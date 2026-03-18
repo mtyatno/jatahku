@@ -1,0 +1,30 @@
+# Jatahku - Phase 1 Dependencies
+# FastAPI + server
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Database
+sqlalchemy[asyncio]==2.0.40
+asyncpg==0.30.0
+alembic==1.15.2
+
+# Redis
+redis==5.2.1
+
+# Auth
+pyjwt==2.10.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.4.0
+
+# Telegram Bot
+python-telegram-bot==21.11.1
+
+# Scheduler
+apscheduler==3.11.0
+
+# Utilities
+pydantic==2.11.1
+pydantic-settings==2.8.1
+python-dotenv==1.1.0
+httpx==0.28.1
