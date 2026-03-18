@@ -400,6 +400,8 @@ def create_bot_app():
     app.add_handler(CommandHandler("amplop_baru", cmd_amplop_baru))
     app.add_handler(CommandHandler("template", cmd_template))
     app.add_handler(CommandHandler("batal", cmd_batal))
+    from app.bot.link_cmd import cmd_link
+    app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^txn_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
