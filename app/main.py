@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
-from app.api.routes import health, auth, envelopes, transactions, incomes
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, webhook
 
 settings = get_settings()
 
@@ -40,3 +40,5 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(envelopes.router, prefix="/envelopes", tags=["envelopes"])
 app.include_router(transactions.router, prefix="/transactions", tags=["transactions"])
 app.include_router(incomes.router, prefix="/incomes", tags=["incomes"])
+app.include_router(webhook.router, tags=["webhook"])
+app.include_router(webhook.router, tags=["webhook"])
