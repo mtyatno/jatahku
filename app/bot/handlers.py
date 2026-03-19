@@ -71,7 +71,9 @@ def format_currency(amount):
     val = int(amount)
     if val >= 1_000_000:
         jt = val / 1_000_000
-        return f"Rp{jt:,.1f}jt".replace(",", ".").replace(".0jt", "jt")
+        if jt == int(jt):
+            return f"Rp{int(jt)}jt"
+        return f"Rp{jt:,.2f}jt".replace(",", ".")
     elif val >= 1_000:
         rb = val / 1_000
         if rb == int(rb):
@@ -143,11 +145,7 @@ async def find_best_envelope(description, household_id, db):
         envelope = result.scalar_one_or_none()
         if envelope:
             return envelope, True
-    result = await db.execute(
-        select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
-        .order_by(Envelope.created_at).limit(1)
-    )
-    return result.scalar_one_or_none(), False
+    return None, False
 
 async def cmd_start(update, context):
     tg_user = update.effective_user
@@ -317,7 +315,20 @@ async def handle_message(update, context):
             return
         envelope, confident = await find_best_envelope(description, hid, db)
         if not envelope:
-            await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
+            envelopes_check = await get_envelopes_with_spent(hid, db)
+            if not envelopes_check:
+                await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
+                return
+            keyboard = []
+            for e in envelopes_check:
+                env = e["envelope"]
+                emoji = env.emoji or "📁"
+                keyboard.append([InlineKeyboardButton(
+                    f"{emoji} {env.name} (sisa {format_currency(e['remaining'])})",
+                    callback_data=f"txn_{env.id}_{amount}_{description[:50]}")])
+            await update.message.reply_text(
+                f"💰 {format_currency(amount)} — {description}\n\nMasuk ke amplop mana?",
+                reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if confident:
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
