@@ -1,22 +1,20 @@
 export function formatCurrency(amount) {
   const val = Math.round(Number(amount));
   return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    style: 'currency', currency: 'IDR',
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(val);
 }
 
 export function formatShort(amount) {
   const val = Math.round(Number(amount));
   if (val >= 1_000_000) {
-    const jt = val / 1_000_000;
-    return `Rp${jt % 1 === 0 ? jt.toFixed(0) : jt.toFixed(1)}jt`;
+    const jt = Math.floor(val / 10_000) / 100;
+    return jt % 1 === 0 ? `Rp${jt}jt` : `Rp${jt}jt`;
   }
   if (val >= 1_000) {
-    const rb = val / 1_000;
-    return `Rp${rb % 1 === 0 ? rb.toFixed(0) : rb.toFixed(1)}rb`;
+    const rb = Math.floor(val / 1_000);
+    return `Rp${rb}rb`;
   }
   return `Rp${val.toLocaleString('id-ID')}`;
 }
@@ -35,8 +33,6 @@ export function budgetStatus(spent, budget) {
 
 export function daysLeftInMonth() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const lastDay = new Date(year, month + 1, 0).getDate();
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return lastDay - now.getDate();
 }

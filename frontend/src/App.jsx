@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Envelopes from './pages/Envelopes';
 import Transactions from './pages/Transactions';
 import Allocate from './pages/Allocate';
+import Settings from './pages/Settings';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="/envelopes" element={<Envelopes />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/allocate" element={<Allocate />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>

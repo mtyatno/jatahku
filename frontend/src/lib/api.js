@@ -106,6 +106,11 @@ class ApiClient {
   }
 
   // Envelopes
+  async getEnvelopeSummary() {
+    const res = await this.request("/envelopes/summary");
+    return res.ok ? res.json() : [];
+  }
+
   async getEnvelopes() {
     const res = await this.request('/envelopes/');
     return res.ok ? res.json() : [];
