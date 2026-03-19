@@ -7,7 +7,8 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.models import User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation
+from app.models.models import User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot
+from app.services.rollover import get_previous_rollover
 
 router = APIRouter()
 
@@ -88,8 +89,10 @@ async def get_envelopes_summary(
         )
         allocated = Decimal(str(allocated_result.scalar()))
 
-        remaining = env.budget_amount + allocated - spent
-        budget = env.budget_amount + allocated
+        prev_rollover = await get_previous_rollover(env.id, now.year, now.month, db)
+        effective_budget = env.budget_amount + allocated + prev_rollover
+        remaining = effective_budget - spent
+        budget = effective_budget
         ratio = float(spent / budget) if budget > 0 else 0.0
 
         summaries.append(EnvelopeSummary(
