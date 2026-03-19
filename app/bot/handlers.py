@@ -109,11 +109,13 @@ async def get_household_id(user, db):
     result = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
     return result.scalar_one_or_none()
 
-async def get_envelopes_with_spent(household_id, db):
+async def get_envelopes_with_spent(household_id, db, user_id=None):
     now = date.today()
-    result = await db.execute(
-        select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True).order_by(Envelope.created_at)
-    )
+    from sqlalchemy import or_
+    query = select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
+    if user_id:
+        query = query.where(or_(Envelope.owner_id == None, Envelope.owner_id == user_id))
+    result = await db.execute(query.order_by(Envelope.created_at))
     envelopes = result.scalars().all()
     envelope_data = []
     for env in envelopes:
@@ -177,7 +179,7 @@ async def cmd_status(update, context):
         if not hid:
             await update.message.reply_text("Ketik /start dulu.")
             return
-        envelopes = await get_envelopes_with_spent(hid, db)
+        envelopes = await get_envelopes_with_spent(hid, db, user.id)
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
@@ -207,7 +209,7 @@ async def cmd_amplop(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
-        envelopes = await get_envelopes_with_spent(hid, db)
+        envelopes = await get_envelopes_with_spent(hid, db, user.id)
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /amplop_baru untuk buat.")
         return
@@ -315,7 +317,7 @@ async def handle_message(update, context):
             return
         envelope, confident = await find_best_envelope(description, hid, db)
         if not envelope:
-            envelopes_check = await get_envelopes_with_spent(hid, db)
+            envelopes_check = await get_envelopes_with_spent(hid, db, user.id)
             if not envelopes_check:
                 await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
                 return
@@ -335,7 +337,7 @@ async def handle_message(update, context):
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
             db.add(txn)
             await db.commit()
-            envelopes = await get_envelopes_with_spent(hid, db)
+            envelopes = await get_envelopes_with_spent(hid, db, user.id)
             env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
             remaining = env_data["remaining"] if env_data else Decimal("0")
             budget = envelope.budget_amount
@@ -358,7 +360,7 @@ async def handle_message(update, context):
                 f"Sisa amplop: {format_currency(remaining)} / {format_currency(budget)}{warning}"
             )
         else:
-            envelopes_data = await get_envelopes_with_spent(hid, db)
+            envelopes_data = await get_envelopes_with_spent(hid, db, user.id)
             keyboard = []
             for e in envelopes_data:
                 env = e["envelope"]
@@ -393,7 +395,7 @@ async def handle_txn_callback(update, context):
             description=description, source=TransactionSource.telegram, transaction_date=date.today())
         db.add(txn)
         await db.commit()
-        envelopes = await get_envelopes_with_spent(hid, db)
+        envelopes = await get_envelopes_with_spent(hid, db, user.id)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
     emoji = envelope.emoji or "📁"

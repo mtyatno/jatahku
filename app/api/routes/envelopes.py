@@ -19,6 +19,7 @@ class EnvelopeCreate(BaseModel):
     budget_amount: Decimal
     is_rollover: bool = True
     group_id: UUID | None = None
+    is_personal: bool = False
 
 
 class EnvelopeResponse(BaseModel):
@@ -30,6 +31,8 @@ class EnvelopeResponse(BaseModel):
     is_active: bool
     group_id: UUID | None
     household_id: UUID
+    owner_id: UUID | None
+    is_personal: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -39,6 +42,7 @@ class EnvelopeSummary(BaseModel):
     emoji: str
     budget_amount: Decimal
     is_rollover: bool
+    is_personal: bool
     spent: Decimal
     allocated: Decimal
     remaining: Decimal
@@ -63,9 +67,14 @@ async def get_envelopes_summary(
     hid = await _get_user_household_id(user, db)
     now = date.today()
 
+    from sqlalchemy import or_
     result = await db.execute(
         select(Envelope)
-        .where(Envelope.household_id == hid, Envelope.is_active == True)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
         .order_by(Envelope.created_at)
     )
     envelopes = result.scalars().all()
@@ -98,6 +107,7 @@ async def get_envelopes_summary(
         summaries.append(EnvelopeSummary(
             id=env.id, name=env.name, emoji=env.emoji,
             budget_amount=env.budget_amount, is_rollover=env.is_rollover,
+            is_personal=env.owner_id is not None,
             spent=spent, allocated=allocated, remaining=remaining,
             spent_ratio=round(ratio, 4),
         ))
@@ -110,9 +120,14 @@ async def list_envelopes(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _get_user_household_id(user, db)
+    from sqlalchemy import or_
     result = await db.execute(
         select(Envelope)
-        .where(Envelope.household_id == hid, Envelope.is_active == True)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
         .order_by(Envelope.created_at)
     )
     return result.scalars().all()
@@ -129,6 +144,7 @@ async def create_envelope(
         household_id=hid, name=req.name, emoji=req.emoji,
         budget_amount=req.budget_amount, is_rollover=req.is_rollover,
         group_id=req.group_id,
+        owner_id=user.id if req.is_personal else None,
     )
     db.add(envelope)
     await db.commit()

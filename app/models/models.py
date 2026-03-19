@@ -135,9 +135,13 @@ class Envelope(TimestampMixin, Base):
     )
     is_rollover: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, default=None
+    )
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelopes")
+    owner: Mapped["User | None"] = relationship(foreign_keys=[owner_id])
     group: Mapped["EnvelopeGroup | None"] = relationship(back_populates="envelopes")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="envelope")
     allocations: Mapped[list["Allocation"]] = relationship(back_populates="envelope")
