@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { formatShort, daysLeftInMonth } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
+import Onboarding from '../components/Onboarding';
 
 function ProgressBar({ ratio, status }) {
   const colors = { safe: 'bg-brand-400', warning: 'bg-amber-400', danger: 'bg-danger-400' };
@@ -20,13 +21,18 @@ export default function Dashboard() {
   const [envelopes, setEnvelopes] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     Promise.all([api.getEnvelopeSummary(), api.getTransactions(null, 10)])
-      .then(([env, txn]) => { setEnvelopes(env); setTransactions(txn); setLoading(false); });
+      .then(([env, txn]) => { setEnvelopes(env); setTransactions(txn); setLoading(false); if (env.length === 0) setShowOnboarding(true); });
   }, []);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
+
+  if (showOnboarding) {
+    return <Onboarding onDone={() => { setShowOnboarding(false); window.location.reload(); }} />;
+  }
 
   const shared = envelopes.filter(e => !e.is_personal);
   const personal = envelopes.filter(e => e.is_personal);
