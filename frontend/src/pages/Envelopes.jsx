@@ -117,11 +117,11 @@ function EnvelopeCard({ env, onEdit, onDelete }) {
       <div className="mb-2">
         <div className="flex justify-between items-end mb-1.5">
           <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : status === 'danger' ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600'}`}>{formatShort(env.remaining)}</span>
-          <span className="text-xs text-gray-400">/ {formatShort(env.budget_amount)}</span>
+          <span className="text-xs text-gray-400">Dana {formatShort(env.allocated || env.budget_amount)}</span>
         </div>
         <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(env.spent_ratio * 100, 1)}%` }} /></div>
       </div>
-      <p className="text-xs text-gray-400">Terpakai {formatCurrency(env.spent)} ({Math.round(env.spent_ratio * 100)}%)</p>
+      <p className="text-xs text-gray-400">Terpakai {formatCurrency(env.spent)} dari {formatCurrency(env.allocated || env.budget_amount)}</p>
       <ControlBadges env={env} />
     </div>
   );
