@@ -7,6 +7,7 @@ import Envelopes from './pages/Envelopes';
 import Transactions from './pages/Transactions';
 import Allocate from './pages/Allocate';
 import Langganan from './pages/Langganan';
+import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/allocate" element={<Allocate />} />
             <Route path="/langganan" element={<Langganan />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>
