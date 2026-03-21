@@ -413,8 +413,11 @@ def create_bot_app():
     app.add_handler(CommandHandler("amplop_baru", cmd_amplop_baru))
     app.add_handler(CommandHandler("template", cmd_template))
     app.add_handler(CommandHandler("batal", cmd_batal))
-    from app.bot.link_cmd import cmd_link
+    from app.bot.link_cmd import cmd_link, cmd_unlink, handle_merge_callback, handle_unlink_callback
     app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("unlink", cmd_unlink))
+    app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
+    app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
     from app.bot.household_cmd import cmd_invite, cmd_join
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("join", cmd_join))
