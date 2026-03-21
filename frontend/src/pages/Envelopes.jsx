@@ -4,7 +4,8 @@ import { formatCurrency, formatShort } from '../lib/utils';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
-function CreateModal({ onClose, onCreated, editing }) {
+function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes }) {
+  const [step, setStep] = useState(editing ? 2 : 1); // 1=basic, 2=controls (editing skips funding)
   const [name, setName] = useState(editing?.name || '');
   const [emoji, setEmoji] = useState(editing?.emoji || '📁');
   const [budget, setBudget] = useState(editing ? String(Math.round(Number(editing.budget_amount))) : '');
@@ -13,38 +14,167 @@ function CreateModal({ onClose, onCreated, editing }) {
   const [isLocked, setIsLocked] = useState(editing?.is_locked ?? false);
   const [dailyLimit, setDailyLimit] = useState(editing?.daily_limit ? String(Math.round(Number(editing.daily_limit))) : '');
   const [coolingThreshold, setCoolingThreshold] = useState(editing?.cooling_threshold ? String(Math.round(Number(editing.cooling_threshold))) : '');
-  const [saving, setSaving] = useState(false);
   const [showControls, setShowControls] = useState(!!(editing?.is_locked || editing?.daily_limit || editing?.cooling_threshold));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  // Funding
+  const [fundingSource, setFundingSource] = useState('transfer'); // 'transfer' or 'income'
+  const [transferFrom, setTransferFrom] = useState('');
+  const [fundAmount, setFundAmount] = useState('');
+  const [newIncomeAmount, setNewIncomeAmount] = useState('');
+  const [newIncomeDesc, setNewIncomeDesc] = useState('Top-up');
+
+  const fundableEnvelopes = (existingEnvelopes || []).filter(e => Number(e.remaining) > 0);
+
+  const handleSubmit = async () => {
     setSaving(true);
+    setError('');
+
+    if (editing) {
+      const data = {
+        name, emoji, budget_amount: Number(budget), is_rollover: rollover,
+        is_personal: isPersonal, is_locked: isLocked,
+        daily_limit: dailyLimit ? Number(dailyLimit) : null,
+        cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
+      };
+      const result = await api.updateEnvelope(editing.id, data);
+      setSaving(false);
+      if (result.ok) { onCreated(); onClose(); } else { setError('Gagal update'); }
+      return;
+    }
+
+    // Create new envelope
     const data = {
-      name, emoji,
-      budget_amount: Number(budget),
-      is_rollover: rollover,
-      is_personal: isPersonal,
-      is_locked: isLocked,
+      name, emoji, budget_amount: Number(fundAmount || budget || 0), is_rollover: rollover,
+      is_personal: isPersonal, is_locked: isLocked,
       daily_limit: dailyLimit ? Number(dailyLimit) : null,
       cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
     };
-    const result = editing ? await api.updateEnvelope(editing.id, data) : await api.createEnvelope(data);
+    const createRes = await api.createEnvelope(data);
+    if (!createRes.ok) { setSaving(false); setError('Gagal buat amplop'); return; }
+    const newEnvId = createRes.data.id;
+
+    // Fund the envelope
+    const amt = Number(fundAmount);
+    if (amt > 0) {
+      if (fundingSource === 'transfer' && transferFrom) {
+        // Transfer from existing envelope
+        const res = await api.request(
+          `/envelopes/transfer?from_id=${transferFrom}&to_id=${newEnvId}&amount=${amt}`,
+          { method: 'POST' }
+        );
+        if (!res.ok) {
+          const d = await res.json();
+          setSaving(false);
+          setError(d.detail || 'Transfer gagal');
+          return;
+        }
+      } else if (fundingSource === 'income') {
+        // New income allocation
+        const incAmt = Number(newIncomeAmount) || amt;
+        const res = await api.request('/incomes/', {
+          method: 'POST',
+          body: JSON.stringify({
+            amount: incAmt,
+            source: newIncomeDesc,
+            allocations: [{ envelope_id: newEnvId, amount: amt }],
+          }),
+        });
+        if (!res.ok) {
+          const d = await res.json();
+          setSaving(false);
+          setError(d.detail || 'Income gagal');
+          return;
+        }
+      }
+    }
+
     setSaving(false);
-    if (result.ok) { onCreated(); onClose(); }
+    onCreated();
+    onClose();
   };
+
+  const selectedSource = fundableEnvelopes.find(e => e.id === transferFrom);
+  const maxTransfer = selectedSource ? Number(selectedSource.remaining) : 0;
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <h3 className="font-display font-bold text-lg mb-4">{editing ? 'Edit amplop' : 'Amplop baru'}</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
+
+        {/* Step 1: Basic info + funding (new only) */}
+        <div className="space-y-4">
           <div><label className="label">Emoji</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}>{e}</button>))}</div></div>
-          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Makan, Transport..." value={name} onChange={e => setName(e.target.value)} required /></div>
-          <div><label className="label">Budget bulanan (Rp)</label><input type="number" className="input font-mono" placeholder="1500000" value={budget} onChange={e => setBudget(e.target.value)} required min="0" />{budget && <p className="text-xs text-gray-400 mt-1">{formatCurrency(budget)}/bulan</p>}</div>
+          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => setName(e.target.value)} required /></div>
+
+          {!editing && (
+            <div className="border-t border-gray-100 pt-4">
+              <h4 className="font-semibold text-sm mb-3">💰 Sumber dana</h4>
+              <div className="flex gap-2 mb-3">
+                <button type="button" onClick={() => setFundingSource('transfer')}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${fundingSource === 'transfer' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+                  ↔️ Transfer dari amplop lain
+                </button>
+                <button type="button" onClick={() => setFundingSource('income')}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${fundingSource === 'income' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+                  💵 Income baru
+                </button>
+              </div>
+
+              {fundingSource === 'transfer' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">Transfer dari</label>
+                    <select className="input" value={transferFrom} onChange={e => setTransferFrom(e.target.value)}>
+                      <option value="">Pilih amplop sumber</option>
+                      {fundableEnvelopes.map(env => (
+                        <option key={env.id} value={env.id}>{env.emoji} {env.name} (sisa {formatShort(env.remaining)})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Jumlah transfer (Rp)</label>
+                    <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
+                      onChange={e => setFundAmount(e.target.value)} min="1" max={maxTransfer} />
+                    {transferFrom && <p className="text-xs text-gray-400 mt-1">Max: {formatCurrency(maxTransfer)}</p>}
+                  </div>
+                </div>
+              )}
+
+              {fundingSource === 'income' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">Total income baru (Rp)</label>
+                    <input type="number" className="input font-mono" placeholder="1000000" value={newIncomeAmount}
+                      onChange={e => setNewIncomeAmount(e.target.value)} min="1" />
+                  </div>
+                  <div>
+                    <label className="label">Keterangan</label>
+                    <input type="text" className="input" value={newIncomeDesc}
+                      onChange={e => setNewIncomeDesc(e.target.value)} placeholder="Bonus, Freelance..." />
+                  </div>
+                  <div>
+                    <label className="label">Alokasi ke amplop ini (Rp)</label>
+                    <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
+                      onChange={e => setFundAmount(e.target.value)} min="1"
+                      max={Number(newIncomeAmount) || undefined} />
+                    {Number(newIncomeAmount) > 0 && Number(fundAmount) > 0 && Number(newIncomeAmount) > Number(fundAmount) && (
+                      <p className="text-xs text-brand-600 mt-1">Sisa {formatCurrency(Number(newIncomeAmount) - Number(fundAmount))} → Tabungan</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {editing && (
+            <div><label className="label">Budget target (Rp)</label><input type="number" className="input font-mono" placeholder="1500000" value={budget} onChange={e => setBudget(e.target.value)} min="0" /></div>
+          )}
 
           <div className="space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={rollover} onChange={e => setRollover(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-400" /><span className="text-sm text-gray-600">Rollover sisa ke bulan depan</span></label>
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isPersonal} onChange={e => setIsPersonal(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-400" /><span className="text-sm text-gray-600">Personal (hanya kamu yang lihat)</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={rollover} onChange={e => setRollover(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" /><span className="text-sm text-gray-600">Rollover sisa ke bulan depan</span></label>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isPersonal} onChange={e => setIsPersonal(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" /><span className="text-sm text-gray-600">Personal (hanya kamu)</span></label>
           </div>
 
           <div className="border-t border-gray-100 pt-3">
@@ -52,34 +182,25 @@ function CreateModal({ onClose, onCreated, editing }) {
               className="text-sm font-medium text-brand-600 hover:underline flex items-center gap-1">
               ⚙️ Behavior controls {showControls ? '▲' : '▼'}
             </button>
-
             {showControls && (
               <div className="mt-3 space-y-3 bg-gray-50 rounded-xl p-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-danger-400 focus:ring-danger-400" />
-                  <span className="text-sm text-gray-600">🔒 Kunci amplop (tidak bisa belanja)</span>
-                </label>
-
-                <div>
-                  <label className="label">📊 Daily limit (Rp/hari)</label>
-                  <input type="number" className="input font-mono" placeholder="Kosongkan jika tidak ada limit"
-                    value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} min="0" />
-                  {dailyLimit && <p className="text-xs text-gray-400 mt-1">Max {formatCurrency(dailyLimit)}/hari</p>}
-                </div>
-
-                <div>
-                  <label className="label">⏳ Cooling threshold (Rp)</label>
-                  <input type="number" className="input font-mono" placeholder="Kosongkan jika tidak ada cooling"
-                    value={coolingThreshold} onChange={e => setCoolingThreshold(e.target.value)} min="0" />
-                  {coolingThreshold && <p className="text-xs text-gray-400 mt-1">Pembelian &ge; {formatCurrency(coolingThreshold)} harus tunggu 24 jam</p>}
-                </div>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-danger-400" /><span className="text-sm text-gray-600">🔒 Kunci amplop</span></label>
+                <div><label className="label">📊 Daily limit (Rp/hari)</label><input type="number" className="input font-mono" placeholder="Kosongkan = no limit" value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} min="0" /></div>
+                <div><label className="label">⏳ Cooling threshold (Rp)</label><input type="number" className="input font-mono" placeholder="Kosongkan = no cooling" value={coolingThreshold} onChange={e => setCoolingThreshold(e.target.value)} min="0" /></div>
               </div>
             )}
           </div>
 
-          <div className="flex gap-2 pt-2"><button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button><button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : editing ? 'Simpan' : 'Buat Amplop'}</button></div>
-        </form>
+          {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+            <button type="button" onClick={handleSubmit} disabled={saving || (!editing && !name)}
+              className="btn-primary flex-1 disabled:opacity-50">
+              {saving ? '...' : editing ? 'Simpan' : 'Buat & Alokasi'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -90,21 +211,20 @@ function ControlBadges({ env }) {
   if (env.is_locked) badges.push({ icon: '🔒', label: 'Locked', color: 'bg-red-50 text-danger-400' });
   if (env.daily_limit) badges.push({ icon: '📊', label: `${formatShort(env.daily_limit)}/hari`, color: 'bg-amber-50 text-amber-600' });
   if (env.cooling_threshold) badges.push({ icon: '⏳', label: `>=${formatShort(env.cooling_threshold)}`, color: 'bg-blue-50 text-info-400' });
-  if (badges.length === 0) return null;
-  return (
-    <div className="flex flex-wrap gap-1 mt-2">
-      {badges.map((b, i) => (
-        <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>
-          {b.icon} {b.label}
-        </span>
-      ))}
-    </div>
-  );
+  if (!badges.length) return null;
+  return <div className="flex flex-wrap gap-1 mt-2">{badges.map((b, i) => <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>{b.icon} {b.label}</span>)}</div>;
 }
 
 function EnvelopeCard({ env, onEdit, onDelete }) {
-  const status = env.spent_ratio >= 0.9 ? 'danger' : env.spent_ratio >= 0.7 ? 'warning' : 'safe';
+  const allocated = Number(env.allocated || 0);
+  const spent = Number(env.spent || 0);
+  const remaining = Number(env.remaining || 0);
+  const spentRatio = env.spent_ratio || 0;
+  const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
+  const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
+  const remainColor = remaining <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+
   return (
     <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-3">
@@ -114,14 +234,18 @@ function EnvelopeCard({ env, onEdit, onDelete }) {
           <button onClick={() => onDelete(env.id, env.name)} className="text-xs text-gray-400 hover:text-danger-400 px-2 py-1 rounded">Hapus</button>
         </div>
       </div>
-      <div className="mb-2">
-        <div className="flex justify-between items-end mb-1.5">
-          <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : status === 'danger' ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600'}`}>{formatShort(env.remaining)}</span>
-          <span className="text-xs text-gray-400">Dana {formatShort(env.allocated || env.budget_amount)}</span>
+      {isUnfunded ? (
+        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana. Alokasikan income dulu.</div>
+      ) : (
+        <div className="mb-2">
+          <div className="flex justify-between items-end mb-1.5">
+            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(remaining)}</span>
+            <span className="text-xs text-gray-400">Dana {formatShort(allocated)}</span>
+          </div>
+          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
+          <p className="text-xs text-gray-400 mt-1">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
         </div>
-        <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(env.spent_ratio * 100, 1)}%` }} /></div>
-      </div>
-      <p className="text-xs text-gray-400">Terpakai {formatCurrency(env.spent)} dari {formatCurrency(env.allocated || env.budget_amount)}</p>
+      )}
       <ControlBadges env={env} />
     </div>
   );
@@ -171,7 +295,7 @@ export default function Envelopes() {
           )}
         </>
       )}
-      {(showCreate || editing) && <CreateModal editing={editing} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
+      {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
     </div>
   );
 }

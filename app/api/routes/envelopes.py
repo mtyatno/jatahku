@@ -234,6 +234,7 @@ async def delete_envelope(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from datetime import date as date_cls
     hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(Envelope.id == envelope_id, Envelope.household_id == hid)
@@ -241,6 +242,68 @@ async def delete_envelope(
     envelope = result.scalar_one_or_none()
     if not envelope:
         raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
+    if envelope.name == "Tabungan":
+        raise HTTPException(status_code=400, detail="Amplop Tabungan tidak bisa dihapus")
+
+    # Find or create Tabungan
+    tab_result = await db.execute(
+        select(Envelope).where(
+            Envelope.household_id == hid, Envelope.name == "Tabungan", Envelope.is_active == True
+        )
+    )
+    tabungan = tab_result.scalar_one_or_none()
+    if not tabungan:
+        tabungan = Envelope(household_id=hid, name="Tabungan", emoji="💰", budget_amount=Decimal("0"), is_rollover=True)
+        db.add(tabungan)
+        await db.flush()
+
+    # Calculate remaining funds in this envelope
+    now = date_cls.today()
+    from app.models.models import Income
+    alloc_result = await db.execute(
+        select(func.coalesce(func.sum(Allocation.amount), 0))
+        .join(Income, Allocation.income_id == Income.id)
+        .where(
+            Allocation.envelope_id == envelope_id,
+            func.extract("year", Income.income_date) == now.year,
+            func.extract("month", Income.income_date) == now.month,
+        )
+    )
+    allocated = Decimal(str(alloc_result.scalar()))
+
+    spent_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.envelope_id == envelope_id,
+            Transaction.is_deleted == False,
+            func.extract("year", Transaction.transaction_date) == now.year,
+            func.extract("month", Transaction.transaction_date) == now.month,
+        )
+    )
+    spent = Decimal(str(spent_result.scalar()))
+    remaining = allocated - spent
+
+    # Transfer remaining funds to Tabungan via internal transfer
+    if remaining > 0:
+        from app.models.models import Income as IncomeModel
+        transfer = IncomeModel(
+            household_id=hid, user_id=user.id, amount=Decimal("0"),
+            description=f"Refund: hapus amplop {envelope.name}",
+        )
+        db.add(transfer)
+        await db.flush()
+        db.add(Allocation(income_id=transfer.id, envelope_id=envelope_id, amount=-remaining))
+        db.add(Allocation(income_id=transfer.id, envelope_id=tabungan.id, amount=remaining))
+
+    # Move all transactions to Tabungan
+    from sqlalchemy import update
+    await db.execute(
+        update(Transaction).where(
+            Transaction.envelope_id == envelope_id,
+            Transaction.is_deleted == False,
+        ).values(envelope_id=tabungan.id)
+    )
+
+    # Soft delete
     envelope.is_active = False
     await db.commit()
 
