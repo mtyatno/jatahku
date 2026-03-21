@@ -15,11 +15,15 @@ export default function Transactions() {
   const [addError, setAddError] = useState('');
 
   const load = () => {
+    const isSource = filter === 'telegram' || filter === 'webapp';
+    const isEnvelope = filter !== 'all' && !isSource;
     Promise.all([
-      api.getTransactions(filter === 'all' ? null : filter, 100),
+      api.getTransactions(isEnvelope ? filter : null, 100),
       api.getEnvelopes(),
     ]).then(([txn, env]) => {
-      setTransactions(txn);
+      let filtered = txn;
+      if (isSource) filtered = txn.filter(t => t.source === filter);
+      setTransactions(filtered);
       setEnvelopes(env);
       setLoading(false);
     });
@@ -114,6 +118,9 @@ export default function Transactions() {
         {envelopes.map(env => (
           <button key={env.id} onClick={() => setFilter(env.id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === env.id ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>{env.emoji} {env.name}</button>
         ))}
+        <span className="mx-1 text-gray-200">|</span>
+        <button onClick={() => setFilter('telegram')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'telegram' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>📱 Telegram</button>
+        <button onClick={() => setFilter('webapp')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'webapp' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>🌐 WebApp</button>
       </div>
 
       {transactions.length === 0 ? (
