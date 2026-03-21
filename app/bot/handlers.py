@@ -15,7 +15,9 @@ from app.core.database import AsyncSessionLocal
 from app.models.models import (
     User, Household, HouseholdMember, HouseholdRole,
     Envelope, Transaction, Allocation, Income, TransactionSource,
+    PendingTransaction, PendingTransactionStatus,
 )
+from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
 
 settings = get_settings()
 logger = logging.getLogger("jatahku.bot")
@@ -333,6 +335,41 @@ async def handle_message(update, context):
                 reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if confident:
+            # Run behavior checks
+            check = await check_behavior(envelope.id, user.id, amount, db)
+            if not check.allowed:
+                if check.check_type == "locked":
+                    await update.message.reply_text(f"🔒 {check.reason}")
+                    return
+                elif check.check_type == "daily_limit":
+                    d = check.details
+                    await update.message.reply_text(
+                        f"⚠️ {check.reason}\n\n"
+                        f"Limit harian: {format_currency(d['daily_limit'])}\n"
+                        f"Sudah terpakai: {format_currency(d['spent_today'])}\n"
+                        f"Sisa limit: {format_currency(d['remaining_today'])}\n"
+                        f"Diminta: {format_currency(d['requested'])}")
+                    return
+                elif check.check_type == "cooling":
+                    pending = await create_pending_transaction(
+                        envelope.id, user.id, amount, description,
+                        TransactionSource.telegram, cooling_hours=24, db=db)
+                    from datetime import datetime, timezone
+                    confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
+                    keyboard = [
+                        [InlineKeyboardButton("❌ Batalkan", callback_data=f"cool_cancel_{pending.id}")],
+                    ]
+                    emoji = envelope.emoji or "📁"
+                    await update.message.reply_text(
+                        f"⏳ Cooling period aktif\n\n"
+                        f"{format_currency(amount)} — {description}\n"
+                        f"Amplop: {emoji} {envelope.name}\n\n"
+                        f"Transaksi bisa dikonfirmasi setelah:\n"
+                        f"🕐 {confirm_time} WIB (24 jam)\n\n"
+                        f"Saya akan kirim reminder saat sudah bisa dikonfirmasi.",
+                        reply_markup=InlineKeyboardMarkup(keyboard))
+                    return
+
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
             db.add(txn)
@@ -391,6 +428,37 @@ async def handle_txn_callback(update, context):
         if not envelope:
             await query.edit_message_text("Amplop nggak ditemukan.")
             return
+
+        # Run behavior checks
+        check = await check_behavior(envelope.id, user.id, amount, db)
+        if not check.allowed:
+            if check.check_type == "locked":
+                await query.edit_message_text(f"🔒 {check.reason}")
+                return
+            elif check.check_type == "daily_limit":
+                d = check.details
+                await query.edit_message_text(
+                    f"⚠️ {check.reason}\n\n"
+                    f"Limit harian: {format_currency(d['daily_limit'])}\n"
+                    f"Sudah terpakai: {format_currency(d['spent_today'])}\n"
+                    f"Sisa limit: {format_currency(d['remaining_today'])}\n"
+                    f"Diminta: {format_currency(d['requested'])}")
+                return
+            elif check.check_type == "cooling":
+                pending = await create_pending_transaction(
+                    envelope.id, user.id, amount, description,
+                    TransactionSource.telegram, cooling_hours=24, db=db)
+                confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
+                emoji = envelope.emoji or "📁"
+                await query.edit_message_text(
+                    f"⏳ Cooling period aktif\n\n"
+                    f"{format_currency(amount)} — {description}\n"
+                    f"Amplop: {emoji} {envelope.name}\n\n"
+                    f"Bisa dikonfirmasi setelah:\n"
+                    f"🕐 {confirm_time} WIB (24 jam)\n\n"
+                    f"Ketik /pending untuk lihat status.")
+                return
+
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
             description=description, source=TransactionSource.telegram, transaction_date=date.today())
         db.add(txn)
@@ -405,6 +473,53 @@ async def handle_txn_callback(update, context):
         f"Sisa amplop: {format_currency(remaining)} / {format_currency(envelope.budget_amount)}"
     )
 
+async def cmd_pending(update, context):
+    tg_user = update.effective_user
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        pendings = await get_user_pending(user.id, db)
+    if not pendings:
+        await update.message.reply_text("Tidak ada transaksi pending.")
+        return
+    for p in pendings:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        can_confirm = now >= p.confirm_after
+        confirm_time = p.confirm_after.strftime("%d %b %H:%M")
+        keyboard = []
+        if can_confirm:
+            keyboard.append([InlineKeyboardButton("✅ Konfirmasi", callback_data=f"cool_confirm_{p.id}")])
+        keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data=f"cool_cancel_{p.id}")])
+        status_text = "✅ Bisa dikonfirmasi" if can_confirm else f"⏳ Tunggu sampai {confirm_time}"
+        await update.message.reply_text(
+            f"💰 {format_currency(p.amount)} — {p.description}\n"
+            f"Status: {status_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def handle_cooling_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
+        await query.edit_message_text("Error: data tidak valid.")
+        return
+    action = parts[1]  # confirm or cancel
+    pending_id = parts[2]
+    async with AsyncSessionLocal() as db:
+        if action == "confirm":
+            result = await confirm_pending(pending_id, db)
+            if "error" in result:
+                await query.edit_message_text(f"❌ {result['error']}")
+            else:
+                await query.edit_message_text("✅ Transaksi dikonfirmasi dan tercatat!")
+        elif action == "cancel":
+            result = await cancel_pending(pending_id, db)
+            if "error" in result:
+                await query.edit_message_text(f"❌ {result['error']}")
+            else:
+                await query.edit_message_text("↩️ Transaksi pending dibatalkan.")
+
+
 def create_bot_app():
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
@@ -416,8 +531,10 @@ def create_bot_app():
     from app.bot.link_cmd import cmd_link, cmd_unlink, handle_merge_callback, handle_unlink_callback
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CommandHandler("unlink", cmd_unlink))
+    app.add_handler(CommandHandler("pending", cmd_pending))
     app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
     app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
+    app.add_handler(CallbackQueryHandler(handle_cooling_callback, pattern=r"^cool_"))
     from app.bot.household_cmd import cmd_invite, cmd_join
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("join", cmd_join))

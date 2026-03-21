@@ -20,6 +20,9 @@ class EnvelopeCreate(BaseModel):
     is_rollover: bool = True
     group_id: UUID | None = None
     is_personal: bool = False
+    is_locked: bool = False
+    daily_limit: Decimal | None = None
+    cooling_threshold: Decimal | None = None
 
 
 class EnvelopeResponse(BaseModel):
@@ -145,6 +148,9 @@ async def create_envelope(
         budget_amount=req.budget_amount, is_rollover=req.is_rollover,
         group_id=req.group_id,
         owner_id=user.id if req.is_personal else None,
+        is_locked=req.is_locked,
+        daily_limit=req.daily_limit,
+        cooling_threshold=req.cooling_threshold,
     )
     db.add(envelope)
     await db.commit()
@@ -170,6 +176,9 @@ async def update_envelope(
     envelope.budget_amount = req.budget_amount
     envelope.is_rollover = req.is_rollover
     envelope.group_id = req.group_id
+    envelope.is_locked = req.is_locked
+    envelope.daily_limit = req.daily_limit
+    envelope.cooling_threshold = req.cooling_threshold
     await db.commit()
     await db.refresh(envelope)
     return envelope

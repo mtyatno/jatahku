@@ -138,6 +138,9 @@ class Envelope(TimestampMixin, Base):
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True, default=None
     )
+    is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    daily_limit: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    cooling_threshold: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelopes")
@@ -240,6 +243,36 @@ class Goal(TimestampMixin, Base):
 
     # Relationships
     envelope: Mapped["Envelope"] = relationship(back_populates="goals")
+
+
+class PendingTransactionStatus(str, enum.Enum):
+    pending = "pending"
+    confirmed = "confirmed"
+    cancelled = "cancelled"
+    expired = "expired"
+
+
+class PendingTransaction(TimestampMixin, Base):
+    __tablename__ = "pending_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
+    description: Mapped[str] = mapped_column(String(500))
+    source: Mapped[TransactionSource] = mapped_column(
+        SAEnum(TransactionSource), default=TransactionSource.telegram
+    )
+    status: Mapped[PendingTransactionStatus] = mapped_column(
+        SAEnum(PendingTransactionStatus), default=PendingTransactionStatus.pending
+    )
+    cooling_hours: Mapped[int] = mapped_column(Integer, default=24)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    confirm_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    # Relationships
+    envelope: Mapped["Envelope"] = relationship()
+    user: Mapped["User"] = relationship()
 
 
 class MonthlySnapshot(TimestampMixin, Base):
