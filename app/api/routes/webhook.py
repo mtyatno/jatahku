@@ -48,3 +48,33 @@ async def webhook_info():
         await bot_app.initialize()
     info = await bot_app.bot.get_webhook_info()
     return {"url": info.url, "pending_updates": info.pending_update_count, "last_error_date": str(info.last_error_date) if info.last_error_date else None, "last_error_message": info.last_error_message}
+
+
+@router.get("/webhook/telegram/set-commands")
+async def set_bot_commands():
+    from telegram import BotCommand
+    bot_app = get_bot_app()
+    if not bot_app.running:
+        await bot_app.initialize()
+    commands = [
+        BotCommand("status", "Ringkasan budget bulan ini"),
+        BotCommand("amplop", "Daftar semua amplop"),
+        BotCommand("pending", "Transaksi menunggu konfirmasi"),
+        BotCommand("langganan", "Daftar langganan aktif"),
+        BotCommand("controls", "Status behavior controls"),
+        BotCommand("amplop_baru", "Buat amplop baru"),
+        BotCommand("template", "Buat amplop dari template"),
+        BotCommand("lock", "Kunci/buka amplop"),
+        BotCommand("setlimit", "Set limit harian amplop"),
+        BotCommand("setcooling", "Set cooling period"),
+        BotCommand("tambah_langganan", "Tambah langganan baru"),
+        BotCommand("hapus_langganan", "Hapus langganan"),
+        BotCommand("invite", "Undang anggota household"),
+        BotCommand("join", "Gabung ke household"),
+        BotCommand("link", "Hubungkan ke WebApp"),
+        BotCommand("unlink", "Putuskan koneksi Telegram"),
+        BotCommand("batal", "Undo transaksi terakhir"),
+        BotCommand("help", "Panduan lengkap"),
+    ]
+    await bot_app.bot.set_my_commands(commands)
+    return {"status": "ok", "commands": len(commands)}

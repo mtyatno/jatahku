@@ -522,7 +522,9 @@ async def handle_cooling_callback(update, context):
 
 def create_bot_app():
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    from app.bot.help_cmd import cmd_help
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("amplop", cmd_amplop))
     app.add_handler(CommandHandler("amplop_baru", cmd_amplop_baru))
