@@ -80,3 +80,15 @@ async def run_monthly_snapshot(
     m = month or now.month
     result = await create_monthly_snapshots(y, m)
     return {"month": f"{y}-{m:02d}", **result}
+
+@router.post("/daily-summary")
+async def trigger_daily_summary(user: User = Depends(get_current_user)):
+    from app.services.summary import send_daily_summary
+    await send_daily_summary()
+    return {"status": "sent"}
+
+@router.post("/weekly-summary")
+async def trigger_weekly_summary(user: User = Depends(get_current_user)):
+    from app.services.summary import send_weekly_summary
+    await send_weekly_summary()
+    return {"status": "sent"}

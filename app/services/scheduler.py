@@ -2,6 +2,7 @@ import logging
 from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.rollover import create_monthly_snapshots
+from app.services.summary import send_daily_summary, send_weekly_summary
 
 logger = logging.getLogger("jatahku.scheduler")
 scheduler = AsyncIOScheduler()
@@ -115,8 +116,25 @@ def start_scheduler():
         id="pending_reminders",
         replace_existing=True,
     )
+    scheduler.add_job(
+        send_daily_summary,
+        trigger="cron",
+        hour=13,  # 20:00 WIB = 13:00 UTC
+        minute=0,
+        id="daily_summary",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_weekly_summary,
+        trigger="cron",
+        day_of_week="mon",
+        hour=1,  # 08:00 WIB = 01:00 UTC
+        minute=0,
+        id="weekly_summary",
+        replace_existing=True,
+    )
     scheduler.start()
-    logger.info("Scheduler started — monthly snapshot + pending reminders every 5 min")
+    logger.info("Scheduler started — monthly snapshot + pending reminders + daily 20:00 + weekly Monday 08:00")
 
 
 def stop_scheduler():
