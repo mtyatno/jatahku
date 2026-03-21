@@ -58,8 +58,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1><p className="text-sm text-gray-500">{month} — {daysLeft} hari lagi</p>
-        <ExportButtons /></div>
+      <div><h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1><p className="text-sm text-gray-500">{month} — {daysLeft} hari lagi</p></div>
+      <ExportButtons />
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="card"><p className="text-xs text-gray-400 font-medium">Budget shared</p><p className="font-display text-xl font-bold mt-1">{formatShort(sharedBudget)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Terpakai</p><p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(sharedSpent)}</p></div>

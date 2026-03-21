@@ -1,5 +1,5 @@
 from decimal import Decimal
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from sqlalchemy import select, func
 from app.core.database import AsyncSessionLocal
@@ -35,10 +35,25 @@ async def _list_envelopes_names(hid, user_id, db):
 async def cmd_lock(update, context):
     """/lock [nama_amplop] — toggle lock on/off"""
     if not context.args:
+        tg_user = update.effective_user
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            hid = await get_household_id(user, db)
+            envs = await _list_envelopes_names(hid, user.id, db)
+        if not envs:
+            await update.message.reply_text("Belum ada amplop.")
+            return
+        keyboard = []
+        for e in envs:
+            emoji = e.emoji or "📁"
+            status = "🔴 Locked" if e.is_locked else "🟢"
+            keyboard.append([InlineKeyboardButton(
+                f"{status} {emoji} {e.name}",
+                callback_data=f"lock_{e.id}"
+            )])
         await update.message.reply_text(
-            "Format: /lock [nama amplop]\n\n"
-            "Contoh:\n• /lock Makan\n• /lock Hiburan\n\n"
-            "Kirim lagi untuk unlock.")
+            "Pilih amplop untuk lock/unlock:",
+            reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     name = " ".join(context.args)
@@ -67,9 +82,21 @@ async def cmd_lock(update, context):
 async def cmd_setlimit(update, context):
     """/setlimit [nama_amplop] [jumlah] — set daily limit, 0 to remove"""
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
-            "Format: /setlimit [nama amplop] [jumlah]\n\n"
-            "Contoh:\n• /setlimit Makan 200k\n• /setlimit Hiburan 100rb\n• /setlimit Makan 0  (hapus limit)")
+        tg_user = update.effective_user
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            hid = await get_household_id(user, db)
+            envs = await _list_envelopes_names(hid, user.id, db)
+        if not envs:
+            await update.message.reply_text("Belum ada amplop.")
+            return
+        lines = ["Format: /setlimit [nama] [jumlah]\n"]
+        for e in envs:
+            emoji = e.emoji or "📁"
+            limit = f"📊 {format_currency(e.daily_limit)}/hari" if e.daily_limit else "Tidak ada"
+            lines.append(f"{emoji} {e.name} — {limit}")
+        lines.append("\nContoh: /setlimit Makan 200k\nHapus: /setlimit Makan 0")
+        await update.message.reply_text("\n".join(lines))
         return
 
     name = context.args[0]
@@ -111,9 +138,21 @@ async def cmd_setlimit(update, context):
 async def cmd_setcooling(update, context):
     """/setcooling [nama_amplop] [jumlah] — set cooling threshold, 0 to remove"""
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
-            "Format: /setcooling [nama amplop] [jumlah]\n\n"
-            "Contoh:\n• /setcooling Makan 500k\n• /setcooling Hiburan 200rb\n• /setcooling Makan 0  (hapus cooling)")
+        tg_user = update.effective_user
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            hid = await get_household_id(user, db)
+            envs = await _list_envelopes_names(hid, user.id, db)
+        if not envs:
+            await update.message.reply_text("Belum ada amplop.")
+            return
+        lines = ["Format: /setcooling [nama] [jumlah]\n"]
+        for e in envs:
+            emoji = e.emoji or "📁"
+            cool = f"⏳ >= {format_currency(e.cooling_threshold)}" if e.cooling_threshold else "Tidak ada"
+            lines.append(f"{emoji} {e.name} — {cool}")
+        lines.append("\nContoh: /setcooling Makan 500k\nHapus: /setcooling Makan 0")
+        await update.message.reply_text("\n".join(lines))
         return
 
     name = context.args[0]
@@ -180,3 +219,26 @@ async def cmd_controls(update, context):
 
     lines.append(f"\nKelola:\n/lock [nama] — kunci/buka\n/setlimit [nama] [jumlah]\n/setcooling [nama] [jumlah]")
     await update.message.reply_text("\n".join(lines))
+
+
+async def handle_lock_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_", 1)
+    if len(parts) < 2:
+        await query.edit_message_text("Error.")
+        return
+    envelope_id = parts[1]
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Envelope).where(Envelope.id == envelope_id))
+        envelope = result.scalar_one_or_none()
+        if not envelope:
+            await query.edit_message_text("Amplop nggak ditemukan.")
+            return
+        envelope.is_locked = not envelope.is_locked
+        await db.commit()
+        emoji = envelope.emoji or "📁"
+        if envelope.is_locked:
+            await query.edit_message_text(f"🔒 {emoji} {envelope.name} dikunci.\nTidak bisa belanja sampai di-unlock.")
+        else:
+            await query.edit_message_text(f"🔓 {emoji} {envelope.name} di-unlock.\nBisa belanja lagi.")
