@@ -22,10 +22,22 @@ from app.services.behavior import check_behavior, create_pending_transaction, co
 settings = get_settings()
 logger = logging.getLogger("jatahku.bot")
 
-AMOUNT_PATTERN = re.compile(
-    r"^(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|k)?\s*(.+)?$", re.IGNORECASE
+# Matches amount anywhere in text: "35k kopi", "kopi 35k", "beli kopi 35rb"
+AMOUNT_ANYWHERE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)", re.IGNORECASE
 )
 MULTIPLIERS = {"jt": 1_000_000, "juta": 1_000_000, "rb": 1_000, "ribu": 1_000, "k": 1_000}
+
+# Subscription patterns — frequency keywords
+SUB_PATTERNS = [
+    (re.compile(r"(?:tiap|setiap|per)\s+(?:setengah\s+tahun|6\s*bulan)", re.IGNORECASE), "biannual", 6),
+    (re.compile(r"(?:tiap|setiap|per)\s+tahun(?:an)?|tahun(?:an)", re.IGNORECASE), "yearly", 12),
+    (re.compile(r"(?:tiap|setiap|per)\s+(?:2\s*minggu|dua\s*minggu)", re.IGNORECASE), "biweekly", 0.5),
+    (re.compile(r"(?:tiap|setiap|per)\s+minggu(?:an)?|minggu(?:an)", re.IGNORECASE), "weekly", 0.25),
+    (re.compile(r"(?:tiap|setiap|per)\s+bulan(?:an)?|bulan(?:an)?|/bul(?:an)?", re.IGNORECASE), "monthly", 1),
+]
+# Keywords that imply recurring/subscription
+SUB_KEYWORDS = re.compile(r"\b(?:langganan|sewa|nyewa|kontrak|ngontrak|subscribe|subscription|berlangganan)\b", re.IGNORECASE)
 
 CATEGORY_KEYWORDS = {
     "makan": ["makan", "nasi", "ayam", "sate", "bakso", "mie", "noodle", "rice",
@@ -45,12 +57,12 @@ CATEGORY_KEYWORDS = {
 }
 
 def parse_amount(text):
-    match = AMOUNT_PATTERN.match(text.strip())
+    """Parse amount from anywhere in text. Returns (amount, description) or None."""
+    match = AMOUNT_ANYWHERE.search(text.strip())
     if not match:
         return None
     number_str = match.group(1).replace(",", ".")
     multiplier_str = match.group(2)
-    description = (match.group(3) or "").strip()
     try:
         number = float(number_str)
     except ValueError:
@@ -59,7 +71,40 @@ def parse_amount(text):
     amount = Decimal(str(int(number * multiplier)))
     if amount <= 0:
         return None
-    return amount, description
+    # Description = everything except the amount part
+    desc = text.strip()[:match.start()].strip() + " " + text.strip()[match.end():].strip()
+    desc = desc.strip()
+    # Clean up subscription keywords from description
+    for pat, _, _ in SUB_PATTERNS:
+        desc = pat.sub("", desc).strip()
+    if not desc:
+        desc = "Pengeluaran"
+    return amount, desc
+
+
+def parse_subscription(text):
+    """Detect subscription intent. Returns (amount, description, frequency, months) or None."""
+    parsed = parse_amount(text)
+    if not parsed:
+        return None
+    amount, desc = parsed
+    # Check explicit frequency patterns
+    for pat, freq_name, months in SUB_PATTERNS:
+        if pat.search(text):
+            # Clean freq keywords from desc
+            clean_desc = desc
+            for p, _, _ in SUB_PATTERNS:
+                clean_desc = p.sub("", clean_desc).strip()
+            clean_desc = SUB_KEYWORDS.sub("", clean_desc).strip()
+            return amount, clean_desc or desc, freq_name, months
+    # Check subscription keywords (sewa, langganan, kontrak, etc) → default monthly
+    if SUB_KEYWORDS.search(text):
+        clean_desc = SUB_KEYWORDS.sub("", desc).strip()
+        # Also clean from original text for better desc
+        if not clean_desc:
+            clean_desc = desc
+        return amount, clean_desc, "monthly", 1
+    return None
 
 def guess_envelope_name(description):
     desc_lower = description.lower()
@@ -340,9 +385,56 @@ async def handle_message(update, context):
     text = update.message.text.strip()
     if text.startswith("/"):
         return
+    # Check for subscription intent first
+    sub = parse_subscription(text)
+    if sub:
+        amount, description, freq_name, months = sub
+        freq_map = {"weekly": "mingguan", "biweekly": "2 mingguan", "monthly": "bulanan", "biannual": "6 bulanan", "yearly": "tahunan"}
+        freq_label = freq_map.get(freq_name, freq_name)
+        from app.models.models import RecurringFrequency
+        freq_db_map = {"weekly": RecurringFrequency.weekly, "monthly": RecurringFrequency.monthly, "yearly": RecurringFrequency.yearly, "biannual": RecurringFrequency.monthly, "biweekly": RecurringFrequency.weekly}
+        tg_user = update.effective_user
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            setup_ok, reason = await _is_setup_complete(user, db)
+            if not setup_ok:
+                await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com\nKetik /start untuk panduan.")
+                return
+            hid = await get_household_id(user, db)
+            from sqlalchemy import or_ as sql_or
+            env_result = await db.execute(
+                select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True,
+                    sql_or(Envelope.owner_id == None, Envelope.owner_id == user.id))
+                .order_by(Envelope.created_at))
+            envs = env_result.scalars().all()
+        # Store sub data in Redis (callback_data has 64 byte limit)
+        import redis.asyncio as aioredis, json as json_mod, secrets
+        from app.core.config import get_settings
+        sub_key = secrets.token_hex(4)
+        r = aioredis.from_url(get_settings().REDIS_URL)
+        await r.set(f"sub:{sub_key}", json_mod.dumps({
+            "amount": int(amount), "desc": description, "freq": freq_name,
+        }), ex=300)
+        await r.close()
+        keyboard = []
+        for e in envs:
+            emoji = e.emoji or "📁"
+            keyboard.append([InlineKeyboardButton(
+                f"{emoji} {e.name}",
+                callback_data=f"addsub_{sub_key}_{e.id}"
+            )])
+        keyboard.append([InlineKeyboardButton("❌ Batal", callback_data="addsub_cancel")])
+        await update.message.reply_text(
+            f"🔄 Langganan terdeteksi!\n\n"
+            f"{format_currency(amount)} — {description}\n"
+            f"Frekuensi: {freq_label}\n\n"
+            f"Masuk ke amplop mana?",
+            reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
     parsed = parse_amount(text)
     if not parsed:
-        await update.message.reply_text("Nggak bisa baca itu. Kirim format seperti:\n• 35k starbucks\n• 150rb nasi padang\n• 2.5jt beli headphone")
+        await update.message.reply_text("Nggak bisa baca itu. Kirim format seperti:\n• 35k starbucks\n• kopi 35rb\n• 2.5jt beli headphone")
         return
     amount, description = parsed
     if not description:
@@ -590,6 +682,80 @@ async def handle_cooling_callback(update, context):
                 await query.edit_message_text("↩️ Transaksi pending dibatalkan.")
 
 
+async def handle_addsub_callback(update, context):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "addsub_cancel":
+        await query.edit_message_text("❌ Dibatalkan.")
+        return
+    # addsub_{sub_key}_{env_id}
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
+        await query.edit_message_text("Error.")
+        return
+    sub_key, env_id = parts[1], parts[2]
+
+    import redis.asyncio as aioredis, json as json_mod
+    from app.core.config import get_settings
+    r = aioredis.from_url(get_settings().REDIS_URL)
+    sub_data = await r.get(f"sub:{sub_key}")
+    await r.close()
+    if not sub_data:
+        await query.edit_message_text("⏰ Session expired. Kirim ulang.")
+        return
+    data = json_mod.loads(sub_data.decode())
+    amount = Decimal(str(data["amount"]))
+    desc = data["desc"]
+    freq_name = data["freq"]
+
+    from app.models.models import RecurringTransaction, RecurringFrequency
+    freq_map = {"weekly": RecurringFrequency.weekly, "monthly": RecurringFrequency.monthly,
+                "yearly": RecurringFrequency.yearly, "biannual": RecurringFrequency.monthly,
+                "biweekly": RecurringFrequency.weekly}
+    db_freq = freq_map.get(freq_name, RecurringFrequency.monthly)
+
+    # Calculate next_run
+    from datetime import timedelta
+    now = date.today()
+    if freq_name == "weekly" or freq_name == "biweekly":
+        interval = timedelta(weeks=1) if freq_name == "weekly" else timedelta(weeks=2)
+        next_run = now + interval
+    elif freq_name == "yearly":
+        next_run = date(now.year + 1, now.month, min(now.day, 28))
+    elif freq_name == "biannual":
+        m = now.month + 6
+        y = now.year
+        if m > 12:
+            m -= 12
+            y += 1
+        next_run = date(y, m, min(now.day, 28))
+    else:
+        if now.month == 12:
+            next_run = date(now.year + 1, 1, min(now.day, 28))
+        else:
+            next_run = date(now.year, now.month + 1, min(now.day, 28))
+
+    async with AsyncSessionLocal() as db:
+        rec = RecurringTransaction(
+            envelope_id=env_id, amount=amount, description=desc,
+            frequency=db_freq, next_run=next_run, is_active=True,
+        )
+        db.add(rec)
+        await db.commit()
+
+        env_result = await db.execute(select(Envelope).where(Envelope.id == env_id))
+        envelope = env_result.scalar_one_or_none()
+
+    freq_label = {"weekly": "mingguan", "biweekly": "2 mingguan", "monthly": "bulanan", "biannual": "6 bulanan", "yearly": "tahunan"}
+    emoji = envelope.emoji if envelope else "📁"
+    await query.edit_message_text(
+        f"✅ Langganan ditambahkan!\n\n"
+        f"🔄 {desc} — {format_currency(amount)}/{freq_label.get(freq_name, freq_name)}\n"
+        f"Amplop: {emoji} {envelope.name if envelope else '-'}\n"
+        f"Reminder berikut: {next_run.strftime('%d %b %Y')}"
+    )
+
+
 def create_bot_app():
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
     from app.bot.help_cmd import cmd_help
@@ -618,6 +784,7 @@ def create_bot_app():
     app.add_handler(CallbackQueryHandler(handle_recpay_callback, pattern=r"^recpay_"))
     app.add_handler(CallbackQueryHandler(handle_recskip_callback, pattern=r"^recskip_"))
     app.add_handler(CallbackQueryHandler(handle_recstop_callback, pattern=r"^recstop_"))
+    app.add_handler(CallbackQueryHandler(handle_addsub_callback, pattern=r"^addsub_"))
     app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
     app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
     app.add_handler(CallbackQueryHandler(handle_cooling_callback, pattern=r"^cool_"))
