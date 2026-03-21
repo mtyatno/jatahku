@@ -151,27 +151,64 @@ async def find_best_envelope(description, household_id, db):
             return envelope, True
     return None, False
 
+async def _is_setup_complete(user, db):
+    """Check if user has linked WebApp + has envelopes."""
+    if not user.email:
+        return False, "not_linked"
+    hid = await get_household_id(user, db)
+    if not hid:
+        return False, "no_household"
+    env_count = await db.execute(
+        select(func.count(Envelope.id)).where(
+            Envelope.household_id == hid, Envelope.is_active == True
+        )
+    )
+    if env_count.scalar() == 0:
+        return False, "no_envelopes"
+    return True, "ok"
+
+
 async def cmd_start(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name or "User", db)
-        hid = await get_household_id(user, db)
-        result = await db.execute(
-            select(func.count(Envelope.id)).where(Envelope.household_id == hid, Envelope.is_active == True)
-        )
-        envelope_count = result.scalar()
-    if envelope_count == 0:
+        setup_ok, reason = await _is_setup_complete(user, db)
+
+    if setup_ok:
         await update.message.reply_text(
-            f"Halo {tg_user.first_name}! Selamat datang di Jatahku 🎉\n\n"
-            f"Setiap rupiah ada jatahnya.\n\n"
-            f"Kamu belum punya amplop. Ketik /template untuk pakai template siap pakai."
+            f"Hai {tg_user.first_name}! \U0001f44b\n\n"
+            f"Kirim pengeluaran seperti chat biasa:\n"
+            f"\u2022 `35k starbucks`\n"
+            f"\u2022 `150rb nasi padang`\n\n"
+            f"Ketik /status untuk cek budget atau /help untuk panduan.",
+            parse_mode="Markdown",
+        )
+    elif reason == "no_envelopes":
+        await update.message.reply_text(
+            f"Hai {tg_user.first_name}! \U0001f44b\n\n"
+            f"Akun Telegram sudah terhubung.\n"
+            f"Tapi kamu belum setup budget.\n\n"
+            f"\U0001f310 Buka *jatahku.com* untuk:\n"
+            f"1. Input income bulanan\n"
+            f"2. Pilih template amplop\n"
+            f"3. Alokasikan dana\n\n"
+            f"Setelah itu, kamu bisa catat pengeluaran di sini!",
+            parse_mode="Markdown",
         )
     else:
         await update.message.reply_text(
-            f"Halo {tg_user.first_name}! 👋\n\nKamu punya {envelope_count} amplop aktif.\n\n"
-            f"Cara pakai:\n• Kirim: 35k starbucks\n• /status — ringkasan budget\n"
-            f"• /amplop — list amplop\n• /batal — undo terakhir"
+            f"Hai {tg_user.first_name}! \U0001f44b\n"
+            f"Selamat datang di *Jatahku* \u2014 pengendali keuangan kamu.\n\n"
+            f"Untuk mulai, hubungkan Telegram ke WebApp:\n\n"
+            f"1\ufe0f\u20e3 Buka *jatahku.com*\n"
+            f"2\ufe0f\u20e3 Daftar / Login\n"
+            f"3\ufe0f\u20e3 Masuk ke Settings\n"
+            f"4\ufe0f\u20e3 Generate kode link\n"
+            f"5\ufe0f\u20e3 Kirim `/link KODE` di sini\n\n"
+            f"\U0001f4d6 /help untuk panduan lengkap",
+            parse_mode="Markdown",
         )
+
 
 async def cmd_status(update, context):
     tg_user = update.effective_user
@@ -313,10 +350,21 @@ async def handle_message(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
-        if not hid:
-            await update.message.reply_text("Ketik /start dulu.")
+
+        setup_ok, reason = await _is_setup_complete(user, db)
+        if not setup_ok:
+            if reason == "not_linked":
+                await update.message.reply_text(
+                    "⚠️ Hubungkan Telegram ke WebApp dulu.\n"
+                    "Buka jatahku.com → Settings → Link Telegram\n\n"
+                    "Ketik /start untuk panduan.")
+            else:
+                await update.message.reply_text(
+                    "⚠️ Belum ada amplop. Setup budget dulu di jatahku.com\n\n"
+                    "Ketik /start untuk panduan.")
             return
+
+        hid = await get_household_id(user, db)
         envelope, confident = await find_best_envelope(description, hid, db)
         if not envelope:
             envelopes_check = await get_envelopes_with_spent(hid, db, user.id)
