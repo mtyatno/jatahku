@@ -10,6 +10,8 @@ from app.core.deps import get_current_user
 from app.models.models import (
     User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
+from app.services.behavior import check_behavior, create_pending_transaction
+from app.services.behavior import check_behavior, create_pending_transaction
 
 router = APIRouter()
 
@@ -53,6 +55,38 @@ async def create_transaction(
     envelope = result.scalar_one_or_none()
     if not envelope:
         raise HTTPException(status_code=404, detail="Envelope not found")
+
+    # Behavior checks
+    check = await check_behavior(req.envelope_id, user.id, req.amount, db)
+    if not check.allowed:
+        if check.check_type == "locked":
+            raise HTTPException(status_code=403, detail=f"Amplop dikunci. Tidak bisa belanja.")
+        elif check.check_type == "daily_limit":
+            d = check.details
+            raise HTTPException(status_code=403, detail=f"Melebihi limit harian. Limit: {d['daily_limit']}, terpakai: {d['spent_today']}, diminta: {d['requested']}")
+        elif check.check_type == "cooling":
+            raise HTTPException(status_code=403, detail=f"Pembelian >= {check.details['threshold']} perlu cooling period 24 jam. Gunakan Telegram untuk transaksi ini.")
+
+    # Run behavior checks
+    check = await check_behavior(req.envelope_id, user.id, req.amount, db)
+    if not check.allowed:
+        if check.check_type == "locked":
+            raise HTTPException(status_code=403, detail=f"🔒 Amplop {check.details.get('envelope_name', '')} sedang dikunci.")
+        elif check.check_type == "cooling":
+            pending = await create_pending_transaction(
+                req.envelope_id, user.id, req.amount, req.description,
+                req.source, cooling_hours=24, db=db,
+            )
+            raise HTTPException(
+                status_code=202,
+                detail=f"⏳ Cooling period aktif. Pembelian >= Rp{int(check.details['threshold']):,} perlu tunggu 24 jam. Cek /pending di Telegram.",
+            )
+        elif check.check_type == "daily_limit":
+            d = check.details
+            raise HTTPException(
+                status_code=403,
+                detail=f"⚠️ Melebihi limit harian. Limit: Rp{int(d['daily_limit']):,}/hari, sudah terpakai: Rp{int(d['spent_today']):,}, sisa: Rp{int(d['remaining_today']):,}",
+            )
 
     txn = Transaction(
         envelope_id=req.envelope_id,

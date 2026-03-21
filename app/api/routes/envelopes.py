@@ -46,6 +46,9 @@ class EnvelopeSummary(BaseModel):
     budget_amount: Decimal
     is_rollover: bool
     is_personal: bool
+    is_locked: bool
+    daily_limit: Decimal | None
+    cooling_threshold: Decimal | None
     spent: Decimal
     allocated: Decimal
     remaining: Decimal
@@ -111,6 +114,9 @@ async def get_envelopes_summary(
             id=env.id, name=env.name, emoji=env.emoji,
             budget_amount=env.budget_amount, is_rollover=env.is_rollover,
             is_personal=env.owner_id is not None,
+            is_locked=env.is_locked,
+            daily_limit=env.daily_limit,
+            cooling_threshold=env.cooling_threshold,
             spent=spent, allocated=allocated, remaining=remaining,
             spent_ratio=round(ratio, 4),
         ))
