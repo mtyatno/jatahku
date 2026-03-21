@@ -92,3 +92,10 @@ async def trigger_weekly_summary(user: User = Depends(get_current_user)):
     from app.services.summary import send_weekly_summary
     await send_weekly_summary()
     return {"status": "sent"}
+
+
+@router.post("/process-recurring")
+async def trigger_recurring(user: User = Depends(get_current_user)):
+    from app.services.recurring_processor import process_recurring_transactions
+    await process_recurring_transactions()
+    return {"status": "processed"}

@@ -3,6 +3,7 @@ from datetime import date
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.rollover import create_monthly_snapshots
 from app.services.summary import send_daily_summary, send_weekly_summary
+from app.services.recurring_processor import process_recurring_transactions
 
 logger = logging.getLogger("jatahku.scheduler")
 scheduler = AsyncIOScheduler()
@@ -131,6 +132,14 @@ def start_scheduler():
         hour=1,  # 08:00 WIB = 01:00 UTC
         minute=0,
         id="weekly_summary",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        process_recurring_transactions,
+        trigger="cron",
+        hour=0,  # 07:00 WIB = 00:00 UTC
+        minute=1,
+        id="recurring_transactions",
         replace_existing=True,
     )
     scheduler.start()
