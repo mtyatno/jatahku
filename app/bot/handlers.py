@@ -774,12 +774,24 @@ async def handle_addsub_callback(update, context):
             y += 1
         next_run = date(y, m, min(now.day, 28))
 
+    tg_user = query.from_user
     async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+
         rec = RecurringTransaction(
             envelope_id=env_id, amount=amount, description=desc,
             frequency=db_freq, next_run=next_run, is_active=True,
         )
         db.add(rec)
+
+        # Also record first payment as transaction
+        from app.models.models import Transaction as TxnModel, TransactionSource
+        txn = TxnModel(
+            envelope_id=env_id, user_id=user.id, amount=amount,
+            description=f"🔄 {desc}", source=TransactionSource.telegram,
+            transaction_date=date.today(),
+        )
+        db.add(txn)
         await db.commit()
 
         env_result = await db.execute(select(Envelope).where(Envelope.id == env_id))
@@ -799,9 +811,10 @@ async def handle_addsub_callback(update, context):
         freq_display = freq_map_label.get(freq_name, freq_name)
     emoji = envelope.emoji if envelope else "📁"
     await query.edit_message_text(
-        f"✅ Langganan ditambahkan!\n\n"
+        f"✅ Langganan ditambahkan + pembayaran pertama tercatat!\n\n"
         f"🔄 {desc} — {format_currency(amount)}/{freq_display}\n"
         f"Amplop: {emoji} {envelope.name if envelope else '-'}\n"
+        f"💸 Pembayaran: -{format_currency(amount)}\n"
         f"Reminder berikut: {next_run.strftime('%d %b %Y')}"
     )
 

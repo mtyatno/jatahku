@@ -127,6 +127,7 @@ export default function Allocate() {
                 {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
                   const val = allocations[env.id] || 0;
                   const pct = incomeNum > 0 ? Math.round(Number(val) / incomeNum * 100) : 0;
+                  const envReserved = Number(env.reserved || 0);
                   return (
                     <div key={env.id} className="flex items-center gap-3">
                       <span className="text-lg w-8">{env.emoji || '📁'}</span>
@@ -135,6 +136,7 @@ export default function Allocate() {
                           <span className="text-sm font-medium">{env.name}</span>
                           <span className="text-xs text-gray-400">{pct}%</span>
                         </div>
+                        {envReserved > 0 && <p className="text-xs text-amber-500">🔄 Min: {formatShort(envReserved)} (langganan)</p>}
                         <div className="h-1 bg-gray-100 rounded-full mt-1">
                           <div className="h-full bg-brand-400 rounded-full transition-all" style={{width: `${Math.min(pct, 100)}%`}} />
                         </div>

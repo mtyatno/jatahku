@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
     User, Envelope, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
+    RecurringTransaction, RecurringFrequency,
 )
 
 router = APIRouter()
@@ -54,7 +55,9 @@ class EnvelopeSummary(BaseModel):
     cooling_threshold: Decimal | None
     allocated: Decimal      # actual money in
     spent: Decimal
-    remaining: Decimal      # allocated - spent (+ rollover)
+    reserved: Decimal       # committed for subscriptions this month
+    remaining: Decimal      # allocated - spent - reserved (+ rollover)
+    free: Decimal           # remaining minus reserved = truly free to spend
     funded_ratio: float     # allocated / budget_amount
     spent_ratio: float      # spent / allocated
 
@@ -150,9 +153,30 @@ async def envelope_summary(
             if snap and snap.rollover_amount:
                 rollover = snap.rollover_amount
 
+        # Calculate reserved from active subscriptions (monthly equivalent)
+        rec_result = await db.execute(
+            select(RecurringTransaction).where(
+                RecurringTransaction.envelope_id == env.id,
+                RecurringTransaction.is_active == True,
+            )
+        )
+        recs = rec_result.scalars().all()
+        reserved = Decimal("0")
+        for rec in recs:
+            if rec.frequency == RecurringFrequency.weekly:
+                monthly_equiv = rec.amount * 4
+            elif rec.frequency == RecurringFrequency.yearly:
+                monthly_equiv = rec.amount / 12
+            elif rec.frequency == RecurringFrequency.monthly:
+                monthly_equiv = rec.amount
+            else:
+                monthly_equiv = rec.amount
+            reserved += monthly_equiv
+
         # Core formula: remaining = allocated + rollover - spent
         remaining = allocated + rollover - spent
         total_available = allocated + rollover
+        free = remaining - reserved  # truly free after reservations
 
         # Funded ratio: how well funded vs target
         funded_ratio = float(allocated / env.budget_amount) if env.budget_amount > 0 else 0.0
@@ -168,7 +192,8 @@ async def envelope_summary(
             daily_limit=env.daily_limit,
             cooling_threshold=env.cooling_threshold,
             allocated=allocated,
-            spent=spent, remaining=remaining,
+            spent=spent, reserved=reserved, remaining=remaining,
+            free=free,
             funded_ratio=round(funded_ratio, 4),
             spent_ratio=round(spent_ratio, 4),
         ))

@@ -6,6 +6,7 @@ const navItems = [
   { to: '/envelopes', label: 'Amplop', icon: '✉️' },
   { to: '/transactions', label: 'Transaksi', icon: '📝' },
   { to: '/allocate', label: 'Alokasi', icon: '💰' },
+  { to: '/langganan', label: 'Langganan', icon: '🔄' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ];
 

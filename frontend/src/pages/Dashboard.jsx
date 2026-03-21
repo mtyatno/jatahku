@@ -46,11 +46,13 @@ export default function Dashboard() {
     const allocated = Number(env.allocated);
     const spent = Number(env.spent);
     const remaining = Number(env.remaining);
+    const reserved = Number(env.reserved || 0);
+    const free = Number(env.free || remaining);
     const spentRatio = env.spent_ratio;
     const fundedRatio = env.funded_ratio;
 
     const spentColor = spentRatio >= 0.9 ? 'bg-danger-400' : spentRatio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
-    const remainColor = remaining <= 0 ? 'text-danger-400' : spentRatio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
+    const remainColor = free <= 0 ? 'text-danger-400' : spentRatio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
     const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
 
     return (
@@ -60,7 +62,7 @@ export default function Dashboard() {
             <span className="text-lg">{env.emoji || '📁'}</span>
             <span className="font-semibold text-sm">{env.name}</span>
           </div>
-          <span className={`font-display font-bold text-sm ${remainColor}`}>{formatShort(remaining)}</span>
+          <span className={`font-display font-bold text-sm ${remainColor}`}>{formatShort(free)}</span>
         </div>
         {isUnfunded ? (
           <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">
@@ -71,6 +73,7 @@ export default function Dashboard() {
             <ProgressBar ratio={spentRatio} color={env.is_locked ? 'bg-gray-300' : spentColor} />
             <div className="flex justify-between mt-1.5 text-xs text-gray-400">
               <span>Terpakai {formatShort(spent)}</span>
+              {reserved > 0 ? <span>🔄 {formatShort(reserved)} reserved</span> : null}
               <span>Dana {formatShort(allocated)}</span>
             </div>
           </>

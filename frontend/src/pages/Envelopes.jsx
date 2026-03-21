@@ -219,11 +219,13 @@ function EnvelopeCard({ env, onEdit, onDelete }) {
   const allocated = Number(env.allocated || 0);
   const spent = Number(env.spent || 0);
   const remaining = Number(env.remaining || 0);
+  const reserved = Number(env.reserved || 0);
+  const free = Number(env.free || remaining);
   const spentRatio = env.spent_ratio || 0;
   const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
-  const remainColor = remaining <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+  const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
 
   return (
     <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
@@ -239,11 +241,12 @@ function EnvelopeCard({ env, onEdit, onDelete }) {
       ) : (
         <div className="mb-2">
           <div className="flex justify-between items-end mb-1.5">
-            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(remaining)}</span>
+            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</span>
             <span className="text-xs text-gray-400">Dana {formatShort(allocated)}</span>
           </div>
           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
           <p className="text-xs text-gray-400 mt-1">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">🔄 Reserved: {formatCurrency(reserved)}/bulan</p>}
         </div>
       )}
       <ControlBadges env={env} />
