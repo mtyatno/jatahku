@@ -102,7 +102,22 @@ async def send_daily_summary():
                         )
                     )
                     allocated = Decimal(str(alloc_r.scalar()))
-                    remaining = allocated - spent
+                    from app.models.models import RecurringTransaction, RecurringFrequency
+                    rec_r = await db.execute(
+                        select(RecurringTransaction).where(
+                            RecurringTransaction.envelope_id == env.id,
+                            RecurringTransaction.is_active == True,
+                        )
+                    )
+                    reserved = Decimal("0")
+                    for rec in rec_r.scalars().all():
+                        if rec.frequency == RecurringFrequency.weekly:
+                            reserved += rec.amount * 4
+                        elif rec.frequency == RecurringFrequency.yearly:
+                            reserved += rec.amount / 12
+                        else:
+                            reserved += rec.amount
+                    remaining = allocated - spent - reserved
                     if allocated > 0:
                         ratio = float(spent / allocated)
                         indicator = "\U0001f534" if ratio >= 0.9 else ("\U0001f7e1" if ratio >= 0.7 else "\U0001f7e2")
