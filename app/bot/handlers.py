@@ -532,6 +532,11 @@ def create_bot_app():
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CommandHandler("unlink", cmd_unlink))
     app.add_handler(CommandHandler("pending", cmd_pending))
+    from app.bot.behavior_cmd import cmd_lock, cmd_setlimit, cmd_setcooling, cmd_controls
+    app.add_handler(CommandHandler("lock", cmd_lock))
+    app.add_handler(CommandHandler("setlimit", cmd_setlimit))
+    app.add_handler(CommandHandler("setcooling", cmd_setcooling))
+    app.add_handler(CommandHandler("controls", cmd_controls))
     app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
     app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
     app.add_handler(CallbackQueryHandler(handle_cooling_callback, pattern=r"^cool_"))
