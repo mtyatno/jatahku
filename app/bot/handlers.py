@@ -28,7 +28,8 @@ AMOUNT_ANYWHERE = re.compile(
 )
 MULTIPLIERS = {"jt": 1_000_000, "juta": 1_000_000, "rb": 1_000, "ribu": 1_000, "k": 1_000}
 
-# Subscription patterns — frequency keywords
+# Subscription patterns — frequency keywords (order matters: specific first)
+SUB_INTERVAL = re.compile(r"(?:tiap|setiap|per)\s+(\d+)\s*(bulan|minggu|tahun)", re.IGNORECASE)
 SUB_PATTERNS = [
     (re.compile(r"(?:tiap|setiap|per)\s+(?:setengah\s+tahun|6\s*bulan)", re.IGNORECASE), "biannual", 6),
     (re.compile(r"(?:tiap|setiap|per)\s+tahun(?:an)?|tahun(?:an)", re.IGNORECASE), "yearly", 12),
@@ -88,6 +89,32 @@ def parse_subscription(text):
     if not parsed:
         return None
     amount, desc = parsed
+
+    # Check custom interval first: "tiap 2 bulan", "tiap 3 tahun", etc.
+    interval_match = SUB_INTERVAL.search(text)
+    if interval_match:
+        num = int(interval_match.group(1))
+        unit = interval_match.group(2).lower()
+        if unit == "bulan":
+            freq_name = f"{num}monthly"
+            months = num
+        elif unit == "minggu":
+            freq_name = f"{num}weekly"
+            months = num * 0.25
+        elif unit == "tahun":
+            freq_name = f"{num}yearly"
+            months = num * 12
+        else:
+            freq_name = "monthly"
+            months = 1
+        clean_desc = desc
+        # Remove full interval pattern + fragments
+        clean_desc = SUB_INTERVAL.sub("", clean_desc).strip()
+        clean_desc = re.sub(r"(?:tiap|setiap|per)\s*\d*\s*", "", clean_desc, flags=re.IGNORECASE).strip()
+        clean_desc = SUB_KEYWORDS.sub("", clean_desc).strip()
+        clean_desc = re.sub(r"\s+", " ", clean_desc).strip()
+        return amount, clean_desc or desc, freq_name, months
+
     # Check explicit frequency patterns
     for pat, freq_name, months in SUB_PATTERNS:
         if pat.search(text):
@@ -390,7 +417,18 @@ async def handle_message(update, context):
     if sub:
         amount, description, freq_name, months = sub
         freq_map = {"weekly": "mingguan", "biweekly": "2 mingguan", "monthly": "bulanan", "biannual": "6 bulanan", "yearly": "tahunan"}
-        freq_label = freq_map.get(freq_name, freq_name)
+        # Handle custom intervals like "2monthly", "3yearly"
+        if freq_name.endswith("monthly") and freq_name != "monthly":
+            n = freq_name.replace("monthly", "")
+            freq_label = f"setiap {n} bulan"
+        elif freq_name.endswith("weekly") and freq_name not in ("weekly", "biweekly"):
+            n = freq_name.replace("weekly", "")
+            freq_label = f"setiap {n} minggu"
+        elif freq_name.endswith("yearly") and freq_name != "yearly":
+            n = freq_name.replace("yearly", "")
+            freq_label = f"setiap {n} tahun"
+        else:
+            freq_label = freq_map.get(freq_name, freq_name)
         from app.models.models import RecurringFrequency
         freq_db_map = {"weekly": RecurringFrequency.weekly, "monthly": RecurringFrequency.monthly, "yearly": RecurringFrequency.yearly, "biannual": RecurringFrequency.monthly, "biweekly": RecurringFrequency.weekly}
         tg_user = update.effective_user
@@ -709,31 +747,32 @@ async def handle_addsub_callback(update, context):
     freq_name = data["freq"]
 
     from app.models.models import RecurringTransaction, RecurringFrequency
-    freq_map = {"weekly": RecurringFrequency.weekly, "monthly": RecurringFrequency.monthly,
-                "yearly": RecurringFrequency.yearly, "biannual": RecurringFrequency.monthly,
-                "biweekly": RecurringFrequency.weekly}
-    db_freq = freq_map.get(freq_name, RecurringFrequency.monthly)
+    # Map to DB frequency (closest match)
+    if "weekly" in freq_name:
+        db_freq = RecurringFrequency.weekly
+    elif "yearly" in freq_name:
+        db_freq = RecurringFrequency.yearly
+    else:
+        db_freq = RecurringFrequency.monthly
 
-    # Calculate next_run
+    # Calculate next_run based on freq_name
     from datetime import timedelta
+    import re as re_mod
     now = date.today()
-    if freq_name == "weekly" or freq_name == "biweekly":
-        interval = timedelta(weeks=1) if freq_name == "weekly" else timedelta(weeks=2)
-        next_run = now + interval
-    elif freq_name == "yearly":
-        next_run = date(now.year + 1, now.month, min(now.day, 28))
-    elif freq_name == "biannual":
-        m = now.month + 6
+    num_match = re_mod.match(r"(\d+)", freq_name)
+    num = int(num_match.group(1)) if num_match else 1
+
+    if "weekly" in freq_name:
+        next_run = now + timedelta(weeks=num)
+    elif "yearly" in freq_name:
+        next_run = date(now.year + num, now.month, min(now.day, 28))
+    else:  # monthly variants
+        m = now.month + num
         y = now.year
-        if m > 12:
+        while m > 12:
             m -= 12
             y += 1
         next_run = date(y, m, min(now.day, 28))
-    else:
-        if now.month == 12:
-            next_run = date(now.year + 1, 1, min(now.day, 28))
-        else:
-            next_run = date(now.year, now.month + 1, min(now.day, 28))
 
     async with AsyncSessionLocal() as db:
         rec = RecurringTransaction(
@@ -746,14 +785,43 @@ async def handle_addsub_callback(update, context):
         env_result = await db.execute(select(Envelope).where(Envelope.id == env_id))
         envelope = env_result.scalar_one_or_none()
 
-    freq_label = {"weekly": "mingguan", "biweekly": "2 mingguan", "monthly": "bulanan", "biannual": "6 bulanan", "yearly": "tahunan"}
+    freq_map_label = {"weekly": "mingguan", "biweekly": "2 mingguan", "monthly": "bulanan", "biannual": "6 bulanan", "yearly": "tahunan"}
+    if freq_name.endswith("monthly") and freq_name != "monthly":
+        n = freq_name.replace("monthly", "")
+        freq_display = f"setiap {n} bulan"
+    elif freq_name.endswith("yearly") and freq_name != "yearly":
+        n = freq_name.replace("yearly", "")
+        freq_display = f"setiap {n} tahun"
+    elif freq_name.endswith("weekly") and freq_name not in ("weekly", "biweekly"):
+        n = freq_name.replace("weekly", "")
+        freq_display = f"setiap {n} minggu"
+    else:
+        freq_display = freq_map_label.get(freq_name, freq_name)
     emoji = envelope.emoji if envelope else "📁"
     await query.edit_message_text(
         f"✅ Langganan ditambahkan!\n\n"
-        f"🔄 {desc} — {format_currency(amount)}/{freq_label.get(freq_name, freq_name)}\n"
+        f"🔄 {desc} — {format_currency(amount)}/{freq_display}\n"
         f"Amplop: {emoji} {envelope.name if envelope else '-'}\n"
         f"Reminder berikut: {next_run.strftime('%d %b %Y')}"
     )
+
+
+async def handle_non_text(update, context):
+    """Handle photos, stickers, voice, etc."""
+    if update.message.photo:
+        await update.message.reply_text(
+            "📸 Fitur scan struk belum tersedia.\n"
+            "Untuk catat pengeluaran, kirim seperti:\n"
+            "• `35k starbucks`\n• `kopi 35rb`",
+            parse_mode="Markdown")
+    elif update.message.sticker:
+        await update.message.reply_text("😄 Stiker lucu! Tapi saya cuma bisa bantu catat pengeluaran.\nKirim: `35k kopi`", parse_mode="Markdown")
+    elif update.message.voice or update.message.audio:
+        await update.message.reply_text("🎤 Voice message belum didukung.\nKirim teks: `35k kopi`", parse_mode="Markdown")
+    elif update.message.document:
+        await update.message.reply_text("📄 File belum didukung.\nKirim teks: `35k kopi`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("Kirim pengeluaran seperti:\n• `35k starbucks`\n• `kopi 150rb`", parse_mode="Markdown")
 
 
 def create_bot_app():
@@ -794,4 +862,7 @@ def create_bot_app():
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^txn_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    from telegram.ext import MessageHandler as MsgHandler
+    app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
+
     return app
