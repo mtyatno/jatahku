@@ -1,21 +1,18 @@
-from uuid import UUID
 from decimal import Decimal
+from uuid import UUID
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from pydantic import BaseModel
+
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.models import User, Income, Allocation, Envelope, HouseholdMember
+from app.models.models import (
+    User, Income, Allocation, Envelope, HouseholdMember,
+)
 
 router = APIRouter()
-
-
-class IncomeCreate(BaseModel):
-    amount: Decimal
-    description: str
-    income_date: date | None = None
 
 
 class AllocationItem(BaseModel):
@@ -23,90 +20,154 @@ class AllocationItem(BaseModel):
     amount: Decimal
 
 
-class AllocateRequest(BaseModel):
-    allocations: list[AllocationItem]
+class IncomeCreate(BaseModel):
+    amount: Decimal
+    source: str = "Gaji"
+    allocations: list[AllocationItem] = []
 
 
 class IncomeResponse(BaseModel):
     id: UUID
     amount: Decimal
-    description: str
-    income_date: date
-    household_id: UUID
-
-    model_config = {"from_attributes": True}
+    source: str
+    allocations: list[dict] = []
+    unallocated: Decimal = Decimal("0")
 
 
-@router.post("/", response_model=IncomeResponse, status_code=status.HTTP_201_CREATED)
+async def _get_hid(user: User, db: AsyncSession):
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_or_create_tabungan(hid: UUID, db: AsyncSession) -> Envelope:
+    """Get or create the Tabungan envelope for auto-allocation of remainder."""
+    result = await db.execute(
+        select(Envelope).where(
+            Envelope.household_id == hid,
+            Envelope.name == "Tabungan",
+            Envelope.is_active == True,
+        )
+    )
+    tabungan = result.scalar_one_or_none()
+    if not tabungan:
+        tabungan = Envelope(
+            household_id=hid,
+            name="Tabungan",
+            emoji="💰",
+            budget_amount=Decimal("0"),
+            is_rollover=True,
+        )
+        db.add(tabungan)
+        await db.flush()
+    return tabungan
+
+
+@router.post("/", response_model=IncomeResponse, status_code=201)
 async def create_income(
     req: IncomeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
+    hid = await _get_hid(user, db)
     if not hid:
-        raise HTTPException(status_code=404, detail="No household found")
+        raise HTTPException(status_code=400, detail="Belum punya household")
 
+    # Validate allocations don't exceed income
+    total_allocated = sum(a.amount for a in req.allocations)
+    if total_allocated > req.amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Total alokasi (Rp{int(total_allocated):,}) melebihi income (Rp{int(req.amount):,})"
+        )
+
+    # Validate all envelopes belong to this household
+    for alloc in req.allocations:
+        env_check = await db.execute(
+            select(Envelope).where(Envelope.id == alloc.envelope_id, Envelope.household_id == hid)
+        )
+        if not env_check.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Amplop {alloc.envelope_id} tidak ditemukan")
+
+    # Create income
     income = Income(
         household_id=hid,
         user_id=user.id,
         amount=req.amount,
-        description=req.description,
-        income_date=req.income_date or date.today(),
+        source=req.source,
     )
     db.add(income)
-    await db.commit()
-    await db.refresh(income)
-    return income
+    await db.flush()
 
+    # Create allocations
+    alloc_details = []
+    for alloc in req.allocations:
+        if alloc.amount > 0:
+            db.add(Allocation(
+                income_id=income.id,
+                envelope_id=alloc.envelope_id,
+                amount=alloc.amount,
+            ))
+            env = await db.execute(select(Envelope).where(Envelope.id == alloc.envelope_id))
+            e = env.scalar_one()
+            alloc_details.append({"envelope": e.name, "emoji": e.emoji, "amount": str(alloc.amount)})
 
-@router.post("/{income_id}/allocate", status_code=status.HTTP_201_CREATED)
-async def allocate_income(
-    income_id: UUID,
-    req: AllocateRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Income).where(Income.id == income_id))
-    income = result.scalar_one_or_none()
-    if not income:
-        raise HTTPException(status_code=404, detail="Income not found")
-
-    total_allocated = sum(a.amount for a in req.allocations)
-    if total_allocated > income.amount:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Total allocation ({total_allocated}) exceeds income ({income.amount})",
-        )
-
-    for item in req.allocations:
-        allocation = Allocation(
-            income_id=income_id,
-            envelope_id=item.envelope_id,
-            amount=item.amount,
-        )
-        db.add(allocation)
+    # Auto-allocate remainder to Tabungan
+    remainder = req.amount - total_allocated
+    if remainder > 0:
+        tabungan = await _get_or_create_tabungan(hid, db)
+        db.add(Allocation(
+            income_id=income.id,
+            envelope_id=tabungan.id,
+            amount=remainder,
+        ))
+        alloc_details.append({"envelope": "Tabungan", "emoji": "💰", "amount": str(remainder), "auto": True})
 
     await db.commit()
-    return {"message": f"Allocated {total_allocated} to {len(req.allocations)} envelopes"}
+
+    return IncomeResponse(
+        id=income.id,
+        amount=income.amount,
+        source=income.source,
+        allocations=alloc_details,
+        unallocated=Decimal("0"),  # always 0 now — remainder goes to Tabungan
+    )
 
 
-@router.get("/", response_model=list[IncomeResponse])
+@router.get("/")
 async def list_incomes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
+    hid = await _get_hid(user, db)
+    if not hid:
+        return []
 
     result = await db.execute(
         select(Income)
         .where(Income.household_id == hid)
-        .order_by(Income.income_date.desc())
+        .order_by(Income.created_at.desc())
+        .limit(20)
     )
-    return result.scalars().all()
+    incomes = result.scalars().all()
+
+    output = []
+    for inc in incomes:
+        alloc_result = await db.execute(
+            select(Allocation, Envelope.name, Envelope.emoji)
+            .join(Envelope, Allocation.envelope_id == Envelope.id)
+            .where(Allocation.income_id == inc.id)
+        )
+        allocs = [
+            {"envelope": name, "emoji": emoji, "amount": str(a.amount)}
+            for a, name, emoji in alloc_result.all()
+        ]
+        output.append({
+            "id": str(inc.id),
+            "amount": str(inc.amount),
+            "source": inc.source,
+            "date": inc.created_at.strftime("%Y-%m-%d"),
+            "allocations": allocs,
+        })
+    return output

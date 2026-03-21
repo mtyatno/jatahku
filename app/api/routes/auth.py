@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +7,7 @@ from pydantic import BaseModel, EmailStr
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.deps import get_current_user
-from app.models.models import User, Household, HouseholdMember, HouseholdRole
+from app.models.models import User, Household, HouseholdMember, HouseholdRole, Envelope
 
 router = APIRouter()
 

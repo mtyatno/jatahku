@@ -1,14 +1,17 @@
-from uuid import UUID
 from decimal import Decimal
+from uuid import UUID
 from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from pydantic import BaseModel
+
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.models import User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot
-from app.services.rollover import get_previous_rollover
+from app.models.models import (
+    User, Envelope, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
+)
 
 router = APIRouter()
 
@@ -43,84 +46,24 @@ class EnvelopeSummary(BaseModel):
     id: UUID
     name: str
     emoji: str
-    budget_amount: Decimal
+    budget_amount: Decimal  # target
     is_rollover: bool
     is_personal: bool
     is_locked: bool
     daily_limit: Decimal | None
     cooling_threshold: Decimal | None
+    allocated: Decimal      # actual money in
     spent: Decimal
-    allocated: Decimal
-    remaining: Decimal
-    spent_ratio: float
+    remaining: Decimal      # allocated - spent (+ rollover)
+    funded_ratio: float     # allocated / budget_amount
+    spent_ratio: float      # spent / allocated
 
 
-async def _get_user_household_id(user: User, db: AsyncSession) -> UUID:
+async def _get_hid(user: User, db: AsyncSession):
     result = await db.execute(
         select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
     )
-    hid = result.scalar_one_or_none()
-    if not hid:
-        raise HTTPException(status_code=404, detail="No household found")
-    return hid
-
-
-@router.get("/summary", response_model=list[EnvelopeSummary])
-async def get_envelopes_summary(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    hid = await _get_user_household_id(user, db)
-    now = date.today()
-
-    from sqlalchemy import or_
-    result = await db.execute(
-        select(Envelope)
-        .where(
-            Envelope.household_id == hid,
-            Envelope.is_active == True,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
-        .order_by(Envelope.created_at)
-    )
-    envelopes = result.scalars().all()
-
-    summaries = []
-    for env in envelopes:
-        spent_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-                Transaction.envelope_id == env.id,
-                Transaction.is_deleted == False,
-                func.extract("year", Transaction.transaction_date) == now.year,
-                func.extract("month", Transaction.transaction_date) == now.month,
-            )
-        )
-        spent = Decimal(str(spent_result.scalar()))
-
-        allocated_result = await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0)).where(
-                Allocation.envelope_id == env.id,
-            )
-        )
-        allocated = Decimal(str(allocated_result.scalar()))
-
-        prev_rollover = await get_previous_rollover(env.id, now.year, now.month, db)
-        effective_budget = env.budget_amount + allocated + prev_rollover
-        remaining = effective_budget - spent
-        budget = effective_budget
-        ratio = float(spent / budget) if budget > 0 else 0.0
-
-        summaries.append(EnvelopeSummary(
-            id=env.id, name=env.name, emoji=env.emoji,
-            budget_amount=env.budget_amount, is_rollover=env.is_rollover,
-            is_personal=env.owner_id is not None,
-            is_locked=env.is_locked,
-            daily_limit=env.daily_limit,
-            cooling_threshold=env.cooling_threshold,
-            spent=spent, allocated=allocated, remaining=remaining,
-            spent_ratio=round(ratio, 4),
-        ))
-    return summaries
+    return result.scalar_one_or_none()
 
 
 @router.get("/", response_model=list[EnvelopeResponse])
@@ -128,8 +71,9 @@ async def list_envelopes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _get_user_household_id(user, db)
-    from sqlalchemy import or_
+    hid = await _get_hid(user, db)
+    if not hid:
+        return []
     result = await db.execute(
         select(Envelope)
         .where(
@@ -142,13 +86,119 @@ async def list_envelopes(
     return result.scalars().all()
 
 
+@router.get("/summary", response_model=list[EnvelopeSummary])
+async def envelope_summary(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    hid = await _get_hid(user, db)
+    if not hid:
+        return []
+
+    result = await db.execute(
+        select(Envelope)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+        .order_by(Envelope.created_at)
+    )
+    envelopes = result.scalars().all()
+
+    now = date.today()
+    summaries = []
+
+    for env in envelopes:
+        # Spent this month
+        spent_result = await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.envelope_id == env.id,
+                Transaction.is_deleted == False,
+                func.extract("year", Transaction.transaction_date) == now.year,
+                func.extract("month", Transaction.transaction_date) == now.month,
+            )
+        )
+        spent = Decimal(str(spent_result.scalar()))
+
+        # Allocated this month (from income allocations)
+        alloc_result = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+            .join(Transaction.__table__, False)  # don't join
+            .where(
+                Allocation.envelope_id == env.id,
+            )
+        )
+        # Simpler: just sum allocations for this envelope this month
+        alloc_result = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0)).where(
+                Allocation.envelope_id == env.id,
+            )
+        )
+        # Filter by income month
+        from app.models.models import Income
+        alloc_result = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+            .join(Income, Allocation.income_id == Income.id)
+            .where(
+                Allocation.envelope_id == env.id,
+                func.extract("year", Income.created_at) == now.year,
+                func.extract("month", Income.created_at) == now.month,
+            )
+        )
+        allocated = Decimal(str(alloc_result.scalar()))
+
+        # Rollover from previous month
+        rollover = Decimal("0")
+        if env.is_rollover:
+            prev_month = now.month - 1 if now.month > 1 else 12
+            prev_year = now.year if now.month > 1 else now.year - 1
+            snap_result = await db.execute(
+                select(MonthlySnapshot).where(
+                    MonthlySnapshot.envelope_id == env.id,
+                    MonthlySnapshot.month == prev_month,
+                    MonthlySnapshot.year == prev_year,
+                )
+            )
+            snap = snap_result.scalar_one_or_none()
+            if snap and snap.rollover_amount:
+                rollover = snap.rollover_amount
+
+        # Core formula: remaining = allocated + rollover - spent
+        remaining = allocated + rollover - spent
+        total_available = allocated + rollover
+
+        # Funded ratio: how well funded vs target
+        funded_ratio = float(allocated / env.budget_amount) if env.budget_amount > 0 else 0.0
+
+        # Spent ratio: how much spent of available money
+        spent_ratio = float(spent / total_available) if total_available > 0 else 0.0
+
+        summaries.append(EnvelopeSummary(
+            id=env.id, name=env.name, emoji=env.emoji,
+            budget_amount=env.budget_amount, is_rollover=env.is_rollover,
+            is_personal=env.owner_id is not None,
+            is_locked=env.is_locked,
+            daily_limit=env.daily_limit,
+            cooling_threshold=env.cooling_threshold,
+            allocated=allocated,
+            spent=spent, remaining=remaining,
+            funded_ratio=round(funded_ratio, 4),
+            spent_ratio=round(spent_ratio, 4),
+        ))
+
+    return summaries
+
+
 @router.post("/", response_model=EnvelopeResponse, status_code=status.HTTP_201_CREATED)
 async def create_envelope(
     req: EnvelopeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _get_user_household_id(user, db)
+    hid = await _get_hid(user, db)
+    if not hid:
+        raise HTTPException(status_code=400, detail="Belum punya household")
     envelope = Envelope(
         household_id=hid, name=req.name, emoji=req.emoji,
         budget_amount=req.budget_amount, is_rollover=req.is_rollover,
@@ -166,17 +216,19 @@ async def create_envelope(
 
 @router.put("/{envelope_id}", response_model=EnvelopeResponse)
 async def update_envelope(
-    envelope_id: UUID, req: EnvelopeCreate,
+    envelope_id: UUID,
+    req: EnvelopeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _get_user_household_id(user, db)
+    hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(Envelope.id == envelope_id, Envelope.household_id == hid)
     )
     envelope = result.scalar_one_or_none()
     if not envelope:
-        raise HTTPException(status_code=404, detail="Envelope not found")
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
+
     envelope.name = req.name
     envelope.emoji = req.emoji
     envelope.budget_amount = req.budget_amount
@@ -196,12 +248,59 @@ async def delete_envelope(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _get_user_household_id(user, db)
+    hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(Envelope.id == envelope_id, Envelope.household_id == hid)
     )
     envelope = result.scalar_one_or_none()
     if not envelope:
-        raise HTTPException(status_code=404, detail="Envelope not found")
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     envelope.is_active = False
     await db.commit()
+
+
+@router.post("/transfer")
+async def transfer_between_envelopes(
+    from_id: UUID,
+    to_id: UUID,
+    amount: Decimal,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Transfer allocated funds from one envelope to another."""
+    hid = await _get_hid(user, db)
+
+    from_env = await db.execute(select(Envelope).where(Envelope.id == from_id, Envelope.household_id == hid))
+    from_envelope = from_env.scalar_one_or_none()
+    to_env = await db.execute(select(Envelope).where(Envelope.id == to_id, Envelope.household_id == hid))
+    to_envelope = to_env.scalar_one_or_none()
+
+    if not from_envelope or not to_envelope:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah harus lebih dari 0")
+
+    # Create internal transfer allocations (negative from source, positive to target)
+    # We use a special "transfer" income
+    from app.models.models import Income
+    transfer_income = Income(
+        household_id=hid,
+        user_id=user.id,
+        amount=Decimal("0"),  # net zero
+        source=f"Transfer: {from_envelope.name} → {to_envelope.name}",
+    )
+    db.add(transfer_income)
+    await db.flush()
+
+    # Negative allocation from source
+    db.add(Allocation(income_id=transfer_income.id, envelope_id=from_id, amount=-amount))
+    # Positive allocation to target
+    db.add(Allocation(income_id=transfer_income.id, envelope_id=to_id, amount=amount))
+
+    await db.commit()
+    return {
+        "status": "transferred",
+        "from": from_envelope.name,
+        "to": to_envelope.name,
+        "amount": str(amount),
+    }

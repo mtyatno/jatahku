@@ -50,7 +50,66 @@ async def check_behavior(
             envelope_name=envelope.name,
         )
 
-    # Check 2: Cooling period (check BEFORE daily limit — big purchases need cooling regardless)
+    # Check 2: Not funded — no allocation = no spending
+    from app.models.models import Allocation, Income
+    now = date.today()
+    alloc_result = await db.execute(
+        select(func.coalesce(func.sum(Allocation.amount), 0))
+        .join(Income, Allocation.income_id == Income.id)
+        .where(
+            Allocation.envelope_id == envelope_id,
+            func.extract("year", Income.created_at) == now.year,
+            func.extract("month", Income.created_at) == now.month,
+        )
+    )
+    allocated = Decimal(str(alloc_result.scalar()))
+
+    # Also check rollover
+    from app.models.models import MonthlySnapshot
+    rollover = Decimal("0")
+    if envelope.is_rollover:
+        prev_month = now.month - 1 if now.month > 1 else 12
+        prev_year = now.year if now.month > 1 else now.year - 1
+        snap_result = await db.execute(
+            select(MonthlySnapshot).where(
+                MonthlySnapshot.envelope_id == envelope_id,
+                MonthlySnapshot.month == prev_month,
+                MonthlySnapshot.year == prev_year,
+            )
+        )
+        snap = snap_result.scalar_one_or_none()
+        if snap and snap.rollover_amount:
+            rollover = snap.rollover_amount
+
+    total_available = allocated + rollover
+    if total_available <= 0:
+        return BehaviorCheckResult.blocked(
+            "not_funded",
+            f"Amplop {envelope.name} belum ada dana. Alokasikan income dulu.",
+            envelope_name=envelope.name,
+        )
+
+    # Check 2b: Amount exceeds available
+    spent_result = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.envelope_id == envelope_id,
+            Transaction.is_deleted == False,
+            func.extract("year", Transaction.transaction_date) == now.year,
+            func.extract("month", Transaction.transaction_date) == now.month,
+        )
+    )
+    current_spent = Decimal(str(spent_result.scalar()))
+    remaining = total_available - current_spent
+    if amount > remaining:
+        return BehaviorCheckResult.blocked(
+            "insufficient",
+            f"Dana di amplop {envelope.name} tidak cukup.",
+            envelope_name=envelope.name,
+            available=remaining,
+            requested=amount,
+        )
+
+    # Check 3: Cooling period (check BEFORE daily limit — big purchases need cooling regardless)
     if envelope.cooling_threshold is not None and amount >= envelope.cooling_threshold:
         return BehaviorCheckResult.blocked(
             "cooling",

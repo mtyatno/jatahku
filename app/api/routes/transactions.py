@@ -72,6 +72,11 @@ async def create_transaction(
     if not check.allowed:
         if check.check_type == "locked":
             raise HTTPException(status_code=403, detail=f"🔒 Amplop {check.details.get('envelope_name', '')} sedang dikunci.")
+        elif check.check_type == "not_funded":
+            raise HTTPException(status_code=403, detail=f"💸 {check.reason}")
+        elif check.check_type == "insufficient":
+            d = check.details
+            raise HTTPException(status_code=403, detail=f"💸 Dana tidak cukup. Sisa: Rp{int(d.get('available', 0)):,}, diminta: Rp{int(d.get('requested', 0)):,}")
         elif check.check_type == "cooling":
             pending = await create_pending_transaction(
                 req.envelope_id, user.id, req.amount, req.description,

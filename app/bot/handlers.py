@@ -341,6 +341,17 @@ async def handle_message(update, context):
                 if check.check_type == "locked":
                     await update.message.reply_text(f"🔒 {check.reason}")
                     return
+                elif check.check_type == "not_funded":
+                    await update.message.reply_text(
+                        f"💸 {check.reason}\n\nBuka jatahku.com/allocate untuk alokasi income.")
+                    return
+                elif check.check_type == "insufficient":
+                    d = check.details
+                    await update.message.reply_text(
+                        f"💸 {check.reason}\n\n"
+                        f"Sisa dana: {format_currency(d['available'])}\n"
+                        f"Diminta: {format_currency(d['requested'])}")
+                    return
                 elif check.check_type == "daily_limit":
                     d = check.details
                     await update.message.reply_text(
@@ -434,6 +445,17 @@ async def handle_txn_callback(update, context):
         if not check.allowed:
             if check.check_type == "locked":
                 await query.edit_message_text(f"🔒 {check.reason}")
+                return
+            elif check.check_type == "not_funded":
+                await query.edit_message_text(
+                    f"💸 {check.reason}\nBuka jatahku.com/allocate untuk alokasi income.")
+                return
+            elif check.check_type == "insufficient":
+                d = check.details
+                await query.edit_message_text(
+                    f"💸 {check.reason}\n"
+                    f"Sisa dana: {format_currency(d['available'])}\n"
+                    f"Diminta: {format_currency(d['requested'])}")
                 return
             elif check.check_type == "daily_limit":
                 d = check.details
