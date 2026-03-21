@@ -80,7 +80,7 @@ async def send_daily_summary():
                 else:
                     lines.append("✨ Nggak ada pengeluaran hari ini. Nice!")
 
-                lines.append(f"\n📊 Sisa budget ({days_left} hari lagi):")
+                lines.append(f"\n📊 Sisa dana ({days_left} hari lagi):")
                 for env in envelopes:
                     spent_result = await db.execute(
                         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
@@ -91,19 +91,26 @@ async def send_daily_summary():
                         )
                     )
                     spent = Decimal(str(spent_result.scalar()))
-                    remaining = env.budget_amount - spent
-                    budget = env.budget_amount
-
-                    if budget > 0:
-                        ratio = float(spent / budget)
-                        indicator = "🔴" if ratio >= 0.9 else ("🟡" if ratio >= 0.7 else "🟢")
+                    from app.models.models import Allocation, Income as IncModel
+                    alloc_r = await db.execute(
+                        select(func.coalesce(func.sum(Allocation.amount), 0))
+                        .join(IncModel, Allocation.income_id == IncModel.id)
+                        .where(
+                            Allocation.envelope_id == env.id,
+                            func.extract("year", IncModel.income_date) == now.year,
+                            func.extract("month", IncModel.income_date) == now.month,
+                        )
+                    )
+                    allocated = Decimal(str(alloc_r.scalar()))
+                    remaining = allocated - spent
+                    if allocated > 0:
+                        ratio = float(spent / allocated)
+                        indicator = "\U0001f534" if ratio >= 0.9 else ("\U0001f7e1" if ratio >= 0.7 else "\U0001f7e2")
                     else:
-                        indicator = "⚪"
-
-                    emoji = env.emoji or "📁"
-                    bar = progress_bar(spent, budget)
+                        indicator = "\u26aa"
+                    emoji = env.emoji or "\U0001f4c1"
+                    bar = progress_bar(spent, allocated)
                     lines.append(f"{indicator} {emoji} {env.name}  {bar}  {format_currency(remaining)}")
-
                 await bot.send_message(chat_id=int(user.telegram_id), text="\n".join(lines))
                 logger.info(f"Daily summary sent to {user.telegram_id}")
 
@@ -163,11 +170,23 @@ async def send_weekly_summary():
                 days_left = (next_month - now).days
                 days_passed = now.day
 
-                total_budget = sum(e.budget_amount for e in envelopes)
+                # Calculate total allocated this month
+                total_budget = Decimal("0")
 
-                # Calculate total spent this month
+                # Calculate total allocated + spent this month
+                from app.models.models import Allocation, Income as IncModel
                 total_spent = Decimal("0")
                 for env in envelopes:
+                    alloc_r = await db.execute(
+                        select(func.coalesce(func.sum(Allocation.amount), 0))
+                        .join(IncModel, Allocation.income_id == IncModel.id)
+                        .where(
+                            Allocation.envelope_id == env.id,
+                            func.extract("year", IncModel.income_date) == now.year,
+                            func.extract("month", IncModel.income_date) == now.month,
+                        )
+                    )
+                    total_budget += Decimal(str(alloc_r.scalar()))
                     spent_result = await db.execute(
                         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                             Transaction.envelope_id == env.id,
@@ -196,7 +215,7 @@ async def send_weekly_summary():
                 lines.append(f"📈 Rata-rata harian: {format_currency(daily_avg)}/hari\n")
 
                 lines.append(f"📅 Progress bulan ini ({days_left} hari lagi):")
-                lines.append(f"   Budget: {format_currency(total_budget)}")
+                lines.append(f"   Dana: {format_currency(total_budget)}")
                 lines.append(f"   Terpakai: {format_currency(total_spent)} ({int(total_spent / total_budget * 100) if total_budget > 0 else 0}%)")
                 lines.append(f"   Sisa: {format_currency(total_remaining)}\n")
 
