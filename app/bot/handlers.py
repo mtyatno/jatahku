@@ -186,6 +186,7 @@ async def get_household_id(user, db):
 async def get_envelopes_with_spent(household_id, db, user_id=None):
     now = date.today()
     from sqlalchemy import or_
+    from app.models.models import Income, RecurringTransaction, RecurringFrequency
     query = select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
     if user_id:
         query = query.where(or_(Envelope.owner_id == None, Envelope.owner_id == user_id))
@@ -201,12 +202,37 @@ async def get_envelopes_with_spent(household_id, db, user_id=None):
             )
         )
         spent = Decimal(str(spent_result.scalar()))
-        allocated_result = await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0)).where(Allocation.envelope_id == env.id)
+        alloc_result = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+            .join(Income, Allocation.income_id == Income.id)
+            .where(
+                Allocation.envelope_id == env.id,
+                func.extract("year", Income.income_date) == now.year,
+                func.extract("month", Income.income_date) == now.month,
+            )
         )
-        allocated = Decimal(str(allocated_result.scalar()))
-        remaining = env.budget_amount + allocated - spent
-        envelope_data.append({"envelope": env, "spent": spent, "allocated": allocated, "remaining": remaining})
+        allocated = Decimal(str(alloc_result.scalar()))
+        # Reserved from subscriptions
+        rec_result = await db.execute(
+            select(RecurringTransaction).where(
+                RecurringTransaction.envelope_id == env.id,
+                RecurringTransaction.is_active == True,
+            )
+        )
+        reserved = Decimal("0")
+        for rec in rec_result.scalars().all():
+            if rec.frequency == RecurringFrequency.weekly:
+                reserved += rec.amount * 4
+            elif rec.frequency == RecurringFrequency.yearly:
+                reserved += rec.amount / 12
+            else:
+                reserved += rec.amount
+        remaining = allocated - spent
+        free = remaining - reserved
+        envelope_data.append({
+            "envelope": env, "spent": spent, "allocated": allocated,
+            "remaining": remaining, "reserved": reserved, "free": free,
+        })
     return envelope_data
 
 async def find_best_envelope(description, household_id, db):
@@ -297,22 +323,22 @@ async def cmd_status(update, context):
     now = date.today()
     next_month = date(now.year + (1 if now.month == 12 else 0), (now.month % 12) + 1, 1)
     days_left = (next_month - now).days
-    total_budget = sum(e["envelope"].budget_amount for e in envelopes)
+    total_allocated = sum(e["allocated"] for e in envelopes)
     total_spent = sum(e["spent"] for e in envelopes)
-    total_remaining = total_budget - total_spent
+    total_free = sum(e["free"] for e in envelopes)
     lines = [f"📊 Budget {now.strftime('%B %Y')} — {days_left} hari lagi\n"]
-    lines.append(f"Total: {format_currency(total_remaining)} / {format_currency(total_budget)}\n")
+    lines.append(f"Dana: {format_currency(total_allocated)} | Terpakai: {format_currency(total_spent)} | Sisa: {format_currency(total_free)}\n")
     for e in envelopes:
         env = e["envelope"]
-        spent, remaining, budget = e["spent"], e["remaining"], env.budget_amount
+        spent, allocated, free = e["spent"], e["allocated"], e["free"]
         emoji = env.emoji or "📁"
-        bar = progress_bar(spent, budget)
-        if budget > 0:
-            ratio = float(spent / budget)
+        bar = progress_bar(spent, allocated)
+        if allocated > 0:
+            ratio = float(spent / allocated)
             indicator = "🔴" if ratio >= 0.9 else ("🟡" if ratio >= 0.7 else "🟢")
         else:
             indicator = "⚪"
-        lines.append(f"{indicator} {emoji} {env.name}\n   {bar} {format_currency(remaining)}")
+        lines.append(f"{indicator} {emoji} {env.name}\n   {bar} {format_currency(free)}")
     await update.message.reply_text("\n".join(lines))
 
 async def cmd_amplop(update, context):
@@ -583,7 +609,7 @@ async def handle_message(update, context):
             await update.message.reply_text(
                 f"✅ {format_currency(amount)} — {description}\n"
                 f"Masuk ke {emoji} {envelope.name}\n\n"
-                f"Sisa amplop: {format_currency(remaining)} / {format_currency(budget)}{warning}"
+                f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}"
             )
         else:
             envelopes_data = await get_envelopes_with_spent(hid, db, user.id)
@@ -670,7 +696,7 @@ async def handle_txn_callback(update, context):
     await query.edit_message_text(
         f"✅ {format_currency(amount)} — {description}\n"
         f"Masuk ke {emoji} {envelope.name}\n\n"
-        f"Sisa amplop: {format_currency(remaining)} / {format_currency(envelope.budget_amount)}"
+        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)})"
     )
 
 async def cmd_pending(update, context):
