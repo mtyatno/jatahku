@@ -95,7 +95,7 @@ async def create_income(
         household_id=hid,
         user_id=user.id,
         amount=req.amount,
-        source=req.source,
+        description=req.source,
     )
     db.add(income)
     await db.flush()
@@ -129,7 +129,7 @@ async def create_income(
     return IncomeResponse(
         id=income.id,
         amount=income.amount,
-        source=income.source,
+        source=income.description,
         allocations=alloc_details,
         unallocated=Decimal("0"),  # always 0 now — remainder goes to Tabungan
     )
@@ -166,8 +166,8 @@ async def list_incomes(
         output.append({
             "id": str(inc.id),
             "amount": str(inc.amount),
-            "source": inc.source,
-            "date": inc.created_at.strftime("%Y-%m-%d"),
+            "source": inc.description,
+            "date": inc.income_date.strftime("%Y-%m-%d"),
             "allocations": allocs,
         })
     return output

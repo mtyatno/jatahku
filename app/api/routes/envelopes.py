@@ -122,28 +122,14 @@ async def envelope_summary(
         spent = Decimal(str(spent_result.scalar()))
 
         # Allocated this month (from income allocations)
-        alloc_result = await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0))
-            .join(Transaction.__table__, False)  # don't join
-            .where(
-                Allocation.envelope_id == env.id,
-            )
-        )
-        # Simpler: just sum allocations for this envelope this month
-        alloc_result = await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0)).where(
-                Allocation.envelope_id == env.id,
-            )
-        )
-        # Filter by income month
         from app.models.models import Income
         alloc_result = await db.execute(
             select(func.coalesce(func.sum(Allocation.amount), 0))
             .join(Income, Allocation.income_id == Income.id)
             .where(
                 Allocation.envelope_id == env.id,
-                func.extract("year", Income.created_at) == now.year,
-                func.extract("month", Income.created_at) == now.month,
+                func.extract("year", Income.income_date) == now.year,
+                func.extract("month", Income.income_date) == now.month,
             )
         )
         allocated = Decimal(str(alloc_result.scalar()))
@@ -287,7 +273,7 @@ async def transfer_between_envelopes(
         household_id=hid,
         user_id=user.id,
         amount=Decimal("0"),  # net zero
-        source=f"Transfer: {from_envelope.name} → {to_envelope.name}",
+        description=f"Transfer: {from_envelope.name} → {to_envelope.name}",
     )
     db.add(transfer_income)
     await db.flush()
