@@ -193,10 +193,12 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 <a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','hero_daftar')">Mulai Gratis &#8594;</a>
 <a href="https://t.me/JatahkuBot" target="_blank" class="btn btn-o btn-l" onclick="trackEvent('cta_click','hero_telegram')">&#128241; Buka di Telegram</a>
 </div>
-<div class="h-social" style="flex-direction:column;gap:6px">
+<div class="h-social">
 <span>&#128101; <b id="user-count">-</b> user aktif</span>
-<span>&#128176; <b id="managed">-</b> dikelola &middot; <b id="today">-</b> hari ini &middot; +<b id="week">-</b> minggu ini</span>
-<span>&#129534; <b id="txn-count">-</b> transaksi tercatat</span>
+<span style="color:var(--border)">|</span>
+<span>&#128176; <b id="managed">-</b> dikelola</span>
+<span style="color:var(--border)">|</span>
+<span>&#129534; <b id="txn-count">-</b> transaksi</span>
 </div>
 <div class="h-visual"><div class="h-mockup"><div class="ph" id="hero-ss">&#128248; Screenshot dashboard akan ditampilkan di sini</div></div></div>
 </section>
@@ -410,12 +412,14 @@ function demoSend(){
   trackEvent('demo_input',{text,amount:p.amount,envelope:env.name});
 }
 // Dynamic social proof
-fetch('https://api.jatahku.com/api-stats').then(r=>r.json()).then(d=>{
-  if(d.users)document.getElementById('user-count').textContent=d.users;
-  if(d.txn_today)document.getElementById('txn-today').textContent=d.txn_today;
-}).catch(()=>{
+
+// Dynamic social proof
+fetch('https://api.jatahku.com/api-stats').then(function(r){return r.json()}).then(function(d){
+  document.getElementById('user-count').textContent=d.users||'0';
+  document.getElementById('managed').textContent=d.managed||'Rp 0';
+    document.getElementById('txn-count').textContent=d.txns||'0';
+}).catch(function(){
   document.getElementById('user-count').textContent='0';
-  document.getElementById('txn-today').textContent='Rp 0';
 });
 // Scroll tracking
 let maxScroll=0;
