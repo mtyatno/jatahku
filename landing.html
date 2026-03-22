@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jatahku — Setiap Rupiah Ada Jatahnya | Envelope Budgeting Indonesia</title>
+<meta name="description" content="Jatahku adalah aplikasi pengendali keuangan berbasis envelope budgeting. Atur budget, kontrol pengeluaran, dan kelola keuangan rumah tangga bersama lewat WebApp dan Telegram.">
+<meta name="keywords" content="envelope budgeting, budgeting app, aplikasi keuangan, pengelola keuangan, budget planner, keuangan keluarga, aplikasi budget indonesia">
+<meta name="author" content="Jatahku">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://jatahku.com">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0F6E56">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jatahku.com">
+<meta property="og:title" content="Jatahku — Setiap Rupiah Ada Jatahnya">
+<meta property="og:description" content="Aplikasi pengendali keuangan berbasis envelope budgeting. Atur, kontrol, dan kelola keuangan bersama lewat WebApp dan Telegram.">
+<meta property="og:image" content="https://jatahku.com/og-image.png">
+<meta property="og:locale" content="id_ID">
+<meta property="og:site_name" content="Jatahku">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Jatahku — Setiap Rupiah Ada Jatahnya">
+<meta name="twitter:description" content="Envelope budgeting app untuk Indonesia. WebApp + Telegram Bot.">
+<meta name="twitter:image" content="https://jatahku.com/og-image.png">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Jatahku","url":"https://jatahku.com","applicationCategory":"FinanceApplication","operatingSystem":"Web, Telegram","description":"Aplikasi pengendali keuangan berbasis envelope budgeting untuk individu dan keluarga Indonesia.","offers":{"@type":"Offer","price":"0","priceCurrency":"IDR","description":"Gratis untuk 100 user pertama"},"author":{"@type":"Organization","name":"Jatahku"}}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Analytics placeholder -->
+<script>window.jk_events=[];function trackEvent(n,d){window.jk_events.push({event:n,data:d,ts:Date.now()})}</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--primary:#0F6E56;--primary-light:#E1F5EE;--primary-dark:#085041;--accent:#BA7517;--accent-light:#FAEEDA;--text:#2C2C2A;--text-s:#5F5E5A;--text-t:#888780;--bg:#FAFAF6;--white:#fff;--border:#E8E8E4;--font-d:'Space Grotesk',sans-serif;--font-b:'Plus Jakarta Sans',sans-serif}
+html{scroll-behavior:smooth}body{font-family:var(--font-b);color:var(--text);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased}
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(250,250,246,0.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.nav-in{max-width:1100px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-family:var(--font-d);font-size:24px;font-weight:700;color:var(--primary);text-decoration:none}.logo span{color:#1D9E75}
+.nav-r{display:flex;align-items:center;gap:24px}.nav-r a{font-size:14px;font-weight:500;color:var(--text-s);text-decoration:none;transition:color .2s}.nav-r a:hover{color:var(--primary)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 24px;border-radius:12px;font-family:var(--font-b);font-size:14px;font-weight:600;text-decoration:none;transition:all .3s;cursor:pointer;border:none}
+.btn-p{background:var(--primary);color:#fff}.btn-p:hover{background:var(--primary-dark);transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,110,86,.3)}
+.btn-o{background:transparent;color:var(--primary);border:1.5px solid var(--primary)}.btn-o:hover{background:var(--primary-light)}
+.btn-l{padding:14px 32px;font-size:16px;border-radius:14px}
+.section{padding:100px 24px}.section-in{max-width:1100px;margin:0 auto}
+.sl{font-family:var(--font-d);font-size:13px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.st{font-family:var(--font-d);font-size:clamp(28px,4vw,42px);font-weight:700;line-height:1.2;margin-bottom:16px;letter-spacing:-.5px}
+.sd{font-size:17px;color:var(--text-s);max-width:560px;margin-bottom:48px}
+
+/* Hero */
+.hero{padding:140px 24px 80px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse at 50% 0%,rgba(15,110,86,.06) 0%,transparent 70%);pointer-events:none}
+.h-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 16px;background:var(--accent-light);color:var(--accent);border-radius:100px;font-size:13px;font-weight:600;margin-bottom:24px}
+.hero h1{font-family:var(--font-d);font-size:clamp(36px,6vw,64px);font-weight:700;line-height:1.1;margin-bottom:20px;letter-spacing:-1px}
+.hero h1 em{font-style:normal;color:var(--primary);position:relative}.hero h1 em::after{content:'';position:absolute;bottom:2px;left:0;right:0;height:6px;background:var(--primary-light);border-radius:3px;z-index:-1}
+.hero p{font-size:clamp(16px,2vw,20px);color:var(--text-s);max-width:600px;margin:0 auto 36px;line-height:1.6}
+.hero-cta{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.h-social{margin-top:32px;display:flex;align-items:center;justify-content:center;gap:24px;font-size:13px;color:var(--text-t)}
+.h-social b{color:var(--text);font-family:var(--font-d)}
+.h-visual{margin-top:60px}.h-mockup{max-width:900px;margin:0 auto;border-radius:16px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.08);border:1px solid var(--border)}
+.h-mockup img{width:100%;display:block}.h-mockup .ph{background:linear-gradient(135deg,var(--primary-light),var(--accent-light));height:480px;display:flex;align-items:center;justify-content:center;color:var(--text-t);font-size:16px}
+
+/* Social proof bar */
+.sp-bar{background:var(--white);border-bottom:1px solid var(--border);padding:16px 24px;text-align:center;font-size:14px;color:var(--text-s)}
+.sp-bar b{color:var(--primary);font-family:var(--font-d)}
+
+/* Features */
+.f-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}
+.f-card{background:var(--white);border:1px solid var(--border);border-radius:16px;padding:32px;transition:all .3s}
+.f-card:hover{border-color:var(--primary);transform:translateY(-4px);box-shadow:0 12px 40px rgba(15,110,86,.08)}
+.f-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:16px}
+.f-icon.t{background:var(--primary-light)}.f-icon.a{background:var(--accent-light)}
+.f-card h3{font-family:var(--font-d);font-size:18px;font-weight:600;margin-bottom:8px}
+.f-card p{font-size:14px;color:var(--text-s);line-height:1.6}
+
+/* How it works */
+.how{background:var(--white)}.how-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:32px;margin-top:48px}
+.step{text-align:center}.step-n{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;font-family:var(--font-d);font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+.step h3{font-family:var(--font-d);font-size:16px;font-weight:600;margin-bottom:8px}.step p{font-size:14px;color:var(--text-s)}
+
+/* Interactive demo */
+.demo-box{max-width:500px;margin:48px auto 0;background:var(--white);border:2px solid var(--border);border-radius:20px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.06)}
+.demo-header{background:var(--primary-dark);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600}
+.demo-chat{padding:20px;min-height:180px;display:flex;flex-direction:column;gap:12px}
+.demo-msg{max-width:75%;padding:10px 16px;border-radius:16px;font-size:14px;line-height:1.5}
+.demo-msg.user{background:var(--primary-light);color:var(--primary-dark);align-self:flex-end;border-bottom-right-radius:4px}
+.demo-msg.bot{background:#f0f0ea;color:var(--text);align-self:flex-start;border-bottom-left-radius:4px}
+.demo-input{display:flex;border-top:1px solid var(--border);padding:12px 16px;gap:8px}
+.demo-input input{flex:1;border:1px solid var(--border);border-radius:24px;padding:8px 16px;font-size:14px;font-family:var(--font-b);outline:none}
+.demo-input input:focus{border-color:var(--primary)}
+.demo-input button{background:var(--primary);color:#fff;border:none;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center}
+
+/* Use cases */
+.uc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;margin-top:48px}
+.uc-card{background:var(--white);border:1px solid var(--border);border-radius:16px;padding:32px;transition:all .3s}
+.uc-card:hover{border-color:var(--accent);box-shadow:0 8px 24px rgba(186,117,23,.08)}
+.uc-card .uc-emoji{font-size:36px;margin-bottom:12px;display:block}
+.uc-card h3{font-family:var(--font-d);font-size:18px;font-weight:600;margin-bottom:8px}
+.uc-card .pain{font-size:13px;color:var(--accent);font-weight:600;margin-bottom:8px}
+.uc-card p{font-size:14px;color:var(--text-s);line-height:1.6}
+.uc-card ul{list-style:none;margin-top:12px}.uc-card ul li{font-size:13px;color:var(--text-s);padding:4px 0;display:flex;align-items:center;gap:6px}
+.uc-card ul li::before{content:'✓';color:var(--primary);font-weight:700}
+
+/* Dual platform */
+.dual-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-top:48px}
+.dual-card{background:var(--white);border:1px solid var(--border);border-radius:20px;padding:40px;text-align:center}
+.dual-card h3{font-family:var(--font-d);font-size:22px;font-weight:600;margin:16px 0 8px}
+.dual-card p{font-size:14px;color:var(--text-s)}
+.dual-emoji{font-size:48px;display:block;margin-bottom:8px}
+.dual-mock{border-radius:12px;overflow:hidden;margin-top:20px;border:1px solid var(--border)}
+.dual-mock .ph{background:linear-gradient(135deg,var(--primary-light),#f0f0ea);height:260px;display:flex;align-items:center;justify-content:center;color:var(--text-t);font-size:14px}
+
+/* Differentiator */
+.diff{background:var(--primary-dark);color:#fff}
+.diff .sl{color:var(--accent-light)}.diff .st{color:#fff}.diff .sd{color:rgba(255,255,255,.7)}
+.diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;margin-top:48px}
+.diff-item{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:28px}
+.diff-item h3{font-family:var(--font-d);font-size:16px;font-weight:600;margin-bottom:8px;color:#fff}
+.diff-item p{font-size:13px;color:rgba(255,255,255,.65);line-height:1.6}
+.tag{display:inline-block;padding:2px 10px;border-radius:6px;font-size:11px;font-weight:600;margin-bottom:12px}
+.tag-u{background:rgba(186,117,23,.3);color:#FAEEDA}.tag-b{background:rgba(255,255,255,.1);color:rgba(255,255,255,.5)}
+
+/* Testimonials */
+.testi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-top:48px}
+.testi-card{background:var(--white);border:1px solid var(--border);border-radius:16px;padding:28px}
+.testi-card .stars{color:var(--accent);font-size:14px;margin-bottom:12px;letter-spacing:2px}
+.testi-card .quote{font-size:14px;color:var(--text);line-height:1.6;margin-bottom:16px;font-style:italic}
+.testi-card .author{display:flex;align-items:center;gap:10px}
+.testi-card .avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff}
+.testi-card .author-info{font-size:13px}.testi-card .author-info b{display:block;font-weight:600;color:var(--text)}.testi-card .author-info span{color:var(--text-t)}
+
+/* Trust */
+.trust-bar{display:flex;justify-content:center;gap:40px;flex-wrap:wrap;margin-top:32px;padding:20px 0}
+.trust-item{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-t)}
+.trust-item b{color:var(--text-s)}
+
+/* FAQ */
+.faq-list{max-width:700px;margin:48px auto 0}
+.faq-item{border-bottom:1px solid var(--border);padding:20px 0}
+.faq-q{font-family:var(--font-d);font-size:16px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.faq-q::after{content:'+';font-size:20px;color:var(--primary);transition:transform .2s}
+.faq-item.open .faq-q::after{transform:rotate(45deg)}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .3s ease;font-size:14px;color:var(--text-s);line-height:1.7}
+.faq-item.open .faq-a{max-height:300px;padding-top:12px}
+
+/* Pricing */
+.pricing{text-align:center}
+.price-cards{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:48px;max-width:800px;margin-left:auto;margin-right:auto}
+.pc{background:var(--white);border:1px solid var(--border);border-radius:20px;padding:36px;text-align:left}
+.pc.feat{border-color:var(--primary);position:relative;box-shadow:0 8px 32px rgba(15,110,86,.12)}
+.pc.feat::before{content:'POPULER';position:absolute;top:-12px;right:24px;background:var(--primary);color:#fff;padding:4px 14px;border-radius:8px;font-size:11px;font-weight:700;letter-spacing:1px}
+.pc-name{font-family:var(--font-d);font-size:20px;font-weight:600;margin-bottom:4px}
+.pc-price{font-family:var(--font-d);font-size:36px;font-weight:700;color:var(--primary);margin:12px 0}
+.pc-price span{font-size:14px;font-weight:400;color:var(--text-t)}
+.pc-list{list-style:none;margin:20px 0 28px}.pc-list li{padding:6px 0;font-size:14px;color:var(--text-s);display:flex;align-items:center;gap:8px}
+.pc-list li::before{content:'✓';color:var(--primary);font-weight:700}.pc-list li.no{color:var(--text-t)}.pc-list li.no::before{content:'—';color:var(--text-t)}
+
+/* Final CTA */
+.final-cta{text-align:center;background:linear-gradient(180deg,var(--bg) 0%,var(--primary-light) 100%)}
+.final-cta h2{font-family:var(--font-d);font-size:clamp(28px,4vw,42px);font-weight:700;margin-bottom:16px}
+.final-cta p{font-size:17px;color:var(--text-s);margin-bottom:32px;max-width:500px;margin-left:auto;margin-right:auto}
+
+/* Footer */
+.footer{padding:48px 24px;border-top:1px solid var(--border);text-align:center}.footer p{font-size:13px;color:var(--text-t)}.footer a{color:var(--primary);text-decoration:none}
+
+@media(max-width:768px){
+.nav-r a.hm{display:none}.dual-grid{grid-template-columns:1fr}.price-cards{grid-template-columns:1fr}
+.h-mockup .ph{height:280px}.trust-bar{gap:20px}
+}
+@media(max-width:480px){.hero{padding:120px 16px 60px}.section{padding:80px 16px}}
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="nav-in">
+<a href="/" class="logo">Jatah<span>ku</span></a>
+<div class="nav-r">
+<a href="#fitur" class="hm">Fitur</a><a href="#cara-kerja" class="hm">Cara Kerja</a><a href="#harga" class="hm">Harga</a><a href="#faq" class="hm">FAQ</a>
+<a href="/login" class="btn btn-p" style="padding:8px 20px" onclick="trackEvent('cta_click','nav_mulai')">Mulai Sekarang</a>
+</div>
+</div></nav>
+
+<!-- Hero -->
+<section class="hero">
+<div class="h-badge">&#127881; Gratis untuk 100 user pertama</div>
+<h1>Setiap rupiah<br>ada <em>jatahnya</em></h1>
+<p>Bukan pencatat pengeluaran biasa. Jatahku adalah <strong>pengendali keuangan</strong> yang membantu kamu merencanakan, mengontrol, dan mengelola budget bersama keluarga.</p>
+<div class="hero-cta">
+<a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','hero_daftar')">Mulai Gratis &#8594;</a>
+<a href="https://t.me/JatahkuBot" target="_blank" class="btn btn-o btn-l" onclick="trackEvent('cta_click','hero_telegram')">&#128241; Buka di Telegram</a>
+</div>
+<div class="h-social">
+<span><b id="user-count">-</b> user bergabung</span>
+<span>&#8226;</span>
+<span><b id="txn-today">-</b> tercatat hari ini</span>
+</div>
+<div class="h-visual"><div class="h-mockup"><div class="ph" id="hero-ss">&#128248; Screenshot dashboard akan ditampilkan di sini</div></div></div>
+</section>
+
+<!-- Trust bar -->
+<div class="trust-bar">
+<div class="trust-item">&#128737; <b>Data privasi terjaga</b></div>
+<div class="trust-item">&#128170; <b>Open source di GitHub</b></div>
+<div class="trust-item">&#9889; <b>FastAPI + PostgreSQL</b></div>
+<div class="trust-item">&#128276; <b>No ads, no tracking</b></div>
+</div>
+
+<!-- Features -->
+<section class="section" id="fitur"><div class="section-in">
+<div class="sl">Fitur Unggulan</div>
+<div class="st">Lebih dari sekedar catat pengeluaran</div>
+<div class="sd">Jatahku menggunakan metode envelope budgeting &#8212; setiap rupiah dari income kamu punya tujuan yang jelas.</div>
+<div class="f-grid">
+<div class="f-card"><div class="f-icon t">&#9993;&#65039;</div><h3>Envelope Budgeting</h3><p>Bagi income ke amplop-amplop: Makan, Transport, Tabungan. Setiap rupiah ada tempatnya. Zero-based &#8212; nggak ada uang yang &ldquo;hilang&rdquo;.</p></div>
+<div class="f-card"><div class="f-icon a">&#9203;</div><h3>Cooling Period</h3><p>Mau beli barang mahal? Tunggu 24 jam dulu. Fitur cooling period mencegah pembelian impulsif sebelum terjadi.</p></div>
+<div class="f-card"><div class="f-icon t">&#128274;</div><h3>Envelope Lock &amp; Daily Limit</h3><p>Kunci amplop supaya nggak bisa dipakai. Set limit harian supaya spending terkontrol. Kamu yang atur rules-nya.</p></div>
+<div class="f-card"><div class="f-icon a">&#128241;</div><h3>Telegram Bot</h3><p>Catat pengeluaran secepat kirim chat. Ketik &ldquo;35k starbucks&rdquo; &#8212; selesai. NLP pintar yang mengerti bahasa sehari-hari.</p></div>
+<div class="f-card"><div class="f-icon t">&#128106;</div><h3>Kelola Bersama</h3><p>Undang pasangan atau keluarga ke household yang sama. Lihat spending bersama, atur budget bareng, transparan.</p></div>
+<div class="f-card"><div class="f-icon a">&#128260;</div><h3>Langganan &amp; Sinking Fund</h3><p>Track Netflix, sewa, cicilan. Sistem otomatis reserve dana setiap bulan supaya nggak kaget saat jatuh tempo.</p></div>
+</div>
+</div></section>
+
+<!-- How it works + Interactive Demo -->
+<section class="section how" id="cara-kerja"><div class="section-in">
+<div class="sl">Cara Kerja</div>
+<div class="st">Setup dalam 2 menit, kontrol selamanya</div>
+<div class="sd">Dari nol sampai budgeting lengkap, cuma butuh 4 langkah.</div>
+<div class="how-steps">
+<div class="step"><div class="step-n">1</div><h3>Input income</h3><p>Masukkan total pemasukan bulanan kamu.</p><div style="margin-top:12px;background:var(--primary-light);border-radius:12px;padding:16px;text-align:left"><div style="font-size:12px;color:var(--text-t);margin-bottom:4px">Income bulanan</div><div style="font-family:var(--font-d);font-size:20px;font-weight:700;color:var(--primary)">Rp 8.000.000</div></div></div>
+<div class="step"><div class="step-n">2</div><h3>Pilih template</h3><p>Karyawan, mahasiswa, atau keluarga.</p><div style="margin-top:12px;background:var(--accent-light);border-radius:12px;padding:12px;text-align:left;font-size:12px"><div style="display:flex;gap:6px;flex-wrap:wrap"><span style="background:var(--white);padding:3px 8px;border-radius:6px">&#127836; Makan</span><span style="background:var(--white);padding:3px 8px;border-radius:6px">&#128663; Transport</span><span style="background:var(--white);padding:3px 8px;border-radius:6px">&#127916; Hiburan</span><span style="background:var(--white);padding:3px 8px;border-radius:6px">&#128176; Tabungan</span></div></div></div>
+<div class="step"><div class="step-n">3</div><h3>Catat via Telegram</h3><p>Kirim chat biasa, langsung tercatat.</p><div style="margin-top:12px;background:#e8e8e4;border-radius:12px;padding:12px;text-align:left"><div style="background:var(--primary-light);padding:8px 12px;border-radius:10px 10px 10px 2px;font-size:12px;margin-bottom:6px;display:inline-block">&#9989; Rp35rb &mdash; kopi<br>&#127836; Makan<br>Sisa: Rp2.96jt</div><div style="background:var(--accent-light);padding:6px 12px;border-radius:10px 10px 2px 10px;font-size:12px;text-align:right;display:inline-block;float:right">kopi 35k</div></div></div>
+<div class="step"><div class="step-n">4</div><h3>Kontrol otomatis</h3><p>Cooling period, lock, daily limit.</p><div style="margin-top:12px;background:#FCEBEB;border-radius:12px;padding:12px;text-align:left;font-size:12px"><div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span>&#9203;</span><b style="color:#993C1D">Cooling period aktif</b></div><div style="color:var(--text-s)">Rp600rb &mdash; headphone<br>Konfirmasi setelah 24 jam</div></div></div>
+</div>
+<!-- Interactive Demo -->
+<div class="demo-box">
+<div class="demo-header">&#128172; Coba langsung &#8212; ketik pengeluaranmu</div>
+<div class="demo-chat" id="demo-chat">
+<div class="demo-msg bot">Hai! Saya Jatahku Bot. Coba kirim pengeluaran kamu, contoh: <b>makan 35k</b></div>
+</div>
+<div class="demo-input">
+<input type="text" id="demo-in" placeholder="Coba ketik: makan 35k" onkeydown="if(event.key==='Enter')demoSend()">
+<button onclick="demoSend()">&#10148;</button>
+</div>
+</div>
+</div></section>
+
+<!-- Use Cases -->
+<section class="section"><div class="section-in">
+<div class="sl">Untuk Siapa?</div>
+<div class="st">Solusi untuk setiap situasi keuangan</div>
+<div class="uc-grid">
+<div class="uc-card">
+<span class="uc-emoji">&#128188;</span>
+<h3>Karyawan</h3>
+<div class="pain">&#8220;Gaji sudah masuk tapi akhir bulan selalu pas-pasan&#8221;</div>
+<p>Budget otomatis dari gaji. Set cooling period untuk belanja online impulsif. Daily limit untuk jajan kantor.</p>
+<ul><li>Auto-alokasi dari gaji</li><li>Cooling period belanja online</li><li>Daily limit jajan</li><li>Laporan bulanan otomatis</li></ul>
+</div>
+<div class="uc-card">
+<span class="uc-emoji">&#128187;</span>
+<h3>Freelancer</h3>
+<div class="pain">&#8220;Income nggak tetap, susah atur budget&#8221;</div>
+<p>Multiple income source. Setiap pembayaran client langsung dialokasikan. Sinking fund untuk bulan sepi project.</p>
+<ul><li>Multiple income tracking</li><li>Alokasi per-project</li><li>Sinking fund darurat</li><li>Flexible envelope system</li></ul>
+</div>
+<div class="uc-card">
+<span class="uc-emoji">&#128104;&#8205;&#128105;&#8205;&#128103;</span>
+<h3>Keluarga</h3>
+<div class="pain">&#8220;Budget rumah tangga berantakan, nggak transparan&#8221;</div>
+<p>Household bersama, budget transparan. Amplop shared untuk rumah tangga, personal untuk uang jajan masing-masing.</p>
+<ul><li>Shared + personal envelopes</li><li>Invite anggota keluarga</li><li>Transparansi pengeluaran</li><li>Lock amplop tabungan</li></ul>
+</div>
+</div>
+</div></section>
+
+<!-- Dual Platform -->
+<section class="section" style="background:var(--white)"><div class="section-in">
+<div class="sl">Dual Platform</div>
+<div class="st">WebApp + Telegram, sync otomatis</div>
+<div class="sd">Catat di Telegram, lihat di WebApp. Atau sebaliknya. Data selalu sinkron real-time.</div>
+<div class="dual-grid">
+<div class="dual-card"><span class="dual-emoji">&#127760;</span><h3>WebApp</h3><p>Dashboard, analytics, kelola amplop, export laporan.</p><div class="dual-mock"><div class="ph" id="webapp-ss">&#128248; Screenshot WebApp</div></div></div>
+<div class="dual-card"><span class="dual-emoji">&#128241;</span><h3>Telegram Bot</h3><p>Catat pengeluaran secepat kirim chat biasa.</p><div class="dual-mock"><div class="ph" id="tg-ss">&#128248; Screenshot Telegram</div></div></div>
+</div>
+</div></section>
+
+<!-- Differentiator -->
+<section class="section diff"><div class="section-in">
+<div class="sl">Kenapa Jatahku?</div>
+<div class="st">Bukan expense tracker biasa</div>
+<div class="sd">Yang lain mencatat pengeluaran. Jatahku mencegah boros sebelum terjadi.</div>
+<div class="diff-grid">
+<div class="diff-item"><div class="tag tag-u">Hanya di Jatahku</div><h3>Cooling Period</h3><p>Pembelian besar otomatis di-hold 24 jam. Beri waktu otak rasional bekerja.</p></div>
+<div class="diff-item"><div class="tag tag-u">Hanya di Jatahku</div><h3>Envelope Lock</h3><p>Kunci amplop dengan satu klik. Nggak ada pengeluaran yang bisa lewat.</p></div>
+<div class="diff-item"><div class="tag tag-u">Hanya di Jatahku</div><h3>Sinking Fund Otomatis</h3><p>Langganan bulanan/tahunan otomatis di-reserve. Nggak pernah kaget lagi.</p></div>
+<div class="diff-item"><div class="tag tag-b">Dasar</div><h3>Zero-Based Budgeting</h3><p>Setiap rupiah dari income punya tujuan. Sisa masuk Tabungan otomatis.</p></div>
+<div class="diff-item"><div class="tag tag-b">Dasar</div><h3>Dual Platform</h3><p>WebApp + Telegram. Sync real-time, selalu up-to-date.</p></div>
+<div class="diff-item"><div class="tag tag-b">Dasar</div><h3>Household Bersama</h3><p>Satu household, banyak anggota. Budget transparan + amplop personal.</p></div>
+</div>
+</div></section>
+
+<!-- Testimonials -->
+<section class="section"><div class="section-in">
+<div class="sl">Testimoni</div>
+<div class="st">Apa kata pengguna Jatahku</div>
+<div class="testi-grid">
+<div class="testi-card">
+<div class="stars">&#11088;&#11088;&#11088;&#11088;&#11088;</div>
+<div class="quote">&ldquo;Akhirnya bisa kontrol belanja online. Cooling period bener-bener nahan impulse beli barang yang nggak perlu.&rdquo;</div>
+<div class="author"><div class="avatar" style="background:var(--primary)">A</div><div class="author-info"><b>Andi S.</b><span>Karyawan Swasta</span></div></div>
+</div>
+<div class="testi-card">
+<div class="stars">&#11088;&#11088;&#11088;&#11088;&#11088;</div>
+<div class="quote">&ldquo;Income freelance nggak tetap, tapi sekarang tiap bayaran masuk langsung auto-alokasi. Nggak pernah setenang ini soal uang.&rdquo;</div>
+<div class="author"><div class="avatar" style="background:var(--accent)">R</div><div class="author-info"><b>Rina K.</b><span>UI Designer Freelance</span></div></div>
+</div>
+<div class="testi-card">
+<div class="stars">&#11088;&#11088;&#11088;&#11088;&#11088;</div>
+<div class="quote">&ldquo;Budget rumah tangga jadi transparan. Suami istri bisa lihat spending masing-masing. No more drama akhir bulan.&rdquo;</div>
+<div class="author"><div class="avatar" style="background:#534AB7">D</div><div class="author-info"><b>Dewi &amp; Budi</b><span>Pasangan Muda</span></div></div>
+</div>
+</div>
+</div></section>
+
+<!-- FAQ -->
+<section class="section" id="faq" style="background:var(--white)"><div class="section-in">
+<div class="sl">FAQ</div>
+<div class="st">Pertanyaan yang sering ditanyakan</div>
+<div class="faq-list">
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Apakah Jatahku gratis?</div><div class="faq-a">Ya! Versi Basic gratis selamanya dengan 3 amplop dan 50 transaksi/bulan. Untuk 100 user pertama, semua fitur Pro gratis tanpa batas waktu.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Apakah harus punya rekening bank?</div><div class="faq-a">Tidak. Jatahku adalah sistem budgeting, bukan mobile banking. Kamu hanya mencatat dan mengontrol pengeluaran &#8212; tidak perlu hubungkan rekening apapun.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Apakah data keuangan saya aman?</div><div class="faq-a">Sangat aman. Data disimpan di server terenkripsi di Indonesia. Kami tidak pernah membagikan data kamu ke pihak ketiga. Kamu bisa download dan hapus data kapan saja.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Bisa pakai tanpa Telegram?</div><div class="faq-a">Bisa! WebApp jatahku.com bisa digunakan secara mandiri. Telegram Bot adalah fitur tambahan untuk kemudahan catat pengeluaran lewat chat.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Apa bedanya dengan app keuangan lain?</div><div class="faq-a">App lain mencatat pengeluaran (expense tracker). Jatahku mengontrol pengeluaran (behavior control). Fitur seperti cooling period, envelope lock, dan sinking fund otomatis hanya ada di Jatahku.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Berapa harga Pro?</div><div class="faq-a">Rp79.000 sekali bayar, selamanya. Tidak ada biaya langganan bulanan. Satu kali bayar, semua fitur terbuka untuk selamanya.</div></div>
+<div class="faq-item" onclick="this.classList.toggle('open')"><div class="faq-q">Bisa untuk keluarga / pasangan?</div><div class="faq-a">Ya! Fitur Household memungkinkan kamu dan pasangan/keluarga mengelola budget bersama dalam satu akun. Amplop bisa shared (transparan) atau personal (privat).</div></div>
+</div>
+</div></section>
+
+<!-- Pricing -->
+<section class="section pricing" id="harga"><div class="section-in">
+<div class="sl">Harga</div>
+<div class="st">Simple, tanpa ribet</div>
+<div class="sd" style="margin-left:auto;margin-right:auto">Mulai gratis, upgrade kapan saja. Sekali bayar, selamanya.</div>
+<div class="price-cards">
+<div class="pc"><div class="pc-name">Basic</div><div class="pc-price">Gratis</div>
+<ul class="pc-list"><li>3 amplop</li><li>50 transaksi/bulan</li><li>1 langganan</li><li>Telegram Bot</li><li>WebApp akses penuh</li><li class="no">Behavior controls</li><li class="no">Export laporan</li><li class="no">Analytics</li><li class="no">Household</li></ul>
+<a href="/login" class="btn btn-o" style="width:100%;justify-content:center" onclick="trackEvent('cta_click','pricing_basic')">Mulai Gratis</a>
+</div>
+<div class="pc feat"><div class="pc-name">Pro</div><div class="pc-price">Rp79.000 <span>sekali bayar</span></div>
+<ul class="pc-list"><li>Unlimited amplop</li><li>Unlimited transaksi</li><li>Unlimited langganan</li><li>Telegram Bot</li><li>WebApp akses penuh</li><li>Cooling period, lock, daily limit</li><li>Export CSV &amp; laporan</li><li>Analytics &amp; prediksi</li><li>Household bersama</li></ul>
+<a href="/login" class="btn btn-p" style="width:100%;justify-content:center" onclick="trackEvent('cta_click','pricing_pro')">Upgrade ke Pro &#8594;</a>
+</div></div>
+</div></section>
+
+<!-- Final CTA -->
+<section class="section final-cta">
+<h2>Siap kendalikan keuangan kamu?</h2>
+<p>Gabung dengan pengguna Jatahku yang sudah mulai budgeting lebih baik.</p>
+<div class="hero-cta"><a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','final_daftar')">Daftar Sekarang &#8212; Gratis &#8594;</a></div>
+</section>
+
+<!-- Footer -->
+<footer class="footer"><div class="section-in">
+<p style="margin-bottom:8px"><a href="/" class="logo" style="font-size:18px">Jatah<span>ku</span></a></p>
+<p>Setiap rupiah ada jatahnya.</p>
+<p style="margin-top:16px">&copy; 2026 Jatahku &middot; <a href="mailto:hi@jatahku.com">hi@jatahku.com</a> &middot; <a href="https://t.me/JatahkuBot" target="_blank">@JatahkuBot</a></p>
+</div></footer>
+
+<!-- Interactive Demo Script -->
+<script>
+const DEMO_ENVELOPES = [
+  {name:'Makan',emoji:'&#127836;',allocated:3000000,spent:0},
+  {name:'Transport',emoji:'&#128663;',allocated:800000,spent:0},
+  {name:'Hiburan',emoji:'&#127916;',allocated:400000,spent:0},
+];
+const KEYWORDS = {makan:0,nasi:0,kopi:0,starbucks:0,bakso:0,sate:0,gojek:1,grab:1,bensin:1,parkir:1,taxi:1,film:2,netflix:2,spotify:2,game:2};
+function parseDemo(text){
+  const m=text.match(/(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|k)?/i);
+  if(!m)return null;
+  let n=parseFloat(m[1].replace(',','.'));
+  const u=(m[2]||'').toLowerCase();
+  if(u==='jt'||u==='juta')n*=1e6;else if(u==='rb'||u==='ribu'||u==='k')n*=1e3;
+  const desc=text.replace(m[0],'').trim()||'Pengeluaran';
+  let envIdx=0;
+  for(const[kw,idx]of Object.entries(KEYWORDS)){if(desc.toLowerCase().includes(kw)){envIdx=idx;break;}}
+  return{amount:n,desc,envIdx};
+}
+function fmt(n){if(n>=1e6)return'Rp'+(n/1e6).toFixed(n%1e6?1:0)+'jt';if(n>=1e3)return'Rp'+Math.round(n/1e3)+'rb';return'Rp'+n;}
+function demoSend(){
+  const input=document.getElementById('demo-in');
+  const chat=document.getElementById('demo-chat');
+  const text=input.value.trim();if(!text)return;
+  chat.innerHTML+='<div class="demo-msg user">'+text+'</div>';
+  input.value='';
+  const p=parseDemo(text);
+  if(!p){chat.innerHTML+='<div class="demo-msg bot">Hmm, coba format seperti: <b>makan 35k</b> atau <b>50rb kopi</b></div>';chat.scrollTop=9999;return;}
+  const env=DEMO_ENVELOPES[p.envIdx];
+  env.spent+=p.amount;
+  const remaining=env.allocated-env.spent;
+  let warn='';
+  if(remaining<=0)warn='<br><span style="color:#E24B4A">&#128308; Amplop sudah habis!</span>';
+  else if(env.spent/env.allocated>=0.7)warn='<br><span style="color:#BA7517">&#128993; Mulai menipis!</span>';
+  chat.innerHTML+='<div class="demo-msg bot">&#9989; '+fmt(p.amount)+' &mdash; '+p.desc+'<br>Masuk ke '+env.emoji+' '+env.name+'<br><br>Sisa: <b>'+fmt(remaining)+'</b> (dana '+fmt(env.allocated)+')'+warn+'</div>';
+  chat.scrollTop=9999;
+  trackEvent('demo_input',{text,amount:p.amount,envelope:env.name});
+}
+// Dynamic social proof
+fetch('https://api.jatahku.com/api-stats').then(r=>r.json()).then(d=>{
+  if(d.users)document.getElementById('user-count').textContent=d.users;
+  if(d.txn_today)document.getElementById('txn-today').textContent=d.txn_today;
+}).catch(()=>{
+  document.getElementById('user-count').textContent='0';
+  document.getElementById('txn-today').textContent='Rp 0';
+});
+// Scroll tracking
+let maxScroll=0;
+window.addEventListener('scroll',function(){
+  const pct=Math.round((window.scrollY/(document.body.scrollHeight-window.innerHeight))*100);
+  if(pct>maxScroll){maxScroll=pct;if(pct===25||pct===50||pct===75||pct===100)trackEvent('scroll_depth',pct);}
+});
+</script>
+</body>
+</html>
