@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 export default function Settings() {
   const { user, logout } = useAuth();
   const [linkCode, setLinkCode] = useState(null);
+  const [copied, setCopied] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
   const [unlinkLoading, setUnlinkLoading] = useState(false);
   const [household, setHousehold] = useState(null);
@@ -28,6 +29,21 @@ export default function Settings() {
     if (res.ok) { const data = await res.json(); setLinkCode(data.code); }
     setLinkLoading(false);
   };
+
+  // Poll to detect when Telegram is linked
+  useEffect(() => {
+    if (!linkCode || user?.telegram_id) return;
+    const interval = setInterval(async () => {
+      const res = await api.request('/auth/me');
+      if (res.ok) {
+        const me = await res.json();
+        if (me.telegram_id) {
+          window.location.reload();
+        }
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [linkCode, user?.telegram_id]);
 
   const handleUnlink = async () => {
     if (!confirm('Yakin mau unlink Telegram? Data tetap aman, tapi kamu nggak bisa catat lewat Telegram sampai link ulang.')) return;
@@ -84,13 +100,22 @@ export default function Settings() {
         <div className="card border-brand-200">
           <h3 className="font-semibold text-sm mb-2">Link Telegram</h3>
           <p className="text-xs text-gray-500 mb-3">Hubungkan akun Telegram supaya bisa catat pengeluaran lewat chat.</p>
+
           {linkCode ? (
             <div className="text-center py-4">
               <p className="text-xs text-gray-400 mb-2">Kirim perintah ini ke @JatahkuBot:</p>
-              <div className="bg-gray-50 rounded-xl px-6 py-4 inline-block">
+              <div className="bg-gray-50 rounded-xl px-4 py-4 inline-flex items-center gap-3">
                 <code className="font-mono text-2xl font-bold text-brand-600 tracking-widest">/link {linkCode}</code>
+                <button onClick={() => {navigator.clipboard.writeText('/link ' + linkCode); setCopied(true); setTimeout(() => setCopied(false), 2000);}}
+                  className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-500 hover:text-brand-600 hover:border-brand-400 transition-all">
+                  {copied ? '✅ Copied!' : '📋 Copy'}
+                </button>
               </div>
-              <p className="text-xs text-gray-400 mt-3">Kode berlaku 5 menit</p>
+              <p className="text-xs text-gray-400 mt-2">Kode berlaku 5 menit</p>
+              <a href="https://t.me/JatahkuBot" target="_blank"
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-xl hover:bg-blue-600 transition-colors">
+                📱 Buka @JatahkuBot di Telegram
+              </a>
             </div>
           ) : (
             <button onClick={generateLinkCode} disabled={linkLoading} className="btn-primary disabled:opacity-50">

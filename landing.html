@@ -171,6 +171,10 @@ html{scroll-behavior:smooth}body{font-family:var(--font-b);color:var(--text);bac
 </style>
 </head>
 <body>
+<script>
+if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){window.location.replace('/login')}
+</script>
+
 
 <nav class="nav"><div class="nav-in">
 <a href="/" class="logo">Jatah<span>ku</span></a>

@@ -245,6 +245,7 @@ async def update_envelope(
     envelope.budget_amount = req.budget_amount
     envelope.is_rollover = req.is_rollover
     envelope.group_id = req.group_id
+    envelope.owner_id = user.id if req.is_personal else None
     envelope.is_locked = req.is_locked
     envelope.daily_limit = req.daily_limit
     envelope.cooling_threshold = req.cooling_threshold
