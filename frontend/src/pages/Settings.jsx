@@ -2,6 +2,53 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 
+
+function NotifPrefs() {
+  const [prefs, setPrefs] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.request('/notifications/preferences').then(r => r.ok ? r.json() : null).then(setPrefs);
+  }, []);
+
+  const toggle = async (key) => {
+    const updated = { ...prefs, [key]: !prefs[key] };
+    setPrefs(updated);
+    setSaving(true);
+    await api.request('/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(updated),
+    });
+    setSaving(false);
+  };
+
+  if (!prefs) return <p className="text-xs text-gray-400">Loading...</p>;
+
+  const rows = [
+    { label: 'Budget warning', key: 'budget_warning' },
+    { label: 'Langganan jatuh tempo', key: 'subscription_due' },
+    { label: 'Ringkasan harian', key: 'daily_summary' },
+    { label: 'Ringkasan mingguan', key: 'weekly_summary' },
+    { label: 'Cooling period selesai', key: 'cooling_ready' },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2 text-xs text-gray-400 font-medium px-1">
+        <span></span><span className="text-center">Telegram</span><span className="text-center">WebApp</span>
+      </div>
+      {rows.map(r => (
+        <div key={r.key} className="grid grid-cols-3 gap-2 items-center">
+          <span className="text-sm text-gray-600">{r.label}</span>
+          <label className="flex justify-center"><input type="checkbox" checked={prefs[r.key + '_tg']} onChange={() => toggle(r.key + '_tg')} className="w-4 h-4 rounded border-gray-300 text-brand-600" /></label>
+          <label className="flex justify-center"><input type="checkbox" checked={prefs[r.key + '_web']} onChange={() => toggle(r.key + '_web')} className="w-4 h-4 rounded border-gray-300 text-brand-600" /></label>
+        </div>
+      ))}
+      {saving && <p className="text-xs text-gray-400">Menyimpan...</p>}
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, logout } = useAuth();
   const [linkCode, setLinkCode] = useState(null);
@@ -167,6 +214,11 @@ export default function Settings() {
           <button type="submit" disabled={joinLoading} className="btn-primary disabled:opacity-50">{joinLoading ? '...' : 'Gabung'}</button>
         </form>
         {joinError && <p className="text-xs text-danger-400 mt-2">{joinError}</p>}
+      </div>
+
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
+        <NotifPrefs />
       </div>
 
       <div className="card">

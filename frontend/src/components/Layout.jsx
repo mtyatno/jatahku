@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import NotificationBell from './NotificationBell';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
@@ -60,7 +61,9 @@ export default function Layout() {
             </nav>
           </div>
 
-          {/* Profile menu */}
+          {/* Notifications + Profile */}
+          <div className="flex items-center gap-1">
+          <NotificationBell />
           <div className="relative" ref={menuRef}>
             <button onClick={() => setMenuOpen(!menuOpen)}
               className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-gray-50 transition-colors">
@@ -95,6 +98,7 @@ export default function Layout() {
                 </div>
               </div>
             )}
+          </div>
           </div>
         </div>
       </header>

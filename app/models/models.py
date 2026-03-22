@@ -245,6 +245,50 @@ class Goal(TimestampMixin, Base):
     envelope: Mapped["Envelope"] = relationship(back_populates="goals")
 
 
+class NotificationType(str, enum.Enum):
+    budget_warning = "budget_warning"
+    subscription_due = "subscription_due"
+    daily_summary = "daily_summary"
+    weekly_summary = "weekly_summary"
+    cooling_ready = "cooling_ready"
+    system = "system"
+
+
+class Notification(TimestampMixin, Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    type: Mapped[NotificationType] = mapped_column(
+        SAEnum(NotificationType), default=NotificationType.system
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(String(1000))
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    user: Mapped["User"] = relationship()
+
+
+class NotificationPreference(TimestampMixin, Base):
+    __tablename__ = "notification_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True)
+    budget_warning_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    budget_warning_web: Mapped[bool] = mapped_column(Boolean, default=True)
+    subscription_due_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    subscription_due_web: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_summary_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_summary_web: Mapped[bool] = mapped_column(Boolean, default=False)
+    weekly_summary_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    weekly_summary_web: Mapped[bool] = mapped_column(Boolean, default=True)
+    cooling_ready_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    cooling_ready_web: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    user: Mapped["User"] = relationship()
+
+
 class PendingTransactionStatus(str, enum.Enum):
     pending = "pending"
     confirmed = "confirmed"
