@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#085041"/>
+      <stop offset="100%" stop-color="#0F6E56"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  
+  <!-- Decorative circles -->
+  <circle cx="1050" cy="100" r="200" fill="#1D9E75" opacity="0.15"/>
+  <circle cx="150" cy="530" r="150" fill="#1D9E75" opacity="0.1"/>
+  <circle cx="900" cy="500" r="100" fill="#BA7517" opacity="0.1"/>
+  
+  <!-- Envelope icon -->
+  <g transform="translate(100, 180)">
+    <rect x="0" y="0" width="80" height="60" rx="8" fill="none" stroke="#E1F5EE" stroke-width="3"/>
+    <polyline points="0,0 40,35 80,0" fill="none" stroke="#E1F5EE" stroke-width="3"/>
+  </g>
+  
+  <!-- Logo -->
+  <text x="100" y="120" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#E1F5EE" opacity="0.8">Jatahku</text>
+  
+  <!-- Tagline main -->
+  <text x="100" y="320" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#FFFFFF">Setiap rupiah</text>
+  <text x="100" y="400" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#FFFFFF">ada <tspan fill="#FAEEDA">jatahnya</tspan></text>
+  
+  <!-- Subtitle -->
+  <text x="100" y="460" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">Pengendali keuangan berbasis envelope budgeting</text>
+  <text x="100" y="495" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">WebApp + Telegram Bot</text>
+  
+  <!-- URL -->
+  <text x="100" y="570" font-family="Arial, sans-serif" font-size="20" fill="#5DCAA5" opacity="0.7">jatahku.com</text>
+  
+  <!-- Feature pills -->
+  <g transform="translate(600, 170)">
+    <rect x="0" y="0" width="200" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="100" y="28" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">✉️ Envelope Budgeting</text>
+    
+    <rect x="220" y="0" width="180" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="310" y="28" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">⏳ Cooling Period</text>
+    
+    <rect x="0" y="60" width="170" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="85" y="88" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">🔒 Envelope Lock</text>
+    
+    <rect x="190" y="60" width="210" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="295" y="88" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">📱 Telegram Bot</text>
+    
+    <rect x="0" y="120" width="190" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="95" y="148" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">👨‍👩‍👧 Household</text>
+    
+    <rect x="210" y="120" width="190" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
+    <text x="305" y="148" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">🔄 Sinking Fund</text>
+  </g>
+  
+  <!-- CTA pill -->
+  <rect x="600" y="370" width="220" height="52" rx="26" fill="#BA7517"/>
+  <text x="710" y="402" font-family="Arial, sans-serif" font-size="18" font-weight="600" fill="#FFFFFF" text-anchor="middle">Mulai Gratis →</text>
+  
+  <!-- Badge -->
+  <rect x="600" y="440" width="280" height="36" rx="18" fill="rgba(255,255,255,0.08)"/>
+  <text x="740" y="464" font-family="Arial, sans-serif" font-size="14" fill="#9FE1CB" text-anchor="middle">🎉 Gratis untuk 100 user pertama</text>
+</svg>
