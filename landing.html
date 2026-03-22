@@ -193,10 +193,10 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 <a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','hero_daftar')">Mulai Gratis &#8594;</a>
 <a href="https://t.me/JatahkuBot" target="_blank" class="btn btn-o btn-l" onclick="trackEvent('cta_click','hero_telegram')">&#128241; Buka di Telegram</a>
 </div>
-<div class="h-social">
-<span><b id="user-count">-</b> user bergabung</span>
-<span>&#8226;</span>
-<span><b id="txn-today">-</b> tercatat hari ini</span>
+<div class="h-social" style="flex-direction:column;gap:6px">
+<span>&#128101; <b id="user-count">-</b> user aktif</span>
+<span>&#128176; <b id="managed">-</b> dikelola &middot; <b id="today">-</b> hari ini &middot; +<b id="week">-</b> minggu ini</span>
+<span>&#129534; <b id="txn-count">-</b> transaksi tercatat</span>
 </div>
 <div class="h-visual"><div class="h-mockup"><div class="ph" id="hero-ss">&#128248; Screenshot dashboard akan ditampilkan di sini</div></div></div>
 </section>

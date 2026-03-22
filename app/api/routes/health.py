@@ -48,25 +48,62 @@ async def health_check(db: AsyncSession = Depends(get_db)):
 @router.get("/api-stats")
 async def public_stats():
     from app.core.database import AsyncSessionLocal
-    from app.models.models import User, Transaction
+    from app.models.models import User, Transaction, Allocation, Income
     from sqlalchemy import select, func
-    from datetime import date
+    from datetime import date, timedelta
+
+    def fmt(n):
+        n = float(n)
+        if n >= 1_000_000_000:
+            return f"Rp {n/1_000_000_000:.1f} M"
+        if n >= 1_000_000:
+            return f"Rp {n/1_000_000:.1f} jt"
+        if n >= 1_000:
+            return f"Rp {int(n/1_000)} rb"
+        return f"Rp {int(n)}"
 
     async with AsyncSessionLocal() as db:
+        # Active users
         user_count = await db.execute(select(func.count(User.id)))
         users = user_count.scalar()
+
         today = date.today()
-        txn_result = await db.execute(
+        week_ago = today - timedelta(days=7)
+
+        # Total managed (all allocations ever)
+        total_managed = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+        )
+        managed = float(total_managed.scalar())
+
+        # Today spending
+        today_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.is_deleted == False,
                 Transaction.transaction_date == today,
             )
         )
-        txn_total = float(txn_result.scalar())
-        if txn_total >= 1_000_000:
-            txn_str = f"Rp {txn_total/1_000_000:.1f} jt"
-        elif txn_total >= 1_000:
-            txn_str = f"Rp {int(txn_total/1_000)} rb"
-        else:
-            txn_str = f"Rp {int(txn_total)}"
-    return {"users": users, "txn_today": txn_str}
+        today_total = float(today_result.scalar())
+
+        # This week spending
+        week_result = await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.is_deleted == False,
+                Transaction.transaction_date >= week_ago,
+            )
+        )
+        week_total = float(week_result.scalar())
+
+        # Total transactions
+        txn_count = await db.execute(
+            select(func.count(Transaction.id)).where(Transaction.is_deleted == False)
+        )
+        total_txns = txn_count.scalar()
+
+    return {
+        "users": users,
+        "managed": fmt(managed),
+        "today": fmt(today_total),
+        "week": fmt(week_total),
+        "txns": total_txns,
+    }

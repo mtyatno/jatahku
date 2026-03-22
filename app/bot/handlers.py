@@ -24,7 +24,7 @@ logger = logging.getLogger("jatahku.bot")
 
 # Matches amount anywhere in text: "35k kopi", "kopi 35k", "beli kopi 35rb"
 AMOUNT_ANYWHERE = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)", re.IGNORECASE
+    r"(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+(?:[,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)", re.IGNORECASE
 )
 MULTIPLIERS = {"jt": 1_000_000, "juta": 1_000_000, "rb": 1_000, "ribu": 1_000, "k": 1_000}
 
@@ -62,17 +62,34 @@ def parse_amount(text):
     match = AMOUNT_ANYWHERE.search(text.strip())
     if not match:
         return None
-    number_str = match.group(1).replace(",", ".")
-    multiplier_str = match.group(2)
-    try:
+
+    if match.group(1):
+        number_str = match.group(1)
+        multiplier_str = match.group(2)
+    elif match.group(3):
+        number_str = match.group(3)
+        multiplier_str = None
+    else:
+        return None
+
+    # Handle Indonesian thousand separator: 17.000 = 17000, 1.500.000 = 1500000
+    if re.match(r"^\d{1,3}(\.\d{3})+$", number_str):
+        number_str = number_str.replace(".", "")
         number = float(number_str)
+    else:
+        number_str = number_str.replace(",", ".")
+        number = float(number_str)
+
+    try:
+        pass
     except ValueError:
         return None
+
     multiplier = MULTIPLIERS.get(multiplier_str.lower(), 1) if multiplier_str else 1
     amount = Decimal(str(int(number * multiplier)))
     if amount <= 0:
         return None
-    # Description = everything except the amount part
+    # Description = everything except the amount part + clean "rp" prefix
     desc = text.strip()[:match.start()].strip() + " " + text.strip()[match.end():].strip()
     desc = desc.strip()
     # Clean up subscription keywords from description
@@ -527,15 +544,28 @@ async def handle_message(update, context):
             if not envelopes_check:
                 await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
                 return
+            import logging
+            logging.getLogger("jatahku").warning(f"No envelope match for '{description}', showing keyboard with {len(envelopes_check)} options")
+            import redis.asyncio as aioredis, json as json_mod, secrets
+            from app.core.config import get_settings
+            txn_key = secrets.token_hex(4)
+            r = aioredis.from_url(get_settings().REDIS_URL)
+            env_map = {}
+            for idx, e in enumerate(envelopes_check):
+                env_map[str(idx)] = str(e["envelope"].id)
+            await r.set(f"txn:{txn_key}", json_mod.dumps({
+                "amount": int(amount), "desc": description, "envs": env_map,
+            }), ex=300)
+            await r.close()
             keyboard = []
-            for e in envelopes_check:
+            for idx, e in enumerate(envelopes_check):
                 env = e["envelope"]
-                emoji = env.emoji or "📁"
+                emoji = env.emoji or "\U0001f4c1"
                 keyboard.append([InlineKeyboardButton(
-                    f"{emoji} {env.name} (sisa {format_currency(e['remaining'])})",
-                    callback_data=f"txn_{env.id}_{amount}_{description[:50]}")])
+                    f"{emoji} {env.name}",
+                    callback_data=f"t_{txn_key}_{idx}")])
             await update.message.reply_text(
-                f"💰 {format_currency(amount)} — {description}\n\nMasuk ke amplop mana?",
+                f"\U0001f4b0 {format_currency(amount)} \u2014 {description}\n\nMasuk ke amplop mana?",
                 reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if confident:
@@ -613,27 +643,52 @@ async def handle_message(update, context):
             )
         else:
             envelopes_data = await get_envelopes_with_spent(hid, db, user.id)
+            import redis.asyncio as aioredis, json as json_mod, secrets
+            from app.core.config import get_settings
+            txn_key = secrets.token_hex(4)
+            r = aioredis.from_url(get_settings().REDIS_URL)
+            env_map = {}
+            for idx, e in enumerate(envelopes_data):
+                env_map[str(idx)] = str(e["envelope"].id)
+            await r.set(f"txn:{txn_key}", json_mod.dumps({
+                "amount": int(amount), "desc": description, "envs": env_map,
+            }), ex=300)
+            await r.close()
             keyboard = []
-            for e in envelopes_data:
+            for idx, e in enumerate(envelopes_data):
                 env = e["envelope"]
-                emoji = env.emoji or "📁"
+                emoji = env.emoji or "\U0001f4c1"
                 keyboard.append([InlineKeyboardButton(
-                    f"{emoji} {env.name} (sisa {format_currency(e['remaining'])})",
-                    callback_data=f"txn_{env.id}_{amount}_{description[:50]}"
-                )])
+                    f"{emoji} {env.name}",
+                    callback_data=f"t_{txn_key}_{idx}")])
             await update.message.reply_text(
-                f"💰 {format_currency(amount)} — {description}\n\nMasuk ke amplop mana?",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-
+                f"\U0001f4b0 {format_currency(amount)} \u2014 {description}\n\nMasuk ke amplop mana?",
+                reply_markup=InlineKeyboardMarkup(keyboard))
+            return
 async def handle_txn_callback(update, context):
     query = update.callback_query
     await query.answer()
-    parts = query.data.split("_", 3)
-    if len(parts) < 4:
+    # t_{redis_key}_{env_idx}
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
         await query.edit_message_text("Error: data nggak valid.")
         return
-    envelope_id, amount, description = parts[1], Decimal(parts[2]), parts[3]
+    txn_key, env_idx = parts[1], parts[2]
+    import redis.asyncio as aioredis, json as json_mod
+    from app.core.config import get_settings
+    r = aioredis.from_url(get_settings().REDIS_URL)
+    txn_data = await r.get(f"txn:{txn_key}")
+    await r.close()
+    if not txn_data:
+        await query.edit_message_text("\u23f0 Session expired. Kirim ulang.")
+        return
+    data = json_mod.loads(txn_data.decode())
+    amount = Decimal(str(data["amount"]))
+    description = data["desc"]
+    envelope_id = data["envs"].get(env_idx)
+    if not envelope_id:
+        await query.edit_message_text("Error: amplop tidak valid.")
+        return
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
@@ -899,7 +954,7 @@ def create_bot_app():
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("join", cmd_join))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
-    app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^txn_"))
+    app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
