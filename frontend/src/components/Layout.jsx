@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import NotificationBell from './NotificationBell';
+import TelegramPrompt from './TelegramPrompt';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
@@ -118,6 +119,7 @@ export default function Layout() {
         </div>
       </nav>
 
+      <TelegramPrompt />
       <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
     </div>
   );
