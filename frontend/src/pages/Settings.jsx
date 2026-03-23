@@ -281,26 +281,6 @@ export default function Settings() {
 
 
 
-      {/* Plan & Usage */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold text-sm">📋 Plan & Usage</h3>
-          <span className={`px-3 py-1 rounded-full text-xs font-bold ${plan === 'pro' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
-            {plan === 'pro' ? '⭐ Pro' : 'Free'}
-          </span>
-        </div>
-        <div className="space-y-2">
-          <UsageBar label="Amplop" used={u.envelopes} limit={l.envelopes} />
-          <UsageBar label="Transaksi bulan ini" used={u.txn_this_month} limit={l.txn_per_month} />
-          <UsageBar label="Langganan" used={u.recurring} limit={l.recurring} />
-        </div>
-        {plan === 'basic' && (
-          <button className="mt-4 w-full btn-primary text-center justify-center text-sm py-2.5">
-            ⭐ Upgrade ke Pro — Rp79.000 sekali bayar
-          </button>
-        )}
-      </div>
-
       {/* Profile */}
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">👤 Profil</h3>
@@ -374,49 +354,6 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Timezone */}
-      <div className="card">
-        <h3 className="font-semibold text-sm mb-3">🕐 Timezone</h3>
-        <div className="flex items-center gap-2">
-          <select className="input text-sm flex-1" value={tz} onChange={e => saveTz(e.target.value)}>
-            {TIMEZONES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          <InlineFlash k="tz" />
-        </div>
-      </div>
-
-      {/* Default Behavior Controls */}
-      <div className="card">
-        <h3 className="font-semibold text-sm mb-1">🛡️ Default Behavior Controls</h3>
-        <p className="text-xs text-gray-400 mb-4">Setting default untuk amplop baru. Bisa diubah per amplop.</p>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm text-gray-600">Cooling threshold (Rp)</label>
-            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 500000" value={cooling} onChange={e => setCooling(e.target.value)} />
-            <p className="text-xs text-gray-400 mt-1">Transaksi di atas jumlah ini harus tunggu 24 jam</p>
-          </div>
-          <div>
-            <label className="text-sm text-gray-600">Daily limit (Rp)</label>
-            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 100000" value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} />
-            <p className="text-xs text-gray-400 mt-1">Maksimal pengeluaran per hari per amplop</p>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            <input type="checkbox" checked={defaultLocked} onChange={e => setDefaultLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
-            Kunci amplop baru secara default
-          </label>
-          <div className="flex items-center gap-2">
-            <button onClick={saveBehavior} className="btn-primary text-sm py-2">Simpan default</button>
-            <InlineFlash k="behavior" />
-          </div>
-        </div>
-      </div>
-
-      {/* Notifications */}
-      <div className="card">
-        <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
-        <NotifPrefs />
-      </div>
-
       {/* Telegram */}
       {!profile.telegram_id ? (
         <div className="card border-brand-200">
@@ -476,6 +413,69 @@ export default function Settings() {
           </div>
         ) : (
           <button onClick={generateInvite} className="text-sm text-brand-600 hover:underline">+ Invite anggota</button>
+        )}
+      </div>
+
+      {/* Timezone */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🕐 Timezone</h3>
+        <div className="flex items-center gap-2">
+          <select className="input text-sm flex-1" value={tz} onChange={e => saveTz(e.target.value)}>
+            {TIMEZONES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <InlineFlash k="tz" />
+        </div>
+      </div>
+
+      {/* Default Behavior Controls */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-1">🛡️ Default Behavior Controls</h3>
+        <p className="text-xs text-gray-400 mb-4">Setting default untuk amplop baru. Bisa diubah per amplop.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-gray-600">Cooling threshold (Rp)</label>
+            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 500000" value={cooling} onChange={e => setCooling(e.target.value)} />
+            <p className="text-xs text-gray-400 mt-1">Transaksi di atas jumlah ini harus tunggu 24 jam</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-600">Daily limit (Rp)</label>
+            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 100000" value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} />
+            <p className="text-xs text-gray-400 mt-1">Maksimal pengeluaran per hari per amplop</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={defaultLocked} onChange={e => setDefaultLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
+            Kunci amplop baru secara default
+          </label>
+          <div className="flex items-center gap-2">
+            <button onClick={saveBehavior} className="btn-primary text-sm py-2">Simpan default</button>
+            <InlineFlash k="behavior" />
+          </div>
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
+        <NotifPrefs />
+      </div>
+
+      {/* Plan & Usage */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-sm">📋 Plan & Usage</h3>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${plan === 'pro' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+            {plan === 'pro' ? '⭐ Pro' : 'Free'}
+          </span>
+        </div>
+        <div className="space-y-2">
+          <UsageBar label="Amplop" used={u.envelopes} limit={l.envelopes} />
+          <UsageBar label="Transaksi bulan ini" used={u.txn_this_month} limit={l.txn_per_month} />
+          <UsageBar label="Langganan" used={u.recurring} limit={l.recurring} />
+        </div>
+        {plan === 'basic' && (
+          <button className="mt-4 w-full btn-primary text-center justify-center text-sm py-2.5">
+            ⭐ Upgrade ke Pro — Rp79.000 sekali bayar
+          </button>
         )}
       </div>
 
