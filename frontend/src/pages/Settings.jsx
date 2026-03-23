@@ -22,9 +22,17 @@ const TIMEZONES = [
 function NotifPrefs() {
   const [prefs, setPrefs] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [dailyTime, setDailyTime] = useState('20:00');
+  const [weeklyTime, setWeeklyTime] = useState('08:00');
 
   useEffect(() => {
-    api.request('/notifications/preferences').then(r => r.ok ? r.json() : null).then(setPrefs);
+    api.request('/notifications/preferences').then(r => r.ok ? r.json() : null).then(d => {
+      if (d) {
+        setPrefs(d);
+        setDailyTime(d.daily_summary_time || '20:00');
+        setWeeklyTime(d.weekly_summary_time || '08:00');
+      }
+    });
   }, []);
 
   const toggle = async (key) => {
@@ -34,6 +42,17 @@ function NotifPrefs() {
     await api.request('/notifications/preferences', {
       method: 'PUT',
       body: JSON.stringify(updated),
+    });
+    setSaving(false);
+  };
+
+  const saveTime = async (key, val) => {
+    if (key === 'daily') setDailyTime(val);
+    else setWeeklyTime(val);
+    setSaving(true);
+    await api.request('/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ ...prefs, [key + '_summary_time']: val }),
     });
     setSaving(false);
   };
@@ -60,7 +79,18 @@ function NotifPrefs() {
           <label className="flex justify-center"><input type="checkbox" checked={prefs[r.key + '_web']} onChange={() => toggle(r.key + '_web')} className="w-4 h-4 rounded border-gray-300 text-brand-600" /></label>
         </div>
       ))}
-      {saving && <p className="text-xs text-brand-600">Menyimpan...</p>}
+      <div className="border-t border-gray-100 pt-3 mt-3 space-y-2">
+        <p className="text-xs text-gray-400 font-medium">Jadwal ringkasan (sesuai timezone kamu):</p>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600 w-32">Harian</span>
+          <input type="time" className="input text-sm py-1 w-28" value={dailyTime} onChange={e => saveTime('daily', e.target.value)} />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600 w-32">Mingguan (Senin)</span>
+          <input type="time" className="input text-sm py-1 w-28" value={weeklyTime} onChange={e => saveTime('weekly', e.target.value)} />
+        </div>
+      </div>
+      {saving && <p className="text-xs text-brand-600 mt-2">Menyimpan...</p>}
     </div>
   );
 }
@@ -131,30 +161,32 @@ export default function Settings() {
     return () => clearInterval(interval);
   }, [linkCode, profile?.telegram_id]);
 
-  const flash = (m) => { setMsg(m); setErrMsg(''); setTimeout(() => setMsg(''), 3000); };
-  const flashErr = (m) => { setErrMsg(m); setMsg(''); setTimeout(() => setErrMsg(''), 3000); };
+  const [inlineMsg, setInlineMsg] = useState({ key: '', text: '' });
+  const flash = (m, key='global') => { setInlineMsg({ key, text: m }); setTimeout(() => setInlineMsg({ key: '', text: '' }), 3000); };
+  const flashErr = (m, key='global') => { setInlineMsg({ key, text: '❌ ' + m }); setTimeout(() => setInlineMsg({ key: '', text: '' }), 3000); };
+  const InlineFlash = ({ k }) => inlineMsg.key === k ? <span className="text-xs text-brand-600 ml-2 animate-pulse">{inlineMsg.text}</span> : null;
 
   const saveName = async () => {
     await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ name }) });
-    setEditName(false); flash('Nama diperbarui'); load();
+    setEditName(false); flash('Nama diperbarui', 'name'); load();
   };
 
   const saveEmail = async () => {
     const res = await api.request('/user/email', { method: 'PUT', body: JSON.stringify({ new_email: newEmail, password: emailPwd }) });
-    if (res.ok) { setEditEmail(false); setNewEmail(''); setEmailPwd(''); flash('Email diperbarui'); load(); }
-    else { const d = await res.json(); flashErr(d.detail || 'Gagal'); }
+    if (res.ok) { setEditEmail(false); setNewEmail(''); setEmailPwd(''); flash('Email diperbarui', 'email'); load(); }
+    else { const d = await res.json(); flashErr(d.detail || 'Gagal', 'email'); }
   };
 
   const savePwd = async () => {
     const res = await api.request('/user/password', { method: 'PUT', body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }) });
-    if (res.ok) { setEditPwd(false); setCurrentPwd(''); setNewPwd(''); flash('Password diperbarui'); }
-    else { const d = await res.json(); flashErr(d.detail || 'Gagal'); }
+    if (res.ok) { setEditPwd(false); setCurrentPwd(''); setNewPwd(''); flash('Password diperbarui', 'pwd'); }
+    else { const d = await res.json(); flashErr(d.detail || 'Gagal', 'pwd'); }
   };
 
   const saveTz = async (val) => {
     setTz(val);
     await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ timezone: val }) });
-    flash('Timezone diperbarui');
+    flash('Timezone diperbarui', 'tz');
   };
 
   const saveBehavior = async () => {
@@ -166,7 +198,7 @@ export default function Settings() {
         default_is_locked: defaultLocked,
       }),
     });
-    flash('Default behavior diperbarui');
+    flash('Default behavior diperbarui', 'behavior');
   };
 
   const uploadPic = async (e) => {
@@ -174,9 +206,10 @@ export default function Settings() {
     if (!file) return;
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${api.baseUrl}/user/profile-pic`, {
+    const baseUrl = api.baseUrl || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://api.jatahku.com');
+    const res = await fetch(baseUrl + '/user/profile-pic', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${api.token}` },
+      headers: { 'Authorization': 'Bearer ' + api.token },
       body: form,
     });
     if (res.ok) { flash('Foto diperbarui'); load(); }
@@ -196,20 +229,35 @@ export default function Settings() {
   };
 
   const exportData = async () => {
-    const res = await api.request('/user/export-data');
-    if (res.ok) {
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `jatahku-data-${profile.name}.json`; a.click();
+    try {
+      const res = await api.request('/user/export-data');
+      if (res.ok) {
+        const data = await res.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'jatahku-data-' + (profile?.name || 'user') + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        flash('Data berhasil didownload', 'data');
+      }
+    } catch (e) {
+      flashErr('Gagal download data', 'data');
     }
   };
 
   const deleteAccount = async () => {
     if (deleteConfirm !== 'HAPUS') return;
-    await exportData();
-    await api.request('/user/account', { method: 'DELETE' });
-    logout();
+    try {
+      await exportData();
+      await api.request('/user/account', { method: 'DELETE' });
+      logout();
+    } catch (e) {
+      flashErr('Gagal hapus akun', 'data');
+    }
   };
 
   const logoutAll = async () => {
@@ -231,8 +279,7 @@ export default function Settings() {
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-display font-bold">Settings</h1>
 
-      {msg && <div className="bg-green-50 border border-green-200 text-sm px-4 py-3 rounded-xl text-green-700">{msg}</div>}
-      {errMsg && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl text-red-600">{errMsg}</div>}
+
 
       {/* Plan & Usage */}
       <div className="card">
@@ -330,9 +377,12 @@ export default function Settings() {
       {/* Timezone */}
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">🕐 Timezone</h3>
-        <select className="input text-sm" value={tz} onChange={e => saveTz(e.target.value)}>
-          {TIMEZONES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
+        <div className="flex items-center gap-2">
+          <select className="input text-sm flex-1" value={tz} onChange={e => saveTz(e.target.value)}>
+            {TIMEZONES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          <InlineFlash k="tz" />
+        </div>
       </div>
 
       {/* Default Behavior Controls */}
@@ -354,7 +404,10 @@ export default function Settings() {
             <input type="checkbox" checked={defaultLocked} onChange={e => setDefaultLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
             Kunci amplop baru secara default
           </label>
-          <button onClick={saveBehavior} className="btn-primary text-sm py-2">Simpan default</button>
+          <div className="flex items-center gap-2">
+            <button onClick={saveBehavior} className="btn-primary text-sm py-2">Simpan default</button>
+            <InlineFlash k="behavior" />
+          </div>
         </div>
       </div>
 
@@ -447,7 +500,10 @@ export default function Settings() {
               <p className="text-sm">Download semua data</p>
               <p className="text-xs text-gray-400">Export dalam format JSON</p>
             </div>
-            <button onClick={exportData} className="text-sm text-brand-600 hover:underline">Download</button>
+            <div className="flex items-center gap-2">
+              <button onClick={exportData} className="text-sm text-brand-600 hover:underline">Download</button>
+              <InlineFlash k="data" />
+            </div>
           </div>
           <div className="border-t border-gray-100 pt-3">
             {!showDelete ? (

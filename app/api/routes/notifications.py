@@ -103,6 +103,8 @@ class PrefsUpdate(BaseModel):
     weekly_summary_web: bool = True
     cooling_ready_tg: bool = True
     cooling_ready_web: bool = True
+    daily_summary_time: str = "20:00"
+    weekly_summary_time: str = "08:00"
 
 
 @router.get("/preferences")
@@ -123,6 +125,8 @@ async def get_preferences(
         "weekly_summary_web": prefs.weekly_summary_web,
         "cooling_ready_tg": prefs.cooling_ready_tg,
         "cooling_ready_web": prefs.cooling_ready_web,
+        "daily_summary_time": prefs.daily_summary_time or "20:00",
+        "weekly_summary_time": prefs.weekly_summary_time or "08:00",
     }
 
 

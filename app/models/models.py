@@ -54,6 +54,13 @@ class User(TimestampMixin, Base):
         String(50), unique=True, index=True
     )
     password_hash: Mapped[str | None] = mapped_column(String(255))
+    timezone: Mapped[str | None] = mapped_column(String(30), default="Asia/Jakarta")
+    profile_pic: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    default_cooling_threshold: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    default_daily_limit: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    default_is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    plan: Mapped[str | None] = mapped_column(String(10), default="basic")
+    last_login: Mapped[datetime | None] = mapped_column(nullable=True)
 
     # Relationships
     household_memberships: Mapped[list["HouseholdMember"]] = relationship(
@@ -285,6 +292,8 @@ class NotificationPreference(TimestampMixin, Base):
     weekly_summary_web: Mapped[bool] = mapped_column(Boolean, default=True)
     cooling_ready_tg: Mapped[bool] = mapped_column(Boolean, default=True)
     cooling_ready_web: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_summary_time: Mapped[str | None] = mapped_column(String(5), default="20:00")
+    weekly_summary_time: Mapped[str | None] = mapped_column(String(5), default="08:00")
 
     user: Mapped["User"] = relationship()
 

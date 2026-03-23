@@ -224,7 +224,7 @@ async def export_data(
     inc_result = await db.execute(
         select(Income).where(Income.user_id == user.id).order_by(Income.created_at)
     )
-    incomes = [{"date": str(i.income_date), "amount": str(i.amount), "source": i.source} for i in inc_result.scalars().all()]
+    incomes = [{"date": str(i.income_date), "amount": str(i.amount), "source": getattr(i, "source", None)} for i in inc_result.scalars().all()]
 
     # Recurring
     rec_result = await db.execute(

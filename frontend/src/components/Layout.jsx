@@ -85,12 +85,9 @@ export default function Layout() {
                 </div>
                 <button onClick={() => { navigate('/settings'); setMenuOpen(false); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
-                  <span>⚙️</span> Settings
+                  <span>⚙️</span> Profil & Settings
                 </button>
-                <button onClick={() => { navigate('/settings'); setMenuOpen(false); }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
-                  <span>👤</span> Profil
-                </button>
+
                 <div className="border-t border-gray-50 mt-1 pt-1">
                   <button onClick={() => { logout(); setMenuOpen(false); }}
                     className="w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 flex items-center gap-3">
