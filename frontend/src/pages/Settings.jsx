@@ -1,7 +1,23 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import { formatCurrency } from '../lib/utils';
 
+const TIMEZONES = [
+  { value: 'Asia/Jakarta', label: 'WIB (Jakarta, GMT+7)' },
+  { value: 'Asia/Makassar', label: 'WITA (Makassar, GMT+8)' },
+  { value: 'Asia/Jayapura', label: 'WIT (Jayapura, GMT+9)' },
+  { value: 'Asia/Singapore', label: 'Singapore (GMT+8)' },
+  { value: 'Asia/Bangkok', label: 'Bangkok (GMT+7)' },
+  { value: 'Asia/Tokyo', label: 'Tokyo (GMT+9)' },
+  { value: 'Asia/Dubai', label: 'Dubai (GMT+4)' },
+  { value: 'Europe/London', label: 'London (GMT+0)' },
+  { value: 'Europe/Berlin', label: 'Berlin (GMT+1)' },
+  { value: 'America/New_York', label: 'New York (GMT-5)' },
+  { value: 'America/Los_Angeles', label: 'Los Angeles (GMT-8)' },
+  { value: 'Australia/Sydney', label: 'Sydney (GMT+11)' },
+];
 
 function NotifPrefs() {
   const [prefs, setPrefs] = useState(null);
@@ -44,31 +60,128 @@ function NotifPrefs() {
           <label className="flex justify-center"><input type="checkbox" checked={prefs[r.key + '_web']} onChange={() => toggle(r.key + '_web')} className="w-4 h-4 rounded border-gray-300 text-brand-600" /></label>
         </div>
       ))}
-      {saving && <p className="text-xs text-gray-400">Menyimpan...</p>}
+      {saving && <p className="text-xs text-brand-600">Menyimpan...</p>}
     </div>
   );
 }
 
 export default function Settings() {
   const { user, logout } = useAuth();
-  const [linkCode, setLinkCode] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [linkLoading, setLinkLoading] = useState(false);
-  const [unlinkLoading, setUnlinkLoading] = useState(false);
-  const [household, setHousehold] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [inviteCode, setInviteCode] = useState(null);
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [joinCode, setJoinCode] = useState('');
-  const [joinLoading, setJoinLoading] = useState(false);
-  const [joinError, setJoinError] = useState('');
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const load = () => {
-    api.getMe().then(u => { if (u) window.__user = u; });
-    api.request('/household/').then(r => r.ok ? r.json() : null).then(setHousehold);
-    api.request('/household/members').then(r => r.ok ? r.json() : []).then(setMembers);
+  // Form states
+  const [editName, setEditName] = useState(false);
+  const [name, setName] = useState('');
+  const [editEmail, setEditEmail] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [emailPwd, setEmailPwd] = useState('');
+  const [editPwd, setEditPwd] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [tz, setTz] = useState('');
+  const [cooling, setCooling] = useState('');
+  const [dailyLimit, setDailyLimit] = useState('');
+  const [defaultLocked, setDefaultLocked] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [errMsg, setErrMsg] = useState('');
+
+  // Link TG
+  const [linkCode, setLinkCode] = useState(null);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Delete
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+
+  // Household
+  const [members, setMembers] = useState([]);
+  const [inviteCode, setInviteCode] = useState('');
+
+  const load = async () => {
+    const res = await api.request('/user/profile');
+    if (res.ok) {
+      const p = await res.json();
+      setProfile(p);
+      setName(p.name);
+      setTz(p.timezone);
+      setCooling(p.default_cooling_threshold || '');
+      setDailyLimit(p.default_daily_limit || '');
+      setDefaultLocked(p.default_is_locked);
+    }
+    const mRes = await api.request('/household/members');
+    if (mRes.ok) setMembers(await mRes.json());
+    setLoading(false);
   };
-  useEffect(load, []);
+
+  useEffect(() => { load(); }, []);
+
+  // Poll for TG link
+  useEffect(() => {
+    if (!linkCode || profile?.telegram_id) return;
+    const interval = setInterval(async () => {
+      const res = await api.request('/auth/me');
+      if (res.ok) {
+        const me = await res.json();
+        if (me.telegram_id) window.location.reload();
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [linkCode, profile?.telegram_id]);
+
+  const flash = (m) => { setMsg(m); setErrMsg(''); setTimeout(() => setMsg(''), 3000); };
+  const flashErr = (m) => { setErrMsg(m); setMsg(''); setTimeout(() => setErrMsg(''), 3000); };
+
+  const saveName = async () => {
+    await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ name }) });
+    setEditName(false); flash('Nama diperbarui'); load();
+  };
+
+  const saveEmail = async () => {
+    const res = await api.request('/user/email', { method: 'PUT', body: JSON.stringify({ new_email: newEmail, password: emailPwd }) });
+    if (res.ok) { setEditEmail(false); setNewEmail(''); setEmailPwd(''); flash('Email diperbarui'); load(); }
+    else { const d = await res.json(); flashErr(d.detail || 'Gagal'); }
+  };
+
+  const savePwd = async () => {
+    const res = await api.request('/user/password', { method: 'PUT', body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }) });
+    if (res.ok) { setEditPwd(false); setCurrentPwd(''); setNewPwd(''); flash('Password diperbarui'); }
+    else { const d = await res.json(); flashErr(d.detail || 'Gagal'); }
+  };
+
+  const saveTz = async (val) => {
+    setTz(val);
+    await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ timezone: val }) });
+    flash('Timezone diperbarui');
+  };
+
+  const saveBehavior = async () => {
+    await api.request('/user/behavior-defaults', {
+      method: 'PUT',
+      body: JSON.stringify({
+        default_cooling_threshold: cooling ? Number(cooling) : null,
+        default_daily_limit: dailyLimit ? Number(dailyLimit) : null,
+        default_is_locked: defaultLocked,
+      }),
+    });
+    flash('Default behavior diperbarui');
+  };
+
+  const uploadPic = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${api.baseUrl}/user/profile-pic`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${api.token}` },
+      body: form,
+    });
+    if (res.ok) { flash('Foto diperbarui'); load(); }
+    else flashErr('Gagal upload. Max 2MB.');
+  };
 
   const generateLinkCode = async () => {
     setLinkLoading(true);
@@ -77,77 +190,185 @@ export default function Settings() {
     setLinkLoading(false);
   };
 
-  // Poll to detect when Telegram is linked
-  useEffect(() => {
-    if (!linkCode || user?.telegram_id) return;
-    const interval = setInterval(async () => {
-      const res = await api.request('/auth/me');
-      if (res.ok) {
-        const me = await res.json();
-        if (me.telegram_id) {
-          window.location.reload();
-        }
-      }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [linkCode, user?.telegram_id]);
-
-  const handleUnlink = async () => {
-    if (!confirm('Yakin mau unlink Telegram? Data tetap aman, tapi kamu nggak bisa catat lewat Telegram sampai link ulang.')) return;
-    setUnlinkLoading(true);
-    const res = await api.request('/auth/link/unlink', { method: 'POST' });
-    setUnlinkLoading(false);
-    if (res.ok) { window.location.reload(); }
-  };
-
   const generateInvite = async () => {
-    setInviteLoading(true);
     const res = await api.request('/household/invite', { method: 'POST' });
-    if (res.ok) { const data = await res.json(); setInviteCode(data.code); }
-    setInviteLoading(false);
+    if (res.ok) { const d = await res.json(); setInviteCode(d.code); }
   };
 
-  const handleJoin = async (e) => {
-    e.preventDefault();
-    setJoinLoading(true); setJoinError('');
-    const res = await api.request(`/household/join?code=${joinCode.trim().toUpperCase()}`, { method: 'POST' });
-    const data = await res.json();
-    setJoinLoading(false);
-    if (res.ok) { window.location.reload(); } else { setJoinError(data.detail || 'Gagal bergabung'); }
+  const exportData = async () => {
+    const res = await api.request('/user/export-data');
+    if (res.ok) {
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `jatahku-data-${profile.name}.json`; a.click();
+    }
   };
 
-  const roleLabel = (role) => role === 'owner' ? '👑 Owner' : role === 'admin' ? '⭐ Admin' : '👤 Member';
+  const deleteAccount = async () => {
+    if (deleteConfirm !== 'HAPUS') return;
+    await exportData();
+    await api.request('/user/account', { method: 'DELETE' });
+    logout();
+  };
+
+  const logoutAll = async () => {
+    await api.request('/user/logout-all', { method: 'POST' });
+    flash('Semua sesi di-logout');
+    logout();
+  };
+
+  const roleLabel = (r) => ({ owner: 'Owner', admin: 'Admin', member: 'Member' }[r] || r);
+
+  if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
+  if (!profile) return <div className="text-center py-12 text-gray-400">Error loading profile</div>;
+
+  const plan = profile.plan || 'basic';
+  const u = profile.usage;
+  const l = profile.limits;
 
   return (
-    <div className="space-y-6 max-w-lg">
-      <div><h1 className="text-2xl font-display font-bold">Settings</h1><p className="text-sm text-gray-500">Kelola akun dan household</p></div>
+    <div className="space-y-6 max-w-2xl">
+      <h1 className="text-2xl font-display font-bold">Settings</h1>
 
+      {msg && <div className="bg-green-50 border border-green-200 text-sm px-4 py-3 rounded-xl text-green-700">{msg}</div>}
+      {errMsg && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl text-red-600">{errMsg}</div>}
+
+      {/* Plan & Usage */}
       <div className="card">
-        <h3 className="font-semibold text-sm mb-3">Profil</h3>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between"><span className="text-gray-400">Nama</span><span className="font-medium">{user?.name}</span></div>
-          <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="font-medium">{user?.email || '-'}</span></div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-400">Telegram</span>
-            {user?.telegram_id ? (
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-sm">📋 Plan & Usage</h3>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${plan === 'pro' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+            {plan === 'pro' ? '⭐ Pro' : 'Free'}
+          </span>
+        </div>
+        <div className="space-y-2">
+          <UsageBar label="Amplop" used={u.envelopes} limit={l.envelopes} />
+          <UsageBar label="Transaksi bulan ini" used={u.txn_this_month} limit={l.txn_per_month} />
+          <UsageBar label="Langganan" used={u.recurring} limit={l.recurring} />
+        </div>
+        {plan === 'basic' && (
+          <button className="mt-4 w-full btn-primary text-center justify-center text-sm py-2.5">
+            ⭐ Upgrade ke Pro — Rp79.000 sekali bayar
+          </button>
+        )}
+      </div>
+
+      {/* Profile */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">👤 Profil</h3>
+        <div className="flex items-center gap-4 mb-4">
+          <div className="relative group">
+            {profile.profile_pic ? (
+              <img src={profile.profile_pic} alt="" className="w-16 h-16 rounded-full object-cover border-2 border-gray-100" />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-brand-50 flex items-center justify-center text-2xl font-bold text-brand-600 border-2 border-gray-100">
+                {profile.name?.charAt(0)?.toUpperCase() || '?'}
+              </div>
+            )}
+            <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
+              <span className="text-white text-xs font-medium">Ganti</span>
+              <input type="file" accept="image/*" className="hidden" onChange={uploadPic} />
+            </label>
+          </div>
+          <div className="flex-1">
+            {!editName ? (
               <div className="flex items-center gap-2">
-                <span className="font-medium text-brand-600">✅ Terhubung</span>
-                <button onClick={handleUnlink} disabled={unlinkLoading} className="text-xs text-danger-400 hover:underline disabled:opacity-50">
-                  {unlinkLoading ? '...' : 'Unlink'}
-                </button>
+                <span className="font-semibold">{profile.name}</span>
+                <button onClick={() => setEditName(true)} className="text-xs text-brand-600 hover:underline">Edit</button>
               </div>
             ) : (
-              <span className="font-medium">❌ Belum terhubung</span>
+              <div className="flex gap-2">
+                <input className="input text-sm py-1.5 flex-1" value={name} onChange={e => setName(e.target.value)} />
+                <button onClick={saveName} className="text-xs text-brand-600 font-medium">Simpan</button>
+                <button onClick={() => { setEditName(false); setName(profile.name); }} className="text-xs text-gray-400">Batal</button>
+              </div>
             )}
+            <p className="text-xs text-gray-400 mt-0.5">{profile.email}</p>
           </div>
+        </div>
+
+        {/* Email */}
+        <div className="border-t border-gray-100 pt-3 mt-3">
+          {!editEmail ? (
+            <div className="flex items-center justify-between">
+              <div><p className="text-xs text-gray-400">Email</p><p className="text-sm">{profile.email}</p></div>
+              <button onClick={() => setEditEmail(true)} className="text-xs text-brand-600 hover:underline">Ganti email</button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <input className="input text-sm" placeholder="Email baru" value={newEmail} onChange={e => setNewEmail(e.target.value)} />
+              <input className="input text-sm" type="password" placeholder="Password untuk konfirmasi" value={emailPwd} onChange={e => setEmailPwd(e.target.value)} />
+              <div className="flex gap-2">
+                <button onClick={saveEmail} disabled={!newEmail || !emailPwd} className="btn-primary text-sm py-1.5 disabled:opacity-50">Simpan</button>
+                <button onClick={() => { setEditEmail(false); setNewEmail(''); setEmailPwd(''); }} className="text-xs text-gray-400">Batal</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Password */}
+        <div className="border-t border-gray-100 pt-3 mt-3">
+          {!editPwd ? (
+            <div className="flex items-center justify-between">
+              <div><p className="text-xs text-gray-400">Password</p><p className="text-sm">••••••••</p></div>
+              <button onClick={() => setEditPwd(true)} className="text-xs text-brand-600 hover:underline">Ganti password</button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <input className="input text-sm" type="password" placeholder="Password lama" value={currentPwd} onChange={e => setCurrentPwd(e.target.value)} />
+              <input className="input text-sm" type="password" placeholder="Password baru (min 6 karakter)" value={newPwd} onChange={e => setNewPwd(e.target.value)} />
+              <div className="flex gap-2">
+                <button onClick={savePwd} disabled={!currentPwd || newPwd.length < 6} className="btn-primary text-sm py-1.5 disabled:opacity-50">Simpan</button>
+                <button onClick={() => { setEditPwd(false); setCurrentPwd(''); setNewPwd(''); }} className="text-xs text-gray-400">Batal</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {!user?.telegram_id && (
-        <div className="card border-brand-200">
-          <h3 className="font-semibold text-sm mb-2">Link Telegram</h3>
-          <p className="text-xs text-gray-500 mb-3">Hubungkan akun Telegram supaya bisa catat pengeluaran lewat chat.</p>
+      {/* Timezone */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🕐 Timezone</h3>
+        <select className="input text-sm" value={tz} onChange={e => saveTz(e.target.value)}>
+          {TIMEZONES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </div>
 
+      {/* Default Behavior Controls */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-1">🛡️ Default Behavior Controls</h3>
+        <p className="text-xs text-gray-400 mb-4">Setting default untuk amplop baru. Bisa diubah per amplop.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-gray-600">Cooling threshold (Rp)</label>
+            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 500000" value={cooling} onChange={e => setCooling(e.target.value)} />
+            <p className="text-xs text-gray-400 mt-1">Transaksi di atas jumlah ini harus tunggu 24 jam</p>
+          </div>
+          <div>
+            <label className="text-sm text-gray-600">Daily limit (Rp)</label>
+            <input className="input text-sm mt-1" type="number" placeholder="Contoh: 100000" value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} />
+            <p className="text-xs text-gray-400 mt-1">Maksimal pengeluaran per hari per amplop</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={defaultLocked} onChange={e => setDefaultLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
+            Kunci amplop baru secara default
+          </label>
+          <button onClick={saveBehavior} className="btn-primary text-sm py-2">Simpan default</button>
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
+        <NotifPrefs />
+      </div>
+
+      {/* Telegram */}
+      {!profile.telegram_id ? (
+        <div className="card border-brand-200">
+          <h3 className="font-semibold text-sm mb-2">📱 Link Telegram</h3>
+          <p className="text-xs text-gray-500 mb-3">Hubungkan akun Telegram supaya bisa catat pengeluaran lewat chat.</p>
           {linkCode ? (
             <div className="text-center py-4">
               <p className="text-xs text-gray-400 mb-2">Kirim perintah ini ke @JatahkuBot:</p>
@@ -170,60 +391,108 @@ export default function Settings() {
             </button>
           )}
         </div>
-      )}
-
-      {household && (
+      ) : (
         <div className="card">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-sm">🏠 {household.name}</h3>
-            <span className="text-xs text-gray-400">{household.member_count} anggota</span>
-          </div>
-          <div className="space-y-2">
-            {members.map(m => (
-              <div key={m.user_id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center text-sm font-bold text-brand-600">{m.name.charAt(0).toUpperCase()}</div>
-                  <div><p className="text-sm font-medium">{m.name}</p><p className="text-xs text-gray-400">{roleLabel(m.role)}{m.telegram_linked ? ' · 📱 TG' : ''}</p></div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 pt-3 border-t border-gray-100">
-            {inviteCode ? (
-              <div className="text-center py-3">
-                <p className="text-xs text-gray-400 mb-2">Share kode ini ke anggota baru:</p>
-                <div className="bg-gray-50 rounded-xl px-6 py-3 inline-block">
-                  <code className="font-mono text-xl font-bold text-brand-600 tracking-widest">{inviteCode}</code>
-                </div>
-                <p className="text-xs text-gray-400 mt-2">Berlaku 24 jam · <code className="text-brand-600">/join {inviteCode}</code></p>
-              </div>
-            ) : (
-              <button onClick={generateInvite} disabled={inviteLoading} className="btn-outline w-full disabled:opacity-50">
-                {inviteLoading ? '...' : '+ Invite Anggota Baru'}
-              </button>
-            )}
+          <h3 className="font-semibold text-sm mb-2">📱 Telegram</h3>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-brand-600">✅ Terhubung (ID: {profile.telegram_id})</span>
           </div>
         </div>
       )}
 
+      {/* Household */}
       <div className="card">
-        <h3 className="font-semibold text-sm mb-2">Gabung Household</h3>
-        <p className="text-xs text-gray-500 mb-3">Punya kode invite? Masukkan di sini.</p>
-        <form onSubmit={handleJoin} className="flex gap-2">
-          <input type="text" className="input flex-1 font-mono uppercase tracking-widest" placeholder="KODE INVITE" value={joinCode} onChange={e => setJoinCode(e.target.value)} required />
-          <button type="submit" disabled={joinLoading} className="btn-primary disabled:opacity-50">{joinLoading ? '...' : 'Gabung'}</button>
-        </form>
-        {joinError && <p className="text-xs text-danger-400 mt-2">{joinError}</p>}
+        <h3 className="font-semibold text-sm mb-3">👨‍👩‍👧 Household</h3>
+        <div className="space-y-2 mb-3">
+          {members.map((m, i) => (
+            <div key={i} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-brand-50 flex items-center justify-center text-xs font-bold text-brand-600">
+                  {m.name?.charAt(0)?.toUpperCase() || '?'}
+                </div>
+                <span>{m.name}</span>
+              </div>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${m.role === 'owner' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500'}`}>{roleLabel(m.role)}</span>
+            </div>
+          ))}
+        </div>
+        {inviteCode ? (
+          <div className="bg-gray-50 rounded-xl p-3 text-center">
+            <p className="text-xs text-gray-400 mb-1">Kode invite (24 jam):</p>
+            <code className="font-mono text-lg font-bold text-brand-600">{inviteCode}</code>
+          </div>
+        ) : (
+          <button onClick={generateInvite} className="text-sm text-brand-600 hover:underline">+ Invite anggota</button>
+        )}
       </div>
 
+      {/* Session & Security */}
       <div className="card">
-        <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
-        <NotifPrefs />
+        <h3 className="font-semibold text-sm mb-3">🔐 Keamanan</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm">Logout semua perangkat</p>
+            <p className="text-xs text-gray-400">Keluar dari semua sesi aktif</p>
+          </div>
+          <button onClick={logoutAll} className="text-sm text-amber-600 hover:underline">Logout semua</button>
+        </div>
       </div>
 
+      {/* Data & Account */}
       <div className="card">
-        <button onClick={logout} className="text-sm text-danger-400 hover:underline">Logout dari Jatahku</button>
+        <h3 className="font-semibold text-sm mb-3">📦 Data & Akun</h3>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Download semua data</p>
+              <p className="text-xs text-gray-400">Export dalam format JSON</p>
+            </div>
+            <button onClick={exportData} className="text-sm text-brand-600 hover:underline">Download</button>
+          </div>
+          <div className="border-t border-gray-100 pt-3">
+            {!showDelete ? (
+              <button onClick={() => setShowDelete(true)} className="text-sm text-red-400 hover:underline">Hapus akun saya</button>
+            ) : (
+              <div className="bg-red-50 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-semibold text-red-600">⚠️ Hapus akun?</p>
+                <p className="text-xs text-red-500">Semua data kamu akan dihapus permanen. Data akan di-download otomatis sebelum dihapus.</p>
+                <input className="input text-sm border-red-200" placeholder='Ketik "HAPUS" untuk konfirmasi'
+                  value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} />
+                <div className="flex gap-2">
+                  <button onClick={deleteAccount} disabled={deleteConfirm !== 'HAPUS'}
+                    className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl disabled:opacity-50">Hapus permanen</button>
+                  <button onClick={() => { setShowDelete(false); setDeleteConfirm(''); }} className="text-xs text-gray-400">Batal</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Logout */}
+      <div className="card">
+        <button onClick={logout} className="text-sm text-red-400 hover:underline">Logout dari Jatahku</button>
+      </div>
+    </div>
+  );
+}
+
+function UsageBar({ label, used, limit }) {
+  const unlimited = limit === -1;
+  const pct = unlimited ? 0 : Math.min(Math.round((used / limit) * 100), 100);
+  const color = pct >= 90 ? 'bg-red-400' : pct >= 70 ? 'bg-amber-400' : 'bg-brand-400';
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1">
+        <span className="text-gray-500">{label}</span>
+        <span className="text-gray-600 font-medium">{used}{unlimited ? '' : ` / ${limit}`}</span>
+      </div>
+      {!unlimited && (
+        <div className="h-1.5 bg-gray-100 rounded-full">
+          <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {unlimited && <p className="text-xs text-brand-600">Unlimited ✨</p>}
     </div>
   );
 }

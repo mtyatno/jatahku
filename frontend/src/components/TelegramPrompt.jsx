@@ -5,13 +5,20 @@ import { useAuth } from '../hooks/useAuth';
 export default function TelegramPrompt() {
   const { user } = useAuth();
   const [show, setShow] = useState(false);
+  const [hasEnvelopes, setHasEnvelopes] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user && !user.telegram_id) {
-      const timer = setTimeout(() => setShow(true), 500);
-      return () => clearTimeout(timer);
-    }
+    if (!user || user.telegram_id) return;
+    // Check if user has completed onboarding (has envelopes)
+    import('../lib/api').then(({ api }) => {
+      api.getEnvelopeSummary().then(envs => {
+        setHasEnvelopes(envs && envs.length > 0);
+        if (envs && envs.length > 0) {
+          setTimeout(() => setShow(true), 500);
+        }
+      });
+    });
   }, [user]);
 
   if (!show) return null;
