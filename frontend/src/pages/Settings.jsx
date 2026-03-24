@@ -357,27 +357,40 @@ export default function Settings() {
       {/* Telegram */}
       {!profile.telegram_id ? (
         <div className="card border-brand-200">
-          <h3 className="font-semibold text-sm mb-2">📱 Link Telegram</h3>
-          <p className="text-xs text-gray-500 mb-3">Hubungkan akun Telegram supaya bisa catat pengeluaran lewat chat.</p>
+          <h3 className="font-semibold text-sm mb-2">📱 Hubungkan Telegram</h3>
+          <p className="text-xs text-gray-500 mb-4">Catat pengeluaran secepat kirim chat. Ketik "kopi 35k" dan langsung tercatat!</p>
+          <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-2">
+            <div className="flex items-center gap-2 text-sm"><span>⚡</span><span>Catat pengeluaran dalam 3 detik</span></div>
+            <div className="flex items-center gap-2 text-sm"><span>🔔</span><span>Notifikasi budget otomatis</span></div>
+            <div className="flex items-center gap-2 text-sm"><span>📊</span><span>Ringkasan harian & mingguan</span></div>
+          </div>
           {linkCode ? (
-            <div className="text-center py-4">
-              <p className="text-xs text-gray-400 mb-2">Kirim perintah ini ke @JatahkuBot:</p>
-              <div className="bg-gray-50 rounded-xl px-4 py-4 inline-flex items-center gap-3">
-                <code className="font-mono text-2xl font-bold text-brand-600 tracking-widest">/link {linkCode}</code>
-                <button onClick={() => {navigator.clipboard.writeText('/link ' + linkCode); setCopied(true); setTimeout(() => setCopied(false), 2000);}}
-                  className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-500 hover:text-brand-600 hover:border-brand-400 transition-all">
-                  {copied ? '✅ Copied!' : '📋 Copy'}
-                </button>
+            <div className="space-y-4">
+              <div className="bg-brand-50 rounded-xl p-4">
+                <p className="text-sm font-semibold text-brand-700 mb-2">Langkah 1: Buka bot di Telegram</p>
+                <a href={`https://t.me/JatahkuBot?start=link_${linkCode}`} target="_blank"
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors">
+                  📱 Buka @JatahkuBot
+                </a>
               </div>
-              <p className="text-xs text-gray-400 mt-2">Kode berlaku 5 menit</p>
-              <a href="https://t.me/JatahkuBot" target="_blank"
-                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-xl hover:bg-blue-600 transition-colors">
-                📱 Buka @JatahkuBot di Telegram
-              </a>
+              <div className="bg-gray-50 rounded-xl p-4">
+                <p className="text-sm font-semibold text-gray-700 mb-2">Langkah 2: Kirim kode ini di chat bot</p>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-white rounded-lg px-4 py-3 border border-gray-200">
+                    <code className="font-mono text-lg font-bold text-brand-600">/link {linkCode}</code>
+                  </div>
+                  <button onClick={() => {navigator.clipboard.writeText('/link ' + linkCode); setCopied(true); setTimeout(() => setCopied(false), 2000);}}
+                    className="px-4 py-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-500 hover:text-brand-600 hover:border-brand-400 transition-all whitespace-nowrap">
+                    {copied ? '✅ Copied!' : '📋 Copy'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-2">Kode berlaku 5 menit</p>
+              </div>
             </div>
           ) : (
-            <button onClick={generateLinkCode} disabled={linkLoading} className="btn-primary disabled:opacity-50">
-              {linkLoading ? '...' : 'Generate Kode Link'}
+            <button onClick={generateLinkCode} disabled={linkLoading}
+              className="w-full btn-primary justify-center text-center disabled:opacity-50">
+              {linkLoading ? 'Generating...' : '🔗 Generate Link Telegram'}
             </button>
           )}
         </div>

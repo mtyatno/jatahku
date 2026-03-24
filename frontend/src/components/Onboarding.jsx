@@ -142,11 +142,13 @@ export default function Onboarding({ onDone }) {
     });
 
     setSaving(false);
+    sessionStorage.setItem('just_onboarded', '1');
+    sessionStorage.removeItem('tg_prompt_dismissed');
     onDone();
   };
 
   return (
-    <div className="max-w-lg mx-auto py-8">
+    <div className="max-w-lg mx-auto py-8 pb-28">
       <div className="text-center mb-6">
         <h1 className="font-display text-3xl font-bold text-brand-600 mb-2">Selamat datang!</h1>
         <div className="flex justify-center gap-2 mb-4">
@@ -210,18 +212,20 @@ export default function Onboarding({ onDone }) {
       {step === 3 && (
         <div className="space-y-4">
           <button onClick={() => setStep(2)} className="text-sm text-brand-600 hover:underline">← Pilih template lain</button>
-          <div className="flex gap-3">
-            <div className="card flex-1">
-              <p className="text-xs text-gray-400">Income</p>
-              <p className="font-display text-lg font-bold">{formatCurrency(incomeNum)}</p>
+          <div className="card">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Income</span>
+              <span className="font-display font-bold">{formatCurrency(incomeNum)}</span>
             </div>
-            <div className="card flex-1">
-              <p className="text-xs text-gray-400">Dialokasikan</p>
-              <p className="font-display text-lg font-bold text-amber-500">{formatCurrency(totalAllocated)}</p>
+            <div className="h-2 bg-gray-100 rounded-full mt-2 mb-1 overflow-hidden">
+              <div className="h-full rounded-full transition-all" style={{
+                width: `${incomeNum > 0 ? Math.min(Math.round(totalAllocated / incomeNum * 100), 100) : 0}%`,
+                background: remainder < 0 ? '#E24B4A' : '#0F6E56',
+              }} />
             </div>
-            <div className="card flex-1">
-              <p className="text-xs text-gray-400">→ Tabungan</p>
-              <p className={`font-display text-lg font-bold ${remainder >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatCurrency(Math.abs(remainder))}</p>
+            <div className="flex items-center justify-between text-xs text-gray-400">
+              <span>Dialokasi: <b className="text-amber-500">{formatCurrency(totalAllocated)}</b></span>
+              <span>Tabungan: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{formatCurrency(Math.abs(remainder))}</b></span>
             </div>
           </div>
 

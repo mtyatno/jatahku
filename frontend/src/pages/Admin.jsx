@@ -259,6 +259,23 @@ export default function Admin() {
           </div>
 
           <div className="card">
+            <h3 className="font-semibold text-sm mb-3">📱 Telegram Reminder</h3>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Email reminder ke user tanpa Telegram</p>
+                <p className="text-xs text-gray-400">Kirim email ajakan link Telegram ke semua user yang belum connect</p>
+              </div>
+              <button onClick={async () => {
+                if (!confirm('Kirim email reminder ke semua user tanpa Telegram?')) return;
+                const res = await api.request('/admin/send-tg-reminders', { method: 'POST' });
+                if (res.ok) { const d = await res.json(); setActionMsg(`✅ Email terkirim ke ${d.sent} dari ${d.total_unlinked} user`); setTimeout(() => setActionMsg(''), 5000); }
+              }} className="text-sm px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100">
+                Kirim Reminder
+              </button>
+            </div>
+          </div>
+
+          <div className="card">
             <h3 className="font-semibold text-sm mb-3">📢 Broadcast Notification</h3>
             <div className="space-y-2">
               <input className="input text-sm" placeholder="Judul notifikasi" value={notifTitle} onChange={e => setNotifTitle(e.target.value)} />

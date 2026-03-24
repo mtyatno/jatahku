@@ -10,6 +10,13 @@ export default function TelegramPrompt() {
 
   useEffect(() => {
     if (!user || user.telegram_id) return;
+    if (sessionStorage.getItem('tg_prompt_dismissed')) return;
+    // Show immediately after onboarding
+    if (sessionStorage.getItem('just_onboarded')) {
+      sessionStorage.removeItem('just_onboarded');
+      setTimeout(() => setShow(true), 800);
+      return;
+    }
     // Check if user has completed onboarding (has envelopes)
     import('../lib/api').then(({ api }) => {
       api.getEnvelopeSummary().then(envs => {
@@ -55,11 +62,11 @@ export default function TelegramPrompt() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <button onClick={() => { setShow(false); navigate('/settings'); }}
+          <button onClick={() => { setShow(false); sessionStorage.setItem('tg_prompt_dismissed', '1'); window.location.href = '/settings'; }}
             className="btn-primary w-full justify-center text-center py-3">
             Hubungkan Sekarang →
           </button>
-          <button onClick={() => setShow(false)}
+          <button onClick={() => { setShow(false); sessionStorage.setItem('tg_prompt_dismissed', '1'); }}
             className="text-sm text-gray-400 hover:text-gray-600 py-2 transition-colors">
             Nanti saja
           </button>
