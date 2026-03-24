@@ -32,9 +32,9 @@ export default function Login() {
     <div className="min-h-screen bg-page flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="font-display text-4xl font-bold text-brand-600 mb-2">
+          <a href="/" className="font-display text-4xl font-bold text-brand-600 mb-2 block" style={{textDecoration:'none'}}>
             Jatah<span className="text-brand-400">ku</span>
-          </h1>
+          </a>
           <p className="text-sm text-gray-500">Setiap rupiah ada jatahnya.</p>
         </div>
 
