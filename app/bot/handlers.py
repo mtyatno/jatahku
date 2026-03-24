@@ -285,6 +285,32 @@ async def _is_setup_complete(user, db):
 
 async def cmd_start(update, context):
     tg_user = update.effective_user
+    import logging; logging.getLogger("jatahku").warning(f"cmd_start args: {context.args}")
+    # Handle deep link: /start link_XXXXXX
+    if context.args and len(context.args) > 0:
+        arg = context.args[0]
+        if arg.startswith("link_"):
+            code = arg.replace("link_", "")
+            import redis.asyncio as aioredis
+            from app.core.config import get_settings
+            r = aioredis.from_url(get_settings().REDIS_URL)
+            user_id = await r.get(f"link:webapp:{code}")
+            await r.close()
+            if user_id:
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(select(User).where(User.id == user_id.decode()))
+                    webapp_user = result.scalar_one_or_none()
+                    if webapp_user:
+                        webapp_user.telegram_id = str(tg_user.id)
+                        await db.commit()
+                        await update.message.reply_text(
+                            f"\u2705 Berhasil! Akun terhubung dengan {webapp_user.name}.\n\n"
+                            f"Sekarang kirim pengeluaran lewat chat:\n"
+                            f"\u2022 `kopi 35k`\n\u2022 `makan 25rb`",
+                            parse_mode="Markdown")
+                        return
+            await update.message.reply_text("\u274c Kode expired. Generate baru di jatahku.com/settings")
+            return
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name or "User", db)
         setup_ok, reason = await _is_setup_complete(user, db)

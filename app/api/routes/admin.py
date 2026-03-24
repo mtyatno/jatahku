@@ -274,3 +274,22 @@ async def notify_all_users(
         count += 1
     await db.commit()
     return {"sent": count}
+
+
+@router.post("/send-tg-reminders")
+async def send_tg_reminders(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send email to all users without Telegram linked."""
+    from app.services.email_service import send_tg_reminder_email
+    result = await db.execute(
+        select(User).where(User.telegram_id == None, User.email != None)
+    )
+    users = result.scalars().all()
+    sent = 0
+    for u in users:
+        if u.email and not u.email.startswith("deleted_") and not u.email.startswith("banned_"):
+            if send_tg_reminder_email(u.email, u.name):
+                sent += 1
+    return {"sent": sent, "total_unlinked": len(users)}

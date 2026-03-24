@@ -79,6 +79,15 @@ async def send_notification(
             except Exception as e:
                 logger.error(f"TG notification failed for {user.telegram_id}: {e}")
 
+        # Send email for important notifications
+        if notif_type in (NotificationType.budget_warning, NotificationType.subscription_due) and user.email and not user.email.startswith("deleted_"):
+            try:
+                from app.services.email_service import send_email, email_template
+                html = email_template(title, f"<p>{message}</p>", "Buka Jatahku", "https://jatahku.com")
+                send_email(user.email, title, html)
+            except Exception as e:
+                logger.error(f"Email notification failed for {user.email}: {e}")
+
     finally:
         if should_close:
             await db.close()
