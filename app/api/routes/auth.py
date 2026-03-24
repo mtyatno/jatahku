@@ -38,6 +38,7 @@ class UserResponse(BaseModel):
     email: str | None
     name: str
     telegram_id: str | None
+    is_admin: bool = False
 
     model_config = {"from_attributes": True}
 

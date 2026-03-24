@@ -83,6 +83,12 @@ export default function Layout() {
                   <p className="text-sm font-semibold">{user.name}</p>
                   <p className="text-xs text-gray-400">{user.email}</p>
                 </div>
+                {user?.is_admin && (
+                  <button onClick={() => { navigate('/admin'); setMenuOpen(false); }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
+                    <span>🛡️</span> Admin
+                  </button>
+                )}
                 <button onClick={() => { navigate('/settings'); setMenuOpen(false); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
                   <span>⚙️</span> Profil & Settings

@@ -8,6 +8,7 @@ import Transactions from './pages/Transactions';
 import Allocate from './pages/Allocate';
 import Langganan from './pages/Langganan';
 import Analytics from './pages/Analytics';
+import Admin from './pages/Admin';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/allocate" element={<Allocate />} />
             <Route path="/langganan" element={<Langganan />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

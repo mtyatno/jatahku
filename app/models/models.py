@@ -61,6 +61,7 @@ class User(TimestampMixin, Base):
     default_is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     plan: Mapped[str | None] = mapped_column(String(10), default="basic")
     last_login: Mapped[datetime | None] = mapped_column(nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
     household_memberships: Mapped[list["HouseholdMember"]] = relationship(

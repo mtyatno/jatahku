@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin
 
 settings = get_settings()
 @asynccontextmanager
@@ -45,4 +45,5 @@ app.include_router(recurring.router, prefix="/recurring", tags=["recurring"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 app.include_router(user_settings.router, prefix="/user", tags=["user"])
+app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(webhook.router, tags=["webhook"])
