@@ -1,6 +1,11 @@
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -44,7 +49,17 @@ class UserResponse(BaseModel):
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    import re as re_mod
+    if not req.email or not re_mod.match(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$", req.email):
+        raise HTTPException(status_code=400, detail="Email tidak valid")
+    if not req.password or len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    if not req.name or len(req.name.strip()) < 1 or len(req.name) > 100:
+        raise HTTPException(status_code=400, detail="Nama tidak valid")
+    req.name = req.name.strip()[:100]
+    req.email = req.email.strip().lower()[:255]
     # Check if email exists
     existing = await db.execute(select(User).where(User.email == req.email))
     if existing.scalar_one_or_none():
@@ -80,7 +95,8 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
 
