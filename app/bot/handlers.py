@@ -595,6 +595,13 @@ async def handle_message(update, context):
                 reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if confident:
+            # Check plan limits
+            from app.services.plan_limits import check_transaction_limit
+            limit_ok, limit_msg = await check_transaction_limit(user, db)
+            if not limit_ok:
+                await update.message.reply_text(f"\u26a0\ufe0f {limit_msg}\n\nUpgrade di jatahku.com/settings")
+                return
+
             # Run behavior checks
             check = await check_behavior(envelope.id, user.id, amount, db)
             if not check.allowed:

@@ -9,6 +9,7 @@ import Allocate from './pages/Allocate';
 import Langganan from './pages/Langganan';
 import Analytics from './pages/Analytics';
 import Admin from './pages/Admin';
+import Upgrade from './pages/Upgrade';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/langganan" element={<Langganan />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/upgrade" element={<Upgrade />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

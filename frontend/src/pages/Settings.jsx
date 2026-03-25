@@ -486,9 +486,9 @@ export default function Settings() {
           <UsageBar label="Langganan" used={u.recurring} limit={l.recurring} />
         </div>
         {plan === 'basic' && (
-          <button className="mt-4 w-full btn-primary text-center justify-center text-sm py-2.5">
+          <a href="/upgrade" className="mt-4 w-full btn-primary text-center justify-center text-sm py-2.5 block">
             ⭐ Upgrade ke Pro — Rp79.000 sekali bayar
-          </button>
+          </a>
         )}
       </div>
 

@@ -208,6 +208,12 @@ async def create_envelope(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _get_hid(user, db)
+    # Check plan limits
+    from app.services.plan_limits import check_envelope_limit
+    allowed, limit_msg = await check_envelope_limit(user, db)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=limit_msg)
+
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
     envelope = Envelope(

@@ -174,6 +174,7 @@ export default function Admin() {
             className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'users' ? 'bg-brand-50 text-brand-600' : 'text-gray-400'}`}>Users</button>
           <button onClick={() => setTab('tools')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'tools' ? 'bg-brand-50 text-brand-600' : 'text-gray-400'}`}>Tools</button>
+          <button onClick={() => setTab('payments')}
         </div>
       </div>
 
@@ -236,6 +237,7 @@ export default function Admin() {
         </>
       )}
 
+
       {tab === 'tools' && (
         <div className="space-y-4">
           <div className="card">
@@ -296,6 +298,180 @@ export default function Admin() {
           </div>
         </div>
       )}
+      {tab === 'payments' && <PaymentsTab onAction={() => { setActionMsg('✅ Done'); setTimeout(() => setActionMsg(''), 3000); }} />}
+    </div>
+  );
+}
+
+function PaymentsTab({ onAction }) {
+  const [orders, setOrders] = useState([]);
+  const [promos, setPromos] = useState([]);
+  const [banks, setBanks] = useState([]);
+  const [filter, setFilter] = useState('');
+  const [newBank, setNewBank] = useState({ bank: '', account_number: '', account_name: '' });
+  const [newPromo, setNewPromo] = useState({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
+  const [showAddBank, setShowAddBank] = useState(false);
+  const [showAddPromo, setShowAddPromo] = useState(false);
+
+  const load = async () => {
+    const url = filter ? `/admin/payment-orders?status=${filter}` : '/admin/payment-orders';
+    const r = await api.request(url);
+    if (r.ok) setOrders(await r.json());
+    const pr = await api.request('/admin/promo-codes');
+    if (pr.ok) setPromos(await pr.json());
+    const br = await api.request('/admin/settings/bank_accounts');
+    if (br.ok) setBanks(br.value || []);
+    try {
+      const bData = await (await api.request('/admin/settings/bank_accounts')).json();
+      setBanks(Array.isArray(bData.value) ? bData.value : JSON.parse(bData.value || '[]'));
+    } catch { setBanks([]); }
+  };
+
+  useEffect(() => { load(); }, [filter]);
+
+  const approveOrder = async (id) => {
+    await api.request(`/admin/payment-orders/${id}/approve`, { method: 'POST' });
+    onAction(); load();
+  };
+
+  const rejectOrder = async (id) => {
+    const reason = prompt('Alasan penolakan:');
+    if (!reason) return;
+    await api.request(`/admin/payment-orders/${id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'POST' });
+    onAction(); load();
+  };
+
+  const saveBanks = async (list) => {
+    await api.request(`/admin/settings/bank_accounts?value=${encodeURIComponent(JSON.stringify(list))}`, { method: 'PUT' });
+    setBanks(list); onAction();
+  };
+
+  const addBank = () => {
+    if (!newBank.bank || !newBank.account_number) return;
+    saveBanks([...banks, newBank]);
+    setNewBank({ bank: '', account_number: '', account_name: '' });
+    setShowAddBank(false);
+  };
+
+  const removeBank = (idx) => saveBanks(banks.filter((_, i) => i !== idx));
+
+  const createPromo = async () => {
+    await api.request('/admin/promo-codes', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...newPromo,
+        max_uses: newPromo.max_uses ? parseInt(newPromo.max_uses) : null,
+        valid_days: newPromo.valid_days ? parseInt(newPromo.valid_days) : null,
+      }),
+    });
+    setNewPromo({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
+    setShowAddPromo(false);
+    onAction(); load();
+  };
+
+  const deletePromo = async (id) => {
+    if (!confirm('Nonaktifkan promo ini?')) return;
+    await api.request(`/admin/promo-codes/${id}`, { method: 'DELETE' });
+    onAction(); load();
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Bank Accounts */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🏦 Rekening Tujuan</h3>
+        {banks.map((b, i) => (
+          <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50">
+            <div><p className="text-sm font-semibold">{b.bank}</p><p className="text-xs text-gray-500">{b.account_number} — {b.account_name}</p></div>
+            <button onClick={() => removeBank(i)} className="text-xs text-red-400 hover:underline">Hapus</button>
+          </div>
+        ))}
+        {!showAddBank ? (
+          <button onClick={() => setShowAddBank(true)} className="text-sm text-brand-600 hover:underline mt-2">+ Tambah rekening</button>
+        ) : (
+          <div className="mt-3 space-y-2 p-3 bg-gray-50 rounded-xl">
+            <input className="input text-sm" placeholder="Nama bank (BCA, Mandiri, dll)" value={newBank.bank} onChange={e => setNewBank({...newBank, bank: e.target.value})} />
+            <input className="input text-sm" placeholder="No rekening" value={newBank.account_number} onChange={e => setNewBank({...newBank, account_number: e.target.value})} />
+            <input className="input text-sm" placeholder="Atas nama" value={newBank.account_name} onChange={e => setNewBank({...newBank, account_name: e.target.value})} />
+            <div className="flex gap-2">
+              <button onClick={addBank} className="btn-primary text-sm py-1.5">Simpan</button>
+              <button onClick={() => setShowAddBank(false)} className="text-xs text-gray-400">Batal</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Promo Codes */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🎁 Kode Promo</h3>
+        {promos.map(p => (
+          <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50">
+            <div>
+              <span className="font-mono font-bold text-brand-600">{p.code}</span>
+              <span className="text-xs text-gray-400 ml-2">{p.is_free ? 'FREE' : `-${p.discount_pct}%`} · {p.used_count}/{p.max_uses || '∞'} used</span>
+              {p.event_name && <span className="text-xs text-amber-600 ml-1">· {p.event_name}</span>}
+            </div>
+            <button onClick={() => deletePromo(p.id)} className="text-xs text-red-400 hover:underline">{p.is_active ? 'Nonaktifkan' : 'Inactive'}</button>
+          </div>
+        ))}
+        {!showAddPromo ? (
+          <button onClick={() => setShowAddPromo(true)} className="text-sm text-brand-600 hover:underline mt-2">+ Buat promo</button>
+        ) : (
+          <div className="mt-3 space-y-2 p-3 bg-gray-50 rounded-xl">
+            <input className="input text-sm" placeholder="Kode promo (contoh: MERDEKA)" value={newPromo.code} onChange={e => setNewPromo({...newPromo, code: e.target.value})} />
+            <div className="flex gap-2 items-center">
+              <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={newPromo.is_free} onChange={e => setNewPromo({...newPromo, is_free: e.target.checked, discount_pct: e.target.checked ? 100 : 0})} /> Gratis</label>
+              {!newPromo.is_free && <input className="input text-sm w-24" type="number" placeholder="Diskon %" value={newPromo.discount_pct} onChange={e => setNewPromo({...newPromo, discount_pct: parseInt(e.target.value)||0})} />}
+            </div>
+            <input className="input text-sm" type="number" placeholder="Max penggunaan (kosong=unlimited)" value={newPromo.max_uses} onChange={e => setNewPromo({...newPromo, max_uses: e.target.value})} />
+            <input className="input text-sm" placeholder="Event (contoh: 17 Agustus)" value={newPromo.event_name} onChange={e => setNewPromo({...newPromo, event_name: e.target.value})} />
+            <input className="input text-sm" type="number" placeholder="Berlaku berapa hari (kosong=forever)" value={newPromo.valid_days} onChange={e => setNewPromo({...newPromo, valid_days: e.target.value})} />
+            <div className="flex gap-2">
+              <button onClick={createPromo} disabled={!newPromo.code} className="btn-primary text-sm py-1.5 disabled:opacity-50">Buat</button>
+              <button onClick={() => setShowAddPromo(false)} className="text-xs text-gray-400">Batal</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Payment Orders */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-sm">💳 Payment Orders</h3>
+          <div className="flex gap-1">
+            {['', 'waiting_confirmation', 'pending', 'completed', 'rejected'].map(s => (
+              <button key={s} onClick={() => setFilter(s)}
+                className={`text-xs px-2 py-1 rounded-lg ${filter === s ? 'bg-brand-50 text-brand-600' : 'text-gray-400'}`}>
+                {s || 'All'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {orders.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-4">Belum ada order</p>
+        ) : orders.map(o => (
+          <div key={o.id} className="py-3 border-b border-gray-50">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold">{o.user_name}</p>
+                <p className="text-xs text-gray-400">{o.user_email} · {formatCurrency(o.amount)} · {new Date(o.created_at).toLocaleDateString('id-ID')}</p>
+                {o.promo_code && <span className="text-xs text-amber-600">Promo: {o.promo_code} (-{o.discount_pct}%)</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                {o.proof_url && <a href={o.proof_url} target="_blank" className="text-xs text-blue-500 hover:underline">📸 Bukti</a>}
+                {(o.status === 'waiting_confirmation' || o.status === 'pending') && (
+                  <>
+                    <button onClick={() => approveOrder(o.id)} className="text-xs px-2 py-1 bg-green-50 text-green-600 rounded-lg hover:bg-green-100">✅ Approve</button>
+                    <button onClick={() => rejectOrder(o.id)} className="text-xs px-2 py-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-100">❌ Reject</button>
+                  </>
+                )}
+                {o.status === 'completed' && <span className="text-xs text-green-600">✅</span>}
+                {o.status === 'rejected' && <span className="text-xs text-red-400">❌</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

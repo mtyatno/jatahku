@@ -293,3 +293,194 @@ async def send_tg_reminders(
             if send_tg_reminder_email(u.email, u.name):
                 sent += 1
     return {"sent": sent, "total_unlinked": len(users)}
+
+
+from app.models.models import PaymentOrder, PromoCode, AppSetting
+
+
+class BankAccountUpdate(BaseModel):
+    accounts: list
+
+
+@router.get("/settings/{key}")
+async def get_app_setting(
+    key: str,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(AppSetting).where(AppSetting.key == key))
+    s = r.scalar_one_or_none()
+    if not s:
+        raise HTTPException(404, "Setting not found")
+    import json
+    try:
+        return {"key": s.key, "value": json.loads(s.value)}
+    except:
+        return {"key": s.key, "value": s.value}
+
+
+@router.put("/settings/{key}")
+async def update_app_setting(
+    key: str,
+    value: str = Query(...),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(AppSetting).where(AppSetting.key == key))
+    s = r.scalar_one_or_none()
+    if s:
+        s.value = value
+    else:
+        db.add(AppSetting(key=key, value=value))
+    await db.commit()
+    return {"status": "updated"}
+
+
+@router.get("/payment-orders")
+async def list_payment_orders(
+    status: str = Query(None),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(PaymentOrder).order_by(PaymentOrder.created_at.desc())
+    if status:
+        query = query.where(PaymentOrder.status == status)
+    r = await db.execute(query.limit(50))
+    orders = r.scalars().all()
+    result = []
+    for o in orders:
+        u = (await db.execute(select(User).where(User.id == o.user_id))).scalar_one_or_none()
+        result.append({
+            "id": str(o.id), "user_name": u.name if u else "-",
+            "user_email": u.email if u else "-",
+            "amount": float(o.amount), "original_amount": float(o.original_amount),
+            "discount_pct": o.discount_pct, "promo_code": o.promo_code,
+            "status": o.status, "proof_url": o.proof_url,
+            "payment_method": o.payment_method,
+            "created_at": o.created_at.isoformat(),
+        })
+    return result
+
+
+@router.post("/payment-orders/{order_id}/approve")
+async def approve_payment(
+    order_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PaymentOrder).where(PaymentOrder.id == order_id))
+    order = r.scalar_one_or_none()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    order.status = "completed"
+    # Upgrade user
+    u = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+    if u:
+        u.plan = "pro"
+        notif = Notification(
+            user_id=u.id, type=NotificationType.system,
+            title="Selamat! Upgrade ke Pro berhasil!",
+            message="Semua fitur unlimited sudah aktif. Terima kasih!",
+            link="/settings",
+        )
+        db.add(notif)
+        # Send email
+        try:
+            from app.services.email_service import send_email, email_template
+            html = email_template(
+                "Upgrade Pro Berhasil!",
+                "<p>Hai " + u.name + ",</p><p>Pembayaran kamu sudah dikonfirmasi. Semua fitur Pro sudah aktif!</p>",
+                "Buka Jatahku", "https://jatahku.com"
+            )
+            send_email(u.email, "Upgrade Pro Berhasil!", html)
+        except:
+            pass
+    await db.commit()
+    return {"status": "approved", "user": u.name if u else "-"}
+
+
+@router.post("/payment-orders/{order_id}/reject")
+async def reject_payment(
+    order_id: UUID,
+    reason: str = Query("Bukti transfer tidak valid"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PaymentOrder).where(PaymentOrder.id == order_id))
+    order = r.scalar_one_or_none()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    order.status = "rejected"
+    order.admin_notes = reason
+    u = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+    if u:
+        notif = Notification(
+            user_id=u.id, type=NotificationType.system,
+            title="Pembayaran ditolak",
+            message=reason,
+            link="/settings",
+        )
+        db.add(notif)
+    await db.commit()
+    return {"status": "rejected"}
+
+
+class PromoCreate(BaseModel):
+    code: str
+    discount_pct: int = 0
+    is_free: bool = False
+    max_uses: int | None = None
+    event_name: str | None = None
+    valid_days: int | None = None
+
+
+@router.post("/promo-codes")
+async def create_promo(
+    req: PromoCreate,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import timedelta
+    promo = PromoCode(
+        code=req.code.upper(),
+        discount_pct=req.discount_pct,
+        is_free=req.is_free,
+        max_uses=req.max_uses,
+        event_name=req.event_name,
+        valid_from=datetime.now(timezone.utc),
+        valid_until=datetime.now(timezone.utc) + timedelta(days=req.valid_days) if req.valid_days else None,
+    )
+    db.add(promo)
+    await db.commit()
+    return {"status": "created", "code": promo.code}
+
+
+@router.get("/promo-codes")
+async def list_promos(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PromoCode).order_by(PromoCode.created_at.desc()))
+    promos = r.scalars().all()
+    return [{
+        "id": str(p.id), "code": p.code,
+        "discount_pct": p.discount_pct, "is_free": p.is_free,
+        "max_uses": p.max_uses, "used_count": p.used_count,
+        "event_name": p.event_name, "is_active": p.is_active,
+        "valid_until": p.valid_until.isoformat() if p.valid_until else None,
+    } for p in promos]
+
+
+@router.delete("/promo-codes/{promo_id}")
+async def delete_promo(
+    promo_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
+    promo = r.scalar_one_or_none()
+    if promo:
+        promo.is_active = False
+        await db.commit()
+    return {"status": "deleted"}

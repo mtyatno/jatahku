@@ -7,7 +7,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin, payment
 
 settings = get_settings()
 @asynccontextmanager
@@ -50,6 +50,7 @@ app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 app.include_router(user_settings.router, prefix="/user", tags=["user"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(payment.router, prefix="/payment", tags=["payment"])
 app.include_router(webhook.router, tags=["webhook"])
 
 
