@@ -11,7 +11,8 @@ export default function Upgrade() {
   const [orders, setOrders] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [msg, setMsg] = useState('');
-  const [step, setStep] = useState(1); // 1=pricing, 2=payment, 3=upload, 4=done
+  const [step, setStep] = useState(1);
+  const [copyBank, setCopyBank] = useState(-1); // 1=pricing, 2=payment, 3=upload, 4=done
 
   useEffect(() => {
     loadPrice();
@@ -151,7 +152,13 @@ export default function Upgrade() {
                 {banks.map((b, i) => (
                   <div key={i} className="bg-gray-50 rounded-xl p-4">
                     <p className="text-sm font-bold">{b.bank}</p>
-                    <p className="font-mono text-lg font-bold text-brand-600 mt-1">{b.account_number}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="font-mono text-lg font-bold text-brand-600">{b.account_number}</p>
+                      <button onClick={() => {navigator.clipboard.writeText(b.account_number); setCopyBank(i); setTimeout(() => setCopyBank(-1), 2000);}}
+                        className="px-2 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-500 hover:text-brand-600 hover:border-brand-400 transition-all">
+                        {copyBank === i ? '✅' : '📋'}
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-500">a.n. {b.account_name}</p>
                   </div>
                 ))}

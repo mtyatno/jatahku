@@ -99,6 +99,55 @@ async def check_pending_reminders():
         await r.close()
 
 
+async def run_user_summaries():
+    """Check each user's timezone + preferred time, send if it matches now."""
+    from datetime import datetime, timezone as tz
+    from zoneinfo import ZoneInfo
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import User, NotificationPreference
+
+    now_utc = datetime.now(tz.utc)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.telegram_id != None))
+        users = result.scalars().all()
+
+        for user in users:
+            try:
+                user_tz = ZoneInfo(getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta')
+            except:
+                user_tz = ZoneInfo('Asia/Jakarta')
+
+            user_now = now_utc.astimezone(user_tz)
+            user_hour = f"{user_now.hour:02d}:00"
+
+            # Get preferences
+            prefs_r = await db.execute(
+                select(NotificationPreference).where(NotificationPreference.user_id == user.id)
+            )
+            prefs = prefs_r.scalar_one_or_none()
+
+            daily_time = getattr(prefs, 'daily_summary_time', '20:00') or '20:00' if prefs else '20:00'
+            weekly_time = getattr(prefs, 'weekly_summary_time', '08:00') or '08:00' if prefs else '08:00'
+
+            # Daily summary
+            if prefs and prefs.daily_summary_tg and user_hour == daily_time.split(':')[0] + ':00':
+                try:
+                    await send_daily_summary(user_id=user.id)
+                except Exception as e:
+                    logger.error(f"Daily summary failed for {user.id}: {e}")
+
+            # Weekly summary (Monday only)
+            if user_now.weekday() == 0 and prefs and prefs.weekly_summary_tg and user_hour == weekly_time.split(':')[0] + ':00':
+                try:
+                    await send_weekly_summary(user_id=user.id)
+                except Exception as e:
+                    logger.error(f"Weekly summary failed for {user.id}: {e}")
+
+    logger.info(f"User summaries check complete at {now_utc.isoformat()}")
+
+
 def start_scheduler():
     """Start the APScheduler with monthly snapshot job."""
     scheduler.add_job(
@@ -118,20 +167,10 @@ def start_scheduler():
         replace_existing=True,
     )
     scheduler.add_job(
-        send_daily_summary,
+        run_user_summaries,
         trigger="cron",
-        hour=13,  # 20:00 WIB = 13:00 UTC
-        minute=0,
-        id="daily_summary",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        send_weekly_summary,
-        trigger="cron",
-        day_of_week="mon",
-        hour=1,  # 08:00 WIB = 01:00 UTC
-        minute=0,
-        id="weekly_summary",
+        minute=0,  # Every hour, check which users need summary
+        id="user_summaries",
         replace_existing=True,
     )
     scheduler.add_job(
@@ -143,7 +182,7 @@ def start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Scheduler started — monthly snapshot + pending reminders + daily 20:00 + weekly Monday 08:00")
+    logger.info("Scheduler started — monthly snapshot + pending reminders + hourly user summaries + recurring")
 
 
 def stop_scheduler():

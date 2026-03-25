@@ -2,49 +2,50 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 
-async def cmd_help(update, context):
-    await update.message.reply_text(
-        "📖 *Jatahku — Panduan Lengkap*\n"
-        "Setiap rupiah ada jatahnya.\n\n"
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send comprehensive help guide."""
+    text = """📖 *Panduan Jatahku*
 
-        "💰 *Catat Pengeluaran*\n"
-        "Kirim langsung seperti chat biasa:\n"
-        "• `35k starbucks`\n"
-        "• `150rb nasi padang`\n"
-        "• `2.5jt beli headphone`\n\n"
+*Catat Pengeluaran* (kirim langsung):
+- `kopi 35k` atau `35rb kopi`
+- `makan siang rp25.000`
+- `grab 15000`
 
-        "📊 *Informasi*\n"
-        "/status — Ringkasan budget bulan ini\n"
-        "/amplop — Daftar semua amplop\n"
-        "/pending — Transaksi yang menunggu konfirmasi\n"
-        "/langganan — Daftar langganan aktif\n"
-        "/controls — Status behavior controls\n\n"
+*Langganan Otomatis:*
+- `sewa server 250k tiap bulan`
+- `langganan netflix 54k`
+- `kontrak rumah 5jt tiap tahun`
 
-        "✉️ *Kelola Amplop*\n"
-        "/amplop\\_baru [nama] [budget] — Buat amplop\n"
-        "/template — Buat amplop dari template\n\n"
+*Perintah Utama:*
+/status — Ringkasan budget bulan ini
+/amplop — Daftar amplop & sisa dana
+/pending — Transaksi yang menunggu cooling
+/langganan — Daftar langganan aktif
+/batal — Undo transaksi terakhir
 
-        "⚙️ *Behavior Controls*\n"
-        "/lock — Kunci/buka amplop\n"
-        "/setlimit [nama] [jumlah] — Set limit harian\n"
-        "/setcooling [nama] [jumlah] — Set cooling period\n\n"
+*Kelola Amplop:*
+/amplop\\_baru \\[nama\\] \\[budget\\]
+/template — Pilih template amplop
+/lock \\[nama\\] — Kunci/buka amplop
+/setlimit \\[nama\\] \\[jumlah\\] — Limit harian
+/setcooling \\[nama\\] \\[jumlah\\] — Cooling threshold
+/controls — Status behavior controls
 
-        "🔄 *Langganan*\n"
-        "/tambah\\_langganan [nama] [jumlah] [amplop]\n"
-        "/hapus\\_langganan — Hapus langganan\n\n"
+*Household:*
+/invite — Buat kode invite
+/join \\[kode\\] — Gabung household
 
-        "🔗 *Akun*\n"
-        "/link [kode] — Hubungkan ke WebApp\n"
-        "/unlink — Putuskan koneksi Telegram\n\n"
+*Akun:*
+/link \\[kode\\] — Hubungkan dengan WebApp
+/unlink — Lepas koneksi Telegram
 
-        "🏠 *Household*\n"
-        "/invite — Undang anggota baru\n"
-        "/join [kode] — Gabung ke household\n\n"
+*Tips:*
+- Ketik angka dengan format apapun: 35k, 35rb, 35.000, rp35000
+- Bot otomatis pilih amplop yang tepat
+- Jika ragu, bot akan tanya amplop mana
 
-        "↩️ *Lainnya*\n"
-        "/batal — Undo transaksi terakhir\n"
-        "/help — Tampilkan panduan ini\n\n"
+🌐 Dashboard: jatahku.com
+⭐ Upgrade Pro: jatahku.com/upgrade"""
 
-        "🌐 WebApp: jatahku.com",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+

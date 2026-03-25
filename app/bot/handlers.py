@@ -951,8 +951,25 @@ async def handle_non_text(update, context):
         await update.message.reply_text("Kirim pengeluaran seperti:\n• `35k starbucks`\n• `kopi 150rb`", parse_mode="Markdown")
 
 
+async def post_init(application):
+    """Set bot commands menu."""
+    await application.bot.set_my_commands([
+        ("status", "Ringkasan budget bulan ini"),
+        ("amplop", "Daftar amplop & sisa dana"),
+        ("pending", "Transaksi cooling period"),
+        ("langganan", "Daftar langganan aktif"),
+        ("batal", "Undo transaksi terakhir"),
+        ("amplop_baru", "Buat amplop baru"),
+        ("template", "Pilih template amplop"),
+        ("lock", "Kunci/buka amplop"),
+        ("controls", "Status behavior controls"),
+        ("invite", "Buat kode invite household"),
+        ("help", "Panduan lengkap"),
+    ])
+
+
 def create_bot_app():
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     from app.bot.help_cmd import cmd_help
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))

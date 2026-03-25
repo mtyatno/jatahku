@@ -14,7 +14,7 @@ settings = get_settings()
 logger = logging.getLogger("jatahku.summary")
 
 
-async def send_daily_summary():
+async def send_daily_summary(user_id=None):
     """Send daily spending summary to all TG-linked users at 8 PM."""
     if not settings.TELEGRAM_BOT_TOKEN:
         return
@@ -24,7 +24,10 @@ async def send_daily_summary():
 
     async with AsyncSessionLocal() as db:
         # Get all users with telegram
-        result = await db.execute(select(User).where(User.telegram_id != None))
+        query = select(User).where(User.telegram_id != None)
+        if user_id:
+            query = query.where(User.id == user_id)
+        result = await db.execute(query)
         users = result.scalars().all()
 
         for user in users:
@@ -133,7 +136,7 @@ async def send_daily_summary():
                 logger.error(f"Failed daily summary for {user.telegram_id}: {e}")
 
 
-async def send_weekly_summary():
+async def send_weekly_summary(user_id=None):
     """Send weekly summary every Monday morning."""
     if not settings.TELEGRAM_BOT_TOKEN:
         return
@@ -143,7 +146,10 @@ async def send_weekly_summary():
     week_start = today - timedelta(days=7)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.telegram_id != None))
+        query = select(User).where(User.telegram_id != None)
+        if user_id:
+            query = query.where(User.id == user_id)
+        result = await db.execute(query)
         users = result.scalars().all()
 
         for user in users:
