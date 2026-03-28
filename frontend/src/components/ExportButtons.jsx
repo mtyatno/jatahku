@@ -41,11 +41,11 @@ export default function ExportButtons() {
     setLoading(null);
   };
 
-  const handleDownloadPDF = () => {
-    const a = document.createElement('a');
-    a.href = pdfUrl;
-    a.download = 'jatahku_laporan_' + year + '-' + String(month).padStart(2, '0') + '.pdf';
-    a.click();
+  const handleSavePDF = () => {
+    if (iframeRef.current) {
+      iframeRef.current.contentWindow.focus();
+      iframeRef.current.contentWindow.print();
+    }
   };
 
   const handlePrint = () => {
@@ -82,10 +82,11 @@ export default function ExportButtons() {
           <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shrink-0">
             <span className="font-semibold text-gray-700">Laporan {monthName}</span>
             <div className="flex items-center gap-2">
-              <button onClick={handleDownloadPDF}
+              <button onClick={handleSavePDF}
+                title="Pilih 'Save as PDF' di dialog print"
                 className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export PDF
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Simpan PDF
               </button>
               <button onClick={handlePrint}
                 className="flex items-center gap-2 px-4 py-2 bg-brand-600 rounded-lg text-sm font-medium text-white hover:bg-brand-900 transition-all">
