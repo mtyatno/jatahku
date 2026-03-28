@@ -77,7 +77,7 @@ export default function ExportButtons() {
 
       {/* Report Modal */}
       {pdfUrl && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex flex-col bg-gray-100">
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shrink-0">
             <span className="font-semibold text-gray-700">Laporan {monthName}</span>
