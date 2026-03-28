@@ -175,6 +175,7 @@ export default function Admin() {
           <button onClick={() => setTab('tools')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'tools' ? 'bg-brand-50 text-brand-600' : 'text-gray-400'}`}>Tools</button>
           <button onClick={() => setTab('payments')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'payments' ? 'bg-brand-50 text-brand-600' : 'text-gray-400'}`}>Payments</button>
         </div>
       </div>
 
