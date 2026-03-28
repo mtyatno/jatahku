@@ -492,6 +492,45 @@ async def handle_message(update, context):
     if is_whatif(text):
         await handle_whatif(update, context)
         return
+
+    # Natural language query handlers (no amount = pure query intent)
+    from app.bot.nlp_cmd import (
+        is_sisa, is_harian, is_proyeksi, is_comparison,
+        is_santai, is_emosi, is_koreksi, is_nabung, parse_multi_expense,
+        handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
+        handle_santai, handle_emosi, handle_koreksi, handle_nabung, handle_multi_expense,
+    )
+    if is_emosi(text):
+        await handle_emosi(update, context)
+        return
+    if is_koreksi(text):
+        await handle_koreksi(update, context)
+        return
+    if is_nabung(text) and not parse_subscription(text):
+        await handle_nabung(update, context)
+        return
+    if is_sisa(text) and not parse_amount(text):
+        await handle_sisa(update, context)
+        return
+    if is_harian(text):
+        await handle_limit_harian(update, context)
+        return
+    if is_proyeksi(text):
+        await handle_proyeksi(update, context)
+        return
+    if is_comparison(text):
+        await handle_comparison(update, context)
+        return
+    if is_santai(text) and not parse_amount(text):
+        await handle_santai(update, context)
+        return
+
+    # Multi-expense: "makan 30k, parkir 5k, kopi 20k"
+    multi_items = parse_multi_expense(text)
+    if multi_items:
+        await handle_multi_expense(update, context, multi_items)
+        return
+
     # Check for subscription intent first
     sub = parse_subscription(text)
     if sub:
