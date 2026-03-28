@@ -71,6 +71,7 @@ async def set_bot_commands():
         BotCommand("hapus_langganan", "Hapus langganan"),
         BotCommand("invite", "Undang anggota household"),
         BotCommand("join", "Gabung ke household"),
+        BotCommand("webapp", "Login ke WebApp tanpa password"),
         BotCommand("link", "Hubungkan ke WebApp"),
         BotCommand("unlink", "Putuskan koneksi Telegram"),
         BotCommand("batal", "Undo transaksi terakhir"),

@@ -36,6 +36,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /join \\[kode\\] — Gabung household
 
 *Akun:*
+/webapp — Login ke WebApp tanpa password
 /link \\[kode\\] — Hubungkan dengan WebApp
 /unlink — Lepas koneksi Telegram
 
