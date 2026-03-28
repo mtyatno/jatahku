@@ -26,6 +26,21 @@ if [ -d "frontend" ]; then
     done
 fi
 
+# Re-register Telegram webhook (sync secret token after restart)
+sleep 3
+sudo -u jatahku bash -c 'source /opt/jatahku/venv/bin/activate && python3 -c "
+from app.core.config import get_settings
+import urllib.request, json, urllib.parse
+s = get_settings()
+if not s.TELEGRAM_BOT_TOKEN or not s.TELEGRAM_WEBHOOK_URL:
+    print(\"⚠️  Telegram webhook skip — token/url not configured\")
+    exit(0)
+data = urllib.parse.urlencode({\"url\": s.TELEGRAM_WEBHOOK_URL, \"secret_token\": s.TELEGRAM_WEBHOOK_SECRET}).encode()
+req = urllib.request.Request(f\"https://api.telegram.org/bot{s.TELEGRAM_BOT_TOKEN}/setWebhook\", data=data)
+r = json.loads(urllib.request.urlopen(req).read())
+print(\"✅ Webhook registered\" if r.get(\"ok\") else f\"⚠️  Webhook error: {r}\")
+" 2>/dev/null || echo "⚠️  Webhook registration failed"' || true
+
 # Health check
 sleep 5
 HEALTH_RESPONSE=$(curl -s https://api.jatahku.com/health 2>/dev/null || echo '{"status":"error"}')
