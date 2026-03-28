@@ -487,6 +487,27 @@ async def handle_message(update, context):
     text = update.message.text.strip()
     if text.startswith("/"):
         return
+
+    # Input length guard
+    if len(text) > 500:
+        await update.message.reply_text("⚠️ Pesan terlalu panjang.")
+        return
+
+    # Per-user Redis rate limit: max 30 messages/minute
+    user_id = update.effective_user.id
+    try:
+        import redis.asyncio as aioredis
+        _r = aioredis.from_url(settings.REDIS_URL)
+        rl_key = f"bot:rl:{user_id}"
+        count = await _r.incr(rl_key)
+        if count == 1:
+            await _r.expire(rl_key, 60)
+        await _r.aclose()
+        if count > 30:
+            await update.message.reply_text("⏳ Terlalu banyak pesan. Coba lagi sebentar.")
+            return
+    except Exception:
+        pass  # Redis down → fail open
     # Check for what-if question first
     from app.bot.checkin_cmd import is_whatif, handle_whatif
     if is_whatif(text):

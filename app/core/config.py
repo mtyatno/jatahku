@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_URL: str = ""
     TELEGRAM_BOT_USERNAME: str = "JatahkuBot"
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+
+    # Admin
+    ADMIN_SECRET: str = ""
 
     # Timezone
     TZ: str = "Asia/Jakarta"

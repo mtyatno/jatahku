@@ -1,3 +1,4 @@
+import hmac
 import logging
 from fastapi import APIRouter, Request, Response
 from telegram import Update
@@ -7,6 +8,14 @@ from app.core.config import get_settings
 settings = get_settings()
 logger = logging.getLogger("jatahku.webhook")
 router = APIRouter()
+
+
+def _verify_admin(request: Request) -> bool:
+    """Check X-Admin-Secret header against ADMIN_SECRET setting."""
+    if not settings.ADMIN_SECRET:
+        return False
+    secret = request.headers.get("X-Admin-Secret", "")
+    return hmac.compare_digest(secret, settings.ADMIN_SECRET)
 
 _bot_app = None
 
@@ -18,6 +27,11 @@ def get_bot_app():
 
 @router.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
+    # Validate Telegram webhook secret token when configured
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(token, settings.TELEGRAM_WEBHOOK_SECRET):
+            return Response(status_code=403)
     try:
         bot_app = get_bot_app()
         if not bot_app.running:
@@ -31,18 +45,25 @@ async def telegram_webhook(request: Request):
         return Response(status_code=200)
 
 @router.get("/webhook/telegram/setup")
-async def setup_webhook():
+async def setup_webhook(request: Request):
+    if not _verify_admin(request):
+        return Response(status_code=403)
     if not settings.TELEGRAM_BOT_TOKEN:
         return {"error": "TELEGRAM_BOT_TOKEN not configured"}
     bot_app = get_bot_app()
     if not bot_app.running:
         await bot_app.initialize()
-    await bot_app.bot.set_webhook(url=settings.TELEGRAM_WEBHOOK_URL)
+    kwargs = {"url": settings.TELEGRAM_WEBHOOK_URL}
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        kwargs["secret_token"] = settings.TELEGRAM_WEBHOOK_SECRET
+    await bot_app.bot.set_webhook(**kwargs)
     info = await bot_app.bot.get_webhook_info()
     return {"status": "ok", "webhook_url": info.url, "pending_updates": info.pending_update_count}
 
 @router.get("/webhook/telegram/info")
-async def webhook_info():
+async def webhook_info(request: Request):
+    if not _verify_admin(request):
+        return Response(status_code=403)
     bot_app = get_bot_app()
     if not bot_app.running:
         await bot_app.initialize()
@@ -51,7 +72,9 @@ async def webhook_info():
 
 
 @router.get("/webhook/telegram/set-commands")
-async def set_bot_commands():
+async def set_bot_commands(request: Request):
+    if not _verify_admin(request):
+        return Response(status_code=403)
     from telegram import BotCommand
     bot_app = get_bot_app()
     if not bot_app.running:
