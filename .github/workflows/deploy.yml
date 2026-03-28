@@ -34,7 +34,13 @@ jobs:
 
       - name: Notify Telegram on failure
         if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d text="❌ Deploy Jatahku GAGAL%0A%0ACommit: ${{ github.sha }}%0APesan: ${{ github.event.head_commit.message }}%0A%0ADetail: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -z "$BOT_TOKEN" ]; then echo "ERROR: TELEGRAM_BOT_TOKEN secret is empty!"; exit 1; fi
+          if [ -z "$CHAT_ID" ]; then echo "ERROR: TELEGRAM_CHAT_ID secret is empty!"; exit 1; fi
+          echo "Secrets OK, sending Telegram message..."
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "{\"chat_id\": \"${CHAT_ID}\", \"text\": \"test notif jatahku\"}"
