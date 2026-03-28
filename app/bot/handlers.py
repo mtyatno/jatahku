@@ -500,7 +500,7 @@ async def handle_message(update, context):
         handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
         handle_santai, handle_emosi, handle_koreksi, handle_nabung, handle_multi_expense,
     )
-    if is_emosi(text):
+    if is_emosi(text) and not parse_amount(text):
         await handle_emosi(update, context)
         return
     if is_koreksi(text):
@@ -509,17 +509,18 @@ async def handle_message(update, context):
     if is_nabung(text) and not parse_subscription(text):
         await handle_nabung(update, context)
         return
-    if is_sisa(text) and not parse_amount(text):
-        await handle_sisa(update, context)
-        return
-    if is_harian(text):
+    # Specific queries before general balance (avoids SISA_RE swallowing them)
+    if is_harian(text) and not parse_amount(text):
         await handle_limit_harian(update, context)
         return
     if is_proyeksi(text):
         await handle_proyeksi(update, context)
         return
-    if is_comparison(text):
+    if is_comparison(text) and not parse_amount(text):
         await handle_comparison(update, context)
+        return
+    if is_sisa(text) and not parse_amount(text):
+        await handle_sisa(update, context)
         return
     if is_santai(text) and not parse_amount(text):
         await handle_santai(update, context)

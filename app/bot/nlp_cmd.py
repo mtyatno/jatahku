@@ -1,8 +1,4 @@
-"""Natural language query handlers for the Telegram bot.
-
-Handles: sisa/balance, daily limit, projection, comparison,
-         casual status checks, emotional queries, corrections, multi-expense.
-"""
+"""Natural language query handlers for the Telegram bot."""
 import re
 from decimal import Decimal
 from datetime import date, timedelta
@@ -16,103 +12,185 @@ from app.bot.handlers import (
 # ── Detection patterns ────────────────────────────────────────────────────────
 
 SISA_RE = re.compile(
-    # 1. Exact single/double-word triggers (common short queries)
+    # Exact single/short triggers (1-3 kata)
     r"^(sisa|saldo|rekap|rekapan|cek|info|amplop|jatah|dompet|status|uangku|duitku"
     r"|sisa\s+uang|sisa\s+duit|cek\s+saldo|tinggal\s+berapa|sisa\s+jatah|cek\s+jatah"
     r"|info\s+saldo|rekap\s+amplop|sisa\s+berapa|duit\s+sisa|cek\s+duit|uang\s+sisa"
     r"|sisa\s+saldo|saldo\s+dong|cek\s+dompet|jatah\s+sisa|info\s+jatah|lihat\s+saldo"
     r"|saldo\s+sisa)$|"
 
-    # 2. Core balance keywords — these alone trigger balance check
+    # Core balance keywords — match anywhere
     r"\b(sisa|tersisa|saldo|rekap|rekapan|jatah|amplop|cuan|amunisi)\b|"
 
-    # 3. "tinggal" in balance context
+    # "tinggal" in balance context
     r"\btinggal\s+(berapa|sisa|duit|uang|saldo|sedikit)\b|"
     r"\b(duit|uang|saldo|jatah)\s*(gue|gw|ku|aku|saya|w\b)?\s*tinggal\b|"
 
-    # 4. "berapa" + money words
+    # "berapa" + money words
     r"\bberapa\s+(sisa|uang|duit|jatah|saldo|lagi|perak|cuan)\b|"
     r"\b(duit|uang|saldo)\s*(gue|gw|ku|aku|saya|w\b)?\s*berapa\b|"
 
-    # 5. Action words + budget context
+    # Action word + budget context
     r"\b(cek|lihat|liat|info|minta|report|tolong)\s+"
     r"(saldo|duit|uang|jatah|amplop|dompet|kantong|keuangan|posisi|sisa|cuan|rekap)\b|"
 
-    # 6. "posisi/status" + money context
+    # "posisi/status" + money context
     r"\b(posisi|status)\s+(dompet|kantong|keuangan|duit|uang|amplop)\b|"
 
-    # 7. Dompet / kantong (wallet slang — alone or with descriptors)
-    r"\b(dompet|kantong)\b|"
+    # Dompet/kantong/keuangan (wallet words)
+    r"\b(dompet|kantong|keuangan)\b|"
 
-    # 8. "masih ada/sisa/punya" + money
+    # "masih ada/sisa/punya duit"
     r"\bmasih\s+(ada\s+)?(duit|uang|jatah|saldo)\b|"
-    r"\bmasih\s+(sisa|punya\s+duit|ada\s+duit|bisa\s+jajan|kaya|nafas|tebel)\b|"
-    r"\budah\s+miskin\b|"
+    r"\bmasih\s+(sisa|punya\s+duit|ada\s+duit|bisa\s+jajan)\b|"
 
-    # 9. Slang states (sekarat/menipis/etc near wallet/money words)
+    # Slang near wallet words
     r"\b(duit|uang|dompet|kantong).{0,25}(sekarat|menipis|nafas|tebel)\b|"
-    r"\b(sekarat|menipis|nafas|tebel).{0,25}(duit|uang|dompet|kantong)\b",
+    r"\b(sekarat|menipis).{0,25}(duit|uang|dompet|kantong)\b",
 
     re.IGNORECASE,
 )
 
 HARIAN_RE = re.compile(
-    r"\bjatah\s+harian\b|"
-    r"\blimit\s+harian\b|"
-    r"\bper\s+hari\s+(berapa|bisa)\b|"
-    r"\bberapa\s+per\s+hari\b|"
-    r"\bmaksimal.{0,15}hari\s+ini\b|"
-    r"\bhari\s+ini\s+maksimal\b|"
-    r"\bbisa\s+keluar\s+berapa\b",
+    # "harian" is the main signal
+    r"\bharian\b|"
+    r"\bperhari\b|"
+
+    # "per hari" — very strong signal
+    r"\bper\s+hari\b|"
+
+    # "hari ini" + budget query keyword
+    r"\bhari\s+ini\s+(berapa|maksimal|boleh|bisa|jatah|limit|budget|jatahnya|budgetnya)\b|"
+
+    # budget keyword + "hari ini"
+    r"\b(maksimal|boleh|bisa|jatah|limit|budget)\s+(jajan\s+|keluar\s+|habis\s+|ngeluarin\s+)?hari\s+ini\b|"
+
+    # "batas pengeluaran hari ini"
+    r"\b(batas|limit)\s+(pengeluaran\s+)?hari\s+ini\b",
+
     re.IGNORECASE,
 )
 
 PROYEKSI_RE = re.compile(
-    r"\b(cukup|aman|tahan)\s+(sampai|hingga)\s+(kapan|akhir)\b|"
-    r"\bhabis\s+(tanggal|kapan)\b|"
-    r"\bsampai\s+kapan\s+(cukup|aman|bertahan)\b|"
-    r"\bkalau\s+begini\s+terus\b|"
-    r"\bcukup\s+sampai\s+akhir\s+bulan\b",
+    # When will money run out
+    r"\bkapan\s+(habis|ludes|kere|abis|tewas|modar|bokek|kosong|nol)\b|"
+    r"\b(habis|ludes|abis)\s+(tanggal|kapan)\b|"
+    r"\b(uang|duit|saldo|jatah|sisa).{0,25}(habis|ludes|abis)\s*(kapan|tanggal|bulan)?\b|"
+
+    # "tahan/kuat/cukup sampai kapan"
+    r"\b(cukup|aman|tahan|kuat|bertahan)\s+(sampai|hingga)\s*(kapan|akhir|tanggal|berapa)?\b|"
+    r"\bsampai\s+kapan\b|"
+
+    # "nyampe" slang
+    r"\bnyampe\s+(kapan|akhir|gajian|tanggal|bulan\s+depan)?\b|"
+
+    # How many days remaining
+    r"\b(tahan|kuat|cukup|bertahan|sisa)\s+berapa\s+hari\b|"
+    r"\bberapa\s+hari\s+(lagi|sisa)\b|"
+    r"\bsisa\s+berapa\s+hari\b|"
+
+    # Scenario: "kalau begini terus"
+    r"\bkalau\s+(begini|gini|kayak\s+gini)\s*(terus|aja)?\b|"
+    r"\bbegini\s+terus\b|"
+    r"\bburn\s+rate\b|"
+
+    # Slang states
+    r"\bkapan\s+(kere|bokek)\b|"
+    r"\b(sisa|umur)\s+(nafas|duit|saldo).{0,15}(berapa|hari|kapan)\b|"
+    r"\bumur\s+(duit|saldo)\b|"
+
+    # Short exact forms
+    r"^(habis\s+kapan|tahan\s+berapa\s+hari|sisa\s+berapa\s+hari|nyampe\s+kapan"
+    r"|kapan\s+habis|cukup\s+berapa\s+hari|kuat\s+berapa\s+hari|habis\s+tanggal\s+berapa"
+    r"|cukup\s+sampe\s+kapan|abis\s+kapan|kapan\s+kere|kapan\s+ludes|kapan\s+bokek)$",
+
     re.IGNORECASE,
 )
 
 COMPARISON_RE = re.compile(
-    r"\blebih\s+(boros|hemat)\s*(dari\s+bulan\s+lalu|bulan\s+lalu)?\b|"
-    r"\bbulan\s+lalu\s*(gimana|berapa|lebih|dibanding)?\b|"
-    r"\bpengeluaran\s+terbesar\b|"
-    r"\bterbesar\s+(apa|bulan\s+ini)\b",
+    # Compare this month vs last
+    r"\blebih\s+(boros|hemat|parah|ngirit|saving|ambyar|boncos|gila|waras)\b|"
+    r"\b(bulan\s+lalu|bulan\s+kemarin|kemaren|kemarin)\b|"
+    r"\b(bandingin|bandingkan|komparasi|perbandingan|evaluasi)\b|"
+    r"\bboros\s+mana\b|"
+    r"\bhemat\s+mana\b|"
+    r"\bbulan\s+ini\s+vs\b|"
+
+    # Top spending
+    r"\b(pengeluaran|expense|jajan|spender)\s+terbesar\b|"
+    r"\btop\s+(pengeluaran|expense|jajan|spender|jebol)\b|"
+    r"\bpaling\s+(boros|gede|banyak|nyedot|nguras|parah|cepet\s+abis)\b|"
+    r"\b(uang|duit)\s+paling\s+(banyak|gede)\s+(abis|lari|kesedot|kepake|kemana)\b|"
+    r"\byang\s+(bikin|nyedot|nguras)\s+(boros|dompet|tipis|bokek|habis)\b|"
+    r"\btren\s+(pengeluaran|boros|jajan)\b|"
+    r"\bkategori\s+terboros\b",
+
     re.IGNORECASE,
 )
 
 SANTAI_RE = re.compile(
-    # "boncos/bokek" — no money context needed, purely about status
     r"\b(boncos|bokek)\b|"
-    # "parah/gawat" as a question about finances
+    r"\b(overbudget|over\s+budget|over\s+limit|tekor|jebol|kritis|minus)\s*(ga|gak|nggak|dong|nih|belum)?\b|"
     r"\b(parah|gawat)\s*(gak|nggak|banget|sih)\b|"
-    # "aman gak?" without money/wallet word (those are caught by SISA_RE first)
-    r"\b(aman|sehat)\s+(gak|nggak|kan|gak\s+sih|nih)\b",
+    r"\b(aman|sehat)\s+(gak|nggak|kan|gak\s+sih|nih|bro|cuy|bang)\b|"
+    r"\bmasih\s+(waras|oke|chill|kuat\s+nafas|panjang\s+nafas|tebel|ambyar)\b|"
+    r"\bgue\s+(masih\s+)?(kaya|miskin)\b|"
+    r"\budah\s+(kere|miskin)\b",
+
     re.IGNORECASE,
 )
 
 EMOSI_RE = re.compile(
-    r"\b(kenapa|kok)\s+.{0,25}(cepet\s+)?habis\b|"
-    r"\bgak\s+(pernah\s+)?bisa\s+nabung\b|"
+    # Why does it disappear
+    r"\b(kenapa|kok)\s+.{0,30}(cepet\s+)?(habis|ludes|abis|ilang|ambyar|tewas|kering|tipis|susut)\b|"
+    r"\bkok\s+(abis|habis|ludes)\s+terus\b|"
+    r"\bkok\s+cepet\s+(abis|habis|ludes)\b|"
+
+    # Where did it go
+    r"\b(duit|uang)\s+(lari|abis|ilang|kesedot|menguap|nguap)\s+(kemana|ke\s+mana)\b|"
+    r"\bkemana\s+(aja\s+)?(duit|uang)\b|"
+    r"\b(duit|uang).{0,20}(lari|kesedot|abis|pergi)\s*(kemana|buat\s+apa)\b|"
+    r"\bbocor\s+halus\b|"
+
+    # "perasaan ga beli apa-apa kok abis"
+    r"\bperasaan\s+(ga|gak|nggak)\s+(beli|jajan|boros|ngeluarin|foya)\b|"
+    r"\b(ga|gak|nggak)\s+(jajan|beli)\s+(banyak|mahal|apa-apa).{0,20}(abis|habis|ludes)\b|"
+
+    # Can't save
+    r"\bgak\s+(pernah\s+)?bisa\s+(nabung|irit|ngumpul|nyimpen)\b|"
     r"\bsusah\s+(banget\s+)?nabung\b|"
-    r"\bselalu\s+boncos\b",
+    r"\b(selalu|terus)\s+boncos\b|"
+    r"\bduit\s+kayak\s+(air|ditiup|nguap|numpang\s+lewat)\b|"
+    r"\btuyul\b",
+
     re.IGNORECASE,
 )
 
 KOREKSI_RE = re.compile(
-    r"\b(tadi|barusan)\s*(salah|keliru|typo|ngaco)\b|"
+    # Edit amount
+    r"\b(tadi|barusan)\s*(salah|keliru|typo|ngaco|salah\s+ketik)\b|"
+    r"\beh\s+salah\b|"
+    r"\btypo\b|"
+    r"\b(ralat|edit|koreksi)\b|"
     r"\bharusnya\s+\d|"
-    r"\b(ganti|ubah|koreksi)\s+.{0,20}(tadi|terakhir)\b",
+    r"\b(ganti|ubah)\s+.{0,20}(tadi|terakhir|barusan)\b|"
+
+    # Delete/undo/cancel
+    r"\b(batalin|cancel|undo)\s*(yang\s+)?(barusan|tadi|terakhir|ini)?\b|"
+    r"\bgajadi\b|"
+    r"\bhapus\s+(transaksi|input|catatan|data|entry|yang\s+(barusan|tadi)|terakhir|barusan)\b",
+
     re.IGNORECASE,
 )
 
 NABUNG_RE = re.compile(
-    r"\bnabung\s+.{0,20}\b(dalam|selama|bulan|hari|minggu)\b|"
-    r"\btarget\s+.{0,20}\b(dalam|bulan|hari)\b|"
-    r"\bnyisih\s+berapa",
+    # With duration keywords
+    r"\b(nabung|ngumpulin|ngumpul|kumpul|nyisih|nyisihin|sisih|sisihkan)\s*.{0,30}\b(dalam|selama|bulan|hari|minggu|tahun)\b|"
+    r"\btarget\s+.{0,30}\b(dalam|bulan|hari|minggu|tahun)\b|"
+    r"\bharus\s+(nyisih|sisih|nabung|sisihkan)\s+(berapa|per)\b|"
+    r"\bper\s+(hari|bulan|minggu)\s+(buat|untuk|target|dapet|capai)\b|"
+    r"\b(pengen|mau|ingin)\s+(beli|dapet|dapetin|punya).{0,30}\b(bulan|hari|minggu)\b",
+
     re.IGNORECASE,
 )
 
@@ -128,18 +206,23 @@ def is_nabung(text): return bool(NABUNG_RE.search(text))
 
 
 def parse_multi_expense(text):
-    """Parse comma/semicolon-separated expenses. Returns list of (amount, desc) or None."""
-    parts = re.split(r"[,;]", text)
-    if len(parts) < 2:
-        return None
-    results = []
-    for part in parts:
-        part = part.strip()
-        if part:
-            parsed = parse_amount(part)
-            if parsed:
-                results.append(parsed)
-    return results if len(results) >= 2 else None
+    """Parse multi-expense input. Supports separators: , ; terus lalu dan (space-sequence).
+    Returns list of (amount, desc) with >= 2 items, or None.
+    """
+    # Try separators in priority order
+    sep_patterns = [
+        r"\s*[,;]\s*",
+        r"\s+(?:terus|lalu)\s+",
+        r"\s+dan\s+",
+    ]
+    for sep in sep_patterns:
+        parts = re.split(sep, text, flags=re.IGNORECASE)
+        if len(parts) >= 2:
+            results = [parse_amount(p.strip()) for p in parts if p.strip()]
+            results = [r for r in results if r is not None]
+            if len(results) >= 2:
+                return results
+    return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -182,7 +265,6 @@ async def handle_sisa(update, context):
 
     total_free = sum(e["free"] for e in envelopes)
     total_spent = sum(e["spent"] for e in envelopes)
-    total_allocated = sum(e["allocated"] for e in envelopes)
     days_left = _days_left_in_month()
     now = date.today()
 
@@ -293,7 +375,7 @@ async def handle_proyeksi(update, context):
         detail = f"Perkiraan habis: {_fmt_date(projected_end)}"
     else:
         tone = f"🔴 Waspada! Perkiraan habis {_fmt_date(projected_end)} ({days_can_last} hari lagi)"
-        detail = f"Di kecepatan ini kamu butuh {format_currency(projected_eom)} tapi budget {format_currency(total_allocated)}"
+        detail = f"Di kecepatan ini butuh {format_currency(projected_eom)} tapi budget {format_currency(total_allocated)}"
 
     lines = [
         f"{tone}\n",
@@ -414,9 +496,7 @@ async def handle_santai(update, context):
         )
     elif spend_ratio < time_ratio - 0.2:
         status = "✅ *Hemat banget!* Jauh di bawah jadwal."
-        advice = (
-            f"Baru {int(spend_ratio*100)}% terpakai, padahal sudah {int(time_ratio*100)}% jalan bulan ini."
-        )
+        advice = f"Baru {int(spend_ratio*100)}% terpakai, padahal sudah {int(time_ratio*100)}% jalan bulan ini."
     else:
         status = "✅ *Aman!* On track."
         advice = f"Terpakai {int(spend_ratio*100)}% dari total budget."
@@ -464,7 +544,7 @@ async def handle_emosi(update, context):
             f"\n💡 {int(spend_ratio*100)}% budget udah terpakai — "
             f"pola {top_env.name} yang paling banyak menyedot."
         )
-        lines.append(f"Coba set limit harian untuk amplop itu via /setlimit")
+        lines.append("Coba set limit harian untuk amplop itu via /setlimit")
     elif spend_ratio > 0.5:
         lines.append(f"\n💡 Sebenarnya masih {int((1-spend_ratio)*100)}% tersisa. Masih bisa diatur!")
     else:
@@ -474,22 +554,16 @@ async def handle_emosi(update, context):
 
 
 async def handle_koreksi(update, context):
-    """Correct the amount of the last transaction."""
+    """Correct or delete the last transaction.
+    - With new amount → edit the amount
+    - Without amount (undo/batalin/hapus) → soft-delete
+    """
     from app.core.database import AsyncSessionLocal
     from app.models.models import Transaction
     tg_user = update.effective_user
     text = update.message.text.strip()
 
     new_parsed = parse_amount(text)
-    if not new_parsed:
-        await update.message.reply_text(
-            "Sebutkan jumlah yang benar ya.\n"
-            "_Contoh: tadi salah, harusnya 20k_",
-            parse_mode="Markdown",
-        )
-        return
-
-    new_amount, _ = new_parsed
 
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
@@ -503,16 +577,24 @@ async def handle_koreksi(update, context):
         if not txn:
             await update.message.reply_text("Tidak ada transaksi yang bisa dikoreksi.")
             return
-        old_amount = txn.amount
-        txn.amount = new_amount
-        await db.commit()
 
-    await update.message.reply_text(
-        f"✅ *Dikoreksi!*\n\n"
-        f"_{txn.description}_\n"
-        f"{format_currency(old_amount)} → *{format_currency(new_amount)}*",
-        parse_mode="Markdown",
-    )
+        if new_parsed:
+            new_amount, _ = new_parsed
+            old_amount = txn.amount
+            txn.amount = new_amount
+            await db.commit()
+            await update.message.reply_text(
+                f"✅ *Dikoreksi!*\n\n_{txn.description}_\n"
+                f"{format_currency(old_amount)} → *{format_currency(new_amount)}*",
+                parse_mode="Markdown",
+            )
+        else:
+            # No amount → treat as undo/delete
+            txn.is_deleted = True
+            await db.commit()
+            await update.message.reply_text(
+                f"↩️ Dibatalkan: {format_currency(txn.amount)} — {txn.description}"
+            )
 
 
 async def handle_nabung(update, context):
@@ -528,11 +610,7 @@ async def handle_nabung(update, context):
         return
 
     target, _ = parsed
-
-    # Extract duration
-    duration_match = re.search(
-        r"(\d+)\s*(bulan|hari|minggu|tahun)", text, re.IGNORECASE
-    )
+    duration_match = re.search(r"(\d+)\s*(bulan|hari|minggu|tahun)", text, re.IGNORECASE)
     if not duration_match:
         await update.message.reply_text(
             "Sebutkan jangka waktunya ya.\n"
@@ -543,17 +621,8 @@ async def handle_nabung(update, context):
 
     num = int(duration_match.group(1))
     unit = duration_match.group(2).lower()
-
-    if unit == "hari":
-        days = num
-    elif unit == "minggu":
-        days = num * 7
-    elif unit == "bulan":
-        days = num * 30
-    elif unit == "tahun":
-        days = num * 365
-    else:
-        days = num * 30
+    unit_days = {"hari": 1, "minggu": 7, "bulan": 30, "tahun": 365}
+    days = num * unit_days.get(unit, 30)
 
     per_hari = target / days
     per_bulan = target / (days / 30)
@@ -570,7 +639,7 @@ async def handle_nabung(update, context):
 
 
 async def handle_multi_expense(update, context, items):
-    """Record multiple comma-separated expenses in one message."""
+    """Record multiple expenses in one message."""
     from app.core.database import AsyncSessionLocal
     from app.models.models import Transaction, TransactionSource
     tg_user = update.effective_user
