@@ -15,3 +15,26 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_KEY }}
           script: /opt/jatahku/deploy.sh
+
+      - name: Health check
+        run: |
+          echo "Waiting for service to be ready..."
+          sleep 5
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://jatahku.com/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+      - name: Notify Telegram on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="❌ Deploy Jatahku GAGAL%0A%0ACommit: ${{ github.sha }}%0APesan: ${{ github.event.head_commit.message }}%0A%0ADetail: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
