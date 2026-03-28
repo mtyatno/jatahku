@@ -368,16 +368,18 @@ export default function Settings() {
             <div className="space-y-4">
               <div className="bg-brand-50 rounded-xl p-4">
                 <p className="text-sm font-semibold text-brand-700 mb-2">Langkah 1: Buka bot di Telegram</p>
-                <button
+                <a href={`https://t.me/JatahkuBot?start=link_${linkCode}`} target="_blank" rel="noreferrer"
                   onClick={() => {
-                    const tgUrl = `tg://resolve?domain=JatahkuBot&start=link_${linkCode}`;
-                    const webUrl = `https://t.me/JatahkuBot?start=link_${linkCode}`;
-                    window.location.href = tgUrl;
-                    setTimeout(() => { window.open(webUrl, '_blank'); }, 1200);
+                    // Also try tg:// to open app directly (hidden anchor, won't navigate page)
+                    const a = document.createElement('a');
+                    a.href = `tg://resolve?domain=JatahkuBot&start=link_${linkCode}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
                   }}
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors">
                   📱 Buka @JatahkuBot
-                </button>
+                </a>
               </div>
               <div className="bg-gray-50 rounded-xl p-4">
                 <p className="text-sm font-semibold text-gray-700 mb-2">Langkah 2: Kirim kode ini di chat bot</p>
