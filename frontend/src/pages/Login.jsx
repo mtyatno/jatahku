@@ -112,7 +112,7 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-6">
-          Punya bot Telegram? Link akun di Settings.
+          Sudah pakai @JatahkuBot? Ketik <span className="font-mono">/webapp</span> di Telegram untuk masuk tanpa password.
         </p>
       </div>
     </div>

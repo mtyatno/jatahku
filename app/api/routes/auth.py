@@ -1,9 +1,11 @@
 from decimal import Decimal
 from uuid import UUID
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from app.core.config import get_settings
 
 limiter = Limiter(key_func=get_remote_address)
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,3 +135,26 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.get("/tg-login", response_model=TokenResponse)
+async def tg_login(token: str, db: AsyncSession = Depends(get_db)):
+    settings = get_settings()
+    r = aioredis.from_url(settings.REDIS_URL)
+    user_id_bytes = await r.get(f"tglogin:{token}")
+    if user_id_bytes:
+        await r.delete(f"tglogin:{token}")
+    await r.close()
+
+    if not user_id_bytes:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
+
+    result = await db.execute(select(User).where(User.id == UUID(user_id_bytes.decode())))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )

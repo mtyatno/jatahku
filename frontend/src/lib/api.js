@@ -105,6 +105,16 @@ class ApiClient {
     return res.ok ? res.json() : null;
   }
 
+  async loginWithTgToken(token) {
+    const res = await fetch(`${API_URL}/auth/tg-login?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if (res.ok) {
+      this.setToken(data.access_token);
+      this.setRefreshToken(data.refresh_token);
+    }
+    return { ok: res.ok, data };
+  }
+
   // Envelopes
   async getEnvelopeSummary() {
     const res = await this.request("/envelopes/summary");

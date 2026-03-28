@@ -1003,6 +1003,8 @@ def create_bot_app():
     from app.bot.household_cmd import cmd_invite, cmd_join
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("join", cmd_join))
+    from app.bot.tglogin_cmd import cmd_webapp
+    app.add_handler(CommandHandler("webapp", cmd_webapp))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

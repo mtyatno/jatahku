@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
 import Layout from './components/Layout';
 import Login from './pages/Login';
+import TgLogin from './pages/TgLogin';
 import Dashboard from './pages/Dashboard';
 import Envelopes from './pages/Envelopes';
 import Transactions from './pages/Transactions';
@@ -18,6 +19,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/auth/tg" element={<TgLogin />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/envelopes" element={<Envelopes />} />
