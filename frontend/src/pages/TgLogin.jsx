@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
 
 export default function TgLogin() {
   const [status, setStatus] = useState('loading');
+  const navigate = useNavigate();
+  const { loginWithTgToken } = useAuth();
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('token');
@@ -10,13 +13,15 @@ export default function TgLogin() {
       setStatus('invalid');
       return;
     }
-    api.loginWithTgToken(token).then(result => {
-      if (result.ok) {
-        window.location.href = '/';
-      } else {
-        setStatus('error');
-      }
-    });
+    loginWithTgToken(token)
+      .then(result => {
+        if (result.ok) {
+          navigate('/', { replace: true });
+        } else {
+          setStatus('error');
+        }
+      })
+      .catch(() => setStatus('error'));
   }, []);
 
   return (

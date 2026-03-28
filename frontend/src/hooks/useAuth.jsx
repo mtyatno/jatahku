@@ -36,13 +36,22 @@ export function AuthProvider({ children }) {
     return result;
   };
 
+  const loginWithTgToken = async (token) => {
+    const result = await api.loginWithTgToken(token);
+    if (result.ok) {
+      const u = await api.getMe();
+      setUser(u);
+    }
+    return result;
+  };
+
   const logout = () => {
     api.logout();
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, loginWithTgToken }}>
       {children}
     </AuthContext.Provider>
   );
