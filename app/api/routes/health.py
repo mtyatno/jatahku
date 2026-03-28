@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.database import get_db
@@ -100,10 +101,13 @@ async def public_stats():
         )
         total_txns = txn_count.scalar()
 
-    return {
-        "users": users,
-        "managed": fmt(managed),
-        "today": fmt(today_total),
-        "week": fmt(week_total),
-        "txns": total_txns,
-    }
+    return JSONResponse(
+        content={
+            "users": users,
+            "managed": fmt(managed),
+            "today": fmt(today_total),
+            "week": fmt(week_total),
+            "txns": total_txns,
+        },
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
