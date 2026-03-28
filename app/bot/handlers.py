@@ -481,6 +481,11 @@ async def handle_message(update, context):
     text = update.message.text.strip()
     if text.startswith("/"):
         return
+    # Check for what-if question first
+    from app.bot.checkin_cmd import is_whatif, handle_whatif
+    if is_whatif(text):
+        await handle_whatif(update, context)
+        return
     # Check for subscription intent first
     sub = parse_subscription(text)
     if sub:
