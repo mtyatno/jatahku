@@ -201,10 +201,21 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
 <p class="footer">Digenerate oleh Jatahku — Setiap rupiah ada jatahnya.<br>{date.today().strftime("%d %B %Y %H:%M")}</p>
 </body></html>"""
 
-    # Return as HTML (can be printed to PDF from browser)
-    filename = f"jatahku_{y}-{m:02d}.html"
-    return StreamingResponse(
-        iter([html]),
-        media_type="text/html",
-        headers={"Content-Disposition": f"inline; filename={filename}"},
-    )
+    # Generate real PDF using weasyprint
+    try:
+        from weasyprint import HTML as WeasyHTML
+        pdf_bytes = WeasyHTML(string=html).write_pdf()
+        filename = f"jatahku_{y}-{m:02d}.pdf"
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except ImportError:
+        # Fallback to HTML if weasyprint not available
+        filename = f"jatahku_{y}-{m:02d}.html"
+        return StreamingResponse(
+            iter([html]),
+            media_type="text/html",
+            headers={"Content-Disposition": f"inline; filename={filename}"},
+        )

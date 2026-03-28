@@ -42,9 +42,11 @@ export default function ExportButtons() {
   };
 
   const handleSavePDF = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow.focus();
-      iframeRef.current.contentWindow.print();
+    if (pdfUrl) {
+      const a = document.createElement('a');
+      a.href = pdfUrl;
+      a.download = 'jatahku_' + year + '-' + String(month).padStart(2, '0') + '.pdf';
+      a.click();
     }
   };
 
@@ -77,7 +79,7 @@ export default function ExportButtons() {
 
       {/* Report Modal */}
       {pdfUrl && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-gray-100">
+        <div className="fixed inset-0 z-50 flex flex-col bg-white">
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shrink-0">
             <span className="font-semibold text-gray-700">Laporan {monthName}</span>
