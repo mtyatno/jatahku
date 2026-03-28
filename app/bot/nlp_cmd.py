@@ -16,10 +16,43 @@ from app.bot.handlers import (
 # ── Detection patterns ────────────────────────────────────────────────────────
 
 SISA_RE = re.compile(
-    r"\b(sisa|tersisa)\b.{0,20}\b(berapa|dong|ya|nih)\b|"
-    r"\bberapa\s+(sisa|uang|duit|jatah|saldo)\b|"
-    r"\b(saldo|jatah|uang|duit)\s*(gue|gw|aku|saya|ku|w\b)?\s*(berapa|masih|ada)\b|"
-    r"\bmasih\s+ada\s+(uang|duit|jatah|saldo)\b",
+    # 1. Exact single/double-word triggers (common short queries)
+    r"^(sisa|saldo|rekap|rekapan|cek|info|amplop|jatah|dompet|status|uangku|duitku"
+    r"|sisa\s+uang|sisa\s+duit|cek\s+saldo|tinggal\s+berapa|sisa\s+jatah|cek\s+jatah"
+    r"|info\s+saldo|rekap\s+amplop|sisa\s+berapa|duit\s+sisa|cek\s+duit|uang\s+sisa"
+    r"|sisa\s+saldo|saldo\s+dong|cek\s+dompet|jatah\s+sisa|info\s+jatah|lihat\s+saldo"
+    r"|saldo\s+sisa)$|"
+
+    # 2. Core balance keywords — these alone trigger balance check
+    r"\b(sisa|tersisa|saldo|rekap|rekapan|jatah|amplop|cuan|amunisi)\b|"
+
+    # 3. "tinggal" in balance context
+    r"\btinggal\s+(berapa|sisa|duit|uang|saldo|sedikit)\b|"
+    r"\b(duit|uang|saldo|jatah)\s*(gue|gw|ku|aku|saya|w\b)?\s*tinggal\b|"
+
+    # 4. "berapa" + money words
+    r"\bberapa\s+(sisa|uang|duit|jatah|saldo|lagi|perak|cuan)\b|"
+    r"\b(duit|uang|saldo)\s*(gue|gw|ku|aku|saya|w\b)?\s*berapa\b|"
+
+    # 5. Action words + budget context
+    r"\b(cek|lihat|liat|info|minta|report|tolong)\s+"
+    r"(saldo|duit|uang|jatah|amplop|dompet|kantong|keuangan|posisi|sisa|cuan|rekap)\b|"
+
+    # 6. "posisi/status" + money context
+    r"\b(posisi|status)\s+(dompet|kantong|keuangan|duit|uang|amplop)\b|"
+
+    # 7. Dompet / kantong (wallet slang — alone or with descriptors)
+    r"\b(dompet|kantong)\b|"
+
+    # 8. "masih ada/sisa/punya" + money
+    r"\bmasih\s+(ada\s+)?(duit|uang|jatah|saldo)\b|"
+    r"\bmasih\s+(sisa|punya\s+duit|ada\s+duit|bisa\s+jajan|kaya|nafas|tebel)\b|"
+    r"\budah\s+miskin\b|"
+
+    # 9. Slang states (sekarat/menipis/etc near wallet/money words)
+    r"\b(duit|uang|dompet|kantong).{0,25}(sekarat|menipis|nafas|tebel)\b|"
+    r"\b(sekarat|menipis|nafas|tebel).{0,25}(duit|uang|dompet|kantong)\b",
+
     re.IGNORECASE,
 )
 
@@ -52,9 +85,11 @@ COMPARISON_RE = re.compile(
 )
 
 SANTAI_RE = re.compile(
+    # "boncos/bokek" — no money context needed, purely about status
     r"\b(boncos|bokek)\b|"
+    # "parah/gawat" as a question about finances
     r"\b(parah|gawat)\s*(gak|nggak|banget|sih)\b|"
-    r"\bmasih\s+aman\s*(gak|nggak|kan|nih)?\b|"
+    # "aman gak?" without money/wallet word (those are caught by SISA_RE first)
     r"\b(aman|sehat)\s+(gak|nggak|kan|gak\s+sih|nih)\b",
     re.IGNORECASE,
 )
