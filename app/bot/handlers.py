@@ -72,9 +72,15 @@ def parse_amount(text):
     else:
         return None
 
-    # Handle Indonesian thousand separator: 17.000 = 17000, 1.500.000 = 1500000
+    # Handle thousand separators:
+    # dot-thousand:   1.500 or 1.500.000 → 1500 / 1500000
+    # comma-thousand: 1,500 or 1,500,000 → 1500 / 1500000
+    # decimal comma:  1,5 or 1,50 → 1.5
     if re.match(r"^\d{1,3}(\.\d{3})+$", number_str):
         number_str = number_str.replace(".", "")
+        number = float(number_str)
+    elif re.match(r"^\d{1,3}(,\d{3})+$", number_str):
+        number_str = number_str.replace(",", "")
         number = float(number_str)
     else:
         number_str = number_str.replace(",", ".")
