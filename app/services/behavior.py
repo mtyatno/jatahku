@@ -42,8 +42,17 @@ async def check_behavior(
     if not envelope:
         return BehaviorCheckResult.blocked("error", "Amplop tidak ditemukan")
 
+    # Load user defaults as fallback when envelope-level settings are not set
+    from app.models.models import User
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+
+    effective_is_locked = envelope.is_locked or (user.default_is_locked if user else False)
+    effective_cooling = envelope.cooling_threshold if envelope.cooling_threshold is not None else (user.default_cooling_threshold if user else None)
+    effective_daily_limit = envelope.daily_limit if envelope.daily_limit is not None else (user.default_daily_limit if user else None)
+
     # Check 1: Envelope lock
-    if envelope.is_locked:
+    if effective_is_locked:
         return BehaviorCheckResult.blocked(
             "locked",
             f"Amplop {envelope.name} sedang dikunci. Tidak bisa belanja.",
@@ -110,18 +119,18 @@ async def check_behavior(
         )
 
     # Check 3: Cooling period (check BEFORE daily limit — big purchases need cooling regardless)
-    if envelope.cooling_threshold is not None and amount >= envelope.cooling_threshold:
+    if effective_cooling is not None and amount >= effective_cooling:
         return BehaviorCheckResult.blocked(
             "cooling",
-            f"Pembelian >= Rp{int(envelope.cooling_threshold):,} perlu cooling period.",
+            f"Pembelian >= Rp{int(effective_cooling):,} perlu cooling period.",
             envelope_name=envelope.name,
-            threshold=envelope.cooling_threshold,
+            threshold=effective_cooling,
             amount=amount,
             cooling_hours=24,
         )
 
-    # Check 3: Daily limit
-    if envelope.daily_limit is not None:
+    # Check 4: Daily limit
+    if effective_daily_limit is not None:
         today = date.today()
         spent_today_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
@@ -133,13 +142,13 @@ async def check_behavior(
         )
         spent_today = Decimal(str(spent_today_result.scalar()))
 
-        if spent_today + amount > envelope.daily_limit:
-            remaining = max(envelope.daily_limit - spent_today, Decimal("0"))
+        if spent_today + amount > effective_daily_limit:
+            remaining = max(effective_daily_limit - spent_today, Decimal("0"))
             return BehaviorCheckResult.blocked(
                 "daily_limit",
                 f"Melebihi limit harian {envelope.name}.",
                 envelope_name=envelope.name,
-                daily_limit=envelope.daily_limit,
+                daily_limit=effective_daily_limit,
                 spent_today=spent_today,
                 remaining_today=remaining,
                 requested=amount,
