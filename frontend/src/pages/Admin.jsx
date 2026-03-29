@@ -357,22 +357,26 @@ function PaymentsTab({ onAction }) {
   const removeBank = (idx) => saveBanks(banks.filter((_, i) => i !== idx));
 
   const createPromo = async () => {
-    const r = await api.request('/admin/promo-codes', {
-      method: 'POST',
-      body: JSON.stringify({
-        ...newPromo,
-        max_uses: newPromo.max_uses ? parseInt(newPromo.max_uses) : null,
-        valid_days: newPromo.valid_days ? parseInt(newPromo.valid_days) : null,
-      }),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      alert('Gagal buat promo: ' + (err.detail || r.status));
-      return;
+    try {
+      const r = await api.request('/admin/promo-codes', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newPromo,
+          max_uses: newPromo.max_uses ? parseInt(newPromo.max_uses) : null,
+          valid_days: newPromo.valid_days ? parseInt(newPromo.valid_days) : null,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert('Gagal buat promo: ' + (err.detail || r.status));
+        return;
+      }
+      setNewPromo({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
+      setShowAddPromo(false);
+      onAction(); load();
+    } catch (e) {
+      alert('Gagal buat promo: ' + e.message);
     }
-    setNewPromo({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
-    setShowAddPromo(false);
-    onAction(); load();
   };
 
   const deletePromo = async (id) => {

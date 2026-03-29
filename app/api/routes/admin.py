@@ -441,19 +441,22 @@ async def create_promo(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import timedelta
-    promo = PromoCode(
-        code=req.code.upper(),
-        discount_pct=req.discount_pct,
-        is_free=req.is_free,
-        max_uses=req.max_uses,
-        event_name=req.event_name,
-        valid_from=datetime.now(timezone.utc),
-        valid_until=datetime.now(timezone.utc) + timedelta(days=req.valid_days) if req.valid_days else None,
-    )
-    db.add(promo)
-    await db.commit()
-    return {"status": "created", "code": promo.code}
+    try:
+        promo = PromoCode(
+            code=req.code.upper(),
+            discount_pct=req.discount_pct,
+            is_free=req.is_free,
+            max_uses=req.max_uses,
+            event_name=req.event_name,
+            valid_from=datetime.now(timezone.utc),
+            valid_until=datetime.now(timezone.utc) + timedelta(days=req.valid_days) if req.valid_days else None,
+        )
+        db.add(promo)
+        await db.commit()
+        return {"status": "created", "code": promo.code}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/promo-codes")
