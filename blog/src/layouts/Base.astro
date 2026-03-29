@@ -58,12 +58,12 @@ const categories = [
     .nav-in{max-width:1100px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between}
     .logo{font-family:var(--font-d);font-size:22px;font-weight:700;color:var(--primary);text-decoration:none}
     .logo span{color:#1D9E75}
-    .nav-links{display:flex;align-items:center;gap:24px}
-    .nav-links a{font-size:14px;font-weight:500;color:var(--text-s);text-decoration:none;transition:color .2s}
-    .nav-links a:hover{color:var(--primary)}
-    .nav-links a.active{color:var(--primary);font-weight:600}
-    .btn-nav{padding:8px 20px;background:var(--primary);color:#fff;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;transition:all .2s}
-    .btn-nav:hover{background:var(--primary-dark)}
+    .nav-links{display:flex;align-items:center;gap:20px}
+    .nav-links a:not(.btn-nav){font-size:14px;font-weight:500;color:var(--text-s);text-decoration:none;transition:color .2s}
+    .nav-links a:not(.btn-nav):hover{color:var(--primary)}
+    .nav-links a.active{color:var(--primary)!important;font-weight:600}
+    .btn-nav{padding:9px 22px;background:var(--primary);color:#fff!important;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;transition:all .2s;white-space:nowrap}
+    .btn-nav:hover{background:var(--primary-dark)!important}
 
     /* Nav kategori blog — secondary bar */
     .cat-nav{background:var(--white);border-bottom:1px solid var(--border)}
@@ -103,10 +103,12 @@ const categories = [
       <a href="https://jatahku.com" class="logo">Jatah<span>ku</span></a>
       <div class="nav-links">
         <a href="https://jatahku.com/#fitur" class="hide-mobile">Fitur</a>
+        <a href="https://jatahku.com/#cara-kerja" class="hide-mobile">Cara Kerja</a>
         <a href="https://jatahku.com/#harga" class="hide-mobile">Harga</a>
+        <a href="https://jatahku.com/#faq" class="hide-mobile">FAQ</a>
         <a href="https://blog.jatahku.com" class="active">Insight</a>
-        <a href="https://jatahku.com/app" class="hide-mobile">Login</a>
-        <a href="https://jatahku.com/app" class="btn-nav">Mulai Gratis</a>
+        <a href="https://jatahku.com/login" class="hide-mobile">Login</a>
+        <a href="https://jatahku.com/login" class="btn-nav">Mulai Gratis</a>
       </div>
     </div>
   </nav>
