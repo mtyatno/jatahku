@@ -9,17 +9,33 @@ logger = logging.getLogger("jatahku.scheduler")
 scheduler = AsyncIOScheduler()
 
 
-async def monthly_snapshot_job():
-    """Run on the 1st of each month — snapshot the previous month."""
-    now = date.today()
-    if now.month == 1:
-        target_year, target_month = now.year - 1, 12
-    else:
-        target_year, target_month = now.year, now.month - 1
+async def payday_snapshot_job():
+    """Run daily — create period-end snapshots for users whose budget period ended yesterday."""
+    from app.core.database import AsyncSessionLocal
+    from app.core.period import get_budget_period
+    from app.models.models import User
 
-    logger.info(f"Running monthly snapshot for {target_year}-{target_month:02d}")
-    result = await create_monthly_snapshots(target_year, target_month)
-    logger.info(f"Snapshot result: {result}")
+    today = date.today()
+    yesterday = today - __import__('datetime').timedelta(days=1)
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select as _sel
+        users_r = await db.execute(_sel(User).where(User.payday_day != None))
+        users = users_r.scalars().all()
+
+    # Find unique payday_days whose period ended yesterday
+    triggered = set()
+    for user in users:
+        pd = getattr(user, 'payday_day', 1) or 1
+        _, period_end = get_budget_period(pd, yesterday)
+        if period_end == yesterday and pd not in triggered:
+            triggered.add(pd)
+            # period_start of that just-ended period
+            period_start, _ = get_budget_period(pd, yesterday)
+            target_year, target_month = period_start.year, period_start.month
+            logger.info(f"Running payday snapshot for payday_day={pd}, period {period_start} → {period_end}")
+            result = await create_monthly_snapshots(target_year, target_month)
+            logger.info(f"Snapshot result: {result}")
 
 
 async def check_pending_reminders():
@@ -151,12 +167,11 @@ async def run_user_summaries():
 def start_scheduler():
     """Start the APScheduler with monthly snapshot job."""
     scheduler.add_job(
-        monthly_snapshot_job,
+        payday_snapshot_job,
         trigger="cron",
-        day=1,
         hour=0,
         minute=5,
-        id="monthly_snapshot",
+        id="payday_snapshot",
         replace_existing=True,
     )
     scheduler.add_job(

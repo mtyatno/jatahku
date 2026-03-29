@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import (
     Envelope, Transaction, PendingTransaction, PendingTransactionStatus, TransactionSource
 )
+from app.core.period import get_budget_period, get_previous_period
 
 
 class BehaviorCheckResult:
@@ -59,16 +60,19 @@ async def check_behavior(
             envelope_name=envelope.name,
         )
 
+    # Determine current budget period from user's payday_day
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    period_start, period_end = get_budget_period(payday_day)
+
     # Check 2: Not funded — no allocation = no spending
     from app.models.models import Allocation, Income
-    now = date.today()
     alloc_result = await db.execute(
         select(func.coalesce(func.sum(Allocation.amount), 0))
         .join(Income, Allocation.income_id == Income.id)
         .where(
             Allocation.envelope_id == envelope_id,
-            func.extract("year", Income.created_at) == now.year,
-            func.extract("month", Income.created_at) == now.month,
+            Income.income_date >= period_start,
+            Income.income_date <= period_end,
         )
     )
     allocated = Decimal(str(alloc_result.scalar()))
@@ -77,13 +81,12 @@ async def check_behavior(
     from app.models.models import MonthlySnapshot
     rollover = Decimal("0")
     if envelope.is_rollover:
-        prev_month = now.month - 1 if now.month > 1 else 12
-        prev_year = now.year if now.month > 1 else now.year - 1
+        prev_start, _ = get_previous_period(payday_day)
         snap_result = await db.execute(
             select(MonthlySnapshot).where(
                 MonthlySnapshot.envelope_id == envelope_id,
-                MonthlySnapshot.month == prev_month,
-                MonthlySnapshot.year == prev_year,
+                MonthlySnapshot.month == prev_start.month,
+                MonthlySnapshot.year == prev_start.year,
             )
         )
         snap = snap_result.scalar_one_or_none()
@@ -103,8 +106,8 @@ async def check_behavior(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.envelope_id == envelope_id,
             Transaction.is_deleted == False,
-            func.extract("year", Transaction.transaction_date) == now.year,
-            func.extract("month", Transaction.transaction_date) == now.month,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
         )
     )
     current_spent = Decimal(str(spent_result.scalar()))

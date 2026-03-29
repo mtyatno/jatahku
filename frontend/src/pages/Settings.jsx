@@ -114,6 +114,7 @@ export default function Settings() {
   const [cooling, setCooling] = useState('');
   const [dailyLimit, setDailyLimit] = useState('');
   const [defaultLocked, setDefaultLocked] = useState(false);
+  const [paydayDay, setPaydayDay] = useState(1);
   const [msg, setMsg] = useState('');
   const [errMsg, setErrMsg] = useState('');
 
@@ -137,6 +138,7 @@ export default function Settings() {
       setProfile(p);
       setName(p.name);
       setTz(p.timezone);
+      setPaydayDay(p.payday_day || 1);
       setCooling(p.default_cooling_threshold || '');
       setDailyLimit(p.default_daily_limit || '');
       setDefaultLocked(p.default_is_locked);
@@ -187,6 +189,14 @@ export default function Settings() {
     setTz(val);
     await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ timezone: val }) });
     flash('Timezone diperbarui', 'tz');
+  };
+
+  const savePaydayDay = async (val) => {
+    const day = parseInt(val);
+    if (day < 1 || day > 31) return;
+    setPaydayDay(day);
+    await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ payday_day: day }) });
+    flash('Tanggal gajian diperbarui', 'payday');
   };
 
   const saveBehavior = async () => {
@@ -435,6 +445,28 @@ export default function Settings() {
         ) : (
           <button onClick={generateInvite} className="text-sm text-brand-600 hover:underline">+ Invite anggota</button>
         )}
+      </div>
+
+      {/* Payday Day */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-1">📅 Tanggal Gajian</h3>
+        <p className="text-xs text-gray-400 mb-3">Periode budget dihitung dari tanggal ini setiap bulan.</p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Tanggal</span>
+            <input
+              type="number" min="1" max="31"
+              className="input text-sm w-20 text-center"
+              value={paydayDay}
+              onChange={e => savePaydayDay(e.target.value)}
+            />
+            <span className="text-sm text-gray-600">setiap bulan</span>
+          </div>
+          <InlineFlash k="payday" />
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          Contoh: gajian tgl 25 → periode 25 Mar – 24 Apr
+        </p>
       </div>
 
       {/* Timezone */}

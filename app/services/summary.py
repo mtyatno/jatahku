@@ -65,9 +65,12 @@ async def send_daily_summary(user_id=None):
                 )
                 envelopes = env_result.scalars().all()
 
-                now = date.today()
-                next_month = date(now.year + (1 if now.month == 12 else 0), (now.month % 12) + 1, 1)
-                days_left = (next_month - now).days
+                from app.core.period import get_period_info
+                payday_day = getattr(user, 'payday_day', 1) or 1
+                period_info = get_period_info(payday_day)
+                period_start = period_info["period_start"]
+                period_end = period_info["period_end"]
+                days_left = period_info["days_remaining"]
 
                 lines = [f"📋 Ringkasan hari ini ({today.strftime('%d %b')}):\n"]
 
@@ -83,14 +86,14 @@ async def send_daily_summary(user_id=None):
                 else:
                     lines.append("✨ Nggak ada pengeluaran hari ini. Nice!")
 
-                lines.append(f"\n📊 Sisa dana ({days_left} hari lagi):")
+                lines.append(f"\n📊 Sisa dana ({days_left} hari lagi sampai gajian):")
                 for env in envelopes:
                     spent_result = await db.execute(
                         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                             Transaction.envelope_id == env.id,
                             Transaction.is_deleted == False,
-                            func.extract("year", Transaction.transaction_date) == now.year,
-                            func.extract("month", Transaction.transaction_date) == now.month,
+                            Transaction.transaction_date >= period_start,
+                            Transaction.transaction_date <= period_end,
                         )
                     )
                     spent = Decimal(str(spent_result.scalar()))
@@ -100,8 +103,8 @@ async def send_daily_summary(user_id=None):
                         .join(IncModel, Allocation.income_id == IncModel.id)
                         .where(
                             Allocation.envelope_id == env.id,
-                            func.extract("year", IncModel.income_date) == now.year,
-                            func.extract("month", IncModel.income_date) == now.month,
+                            IncModel.income_date >= period_start,
+                            IncModel.income_date <= period_end,
                         )
                     )
                     allocated = Decimal(str(alloc_r.scalar()))
@@ -186,16 +189,16 @@ async def send_weekly_summary(user_id=None):
                 )
                 envelopes = env_result.scalars().all()
 
-                now = date.today()
-                next_month = date(now.year + (1 if now.month == 12 else 0), (now.month % 12) + 1, 1)
-                days_left = (next_month - now).days
-                days_passed = now.day
+                from app.core.period import get_period_info
+                payday_day = getattr(user, 'payday_day', 1) or 1
+                period_info = get_period_info(payday_day)
+                period_start = period_info["period_start"]
+                period_end = period_info["period_end"]
+                days_left = period_info["days_remaining"]
+                days_passed = period_info["days_used"]
 
-                # Calculate total allocated this month
-                total_budget = Decimal("0")
-
-                # Calculate total allocated + spent this month
                 from app.models.models import Allocation, Income as IncModel
+                total_budget = Decimal("0")
                 total_spent = Decimal("0")
                 for env in envelopes:
                     alloc_r = await db.execute(
@@ -203,8 +206,8 @@ async def send_weekly_summary(user_id=None):
                         .join(IncModel, Allocation.income_id == IncModel.id)
                         .where(
                             Allocation.envelope_id == env.id,
-                            func.extract("year", IncModel.income_date) == now.year,
-                            func.extract("month", IncModel.income_date) == now.month,
+                            IncModel.income_date >= period_start,
+                            IncModel.income_date <= period_end,
                         )
                     )
                     total_budget += Decimal(str(alloc_r.scalar()))
@@ -212,8 +215,8 @@ async def send_weekly_summary(user_id=None):
                         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                             Transaction.envelope_id == env.id,
                             Transaction.is_deleted == False,
-                            func.extract("year", Transaction.transaction_date) == now.year,
-                            func.extract("month", Transaction.transaction_date) == now.month,
+                            Transaction.transaction_date >= period_start,
+                            Transaction.transaction_date <= period_end,
                         )
                     )
                     total_spent += Decimal(str(spent_result.scalar()))
@@ -230,21 +233,22 @@ async def send_weekly_summary(user_id=None):
                     predicted_total = Decimal("0")
                     on_track = True
 
+                period_label = f"{period_start.strftime('%d %b')} – {period_end.strftime('%d %b')}"
                 lines = [f"📊 Ringkasan minggu ({week_start.strftime('%d %b')} - {today.strftime('%d %b')}):\n"]
                 lines.append(f"💸 Pengeluaran minggu ini: {format_currency(week_total)}")
                 lines.append(f"📝 {len(week_txns)} transaksi")
                 lines.append(f"📈 Rata-rata harian: {format_currency(daily_avg)}/hari\n")
 
-                lines.append(f"📅 Progress bulan ini ({days_left} hari lagi):")
+                lines.append(f"📅 Progress periode {period_label} ({days_left} hari lagi):")
                 lines.append(f"   Dana: {format_currency(total_budget)}")
                 lines.append(f"   Terpakai: {format_currency(total_spent)} ({int(total_spent / total_budget * 100) if total_budget > 0 else 0}%)")
                 lines.append(f"   Sisa: {format_currency(total_remaining)}\n")
 
                 if on_track:
-                    lines.append(f"✅ Prediksi: On track! Budget cukup sampai akhir bulan.")
+                    lines.append(f"✅ Prediksi: On track! Budget cukup sampai gajian.")
                 else:
                     over = predicted_total - total_budget
-                    lines.append(f"⚠️ Prediksi: Overspend {format_currency(over)} di akhir bulan!")
+                    lines.append(f"⚠️ Prediksi: Overspend {format_currency(over)} sebelum gajian!")
                     safe_daily = total_remaining / days_left if days_left > 0 else Decimal("0")
                     lines.append(f"💡 Supaya aman, max {format_currency(safe_daily)}/hari.")
 

@@ -238,10 +238,11 @@ async def get_household_id(user, db):
     result = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
     return result.scalar_one_or_none()
 
-async def get_envelopes_with_spent(household_id, db, user_id=None):
-    now = date.today()
+async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: int = 1):
     from sqlalchemy import or_
     from app.models.models import Income, RecurringTransaction, RecurringFrequency
+    from app.core.period import get_budget_period
+    period_start, period_end = get_budget_period(payday_day)
     query = select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
     if user_id:
         query = query.where(or_(Envelope.owner_id == None, Envelope.owner_id == user_id))
@@ -252,8 +253,8 @@ async def get_envelopes_with_spent(household_id, db, user_id=None):
         spent_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.envelope_id == env.id, Transaction.is_deleted == False,
-                func.extract("year", Transaction.transaction_date) == now.year,
-                func.extract("month", Transaction.transaction_date) == now.month,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
             )
         )
         spent = Decimal(str(spent_result.scalar()))
@@ -262,8 +263,8 @@ async def get_envelopes_with_spent(household_id, db, user_id=None):
             .join(Income, Allocation.income_id == Income.id)
             .where(
                 Allocation.envelope_id == env.id,
-                func.extract("year", Income.income_date) == now.year,
-                func.extract("month", Income.income_date) == now.month,
+                Income.income_date >= period_start,
+                Income.income_date <= period_end,
             )
         )
         allocated = Decimal(str(alloc_result.scalar()))
@@ -440,17 +441,19 @@ async def cmd_status(update, context):
         if not hid:
             await update.message.reply_text("Ketik /start dulu.")
             return
-        envelopes = await get_envelopes_with_spent(hid, db, user.id)
+        payday_day = getattr(user, 'payday_day', 1) or 1
+        envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
-    now = date.today()
-    next_month = date(now.year + (1 if now.month == 12 else 0), (now.month % 12) + 1, 1)
-    days_left = (next_month - now).days
+    from app.core.period import get_period_info
+    info = get_period_info(payday_day)
+    days_left = info["days_remaining"]
+    period_label = f"{info['period_start'].strftime('%d %b')} – {info['period_end'].strftime('%d %b %Y')}"
     total_allocated = sum(e["allocated"] for e in envelopes)
     total_spent = sum(e["spent"] for e in envelopes)
     total_free = sum(e["free"] for e in envelopes)
-    lines = [f"📊 Budget {now.strftime('%B %Y')} — {days_left} hari lagi\n"]
+    lines = [f"📊 Budget {period_label} — {days_left} hari lagi\n"]
     lines.append(f"Dana: {format_currency(total_allocated)} | Terpakai: {format_currency(total_spent)} | Sisa: {format_currency(total_free)}\n")
     for e in envelopes:
         env = e["envelope"]

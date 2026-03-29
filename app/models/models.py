@@ -60,6 +60,7 @@ class User(TimestampMixin, Base):
     default_daily_limit: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     default_is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     plan: Mapped[str | None] = mapped_column(String(10), default="basic")
+    payday_day: Mapped[int] = mapped_column(Integer, default=1)
     last_login: Mapped[datetime | None] = mapped_column(nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 

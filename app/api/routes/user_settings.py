@@ -34,6 +34,7 @@ class ChangePassword(BaseModel):
 class UpdateProfile(BaseModel):
     name: str | None = None
     timezone: str | None = None
+    payday_day: int | None = None
 
 
 class DefaultBehavior(BaseModel):
@@ -47,15 +48,17 @@ async def get_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Count usage
+    # Count usage within current budget period
     from datetime import date
-    now = date.today()
+    from app.core.period import get_budget_period
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    period_start, period_end = get_budget_period(payday_day)
     txn_count = await db.execute(
         select(func.count(Transaction.id)).where(
             Transaction.user_id == user.id,
             Transaction.is_deleted == False,
-            func.extract("year", Transaction.transaction_date) == now.year,
-            func.extract("month", Transaction.transaction_date) == now.month,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
         )
     )
     monthly_txns = txn_count.scalar()
@@ -88,6 +91,7 @@ async def get_profile(
         "email": user.email,
         "telegram_id": user.telegram_id,
         "timezone": getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
+        "payday_day": getattr(user, 'payday_day', 1) or 1,
         "profile_pic": getattr(user, 'profile_pic', None),
         "plan": plan,
         "default_cooling_threshold": str(user.default_cooling_threshold) if getattr(user, 'default_cooling_threshold', None) else None,
@@ -123,6 +127,10 @@ async def update_profile(
         if req.timezone not in valid_tz:
             raise HTTPException(400, f"Invalid timezone. Options: {', '.join(valid_tz)}")
         user.timezone = req.timezone
+    if req.payday_day is not None:
+        if not (1 <= req.payday_day <= 31):
+            raise HTTPException(400, "payday_day harus antara 1 dan 31")
+        user.payday_day = req.payday_day
     await db.commit()
     return {"status": "updated"}
 
