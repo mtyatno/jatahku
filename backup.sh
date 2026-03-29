@@ -14,8 +14,18 @@ FILEPATH="${BACKUP_DIR}/${FILENAME}"
 
 # Load env vars
 if [ -f "$ENV_FILE" ]; then
-    export $(grep -E '^(TELEGRAM_BOT_TOKEN|ADMIN_TELEGRAM_ID)=' "$ENV_FILE" | xargs)
+    export $(grep -E '^(TELEGRAM_BOT_TOKEN|ADMIN_TELEGRAM_ID|DATABASE_URL)=' "$ENV_FILE" | xargs)
 fi
+
+# Parse DATABASE_URL: postgresql+asyncpg://user:pass@host:port/dbname
+DB_URL="${DATABASE_URL:-}"
+DB_URL="${DB_URL/postgresql+asyncpg:\/\//postgresql:\/\/}"  # normalize asyncpg prefix
+DB_USER=$(echo "$DB_URL" | sed -E 's|postgresql://([^:]+):.*|\1|')
+DB_PASS=$(echo "$DB_URL" | sed -E 's|postgresql://[^:]+:([^@]+)@.*|\1|')
+DB_HOST=$(echo "$DB_URL" | sed -E 's|.*@([^:/]+)[:/].*|\1|')
+DB_PORT=$(echo "$DB_URL" | sed -E 's|.*:([0-9]+)/.*|\1|')
+DB_NAME=$(echo "$DB_URL" | sed -E 's|.*/([^?]+).*|\1|')
+export PGPASSWORD="$DB_PASS"
 
 send_tg() {
     local msg="$1"
@@ -31,7 +41,7 @@ mkdir -p "$BACKUP_DIR"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup..."
 
-if pg_dump -U jatahku "$DB_NAME" | gzip > "$FILEPATH"; then
+if pg_dump -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" -U "$DB_USER" "$DB_NAME" | gzip > "$FILEPATH"; then
     SIZE=$(du -sh "$FILEPATH" | cut -f1)
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup OK: $FILENAME ($SIZE)"
 
