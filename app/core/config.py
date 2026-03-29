@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # Admin
     ADMIN_SECRET: str = ""
+    ADMIN_TELEGRAM_ID: str = ""
 
     # Timezone
     TZ: str = "Asia/Jakarta"
