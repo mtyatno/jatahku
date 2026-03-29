@@ -1081,6 +1081,91 @@ async def handle_addsub_callback(update, context):
     )
 
 
+async def handle_batch_callback(update, context):
+    """Handle envelope selection for multi-item batch queue.
+    callback_data: batch_{key}_{idx}_{env_id|skip}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split("_", 3)  # batch, key, idx, env_id_or_skip
+    if len(parts) < 4:
+        await query.edit_message_text("Error: data tidak valid.")
+        return
+    _, batch_key, idx_str, choice = parts
+    idx = int(idx_str)
+
+    import redis.asyncio as aioredis, json as json_mod
+    r = aioredis.from_url(settings.REDIS_URL)
+    raw = await r.get(f"batch:{batch_key}")
+    if not raw:
+        await query.edit_message_text("⏰ Session expired. Kirim ulang pesan.")
+        await r.aclose()
+        return
+
+    data = json_mod.loads(raw.decode())
+    queue = data["queue"]
+    auto_lines = data["auto_lines"]
+    env_list = data["envs"]
+    user_id = data["user_id"]
+
+    item = queue[idx]
+    amount = Decimal(str(item["amount"]))
+    description = item["desc"]
+
+    if choice != "skip":
+        env_id = choice
+        tg_user = update.effective_user
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            env_result = await db.execute(select(Envelope).where(Envelope.id == env_id))
+            envelope = env_result.scalar_one_or_none()
+            if not envelope:
+                await query.edit_message_text("Amplop tidak ditemukan.")
+                await r.aclose()
+                return
+
+            # Behavior check
+            check = await check_behavior(envelope.id, user.id, amount, db)
+            if not check.allowed:
+                msg = f"⚠️ {check.reason}"
+                if check.check_type == "insufficient":
+                    d = check.details
+                    msg += f"\nSisa dana: {format_currency(d['available'])}"
+                await query.edit_message_text(msg)
+                await r.aclose()
+                return
+
+            txn = Transaction(
+                envelope_id=envelope.id, user_id=user.id, amount=amount,
+                description=description, source=TransactionSource.telegram,
+                transaction_date=date.today(),
+            )
+            db.add(txn)
+            await save_learned_keywords(user.id, description, envelope.id, db)
+            await db.commit()
+
+        env_emoji = next((e["emoji"] for e in env_list if e["id"] == env_id), "📁")
+        env_name = next((e["name"] for e in env_list if e["id"] == env_id), "")
+        auto_lines = auto_lines + [f"{env_emoji} {env_name}: {format_currency(amount)} — {description}"]
+        data["auto_lines"] = auto_lines
+
+    # Move to next unresolved item
+    next_idx = idx + 1
+    if next_idx < len(queue):
+        # Update Redis with new auto_lines, ask next item
+        await r.set(f"batch:{batch_key}", json_mod.dumps(data), ex=600)
+        await r.aclose()
+        from app.bot.nlp_cmd import _ask_batch_item
+        await _ask_batch_item(query, batch_key, queue, next_idx, auto_lines, env_list, is_edit=True)
+    else:
+        await r.delete(f"batch:{batch_key}")
+        await r.aclose()
+        # All done — show final summary
+        lines = ["✅ *Semua item selesai!*\n"] + auto_lines
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def handle_non_text(update, context):
     """Handle photos, stickers, voice, etc."""
     if update.message.photo:
@@ -1155,6 +1240,7 @@ def create_bot_app():
     app.add_handler(CommandHandler("webapp", cmd_webapp))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
+    app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))

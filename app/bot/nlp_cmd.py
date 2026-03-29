@@ -4,6 +4,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from sqlalchemy import select, func
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
     get_or_create_user, get_household_id, _is_setup_complete, format_currency,
@@ -639,9 +640,14 @@ async def handle_nabung(update, context):
 
 
 async def handle_multi_expense(update, context, items):
-    """Record multiple expenses in one message."""
+    """Record multiple expenses in one message.
+    Auto-records matched items, queues unknown items for inline keyboard selection.
+    """
     from app.core.database import AsyncSessionLocal
-    from app.models.models import Transaction, TransactionSource
+    from app.models.models import Transaction, TransactionSource, Envelope
+    from app.bot.handlers import save_learned_keywords
+    import redis.asyncio as aioredis, json as json_mod, secrets
+    from app.core.config import get_settings
     tg_user = update.effective_user
 
     async with AsyncSessionLocal() as db:
@@ -652,10 +658,17 @@ async def handle_multi_expense(update, context, items):
             return
         hid = await get_household_id(user, db)
 
+        # Fetch all envelopes once for the keyboard
+        env_result = await db.execute(
+            select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True)
+            .order_by(Envelope.created_at)
+        )
+        all_envs = env_result.scalars().all()
+
         recorded = []
         unmatched = []
         for amount, description in items:
-            envelope, _ = await find_best_envelope(description, hid, db)
+            envelope, _ = await find_best_envelope(description, hid, db, user_id=user.id)
             if envelope:
                 db.add(Transaction(
                     user_id=user.id,
@@ -665,30 +678,75 @@ async def handle_multi_expense(update, context, items):
                     transaction_date=date.today(),
                     source=TransactionSource.telegram,
                 ))
+                await save_learned_keywords(user.id, description, envelope.id, db)
                 recorded.append((amount, description, envelope))
             else:
-                unmatched.append((amount, description))
+                unmatched.append({"amount": int(amount), "desc": description})
 
         if recorded:
             await db.commit()
 
-    if not recorded:
-        await update.message.reply_text(
-            "Nggak bisa mencocokkan ke amplop manapun.\n"
-            "Coba catat satu per satu."
-        )
+        hid_str = str(hid)
+        user_id_str = str(user.id)
+        env_list = [{"id": str(e.id), "name": e.name, "emoji": e.emoji or "📁"} for e in all_envs]
+
+    # Build summary of auto-recorded items
+    auto_lines = []
+    for amount, desc, env in recorded:
+        auto_lines.append(f"{env.emoji or '📁'} {env.name}: {format_currency(amount)} — {desc}")
+
+    if not unmatched:
+        # All matched — show summary
+        total = sum(a for a, _, _ in recorded)
+        lines = [f"✅ *{len(recorded)} transaksi dicatat*\n"] + auto_lines
+        lines.append(f"\n💸 Total: *{format_currency(total)}*")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
         return
 
-    total = sum(a for a, _, _ in recorded)
-    lines = [f"✅ *{len(recorded)} transaksi dicatat*\n"]
-    for amount, desc, env in recorded:
-        lines.append(f"{env.emoji or '📁'} {env.name}: {format_currency(amount)} — {desc}")
-    lines.append(f"\n💸 Total: *{format_currency(total)}*")
+    if not recorded and not all_envs:
+        await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
+        return
 
-    if unmatched:
-        lines.append(f"\n⚠️ Tidak dikenali amplop untuk:")
-        for amount, desc in unmatched:
-            lines.append(f"• {desc} {format_currency(amount)}")
-        lines.append("_Catat satu per satu untuk pilih amplop._")
+    # Store queue in Redis, ask for first unmatched item
+    batch_key = secrets.token_hex(4)
+    r = aioredis.from_url(get_settings().REDIS_URL)
+    await r.set(f"batch:{batch_key}", json_mod.dumps({
+        "queue": unmatched,
+        "auto_lines": auto_lines,
+        "user_id": user_id_str,
+        "hid": hid_str,
+        "envs": env_list,
+    }), ex=600)
+    await r.aclose()
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await _ask_batch_item(update, batch_key, unmatched, 0, auto_lines, env_list, is_edit=False)
+
+
+async def _ask_batch_item(update_or_query, batch_key, queue, idx, auto_lines, env_list, is_edit=False):
+    """Show inline keyboard for queue[idx]."""
+    item = queue[idx]
+    remaining_count = len(queue) - idx
+
+    header = ""
+    if auto_lines:
+        header = "\n".join(auto_lines) + "\n" + "─" * 20 + "\n"
+
+    progress = f"({idx + 1}/{len(queue)})" if len(queue) > 1 else ""
+    text = (
+        f"{header}"
+        f"💰 {format_currency(item['amount'])} — {item['desc']} {progress}\n\n"
+        f"Masuk ke amplop mana?"
+    )
+    keyboard = []
+    for env in env_list:
+        keyboard.append([InlineKeyboardButton(
+            f"{env['emoji']} {env['name']}",
+            callback_data=f"batch_{batch_key}_{idx}_{env['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton("⏭ Lewati", callback_data=f"batch_{batch_key}_{idx}_skip")])
+
+    markup = InlineKeyboardMarkup(keyboard)
+    if is_edit:
+        await update_or_query.edit_message_text(text, reply_markup=markup)
+    else:
+        await update_or_query.message.reply_text(text, reply_markup=markup)
