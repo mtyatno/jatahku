@@ -31,6 +31,11 @@ export function budgetStatus(spent, budget) {
   return 'safe';
 }
 
+export function titleCase(str) {
+  if (!str) return str;
+  return str.replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export function daysLeftInMonth() {
   const now = new Date();
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();

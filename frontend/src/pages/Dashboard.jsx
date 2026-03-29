@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
-import { formatShort, formatCurrency } from '../lib/utils';
+import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import {
@@ -82,11 +82,11 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
   urgent.forEach(e => {
     const pct = Math.round(e.spent_ratio * 100);
     if (e.spent_ratio >= 1.0) {
-      items.push({ icon: '🔴', text: `${e.emoji} ${e.name} sudah habis (${pct}%)`, level: 'danger' });
+      items.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, level: 'danger' });
     } else if (e.spent_ratio >= 0.9) {
-      items.push({ icon: '🔴', text: `${e.emoji} ${e.name} hampir habis (${pct}%)`, level: 'danger' });
+      items.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, level: 'danger' });
     } else {
-      items.push({ icon: '⚠️', text: `${e.emoji} ${e.name} mulai menipis (${pct}%)`, level: 'warning' });
+      items.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, level: 'warning' });
     }
   });
 
@@ -148,7 +148,7 @@ function EnvelopeRow({ env }) {
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
           <span className="text-lg">{env.emoji || '📁'}</span>
-          <span className="font-semibold text-sm">{env.name}</span>
+          <span className="font-semibold text-sm">{titleCase(env.name)}</span>
           {badge}
         </div>
         <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
