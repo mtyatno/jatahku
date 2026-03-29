@@ -206,6 +206,85 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
   );
 }
 
+function TransferModal({ env, envelopes, onClose, onDone }) {
+  const [direction, setDirection] = useState('to'); // 'to' = add dana ke env ini, 'from' = ambil dana dari env ini
+  const [otherId, setOtherId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const others = envelopes.filter(e => e.id !== env.id);
+  const otherEnv = others.find(e => e.id === otherId);
+
+  const fromEnv = direction === 'to' ? otherEnv : env;
+  const maxAmount = fromEnv ? Number(fromEnv.remaining) : 0;
+
+  const handleSubmit = async () => {
+    if (!otherId || !amount || Number(amount) <= 0) { setError('Lengkapi semua field'); return; }
+    if (Number(amount) > maxAmount) { setError(`Melebihi sisa ${direction === 'to' ? 'amplop sumber' : 'amplop ini'}`); return; }
+    setSaving(true);
+    setError('');
+    const fromId = direction === 'to' ? otherId : env.id;
+    const toId = direction === 'to' ? env.id : otherId;
+    const res = await api.request(
+      `/envelopes/transfer?from_id=${fromId}&to_id=${toId}&amount=${amount}`,
+      { method: 'POST' }
+    );
+    setSaving(false);
+    if (res.ok) { onDone(); onClose(); }
+    else { const d = await res.json(); setError(d.detail || 'Transfer gagal'); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-lg mb-1">Geser Dana</h3>
+        <p className="text-sm text-gray-400 mb-4">Amplop: {env.emoji} {env.name} (sisa {formatCurrency(Number(env.remaining))})</p>
+
+        <div className="flex gap-2 mb-4">
+          <button type="button" onClick={() => { setDirection('to'); setOtherId(''); setAmount(''); }}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${direction === 'to' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+            Tambah dana kesini
+          </button>
+          <button type="button" onClick={() => { setDirection('from'); setOtherId(''); setAmount(''); }}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${direction === 'from' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+            Kirim dana ke amplop lain
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="label">{direction === 'to' ? 'Ambil dari amplop' : 'Kirim ke amplop'}</label>
+            <select className="input" value={otherId} onChange={e => { setOtherId(e.target.value); setAmount(''); }}>
+              <option value="">Pilih amplop...</option>
+              {others.map(e => (
+                <option key={e.id} value={e.id}>
+                  {e.emoji} {e.name}
+                  {direction === 'to' ? ` (sisa ${formatShort(e.remaining)})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Jumlah (Rp)</label>
+            <input type="number" className="input font-mono" placeholder="500000"
+              value={amount} onChange={e => setAmount(e.target.value)} min="1" max={maxAmount} />
+            {otherId && <p className="text-xs text-gray-400 mt-1">Max: {formatCurrency(maxAmount)}</p>}
+          </div>
+        </div>
+
+        {error && <div className="mt-3 bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
+
+        <div className="flex gap-2 mt-4">
+          <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+          <button type="button" onClick={handleSubmit} disabled={saving}
+            className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Geser'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ControlBadges({ env }) {
   const badges = [];
   if (env.is_locked) badges.push({ icon: '🔒', label: 'Locked', color: 'bg-red-50 text-danger-400' });
@@ -215,7 +294,7 @@ function ControlBadges({ env }) {
   return <div className="flex flex-wrap gap-1 mt-2">{badges.map((b, i) => <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>{b.icon} {b.label}</span>)}</div>;
 }
 
-function EnvelopeCard({ env, onEdit, onDelete }) {
+function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   const allocated = Number(env.allocated || 0);
   const spent = Number(env.spent || 0);
   const remaining = Number(env.remaining || 0);
@@ -232,6 +311,7 @@ function EnvelopeCard({ env, onEdit, onDelete }) {
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2.5"><span className="text-2xl">{env.emoji || '📁'}</span><div><h3 className="font-semibold">{env.name}</h3><p className="text-xs text-gray-400">{env.is_personal ? '🔒 Personal' : '👥 Shared'} · {env.is_rollover ? 'Rollover' : 'Reset'}</p></div></div>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+          <button onClick={() => onTransfer(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Geser</button>
           <button onClick={() => onEdit(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Edit</button>
           <button onClick={() => onDelete(env.id, env.name)} className="text-xs text-gray-400 hover:text-danger-400 px-2 py-1 rounded">Hapus</button>
         </div>
@@ -259,6 +339,7 @@ export default function Envelopes() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [transferTarget, setTransferTarget] = useState(null);
 
   const load = () => { api.getEnvelopeSummary().then(env => { setEnvelopes(env); setLoading(false); }); };
   useEffect(load, []);
@@ -287,18 +368,19 @@ export default function Envelopes() {
           {shared.length > 0 && (
             <div>
               <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">👥 Shared ({shared.length})</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{shared.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} />)}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{shared.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} />)}</div>
             </div>
           )}
           {personal.length > 0 && (
             <div>
               <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">🔒 Personal ({personal.length})</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{personal.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} />)}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{personal.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} />)}</div>
             </div>
           )}
         </>
       )}
       {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
+      {transferTarget && <TransferModal env={transferTarget} envelopes={envelopes} onClose={() => setTransferTarget(null)} onDone={load} />}
     </div>
   );
 }
