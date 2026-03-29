@@ -27,7 +27,8 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap"></noscript>
 <script>window.jk_events=[];function trackEvent(n,d){window.jk_events.push({event:n,data:d,ts:Date.now()})}</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -37,7 +38,7 @@
   --text:#2C2C2A;--text-s:#5F5E5A;--text-t:#888780;
   --bg:#FAFAF6;--white:#fff;--border:#E8E8E4;
   --red:#E24B4A;--red-light:#FDEAEA;--yellow:#D97706;--yellow-light:#FEF3C7;
-  --font-d:'Space Grotesk',sans-serif;--font-b:'Plus Jakarta Sans',sans-serif;
+  --font-d:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--font-b:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --radius:14px;--radius-lg:20px;--shadow:0 4px 20px rgba(0,0,0,.06);--shadow-lg:0 12px 48px rgba(0,0,0,.1);
 }
 html{scroll-behavior:smooth}
