@@ -307,15 +307,24 @@ export default function Dashboard() {
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="flex-1 space-y-1.5">
-                  {breakdown.map((item, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{ background: COLORS[i % COLORS.length] }} />
-                        <span>{item.emoji} {item.name}</span>
-                      </div>
-                      <span className="font-mono font-medium">{formatShort(item.spent)}</span>
-                    </div>
-                  ))}
+                  {(() => {
+                    const total = breakdown.reduce((s, x) => s + x.spent, 0);
+                    return breakdown.map((item, i) => {
+                      const pct = total > 0 ? Math.round((item.spent / total) * 100) : 0;
+                      return (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="w-2.5 h-2.5 flex-shrink-0 rounded-sm" style={{ background: COLORS[i % COLORS.length] }} />
+                            <span className="truncate">{item.emoji} {titleCase(item.name)}</span>
+                          </div>
+                          <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                            <span className="font-mono font-medium">{formatShort(item.spent)}</span>
+                            <span className="text-gray-400">({pct}%)</span>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             </div>
