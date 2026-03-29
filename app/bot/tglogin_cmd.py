@@ -34,8 +34,8 @@ async def cmd_webapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     login_url = f"{settings.APP_URL}/auth/tg?token={token}"
 
     await update.message.reply_text(
-        f"🔐 *Login ke Jatahku Webapp*\n\n"
+        f"🔐 <b>Login ke Jatahku Webapp</b>\n\n"
         f"Klik link berikut untuk masuk:\n{login_url}\n\n"
-        f"⏱ Link berlaku *5 menit* dan hanya bisa digunakan sekali.",
-        parse_mode="Markdown"
+        f"⏱ Link berlaku <b>5 menit</b> dan hanya bisa digunakan sekali.",
+        parse_mode="HTML"
     )
