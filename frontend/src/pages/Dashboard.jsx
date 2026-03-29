@@ -62,15 +62,18 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
   // Today vs safe daily
   if (todaySpent > 0 && safeDaily > 0) {
     const ratio = todaySpent / safeDaily;
+    const sisa = safeDaily - todaySpent;
     if (ratio >= 1.5) {
       items.push({ icon: '🔴', text: `Hari ini kamu overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, level: 'danger' });
     } else if (ratio >= 1.0) {
       items.push({ icon: '🟠', text: `Pengeluaran hari ini (${formatCurrency(todaySpent)}) melebihi batas aman ${formatCurrency(safeDaily)}/hari`, level: 'warning' });
+    } else if (ratio <= 0.5) {
+      items.push({ icon: '🎉', text: `Mantap! Hari ini kamu hemat. Sisa jatah ${formatCurrency(sisa)} bisa ditabung atau carry ke besok.`, level: 'reward' });
     } else {
-      items.push({ icon: '✅', text: `Pengeluaran hari ini ${formatCurrency(todaySpent)} — masih di bawah batas aman ${formatCurrency(safeDaily)}/hari`, level: 'safe' });
+      items.push({ icon: '✅', text: `Pengeluaran hari ini ${formatCurrency(todaySpent)} — masih aman, sisa ${formatCurrency(sisa)} hari ini.`, level: 'safe' });
     }
   } else if (safeDaily > 0) {
-    items.push({ icon: '✅', text: `Belum ada pengeluaran hari ini. Batas aman ${formatCurrency(safeDaily)}/hari`, level: 'safe' });
+    items.push({ icon: '🎉', text: `Belum ada pengeluaran hari ini. Jatah ${formatCurrency(safeDaily)} masih utuh — mantap!`, level: 'reward' });
   }
 
   // Envelope warnings — top 3 most urgent
@@ -100,17 +103,18 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
 
   const hasDanger = items.some(i => i.level === 'danger');
   const hasWarning = items.some(i => i.level === 'warning');
-  const bg = hasDanger ? '#FEF2F2' : hasWarning ? '#FFFBEB' : '#F0FDF9';
-  const border = hasDanger ? '#FECACA' : hasWarning ? '#FDE68A' : '#A7F3D0';
-  const label = hasDanger ? '🚨 Perlu perhatian sekarang' : hasWarning ? '📊 Status budget hari ini' : '📊 Status budget hari ini';
-  const labelColor = hasDanger ? '#991B1B' : hasWarning ? '#92400E' : '#065F46';
+  const hasReward = !hasDanger && !hasWarning && items.some(i => i.level === 'reward');
+  const bg = hasDanger ? '#FEF2F2' : hasWarning ? '#FFFBEB' : hasReward ? '#EFF6FF' : '#F0FDF9';
+  const border = hasDanger ? '#FECACA' : hasWarning ? '#FDE68A' : hasReward ? '#BFDBFE' : '#A7F3D0';
+  const label = hasDanger ? '🚨 Perlu perhatian sekarang' : hasWarning ? '📊 Status budget hari ini' : hasReward ? '🌟 Kamu lagi on fire!' : '📊 Status budget hari ini';
+  const labelColor = hasDanger ? '#991B1B' : hasWarning ? '#92400E' : hasReward ? '#1E40AF' : '#065F46';
 
   return (
     <div className="rounded-xl p-4" style={{ background: bg, border: `1px solid ${border}` }}>
       <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: labelColor }}>{label}</p>
       <div className="space-y-1.5">
         {items.map((item, i) => (
-          <p key={i} className="text-sm" style={{ color: item.level === 'safe' ? '#065F46' : item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
+          <p key={i} className="text-sm" style={{ color: item.level === 'reward' ? '#1E40AF' : item.level === 'safe' ? '#065F46' : item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
             {item.icon} {item.text}
           </p>
         ))}
@@ -157,11 +161,16 @@ function EnvelopeRow({ env }) {
         <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana.</div>
       ) : (
         <>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all duration-500 ${env.is_locked ? 'bg-gray-300' : barColor}`}
-              style={{ width: `${Math.min(Math.max(ratio * 100, 1), 100)}%` }} />
+          <div className="flex items-center gap-2">
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex-1">
+              <div className={`h-full rounded-full transition-all duration-500 ${env.is_locked ? 'bg-gray-300' : barColor}`}
+                style={{ width: `${Math.min(Math.max(ratio * 100, 1), 100)}%` }} />
+            </div>
+            <span className={`text-xs font-semibold w-10 text-right ${freeColor}`}>
+              {free <= 0 ? '0%' : `Sisa ${Math.round((1 - ratio) * 100)}%`}
+            </span>
           </div>
-          <div className="flex justify-between mt-1.5 text-xs text-gray-400">
+          <div className="flex justify-between mt-1 text-xs text-gray-400">
             <span>Terpakai {formatShort(spent)}</span>
             {reserved > 0 && <span>🔄 {formatShort(reserved)}</span>}
             <span>Dana {formatShort(allocated)}</span>
@@ -277,7 +286,7 @@ export default function Dashboard() {
                     fill="#0F6E56"
                     shape={(props) => {
                       const { isFuture, ...rest } = props;
-                      return <rect {...rest} fill={props.isFuture ? '#E8F5F1' : '#0F6E56'} rx={3} ry={3} />;
+                      return <rect {...rest} fill={props.isFuture ? '#E5E7EB' : '#0F6E56'} rx={3} ry={3} />;
                     }}
                   />
                 </ComposedChart>
