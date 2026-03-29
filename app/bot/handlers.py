@@ -259,17 +259,37 @@ async def get_envelopes_with_spent(household_id, db, user_id=None):
     return envelope_data
 
 async def find_best_envelope(description, household_id, db):
-    guessed_name = guess_envelope_name(description)
-    if guessed_name:
-        result = await db.execute(
-            select(Envelope).where(
-                Envelope.household_id == household_id, Envelope.is_active == True,
-                func.lower(Envelope.name) == guessed_name.lower(),
-            )
+    result = await db.execute(
+        select(Envelope).where(
+            Envelope.household_id == household_id, Envelope.is_active == True,
         )
-        envelope = result.scalar_one_or_none()
-        if envelope:
-            return envelope, True
+    )
+    envelopes = result.scalars().all()
+    if not envelopes:
+        return None, False
+
+    guessed_name = guess_envelope_name(description)
+
+    # 1. Exact match on guessed category name
+    if guessed_name:
+        for env in envelopes:
+            if env.name.lower() == guessed_name.lower():
+                return env, True
+
+    # 2. Partial match — "transport" matches "Transportasi", "makan" matches "Makanan"
+    if guessed_name:
+        g = guessed_name.lower()
+        for env in envelopes:
+            e = env.name.lower()
+            if g in e or e in g:
+                return env, True
+
+    # 3. Envelope name appears directly in description (e.g. "transportasi 25k")
+    desc_lower = description.lower()
+    for env in envelopes:
+        if env.name.lower() in desc_lower:
+            return env, True
+
     return None, False
 
 async def _is_setup_complete(user, db):
