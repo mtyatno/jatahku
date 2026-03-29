@@ -448,8 +448,8 @@ async def create_promo(
             is_free=req.is_free,
             max_uses=req.max_uses,
             event_name=req.event_name,
-            valid_from=datetime.now(timezone.utc),
-            valid_until=datetime.now(timezone.utc) + timedelta(days=req.valid_days) if req.valid_days else None,
+            valid_from=datetime.utcnow(),
+            valid_until=datetime.utcnow() + timedelta(days=req.valid_days) if req.valid_days else None,
         )
         db.add(promo)
         await db.commit()
