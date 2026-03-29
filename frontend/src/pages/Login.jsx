@@ -8,6 +8,7 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [promoCode, setPromoCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,7 +20,7 @@ export default function Login() {
     setLoading(true);
 
     const result = isRegister
-      ? await register(email, password, name)
+      ? await register(email, password, name, promoCode)
       : await login(email, password);
 
     setLoading(false);
@@ -94,6 +95,19 @@ export default function Login() {
                 required
               />
             </div>
+
+            {isRegister && (
+              <div>
+                <label className="label">Kode Promo <span className="text-gray-400 font-normal">(opsional)</span></label>
+                <input
+                  type="text"
+                  className="input uppercase"
+                  placeholder="Contoh: EARLY100"
+                  value={promoCode}
+                  onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                />
+              </div>
+            )}
 
             {error && (
               <div className="text-sm text-danger-400 bg-red-50 px-3 py-2 rounded-lg">

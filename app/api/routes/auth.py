@@ -23,6 +23,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
+    promo_code: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -88,6 +89,32 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
         role=HouseholdRole.owner,
     )
     db.add(membership)
+    await db.flush()
+
+    # Apply promo code if provided
+    if req.promo_code:
+        from app.models.models import PromoCode
+        from datetime import datetime as dt
+        promo_result = await db.execute(
+            select(PromoCode).where(
+                PromoCode.code == req.promo_code.upper(),
+                PromoCode.is_active == True,
+            )
+        )
+        promo = promo_result.scalar_one_or_none()
+        if promo:
+            now = dt.utcnow()
+            valid = True
+            if promo.valid_from and now < promo.valid_from:
+                valid = False
+            if promo.valid_until and now > promo.valid_until:
+                valid = False
+            if promo.max_uses and promo.used_count >= promo.max_uses:
+                valid = False
+            if valid and promo.is_free:
+                user.plan = "pro"
+                promo.used_count += 1
+
     await db.commit()
 
     return TokenResponse(

@@ -72,11 +72,11 @@ class ApiClient {
   }
 
   // Auth
-  async register(email, password, name) {
+  async register(email, password, name, promoCode) {
     const res = await fetch(`${API_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({ email, password, name, promo_code: promoCode || undefined }),
     });
     const data = await res.json();
     if (res.ok) {
