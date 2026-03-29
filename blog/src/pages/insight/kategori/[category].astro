@@ -61,7 +61,7 @@ const color = categoryColor[category] ?? '#0F6E56';
       ) : (
         <div class="articles-list">
           {articles.map(article => (
-            <a href={`/insight/${article.slug}`} class="card">
+            <a href={`/insight/${article.id}`} class="card">
               <span class="card-badge" style={`background:${color}18;color:${color}`}>{label}</span>
               <h2 class="card-title">{article.data.title}</h2>
               <p class="card-desc">{article.data.description}</p>

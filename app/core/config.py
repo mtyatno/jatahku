@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     ADMIN_SECRET: str = ""
     ADMIN_TELEGRAM_ID: str = ""
 
+    # GitHub OAuth (for Decap CMS)
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+
     # Timezone
     TZ: str = "Asia/Jakarta"
 

@@ -68,7 +68,7 @@ const categoryColor: Record<string, string> = {
               <p class="section-label">Pilihan Editor</p>
               <div class="featured-grid">
                 {featured.slice(0, 2).map(article => (
-                  <a href={`/insight/${article.slug}`} class="card-featured">
+                  <a href={`/insight/${article.id}`} class="card-featured">
                     {article.data.cover
                       ? <img src={article.data.cover} alt={article.data.title} class="card-img" />
                       : <div class="card-img-placeholder">📝</div>
@@ -95,7 +95,7 @@ const categoryColor: Record<string, string> = {
               <p class="section-label">Artikel Terbaru</p>
               <div class="articles-list">
                 {rest.map(article => (
-                  <a href={`/insight/${article.slug}`} class="card-list">
+                  <a href={`/insight/${article.id}`} class="card-list">
                     <span class="card-badge" style={`background:${categoryColor[article.data.category]}18;color:${categoryColor[article.data.category]}`}>
                       {categoryLabel[article.data.category]}
                     </span>

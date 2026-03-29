@@ -7,7 +7,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin, payment
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin, payment, cms_oauth
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
@@ -58,6 +58,7 @@ app.include_router(user_settings.router, prefix="/user", tags=["user"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(payment.router, prefix="/payment", tags=["payment"])
 app.include_router(webhook.router, tags=["webhook"])
+app.include_router(cms_oauth.router, tags=["cms"])
 
 
 from starlette.middleware.base import BaseHTTPMiddleware
