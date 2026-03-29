@@ -14,7 +14,11 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — create any missing tables (safe, skips existing)
+    from app.core.database import engine
+    from app.models.models import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield

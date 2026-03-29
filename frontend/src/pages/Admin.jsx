@@ -357,7 +357,7 @@ function PaymentsTab({ onAction }) {
   const removeBank = (idx) => saveBanks(banks.filter((_, i) => i !== idx));
 
   const createPromo = async () => {
-    await api.request('/admin/promo-codes', {
+    const r = await api.request('/admin/promo-codes', {
       method: 'POST',
       body: JSON.stringify({
         ...newPromo,
@@ -365,6 +365,11 @@ function PaymentsTab({ onAction }) {
         valid_days: newPromo.valid_days ? parseInt(newPromo.valid_days) : null,
       }),
     });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert('Gagal buat promo: ' + (err.detail || r.status));
+      return;
+    }
     setNewPromo({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
     setShowAddPromo(false);
     onAction(); load();
