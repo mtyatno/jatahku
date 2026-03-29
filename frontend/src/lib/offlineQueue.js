@@ -13,13 +13,20 @@ function openDB() {
 }
 
 export async function enqueueTransaction(payload) {
+  const token = localStorage.getItem('jatahku_token');
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    const req = tx.objectStore(STORE).add({ ...payload, queuedAt: Date.now() });
+    const req = tx.objectStore(STORE).add({ ...payload, token, queuedAt: Date.now() });
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+
+  // Register background sync so SW can sync even when app is closed
+  if ('serviceWorker' in navigator && 'SyncManager' in window) {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.sync.register('sync-transactions');
+  }
 }
 
 export async function getPendingCount() {
