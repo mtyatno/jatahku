@@ -1,0 +1,80 @@
+---
+import Base from './Base.astro';
+export interface Props {
+  title: string;
+  description: string;
+  pubDate: Date;
+  updatedDate?: Date;
+  category: string;
+  author: string;
+  cover?: string;
+}
+const { title, description, pubDate, updatedDate, category, author, cover } = Astro.props;
+
+const categoryLabel: Record<string, string> = {
+  'tutorial': 'Tutorial',
+  'tips-keuangan': 'Tips Keuangan',
+  'update-fitur': 'Update Fitur',
+};
+const categoryColor: Record<string, string> = {
+  'tutorial': '#0F6E56',
+  'tips-keuangan': '#BA7517',
+  'update-fitur': '#1D4ED8',
+};
+const dateStr = pubDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+const updatedStr = updatedDate?.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+---
+<Base title={title} description={description} ogImage={cover} activeCategory={category}>
+  <style>
+    .article-hero{padding:48px 24px 0;max-width:740px;margin:0 auto}
+    .cat-badge{display:inline-block;padding:4px 12px;border-radius:100px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px}
+    .article-title{font-family:var(--font-d);font-size:clamp(26px,4vw,40px);font-weight:700;line-height:1.2;letter-spacing:-.5px;margin-bottom:16px}
+    .article-meta{font-size:13px;color:var(--text-t);display:flex;gap:16px;flex-wrap:wrap;margin-bottom:32px}
+    .article-cover{width:100%;height:auto;border-radius:var(--radius-lg);margin-bottom:40px;object-fit:cover;max-height:400px}
+    .article-body{max-width:740px;margin:0 auto;padding:0 24px 80px;font-size:16px;line-height:1.8;color:var(--text)}
+    .article-body h2{font-family:var(--font-d);font-size:24px;font-weight:700;margin:40px 0 16px;letter-spacing:-.3px}
+    .article-body h3{font-family:var(--font-d);font-size:19px;font-weight:600;margin:32px 0 12px}
+    .article-body p{margin-bottom:20px}
+    .article-body ul,.article-body ol{margin:0 0 20px 24px}
+    .article-body li{margin-bottom:8px}
+    .article-body a{color:var(--primary);text-decoration:underline;text-underline-offset:3px}
+    .article-body img{width:100%;border-radius:var(--radius);margin:24px 0;box-shadow:0 4px 20px rgba(0,0,0,.08);border:1px solid var(--border)}
+    .article-body blockquote{border-left:3px solid var(--primary);padding:12px 20px;background:var(--primary-light);border-radius:0 var(--radius) var(--radius) 0;margin:24px 0;color:var(--primary-dark);font-style:italic}
+    .article-body code{background:#F1F0EC;padding:2px 7px;border-radius:5px;font-size:13px;font-family:monospace}
+    .article-body pre{background:#2C2C2A;color:#E8E8E4;padding:20px;border-radius:var(--radius);overflow-x:auto;margin:24px 0}
+    .article-body pre code{background:none;padding:0;color:inherit}
+    .article-body hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+    .back-link{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--text-s);text-decoration:none;margin-bottom:24px;transition:color .2s}
+    .back-link:hover{color:var(--primary)}
+    .cta-box{background:var(--primary);color:#fff;border-radius:var(--radius-lg);padding:32px;text-align:center;margin:48px 0}
+    .cta-box h3{font-family:var(--font-d);font-size:22px;font-weight:700;margin-bottom:8px}
+    .cta-box p{font-size:15px;opacity:.85;margin-bottom:20px}
+    .cta-box a{display:inline-block;background:#fff;color:var(--primary);padding:12px 28px;border-radius:10px;font-weight:700;text-decoration:none;font-size:15px;transition:all .2s}
+    .cta-box a:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.15)}
+  </style>
+
+  <div class="article-hero">
+    <a href="/insight" class="back-link">← Kembali ke Insight</a>
+    <span class="cat-badge" style={`background:${categoryColor[category]}18;color:${categoryColor[category]}`}>
+      {categoryLabel[category]}
+    </span>
+    <h1 class="article-title">{title}</h1>
+    <div class="article-meta">
+      <span>✍️ {author}</span>
+      <span>📅 {dateStr}</span>
+      {updatedStr && <span>🔄 Diperbarui {updatedStr}</span>}
+    </div>
+    {cover && <img src={cover} alt={title} class="article-cover" />}
+  </div>
+
+  <div class="article-body">
+    <slot />
+
+    <!-- CTA di akhir artikel -->
+    <div class="cta-box">
+      <h3>Siap kelola keuangan lebih baik?</h3>
+      <p>Coba Jatahku gratis — catat pengeluaran secepat kirim chat Telegram.</p>
+      <a href="https://jatahku.com">Mulai Gratis Sekarang →</a>
+    </div>
+  </div>
+</Base>

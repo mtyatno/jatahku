@@ -1,0 +1,157 @@
+---
+export interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+  activeCategory?: string;
+}
+const { title, description = 'Tips keuangan, tutorial Jatahku, dan insight envelope budgeting untuk Indonesia.', ogImage = 'https://jatahku.com/og-image.png', activeCategory } = Astro.props;
+
+const categories = [
+  { slug: 'semua', label: 'Semua' },
+  { slug: 'tutorial', label: 'Tutorial' },
+  { slug: 'tips-keuangan', label: 'Tips Keuangan' },
+  { slug: 'update-fitur', label: 'Update Fitur' },
+];
+---
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — Jatahku Insight</title>
+  <meta name="description" content={description} />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href={Astro.url} />
+  <link rel="icon" type="image/svg+xml" href="https://jatahku.com/favicon.svg" />
+  <meta name="theme-color" content="#0F6E56" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={Astro.url} />
+  <meta property="og:title" content={`${title} — Jatahku Insight`} />
+  <meta property="og:description" content={description} />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:locale" content="id_ID" />
+  <meta property="og:site_name" content="Jatahku" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={`${title} — Jatahku Insight`} />
+  <meta name="twitter:image" content={ogImage} />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --primary:#0F6E56;--primary-light:#E1F5EE;--primary-mid:#1a8a6a;--primary-dark:#085041;
+      --accent:#BA7517;--accent-light:#FAEEDA;
+      --text:#2C2C2A;--text-s:#5F5E5A;--text-t:#888780;
+      --bg:#FAFAF6;--white:#fff;--border:#E8E8E4;
+      --red:#E24B4A;
+      --font-d:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      --font-b:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      --radius:14px;--radius-lg:20px;
+    }
+    html{scroll-behavior:smooth}
+    body{font-family:var(--font-b);color:var(--text);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased}
+
+    /* Nav utama — identik dengan landing page */
+    .nav{position:sticky;top:0;z-index:100;background:rgba(250,250,246,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border)}
+    .nav-in{max-width:1100px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;justify-content:space-between}
+    .logo{font-family:var(--font-d);font-size:22px;font-weight:700;color:var(--primary);text-decoration:none}
+    .logo span{color:#1D9E75}
+    .nav-links{display:flex;align-items:center;gap:24px}
+    .nav-links a{font-size:14px;font-weight:500;color:var(--text-s);text-decoration:none;transition:color .2s}
+    .nav-links a:hover{color:var(--primary)}
+    .nav-links a.active{color:var(--primary);font-weight:600}
+    .btn-nav{padding:8px 20px;background:var(--primary);color:#fff;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;transition:all .2s}
+    .btn-nav:hover{background:var(--primary-dark)}
+
+    /* Nav kategori blog — secondary bar */
+    .cat-nav{background:var(--white);border-bottom:1px solid var(--border)}
+    .cat-nav-in{max-width:1100px;margin:0 auto;padding:0 24px;height:44px;display:flex;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none}
+    .cat-nav-in::-webkit-scrollbar{display:none}
+    .cat-link{padding:6px 14px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text-s);text-decoration:none;white-space:nowrap;transition:all .2s}
+    .cat-link:hover{background:var(--primary-light);color:var(--primary)}
+    .cat-link.active{background:var(--primary);color:#fff}
+
+    /* Content */
+    .container{max-width:1100px;margin:0 auto;padding:0 24px}
+
+    /* Footer — identik dengan landing page */
+    .footer{background:var(--white);border-top:1px solid var(--border);padding:48px 24px 32px}
+    .footer-in{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px}
+    .footer-brand .logo{font-size:20px}
+    .footer-brand p{font-size:14px;color:var(--text-t);margin-top:8px;max-width:220px;line-height:1.6}
+    .footer-col h4{font-family:var(--font-d);font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+    .footer-col a{display:block;font-size:14px;color:var(--text-s);text-decoration:none;margin-bottom:8px;transition:color .2s}
+    .footer-col a:hover{color:var(--primary)}
+    .footer-bottom{max-width:1100px;margin:32px auto 0;padding-top:24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+    .footer-bottom p{font-size:13px;color:var(--text-t)}
+
+    @media(max-width:768px){
+      .nav-links .hide-mobile{display:none}
+      .footer-in{grid-template-columns:1fr 1fr}
+    }
+    @media(max-width:480px){
+      .footer-in{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <!-- Nav utama -->
+  <nav class="nav">
+    <div class="nav-in">
+      <a href="https://jatahku.com" class="logo">Jatah<span>ku</span></a>
+      <div class="nav-links">
+        <a href="https://jatahku.com/#fitur" class="hide-mobile">Fitur</a>
+        <a href="https://jatahku.com/#harga" class="hide-mobile">Harga</a>
+        <a href="https://blog.jatahku.com" class="active">Insight</a>
+        <a href="https://jatahku.com/app" class="hide-mobile">Login</a>
+        <a href="https://jatahku.com/app" class="btn-nav">Mulai Gratis</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Nav kategori blog -->
+  <div class="cat-nav">
+    <div class="cat-nav-in">
+      {categories.map(cat => (
+        <a
+          href={cat.slug === 'semua' ? '/insight' : `/insight/kategori/${cat.slug}`}
+          class={`cat-link ${activeCategory === cat.slug || (!activeCategory && cat.slug === 'semua') ? 'active' : ''}`}
+        >
+          {cat.label}
+        </a>
+      ))}
+    </div>
+  </div>
+
+  <!-- Page content -->
+  <slot />
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-in">
+      <div class="footer-brand">
+        <a href="https://jatahku.com" class="logo">Jatah<span>ku</span></a>
+        <p>Setiap rupiah ada jatahnya. Envelope budgeting untuk Indonesia.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Produk</h4>
+        <a href="https://jatahku.com/#fitur">Fitur</a>
+        <a href="https://jatahku.com/#harga">Harga</a>
+        <a href="https://t.me/JatahkuBot">Telegram Bot</a>
+        <a href="https://blog.jatahku.com">Insight</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="https://jatahku.com/privacy.html">Kebijakan Privasi</a>
+        <a href="https://jatahku.com/terms.html">Syarat & Ketentuan</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© {new Date().getFullYear()} Jatahku. Setiap rupiah ada jatahnya.</p>
+      <p>Made with ☕ in Indonesia</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,116 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+
+const all = await getCollection('articles');
+const articles = all.sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
+const featured = articles.filter(a => a.data.featured);
+const rest = articles.filter(a => !a.data.featured);
+
+const categoryLabel: Record<string, string> = {
+  'tutorial': 'Tutorial',
+  'tips-keuangan': 'Tips Keuangan',
+  'update-fitur': 'Update Fitur',
+};
+const categoryColor: Record<string, string> = {
+  'tutorial': '#0F6E56',
+  'tips-keuangan': '#BA7517',
+  'update-fitur': '#1D4ED8',
+};
+---
+<Base title="Insight" description="Tips keuangan, tutorial Jatahku, dan insight envelope budgeting untuk Indonesia." activeCategory="semua">
+  <style>
+    .hero{padding:56px 24px 40px;text-align:center;border-bottom:1px solid var(--border);background:var(--white)}
+    .hero-badge{display:inline-block;padding:5px 14px;background:var(--accent-light);color:var(--accent);border-radius:100px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:16px}
+    .hero h1{font-family:var(--font-d);font-size:clamp(28px,4vw,44px);font-weight:700;letter-spacing:-.5px;margin-bottom:12px}
+    .hero p{font-size:16px;color:var(--text-s);max-width:480px;margin:0 auto}
+    .section{padding:48px 24px}
+    .container{max-width:1100px;margin:0 auto}
+    .section-label{font-family:var(--font-d);font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:2px;margin-bottom:20px}
+    /* Featured */
+    .featured-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+    .card-featured{background:var(--white);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;text-decoration:none;color:inherit;transition:all .25s;display:flex;flex-direction:column}
+    .card-featured:hover{border-color:#1D9E75;box-shadow:0 8px 32px rgba(15,110,86,.1);transform:translateY(-2px)}
+    .card-img{width:100%;height:200px;object-fit:cover;background:#F1F0EC}
+    .card-img-placeholder{width:100%;height:200px;background:linear-gradient(135deg,var(--primary-light),#fff);display:flex;align-items:center;justify-content:center;font-size:48px}
+    .card-body{padding:20px;flex:1;display:flex;flex-direction:column}
+    .card-badge{display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+    .card-title{font-family:var(--font-d);font-size:18px;font-weight:700;line-height:1.3;margin-bottom:8px;letter-spacing:-.2px}
+    .card-desc{font-size:14px;color:var(--text-s);line-height:1.6;flex:1}
+    .card-meta{margin-top:14px;font-size:12px;color:var(--text-t);display:flex;gap:12px}
+    /* List */
+    .articles-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+    .card-list{background:var(--white);border:1px solid var(--border);border-radius:var(--radius);padding:20px;text-decoration:none;color:inherit;transition:all .2s;display:flex;flex-direction:column}
+    .card-list:hover{border-color:#1D9E75;box-shadow:0 4px 16px rgba(15,110,86,.08)}
+    .card-list .card-title{font-size:16px}
+    .empty{text-align:center;padding:80px 24px;color:var(--text-t)}
+    .empty p{font-size:32px;margin-bottom:12px}
+    @media(max-width:640px){.featured-grid{grid-template-columns:1fr}}
+  </style>
+
+  <div class="hero">
+    <span class="hero-badge">Jatahku Insight</span>
+    <h1>Tips, Tutorial & Update Fitur</h1>
+    <p>Panduan praktis kelola keuangan dengan envelope budgeting — plus cara pakai Jatahku maksimal.</p>
+  </div>
+
+  <div class="section">
+    <div class="container">
+      {articles.length === 0 ? (
+        <div class="empty">
+          <p>✍️</p>
+          <p>Artikel pertama segera hadir.</p>
+        </div>
+      ) : (
+        <>
+          {featured.length > 0 && (
+            <div style="margin-bottom:48px">
+              <p class="section-label">Pilihan Editor</p>
+              <div class="featured-grid">
+                {featured.slice(0, 2).map(article => (
+                  <a href={`/insight/${article.slug}`} class="card-featured">
+                    {article.data.cover
+                      ? <img src={article.data.cover} alt={article.data.title} class="card-img" />
+                      : <div class="card-img-placeholder">📝</div>
+                    }
+                    <div class="card-body">
+                      <span class="card-badge" style={`background:${categoryColor[article.data.category]}18;color:${categoryColor[article.data.category]}`}>
+                        {categoryLabel[article.data.category]}
+                      </span>
+                      <h2 class="card-title">{article.data.title}</h2>
+                      <p class="card-desc">{article.data.description}</p>
+                      <div class="card-meta">
+                        <span>{article.data.author}</span>
+                        <span>{article.data.pubDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      </div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {rest.length > 0 && (
+            <div>
+              <p class="section-label">Artikel Terbaru</p>
+              <div class="articles-list">
+                {rest.map(article => (
+                  <a href={`/insight/${article.slug}`} class="card-list">
+                    <span class="card-badge" style={`background:${categoryColor[article.data.category]}18;color:${categoryColor[article.data.category]}`}>
+                      {categoryLabel[article.data.category]}
+                    </span>
+                    <h2 class="card-title">{article.data.title}</h2>
+                    <p class="card-desc">{article.data.description}</p>
+                    <div class="card-meta">
+                      <span>{article.data.pubDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  </div>
+</Base>

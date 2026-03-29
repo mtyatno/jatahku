@@ -1,0 +1,32 @@
+backend:
+  name: github
+  repo: mtyatno/jatahku
+  branch: main
+  base_url: https://api.jatahku.com
+  auth_endpoint: /auth/cms-oauth
+
+media_folder: "blog/public/uploads"
+public_folder: "/uploads"
+
+collections:
+  - name: "articles"
+    label: "Artikel"
+    folder: "blog/src/content/articles"
+    create: true
+    slug: "{{slug}}"
+    fields:
+      - { label: "Judul", name: "title", widget: "string" }
+      - { label: "Deskripsi", name: "description", widget: "text", hint: "Muncul di preview & Google (max 160 karakter)" }
+      - { label: "Tanggal Publish", name: "pubDate", widget: "datetime", format: "YYYY-MM-DD" }
+      - { label: "Tanggal Update", name: "updatedDate", widget: "datetime", format: "YYYY-MM-DD", required: false }
+      - label: "Kategori"
+        name: "category"
+        widget: "select"
+        options:
+          - { label: "Tutorial", value: "tutorial" }
+          - { label: "Tips Keuangan", value: "tips-keuangan" }
+          - { label: "Update Fitur", value: "update-fitur" }
+      - { label: "Penulis", name: "author", widget: "string", default: "Tim Jatahku" }
+      - { label: "Cover Image", name: "cover", widget: "image", required: false, hint: "Rekomendasi 1200x630px" }
+      - { label: "Featured (tampil di atas)", name: "featured", widget: "boolean", default: false }
+      - { label: "Isi Artikel", name: "body", widget: "markdown" }
