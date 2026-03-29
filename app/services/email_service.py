@@ -23,9 +23,12 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid(domain="jatahku.com")
+        msg["List-Unsubscribe"] = "<mailto:noreply@jatahku.com?subject=unsubscribe>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
-        if text_body:
-            msg.attach(MIMEText(text_body, "plain"))
+        # Always attach plain text (improves deliverability)
+        plain = text_body or "Buka email ini dengan client yang mendukung HTML untuk melihat konten."
+        msg.attach(MIMEText(plain, "plain"))
         msg.attach(MIMEText(html_body, "html"))
 
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
