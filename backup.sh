@@ -85,13 +85,16 @@ if [ ${#ERRORS[@]} -eq 0 ]; then
     send_tg "✅ <b>Backup Jatahku berhasil</b>
 📅 $(date '+%Y-%m-%d %H:%M WIB')
 
-🗄 <b>Database:</b> ${DB_SIZE}
-🖼 <b>Uploads:</b> ${UPLOADS_SIZE:-"-"}
-🔐 <b>.env:</b> terenkripsi (AES-256)
+🗄 <b>Database:</b> ${DB_SIZE} → <code>${DB_FILE}</code>
+🖼 <b>Uploads:</b> ${UPLOADS_SIZE:-"-"} → <code>${UPLOADS_FILE}</code>
+🔐 <b>.env:</b> terenkripsi AES-256 → <code>jatahku_env_${DATE}.enc</code>
 
 📁 Lokasi: <code>${BACKUP_DIR}/</code>
 🗂 Retensi: ${DB_COUNT}/${RETAIN_DAYS} hari tersimpan
-💾 Total ukuran folder: ${TOTAL_SIZE}"
+💾 Total ukuran folder: ${TOTAL_SIZE}
+
+<i>Restore .env:</i>
+<code>openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:\"DB_PASS\" -in ${BACKUP_DIR}/jatahku_env_${DATE}.enc</code>"
 else
     ERROR_MSG=$(printf '%s\n' "${ERRORS[@]}")
     send_tg "❌ <b>Backup Jatahku GAGAL!</b>
