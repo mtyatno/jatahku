@@ -40,6 +40,38 @@ SUB_PATTERNS = [
 # Keywords that imply recurring/subscription
 SUB_KEYWORDS = re.compile(r"\b(?:langganan|sewa|nyewa|kontrak|ngontrak|subscribe|subscription|berlangganan)\b", re.IGNORECASE)
 
+STOPWORDS = {"di", "ke", "dari", "yang", "dan", "untuk", "dengan", "ya", "aku",
+             "saya", "kamu", "ini", "itu", "ada", "buat", "sama", "juga", "mau",
+             "beli", "bayar", "beli", "tadi", "lagi", "udah", "sudah", "pas", "aja"}
+
+def extract_keywords(description: str) -> list:
+    import re as _re
+    words = _re.sub(r'[^\w\s]', '', description.lower()).split()
+    keywords = [w for w in words if len(w) >= 3 and w not in STOPWORDS]
+    # Also include full cleaned phrase for exact future matches
+    phrase = " ".join(keywords)
+    if phrase and phrase not in keywords:
+        keywords.append(phrase)
+    return keywords
+
+async def save_learned_keywords(user_id, description: str, envelope_id, db):
+    from app.models.models import UserEnvelopeKeyword
+    from sqlalchemy import select as _sel
+    keywords = extract_keywords(description)
+    for kw in keywords:
+        res = await db.execute(
+            _sel(UserEnvelopeKeyword).where(
+                UserEnvelopeKeyword.user_id == user_id,
+                UserEnvelopeKeyword.keyword == kw,
+                UserEnvelopeKeyword.envelope_id == envelope_id,
+            )
+        )
+        existing = res.scalar_one_or_none()
+        if existing:
+            existing.count += 1
+        else:
+            db.add(UserEnvelopeKeyword(user_id=user_id, keyword=kw, envelope_id=envelope_id))
+
 CATEGORY_KEYWORDS = {
     "makan": ["makan", "nasi", "ayam", "sate", "bakso", "mie", "noodle", "rice",
               "lunch", "dinner", "breakfast", "sarapan", "siang", "malam",
@@ -258,7 +290,7 @@ async def get_envelopes_with_spent(household_id, db, user_id=None):
         })
     return envelope_data
 
-async def find_best_envelope(description, household_id, db):
+async def find_best_envelope(description, household_id, db, user_id=None):
     result = await db.execute(
         select(Envelope).where(
             Envelope.household_id == household_id, Envelope.is_active == True,
@@ -267,6 +299,29 @@ async def find_best_envelope(description, household_id, db):
     envelopes = result.scalars().all()
     if not envelopes:
         return None, False
+
+    env_by_id = {str(e.id): e for e in envelopes}
+
+    # 0. Learned keywords — highest score wins
+    if user_id:
+        from app.models.models import UserEnvelopeKeyword
+        keywords = extract_keywords(description)
+        if keywords:
+            scores = {}
+            for kw in keywords:
+                kw_res = await db.execute(
+                    select(UserEnvelopeKeyword).where(
+                        UserEnvelopeKeyword.user_id == user_id,
+                        UserEnvelopeKeyword.keyword == kw,
+                    )
+                )
+                for row in kw_res.scalars().all():
+                    eid = str(row.envelope_id)
+                    if eid in env_by_id:
+                        scores[eid] = scores.get(eid, 0) + row.count
+            if scores:
+                best_id = max(scores, key=lambda x: scores[x])
+                return env_by_id[best_id], True
 
     guessed_name = guess_envelope_name(description)
 
@@ -656,7 +711,7 @@ async def handle_message(update, context):
             return
 
         hid = await get_household_id(user, db)
-        envelope, confident = await find_best_envelope(description, hid, db)
+        envelope, confident = await find_best_envelope(description, hid, db, user_id=user.id)
         if not envelope:
             envelopes_check = await get_envelopes_with_spent(hid, db, user.id)
             if not envelopes_check:
@@ -868,6 +923,7 @@ async def handle_txn_callback(update, context):
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
             description=description, source=TransactionSource.telegram, transaction_date=date.today())
         db.add(txn)
+        await save_learned_keywords(user.id, description, envelope.id, db)
         await db.commit()
         envelopes = await get_envelopes_with_spent(hid, db, user.id)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)

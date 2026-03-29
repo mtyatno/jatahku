@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
-    ForeignKey, Enum as SAEnum, func
+    ForeignKey, Enum as SAEnum, func, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -384,6 +384,18 @@ class PromoCode(Base):
     event_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserEnvelopeKeyword(Base):
+    __tablename__ = "user_envelope_keywords"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    keyword: Mapped[str] = mapped_column(String(100))
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id", ondelete="CASCADE"))
+    count: Mapped[int] = mapped_column(Integer, default=1)
+
+    __table_args__ = (UniqueConstraint("user_id", "keyword", "envelope_id", name="uq_user_kw_env"),)
 
 
 class AppSetting(Base):
