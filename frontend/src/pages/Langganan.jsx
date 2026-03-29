@@ -2,9 +2,94 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 
+function AddModal({ onClose, onCreated }) {
+  const [envelopes, setEnvelopes] = useState([]);
+  const [desc, setDesc] = useState('');
+  const [amount, setAmount] = useState('');
+  const [frequency, setFrequency] = useState('monthly');
+  const [envelopeId, setEnvelopeId] = useState('');
+  const [nextRun, setNextRun] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getEnvelopeSummary().then(envs => {
+      setEnvelopes(envs || []);
+      if (envs?.length) setEnvelopeId(envs[0].id);
+    });
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!desc || !amount || !envelopeId) { setError('Lengkapi semua field'); return; }
+    setSaving(true);
+    setError('');
+    const res = await api.request('/recurring/', {
+      method: 'POST',
+      body: JSON.stringify({
+        description: desc,
+        amount: Number(amount),
+        frequency,
+        envelope_id: envelopeId,
+        next_run: nextRun,
+      }),
+    });
+    setSaving(false);
+    if (res.ok) { onCreated(); onClose(); }
+    else { const d = await res.json(); setError(d.detail || 'Gagal menyimpan'); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-lg mb-4">Tambah Langganan</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="label">Nama langganan</label>
+            <input type="text" className="input" placeholder="Netflix, Sewa server..." value={desc} onChange={e => setDesc(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Jumlah (Rp)</label>
+            <input type="number" className="input font-mono" placeholder="54000" value={amount} onChange={e => setAmount(e.target.value)} min="1" />
+          </div>
+          <div>
+            <label className="label">Frekuensi</label>
+            <select className="input" value={frequency} onChange={e => setFrequency(e.target.value)}>
+              <option value="weekly">Mingguan</option>
+              <option value="monthly">Bulanan</option>
+              <option value="yearly">Tahunan</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Amplop</label>
+            <select className="input" value={envelopeId} onChange={e => setEnvelopeId(e.target.value)}>
+              {envelopes.map(e => <option key={e.id} value={e.id}>{e.emoji} {e.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Jatuh tempo pertama</label>
+            <input type="date" className="input" value={nextRun} onChange={e => setNextRun(e.target.value)} />
+          </div>
+        </div>
+        {error && <div className="mt-3 bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
+        <div className="flex gap-2 mt-4">
+          <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+          <button type="button" onClick={handleSubmit} disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
+            {saving ? '...' : 'Simpan'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Langganan() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
@@ -34,9 +119,12 @@ export default function Langganan() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-display font-bold">Langganan</h1>
-        <p className="text-sm text-gray-500">Pembayaran rutin yang tercatat otomatis</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-display font-bold">Langganan</h1>
+          <p className="text-sm text-gray-500">Pembayaran rutin yang tercatat otomatis</p>
+        </div>
+        <button onClick={() => setShowAdd(true)} className="btn-primary">+ Tambah</button>
       </div>
 
       {items.length > 0 && (
@@ -50,7 +138,8 @@ export default function Langganan() {
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">🔄</p>
           <p className="text-gray-500 mb-2">Belum ada langganan</p>
-          <p className="text-sm text-gray-400">Tambah via Telegram: kirim pesan seperti<br/><code className="text-brand-600">langganan netflix 54k</code> atau <code className="text-brand-600">sewa server 250k tiap bulan</code></p>
+          <p className="text-sm text-gray-400 mb-4">Tambah lewat tombol di atas atau via Telegram</p>
+          <button onClick={() => setShowAdd(true)} className="btn-primary">+ Tambah Langganan</button>
         </div>
       ) : (
         <div className="space-y-3">
@@ -80,14 +169,7 @@ export default function Langganan() {
         </div>
       )}
 
-      <div className="card bg-gray-50">
-        <p className="text-sm text-gray-500">💡 Tambah langganan lewat Telegram:</p>
-        <div className="mt-2 space-y-1">
-          <p className="text-xs font-mono text-brand-600">langganan netflix 54k</p>
-          <p className="text-xs font-mono text-brand-600">sewa server 250k tiap bulan</p>
-          <p className="text-xs font-mono text-brand-600">kontrak rumah 5jt tiap tahun</p>
-        </div>
-      </div>
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onCreated={load} />}
     </div>
   );
 }
