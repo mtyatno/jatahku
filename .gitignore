@@ -1,1 +1,19 @@
 __pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Blog
+blog/node_modules/
+blog/dist/
+blog/.astro/
+
+# OS
+.DS_Store
+Thumbs.db
