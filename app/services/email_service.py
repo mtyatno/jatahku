@@ -2,6 +2,7 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formatdate, make_msgid
 
 logger = logging.getLogger("jatahku.email")
 
@@ -20,6 +21,8 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
         msg["To"] = to_email
         msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain="jatahku.com")
 
         if text_body:
             msg.attach(MIMEText(text_body, "plain"))
