@@ -42,6 +42,7 @@ const TEMPLATES = {
 export default function Onboarding({ onDone }) {
   const [step, setStep] = useState(1);
   const [income, setIncome] = useState('');
+  const [paydayDay, setPaydayDay] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [envelopes, setEnvelopes] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -115,6 +116,12 @@ export default function Onboarding({ onDone }) {
     setSaving(true);
     setError('');
 
+    // Save payday_day
+    await api.request('/user/profile', {
+      method: 'PUT',
+      body: JSON.stringify({ payday_day: paydayDay }),
+    });
+
     const envelopeIds = [];
     for (const env of envelopes) {
       const amount = Number(env.amount) || 0;
@@ -160,15 +167,34 @@ export default function Onboarding({ onDone }) {
 
       {step === 1 && (
         <div className="space-y-4">
-          <div className="card">
-            <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
-            <p className="text-sm text-gray-500 mb-4">Total pemasukan per bulan (gaji, freelance, dll).</p>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
-              <input type="number" className="input pl-12 text-right font-mono text-xl" placeholder="8000000"
-                value={income} onChange={e => setIncome(e.target.value)} min="0" autoFocus />
+          <div className="card space-y-5">
+            <div>
+              <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
+              <p className="text-sm text-gray-500 mb-3">Total pemasukan per bulan (gaji, freelance, dll).</p>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                <input type="number" className="input pl-12 text-right font-mono text-xl" placeholder="8000000"
+                  value={income} onChange={e => setIncome(e.target.value)} min="0" autoFocus />
+              </div>
+              {incomeNum > 0 && <p className="text-sm text-brand-600 mt-2 text-right font-medium">{formatCurrency(incomeNum)}/bulan</p>}
             </div>
-            {incomeNum > 0 && <p className="text-sm text-brand-600 mt-2 text-right font-medium">{formatCurrency(incomeNum)}/bulan</p>}
+
+            <div className="border-t border-gray-100 pt-4">
+              <h3 className="font-semibold text-base mb-1">📅 Tanggal gajian kamu?</h3>
+              <p className="text-sm text-gray-500 mb-3">Untuk hitung periode budget yang akurat. Bisa diubah nanti.</p>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number" min="1" max="31"
+                  className="input w-20 text-center font-mono text-lg"
+                  value={paydayDay}
+                  onChange={e => setPaydayDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
+                />
+                <span className="text-sm text-gray-500">setiap bulan</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Contoh: isi 25 jika gajian tiap tanggal 25
+              </p>
+            </div>
           </div>
           <button onClick={() => setStep(2)} disabled={incomeNum <= 0}
             className="btn-primary w-full disabled:opacity-50">Lanjut →</button>
