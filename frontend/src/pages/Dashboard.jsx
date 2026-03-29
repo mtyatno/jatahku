@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
-import { formatShort, formatCurrency, daysLeftInMonth } from '../lib/utils';
+import { formatShort, formatCurrency } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
 } from 'recharts';
 
@@ -16,22 +16,170 @@ function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
-      <p className="text-xs text-gray-400 mb-1">{label}</p>
-      {payload.map((p, i) => (
+      <p className="text-xs text-gray-400 mb-1">Tgl {label}</p>
+      {payload.map((p, i) => p.value > 0 && (
         <p key={i} className="text-sm font-semibold" style={{color: p.color}}>
-          {p.name}: {formatCurrency(p.value)}
+          {formatCurrency(p.value)}
         </p>
       ))}
     </div>
   );
 }
 
-function ProgressBar({ ratio, color }) {
+function buildDailyData(raw, prediction) {
+  if (!prediction?.period_start) {
+    return raw.map(x => ({ date: new Date(x.date).getDate() + '', total: x.total, isFuture: false }));
+  }
+  const spendMap = {};
+  raw.forEach(d => { spendMap[d.date] = d.total; });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(prediction.period_start);
+  const end = new Date(prediction.period_end);
+  const result = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dateStr = cur.toISOString().split('T')[0];
+    const isFuture = cur > today;
+    result.push({
+      date: cur.getDate() + '',
+      dateStr,
+      total: spendMap[dateStr] || 0,
+      isFuture,
+    });
+    cur.setDate(cur.getDate() + 1);
+  }
+  return result;
+}
+
+function DecisionBox({ envelopes, prediction, todaySpent }) {
+  if (!prediction || prediction.total_allocated === 0) return null;
+
+  const safeDaily = prediction.safe_daily;
+  const items = [];
+
+  // Today vs safe daily
+  if (todaySpent > 0 && safeDaily > 0) {
+    const ratio = todaySpent / safeDaily;
+    if (ratio >= 1.5) {
+      items.push({ icon: '🔴', text: `Hari ini kamu overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, level: 'danger' });
+    } else if (ratio >= 1.0) {
+      items.push({ icon: '🟠', text: `Pengeluaran hari ini (${formatCurrency(todaySpent)}) melebihi batas aman ${formatCurrency(safeDaily)}/hari`, level: 'warning' });
+    } else {
+      items.push({ icon: '✅', text: `Pengeluaran hari ini ${formatCurrency(todaySpent)} — masih di bawah batas aman ${formatCurrency(safeDaily)}/hari`, level: 'safe' });
+    }
+  } else if (safeDaily > 0) {
+    items.push({ icon: '✅', text: `Belum ada pengeluaran hari ini. Batas aman ${formatCurrency(safeDaily)}/hari`, level: 'safe' });
+  }
+
+  // Envelope warnings — top 3 most urgent
+  const urgent = [...envelopes]
+    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
+    .sort((a, b) => b.spent_ratio - a.spent_ratio)
+    .slice(0, 3);
+
+  urgent.forEach(e => {
+    const pct = Math.round(e.spent_ratio * 100);
+    if (e.spent_ratio >= 1.0) {
+      items.push({ icon: '🔴', text: `${e.emoji} ${e.name} sudah habis (${pct}%)`, level: 'danger' });
+    } else if (e.spent_ratio >= 0.9) {
+      items.push({ icon: '🔴', text: `${e.emoji} ${e.name} hampir habis (${pct}%)`, level: 'danger' });
+    } else {
+      items.push({ icon: '⚠️', text: `${e.emoji} ${e.name} mulai menipis (${pct}%)`, level: 'warning' });
+    }
+  });
+
+  // Safe envelopes summary
+  const safeCount = envelopes.filter(e => Number(e.allocated) > 0 && e.spent_ratio < 0.7).length;
+  if (safeCount > 0 && urgent.length > 0) {
+    items.push({ icon: '✅', text: `${safeCount} amplop lainnya masih aman`, level: 'safe' });
+  }
+
+  if (items.length === 0) return null;
+
+  const hasDanger = items.some(i => i.level === 'danger');
+  const hasWarning = items.some(i => i.level === 'warning');
+  const bg = hasDanger ? '#FEF2F2' : hasWarning ? '#FFFBEB' : '#F0FDF9';
+  const border = hasDanger ? '#FECACA' : hasWarning ? '#FDE68A' : '#A7F3D0';
+  const label = hasDanger ? '🚨 Perlu perhatian sekarang' : hasWarning ? '📊 Status budget hari ini' : '📊 Status budget hari ini';
+  const labelColor = hasDanger ? '#991B1B' : hasWarning ? '#92400E' : '#065F46';
+
   return (
-    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-      <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${Math.min(Math.max(ratio * 100, 1), 100)}%` }} />
+    <div className="rounded-xl p-4" style={{ background: bg, border: `1px solid ${border}` }}>
+      <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: labelColor }}>{label}</p>
+      <div className="space-y-1.5">
+        {items.map((item, i) => (
+          <p key={i} className="text-sm" style={{ color: item.level === 'safe' ? '#065F46' : item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
+            {item.icon} {item.text}
+          </p>
+        ))}
+      </div>
+      {safeDaily > 0 && (
+        <p className="text-xs mt-2.5 pt-2.5 border-t" style={{ borderColor: border, color: labelColor }}>
+          👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
+        </p>
+      )}
     </div>
   );
+}
+
+function EnvelopeRow({ env }) {
+  const allocated = Number(env.allocated);
+  const spent = Number(env.spent);
+  const reserved = Number(env.reserved || 0);
+  const free = Number(env.free || env.remaining);
+  const ratio = env.spent_ratio;
+  const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
+
+  const barColor = ratio >= 0.9 ? 'bg-danger-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
+  const freeColor = free <= 0 ? 'text-danger-400' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
+
+  const badge = ratio >= 1.0
+    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-100 text-danger-400 font-semibold">Habis</span>
+    : ratio >= 0.9
+    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-50 text-danger-400 font-medium">🔴 {Math.round(ratio * 100)}%</span>
+    : ratio >= 0.7
+    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 font-medium">🟡 {Math.round(ratio * 100)}%</span>
+    : null;
+
+  return (
+    <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{env.emoji || '📁'}</span>
+          <span className="font-semibold text-sm">{env.name}</span>
+          {badge}
+        </div>
+        <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
+      </div>
+      {isUnfunded ? (
+        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana.</div>
+      ) : (
+        <>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className={`h-full rounded-full transition-all duration-500 ${env.is_locked ? 'bg-gray-300' : barColor}`}
+              style={{ width: `${Math.min(Math.max(ratio * 100, 1), 100)}%` }} />
+          </div>
+          <div className="flex justify-between mt-1.5 text-xs text-gray-400">
+            <span>Terpakai {formatShort(spent)}</span>
+            {reserved > 0 && <span>🔄 {formatShort(reserved)}</span>}
+            <span>Dana {formatShort(allocated)}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function sortEnvelopes(envs) {
+  return [...envs].sort((a, b) => {
+    const aFunded = Number(a.allocated) > 0;
+    const bFunded = Number(b.allocated) > 0;
+    if (aFunded && !bFunded) return -1;
+    if (!aFunded && bFunded) return 1;
+    return b.spent_ratio - a.spent_ratio;
+  });
 }
 
 export default function Dashboard() {
@@ -54,7 +202,7 @@ export default function Dashboard() {
     ]).then(([env, txn, d, b, p]) => {
       setEnvelopes(env);
       setTransactions(txn);
-      setDaily(d.map(x => ({...x, date: new Date(x.date).getDate() + ''})));
+      setDaily(d);
       setBreakdown(b.filter(x => x.spent > 0));
       setPrediction(p);
       setLoading(false);
@@ -65,60 +213,27 @@ export default function Dashboard() {
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (showOnboarding) return <Onboarding onDone={() => { setShowOnboarding(false); window.location.reload(); }} />;
 
-  const shared = envelopes.filter(e => !e.is_personal);
-  const personal = envelopes.filter(e => e.is_personal);
-  const daysLeft = daysLeftInMonth();
-  const month = new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const shared = sortEnvelopes(envelopes.filter(e => !e.is_personal));
+  const personal = sortEnvelopes(envelopes.filter(e => e.is_personal));
 
   const totalAllocated = shared.reduce((s, e) => s + Number(e.allocated), 0);
   const totalSpent = shared.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = shared.reduce((s, e) => s + Number(e.remaining), 0);
 
-  const renderEnvelopeRow = (env) => {
-    const allocated = Number(env.allocated);
-    const spent = Number(env.spent);
-    const remaining = Number(env.remaining);
-    const reserved = Number(env.reserved || 0);
-    const free = Number(env.free || remaining);
-    const spentRatio = env.spent_ratio;
+  const periodLabel = prediction?.period_start
+    ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
+    : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const daysLeft = prediction?.days_left ?? 0;
 
-    const spentColor = spentRatio >= 0.9 ? 'bg-danger-400' : spentRatio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
-    const remainColor = free <= 0 ? 'text-danger-400' : spentRatio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
-    const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
-
-    return (
-      <div key={env.id} className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">{env.emoji || '📁'}</span>
-            <span className="font-semibold text-sm">{env.name}</span>
-          </div>
-          <span className={`font-display font-bold text-sm ${remainColor}`}>{formatShort(free)}</span>
-        </div>
-        {isUnfunded ? (
-          <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana.</div>
-        ) : (
-          <>
-            <ProgressBar ratio={spentRatio} color={env.is_locked ? 'bg-gray-300' : spentColor} />
-            <div className="flex justify-between mt-1.5 text-xs text-gray-400">
-              <span>Terpakai {formatShort(spent)}</span>
-              {reserved > 0 && <span>🔄 {formatShort(reserved)}</span>}
-              <span>Dana {formatShort(allocated)}</span>
-            </div>
-          </>
-        )}
-      </div>
-    );
-  };
-
-  const pct = prediction && prediction.total_allocated > 0
-    ? Math.round((prediction.total_spent / prediction.total_allocated) * 100) : 0;
+  const chartData = buildDailyData(daily, prediction);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
-        <p className="text-sm text-gray-500">{month} — {daysLeft} hari lagi</p>
+        <p className="text-sm text-gray-500">{periodLabel} · {daysLeft} hari lagi</p>
       </div>
 
       <ExportButtons />
@@ -131,35 +246,41 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
-      {/* Prediction */}
-      {prediction && prediction.total_allocated > 0 && (
-        <div className="flex items-center gap-3 p-4 rounded-xl" style={{background: prediction.on_track ? '#E1F5EE' : '#FCEBEB'}}>
-          <span className="text-2xl">{prediction.on_track ? '✅' : '⚠️'}</span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold" style={{color: prediction.on_track ? '#085041' : '#791F1F'}}>
-              {prediction.on_track ? 'On track! Budget cukup sampai akhir bulan.' : 'Hati-hati! Di pace ini, budget bisa habis sebelum akhir bulan.'}
-            </p>
-            <p className="text-xs mt-0.5" style={{color: prediction.on_track ? '#0F6E56' : '#A32D2D'}}>
-              Rata-rata {formatCurrency(prediction.daily_avg)}/hari · Aman max {formatCurrency(prediction.safe_daily)}/hari · {prediction.days_left} hari lagi
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Decision Box */}
+      <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
 
-      {/* Charts row */}
-      {(daily.length > 0 || breakdown.length > 0) && (
+      {/* Charts */}
+      {(chartData.length > 0 || breakdown.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {daily.length > 0 && (
+          {chartData.length > 0 && (
             <div className="card">
-              <h3 className="font-semibold text-sm mb-3">Pengeluaran harian</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
+                {prediction?.safe_daily > 0 && (
+                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <span className="inline-block w-4 border-t-2 border-dashed border-danger-400"></span>
+                    Batas aman {formatShort(prediction.safe_daily)}/hari
+                  </span>
+                )}
+              </div>
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={daily}>
-                  <XAxis dataKey="date" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                  <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} width={45}
+                <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={45}
                     tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="total" name="Pengeluaran" fill="#0F6E56" radius={[3,3,0,0]} />
-                </BarChart>
+                  {prediction?.safe_daily > 0 && (
+                    <ReferenceLine y={prediction.safe_daily} stroke="#E24B4A" strokeDasharray="4 3" strokeWidth={1.5}
+                      label={{ value: '', position: 'right' }} />
+                  )}
+                  <Bar dataKey="total" name="Pengeluaran" radius={[3, 3, 0, 0]}
+                    fill="#0F6E56"
+                    shape={(props) => {
+                      const { isFuture, ...rest } = props;
+                      return <rect {...rest} fill={props.isFuture ? '#E8F5F1' : '#0F6E56'} rx={3} ry={3} />;
+                    }}
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -180,7 +301,7 @@ export default function Dashboard() {
                   {breakdown.map((item, i) => (
                     <div key={i} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{background: COLORS[i % COLORS.length]}} />
+                        <div className="w-2.5 h-2.5 rounded-sm" style={{ background: COLORS[i % COLORS.length] }} />
                         <span>{item.emoji} {item.name}</span>
                       </div>
                       <span className="font-mono font-medium">{formatShort(item.spent)}</span>
@@ -193,24 +314,35 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Envelopes */}
+      {/* Envelopes — sorted by urgency */}
       {shared.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-3"><h2 className="font-display font-bold text-lg">👥 Shared</h2><Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{shared.map(renderEnvelopeRow)}</div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-bold text-lg">👥 Shared</h2>
+            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {shared.map(env => <EnvelopeRow key={env.id} env={env} />)}
+          </div>
         </div>
       )}
-
       {personal.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-3"><h2 className="font-display font-bold text-lg">🔒 Personal</h2></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{personal.map(renderEnvelopeRow)}</div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-bold text-lg">🔒 Personal</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {personal.map(env => <EnvelopeRow key={env.id} env={env} />)}
+          </div>
         </div>
       )}
 
       {/* Recent transactions */}
       <div>
-        <div className="flex items-center justify-between mb-3"><h2 className="font-display font-bold text-lg">Transaksi terbaru</h2><Link to="/transactions" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link></div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display font-bold text-lg">Transaksi terbaru</h2>
+          <Link to="/transactions" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
+        </div>
         {transactions.length === 0 ? (
           <div className="card text-center py-8"><p className="text-gray-400">Belum ada transaksi</p></div>
         ) : (
@@ -219,8 +351,17 @@ export default function Dashboard() {
               const env = envelopes.find(e => e.id === txn.envelope_id);
               return (
                 <div key={txn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                  <div className="flex items-center gap-3"><span className="text-lg">{env?.emoji || '📁'}</span><div><p className="text-sm font-medium">{txn.description}</p><p className="text-xs text-gray-400">{env?.name} · {txn.source === 'telegram' ? '📱' : '🌐'}</p></div></div>
-                  <div className="text-right"><p className="font-display font-bold text-sm text-gray-900">-{formatShort(txn.amount)}</p><p className="text-xs text-gray-400">{new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</p></div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">{env?.emoji || '📁'}</span>
+                    <div>
+                      <p className="text-sm font-medium">{txn.description}</p>
+                      <p className="text-xs text-gray-400">{env?.name} · {txn.source === 'telegram' ? '📱' : '🌐'}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-display font-bold text-sm text-gray-900">-{formatShort(txn.amount)}</p>
+                    <p className="text-xs text-gray-400">{new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</p>
+                  </div>
                 </div>
               );
             })}
