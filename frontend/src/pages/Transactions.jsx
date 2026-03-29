@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
+import { enqueueTransaction, flushQueue, getPendingCount } from '../lib/offlineQueue';
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -13,6 +14,19 @@ export default function Transactions() {
   const [envelopeId, setEnvelopeId] = useState('');
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    getPendingCount().then(setPendingCount);
+    const syncOnOnline = async () => {
+      const results = await flushQueue((item) =>
+        api.createTransaction({ envelope_id: item.envelope_id, amount: item.amount, description: item.description, source: item.source })
+      );
+      if (results.some(r => r.success)) { load(); getPendingCount().then(setPendingCount); }
+    };
+    window.addEventListener('online', syncOnOnline);
+    return () => window.removeEventListener('online', syncOnOnline);
+  }, []);
 
   const load = () => {
     const isSource = filter === 'telegram' || filter === 'webapp';
@@ -34,19 +48,20 @@ export default function Transactions() {
     e.preventDefault();
     setSaving(true);
     setAddError('');
-    const result = await api.createTransaction({
-      envelope_id: envelopeId,
-      amount: Number(amount),
-      description,
-      source: 'webapp',
-    });
+    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp' };
+
+    if (!navigator.onLine) {
+      await enqueueTransaction(payload);
+      setSaving(false);
+      setAmount(''); setDescription(''); setEnvelopeId(''); setShowAdd(false);
+      getPendingCount().then(setPendingCount);
+      return;
+    }
+
+    const result = await api.createTransaction(payload);
     setSaving(false);
     if (result.ok) {
-      setAmount('');
-      setDescription('');
-      setEnvelopeId('');
-      setShowAdd(false);
-      setAddError('');
+      setAmount(''); setDescription(''); setEnvelopeId(''); setShowAdd(false); setAddError('');
       load();
     } else {
       setAddError(result.data?.detail || 'Gagal menyimpan transaksi');
@@ -75,7 +90,14 @@ export default function Transactions() {
           <h1 className="text-2xl font-display font-bold">Transaksi</h1>
           <p className="text-sm text-gray-500">{transactions.length} transaksi</p>
         </div>
-        <button onClick={() => { setShowAdd(!showAdd); setAddError(''); }} className="btn-primary">+ Tambah</button>
+        <div className="flex items-center gap-2">
+          {pendingCount > 0 && (
+            <span style={{ fontSize: '12px', background: '#FEF3C7', color: '#92400E', padding: '4px 10px', borderRadius: '8px', fontWeight: 600 }}>
+              ⏳ {pendingCount} pending
+            </span>
+          )}
+          <button onClick={() => { setShowAdd(!showAdd); setAddError(''); }} className="btn-primary">+ Tambah</button>
+        </div>
       </div>
 
       {showAdd && (

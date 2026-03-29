@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './hooks/useAuth';
 import Layout from './components/Layout';
+import { OfflineBanner, InstallPrompt } from './components/PWAPrompt';
 import Login from './pages/Login';
 import TgLogin from './pages/TgLogin';
 import Dashboard from './pages/Dashboard';
@@ -16,6 +17,8 @@ import Settings from './pages/Settings';
 export default function App() {
   return (
     <AuthProvider>
+      <OfflineBanner />
+      <InstallPrompt />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
