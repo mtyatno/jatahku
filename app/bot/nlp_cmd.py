@@ -258,11 +258,12 @@ def is_pengeluaran_hari_ini(text): return bool(PENGELUARAN_HARI_INI_RE.search(te
 
 
 def parse_multi_expense(text):
-    """Parse multi-expense input. Supports separators: , ; terus lalu dan (space-sequence).
+    """Parse multi-expense input. Supports separators: newline, , ; terus lalu dan.
     Returns list of (amount, desc) with >= 2 items, or None.
     """
     # Try separators in priority order
     sep_patterns = [
+        r"\s*\n+\s*",           # newline / Enter (highest priority)
         r"\s*[,;]\s*",
         r"\s+(?:terus|lalu)\s+",
         r"\s+dan\s+",
