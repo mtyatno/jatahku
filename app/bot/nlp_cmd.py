@@ -197,31 +197,36 @@ NABUNG_RE = re.compile(
 
 
 PENGELUARAN_HARI_INI_RE = re.compile(
-    # ── Exact short triggers ──────────────────────────────────────────────────
-    r"^(total\s+hari\s+ini|rekap\s+hari\s+ini|expend\s+hari\s+ini|keluar\s+hari\s+ini"
-    r"|jajan\s+hari\s+ini|pengeluaran\s+hari\s+ini|spend\s+hari\s+ini"
+    # ── Exact standalone triggers (no "hari ini" needed) ─────────────────────
+    r"^(spend|expend|pengeluaran|jajan\s+hari\s+ini|keluar\s+hari\s+ini"
+    r"|total\s+hari\s+ini|rekap\s+hari\s+ini|expend\s+hari\s+ini"
+    r"|pengeluaran\s+hari\s+ini|spend\s+hari\s+ini"
     r"|total\s+keluar|total\s+jajan|total\s+belanja|rekap\s+harian"
-    r"|total\s+pengeluaran|pengeluaran\s+harian|spend\s+harian"
+    r"|total\s+pengeluaran|pengeluaran\s+harian|spend\s+harian|expend\s+harian"
     r"|totalan\s+hari\s+ini|total\s+spend|kepake\s+hari\s+ini"
     r"|duit\s+keluar\s+hari\s+ini|rekap\s+jajan|total\s+duit\s+keluar"
     r"|abis\s+brp|jajan\s+brp\s+hari\s+ini|total\s+hari\s+ini\s+dong)$"
 
+    # ── "berapa" + expense verb (+ optional "hari ini") ──────────────────────
+    r"|\bberapa\s+(spend|expend|keluar|jajan|belanja|pengeluaran|habis|abis"
+    r"|ngeluarin|ngabisin|kepake|terpakai)\b"
+
     # ── "hari ini" + sudah/udah + expense verb ───────────────────────────────
     r"|\bhari\s+ini\s+(udah|sudah)?\s*"
-    r"(expend|keluar|habis|jajan|spend|belanja|ngeluarin|ngabisin|terpakai|kepake|abis"
+    r"(expend|spend|keluar|habis|jajan|belanja|ngeluarin|ngabisin|terpakai|kepake|abis"
     r"|boros|bakar\s+duit|ludes|foya|boncos|ambyar|bocor|tewas|nguras|buang\s+duit"
     r"|narik|nyumbang|cuan\s+keluar)\b"
 
     # ── expense verb + "hari ini" ────────────────────────────────────────────
-    r"|\b(expend|ngeluarin|ngabisin|belanja|jajan|abis|ludes|boncos|ambyar|tewas"
+    r"|\b(expend|spend|ngeluarin|ngabisin|belanja|jajan|abis|ludes|boncos|ambyar|tewas"
     r"|bakar\s+duit|buang\s+duit|foya|khilaf|boros)\b.{0,30}\bhari\s+ini\b"
 
     # ── "udah/sudah" + expense verb (+ "hari ini" context) ──────────────────
-    r"|\b(udah|sudah)\s+(expend|keluar|jajan|spend|belanja|ngeluarin|ngabisin"
+    r"|\b(udah|sudah)\s+(expend|spend|keluar|jajan|belanja|ngeluarin|ngabisin"
     r"|kepake|abis|boros|bakar|boncos|ambyar|khilaf|foya|ludes|bocor)\b"
     r".{0,40}\bhari\s+ini\b"
 
-    r"|\bhari\s+ini\b.{0,40}\b(udah|sudah)\s+(expend|keluar|jajan|spend|belanja"
+    r"|\bhari\s+ini\b.{0,40}\b(udah|sudah)\s+(expend|spend|keluar|jajan|belanja"
     r"|ngeluarin|ngabisin|kepake|abis|boros|bakar|boncos|ambyar|khilaf|foya|ludes)\b"
 
     # ── rekap / total + hari ini / pagi ──────────────────────────────────────
