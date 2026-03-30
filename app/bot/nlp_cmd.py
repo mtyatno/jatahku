@@ -196,6 +196,51 @@ NABUNG_RE = re.compile(
 )
 
 
+PENGELUARAN_HARI_INI_RE = re.compile(
+    # ── Exact short triggers ──────────────────────────────────────────────────
+    r"^(total\s+hari\s+ini|rekap\s+hari\s+ini|expend\s+hari\s+ini|keluar\s+hari\s+ini"
+    r"|jajan\s+hari\s+ini|pengeluaran\s+hari\s+ini|spend\s+hari\s+ini"
+    r"|total\s+keluar|total\s+jajan|total\s+belanja|rekap\s+harian"
+    r"|total\s+pengeluaran|pengeluaran\s+harian|spend\s+harian"
+    r"|totalan\s+hari\s+ini|total\s+spend|kepake\s+hari\s+ini"
+    r"|duit\s+keluar\s+hari\s+ini|rekap\s+jajan|total\s+duit\s+keluar"
+    r"|abis\s+brp|jajan\s+brp\s+hari\s+ini|total\s+hari\s+ini\s+dong)$"
+
+    # ── "hari ini" + sudah/udah + expense verb ───────────────────────────────
+    r"|\bhari\s+ini\s+(udah|sudah)?\s*"
+    r"(expend|keluar|habis|jajan|spend|belanja|ngeluarin|ngabisin|terpakai|kepake|abis"
+    r"|boros|bakar\s+duit|ludes|foya|boncos|ambyar|bocor|tewas|nguras|buang\s+duit"
+    r"|narik|nyumbang|cuan\s+keluar)\b"
+
+    # ── expense verb + "hari ini" ────────────────────────────────────────────
+    r"|\b(expend|ngeluarin|ngabisin|belanja|jajan|abis|ludes|boncos|ambyar|tewas"
+    r"|bakar\s+duit|buang\s+duit|foya|khilaf|boros)\b.{0,30}\bhari\s+ini\b"
+
+    # ── "udah/sudah" + expense verb (+ "hari ini" context) ──────────────────
+    r"|\b(udah|sudah)\s+(expend|keluar|jajan|spend|belanja|ngeluarin|ngabisin"
+    r"|kepake|abis|boros|bakar|boncos|ambyar|khilaf|foya|ludes|bocor)\b"
+    r".{0,40}\bhari\s+ini\b"
+
+    r"|\bhari\s+ini\b.{0,40}\b(udah|sudah)\s+(expend|keluar|jajan|spend|belanja"
+    r"|ngeluarin|ngabisin|kepake|abis|boros|bakar|boncos|ambyar|khilaf|foya|ludes)\b"
+
+    # ── rekap / total + hari ini / pagi ──────────────────────────────────────
+    r"|\b(total|rekap|rekapin|totalin|akumulasi|hitungin|minta\s+total|minta\s+rekap)\b"
+    r".{0,25}(hari\s+ini|harian|dari\s+pagi|pagi\s+sampai)"
+
+    # ── "dompet/kantong bocor/jebol" hari ini ────────────────────────────────
+    r"|\b(dompet|kantong).{0,20}(bocor|jebol|nguras|terkuras|berkurang).{0,20}hari\s+ini\b"
+    r"|\bhari\s+ini.{0,20}(dompet|kantong).{0,20}(bocor|jebol|nguras|berkurang)\b"
+
+    # ── singkat / typo ────────────────────────────────────────────────────────
+    r"|\b(abis|habis|keluar)\s+brp\s+hari\s+ini\b"
+    r"|\bhari\s+ini\s+(abis|keluar|expend|spend|jajan)\s+(brp|berapa)\b"
+    r"|\bhari\s+ini\s+(brp|berapa)\b(?!.*(boleh|bisa|maksimal|limit|jatah|budget))",
+
+    re.IGNORECASE,
+)
+
+
 def is_sisa(text): return bool(SISA_RE.search(text))
 def is_harian(text): return bool(HARIAN_RE.search(text))
 def is_proyeksi(text): return bool(PROYEKSI_RE.search(text))
@@ -204,6 +249,7 @@ def is_santai(text): return bool(SANTAI_RE.search(text))
 def is_emosi(text): return bool(EMOSI_RE.search(text))
 def is_koreksi(text): return bool(KOREKSI_RE.search(text))
 def is_nabung(text): return bool(NABUNG_RE.search(text))
+def is_pengeluaran_hari_ini(text): return bool(PENGELUARAN_HARI_INI_RE.search(text))
 
 
 def parse_multi_expense(text):
@@ -750,3 +796,92 @@ async def _ask_batch_item(update_or_query, batch_key, queue, idx, auto_lines, en
         await update_or_query.edit_message_text(text, reply_markup=markup)
     else:
         await update_or_query.message.reply_text(text, reply_markup=markup)
+
+
+async def handle_pengeluaran_hari_ini(update, context):
+    """Show total spending today, broken down by envelope."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import Transaction, Envelope
+    from sqlalchemy import select, func
+    tg_user = update.effective_user
+
+    async with AsyncSessionLocal() as db:
+        user, hid, envelopes = await _get_user_envelopes(tg_user, db)
+        if envelopes is None:
+            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            return
+
+        today = date.today()
+
+        # Query today's transactions grouped by envelope
+        rows = await db.execute(
+            select(Transaction.envelope_id, func.sum(Transaction.amount).label("total"))
+            .join(Envelope, Envelope.id == Transaction.envelope_id)
+            .where(
+                Transaction.user_id == user.id,
+                Transaction.transaction_date == today,
+                Transaction.amount > 0,
+            )
+            .group_by(Transaction.envelope_id)
+        )
+        by_envelope = {r.envelope_id: r.total for r in rows}
+
+        # Also query latest 3 transactions today for mini riwayat
+        recent_rows = await db.execute(
+            select(Transaction)
+            .where(
+                Transaction.user_id == user.id,
+                Transaction.transaction_date == today,
+                Transaction.amount > 0,
+            )
+            .order_by(Transaction.id.desc())
+            .limit(5)
+        )
+        recent_txns = recent_rows.scalars().all()
+
+    total_today = sum(by_envelope.values()) if by_envelope else Decimal("0")
+
+    # Calculate daily limit for comparison
+    total_free = sum(e["free"] for e in envelopes)
+    days_left = _days_left_in_month()
+    daily_limit = total_free / days_left if days_left > 0 else Decimal("0")
+
+    # Build envelope breakdown
+    env_map = {e["envelope"].id: e["envelope"] for e in envelopes}
+    breakdown_lines = []
+    for env_id, spent in sorted(by_envelope.items(), key=lambda x: -x[1]):
+        env = env_map.get(env_id)
+        if env:
+            emoji = env.emoji or "📁"
+            breakdown_lines.append(f"  {emoji} {env.name}: {format_currency(spent)}")
+
+    # Status label vs daily limit
+    if total_today == 0:
+        status = "🌱 Belum ada pengeluaran hari ini."
+    elif daily_limit > 0 and total_today > daily_limit:
+        over = total_today - daily_limit
+        status = f"⚠️ Sudah *{format_currency(over)}* di atas jatah harian ({format_currency(daily_limit)})"
+    elif daily_limit > 0:
+        sisa_hari_ini = daily_limit - total_today
+        status = f"✅ Masih aman — sisa jatah hari ini: *{format_currency(sisa_hari_ini)}*"
+    else:
+        status = "📊 Budget penuh atau tidak ada sisa."
+
+    lines = [
+        f"🧾 *Pengeluaran hari ini — {today.strftime('%-d %B')}*\n",
+        f"Total: *{format_currency(total_today)}*",
+        status,
+    ]
+
+    if breakdown_lines:
+        lines.append("\nPer amplop:")
+        lines.extend(breakdown_lines)
+
+    if recent_txns:
+        lines.append("\nTerakhir:")
+        for t in recent_txns:
+            env = env_map.get(t.envelope_id)
+            env_name = env.name if env else "?"
+            lines.append(f"  • {t.description} — {format_currency(t.amount)} ({env_name})")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
