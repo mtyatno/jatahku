@@ -316,24 +316,51 @@ async def handle_sisa(update, context):
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
 
-    total_free = sum(e["free"] for e in envelopes)
-    total_spent = sum(e["spent"] for e in envelopes)
-    days_left = _days_left_in_month()
+    total_free  = sum(e["free"]      for e in envelopes)
+    total_spent = sum(e["spent"]     for e in envelopes)
+    total_alloc = sum(e["allocated"] for e in envelopes)
+    days_left   = _days_left_in_month()
     now = date.today()
 
-    lines = [f"💰 *Sisa budget {now.strftime('%B')}*\n"]
-    lines.append(f"Bebas: *{format_currency(total_free)}* | Keluar: {format_currency(total_spent)} | Sisa {days_left}h\n")
+    # Top-level bar: % spent of total allocation
+    pct_spent = int(float(total_spent / total_alloc * 100)) if total_alloc > 0 else 0
+    filled = round(pct_spent / 100 * 6)
+    budget_bar = "▓" * filled + "░" * (6 - filled)
+
+    # Daily safe limit based on remaining
+    safe_daily = total_free / days_left if days_left > 0 else Decimal("0")
+
+    lines = [f"💰 <b>Sisa Amplop · {now.strftime('%d %b')}</b>"]
+    lines.append(
+        f"\nBebas     <b>{format_currency(total_free)}</b>\n"
+        f"Terpakai  <b>{format_currency(total_spent)}</b>  {budget_bar} {pct_spent}%\n"
+        f"Jatah     <b>{format_currency(safe_daily)}</b>/hari · {days_left} hari lagi"
+    )
+    lines.append("\n─────────────────")
 
     for e in envelopes:
-        env = e["envelope"]
+        env  = e["envelope"]
         free = e["free"]
+        spent = e["spent"]
+        allocated = e["allocated"]
         emoji = env.emoji or "📁"
-        if free >= 0:
-            lines.append(f"{emoji} {env.name}: {format_currency(free)}")
-        else:
-            lines.append(f"🔴 {env.name}: minus {format_currency(abs(free))}")
+        name  = env.name or "—"
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        if free < 0:
+            lines.append(f"🔴 {emoji} {name} · <b>minus {format_currency(abs(free))}</b>")
+        elif free == 0:
+            lines.append(f"⚪ {emoji} {name} · <b>habis</b>")
+        else:
+            if allocated > 0 and spent > 0:
+                pct = int(float(spent / allocated) * 100)
+                f2  = round(pct / 100 * 6)
+                bar = "▓" * f2 + "░" * (6 - f2)
+                indicator = "🔴" if pct >= 90 else ("🟡" if pct >= 70 else "🟢")
+                lines.append(f"{indicator} {emoji} {name} · <b>{format_currency(free)}</b>  {bar} {pct}%")
+            else:
+                lines.append(f"🟢 {emoji} {name} · <b>{format_currency(free)}</b>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def handle_limit_harian(update, context):
