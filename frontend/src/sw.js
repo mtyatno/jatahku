@@ -7,9 +7,9 @@ const manifest = self.__WB_MANIFEST || [];
 // Install: pre-cache app shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) =>
-      cache.addAll(manifest.map((e) => (typeof e === 'string' ? e : e.url)))
-    ).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(manifest.map((e) => (typeof e === 'string' ? e : e.url))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -22,16 +22,14 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: NetworkFirst for API, CacheFirst for assets
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET and chrome-extension
   if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
+  // API: NetworkFirst — try network, cache on success, fall back to cache
   if (url.hostname === 'api.jatahku.com') {
-    // API: try network, fall back to cache
     event.respondWith(
       fetch(request)
         .then((res) => {
@@ -44,7 +42,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App shell + assets: cache first
+  // SPA navigation: always serve index.html from cache
+  // This is critical — without this, /envelopes, /transactions etc fail offline
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      caches.match('/index.html').then((cached) => cached || fetch(request))
+    );
+    return;
+  }
+
+  // Assets (JS, CSS, images): CacheFirst
   event.respondWith(
     caches.match(request).then((cached) => cached || fetch(request))
   );
@@ -100,6 +107,5 @@ async function syncPendingTransactions() {
         req.onerror = () => reject(req.error);
       });
     }
-    // If not ok (e.g. 401), leave in queue — don't throw so other items still process
   }
 }

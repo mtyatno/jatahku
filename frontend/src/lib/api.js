@@ -1,3 +1,5 @@
+import { saveCache, loadCache } from './localCache';
+
 const API_URL = import.meta.env.PROD
   ? 'https://api.jatahku.com'
   : '/api';
@@ -101,8 +103,15 @@ class ApiClient {
   }
 
   async getMe() {
-    const res = await this.request('/auth/me');
-    return res.ok ? res.json() : null;
+    try {
+      const res = await this.request('/auth/me');
+      if (res.ok) {
+        const data = await res.json();
+        saveCache('me', data);
+        return data;
+      }
+    } catch {}
+    return loadCache('me');
   }
 
   async loginWithTgToken(token) {
@@ -117,13 +126,27 @@ class ApiClient {
 
   // Envelopes
   async getEnvelopeSummary() {
-    const res = await this.request("/envelopes/summary");
-    return res.ok ? res.json() : [];
+    try {
+      const res = await this.request("/envelopes/summary");
+      if (res.ok) {
+        const data = await res.json();
+        saveCache('envelope_summary', data);
+        return data;
+      }
+    } catch {}
+    return loadCache('envelope_summary') ?? [];
   }
 
   async getEnvelopes() {
-    const res = await this.request('/envelopes/');
-    return res.ok ? res.json() : [];
+    try {
+      const res = await this.request('/envelopes/');
+      if (res.ok) {
+        const data = await res.json();
+        saveCache('envelopes', data);
+        return data;
+      }
+    } catch {}
+    return loadCache('envelopes') ?? [];
   }
 
   async createEnvelope(data) {
@@ -149,10 +172,18 @@ class ApiClient {
 
   // Transactions
   async getTransactions(envelopeId = null, limit = 50) {
+    const cacheKey = `transactions_${envelopeId || 'all'}_${limit}`;
     const params = new URLSearchParams({ limit });
     if (envelopeId) params.set('envelope_id', envelopeId);
-    const res = await this.request(`/transactions/?${params}`);
-    return res.ok ? res.json() : [];
+    try {
+      const res = await this.request(`/transactions/?${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        saveCache(cacheKey, data);
+        return data;
+      }
+    } catch {}
+    return loadCache(cacheKey) ?? [];
   }
 
   async createTransaction(data) {
