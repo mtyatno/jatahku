@@ -1,6 +1,7 @@
 import logging
 from decimal import Decimal
 from datetime import date, timedelta
+from collections import defaultdict
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
@@ -8,10 +9,21 @@ from telegram import Bot
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.models import User, HouseholdMember, Envelope, Transaction, Allocation
-from app.bot.handlers import format_currency, progress_bar, get_envelopes_with_spent
+from app.bot.handlers import format_currency, get_envelopes_with_spent
 
 settings = get_settings()
 logger = logging.getLogger("jatahku.summary")
+
+DAY_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+
+
+def _short_bar(spent, allocated, width=6):
+    """▓▓▓░░░ style bar, width chars."""
+    if not allocated or allocated <= 0:
+        return ""
+    ratio = min(float(spent / allocated), 1.0)
+    filled = round(ratio * width)
+    return "▓" * filled + "░" * (width - filled)
 
 
 async def send_daily_summary(user_id=None):
@@ -72,23 +84,16 @@ async def send_daily_summary(user_id=None):
                 period_end = period_info["period_end"]
                 days_left = period_info["days_remaining"]
 
-                lines = [f"📋 Ringkasan hari ini ({today.strftime('%d %b')}):\n"]
+                from app.models.models import Allocation, Income as IncModel
+                from app.models.models import RecurringTransaction, RecurringFrequency
 
-                if today_txns:
-                    lines.append(f"💸 Total pengeluaran: {format_currency(today_total)}")
-                    lines.append(f"📝 {len(today_txns)} transaksi\n")
-                    for t in today_txns[:5]:
-                        env = next((e for e in envelopes if e.id == t.envelope_id), None)
-                        emoji = env.emoji if env else "📁"
-                        lines.append(f"  {emoji} {format_currency(t.amount)} — {t.description}")
-                    if len(today_txns) > 5:
-                        lines.append(f"  ... +{len(today_txns) - 5} lainnya")
-                else:
-                    lines.append("✨ Nggak ada pengeluaran hari ini. Nice!")
+                # ── Build per-envelope period stats ────────────────────────
+                env_stats = []  # (env, allocated, spent, reserved, remaining, indicator)
+                total_period_spent = Decimal("0")
+                total_period_allocated = Decimal("0")
 
-                lines.append(f"\n📊 Sisa dana ({days_left} hari lagi sampai gajian):")
                 for env in envelopes:
-                    spent_result = await db.execute(
+                    spent_r = await db.execute(
                         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                             Transaction.envelope_id == env.id,
                             Transaction.is_deleted == False,
@@ -96,8 +101,8 @@ async def send_daily_summary(user_id=None):
                             Transaction.transaction_date <= period_end,
                         )
                     )
-                    spent = Decimal(str(spent_result.scalar()))
-                    from app.models.models import Allocation, Income as IncModel
+                    spent = Decimal(str(spent_r.scalar()))
+
                     alloc_r = await db.execute(
                         select(func.coalesce(func.sum(Allocation.amount), 0))
                         .join(IncModel, Allocation.income_id == IncModel.id)
@@ -108,7 +113,7 @@ async def send_daily_summary(user_id=None):
                         )
                     )
                     allocated = Decimal(str(alloc_r.scalar()))
-                    from app.models.models import RecurringTransaction, RecurringFrequency
+
                     rec_r = await db.execute(
                         select(RecurringTransaction).where(
                             RecurringTransaction.envelope_id == env.id,
@@ -123,16 +128,94 @@ async def send_daily_summary(user_id=None):
                             reserved += rec.amount / 12
                         else:
                             reserved += rec.amount
+
                     remaining = allocated - spent - reserved
                     if allocated > 0:
                         ratio = float(spent / allocated)
-                        indicator = "\U0001f534" if ratio >= 0.9 else ("\U0001f7e1" if ratio >= 0.7 else "\U0001f7e2")
+                        indicator = "🔴" if ratio >= 0.9 else ("🟡" if ratio >= 0.7 else "🟢")
                     else:
-                        indicator = "\u26aa"
-                    emoji = env.emoji or "\U0001f4c1"
-                    bar = progress_bar(spent, allocated)
-                    lines.append(f"{indicator} {emoji} {env.name}  {bar}  {format_currency(remaining)}")
-                await bot.send_message(chat_id=int(user.telegram_id), text="\n".join(lines))
+                        indicator = "⚪"
+
+                    env_stats.append((env, allocated, spent, reserved, remaining, indicator))
+                    total_period_spent += spent
+                    total_period_allocated += allocated
+
+                # ── Burn rate & status ─────────────────────────────────────
+                period_info2 = get_period_info(payday_day)
+                days_used = period_info2.get("days_used", 1) or 1
+                daily_avg = total_period_spent / days_used if days_used > 0 else Decimal("0")
+                total_remaining = total_period_allocated - total_period_spent
+                projected_end = daily_avg * (days_used + days_left) if daily_avg > 0 else Decimal("0")
+
+                if total_period_allocated > 0 and projected_end <= total_period_allocated:
+                    status_line = f"✅ On track · avg {format_currency(daily_avg)}/hari"
+                elif total_period_allocated > 0:
+                    overshoot = projected_end - total_period_allocated
+                    safe_daily = total_remaining / days_left if days_left > 0 else Decimal("0")
+                    status_line = f"⚠️ Hati-hati · max {format_currency(safe_daily)}/hari biar aman"
+                else:
+                    status_line = f"📊 avg {format_currency(daily_avg)}/hari"
+
+                # ── Today's spending grouped by envelope ───────────────────
+                day_name = DAY_ID[today.weekday()]
+                date_str = today.strftime("%d %b")
+                lines = [f"📋 <b>Ringkasan · {day_name}, {date_str}</b>"]
+
+                if today_txns:
+                    by_env: dict = defaultdict(Decimal)
+                    for t in today_txns:
+                        by_env[t.envelope_id] += t.amount
+                    sorted_envs = sorted(by_env.items(), key=lambda x: x[1], reverse=True)
+
+                    # Top 2 envelopes inline, rest as "+X lainnya Rpyyy"
+                    parts = []
+                    shown_total = Decimal("0")
+                    for i, (eid, amt) in enumerate(sorted_envs):
+                        if i < 2:
+                            env = next((e for e in envelopes if e.id == eid), None)
+                            em = env.emoji if env else "📁"
+                            nm = (env.name or "Lain").split()[0]
+                            parts.append(f"{em} {nm} {format_currency(amt)}")
+                            shown_total += amt
+                        else:
+                            break
+                    rest = today_total - shown_total
+                    if len(sorted_envs) > 2 and rest > 0:
+                        extra_count = len(sorted_envs) - 2
+                        parts.append(f"+{extra_count} lain {format_currency(rest)}")
+
+                    lines.append(
+                        f"\n💸 Pengeluaran: <b>{format_currency(today_total)}</b> ({len(today_txns)} txn)"
+                    )
+                    lines.append("  " + " · ".join(parts))
+                else:
+                    lines.append("\n✨ Nggak ada pengeluaran hari ini. Nice!")
+
+                # ── Envelope section ───────────────────────────────────────
+                lines.append(f"\n─────────────────")
+                lines.append(f"📦 <b>Amplop</b> — {days_left} hari lagi\n")
+
+                for env, allocated, spent, reserved, remaining, indicator in env_stats:
+                    emoji = env.emoji or "📁"
+                    name = env.name or "—"
+                    rem_str = format_currency(remaining) if remaining > 0 else "habis"
+                    rem_bold = f"<b>{rem_str}</b>"
+
+                    if allocated > 0 and spent > 0:
+                        pct = int(float(spent / allocated) * 100)
+                        bar = _short_bar(spent, allocated)
+                        lines.append(f"{indicator} {emoji} {name} · {rem_bold}  {bar} {pct}%")
+                    else:
+                        lines.append(f"{indicator} {emoji} {name} · {rem_bold}")
+
+                lines.append(f"─────────────────")
+                lines.append(status_line)
+
+                await bot.send_message(
+                    chat_id=int(user.telegram_id),
+                    text="\n".join(lines),
+                    parse_mode="HTML",
+                )
                 logger.info(f"Daily summary sent to {user.telegram_id}")
 
             except Exception as e:
