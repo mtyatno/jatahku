@@ -852,42 +852,57 @@ async def handle_pengeluaran_hari_ini(update, context):
     days_left = _days_left_in_month()
     daily_limit = total_free / days_left if days_left > 0 else Decimal("0")
 
-    # Build envelope breakdown
     env_map = {e["envelope"].id: e["envelope"] for e in envelopes}
-    breakdown_lines = []
-    for env_id, spent in sorted(by_envelope.items(), key=lambda x: -x[1]):
-        env = env_map.get(env_id)
-        if env:
-            emoji = env.emoji or "📁"
-            breakdown_lines.append(f"  {emoji} {env.name}: {format_currency(spent)}")
 
-    # Status label vs daily limit
+    # ── Header ─────────────────────────────────────────────────────
+    _DAY = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+    day_str = _DAY[today.weekday()]
+    date_str = today.strftime("%d %b")
+    txn_count = sum(
+        1 for t in recent_txns
+    )  # recent_txns is already limited to 5; re-count from by_envelope not needed
+    # actual count: we do have recent_txns limited to 5 but total count unknown — use by_envelope sum proxy
+    total_count_approx = len(recent_txns)
+
+    lines = [f"🧾 <b>Pengeluaran · {day_str}, {date_str}</b>"]
+
     if total_today == 0:
-        status = "🌱 Belum ada pengeluaran hari ini."
-    elif daily_limit > 0 and total_today > daily_limit:
+        lines.append("\n🌱 Belum ada pengeluaran hari ini.")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+
+    lines.append(f"\n💸 <b>{format_currency(total_today)}</b>")
+
+    # Status vs daily limit
+    if daily_limit > 0 and total_today > daily_limit:
         over = total_today - daily_limit
-        status = f"⚠️ Sudah *{format_currency(over)}* di atas jatah harian ({format_currency(daily_limit)})"
+        lines.append(f"⚠️ Lewat jatah harian <b>{format_currency(over)}</b> (jatah: {format_currency(daily_limit)})")
     elif daily_limit > 0:
-        sisa_hari_ini = daily_limit - total_today
-        status = f"✅ Masih aman — sisa jatah hari ini: *{format_currency(sisa_hari_ini)}*"
-    else:
-        status = "📊 Budget penuh atau tidak ada sisa."
+        sisa = daily_limit - total_today
+        lines.append(f"✅ Sisa jatah hari ini: <b>{format_currency(sisa)}</b>")
 
-    lines = [
-        f"🧾 *Pengeluaran hari ini — {today.strftime('%-d %B')}*\n",
-        f"Total: *{format_currency(total_today)}*",
-        status,
-    ]
+    # ── Per-envelope breakdown with composition bar ─────────────────
+    sorted_env = sorted(by_envelope.items(), key=lambda x: -x[1])
+    lines.append("\n─────────────────")
+    for env_id, spent in sorted_env:
+        env = env_map.get(env_id)
+        if not env:
+            continue
+        emoji = env.emoji or "📁"
+        name = env.name or "—"
+        pct = int(float(spent / total_today) * 100) if total_today > 0 else 0
+        filled = round(pct / 100 * 6)
+        bar = "▓" * filled + "░" * (6 - filled)
+        lines.append(f"{emoji} {name}  {bar} <b>{format_currency(spent)}</b> ({pct}%)")
 
-    if breakdown_lines:
-        lines.append("\nPer amplop:")
-        lines.extend(breakdown_lines)
-
+    # ── Recent transactions ─────────────────────────────────────────
     if recent_txns:
-        lines.append("\nTerakhir:")
+        lines.append("\n─────────────────")
+        lines.append("5 terakhir:")
         for t in recent_txns:
             env = env_map.get(t.envelope_id)
-            env_name = env.name if env else "?"
-            lines.append(f"  • {t.description} — {format_currency(t.amount)} ({env_name})")
+            em = env.emoji if env else "📁"
+            desc = t.description or "—"
+            lines.append(f"{em} {desc} — <b>{format_currency(t.amount)}</b>")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
