@@ -316,26 +316,70 @@ async def send_weekly_summary(user_id=None):
                     predicted_total = Decimal("0")
                     on_track = True
 
+                # ── Week's spending grouped by envelope ────────────────────
+                week_label = f"{week_start.strftime('%d')}–{today.strftime('%d %b')}"
+                lines = [f"📊 <b>Minggu ini · {week_label}</b>"]
+
+                if week_txns:
+                    by_env: dict = defaultdict(Decimal)
+                    for t in week_txns:
+                        by_env[t.envelope_id] += t.amount
+                    sorted_envs = sorted(by_env.items(), key=lambda x: x[1], reverse=True)
+
+                    parts = []
+                    shown = Decimal("0")
+                    for i, (eid, amt) in enumerate(sorted_envs):
+                        if i < 2:
+                            env = next((e for e in envelopes if e.id == eid), None)
+                            em = env.emoji if env else "📁"
+                            nm = (env.name or "Lain").split()[0]
+                            parts.append(f"{em} {nm} {format_currency(amt)}")
+                            shown += amt
+                        else:
+                            break
+                    rest = week_total - shown
+                    if len(sorted_envs) > 2 and rest > 0:
+                        parts.append(f"+{len(sorted_envs) - 2} lain {format_currency(rest)}")
+
+                    lines.append(
+                        f"\n💸 Total: <b>{format_currency(week_total)}</b> ({len(week_txns)} txn)"
+                    )
+                    lines.append("  " + " · ".join(parts))
+                else:
+                    lines.append("\n✨ Tidak ada pengeluaran minggu ini.")
+
+                # ── Period progress ────────────────────────────────────────
+                total_days = days_passed + days_left
+                pct_time = int(days_passed / total_days * 100) if total_days > 0 else 0
+                pct_budget = int(float(total_spent / total_budget * 100)) if total_budget > 0 else 0
+                period_bar = _short_bar(Decimal(days_passed), Decimal(total_days))
+                budget_bar = _short_bar(total_spent, total_budget)
                 period_label = f"{period_start.strftime('%d %b')} – {period_end.strftime('%d %b')}"
-                lines = [f"📊 Ringkasan minggu ({week_start.strftime('%d %b')} - {today.strftime('%d %b')}):\n"]
-                lines.append(f"💸 Pengeluaran minggu ini: {format_currency(week_total)}")
-                lines.append(f"📝 {len(week_txns)} transaksi")
-                lines.append(f"📈 Rata-rata harian: {format_currency(daily_avg)}/hari\n")
 
-                lines.append(f"📅 Progress periode {period_label} ({days_left} hari lagi):")
-                lines.append(f"   Dana: {format_currency(total_budget)}")
-                lines.append(f"   Terpakai: {format_currency(total_spent)} ({int(total_spent / total_budget * 100) if total_budget > 0 else 0}%)")
-                lines.append(f"   Sisa: {format_currency(total_remaining)}\n")
+                lines.append(f"\n─────────────────")
+                lines.append(f"📅 <b>Periode {period_label}</b>")
+                lines.append(f"   Waktu  {period_bar} {pct_time}% ({days_passed}/{total_days} hari)")
+                lines.append(f"   Budget {budget_bar} {pct_budget}% terpakai")
+                lines.append(f"\n   Dana:     <b>{format_currency(total_budget)}</b>")
+                lines.append(f"   Terpakai: <b>{format_currency(total_spent)}</b>")
+                lines.append(f"   Sisa:     <b>{format_currency(total_remaining)}</b> · {days_left} hari lagi")
+                lines.append(f"\n   Burn rate: {format_currency(daily_avg)}/hari")
 
+                # ── Status ─────────────────────────────────────────────────
+                lines.append(f"─────────────────")
                 if on_track:
-                    lines.append(f"✅ Prediksi: On track! Budget cukup sampai gajian.")
+                    lines.append(f"✅ On track — budget cukup sampai gajian")
                 else:
                     over = predicted_total - total_budget
-                    lines.append(f"⚠️ Prediksi: Overspend {format_currency(over)} sebelum gajian!")
                     safe_daily = total_remaining / days_left if days_left > 0 else Decimal("0")
-                    lines.append(f"💡 Supaya aman, max {format_currency(safe_daily)}/hari.")
+                    lines.append(f"⚠️ Hati-hati — prediksi overspend <b>{format_currency(over)}</b>")
+                    lines.append(f"💡 Max <b>{format_currency(safe_daily)}</b>/hari biar aman")
 
-                await bot.send_message(chat_id=int(user.telegram_id), text="\n".join(lines))
+                await bot.send_message(
+                    chat_id=int(user.telegram_id),
+                    text="\n".join(lines),
+                    parse_mode="HTML",
+                )
                 logger.info(f"Weekly summary sent to {user.telegram_id}")
 
             except Exception as e:
