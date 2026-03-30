@@ -296,17 +296,19 @@ export default function Dashboard() {
           {breakdown.length > 0 && (
             <div className="card">
               <h3 className="font-semibold text-sm mb-3">Breakdown amplop</h3>
-              <div className="flex items-center gap-4">
-                <ResponsiveContainer width="50%" height={160}>
-                  <PieChart>
-                    <Pie data={breakdown} dataKey="spent" nameKey="name" cx="50%" cy="50%"
-                      outerRadius={65} innerRadius={38} paddingAngle={2}>
-                      {breakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={v => formatCurrency(v)} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex-1 space-y-1.5">
+              <div className="flex items-center gap-3">
+                <div style={{ width: 140, height: 140, flexShrink: 0 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={breakdown} dataKey="spent" nameKey="name" cx="50%" cy="50%"
+                        outerRadius={58} innerRadius={34} paddingAngle={2}>
+                        {breakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={v => formatCurrency(v)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
                   {(() => {
                     const total = breakdown.reduce((s, x) => s + x.spent, 0);
                     return breakdown.map((item, i) => {
