@@ -399,6 +399,17 @@ class UserEnvelopeKeyword(Base):
     __table_args__ = (UniqueConstraint("user_id", "keyword", "envelope_id", name="uq_user_kw_env"),)
 
 
+class GlobalIntentPhrase(Base):
+    """User-confirmed phrase → intent mappings, shared across all users."""
+    __tablename__ = "global_intent_phrases"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    phrase: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    intent: Mapped[str] = mapped_column(String(50))
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

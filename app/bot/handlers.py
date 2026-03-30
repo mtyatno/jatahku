@@ -696,7 +696,30 @@ async def handle_message(update, context):
 
     parsed = parse_amount(text)
     if not parsed:
-        await update.message.reply_text("Nggak bisa baca itu. Kirim format seperti:\n• 35k starbucks\n• kopi 35rb\n• 2.5jt beli headphone")
+        # Check global learned intent phrases before giving up
+        from app.bot.intent_learning import lookup_intent, show_intent_suggestions
+        from app.core.database import AsyncSessionLocal as _ASL
+        async with _ASL() as _db:
+            learned = await lookup_intent(text, _db)
+        if learned:
+            from app.bot.nlp_cmd import (
+                handle_pengeluaran_hari_ini, handle_sisa, handle_limit_harian,
+                handle_proyeksi, handle_comparison, handle_santai,
+            )
+            _intent_handlers = {
+                "pengeluaran_hari_ini": handle_pengeluaran_hari_ini,
+                "sisa": handle_sisa,
+                "harian": handle_limit_harian,
+                "proyeksi": handle_proyeksi,
+                "comparison": handle_comparison,
+                "santai": handle_santai,
+            }
+            _h = _intent_handlers.get(learned)
+            if _h:
+                await _h(update, context)
+                return
+        # Unknown — show learning suggestion buttons
+        await show_intent_suggestions(update, text, settings)
         return
     amount, description = parsed
     if not description:
@@ -1249,6 +1272,10 @@ def create_bot_app():
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
     app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
+    async def _handle_intent_learn(update, context):
+        from app.bot.intent_learning import handle_intent_learn_callback
+        await handle_intent_learn_callback(update.callback_query, context, settings)
+    app.add_handler(CallbackQueryHandler(_handle_intent_learn, pattern=r"^intentlearn:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
