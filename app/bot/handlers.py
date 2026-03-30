@@ -446,27 +446,66 @@ async def cmd_status(update, context):
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
+
     from app.core.period import get_period_info
+    from decimal import Decimal as _D
     info = get_period_info(payday_day)
     days_left = info["days_remaining"]
-    period_label = f"{info['period_start'].strftime('%d %b')} – {info['period_end'].strftime('%d %b %Y')}"
+    days_used = info.get("days_used", 1) or 1
+    period_label = f"{info['period_start'].strftime('%d %b')} – {info['period_end'].strftime('%d %b')}"
+
     total_allocated = sum(e["allocated"] for e in envelopes)
-    total_spent = sum(e["spent"] for e in envelopes)
-    total_free = sum(e["free"] for e in envelopes)
-    lines = [f"📊 Budget {period_label} — {days_left} hari lagi\n"]
-    lines.append(f"Dana: {format_currency(total_allocated)} | Terpakai: {format_currency(total_spent)} | Sisa: {format_currency(total_free)}\n")
+    total_spent     = sum(e["spent"]     for e in envelopes)
+    total_free      = sum(e["free"]      for e in envelopes)
+
+    # Burn rate & prediction
+    daily_avg = total_spent / days_used if days_used > 0 else _D("0")
+    predicted  = daily_avg * (days_used + days_left)
+    on_track   = total_allocated <= 0 or predicted <= total_allocated
+
+    # Budget-level bar (how much of budget is spent)
+    pct_spent = int(float(total_spent / total_allocated * 100)) if total_allocated > 0 else 0
+    filled = round(pct_spent / 100 * 6)
+    budget_bar = "▓" * filled + "░" * (6 - filled)
+
+    lines = [f"📊 <b>Budget · {period_label}</b>"]
+    lines.append(
+        f"\nDana      <b>{format_currency(total_allocated)}</b>\n"
+        f"Terpakai  <b>{format_currency(total_spent)}</b>  {budget_bar} {pct_spent}%\n"
+        f"Sisa      <b>{format_currency(total_free)}</b> · {days_left} hari lagi"
+    )
+
+    lines.append("\n─────────────────")
     for e in envelopes:
         env = e["envelope"]
         spent, allocated, free = e["spent"], e["allocated"], e["free"]
         emoji = env.emoji or "📁"
-        bar = progress_bar(spent, allocated)
+        name  = env.name or "—"
+        free_str = format_currency(free) if free > 0 else "habis"
+
         if allocated > 0:
             ratio = float(spent / allocated)
             indicator = "🔴" if ratio >= 0.9 else ("🟡" if ratio >= 0.7 else "🟢")
+            if spent > 0:
+                pct = int(ratio * 100)
+                f2 = round(ratio * 6)
+                bar = "▓" * f2 + "░" * (6 - f2)
+                lines.append(f"{indicator} {emoji} {name} · <b>{free_str}</b>  {bar} {pct}%")
+            else:
+                lines.append(f"{indicator} {emoji} {name} · <b>{free_str}</b>")
         else:
-            indicator = "⚪"
-        lines.append(f"{indicator} {emoji} {env.name}\n   {bar} {format_currency(free)}")
-    await update.message.reply_text("\n".join(lines))
+            lines.append(f"⚪ {emoji} {name} · <b>{free_str}</b>")
+
+    lines.append("─────────────────")
+    if on_track:
+        lines.append(f"✅ On track · avg <b>{format_currency(daily_avg)}</b>/hari")
+    else:
+        over = predicted - total_allocated
+        safe = total_free / days_left if days_left > 0 else _D("0")
+        lines.append(f"⚠️ Hati-hati · prediksi overspend <b>{format_currency(over)}</b>")
+        lines.append(f"💡 Max <b>{format_currency(safe)}</b>/hari biar aman")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def cmd_amplop(update, context):
     tg_user = update.effective_user
