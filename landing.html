@@ -361,6 +361,14 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
             <div class="mm-title">Dashboard &mdash; Maret 2026</div>
             <div class="mm-date">Sisa 3 hari</div>
           </div>
+          <!-- Decision Box -->
+          <div style="background:#E1F5EE;border:1px solid #A7DFC8;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+            <span style="font-size:18px">✅</span>
+            <div>
+              <div style="font-size:11px;font-weight:700;color:var(--primary)">Hari ini aman</div>
+              <div style="font-size:11px;color:var(--text-s)">Pengeluaran Rp87rb &mdash; jatah harian Rp157rb &middot; sisa Rp70rb</div>
+            </div>
+          </div>
           <div class="mm-cards">
             <div class="mm-card">
               <div class="mm-card-label">Total Income</div>
@@ -371,13 +379,13 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
               <div class="mm-card-val amber">Rp5.640.000</div>
             </div>
             <div class="mm-card">
-              <div class="mm-card-label">Sisa Budget</div>
+              <div class="mm-card-label">Sisa Bebas</div>
               <div class="mm-card-val green">Rp2.360.000</div>
             </div>
           </div>
           <div class="mm-envelopes">
             <div class="mm-env">
-              <div class="mm-env-top"><span class="mm-env-name">&#127836; Makan</span><span class="mm-env-pct">72%</span></div>
+              <div class="mm-env-top"><span class="mm-env-name">&#127836; Makan</span><span class="mm-env-pct" style="color:var(--accent)">72% ⚠</span></div>
               <div class="mm-env-val">Rp840rb sisa</div>
               <div class="mm-bar"><div class="mm-bar-fill" style="width:72%;background:var(--accent)"></div></div>
             </div>
@@ -429,7 +437,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <div class="f-icon a">&#129504;</div>
       <div class="f-tag">NLP Pintar</div>
       <h3>Bot Ngerti Bahasa Gaul</h3>
-      <p>Ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget?&rdquo;, &ldquo;kapan duit abis?&rdquo; &mdash; bot langsung paham. Didukung 7 kategori intent NLP bahasa Indonesia.</p>
+      <p>Ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget?&rdquo;, &ldquo;pengeluaran hari ini?&rdquo; &mdash; bot langsung paham. Didukung 8 kategori intent NLP bahasa Indonesia. Belum dimengerti? Bot belajar dari kamu.</p>
     </div>
     <div class="f-card">
       <div class="f-icon r">&#9203;</div>
@@ -465,6 +473,12 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <h3>Export CSV &amp; Laporan PDF</h3>
       <p>Download data transaksi lengkap dalam CSV atau cetak laporan bulanan dalam PDF &mdash; untuk arsip, pajak, atau evaluasi.</p>
     </div>
+    <div class="f-card">
+      <div class="f-icon g">&#128241;</div>
+      <div class="f-tag">PWA</div>
+      <h3>Install ke Home Screen</h3>
+      <p>Jatahku bisa diinstall seperti app native di HP kamu. Buka langsung dari home screen, akses offline, sinkron otomatis saat kembali online.</p>
+    </div>
   </div>
 </div></section>
 
@@ -478,12 +492,13 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <div class="nlp-tabs">
         <div class="nlp-tab active" onclick="showNlp('catat',this)">💳 Catat</div>
         <div class="nlp-tab" onclick="showNlp('saldo',this)">📊 Cek Saldo</div>
-        <div class="nlp-tab" onclick="showNlp('proyeksi',this)">📅 Proyeksi</div>
+        <div class="nlp-tab" onclick="showNlp('hariini',this)">📅 Hari Ini</div>
+        <div class="nlp-tab" onclick="showNlp('proyeksi',this)">🔮 Proyeksi</div>
         <div class="nlp-tab" onclick="showNlp('multi',this)">⚡ Multi</div>
         <div class="nlp-tab" onclick="showNlp('analitik',this)">📈 Analitik</div>
         <div class="nlp-tab" onclick="showNlp('koreksi',this)">↩️ Koreksi</div>
       </div>
-      <div style="color:rgba(255,255,255,.5);font-size:13px">7 kategori intent &middot; 1000+ variasi query dipahami</div>
+      <div style="color:rgba(255,255,255,.5);font-size:13px">8 kategori intent &middot; 1000+ variasi query dipahami</div>
     </div>
     <div class="nlp-right">
       <!-- Catat -->
@@ -516,6 +531,21 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
           <div class="bubble bot">&#127836; <b>Makan</b> &mdash; Rp785rb tersisa<br>Terpakai 72% &bull; sisa 3 hari<br><span class="dim">Jatah harian: Rp261rb/hari</span></div>
         </div>
       </div>
+      <!-- Hari Ini -->
+      <div class="nlp-panel" id="nlp-hariini">
+        <div class="chat-bubble right">
+          <div class="bubble user">pengeluaran hari ini berapa?</div>
+        </div>
+        <div class="chat-bubble">
+          <div class="bubble bot">&#128197; <b>Pengeluaran Hari Ini (30 Mar):</b><br>Total: <b>Rp87.000</b><br>&#127836; Makan Rp35rb &bull; &#9749; Kopi Rp52rb<br><span class="dim">Jatah harian Rp157rb &bull; sisa Rp70rb ✅</span></div>
+        </div>
+        <div class="chat-bubble right">
+          <div class="bubble user">udah spend berapa hari ini?</div>
+        </div>
+        <div class="chat-bubble">
+          <div class="bubble bot">&#128197; Hari ini kamu sudah spend <b>Rp87.000</b><br>dari 2 transaksi &bull; masih <b>aman</b> dari limit harian</div>
+        </div>
+      </div>
       <!-- Proyeksi -->
       <div class="nlp-panel" id="nlp-proyeksi">
         <div class="chat-bubble right">
@@ -540,10 +570,12 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
           <div class="bubble bot">&#9889; <b>3 transaksi sekaligus:</b><br>&#9989; Rp20rb &mdash; sarapan<br>&#9989; Rp22rb &mdash; grab<br>&#9989; Rp5.000 &mdash; parkir<br>Total: <b>Rp47.000</b></div>
         </div>
         <div class="chat-bubble right">
-          <div class="bubble user">belakawali 150k; buku 45k; snack 12k</div>
+          <div class="bubble user" style="white-space:pre-line">makan siang 35k
+kopi 20rb
+parkir 5000</div>
         </div>
         <div class="chat-bubble">
-          <div class="bubble bot">&#9889; 3 transaksi dicatat &mdash; total <b>Rp207.000</b></div>
+          <div class="bubble bot">&#9889; 3 transaksi dicatat &mdash; total <b>Rp60.000</b><br><span class="dim">Pemisah koma, titik koma, atau Enter semua OK</span></div>
         </div>
       </div>
       <!-- Analitik -->
@@ -700,14 +732,16 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
   <div class="dual-grid">
     <div class="dual-card">
       <span style="font-size:40px">&#127760;</span>
-      <h3>WebApp</h3>
-      <p>Dashboard lengkap dengan visualisasi budget, kelola amplop, analytics tren bulanan, dan export laporan PDF/CSV.</p>
+      <h3>WebApp <span style="font-size:13px;font-weight:600;color:var(--primary);background:var(--primary-light);padding:2px 8px;border-radius:6px;margin-left:4px;vertical-align:middle">PWA</span></h3>
+      <p>Dashboard lengkap dengan visualisasi budget, kelola amplop, analytics tren bulanan, dan export laporan PDF/CSV. Bisa diinstall ke home screen seperti app native.</p>
       <div class="dual-features">
         <div class="dual-feat">Dashboard envelope dengan progress bar</div>
         <div class="dual-feat">Analytics & perbandingan bulan</div>
         <div class="dual-feat">Kelola langganan & sinking fund</div>
         <div class="dual-feat">Export PDF & CSV laporan</div>
         <div class="dual-feat">Pengaturan behavior controls</div>
+        <div class="dual-feat">Install ke home screen (offline ready)</div>
+        <div class="dual-feat">Sync otomatis transaksi saat online</div>
       </div>
     </div>
     <div class="dual-card">
@@ -766,6 +800,11 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <h3>&#128101; Household Bersama</h3>
       <p>Satu household, banyak anggota. Budget transparan bersama + amplop personal masing-masing.</p>
     </div>
+    <div class="diff-item">
+      <div class="diff-badge badge-u">Hanya di Jatahku</div>
+      <h3>&#128241; PWA Offline-Ready</h3>
+      <p>Install langsung ke home screen tanpa App Store. Akses dashboard tetap muncul walaupun koneksi hilang &mdash; data sync saat online kembali.</p>
+    </div>
   </div>
 </div></section>
 
@@ -812,7 +851,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Telegram Bot mengerti bahasa apa saja?</div>
-      <div class="faq-a">Bot mengerti bahasa Indonesia sehari-hari termasuk bahasa gaul. Kamu bisa ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget gue?&rdquo;, &ldquo;kapan bokek?&rdquo;, &ldquo;bulan ini lebih boros nggak?&rdquo; &mdash; semuanya dipahami. Total 7 kategori intent dengan lebih dari 1000 variasi query.</div>
+      <div class="faq-a">Bot mengerti bahasa Indonesia sehari-hari termasuk bahasa gaul. Kamu bisa ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget gue?&rdquo;, &ldquo;kapan bokek?&rdquo;, &ldquo;pengeluaran hari ini berapa?&rdquo;, &ldquo;bulan ini lebih boros nggak?&rdquo; &mdash; semuanya dipahami. Total 8 kategori intent dengan lebih dari 1000 variasi query. Kalau bot belum mengerti, sistem akan belajar dari konfirmasi kamu dan langsung berlaku untuk semua pengguna.</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Apakah harus punya rekening bank?</div>
@@ -825,6 +864,10 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Bisa pakai tanpa Telegram?</div>
       <div class="faq-a">Bisa! WebApp jatahku.com bisa digunakan secara mandiri. Telegram Bot adalah fitur tambahan untuk kemudahan catat pengeluaran lewat chat &mdash; tidak wajib.</div>
+    </div>
+    <div class="faq-item" onclick="this.classList.toggle('open')">
+      <div class="faq-q">Bisa diinstall seperti app di HP?</div>
+      <div class="faq-a">Ya! Jatahku adalah PWA (Progressive Web App) yang bisa diinstall langsung ke home screen di Android maupun iOS, tanpa App Store. Setelah diinstall, dashboard tetap bisa diakses walau koneksi internet tidak stabil &mdash; transaksi offline akan tersinkron otomatis saat online kembali.</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Apa bedanya Jatahku dengan app keuangan lain?</div>
