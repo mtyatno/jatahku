@@ -84,7 +84,9 @@ CATEGORY_KEYWORDS = {
     "hiburan": ["nonton", "film", "bioskop", "game", "steam", "netflix",
                 "spotify", "youtube", "premium", "langganan", "subscribe",
                 "hangout", "karaoke", "mall"],
-    "belanja": ["beli", "shopee", "tokped", "tokopedia", "lazada", "belanja", "online", "shop"],
+    "belanja": ["baju", "pakaian", "fashion", "kaos", "celana", "jaket", "kemeja", "dress",
+                "sepatu", "sandal", "tas", "dompet", "aksesoris", "jam tangan",
+                "shopee", "tokped", "tokopedia", "lazada", "tiktok shop", "belanja", "online", "shop"],
     "tagihan": ["listrik", "air", "pdam", "internet", "wifi", "pulsa",
                 "token", "indihome", "telkom", "pln"],
 }
@@ -333,12 +335,13 @@ async def find_best_envelope(description, household_id, db, user_id=None):
                 return env, True
 
     # 2. Partial match — "transport" matches "Transportasi", "makan" matches "Makanan"
+    # Returns confident=False because partial matches are ambiguous (e.g. "belanja" → "Belanja Rutin Server")
     if guessed_name:
         g = guessed_name.lower()
         for env in envelopes:
             e = env.name.lower()
             if g in e or e in g:
-                return env, True
+                return env, False
 
     # 3. Envelope name appears directly in description (e.g. "transportasi 25k")
     desc_lower = description.lower()

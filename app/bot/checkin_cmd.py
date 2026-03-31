@@ -14,6 +14,16 @@ WHATIF_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Strip trigger words + filler pronouns from description before envelope matching
+_WHATIF_STRIP_RE = re.compile(
+    r"(?:aman|cukup|bisa|sanggup)\s*(?:gak|ga|nggak|ngga|tidak|enggak|kan)\?*\s*|"
+    r"(?:kalo|kalau)\s+(?:gw|gue|saya|aku|w\b)?\s*(?:beli\s*)?|"
+    r"masuk\s*budget\s*|boleh\s*beli\s*|"
+    r"\b(?:gw|gue|aku|saya|w|g)\b\s*|"
+    r"\bbeli\b\s*",
+    re.IGNORECASE,
+)
+
 
 def is_whatif(text: str) -> bool:
     return bool(WHATIF_RE.search(text))
@@ -33,6 +43,9 @@ async def handle_whatif(update, context):
         return
 
     amount, description = parsed
+    # Strip whatif trigger words so envelope matching works on the item name only
+    # e.g. "aman gak gw beli baju" → "baju"
+    item_text = _WHATIF_STRIP_RE.sub("", description).strip()
     tg_user = update.effective_user
 
     async with AsyncSessionLocal() as db:
@@ -45,10 +58,10 @@ async def handle_whatif(update, context):
             return
 
         hid = await get_household_id(user, db)
-        envelope, confident = await find_best_envelope(description, hid, db)
+        envelope, confident = await find_best_envelope(item_text or description, hid, db, user.id)
         all_envs = await get_envelopes_with_spent(hid, db, user.id)
 
-    if envelope:
+    if envelope and confident:
         # Find this envelope's data
         env_data = next((e for e in all_envs if e["envelope"].id == envelope.id), None)
         if not env_data:
@@ -77,12 +90,16 @@ async def handle_whatif(update, context):
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     else:
-        # Envelope not detected — show all envelopes so user can compare
+        # Envelope not detected (or low-confidence partial match) — show all so user can pick
         if not all_envs:
             await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
             return
 
-        lines = [f"💬 *Cek budget untuk {format_currency(amount)}*\n"]
+        item_label = item_text or description
+        lines = [f"💬 *Cek budget untuk {format_currency(amount)}*"]
+        if envelope and not confident:
+            lines.append(f"_('{item_label}' tidak jelas amplop mana — tampil semua)_")
+        lines.append("")
         for e in all_envs:
             env = e["envelope"]
             free = e["free"]
