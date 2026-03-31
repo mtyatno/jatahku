@@ -132,20 +132,32 @@ async def check_behavior(
             cooling_hours=24,
         )
 
-    # Check 4: Daily limit
+    # Check 4: Daily limit (skipped if user has a temp bypass active for today)
     if effective_daily_limit is not None:
-        today = date.today()
-        spent_today_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-                Transaction.envelope_id == envelope_id,
-                Transaction.user_id == user_id,
-                Transaction.is_deleted == False,
-                Transaction.transaction_date == today,
-            )
-        )
-        spent_today = Decimal(str(spent_today_result.scalar()))
+        # Check Redis temp bypass set when user confirmed a limit override
+        _bypass = False
+        try:
+            import redis.asyncio as aioredis
+            from app.core.config import get_settings as _gs
+            _r = aioredis.from_url(_gs().REDIS_URL)
+            _bypass = bool(await _r.get(f"dlimit_temp:{user_id}:{envelope_id}"))
+            await _r.aclose()
+        except Exception:
+            pass
 
-        if spent_today + amount > effective_daily_limit:
+        if not _bypass:
+            today = date.today()
+            spent_today_result = await db.execute(
+                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.envelope_id == envelope_id,
+                    Transaction.user_id == user_id,
+                    Transaction.is_deleted == False,
+                    Transaction.transaction_date == today,
+                )
+            )
+            spent_today = Decimal(str(spent_today_result.scalar()))
+
+        if not _bypass and spent_today + amount > effective_daily_limit:
             remaining = max(effective_daily_limit - spent_today, Decimal("0"))
             return BehaviorCheckResult.blocked(
                 "daily_limit",

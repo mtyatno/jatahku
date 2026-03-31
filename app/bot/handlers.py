@@ -433,6 +433,133 @@ async def cmd_start(update, context):
         )
 
 
+# ── Daily-limit bypass helpers ────────────────────────────────────────────────
+
+async def _send_daily_limit_blocked(send_fn, user_id, d, envelope, settings):
+    """Show a friendly daily-limit block with a temporary-raise offer."""
+    import secrets, json
+    import redis.asyncio as aioredis
+    from datetime import datetime
+
+    daily_limit  = d["daily_limit"]
+    spent_today  = d["spent_today"]
+    remaining    = d["remaining_today"]
+    requested    = d["requested"]
+    over         = requested - remaining
+    emoji        = envelope.emoji or "📁"
+    name         = envelope.name
+
+    # Store pending bypass payload in Redis (10-min TTL)
+    token   = secrets.token_hex(8)
+    payload = json.dumps({
+        "envelope_id": str(envelope.id),
+        "amount":      str(requested),
+        "description": d.get("description", ""),
+    })
+    r = aioredis.from_url(settings.REDIS_URL)
+    await r.setex(f"dlimit_pending:{user_id}:{token}", 600, payload)
+    await r.aclose()
+
+    text = (
+        f"⚠️ <b>Limit harian terlampaui</b>\n\n"
+        f"{emoji} <b>{name}</b>\n"
+        f"Diminta   <b>{format_currency(requested)}</b>\n"
+        f"Limit     {format_currency(daily_limit)}\n"
+        f"Terpakai  {format_currency(spent_today)}\n"
+        f"Kelebihan <b>{format_currency(over)}</b>\n\n"
+        f"Mau tetap catat? Limit hari ini akan dinaikkan sementara "
+        f"dan otomatis kembali ke <b>{format_currency(daily_limit)}</b> besok."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Catat, naikkan limit hari ini", callback_data=f"dlimit:confirm:{token}")],
+        [InlineKeyboardButton("❌ Batalkan", callback_data=f"dlimit:cancel:{token}")],
+    ])
+    await send_fn(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def handle_daily_limit_callback(update, context):
+    """Handle ✅ / ❌ for daily-limit bypass."""
+    import json
+    from datetime import datetime, time, timedelta
+    import redis.asyncio as aioredis
+
+    query = update.callback_query
+    await query.answer()
+
+    settings = get_settings()
+    parts = query.data.split(":", 2)   # dlimit : confirm/cancel : token
+    if len(parts) != 3:
+        return
+    _, action, token = parts
+    user_id = str(query.from_user.id)
+
+    r = aioredis.from_url(settings.REDIS_URL)
+    raw = await r.get(f"dlimit_pending:{user_id}:{token}")
+
+    if action == "cancel" or not raw:
+        await r.delete(f"dlimit_pending:{user_id}:{token}")
+        await r.aclose()
+        await query.edit_message_text("❌ Transaksi dibatalkan.")
+        return
+
+    payload    = json.loads(raw)
+    envelope_id = payload["envelope_id"]
+    amount      = Decimal(payload["amount"])
+    description = payload.get("description", "")
+
+    # Set temp bypass in Redis until midnight
+    now      = datetime.now()
+    midnight = datetime.combine(now.date() + timedelta(days=1), time.min)
+    ttl      = int((midnight - now).total_seconds())
+    await r.setex(f"dlimit_temp:{user_id}:{envelope_id}", ttl, "1")
+    await r.delete(f"dlimit_pending:{user_id}:{token}")
+    await r.aclose()
+
+    # Record transaction directly (bypass already set)
+    import uuid
+    async with AsyncSessionLocal() as db:
+        from app.models.models import Envelope as EnvModel, HouseholdMember
+        from app.services.behavior import get_envelopes_with_spent
+        env_r = await db.execute(select(EnvModel).where(EnvModel.id == uuid.UUID(envelope_id)))
+        envelope = env_r.scalar_one_or_none()
+        if not envelope:
+            await query.edit_message_text("⚠️ Amplop tidak ditemukan.")
+            return
+
+        user_r = await db.execute(
+            select(User).where(User.telegram_id == user_id)
+        )
+        user = user_r.scalar_one_or_none()
+        if not user:
+            await query.edit_message_text("⚠️ User tidak ditemukan.")
+            return
+
+        txn = Transaction(
+            envelope_id=envelope.id,
+            user_id=user.id,
+            amount=amount,
+            description=description,
+            source=TransactionSource.telegram,
+            transaction_date=date.today(),
+        )
+        db.add(txn)
+        await db.commit()
+
+        # Fetch updated remaining for envelope
+        from app.bot.nlp_cmd import _get_user_envelopes
+        _, _, envs = await _get_user_envelopes(query.from_user, db)
+        env_data = next((e for e in (envs or []) if e["envelope"].id == envelope.id), None)
+        remaining = env_data["remaining"] if env_data else Decimal("0")
+
+    emoji = envelope.emoji or "📁"
+    await query.edit_message_text(
+        f"✅ <b>{format_currency(amount)}</b> — {description}\n"
+        f"{emoji} {envelope.name} · sisa <b>{format_currency(remaining)}</b>\n\n"
+        f"<i>Limit harian dinaikkan sementara sampai tengah malam.</i>",
+        parse_mode="HTML",
+    )
+
+
 async def cmd_status(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
@@ -838,12 +965,11 @@ async def handle_message(update, context):
                     return
                 elif check.check_type == "daily_limit":
                     d = check.details
-                    await update.message.reply_text(
-                        f"⚠️ {check.reason}\n\n"
-                        f"Limit harian: {format_currency(d['daily_limit'])}\n"
-                        f"Sudah terpakai: {format_currency(d['spent_today'])}\n"
-                        f"Sisa limit: {format_currency(d['remaining_today'])}\n"
-                        f"Diminta: {format_currency(d['requested'])}")
+                    d["description"] = description
+                    await _send_daily_limit_blocked(
+                        lambda t, **kw: update.message.reply_text(t, **kw),
+                        str(tg_user.id), d, envelope, settings,
+                    )
                     return
                 elif check.check_type == "cooling":
                     pending = await create_pending_transaction(
@@ -968,12 +1094,11 @@ async def handle_txn_callback(update, context):
                 return
             elif check.check_type == "daily_limit":
                 d = check.details
-                await query.edit_message_text(
-                    f"⚠️ {check.reason}\n\n"
-                    f"Limit harian: {format_currency(d['daily_limit'])}\n"
-                    f"Sudah terpakai: {format_currency(d['spent_today'])}\n"
-                    f"Sisa limit: {format_currency(d['remaining_today'])}\n"
-                    f"Diminta: {format_currency(d['requested'])}")
+                d["description"] = description
+                await _send_daily_limit_blocked(
+                    lambda t, **kw: query.edit_message_text(t, **kw),
+                    str(query.from_user.id), d, envelope, settings,
+                )
                 return
             elif check.check_type == "cooling":
                 pending = await create_pending_transaction(
@@ -1315,6 +1440,7 @@ def create_bot_app():
         from app.bot.intent_learning import handle_intent_learn_callback
         await handle_intent_learn_callback(update.callback_query, context, settings)
     app.add_handler(CallbackQueryHandler(_handle_intent_learn, pattern=r"^intentlearn:"))
+    app.add_handler(CallbackQueryHandler(handle_daily_limit_callback, pattern=r"^dlimit:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
