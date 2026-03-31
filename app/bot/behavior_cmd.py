@@ -8,16 +8,26 @@ from app.bot.handlers import get_or_create_user, get_household_id, format_curren
 
 
 async def _get_envelope_by_name(name, hid, user_id, db):
+    """Exact match first, then partial/contains fallback (case-insensitive)."""
     from sqlalchemy import or_
-    result = await db.execute(
-        select(Envelope).where(
-            Envelope.household_id == hid,
-            Envelope.is_active == True,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user_id),
-            func.lower(Envelope.name) == name.lower(),
-        )
+    base = select(Envelope).where(
+        Envelope.household_id == hid,
+        Envelope.is_active == True,
+        or_(Envelope.owner_id == None, Envelope.owner_id == user_id),
     )
-    return result.scalar_one_or_none()
+    # 1. Exact (case-insensitive)
+    result = await db.execute(base.where(func.lower(Envelope.name) == name.strip().lower()))
+    env = result.scalar_one_or_none()
+    if env:
+        return env
+    # 2. Partial: name is contained in envelope.name (e.g. "rumah" → "Rumah dan isinya")
+    result2 = await db.execute(
+        base.where(func.lower(Envelope.name).contains(name.strip().lower()))
+    )
+    envs = result2.scalars().all()
+    if len(envs) == 1:
+        return envs[0]
+    return None
 
 
 async def _list_envelopes_names(hid, user_id, db):
@@ -99,13 +109,19 @@ async def cmd_setlimit(update, context):
         await update.message.reply_text("\n".join(lines))
         return
 
-    name = context.args[0]
-    amount_text = " ".join(context.args[1:])
-
+    # Last arg = amount, everything before = envelope name
     from app.bot.handlers import parse_amount
+    amount_text = context.args[-1]
+    name = " ".join(context.args[:-1]).strip("'\"")
+
     parsed = parse_amount(amount_text + " placeholder")
     if not parsed:
-        await update.message.reply_text(f"Nggak bisa baca '{amount_text}'. Contoh: 200k, 100rb, 500000")
+        # Maybe user put amount in the middle — show usage
+        await update.message.reply_text(
+            "Format: /setlimit [nama amplop] [jumlah]\n"
+            "Contoh: /setlimit makan 200k\n"
+            "        /setlimit Rumah dan isinya 400000"
+        )
         return
 
     limit = parsed[0]
@@ -119,7 +135,11 @@ async def cmd_setlimit(update, context):
         if not envelope:
             envs = await _list_envelopes_names(hid, user.id, db)
             names = ", ".join([f"{e.emoji or '📁'} {e.name}" for e in envs])
-            await update.message.reply_text(f"Amplop '{name}' nggak ditemukan.\n\nAmplop kamu: {names}")
+            await update.message.reply_text(
+                f"Amplop '{name}' nggak ditemukan.\n\n"
+                f"Amplop kamu:\n{names}\n\n"
+                f"Tip: nama amplop tidak perlu harus persis — 'rumah' sudah cukup kalau unik."
+            )
             return
 
         emoji = envelope.emoji or "📁"
@@ -155,13 +175,17 @@ async def cmd_setcooling(update, context):
         await update.message.reply_text("\n".join(lines))
         return
 
-    name = context.args[0]
-    amount_text = " ".join(context.args[1:])
-
     from app.bot.handlers import parse_amount
+    amount_text = context.args[-1]
+    name = " ".join(context.args[:-1]).strip("'\"")
+
     parsed = parse_amount(amount_text + " placeholder")
     if not parsed:
-        await update.message.reply_text(f"Nggak bisa baca '{amount_text}'. Contoh: 500k, 200rb, 1jt")
+        await update.message.reply_text(
+            "Format: /setcooling [nama amplop] [jumlah]\n"
+            "Contoh: /setcooling makan 500k\n"
+            "        /setcooling Rumah dan isinya 1jt"
+        )
         return
 
     threshold = parsed[0]
