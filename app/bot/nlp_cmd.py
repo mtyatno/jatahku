@@ -334,8 +334,7 @@ async def handle_sisa(update, context):
     lines.append(
         f"\nDana      <b>{format_currency(total_alloc)}</b>\n"
         f"Terpakai  <b>{format_currency(total_spent)}</b>  {budget_bar} {pct_spent}%\n"
-        f"Sisa      <b>{format_currency(total_free)}</b> · {days_left} hari lagi\n"
-        f"Jatah     <b>{format_currency(safe_daily)}</b>/hari"
+        f"Sisa      <b>{format_currency(total_free)}</b> · {days_left} hari lagi"
     )
     lines.append("\n─────────────────")
 
