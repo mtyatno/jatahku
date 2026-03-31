@@ -281,9 +281,18 @@ def parse_multi_expense(text):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _days_left_in_month():
+    """Fallback: calendar month days remaining. Prefer _period_days() when user is available."""
     now = date.today()
     next_month = date(now.year + (1 if now.month == 12 else 0), (now.month % 12) + 1, 1)
     return (next_month - now).days
+
+
+def _period_days(user):
+    """Return (days_remaining, days_used) based on user's payday_day setting."""
+    from app.core.period import get_period_info
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    info = get_period_info(payday_day)
+    return info["days_remaining"], info.get("days_used", 1) or 1
 
 
 def _fmt_date(d):
@@ -319,7 +328,7 @@ async def handle_sisa(update, context):
     total_free  = sum(e["free"]      for e in envelopes)
     total_spent = sum(e["spent"]     for e in envelopes)
     total_alloc = sum(e["allocated"] for e in envelopes)
-    days_left   = _days_left_in_month()
+    days_left, _ = _period_days(user)
     now = date.today()
 
     # Top-level bar: % spent of total allocation
@@ -375,7 +384,7 @@ async def handle_limit_harian(update, context):
         return
 
     total_free = sum(e["free"] for e in envelopes)
-    days_left = _days_left_in_month()
+    days_left, _ = _period_days(user)
 
     if total_free <= 0:
         await update.message.reply_text(
@@ -388,7 +397,7 @@ async def handle_limit_harian(update, context):
 
     lines = [
         f"📅 *Jatah harian — {days_left} hari tersisa*\n",
-        f"Total bebas: {format_currency(total_free)}",
+        f"Total sisa: {format_currency(total_free)}",
         f"💡 Per hari: *{format_currency(daily)}*\n",
         "Per amplop:",
     ]
@@ -424,8 +433,7 @@ async def handle_proyeksi(update, context):
         )
         total_spent = Decimal(str(spent_result.scalar()))
 
-    days_elapsed = now.day
-    days_left = _days_left_in_month()
+    days_left, days_elapsed = _period_days(user)
     total_free = sum(e["free"] for e in envelopes)
     total_allocated = sum(e["allocated"] for e in envelopes)
 
@@ -557,8 +565,7 @@ async def handle_santai(update, context):
         return
 
     now = date.today()
-    days_left = _days_left_in_month()
-    days_elapsed = now.day
+    days_left, days_elapsed = _period_days(user)
     spend_ratio = float(total_spent / total_allocated)
     time_ratio = days_elapsed / (days_elapsed + days_left)
 
@@ -876,7 +883,7 @@ async def handle_pengeluaran_hari_ini(update, context):
 
     # Calculate daily limit for comparison
     total_free = sum(e["free"] for e in envelopes)
-    days_left = _days_left_in_month()
+    days_left, _ = _period_days(user)
     daily_limit = total_free / days_left if days_left > 0 else Decimal("0")
 
     env_map = {e["envelope"].id: e["envelope"] for e in envelopes}
