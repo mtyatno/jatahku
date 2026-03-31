@@ -229,22 +229,45 @@ async def cmd_controls(update, context):
         )
         return
 
-    lines = ["⚙️ Behavior controls:\n"]
+    active, inactive = [], []
     for env in envs:
-        emoji = env.emoji or "📁"
         controls = []
         if env.is_locked:
-            controls.append("🔒 Locked")
+            controls.append("🔒 Terkunci")
         if env.daily_limit:
             controls.append(f"📊 Limit {format_currency(env.daily_limit)}/hari")
         if env.cooling_threshold:
-            controls.append(f"⏳ Cooling >= {format_currency(env.cooling_threshold)}")
+            controls.append(f"⏳ Cooling ≥ {format_currency(env.cooling_threshold)}")
+        if controls:
+            active.append((env, controls))
+        else:
+            inactive.append(env)
 
-        status = " · ".join(controls) if controls else "Tidak ada"
-        lines.append(f"{emoji} {env.name}\n   {status}")
+    lines = ["⚙️ <b>Behavior Controls</b>"]
 
-    lines.append(f"\nKelola:\n/lock [nama] — kunci/buka\n/setlimit [nama] [jumlah]\n/setcooling [nama] [jumlah]")
-    await update.message.reply_text("\n".join(lines))
+    if active:
+        lines.append("")
+        for env, controls in active:
+            em = env.emoji or "📁"
+            lines.append(f"🟠 {em} <b>{env.name}</b>")
+            for c in controls:
+                lines.append(f"   {c}")
+    else:
+        lines.append("\nBelum ada kontrol aktif di amplop manapun.")
+
+    if inactive:
+        lines.append("\n─────────────────")
+        for env in inactive:
+            em = env.emoji or "📁"
+            lines.append(f"⚪ {em} {env.name}")
+
+    lines.append("\n─────────────────")
+    lines.append(
+        "/setlimit [nama] [jumlah] — atur limit harian\n"
+        "/setcooling [nama] [jumlah] — atur cooling period\n"
+        "/lock [nama] — kunci / buka amplop"
+    )
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def handle_lock_callback(update, context):
