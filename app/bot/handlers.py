@@ -652,7 +652,11 @@ async def cmd_amplop(update, context):
 
 async def cmd_amplop_baru(update, context):
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text("Format: /amplop_baru [nama] [budget]\n\nContoh:\n• /amplop_baru Makan 1.5jt\n• /amplop_baru Transport 500k")
+        await update.message.reply_text(
+            "Format: /amplop_baru [nama] [budget]\n\n"
+            "Contoh:\n• /amplop_baru Makan 1.5jt\n• /amplop_baru Transport 500k\n\n"
+            "Tip: amplop dan alokasi lebih mudah diatur lewat /webapp."
+        )
         return
     name = context.args[0]
     parsed = parse_amount(context.args[1] + " placeholder")
@@ -679,10 +683,27 @@ async def cmd_template(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
-        result = await db.execute(select(func.count(Envelope.id)).where(Envelope.household_id == hid, Envelope.is_active == True))
-        if result.scalar() > 0:
-            await update.message.reply_text("Kamu sudah punya amplop. Gunakan /amplop_baru untuk tambah.")
-            return
+        env_result = await db.execute(
+            select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True)
+            .order_by(Envelope.created_at)
+        )
+        existing = env_result.scalars().all()
+
+    if existing:
+        env_lines = "\n".join(f"{e.emoji or '📁'} {e.name}" for e in existing)
+        is_linked = bool(user.telegram_id)
+        webapp_hint = "Ketik /webapp untuk buka dashboard WebApp." if is_linked else "Buka jatahku.com untuk kelola amplop."
+        await update.message.reply_text(
+            f"✅ <b>Budget kamu sudah siap!</b>\n\n"
+            f"<b>{len(existing)} amplop aktif:</b>\n{env_lines}\n\n"
+            f"Template tidak diperlukan lagi — amplop sudah ada.\n\n"
+            f"Tambah amplop baru: /amplop_baru\n"
+            f"Cek status budget: /status\n"
+            f"{webapp_hint}",
+            parse_mode="HTML",
+        )
+        return
+
     keyboard = [
         [InlineKeyboardButton("💼 Karyawan (5 amplop)", callback_data="tpl_karyawan")],
         [InlineKeyboardButton("🎓 Mahasiswa (4 amplop)", callback_data="tpl_mahasiswa")],

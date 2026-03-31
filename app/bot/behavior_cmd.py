@@ -224,7 +224,9 @@ async def cmd_controls(update, context):
         envs = await _list_envelopes_names(hid, user.id, db)
 
     if not envs:
-        await update.message.reply_text("Belum ada amplop.")
+        await update.message.reply_text(
+            "Belum ada amplop. Setup dulu di /webapp atau ketik /template."
+        )
         return
 
     lines = ["⚙️ Behavior controls:\n"]

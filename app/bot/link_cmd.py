@@ -59,6 +59,27 @@ async def cmd_link(update, context):
             detail = data.get("detail", "Gagal menghubungkan")
             await update.message.reply_text(f"❌ {detail}")
     else:
+        # Check if this Telegram ID is already linked to a WebApp account
+        from app.core.database import AsyncSessionLocal
+        from app.models.models import User
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.telegram_id == tg_id))
+            linked_user = result.scalar_one_or_none()
+
+        if linked_user:
+            await update.message.reply_text(
+                f"✅ <b>Telegram sudah terhubung ke WebApp!</b>\n\n"
+                f"Akun: <b>{linked_user.name or linked_user.email}</b>\n\n"
+                f"Tidak perlu link ulang. Kamu bisa langsung:\n"
+                f"• Catat pengeluaran via chat\n"
+                f"• /status — cek budget\n"
+                f"• /webapp — buka dashboard\n\n"
+                f"Mau putus koneksi? Ketik /unlink.",
+                parse_mode="HTML",
+            )
+            return
+
         async with httpx.AsyncClient() as client:
             res = await client.post(
                 f"{API}/auth/link/generate-for-telegram",
@@ -67,10 +88,10 @@ async def cmd_link(update, context):
         if res.status_code == 200:
             code = res.json()["code"]
             await update.message.reply_text(
-                f"🔗 Kode link: *{code}*\n\n"
+                f"🔗 Kode link: <b>{code}</b>\n\n"
                 f"Buka {settings.APP_URL}/login → klik 'Punya akun Telegram?' → masukkan kode.\n\n"
                 f"Berlaku 5 menit.",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         else:
             await update.message.reply_text("❌ Gagal generate kode. Coba lagi.")
