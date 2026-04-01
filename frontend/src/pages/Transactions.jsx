@@ -135,7 +135,7 @@ export default function Transactions() {
         </div>
       )}
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex flex-wrap gap-2">
         <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'all' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>Semua</button>
         {envelopes.map(env => (
           <button key={env.id} onClick={() => setFilter(env.id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === env.id ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>{env.emoji} {env.name}</button>
