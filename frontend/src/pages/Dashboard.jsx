@@ -296,8 +296,8 @@ export default function Dashboard() {
           {breakdown.length > 0 && (
             <div className="card">
               <h3 className="font-semibold text-sm mb-3">Breakdown amplop</h3>
-              <div className="flex items-center gap-3">
-                <div style={{ width: 140, height: 140, flexShrink: 0 }}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="mx-auto sm:mx-0" style={{ width: 140, height: 140, flexShrink: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={breakdown} dataKey="spent" nameKey="name" cx="50%" cy="50%"
