@@ -2,24 +2,25 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 
-function AddModal({ onClose, onCreated }) {
+function RecurringModal({ onClose, onSaved, item }) {
+  const isEdit = !!item;
   const [envelopes, setEnvelopes] = useState([]);
-  const [desc, setDesc] = useState('');
-  const [amount, setAmount] = useState('');
-  const [frequency, setFrequency] = useState('monthly');
-  const [envelopeId, setEnvelopeId] = useState('');
-  const [nextRun, setNextRun] = useState(() => {
+  const [desc, setDesc] = useState(item?.description || '');
+  const [amount, setAmount] = useState(item?.amount ? String(item.amount) : '');
+  const [frequency, setFrequency] = useState(item?.frequency || 'monthly');
+  const [envelopeId, setEnvelopeId] = useState(item?.envelope_id || '');
+  const [nextRun, setNextRun] = useState(item?.next_run || (() => {
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
     return d.toISOString().split('T')[0];
-  });
+  })());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.getEnvelopeSummary().then(envs => {
       setEnvelopes(envs || []);
-      if (envs?.length) setEnvelopeId(envs[0].id);
+      if (!isEdit && envs?.length) setEnvelopeId(envs[0].id);
     });
   }, []);
 
@@ -27,8 +28,8 @@ function AddModal({ onClose, onCreated }) {
     if (!desc || !amount || !envelopeId) { setError('Lengkapi semua field'); return; }
     setSaving(true);
     setError('');
-    const res = await api.request('/recurring/', {
-      method: 'POST',
+    const res = await api.request(isEdit ? `/recurring/${item.id}` : '/recurring/', {
+      method: isEdit ? 'PUT' : 'POST',
       body: JSON.stringify({
         description: desc,
         amount: Number(amount),
@@ -38,14 +39,14 @@ function AddModal({ onClose, onCreated }) {
       }),
     });
     setSaving(false);
-    if (res.ok) { onCreated(); onClose(); }
+    if (res.ok) { onSaved(); onClose(); }
     else { const d = await res.json(); setError(d.detail || 'Gagal menyimpan'); }
   };
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-lg mb-4">Tambah Langganan</h3>
+        <h3 className="font-display font-bold text-lg mb-4">{isEdit ? 'Edit Langganan' : 'Tambah Langganan'}</h3>
         <div className="space-y-3">
           <div>
             <label className="label">Nama langganan</label>
@@ -90,6 +91,7 @@ export default function Langganan() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [editItem, setEditItem] = useState(null);
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
@@ -160,16 +162,19 @@ export default function Langganan() {
                   <p className="text-xs text-gray-400">Next: {new Date(item.next_run).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                 </div>
               </div>
-              <div className="flex justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex justify-end gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => setEditItem(item)}
+                  className="text-xs text-brand-500 hover:underline">Edit</button>
                 <button onClick={() => handleDelete(item.id, item.description)}
-                  className="text-xs text-danger-400 hover:underline">Hapus langganan</button>
+                  className="text-xs text-danger-400 hover:underline">Hapus</button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onCreated={load} />}
+      {showAdd && <RecurringModal onClose={() => setShowAdd(false)} onSaved={load} />}
+      {editItem && <RecurringModal onClose={() => setEditItem(null)} onSaved={load} item={editItem} />}
     </div>
   );
 }

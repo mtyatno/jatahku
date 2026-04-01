@@ -108,6 +108,44 @@ async def create_recurring(
     )
 
 
+@router.put("/{rec_id}", response_model=RecurringResponse)
+async def update_recurring(
+    rec_id: UUID,
+    req: RecurringCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    hid = await _get_hid(user, db)
+    result = await db.execute(
+        select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
+    )
+    rec = result.scalar_one_or_none()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Tidak ditemukan")
+
+    env_result = await db.execute(
+        select(Envelope).where(Envelope.id == req.envelope_id, Envelope.household_id == hid)
+    )
+    envelope = env_result.scalar_one_or_none()
+    if not envelope:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
+
+    rec.envelope_id = req.envelope_id
+    rec.amount = req.amount
+    rec.description = req.description
+    rec.frequency = req.frequency
+    rec.next_run = req.next_run
+    await db.commit()
+    await db.refresh(rec)
+    return RecurringResponse(
+        id=rec.id, envelope_id=rec.envelope_id,
+        envelope_name=envelope.name, envelope_emoji=envelope.emoji,
+        amount=rec.amount, description=rec.description,
+        frequency=rec.frequency.value, next_run=rec.next_run,
+        is_active=rec.is_active,
+    )
+
+
 @router.delete("/{rec_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_recurring(
     rec_id: UUID,
