@@ -141,16 +141,17 @@ export default function Transactions() {
         const visible = envelopes.slice(0, VISIBLE);
         const hidden = envelopes.slice(VISIBLE);
         const activeInHidden = hidden.some(e => e.id === filter);
-        const chipCls = (active) => `px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-brand-600 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
+        const chipCls = (active) => `px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${active ? 'shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
+        const chipStyle = (active) => active ? { background: '#0F6E56', color: '#fff' } : {};
         return (
           <div className="flex flex-wrap gap-2 items-center">
-            <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')}>Semua</button>
+            <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')} style={chipStyle(filter === 'all')}>Semua</button>
             {visible.map(env => (
-              <button key={env.id} onClick={() => setFilter(env.id)} className={chipCls(filter === env.id)}>{env.emoji} {env.name}</button>
+              <button key={env.id} onClick={() => setFilter(env.id)} className={chipCls(filter === env.id)} style={chipStyle(filter === env.id)}>{env.emoji} {env.name}</button>
             ))}
             {hidden.length > 0 && (
               <div className="relative">
-                <button onClick={() => setShowMoreFilter(v => !v)} className={chipCls(activeInHidden)}>
+                <button onClick={() => setShowMoreFilter(v => !v)} className={chipCls(activeInHidden)} style={chipStyle(activeInHidden)}>
                   {activeInHidden ? `${envelopes.find(e => e.id === filter)?.emoji} ${envelopes.find(e => e.id === filter)?.name}` : `+${hidden.length} lainnya`} ▾
                 </button>
                 {showMoreFilter && (
@@ -166,8 +167,8 @@ export default function Transactions() {
               </div>
             )}
             <div className="w-px h-5 bg-gray-200 mx-1" />
-            <button onClick={() => setFilter('telegram')} className={chipCls(filter === 'telegram')}>📱 Telegram</button>
-            <button onClick={() => setFilter('webapp')} className={chipCls(filter === 'webapp')}>🌐 WebApp</button>
+            <button onClick={() => setFilter('telegram')} className={chipCls(filter === 'telegram')} style={chipStyle(filter === 'telegram')}>📱 Telegram</button>
+            <button onClick={() => setFilter('webapp')} className={chipCls(filter === 'webapp')} style={chipStyle(filter === 'webapp')}>🌐 WebApp</button>
           </div>
         );
       })()}
