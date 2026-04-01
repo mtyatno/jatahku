@@ -15,6 +15,7 @@ export default function Transactions() {
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
+  const [showMoreFilter, setShowMoreFilter] = useState(false);
 
   useEffect(() => {
     getPendingCount().then(setPendingCount);
@@ -135,15 +136,41 @@ export default function Transactions() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'all' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>Semua</button>
-        {envelopes.map(env => (
-          <button key={env.id} onClick={() => setFilter(env.id)} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === env.id ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>{env.emoji} {env.name}</button>
-        ))}
-        <span className="mx-1 text-gray-200">|</span>
-        <button onClick={() => setFilter('telegram')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'telegram' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>📱 Telegram</button>
-        <button onClick={() => setFilter('webapp')} className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${filter === 'webapp' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>🌐 WebApp</button>
-      </div>
+      {(() => {
+        const VISIBLE = 3;
+        const visible = envelopes.slice(0, VISIBLE);
+        const hidden = envelopes.slice(VISIBLE);
+        const activeInHidden = hidden.some(e => e.id === filter);
+        const chipCls = (active) => `px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-brand-500 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
+        return (
+          <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')}>Semua</button>
+            {visible.map(env => (
+              <button key={env.id} onClick={() => setFilter(env.id)} className={chipCls(filter === env.id)}>{env.emoji} {env.name}</button>
+            ))}
+            {hidden.length > 0 && (
+              <div className="relative">
+                <button onClick={() => setShowMoreFilter(v => !v)} className={chipCls(activeInHidden)}>
+                  {activeInHidden ? `${envelopes.find(e => e.id === filter)?.emoji} ${envelopes.find(e => e.id === filter)?.name}` : `+${hidden.length} lainnya`} ▾
+                </button>
+                {showMoreFilter && (
+                  <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-100 rounded-xl shadow-lg py-1 min-w-[160px]">
+                    {hidden.map(env => (
+                      <button key={env.id} onClick={() => { setFilter(env.id); setShowMoreFilter(false); }}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${filter === env.id ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
+                        {env.emoji} {env.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="w-px h-5 bg-gray-200 mx-1" />
+            <button onClick={() => setFilter('telegram')} className={chipCls(filter === 'telegram')}>📱 Telegram</button>
+            <button onClick={() => setFilter('webapp')} className={chipCls(filter === 'webapp')}>🌐 WebApp</button>
+          </div>
+        );
+      })()}
 
       {transactions.length === 0 ? (
         <div className="card text-center py-12">
