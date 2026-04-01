@@ -30,11 +30,9 @@ async def payday_snapshot_job():
         _, period_end = get_budget_period(pd, yesterday)
         if period_end == yesterday and pd not in triggered:
             triggered.add(pd)
-            # period_start of that just-ended period
             period_start, _ = get_budget_period(pd, yesterday)
-            target_year, target_month = period_start.year, period_start.month
             logger.info(f"Running payday snapshot for payday_day={pd}, period {period_start} → {period_end}")
-            result = await create_monthly_snapshots(target_year, target_month)
+            result = await create_monthly_snapshots(period_start, period_end)
             logger.info(f"Snapshot result: {result}")
 
 

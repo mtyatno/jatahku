@@ -72,14 +72,27 @@ async def list_snapshots(
 async def run_monthly_snapshot(
     year: int = Query(None),
     month: int = Query(None),
+    force: bool = Query(False),
     user: User = Depends(get_current_user),
 ):
-    """Manually trigger monthly snapshot (admin/debug). Snapshots the given month."""
+    """Manually trigger snapshot for a budget period (admin/debug).
+    year/month refer to period_start year/month. Uses caller's payday_day to reconstruct period dates."""
+    import calendar
     now = date.today()
     y = year or now.year
     m = month or now.month
-    result = await create_monthly_snapshots(y, m)
-    return {"month": f"{y}-{m:02d}", **result}
+    payday = user.payday_day or 1
+
+    # Reconstruct the period whose start falls in y/m
+    last_day = calendar.monthrange(y, m)[1]
+    target_day = min(payday, last_day)
+    target_date = date(y, m, target_day)  # = period_start
+
+    from app.core.period import get_budget_period
+    period_start, period_end = get_budget_period(payday, target_date)
+
+    result = await create_monthly_snapshots(period_start, period_end, force=force)
+    return {"period": f"{period_start} → {period_end}", **result}
 
 @router.post("/daily-summary")
 async def trigger_daily_summary(user: User = Depends(get_current_user)):

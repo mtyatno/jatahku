@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
     User, Envelope, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
     RecurringTransaction, RecurringFrequency,
@@ -110,43 +111,44 @@ async def envelope_summary(
     envelopes = result.scalars().all()
 
     now = date.today()
+    payday_day = getattr(user, 'payday_day', None) or 1
+    period_start, period_end = get_budget_period(payday_day, now)
+    prev_start, _ = get_previous_period(payday_day, now)
     summaries = []
 
     for env in envelopes:
-        # Spent this month
+        # Spent this budget period
         spent_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.envelope_id == env.id,
                 Transaction.is_deleted == False,
-                func.extract("year", Transaction.transaction_date) == now.year,
-                func.extract("month", Transaction.transaction_date) == now.month,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
             )
         )
         spent = Decimal(str(spent_result.scalar()))
 
-        # Allocated this month (from income allocations)
+        # Allocated this budget period (from income allocations)
         from app.models.models import Income
         alloc_result = await db.execute(
             select(func.coalesce(func.sum(Allocation.amount), 0))
             .join(Income, Allocation.income_id == Income.id)
             .where(
                 Allocation.envelope_id == env.id,
-                func.extract("year", Income.income_date) == now.year,
-                func.extract("month", Income.income_date) == now.month,
+                Income.income_date >= period_start,
+                Income.income_date <= period_end,
             )
         )
         allocated = Decimal(str(alloc_result.scalar()))
 
-        # Rollover from previous month
+        # Rollover from previous budget period (snapshot keyed by prev_start year/month)
         rollover = Decimal("0")
         if env.is_rollover:
-            prev_month = now.month - 1 if now.month > 1 else 12
-            prev_year = now.year if now.month > 1 else now.year - 1
             snap_result = await db.execute(
                 select(MonthlySnapshot).where(
                     MonthlySnapshot.envelope_id == env.id,
-                    MonthlySnapshot.month == prev_month,
-                    MonthlySnapshot.year == prev_year,
+                    MonthlySnapshot.year == prev_start.year,
+                    MonthlySnapshot.month == prev_start.month,
                 )
             )
             snap = snap_result.scalar_one_or_none()
