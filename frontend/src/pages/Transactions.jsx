@@ -141,7 +141,7 @@ export default function Transactions() {
         const visible = envelopes.slice(0, VISIBLE);
         const hidden = envelopes.slice(VISIBLE);
         const activeInHidden = hidden.some(e => e.id === filter);
-        const chipCls = (active) => `px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-brand-500 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
+        const chipCls = (active) => `px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${active ? 'bg-brand-600 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`;
         return (
           <div className="flex flex-wrap gap-2 items-center">
             <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')}>Semua</button>
