@@ -21,7 +21,7 @@ jobs:
           echo "Waiting for service to be ready..."
           sleep 5
           for i in {1..5}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://jatahku.com/health)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.jatahku.com/health)
             if [ "$STATUS" = "200" ]; then
               echo "Health check passed (HTTP $STATUS)"
               exit 0
