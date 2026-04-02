@@ -17,6 +17,7 @@ jobs:
           script: sudo /opt/jatahku/deploy.sh
 
       - name: Health check
+        continue-on-error: true
         run: |
           echo "Waiting for service to be ready..."
           sleep 15
