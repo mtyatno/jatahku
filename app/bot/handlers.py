@@ -242,9 +242,10 @@ async def get_household_id(user, db):
 
 async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: int = 1):
     from sqlalchemy import or_
-    from app.models.models import Income, RecurringTransaction, RecurringFrequency
-    from app.core.period import get_budget_period
+    from app.models.models import Income, RecurringTransaction, RecurringFrequency, MonthlySnapshot
+    from app.core.period import get_budget_period, get_previous_period
     period_start, period_end = get_budget_period(payday_day)
+    prev_start, _ = get_previous_period(payday_day)
     query = select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
     if user_id:
         query = query.where(or_(Envelope.owner_id == None, Envelope.owner_id == user_id))
@@ -270,6 +271,19 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
             )
         )
         allocated = Decimal(str(alloc_result.scalar()))
+        # Rollover from previous period
+        rollover = Decimal("0")
+        if env.is_rollover:
+            snap_result = await db.execute(
+                select(MonthlySnapshot).where(
+                    MonthlySnapshot.envelope_id == env.id,
+                    MonthlySnapshot.year == prev_start.year,
+                    MonthlySnapshot.month == prev_start.month,
+                )
+            )
+            snap = snap_result.scalar_one_or_none()
+            if snap and snap.rollover_amount:
+                rollover = snap.rollover_amount
         # Reserved from subscriptions
         rec_result = await db.execute(
             select(RecurringTransaction).where(
@@ -285,7 +299,7 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
                 reserved += rec.amount / 12
             else:
                 reserved += rec.amount
-        remaining = allocated - spent
+        remaining = allocated + rollover - spent
         free = remaining - reserved
         envelope_data.append({
             "envelope": env, "spent": spent, "allocated": allocated,
@@ -642,7 +656,8 @@ async def cmd_amplop(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
-        envelopes = await get_envelopes_with_spent(hid, db, user.id)
+        payday_day = getattr(user, 'payday_day', 1) or 1
+        envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /amplop_baru untuk buat.")
         return
@@ -932,9 +947,10 @@ async def handle_message(update, context):
             return
 
         hid = await get_household_id(user, db)
+        payday_day = getattr(user, 'payday_day', 1) or 1
         envelope, confident = await find_best_envelope(description, hid, db, user_id=user.id)
         if not envelope:
-            envelopes_check = await get_envelopes_with_spent(hid, db, user.id)
+            envelopes_check = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             if not envelopes_check:
                 await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
                 return
@@ -1019,7 +1035,7 @@ async def handle_message(update, context):
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
             db.add(txn)
             await db.commit()
-            envelopes = await get_envelopes_with_spent(hid, db, user.id)
+            envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
             remaining = env_data["remaining"] if env_data else Decimal("0")
             budget = envelope.budget_amount
@@ -1042,7 +1058,7 @@ async def handle_message(update, context):
                 f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}"
             )
         else:
-            envelopes_data = await get_envelopes_with_spent(hid, db, user.id)
+            envelopes_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             import redis.asyncio as aioredis, json as json_mod, secrets
             from app.core.config import get_settings
             txn_key = secrets.token_hex(4)
@@ -1093,6 +1109,7 @@ async def handle_txn_callback(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
+        payday_day = getattr(user, 'payday_day', 1) or 1
         result = await db.execute(select(Envelope).where(Envelope.id == envelope_id))
         envelope = result.scalar_one_or_none()
         if not envelope:
@@ -1144,7 +1161,7 @@ async def handle_txn_callback(update, context):
         db.add(txn)
         await save_learned_keywords(user.id, description, envelope.id, db)
         await db.commit()
-        envelopes = await get_envelopes_with_spent(hid, db, user.id)
+        envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
     emoji = envelope.emoji or "📁"
