@@ -19,7 +19,7 @@ jobs:
       - name: Health check
         run: |
           echo "Waiting for service to be ready..."
-          sleep 5
+          sleep 15
           for i in {1..5}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.jatahku.com/health)
             if [ "$STATUS" = "200" ]; then
