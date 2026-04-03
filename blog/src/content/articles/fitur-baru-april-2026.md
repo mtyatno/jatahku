@@ -66,4 +66,4 @@ Beberapa perbaikan di balik layar:
 
 Semua pembaruan ini sudah live dan tidak memerlukan update app. Jika kamu install Jatahku sebagai PWA di home screen, cukup buka dan refresh sekali untuk mendapat versi terbaru.
 
-Ada saran fitur atau laporan bug? Kirim pesan ke [@JatahkuBot](https://t.me/JatahkuBot).
+Ada saran fitur atau laporan bug? Hubungi kami melalui halaman [jatahku.com](https://jatahku.com).
