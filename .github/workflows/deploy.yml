@@ -58,12 +58,22 @@ jobs:
         working-directory: blog
         run: npm ci && npm run build
 
-      - name: Deploy blog to VPS
+      - name: SCP blog dist to /tmp on VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_KEY }}
-          source: "blog/dist/*"
-          target: "/home/jatahku/web/blog.jatahku.com/public_html/"
+          source: "blog/dist/"
+          target: "/tmp/blog-dist-new/"
           strip_components: 2
+
+      - name: Move blog to web root via sudo
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_KEY }}
+          script: |
+            sudo rsync -a --delete /tmp/blog-dist-new/ /home/jatahku/web/blog.jatahku.com/public_html/
+            sudo rm -rf /tmp/blog-dist-new/
