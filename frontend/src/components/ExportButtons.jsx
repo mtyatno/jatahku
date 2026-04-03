@@ -4,28 +4,18 @@ import { api } from '../lib/api';
 export default function ExportButtons() {
   const [loading, setLoading] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
+  const [modalYear, setModalYear] = useState(null);
+  const [modalMonth, setModalMonth] = useState(null);
   const iframeRef = useRef(null);
 
   const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
 
-  const year = selectedYear;
-  const month = selectedMonth;
-  const monthName = new Date(selectedYear, selectedMonth - 1, 1).toLocaleString('id-ID', { month: 'long', year: 'numeric' });
-  const isCurrentMonth = selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
-
-  const goPrev = () => {
-    if (selectedMonth === 1) { setSelectedMonth(12); setSelectedYear(y => y - 1); }
-    else setSelectedMonth(m => m - 1);
-  };
-  const goNext = () => {
-    if (isCurrentMonth) return;
-    if (selectedMonth === 12) { setSelectedMonth(1); setSelectedYear(y => y + 1); }
-    else setSelectedMonth(m => m + 1);
-  };
+  const monthName = (y, m) => new Date(y, m - 1, 1).toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const isCurrentMonth = (y, m) => y === now.getFullYear() && m === now.getMonth() + 1;
 
   const handleCSV = async () => {
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
     setLoading('csv');
     try {
       const res = await api.request('/export/csv?year=' + year + '&month=' + month);
@@ -36,30 +26,42 @@ export default function ExportButtons() {
       a.download = 'jatahku_' + year + '-' + String(month).padStart(2, '0') + '.csv';
       a.click();
       URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
     setLoading(null);
   };
 
-  const handleOpenReport = async () => {
+  const handleOpenReport = async (y, m) => {
     setLoading('pdf');
     try {
-      const res = await api.request('/export/pdf?year=' + year + '&month=' + month);
+      const res = await api.request('/export/pdf?year=' + y + '&month=' + m);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
       setPdfUrl(url);
-    } catch (e) {
-      console.error(e);
-    }
+      setModalYear(y);
+      setModalMonth(m);
+    } catch (e) { console.error(e); }
     setLoading(null);
+  };
+
+  const goPrev = () => {
+    const newM = modalMonth === 1 ? 12 : modalMonth - 1;
+    const newY = modalMonth === 1 ? modalYear - 1 : modalYear;
+    handleOpenReport(newY, newM);
+  };
+
+  const goNext = () => {
+    if (isCurrentMonth(modalYear, modalMonth)) return;
+    const newM = modalMonth === 12 ? 1 : modalMonth + 1;
+    const newY = modalMonth === 12 ? modalYear + 1 : modalYear;
+    handleOpenReport(newY, newM);
   };
 
   const handleSavePDF = () => {
     if (pdfUrl) {
       const a = document.createElement('a');
       a.href = pdfUrl;
-      a.download = 'jatahku_' + year + '-' + String(month).padStart(2, '0') + '.pdf';
+      a.download = 'jatahku_' + modalYear + '-' + String(modalMonth).padStart(2, '0') + '.pdf';
       a.click();
     }
   };
@@ -74,49 +76,54 @@ export default function ExportButtons() {
   const handleClose = () => {
     URL.revokeObjectURL(pdfUrl);
     setPdfUrl(null);
+    setModalYear(null);
+    setModalMonth(null);
   };
+
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth() + 1;
 
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap">
-        {/* Month navigator */}
-        <div className="flex items-center gap-1 bg-gray-100 rounded-xl px-1 py-1">
-          <button onClick={goPrev} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-all">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
-          <span className="text-sm font-medium text-gray-700 px-2 min-w-[110px] text-center">{monthName}</span>
-          <button onClick={goNext} disabled={isCurrentMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-all disabled:opacity-30 disabled:cursor-default">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-        </div>
-
+      <div className="flex items-center gap-3">
         <button onClick={handleCSV} disabled={!!loading}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all disabled:opacity-50">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          {loading === 'csv' ? '...' : 'CSV'}
+          {loading === 'csv' ? '...' : 'Download CSV'}
         </button>
-        <button onClick={handleOpenReport} disabled={!!loading}
+        <button onClick={() => handleOpenReport(curYear, curMonth)} disabled={!!loading}
           className="flex items-center gap-2 px-4 py-2 bg-brand-600 rounded-xl text-sm font-medium text-white hover:bg-brand-900 transition-all disabled:opacity-50">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          {loading === 'pdf' ? '...' : 'Laporan'}
+          {loading === 'pdf' ? '...' : 'Laporan ' + monthName(curYear, curMonth)}
         </button>
       </div>
 
       {/* Report Modal */}
-      {pdfUrl && (
+      {pdfUrl && modalYear && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white">
           {/* Toolbar */}
           <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 shrink-0">
-            <span className="font-semibold text-gray-700">Laporan {monthName}</span>
+            {/* Month navigator */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-xl px-1 py-1">
+              <button onClick={goPrev} disabled={!!loading} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-all disabled:opacity-40">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span className="text-sm font-semibold text-gray-700 px-2 min-w-[130px] text-center">
+                {loading === 'pdf' ? '...' : monthName(modalYear, modalMonth)}
+              </span>
+              <button onClick={goNext} disabled={!!loading || isCurrentMonth(modalYear, modalMonth)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white text-gray-500 hover:text-gray-700 transition-all disabled:opacity-30 disabled:cursor-default">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+
             <div className="flex items-center gap-2">
-              <button onClick={handleSavePDF}
-                title="Pilih 'Save as PDF' di dialog print"
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all">
+              <button onClick={handleSavePDF} disabled={!!loading}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all disabled:opacity-50">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                 Simpan PDF
               </button>
-              <button onClick={handlePrint}
-                className="flex items-center gap-2 px-4 py-2 bg-brand-600 rounded-lg text-sm font-medium text-white hover:bg-brand-900 transition-all">
+              <button onClick={handlePrint} disabled={!!loading}
+                className="flex items-center gap-2 px-4 py-2 bg-brand-600 rounded-lg text-sm font-medium text-white hover:bg-brand-900 transition-all disabled:opacity-50">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
                 Print
               </button>
