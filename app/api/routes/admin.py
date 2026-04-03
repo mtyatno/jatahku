@@ -282,6 +282,8 @@ class DirectEmailRequest(BaseModel):
     body: str
     cta_text: str | None = None
     cta_url: str | None = None
+    send_telegram: bool = False
+    telegram_text: str | None = None
 
 
 @router.post("/send-email-user")
@@ -290,25 +292,43 @@ async def send_email_to_user(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Send a tailored email to a specific user."""
+    """Send a tailored email and/or Telegram message to a specific user."""
     result = await db.execute(select(User).where(User.id == req.user_id))
     u = result.scalar_one_or_none()
-    if not u or not u.email:
-        raise HTTPException(404, "User tidak ditemukan atau tidak punya email")
-    if u.email.startswith("deleted_") or u.email.startswith("banned_"):
-        raise HTTPException(400, "User ini tidak bisa dikirim email")
+    if not u:
+        raise HTTPException(404, "User tidak ditemukan")
 
-    from app.services.email_service import send_email, email_template
-    html = email_template(
-        req.subject,
-        f"<p>Hai {u.name},</p>" + req.body,
-        req.cta_text or None,
-        req.cta_url or None,
-    )
-    success = send_email(u.email, req.subject, html)
-    if not success:
-        raise HTTPException(500, "Gagal mengirim email")
-    return {"status": "sent", "to": u.email, "name": u.name}
+    results = {}
+
+    # Send email
+    if u.email and not u.email.startswith("deleted_") and not u.email.startswith("banned_"):
+        from app.services.email_service import send_email, email_template
+        html = email_template(
+            req.subject,
+            f"<p>Hai {u.name},</p>" + req.body,
+            req.cta_text or None,
+            req.cta_url or None,
+        )
+        results["email"] = "sent" if send_email(u.email, req.subject, html) else "failed"
+    else:
+        results["email"] = "skipped"
+
+    # Send Telegram
+    if req.send_telegram:
+        if u.telegram_id:
+            try:
+                from telegram import Bot
+                from app.core.config import get_settings
+                bot = Bot(token=get_settings().TELEGRAM_BOT_TOKEN)
+                tg_msg = req.telegram_text or f"*{req.subject}*"
+                await bot.send_message(chat_id=int(u.telegram_id), text=tg_msg, parse_mode="Markdown")
+                results["telegram"] = "sent"
+            except Exception as e:
+                results["telegram"] = f"failed: {e}"
+        else:
+            results["telegram"] = "skipped (tidak ada TG)"
+
+    return {"status": "ok", "to": u.email, "name": u.name, "results": results}
 
 
 @router.post("/send-tg-reminders")

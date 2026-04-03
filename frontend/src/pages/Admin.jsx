@@ -89,6 +89,8 @@ export default function Admin() {
   const [dmBody, setDmBody] = useState('');
   const [dmCtaText, setDmCtaText] = useState('');
   const [dmCtaUrl, setDmCtaUrl] = useState('');
+  const [dmSendTg, setDmSendTg] = useState(false);
+  const [dmTgText, setDmTgText] = useState('');
   const [dmSending, setDmSending] = useState(false);
 
   const loadDash = async () => {
@@ -306,23 +308,36 @@ export default function Admin() {
               <input className="input text-sm" placeholder="Subject email" value={dmSubject} onChange={e => setDmSubject(e.target.value)} />
               <textarea className="input text-sm font-mono" rows="5" placeholder="Isi pesan (HTML diperbolehkan, misal: <p>teks</p><br><b>bold</b>)" value={dmBody} onChange={e => setDmBody(e.target.value)} />
               <div className="grid grid-cols-2 gap-2">
-                <input className="input text-sm" placeholder="Teks tombol (opsional)" value={dmCtaText} onChange={e => setDmCtaText(e.target.value)} />
-                <input className="input text-sm" placeholder="URL tombol (opsional)" value={dmCtaUrl} onChange={e => setDmCtaUrl(e.target.value)} />
+                <input className="input text-sm" placeholder="Teks tombol email (opsional)" value={dmCtaText} onChange={e => setDmCtaText(e.target.value)} />
+                <input className="input text-sm" placeholder="URL tombol email (opsional)" value={dmCtaUrl} onChange={e => setDmCtaUrl(e.target.value)} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none pt-1">
+                <input type="checkbox" checked={dmSendTg} onChange={e => setDmSendTg(e.target.checked)} className="rounded" />
+                Kirim juga ke Telegram (jika user sudah connect)
+              </label>
+              {dmSendTg && (
+                <textarea className="input text-sm font-mono" rows="3"
+                  placeholder="Pesan Telegram (Markdown: *bold*, _italic_). Kosongkan untuk hanya kirim subject sebagai judul."
+                  value={dmTgText} onChange={e => setDmTgText(e.target.value)} />
+              )}
               <button disabled={!dmUserId || !dmSubject || !dmBody || dmSending}
                 onClick={async () => {
-                  if (!confirm(`Kirim email ke user ini?`)) return;
+                  const selectedUser = users.find(u => u.id === dmUserId);
+                  const hasTg = selectedUser?.telegram_id;
+                  const channels = ['email', ...(dmSendTg ? [hasTg ? 'Telegram' : 'Telegram (tidak tersambung, akan dilewati)'] : [])].join(' + ');
+                  if (!confirm(`Kirim ke ${selectedUser?.name} via ${channels}?`)) return;
                   setDmSending(true);
                   const res = await api.request('/admin/send-email-user', {
                     method: 'POST',
-                    body: JSON.stringify({ user_id: dmUserId, subject: dmSubject, body: dmBody, cta_text: dmCtaText || null, cta_url: dmCtaUrl || null }),
+                    body: JSON.stringify({ user_id: dmUserId, subject: dmSubject, body: dmBody, cta_text: dmCtaText || null, cta_url: dmCtaUrl || null, send_telegram: dmSendTg, telegram_text: dmTgText || null }),
                   });
                   setDmSending(false);
                   if (res.ok) {
                     const d = await res.json();
-                    setActionMsg(`✅ Email terkirim ke ${d.name} (${d.to})`);
-                    setDmUserId(''); setDmSubject(''); setDmBody(''); setDmCtaText(''); setDmCtaUrl('');
-                    setTimeout(() => setActionMsg(''), 5000);
+                    const r = d.results;
+                    setActionMsg(`✅ ${d.name} — email: ${r.email}${r.telegram ? `, TG: ${r.telegram}` : ''}`);
+                    setDmUserId(''); setDmSubject(''); setDmBody(''); setDmCtaText(''); setDmCtaUrl(''); setDmSendTg(false); setDmTgText('');
+                    setTimeout(() => setActionMsg(''), 6000);
                   } else {
                     const d = await res.json();
                     setActionMsg(`❌ Gagal: ${d.detail}`);
@@ -330,7 +345,7 @@ export default function Admin() {
                   }
                 }}
                 className="btn-primary text-sm py-2 disabled:opacity-50">
-                {dmSending ? 'Mengirim...' : 'Kirim Email'}
+                {dmSending ? 'Mengirim...' : `Kirim${dmSendTg ? ' Email + Telegram' : ' Email'}`}
               </button>
             </div>
           </div>
