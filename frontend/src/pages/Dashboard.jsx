@@ -101,28 +101,50 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
 
   if (items.length === 0) return null;
 
-  const hasDanger = items.some(i => i.level === 'danger');
-  const hasWarning = items.some(i => i.level === 'warning');
-  const hasReward = !hasDanger && !hasWarning && items.some(i => i.level === 'reward');
-  const bg = hasDanger ? '#FEF2F2' : hasWarning ? '#FFFBEB' : hasReward ? '#EFF6FF' : '#F0FDF9';
-  const border = hasDanger ? '#FECACA' : hasWarning ? '#FDE68A' : hasReward ? '#BFDBFE' : '#A7F3D0';
-  const label = hasDanger ? '🚨 Perlu perhatian sekarang' : hasWarning ? '📊 Status budget hari ini' : hasReward ? '🌟 Kamu lagi on fire!' : '📊 Status budget hari ini';
-  const labelColor = hasDanger ? '#991B1B' : hasWarning ? '#92400E' : hasReward ? '#1E40AF' : '#065F46';
+  const alertItems = items.filter(i => i.level === 'danger' || i.level === 'warning');
+  const positiveItems = items.filter(i => i.level === 'reward' || i.level === 'safe');
+
+  const hasDanger = alertItems.some(i => i.level === 'danger');
 
   return (
-    <div className="rounded-xl p-4" style={{ background: bg, border: `1px solid ${border}` }}>
-      <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: labelColor }}>{label}</p>
-      <div className="space-y-1.5">
-        {items.map((item, i) => (
-          <p key={i} className="text-sm" style={{ color: item.level === 'reward' ? '#1E40AF' : item.level === 'safe' ? '#065F46' : item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
-            {item.icon} {item.text}
+    <div className="space-y-3">
+      {alertItems.length > 0 && (
+        <div className="rounded-xl p-4" style={{ background: hasDanger ? '#FEF2F2' : '#FFFBEB', border: `1px solid ${hasDanger ? '#FECACA' : '#FDE68A'}` }}>
+          <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: hasDanger ? '#991B1B' : '#92400E' }}>
+            {hasDanger ? '🚨 Perlu perhatian' : '⚠️ Mulai menipis'}
           </p>
-        ))}
-      </div>
-      {safeDaily > 0 && (
-        <p className="text-xs mt-2.5 pt-2.5 border-t" style={{ borderColor: border, color: labelColor }}>
-          👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
-        </p>
+          <div className="space-y-1.5">
+            {alertItems.map((item, i) => (
+              <p key={i} className="text-sm" style={{ color: item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
+                {item.icon} {item.text}
+              </p>
+            ))}
+          </div>
+          {safeDaily > 0 && (
+            <p className="text-xs mt-2.5 pt-2.5 border-t" style={{ borderColor: hasDanger ? '#FECACA' : '#FDE68A', color: hasDanger ? '#991B1B' : '#92400E' }}>
+              👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
+            </p>
+          )}
+        </div>
+      )}
+      {positiveItems.length > 0 && (
+        <div className="rounded-xl p-4" style={{ background: '#F0FDF9', border: '1px solid #A7F3D0' }}>
+          <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: '#065F46' }}>
+            {positiveItems.some(i => i.level === 'reward') ? '🎉 Kabar baik' : '✅ Status aman'}
+          </p>
+          <div className="space-y-1.5">
+            {positiveItems.map((item, i) => (
+              <p key={i} className="text-sm" style={{ color: '#065F46' }}>
+                {item.icon} {item.text}
+              </p>
+            ))}
+          </div>
+          {alertItems.length === 0 && safeDaily > 0 && (
+            <p className="text-xs mt-2.5 pt-2.5 border-t border-green-200" style={{ color: '#065F46' }}>
+              👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
