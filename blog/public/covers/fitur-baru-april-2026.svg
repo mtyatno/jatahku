@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A4F3E"/>
+      <stop offset="100%" stop-color="#116653"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- White card -->
+  <rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+  <!-- Star burst / sparkles -->
+  <!-- Big star center -->
+  <polygon points="860,165 878,218 934,218 889,250 907,303 860,271 813,303 831,250 786,218 842,218" fill="rgba(255,255,255,0.85)"/>
+  <!-- Medium star top-right -->
+  <polygon points="990,190 1001,222 1034,222 1008,241 1019,273 990,254 961,273 972,241 946,222 979,222" fill="rgba(255,255,255,0.45)"/>
+  <!-- Small star left -->
+  <polygon points="710,230 718,254 743,254 723,268 731,292 710,278 689,292 697,268 677,254 702,254" fill="rgba(255,255,255,0.3)"/>
+  <!-- Tiny sparkles -->
+  <circle cx="955" cy="155" r="8" fill="rgba(255,255,255,0.5)"/>
+  <circle cx="760" cy="175" r="6" fill="rgba(255,255,255,0.4)"/>
+  <circle cx="1020" cy="310" r="5" fill="rgba(255,255,255,0.3)"/>
+
+  <!-- Pill badges for new features -->
+  <rect x="670" y="340" width="380" height="46" rx="23" fill="rgba(255,255,255,0.15)"/>
+  <text x="860" y="370" text-anchor="middle" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="white">Dashboard Sentimen Terpisah</text>
+
+  <rect x="700" y="400" width="320" height="46" rx="23" fill="rgba(255,255,255,0.12)"/>
+  <text x="860" y="430" text-anchor="middle" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.85)">Navigasi Laporan PDF</text>
+
+  <rect x="720" y="460" width="280" height="46" rx="23" fill="rgba(255,255,255,0.09)"/>
+  <text x="860" y="490" text-anchor="middle" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.7)">Keyword Learning Bot</text>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="225" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="172" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+
+  <text x="60" y="195" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Update</text>
+  <text x="60" y="260" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Jatahku</text>
+  <text x="60" y="320" font-family="Georgia,serif" font-size="42" font-weight="700" fill="rgba(255,255,255,0.75)">April 2026</text>
+  <text x="60" y="385" font-family="system-ui,sans-serif" font-size="20" fill="rgba(255,255,255,0.55)">3 improvement baru</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

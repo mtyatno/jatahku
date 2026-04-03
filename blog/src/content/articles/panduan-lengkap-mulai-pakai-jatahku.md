@@ -4,6 +4,7 @@ description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun
 pubDate: 2026-04-02
 category: tutorial
 author: Tim Jatahku
+cover: /covers/panduan-lengkap.svg
 featured: false
 ---
 

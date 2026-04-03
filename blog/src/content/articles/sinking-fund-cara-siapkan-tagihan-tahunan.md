@@ -4,6 +4,7 @@ description: "Tagihan tahunan seperti pajak kendaraan, asuransi, dan daftar ulan
 pubDate: 2026-03-30
 category: tips-keuangan
 author: Tim Jatahku
+cover: /covers/sinking-fund.svg
 featured: false
 ---
 

@@ -4,6 +4,7 @@ description: "Fitur /webapp menghasilkan link login sekali pakai yang membuka we
 pubDate: 2026-04-03
 category: update-fitur
 author: Tim Jatahku
+cover: /covers/fitur-command-webapp.svg
 featured: false
 ---
 

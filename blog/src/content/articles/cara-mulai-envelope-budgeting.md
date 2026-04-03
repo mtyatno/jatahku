@@ -4,6 +4,7 @@ description: "Panduan praktis memulai envelope budgeting dengan Jatahku. Dari se
 pubDate: 2026-03-30
 category: tutorial
 author: Tim Jatahku
+cover: /covers/cara-mulai-envelope-budgeting.svg
 featured: true
 ---
 

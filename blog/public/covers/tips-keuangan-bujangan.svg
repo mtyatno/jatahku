@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A4F3E"/>
+      <stop offset="100%" stop-color="#116653"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- White card -->
+  <rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+  <!-- Person silhouette -->
+  <circle cx="760" cy="210" r="55" fill="rgba(255,255,255,0.75)"/>
+  <path d="M 660 420 Q 660 310 760 310 Q 860 310 860 420" fill="rgba(255,255,255,0.75)"/>
+
+  <!-- Piggy bank / coins on right -->
+  <!-- Piggy body -->
+  <ellipse cx="990" cy="310" rx="85" ry="75" fill="rgba(255,255,255,0.2)"/>
+  <!-- Piggy head -->
+  <circle cx="1055" cy="265" r="40" fill="rgba(255,255,255,0.2)"/>
+  <!-- Ear -->
+  <circle cx="1045" cy="237" r="12" fill="rgba(255,255,255,0.3)"/>
+  <!-- Snout -->
+  <ellipse cx="1075" cy="275" rx="16" ry="12" fill="rgba(255,255,255,0.35)"/>
+  <!-- Coin slot -->
+  <rect x="982" y="238" width="30" height="7" rx="3" fill="rgba(255,255,255,0.6)"/>
+  <!-- Legs -->
+  <rect x="935" y="375" width="22" height="40" rx="8" fill="rgba(255,255,255,0.2)"/>
+  <rect x="968" y="375" width="22" height="40" rx="8" fill="rgba(255,255,255,0.2)"/>
+  <rect x="1010" y="375" width="22" height="40" rx="8" fill="rgba(255,255,255,0.2)"/>
+  <!-- Tail -->
+  <path d="M 910 295 Q 890 270 910 250" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Small coins flying to piggy -->
+  <circle cx="870" cy="260" r="18" fill="rgba(255,255,255,0.3)"/>
+  <text x="870" y="267" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#0F6E56">Rp</text>
+  <circle cx="895" cy="230" r="14" fill="rgba(255,255,255,0.25)"/>
+  <circle cx="910" cy="255" r="11" fill="rgba(255,255,255,0.2)"/>
+
+  <!-- 7 dots representing 7 tips -->
+  <text x="860" y="490" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" fill="rgba(255,255,255,0.5)">7 tips finansial</text>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="225" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="172" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">TIPS KEUANGAN</text>
+
+  <text x="60" y="200" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Keuangan</text>
+  <text x="60" y="265" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Bujangan</text>
+  <text x="60" y="340" font-family="system-ui,sans-serif" font-size="21" fill="rgba(255,255,255,0.6)">Hidup bebas tanpa</text>
+  <text x="60" y="370" font-family="system-ui,sans-serif" font-size="21" fill="rgba(255,255,255,0.6)">finansial berantakan</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

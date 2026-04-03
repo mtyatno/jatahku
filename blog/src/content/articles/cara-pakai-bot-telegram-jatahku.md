@@ -4,6 +4,7 @@ description: "Panduan lengkap pakai @JatahkuBot untuk mencatat pengeluaran tanpa
 pubDate: 2026-03-30
 category: tutorial
 author: Tim Jatahku
+cover: /covers/cara-pakai-bot-telegram.svg
 featured: true
 ---
 

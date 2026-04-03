@@ -4,6 +4,7 @@ description: "Tips praktis mengatur keuangan untuk yang masih single — dari ca
 pubDate: 2026-04-02
 category: tips-keuangan
 author: Tim Jatahku
+cover: /covers/tips-keuangan-bujangan.svg
 featured: false
 ---
 

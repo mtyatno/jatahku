@@ -4,6 +4,7 @@ description: "Gaji udah masuk tapi minggu kedua udah tipis? Bukan karena kurang 
 pubDate: 2026-03-30
 category: tips-keuangan
 author: Tim Jatahku
+cover: /covers/gaji-numpang.svg
 featured: false
 ---
 

@@ -4,6 +4,7 @@ description: "Ringkasan fitur baru Jatahku: dashboard peringatan dipisah dari in
 pubDate: 2026-04-02
 category: update-fitur
 author: Tim Jatahku
+cover: /covers/fitur-baru-april-2026.svg
 featured: false
 ---
 

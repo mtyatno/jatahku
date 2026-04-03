@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A4F3E"/>
+      <stop offset="100%" stop-color="#116653"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- White card -->
+  <rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+  <!-- Banknote -->
+  <rect x="660" y="180" width="400" height="200" rx="14" fill="none" stroke="white" stroke-width="6"/>
+  <rect x="680" y="200" width="360" height="160" rx="8" fill="rgba(255,255,255,0.07)"/>
+  <!-- Rupiah symbol -->
+  <text x="860" y="298" text-anchor="middle" font-family="Georgia,serif" font-size="80" font-weight="700" fill="rgba(255,255,255,0.85)">Rp</text>
+  <!-- Decorative corners -->
+  <circle cx="710" cy="230" r="18" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+  <circle cx="1010" cy="230" r="18" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+  <circle cx="710" cy="340" r="18" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+  <circle cx="1010" cy="340" r="18" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+
+  <!-- Arrow down to envelopes -->
+  <line x1="860" y1="395" x2="860" y2="430" stroke="rgba(255,255,255,0.5)" stroke-width="4" stroke-dasharray="8,5"/>
+  <polygon points="845,430 860,455 875,430" fill="rgba(255,255,255,0.5)"/>
+
+  <!-- Three small envelope icons -->
+  <rect x="700" y="460" width="90" height="60" rx="8" fill="rgba(255,255,255,0.15)"/>
+  <polyline points="700,460 745,490 790,460" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="3"/>
+  <rect x="815" y="460" width="90" height="60" rx="8" fill="rgba(255,255,255,0.15)"/>
+  <polyline points="815,460 860,490 905,460" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="3"/>
+  <rect x="930" y="460" width="90" height="60" rx="8" fill="rgba(255,255,255,0.15)"/>
+  <polyline points="930,460 975,490 1020,460" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="3"/>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="200" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="160" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">TIPS KEUANGAN</text>
+
+  <text x="60" y="200" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">Gaji</text>
+  <text x="60" y="260" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">Numpang</text>
+  <text x="60" y="320" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">Lewat</text>
+  <text x="60" y="385" font-family="system-ui,sans-serif" font-size="20" fill="rgba(255,255,255,0.6)">Metode amplop untuk gaji habis</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

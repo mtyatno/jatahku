@@ -4,6 +4,7 @@ description: "Kenapa kita sering beli barang yang tidak benar-benar dibutuhkan? 
 pubDate: 2026-03-30
 category: tips-keuangan
 author: Tim Jatahku
+cover: /covers/fitur-cooling-period.svg
 featured: false
 ---
 

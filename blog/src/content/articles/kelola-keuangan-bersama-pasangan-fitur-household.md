@@ -4,6 +4,7 @@ description: "Cara menggunakan fitur Household Jatahku untuk mengelola keuangan 
 pubDate: 2026-03-30
 category: tutorial
 author: Tim Jatahku
+cover: /covers/kelola-keuangan-bersama.svg
 featured: false
 ---
 

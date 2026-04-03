@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A4F3E"/>
+      <stop offset="100%" stop-color="#116653"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- White card -->
+  <rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+  <!-- Chat bubble with /webapp command -->
+  <rect x="640" y="140" width="300" height="70" rx="20" fill="rgba(255,255,255,0.18)"/>
+  <polygon points="640,170 615,185 645,195" fill="rgba(255,255,255,0.18)"/>
+  <text x="790" y="182" text-anchor="middle" font-family="monospace" font-size="28" font-weight="700" fill="white">/webapp</text>
+
+  <!-- Arrow down -->
+  <line x1="860" y1="225" x2="860" y2="265" stroke="rgba(255,255,255,0.4)" stroke-width="4"/>
+  <polygon points="845,260 860,280 875,260" fill="rgba(255,255,255,0.4)"/>
+
+  <!-- Browser window mockup -->
+  <rect x="645" y="285" width="450" height="240" rx="14" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+  <!-- Browser bar -->
+  <rect x="645" y="285" width="450" height="40" rx="14" fill="rgba(255,255,255,0.2)"/>
+  <rect x="645" y="305" width="450" height="20" fill="rgba(255,255,255,0.2)"/>
+  <!-- Traffic lights -->
+  <circle cx="675" cy="305" r="7" fill="rgba(255,255,255,0.4)"/>
+  <circle cx="700" cy="305" r="7" fill="rgba(255,255,255,0.3)"/>
+  <circle cx="725" cy="305" r="7" fill="rgba(255,255,255,0.25)"/>
+  <!-- URL bar -->
+  <rect x="750" y="294" width="300" height="22" rx="11" fill="rgba(255,255,255,0.15)"/>
+  <text x="900" y="310" text-anchor="middle" font-family="monospace" font-size="13" fill="rgba(255,255,255,0.7)">jatahku.com/auth/tg?token=•••</text>
+  <!-- Screen content - dashboard preview -->
+  <rect x="665" y="340" width="180" height="80" rx="8" fill="rgba(255,255,255,0.1)"/>
+  <rect x="665" y="350" width="100" height="10" rx="5" fill="rgba(255,255,255,0.3)"/>
+  <rect x="665" y="370" width="160" height="8" rx="4" fill="rgba(255,255,255,0.1)"/>
+  <rect x="665" y="370" width="110" height="8" rx="4" fill="rgba(255,255,255,0.35)"/>
+  <rect x="665" y="390" width="160" height="8" rx="4" fill="rgba(255,255,255,0.1)"/>
+  <rect x="665" y="390" width="85" height="8" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <!-- Checkmark - logged in -->
+  <circle cx="985" cy="400" r="35" fill="rgba(74,222,128,0.25)"/>
+  <polyline points="965,400 980,415 1005,385" fill="none" stroke="#4ADE80" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Timer 5 min badge -->
+  <rect x="680" y="468" width="160" height="34" rx="17" fill="rgba(255,255,255,0.12)"/>
+  <text x="760" y="490" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="rgba(255,255,255,0.7)">⏱ 5 menit · sekali pakai</text>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="225" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="172" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+
+  <text x="60" y="200" font-family="monospace" font-size="60" font-weight="700" fill="white">/webapp</text>
+  <text x="60" y="280" font-family="Georgia,serif" font-size="42" font-weight="700" fill="white">Login Sekali</text>
+  <text x="60" y="335" font-family="Georgia,serif" font-size="42" font-weight="700" fill="white">Klik dari</text>
+  <text x="60" y="390" font-family="Georgia,serif" font-size="42" font-weight="700" fill="white">Telegram</text>
+  <text x="60" y="445" font-family="system-ui,sans-serif" font-size="19" fill="rgba(255,255,255,0.6)">Tanpa ketik password</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

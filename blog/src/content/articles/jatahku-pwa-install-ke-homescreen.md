@@ -4,6 +4,7 @@ description: "Jatahku sekarang hadir sebagai Progressive Web App (PWA) — bisa 
 pubDate: 2026-03-30
 category: update-fitur
 author: Tim Jatahku
+cover: /covers/jatahku-pwa.svg
 featured: false
 ---
 
