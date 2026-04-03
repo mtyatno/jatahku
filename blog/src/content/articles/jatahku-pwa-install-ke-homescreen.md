@@ -95,4 +95,4 @@ Iya. PWA Jatahku menggunakan koneksi **HTTPS terenkripsi** untuk semua komunikas
 
 ---
 
-Install sekarang dan rasakan bedanya. Kalau ada pertanyaan atau masukan soal fitur ini, kirim ke [@JatahkuBot](https://t.me/JatahkuBot) — kami senang mendengarnya.
+Install sekarang dan rasakan bedanya. Kalau ada pertanyaan atau masukan soal fitur ini, kirim email ke [hi@jatahku.com](mailto:hi@jatahku.com) — kami senang mendengarnya.

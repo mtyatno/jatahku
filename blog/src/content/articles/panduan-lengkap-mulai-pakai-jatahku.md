@@ -151,4 +151,4 @@ Di akhir bulan (atau kapan saja), kamu bisa lihat laporan lengkap:
 
 ---
 
-Selamat mencoba! Kalau ada pertanyaan atau butuh bantuan, kirim pesan ke [@JatahkuBot](https://t.me/JatahkuBot) atau hubungi kami di [jatahku.com](https://jatahku.com).
+Selamat mencoba! Kalau ada pertanyaan atau butuh bantuan, hubungi kami di [hi@jatahku.com](mailto:hi@jatahku.com).
