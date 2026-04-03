@@ -83,6 +83,8 @@ export default function Admin() {
   const [tab, setTab] = useState('dashboard');
   const [notifTitle, setNotifTitle] = useState('');
   const [notifMsg, setNotifMsg] = useState('');
+  const [notifSendTg, setNotifSendTg] = useState(false);
+  const [notifTgText, setNotifTgText] = useState('');
   const [actionMsg, setActionMsg] = useState('');
   const [dmUserId, setDmUserId] = useState('');
   const [dmSubject, setDmSubject] = useState('');
@@ -154,12 +156,15 @@ export default function Admin() {
 
   const sendNotifAll = async () => {
     if (!notifTitle || !notifMsg) return;
-    const res = await api.request(`/admin/notify-all?title=${encodeURIComponent(notifTitle)}&message=${encodeURIComponent(notifMsg)}`, { method: 'POST' });
+    let url = `/admin/notify-all?title=${encodeURIComponent(notifTitle)}&message=${encodeURIComponent(notifMsg)}&send_telegram=${notifSendTg}`;
+    if (notifSendTg && notifTgText) url += `&telegram_text=${encodeURIComponent(notifTgText)}`;
+    const res = await api.request(url, { method: 'POST' });
     if (res.ok) {
       const d = await res.json();
-      setActionMsg(`✅ Notifikasi terkirim ke ${d.sent} user`);
-      setNotifTitle(''); setNotifMsg('');
-      setTimeout(() => setActionMsg(''), 3000);
+      const tgInfo = notifSendTg ? `, TG: ${d.tg_sent} terkirim${d.tg_failed ? `, ${d.tg_failed} gagal` : ''}` : '';
+      setActionMsg(`✅ Notifikasi terkirim ke ${d.sent} user${tgInfo}`);
+      setNotifTitle(''); setNotifMsg(''); setNotifSendTg(false); setNotifTgText('');
+      setTimeout(() => setActionMsg(''), 5000);
     }
   };
 
@@ -290,9 +295,20 @@ export default function Admin() {
             <h3 className="font-semibold text-sm mb-3">📢 Broadcast Notification</h3>
             <div className="space-y-2">
               <input className="input text-sm" placeholder="Judul notifikasi" value={notifTitle} onChange={e => setNotifTitle(e.target.value)} />
-              <textarea className="input text-sm" rows="3" placeholder="Isi pesan..." value={notifMsg} onChange={e => setNotifMsg(e.target.value)} />
+              <textarea className="input text-sm" rows="3" placeholder="Isi pesan (in-app notification)..." value={notifMsg} onChange={e => setNotifMsg(e.target.value)} />
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none pt-1">
+                <input type="checkbox" checked={notifSendTg} onChange={e => setNotifSendTg(e.target.checked)} className="rounded" />
+                Kirim juga ke Telegram (hanya user yang sudah connect)
+              </label>
+              {notifSendTg && (
+                <textarea className="input text-sm font-mono" rows="3"
+                  placeholder="Pesan Telegram (Markdown). Kosongkan = gunakan judul + isi di atas."
+                  value={notifTgText} onChange={e => setNotifTgText(e.target.value)} />
+              )}
               <button onClick={sendNotifAll} disabled={!notifTitle || !notifMsg}
-                className="btn-primary text-sm py-2 disabled:opacity-50">Kirim ke semua user</button>
+                className="btn-primary text-sm py-2 disabled:opacity-50">
+                {notifSendTg ? 'Kirim ke semua user + Telegram' : 'Kirim ke semua user'}
+              </button>
             </div>
           </div>
 

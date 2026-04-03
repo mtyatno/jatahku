@@ -258,13 +258,24 @@ async def upgrade_all(
 async def notify_all_users(
     title: str = Query(...),
     message: str = Query(...),
+    send_telegram: bool = Query(False),
+    telegram_text: str = Query(None),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Send notification to all users."""
+    """Send in-app notification to all users, optionally also via Telegram."""
     result = await db.execute(select(User))
     users = result.scalars().all()
     count = 0
+    tg_sent = 0
+    tg_failed = 0
+
+    bot = None
+    if send_telegram:
+        from telegram import Bot
+        from app.core.config import get_settings
+        bot = Bot(token=get_settings().TELEGRAM_BOT_TOKEN)
+
     for u in users:
         notif = Notification(
             user_id=u.id, type=NotificationType.system,
@@ -272,8 +283,17 @@ async def notify_all_users(
         )
         db.add(notif)
         count += 1
+
+        if send_telegram and bot and u.telegram_id:
+            try:
+                tg_msg = telegram_text or f"*{title}*\n\n{message}"
+                await bot.send_message(chat_id=int(u.telegram_id), text=tg_msg, parse_mode="Markdown")
+                tg_sent += 1
+            except Exception:
+                tg_failed += 1
+
     await db.commit()
-    return {"sent": count}
+    return {"sent": count, "tg_sent": tg_sent, "tg_failed": tg_failed}
 
 
 class DirectEmailRequest(BaseModel):
