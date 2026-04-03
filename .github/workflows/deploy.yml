@@ -67,4 +67,3 @@ jobs:
           source: "blog/dist/*"
           target: "/home/jatahku/web/blog.jatahku.com/public_html/"
           strip_components: 2
-          rm: true
