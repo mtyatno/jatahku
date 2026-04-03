@@ -2,7 +2,7 @@
 title: "Update Jatahku April 2026: Dashboard Lebih Informatif, Laporan Bulan Sebelumnya, dan Notifikasi Langsung"
 description: "Ringkasan fitur baru Jatahku: dashboard peringatan dipisah dari info positif, navigasi laporan PDF ke bulan sebelumnya, dan admin bisa kirim pesan langsung ke pengguna."
 pubDate: 2026-04-02
-category: update
+category: update-fitur
 author: Tim Jatahku
 featured: false
 ---

@@ -2,7 +2,7 @@
 title: "7 Tips Keuangan untuk Bujangan: Hidup Bebas Tanpa Finansial Berantakan"
 description: "Tips praktis mengatur keuangan untuk yang masih single — dari cara bagi gaji, hindari lifestyle inflation, sampai mulai investasi dengan modal kecil."
 pubDate: 2026-04-02
-category: tips
+category: tips-keuangan
 author: Tim Jatahku
 featured: false
 ---
