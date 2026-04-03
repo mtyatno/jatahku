@@ -305,7 +305,8 @@ async def _get_user_envelopes(tg_user, db):
     if not setup_ok:
         return user, None, None
     hid = await get_household_id(user, db)
-    envelopes = await get_envelopes_with_spent(hid, db, user.id)
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     return user, hid, envelopes
 
 
@@ -329,7 +330,11 @@ async def handle_sisa(update, context):
     total_spent = sum(e["spent"]     for e in envelopes)
     total_alloc = sum(e["allocated"] for e in envelopes)
     days_left, _ = _period_days(user)
-    now = date.today()
+
+    from app.core.period import get_period_info
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    info = get_period_info(payday_day)
+    period_label = f"{info['period_start'].strftime('%d %b')} – {info['period_end'].strftime('%d %b')}"
 
     # Top-level bar: % spent of total allocation
     pct_spent = int(float(total_spent / total_alloc * 100)) if total_alloc > 0 else 0
@@ -339,7 +344,7 @@ async def handle_sisa(update, context):
     # Daily safe limit based on remaining
     safe_daily = total_free / days_left if days_left > 0 else Decimal("0")
 
-    lines = [f"💰 <b>Sisa Amplop · {now.strftime('%d %b')}</b>"]
+    lines = [f"💰 <b>Sisa Amplop · {period_label}</b>"]
     lines.append(
         f"\nDana      <b>{format_currency(total_alloc)}</b>\n"
         f"Terpakai  <b>{format_currency(total_spent)}</b>  {budget_bar} {pct_spent}%\n"
