@@ -197,23 +197,26 @@ NABUNG_RE = re.compile(
 
 
 PENGELUARAN_HARI_LALU_RE = re.compile(
-    # "kemarin/kemaren" + spend keyword (anywhere in sentence)
-    r"\b(kemarin|kemaren)\b.{0,50}\b(spend|keluar|jajan|belanja|habis|abis"
-    r"|pengeluaran|ngeluarin|ngabisin|terpakai|berapa)\b|"
-    r"\b(spend|keluar|jajan|belanja|habis|abis"
-    r"|pengeluaran|ngeluarin|ngabisin|terpakai|berapa)\b.{0,50}\b(kemarin|kemaren)\b|"
+    # "kemarin/kemaren" + spend/query keyword (after)
+    r"\b(kemarin|kemaren)\b.{0,60}\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran|ngeluarin|ngabisin|terpakai|berapa|apa|rekap|daftar|list)\b|"
 
-    # "kemarin" alone as a query (short forms)
-    r"^(kemarin|kemaren)(\s+(berapa|dong|ya|yuk|nih|deh|aja))?$|"
+    # spend/query keyword (before) + "kemarin"
+    r"\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran\w{0,5}|ngeluarin|ngabisin|terpakai|berapa|rekap|daftar)\b"
+    r".{0,60}\b(kemarin|kemaren)\b|"
+
+    # "kemarin" alone or with filler words
+    r"^(kemarin|kemaren)(\s+(berapa|dong|ya|yuk|nih|deh|aja|saja|apa|gimana|recap))?$|"
 
     # "X hari lalu" — always a past-day query
     r"\b\d+\s+hari\s+(lalu|yang\s+lalu|ke\s+belakang)\b|"
 
-    # "tanggal X" + spend keyword
-    r"\b(tanggal|tgl)\s+\d{1,2}\b.{0,50}\b(spend|keluar|jajan|belanja|habis|abis"
-    r"|pengeluaran|berapa|ngeluarin|ngabisin|rekap)\b|"
-    r"\b(spend|keluar|jajan|belanja|habis|abis|pengeluaran|berapa|ngeluarin|rekap)\b"
-    r".{0,50}\b(tanggal|tgl)\s+\d{1,2}\b|"
+    # "tanggal X" + spend/query keyword
+    r"\b(tanggal|tgl)\s+\d{1,2}\b.{0,60}\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran|berapa|ngeluarin|ngabisin|rekap|apa)\b|"
+    r"\b(spend|keluar|jajan|belanja|habis|abis|pengeluaran\w{0,5}|berapa|ngeluarin|rekap)\b"
+    r".{0,60}\b(tanggal|tgl)\s+\d{1,2}\b|"
 
     # Day-of-week + lalu/kemarin
     r"\b(senin|selasa|rabu|kamis|jumat|sabtu|minggu)\s+(lalu|kemarin|kemaren)\b",
