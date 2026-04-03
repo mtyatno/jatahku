@@ -1034,6 +1034,7 @@ async def handle_message(update, context):
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
             db.add(txn)
+            await save_learned_keywords(user.id, description, envelope.id, db)
             await db.commit()
             envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
