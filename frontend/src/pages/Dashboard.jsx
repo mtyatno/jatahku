@@ -249,7 +249,7 @@ export default function Dashboard() {
 
   const totalAllocated = shared.reduce((s, e) => s + Number(e.allocated), 0);
   const totalSpent = shared.reduce((s, e) => s + Number(e.spent), 0);
-  const totalRemaining = shared.reduce((s, e) => s + Number(e.remaining), 0);
+  const totalRemaining = shared.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
 
   const periodLabel = prediction?.period_start
     ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
