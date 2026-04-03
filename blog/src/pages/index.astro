@@ -65,10 +65,12 @@ const categoryColor: Record<string, string> = {
             <div style="margin-bottom:48px">
               <p class="section-label">Pilihan Editor</p>
               <div class="featured-grid">
-                {featured.slice(0, 2).map(article => (
+                {featured.slice(0, 2).map((article, i) => (
                   <a href={`/insight/${article.id}`} class="card-featured">
                     {article.data.cover
-                      ? <img src={article.data.cover} alt={article.data.title} class="card-img" />
+                      ? <img src={article.data.cover} alt={article.data.title} class="card-img"
+                          loading={i === 0 ? 'eager' : 'lazy'}
+                          fetchpriority={i === 0 ? 'high' : 'auto'} />
                       : <div class="card-img-placeholder">📝</div>
                     }
                     <div class="card-body">
