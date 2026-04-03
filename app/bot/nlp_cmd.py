@@ -196,6 +196,31 @@ NABUNG_RE = re.compile(
 )
 
 
+PENGELUARAN_HARI_LALU_RE = re.compile(
+    # "kemarin/kemaren" + spend keyword (anywhere in sentence)
+    r"\b(kemarin|kemaren)\b.{0,50}\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran|ngeluarin|ngabisin|terpakai|berapa)\b|"
+    r"\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran|ngeluarin|ngabisin|terpakai|berapa)\b.{0,50}\b(kemarin|kemaren)\b|"
+
+    # "kemarin" alone as a query (short forms)
+    r"^(kemarin|kemaren)(\s+(berapa|dong|ya|yuk|nih|deh|aja))?$|"
+
+    # "X hari lalu" — always a past-day query
+    r"\b\d+\s+hari\s+(lalu|yang\s+lalu|ke\s+belakang)\b|"
+
+    # "tanggal X" + spend keyword
+    r"\b(tanggal|tgl)\s+\d{1,2}\b.{0,50}\b(spend|keluar|jajan|belanja|habis|abis"
+    r"|pengeluaran|berapa|ngeluarin|ngabisin|rekap)\b|"
+    r"\b(spend|keluar|jajan|belanja|habis|abis|pengeluaran|berapa|ngeluarin|rekap)\b"
+    r".{0,50}\b(tanggal|tgl)\s+\d{1,2}\b|"
+
+    # Day-of-week + lalu/kemarin
+    r"\b(senin|selasa|rabu|kamis|jumat|sabtu|minggu)\s+(lalu|kemarin|kemaren)\b",
+
+    re.IGNORECASE,
+)
+
 PENGELUARAN_HARI_INI_RE = re.compile(
     # ── Exact standalone triggers (no "hari ini" needed) ─────────────────────
     r"^(spend|expend|pengeluaran|jajan\s+hari\s+ini|keluar\s+hari\s+ini"
@@ -253,6 +278,7 @@ def is_comparison(text): return bool(COMPARISON_RE.search(text))
 def is_santai(text): return bool(SANTAI_RE.search(text))
 def is_emosi(text): return bool(EMOSI_RE.search(text))
 def is_koreksi(text): return bool(KOREKSI_RE.search(text))
+def is_pengeluaran_hari_lalu(text): return bool(PENGELUARAN_HARI_LALU_RE.search(text))
 def is_nabung(text): return bool(NABUNG_RE.search(text))
 def is_pengeluaran_hari_ini(text): return bool(PENGELUARAN_HARI_INI_RE.search(text))
 
@@ -297,6 +323,62 @@ def _period_days(user):
 
 def _fmt_date(d):
     return f"{d.day} {d.strftime('%B')}"
+
+
+_MONTH_MAP = {
+    'jan': 1, 'januari': 1, 'feb': 2, 'februari': 2,
+    'mar': 3, 'maret': 3, 'apr': 4, 'april': 4,
+    'mei': 5, 'jun': 6, 'juni': 6,
+    'jul': 7, 'juli': 7, 'agu': 8, 'agustus': 8,
+    'sep': 9, 'september': 9, 'okt': 10, 'oktober': 10,
+    'nov': 11, 'november': 11, 'des': 12, 'desember': 12,
+}
+_DOW_MAP = {
+    'senin': 0, 'selasa': 1, 'rabu': 2, 'kamis': 3,
+    'jumat': 4, 'jum\'at': 4, 'sabtu': 5, 'minggu': 6,
+}
+
+
+def parse_target_date(text):
+    """Extract a past target date from NLP text. Returns date or None."""
+    today = date.today()
+    t = text.lower().strip()
+
+    # "kemarin" / "kemaren"
+    if re.search(r'\b(kemarin|kemaren)\b', t) and not re.search(r'\bbulan\s+(kemarin|kemaren)\b', t):
+        return today - timedelta(days=1)
+
+    # "X hari lalu / yang lalu"
+    m = re.search(r'\b(\d+)\s+hari\s+(lalu|yang\s+lalu|ke\s+belakang)', t)
+    if m:
+        return today - timedelta(days=int(m.group(1)))
+
+    # "tanggal X [bulan]" or "tgl X [bulan]"
+    m = re.search(
+        r'\b(?:tanggal|tgl)\s+(\d{1,2})'
+        r'(?:\s+(' + '|'.join(_MONTH_MAP.keys()) + r'))?\b', t
+    )
+    if m:
+        day = int(m.group(1))
+        month = _MONTH_MAP.get(m.group(2), today.month) if m.group(2) else today.month
+        year = today.year
+        try:
+            target = date(year, month, day)
+            if target >= today:
+                target = date(year - 1, month, day)
+            return target
+        except ValueError:
+            return None
+
+    # "senin lalu", "rabu kemarin", etc.
+    for day_name, dow in _DOW_MAP.items():
+        if re.search(rf'\b{re.escape(day_name)}\b', t):
+            days_back = (today.weekday() - dow) % 7
+            if days_back == 0:
+                days_back = 7
+            return today - timedelta(days=days_back)
+
+    return None
 
 
 async def _get_user_envelopes(tg_user, db):
@@ -943,5 +1025,125 @@ async def handle_pengeluaran_hari_ini(update, context):
             em = env.emoji if env else "📁"
             desc = t.description or "—"
             lines.append(f"{em} {desc} — <b>{format_currency(t.amount)}</b>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def handle_pengeluaran_hari_lalu(update, context):
+    """Show spending for a specific past day (kemarin, X hari lalu, tanggal X, hari-nama lalu)."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import Transaction, Envelope
+    from sqlalchemy import select, func
+
+    tg_user = update.effective_user
+    text = update.message.text.strip()
+    target_date = parse_target_date(text)
+
+    if not target_date:
+        await update.message.reply_text(
+            "Hmm, tanggal yang dimaksud tidak terbaca 🤔\n"
+            "Coba: <b>kemarin</b>, <b>3 hari lalu</b>, <b>tanggal 1</b>, <b>senin lalu</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    today = date.today()
+    if target_date >= today:
+        await update.message.reply_text("Itu bukan hari yang lalu 😅 Coba tanggal sebelum hari ini.")
+        return
+
+    async with AsyncSessionLocal() as db:
+        user, hid, envelopes = await _get_user_envelopes(tg_user, db)
+        if envelopes is None:
+            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            return
+
+        # Transactions on target date
+        target_rows = await db.execute(
+            select(Transaction)
+            .where(
+                Transaction.user_id == user.id,
+                Transaction.transaction_date == target_date,
+                Transaction.is_deleted == False,
+                Transaction.amount > 0,
+            )
+            .order_by(Transaction.id.desc())
+        )
+        target_txns = target_rows.scalars().all()
+
+        # Today's total for comparison
+        today_total_r = await db.execute(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user.id,
+                Transaction.transaction_date == today,
+                Transaction.is_deleted == False,
+                Transaction.amount > 0,
+            )
+        )
+        today_total = Decimal(str(today_total_r.scalar()))
+
+    env_map = {e["envelope"].id: e["envelope"] for e in envelopes}
+    target_total = sum(t.amount for t in target_txns)
+
+    _DAY_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+    day_str = _DAY_ID[target_date.weekday()]
+    date_str = target_date.strftime("%d %b")
+    delta = (today - target_date).days
+    if delta == 1:
+        date_label = f"kemarin ({day_str}, {date_str})"
+    elif delta <= 6:
+        date_label = f"{delta} hari lalu ({day_str}, {date_str})"
+    else:
+        date_label = f"{day_str}, {date_str}"
+
+    lines = [f"🗓 <b>Pengeluaran {date_label}</b>"]
+
+    if target_total == 0:
+        lines.append("\n🌱 Tidak ada pengeluaran di hari itu.")
+    else:
+        lines.append(f"\n💸 Total: <b>{format_currency(target_total)}</b>")
+
+        # Per-envelope breakdown
+        by_env: dict = {}
+        for t in target_txns:
+            by_env[t.envelope_id] = by_env.get(t.envelope_id, Decimal("0")) + t.amount
+
+        lines.append("\n─────────────────")
+        for env_id, spent in sorted(by_env.items(), key=lambda x: -x[1]):
+            env = env_map.get(env_id)
+            emoji = env.emoji if env else "📁"
+            name = env.name if env else "—"
+            pct = int(float(spent / target_total) * 100) if target_total > 0 else 0
+            filled = round(pct / 100 * 6)
+            bar = "▓" * filled + "░" * (6 - filled)
+            lines.append(f"{emoji} {name}  {bar} <b>{format_currency(spent)}</b> ({pct}%)")
+
+        # Full transaction list
+        lines.append("\n─────────────────")
+        for t in target_txns:
+            env = env_map.get(t.envelope_id)
+            em = env.emoji if env else "📁"
+            desc = t.description or "—"
+            lines.append(f"{em} {desc} — <b>{format_currency(t.amount)}</b>")
+
+    # Comparison with today
+    lines.append("\n─────────────────")
+    today_day_str = _DAY_ID[today.weekday()]
+    if today_total == 0:
+        lines.append(f"📅 Hari ini ({today_day_str}): belum ada pengeluaran")
+    else:
+        diff = target_total - today_total
+        if diff > 0:
+            lines.append(
+                f"📅 Hari ini ({today_day_str}): <b>{format_currency(today_total)}</b>"
+                f" · {date_label.split('(')[0].strip()} lebih boros <b>{format_currency(diff)}</b> 🔴"
+            )
+        elif diff < 0:
+            lines.append(
+                f"📅 Hari ini ({today_day_str}): <b>{format_currency(today_total)}</b>"
+                f" · {date_label.split('(')[0].strip()} lebih hemat <b>{format_currency(abs(diff))}</b> 🟢"
+            )
+        else:
+            lines.append(f"📅 Hari ini ({today_day_str}): <b>{format_currency(today_total)}</b> · sama persis")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
