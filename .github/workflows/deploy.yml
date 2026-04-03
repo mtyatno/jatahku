@@ -5,8 +5,34 @@ on:
     branches: [main]
 
 jobs:
+  deploy-blog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: blog/package-lock.json
+
+      - name: Build blog
+        working-directory: blog
+        run: npm ci && npm run build
+
+      - name: SCP blog dist to /tmp on VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_KEY }}
+          source: "blog/dist/"
+          target: "/tmp/blog-dist-new/"
+          strip_components: 2
+
   deploy-backend:
     runs-on: ubuntu-latest
+    needs: deploy-blog
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
@@ -42,36 +68,3 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -H "Content-Type: application/json" \
             -d "{\"chat_id\": \"${CHAT_ID}\", \"text\": \"❌ Deploy Jatahku GAGAL\n\nCommit: ${{ github.sha }}\nPesan: ${{ github.event.head_commit.message }}\n\nDetail: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
-
-  deploy-blog:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: blog/package-lock.json
-
-      - name: Build blog
-        working-directory: blog
-        run: npm ci && npm run build
-
-      - name: SCP blog dist to /tmp on VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_KEY }}
-          source: "blog/dist/"
-          target: "/tmp/blog-dist-new/"
-          strip_components: 2
-
-      - name: Deploy blog via deploy.sh (already NOPASSWD)
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_KEY }}
-          script: sudo /opt/jatahku/deploy.sh
