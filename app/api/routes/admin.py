@@ -276,6 +276,41 @@ async def notify_all_users(
     return {"sent": count}
 
 
+class DirectEmailRequest(BaseModel):
+    user_id: UUID
+    subject: str
+    body: str
+    cta_text: str | None = None
+    cta_url: str | None = None
+
+
+@router.post("/send-email-user")
+async def send_email_to_user(
+    req: DirectEmailRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a tailored email to a specific user."""
+    result = await db.execute(select(User).where(User.id == req.user_id))
+    u = result.scalar_one_or_none()
+    if not u or not u.email:
+        raise HTTPException(404, "User tidak ditemukan atau tidak punya email")
+    if u.email.startswith("deleted_") or u.email.startswith("banned_"):
+        raise HTTPException(400, "User ini tidak bisa dikirim email")
+
+    from app.services.email_service import send_email, email_template
+    html = email_template(
+        req.subject,
+        f"<p>Hai {u.name},</p>" + req.body,
+        req.cta_text or None,
+        req.cta_url or None,
+    )
+    success = send_email(u.email, req.subject, html)
+    if not success:
+        raise HTTPException(500, "Gagal mengirim email")
+    return {"status": "sent", "to": u.email, "name": u.name}
+
+
 @router.post("/send-tg-reminders")
 async def send_tg_reminders(
     admin: User = Depends(require_admin),

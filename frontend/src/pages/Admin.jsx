@@ -84,6 +84,12 @@ export default function Admin() {
   const [notifTitle, setNotifTitle] = useState('');
   const [notifMsg, setNotifMsg] = useState('');
   const [actionMsg, setActionMsg] = useState('');
+  const [dmUserId, setDmUserId] = useState('');
+  const [dmSubject, setDmSubject] = useState('');
+  const [dmBody, setDmBody] = useState('');
+  const [dmCtaText, setDmCtaText] = useState('');
+  const [dmCtaUrl, setDmCtaUrl] = useState('');
+  const [dmSending, setDmSending] = useState(false);
 
   const loadDash = async () => {
     const res = await api.request('/admin/dashboard');
@@ -285,6 +291,47 @@ export default function Admin() {
               <textarea className="input text-sm" rows="3" placeholder="Isi pesan..." value={notifMsg} onChange={e => setNotifMsg(e.target.value)} />
               <button onClick={sendNotifAll} disabled={!notifTitle || !notifMsg}
                 className="btn-primary text-sm py-2 disabled:opacity-50">Kirim ke semua user</button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 className="font-semibold text-sm mb-3">✉️ Direct Message ke User</h3>
+            <div className="space-y-2">
+              <select className="input text-sm" value={dmUserId} onChange={e => setDmUserId(e.target.value)}>
+                <option value="">Pilih user penerima...</option>
+                {users.filter(u => u.email && !u.email.startsWith('deleted_') && !u.email.startsWith('banned_')).map(u => (
+                  <option key={u.id} value={u.id}>{u.name} — {u.email}</option>
+                ))}
+              </select>
+              <input className="input text-sm" placeholder="Subject email" value={dmSubject} onChange={e => setDmSubject(e.target.value)} />
+              <textarea className="input text-sm font-mono" rows="5" placeholder="Isi pesan (HTML diperbolehkan, misal: <p>teks</p><br><b>bold</b>)" value={dmBody} onChange={e => setDmBody(e.target.value)} />
+              <div className="grid grid-cols-2 gap-2">
+                <input className="input text-sm" placeholder="Teks tombol (opsional)" value={dmCtaText} onChange={e => setDmCtaText(e.target.value)} />
+                <input className="input text-sm" placeholder="URL tombol (opsional)" value={dmCtaUrl} onChange={e => setDmCtaUrl(e.target.value)} />
+              </div>
+              <button disabled={!dmUserId || !dmSubject || !dmBody || dmSending}
+                onClick={async () => {
+                  if (!confirm(`Kirim email ke user ini?`)) return;
+                  setDmSending(true);
+                  const res = await api.request('/admin/send-email-user', {
+                    method: 'POST',
+                    body: JSON.stringify({ user_id: dmUserId, subject: dmSubject, body: dmBody, cta_text: dmCtaText || null, cta_url: dmCtaUrl || null }),
+                  });
+                  setDmSending(false);
+                  if (res.ok) {
+                    const d = await res.json();
+                    setActionMsg(`✅ Email terkirim ke ${d.name} (${d.to})`);
+                    setDmUserId(''); setDmSubject(''); setDmBody(''); setDmCtaText(''); setDmCtaUrl('');
+                    setTimeout(() => setActionMsg(''), 5000);
+                  } else {
+                    const d = await res.json();
+                    setActionMsg(`❌ Gagal: ${d.detail}`);
+                    setTimeout(() => setActionMsg(''), 5000);
+                  }
+                }}
+                className="btn-primary text-sm py-2 disabled:opacity-50">
+                {dmSending ? 'Mengirim...' : 'Kirim Email'}
+              </button>
             </div>
           </div>
 
