@@ -279,6 +279,16 @@ def is_santai(text): return bool(SANTAI_RE.search(text))
 def is_emosi(text): return bool(EMOSI_RE.search(text))
 def is_koreksi(text): return bool(KOREKSI_RE.search(text))
 def is_pengeluaran_hari_lalu(text): return bool(PENGELUARAN_HARI_LALU_RE.search(text))
+
+_DATE_NUM_RE = re.compile(
+    r'\b\d+\s+hari\b'               # "3 hari lalu" → strip "3"
+    r'|\b(?:tanggal|tgl)\s+\d{1,2}\b',  # "tanggal 28" → strip angka
+    re.IGNORECASE,
+)
+
+def strip_date_numbers(text: str) -> str:
+    """Remove numbers that are part of date expressions so parse_amount won't catch them."""
+    return _DATE_NUM_RE.sub('', text)
 def is_nabung(text): return bool(NABUNG_RE.search(text))
 def is_pengeluaran_hari_ini(text): return bool(PENGELUARAN_HARI_INI_RE.search(text))
 

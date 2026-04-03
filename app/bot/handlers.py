@@ -801,7 +801,7 @@ async def handle_message(update, context):
     from app.bot.nlp_cmd import (
         is_sisa, is_harian, is_proyeksi, is_comparison,
         is_santai, is_emosi, is_koreksi, is_nabung, parse_multi_expense,
-        is_pengeluaran_hari_ini, is_pengeluaran_hari_lalu,
+        is_pengeluaran_hari_ini, is_pengeluaran_hari_lalu, strip_date_numbers,
         handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
         handle_santai, handle_emosi, handle_koreksi, handle_nabung, handle_multi_expense,
         handle_pengeluaran_hari_ini, handle_pengeluaran_hari_lalu,
@@ -819,7 +819,7 @@ async def handle_message(update, context):
     if is_pengeluaran_hari_ini(text) and not parse_amount(text):
         await handle_pengeluaran_hari_ini(update, context)
         return
-    if is_pengeluaran_hari_lalu(text) and not parse_amount(text):
+    if is_pengeluaran_hari_lalu(text) and not parse_amount(strip_date_numbers(text)):
         await handle_pengeluaran_hari_lalu(update, context)
         return
     if is_harian(text) and not parse_amount(text):
