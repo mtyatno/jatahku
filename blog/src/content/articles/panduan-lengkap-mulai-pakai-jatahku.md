@@ -1,6 +1,6 @@
 ---
 title: "Panduan Lengkap Mulai Pakai Jatahku: Dari Daftar sampai Catat Pengeluaran Pertama"
-description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, setup amplop, input gaji, catat pengeluaran via Telegram, sampai baca laporan bulanan."
+description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, onboarding wizard, hubungkan Telegram, catat pengeluaran dengan NLP, sampai baca laporan bulanan."
 pubDate: 2026-04-02
 category: tutorial
 author: Tim Jatahku
@@ -15,7 +15,7 @@ Kamu baru dengar soal Jatahku dan penasaran cara pakainya? Artikel ini akan memb
 
 Jatahku adalah aplikasi *envelope budgeting* berbasis web yang terintegrasi dengan Telegram Bot. Idenya sederhana: **setiap rupiah yang masuk langsung dibagi ke amplop-amplop pengeluaran** sebelum kamu mulai belanja.
 
-Bedanya dengan aplikasi keuangan lain: pencatatan pengeluaran bisa dilakukan lewat chat Telegram — semudah kirim pesan ke teman.
+Bedanya dengan aplikasi keuangan lain: pencatatan pengeluaran bisa dilakukan lewat chat Telegram — semudah kirim pesan ke teman. Tidak perlu buka app, tidak perlu klik banyak tombol.
 
 ---
 
@@ -26,66 +26,42 @@ Bedanya dengan aplikasi keuangan lain: pencatatan pengeluaran bisa dilakukan lew
 3. Isi nama, email, dan password
 4. Akun langsung aktif — tidak perlu verifikasi email
 
-Setelah login, kamu akan masuk ke halaman **Dashboard**.
+Setelah login pertama kali, **Onboarding Wizard** akan otomatis muncul untuk memandu setup awal kamu.
 
 ---
 
-## Langkah 2: Buat Amplop Pertama
+## Langkah 2: Onboarding Wizard (3 Langkah)
 
-Amplop adalah kategori pengeluaranmu. Contoh: Makan, Transportasi, Tagihan, Jajan, Darurat.
+Saat pertama login, Jatahku menjalankan wizard setup singkat 3 langkah. Ini cara tercepat untuk langsung siap pakai.
 
-1. Klik menu **Amplop** di sidebar
-2. Klik tombol **+ Amplop Baru**
-3. Beri nama amplop (contoh: "Makan")
-4. Klik **Simpan**
+### Step 1 — Income & Tanggal Gajian
 
-Ulangi untuk setiap kategori pengeluaran utama kamu. Untuk permulaan, 4–6 amplop sudah cukup. Jangan terlalu banyak — lebih mudah konsisten dengan amplop yang sedikit tapi relevan.
+Masukkan total pemasukan bulanan kamu (gaji, freelance, dll) dan tanggal gajian.
 
-**Contoh amplop untuk mulai:**
-- Makan & Minum
-- Transportasi
-- Tagihan (listrik, internet, dll)
-- Jajan & Hiburan
-- Tabungan / Dana Darurat
+Tanggal gajian penting karena Jatahku menghitung **periode budget berdasarkan hari gajianmu**, bukan bulan kalender. Misalnya jika gajian tanggal 25, periode budgetmu adalah 25 Maret – 24 April, bukan 1–31 April.
 
----
+### Step 2 — Pilih Template Amplop
 
-## Langkah 3: Input Gaji / Pendapatan
+Pilih salah satu dari empat template yang sudah disiapkan:
 
-Sebelum bisa "mengisi" amplop, kamu perlu mencatat berapa uang yang masuk dulu.
+| Template | Cocok untuk | Amplop bawaan |
+|----------|-------------|---------------|
+| 💼 Karyawan | Pekerja kantoran | Makan 20%, Transport 7%, Hiburan 5%, Tagihan 8% |
+| 🎓 Mahasiswa | Pelajar/mahasiswa | Makan 30%, Transport 10%, Hiburan 10%, Kuliah 15% |
+| 👨‍👩‍👧 Keluarga | Rumah tangga | Makan 25%, Transport 10%, Rumah 20%, Tagihan 8%, Hiburan 5% |
+| ✏️ Custom | Semua profil | Buat amplop sendiri dari nol |
 
-1. Buka halaman **Dashboard**
-2. Klik tombol **+ Catat Pemasukan**
-3. Isi nominal gaji atau pendapatan bulan ini
-4. Klik **Simpan**
+### Step 3 — Sesuaikan Alokasi
 
-Sekarang kamu punya "uang" yang siap dibagi ke amplop-amplop.
+Setelah pilih template, kamu bisa atur ulang alokasi tiap amplop — baik dalam persen maupun nominal Rp. Bar progress akan menunjukkan berapa yang sudah teralokasi dari total income.
+
+Sisa income yang belum dialokasikan otomatis masuk sebagai **Tabungan**.
+
+Klik **Mulai Budgeting** — semua amplop dan alokasi langsung tersimpan sekaligus.
 
 ---
 
-## Langkah 4: Alokasikan ke Amplop
-
-Ini inti dari envelope budgeting: **bagi semua pemasukan ke amplop** sebelum mulai belanja.
-
-1. Buka halaman **Alokasi**
-2. Kamu akan lihat daftar amplop dengan kolom input nominal
-3. Isi berapa yang kamu anggarkan untuk tiap amplop bulan ini
-4. Pastikan total alokasi = total pemasukan (atau lebih kecil — sisanya bisa ditabung)
-5. Klik **Simpan Alokasi**
-
-Contoh alokasi gaji 5 juta:
-| Amplop | Alokasi |
-|--------|---------|
-| Makan | Rp 1.500.000 |
-| Transportasi | Rp 500.000 |
-| Tagihan | Rp 800.000 |
-| Jajan & Hiburan | Rp 400.000 |
-| Tabungan | Rp 800.000 |
-| **Total** | **Rp 4.000.000** |
-
----
-
-## Langkah 5: Hubungkan Telegram Bot
+## Langkah 3: Hubungkan Telegram Bot
 
 Ini langkah yang akan membuat pencatatan pengeluaran jadi sangat mudah.
 
@@ -98,32 +74,74 @@ Bot sudah mengenal kamu. Sekarang kamu bisa catat pengeluaran hanya dengan kirim
 
 ---
 
-## Langkah 6: Catat Pengeluaran Pertama
+## Langkah 4: Catat Pengeluaran dengan NLP
 
-Buka Telegram, chat ke [@JatahkuBot](https://t.me/JatahkuBot), dan ketik:
+Ini fitur utama Jatahku. Kamu **tidak perlu pilih menu atau klik tombol** — cukup ketik kalimat natural seperti chat biasa, dan bot akan mengerti.
+
+### Format Dasar
+
+Ketik deskripsi pengeluaran diikuti nominal:
 
 ```
 kopi 18k
+makan siang 35000
+grab ke kantor 22rb
+bayar listrik 250.000
+nonton bioskop 75.000
 ```
 
-Bot akan membalas dengan konfirmasi: pengeluaran Rp 18.000 sudah masuk ke amplop yang paling relevan (misalnya "Makan & Minum" atau "Jajan").
+### Format Angka yang Didukung
 
-Format lain yang bisa kamu pakai:
-- `makan siang 35000`
-- `grab ke kantor 22k`
-- `bayar listrik 250.000`
-- `nonton bioskop 75rb`
+Bot memahami semua format angka Indonesia:
 
-Bot cukup pintar untuk memahami berbagai format angka dan mencocokkan dengan amplopmu.
+| Yang kamu ketik | Dibaca sebagai |
+|-----------------|----------------|
+| `18k` | Rp 18.000 |
+| `18rb` | Rp 18.000 |
+| `18ribu` | Rp 18.000 |
+| `18000` | Rp 18.000 |
+| `18.000` | Rp 18.000 |
+| `250k` | Rp 250.000 |
+| `1.5jt` | Rp 1.500.000 |
+| `rp17.000` | Rp 17.000 |
+
+### Deteksi Amplop Otomatis
+
+Bot belajar mengenali kata-kata yang kamu sering pakai dan mencocokkannya ke amplop yang tepat. Semakin sering dipakai, semakin akurat deteksinya.
+
+- `kopi`, `makan siang`, `warteg` → otomatis ke amplop Makan
+- `grab`, `gojek`, `bensin` → otomatis ke amplop Transport
+- `netflix`, `spotify` → otomatis ke amplop Hiburan atau Tagihan
+
+Jika bot belum yakin, ia akan menampilkan tombol pilihan amplop. Pilihanmu akan **diingat** untuk transaksi berikutnya.
+
+### Cek Saldo Amplop
+
+Ketik `/status` untuk lihat semua amplop beserta sisa saldo:
+
+```
+/status
+```
+
+Bot akan membalas dengan daftar lengkap amplop, berapa yang sudah dipakai, dan berapa sisa yang tersedia.
+
+### Perintah Bot Lainnya
+
+| Perintah | Fungsi |
+|----------|--------|
+| `/status` | Cek saldo semua amplop |
+| `/sisa` | Ringkasan sisa budget |
+| `/help` | Daftar semua perintah |
 
 ---
 
-## Pantau Saldo Amplop
+## Pantau Budget di Webapp
 
-Setelah beberapa pengeluaran masuk, kamu bisa cek saldo amplop kapan saja:
+Selain Telegram, kamu juga bisa pantau budget lewat webapp di [jatahku.com](https://jatahku.com):
 
-- **Lewat Telegram:** ketik `/status` — bot akan tampilkan semua amplop beserta sisa saldo
-- **Lewat webapp:** buka halaman Amplop — ada progress bar visual untuk tiap amplop
+- **Dashboard** — ringkasan budget, peringatan amplop hampir habis, dan kabar baik jika hemat
+- **Halaman Amplop** — progress bar visual tiap amplop
+- **Analytics** — grafik tren pengeluaran bulanan
 
 ---
 
