@@ -112,7 +112,7 @@ async def list_transactions(
     envelope_id: UUID | None = Query(None),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
-    limit: int = Query(20, le=100),
+    limit: int = Query(20, le=500),
     offset: int = Query(0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
