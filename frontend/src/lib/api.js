@@ -125,16 +125,21 @@ class ApiClient {
   }
 
   // Envelopes
-  async getEnvelopeSummary() {
+  async getEnvelopeSummary(periodStart = null, periodEnd = null) {
+    const params = new URLSearchParams();
+    if (periodStart) params.set('period_start', periodStart);
+    if (periodEnd) params.set('period_end', periodEnd);
+    const qs = params.toString() ? `?${params}` : '';
+    const cacheKey = `envelope_summary${periodStart ? `_${periodStart}` : ''}`;
     try {
-      const res = await this.request("/envelopes/summary");
+      const res = await this.request(`/envelopes/summary${qs}`);
       if (res.ok) {
         const data = await res.json();
-        saveCache('envelope_summary', data);
+        if (!periodStart) saveCache(cacheKey, data); // only cache current period
         return data;
       }
     } catch {}
-    return loadCache('envelope_summary') ?? [];
+    return loadCache(cacheKey) ?? [];
   }
 
   async getEnvelopes() {
@@ -170,16 +175,42 @@ class ApiClient {
     return res.ok;
   }
 
+  // Analytics
+  async getPeriods(count = 12) {
+    const res = await this.request(`/analytics/periods?count=${count}`);
+    return res.ok ? res.json() : [];
+  }
+
+  async getDailySpending(periodStart = null, periodEnd = null) {
+    const params = new URLSearchParams();
+    if (periodStart) params.set('period_start', periodStart);
+    if (periodEnd) params.set('period_end', periodEnd);
+    const qs = params.toString() ? `?${params}` : '';
+    const res = await this.request(`/analytics/daily-spending${qs}`);
+    return res.ok ? res.json() : [];
+  }
+
+  async getEnvelopeBreakdown(periodStart = null, periodEnd = null) {
+    const params = new URLSearchParams();
+    if (periodStart) params.set('period_start', periodStart);
+    if (periodEnd) params.set('period_end', periodEnd);
+    const qs = params.toString() ? `?${params}` : '';
+    const res = await this.request(`/analytics/envelope-breakdown${qs}`);
+    return res.ok ? res.json() : [];
+  }
+
   // Transactions
-  async getTransactions(envelopeId = null, limit = 50) {
-    const cacheKey = `transactions_${envelopeId || 'all'}_${limit}`;
+  async getTransactions(envelopeId = null, limit = 50, startDate = null, endDate = null) {
     const params = new URLSearchParams({ limit });
     if (envelopeId) params.set('envelope_id', envelopeId);
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+    const cacheKey = `transactions_${envelopeId || 'all'}_${startDate || 'cur'}`;
     try {
       const res = await this.request(`/transactions/?${params}`);
       if (res.ok) {
         const data = await res.json();
-        saveCache(cacheKey, data);
+        if (!startDate) saveCache(cacheKey, data); // only cache current period
         return data;
       }
     } catch {}

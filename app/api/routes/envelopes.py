@@ -1,8 +1,8 @@
 from decimal import Decimal
 from uuid import UUID
-from datetime import date
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from pydantic import BaseModel
@@ -92,6 +92,8 @@ async def list_envelopes(
 
 @router.get("/summary", response_model=list[EnvelopeSummary])
 async def envelope_summary(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -112,8 +114,12 @@ async def envelope_summary(
 
     now = date.today()
     payday_day = getattr(user, 'payday_day', None) or 1
-    period_start, period_end = get_budget_period(payday_day, now)
-    prev_start, _ = get_previous_period(payday_day, now)
+    if period_start and period_end:
+        # Historical period: rollover comes from the period before period_start
+        prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))
+    else:
+        period_start, period_end = get_budget_period(payday_day, now)
+        prev_start, _ = get_previous_period(payday_day, now)
     summaries = []
 
     for env in envelopes:

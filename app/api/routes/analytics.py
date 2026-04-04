@@ -25,15 +25,37 @@ def _payday(user) -> int:
     return getattr(user, 'payday_day', 1) or 1
 
 
+@router.get("/periods")
+async def available_periods(
+    count: int = Query(12, ge=1, le=24),
+    user: User = Depends(get_current_user),
+):
+    """Return list of last N budget periods for period selector UI."""
+    from app.core.period import get_last_n_periods
+    periods = get_last_n_periods(_payday(user), count)
+    result = []
+    for p_start, p_end in periods:
+        label = f"{p_start.strftime('%d %b')} – {p_end.strftime('%d %b %Y')}"
+        result.append({
+            "period_start": str(p_start),
+            "period_end": str(p_end),
+            "label": label,
+        })
+    return result
+
+
 @router.get("/daily-spending")
 async def daily_spending(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """Daily spending for current budget period — for bar/line chart."""
+    """Daily spending for a budget period — for bar/line chart."""
     hid = await _get_hid(user, db)
     if not hid:
         return []
-    period_start, period_end = get_budget_period(_payday(user))
+    if not period_start or not period_end:
+        period_start, period_end = get_budget_period(_payday(user))
 
     result = await db.execute(
         select(
@@ -56,13 +78,16 @@ async def daily_spending(
 
 @router.get("/envelope-breakdown")
 async def envelope_breakdown(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """Spending breakdown by envelope for current period — for pie chart."""
+    """Spending breakdown by envelope for a budget period — for pie chart."""
     hid = await _get_hid(user, db)
     if not hid:
         return []
-    period_start, period_end = get_budget_period(_payday(user))
+    if not period_start or not period_end:
+        period_start, period_end = get_budget_period(_payday(user))
 
     result = await db.execute(
         select(
@@ -125,6 +150,8 @@ async def monthly_trend(
 
 @router.get("/prediction")
 async def spending_prediction(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
     """Will budget last until next payday? Prediction based on daily average."""
@@ -133,12 +160,18 @@ async def spending_prediction(
         return {}
 
     payday_day = _payday(user)
-    info = get_period_info(payday_day)
-    period_start = info["period_start"]
-    period_end = info["period_end"]
-    days_passed = info["days_used"]
-    days_left = info["days_remaining"]
-    days_total = info["days_total"]
+    today = date.today()
+    if period_start and period_end:
+        days_total = (period_end - period_start).days + 1
+        days_passed = min(max((today - period_start).days + 1, 0), days_total)
+        days_left = max((period_end - today).days, 0)
+    else:
+        info = get_period_info(payday_day)
+        period_start = info["period_start"]
+        period_end = info["period_end"]
+        days_passed = info["days_used"]
+        days_left = info["days_remaining"]
+        days_total = info["days_total"]
 
     alloc_r = await db.execute(
         select(func.coalesce(func.sum(Allocation.amount), 0))

@@ -110,6 +110,8 @@ async def create_transaction(
 @router.get("/", response_model=list[TransactionResponse])
 async def list_transactions(
     envelope_id: UUID | None = Query(None),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
     user: User = Depends(get_current_user),
@@ -127,6 +129,10 @@ async def list_transactions(
     )
     if envelope_id:
         query = query.where(Transaction.envelope_id == envelope_id)
+    if start_date:
+        query = query.where(Transaction.transaction_date >= start_date)
+    if end_date:
+        query = query.where(Transaction.transaction_date <= end_date)
 
     query = query.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
     query = query.limit(limit).offset(offset)

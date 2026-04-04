@@ -6,7 +6,7 @@ import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import {
-  ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
 } from 'recharts';
 
@@ -26,8 +26,10 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-function buildDailyData(raw, prediction) {
-  if (!prediction?.period_start) {
+function buildDailyData(raw, prediction, periodDates = null) {
+  const pStart = prediction?.period_start || periodDates?.period_start;
+  const pEnd = prediction?.period_end || periodDates?.period_end;
+  if (!pStart) {
     return raw.map(x => ({ date: new Date(x.date).getDate() + '', total: x.total, isFuture: false }));
   }
   const spendMap = {};
@@ -35,8 +37,8 @@ function buildDailyData(raw, prediction) {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const start = new Date(prediction.period_start);
-  const end = new Date(prediction.period_end);
+  const start = new Date(pStart);
+  const end = new Date(pEnd);
   const result = [];
   const cur = new Date(start);
   while (cur <= end) {
@@ -150,6 +152,53 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
   );
 }
 
+function MonthlyComparison({ data }) {
+  if (!data || data.length === 0) return null;
+  const chartData = data.map(d => {
+    const parts = d.month.split('–');
+    const shortLabel = parts[1]?.trim().slice(0, 6) || parts[0]?.trim().slice(0, 6) || d.month;
+    return {
+      name: shortLabel,
+      fullLabel: d.month,
+      spent: d.spent,
+      allocated: d.allocated,
+      pct: d.allocated > 0 ? Math.round((d.spent / d.allocated) * 100) : 0,
+    };
+  });
+
+  return (
+    <div className="card">
+      <h3 className="font-semibold text-sm mb-3">Perbandingan periode</h3>
+      <ResponsiveContainer width="100%" height={140}>
+        <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
+          <XAxis dataKey="name" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} width={42}
+            tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(0)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
+          <Tooltip
+            formatter={(v, n) => [formatCurrency(v), n === 'spent' ? 'Terpakai' : 'Dialokasi']}
+            labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel || ''}
+          />
+          <Bar dataKey="allocated" fill="#D1FAE5" radius={[2, 2, 0, 0]} barSize={12} />
+          <Bar dataKey="spent" fill="#0F6E56" radius={[2, 2, 0, 0]} barSize={12} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="mt-2 space-y-1">
+        {chartData.map((d, i) => (
+          <div key={i} className="flex items-center justify-between text-xs">
+            <span className="text-gray-500 truncate mr-2">{d.fullLabel}</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className="text-gray-400">{formatShort(d.spent)} / {formatShort(d.allocated)}</span>
+              <span className={`font-semibold w-9 text-right ${d.pct >= 90 ? 'text-danger-400' : d.pct >= 70 ? 'text-amber-500' : 'text-brand-600'}`}>
+                {d.pct}%
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EnvelopeRow({ env }) {
   const allocated = Number(env.allocated);
   const spent = Number(env.spent);
@@ -218,31 +267,62 @@ export default function Dashboard() {
   const [envelopes, setEnvelopes] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [periodLoading, setPeriodLoading] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [daily, setDaily] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
   const [prediction, setPrediction] = useState(null);
+  const [periods, setPeriods] = useState([]);
+  const [periodIdx, setPeriodIdx] = useState(null);
+  const [monthlyTrend, setMonthlyTrend] = useState([]);
 
+  // Load period list and monthly trend once on mount
   useEffect(() => {
     Promise.all([
-      api.getEnvelopeSummary(),
-      api.getTransactions(null, 10),
-      api.request('/analytics/daily-spending').then(r => r.ok ? r.json() : []),
-      api.request('/analytics/envelope-breakdown').then(r => r.ok ? r.json() : []),
-      api.request('/analytics/prediction').then(r => r.ok ? r.json() : null),
-    ]).then(([env, txn, d, b, p]) => {
+      api.getPeriods(12),
+      api.request('/analytics/monthly-trend').then(r => r.ok ? r.json() : []),
+    ]).then(([p, trend]) => {
+      setPeriods(p);
+      setMonthlyTrend(trend);
+      setPeriodIdx(p.length - 1); // default = current period
+    });
+  }, []);
+
+  // Reload data whenever selected period changes
+  useEffect(() => {
+    if (periods.length === 0 || periodIdx === null) return;
+    const isCurrentPeriod = periodIdx === periods.length - 1;
+    const period = periods[periodIdx];
+    // Pass null for current period so backend uses its own default (handles edge cases)
+    const ps = isCurrentPeriod ? null : period.period_start;
+    const pe = isCurrentPeriod ? null : period.period_end;
+
+    setPeriodLoading(true);
+    Promise.all([
+      api.getEnvelopeSummary(ps, pe),
+      api.getTransactions(null, 10, period.period_start, period.period_end),
+      api.getDailySpending(ps, pe),
+      api.getEnvelopeBreakdown(ps, pe),
+      isCurrentPeriod
+        ? api.request('/analytics/prediction').then(r => r.ok ? r.json() : null)
+        : Promise.resolve(null),
+    ]).then(([env, txn, d, b, pred]) => {
       setEnvelopes(env);
       setTransactions(txn);
       setDaily(d);
       setBreakdown(b.filter(x => x.spent > 0));
-      setPrediction(p);
+      setPrediction(pred);
+      setPeriodLoading(false);
       setLoading(false);
-      if (env.length === 0) setShowOnboarding(true);
+      if (env.length === 0 && isCurrentPeriod) setShowOnboarding(true);
     });
-  }, []);
+  }, [periodIdx, periods]);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (showOnboarding) return <Onboarding onDone={() => { setShowOnboarding(false); window.location.reload(); }} />;
+
+  const isCurrentPeriod = periodIdx === periods.length - 1;
+  const selectedPeriod = periods[periodIdx];
 
   const shared = sortEnvelopes(envelopes.filter(e => !e.is_personal));
   const personal = sortEnvelopes(envelopes.filter(e => e.is_personal));
@@ -251,12 +331,13 @@ export default function Dashboard() {
   const totalSpent = shared.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = shared.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
 
-  const periodLabel = prediction?.period_start
-    ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
-    : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+  const periodLabel = selectedPeriod?.label
+    || (prediction?.period_start
+      ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
+      : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' }));
   const daysLeft = prediction?.days_left ?? 0;
 
-  const chartData = buildDailyData(daily, prediction);
+  const chartData = buildDailyData(daily, prediction, selectedPeriod);
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
 
@@ -264,10 +345,29 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
-        <p className="text-sm text-gray-500">{periodLabel} · {daysLeft} hari lagi</p>
+        {/* Period Navigator */}
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            onClick={() => setPeriodIdx(i => i - 1)}
+            disabled={periodIdx === 0}
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm leading-none"
+            aria-label="Periode sebelumnya"
+          >←</button>
+          <span className="text-sm text-gray-500">{periodLabel}{isCurrentPeriod && daysLeft > 0 ? ` · ${daysLeft} hari lagi` : ''}</span>
+          {isCurrentPeriod && (
+            <span className="text-xs px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded font-medium">Sekarang</span>
+          )}
+          <button
+            onClick={() => setPeriodIdx(i => i + 1)}
+            disabled={isCurrentPeriod}
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm leading-none"
+            aria-label="Periode berikutnya"
+          >→</button>
+          {periodLoading && <span className="text-xs text-gray-400 ml-1">...</span>}
+        </div>
       </div>
 
-      <ExportButtons />
+      {isCurrentPeriod && <ExportButtons />}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -277,8 +377,13 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
-      {/* Decision Box */}
-      <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
+      {/* Decision Box — only for current period */}
+      {isCurrentPeriod && (
+        <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
+      )}
+
+      {/* Monthly Comparison — always visible */}
+      <MonthlyComparison data={monthlyTrend} />
 
       {/* Charts */}
       {(chartData.length > 0 || breakdown.length > 0) && (
@@ -379,10 +484,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Recent transactions */}
+      {/* Transactions for selected period */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-display font-bold text-lg">Transaksi terbaru</h2>
+          <h2 className="font-display font-bold text-lg">Transaksi{isCurrentPeriod ? ' terbaru' : ''}</h2>
           <Link to="/transactions" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
         </div>
         {transactions.length === 0 ? (

@@ -16,8 +16,14 @@ export default function Transactions() {
   const [addError, setAddError] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   const [showMoreFilter, setShowMoreFilter] = useState(false);
+  const [periods, setPeriods] = useState([]);
+  const [periodIdx, setPeriodIdx] = useState(null);
 
   useEffect(() => {
+    api.getPeriods(12).then(p => {
+      setPeriods(p);
+      setPeriodIdx(p.length - 1);
+    });
     getPendingCount().then(setPendingCount);
     const syncOnOnline = async () => {
       const results = await flushQueue((item) =>
@@ -29,11 +35,15 @@ export default function Transactions() {
     return () => window.removeEventListener('online', syncOnOnline);
   }, []);
 
+  const selectedPeriod = periodIdx !== null ? periods[periodIdx] : null;
+  const isCurrentPeriod = periodIdx === periods.length - 1;
+
   const load = () => {
+    if (!selectedPeriod) return;
     const isSource = filter === 'telegram' || filter === 'webapp';
     const isEnvelope = filter !== 'all' && !isSource;
     Promise.all([
-      api.getTransactions(isEnvelope ? filter : null, 100),
+      api.getTransactions(isEnvelope ? filter : null, 200, selectedPeriod.period_start, selectedPeriod.period_end),
       api.getEnvelopes(),
     ]).then(([txn, env]) => {
       let filtered = txn;
@@ -43,7 +53,7 @@ export default function Transactions() {
       setLoading(false);
     });
   };
-  useEffect(load, [filter]);
+  useEffect(load, [filter, periodIdx, periods]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -89,6 +99,20 @@ export default function Transactions() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-display font-bold">Transaksi</h1>
+          <div className="flex items-center gap-1 mt-0.5">
+            <button
+              onClick={() => setPeriodIdx(i => i - 1)}
+              disabled={periodIdx === 0}
+              className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm"
+            >←</button>
+            <span className="text-sm text-gray-500">{selectedPeriod?.label || '...'}</span>
+            {isCurrentPeriod && <span className="text-xs px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded font-medium">Sekarang</span>}
+            <button
+              onClick={() => setPeriodIdx(i => i + 1)}
+              disabled={isCurrentPeriod}
+              className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm"
+            >→</button>
+          </div>
           <p className="text-sm text-gray-500">{transactions.length} transaksi</p>
         </div>
         <div className="flex items-center gap-2">
