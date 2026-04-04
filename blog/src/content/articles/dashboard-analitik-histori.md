@@ -125,4 +125,4 @@ Semuanya akan terisi seiring kamu mencatat pengeluaran lebih rutin.
 
 Semua perubahan sudah live dan tidak memerlukan update manual. Jika kamu menggunakan Jatahku di browser, cukup refresh halaman. Jika sudah install sebagai PWA di home screen, buka dan tunggu sebentar sampai versi terbaru dimuat.
 
-Ada pertanyaan atau saran? Sampaikan melalui [jatahku.com](https://jatahku.com).
+Ada pertanyaan atau saran? Kirim email ke [hi@jatahku.com](mailto:hi@jatahku.com).
