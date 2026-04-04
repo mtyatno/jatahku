@@ -190,6 +190,11 @@ class ApiClient {
     return res.ok ? res.json() : [];
   }
 
+  async getWeeklyPattern(periods = 3) {
+    const res = await this.request(`/analytics/weekly-pattern?periods=${periods}`);
+    return res.ok ? res.json() : [];
+  }
+
   async getEnvelopeBreakdown(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
     if (periodStart) params.set('period_start', periodStart);

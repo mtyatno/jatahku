@@ -152,9 +152,47 @@ function DecisionBox({ envelopes, prediction, todaySpent }) {
   );
 }
 
-function MonthlyComparison({ data }) {
+function buildInsights(monthlyTrend, breakdown) {
+  const insights = [];
+  const active = (monthlyTrend || []).filter(d => d.spent > 0 || d.allocated > 0);
+
+  // Insight 1: spend trend vs last period
+  if (active.length >= 2) {
+    const prev = active[active.length - 2];
+    const curr = active[active.length - 1];
+    if (prev.spent > 0) {
+      const pct = Math.round(((curr.spent - prev.spent) / prev.spent) * 100);
+      const absPct = Math.abs(pct);
+      if (absPct >= 5) {
+        const arah = pct > 0 ? 'naik' : 'turun';
+        insights.push(`📊 Pengeluaran ${arah} ${absPct}% dibanding periode lalu`);
+      } else {
+        insights.push(`📊 Pengeluaran stabil dibanding periode lalu`);
+      }
+    }
+  }
+
+  // Insight 2: top envelope this period
+  if (breakdown && breakdown.length > 0) {
+    const total = breakdown.reduce((s, x) => s + x.spent, 0);
+    const top = [...breakdown].sort((a, b) => b.spent - a.spent)[0];
+    if (top && total > 0) {
+      const pct = Math.round((top.spent / total) * 100);
+      insights.push(`${top.emoji || '📁'} Terbanyak: ${titleCase(top.name)} (${pct}% dari total)`);
+    }
+  }
+
+  return insights;
+}
+
+function MonthlyComparison({ data, breakdown }) {
   if (!data || data.length === 0) return null;
-  const chartData = data.map(d => {
+
+  // Only show periods with actual data
+  const active = data.filter(d => d.spent > 0 || d.allocated > 0).slice(-6);
+  if (active.length === 0) return null;
+
+  const chartData = active.map(d => {
     const parts = d.month.split('–');
     const shortLabel = parts[1]?.trim().slice(0, 6) || parts[0]?.trim().slice(0, 6) || d.month;
     return {
@@ -166,9 +204,18 @@ function MonthlyComparison({ data }) {
     };
   });
 
+  const insights = buildInsights(data, breakdown);
+
   return (
     <div className="card">
       <h3 className="font-semibold text-sm mb-3">Perbandingan periode</h3>
+      {insights.length > 0 && (
+        <div className="mb-3 space-y-1">
+          {insights.map((ins, i) => (
+            <p key={i} className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-1.5">{ins}</p>
+          ))}
+        </div>
+      )}
       <ResponsiveContainer width="100%" height={140}>
         <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
           <XAxis dataKey="name" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
@@ -195,6 +242,56 @@ function MonthlyComparison({ data }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function WeeklyPattern({ data }) {
+  if (!data || data.length === 0) return null;
+
+  // Reorder: Senin–Sabtu–Minggu (DOW 1,2,3,4,5,6,0)
+  const ordered = [1, 2, 3, 4, 5, 6, 0].map(dow => data.find(d => d.dow === dow)).filter(Boolean);
+  const hasData = ordered.some(d => d.avg > 0);
+  if (!hasData) return null;
+
+  const maxAvg = Math.max(...ordered.map(d => d.avg));
+  const chartData = ordered.map(d => ({
+    name: d.name.slice(0, 3), // Sen, Sel, Rab, Kam, Jum, Sab, Min
+    fullName: d.name,
+    avg: d.avg,
+    isPeak: d.avg === maxAvg && maxAvg > 0,
+  }));
+
+  const peakDay = chartData.find(d => d.isPeak);
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold text-sm">Pola mingguan</h3>
+        {peakDay && (
+          <span className="text-xs text-gray-400">
+            Paling boros: <span className="font-medium text-amber-500">{peakDay.fullName}</span>
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={120}>
+        <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="15%">
+          <XAxis dataKey="name" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} width={42}
+            tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
+          <Tooltip
+            formatter={v => [formatCurrency(v), 'Rata-rata']}
+            labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+          />
+          <Bar dataKey="avg" radius={[3, 3, 0, 0]}
+            shape={(props) => {
+              const color = props.isPeak ? '#BA7517' : '#1D9E75';
+              return <rect {...props} fill={color} rx={3} ry={3} />;
+            }}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+      <p className="text-xs text-gray-400 mt-2">Rata-rata pengeluaran per hari · 3 periode terakhir</p>
     </div>
   );
 }
@@ -275,15 +372,18 @@ export default function Dashboard() {
   const [periods, setPeriods] = useState([]);
   const [periodIdx, setPeriodIdx] = useState(null);
   const [monthlyTrend, setMonthlyTrend] = useState([]);
+  const [weeklyPattern, setWeeklyPattern] = useState([]);
 
-  // Load period list and monthly trend once on mount
+  // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
     Promise.all([
       api.getPeriods(12),
       api.request('/analytics/monthly-trend').then(r => r.ok ? r.json() : []),
-    ]).then(([p, trend]) => {
+      api.getWeeklyPattern(3),
+    ]).then(([p, trend, weekly]) => {
       setPeriods(p);
       setMonthlyTrend(trend);
+      setWeeklyPattern(weekly);
       setPeriodIdx(p.length - 1); // default = current period
     });
   }, []);
@@ -383,7 +483,10 @@ export default function Dashboard() {
       )}
 
       {/* Monthly Comparison — always visible */}
-      <MonthlyComparison data={monthlyTrend} />
+      <MonthlyComparison data={monthlyTrend} breakdown={breakdown} />
+
+      {/* Weekly Pattern — always visible */}
+      <WeeklyPattern data={weeklyPattern} />
 
       {/* Charts */}
       {(chartData.length > 0 || breakdown.length > 0) && (
