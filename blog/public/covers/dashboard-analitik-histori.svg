@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A4F3E"/>
+      <stop offset="100%" stop-color="#116653"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- Right panel card -->
+  <rect x="580" y="70" width="570" height="490" rx="36" fill="rgba(255,255,255,0.08)"/>
+
+  <!-- Mini bar chart illustration (weekly pattern) -->
+  <!-- bars: Mon–Sun, amber peak on Fri -->
+  <rect x="620" y="240" width="30" height="60" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <rect x="660" y="210" width="30" height="90" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <rect x="700" y="250" width="30" height="50" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <rect x="740" y="230" width="30" height="70" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <rect x="780" y="170" width="30" height="130" rx="4" fill="#BA7517"/>
+  <rect x="820" y="255" width="30" height="45" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <rect x="860" y="265" width="30" height="35" rx="4" fill="rgba(255,255,255,0.25)"/>
+  <!-- x-axis line -->
+  <line x1="610" y1="305" x2="910" y2="305" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+  <!-- labels -->
+  <text x="635" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Sen</text>
+  <text x="675" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Sel</text>
+  <text x="715" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Rab</text>
+  <text x="755" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Kam</text>
+  <text x="795" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="#BA7517">Jum</text>
+  <text x="835" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Sab</text>
+  <text x="875" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="rgba(255,255,255,0.45)">Min</text>
+
+  <!-- Period navigator mock -->
+  <rect x="610" y="355" width="480" height="46" rx="23" fill="rgba(255,255,255,0.1)"/>
+  <text x="630" y="383" font-family="system-ui,sans-serif" font-size="20" fill="rgba(255,255,255,0.5)">←</text>
+  <text x="860" y="384" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="rgba(255,255,255,0.9)">28 Mar – 27 Apr 2026</text>
+  <rect x="990" y="363" width="76" height="29" rx="14" fill="rgba(29,158,117,0.5)"/>
+  <text x="1028" y="382" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="white">Sekarang</text>
+
+  <!-- Feature pills -->
+  <rect x="628" y="415" width="250" height="40" rx="20" fill="rgba(255,255,255,0.14)"/>
+  <text x="753" y="440" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="white">Navigasi Periode</text>
+
+  <rect x="890" y="415" width="230" height="40" rx="20" fill="rgba(255,255,255,0.11)"/>
+  <text x="1005" y="440" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="rgba(255,255,255,0.85)">Pola Mingguan</text>
+
+  <rect x="628" y="468" width="230" height="40" rx="20" fill="rgba(255,255,255,0.09)"/>
+  <text x="743" y="493" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="rgba(255,255,255,0.75)">Perbandingan Bulan</text>
+
+  <rect x="872" y="468" width="200" height="40" rx="20" fill="rgba(255,255,255,0.07)"/>
+  <text x="972" y="493" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="rgba(255,255,255,0.6)">Auto-Insight</text>
+
+  <!-- Chart header label -->
+  <text x="620" y="160" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="rgba(255,255,255,0.5)" letter-spacing="1">POLA MINGGUAN</text>
+  <text x="860" y="160" text-anchor="end" font-family="system-ui,sans-serif" font-size="12" fill="rgba(186,117,23,0.9)">Paling boros: Jumat</text>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="225" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="172" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+
+  <text x="60" y="210" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Dashboard</text>
+  <text x="60" y="272" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Analitik</text>
+  <text x="60" y="330" font-family="Georgia,serif" font-size="42" font-weight="700" fill="rgba(255,255,255,0.75)">Histori &amp; Pola</text>
+
+  <text x="60" y="400" font-family="system-ui,sans-serif" font-size="19" fill="rgba(255,255,255,0.55)">4 fitur baru · April 2026</text>
+
+  <!-- Decorative insight pill -->
+  <rect x="60" y="430" width="440" height="42" rx="12" fill="rgba(255,255,255,0.07)"/>
+  <text x="80" y="455" font-family="system-ui,sans-serif" font-size="14" fill="rgba(255,255,255,0.6)">📊 Pengeluaran turun 12% dari periode lalu</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>
