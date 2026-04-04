@@ -117,6 +117,23 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 
     await db.commit()
 
+    # Notify admin on Telegram (fire-and-forget)
+    try:
+        from telegram import Bot
+        from app.core.config import get_settings as _gs
+        _s = _gs()
+        if _s.TELEGRAM_BOT_TOKEN and _s.ADMIN_TELEGRAM_ID:
+            _bot = Bot(token=_s.TELEGRAM_BOT_TOKEN)
+            _plan = "Pro 🎉" if user.plan == "pro" else "Basic"
+            _promo = f" · promo `{req.promo_code.upper()}`" if req.promo_code and user.plan == "pro" else ""
+            await _bot.send_message(
+                chat_id=int(_s.ADMIN_TELEGRAM_ID),
+                text=f"👤 *User baru!*\n\nNama: {user.name}\nEmail: `{user.email}`\nPlan: {_plan}{_promo}",
+                parse_mode="Markdown",
+            )
+    except Exception:
+        pass  # Jangan block register jika notif gagal
+
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
         refresh_token=create_refresh_token(str(user.id)),
