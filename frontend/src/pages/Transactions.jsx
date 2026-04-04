@@ -224,7 +224,10 @@ export default function Transactions() {
                           <span className="text-lg">{env?.emoji || '📁'}</span>
                           <div>
                             <p className="text-sm font-medium">{txn.description}</p>
-                            <p className="text-xs text-gray-400">{env?.name}<span className="mx-1">·</span>{txn.source === 'telegram' ? '📱' : '🌐'}</p>
+                            <p className="text-xs text-gray-400">
+                              {env?.name}<span className="mx-1">·</span>{txn.source === 'telegram' ? '📱' : '🌐'}
+                              {txn.created_at && <><span className="mx-1">·</span>{new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</>}
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-3">

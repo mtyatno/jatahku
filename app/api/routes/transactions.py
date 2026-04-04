@@ -1,6 +1,6 @@
 from uuid import UUID
 from decimal import Decimal
-from datetime import date
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -32,6 +32,7 @@ class TransactionResponse(BaseModel):
     description: str
     source: TransactionSource
     transaction_date: date
+    created_at: datetime
     is_deleted: bool
 
     model_config = {"from_attributes": True}

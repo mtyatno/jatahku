@@ -610,7 +610,10 @@ export default function Dashboard() {
                   </div>
                   <div className="text-right">
                     <p className="font-display font-bold text-sm text-gray-900">-{formatShort(txn.amount)}</p>
-                    <p className="text-xs text-gray-400">{new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</p>
+                    <p className="text-xs text-gray-400">
+                      {new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                      {txn.created_at && <> · {new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</>}
+                    </p>
                   </div>
                 </div>
               );
