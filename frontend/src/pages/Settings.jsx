@@ -260,9 +260,9 @@ export default function Settings() {
 
   const unlinkWhatsApp = async () => {
     if (!confirm('Putuskan koneksi WhatsApp?')) return;
-    await api.unlinkWhatsApp();
-    flash('WhatsApp diputus', 'wa');
-    load();
+    const res = await api.unlinkWhatsApp();
+    if (res.ok) { flash('WhatsApp diputus', 'wa'); load(); }
+    else flashErr('Gagal memutus koneksi', 'wa');
   };
 
   const saveWaPhone = async () => {
@@ -522,7 +522,10 @@ export default function Settings() {
         <div className="card">
           <h3 className="font-semibold text-sm mb-2">💬 WhatsApp</h3>
           <div className="flex items-center justify-between">
-            <span className="text-sm text-brand-600">✅ Terhubung</span>
+            <div>
+              <span className="text-sm text-brand-600">✅ Terhubung</span>
+              {waStatus.phone && <p className="text-xs text-gray-500 mt-0.5">+{waStatus.phone}</p>}
+            </div>
             <button onClick={unlinkWhatsApp} className="text-xs text-gray-400 hover:text-danger-400">
               Putuskan
             </button>
