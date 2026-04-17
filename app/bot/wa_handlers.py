@@ -231,13 +231,13 @@ async def handle_envelope_reply(chat_id: str, user: User, choice: int, raw: byte
     data = json_mod.loads(raw.decode())
     env_list = data["envs"]
 
+    if choice == 0 or choice > len(env_list):
+        await waha_send(chat_id, f"❌ Pilih angka antara 1 dan {len(env_list)}")
+        return  # leave pending state intact so user can retry
+
     r = await _redis()
     await r.delete(f"wa:pending:{chat_id}")
     await r.close()
-
-    if choice == 0 or choice > len(env_list):
-        await waha_send(chat_id, f"❌ Pilih angka antara 1 dan {len(env_list)}")
-        return
 
     chosen = env_list[choice - 1]
     amount = Decimal(str(data["amount"]))
@@ -286,8 +286,8 @@ async def handle_multi_expense(chat_id: str, user: User, items: list) -> None:
         recorded = []
         unmatched = []
         for amount, description in items:
-            envelope, _ = await find_best_envelope(description, hid, db, user_id=user.id)
-            if envelope:
+            envelope, confident = await find_best_envelope(description, hid, db, user_id=user.id)
+            if envelope and confident:
                 db.add(Transaction(
                     user_id=user.id,
                     envelope_id=envelope.id,
@@ -369,17 +369,19 @@ async def handle_batch_reply(chat_id: str, user: User, choice: int, raw: bytes) 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Envelope).where(Envelope.id == chosen["id"]))
             envelope = result.scalar_one_or_none()
-            if envelope:
-                db.add(Transaction(
-                    user_id=user.id,
-                    envelope_id=envelope.id,
-                    amount=amount,
-                    description=item["desc"],
-                    transaction_date=date.today(),
-                    source=TransactionSource.webapp,
-                ))
-                await save_learned_keywords(user.id, item["desc"], envelope.id, db)
-                await db.commit()
+            if not envelope:
+                await waha_send(chat_id, "❌ Amplop tidak ditemukan. Coba lagi.")
+                return
+            db.add(Transaction(
+                user_id=user.id,
+                envelope_id=envelope.id,
+                amount=amount,
+                description=item["desc"],
+                transaction_date=date.today(),
+                source=TransactionSource.webapp,
+            ))
+            await save_learned_keywords(user.id, item["desc"], envelope.id, db)
+            await db.commit()
 
         queue[idx]["env_id"] = chosen["id"]
         auto_lines = auto_lines + [f"{chosen['emoji']} {chosen['name']}: {format_currency(amount)} — {item['desc']}"]
