@@ -53,6 +53,10 @@ class User(TimestampMixin, Base):
     telegram_id: Mapped[str | None] = mapped_column(
         String(50), unique=True, index=True
     )
+    whatsapp_id: Mapped[str | None] = mapped_column(
+        String(50), unique=True, index=True, nullable=True
+    )
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255))
     timezone: Mapped[str | None] = mapped_column(String(30), default="Asia/Jakarta")
     profile_pic: Mapped[str | None] = mapped_column(String(500), nullable=True)
