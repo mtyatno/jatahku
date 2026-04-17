@@ -493,29 +493,6 @@ export default function Settings() {
               </div>
               <InlineFlash k="wa" />
             </div>
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-sm font-medium text-gray-700 mb-1">Cara 2: Nomor HP (auto-link)</p>
-              <p className="text-xs text-gray-500 mb-2">
-                Simpan nomor HP kamu. Bot akan otomatis mengenali saat pesan pertama masuk.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="tel"
-                  className="input flex-1"
-                  placeholder="08123456789"
-                  value={waPhone}
-                  onChange={e => setWaPhone(e.target.value)}
-                />
-                <button
-                  onClick={saveWaPhone}
-                  disabled={waSavingPhone || !waPhone}
-                  className="btn-outline disabled:opacity-50 whitespace-nowrap"
-                >
-                  {waSavingPhone ? '...' : 'Simpan'}
-                </button>
-              </div>
-              <InlineFlash k="wa-phone" />
-            </div>
           </div>
         </div>
       ) : waStatus?.linked ? (
