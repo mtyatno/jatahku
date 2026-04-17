@@ -256,6 +256,29 @@ class ApiClient {
     });
     return { ok: res.ok, data: await res.json() };
   }
+
+  async getWhatsAppStatus() {
+    const res = await this.request('/auth/link/whatsapp-status');
+    return res.ok ? res.json() : { linked: false, whatsapp_id: null, phone: null };
+  }
+
+  async linkWhatsApp(code) {
+    return this.request('/auth/link/whatsapp', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  async unlinkWhatsApp() {
+    return this.request('/auth/link/unlink-whatsapp', { method: 'POST' });
+  }
+
+  async saveWhatsAppPhone(phone) {
+    return this.request('/auth/link/whatsapp-phone', {
+      method: 'PUT',
+      body: JSON.stringify({ phone }),
+    });
+  }
 }
 
 export const api = new ApiClient();

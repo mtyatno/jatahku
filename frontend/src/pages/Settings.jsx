@@ -123,6 +123,13 @@ export default function Settings() {
   const [linkLoading, setLinkLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Link WA
+  const [waStatus, setWaStatus] = useState(null);
+  const [waCodeInput, setWaCodeInput] = useState('');
+  const [waLinking, setWaLinking] = useState(false);
+  const [waPhone, setWaPhone] = useState('');
+  const [waSavingPhone, setWaSavingPhone] = useState(false);
+
   // Delete
   const [showDelete, setShowDelete] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -146,6 +153,9 @@ export default function Settings() {
     const mRes = await api.request('/household/members');
     if (mRes.ok) setMembers(await mRes.json());
     setLoading(false);
+    const waRes = await api.getWhatsAppStatus();
+    setWaStatus(waRes);
+    setWaPhone(waRes.phone || '');
   };
 
   useEffect(() => { load(); }, []);
@@ -231,6 +241,36 @@ export default function Settings() {
     const res = await api.request('/auth/link/generate', { method: 'POST' });
     if (res.ok) { const data = await res.json(); setLinkCode(data.code); }
     setLinkLoading(false);
+  };
+
+  const linkWhatsApp = async () => {
+    if (!waCodeInput.trim()) return;
+    setWaLinking(true);
+    const res = await api.linkWhatsApp(waCodeInput.trim());
+    setWaLinking(false);
+    if (res.ok) {
+      setWaCodeInput('');
+      flash('WhatsApp terhubung!', 'wa');
+      load();
+    } else {
+      const d = await res.json();
+      flashErr(d.detail || 'Kode tidak valid', 'wa');
+    }
+  };
+
+  const unlinkWhatsApp = async () => {
+    if (!confirm('Putuskan koneksi WhatsApp?')) return;
+    await api.unlinkWhatsApp();
+    flash('WhatsApp diputus', 'wa');
+    load();
+  };
+
+  const saveWaPhone = async () => {
+    setWaSavingPhone(true);
+    const res = await api.saveWhatsAppPhone(waPhone);
+    setWaSavingPhone(false);
+    if (res.ok) flash('Nomor HP disimpan', 'wa-phone');
+    else flashErr('Format nomor tidak valid', 'wa-phone');
   };
 
   const generateInvite = async () => {
@@ -420,6 +460,75 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {/* WhatsApp */}
+      {waStatus && !waStatus.linked ? (
+        <div className="card border-brand-200">
+          <h3 className="font-semibold text-sm mb-2">💬 Hubungkan WhatsApp</h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Catat pengeluaran via WhatsApp dengan NLP yang sama seperti Telegram.
+          </p>
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Cara 1: Kode dari bot</p>
+              <p className="text-xs text-gray-500 mb-2">
+                Kirim <code className="bg-gray-100 px-1 rounded">/link</code> ke nomor WhatsApp Jatahku, lalu masukkan kode di bawah.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="Masukkan kode 6 digit"
+                  value={waCodeInput}
+                  onChange={e => setWaCodeInput(e.target.value)}
+                  maxLength={6}
+                />
+                <button
+                  onClick={linkWhatsApp}
+                  disabled={waLinking || waCodeInput.length !== 6}
+                  className="btn-primary disabled:opacity-50 whitespace-nowrap"
+                >
+                  {waLinking ? '...' : 'Hubungkan'}
+                </button>
+              </div>
+              <InlineFlash k="wa" />
+            </div>
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-sm font-medium text-gray-700 mb-1">Cara 2: Nomor HP (auto-link)</p>
+              <p className="text-xs text-gray-500 mb-2">
+                Simpan nomor HP kamu. Bot akan otomatis mengenali saat pesan pertama masuk.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="tel"
+                  className="input flex-1"
+                  placeholder="08123456789"
+                  value={waPhone}
+                  onChange={e => setWaPhone(e.target.value)}
+                />
+                <button
+                  onClick={saveWaPhone}
+                  disabled={waSavingPhone || !waPhone}
+                  className="btn-outline disabled:opacity-50 whitespace-nowrap"
+                >
+                  {waSavingPhone ? '...' : 'Simpan'}
+                </button>
+              </div>
+              <InlineFlash k="wa-phone" />
+            </div>
+          </div>
+        </div>
+      ) : waStatus?.linked ? (
+        <div className="card">
+          <h3 className="font-semibold text-sm mb-2">💬 WhatsApp</h3>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-brand-600">✅ Terhubung</span>
+            <button onClick={unlinkWhatsApp} className="text-xs text-gray-400 hover:text-danger-400">
+              Putuskan
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Household */}
       <div className="card">
