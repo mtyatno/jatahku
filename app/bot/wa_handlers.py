@@ -147,12 +147,10 @@ async def handle_link(chat_id: str) -> None:
     r = await _redis()
     await r.set(f"link:whatsapp:{code}", chat_id, ex=300)
     await r.close()
+    link = f"{settings.APP_URL}/settings?wa={code}"
     await waha_send(chat_id,
-        f"Kode link WhatsApp kamu: *{code}*\n\n"
-        f"Langkah:\n"
-        f"1. Buka jatahku.com/settings\n"
-        f"2. Scroll ke bagian WhatsApp\n"
-        f"3. Masukkan kode di atas\n\n"
+        f"Tap link berikut untuk menghubungkan akun WhatsApp:\n\n"
+        f"{link}\n\n"
         f"Berlaku 5 menit."
     )
 

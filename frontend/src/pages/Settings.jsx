@@ -127,6 +127,7 @@ export default function Settings() {
   const [waStatus, setWaStatus] = useState({ linked: false });
   const [waCodeInput, setWaCodeInput] = useState('');
   const [waLinking, setWaLinking] = useState(false);
+  const [waAutoCode, setWaAutoCode] = useState('');
   const [waPhone, setWaPhone] = useState('');
   const [waSavingPhone, setWaSavingPhone] = useState(false);
 
@@ -158,7 +159,16 @@ export default function Settings() {
     setWaPhone(waRes.phone || '');
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const waCode = params.get('wa');
+    if (waCode) {
+      setWaCodeInput(waCode);
+      setWaAutoCode(waCode);
+      window.history.replaceState({}, '', '/settings');
+    }
+    load();
+  }, []);
 
   // Poll for TG link
   useEffect(() => {
@@ -242,6 +252,13 @@ export default function Settings() {
     if (res.ok) { const data = await res.json(); setLinkCode(data.code); }
     setLinkLoading(false);
   };
+
+  useEffect(() => {
+    if (waAutoCode && !waStatus.linked && !loading) {
+      setWaAutoCode('');
+      linkWhatsApp();
+    }
+  }, [waStatus, loading]);
 
   const linkWhatsApp = async () => {
     if (!waCodeInput.trim()) return;
