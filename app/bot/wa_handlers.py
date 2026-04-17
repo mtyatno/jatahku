@@ -418,7 +418,7 @@ async def handle_wa_message(payload: dict) -> None:
         return
     if msg.get("fromMe"):
         return
-    if msg.get("type") != "chat":
+    if msg.get("type") not in ("chat", None):
         return
 
     chat_id = msg.get("from", "")

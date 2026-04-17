@@ -18,5 +18,7 @@ def normalize_phone(phone: str) -> str:
 
 
 def chat_id_to_phone(chat_id: str) -> str:
-    """Extract phone from WAHA chat_id format '628xxx@c.us'."""
-    return chat_id.replace("@c.us", "").replace("@s.whatsapp.net", "")
+    """Extract phone from WAHA chat_id (supports @c.us, @s.whatsapp.net, @lid)."""
+    for suffix in ("@c.us", "@s.whatsapp.net", "@lid"):
+        chat_id = chat_id.replace(suffix, "")
+    return chat_id
