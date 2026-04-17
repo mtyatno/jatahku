@@ -1,8 +1,9 @@
+import re
 import logging
 from decimal import Decimal
 from datetime import date, timedelta
 from collections import defaultdict
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -13,6 +14,14 @@ from app.bot.handlers import format_currency, get_envelopes_with_spent
 
 settings = get_settings()
 logger = logging.getLogger("jatahku.summary")
+
+
+def _to_wa(lines: list[str]) -> str:
+    """Convert HTML summary lines to plain text for WhatsApp."""
+    text = "\n".join(lines)
+    text = re.sub(r"<b>(.*?)</b>", r"*\1*", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return text
 
 DAY_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
@@ -27,16 +36,12 @@ def _short_bar(spent, allocated, width=6):
 
 
 async def send_daily_summary(user_id=None):
-    """Send daily spending summary to all TG-linked users at 8 PM."""
-    if not settings.TELEGRAM_BOT_TOKEN:
-        return
-
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    """Send daily spending summary to all TG/WA-linked users at 8 PM."""
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN else None
     today = date.today()
 
     async with AsyncSessionLocal() as db:
-        # Get all users with telegram
-        query = select(User).where(User.telegram_id != None)
+        query = select(User).where(or_(User.telegram_id != None, User.whatsapp_id != None))
         if user_id:
             query = query.where(User.id == user_id)
         result = await db.execute(query)
@@ -211,28 +216,31 @@ async def send_daily_summary(user_id=None):
                 lines.append(f"─────────────────")
                 lines.append(status_line)
 
-                await bot.send_message(
-                    chat_id=int(user.telegram_id),
-                    text="\n".join(lines),
-                    parse_mode="HTML",
-                )
-                logger.info(f"Daily summary sent to {user.telegram_id}")
+                if user.telegram_id and bot:
+                    await bot.send_message(
+                        chat_id=int(user.telegram_id),
+                        text="\n".join(lines),
+                        parse_mode="HTML",
+                    )
+                    logger.info(f"Daily summary sent to TG {user.telegram_id}")
+
+                if user.whatsapp_id:
+                    from app.bot.wa_handlers import waha_send
+                    await waha_send(user.whatsapp_id, _to_wa(lines))
+                    logger.info(f"Daily summary sent to WA {user.whatsapp_id}")
 
             except Exception as e:
-                logger.error(f"Failed daily summary for {user.telegram_id}: {e}")
+                logger.error(f"Failed daily summary for user {user.id}: {e}")
 
 
 async def send_weekly_summary(user_id=None):
     """Send weekly summary every Monday morning."""
-    if not settings.TELEGRAM_BOT_TOKEN:
-        return
-
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN else None
     today = date.today()
     week_start = today - timedelta(days=7)
 
     async with AsyncSessionLocal() as db:
-        query = select(User).where(User.telegram_id != None)
+        query = select(User).where(or_(User.telegram_id != None, User.whatsapp_id != None))
         if user_id:
             query = query.where(User.id == user_id)
         result = await db.execute(query)
@@ -375,12 +383,18 @@ async def send_weekly_summary(user_id=None):
                     lines.append(f"⚠️ Hati-hati — prediksi overspend <b>{format_currency(over)}</b>")
                     lines.append(f"💡 Max <b>{format_currency(safe_daily)}</b>/hari biar aman")
 
-                await bot.send_message(
-                    chat_id=int(user.telegram_id),
-                    text="\n".join(lines),
-                    parse_mode="HTML",
-                )
-                logger.info(f"Weekly summary sent to {user.telegram_id}")
+                if user.telegram_id and bot:
+                    await bot.send_message(
+                        chat_id=int(user.telegram_id),
+                        text="\n".join(lines),
+                        parse_mode="HTML",
+                    )
+                    logger.info(f"Weekly summary sent to TG {user.telegram_id}")
+
+                if user.whatsapp_id:
+                    from app.bot.wa_handlers import waha_send
+                    await waha_send(user.whatsapp_id, _to_wa(lines))
+                    logger.info(f"Weekly summary sent to WA {user.whatsapp_id}")
 
             except Exception as e:
-                logger.error(f"Failed weekly summary for {user.telegram_id}: {e}")
+                logger.error(f"Failed weekly summary for user {user.id}: {e}")
