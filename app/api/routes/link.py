@@ -275,6 +275,9 @@ async def link_whatsapp_account(
     existing = await db.execute(select(User).where(User.whatsapp_id == whatsapp_id))
     existing_user = existing.scalar_one_or_none()
     if existing_user and str(existing_user.id) != str(user.id):
+        r = await _redis()
+        await r.delete(f"link:whatsapp:{req.code}")
+        await r.close()
         raise HTTPException(status_code=400, detail="Nomor WhatsApp sudah terhubung ke akun lain")
 
     user.whatsapp_id = whatsapp_id
