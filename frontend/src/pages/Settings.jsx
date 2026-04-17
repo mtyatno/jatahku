@@ -124,7 +124,7 @@ export default function Settings() {
   const [copied, setCopied] = useState(false);
 
   // Link WA
-  const [waStatus, setWaStatus] = useState(null);
+  const [waStatus, setWaStatus] = useState({ linked: false });
   const [waCodeInput, setWaCodeInput] = useState('');
   const [waLinking, setWaLinking] = useState(false);
   const [waPhone, setWaPhone] = useState('');
