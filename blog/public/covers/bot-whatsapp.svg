@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#075E54"/>
+      <stop offset="100%" stop-color="#128C7E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+
+  <!-- White card -->
+  <rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+  <!-- Chat bubble 1 (incoming) -->
+  <rect x="650" y="130" width="310" height="70" rx="20" fill="rgba(255,255,255,0.18)"/>
+  <polygon points="650,165 625,180 655,185" fill="rgba(255,255,255,0.18)"/>
+  <text x="805" y="173" text-anchor="middle" font-family="monospace" font-size="22" font-weight="700" fill="white">kopi 18k, makan 35k</text>
+
+  <!-- Chat bubble 2 (reply) -->
+  <rect x="670" y="230" width="380" height="130" rx="20" fill="#25D366" fill-opacity="0.85"/>
+  <polygon points="1050,265 1075,250 1048,295" fill="#25D366" fill-opacity="0.85"/>
+  <text x="860" y="272" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" fill="white">✅ Rp18.000 → Makan &amp; Minum</text>
+  <text x="860" y="300" text-anchor="middle" font-family="system-ui,sans-serif" font-size="15" fill="white">✅ Rp35.000 → Makan &amp; Minum</text>
+  <text x="860" y="340" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="rgba(255,255,255,0.7)">2 transaksi dicatat otomatis</text>
+
+  <!-- Chat bubble 3 -->
+  <rect x="650" y="390" width="200" height="55" rx="20" fill="rgba(255,255,255,0.18)"/>
+  <polygon points="650,410 625,425 655,430" fill="rgba(255,255,255,0.18)"/>
+  <text x="750" y="423" text-anchor="middle" font-family="monospace" font-size="20" font-weight="700" fill="white">/status</text>
+
+  <!-- Left content -->
+  <rect x="60" y="60" width="230" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+  <text x="175" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+
+  <text x="60" y="200" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">Catat Budget</text>
+  <text x="60" y="260" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">Lewat</text>
+  <text x="60" y="320" font-family="Georgia,serif" font-size="50" font-weight="700" fill="white">WhatsApp</text>
+  <text x="60" y="385" font-family="system-ui,sans-serif" font-size="20" fill="rgba(255,255,255,0.6)">NLP · Multi-input · Daily Summary</text>
+
+  <text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+  <text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>
