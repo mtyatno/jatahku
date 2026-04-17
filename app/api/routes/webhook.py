@@ -115,6 +115,7 @@ async def whatsapp_webhook(request: Request):
 
     try:
         data = await request.json()
+        logger.info(f"WA raw payload: event={data.get('event')} type={data.get('payload',{}).get('type')} fromMe={data.get('payload',{}).get('fromMe')} from={data.get('payload',{}).get('from','')[:20]}")
         from app.bot.wa_handlers import handle_wa_message
         await handle_wa_message(data)
         return Response(status_code=200)
