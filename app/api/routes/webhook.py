@@ -107,10 +107,10 @@ async def set_bot_commands(request: Request):
 @router.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     """Receive messages from WAHA and dispatch to WA handler."""
-    # Validate API key
-    if settings.WAHA_API_KEY:
+    # Validate webhook secret (optional — leave WAHA_WEBHOOK_SECRET empty to skip)
+    if settings.WAHA_WEBHOOK_SECRET:
         key = request.headers.get("X-Api-Key", "")
-        if not hmac.compare_digest(key, settings.WAHA_API_KEY):
+        if not hmac.compare_digest(key, settings.WAHA_WEBHOOK_SECRET):
             return Response(status_code=403)
 
     try:

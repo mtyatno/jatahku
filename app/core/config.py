@@ -29,7 +29,8 @@ class Settings(BaseSettings):
 
     # WhatsApp (WAHA)
     WAHA_URL: str = "http://localhost:3000"
-    WAHA_API_KEY: str = ""
+    WAHA_API_KEY: str = ""         # key to call WAHA API (sendText, etc.)
+    WAHA_WEBHOOK_SECRET: str = ""  # key to validate incoming webhooks (optional)
     WAHA_SESSION: str = "default"
 
     # Admin
