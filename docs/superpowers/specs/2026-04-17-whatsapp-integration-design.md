@@ -1,4 +1,5 @@
 # WhatsApp Integration Design — Jatahku
+
 **Date:** 2026-04-17  
 **Status:** Approved  
 **Scope:** Core bot features via self-hosted WAHA (WhatsApp HTTP API)
@@ -31,6 +32,7 @@ WhatsApp User
 ```
 
 **Komponen baru:**
+
 - `app/bot/wa_handlers.py` — semua logic pesan WA masuk
 - `app/api/routes/webhook.py` — tambah `POST /webhook/whatsapp`
 - `app/api/routes/link.py` — tambah endpoints linking WA
@@ -55,17 +57,20 @@ Alembic migration diperlukan. Kedua kolom nullable dan tidak breaking.
 ## 4. Account Linking — Hybrid
 
 ### Flow A: Code Exchange (primary)
+
 1. User ketik `/link` di WA
 2. Bot generate kode 6 digit, simpan di Redis: `link:whatsapp:{code}` → `whatsapp_id` (TTL 300 detik)
 3. User buka WebApp Settings → masukkan kode
 4. WebApp panggil `POST /link/whatsapp` → simpan `whatsapp_id` ke user
 
 ### Flow B: Phone Auto-link (secondary)
+
 1. User simpan nomor HP di WebApp Settings (field baru `phone`)
 2. Saat pesan WA masuk dan user belum ter-link, cek `user.phone` vs nomor pengirim
 3. Jika cocok → auto-link `whatsapp_id`, kirim notifikasi konfirmasi ke user
 
 ### Unlink
+
 - `POST /link/unlink-whatsapp` — set `whatsapp_id = None`
 - Tersedia di WebApp Settings
 
@@ -73,14 +78,14 @@ Alembic migration diperlukan. Kedua kolom nullable dan tidak breaking.
 
 ## 5. Bot Commands & Fitur
 
-| Input | Behaviour |
-|---|---|
+| Input                          | Behaviour                                                             |
+| ------------------------------ | --------------------------------------------------------------------- |
 | `kopi 35k` / `35k makan siang` | NLP parse → pilih amplop (tombol teks) → konfirmasi → catat transaksi |
-| `/status` | Ringkasan budget: dana dialokasi, terpakai, sisa, per amplop |
-| `/amplop` | List semua amplop dengan emoji, nama, sisa budget |
-| `/webapp` | Generate magic link token → kirim URL login WebApp |
-| `/link` | Mulai flow code exchange linking |
-| Pesan tidak dikenal | Kirim pesan bantuan singkat |
+| `/status`                      | Ringkasan budget: dana dialokasi, terpakai, sisa, per amplop          |
+| `/amplop`                      | List semua amplop dengan emoji, nama, sisa budget                     |
+| `/webapp`                      | Generate magic link token → kirim URL login WebApp                    |
+| `/link`                        | Mulai flow code exchange linking                                      |
+| Pesan tidak dikenal            | Kirim pesan bantuan singkat                                           |
 
 **Format respons:** plain text + emoji (WA tidak support Markdown formatting seperti Telegram). Contoh:
 
@@ -95,10 +100,11 @@ Sisa: Rp1.300.000
 ```
 
 ### Pemilihan Amplop via Teks
-WA tidak punya inline keyboard seperti Telegram. Saat NLP parse berhasil dan ada multiple amplop, bot kirim numbered list:
+
+WA tidak punya inline keyboard seperti Telegram. Saat NLP parse berhasil dan amplop perlu dipilih, bot kirim numbered list:
 
 ```
-"kopi 35k" — pilih amplop:
+"kopi 35k" — masuk ke amplop mana?
 1. ☕ Jajan/Kopi
 2. 🍽️ Makan
 3. 💼 Lainnya
@@ -106,7 +112,41 @@ WA tidak punya inline keyboard seperti Telegram. Saat NLP parse berhasil dan ada
 Balas dengan nomor (1/2/3)
 ```
 
-State pilihan disimpan di Redis sementara (TTL 2 menit): `wa:pending:{whatsapp_id}`.
+State pilihan disimpan di Redis (TTL 2 menit): `wa:pending:{whatsapp_id}`.
+
+### Multi-Input (Batch)
+
+Multi-expense parsing sudah ada di `nlp_cmd.parse_multi_expense()` — mendukung separator `\n`, `,`, `;`, "terus", "lalu", "dan". Fungsi ini di-import langsung, tidak diduplikasi.
+
+Behaviour identik dengan Telegram:
+
+- Item yang `find_best_envelope()` cocok → **auto-record langsung**
+- Item yang tidak cocok → antri, tanya satu per satu
+
+Contoh flow:
+
+```
+User kirim:
+  kopi 35k
+  parkir 5k
+  makan siang 50k
+  beli baju 120k
+  token listrik 80k
+
+Bot:
+  ✅ 3 dicatat otomatis:
+  ☕ Jajan: Rp35rb — kopi
+  🚗 Transport: Rp5rb — parkir
+  🍽️ Makan: Rp50rb — makan siang
+
+  💰 Rp120rb — beli baju (1/2)
+  Masuk ke amplop mana?
+  1. 👗 Belanja
+  2. 💼 Lainnya
+  3. ⏭ Lewati
+```
+
+State batch disimpan di Redis: `wa:batch:{whatsapp_id}` (TTL 10 menit). Format sama dengan `batch:{key}` di Telegram — `queue`, `auto_lines`, `user_id`, `envs`.
 
 ---
 
@@ -133,6 +173,7 @@ services:
 - WAHA Dashboard tersedia via SSH tunnel untuk scan QR saat setup awal
 
 **Setup awal:**
+
 1. `docker compose -f docker-compose.waha.yml up -d`
 2. Akses WAHA dashboard via SSH tunnel: `ssh -L 3000:localhost:3000 user@67.217.58.13`
 3. Buka `http://localhost:3000` → scan QR dengan nomor WA khusus Jatahku
@@ -180,14 +221,14 @@ GET  /link/whatsapp-status      — cek apakah user sudah ter-link
 
 ## 10. File Changes Summary
 
-| File | Perubahan |
-|---|---|
-| `app/models/models.py` | Tambah `whatsapp_id`, `phone` ke User |
-| `app/bot/wa_handlers.py` | **Baru** — semua WA message handling |
-| `app/api/routes/webhook.py` | Tambah `POST /webhook/whatsapp` |
-| `app/api/routes/link.py` | Tambah 3 endpoints WA linking |
-| `app/core/config.py` | Tambah `WAHA_URL`, `WAHA_API_KEY` settings |
-| `frontend/src/pages/Settings.jsx` | Tambah WA linking UI + phone field |
-| `frontend/src/lib/api.js` | Tambah WA link/unlink/status methods |
-| `/opt/jatahku/docker-compose.waha.yml` | **Baru** — WAHA Docker config |
-| Alembic migration | `whatsapp_id`, `phone` columns |
+| File                                   | Perubahan                                  |
+| -------------------------------------- | ------------------------------------------ |
+| `app/models/models.py`                 | Tambah `whatsapp_id`, `phone` ke User      |
+| `app/bot/wa_handlers.py`               | **Baru** — semua WA message handling       |
+| `app/api/routes/webhook.py`            | Tambah `POST /webhook/whatsapp`            |
+| `app/api/routes/link.py`               | Tambah 3 endpoints WA linking              |
+| `app/core/config.py`                   | Tambah `WAHA_URL`, `WAHA_API_KEY` settings |
+| `frontend/src/pages/Settings.jsx`      | Tambah WA linking UI + phone field         |
+| `frontend/src/lib/api.js`              | Tambah WA link/unlink/status methods       |
+| `/opt/jatahku/docker-compose.waha.yml` | **Baru** — WAHA Docker config              |
+| Alembic migration                      | `whatsapp_id`, `phone` columns             |
