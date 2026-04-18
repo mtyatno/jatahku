@@ -42,11 +42,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // SPA navigation: always serve index.html from cache
-  // This is critical — without this, /envelopes, /transactions etc fail offline
+  // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then((cached) => cached || fetch(request))
+      fetch(request)
+        .then((res) => {
+          const clone = res.clone();
+          caches.open(CACHE).then((c) => c.put('/index.html', clone));
+          return res;
+        })
+        .catch(() => caches.match('/index.html'))
     );
     return;
   }
