@@ -304,10 +304,12 @@ async def unlink_whatsapp(
 
 @router.get("/link/whatsapp-status")
 async def whatsapp_status(user: User = Depends(get_current_user)):
+    bot_phone = settings.WAHA_PHONE
     return {
         "linked": bool(user.whatsapp_id),
         "whatsapp_id": user.whatsapp_id,
         "phone": user.phone,
+        "bot_phone": f"+{bot_phone}" if bot_phone else None,
     }
 
 

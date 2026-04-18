@@ -95,8 +95,8 @@ Kamu tidak perlu melakukan apa-apa. Selama akun terhubung, ringkasan akan terkir
 
 ---
 
-## Nomor WhatsApp Jatahku
+## Cara Menemukan Nomor WhatsApp Jatahku
 
-Untuk mulai, kirim pesan `/link` ke nomor WhatsApp Jatahku. Nomor bisa ditemukan di halaman **Settings → WhatsApp** di [jatahku.com](https://jatahku.com).
+Buka [jatahku.com/settings](https://jatahku.com/settings), scroll ke bagian **WhatsApp**. Nomor bot akan ditampilkan di sana — simpan ke kontak HP kamu, lalu kirim `/link` untuk memulai.
 
 Kalau kamu sudah pakai bot Telegram dan mau coba WA juga, keduanya bisa aktif bersamaan — transaksi yang dicatat dari salah satu channel akan langsung terlihat di dashboard dan channel lainnya.

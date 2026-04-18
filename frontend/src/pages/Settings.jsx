@@ -485,11 +485,17 @@ export default function Settings() {
           <p className="text-xs text-gray-500 mb-4">
             Catat pengeluaran via WhatsApp dengan NLP yang sama seperti Telegram.
           </p>
+          {waStatus.bot_phone && (
+            <div className="bg-gray-50 rounded-lg px-3 py-2 mb-4 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Nomor WA Jatahku:</span>
+              <span className="text-sm font-mono font-semibold text-gray-800">{waStatus.bot_phone}</span>
+            </div>
+          )}
           <div className="space-y-4">
             <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Cara 1: Kode dari bot</p>
+              <p className="text-sm font-medium text-gray-700 mb-1">Hubungkan akun</p>
               <p className="text-xs text-gray-500 mb-2">
-                Kirim <code className="bg-gray-100 px-1 rounded">/link</code> ke nomor WhatsApp Jatahku, lalu masukkan kode di bawah.
+                Kirim <code className="bg-gray-100 px-1 rounded">/link</code> ke nomor di atas, lalu tap link yang dikirim bot.
               </p>
               <div className="flex gap-2">
                 <input
