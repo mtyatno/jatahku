@@ -93,27 +93,31 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 
     # Apply promo code if provided
     if req.promo_code:
-        from app.models.models import PromoCode
-        from datetime import datetime as dt
-        promo_result = await db.execute(
-            select(PromoCode).where(
-                PromoCode.code == req.promo_code.upper(),
-                PromoCode.is_active == True,
+        try:
+            from app.models.models import PromoCode
+            from datetime import datetime as dt
+            promo_result = await db.execute(
+                select(PromoCode).where(
+                    PromoCode.code == req.promo_code.upper(),
+                    PromoCode.is_active == True,
+                )
             )
-        )
-        promo = promo_result.scalar_one_or_none()
-        if promo:
-            now = dt.utcnow()
-            valid = True
-            if promo.valid_from and now < promo.valid_from:
-                valid = False
-            if promo.valid_until and now > promo.valid_until:
-                valid = False
-            if promo.max_uses and promo.used_count >= promo.max_uses:
-                valid = False
-            if valid and promo.is_free:
-                user.plan = "pro"
-                promo.used_count += 1
+            promo = promo_result.scalar_one_or_none()
+            if promo:
+                now = dt.utcnow()
+                valid = True
+                if promo.valid_from and now < promo.valid_from:
+                    valid = False
+                if promo.valid_until and now > promo.valid_until:
+                    valid = False
+                if promo.max_uses and promo.used_count >= promo.max_uses:
+                    valid = False
+                if valid and promo.is_free:
+                    user.plan = "pro"
+                    promo.used_count += 1
+        except Exception as promo_err:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=f"Promo error: {promo_err}")
 
     await db.commit()
 
