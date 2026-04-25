@@ -19,13 +19,18 @@ export default function Login() {
     setError('');
     setLoading(true);
 
-    const result = isRegister
-      ? await register(email, password, name, promoCode)
-      : await login(email, password);
+    try {
+      const result = isRegister
+        ? await register(email, password, name, promoCode)
+        : await login(email, password);
 
-    setLoading(false);
-    if (!result.ok) {
-      setError(result.data?.detail || 'Terjadi kesalahan');
+      if (!result.ok) {
+        setError(result.data?.detail || 'Terjadi kesalahan');
+      }
+    } catch {
+      setError('Terjadi kesalahan jaringan. Silakan coba lagi.');
+    } finally {
+      setLoading(false);
     }
   };
 

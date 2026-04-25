@@ -75,31 +75,39 @@ class ApiClient {
 
   // Auth
   async register(email, password, name, promoCode) {
-    const res = await fetch(`${API_URL}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name, promo_code: promoCode || undefined }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      this.setToken(data.access_token);
-      this.setRefreshToken(data.refresh_token);
+    try {
+      const res = await fetch(`${API_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name, promo_code: promoCode || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        this.setToken(data.access_token);
+        this.setRefreshToken(data.refresh_token);
+      }
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
     }
-    return { ok: res.ok, data };
   }
 
   async login(email, password) {
-    const res = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      this.setToken(data.access_token);
-      this.setRefreshToken(data.refresh_token);
+    try {
+      const res = await fetch(`${API_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        this.setToken(data.access_token);
+        this.setRefreshToken(data.refresh_token);
+      }
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
     }
-    return { ok: res.ok, data };
   }
 
   async getMe() {
