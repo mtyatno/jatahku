@@ -303,7 +303,7 @@ function EnvelopeRow({ env }) {
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || env.remaining);
   const ratio = env.spent_ratio;
-  const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
+  const isUnfunded = allocated <= 0 && rollover <= 0 && env.name !== 'Tabungan';
 
   const barColor = ratio >= 0.9 ? 'bg-danger-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
   const freeColor = free <= 0 ? 'text-danger-400' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';

@@ -302,7 +302,7 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || remaining);
   const spentRatio = env.spent_ratio || 0;
-  const isUnfunded = allocated <= 0 && env.name !== 'Tabungan';
+  const isUnfunded = allocated <= 0 && rollover <= 0 && env.name !== 'Tabungan';
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
   const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
