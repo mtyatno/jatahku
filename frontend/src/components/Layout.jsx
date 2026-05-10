@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 
@@ -18,6 +19,7 @@ const menuItems = [
 
 export default function Layout() {
   const { user, loading, logout } = useAuth();
+  const { mode, toggleMode } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
@@ -65,6 +67,13 @@ export default function Layout() {
           {/* Notifications + Profile */}
           <div className="flex items-center gap-1">
           <NotificationBell />
+          <button
+            onClick={toggleMode}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-base"
+            title={mode === 'light' ? 'Mode Gelap' : 'Mode Terang'}
+          >
+            {mode === 'light' ? '🌙' : '☀️'}
+          </button>
           <div className="relative" ref={menuRef}>
             <button onClick={() => setMenuOpen(!menuOpen)}
               className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-gray-50 transition-colors">
