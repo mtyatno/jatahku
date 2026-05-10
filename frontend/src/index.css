@@ -137,6 +137,7 @@ body {
 [data-theme*="-dark"] .text-gray-500 { color: #94a3b8; }
 [data-theme*="-dark"] .text-gray-600 { color: #cbd5e1; }
 [data-theme*="-dark"] .text-gray-700 { color: #e2e8f0; }
+[data-theme*="-dark"] .text-gray-800 { color: #f1f5f9; }
 [data-theme*="-dark"] .text-gray-900 { color: #f1f5f9; }
 
 [data-theme*="-dark"] .bg-gray-50  { background-color: #1e293b; }
