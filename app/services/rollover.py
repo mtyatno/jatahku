@@ -53,15 +53,27 @@ async def get_previous_rollover(env_id, year, month, db: AsyncSession) -> Decima
     return rollover if rollover is not None else Decimal("0")
 
 
-async def create_monthly_snapshots(period_start: date, period_end: date, force: bool = False) -> dict:
-    """Create snapshots for all envelopes for the given budget period.
+async def create_monthly_snapshots(
+    period_start: date,
+    period_end: date,
+    force: bool = False,
+    household_ids: list | None = None,
+) -> dict:
+    """Create snapshots for envelopes for the given budget period.
     Snapshot is keyed by period_start.year and period_start.month.
-    Set force=True to overwrite an existing snapshot."""
+    Set force=True to overwrite an existing snapshot.
+    Pass household_ids to restrict to specific households (e.g. only those
+    whose owner's payday_day matches this period)."""
     target_year = period_start.year
     target_month = period_start.month
 
     async with AsyncSessionLocal() as db:
-        households = await db.execute(select(Household))
+        if household_ids is not None:
+            households = await db.execute(
+                select(Household).where(Household.id.in_(household_ids))
+            )
+        else:
+            households = await db.execute(select(Household))
         results = {"processed": 0, "snapshots_created": 0, "errors": []}
 
         for household in households.scalars().all():

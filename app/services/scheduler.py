@@ -13,7 +13,7 @@ async def payday_snapshot_job():
     """Run daily — create period-end snapshots for users whose budget period ended yesterday."""
     from app.core.database import AsyncSessionLocal
     from app.core.period import get_budget_period
-    from app.models.models import User
+    from app.models.models import User, HouseholdMember
 
     today = date.today()
     yesterday = today - __import__('datetime').timedelta(days=1)
@@ -23,17 +23,34 @@ async def payday_snapshot_job():
         users_r = await db.execute(_sel(User).where(User.payday_day != None))
         users = users_r.scalars().all()
 
-    # Find unique payday_days whose period ended yesterday
-    triggered = set()
-    for user in users:
-        pd = getattr(user, 'payday_day', 1) or 1
-        _, period_end = get_budget_period(pd, yesterday)
-        if period_end == yesterday and pd not in triggered:
-            triggered.add(pd)
-            period_start, _ = get_budget_period(pd, yesterday)
-            logger.info(f"Running payday snapshot for payday_day={pd}, period {period_start} → {period_end}")
-            result = await create_monthly_snapshots(period_start, period_end)
-            logger.info(f"Snapshot result: {result}")
+        # Group user IDs by payday_day for those whose period ended yesterday
+        payday_user_ids: dict[int, list] = {}
+        for user in users:
+            pd = getattr(user, 'payday_day', 1) or 1
+            _, period_end = get_budget_period(pd, yesterday)
+            if period_end == yesterday:
+                payday_user_ids.setdefault(pd, []).append(user.id)
+
+        # For each triggered payday_day, get the households of those users
+        payday_households: dict[int, list] = {}
+        for pd, user_ids in payday_user_ids.items():
+            hm_r = await db.execute(
+                _sel(HouseholdMember.household_id)
+                .where(HouseholdMember.user_id.in_(user_ids))
+                .distinct()
+            )
+            payday_households[pd] = list(hm_r.scalars().all())
+
+    # Create snapshots per payday_day, restricted to the relevant households
+    for pd, household_ids in payday_households.items():
+        period_start, period_end = get_budget_period(pd, yesterday)
+        logger.info(
+            f"Running payday snapshot for payday_day={pd}, "
+            f"period {period_start} → {period_end}, "
+            f"households={len(household_ids)}"
+        )
+        result = await create_monthly_snapshots(period_start, period_end, household_ids=household_ids)
+        logger.info(f"Snapshot result: {result}")
 
 
 async def check_pending_reminders():
