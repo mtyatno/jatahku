@@ -41,7 +41,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_KEY }}
           script: |
-            git -C /opt/jatahku checkout -- frontend/dist/ 2>/dev/null || true
+            sudo git -C /opt/jatahku reset --hard HEAD
             sudo /opt/jatahku/deploy.sh
 
       - name: Health check
