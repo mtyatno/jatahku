@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../hooks/useTheme';
 import { formatCurrency } from '../lib/utils';
 
 const TIMEZONES = [
@@ -95,8 +96,15 @@ function NotifPrefs() {
   );
 }
 
+const THEME_OPTIONS = [
+  { id: 'hijau', label: '🌿 Hijau', from: '#1D9E75', to: '#5DCAA5' },
+  { id: 'laut',  label: '🌊 Laut',  from: '#2563eb', to: '#60a5fa' },
+  { id: 'senja', label: '🌅 Senja', from: '#d97706', to: '#fbbf24' },
+];
+
 export default function Settings() {
   const { user, logout } = useAuth();
+  const { color: themeColor, setColor } = useTheme();
   const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -346,7 +354,32 @@ export default function Settings() {
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-display font-bold">Settings</h1>
 
-
+      {/* Tema Tampilan */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-3">🎨 Tema Tampilan</h3>
+        <div className="grid grid-cols-3 gap-3">
+          {THEME_OPTIONS.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setColor(t.id)}
+              className={`rounded-xl overflow-hidden border-2 transition-all ${
+                themeColor === t.id
+                  ? 'border-brand-600 ring-2 ring-brand-200'
+                  : 'border-transparent hover:border-brand-200'
+              }`}
+            >
+              <div
+                className="h-10 w-full"
+                style={{ background: `linear-gradient(135deg, ${t.from}, ${t.to})` }}
+              />
+              <div className="py-2 text-xs font-semibold text-center">{t.label}</div>
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          Gunakan toggle ☀️/🌙 di header untuk ganti mode gelap.
+        </p>
+      </div>
 
       {/* Profile */}
       <div className="card">
