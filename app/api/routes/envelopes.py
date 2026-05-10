@@ -54,10 +54,11 @@ class EnvelopeSummary(BaseModel):
     is_locked: bool
     daily_limit: Decimal | None
     cooling_threshold: Decimal | None
-    allocated: Decimal      # actual money in
+    allocated: Decimal      # actual money in this period
+    rollover: Decimal       # carried over from previous period
     spent: Decimal
     reserved: Decimal       # committed for subscriptions this month
-    remaining: Decimal      # allocated - spent - reserved (+ rollover)
+    remaining: Decimal      # allocated + rollover - spent
     free: Decimal           # remaining minus reserved = truly free to spend
     funded_ratio: float     # allocated / budget_amount
     spent_ratio: float      # spent / allocated
@@ -200,6 +201,7 @@ async def envelope_summary(
             daily_limit=env.daily_limit,
             cooling_threshold=env.cooling_threshold,
             allocated=allocated,
+            rollover=rollover,
             spent=spent, reserved=reserved, remaining=remaining,
             free=free,
             funded_ratio=round(funded_ratio, 4),

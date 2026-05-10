@@ -296,6 +296,7 @@ function ControlBadges({ env }) {
 
 function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   const allocated = Number(env.allocated || 0);
+  const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent || 0);
   const remaining = Number(env.remaining || 0);
   const reserved = Number(env.reserved || 0);
@@ -326,7 +327,8 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
           </div>
           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
           <p className="text-xs text-gray-400 mt-1">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">🔄 Reserved: {formatCurrency(reserved)}/bulan</p>}
+          {rollover > 0 && <p className="text-xs text-brand-500 mt-0.5">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>}
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatCurrency(reserved)}/bulan</p>}
         </div>
       )}
       <ControlBadges env={env} />

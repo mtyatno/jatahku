@@ -298,6 +298,7 @@ function WeeklyPattern({ data }) {
 
 function EnvelopeRow({ env }) {
   const allocated = Number(env.allocated);
+  const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent);
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || env.remaining);
@@ -340,9 +341,12 @@ function EnvelopeRow({ env }) {
           </div>
           <div className="flex justify-between mt-1 text-xs text-gray-400">
             <span>Terpakai {formatShort(spent)}</span>
-            {reserved > 0 && <span>🔄 {formatShort(reserved)}</span>}
+            {reserved > 0 && <span>⏳ {formatShort(reserved)}</span>}
             <span>Dana {formatShort(allocated)}</span>
           </div>
+          {rollover > 0 && (
+            <p className="text-xs text-brand-500 mt-0.5">🔄 +{formatShort(rollover)} rollover</p>
+          )}
         </>
       )}
     </div>
