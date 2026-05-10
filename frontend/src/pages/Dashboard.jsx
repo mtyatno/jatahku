@@ -12,11 +12,20 @@ import {
 
 const COLORS = ['#0F6E56', '#BA7517', '#1D9E75', '#D85A30', '#534AB7', '#993556', '#378ADD', '#639922'];
 
+const TOOLTIP_STYLE = {
+  background: 'var(--card-bg)',
+  border: '1px solid var(--border)',
+  borderRadius: '8px',
+  color: 'var(--text)',
+};
+const TOOLTIP_LABEL_STYLE = { color: 'var(--text-muted)', fontSize: 11 };
+const TOOLTIP_ITEM_STYLE = { color: 'var(--text)' };
+
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
-      <p className="text-xs text-gray-400 mb-1">Tgl {label}</p>
+    <div style={TOOLTIP_STYLE} className="px-3 py-2 shadow-sm">
+      <p className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>Tgl {label}</p>
       {payload.map((p, i) => p.value > 0 && (
         <p key={i} className="text-sm font-semibold" style={{color: p.color}}>
           {formatCurrency(p.value)}
@@ -224,6 +233,9 @@ function MonthlyComparison({ data, breakdown }) {
           <Tooltip
             formatter={(v, n) => [formatCurrency(v), n === 'spent' ? 'Terpakai' : 'Dialokasi']}
             labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel || ''}
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           <Bar dataKey="allocated" fill="#D1FAE5" radius={[2, 2, 0, 0]} barSize={12} />
           <Bar dataKey="spent" fill="#0F6E56" radius={[2, 2, 0, 0]} barSize={12} />
@@ -282,6 +294,9 @@ function WeeklyPattern({ data }) {
           <Tooltip
             formatter={v => [formatCurrency(v), 'Rata-rata']}
             labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
+            contentStyle={TOOLTIP_STYLE}
+            labelStyle={TOOLTIP_LABEL_STYLE}
+            itemStyle={TOOLTIP_ITEM_STYLE}
           />
           <Bar dataKey="avg" radius={[3, 3, 0, 0]}
             shape={(props) => {
@@ -538,7 +553,7 @@ export default function Dashboard() {
                         outerRadius={58} innerRadius={34} paddingAngle={2}>
                         {breakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
-                      <Tooltip formatter={v => formatCurrency(v)} />
+                      <Tooltip formatter={v => formatCurrency(v)} contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
