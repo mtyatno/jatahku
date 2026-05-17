@@ -1,4 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="40" fill="#0F6E56"/>
-  <text x="96" y="122" font-family="system-ui,sans-serif" font-size="88" font-weight="700" text-anchor="middle" fill="white">J</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0F6E56"/>
+  <rect x="65" y="215" width="382" height="218" rx="8" fill="white"/>
+  <line x1="65" y1="433" x2="447" y2="215" stroke="#0F6E56" stroke-width="15" stroke-linecap="round"/>
+  <line x1="447" y1="433" x2="65" y2="215" stroke="#0F6E56" stroke-width="15" stroke-linecap="round"/>
+  <polygon points="65,215 447,215 256,105" fill="white"/>
+  <rect x="213" y="85" width="120" height="170" rx="6" fill="white"/>
+  <rect x="225" y="97" width="96" height="146" rx="4" fill="none" stroke="#0F6E56" stroke-width="9"/>
+  <circle cx="273" cy="177" r="26" fill="#0F6E56"/>
+  <rect x="181" y="98" width="120" height="165" rx="6" fill="white"/>
+  <rect x="193" y="110" width="96" height="141" rx="4" fill="none" stroke="#0F6E56" stroke-width="9"/>
+  <circle cx="241" cy="188" r="26" fill="#0F6E56"/>
 </svg>
