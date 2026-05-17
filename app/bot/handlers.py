@@ -24,7 +24,7 @@ logger = logging.getLogger("jatahku.bot")
 
 # Matches amount anywhere in text: "35k kopi", "kopi 35k", "beli kopi 35rb"
 AMOUNT_ANYWHERE = re.compile(
-    r"(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+(?:[,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)", re.IGNORECASE
+    r"(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+\.\d{1,2}|\d+(?:[,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)", re.IGNORECASE
 )
 MULTIPLIERS = {"jt": 1_000_000, "juta": 1_000_000, "rb": 1_000, "ribu": 1_000, "k": 1_000}
 
