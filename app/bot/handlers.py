@@ -511,32 +511,32 @@ async def handle_daily_limit_callback(update, context):
     user_id = str(query.from_user.id)
 
     r = aioredis.from_url(settings.REDIS_URL)
-    raw = await r.get(f"dlimit_pending:{user_id}:{token}")
 
-    if action == "cancel" or not raw:
+    # Cancel path — explicit user request
+    if action == "cancel":
         await r.delete(f"dlimit_pending:{user_id}:{token}")
         await r.aclose()
         await query.edit_message_text("❌ Transaksi dibatalkan.")
         return
 
-    payload    = json.loads(raw)
+    # Confirm path — use getdel (atomic fetch+delete) to prevent double-processing
+    raw = await r.getdel(f"dlimit_pending:{user_id}:{token}")
+    await r.aclose()
+
+    if not raw:
+        # Key missing: already processed or session expired
+        await query.edit_message_text("⏰ Transaksi sudah diproses atau sesi expired. Cek /status.")
+        return
+
+    payload     = json.loads(raw)
     envelope_id = payload["envelope_id"]
     amount      = Decimal(payload["amount"])
     description = payload.get("description", "")
 
-    # Set temp bypass in Redis until midnight
-    now      = datetime.now()
-    midnight = datetime.combine(now.date() + timedelta(days=1), time.min)
-    ttl      = int((midnight - now).total_seconds())
-    await r.setex(f"dlimit_temp:{user_id}:{envelope_id}", ttl, "1")
-    await r.delete(f"dlimit_pending:{user_id}:{token}")
-    await r.aclose()
-
-    # Record transaction directly (bypass already set)
+    # Record transaction
     import uuid
     async with AsyncSessionLocal() as db:
-        from app.models.models import Envelope as EnvModel, HouseholdMember
-        from app.services.behavior import get_envelopes_with_spent
+        from app.models.models import Envelope as EnvModel
         env_r = await db.execute(select(EnvModel).where(EnvModel.id == uuid.UUID(envelope_id)))
         envelope = env_r.scalar_one_or_none()
         if not envelope:
@@ -561,6 +561,14 @@ async def handle_daily_limit_callback(update, context):
         )
         db.add(txn)
         await db.commit()
+
+        # Set temp bypass until midnight — use DB user UUID to match check_behavior
+        now      = datetime.now()
+        midnight = datetime.combine(now.date() + timedelta(days=1), time.min)
+        ttl      = int((midnight - now).total_seconds())
+        r2 = aioredis.from_url(settings.REDIS_URL)
+        await r2.setex(f"dlimit_temp:{user.id}:{envelope_id}", ttl, "1")
+        await r2.aclose()
 
         # Fetch updated remaining for envelope
         from app.bot.nlp_cmd import _get_user_envelopes
