@@ -303,7 +303,7 @@ def parse_multi_expense(text):
     # Try separators in priority order
     sep_patterns = [
         r"\s*\n+\s*",           # newline / Enter (highest priority)
-        r"\s*[,;]\s*",
+        r"\s*(?<!\d),\s*|[;]",  # comma only if not preceded by digit (avoids splitting decimal 1,6)
         r"\s+(?:terus|lalu)\s+",
         r"\s+dan\s+",
     ]
