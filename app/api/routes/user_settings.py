@@ -387,6 +387,9 @@ async def reset_data(
         email_sent = send_data_backup_email(user.email, user.name, export, filename)
 
     # --- Hard delete in FK-safe order ---
+    if not hid:
+        raise HTTPException(400, "Data tidak ditemukan")
+
     if env_ids:
         await db.execute(delete(PendingTransaction).where(PendingTransaction.envelope_id.in_(env_ids)))
         await db.execute(delete(Transaction).where(Transaction.envelope_id.in_(env_ids)))
@@ -397,10 +400,13 @@ async def reset_data(
         await db.execute(delete(UserEnvelopeKeyword).where(UserEnvelopeKeyword.envelope_id.in_(env_ids)))
         await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
+    inc_ids_result = await db.execute(select(Income.id).where(Income.user_id == user.id))
+    inc_ids = [row[0] for row in inc_ids_result.all()]
+    if inc_ids:
+        await db.execute(delete(Allocation).where(Allocation.income_id.in_(inc_ids)))
     await db.execute(delete(Income).where(Income.user_id == user.id))
 
-    if hid:
-        await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
+    await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
 
     await db.commit()
     return {"success": True, "email_sent": email_sent}
