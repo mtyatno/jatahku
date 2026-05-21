@@ -128,6 +128,7 @@ function HardResetDialog({ profile, members, onClose, onSuccess }) {
       const data = await res.json();
       if (res.ok) {
         onSuccess(data.email_sent, profile.email || email);
+        return;
       } else {
         setError(data.detail || 'Gagal reset data');
       }
