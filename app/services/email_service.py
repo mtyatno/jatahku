@@ -1,7 +1,9 @@
 import smtplib
 import logging
+import json as _json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from email.utils import formatdate, make_msgid
 
 logger = logging.getLogger("jatahku.email")
@@ -139,3 +141,43 @@ def send_subscription_due_email(to_email: str, name: str, desc: str, amount: str
         "https://jatahku.com/langganan"
     )
     return send_email(to_email, f"🔔 Jatuh tempo: {desc} — {amount}", html)
+
+
+def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) -> bool:
+    """Send backup JSON as attachment before a data reset."""
+    try:
+        msg = MIMEMultipart("mixed")
+        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
+        msg["To"] = to_email
+        msg["Subject"] = "Backup data Jatahku kamu sebelum reset"
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain="jatahku.com")
+
+        html_body = email_template(
+            "Backup data kamu tersedia",
+            f"""<p>Hai {name},</p>
+            <p>Data Jatahku kamu terlampir sebagai file <strong>{filename}</strong>.</p>
+            <p>Ini adalah salinan lengkap semua data kamu sebelum reset dilakukan.
+            Simpan sebagai referensi jika sewaktu-waktu diperlukan.</p>""",
+        )
+        body_part = MIMEMultipart("alternative")
+        body_part.attach(MIMEText(f"Backup data Jatahku kamu terlampir: {filename}", "plain"))
+        body_part.attach(MIMEText(html_body, "html"))
+        msg.attach(body_part)
+
+        json_bytes = _json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+        attachment = MIMEApplication(json_bytes, _subtype="json")
+        attachment.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(attachment)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+
+        logger.info(f"Backup email sent to {to_email}: {filename}")
+        return True
+    except Exception as e:
+        logger.error(f"Backup email failed to {to_email}: {e}")
+        return False
