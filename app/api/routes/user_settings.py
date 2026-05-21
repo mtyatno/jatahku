@@ -325,6 +325,10 @@ async def reset_data(
     )
     hid = hid_result.scalar_one_or_none()
 
+    # Guard: fail early if household not found
+    if not hid:
+        raise HTTPException(400, "Data tidak ditemukan")
+
     # Collect envelope ids
     env_ids: list = []
     if hid:
@@ -387,9 +391,6 @@ async def reset_data(
         email_sent = send_data_backup_email(user.email, user.name, export, filename)
 
     # --- Hard delete in FK-safe order ---
-    if not hid:
-        raise HTTPException(400, "Data tidak ditemukan")
-
     if env_ids:
         await db.execute(delete(PendingTransaction).where(PendingTransaction.envelope_id.in_(env_ids)))
         await db.execute(delete(Transaction).where(Transaction.envelope_id.in_(env_ids)))
