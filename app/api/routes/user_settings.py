@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, delete
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -16,6 +16,7 @@ from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
     HouseholdMember, Household,
+    Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
 )
 
 router = APIRouter()
@@ -41,6 +42,10 @@ class DefaultBehavior(BaseModel):
     default_cooling_threshold: Decimal | None = None
     default_daily_limit: Decimal | None = None
     default_is_locked: bool = False
+
+
+class ResetDataRequest(BaseModel):
+    email: str | None = None  # only provided if user has no email yet
 
 
 @router.get("/profile")
@@ -293,3 +298,109 @@ async def logout_all(
     user.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "all_sessions_invalidated"}
+
+
+@router.post("/reset")
+async def reset_data(
+    req: ResetDataRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import date as _date
+    from app.services.email_service import send_data_backup_email
+
+    # Save new email if provided (user had no email before)
+    if req.email:
+        existing = await db.execute(
+            select(User).where(User.email == req.email, User.id != user.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(400, "Email sudah digunakan")
+        user.email = req.email
+        await db.flush()
+
+    # Resolve household id
+    hid_result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = hid_result.scalar_one_or_none()
+
+    # Collect envelope ids
+    env_ids: list = []
+    if hid:
+        env_ids_result = await db.execute(
+            select(Envelope.id).where(Envelope.household_id == hid)
+        )
+        env_ids = [row[0] for row in env_ids_result.all()]
+
+    # --- Build export payload ---
+    envelopes_data = []
+    if env_ids:
+        env_result = await db.execute(select(Envelope).where(Envelope.id.in_(env_ids)))
+        envelopes_data = [
+            {"name": e.name, "emoji": e.emoji, "budget": str(e.budget_amount)}
+            for e in env_result.scalars().all()
+        ]
+
+    txn_result = await db.execute(
+        select(Transaction)
+        .where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+        .order_by(Transaction.created_at)
+    )
+    transactions_data = [
+        {"date": str(t.transaction_date), "amount": str(t.amount), "description": t.description}
+        for t in txn_result.scalars().all()
+    ]
+
+    inc_result = await db.execute(
+        select(Income).where(Income.user_id == user.id).order_by(Income.created_at)
+    )
+    incomes_data = [
+        {"date": str(i.income_date), "amount": str(i.amount), "description": i.description}
+        for i in inc_result.scalars().all()
+    ]
+
+    recurring_data = []
+    if env_ids:
+        rec_result = await db.execute(
+            select(RecurringTransaction)
+            .where(RecurringTransaction.envelope_id.in_(env_ids))
+        )
+        recurring_data = [
+            {"description": r.description, "amount": str(r.amount), "frequency": r.frequency.value}
+            for r in rec_result.scalars().all()
+        ]
+
+    export = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "user": {"name": user.name, "email": user.email},
+        "envelopes": envelopes_data,
+        "transactions": transactions_data,
+        "incomes": incomes_data,
+        "recurring": recurring_data,
+    }
+
+    # --- Send backup email (non-blocking: reset proceeds even if email fails) ---
+    email_sent = False
+    if user.email:
+        filename = f"jatahku-backup-{_date.today().isoformat()}.json"
+        email_sent = send_data_backup_email(user.email, user.name, export, filename)
+
+    # --- Hard delete in FK-safe order ---
+    if env_ids:
+        await db.execute(delete(PendingTransaction).where(PendingTransaction.envelope_id.in_(env_ids)))
+        await db.execute(delete(Transaction).where(Transaction.envelope_id.in_(env_ids)))
+        await db.execute(delete(Allocation).where(Allocation.envelope_id.in_(env_ids)))
+        await db.execute(delete(Goal).where(Goal.envelope_id.in_(env_ids)))
+        await db.execute(delete(MonthlySnapshot).where(MonthlySnapshot.envelope_id.in_(env_ids)))
+        await db.execute(delete(RecurringTransaction).where(RecurringTransaction.envelope_id.in_(env_ids)))
+        await db.execute(delete(UserEnvelopeKeyword).where(UserEnvelopeKeyword.envelope_id.in_(env_ids)))
+        await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
+
+    await db.execute(delete(Income).where(Income.user_id == user.id))
+
+    if hid:
+        await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
+
+    await db.commit()
+    return {"success": True, "email_sent": email_sent}
