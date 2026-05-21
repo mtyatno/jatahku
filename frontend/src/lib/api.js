@@ -287,6 +287,14 @@ class ApiClient {
       body: JSON.stringify({ phone }),
     });
   }
+
+  async resetData(email = null) {
+    const body = email ? { email } : {};
+    return this.request('/user/reset', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 export const api = new ApiClient();
