@@ -102,6 +102,144 @@ const THEME_OPTIONS = [
   { id: 'senja', label: '🌅 Senja', from: '#d97706', to: '#fbbf24' },
 ];
 
+function HardResetDialog({ profile, members, onClose, onSuccess }) {
+  const [step, setStep] = useState(1);
+  const [email, setEmail] = useState('');
+  const [confirmText, setConfirmText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const hasEmail = !!profile.email;
+  const hasHousehold = members.length > 1;
+
+  const goToConfirm = () => {
+    if (!hasEmail) {
+      if (!email || !email.includes('@')) { setError('Masukkan email yang valid'); return; }
+      setError('');
+    }
+    setStep(3);
+  };
+
+  const handleReset = async () => {
+    if (confirmText !== 'RESET') return;
+    setLoading(true);
+    try {
+      const res = await api.resetData(!hasEmail ? email : null);
+      const data = await res.json();
+      if (res.ok) {
+        onSuccess(data.email_sent, profile.email || email);
+      } else {
+        setError(data.detail || 'Gagal reset data');
+      }
+    } catch {
+      setError('Terjadi kesalahan jaringan');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
+
+        {step === 1 && (
+          <>
+            <h3 className="text-lg font-semibold text-red-600">⚠️ Reset Semua Data?</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Data berikut akan dihapus permanen dan tidak bisa dikembalikan:</p>
+            <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1 list-disc list-inside">
+              <li>Semua amplop</li>
+              <li>Semua transaksi</li>
+              <li>Semua alokasi</li>
+              <li>Semua catatan pemasukan</li>
+              <li>Semua langganan & recurring</li>
+            </ul>
+            {hasHousehold && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-700">
+                <strong>Perhatian:</strong> Kamu adalah anggota household. Amplop yang kamu share dengan anggota lain juga akan terdampak.
+              </div>
+            )}
+            <p className="text-xs text-gray-400">Setting akun (payday, timezone, notifikasi, status Pro) tidak akan dihapus.</p>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => hasEmail ? setStep(3) : setStep(2)}
+                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl hover:bg-red-600 transition-colors"
+              >
+                Lanjutkan
+              </button>
+              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50">
+                Batal
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <h3 className="text-lg font-semibold">📧 Email untuk backup</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Data kamu akan di-backup dan dikirim ke email ini sebelum dihapus. Email juga akan disimpan ke akun kamu.
+            </p>
+            <input
+              type="email"
+              className="input text-sm w-full"
+              placeholder="email@kamu.com"
+              value={email}
+              onChange={e => { setEmail(e.target.value); setError(''); }}
+              autoFocus
+            />
+            {error && <p className="text-xs text-red-500">{error}</p>}
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={goToConfirm}
+                disabled={!email}
+                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                Lanjutkan
+              </button>
+              <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50">
+                Kembali
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <h3 className="text-lg font-semibold text-red-600">🔴 Konfirmasi Reset</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Ketik <strong className="font-mono">RESET</strong> untuk melanjutkan. Tindakan ini tidak bisa dibatalkan.
+            </p>
+            <input
+              className="input text-sm w-full font-mono tracking-widest"
+              placeholder="ketik RESET untuk melanjutkan"
+              value={confirmText}
+              onChange={e => { setConfirmText(e.target.value); setError(''); }}
+              autoFocus
+            />
+            {error && <p className="text-xs text-red-500">{error}</p>}
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={handleReset}
+                disabled={confirmText !== 'RESET' || loading}
+                className="flex-1 px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {loading ? 'Mereset...' : 'Reset Sekarang'}
+              </button>
+              <button
+                onClick={() => { hasEmail ? setStep(1) : setStep(2); setConfirmText(''); setError(''); }}
+                disabled={loading}
+                className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50"
+              >
+                Kembali
+              </button>
+            </div>
+          </>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, logout } = useAuth();
   const { color: themeColor, setColor } = useTheme();
@@ -142,6 +280,9 @@ export default function Settings() {
   // Delete
   const [showDelete, setShowDelete] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+
+  // Reset
+  const [showReset, setShowReset] = useState(false);
 
   // Household
   const [members, setMembers] = useState([]);
@@ -339,6 +480,15 @@ export default function Settings() {
     await api.request('/user/logout-all', { method: 'POST' });
     flash('Semua sesi di-logout');
     logout();
+  };
+
+  const onResetSuccess = (emailSent, emailAddr) => {
+    setShowReset(false);
+    const msg = emailSent
+      ? `Data berhasil direset. Backup dikirim ke ${emailAddr}.`
+      : 'Data berhasil direset. (Backup tidak berhasil dikirim)';
+    flash(msg, 'global');
+    setTimeout(() => navigate('/envelopes'), 2000);
   };
 
   const roleLabel = (r) => ({ owner: 'Owner', admin: 'Admin', member: 'Member' }[r] || r);
@@ -723,10 +873,36 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Zona Berbahaya */}
+      <div className="card border border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-900">
+        <h3 className="font-semibold text-sm text-red-600 mb-1">⚠️ Zona Berbahaya</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm">Reset Semua Data</p>
+            <p className="text-xs text-gray-400">Hapus semua amplop, transaksi, dan data finansial. Tidak bisa dibatalkan.</p>
+          </div>
+          <button
+            onClick={() => setShowReset(true)}
+            className="text-sm text-red-400 border border-red-200 rounded-xl px-3 py-1.5 hover:bg-red-50 hover:text-red-600 hover:border-red-400 transition-all whitespace-nowrap ml-4"
+          >
+            Reset data
+          </button>
+        </div>
+      </div>
+
       {/* Logout */}
       <div className="card">
         <button onClick={logout} className="text-sm text-red-400 hover:underline">Logout dari Jatahku</button>
       </div>
+
+      {showReset && (
+        <HardResetDialog
+          profile={profile}
+          members={members}
+          onClose={() => setShowReset(false)}
+          onSuccess={onResetSuccess}
+        />
+      )}
     </div>
   );
 }
