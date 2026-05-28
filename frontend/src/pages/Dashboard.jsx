@@ -318,7 +318,7 @@ function EnvelopeRow({ env }) {
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || env.remaining);
   const ratio = env.spent_ratio;
-  const isUnfunded = allocated <= 0 && rollover <= 0 && env.name !== 'Tabungan';
+  const isUnfunded = allocated <= 0 && rollover === 0 && env.name !== 'Tabungan';
 
   const barColor = ratio >= 0.9 ? 'bg-danger-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
   const freeColor = free <= 0 ? 'text-danger-400' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
@@ -359,8 +359,12 @@ function EnvelopeRow({ env }) {
             {reserved > 0 && <span>⏳ {formatShort(reserved)}</span>}
             <span>Dana {formatShort(allocated)}</span>
           </div>
-          {rollover > 0 && (
-            <p className="text-xs text-brand-500 mt-0.5">🔄 +{formatShort(rollover)} rollover</p>
+          {rollover !== 0 && (
+            <p className={`text-xs mt-0.5 ${rollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
+              {rollover > 0
+                ? `🔄 +${formatShort(rollover)} rollover`
+                : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+            </p>
           )}
         </>
       )}

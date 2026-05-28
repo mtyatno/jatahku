@@ -9,29 +9,35 @@ logger = logging.getLogger("jatahku.scheduler")
 scheduler = AsyncIOScheduler()
 
 
+# How many recently-closed periods the daily job backfills. Covers short
+# outages; use the /snapshots/recompute endpoint for longer gaps or repairs.
+CATCH_UP_PERIODS = 3
+
+
 async def payday_snapshot_job():
-    """Run daily — create period-end snapshots for users whose budget period ended yesterday."""
+    """Run daily — ensure snapshots exist for all recently-closed budget periods.
+
+    Idempotent and self-healing: walks the last few closed periods oldest-first
+    and creates any that are missing (e.g. skipped by a missed run), so the
+    rollover chain never loses a link. Existing snapshots are left untouched."""
     from app.core.database import AsyncSessionLocal
-    from app.core.period import get_budget_period
+    from app.core.period import get_closed_periods
     from app.models.models import User, HouseholdMember
 
     today = date.today()
-    yesterday = today - __import__('datetime').timedelta(days=1)
 
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select as _sel
         users_r = await db.execute(_sel(User).where(User.payday_day != None))
         users = users_r.scalars().all()
 
-        # Group user IDs by payday_day for those whose period ended yesterday
+        # Group user IDs by payday_day
         payday_user_ids: dict[int, list] = {}
         for user in users:
             pd = getattr(user, 'payday_day', 1) or 1
-            _, period_end = get_budget_period(pd, yesterday)
-            if period_end == yesterday:
-                payday_user_ids.setdefault(pd, []).append(user.id)
+            payday_user_ids.setdefault(pd, []).append(user.id)
 
-        # For each triggered payday_day, get the households of those users
+        # Resolve the households for each payday_day group
         payday_households: dict[int, list] = {}
         for pd, user_ids in payday_user_ids.items():
             hm_r = await db.execute(
@@ -41,16 +47,21 @@ async def payday_snapshot_job():
             )
             payday_households[pd] = list(hm_r.scalars().all())
 
-    # Create snapshots per payday_day, restricted to the relevant households
+    # Backfill recent closed periods per payday_day, oldest-first so each
+    # period's rollover sees its (already-created) predecessor.
     for pd, household_ids in payday_households.items():
-        period_start, period_end = get_budget_period(pd, yesterday)
-        logger.info(
-            f"Running payday snapshot for payday_day={pd}, "
-            f"period {period_start} → {period_end}, "
-            f"households={len(household_ids)}"
-        )
-        result = await create_monthly_snapshots(period_start, period_end, household_ids=household_ids)
-        logger.info(f"Snapshot result: {result}")
+        if not household_ids:
+            continue
+        for period_start, period_end in get_closed_periods(pd, today, CATCH_UP_PERIODS):
+            result = await create_monthly_snapshots(
+                period_start, period_end, household_ids=household_ids
+            )
+            if result["snapshots_created"]:
+                logger.info(
+                    f"payday={pd} period {period_start} → {period_end}: "
+                    f"{result['snapshots_created']} snapshots created, "
+                    f"{len(result['errors'])} errors"
+                )
 
 
 async def check_pending_reminders():

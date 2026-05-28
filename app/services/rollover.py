@@ -36,7 +36,16 @@ async def calculate_envelope_balance(env_id, period_start: date, period_end: dat
 
 
 async def get_previous_rollover(env_id, year, month, db: AsyncSession) -> Decimal:
-    """Get rollover amount from the previous period's snapshot (keyed by period_start year/month)."""
+    """Get rollover amount from the previous period's snapshot (keyed by period_start year/month).
+
+    The previous snapshot's key is derived by plain calendar arithmetic
+    (month - 1). This is correct because every budget period spans exactly one
+    payday-to-payday window, so consecutive periods always start in consecutive
+    calendar months — i.e. (year, month-1) always equals the previous period's
+    period_start year/month, for any payday_day. That invariant is locked by
+    app/tests/test_rollover_key_invariant.py; do not "simplify" to a
+    most-recent-snapshot lookup, which would silently skip a period if one
+    snapshot is missing instead of correctly resolving to the exact predecessor."""
     if month == 1:
         prev_year, prev_month = year - 1, 12
     else:

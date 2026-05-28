@@ -31,9 +31,15 @@ def get_budget_period(payday_day: int, today: date | None = None) -> tuple[date,
         today = date.today()
     payday_day = max(1, min(payday_day, 31))
 
-    if today.day >= payday_day:
+    # This month's payday, capped to the last day of the month. Comparing against
+    # this (not the raw payday_day) is essential for payday 29/30/31: in a short
+    # month the capped payday can be < payday_day, so `today.day >= payday_day`
+    # would wrongly skip the day(s) at month-end into a no-man's-land.
+    this_month_payday = _safe_date(today.year, today.month, payday_day)
+
+    if today >= this_month_payday:
         # We're at or past payday this month — period started this month
-        period_start = _safe_date(today.year, today.month, payday_day)
+        period_start = this_month_payday
         if today.month == 12:
             next_year, next_month = today.year + 1, 1
         else:
@@ -46,7 +52,7 @@ def get_budget_period(payday_day: int, today: date | None = None) -> tuple[date,
         else:
             prev_year, prev_month = today.year, today.month - 1
         period_start = _safe_date(prev_year, prev_month, payday_day)
-        period_end = _safe_date(today.year, today.month, payday_day) - timedelta(days=1)
+        period_end = this_month_payday - timedelta(days=1)
 
     return period_start, period_end
 
@@ -67,6 +73,28 @@ def get_last_n_periods(payday_day: int, n: int, today: date | None = None) -> li
     periods = []
     anchor = today
     for _ in range(n):
+        start, end = get_budget_period(payday_day, anchor)
+        periods.append((start, end))
+        anchor = start - timedelta(days=1)
+    periods.reverse()
+    return periods
+
+
+def get_closed_periods(
+    payday_day: int, today: date | None = None, max_periods: int = 12
+) -> list[tuple[date, date]]:
+    """Return up to `max_periods` CLOSED budget periods (oldest first).
+
+    A period is "closed" once it no longer contains `today`. The newest closed
+    period is the one ending the day before the current period starts. Used by
+    the snapshot catch-up so missed snapshots can be backfilled in dependency
+    order (oldest first → each period's rollover sees its predecessor)."""
+    if today is None:
+        today = date.today()
+    current_start, _ = get_budget_period(payday_day, today)
+    periods: list[tuple[date, date]] = []
+    anchor = current_start - timedelta(days=1)  # last day of newest closed period
+    for _ in range(max(0, max_periods)):
         start, end = get_budget_period(payday_day, anchor)
         periods.append((start, end))
         anchor = start - timedelta(days=1)
