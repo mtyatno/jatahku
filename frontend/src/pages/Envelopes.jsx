@@ -302,7 +302,7 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || remaining);
   const spentRatio = env.spent_ratio || 0;
-  const isUnfunded = allocated <= 0 && rollover <= 0 && env.name !== 'Tabungan';
+  const isUnfunded = allocated <= 0 && rollover === 0 && env.name !== 'Tabungan';
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
   const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
@@ -327,7 +327,11 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
           </div>
           <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
           <p className="text-xs text-gray-400 mt-1">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
-          {rollover > 0 && <p className="text-xs text-brand-500 mt-0.5">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>}
+          {rollover !== 0 && (
+            rollover > 0
+              ? <p className="text-xs text-brand-500 mt-0.5">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
+              : <p className="text-xs text-danger-400 mt-0.5">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
+          )}
           {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatCurrency(reserved)}/bulan</p>}
         </div>
       )}
