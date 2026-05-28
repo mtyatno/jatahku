@@ -353,6 +353,10 @@ class MonthlySnapshot(TimestampMixin, Base):
         Numeric(15, 2), default=Decimal("0")
     )
 
+    __table_args__ = (
+        UniqueConstraint("envelope_id", "year", "month", name="uq_snapshot_envelope_period"),
+    )
+
     # Relationships
     envelope: Mapped["Envelope"] = relationship(back_populates="monthly_snapshots")
 
