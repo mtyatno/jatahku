@@ -94,6 +94,35 @@ async def run_monthly_snapshot(
     result = await create_monthly_snapshots(period_start, period_end, force=force)
     return {"period": f"{period_start} → {period_end}", **result}
 
+@router.post("/recompute")
+async def recompute_snapshots(
+    periods: int = Query(6, ge=1, le=36),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rebuild the last N closed snapshots for the caller's household, oldest-first
+    and with force=True, so the rollover chain is recomputed correctly end-to-end.
+    Repairs chains corrupted by missed snapshot runs."""
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = result.scalar_one_or_none()
+    if not hid:
+        return {"recomputed": 0, "periods": []}
+
+    from app.core.period import get_closed_periods
+    payday = user.payday_day or 1
+    closed = get_closed_periods(payday, date.today(), periods)
+
+    out = []
+    for period_start, period_end in closed:  # oldest-first → chain rebuilds in order
+        r = await create_monthly_snapshots(
+            period_start, period_end, force=True, household_ids=[hid]
+        )
+        out.append({"period": f"{period_start} → {period_end}", **r})
+    return {"recomputed": len(out), "periods": out}
+
+
 @router.post("/daily-summary")
 async def trigger_daily_summary(user: User = Depends(get_current_user)):
     from app.services.summary import send_daily_summary
