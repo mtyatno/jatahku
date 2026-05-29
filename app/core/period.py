@@ -102,6 +102,15 @@ def get_closed_periods(
     return periods
 
 
+def payday_reminder_day_index(payday_day: int, user_today: date) -> int | None:
+    """0/1/2 if user_today is within the first 3 days of the current budget
+    period, else None. Drives the payday-reminder re-nudge window (day 0 =
+    payday, days 1-2 = follow-up nudges)."""
+    period_start, _ = get_budget_period(payday_day, user_today)
+    idx = (user_today - period_start).days
+    return idx if 0 <= idx <= 2 else None
+
+
 def get_period_info(payday_day: int, today: date | None = None) -> dict:
     """Return period stats dict for display."""
     if today is None:

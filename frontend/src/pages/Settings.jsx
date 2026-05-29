@@ -80,6 +80,18 @@ function NotifPrefs() {
           <label className="flex justify-center"><input type="checkbox" checked={prefs[r.key + '_web']} onChange={() => toggle(r.key + '_web')} className="w-4 h-4 rounded border-gray-300 text-brand-600" /></label>
         </div>
       ))}
+      <div className="grid grid-cols-3 gap-2 items-center pt-1 border-t border-gray-100">
+        <span className="text-sm text-gray-600">Pengingat alokasi gaji</span>
+        <label className="flex justify-center">
+          <input
+            type="checkbox"
+            checked={!!prefs.payday_reminder_tg}
+            onChange={() => toggle('payday_reminder_tg')}
+            className="w-4 h-4 rounded border-gray-300 text-brand-600"
+          />
+        </label>
+        <span className="text-center text-xs text-gray-300">—</span>
+      </div>
       <div className="border-t border-gray-100 pt-3 mt-3 space-y-2">
         <p className="text-xs text-gray-400 font-medium">Jadwal ringkasan (sesuai timezone kamu):</p>
         <div className="flex items-center gap-3">

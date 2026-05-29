@@ -187,6 +187,14 @@ async def run_user_summaries():
                 except Exception as e:
                     logger.error(f"Weekly summary failed for {user.id}: {e}")
 
+            # Payday allocation reminder (08:00 local, first 3 days of period)
+            if user_hour == "08:00":
+                try:
+                    from app.services.payday_reminder import send_payday_reminder
+                    await send_payday_reminder(user, user_now, prefs, db)
+                except Exception as e:
+                    logger.error(f"Payday reminder failed for {user.id}: {e}")
+
     logger.info(f"User summaries check complete at {now_utc.isoformat()}")
 
 
