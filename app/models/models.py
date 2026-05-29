@@ -298,6 +298,7 @@ class NotificationPreference(TimestampMixin, Base):
     weekly_summary_web: Mapped[bool] = mapped_column(Boolean, default=True)
     cooling_ready_tg: Mapped[bool] = mapped_column(Boolean, default=True)
     cooling_ready_web: Mapped[bool] = mapped_column(Boolean, default=True)
+    payday_reminder_tg: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_summary_time: Mapped[str | None] = mapped_column(String(5), default="20:00")
     weekly_summary_time: Mapped[str | None] = mapped_column(String(5), default="08:00")
 
