@@ -383,6 +383,28 @@ async def send_weekly_summary(user_id=None):
                     lines.append(f"⚠️ Hati-hati — prediksi overspend <b>{format_currency(over)}</b>")
                     lines.append(f"💡 Max <b>{format_currency(safe_daily)}</b>/hari biar aman")
 
+                # ── Discipline: consistency of logging ─────────────────────
+                logged_days = len({t.transaction_date for t in week_txns})
+                if logged_days >= 6:
+                    consistency = "🔥 Konsisten banget!"
+                elif logged_days >= 4:
+                    consistency = "👍 Lumayan rajin."
+                elif logged_days >= 1:
+                    consistency = "💪 Yuk lebih sering nyatat."
+                else:
+                    consistency = "😴 Minggu ini sepi catatan."
+                lines.append(f"─────────────────")
+                lines.append(f"🗓️ Kamu mencatat <b>{logged_days}/7 hari</b> minggu ini. {consistency}")
+                try:
+                    from app.services.streak import get_streak
+                    s = await get_streak(db, user.id, getattr(user, "timezone", None))
+                    if s.current_streak >= 2:
+                        lines.append(f"🔥 Streak aktif <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari")
+                    elif s.longest_streak >= 2:
+                        lines.append(f"💤 Streak putus · rekormu {s.longest_streak} hari. Mulai lagi yuk!")
+                except Exception:
+                    pass
+
                 if user.telegram_id and bot:
                     await bot.send_message(
                         chat_id=int(user.telegram_id),

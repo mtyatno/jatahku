@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.rollover import create_monthly_snapshots
 from app.services.summary import send_daily_summary, send_weekly_summary
@@ -195,7 +195,71 @@ async def run_user_summaries():
                 except Exception as e:
                     logger.error(f"Payday reminder failed for {user.id}: {e}")
 
+            # Daily check-in nudge — if user hasn't logged anything today by
+            # their preferred hour, gently ask them to (keeps the habit alive).
+            checkin_time = (getattr(prefs, 'checkin_nudge_time', '21:00') or '21:00') if prefs else '21:00'
+            checkin_on = getattr(prefs, 'checkin_nudge_tg', True) if prefs else True
+            if checkin_on and user_hour == checkin_time.split(':')[0] + ':00':
+                try:
+                    await send_checkin_nudge(user, user_now.date(), db)
+                except Exception as e:
+                    logger.error(f"Check-in nudge failed for {user.id}: {e}")
+
     logger.info(f"User summaries check complete at {now_utc.isoformat()}")
+
+
+async def send_checkin_nudge(user, local_today, db):
+    """Send a once-a-day Telegram nudge if the user hasn't logged today.
+
+    No-ops when: the user has no Telegram, already logged activity today, or a
+    nudge was already sent today (anti-spam). The 'no spending' button keeps the
+    streak alive without forcing a transaction."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+    from app.models.models import UserStreak
+    from app.core.config import get_settings
+
+    if not user.telegram_id:
+        return
+
+    settings = get_settings()
+    if not settings.TELEGRAM_BOT_TOKEN:
+        return
+
+    streak = await db.get(UserStreak, user.id)
+    # Already logged today → no nudge needed.
+    if streak and streak.last_log_date == local_today:
+        return
+    # Already nudged today → don't spam.
+    if streak and streak.last_checkin_date == local_today:
+        return
+
+    streak_hint = ""
+    if streak and streak.current_streak >= 2 and streak.last_log_date == local_today - timedelta(days=1):
+        streak_hint = f"\n\nStreak kamu {streak.current_streak} hari — jangan putus ya 🔥"
+
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+    keyboard = [[InlineKeyboardButton("✅ Gak ada pengeluaran hari ini", callback_data="checkin_none")]]
+    try:
+        await bot.send_message(
+            chat_id=int(user.telegram_id),
+            text=(
+                "👋 Belum ada catatan hari ini.\n\n"
+                "Lagi hemat, atau lupa nyatat? Kirim aja pengeluaranmu "
+                "(misal: <i>kopi 25k</i>), atau tekan tombol kalau memang "
+                f"gak ada pengeluaran.{streak_hint}"
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        # Record that we nudged today (create row if needed).
+        if streak is None:
+            streak = UserStreak(user_id=user.id)
+            db.add(streak)
+        streak.last_checkin_date = local_today
+        await db.commit()
+        logger.info(f"Sent check-in nudge to {user.telegram_id}")
+    except Exception as e:
+        logger.error(f"Failed to send check-in nudge to {user.id}: {e}")
 
 
 def start_scheduler():

@@ -17,6 +17,7 @@ from app.models.models import (
     RecurringTransaction, Notification, NotificationPreference,
     HouseholdMember, Household,
     Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
+    UserStreak,
 )
 
 router = APIRouter()
@@ -46,6 +47,26 @@ class DefaultBehavior(BaseModel):
 
 class ResetDataRequest(BaseModel):
     email: str | None = None  # only provided if user has no email yet
+
+
+@router.get("/streak")
+async def get_streak_info(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Current logging-discipline streak for the dashboard badge."""
+    from app.services.streak import get_streak, user_today
+    s = await get_streak(db, user.id, getattr(user, "timezone", None))
+    streak_row = await db.get(UserStreak, user.id)
+    logged_today = bool(
+        streak_row and streak_row.last_log_date == user_today(getattr(user, "timezone", None))
+    )
+    return {
+        "current_streak": s.current_streak,
+        "longest_streak": s.longest_streak,
+        "total_logged_days": s.total_logged_days,
+        "logged_today": logged_today,
+    }
 
 
 @router.get("/profile")

@@ -299,8 +299,33 @@ class NotificationPreference(TimestampMixin, Base):
     cooling_ready_tg: Mapped[bool] = mapped_column(Boolean, default=True)
     cooling_ready_web: Mapped[bool] = mapped_column(Boolean, default=True)
     payday_reminder_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    checkin_nudge_tg: Mapped[bool] = mapped_column(Boolean, default=True)
+    checkin_nudge_time: Mapped[str | None] = mapped_column(String(5), default="21:00")
     daily_summary_time: Mapped[str | None] = mapped_column(String(5), default="20:00")
     weekly_summary_time: Mapped[str | None] = mapped_column(String(5), default="08:00")
+
+    user: Mapped["User"] = relationship()
+
+
+class UserStreak(TimestampMixin, Base):
+    """Tracks how consistently a user logs activity (the discipline framework).
+
+    A "logged day" is any day the user either records a transaction or
+    explicitly marks as a no-spending day — both keep the streak alive, so
+    discipline means *showing up*, not spending money. All dates are stored in
+    the user's local timezone (resolved when activity is recorded)."""
+    __tablename__ = "user_streaks"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), primary_key=True
+    )
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    longest_streak: Mapped[int] = mapped_column(Integer, default=0)
+    total_logged_days: Mapped[int] = mapped_column(Integer, default=0)
+    # Last local date the user logged activity (kept the streak alive).
+    last_log_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Last local date a check-in nudge was sent (anti-spam: max once/day).
+    last_checkin_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     user: Mapped["User"] = relationship()
 
