@@ -92,14 +92,31 @@ async def record_activity(
 
     milestone = streak.current_streak if streak.current_streak in MILESTONES else None
 
-    await db.commit()
-    return StreakResult(
+    result = StreakResult(
         current_streak=streak.current_streak,
         longest_streak=streak.longest_streak,
         total_logged_days=streak.total_logged_days,
         advanced=True,
         milestone=milestone,
     )
+
+    # Surface milestones in the web notification bell (persisted, dedup'd by the
+    # once-per-day advance guard above so it can't fire twice for the same day).
+    if milestone:
+        try:
+            from app.models.models import Notification, NotificationType
+            db.add(Notification(
+                user_id=user_id,
+                type=NotificationType.system,
+                title="🔥 Streak milestone!",
+                message=milestone_message(result),
+                link="/",
+            ))
+        except Exception:
+            pass
+
+    await db.commit()
+    return result
 
 
 async def get_streak(db: AsyncSession, user_id, tz_str: str | None) -> StreakResult:

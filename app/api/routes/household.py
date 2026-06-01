@@ -9,7 +9,7 @@ import redis.asyncio as aioredis
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
-from app.models.models import User, Household, HouseholdMember, HouseholdRole
+from app.models.models import User, Household, HouseholdMember, HouseholdRole, UserStreak
 
 settings = get_settings()
 router = APIRouter()
@@ -99,6 +99,58 @@ async def list_members(
         )
         for member, u in rows
     ]
+
+
+class LeaderboardEntry(BaseModel):
+    user_id: UUID
+    name: str
+    current_streak: int
+    longest_streak: int
+    total_logged_days: int
+    logged_today: bool
+    is_me: bool
+
+
+@router.get("/leaderboard", response_model=list[LeaderboardEntry])
+async def streak_leaderboard(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rank household members by their current logging streak."""
+    from datetime import timedelta
+    from app.services.streak import user_today
+
+    membership = await _get_membership(user, db)
+    if not membership:
+        raise HTTPException(status_code=404, detail="No household found")
+
+    result = await db.execute(
+        select(HouseholdMember, User, UserStreak)
+        .join(User, HouseholdMember.user_id == User.id)
+        .outerjoin(UserStreak, UserStreak.user_id == User.id)
+        .where(HouseholdMember.household_id == membership.household_id)
+    )
+
+    entries = []
+    for member, u, streak in result.all():
+        today = user_today(getattr(u, "timezone", None))
+        current = streak.current_streak if streak else 0
+        # A stale streak (last log older than yesterday) is already broken.
+        if streak and streak.last_log_date is not None and streak.last_log_date < today - timedelta(days=1):
+            current = 0
+        entries.append(LeaderboardEntry(
+            user_id=u.id,
+            name=u.name,
+            current_streak=current,
+            longest_streak=streak.longest_streak if streak else 0,
+            total_logged_days=streak.total_logged_days if streak else 0,
+            logged_today=bool(streak and streak.last_log_date == today),
+            is_me=(u.id == user.id),
+        ))
+
+    # Highest current streak first; ties broken by longest then total.
+    entries.sort(key=lambda e: (e.current_streak, e.longest_streak, e.total_logged_days), reverse=True)
+    return entries
 
 
 @router.post("/invite", response_model=InviteResponse)
