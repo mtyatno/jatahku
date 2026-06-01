@@ -18,6 +18,18 @@ from app.models.models import User, Household, HouseholdMember, HouseholdRole, E
 
 router = APIRouter()
 
+# Lazily-computed hash so login can do a bcrypt compare even when the email
+# doesn't exist, removing the user-enumeration timing oracle. Computed on first
+# use (not at import) so a bcrypt hiccup can't block module load.
+_DUMMY_HASH: str | None = None
+
+
+def _dummy_hash() -> str:
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = hash_password("jatahku-dummy-password")
+    return _DUMMY_HASH
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -57,8 +69,8 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
     import re as re_mod
     if not req.email or not re_mod.match(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$", req.email):
         raise HTTPException(status_code=400, detail="Email tidak valid")
-    if not req.password or len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    if not req.password or len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password minimal 8 karakter")
     if not req.name or len(req.name.strip()) < 1 or len(req.name) > 100:
         raise HTTPException(status_code=400, detail="Nama tidak valid")
     req.name = req.name.strip()[:100]
@@ -147,6 +159,8 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
     user = result.scalar_one_or_none()
 
     if not user or not user.password_hash:
+        # Burn the same time as a real verify to avoid leaking which emails exist.
+        verify_password(req.password, _dummy_hash())
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not verify_password(req.password, user.password_hash):
@@ -165,10 +179,24 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    try:
+        uid = UUID(str(user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    result = await db.execute(select(User).where(User.id == uid))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+
+    # Honour forced-logout / password-change / ban cutoffs on refresh too.
+    cutoff = getattr(user, "tokens_valid_after", None)
+    iat = payload.get("iat")
+    if cutoff is not None and iat is not None:
+        from datetime import datetime as _dt, timezone as _tz
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=_tz.utc)
+        if _dt.fromtimestamp(int(iat), tz=_tz.utc) < cutoff:
+            raise HTTPException(status_code=401, detail="Session expired, please log in again")
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),

@@ -28,7 +28,15 @@ async def get_current_user(
         )
 
     user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    try:
+        uid = UUID(str(user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        )
+
+    result = await db.execute(select(User).where(User.id == uid))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -36,4 +44,17 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+
+    # Reject tokens issued before a forced logout / password change / ban.
+    cutoff = getattr(user, "tokens_valid_after", None)
+    iat = payload.get("iat")
+    if cutoff is not None and iat is not None:
+        from datetime import datetime, timezone
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        if datetime.fromtimestamp(int(iat), tz=timezone.utc) < cutoff:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired, please log in again",
+            )
     return user

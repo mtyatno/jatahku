@@ -67,6 +67,11 @@ class User(TimestampMixin, Base):
     payday_day: Mapped[int] = mapped_column(Integer, default=1)
     last_login: Mapped[datetime | None] = mapped_column(nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # JWTs issued before this instant are rejected (forced logout / password
+    # change / ban). Null = no cutoff.
+    tokens_valid_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relationships
     household_memberships: Mapped[list["HouseholdMember"]] = relationship(

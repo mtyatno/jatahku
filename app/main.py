@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE notification_preferences "
                 "ADD COLUMN IF NOT EXISTS checkin_nudge_time VARCHAR(5) DEFAULT '21:00'"
             ))
+            await conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS tokens_valid_after TIMESTAMPTZ"
+            ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield

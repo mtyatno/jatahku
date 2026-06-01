@@ -212,6 +212,9 @@ async def user_action(
     elif req.action == "ban":
         target.password_hash = "BANNED"
         target.email = f"banned_{target.id}@jatahku.com"
+        # Revoke the banned user's existing tokens immediately.
+        from datetime import datetime as _dt, timezone as _tz
+        target.tokens_valid_after = _dt.now(_tz.utc)
     elif req.action == "make_admin":
         target.is_admin = True
     elif req.action == "remove_admin":

@@ -117,7 +117,9 @@ async def update_recurring(
 ):
     hid = await _get_hid(user, db)
     result = await db.execute(
-        select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(RecurringTransaction.id == rec_id, Envelope.household_id == hid)
     )
     rec = result.scalar_one_or_none()
     if not rec:
@@ -152,8 +154,11 @@ async def delete_recurring(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    hid = await _get_hid(user, db)
     result = await db.execute(
-        select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(RecurringTransaction.id == rec_id, Envelope.household_id == hid)
     )
     rec = result.scalar_one_or_none()
     if not rec:

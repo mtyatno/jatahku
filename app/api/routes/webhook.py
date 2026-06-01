@@ -27,11 +27,14 @@ def get_bot_app():
 
 @router.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    # Validate Telegram webhook secret token when configured
-    if settings.TELEGRAM_WEBHOOK_SECRET:
-        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not hmac.compare_digest(token, settings.TELEGRAM_WEBHOOK_SECRET):
-            return Response(status_code=403)
+    # Validate Telegram webhook secret token. Fail closed: if no secret is
+    # configured, reject everything rather than accept forged updates.
+    if not settings.TELEGRAM_WEBHOOK_SECRET:
+        logger.error("TELEGRAM_WEBHOOK_SECRET not set — rejecting webhook")
+        return Response(status_code=503)
+    token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(token, settings.TELEGRAM_WEBHOOK_SECRET):
+        return Response(status_code=403)
     try:
         bot_app = get_bot_app()
         if not bot_app.running:
@@ -107,11 +110,14 @@ async def set_bot_commands(request: Request):
 @router.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     """Receive messages from WAHA and dispatch to WA handler."""
-    # Validate webhook secret (optional — leave WAHA_WEBHOOK_SECRET empty to skip)
-    if settings.WAHA_WEBHOOK_SECRET:
-        key = request.headers.get("X-Api-Key", "")
-        if not hmac.compare_digest(key, settings.WAHA_WEBHOOK_SECRET):
-            return Response(status_code=403)
+    # Validate webhook secret. Fail closed: reject if not configured so forged
+    # WAHA callbacks can't impersonate users.
+    if not settings.WAHA_WEBHOOK_SECRET:
+        logger.error("WAHA_WEBHOOK_SECRET not set — rejecting webhook")
+        return Response(status_code=503)
+    key = request.headers.get("X-Api-Key", "")
+    if not hmac.compare_digest(key, settings.WAHA_WEBHOOK_SECRET):
+        return Response(status_code=403)
 
     try:
         data = await request.json()

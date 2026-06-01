@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 class ChangeEmail(BaseModel):
-    new_email: str
+    new_email: EmailStr
     password: str
 
 
@@ -169,10 +169,11 @@ async def change_email(
 ):
     if not verify_password(req.password, user.password_hash):
         raise HTTPException(400, "Password salah")
-    existing = await db.execute(select(User).where(User.email == req.new_email))
+    new_email = req.new_email.strip().lower()[:255]
+    existing = await db.execute(select(User).where(User.email == new_email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email sudah digunakan")
-    user.email = req.new_email
+    user.email = new_email
     await db.commit()
     return {"status": "updated"}
 
@@ -185,9 +186,11 @@ async def change_password(
 ):
     if not verify_password(req.current_password, user.password_hash):
         raise HTTPException(400, "Password lama salah")
-    if len(req.new_password) < 6:
-        raise HTTPException(400, "Password baru minimal 6 karakter")
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "Password baru minimal 8 karakter")
     user.password_hash = hash_password(req.new_password)
+    # Force every other session to re-authenticate after a password change.
+    user.tokens_valid_after = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "updated"}
 
@@ -211,12 +214,16 @@ async def upload_profile_pic(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "File harus gambar")
     if file.size and file.size > 2_000_000:
         raise HTTPException(400, "Max 2MB")
     data = await file.read()
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    if len(data) > 2_000_000:
+        raise HTTPException(400, "Max 2MB")
+    from app.core.files import safe_image_ext
+    try:
+        ext = safe_image_ext(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     fname = f"{user.id}.{ext}"
     upload_dir = "/home/jatahku/web/jatahku.com/public_html/uploads"
     os.makedirs(upload_dir, exist_ok=True)
@@ -314,9 +321,8 @@ async def logout_all(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Invalidate all sessions by changing password hash salt."""
-    # Simple approach: bump updated_at which invalidates JWTs issued before
-    user.updated_at = datetime.now(timezone.utc)
+    """Invalidate every existing session by rejecting tokens issued before now."""
+    user.tokens_valid_after = datetime.now(timezone.utc)
     await db.commit()
     return {"status": "all_sessions_invalidated"}
 

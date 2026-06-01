@@ -5,6 +5,8 @@ from app.core.config import get_settings
 
 settings = get_settings()
 API = settings.API_URL
+# Sent on every bot→API linking call so the API can trust these requests.
+BOT_HEADERS = {"X-Bot-Secret": settings.BOT_INTERNAL_SECRET}
 
 
 async def cmd_link(update, context):
@@ -17,6 +19,7 @@ async def cmd_link(update, context):
             res = await client.post(
                 f"{API}/auth/link/telegram",
                 json={"code": code, "telegram_id": tg_id},
+                headers=BOT_HEADERS,
             )
         data = res.json()
 
@@ -84,6 +87,7 @@ async def cmd_link(update, context):
             res = await client.post(
                 f"{API}/auth/link/generate-for-telegram",
                 json={"telegram_id": tg_id},
+                headers=BOT_HEADERS,
             )
         if res.status_code == 200:
             code = res.json()["code"]
@@ -118,6 +122,7 @@ async def handle_merge_callback(update, context):
         res = await client.post(
             f"{API}/auth/link/merge",
             json={"code": code, "keep_household_id": household_id},
+            headers=BOT_HEADERS,
         )
 
     if res.status_code == 200:
@@ -154,7 +159,7 @@ async def handle_unlink_callback(update, context):
 
     tg_id = str(query.from_user.id)
     async with httpx.AsyncClient() as client:
-        res = await client.post(f"{API}/auth/link/unlink-bot?telegram_id={tg_id}")
+        res = await client.post(f"{API}/auth/link/unlink-bot?telegram_id={tg_id}", headers=BOT_HEADERS)
 
     if res.status_code == 200:
         await query.edit_message_text(

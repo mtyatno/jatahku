@@ -105,12 +105,20 @@ async def create_order(
                 valid = False
             if valid:
                 discount = 100 if promo.is_free else promo.discount_pct
-                promo.used_count += 1
 
     final_price = max(0, price - (price * discount // 100))
 
-    # If free (100% discount), auto-upgrade
+    # If free (100% discount), auto-upgrade. Only here do we consume a promo
+    # use — pending paid orders must not burn max_uses before payment lands.
     if final_price == 0:
+        if req.promo_code and discount == 100:
+            # Re-fetch within this txn to increment usage atomically.
+            r2 = await db.execute(
+                select(PromoCode).where(PromoCode.code == req.promo_code.upper())
+            )
+            p2 = r2.scalar_one_or_none()
+            if p2:
+                p2.used_count += 1
         user.plan = 'pro'
         order = PaymentOrder(
             user_id=user.id, amount=0, original_amount=price,
@@ -165,7 +173,13 @@ async def upload_proof(
 
     import os
     data = await file.read()
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    if len(data) > 5_000_000:
+        raise HTTPException(400, "Max 5MB")
+    from app.core.files import safe_image_ext
+    try:
+        ext = safe_image_ext(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     fname = f"proof_{order_id}.{ext}"
     upload_dir = "/home/jatahku/web/jatahku.com/public_html/uploads"
     os.makedirs(upload_dir, exist_ok=True)

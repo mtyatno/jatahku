@@ -1,6 +1,9 @@
+import hmac
 import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -16,11 +19,25 @@ from app.services.merge import get_merge_preview, merge_users
 
 settings = get_settings()
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 LINK_TTL = 300
 
 
 def _gen_code():
     return str(secrets.randbelow(900000) + 100000)
+
+
+def verify_bot_secret(request: Request):
+    """Gate endpoints that are only ever called server-to-server by the bot.
+
+    Fails closed: if BOT_INTERNAL_SECRET isn't configured, these endpoints are
+    disabled entirely rather than left open to forged callers."""
+    secret = settings.BOT_INTERNAL_SECRET
+    if not secret:
+        raise HTTPException(status_code=503, detail="Linking belum dikonfigurasi")
+    provided = request.headers.get("X-Bot-Secret", "")
+    if not hmac.compare_digest(provided, secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 async def _redis():
@@ -57,8 +74,10 @@ class LinkResult(BaseModel):
 @router.post("/link/telegram", response_model=LinkResult)
 async def link_telegram_account(
     req: LinkTelegramRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    verify_bot_secret(request)
     r = await _redis()
     user_id = await r.get(f"link:webapp:{req.code}")
     await r.close()
@@ -120,8 +139,10 @@ class MergeRequest(BaseModel):
 @router.post("/link/merge")
 async def execute_merge(
     req: MergeRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    verify_bot_secret(request)
     r = await _redis()
     merge_data = await r.get(f"merge:{req.code}")
     await r.close()
@@ -160,7 +181,8 @@ class LinkFromTelegramRequest(BaseModel):
 
 
 @router.post("/link/generate-for-telegram", response_model=LinkGenerateResponse)
-async def generate_code_for_telegram(req: LinkFromTelegramRequest):
+async def generate_code_for_telegram(req: LinkFromTelegramRequest, request: Request):
+    verify_bot_secret(request)
     code = _gen_code()
     r = await _redis()
     await r.set(f"link:telegram:{code}", req.telegram_id, ex=LINK_TTL)
@@ -182,7 +204,9 @@ class ClaimTelegramResponse(BaseModel):
 
 
 @router.post("/link/claim-telegram", response_model=ClaimTelegramResponse)
+@limiter.limit("5/minute")
 async def claim_telegram_account(
+    request: Request,
     req: ClaimTelegramRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -237,8 +261,10 @@ async def unlink_telegram(
 @router.post("/link/unlink-bot")
 async def unlink_from_bot(
     telegram_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    verify_bot_secret(request)
     result = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = result.scalar_one_or_none()
     if not user:

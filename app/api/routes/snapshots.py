@@ -7,6 +7,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.api.routes.admin import require_admin
 from app.models.models import User, MonthlySnapshot, Envelope, HouseholdMember
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
 
@@ -73,7 +74,7 @@ async def run_monthly_snapshot(
     year: int = Query(None),
     month: int = Query(None),
     force: bool = Query(False),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ):
     """Manually trigger snapshot for a budget period (admin/debug).
     year/month refer to period_start year/month. Uses caller's payday_day to reconstruct period dates."""
@@ -124,20 +125,20 @@ async def recompute_snapshots(
 
 
 @router.post("/daily-summary")
-async def trigger_daily_summary(user: User = Depends(get_current_user)):
+async def trigger_daily_summary(user: User = Depends(require_admin)):
     from app.services.summary import send_daily_summary
     await send_daily_summary()
     return {"status": "sent"}
 
 @router.post("/weekly-summary")
-async def trigger_weekly_summary(user: User = Depends(get_current_user)):
+async def trigger_weekly_summary(user: User = Depends(require_admin)):
     from app.services.summary import send_weekly_summary
     await send_weekly_summary()
     return {"status": "sent"}
 
 
 @router.post("/process-recurring")
-async def trigger_recurring(user: User = Depends(get_current_user)):
+async def trigger_recurring(user: User = Depends(require_admin)):
     from app.services.recurring_processor import process_recurring_transactions
     await process_recurring_transactions()
     return {"status": "processed"}

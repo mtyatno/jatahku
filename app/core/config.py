@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     ADMIN_SECRET: str = ""
     ADMIN_TELEGRAM_ID: str = ""
 
+    # Shared secret the bot uses to call internal /auth/link/* bot endpoints.
+    # Bot and API read the same .env, so set this once for both. If empty, the
+    # bot-only linking endpoints fail closed (return 503) to prevent abuse.
+    BOT_INTERNAL_SECRET: str = ""
+
     # GitHub OAuth (for Decap CMS)
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""

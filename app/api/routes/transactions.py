@@ -156,7 +156,17 @@ async def delete_transaction(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Transaction).where(Transaction.id == txn_id))
+    # Scope to the caller's household so a user can't delete others' transactions.
+    hid_result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = hid_result.scalar_one_or_none()
+
+    result = await db.execute(
+        select(Transaction)
+        .join(Envelope, Transaction.envelope_id == Envelope.id)
+        .where(Transaction.id == txn_id, Envelope.household_id == hid)
+    )
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
