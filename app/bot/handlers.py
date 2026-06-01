@@ -240,6 +240,24 @@ async def get_household_id(user, db):
     result = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
     return result.scalar_one_or_none()
 
+async def _streak_line(db, user) -> str:
+    """Record today's activity and return a short streak line for chat replies.
+
+    Best-effort: a streak failure must never break expense logging."""
+    try:
+        from app.services.streak import record_activity, milestone_message
+        res = await record_activity(db, user.id, getattr(user, "timezone", None))
+        if not res.advanced:
+            return ""
+        celebrate = milestone_message(res)
+        if celebrate:
+            return f"\n\n🔥 {celebrate}"
+        if res.current_streak >= 2:
+            return f"\n\n🔥 Streak {res.current_streak} hari!"
+        return ""
+    except Exception:
+        return ""
+
 async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: int = 1):
     from sqlalchemy import or_
     from app.models.models import Income, RecurringTransaction, RecurringFrequency, MonthlySnapshot
@@ -657,6 +675,17 @@ async def cmd_status(update, context):
         lines.append(f"⚠️ Hati-hati · prediksi overspend <b>{format_currency(over)}</b>")
         lines.append(f"💡 Max <b>{format_currency(safe)}</b>/hari biar aman")
 
+    try:
+        from app.services.streak import get_streak
+        async with AsyncSessionLocal() as sdb:
+            s = await get_streak(sdb, user.id, getattr(user, "timezone", None))
+        if s.current_streak >= 2:
+            lines.append(f"🔥 Streak <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari")
+        elif s.longest_streak >= 2:
+            lines.append(f"💤 Streak putus · rekormu {s.longest_streak} hari. Yuk mulai lagi!")
+    except Exception:
+        pass
+
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def cmd_amplop(update, context):
@@ -1047,6 +1076,7 @@ async def handle_message(update, context):
             db.add(txn)
             await save_learned_keywords(user.id, description, envelope.id, db)
             await db.commit()
+            streak_line = await _streak_line(db, user)
             envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
             remaining = env_data["remaining"] if env_data else Decimal("0")
@@ -1067,7 +1097,7 @@ async def handle_message(update, context):
             await update.message.reply_text(
                 f"✅ {format_currency(amount)} — {description}\n"
                 f"Masuk ke {emoji} {envelope.name}\n\n"
-                f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}"
+                f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}{streak_line}"
             )
         else:
             envelopes_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
@@ -1173,6 +1203,7 @@ async def handle_txn_callback(update, context):
         db.add(txn)
         await save_learned_keywords(user.id, description, envelope.id, db)
         await db.commit()
+        streak_line = await _streak_line(db, user)
         envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
@@ -1180,7 +1211,28 @@ async def handle_txn_callback(update, context):
     await query.edit_message_text(
         f"✅ {format_currency(amount)} — {description}\n"
         f"Masuk ke {emoji} {envelope.name}\n\n"
-        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)})"
+        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)}){streak_line}"
+    )
+
+async def handle_checkin_callback(update, context):
+    """User tapped a button on the daily check-in nudge.
+
+    checkin_none  → no spending today, but still keep the streak alive.
+    """
+    query = update.callback_query
+    await query.answer()
+    tg_user = update.effective_user
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        from app.services.streak import record_activity, milestone_message
+        res = await record_activity(db, user.id, getattr(user, "timezone", None))
+    celebrate = milestone_message(res)
+    tail = f"\n\n🔥 {celebrate}" if celebrate else (
+        f"\n\n🔥 Streak {res.current_streak} hari!" if res.current_streak >= 2 else ""
+    )
+    await query.edit_message_text(
+        f"👍 Oke, dicatat: hari ini tanpa pengeluaran.\n"
+        f"Yang penting kamu tetap pantau — streak aman.{tail}"
     )
 
 async def cmd_pending(update, context):
@@ -1481,6 +1533,7 @@ def create_bot_app():
     app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
     app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
     app.add_handler(CallbackQueryHandler(handle_cooling_callback, pattern=r"^cool_"))
+    app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^checkin_"))
     from app.bot.household_cmd import cmd_invite, cmd_join
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("join", cmd_join))

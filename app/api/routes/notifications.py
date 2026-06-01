@@ -104,6 +104,8 @@ class PrefsUpdate(BaseModel):
     cooling_ready_tg: bool = True
     cooling_ready_web: bool = True
     payday_reminder_tg: bool = True
+    checkin_nudge_tg: bool = True
+    checkin_nudge_time: str = "21:00"
     daily_summary_time: str = "20:00"
     weekly_summary_time: str = "08:00"
 
@@ -127,6 +129,8 @@ async def get_preferences(
         "cooling_ready_tg": prefs.cooling_ready_tg,
         "cooling_ready_web": prefs.cooling_ready_web,
         "payday_reminder_tg": prefs.payday_reminder_tg,
+        "checkin_nudge_tg": prefs.checkin_nudge_tg,
+        "checkin_nudge_time": prefs.checkin_nudge_time or "21:00",
         "daily_summary_time": prefs.daily_summary_time or "20:00",
         "weekly_summary_time": prefs.weekly_summary_time or "08:00",
     }
