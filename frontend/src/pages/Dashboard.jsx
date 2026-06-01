@@ -396,6 +396,7 @@ export default function Dashboard() {
   const [periodIdx, setPeriodIdx] = useState(null);
   const [monthlyTrend, setMonthlyTrend] = useState([]);
   const [weeklyPattern, setWeeklyPattern] = useState([]);
+  const [streak, setStreak] = useState(null);
 
   // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
@@ -409,6 +410,7 @@ export default function Dashboard() {
       setWeeklyPattern(weekly);
       setPeriodIdx(p.length - 1); // default = current period
     });
+    api.request('/user/streak').then(r => r.ok ? r.json() : null).then(s => s && setStreak(s));
   }, []);
 
   // Reload data whenever selected period changes
@@ -467,7 +469,18 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
+          {streak && streak.current_streak >= 1 && (
+            <span
+              className="text-sm px-2.5 py-1 rounded-full font-semibold flex-shrink-0"
+              style={{ background: streak.logged_today ? '#FEF3C7' : '#F3F4F6', color: streak.logged_today ? '#92400E' : '#6B7280' }}
+              title={`Rekor ${streak.longest_streak} hari · total ${streak.total_logged_days} hari tercatat`}
+            >
+              🔥 {streak.current_streak} hari
+            </span>
+          )}
+        </div>
         {/* Period Navigator */}
         <div className="flex items-center gap-1 mt-1">
           <button
