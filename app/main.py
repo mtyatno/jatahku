@@ -19,6 +19,19 @@ async def lifespan(app: FastAPI):
     from app.models.models import Base
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all makes new *tables* but never ALTERs existing ones. Deploy
+        # doesn't run alembic, so additively backfill new columns here to keep
+        # the schema self-healing. Idempotent; Postgres only.
+        if conn.dialect.name == "postgresql":
+            from sqlalchemy import text
+            await conn.execute(text(
+                "ALTER TABLE notification_preferences "
+                "ADD COLUMN IF NOT EXISTS checkin_nudge_tg BOOLEAN NOT NULL DEFAULT true"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE notification_preferences "
+                "ADD COLUMN IF NOT EXISTS checkin_nudge_time VARCHAR(5) DEFAULT '21:00'"
+            ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield
