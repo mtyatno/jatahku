@@ -1,8 +1,21 @@
 // Custom Service Worker — Jatahku PWA
 // vite-plugin-pwa (injectManifest) will replace self.__WB_MANIFEST
 
-const CACHE = 'jatahku-v1';
 const manifest = self.__WB_MANIFEST || [];
+
+// Cache name is derived from the precache manifest so it changes on every
+// deploy (asset URLs/revisions are content-hashed). A new name means the
+// `activate` handler purges ALL previous caches, so users can never be
+// stuck on a stale bundle after a deploy.
+function manifestVersion(entries) {
+  const str = entries
+    .map((e) => (typeof e === 'string' ? e : `${e.url}:${e.revision || ''}`))
+    .join('|');
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (Math.imul(h, 31) + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+const CACHE = `jatahku-${manifestVersion(manifest)}`;
 
 // Install: pre-cache app shell
 self.addEventListener('install', (event) => {
