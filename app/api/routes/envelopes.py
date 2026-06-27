@@ -62,6 +62,8 @@ class EnvelopeSummary(BaseModel):
     free: Decimal           # remaining minus reserved = truly free to spend
     funded_ratio: float     # allocated / budget_amount
     spent_ratio: float      # spent / allocated
+    group_id: UUID | None = None
+    group_name: str | None = None
 
 
 class EnvelopeGroupCreate(BaseModel):
@@ -123,6 +125,11 @@ async def envelope_summary(
         .order_by(Envelope.created_at)
     )
     envelopes = result.scalars().all()
+
+    group_result = await db.execute(
+        select(EnvelopeGroup.id, EnvelopeGroup.name).where(EnvelopeGroup.household_id == hid)
+    )
+    group_names = {gid: gname for gid, gname in group_result.all()}
 
     now = date.today()
     payday_day = getattr(user, 'payday_day', None) or 1
@@ -217,6 +224,8 @@ async def envelope_summary(
             free=free,
             funded_ratio=round(funded_ratio, 4),
             spent_ratio=round(spent_ratio, 4),
+            group_id=env.group_id,
+            group_name=group_names.get(env.group_id),
         ))
 
     return summaries
@@ -321,6 +330,16 @@ async def create_envelope(
 
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
+
+    if req.group_id is not None:
+        grp_check = await db.execute(
+            select(EnvelopeGroup).where(
+                EnvelopeGroup.id == req.group_id, EnvelopeGroup.household_id == hid
+            )
+        )
+        if grp_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=400, detail="Grup tidak valid")
+
     envelope = Envelope(
         household_id=hid, name=req.name, emoji=req.emoji,
         budget_amount=req.budget_amount, is_rollover=req.is_rollover,
@@ -350,6 +369,15 @@ async def update_envelope(
     envelope = result.scalar_one_or_none()
     if not envelope:
         raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
+
+    if req.group_id is not None:
+        grp_check = await db.execute(
+            select(EnvelopeGroup).where(
+                EnvelopeGroup.id == req.group_id, EnvelopeGroup.household_id == hid
+            )
+        )
+        if grp_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=400, detail="Grup tidak valid")
 
     envelope.name = req.name
     envelope.emoji = req.emoji
