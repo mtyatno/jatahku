@@ -618,13 +618,14 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
-      {/* Advisor smart insight cards — fall back to DecisionBox when none */}
+      {/* Strategic advisor cards (historical/forward-looking) above tactical DecisionBox (today's status) */}
       {isCurrentPeriod && (
-        advisorInsights?.dashboard_cards?.length > 0 ? (
-          <AdvisorCards cards={advisorInsights.dashboard_cards} />
-        ) : (
+        <>
+          {advisorInsights?.dashboard_cards?.length > 0 && (
+            <AdvisorCards cards={advisorInsights.dashboard_cards} />
+          )}
           <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
-        )
+        </>
       )}
 
       {/* Monthly Comparison — always visible */}
