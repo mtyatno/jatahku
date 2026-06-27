@@ -288,6 +288,38 @@ class ApiClient {
     });
   }
 
+  async getAdvisorInsights() {
+    try {
+      const res = await this.request('/advisor/insights');
+      if (res.ok) return res.json();
+    } catch {}
+    return { cards: [], dashboard_cards: [] };
+  }
+
+  async getSinkingFundAdvice() {
+    try {
+      const res = await this.request('/advisor/sinking-funds');
+      if (res.ok) return res.json();
+    } catch {}
+    return {
+      summary: {
+        monthly_reserve_needed: 0,
+        new_reserve_needed: 0,
+        recommendation_count: 0,
+        high_confidence_count: 0,
+      },
+      recommendations: [],
+    };
+  }
+
+  async getAllocationRecommendation(incomeAmount) {
+    const res = await this.request('/advisor/allocation-recommendation', {
+      method: 'POST',
+      body: JSON.stringify({ income_amount: Number(incomeAmount) }),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
   async resetData(email = null) {
     const body = email ? { email } : {};
     return this.request('/user/reset', {
