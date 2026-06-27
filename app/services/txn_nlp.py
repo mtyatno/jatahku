@@ -3,8 +3,6 @@ learned keyword matching. Used by both the Telegram bot and the web API so the
 two channels share one classification + learning implementation."""
 from sqlalchemy import select
 
-from app.models.models import Envelope
-
 STOPWORDS = {"di", "ke", "dari", "yang", "dan", "untuk", "dengan", "ya", "aku",
              "saya", "kamu", "ini", "itu", "ada", "buat", "sama", "juga", "mau",
              "beli", "bayar", "beli", "tadi", "lagi", "udah", "sudah", "pas", "aja"}
@@ -69,6 +67,7 @@ async def save_learned_keywords(user_id, description: str, envelope_id, db):
 
 
 async def find_best_envelope(description, household_id, db, user_id=None):
+    from app.models.models import Envelope
     result = await db.execute(
         select(Envelope).where(
             Envelope.household_id == household_id, Envelope.is_active == True,

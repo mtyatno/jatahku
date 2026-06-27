@@ -38,6 +38,10 @@ class TransactionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SuggestEnvelopeRequest(BaseModel):
+    description: str
+
+
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     req: TransactionCreate,
@@ -113,7 +117,35 @@ async def create_transaction(
     except Exception:
         pass
 
+    # Best-effort: learn keyword -> envelope from this transaction so web input
+    # enriches the same per-user learning the bot uses. Never block the txn.
+    try:
+        from app.services.txn_nlp import save_learned_keywords
+        await save_learned_keywords(user.id, req.description, req.envelope_id, db)
+        await db.commit()
+    except Exception:
+        pass
+
     return txn
+
+
+@router.post("/suggest-envelope")
+async def suggest_envelope(
+    req: SuggestEnvelopeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.txn_nlp import find_best_envelope
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = result.scalar_one_or_none()
+    if not hid or not req.description.strip():
+        return {"envelope_id": None, "envelope_name": None, "confident": False}
+    envelope, confident = await find_best_envelope(req.description, hid, db, user.id)
+    if not envelope:
+        return {"envelope_id": None, "envelope_name": None, "confident": False}
+    return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)}
 
 
 @router.get("/", response_model=list[TransactionResponse])
