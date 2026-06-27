@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
-    User, Envelope, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
+    User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
     RecurringTransaction, RecurringFrequency,
 )
 
@@ -62,6 +62,17 @@ class EnvelopeSummary(BaseModel):
     free: Decimal           # remaining minus reserved = truly free to spend
     funded_ratio: float     # allocated / budget_amount
     spent_ratio: float      # spent / allocated
+
+
+class EnvelopeGroupCreate(BaseModel):
+    name: str
+
+
+class EnvelopeGroupResponse(BaseModel):
+    id: UUID
+    name: str
+    sort_order: int
+    model_config = {"from_attributes": True}
 
 
 async def _get_hid(user: User, db: AsyncSession):
@@ -209,6 +220,90 @@ async def envelope_summary(
         ))
 
     return summaries
+
+
+@router.get("/groups", response_model=list[EnvelopeGroupResponse])
+async def list_groups(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    hid = await _get_hid(user, db)
+    if not hid:
+        return []
+    result = await db.execute(
+        select(EnvelopeGroup)
+        .where(EnvelopeGroup.household_id == hid)
+        .order_by(EnvelopeGroup.sort_order, EnvelopeGroup.name)
+    )
+    return result.scalars().all()
+
+
+@router.post("/groups", response_model=EnvelopeGroupResponse, status_code=status.HTTP_201_CREATED)
+async def create_group(
+    req: EnvelopeGroupCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    hid = await _get_hid(user, db)
+    if not hid:
+        raise HTTPException(status_code=400, detail="Belum punya household")
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama grup tidak boleh kosong")
+    max_result = await db.execute(
+        select(func.coalesce(func.max(EnvelopeGroup.sort_order), -1))
+        .where(EnvelopeGroup.household_id == hid)
+    )
+    next_order = int(max_result.scalar()) + 1
+    group = EnvelopeGroup(household_id=hid, name=name, sort_order=next_order)
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return group
+
+
+@router.patch("/groups/{group_id}", response_model=EnvelopeGroupResponse)
+async def rename_group(
+    group_id: UUID,
+    req: EnvelopeGroupCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    hid = await _get_hid(user, db)
+    result = await db.execute(
+        select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nama grup tidak boleh kosong")
+    group.name = name
+    await db.commit()
+    await db.refresh(group)
+    return group
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(
+    group_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import update
+    hid = await _get_hid(user, db)
+    result = await db.execute(
+        select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
+    await db.execute(
+        update(Envelope).where(Envelope.group_id == group_id).values(group_id=None)
+    )
+    await db.delete(group)
+    await db.commit()
 
 
 @router.post("/", response_model=EnvelopeResponse, status_code=status.HTTP_201_CREATED)
