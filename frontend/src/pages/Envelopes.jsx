@@ -15,9 +15,10 @@ function groupBalance(envelopes) {
 // Split a section's envelopes into ordered custom groups + a trailing "Lainnya"
 // bucket for ungrouped envelopes. Returns [] of { id, name, envelopes }.
 function buildGroupSections(envelopes, groups) {
+  const groupIds = new Set(groups.map((g) => g.id));
   const byGroup = {};
   envelopes.forEach((e) => {
-    const key = e.group_id || '__none__';
+    const key = e.group_id && groupIds.has(e.group_id) ? e.group_id : '__none__';
     (byGroup[key] = byGroup[key] || []).push(e);
   });
   const sections = [...groups]
