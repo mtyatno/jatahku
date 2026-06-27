@@ -25,6 +25,15 @@ settings = get_settings()
 logger = logging.getLogger("jatahku.wa")
 
 
+async def _bump_streak(db, user) -> None:
+    """Best-effort: keep the discipline streak alive after a WA expense log."""
+    try:
+        from app.services.streak import record_activity
+        await record_activity(db, user.id, getattr(user, "timezone", None))
+    except Exception:
+        pass
+
+
 # ── WAHA client ───────────────────────────────────────────────────────────────
 
 async def waha_send(chat_id: str, text: str) -> None:
@@ -190,6 +199,7 @@ async def handle_single_expense(chat_id: str, user: User, amount: Decimal, descr
             ))
             await save_learned_keywords(user.id, description, envelope.id, db)
             await db.commit()
+            await _bump_streak(db, user)
             await waha_send(chat_id,
                 f"✅ {envelope.emoji or '📁'} {envelope.name}: {format_currency(amount)} — {description}"
             )
@@ -258,6 +268,7 @@ async def handle_envelope_reply(chat_id: str, user: User, choice: int, raw: byte
         ))
         await save_learned_keywords(user.id, description, envelope.id, db)
         await db.commit()
+        await _bump_streak(db, user)
 
     await waha_send(chat_id,
         f"✅ {chosen['emoji']} {chosen['name']}: {format_currency(amount)} — {description}"
@@ -301,6 +312,7 @@ async def handle_multi_expense(chat_id: str, user: User, items: list) -> None:
 
         if recorded:
             await db.commit()
+            await _bump_streak(db, user)
 
     auto_lines = [
         f"{e.emoji or '📁'} {e.name}: {format_currency(a)} — {d}"
@@ -380,6 +392,7 @@ async def handle_batch_reply(chat_id: str, user: User, choice: int, raw: bytes) 
             ))
             await save_learned_keywords(user.id, item["desc"], envelope.id, db)
             await db.commit()
+            await _bump_streak(db, user)
 
         queue[idx]["env_id"] = chosen["id"]
         auto_lines = auto_lines + [f"{chosen['emoji']} {chosen['name']}: {format_currency(amount)} — {item['desc']}"]

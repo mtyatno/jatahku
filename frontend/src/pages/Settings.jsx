@@ -25,6 +25,7 @@ function NotifPrefs() {
   const [saving, setSaving] = useState(false);
   const [dailyTime, setDailyTime] = useState('20:00');
   const [weeklyTime, setWeeklyTime] = useState('08:00');
+  const [checkinTime, setCheckinTime] = useState('21:00');
 
   useEffect(() => {
     api.request('/notifications/preferences').then(r => r.ok ? r.json() : null).then(d => {
@@ -32,6 +33,7 @@ function NotifPrefs() {
         setPrefs(d);
         setDailyTime(d.daily_summary_time || '20:00');
         setWeeklyTime(d.weekly_summary_time || '08:00');
+        setCheckinTime(d.checkin_nudge_time || '21:00');
       }
     });
   }, []);
@@ -54,6 +56,16 @@ function NotifPrefs() {
     await api.request('/notifications/preferences', {
       method: 'PUT',
       body: JSON.stringify({ ...prefs, [key + '_summary_time']: val }),
+    });
+    setSaving(false);
+  };
+
+  const saveCheckinTime = async (val) => {
+    setCheckinTime(val);
+    setSaving(true);
+    await api.request('/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ ...prefs, checkin_nudge_time: val }),
     });
     setSaving(false);
   };
@@ -92,6 +104,18 @@ function NotifPrefs() {
         </label>
         <span className="text-center text-xs text-gray-300">—</span>
       </div>
+      <div className="grid grid-cols-3 gap-2 items-center">
+        <span className="text-sm text-gray-600">Ingatkan kalau lupa nyatat</span>
+        <label className="flex justify-center">
+          <input
+            type="checkbox"
+            checked={!!prefs.checkin_nudge_tg}
+            onChange={() => toggle('checkin_nudge_tg')}
+            className="w-4 h-4 rounded border-gray-300 text-brand-600"
+          />
+        </label>
+        <span className="text-center text-xs text-gray-300">—</span>
+      </div>
       <div className="border-t border-gray-100 pt-3 mt-3 space-y-2">
         <p className="text-xs text-gray-400 font-medium">Jadwal ringkasan (sesuai timezone kamu):</p>
         <div className="flex items-center gap-3">
@@ -101,6 +125,10 @@ function NotifPrefs() {
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-600 w-32">Mingguan (Senin)</span>
           <input type="time" className="input text-sm py-1 w-28" value={weeklyTime} onChange={e => saveTime('weekly', e.target.value)} />
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600 w-32">Check-in harian</span>
+          <input type="time" className="input text-sm py-1 w-28" value={checkinTime} onChange={e => saveCheckinTime(e.target.value)} />
         </div>
       </div>
       {saving && <p className="text-xs text-brand-600 mt-2">Menyimpan...</p>}

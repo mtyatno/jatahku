@@ -105,6 +105,14 @@ async def create_transaction(
     db.add(txn)
     await db.commit()
     await db.refresh(txn)
+
+    # Keep the discipline streak alive (best-effort; never block the txn).
+    try:
+        from app.services.streak import record_activity
+        await record_activity(db, user.id, getattr(user, "timezone", None))
+    except Exception:
+        pass
+
     return txn
 
 

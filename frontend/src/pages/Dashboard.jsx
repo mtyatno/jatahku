@@ -435,6 +435,9 @@ export default function Dashboard() {
   const [monthlyTrend, setMonthlyTrend] = useState([]);
   const [weeklyPattern, setWeeklyPattern] = useState([]);
   const [advisorInsights, setAdvisorInsights] = useState(null);
+  const [streak, setStreak] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [celebrate, setCelebrate] = useState(null);
 
   // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
@@ -450,6 +453,20 @@ export default function Dashboard() {
       setAdvisorInsights(insights);
       setPeriodIdx(p.length - 1); // default = current period
     });
+    api.request('/user/streak').then(r => r.ok ? r.json() : null).then(s => {
+      if (!s) return;
+      setStreak(s);
+      // Celebrate each milestone once per device.
+      const MILESTONES = [3, 7, 14, 30, 50, 100, 150, 200, 365];
+      if (MILESTONES.includes(s.current_streak)) {
+        const key = `jatahku_celebrated_${s.current_streak}`;
+        if (!localStorage.getItem(key)) {
+          setCelebrate(s.current_streak);
+          localStorage.setItem(key, '1');
+        }
+      }
+    });
+    api.request('/household/leaderboard').then(r => r.ok ? r.json() : []).then(setLeaderboard);
   }, []);
 
   // Reload data whenever selected period changes
@@ -505,10 +522,42 @@ export default function Dashboard() {
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
 
+  const milestoneLabel = (n) => ({
+    3: 'Kebiasaan baik dimulai 🌱', 7: 'Seminggu penuh disiplin!', 14: '2 minggu konsisten 💪',
+    30: 'Sebulan penuh nyatat! 🏆', 50: '50 hari, luar biasa 🌟', 100: '100 hari, kamu legend 👑',
+    150: '150 hari 🚀', 200: '200 hari, level dewa 🧘', 365: 'SATU TAHUN PENUH 🎉',
+  }[n] || `${n} hari berturut-turut!`);
+
   return (
     <div className="space-y-6">
+      {celebrate && (
+        <div
+          className="rounded-xl p-4 flex items-center justify-between gap-3 animate-pulse"
+          style={{ background: 'linear-gradient(90deg,#FEF3C7,#FDE68A)', border: '1px solid #FCD34D' }}
+        >
+          <div>
+            <p className="font-bold text-amber-900">🔥 Streak {celebrate} hari!</p>
+            <p className="text-sm text-amber-800">{milestoneLabel(celebrate)}</p>
+          </div>
+          <button
+            onClick={() => setCelebrate(null)}
+            className="text-amber-700 text-sm px-3 py-1 rounded-lg hover:bg-amber-200/60 flex-shrink-0"
+          >Tutup</button>
+        </div>
+      )}
       <div>
-        <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
+          {streak && streak.current_streak >= 1 && (
+            <span
+              className="text-sm px-2.5 py-1 rounded-full font-semibold flex-shrink-0"
+              style={{ background: streak.logged_today ? '#FEF3C7' : '#F3F4F6', color: streak.logged_today ? '#92400E' : '#6B7280' }}
+              title={`Rekor ${streak.longest_streak} hari · total ${streak.total_logged_days} hari tercatat`}
+            >
+              🔥 {streak.current_streak} hari
+            </span>
+          )}
+        </div>
         {/* Period Navigator */}
         <div className="flex items-center gap-1 mt-1">
           <button
@@ -532,6 +581,34 @@ export default function Dashboard() {
       </div>
 
       {isCurrentPeriod && <ExportButtons />}
+
+      {/* Household streak leaderboard — only when there's someone to compete with */}
+      {leaderboard.length >= 2 && (
+        <div className="card">
+          <h3 className="font-semibold text-sm mb-3">🔥 Papan disiplin rumah</h3>
+          <div className="space-y-1.5">
+            {leaderboard.map((m, i) => {
+              const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
+              return (
+                <div
+                  key={m.user_id}
+                  className="flex items-center justify-between text-sm rounded-lg px-2 py-1.5"
+                  style={m.is_me ? { background: '#F0FDF9' } : undefined}
+                >
+                  <span className="flex items-center gap-2 truncate mr-2">
+                    <span className="w-6 text-center flex-shrink-0">{medal}</span>
+                    <span className="truncate">{m.name}{m.is_me ? ' (kamu)' : ''}</span>
+                    {m.logged_today && <span className="text-xs flex-shrink-0" title="Sudah catat hari ini">✅</span>}
+                  </span>
+                  <span className="flex-shrink-0 font-semibold text-gray-700">
+                    {m.current_streak > 0 ? `🔥 ${m.current_streak} hari` : <span className="text-gray-400 font-normal">—</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
