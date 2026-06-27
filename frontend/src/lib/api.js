@@ -267,6 +267,17 @@ class ApiClient {
     return { ok: res.ok, data: await res.json() };
   }
 
+  async suggestEnvelope(description) {
+    try {
+      const res = await this.request('/transactions/suggest-envelope', {
+        method: 'POST',
+        body: JSON.stringify({ description }),
+      });
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
   async deleteTransaction(id) {
     const res = await this.request(`/transactions/${id}`, { method: 'DELETE' });
     return res.ok;

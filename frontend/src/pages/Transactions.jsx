@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
-import { enqueueTransaction, flushQueue, getPendingCount } from '../lib/offlineQueue';
+import { flushQueue, getPendingCount } from '../lib/offlineQueue';
+import QuickAddTransaction from '../components/QuickAddTransaction';
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -9,12 +10,8 @@ export default function Transactions() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [envelopeId, setEnvelopeId] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [addError, setAddError] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [showMoreFilter, setShowMoreFilter] = useState(false);
   const [periods, setPeriods] = useState([]);
   const [periodIdx, setPeriodIdx] = useState(null);
@@ -35,6 +32,12 @@ export default function Transactions() {
     return () => window.removeEventListener('online', syncOnOnline);
   }, []);
 
+  useEffect(() => {
+    const onAdded = () => { setRefreshTick(t => t + 1); getPendingCount().then(setPendingCount); };
+    window.addEventListener('jatahku:txn-added', onAdded);
+    return () => window.removeEventListener('jatahku:txn-added', onAdded);
+  }, []);
+
   const selectedPeriod = periodIdx !== null ? periods[periodIdx] : null;
   const isCurrentPeriod = periodIdx === periods.length - 1;
 
@@ -53,31 +56,7 @@ export default function Transactions() {
       setLoading(false);
     });
   };
-  useEffect(load, [filter, periodIdx, periods]);
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    setAddError('');
-    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp' };
-
-    if (!navigator.onLine) {
-      await enqueueTransaction(payload);
-      setSaving(false);
-      setAmount(''); setDescription(''); setEnvelopeId(''); setShowAdd(false);
-      getPendingCount().then(setPendingCount);
-      return;
-    }
-
-    const result = await api.createTransaction(payload);
-    setSaving(false);
-    if (result.ok) {
-      setAmount(''); setDescription(''); setEnvelopeId(''); setShowAdd(false); setAddError('');
-      load();
-    } else {
-      setAddError(result.data?.detail || 'Gagal menyimpan transaksi');
-    }
-  };
+  useEffect(load, [filter, periodIdx, periods, refreshTick]);
 
   const handleDelete = async (id) => {
     if (!confirm('Hapus transaksi ini?')) return;
@@ -121,42 +100,16 @@ export default function Transactions() {
               ⏳ {pendingCount} pending
             </span>
           )}
-          <button onClick={() => { setShowAdd(!showAdd); setAddError(''); }} className="btn-primary">+ Tambah</button>
+          <button onClick={() => setShowAdd(!showAdd)} className="btn-primary">+ Tambah</button>
         </div>
       </div>
 
       {showAdd && (
-        <div className="card border-brand-200 space-y-3">
-          <form onSubmit={handleAdd}>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div>
-                <label className="label">Jumlah (Rp)</label>
-                <input type="number" className="input font-mono" placeholder="35000" value={amount} onChange={e => setAmount(e.target.value)} required min="1" />
-              </div>
-              <div>
-                <label className="label">Keterangan</label>
-                <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={e => setDescription(e.target.value)} required />
-              </div>
-              <div>
-                <label className="label">Amplop</label>
-                <select className="input" value={envelopeId} onChange={e => setEnvelopeId(e.target.value)} required>
-                  <option value="">Pilih amplop</option>
-                  {envelopes.map(env => (
-                    <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-end gap-2">
-                <button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Simpan'}</button>
-                <button type="button" onClick={() => { setShowAdd(false); setAddError(''); }} className="btn-outline">Batal</button>
-              </div>
-            </div>
-          </form>
-          {addError && (
-            <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>
-              {addError}
-            </div>
-          )}
+        <div className="card border-brand-200">
+          <QuickAddTransaction
+            onSaved={() => { setShowAdd(false); load(); }}
+            onCancel={() => setShowAdd(false)}
+          />
         </div>
       )}
 

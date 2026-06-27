@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
+import QuickAddTransaction from './QuickAddTransaction';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
@@ -21,6 +22,7 @@ export default function Layout() {
   const { user, loading, logout } = useAuth();
   const { mode, toggleMode } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [fabOpen, setFabOpen] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
 
@@ -133,6 +135,20 @@ export default function Layout() {
 
       <TelegramPrompt />
       <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
+      {/* Global quick-add FAB (every page) */}
+      <button
+        onClick={() => setFabOpen(true)}
+        className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-40 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl leading-none shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
+        title="Catat pengeluaran"
+      >+</button>
+      {fabOpen && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="font-display font-bold text-lg mb-4">💰 Catat pengeluaran</h3>
+            <QuickAddTransaction onSaved={() => setFabOpen(false)} onCancel={() => setFabOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
