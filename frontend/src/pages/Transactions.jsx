@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
-import { enqueueTransaction, flushQueue, getPendingCount } from '../lib/offlineQueue';
+import { flushQueue, getPendingCount } from '../lib/offlineQueue';
 import QuickAddTransaction from '../components/QuickAddTransaction';
 
 export default function Transactions() {
@@ -33,7 +33,7 @@ export default function Transactions() {
   }, []);
 
   useEffect(() => {
-    const onAdded = () => setRefreshTick(t => t + 1);
+    const onAdded = () => { setRefreshTick(t => t + 1); getPendingCount().then(setPendingCount); };
     window.addEventListener('jatahku:txn-added', onAdded);
     return () => window.removeEventListener('jatahku:txn-added', onAdded);
   }, []);
