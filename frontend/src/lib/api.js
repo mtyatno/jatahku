@@ -183,6 +183,35 @@ class ApiClient {
     return res.ok;
   }
 
+  async getEnvelopeGroups() {
+    try {
+      const res = await this.request('/envelopes/groups');
+      if (res.ok) return res.json();
+    } catch {}
+    return [];
+  }
+
+  async createEnvelopeGroup(name) {
+    const res = await this.request('/envelopes/groups', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  async renameEnvelopeGroup(id, name) {
+    const res = await this.request(`/envelopes/groups/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  async deleteEnvelopeGroup(id) {
+    const res = await this.request(`/envelopes/groups/${id}`, { method: 'DELETE' });
+    return res.ok;
+  }
+
   // Analytics
   async getPeriods(count = 12) {
     const res = await this.request(`/analytics/periods?count=${count}`);

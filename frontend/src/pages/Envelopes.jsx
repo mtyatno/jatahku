@@ -4,7 +4,34 @@ import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
-function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes }) {
+// Balance of a list of envelopes = sum of (allocated + rollover - spent)
+function groupBalance(envelopes) {
+  return envelopes.reduce(
+    (sum, e) => sum + (Number(e.allocated || 0) + Number(e.rollover || 0) - Number(e.spent || 0)),
+    0,
+  );
+}
+
+// Split a section's envelopes into ordered custom groups + a trailing "Lainnya"
+// bucket for ungrouped envelopes. Returns [] of { id, name, envelopes }.
+function buildGroupSections(envelopes, groups) {
+  const groupIds = new Set(groups.map((g) => g.id));
+  const byGroup = {};
+  envelopes.forEach((e) => {
+    const key = e.group_id && groupIds.has(e.group_id) ? e.group_id : '__none__';
+    (byGroup[key] = byGroup[key] || []).push(e);
+  });
+  const sections = [...groups]
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .filter((g) => byGroup[g.id]?.length)
+    .map((g) => ({ id: g.id, name: g.name, envelopes: byGroup[g.id] }));
+  if (byGroup['__none__']?.length) {
+    sections.push({ id: null, name: 'Lainnya', envelopes: byGroup['__none__'] });
+  }
+  return sections;
+}
+
+function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [] }) {
   const [step, setStep] = useState(editing ? 2 : 1); // 1=basic, 2=controls (editing skips funding)
   const [name, setName] = useState(editing?.name || '');
   const [emoji, setEmoji] = useState(editing?.emoji || '📁');
@@ -17,6 +44,8 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
   const [showControls, setShowControls] = useState(!!(editing?.is_locked || editing?.daily_limit || editing?.cooling_threshold));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [groupId, setGroupId] = useState(editing?.group_id || '');
+  const [newGroupName, setNewGroupName] = useState('');
 
   // Funding
   const [fundingSource, setFundingSource] = useState('transfer'); // 'transfer' or 'income'
@@ -31,12 +60,23 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
     setSaving(true);
     setError('');
 
+    // Resolve group: '__new__' means create from the typed name first.
+    let resolvedGroupId = groupId || null;
+    if (groupId === '__new__' && newGroupName.trim()) {
+      const gres = await api.createEnvelopeGroup(newGroupName.trim());
+      if (!gres.ok) { setSaving(false); setError('Gagal buat grup'); return; }
+      resolvedGroupId = gres.data.id;
+    } else if (groupId === '__new__') {
+      resolvedGroupId = null;
+    }
+
     if (editing) {
       const data = {
         name, emoji, budget_amount: Number(budget), is_rollover: rollover,
         is_personal: isPersonal, is_locked: isLocked,
         daily_limit: dailyLimit ? Number(dailyLimit) : null,
         cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
+        group_id: resolvedGroupId,
       };
       const result = await api.updateEnvelope(editing.id, data);
       setSaving(false);
@@ -50,6 +90,7 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
       is_personal: isPersonal, is_locked: isLocked,
       daily_limit: dailyLimit ? Number(dailyLimit) : null,
       cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
+      group_id: resolvedGroupId,
     };
     const createRes = await api.createEnvelope(data);
     if (!createRes.ok) { setSaving(false); setError('Gagal buat amplop'); return; }
@@ -107,6 +148,21 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
         <div className="space-y-4">
           <div><label className="label">Emoji</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}>{e}</button>))}</div></div>
           <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => setName(e.target.value)} required /></div>
+
+          <div>
+            <label className="label">Grup</label>
+            <select className="input" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+              <option value="">Tanpa grup</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+              <option value="__new__">+ Grup baru…</option>
+            </select>
+            {groupId === '__new__' && (
+              <input type="text" className="input mt-2" placeholder="Nama grup baru (mis. Tabungan)"
+                value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+            )}
+          </div>
 
           {!editing && (
             <div className="border-t border-gray-100 pt-4">
@@ -340,14 +396,82 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   );
 }
 
+function EnvelopeSection({ title, envelopes, groups, onEdit, onDelete, onTransfer, onGroupChanged }) {
+  const hasGroups = envelopes.some((e) => e.group_id);
+
+  const renderGrid = (items) => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {items.map((env) => (
+        <EnvelopeCard key={env.id} env={env} onEdit={onEdit} onDelete={onDelete} onTransfer={onTransfer} />
+      ))}
+    </div>
+  );
+
+  if (!hasGroups) {
+    return (
+      <div>
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{title} ({envelopes.length})</h2>
+        {renderGrid(envelopes)}
+      </div>
+    );
+  }
+
+  const sections = buildGroupSections(envelopes, groups);
+
+  const handleRename = async (g) => {
+    const next = window.prompt('Nama grup baru:', g.name);
+    if (!next || !next.trim() || next.trim() === g.name) return;
+    await api.renameEnvelopeGroup(g.id, next.trim());
+    onGroupChanged();
+  };
+
+  const handleDeleteGroup = async (g) => {
+    if (!confirm(`Hapus grup "${g.name}"? Amplop di dalamnya pindah ke Lainnya.`)) return;
+    await api.deleteEnvelopeGroup(g.id);
+    onGroupChanged();
+  };
+
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{title} ({envelopes.length})</h2>
+      <div className="space-y-5">
+        {sections.map((sec) => (
+          <div key={sec.id ?? '__none__'}>
+            <div className="group flex items-center justify-between mb-2">
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-sm font-semibold text-gray-600">{sec.name}</h3>
+                <span className="text-xs text-gray-400">· saldo {formatCurrency(groupBalance(sec.envelopes))}</span>
+              </div>
+              {sec.id && (
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                  <button onClick={() => handleRename(sec)} className="text-xs text-gray-400 hover:text-brand-600">✏️ Rename</button>
+                  <button onClick={() => handleDeleteGroup(sec)} className="text-xs text-gray-400 hover:text-danger-400">🗑 Hapus</button>
+                </div>
+              )}
+            </div>
+            {renderGrid(sec.envelopes)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Envelopes() {
   const [envelopes, setEnvelopes] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
 
-  const load = () => { api.getEnvelopeSummary().then(env => { setEnvelopes(env); setLoading(false); }); };
+  const load = () => {
+    Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups()]).then(([env, grp]) => {
+      setEnvelopes(env);
+      setGroups(grp);
+      setLoading(false);
+    });
+  };
   useEffect(load, []);
 
   const handleDelete = async (id, name) => {
@@ -372,20 +496,16 @@ export default function Envelopes() {
       ) : (
         <>
           {shared.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">👥 Shared ({shared.length})</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{shared.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} />)}</div>
-            </div>
+            <EnvelopeSection title="👥 Shared" envelopes={shared} groups={groups}
+              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load} />
           )}
           {personal.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">🔒 Personal ({personal.length})</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">{personal.map(env => <EnvelopeCard key={env.id} env={env} onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} />)}</div>
-            </div>
+            <EnvelopeSection title="🔒 Personal" envelopes={personal} groups={groups}
+              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load} />
           )}
         </>
       )}
-      {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
+      {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} groups={groups} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
       {transferTarget && <TransferModal env={transferTarget} envelopes={envelopes} onClose={() => setTransferTarget(null)} onDone={load} />}
     </div>
   );
