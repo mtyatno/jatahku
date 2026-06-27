@@ -438,6 +438,13 @@ export default function Dashboard() {
   const [streak, setStreak] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [celebrate, setCelebrate] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    const onAdded = () => setRefreshTick(t => t + 1);
+    window.addEventListener('jatahku:txn-added', onAdded);
+    return () => window.removeEventListener('jatahku:txn-added', onAdded);
+  }, []);
 
   // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
@@ -497,7 +504,7 @@ export default function Dashboard() {
       setLoading(false);
       if (env.length === 0 && isCurrentPeriod) setShowOnboarding(true);
     });
-  }, [periodIdx, periods]);
+  }, [periodIdx, periods, refreshTick]);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (showOnboarding) return <Onboarding onDone={() => { setShowOnboarding(false); window.location.reload(); }} />;

@@ -464,6 +464,7 @@ export default function Envelopes() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const load = () => {
     Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups()]).then(([env, grp]) => {
@@ -472,7 +473,14 @@ export default function Envelopes() {
       setLoading(false);
     });
   };
-  useEffect(load, []);
+
+  useEffect(() => {
+    const onAdded = () => setRefreshTick(t => t + 1);
+    window.addEventListener('jatahku:txn-added', onAdded);
+    return () => window.removeEventListener('jatahku:txn-added', onAdded);
+  }, []);
+
+  useEffect(load, [refreshTick]);
 
   const handleDelete = async (id, name) => {
     if (!confirm(`Hapus amplop "${name}"?`)) return;
