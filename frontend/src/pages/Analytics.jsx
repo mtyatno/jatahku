@@ -50,11 +50,70 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
+function SinkingFundAdvisor({ data }) {
+  const recommendations = data?.recommendations || [];
+  if (recommendations.length === 0) return null;
+  return (
+    <div className="card">
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="font-semibold text-sm">Sinking fund advisor</h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Reserve baru {formatShort(data.summary?.new_reserve_needed || 0)} · {recommendations.length} rekomendasi
+          </p>
+        </div>
+        <span className="text-xs px-2 py-1 rounded-lg bg-brand-50 text-brand-600 font-semibold">
+          {data.summary?.high_confidence_count || 0} high confidence
+        </span>
+      </div>
+      <div className="space-y-3">
+        {recommendations.slice(0, 5).map(item => (
+          <div key={item.id} className="rounded-xl border border-gray-100 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{item.title}</p>
+                <p className="text-xs text-gray-500 mt-1">{item.envelope_name} · {item.frequency} · {item.confidence}</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="font-display font-bold text-brand-600">{formatShort(item.monthly_reserve)}</p>
+                <p className="text-xs text-gray-400">/periode</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">{item.description}</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-xs">
+              <div className="bg-gray-50 rounded-lg px-2 py-1.5">
+                <p className="text-gray-400">Nominal</p>
+                <p className="font-semibold">{formatCurrency(item.suggested_amount)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg px-2 py-1.5">
+                <p className="text-gray-400">Estimasi berikut</p>
+                <p className="font-semibold">{item.next_expected_date || '-'}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg px-2 py-1.5">
+                <p className="text-gray-400">Tipe</p>
+                <p className="font-semibold">{item.type}</p>
+              </div>
+            </div>
+            {item.evidence?.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
+                {item.evidence.map((evidence, idx) => (
+                  <p key={idx} className="text-xs text-gray-500">{evidence}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Analytics() {
   const [daily, setDaily] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
   const [trend, setTrend] = useState([]);
   const [prediction, setPrediction] = useState(null);
+  const [sinkingAdvice, setSinkingAdvice] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -63,11 +122,13 @@ export default function Analytics() {
       api.request('/analytics/envelope-breakdown').then(r => r.json()),
       api.request('/analytics/monthly-trend').then(r => r.json()),
       api.request('/analytics/prediction').then(r => r.json()),
-    ]).then(([d, b, t, p]) => {
+      api.getSinkingFundAdvice(),
+    ]).then(([d, b, t, p, sfa]) => {
       setDaily(d.map(x => ({...x, date: new Date(x.date).getDate() + ''})));
       setBreakdown(b.filter(x => x.spent > 0));
       setTrend(t);
       setPrediction(p);
+      setSinkingAdvice(sfa);
       setLoading(false);
     });
   }, []);
@@ -84,6 +145,8 @@ export default function Analytics() {
       </div>
 
       <PredictionCard data={prediction} />
+
+      <SinkingFundAdvisor data={sinkingAdvice} />
 
       {/* Daily spending */}
       <div className="card">

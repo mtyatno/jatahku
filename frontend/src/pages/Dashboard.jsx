@@ -311,6 +311,44 @@ function WeeklyPattern({ data }) {
   );
 }
 
+function AdvisorCards({ cards }) {
+  if (!cards?.length) return null;
+  const styles = {
+    danger: { bg: '#FEF2F2', border: '#FECACA', title: '#991B1B', text: '#7F1D1D' },
+    warning: { bg: '#FFFBEB', border: '#FDE68A', title: '#92400E', text: '#78350F' },
+    info: { bg: '#EFF6FF', border: '#BFDBFE', title: '#1D4ED8', text: '#1E3A8A' },
+    positive: { bg: '#F0FDF9', border: '#A7F3D0', title: '#065F46', text: '#065F46' },
+  };
+  return (
+    <div className="space-y-3">
+      {cards.map(card => {
+        const style = styles[card.severity] || styles.info;
+        return (
+          <div key={card.id} className="rounded-xl p-4" style={{ background: style.bg, border: `1px solid ${style.border}` }}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold mb-1 uppercase tracking-wide" style={{ color: style.title }}>Advisor</p>
+                <p className="text-sm font-semibold" style={{ color: style.text }}>{card.title}</p>
+                <p className="text-xs mt-1" style={{ color: style.text }}>{card.body}</p>
+              </div>
+              {card.primary_action?.route && (
+                <Link to={card.primary_action.route} className="text-xs font-semibold text-brand-600 hover:underline flex-shrink-0">
+                  {card.primary_action.label || 'Lihat'}
+                </Link>
+              )}
+            </div>
+            {card.evidence?.length > 0 && (
+              <div className="mt-2 pt-2 border-t text-xs space-y-1" style={{ borderColor: style.border, color: style.text }}>
+                {card.evidence.map((item, idx) => <p key={idx}>{item}</p>)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EnvelopeRow({ env }) {
   const allocated = Number(env.allocated);
   const rollover = Number(env.rollover || 0);
@@ -396,6 +434,7 @@ export default function Dashboard() {
   const [periodIdx, setPeriodIdx] = useState(null);
   const [monthlyTrend, setMonthlyTrend] = useState([]);
   const [weeklyPattern, setWeeklyPattern] = useState([]);
+  const [advisorInsights, setAdvisorInsights] = useState(null);
 
   // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
@@ -403,10 +442,12 @@ export default function Dashboard() {
       api.getPeriods(12),
       api.request('/analytics/monthly-trend').then(r => r.ok ? r.json() : []),
       api.getWeeklyPattern(3),
-    ]).then(([p, trend, weekly]) => {
+      api.getAdvisorInsights(),
+    ]).then(([p, trend, weekly, insights]) => {
       setPeriods(p);
       setMonthlyTrend(trend);
       setWeeklyPattern(weekly);
+      setAdvisorInsights(insights);
       setPeriodIdx(p.length - 1); // default = current period
     });
   }, []);
@@ -500,9 +541,13 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
-      {/* Decision Box — only for current period */}
+      {/* Advisor smart insight cards — fall back to DecisionBox when none */}
       {isCurrentPeriod && (
-        <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
+        advisorInsights?.dashboard_cards?.length > 0 ? (
+          <AdvisorCards cards={advisorInsights.dashboard_cards} />
+        ) : (
+          <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
+        )
       )}
 
       {/* Monthly Comparison — always visible */}

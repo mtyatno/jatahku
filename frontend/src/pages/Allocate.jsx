@@ -14,6 +14,9 @@ export default function Allocate() {
   const [allocations, setAllocations] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [advisorLoading, setAdvisorLoading] = useState(false);
+  const [advisorRecommendation, setAdvisorRecommendation] = useState(null);
+  const [advisorApplied, setAdvisorApplied] = useState(false);
 
   const load = () => {
     Promise.all([api.getEnvelopeSummary(), api.getIncomes()])
@@ -43,6 +46,31 @@ export default function Allocate() {
     setAllocations(newAlloc);
   };
 
+  const requestAllocationRecommendation = async () => {
+    if (incomeNum <= 0) return;
+    setAdvisorLoading(true);
+    setError('');
+    const res = await api.getAllocationRecommendation(incomeNum);
+    setAdvisorLoading(false);
+    if (res.ok) {
+      setAdvisorRecommendation(res.data);
+      setAdvisorApplied(false);
+    } else {
+      setError(res.data?.detail || 'Gagal membuat rekomendasi alokasi');
+    }
+  };
+
+  const applyAllocationRecommendation = () => {
+    if (!advisorRecommendation?.items) return;
+    const nextAllocations = {};
+    advisorRecommendation.items.forEach(item => {
+      if (Number(item.recommended_amount) > 0 && item.name !== 'Tabungan') {
+        nextAllocations[item.envelope_id] = Number(item.recommended_amount);
+      }
+    });
+    setAllocations(nextAllocations);
+    setAdvisorApplied(true);
+  };
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (totalAllocated > incomeNum) {
@@ -100,7 +128,7 @@ export default function Allocate() {
             <div>
               <label className="label">Jumlah income (Rp)</label>
               <input type="number" className="input font-mono" placeholder="8000000"
-                value={incomeAmount} onChange={e => { setIncomeAmount(e.target.value); setAllocations({}); }} required min="1" />
+                value={incomeAmount} onChange={e => { setIncomeAmount(e.target.value); setAllocations({}); setAdvisorRecommendation(null); setAdvisorApplied(false); }} required min="1" />
               {incomeNum > 0 && <p className="text-xs text-brand-600 mt-1">{formatCurrency(incomeNum)}</p>}
             </div>
             <div>
@@ -120,8 +148,35 @@ export default function Allocate() {
 
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Distribusikan ke amplop:</p>
-                <button type="button" onClick={distributeByBudget} className="text-xs text-brand-600 hover:underline">Bagi proporsional</button>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={requestAllocationRecommendation} disabled={advisorLoading} className="text-xs text-brand-600 hover:underline disabled:opacity-50">
+                    {advisorLoading ? 'Menghitung...' : '✨ Rekomendasikan alokasi'}
+                  </button>
+                  <button type="button" onClick={distributeByBudget} className="text-xs text-brand-600 hover:underline">Bagi proporsional</button>
+                </div>
               </div>
+
+              {advisorRecommendation && (
+                <div className="card !p-3 bg-brand-50/40 border-brand-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold">✨ Rekomendasi advisor</p>
+                    <span className="text-xs px-2 py-0.5 rounded-md bg-white text-brand-600 capitalize">Keyakinan: {advisorRecommendation.confidence}</span>
+                  </div>
+                  <div className="flex gap-3 text-xs">
+                    <span className="text-gray-500">Total rekomendasi: <b className="text-gray-700">{formatShort(advisorRecommendation.total_recommended)}</b></span>
+                    <span className="text-gray-500">→ Tabungan/sisa: <b className="text-brand-600">{formatShort(advisorRecommendation.unallocated)}</b></span>
+                  </div>
+                  {advisorRecommendation.warnings?.length > 0 && (
+                    <ul className="text-xs text-amber-600 list-disc list-inside">
+                      {advisorRecommendation.warnings.slice(0, 3).map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                  )}
+                  <button type="button" onClick={applyAllocationRecommendation} disabled={advisorApplied}
+                    className="btn-primary !py-1.5 !text-xs w-full disabled:opacity-50">
+                    {advisorApplied ? '✓ Diterapkan ke form' : 'Terapkan ke form'}
+                  </button>
+                </div>
+              )}
 
               <div className="space-y-2">
                 {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
