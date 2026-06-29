@@ -577,26 +577,10 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         </div>
       )}
 
-      {/* Goal target section — only for saving/sinking_fund */}
+      {/* Goal actions — only for saving/sinking_fund */}
       {isSavingLike && goal && !showGoalForm && (
         <div className="mt-2 pt-2 border-t border-gray-100">
-          <div className="flex justify-between items-end mb-1">
-            <span className="text-xs text-gray-400">🎯 {goal.name}</span>
-            <span className="text-xs font-medium text-amber-600">{Math.round(goal.progress_pct)}%</span>
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
-              style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
-          </div>
-          <p className="text-xs text-gray-400 mt-1">
-            {formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}
-          </p>
-          {goal.monthly_needed !== null && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bulan
-            </p>
-          )}
-          <div className="flex items-center gap-2 mt-1.5">
+          <div className="flex items-center gap-2">
             {goal.is_achieved && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700">✅ Tercapai</span>
             )}
