@@ -395,7 +395,7 @@ async def build_advisor_insights(user, db) -> dict:
                 elif capped:
                     line += f" — setoran Rp{_money(avg_contribution):,}/bln terlalu kecil, estimasi >10 tahun"
                 else:
-                    line += f" — estimasi {months_to_goal} bulan lagi (Rp{_money(avg_contribution):,}/bln)"
+                    line += f" — estimasi {_fmt_months(months_to_goal)} (Rp{_money(avg_contribution):,}/bln)"
                 saving_items.append(line)
 
             elif purpose == "sinking_fund":
@@ -404,11 +404,11 @@ async def build_advisor_insights(user, db) -> dict:
                     months_remaining = max(1, (goal.target_date.year - today.year) * 12 + goal.target_date.month - today.month)
                     monthly_needed = max(Decimal("0"), target - balance) / months_remaining
                     if allocated >= monthly_needed:
-                        line = f"✅ {envelope.emoji} {goal.name}: {int(pct)}% — on track ({months_remaining} bulan)"
+                        line = f"✅ {envelope.emoji} {goal.name}: {int(pct)}% — on track ({_fmt_months(months_remaining)})"
                     elif allocated > 0:
                         line = f"⚠️ {envelope.emoji} {goal.name}: {int(pct)}% — butuh Rp{_money(monthly_needed):,}/bln (baru Rp{_money(allocated):,})"
                     else:
-                        line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% — {months_remaining} bulan, perlu Rp{_money(monthly_needed):,}/bln"
+                        line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% — {_fmt_months(months_remaining)}, perlu Rp{_money(monthly_needed):,}/bln"
                 else:
                     line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_money(balance):,} / Rp{_money(target):,})"
                 sinking_items.append(line)
@@ -445,27 +445,24 @@ async def build_advisor_insights(user, db) -> dict:
                 ["Pola ini bisa membuat amplop cepat menipis."],
             ))
 
-    # Consolidated saving card
-    if saving_items:
-        cards.append(_card(
-            "saving_progress:consolidated",
-            "saving_progress",
-            "info",
-            "🎯 Progress tabungan",
-            "\n".join(f"• {item}" for item in saving_items),
-            "/envelopes",
-            ["Buka halaman amplop untuk detail dan edit target."],
-        ))
-
-    # Consolidated sinking fund card
-    if sinking_items:
+    # Consolidated goals card
+    if saving_items or sinking_items:
+        body_parts = []
+        if saving_items:
+            body_parts.append("🎯 Progress tabungan:")
+            body_parts.extend(f"  • {item}" for item in saving_items)
+        if sinking_items:
+            if body_parts:
+                body_parts.append("")
+            body_parts.append("📅 Dana persiapan:")
+            body_parts.extend(f"  • {item}" for item in sinking_items)
         severity = "warning" if any("⚠️" in s for s in sinking_items) else "info"
         cards.append(_card(
-            "sinking_fund_deadline:consolidated",
-            "sinking_fund_deadline",
+            "goals:consolidated",
+            "goal_progress",
             severity,
-            "📅 Dana persiapan (sinking fund)",
-            "\n".join(f"• {item}" for item in sinking_items),
+            "Target menabung & dana persiapan",
+            "\n".join(body_parts),
             "/envelopes",
             ["Buka halaman amplop untuk detail dan edit target."],
         ))
@@ -498,6 +495,18 @@ async def build_advisor_insights(user, db) -> dict:
 
 def _money(value: Decimal) -> int:
     return int(_to_decimal(value).quantize(Decimal("1")))
+
+
+def _fmt_months(months: int) -> str:
+    """Format months as 'X tahun Y bulan' or 'X bulan'."""
+    years = months // 12
+    remaining = months % 12
+    if years > 0 and remaining > 0:
+        return f"{years} tahun {remaining} bulan"
+    elif years > 0:
+        return f"{years} tahun"
+    else:
+        return f"{months} bulan"
 
 
 def _median_decimal(values: list[Decimal]) -> Decimal:
