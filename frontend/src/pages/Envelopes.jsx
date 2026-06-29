@@ -31,7 +31,8 @@ function buildGroupSections(envelopes, groups) {
   return sections;
 }
 
-function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [] }) {
+function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [], goals = [] }) {
+  const editingGoal = editing ? goals.find(g => g.envelope_id === editing.id) : null;
   const [step, setStep] = useState(editing ? 2 : 1); // 1=basic, 2=controls (editing skips funding)
   const [name, setName] = useState(editing?.name || '');
   const [emoji, setEmoji] = useState(editing?.emoji || '📁');
@@ -47,9 +48,9 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
   const [groupId, setGroupId] = useState(editing?.group_id || '');
   const [newGroupName, setNewGroupName] = useState('');
   const [purpose, setPurpose] = useState(editing?.purpose || 'expense');
-  const [goalName, setGoalName] = useState('');
-  const [goalAmount, setGoalAmount] = useState('');
-  const [goalDate, setGoalDate] = useState('');
+  const [goalName, setGoalName] = useState(editingGoal?.name || '');
+  const [goalAmount, setGoalAmount] = useState(editingGoal ? String(Math.round(Number(editingGoal.target_amount))) : '');
+  const [goalDate, setGoalDate] = useState(editingGoal?.target_date || '');
 
   const guessPurpose = (name) => {
     const n = name.toLowerCase();
@@ -99,8 +100,24 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
         data.is_rollover = true;
       }
       const result = await api.updateEnvelope(editing.id, data);
+      if (!result.ok) { setSaving(false); setError('Gagal update'); return; }
+
+      // Handle goal for saving/sinking_fund during edit
+      if (isSavingLike && goalName.trim() && Number(goalAmount) > 0) {
+        const goalData = {
+          name: goalName.trim(),
+          target_amount: Number(goalAmount),
+          target_date: goalDate || null,
+        };
+        if (editingGoal) {
+          await api.updateGoal(editingGoal.id, goalData);
+        } else {
+          await api.createGoal({ envelope_id: editing.id, ...goalData });
+        }
+      }
       setSaving(false);
-      if (result.ok) { onCreated(); onClose(); } else { setError('Gagal update'); }
+      onCreated();
+      onClose();
       return;
     }
 
@@ -223,8 +240,8 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
             </div>
           </div>
 
-          {/* Goal fields for saving/sinking_fund — new envelope only */}
-          {!editing && isSavingLike && (
+          {/* Goal fields for saving/sinking_fund */}
+          {isSavingLike && (
             <div className="border-t border-gray-100 pt-3 space-y-3">
               <h4 className="font-semibold text-sm">🎯 Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
               <div>
@@ -772,7 +789,7 @@ export default function Envelopes() {
           )}
         </>
       )}
-      {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} groups={groups} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
+      {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} groups={groups} goals={goals} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
       {transferTarget && <TransferModal env={transferTarget} envelopes={envelopes} onClose={() => setTransferTarget(null)} onDone={load} />}
     </div>
   );
