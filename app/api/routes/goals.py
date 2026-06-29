@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -128,6 +129,7 @@ async def list_goals(
 
     result = await db.execute(
         select(Goal)
+        .options(selectinload(Goal.envelope))
         .join(Envelope, Goal.envelope_id == Envelope.id)
         .where(Envelope.household_id == hid, Envelope.is_active == True)
         .order_by(Goal.created_at)
@@ -174,7 +176,7 @@ async def create_goal(
 
     # Re-fetch with relationship
     result = await db.execute(
-        select(Goal).where(Goal.id == goal.id)
+        select(Goal).options(selectinload(Goal.envelope)).where(Goal.id == goal.id)
     )
     goal = result.scalar_one()
 
@@ -193,6 +195,7 @@ async def get_goal(
 
     result = await db.execute(
         select(Goal)
+        .options(selectinload(Goal.envelope))
         .join(Envelope, Goal.envelope_id == Envelope.id)
         .where(Goal.id == goal_id, Envelope.household_id == hid)
     )
@@ -216,6 +219,7 @@ async def update_goal(
 
     result = await db.execute(
         select(Goal)
+        .options(selectinload(Goal.envelope))
         .join(Envelope, Goal.envelope_id == Envelope.id)
         .where(Goal.id == goal_id, Envelope.household_id == hid)
     )
