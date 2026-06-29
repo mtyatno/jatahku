@@ -6,7 +6,7 @@ import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import {
-  ComposedChart, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
 } from 'recharts';
 
@@ -62,156 +62,6 @@ function buildDailyData(raw, prediction, periodDates = null) {
     cur.setDate(cur.getDate() + 1);
   }
   return result;
-}
-
-function buildInsights(monthlyTrend, breakdown) {
-  const insights = [];
-  const active = (monthlyTrend || []).filter(d => d.spent > 0 || d.allocated > 0);
-
-  // Insight 1: spend trend vs last period
-  if (active.length >= 2) {
-    const prev = active[active.length - 2];
-    const curr = active[active.length - 1];
-    if (prev.spent > 0) {
-      const pct = Math.round(((curr.spent - prev.spent) / prev.spent) * 100);
-      const absPct = Math.abs(pct);
-      if (absPct >= 5) {
-        const arah = pct > 0 ? 'naik' : 'turun';
-        insights.push(`📊 Pengeluaran ${arah} ${absPct}% dibanding periode lalu`);
-      } else {
-        insights.push(`📊 Pengeluaran stabil dibanding periode lalu`);
-      }
-    }
-  }
-
-  // Insight 2: top envelope this period
-  if (breakdown && breakdown.length > 0) {
-    const total = breakdown.reduce((s, x) => s + x.spent, 0);
-    const top = [...breakdown].sort((a, b) => b.spent - a.spent)[0];
-    if (top && total > 0) {
-      const pct = Math.round((top.spent / total) * 100);
-      insights.push(`${top.emoji || '📁'} Terbanyak: ${titleCase(top.name)} (${pct}% dari total)`);
-    }
-  }
-
-  return insights;
-}
-
-function MonthlyComparison({ data, breakdown }) {
-  if (!data || data.length === 0) return null;
-
-  // Only show periods with actual data
-  const active = data.filter(d => d.spent > 0 || d.allocated > 0).slice(-6);
-  if (active.length === 0) return null;
-
-  const chartData = active.map(d => {
-    const parts = d.month.split('–');
-    const shortLabel = parts[1]?.trim().slice(0, 6) || parts[0]?.trim().slice(0, 6) || d.month;
-    return {
-      name: shortLabel,
-      fullLabel: d.month,
-      spent: d.spent,
-      allocated: d.allocated,
-      pct: d.allocated > 0 ? Math.round((d.spent / d.allocated) * 100) : 0,
-    };
-  });
-
-  const insights = buildInsights(data, breakdown);
-
-  return (
-    <div className="card">
-      <h3 className="font-semibold text-sm mb-3">Perbandingan periode</h3>
-      {insights.length > 0 && (
-        <div className="mb-3 space-y-1">
-          {insights.map((ins, i) => (
-            <p key={i} className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-1.5">{ins}</p>
-          ))}
-        </div>
-      )}
-      <ResponsiveContainer width="100%" height={140}>
-        <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="20%">
-          <XAxis dataKey="name" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
-          <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} width={42}
-            tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(0)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
-          <Tooltip
-            formatter={(v, n) => [formatCurrency(v), n === 'spent' ? 'Terpakai' : 'Dialokasi']}
-            labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel || ''}
-            contentStyle={TOOLTIP_STYLE}
-            labelStyle={TOOLTIP_LABEL_STYLE}
-            itemStyle={TOOLTIP_ITEM_STYLE}
-          />
-          <Bar dataKey="allocated" fill="#D1FAE5" radius={[2, 2, 0, 0]} barSize={12} />
-          <Bar dataKey="spent" fill="#0F6E56" radius={[2, 2, 0, 0]} barSize={12} />
-        </BarChart>
-      </ResponsiveContainer>
-      <div className="mt-2 space-y-1">
-        {chartData.map((d, i) => (
-          <div key={i} className="flex items-center justify-between text-xs">
-            <span className="text-gray-500 truncate mr-2">{d.fullLabel}</span>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className="text-gray-400">{formatShort(d.spent)} / {formatShort(d.allocated)}</span>
-              <span className={`font-semibold w-9 text-right ${d.pct >= 90 ? 'text-danger-400' : d.pct >= 70 ? 'text-amber-500' : 'text-brand-600'}`}>
-                {d.pct}%
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WeeklyPattern({ data }) {
-  if (!data || data.length === 0) return null;
-
-  // Reorder: Senin–Sabtu–Minggu (DOW 1,2,3,4,5,6,0)
-  const ordered = [1, 2, 3, 4, 5, 6, 0].map(dow => data.find(d => d.dow === dow)).filter(Boolean);
-  const hasData = ordered.some(d => d.avg > 0);
-  if (!hasData) return null;
-
-  const maxAvg = Math.max(...ordered.map(d => d.avg));
-  const chartData = ordered.map(d => ({
-    name: d.name.slice(0, 3), // Sen, Sel, Rab, Kam, Jum, Sab, Min
-    fullName: d.name,
-    avg: d.avg,
-    isPeak: d.avg === maxAvg && maxAvg > 0,
-  }));
-
-  const peakDay = chartData.find(d => d.isPeak);
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-sm">Pola mingguan</h3>
-        {peakDay && (
-          <span className="text-xs text-gray-400">
-            Paling boros: <span className="font-medium text-amber-500">{peakDay.fullName}</span>
-          </span>
-        )}
-      </div>
-      <ResponsiveContainer width="100%" height={120}>
-        <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="15%">
-          <XAxis dataKey="name" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
-          <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} width={42}
-            tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
-          <Tooltip
-            formatter={v => [formatCurrency(v), 'Rata-rata']}
-            labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
-            contentStyle={TOOLTIP_STYLE}
-            labelStyle={TOOLTIP_LABEL_STYLE}
-            itemStyle={TOOLTIP_ITEM_STYLE}
-          />
-          <Bar dataKey="avg" radius={[3, 3, 0, 0]}
-            shape={(props) => {
-              const color = props.isPeak ? '#BA7517' : '#1D9E75';
-              return <rect {...props} fill={color} rx={3} ry={3} />;
-            }}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-      <p className="text-xs text-gray-400 mt-2">Rata-rata pengeluaran per hari · 3 periode terakhir</p>
-    </div>
-  );
 }
 
 function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
@@ -436,8 +286,6 @@ export default function Dashboard() {
   const [prediction, setPrediction] = useState(null);
   const [periods, setPeriods] = useState([]);
   const [periodIdx, setPeriodIdx] = useState(null);
-  const [monthlyTrend, setMonthlyTrend] = useState([]);
-  const [weeklyPattern, setWeeklyPattern] = useState([]);
   const [advisorInsights, setAdvisorInsights] = useState(null);
   const [goals, setGoals] = useState([]);
   const [streak, setStreak] = useState(null);
@@ -451,21 +299,16 @@ export default function Dashboard() {
     return () => window.removeEventListener('jatahku:txn-added', onAdded);
   }, []);
 
-  // Load period list, monthly trend, and weekly pattern once on mount
   useEffect(() => {
     Promise.all([
       api.getPeriods(12),
-      api.request('/analytics/monthly-trend').then(r => r.ok ? r.json() : []),
-      api.getWeeklyPattern(3),
       api.getAdvisorInsights(),
       api.getGoals(),
-    ]).then(([p, trend, weekly, insights, gls]) => {
+    ]).then(([p, insights, gls]) => {
       setPeriods(p);
-      setMonthlyTrend(trend);
-      setWeeklyPattern(weekly);
       setAdvisorInsights(insights);
       setGoals(gls);
-      setPeriodIdx(p.length - 1); // default = current period
+      setPeriodIdx(p.length - 1);
     });
     api.request('/user/streak').then(r => r.ok ? r.json() : null).then(s => {
       if (!s) return;
@@ -643,13 +486,7 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Monthly Comparison — always visible */}
-      <MonthlyComparison data={monthlyTrend} breakdown={breakdown} />
-
-      {/* Weekly Pattern — always visible */}
-      <WeeklyPattern data={weeklyPattern} />
-
-      {/* Charts */}
+      {/* Daily spending chart + breakdown */}
       {(chartData.length > 0 || breakdown.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {chartData.length > 0 && (
