@@ -319,6 +319,7 @@ async def build_advisor_insights(user, db) -> dict:
     total_free = Decimal("0")
 
     # Load goals for saving/sinking_fund envelopes
+    from sqlalchemy import select
     from app.models.models import Goal
     goal_result = await db.execute(
         select(Goal).where(Goal.envelope_id.in_([e.id for e in envelopes]))
