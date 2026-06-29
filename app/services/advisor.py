@@ -382,19 +382,6 @@ async def build_advisor_insights(user, db) -> dict:
                 ["Pola ini bisa membuat amplop cepat menipis."],
             ))
 
-        is_discretionary = not _is_essential_envelope(envelope.name) and envelope.name.lower() != "tabungan"
-        if is_discretionary and spent > 0 and not getattr(envelope, "daily_limit", None) and not getattr(envelope, "cooling_threshold", None):
-            if available > 0 and spent / available >= Decimal("0.7"):
-                cards.append(_card(
-                    f"behavior_control:{envelope.id}",
-                    "behavior_control",
-                    "info",
-                    f"Pertimbangkan limit untuk {envelope.name}",
-                    "Amplop discretionary ini sudah melewati 70% pemakaian.",
-                    "/envelopes",
-                    ["Daily limit atau cooling period bisa menahan belanja impulsif."],
-                ))
-
     if total_allocated > 0:
         projected_total = (total_spent / days_used) * days_total
         if projected_total > total_allocated:
@@ -411,18 +398,6 @@ async def build_advisor_insights(user, db) -> dict:
                     f"Reserve rutin Rp{_money(total_reserved):,}",
                 ],
             ))
-        elif total_free > 0 and days_remaining > 0:
-            safe_daily = total_free / max(days_remaining, 1)
-            if total_free > safe_daily * 3:
-                cards.append(_card(
-                    "safe_surplus:current",
-                    "safe_surplus",
-                    "positive",
-                    "Ada ruang aman untuk ditabung",
-                    f"Dana bebas Rp{_money(total_free):,}; batas aman sekitar Rp{_money(safe_daily):,}/hari.",
-                    "/allocate",
-                    ["Pertimbangkan tambah Tabungan atau amplop prioritas."],
-                ))
 
     cards = sorted(cards, key=lambda item: (_severity_rank(item["severity"]), item["id"]))
     return {
