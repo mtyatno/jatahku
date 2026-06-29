@@ -716,15 +716,15 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Envelopes — sorted by urgency */}
+      {/* Envelopes — sorted by urgency, max 6 */}
       {shared.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display font-bold text-lg">👥 Shared</h2>
-            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
+            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({shared.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {shared.map(env => <EnvelopeRow key={env.id} env={env} />)}
+            {[...shared].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} />)}
           </div>
         </div>
       )}
@@ -732,9 +732,10 @@ export default function Dashboard() {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display font-bold text-lg">🔒 Personal</h2>
+            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({personal.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {personal.map(env => <EnvelopeRow key={env.id} env={env} />)}
+            {[...personal].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} />)}
           </div>
         </div>
       )}
