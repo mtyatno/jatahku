@@ -5,6 +5,7 @@ import { formatCurrency, formatShort } from '../lib/utils';
 export default function Allocate() {
   const [envelopes, setEnvelopes] = useState([]);
   const [incomes, setIncomes] = useState([]);
+  const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
 
@@ -19,8 +20,8 @@ export default function Allocate() {
   const [advisorApplied, setAdvisorApplied] = useState(false);
 
   const load = () => {
-    Promise.all([api.getEnvelopeSummary(), api.getIncomes()])
-      .then(([env, inc]) => { setEnvelopes(env); setIncomes(inc); setLoading(false); });
+    Promise.all([api.getEnvelopeSummary(), api.getIncomes(), api.getGoals()])
+      .then(([env, inc, gls]) => { setEnvelopes(env); setIncomes(inc); setGoals(gls); setLoading(false); });
   };
   useEffect(load, []);
 
@@ -28,21 +29,42 @@ export default function Allocate() {
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
+  const tabunganEnv = envelopes.find(e => e.name === 'Tabungan');
+  const tabunganGoal = goals?.find(g => g.envelope_id === tabunganEnv?.id);
+
   const distributeByBudget = () => {
     if (envelopes.length === 0 || incomeNum <= 0) return;
-    const totalBudget = envelopes.reduce((s, e) => s + Number(e.budget_amount), 0);
     const newAlloc = {};
+
+    // Goal-aware: fill Tabungan first if a goal with monthly_needed exists
+    let tabunganAmount = 0;
+    if (tabunganGoal && tabunganGoal.monthly_needed !== null) {
+      const alreadyAllocated = Number(tabunganEnv?.allocated || 0);
+      const stillNeeded = Math.max(0, Number(tabunganGoal.monthly_needed) - alreadyAllocated);
+      tabunganAmount = Math.min(stillNeeded, incomeNum);
+      if (tabunganAmount > 0 && tabunganEnv) {
+        newAlloc[tabunganEnv.id] = tabunganAmount;
+      }
+    }
+
+    const remaining = incomeNum - tabunganAmount;
+    const otherEnvelopes = tabunganGoal?.monthly_needed !== null
+      ? envelopes.filter(e => e.id !== tabunganEnv?.id)
+      : envelopes;
+    const totalBudget = otherEnvelopes.reduce((s, e) => s + Number(e.budget_amount), 0);
+
     if (totalBudget > 0) {
-      envelopes.forEach(env => {
+      otherEnvelopes.forEach(env => {
         const ratio = Number(env.budget_amount) / totalBudget;
-        newAlloc[env.id] = Math.round(incomeNum * ratio);
+        newAlloc[env.id] = Math.round(remaining * ratio);
       });
     } else {
-      const per = Math.floor(incomeNum / envelopes.length);
-      envelopes.forEach((env, i) => {
-        newAlloc[env.id] = i === 0 ? incomeNum - per * (envelopes.length - 1) : per;
+      const per = Math.floor(remaining / otherEnvelopes.length);
+      otherEnvelopes.forEach((env, i) => {
+        newAlloc[env.id] = i === 0 ? remaining - per * (otherEnvelopes.length - 1) : per;
       });
     }
+
     setAllocations(newAlloc);
   };
 
@@ -146,6 +168,16 @@ export default function Allocate() {
                 <div className="card flex-1 !p-3"><p className="text-xs text-gray-400">→ Tabungan</p><p className={`font-display font-bold ${remainder >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(Math.abs(remainder))}</p></div>
               </div>
 
+              {tabunganGoal && (
+                <div className="text-xs text-gray-400">
+                  🎯 Target {tabunganGoal.name}: butuh{' '}
+                  <b className="text-amber-600">{formatShort(tabunganGoal.monthly_needed)}</b>/bulan
+                  {tabunganGoal.monthly_needed !== null && Number(remainder) >= Number(tabunganGoal.monthly_needed)
+                    ? ' ✅ Cukup'
+                    : ` ⚠️ Kurang ${formatShort(Math.max(0, Number(tabunganGoal.monthly_needed || 0) - remainder))}`}
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Distribusikan ke amplop:</p>
                 <div className="flex items-center gap-3">
@@ -205,6 +237,24 @@ export default function Allocate() {
                     </div>
                   );
                 })}
+                {tabunganGoal && tabunganEnv && (
+                  <div className="flex items-center gap-3 bg-amber-50/30 rounded-lg px-2 py-2 -mx-2">
+                    <span className="text-lg w-8">{tabunganEnv.emoji || '💰'}</span>
+                    <div className="flex-1">
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium">{tabunganEnv.name}</span>
+                        <span className="text-xs text-amber-600">🎯 {tabunganGoal.name}</span>
+                      </div>
+                      <p className="text-xs text-gray-400">{tabunganGoal.monthly_needed !== null ? `${formatShort(tabunganGoal.monthly_needed)}/bulan` : `${Math.round(tabunganGoal.progress_pct)}% ke target`}</p>
+                    </div>
+                    <div className="relative w-32">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">Rp</span>
+                      <input type="number" className="input pl-8 text-right font-mono text-sm"
+                        value={allocations[tabunganEnv.id] || ''} min="0"
+                        onChange={e => setAllocations(prev => ({...prev, [tabunganEnv.id]: Number(e.target.value) || 0}))} />
+                    </div>
+                  </div>
+                )}
                 {remainder > 0 && (
                   <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
                     <span className="text-lg w-8">💰</span>

@@ -157,6 +157,39 @@ async def create_transaction(
     except Exception:
         pass
 
+    # Best-effort: check if any goal on this envelope has been achieved. Never block.
+    try:
+        from app.models.models import Goal, Allocation, Income
+        from app.services.notification_service import send_notification
+        result = await db.execute(select(Goal).where(Goal.envelope_id == req.envelope_id))
+        goal = result.scalar_one_or_none()
+        if goal:
+            spent_res = await db.execute(
+                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.envelope_id == req.envelope_id,
+                    Transaction.is_deleted == False,
+                )
+            )
+            total_spent = Decimal(str(spent_res.scalar()))
+            alloc_res = await db.execute(
+                select(func.coalesce(func.sum(Allocation.amount), 0)).where(
+                    Allocation.envelope_id == req.envelope_id,
+                )
+            )
+            total_allocated = Decimal(str(alloc_res.scalar()))
+            balance = total_allocated - total_spent
+            if balance >= goal.target_amount:
+                await send_notification(
+                    user.id,
+                    notif_type=NotificationType.system,
+                    title="🎯 Goal tercapai!",
+                    message=f"{envelope.emoji} {envelope.name} sudah mencapai target {goal.name} sebesar Rp {int(goal.target_amount):,}. Selamat!",
+                    link="/envelopes",
+                    db=db,
+                )
+    except Exception:
+        pass
+
     return txn
 
 
@@ -271,6 +304,37 @@ async def batch_create_transactions(
             from app.services.txn_nlp import save_learned_keywords
             await save_learned_keywords(user.id, item.description, item.envelope_id, db)
             await db.commit()
+        except Exception:
+            pass
+
+        try:
+            from app.services.notification_service import send_notification
+            g_result = await db.execute(select(Goal).where(Goal.envelope_id == item.envelope_id))
+            goal = g_result.scalar_one_or_none()
+            if goal:
+                spent_res = await db.execute(
+                    select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                        Transaction.envelope_id == item.envelope_id,
+                        Transaction.is_deleted == False,
+                    )
+                )
+                total_spent = Decimal(str(spent_res.scalar()))
+                alloc_res = await db.execute(
+                    select(func.coalesce(func.sum(Allocation.amount), 0)).where(
+                        Allocation.envelope_id == item.envelope_id,
+                    )
+                )
+                total_allocated = Decimal(str(alloc_res.scalar()))
+                balance = total_allocated - total_spent
+                if balance >= goal.target_amount:
+                    await send_notification(
+                        user.id,
+                        notif_type=NotificationType.system,
+                        title="🎯 Goal tercapai!",
+                        message=f"{envelope.emoji} {envelope.name} sudah mencapai target {goal.name} sebesar Rp {int(goal.target_amount):,}. Selamat!",
+                        link="/envelopes",
+                        db=db,
+                    )
         except Exception:
             pass
 

@@ -391,6 +391,35 @@ class ApiClient {
       body: JSON.stringify(body),
     });
   }
+
+  async getGoals() {
+    try {
+      const res = await this.request('/goals/');
+      if (res.ok) return res.json();
+    } catch {}
+    return [];
+  }
+
+  async createGoal(data) {
+    const res = await this.request('/goals/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  async updateGoal(id, data) {
+    const res = await this.request(`/goals/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  async deleteGoal(id) {
+    const res = await this.request(`/goals/${id}`, { method: 'DELETE' });
+    return res.ok;
+  }
 }
 
 export const api = new ApiClient();

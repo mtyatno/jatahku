@@ -350,7 +350,7 @@ function ControlBadges({ env }) {
   return <div className="flex flex-wrap gap-1 mt-2">{badges.map((b, i) => <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>{b.icon} {b.label}</span>)}</div>;
 }
 
-function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
+function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, onGoalUpdate, onGoalDelete }) {
   const allocated = Number(env.allocated || 0);
   const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent || 0);
@@ -362,6 +362,40 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
   const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [goalName, setGoalName] = useState(goal?.name || '');
+  const [goalAmount, setGoalAmount] = useState(goal ? String(Math.round(Number(goal.target_amount))) : '');
+  const [goalDate, setGoalDate] = useState(goal?.target_date || '');
+  const [goalSaving, setGoalSaving] = useState(false);
+
+  const handleGoalSubmit = async () => {
+    if (!goalName.trim() || !goalAmount || Number(goalAmount) <= 0) return;
+    setGoalSaving(true);
+    const data = {
+      envelope_id: env.id,
+      name: goalName.trim(),
+      target_amount: Number(goalAmount),
+      target_date: goalDate || null,
+    };
+    if (goal) {
+      await onGoalUpdate(goal.id, data);
+    } else {
+      await onGoalCreate(data);
+    }
+    setGoalSaving(false);
+    setShowGoalForm(false);
+  };
+
+  const handleGoalDeleteClick = async () => {
+    if (goal) {
+      await onGoalDelete(goal.id);
+      setShowGoalForm(false);
+      setGoalName('');
+      setGoalAmount('');
+      setGoalDate('');
+    }
+  };
 
   return (
     <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
@@ -391,19 +425,89 @@ function EnvelopeCard({ env, onEdit, onDelete, onTransfer }) {
           {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatCurrency(reserved)}/bulan</p>}
         </div>
       )}
+
+      {/* Goal target section */}
+      {goal && !showGoalForm && (
+        <div className="mt-2 pt-2 border-t border-gray-100">
+          <div className="flex justify-between items-end mb-1">
+            <span className="text-xs text-gray-400">🎯 {goal.name}</span>
+            <span className="text-xs font-medium text-amber-600">{Math.round(goal.progress_pct)}%</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
+              style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            {formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}
+          </p>
+          {goal.monthly_needed !== null && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bulan
+            </p>
+          )}
+          <div className="flex items-center gap-2 mt-1.5">
+            {goal.is_achieved && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700">✅ Tercapai</span>
+            )}
+            {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700">⚠️ Terlambat</span>
+            )}
+            <button onClick={() => { setShowGoalForm(true); setGoalName(goal.name); setGoalAmount(String(Math.round(Number(goal.target_amount)))); setGoalDate(goal.target_date || ''); }}
+              className="text-xs text-gray-400 hover:text-brand-600 ml-auto">
+              Edit target
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!goal && !showGoalForm && (
+        <div className="mt-2 pt-2 border-t border-gray-100">
+          <button onClick={() => setShowGoalForm(true)}
+            className="text-xs text-gray-400 hover:text-amber-600 transition-colors">
+            + 🎯 Tambah target tabungan
+          </button>
+        </div>
+      )}
+
+      {showGoalForm && (
+        <div className="mt-2 pt-2 border-t border-gray-100 space-y-2">
+          <input type="text" className="input text-sm py-1.5" placeholder="Nama target (Nikah, Darurat...)"
+            value={goalName} onChange={e => setGoalName(e.target.value)} />
+          <input type="number" className="input text-sm py-1.5 font-mono" placeholder="Jumlah target (Rp)"
+            value={goalAmount} onChange={e => setGoalAmount(e.target.value)} min="1" />
+          <input type="date" className="input text-sm py-1.5"
+            value={goalDate} onChange={e => setGoalDate(e.target.value)} />
+          <div className="flex gap-2">
+            <button onClick={handleGoalSubmit} disabled={goalSaving}
+              className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50">
+              {goalSaving ? '...' : goal ? 'Simpan' : 'Buat Target'}
+            </button>
+            <button onClick={() => setShowGoalForm(false)} className="text-xs px-3 py-1.5 rounded-lg text-gray-400 hover:text-gray-600">Batal</button>
+            {goal && (
+              <button onClick={handleGoalDeleteClick} className="text-xs px-3 py-1.5 rounded-lg text-red-400 hover:text-red-600 ml-auto">Hapus</button>
+            )}
+          </div>
+        </div>
+      )}
+
       <ControlBadges env={env} />
     </div>
   );
 }
 
-function EnvelopeSection({ title, envelopes, groups, onEdit, onDelete, onTransfer, onGroupChanged }) {
+function EnvelopeSection({ title, envelopes, groups, goals, onEdit, onDelete, onTransfer, onGroupChanged, onGoalCreate, onGoalUpdate, onGoalDelete }) {
   const hasGroups = envelopes.some((e) => e.group_id);
 
   const renderGrid = (items) => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {items.map((env) => (
-        <EnvelopeCard key={env.id} env={env} onEdit={onEdit} onDelete={onDelete} onTransfer={onTransfer} />
-      ))}
+      {items.map((env) => {
+        const goal = goals?.find(g => g.envelope_id === env.id);
+        return (
+          <EnvelopeCard key={env.id} env={env} goal={goal}
+            onEdit={onEdit} onDelete={onDelete} onTransfer={onTransfer}
+            onGoalCreate={onGoalCreate} onGoalUpdate={onGoalUpdate} onGoalDelete={onGoalDelete} />
+        );
+      })}
     </div>
   );
 
@@ -460,6 +564,7 @@ function EnvelopeSection({ title, envelopes, groups, onEdit, onDelete, onTransfe
 export default function Envelopes() {
   const [envelopes, setEnvelopes] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -467,9 +572,10 @@ export default function Envelopes() {
   const [refreshTick, setRefreshTick] = useState(0);
 
   const load = () => {
-    Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups()]).then(([env, grp]) => {
+    Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups(), api.getGoals()]).then(([env, grp, gls]) => {
       setEnvelopes(env);
       setGroups(grp);
+      setGoals(gls);
       setLoading(false);
     });
   };
@@ -485,6 +591,23 @@ export default function Envelopes() {
   const handleDelete = async (id, name) => {
     if (!confirm(`Hapus amplop "${name}"?`)) return;
     await api.deleteEnvelope(id);
+    load();
+  };
+
+  const handleGoalCreate = async (data) => {
+    const res = await api.createGoal(data);
+    if (res.ok) load();
+    else alert(res.data?.detail || 'Gagal membuat target');
+  };
+
+  const handleGoalUpdate = async (id, data) => {
+    const res = await api.updateGoal(id, data);
+    if (res.ok) load();
+  };
+
+  const handleGoalDelete = async (id) => {
+    if (!confirm('Hapus target ini?')) return;
+    await api.deleteGoal(id);
     load();
   };
 
@@ -504,12 +627,14 @@ export default function Envelopes() {
       ) : (
         <>
           {shared.length > 0 && (
-            <EnvelopeSection title="👥 Shared" envelopes={shared} groups={groups}
-              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load} />
+            <EnvelopeSection title="👥 Shared" envelopes={shared} groups={groups} goals={goals}
+              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load}
+              onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
           )}
           {personal.length > 0 && (
-            <EnvelopeSection title="🔒 Personal" envelopes={personal} groups={groups}
-              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load} />
+            <EnvelopeSection title="🔒 Personal" envelopes={personal} groups={groups} goals={goals}
+              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load}
+              onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
           )}
         </>
       )}

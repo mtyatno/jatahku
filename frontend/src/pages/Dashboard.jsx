@@ -435,6 +435,7 @@ export default function Dashboard() {
   const [monthlyTrend, setMonthlyTrend] = useState([]);
   const [weeklyPattern, setWeeklyPattern] = useState([]);
   const [advisorInsights, setAdvisorInsights] = useState(null);
+  const [goals, setGoals] = useState([]);
   const [streak, setStreak] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [celebrate, setCelebrate] = useState(null);
@@ -453,11 +454,13 @@ export default function Dashboard() {
       api.request('/analytics/monthly-trend').then(r => r.ok ? r.json() : []),
       api.getWeeklyPattern(3),
       api.getAdvisorInsights(),
-    ]).then(([p, trend, weekly, insights]) => {
+      api.getGoals(),
+    ]).then(([p, trend, weekly, insights, gls]) => {
       setPeriods(p);
       setMonthlyTrend(trend);
       setWeeklyPattern(weekly);
       setAdvisorInsights(insights);
+      setGoals(gls);
       setPeriodIdx(p.length - 1); // default = current period
     });
     api.request('/user/streak').then(r => r.ok ? r.json() : null).then(s => {
@@ -624,6 +627,40 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Sisa</p><p className={`font-display text-xl font-bold mt-1 ${totalRemaining >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(totalRemaining)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
+
+      {/* Goal targets */}
+      {goals?.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-gray-600">🎯 Target Menabung</h3>
+          {goals.filter(g => !g.is_achieved).map(goal => (
+            <div key={goal.id} className="card !p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{goal.envelope_emoji}</span>
+                  <span className="font-medium text-sm">{goal.name}</span>
+                  <span className="text-xs text-gray-400">({goal.envelope_name})</span>
+                </div>
+                <span className="text-sm font-bold text-amber-600">{Math.round(goal.progress_pct)}%</span>
+              </div>
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
+              </div>
+              <div className="flex justify-between mt-1.5">
+                <span className="text-xs text-gray-400">{formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}</span>
+                {goal.monthly_needed !== null && (
+                  <span className="text-xs text-gray-400">📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</span>
+                )}
+              </div>
+            </div>
+          ))}
+          {goals.some(g => g.is_achieved) && (
+            <div className="text-xs text-center text-green-600 bg-green-50 border border-green-200 rounded-lg p-2">
+              ✅ {goals.filter(g => g.is_achieved).length} target sudah tercapai!
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Strategic advisor cards (historical/forward-looking) above tactical DecisionBox (today's status) */}
       {isCurrentPeriod && (
