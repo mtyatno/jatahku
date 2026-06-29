@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
@@ -65,6 +66,8 @@ function buildDailyData(raw, prediction, periodDates = null) {
 }
 
 function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
+  const { mode } = useTheme();
+  const isDark = mode === 'dark';
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
   const hasPrediction = prediction && prediction.total_allocated > 0;
@@ -105,38 +108,39 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
 
   const hasTactical = tacticalLines.length > 0;
   const hasCards = cards?.length > 0;
-  if (!hasTactical && !hasCards) return null;
+  const hasGoals = goals?.length > 0;
+  if (!hasTactical && !hasCards && !hasGoals) return null;
 
-  const style = {
-    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF',
-    border: '#E2E8F0',
-    accent: '#0F6E56',
-    title: '#1E293B',
-    text: '#475569',
-    muted: '#94A3B8',
+  const clr = isDark ? {
+    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b',
+  } : {
+    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8',
   };
 
   return (
-    <div className="rounded-2xl p-5" style={{ background: style.bg, border: `1px solid ${style.border}`, boxShadow: '0 1px 3px rgba(15,110,86,0.06)' }}>
+        <div className="rounded-2xl p-5" style={{
+          background: clr.bg, border: `1px solid ${clr.border}`,
+          boxShadow: isDark ? '0 0 0 1px rgba(52,211,153,0.12), 0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
+        }}>
       <div className="flex items-center gap-2 mb-4">
         <span className="text-lg">🤖</span>
-        <h2 className="font-display font-bold text-base" style={{ color: style.title }}>AI Advisor</h2>
-        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: style.accent }}>Beta</span>
+        <h2 className="font-display font-bold text-base" style={{ color: clr.title }}>AI Advisor</h2>
+        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: clr.accent }}>Beta</span>
       </div>
 
       {hasTactical && (
         <div className="mb-4">
-          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: style.accent }}>📊 Hari ini</p>
+          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: clr.accent }}>📊 Hari ini</p>
           <div className="space-y-1.5">
             {tacticalLines.map((item, i) => (
-              <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? '#991B1B' : item.lvl === 'warning' ? '#92400E' : style.text }}>
+              <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? (isDark ? '#fca5a5' : '#991B1B') : item.lvl === 'warning' ? (isDark ? '#fde68a' : '#92400E') : clr.text }}>
                 <span className="shrink-0">{item.icon}</span>
-                <span>{item.text}</span>
+                <span dangerouslySetInnerHTML={{__html: item.text.replace(/(\d[\d.,]*(?:\s*(?:jt|juta|rb|ribu|k|%|x|hari)))/gi, '<b>$1</b>')}} />
               </p>
             ))}
           </div>
           {safeDaily > 0 && (
-            <p className="text-xs mt-2" style={{ color: style.muted }}>
+            <p className="text-xs mt-2" style={{ color: clr.muted }}>
               Batas aman <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
             </p>
           )}
@@ -144,7 +148,12 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
       )}
 
       {hasCards && cards.map((card, ci) => {
-        const cs = {
+        const cs = isDark ? {
+          danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
+          warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
+          info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
+          positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
+        }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
           danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
           warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
           info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
@@ -164,35 +173,35 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
       })}
 
       {goals?.length > 0 && (
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: style.border }}>
-          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide" style={{ color: style.accent }}>🎯 Target Menabung</p>
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
+          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide" style={{ color: clr.accent }}>🎯 Target Menabung</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
               const pct = Math.round(goal.progress_pct);
               return (
                 <div key={goal.id}>
-                  <div className="flex items-center gap-2 text-sm mb-1" style={{ color: style.text }}>
+                  <div className="flex items-center gap-2 text-sm mb-1" style={{ color: clr.text }}>
                     <span>{goal.envelope_emoji}</span>
                     <span className="truncate">{goal.name}</span>
-                    <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : style.muted }}>
+                    <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : clr.muted }}>
                       {pct}%
                     </span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? '#334155' : '#F1F5F9' }}>
                     <div className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${Math.max(pct, 2)}%`, background: pct > 0 ? '#D97706' : '#E5E7EB' }} />
+                      style={{ width: `${Math.max(pct, 2)}%`, background: pct > 0 ? '#D97706' : (isDark ? '#475569' : '#E5E7EB') }} />
                   </div>
                 </div>
               );
             })}
           </div>
           {goals.filter(g => !g.is_achieved).length > 4 && (
-            <Link to="/envelopes" className="text-xs mt-2 inline-block" style={{ color: style.accent }}>
+            <Link to="/envelopes" className="text-xs mt-2 inline-block" style={{ color: clr.accent }}>
               → Lihat {goals.filter(g => !g.is_achieved).length} target
             </Link>
           )}
           {goals.some(g => g.is_achieved) && (
-            <p className="text-xs mt-1" style={{ color: '#059669' }}>
+            <p className="text-xs mt-1" style={{ color: isDark ? '#86efac' : '#059669' }}>
               ✅ {goals.filter(g => g.is_achieved).length} target tercapai!
             </p>
           )}
