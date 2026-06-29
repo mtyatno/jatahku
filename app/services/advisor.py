@@ -342,7 +342,7 @@ async def build_advisor_insights(user, db) -> dict:
         total_reserved += reserved
         total_free += free
 
-        if available > 0 and spent > 0 and getattr(envelope, "purpose", "expense") == "expense":
+        if available > 0 and spent > 0 and str(getattr(envelope, "purpose", "expense")) == "expense":
             projected = (spent / days_used) * days_total
             if projected > available and days_remaining > 0:
                 pct = int(spent / available * 100)
@@ -362,7 +362,7 @@ async def build_advisor_insights(user, db) -> dict:
                 ))
 
         # Saving: goal progress insight
-        purpose = getattr(envelope, "purpose", "expense")
+        purpose = str(getattr(envelope, "purpose", "expense"))
         goal = goals_by_env.get(str(envelope.id))
         if purpose in ("saving", "sinking_fund") and goal:
             balance = available - spent
