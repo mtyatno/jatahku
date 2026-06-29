@@ -28,7 +28,7 @@ class EnvelopeCreate(BaseModel):
     is_locked: bool = False
     daily_limit: Decimal | None = None
     cooling_threshold: Decimal | None = None
-    purpose: PurposeType = PurposeType.expense
+    purpose: str = "expense"
 
 
 class EnvelopeResponse(BaseModel):
@@ -42,7 +42,7 @@ class EnvelopeResponse(BaseModel):
     household_id: UUID
     owner_id: UUID | None
     is_personal: bool = False
-    purpose: PurposeType | None = None
+    purpose: str | None = None
     model_config = {"from_attributes": True}
 
 
@@ -66,7 +66,7 @@ class EnvelopeSummary(BaseModel):
     spent_ratio: float
     group_id: UUID | None = None
     group_name: str | None = None
-    purpose: PurposeType | None = None
+    purpose: str | None = None
 
 
 class EnvelopeGroupCreate(BaseModel):
@@ -338,11 +338,11 @@ async def create_envelope(
     # Validate purpose
     budget = req.budget_amount
     rollover = req.is_rollover
-    if req.purpose in (PurposeType.saving, PurposeType.sinking_fund):
+    if req.purpose in ("saving", "sinking_fund"):
         rollover = True
-        if req.purpose == PurposeType.saving:
+        if req.purpose == "saving":
             budget = Decimal("0")
-    elif req.purpose == PurposeType.expense and budget <= 0:
+    elif req.purpose == "expense" and budget <= 0:
         raise HTTPException(status_code=400, detail="Amplop expense harus memiliki budget")
 
     if req.group_id is not None:

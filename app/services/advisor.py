@@ -1,7 +1,10 @@
 import re
+import logging
 from datetime import date
 from decimal import Decimal
 from statistics import median
+
+logger = logging.getLogger("jatahku.advisor")
 
 _AMOUNT_RE = re.compile(
     r"(?:rp\.?\s*)?\d{1,3}(?:[.,]\d{3})+(?:\s*(?:jt|juta|rb|ribu|k))?"

@@ -160,8 +160,8 @@ class Envelope(TimestampMixin, Base):
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_limit: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     cooling_threshold: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
-    purpose: Mapped[PurposeType] = mapped_column(
-        SAEnum(PurposeType), default=PurposeType.expense, nullable=False, server_default="expense"
+    purpose: Mapped[str] = mapped_column(
+        String(20), default="expense", nullable=False, server_default="expense"
     )
 
     # Relationships

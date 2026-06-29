@@ -35,12 +35,8 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS purpose VARCHAR(20) NOT NULL DEFAULT 'expense'"
             ))
-            # Repair: re-create type if dropped by previous buggy migration
             await conn.execute(text(
-                "DO $$ BEGIN "
-                "CREATE TYPE purposetype AS ENUM ('expense', 'saving', 'sinking_fund'); "
-                "EXCEPTION WHEN duplicate_object THEN NULL; "
-                "END $$"
+                "ALTER TABLE envelopes ALTER COLUMN purpose TYPE VARCHAR(20) USING COALESCE(purpose::VARCHAR(20), 'expense')"
             ))
             await conn.execute(text(
                 "UPDATE envelopes SET purpose = 'saving' WHERE LOWER(name) = 'tabungan' AND purpose = 'expense'"

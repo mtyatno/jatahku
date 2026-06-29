@@ -1,0 +1,149 @@
+<h2>Preview Icon Jatahku</h2>
+<p class="subtitle">Tampilan di berbagai ukuran — favicon, app icon, dan home screen</p>
+
+<style>
+.preview-grid {
+  display: flex;
+  gap: 40px;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 40px 0;
+}
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.preview-item span {
+  font-size: 12px;
+  color: #888;
+  font-weight: 500;
+}
+.phone-mockup {
+  background: #1a1a1a;
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 120px;
+}
+.phone-icon-label {
+  color: rgba(255,255,255,0.8);
+  font-size: 10px;
+}
+.browser-tab {
+  background: #f0f0f0;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #ddd;
+  border-bottom: none;
+  width: fit-content;
+}
+.browser-tab-text {
+  font-size: 12px;
+  color: #333;
+}
+.checker {
+  background-image: linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0px;
+  background-color: #f8f8f8;
+  padding: 12px;
+  border-radius: 8px;
+}
+</style>
+
+<!-- The SVG icon definition (inline) -->
+<svg style="display:none">
+  <defs>
+    <symbol id="jatahku-icon" viewBox="0 0 512 512">
+      <rect width="512" height="512" rx="96" fill="#0F6E56"/>
+      <rect x="65" y="215" width="382" height="218" rx="8" fill="white"/>
+      <line x1="65" y1="433" x2="447" y2="215" stroke="#0F6E56" stroke-width="15" stroke-linecap="round"/>
+      <line x1="447" y1="433" x2="65" y2="215" stroke="#0F6E56" stroke-width="15" stroke-linecap="round"/>
+      <polygon points="65,215 447,215 256,105" fill="white"/>
+      <rect x="213" y="85" width="120" height="170" rx="6" fill="white"/>
+      <rect x="225" y="97" width="96" height="146" rx="4" fill="none" stroke="#0F6E56" stroke-width="9"/>
+      <circle cx="273" cy="177" r="26" fill="#0F6E56"/>
+      <rect x="181" y="98" width="120" height="165" rx="6" fill="white"/>
+      <rect x="193" y="110" width="96" height="141" rx="4" fill="none" stroke="#0F6E56" stroke-width="9"/>
+      <circle cx="241" cy="188" r="26" fill="#0F6E56"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="preview-grid">
+
+  <!-- Favicon size -->
+  <div class="preview-item">
+    <div class="checker">
+      <svg width="16" height="16"><use href="#jatahku-icon"/></svg>
+    </div>
+    <span>16px (favicon)</span>
+  </div>
+
+  <div class="preview-item">
+    <div class="checker">
+      <svg width="32" height="32"><use href="#jatahku-icon"/></svg>
+    </div>
+    <span>32px</span>
+  </div>
+
+  <div class="preview-item">
+    <div class="checker">
+      <svg width="64" height="64"><use href="#jatahku-icon"/></svg>
+    </div>
+    <span>64px</span>
+  </div>
+
+  <!-- Mobile home screen (iOS-style) -->
+  <div class="preview-item">
+    <div class="phone-mockup">
+      <svg width="76" height="76" style="border-radius:17px; display:block"><use href="#jatahku-icon"/></svg>
+      <span class="phone-icon-label">Jatahku</span>
+    </div>
+    <span>Home screen (iOS)</span>
+  </div>
+
+  <!-- Android -->
+  <div class="preview-item">
+    <div class="phone-mockup" style="background:#222; border-radius:28px">
+      <svg width="72" height="72" style="border-radius:18px; display:block"><use href="#jatahku-icon"/></svg>
+      <span class="phone-icon-label">Jatahku</span>
+    </div>
+    <span>Home screen (Android)</span>
+  </div>
+
+  <!-- Full size preview -->
+  <div class="preview-item">
+    <div class="checker">
+      <svg width="128" height="128"><use href="#jatahku-icon"/></svg>
+    </div>
+    <span>128px (full detail)</span>
+  </div>
+
+</div>
+
+<!-- Browser tab mockup -->
+<div style="display:flex; justify-content:center; margin-top:24px">
+  <div>
+    <div class="browser-tab">
+      <svg width="16" height="16"><use href="#jatahku-icon"/></svg>
+      <span class="browser-tab-text">Jatahku — Setiap rupiah ada jatahnya</span>
+      <span style="color:#999; font-size:11px; margin-left:4px">×</span>
+    </div>
+    <div style="background:#fff; border:1px solid #ddd; border-radius:0 8px 8px 8px; padding:24px 32px; color:#888; font-size:13px; width:400px">
+      Browser tab preview
+    </div>
+  </div>
+</div>

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pilih Tema Jatahku</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: #1a1a2e; color: #e2e8f0; padding: 24px; }
+
+  h2 { font-size: 1.4rem; font-weight: 700; text-align: center; margin-bottom: 6px; }
+  .subtitle { text-align: center; color: #94a3b8; font-size: 0.85rem; margin-bottom: 24px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 820px; margin: 0 auto; }
+
+  .theme-card {
+    border-radius: 16px; overflow: hidden; cursor: pointer;
+    border: 3px solid transparent; transition: all 0.2s;
+  }
+  .theme-card:hover { transform: translateY(-3px); }
+  .theme-card.selected { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,0.3); }
+
+  .theme-label {
+    padding: 10px 14px; font-weight: 700; font-size: 0.95rem;
+    display: flex; align-items: center; gap-8px; justify-content: space-between;
+  }
+  .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+
+  /* ── HIJAU (current) ── */
+  .hijau { background: #FAFAF8; }
+  .hijau .theme-label { background: white; color: #0F6E56; border-bottom: 1px solid #e5e7eb; }
+  .hijau .badge { background: #E1F5EE; color: #0F6E56; }
+  .hijau .app-header { background: rgba(255,255,255,0.9); border-bottom: 1px solid #f0f0ee; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .hijau .logo { font-weight: 800; color: #1D9E75; font-size: 1rem; }
+  .hijau .app-body { padding: 12px; background: #FAFAF8; }
+  .hijau .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .hijau .card-title { font-weight: 700; font-size: 0.8rem; color: #374151; }
+  .hijau .card-amount { font-size: 1.3rem; font-weight: 800; color: #1D9E75; margin: 4px 0; }
+  .hijau .card-bar-bg { height: 6px; background: #f3f4f6; border-radius: 99px; }
+  .hijau .card-bar { height: 6px; background: #1D9E75; border-radius: 99px; width: 30%; }
+  .hijau .card-sub { font-size: 0.65rem; color: #9ca3af; margin-top: 4px; }
+  .hijau .btn { background: #0F6E56; color: white; border-radius: 10px; padding: 7px 14px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 4px; }
+  .hijau .nav { display: flex; gap: 4px; }
+  .hijau .nav-item { font-size: 0.65rem; color: #6b7280; padding: 4px 8px; border-radius: 8px; }
+  .hijau .nav-item.active { background: #E1F5EE; color: #0F6E56; font-weight: 600; }
+
+  /* ── MALAM (dark) ── */
+  .malam { background: #0f172a; }
+  .malam .theme-label { background: #1e293b; color: #e2e8f0; border-bottom: 1px solid #334155; }
+  .malam .badge { background: #334155; color: #94a3b8; }
+  .malam .app-header { background: rgba(30,41,59,0.95); border-bottom: 1px solid #1e293b; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .malam .logo { font-weight: 800; color: #34d399; font-size: 1rem; }
+  .malam .app-body { padding: 12px; background: #0f172a; }
+  .malam .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .malam .card-title { font-weight: 700; font-size: 0.8rem; color: #cbd5e1; }
+  .malam .card-amount { font-size: 1.3rem; font-weight: 800; color: #34d399; margin: 4px 0; }
+  .malam .card-bar-bg { height: 6px; background: #0f172a; border-radius: 99px; }
+  .malam .card-bar { height: 6px; background: #34d399; border-radius: 99px; width: 30%; }
+  .malam .card-sub { font-size: 0.65rem; color: #475569; margin-top: 4px; }
+  .malam .btn { background: #34d399; color: #0f172a; border-radius: 10px; padding: 7px 14px; font-size: 0.75rem; font-weight: 700; display: inline-block; margin-top: 4px; }
+  .malam .nav { display: flex; gap: 4px; }
+  .malam .nav-item { font-size: 0.65rem; color: #475569; padding: 4px 8px; border-radius: 8px; }
+  .malam .nav-item.active { background: #1e3a2f; color: #34d399; font-weight: 600; }
+
+  /* ── LAUT (ocean blue) ── */
+  .laut { background: #f0f7ff; }
+  .laut .theme-label { background: white; color: #1e40af; border-bottom: 1px solid #dbeafe; }
+  .laut .badge { background: #dbeafe; color: #1e40af; }
+  .laut .app-header { background: rgba(255,255,255,0.9); border-bottom: 1px solid #e0f0ff; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .laut .logo { font-weight: 800; color: #2563eb; font-size: 1rem; }
+  .laut .app-body { padding: 12px; background: #f0f7ff; }
+  .laut .card { background: white; border: 1px solid #dbeafe; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .laut .card-title { font-weight: 700; font-size: 0.8rem; color: #1e3a5f; }
+  .laut .card-amount { font-size: 1.3rem; font-weight: 800; color: #2563eb; margin: 4px 0; }
+  .laut .card-bar-bg { height: 6px; background: #eff6ff; border-radius: 99px; }
+  .laut .card-bar { height: 6px; background: #3b82f6; border-radius: 99px; width: 30%; }
+  .laut .card-sub { font-size: 0.65rem; color: #93c5fd; margin-top: 4px; }
+  .laut .btn { background: #2563eb; color: white; border-radius: 10px; padding: 7px 14px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 4px; }
+  .laut .nav { display: flex; gap: 4px; }
+  .laut .nav-item { font-size: 0.65rem; color: #93c5fd; padding: 4px 8px; border-radius: 8px; }
+  .laut .nav-item.active { background: #dbeafe; color: #2563eb; font-weight: 600; }
+
+  /* ── SENJA (warm earth) ── */
+  .senja { background: #fdf8f3; }
+  .senja .theme-label { background: white; color: #92400e; border-bottom: 1px solid #fde8c8; }
+  .senja .badge { background: #fef3c7; color: #92400e; }
+  .senja .app-header { background: rgba(255,255,255,0.9); border-bottom: 1px solid #fde8c8; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .senja .logo { font-weight: 800; color: #d97706; font-size: 1rem; }
+  .senja .app-body { padding: 12px; background: #fdf8f3; }
+  .senja .card { background: white; border: 1px solid #fde8c8; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .senja .card-title { font-weight: 700; font-size: 0.8rem; color: #78350f; }
+  .senja .card-amount { font-size: 1.3rem; font-weight: 800; color: #d97706; margin: 4px 0; }
+  .senja .card-bar-bg { height: 6px; background: #fef3c7; border-radius: 99px; }
+  .senja .card-bar { height: 6px; background: #f59e0b; border-radius: 99px; width: 30%; }
+  .senja .card-sub { font-size: 0.65rem; color: #fbbf24; margin-top: 4px; }
+  .senja .btn { background: #d97706; color: white; border-radius: 10px; padding: 7px 14px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 4px; }
+  .senja .nav { display: flex; gap: 4px; }
+  .senja .nav-item { font-size: 0.65rem; color: #d4a36a; padding: 4px 8px; border-radius: 8px; }
+  .senja .nav-item.active { background: #fef3c7; color: #d97706; font-weight: 600; }
+
+  .checkmark {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #60a5fa; color: white; display: none;
+    align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700;
+  }
+  .theme-card.selected .checkmark { display: flex; }
+
+  .note { text-align: center; font-size: 0.75rem; color: #64748b; margin-top: 16px; }
+</style>
+</head>
+<body>
+<h2>Pilih 2 tema warna tambahan</h2>
+<p class="subtitle">Light & Dark sudah pasti ada. Klik satu atau dua tema di bawah untuk melengkapi koleksi.</p>
+
+<div class="grid">
+
+  <!-- HIJAU -->
+  <div class="theme-card hijau" onclick="toggleTheme(this,'hijau')">
+    <div class="theme-label">
+      🌿 Hijau <span style="display:flex;align-items:center;gap:6px"><span class="badge">Default saat ini</span><span class="checkmark">✓</span></span>
+    </div>
+    <div class="app-header">
+      <span class="logo">Jatahku</span>
+      <div class="nav">
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Amplop</span>
+        <span class="nav-item">Transaksi</span>
+      </div>
+    </div>
+    <div class="app-body">
+      <div class="card">
+        <div class="card-title">✉️ Makan</div>
+        <div class="card-amount">Rp1,2jt</div>
+        <div class="card-bar-bg"><div class="card-bar"></div></div>
+        <div class="card-sub">Terpakai Rp400rb dari Rp1.500.000</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏠 Sewa</div>
+        <div class="card-amount">Rp3,5jt</div>
+        <div class="card-bar-bg"><div class="card-bar" style="width:10%"></div></div>
+        <div class="card-sub">🔄 Rollover +Rp500rb dari bulan lalu</div>
+      </div>
+      <span class="btn">+ Alokasi Income</span>
+    </div>
+  </div>
+
+  <!-- MALAM -->
+  <div class="theme-card malam" onclick="toggleTheme(this,'malam')">
+    <div class="theme-label">
+      🌙 Malam <span style="display:flex;align-items:center;gap:6px"><span class="badge">Dark mode</span><span class="checkmark">✓</span></span>
+    </div>
+    <div class="app-header">
+      <span class="logo">Jatahku</span>
+      <div class="nav">
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Amplop</span>
+        <span class="nav-item">Transaksi</span>
+      </div>
+    </div>
+    <div class="app-body">
+      <div class="card">
+        <div class="card-title">✉️ Makan</div>
+        <div class="card-amount">Rp1,2jt</div>
+        <div class="card-bar-bg"><div class="card-bar"></div></div>
+        <div class="card-sub">Terpakai Rp400rb dari Rp1.500.000</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏠 Sewa</div>
+        <div class="card-amount">Rp3,5jt</div>
+        <div class="card-bar-bg"><div class="card-bar" style="width:10%"></div></div>
+        <div class="card-sub">🔄 Rollover +Rp500rb dari bulan lalu</div>
+      </div>
+      <span class="btn">+ Alokasi Income</span>
+    </div>
+  </div>
+
+  <!-- LAUT -->
+  <div class="theme-card laut" onclick="toggleTheme(this,'laut')">
+    <div class="theme-label">
+      🌊 Laut <span style="display:flex;align-items:center;gap:6px"><span class="badge">Ocean Blue</span><span class="checkmark">✓</span></span>
+    </div>
+    <div class="app-header">
+      <span class="logo">Jatahku</span>
+      <div class="nav">
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Amplop</span>
+        <span class="nav-item">Transaksi</span>
+      </div>
+    </div>
+    <div class="app-body">
+      <div class="card">
+        <div class="card-title">✉️ Makan</div>
+        <div class="card-amount">Rp1,2jt</div>
+        <div class="card-bar-bg"><div class="card-bar"></div></div>
+        <div class="card-sub">Terpakai Rp400rb dari Rp1.500.000</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏠 Sewa</div>
+        <div class="card-amount">Rp3,5jt</div>
+        <div class="card-bar-bg"><div class="card-bar" style="width:10%"></div></div>
+        <div class="card-sub">🔄 Rollover +Rp500rb dari bulan lalu</div>
+      </div>
+      <span class="btn">+ Alokasi Income</span>
+    </div>
+  </div>
+
+  <!-- SENJA -->
+  <div class="theme-card senja" onclick="toggleTheme(this,'senja')">
+    <div class="theme-label">
+      🌅 Senja <span style="display:flex;align-items:center;gap:6px"><span class="badge">Warm Earth</span><span class="checkmark">✓</span></span>
+    </div>
+    <div class="app-header">
+      <span class="logo">Jatahku</span>
+      <div class="nav">
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Amplop</span>
+        <span class="nav-item">Transaksi</span>
+      </div>
+    </div>
+    <div class="app-body">
+      <div class="card">
+        <div class="card-title">✉️ Makan</div>
+        <div class="card-amount">Rp1,2jt</div>
+        <div class="card-bar-bg"><div class="card-bar"></div></div>
+        <div class="card-sub">Terpakai Rp400rb dari Rp1.500.000</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏠 Sewa</div>
+        <div class="card-amount">Rp3,5jt</div>
+        <div class="card-bar-bg"><div class="card-bar" style="width:10%"></div></div>
+        <div class="card-sub">🔄 Rollover +Rp500rb dari bulan lalu</div>
+      </div>
+      <span class="btn">+ Alokasi Income</span>
+    </div>
+  </div>
+
+</div>
+
+<p class="note">Light (Hijau) & Dark (Malam) sudah pasti masuk. Pilih 1–2 tema tambahan dari Laut atau Senja, atau keduanya.</p>
+
+<script>
+  const selected = new Set();
+  function toggleTheme(el, name) {
+    if (el.classList.contains('selected')) {
+      el.classList.remove('selected');
+      selected.delete(name);
+    } else {
+      el.classList.add('selected');
+      selected.add(name);
+    }
+    // emit to superpowers helper if available
+    if (window.__sp_select) window.__sp_select(el, [...selected].join(','));
+  }
+</script>
+</body>
+</html>
