@@ -194,7 +194,17 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
             )}
           </div>
 
-          {!editing && (
+          {editing ? (
+            <div>
+              <label className="label">Purpose</label>
+              <div className="text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded-lg">
+                {purpose === 'expense' ? '💰 Expense — Pengeluaran rutin' :
+                 purpose === 'saving' ? '🎯 Saving — Target menabung' :
+                 '📅 Sinking Fund — Dana persiapan'}
+                <span className="text-xs text-gray-400 ml-2">(tidak dapat diubah)</span>
+              </div>
+            </div>
+          ) : (
             <div>
               <label className="label">Purpose</label>
               <div className="flex gap-1.5">
@@ -215,8 +225,8 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
             </div>
           )}
 
-          {/* Goal fields for saving/sinking_fund */}
-          {isSavingLike && (
+          {/* Goal fields for saving/sinking_fund — new envelope only */}
+          {!editing && isSavingLike && (
             <div className="border-t border-gray-100 pt-3 space-y-3">
               <h4 className="font-semibold text-sm">🎯 Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
               <div>
