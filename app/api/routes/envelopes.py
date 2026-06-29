@@ -12,7 +12,7 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
     User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
-    RecurringTransaction, RecurringFrequency,
+    RecurringTransaction, RecurringFrequency, PurposeType,
 )
 
 router = APIRouter()
@@ -28,6 +28,7 @@ class EnvelopeCreate(BaseModel):
     is_locked: bool = False
     daily_limit: Decimal | None = None
     cooling_threshold: Decimal | None = None
+    purpose: PurposeType = PurposeType.expense
 
 
 class EnvelopeResponse(BaseModel):
@@ -41,6 +42,7 @@ class EnvelopeResponse(BaseModel):
     household_id: UUID
     owner_id: UUID | None
     is_personal: bool = False
+    purpose: PurposeType | None = None
     model_config = {"from_attributes": True}
 
 
@@ -48,22 +50,23 @@ class EnvelopeSummary(BaseModel):
     id: UUID
     name: str
     emoji: str
-    budget_amount: Decimal  # target
+    budget_amount: Decimal
     is_rollover: bool
     is_personal: bool
     is_locked: bool
     daily_limit: Decimal | None
     cooling_threshold: Decimal | None
-    allocated: Decimal      # actual money in this period
-    rollover: Decimal       # carried over from previous period
+    allocated: Decimal
+    rollover: Decimal
     spent: Decimal
-    reserved: Decimal       # committed for subscriptions this month
-    remaining: Decimal      # allocated + rollover - spent
-    free: Decimal           # remaining minus reserved = truly free to spend
-    funded_ratio: float     # allocated / budget_amount
-    spent_ratio: float      # spent / allocated
+    reserved: Decimal
+    remaining: Decimal
+    free: Decimal
+    funded_ratio: float
+    spent_ratio: float
     group_id: UUID | None = None
     group_name: str | None = None
+    purpose: PurposeType | None = None
 
 
 class EnvelopeGroupCreate(BaseModel):
@@ -226,6 +229,7 @@ async def envelope_summary(
             spent_ratio=round(spent_ratio, 4),
             group_id=env.group_id,
             group_name=group_names.get(env.group_id),
+            purpose=env.purpose,
         ))
 
     return summaries
@@ -331,6 +335,16 @@ async def create_envelope(
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
 
+    # Validate purpose
+    budget = req.budget_amount
+    rollover = req.is_rollover
+    if req.purpose in (PurposeType.saving, PurposeType.sinking_fund):
+        rollover = True
+        if req.purpose == PurposeType.saving:
+            budget = Decimal("0")
+    elif req.purpose == PurposeType.expense and budget <= 0:
+        raise HTTPException(status_code=400, detail="Amplop expense harus memiliki budget")
+
     if req.group_id is not None:
         grp_check = await db.execute(
             select(EnvelopeGroup).where(
@@ -342,12 +356,13 @@ async def create_envelope(
 
     envelope = Envelope(
         household_id=hid, name=req.name, emoji=req.emoji,
-        budget_amount=req.budget_amount, is_rollover=req.is_rollover,
+        budget_amount=budget, is_rollover=rollover,
         group_id=req.group_id,
         owner_id=user.id if req.is_personal else None,
         is_locked=req.is_locked,
         daily_limit=req.daily_limit,
         cooling_threshold=req.cooling_threshold,
+        purpose=req.purpose,
     )
     db.add(envelope)
     await db.commit()
@@ -388,6 +403,7 @@ async def update_envelope(
     envelope.is_locked = req.is_locked
     envelope.daily_limit = req.daily_limit
     envelope.cooling_threshold = req.cooling_threshold
+    # purpose is immutable — keep existing value
     await db.commit()
     await db.refresh(envelope)
     return envelope

@@ -29,6 +29,12 @@ class RecurringFrequency(str, enum.Enum):
     yearly = "yearly"
 
 
+class PurposeType(str, enum.Enum):
+    expense = "expense"
+    saving = "saving"
+    sinking_fund = "sinking_fund"
+
+
 # --- Mixins ---
 
 class TimestampMixin:
@@ -154,6 +160,9 @@ class Envelope(TimestampMixin, Base):
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_limit: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
     cooling_threshold: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    purpose: Mapped[PurposeType] = mapped_column(
+        SAEnum(PurposeType), default=PurposeType.expense, nullable=False, server_default="expense"
+    )
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelopes")

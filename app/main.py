@@ -32,6 +32,15 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE notification_preferences "
                 "ADD COLUMN IF NOT EXISTS checkin_nudge_time VARCHAR(5) DEFAULT '21:00'"
             ))
+            await conn.execute(text(
+                "ALTER TABLE envelopes ADD COLUMN IF NOT EXISTS purpose VARCHAR(20) NOT NULL DEFAULT 'expense'"
+            ))
+            await conn.execute(text(
+                "DROP TYPE IF EXISTS purposetype CASCADE"
+            ))
+            await conn.execute(text(
+                "UPDATE envelopes SET purpose = 'saving' WHERE LOWER(name) = 'tabungan' AND purpose = 'expense'"
+            ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield

@@ -51,6 +51,16 @@ export default function Onboarding({ onDone }) {
   const [newName, setNewName] = useState('');
   const [newEmoji, setNewEmoji] = useState('📦');
   const [newPct, setNewPct] = useState('');
+  const [newPurpose, setNewPurpose] = useState('expense');
+
+  const guessPurpose = (name) => {
+    const n = name.toLowerCase();
+    const savingKw = ['tabungan','nikah','darurat','liburan','umroh','rumah','mobil','motor','pendidikan','sekolah','kuliah','dp','menikah','haji','investasi','pensiun'];
+    const sinkingKw = ['servis','pajak','asuransi','perpanjang','tahunan','semester','langganan','renewal','hosting','domain','stnk','bpjs','service','maintenance','perawatan'];
+    if (savingKw.some(kw => n.includes(kw))) return 'saving';
+    if (sinkingKw.some(kw => n.includes(kw))) return 'sinking_fund';
+    return 'expense';
+  };
 
   const incomeNum = Number(income) || 0;
   const totalAllocated = envelopes.reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -70,6 +80,7 @@ export default function Onboarding({ onDone }) {
       pct: env.pct,
       amount: Math.round(incomeNum * env.pct / 100),
       isTemplate: true,
+      purpose: 'expense',
     })));
     setStep(3);
   };
@@ -92,10 +103,12 @@ export default function Onboarding({ onDone }) {
     const amount = Math.round(incomeNum * pct / 100);
     setEnvelopes(prev => [...prev, {
       emoji: newEmoji, name: newName.trim(), pct, amount, isTemplate: false,
+      purpose: newPurpose,
     }]);
     setNewName('');
     setNewPct('');
     setNewEmoji('📦');
+    setNewPurpose('expense');
     setShowAddForm(false);
   };
 
@@ -129,6 +142,7 @@ export default function Onboarding({ onDone }) {
         name: env.name, emoji: env.emoji,
         budget_amount: amount,
         is_rollover: true, is_personal: false,
+        purpose: env.purpose || 'expense',
       });
       if (res.ok) {
         envelopeIds.push({ id: res.data.id, amount });
@@ -303,13 +317,27 @@ export default function Onboarding({ onDone }) {
                     {EMOJI_OPTIONS.map(em => <option key={em} value={em}>{em}</option>)}
                   </select>
                   <input type="text" className="input flex-1 text-sm py-1.5" placeholder="Nama amplop"
-                    value={newName} onChange={e => setNewName(e.target.value)} autoFocus />
+                    value={newName} onChange={e => { setNewName(e.target.value); setNewPurpose(guessPurpose(e.target.value)); }} autoFocus />
                   <div className="relative w-20">
                     <input type="number" className="input text-center text-sm py-1.5 pr-6" placeholder="0"
                       value={newPct} min="0" max="100"
                       onChange={e => setNewPct(e.target.value)} />
                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">%</span>
                   </div>
+                </div>
+                <div className="flex gap-1.5">
+                  {[
+                    { key: 'expense', label: '💰 Expense' },
+                    { key: 'saving', label: '🎯 Saving' },
+                    { key: 'sinking_fund', label: '📅 Sinking' },
+                  ].map(p => (
+                    <button key={p.key} type="button" onClick={() => setNewPurpose(p.key)}
+                      className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                        newPurpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}>
+                      {p.label}
+                    </button>
+                  ))}
                 </div>
                 {newPct && incomeNum > 0 && (
                   <p className="text-xs text-gray-500 ml-1">= {formatCurrency(Math.round(incomeNum * (Number(newPct) || 0) / 100))}</p>
@@ -326,7 +354,7 @@ export default function Onboarding({ onDone }) {
             {remainder > 0 && (
               <div className="flex items-center gap-3 mt-4 pt-3 border-t border-gray-100">
                 <span className="text-xl w-7">💰</span>
-                <span className="text-sm font-medium flex-1">Tabungan <span className="text-xs text-gray-400">(otomatis)</span></span>
+                <span className="text-sm font-medium flex-1">Tabungan (Saving) <span className="text-xs text-gray-400">(otomatis)</span></span>
                 <span className="font-mono text-sm font-bold text-brand-600">{formatCurrency(remainder)}</span>
               </div>
             )}

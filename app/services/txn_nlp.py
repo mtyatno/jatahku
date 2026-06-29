@@ -27,6 +27,28 @@ CATEGORY_KEYWORDS = {
 }
 
 
+PURPOSE_KEYWORDS = {
+    "saving": ["tabungan", "nikah", "darurat", "liburan", "umroh",
+               "rumah", "mobil", "motor", "pendidikan", "sekolah",
+               "kuliah", "dp", "menikah", "haji", "investasi", "pensiun",
+               "dana darurat", "dp rumah", "dp mobil"],
+    "sinking_fund": ["servis", "pajak", "asuransi", "perpanjang",
+                     "tahunan", "semester", "langganan", "renewal",
+                     "hosting", "domain", "stnk", "bpjs", "ppn",
+                     "service", "maintenance", "perawatan"],
+}
+
+
+def guess_purpose(name: str) -> str:
+    """Suggest envelope purpose from name. Returns 'expense' as default."""
+    name_lower = name.lower()
+    for purpose, keywords in PURPOSE_KEYWORDS.items():
+        for kw in keywords:
+            if kw in name_lower:
+                return purpose
+    return "expense"
+
+
 def extract_keywords(description: str) -> list:
     import re as _re
     words = _re.sub(r'[^\w\s]', '', description.lower()).split()

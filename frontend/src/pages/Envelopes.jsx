@@ -46,6 +46,21 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
   const [error, setError] = useState('');
   const [groupId, setGroupId] = useState(editing?.group_id || '');
   const [newGroupName, setNewGroupName] = useState('');
+  const [purpose, setPurpose] = useState(editing?.purpose || 'expense');
+  const [goalName, setGoalName] = useState('');
+  const [goalAmount, setGoalAmount] = useState('');
+  const [goalDate, setGoalDate] = useState('');
+
+  const guessPurpose = (name) => {
+    const n = name.toLowerCase();
+    const savingKw = ['tabungan','nikah','darurat','liburan','umroh','rumah','mobil','motor','pendidikan','sekolah','kuliah','dp','menikah','haji','investasi','pensiun'];
+    const sinkingKw = ['servis','pajak','asuransi','perpanjang','tahunan','semester','langganan','renewal','hosting','domain','stnk','bpjs','service','maintenance','perawatan'];
+    if (savingKw.some(kw => n.includes(kw))) return 'saving';
+    if (sinkingKw.some(kw => n.includes(kw))) return 'sinking_fund';
+    return 'expense';
+  };
+
+  const isSavingLike = purpose === 'saving' || purpose === 'sinking_fund';
 
   // Funding
   const [fundingSource, setFundingSource] = useState('transfer'); // 'transfer' or 'income'
@@ -91,10 +106,25 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
       daily_limit: dailyLimit ? Number(dailyLimit) : null,
       cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
       group_id: resolvedGroupId,
+      purpose,
     };
+    if (isSavingLike) {
+      data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
+      data.is_rollover = true;
+    }
     const createRes = await api.createEnvelope(data);
     if (!createRes.ok) { setSaving(false); setError('Gagal buat amplop'); return; }
     const newEnvId = createRes.data.id;
+
+    // Create goal for saving/sinking_fund
+    if (isSavingLike && goalName.trim() && Number(goalAmount) > 0) {
+      const goalRes = await api.createGoal({
+        envelope_id: newEnvId, name: goalName.trim(),
+        target_amount: Number(goalAmount),
+        target_date: goalDate || null,
+      });
+      if (!goalRes.ok) { setSaving(false); setError('Goal gagal dibuat'); return; }
+    }
 
     // Fund the envelope
     const amt = Number(fundAmount);
@@ -147,7 +177,7 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
         {/* Step 1: Basic info + funding (new only) */}
         <div className="space-y-4">
           <div><label className="label">Emoji</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}>{e}</button>))}</div></div>
-          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => setName(e.target.value)} required /></div>
+          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => { setName(e.target.value); if (!editing) setPurpose(guessPurpose(e.target.value)); }} required /></div>
 
           <div>
             <label className="label">Grup</label>
@@ -163,6 +193,56 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
                 value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
             )}
           </div>
+
+          {!editing && (
+            <div>
+              <label className="label">Purpose</label>
+              <div className="flex gap-1.5">
+                {[
+                  { key: 'expense', label: '💰 Expense', desc: 'Pengeluaran rutin' },
+                  { key: 'saving', label: '🎯 Saving', desc: 'Target menabung' },
+                  { key: 'sinking_fund', label: '📅 Sinking Fund', desc: 'Dana persiapan' },
+                ].map(p => (
+                  <button key={p.key} type="button" onClick={() => setPurpose(p.key)}
+                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight ${
+                      purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                    }`}>
+                    <span className="block text-base mb-0.5">{p.label.split(' ')[0]}</span>
+                    {p.desc}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Goal fields for saving/sinking_fund */}
+          {isSavingLike && (
+            <div className="border-t border-gray-100 pt-3 space-y-3">
+              <h4 className="font-semibold text-sm">🎯 Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
+              <div>
+                <label className="label">Nama target</label>
+                <input type="text" className="input" placeholder={purpose === 'saving' ? 'Nikah, Darurat, Liburan...' : 'Servis tahunan, Pajak...'}
+                  value={goalName} onChange={e => setGoalName(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Jumlah target (Rp)</label>
+                <input type="number" className="input font-mono" placeholder="10000000"
+                  value={goalAmount} onChange={e => setGoalAmount(e.target.value)} min="1" />
+              </div>
+              <div>
+                <label className="label">Tanggal target <span className="text-xs text-gray-400">(opsional)</span></label>
+                <input type="date" className="input"
+                  value={goalDate} onChange={e => setGoalDate(e.target.value)} />
+              </div>
+              {purpose === 'sinking_fund' && (
+                <div>
+                  <label className="label">Budget bulanan <span className="text-xs text-gray-400">(opsional)</span></label>
+                  <input type="number" className="input font-mono" placeholder="Kosongkan = hanya target"
+                    value={budget} onChange={e => setBudget(e.target.value)} min="0" />
+                </div>
+              )}
+            </div>
+          )}
 
           {!editing && (
             <div className="border-t border-gray-100 pt-4">
@@ -358,7 +438,8 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || remaining);
   const spentRatio = env.spent_ratio || 0;
-  const isUnfunded = allocated <= 0 && rollover === 0 && env.name !== 'Tabungan';
+  const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
+  const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
   const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
@@ -400,7 +481,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   return (
     <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2.5"><span className="text-2xl">{env.emoji || '📁'}</span><div><h3 className="font-semibold">{titleCase(env.name)}</h3><p className="text-xs text-gray-400">{env.is_personal ? '🔒 Personal' : '👥 Shared'} · {env.is_rollover ? 'Rollover' : 'Reset'}</p></div></div>
+        <div className="flex items-center gap-2.5"><span className="text-2xl">{env.emoji || '📁'}</span><div><h3 className="font-semibold">{titleCase(env.name)}</h3><p className="text-xs text-gray-400">{env.is_personal ? '🔒 Personal' : '👥 Shared'} · {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</p></div></div>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
           <button onClick={() => onTransfer(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Geser</button>
           <button onClick={() => onEdit(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Edit</button>
@@ -409,6 +490,51 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
       </div>
       {isUnfunded ? (
         <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana. Alokasikan income dulu.</div>
+      ) : isSavingLike ? (
+        <div className="mb-2">
+          {goal && (
+            <div>
+              <div className="flex justify-between items-end mb-1.5">
+                <span className={`font-display text-2xl font-bold ${remainColor}`}>{formatShort(free)}</span>
+                <span className="text-xs text-gray-400">Saldo</span>
+              </div>
+              <div className="flex justify-between items-end mb-1">
+                <span className="text-xs text-gray-400">🎯 {goal.name}</span>
+                <span className="text-xs font-medium text-amber-600">{Math.round(goal.progress_pct)}%</span>
+              </div>
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">{formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}</p>
+              {goal.monthly_needed !== null && (
+                <p className="text-xs text-gray-400 mt-0.5">📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
+              )}
+              {goal.is_achieved && (
+                <span className="inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700">✅ Tercapai</span>
+              )}
+              {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
+                <span className="inline-block mt-0.5 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700">⚠️ Terlambat</span>
+              )}
+            </div>
+          )}
+          {!goal && (
+            <div className="text-center py-3">
+              <p className="text-xs text-gray-400 mb-2">Belum ada target</p>
+              <button onClick={() => setShowGoalForm(true)} className="text-xs text-brand-600 hover:underline">+ Buat target</button>
+            </div>
+          )}
+          {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
+            <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">
+              Budget: {formatShort(env.budget_amount)}/bulan
+            </p>
+          )}
+          {rollover !== 0 && (
+            rollover > 0
+              ? <p className="text-xs text-brand-500 mt-1">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
+              : <p className="text-xs text-danger-400 mt-1">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
+          )}
+        </div>
       ) : (
         <div className="mb-2">
           <div className="flex justify-between items-end mb-1.5">
@@ -426,8 +552,8 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         </div>
       )}
 
-      {/* Goal target section */}
-      {goal && !showGoalForm && (
+      {/* Goal target section — only for saving/sinking_fund */}
+      {isSavingLike && goal && !showGoalForm && (
         <div className="mt-2 pt-2 border-t border-gray-100">
           <div className="flex justify-between items-end mb-1">
             <span className="text-xs text-gray-400">🎯 {goal.name}</span>
@@ -460,7 +586,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         </div>
       )}
 
-      {!goal && !showGoalForm && (
+      {isSavingLike && !goal && !showGoalForm && (
         <div className="mt-2 pt-2 border-t border-gray-100">
           <button onClick={() => setShowGoalForm(true)}
             className="text-xs text-gray-400 hover:text-amber-600 transition-colors">
@@ -469,7 +595,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         </div>
       )}
 
-      {showGoalForm && (
+      {isSavingLike && showGoalForm && (
         <div className="mt-2 pt-2 border-t border-gray-100 space-y-2">
           <input type="text" className="input text-sm py-1.5" placeholder="Nama target (Nikah, Darurat...)"
             value={goalName} onChange={e => setGoalName(e.target.value)} />
