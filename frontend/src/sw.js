@@ -41,19 +41,8 @@ self.addEventListener('fetch', (event) => {
 
   if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
-  // API: NetworkFirst — try network, cache on success, fall back to cache
-  if (url.hostname === 'api.jatahku.com') {
-    event.respondWith(
-      fetch(request)
-        .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(request, clone));
-          return res;
-        })
-        .catch(() => caches.match(request))
-    );
-    return;
-  }
+  // API: bypass service worker entirely — let browser handle directly
+  if (url.hostname === 'api.jatahku.com') return;
 
   // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline
   if (request.mode === 'navigate') {
