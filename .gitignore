@@ -17,3 +17,6 @@ blog/.astro/
 # OS
 .DS_Store
 Thumbs.db
+
+# Docs (local only)
+docs/superpowers/
