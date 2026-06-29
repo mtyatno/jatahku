@@ -25,12 +25,7 @@ async def advisor_insights(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        return await build_advisor_insights(user, db)
-    except Exception:
-        import logging
-        logging.getLogger("jatahku.advisor").exception("build_advisor_insights failed")
-        return {"cards": [], "dashboard_cards": []}
+    return await build_advisor_insights(user, db)
 
 
 @router.post("/allocation-recommendation")
