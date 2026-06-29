@@ -92,7 +92,12 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
         daily_limit: dailyLimit ? Number(dailyLimit) : null,
         cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
         group_id: resolvedGroupId,
+        purpose,
       };
+      if (isSavingLike) {
+        data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
+        data.is_rollover = true;
+      }
       const result = await api.updateEnvelope(editing.id, data);
       setSaving(false);
       if (result.ok) { onCreated(); onClose(); } else { setError('Gagal update'); }
@@ -177,7 +182,7 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
         {/* Step 1: Basic info + funding (new only) */}
         <div className="space-y-4">
           <div><label className="label">Emoji</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}>{e}</button>))}</div></div>
-          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => { setName(e.target.value); if (!editing) setPurpose(guessPurpose(e.target.value)); }} required /></div>
+          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => { setName(e.target.value); setPurpose(guessPurpose(e.target.value)); }} required /></div>
 
           <div>
             <label className="label">Grup</label>
@@ -194,36 +199,29 @@ function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes
             )}
           </div>
 
-          {editing ? (
-            <div>
-              <label className="label">Purpose</label>
-              <div className="text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded-lg">
-                {purpose === 'expense' ? '💰 Expense — Pengeluaran rutin' :
-                 purpose === 'saving' ? '🎯 Saving — Target menabung' :
-                 '📅 Sinking Fund — Dana persiapan'}
-                <span className="text-xs text-gray-400 ml-2">(tidak dapat diubah)</span>
-              </div>
+          <div>
+            <label className="label">Purpose</label>
+            <div className="flex gap-1.5">
+              {[
+                { key: 'expense', label: '💰 Expense', desc: 'Pengeluaran rutin' },
+                { key: 'saving', label: '🎯 Saving', desc: 'Target menabung' },
+                { key: 'sinking_fund', label: '📅 Sinking Fund', desc: 'Dana persiapan' },
+              ].map(p => (
+                <button key={p.key} type="button" onClick={() => {
+                  if (editing && purpose !== p.key) {
+                    if (!confirm(`Ubah purpose ke "${p.label.split(' ')[1]}"? Budget atau goal mungkin terpengaruh.`)) return;
+                  }
+                  setPurpose(p.key);
+                }}
+                  className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight ${
+                    purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                  }`}>
+                  <span className="block text-base mb-0.5">{p.label.split(' ')[0]}</span>
+                  {p.desc}
+                </button>
+              ))}
             </div>
-          ) : (
-            <div>
-              <label className="label">Purpose</label>
-              <div className="flex gap-1.5">
-                {[
-                  { key: 'expense', label: '💰 Expense', desc: 'Pengeluaran rutin' },
-                  { key: 'saving', label: '🎯 Saving', desc: 'Target menabung' },
-                  { key: 'sinking_fund', label: '📅 Sinking Fund', desc: 'Dana persiapan' },
-                ].map(p => (
-                  <button key={p.key} type="button" onClick={() => setPurpose(p.key)}
-                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight ${
-                      purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
-                    }`}>
-                    <span className="block text-base mb-0.5">{p.label.split(' ')[0]}</span>
-                    {p.desc}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
 
           {/* Goal fields for saving/sinking_fund — new envelope only */}
           {!editing && isSavingLike && (

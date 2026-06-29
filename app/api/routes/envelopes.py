@@ -403,7 +403,7 @@ async def update_envelope(
     envelope.is_locked = req.is_locked
     envelope.daily_limit = req.daily_limit
     envelope.cooling_threshold = req.cooling_threshold
-    # purpose is immutable — keep existing value
+    envelope.purpose = req.purpose
     await db.commit()
     await db.refresh(envelope)
     return envelope
