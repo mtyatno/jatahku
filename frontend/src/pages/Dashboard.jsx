@@ -64,103 +64,6 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
-function DecisionBox({ envelopes, prediction, todaySpent }) {
-  if (!prediction || prediction.total_allocated === 0) return null;
-
-  const safeDaily = prediction.safe_daily;
-  const items = [];
-
-  // Today vs safe daily
-  if (todaySpent > 0 && safeDaily > 0) {
-    const ratio = todaySpent / safeDaily;
-    const sisa = safeDaily - todaySpent;
-    if (ratio >= 1.5) {
-      items.push({ icon: '🔴', text: `Hari ini kamu overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, level: 'danger' });
-    } else if (ratio >= 1.0) {
-      items.push({ icon: '🟠', text: `Pengeluaran hari ini (${formatCurrency(todaySpent)}) melebihi batas aman ${formatCurrency(safeDaily)}/hari`, level: 'warning' });
-    } else if (ratio <= 0.5) {
-      items.push({ icon: '🎉', text: `Mantap! Hari ini kamu hemat. Sisa jatah ${formatCurrency(sisa)} bisa ditabung atau carry ke besok.`, level: 'reward' });
-    } else {
-      items.push({ icon: '✅', text: `Pengeluaran hari ini ${formatCurrency(todaySpent)} — masih aman, sisa ${formatCurrency(sisa)} hari ini.`, level: 'safe' });
-    }
-  } else if (safeDaily > 0) {
-    items.push({ icon: '🎉', text: `Belum ada pengeluaran hari ini. Jatah ${formatCurrency(safeDaily)} masih utuh — mantap!`, level: 'reward' });
-  }
-
-  // Envelope warnings — top 3 most urgent
-  const urgent = [...envelopes]
-    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
-    .sort((a, b) => b.spent_ratio - a.spent_ratio)
-    .slice(0, 3);
-
-  urgent.forEach(e => {
-    const pct = Math.round(e.spent_ratio * 100);
-    if (e.spent_ratio >= 1.0) {
-      items.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, level: 'danger' });
-    } else if (e.spent_ratio >= 0.9) {
-      items.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, level: 'danger' });
-    } else {
-      items.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, level: 'warning' });
-    }
-  });
-
-  // Safe envelopes summary
-  const safeCount = envelopes.filter(e => Number(e.allocated) > 0 && e.spent_ratio < 0.7).length;
-  if (safeCount > 0 && urgent.length > 0) {
-    items.push({ icon: '✅', text: `${safeCount} amplop lainnya masih aman`, level: 'safe' });
-  }
-
-  if (items.length === 0) return null;
-
-  const alertItems = items.filter(i => i.level === 'danger' || i.level === 'warning');
-  const positiveItems = items.filter(i => i.level === 'reward' || i.level === 'safe');
-
-  const hasDanger = alertItems.some(i => i.level === 'danger');
-
-  return (
-    <div className="space-y-3">
-      {alertItems.length > 0 && (
-        <div className="rounded-xl p-4" style={{ background: hasDanger ? '#FEF2F2' : '#FFFBEB', border: `1px solid ${hasDanger ? '#FECACA' : '#FDE68A'}` }}>
-          <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: hasDanger ? '#991B1B' : '#92400E' }}>
-            {hasDanger ? '🚨 Perlu perhatian' : '⚠️ Mulai menipis'}
-          </p>
-          <div className="space-y-1.5">
-            {alertItems.map((item, i) => (
-              <p key={i} className="text-sm" style={{ color: item.level === 'danger' ? '#7F1D1D' : '#78350F' }}>
-                {item.icon} {item.text}
-              </p>
-            ))}
-          </div>
-          {safeDaily > 0 && (
-            <p className="text-xs mt-2.5 pt-2.5 border-t" style={{ borderColor: hasDanger ? '#FECACA' : '#FDE68A', color: hasDanger ? '#991B1B' : '#92400E' }}>
-              👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
-            </p>
-          )}
-        </div>
-      )}
-      {positiveItems.length > 0 && (
-        <div className="rounded-xl p-4" style={{ background: '#F0FDF9', border: '1px solid #A7F3D0' }}>
-          <p className="text-xs font-bold mb-2.5 uppercase tracking-wide" style={{ color: '#065F46' }}>
-            {positiveItems.some(i => i.level === 'reward') ? '🎉 Kabar baik' : '✅ Status aman'}
-          </p>
-          <div className="space-y-1.5">
-            {positiveItems.map((item, i) => (
-              <p key={i} className="text-sm" style={{ color: '#065F46' }}>
-                {item.icon} {item.text}
-              </p>
-            ))}
-          </div>
-          {alertItems.length === 0 && safeDaily > 0 && (
-            <p className="text-xs mt-2.5 pt-2.5 border-t border-green-200" style={{ color: '#065F46' }}>
-              👉 Batas aman: <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function buildInsights(monthlyTrend, breakdown) {
   const insights = [];
   const active = (monthlyTrend || []).filter(d => d.spent > 0 || d.allocated > 0);
@@ -311,36 +214,100 @@ function WeeklyPattern({ data }) {
   );
 }
 
-function AdvisorCards({ cards }) {
-  if (!cards?.length) return null;
-  const styles = {
-    danger: { bg: '#FEF2F2', border: '#FECACA', title: '#991B1B', text: '#7F1D1D' },
-    warning: { bg: '#FFFBEB', border: '#FDE68A', title: '#92400E', text: '#78350F' },
-    info: { bg: '#EFF6FF', border: '#BFDBFE', title: '#1D4ED8', text: '#1E3A8A' },
-    positive: { bg: '#F0FDF9', border: '#A7F3D0', title: '#065F46', text: '#065F46' },
+function HeroAdvisor({ cards, prediction, todaySpent, envelopes }) {
+  const tacticalLines = [];
+  const safeDaily = prediction?.safe_daily;
+  const hasPrediction = prediction && prediction.total_allocated > 0;
+
+  if (hasPrediction && safeDaily > 0) {
+    if (todaySpent > 0) {
+      const ratio = todaySpent / safeDaily;
+      const sisa = safeDaily - todaySpent;
+      if (ratio >= 1.5) {
+        tacticalLines.push({ icon: '🔴', text: `Overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, lvl: 'danger' });
+      } else if (ratio >= 1.0) {
+        tacticalLines.push({ icon: '🟠', text: `Pengeluaran ${formatCurrency(todaySpent)} melebihi batas aman ${formatCurrency(safeDaily)}/hari`, lvl: 'warning' });
+      } else if (ratio <= 0.5) {
+        tacticalLines.push({ icon: '🎉', text: `Hari ini hemat! Sisa ${formatCurrency(sisa)} bisa ditabung.`, lvl: 'reward' });
+      } else {
+        tacticalLines.push({ icon: '✅', text: `Pengeluaran ${formatCurrency(todaySpent)} — masih aman, sisa ${formatCurrency(sisa)}.`, lvl: 'safe' });
+      }
+    } else {
+      tacticalLines.push({ icon: '🎉', text: `Belum ada pengeluaran hari ini. Jatah ${formatCurrency(safeDaily)} masih utuh!`, lvl: 'reward' });
+    }
+  }
+
+  const urgent = [...(envelopes || [])]
+    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
+    .sort((a, b) => b.spent_ratio - a.spent_ratio)
+    .slice(0, 3);
+
+  urgent.forEach(e => {
+    const pct = Math.round(e.spent_ratio * 100);
+    if (e.spent_ratio >= 1.0) {
+      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, lvl: 'danger' });
+    } else if (e.spent_ratio >= 0.9) {
+      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, lvl: 'danger' });
+    } else {
+      tacticalLines.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, lvl: 'warning' });
+    }
+  });
+
+  const hasTactical = tacticalLines.length > 0;
+  const hasCards = cards?.length > 0;
+  if (!hasTactical && !hasCards) return null;
+
+  const style = {
+    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF',
+    border: '#E2E8F0',
+    accent: '#0F6E56',
+    title: '#1E293B',
+    text: '#475569',
+    muted: '#94A3B8',
   };
+
   return (
-    <div className="space-y-3">
-      {cards.map(card => {
-        const style = styles[card.severity] || styles.info;
+    <div className="rounded-2xl p-5" style={{ background: style.bg, border: `1px solid ${style.border}`, boxShadow: '0 1px 3px rgba(15,110,86,0.06)' }}>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-lg">🤖</span>
+        <h2 className="font-display font-bold text-base" style={{ color: style.title }}>AI Advisor</h2>
+        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: style.accent }}>Beta</span>
+      </div>
+
+      {hasTactical && (
+        <div className="mb-4">
+          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: style.accent }}>📊 Hari ini</p>
+          <div className="space-y-1.5">
+            {tacticalLines.map((item, i) => (
+              <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? '#991B1B' : item.lvl === 'warning' ? '#92400E' : style.text }}>
+                <span className="shrink-0">{item.icon}</span>
+                <span>{item.text}</span>
+              </p>
+            ))}
+          </div>
+          {safeDaily > 0 && (
+            <p className="text-xs mt-2" style={{ color: style.muted }}>
+              Batas aman <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {hasCards && cards.map((card, ci) => {
+        const cs = {
+          danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
+          warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
+          info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
+          positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
+        }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
         return (
-          <div key={card.id} className="rounded-xl p-4" style={{ background: style.bg, border: `1px solid ${style.border}` }}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-bold mb-1 uppercase tracking-wide" style={{ color: style.title }}>Advisor</p>
-                <p className="text-sm font-semibold" style={{ color: style.text }}>{card.title}</p>
-                <p className="text-xs mt-1" style={{ color: style.text, whiteSpace: 'pre-line' }}>{card.body}</p>
-              </div>
-              {card.primary_action?.route && (
-                <Link to={card.primary_action.route} className="text-xs font-semibold text-brand-600 hover:underline flex-shrink-0">
-                  {card.primary_action.label || 'Lihat'}
-                </Link>
-              )}
-            </div>
-            {card.evidence?.length > 0 && (
-              <div className="mt-2 pt-2 border-t text-xs space-y-1" style={{ borderColor: style.border, color: style.text }}>
-                {card.evidence.map((item, idx) => <p key={idx}>{item}</p>)}
-              </div>
+          <div key={card.id} className="rounded-xl p-3.5 mb-3 last:mb-0" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
+            <p className="text-xs font-semibold mb-1.5" style={{ color: cs.txt }}>{card.title}</p>
+            <p className="text-xs" style={{ color: cs.txt, whiteSpace: 'pre-line' }}>{card.body}</p>
+            {card.primary_action?.route && (
+              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 text-brand-600 hover:underline">
+                {card.primary_action.label || 'Lihat detail'} →
+              </Link>
             )}
           </div>
         );
@@ -348,6 +315,7 @@ function AdvisorCards({ cards }) {
     </div>
   );
 }
+
 
 function EnvelopeRow({ env }) {
   const allocated = Number(env.allocated);
@@ -662,14 +630,14 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Strategic advisor cards (historical/forward-looking) above tactical DecisionBox (today's status) */}
+      {/* Hero AI Advisor — today's status + strategic insights */}
       {isCurrentPeriod && (
-        <>
-          {advisorInsights?.dashboard_cards?.length > 0 && (
-            <AdvisorCards cards={advisorInsights.dashboard_cards} />
-          )}
-          <DecisionBox envelopes={envelopes} prediction={prediction} todaySpent={todaySpent} />
-        </>
+        <HeroAdvisor
+          cards={advisorInsights?.dashboard_cards}
+          prediction={prediction}
+          todaySpent={todaySpent}
+          envelopes={envelopes}
+        />
       )}
 
       {/* Monthly Comparison — always visible */}
