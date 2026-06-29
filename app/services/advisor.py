@@ -315,6 +315,15 @@ async def build_advisor_insights(user, db) -> dict:
     total_reserved = Decimal("0")
     total_free = Decimal("0")
 
+    # Load goals for saving/sinking_fund envelopes
+    from app.models.models import Goal
+    goal_result = await db.execute(
+        select(Goal).where(Goal.envelope_id.in_([e.id for e in envelopes]))
+    )
+    goals_by_env = {}
+    for g in goal_result.scalars().all():
+        goals_by_env[str(g.envelope_id)] = g
+
     for envelope in envelopes:
         envelope_stats = stats.get(str(envelope.id), [])
         if not envelope_stats:
@@ -333,22 +342,105 @@ async def build_advisor_insights(user, db) -> dict:
         total_reserved += reserved
         total_free += free
 
-        if available > 0 and spent > 0:
+        if available > 0 and spent > 0 and getattr(envelope, "purpose", "expense") == "expense":
             projected = (spent / days_used) * days_total
             if projected > available and days_remaining > 0:
+                pct = int(spent / available * 100)
                 shortage = projected - available
+                daily_rate = spent / days_used
                 cards.append(_card(
                     f"env_depletion:{envelope.id}",
                     "env_depletion",
                     "danger" if shortage > available * Decimal("0.2") else "warning",
-                    f"Amplop {envelope.name} berisiko habis sebelum periode selesai",
-                    f"Proyeksi kurang sekitar Rp{_money(shortage):,} jika pola belanja berlanjut.",
+                    f"{envelope.emoji} {envelope.name} sudah terpakai {pct}%",
+                    f"Masih {days_remaining} hari. Proyeksi habis {max(1, int(shortage / daily_rate))} hari sebelum periode selesai.",
                     "/allocate",
                     [
                         f"Terpakai Rp{_money(spent):,} dari Rp{_money(available):,}",
-                        f"Sisa {days_remaining} hari dalam periode ini",
+                        f"Rata-rata Rp{_money(daily_rate):,}/hari",
                     ],
                 ))
+
+        # Saving: goal progress insight
+        purpose = getattr(envelope, "purpose", "expense")
+        goal = goals_by_env.get(str(envelope.id))
+        if purpose in ("saving", "sinking_fund") and goal:
+            balance = available - spent
+            target = _to_decimal(goal.target_amount)
+            pct = min(round(float(balance / target) * 100, 1) if target > 0 else 0, 100)
+
+            if purpose == "saving":
+                # Calculate average historical contribution per period
+                hist_allocations = [
+                    _to_decimal(row.get("allocated"))
+                    for row in envelope_stats[:-1]
+                    if _to_decimal(row.get("allocated")) > 0
+                ]
+                avg_contribution = _median_decimal(hist_allocations) if hist_allocations else allocated
+                if avg_contribution <= 0:
+                    avg_contribution = allocated if allocated > 0 else Decimal("1")
+                months_to_goal = (target - balance) / avg_contribution if target > balance else 0
+                months_to_goal = max(1, round(float(months_to_goal)))
+
+                cards.append(_card(
+                    f"saving_progress:{envelope.id}",
+                    "saving_progress",
+                    "positive" if pct >= 50 else "info",
+                    f"🎯 {goal.name} sudah {int(pct)}%",
+                    f"Dengan rata-rata setoran Rp{_money(avg_contribution):,}/bulan, estimasi tercapai {months_to_goal} bulan lagi.",
+                    "/envelopes",
+                    [
+                        f"Saldo Rp{_money(balance):,} dari target Rp{_money(target):,}",
+                        f"Rata-rata setoran Rp{_money(avg_contribution):,}/bulan",
+                    ],
+                ))
+            elif purpose == "sinking_fund":
+                today = date.today()
+                if goal.target_date and goal.target_date > today:
+                    months_remaining = max(1, (goal.target_date.year - today.year) * 12 + goal.target_date.month - today.month)
+                    monthly_needed = max(Decimal("0"), target - balance) / months_remaining
+                    if allocated >= monthly_needed:
+                        cards.append(_card(
+                            f"sinking_fund_deadline:{envelope.id}",
+                            "sinking_fund_deadline",
+                            "positive",
+                            f"✅ {goal.name} on track",
+                            f"Dengan setoran Rp{_money(allocated):,}/bulan, target Rp{_money(target):,} akan tercapai tepat waktu.",
+                            "/envelopes",
+                            [f"Dana {int(pct)}% · {months_remaining} bulan lagi"],
+                        ))
+                    elif allocated > 0:
+                        shortage = monthly_needed - allocated
+                        cards.append(_card(
+                            f"sinking_fund_deadline:{envelope.id}",
+                            "sinking_fund_deadline",
+                            "warning",
+                            f"⚠️ {goal.name} butuh Rp{_money(monthly_needed):,}/bulan",
+                            f"Saat ini setoran Rp{_money(allocated):,}/bulan. Kurang Rp{_money(shortage):,}/bulan agar tepat waktu.",
+                            "/envelopes",
+                            [f"Dana {int(pct)}% · {months_remaining} bulan lagi", f"Perlu Rp{_money(monthly_needed):,}/bulan"],
+                        ))
+                    else:
+                        cards.append(_card(
+                            f"sinking_fund_deadline:{envelope.id}",
+                            "sinking_fund_deadline",
+                            "warning" if pct < 30 else "info",
+                            f"📅 {goal.name} jatuh tempo {months_remaining} bulan lagi",
+                            f"Dana baru {int(pct)}%. Perlu Rp{_money(monthly_needed):,}/bulan agar tepat waktu.",
+                            "/envelopes",
+                            [f"Saldo Rp{_money(balance):,} dari target Rp{_money(target):,}"],
+                        ))
+                else:
+                    # No deadline — show progress only
+                    cards.append(_card(
+                        f"sinking_fund_deadline:{envelope.id}",
+                        "sinking_fund_deadline",
+                        "info",
+                        f"📅 {goal.name} — dana persiapan",
+                        f"Dana terkumpul {int(pct)}%. Saldo Rp{_money(balance):,} dari target Rp{_money(target):,}.",
+                        "/envelopes",
+                        [f"Set target tanggal untuk estimasi bulanan"],
+                    ))
 
         if reserved > 0 and free < reserved * Decimal("0.25"):
             cards.append(_card(
@@ -371,7 +463,7 @@ async def build_advisor_insights(user, db) -> dict:
         ]
         historical_median = _median_decimal(historical_spends)
         budget_target = _to_decimal(getattr(envelope, "budget_amount", 0))
-        if budget_target > 0 and historical_median > budget_target * Decimal("1.15"):
+        if purpose == "expense" and budget_target > 0 and historical_median > budget_target * Decimal("1.15"):
             cards.append(_card(
                 f"allocation_drift:{envelope.id}",
                 "allocation_drift",
