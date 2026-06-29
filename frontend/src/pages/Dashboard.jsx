@@ -293,33 +293,6 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
         </div>
       )}
 
-      {goals?.length > 0 && (
-        <div className="mb-4">
-          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: style.accent }}>🎯 Target Menabung</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => (
-              <div key={goal.id} className="flex items-center gap-2 text-sm" style={{ color: style.text }}>
-                <span>{goal.envelope_emoji}</span>
-                <span className="truncate">{goal.name}</span>
-                <span className="font-semibold ml-auto" style={{ color: goal.is_achieved ? '#059669' : goal.progress_pct > 0 ? '#D97706' : style.muted }}>
-                  {Math.round(goal.progress_pct)}%
-                </span>
-              </div>
-            ))}
-          </div>
-          {goals.filter(g => !g.is_achieved).length > 4 && (
-            <Link to="/envelopes" className="text-xs mt-1.5 inline-block" style={{ color: style.accent }}>
-              → Lihat {goals.filter(g => !g.is_achieved).length} target
-            </Link>
-          )}
-          {goals.some(g => g.is_achieved) && (
-            <p className="text-xs mt-1" style={{ color: '#059669' }}>
-              ✅ {goals.filter(g => g.is_achieved).length} target tercapai!
-            </p>
-          )}
-        </div>
-      )}
-
       {hasCards && cards.map((card, ci) => {
         const cs = {
           danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
@@ -339,6 +312,42 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
           </div>
         );
       })}
+
+      {goals?.length > 0 && (
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: style.border }}>
+          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide" style={{ color: style.accent }}>🎯 Target Menabung</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
+              const pct = Math.round(goal.progress_pct);
+              return (
+                <div key={goal.id}>
+                  <div className="flex items-center gap-2 text-sm mb-1" style={{ color: style.text }}>
+                    <span>{goal.envelope_emoji}</span>
+                    <span className="truncate">{goal.name}</span>
+                    <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : style.muted }}>
+                      {pct}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(pct, 2)}%`, background: pct > 0 ? '#D97706' : '#E5E7EB' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {goals.filter(g => !g.is_achieved).length > 4 && (
+            <Link to="/envelopes" className="text-xs mt-2 inline-block" style={{ color: style.accent }}>
+              → Lihat {goals.filter(g => !g.is_achieved).length} target
+            </Link>
+          )}
+          {goals.some(g => g.is_achieved) && (
+            <p className="text-xs mt-1" style={{ color: '#059669' }}>
+              ✅ {goals.filter(g => g.is_achieved).length} target tercapai!
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
