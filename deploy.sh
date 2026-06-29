@@ -4,6 +4,9 @@ set -e
 echo "=== Jatahku Deploy ==="
 cd /opt/jatahku/app
 
+# Clean dirty dist files (built on server, conflict with repo)
+sudo -u jatahku git checkout -- frontend/dist/ 2>/dev/null || true
+
 # Pull latest
 sudo -u jatahku git pull origin main
 
@@ -18,11 +21,25 @@ if [ -d "frontend" ]; then
     sudo -u jatahku npm run build
     sudo cp -r dist/* /home/jatahku/web/jatahku.com/public_html/
     sudo cp /home/jatahku/web/jatahku.com/public_html/index.html /home/jatahku/web/jatahku.com/public_html/app.html
-    # Preserve landing + legal pages
-    for f in landing.html privacy.html terms.html favicon.svg og-image.png og-image.svg; do
-        if [ -f "/opt/jatahku/app/$f" ]; then
-            sudo cp "/opt/jatahku/app/$f" "/home/jatahku/web/jatahku.com/public_html/$f"
+    # Preserve landing + legal pages — use backup if available, fallback to repo
+    restore_file() {
+        local f="$1"
+        local src="/opt/jatahku/app/$f"
+        local backup="/opt/jatahku/backups/$f"
+        local dest="/home/jatahku/web/jatahku.com/public_html/$f"
+        if [ -f "$backup" ] && [ -s "$backup" ]; then
+            sudo cp "$backup" "$dest"
+        elif [ -f "$src" ] && [ -s "$src" ]; then
+            sudo cp "$src" "$dest"
         fi
+        # Update backup from destination (only if successfully restored and non-empty)
+        if [ -f "$dest" ] && [ -s "$dest" ]; then
+            sudo mkdir -p /opt/jatahku/backups
+            sudo cp "$dest" "$backup"
+        fi
+    }
+    for f in landing.html privacy.html terms.html favicon.svg og-image.png og-image.svg; do
+        restore_file "$f"
     done
 fi
 
