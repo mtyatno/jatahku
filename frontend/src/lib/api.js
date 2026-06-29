@@ -278,6 +278,30 @@ class ApiClient {
     return null;
   }
 
+  async batchSuggestEnvelopes(descriptions) {
+    try {
+      const res = await this.request('/transactions/suggest-envelopes', {
+        method: 'POST',
+        body: JSON.stringify({ descriptions }),
+      });
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
+  async batchCreateTransactions(items) {
+    try {
+      const res = await this.request('/transactions/batch', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: [] };
+    }
+  }
+
   async deleteTransaction(id) {
     const res = await this.request(`/transactions/${id}`, { method: 'DELETE' });
     return res.ok;

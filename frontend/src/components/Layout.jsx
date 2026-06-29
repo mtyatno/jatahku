@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
-import QuickAddTransaction from './QuickAddTransaction';
+import MultiAddTransaction from './MultiAddTransaction';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
@@ -145,7 +145,7 @@ export default function Layout() {
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabOpen(false)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl" onClick={e => e.stopPropagation()}>
             <h3 className="font-display font-bold text-lg mb-4">💰 Catat pengeluaran</h3>
-            <QuickAddTransaction onSaved={() => setFabOpen(false)} onCancel={() => setFabOpen(false)} />
+            <MultiAddTransaction onSaved={() => setFabOpen(false)} onCancel={() => setFabOpen(false)} />
           </div>
         </div>
       )}

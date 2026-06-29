@@ -42,6 +42,37 @@ class SuggestEnvelopeRequest(BaseModel):
     description: str
 
 
+class BatchSuggestEnvelopeRequest(BaseModel):
+    descriptions: list[str]
+
+
+class BatchSuggestEnvelopeResult(BaseModel):
+    index: int
+    envelope_id: str | None
+    envelope_name: str | None
+    confident: bool
+
+
+class BatchTransactionItem(BaseModel):
+    envelope_id: UUID
+    amount: Decimal
+    description: str
+    source: TransactionSource = TransactionSource.webapp
+    transaction_date: date | None = None
+
+
+class BatchTransactionCreate(BaseModel):
+    items: list[BatchTransactionItem]
+
+
+class BatchTransactionResult(BaseModel):
+    index: int
+    ok: bool
+    id: UUID | None = None
+    description: str
+    error: str | None = None
+
+
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     req: TransactionCreate,
@@ -146,6 +177,106 @@ async def suggest_envelope(
     if not envelope:
         return {"envelope_id": None, "envelope_name": None, "confident": False}
     return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)}
+
+
+@router.post("/suggest-envelopes")
+async def suggest_envelopes(
+    req: BatchSuggestEnvelopeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.txn_nlp import find_best_envelope
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = result.scalar_one_or_none()
+    if not hid:
+        return {"results": [{"index": i, "envelope_id": None, "envelope_name": None, "confident": False} for i in range(len(req.descriptions))]}
+
+    results = []
+    for i, desc in enumerate(req.descriptions):
+        if not desc or not desc.strip():
+            results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
+            continue
+        envelope, confident = await find_best_envelope(desc, hid, db, user.id)
+        if envelope:
+            results.append({"index": i, "envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)})
+        else:
+            results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
+    return {"results": results}
+
+
+@router.post("/batch")
+async def batch_create_transactions(
+    req: BatchTransactionCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
+    hid = result.scalar_one_or_none()
+
+    results = []
+    for i, item in enumerate(req.items):
+        if not hid:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Household not found"))
+            continue
+
+        result_env = await db.execute(
+            select(Envelope).where(Envelope.id == item.envelope_id, Envelope.household_id == hid)
+        )
+        envelope = result_env.scalar_one_or_none()
+        if not envelope:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
+            continue
+
+        check = await check_behavior(item.envelope_id, user.id, item.amount, db)
+        if not check.allowed:
+            msg = check.reason or ""
+            if check.check_type == "locked":
+                msg = f"Amplop dikunci. Tidak bisa belanja."
+            elif check.check_type == "daily_limit":
+                d = check.details
+                msg = f"Melebihi limit harian. Limit: {d.get('daily_limit',0)}, terpakai: {d.get('spent_today',0)}"
+            elif check.check_type == "not_funded":
+                msg = check.reason or "Amplop belum didanai"
+            elif check.check_type == "insufficient":
+                d = check.details
+                msg = f"Dana tidak cukup. Sisa: Rp{int(d.get('available', 0)):,}, diminta: Rp{int(d.get('requested', 0)):,}"
+            elif check.check_type == "cooling":
+                msg = f"Pembelian >= Rp{int(check.details.get('threshold', 0)):,} perlu cooling period 24 jam"
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=msg))
+            continue
+
+        txn = Transaction(
+            envelope_id=item.envelope_id,
+            user_id=user.id,
+            amount=item.amount,
+            description=item.description,
+            source=item.source,
+            transaction_date=item.transaction_date or date.today(),
+        )
+        db.add(txn)
+        await db.commit()
+        await db.refresh(txn)
+
+        try:
+            from app.services.streak import record_activity
+            await record_activity(db, user.id, getattr(user, "timezone", None))
+        except Exception:
+            pass
+
+        try:
+            from app.services.txn_nlp import save_learned_keywords
+            await save_learned_keywords(user.id, item.description, item.envelope_id, db)
+            await db.commit()
+        except Exception:
+            pass
+
+        results.append(BatchTransactionResult(index=i, ok=True, id=txn.id, description=item.description))
+
+    return results
 
 
 @router.get("/", response_model=list[TransactionResponse])
