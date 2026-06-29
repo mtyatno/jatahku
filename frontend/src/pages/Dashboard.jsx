@@ -329,7 +329,7 @@ function AdvisorCards({ cards }) {
               <div>
                 <p className="text-xs font-bold mb-1 uppercase tracking-wide" style={{ color: style.title }}>Advisor</p>
                 <p className="text-sm font-semibold" style={{ color: style.text }}>{card.title}</p>
-                <p className="text-xs mt-1" style={{ color: style.text }}>{card.body}</p>
+                <p className="text-xs mt-1" style={{ color: style.text, whiteSpace: 'pre-line' }}>{card.body}</p>
               </div>
               {card.primary_action?.route && (
                 <Link to={card.primary_action.route} className="text-xs font-semibold text-brand-600 hover:underline flex-shrink-0">
