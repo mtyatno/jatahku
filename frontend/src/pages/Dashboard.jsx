@@ -214,7 +214,7 @@ function WeeklyPattern({ data }) {
   );
 }
 
-function HeroAdvisor({ cards, prediction, todaySpent, envelopes }) {
+function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
   const hasPrediction = prediction && prediction.total_allocated > 0;
@@ -288,6 +288,33 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes }) {
           {safeDaily > 0 && (
             <p className="text-xs mt-2" style={{ color: style.muted }}>
               Batas aman <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {goals?.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: style.accent }}>🎯 Target Menabung</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => (
+              <div key={goal.id} className="flex items-center gap-2 text-sm" style={{ color: style.text }}>
+                <span>{goal.envelope_emoji}</span>
+                <span className="truncate">{goal.name}</span>
+                <span className="font-semibold ml-auto" style={{ color: goal.is_achieved ? '#059669' : goal.progress_pct > 0 ? '#D97706' : style.muted }}>
+                  {Math.round(goal.progress_pct)}%
+                </span>
+              </div>
+            ))}
+          </div>
+          {goals.filter(g => !g.is_achieved).length > 4 && (
+            <Link to="/envelopes" className="text-xs mt-1.5 inline-block" style={{ color: style.accent }}>
+              → Lihat {goals.filter(g => !g.is_achieved).length} target
+            </Link>
+          )}
+          {goals.some(g => g.is_achieved) && (
+            <p className="text-xs mt-1" style={{ color: '#059669' }}>
+              ✅ {goals.filter(g => g.is_achieved).length} target tercapai!
             </p>
           )}
         </div>
@@ -596,40 +623,6 @@ export default function Dashboard() {
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
-      {/* Goal targets */}
-      {goals?.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-gray-600">🎯 Target Menabung</h3>
-          {goals.filter(g => !g.is_achieved).map(goal => (
-            <div key={goal.id} className="card !p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">{goal.envelope_emoji}</span>
-                  <span className="font-medium text-sm">{goal.name}</span>
-                  <span className="text-xs text-gray-400">({goal.envelope_name})</span>
-                </div>
-                <span className="text-sm font-bold text-amber-600">{Math.round(goal.progress_pct)}%</span>
-              </div>
-              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
-              </div>
-              <div className="flex justify-between mt-1.5">
-                <span className="text-xs text-gray-400">{formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}</span>
-                {goal.monthly_needed !== null && (
-                  <span className="text-xs text-gray-400">📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</span>
-                )}
-              </div>
-            </div>
-          ))}
-          {goals.some(g => g.is_achieved) && (
-            <div className="text-xs text-center text-green-600 bg-green-50 border border-green-200 rounded-lg p-2">
-              ✅ {goals.filter(g => g.is_achieved).length} target sudah tercapai!
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Hero AI Advisor — today's status + strategic insights */}
       {isCurrentPeriod && (
         <HeroAdvisor
@@ -637,6 +630,7 @@ export default function Dashboard() {
           prediction={prediction}
           todaySpent={todaySpent}
           envelopes={envelopes}
+          goals={goals}
         />
       )}
 
