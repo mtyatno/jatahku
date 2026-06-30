@@ -85,7 +85,11 @@ async def create_income(
     # Validate all envelopes belong to this household
     for alloc in req.allocations:
         env_check = await db.execute(
-            select(Envelope).where(Envelope.id == alloc.envelope_id, Envelope.household_id == hid)
+            select(Envelope).where(
+                Envelope.id == alloc.envelope_id,
+                Envelope.household_id == hid,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            )
         )
         if not env_check.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=f"Amplop {alloc.envelope_id} tidak ditemukan")
@@ -157,7 +161,10 @@ async def list_incomes(
         alloc_result = await db.execute(
             select(Allocation, Envelope.name, Envelope.emoji)
             .join(Envelope, Allocation.envelope_id == Envelope.id)
-            .where(Allocation.income_id == inc.id)
+            .where(
+                Allocation.income_id == inc.id,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            )
         )
         allocs = [
             {"envelope": name, "emoji": emoji, "amount": str(a.amount)}
