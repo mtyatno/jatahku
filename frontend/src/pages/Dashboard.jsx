@@ -554,11 +554,13 @@ export default function Dashboard() {
         <div className="card">
           <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
           <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
-          {totalRollover !== 0 && (
-            <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
-              {totalRollover > 0 ? `+${formatShort(totalRollover)} rollover` : `−${formatShort(Math.abs(totalRollover))} dari periode lalu`}
-            </p>
-          )}
+          <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
+            {totalRollover > 0
+              ? `+${formatShort(totalRollover)} rollover`
+              : totalRollover < 0
+              ? `−${formatShort(Math.abs(totalRollover))} dari periode lalu`
+              : 'Belum ada rollover'}
+          </p>
         </div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Terpakai</p><p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Sisa bebas</p><p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p></div>
