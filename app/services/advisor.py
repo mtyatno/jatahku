@@ -165,91 +165,41 @@ async def _load_visible_envelopes(user, household_id, db):
     return result.scalars().all()
 
 
-async def _allocated_for_period(envelope_id, period_start: date, period_end: date, db) -> Decimal:
-    from sqlalchemy import func, select
-    from app.models.models import Allocation, Income
-
-    result = await db.execute(
-        select(func.coalesce(func.sum(Allocation.amount), 0))
-        .join(Income, Allocation.income_id == Income.id)
-        .where(
-            Allocation.envelope_id == envelope_id,
-            Income.income_date >= period_start,
-            Income.income_date <= period_end,
-        )
-    )
-    return _to_decimal(result.scalar())
+# ── Pure period-bucketing helpers (unit-tested; no DB) ──
+def _period_index(d: date, periods: list[tuple[date, date]]):
+    for i, (ps, pe) in enumerate(periods):
+        if ps <= d <= pe:
+            return i
+    return None
 
 
-async def _spent_for_period(envelope_id, period_start: date, period_end: date, db) -> Decimal:
-    from sqlalchemy import func, select
-    from app.models.models import Transaction
-
-    result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-        )
-    )
-    return _to_decimal(result.scalar())
+def _sum_by_period(rows, periods) -> list[Decimal]:
+    """rows: iterable of (date, amount). Returns Decimal sum per period index."""
+    sums = [Decimal("0") for _ in periods]
+    for d, amount in rows:
+        idx = _period_index(d, periods)
+        if idx is not None:
+            sums[idx] += _to_decimal(amount)
+    return sums
 
 
-async def _transaction_count_for_period(envelope_id, period_start: date, period_end: date, db) -> int:
-    from sqlalchemy import func, select
-    from app.models.models import Transaction
-
-    result = await db.execute(
-        select(func.count(Transaction.id)).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-        )
-    )
-    return int(result.scalar() or 0)
+def _count_by_period(dates, periods) -> list[int]:
+    counts = [0 for _ in periods]
+    for d in dates:
+        idx = _period_index(d, periods)
+        if idx is not None:
+            counts[idx] += 1
+    return counts
 
 
-async def _rollover_for_period(envelope, payday_day: int, period_start: date, db) -> Decimal:
-    if not envelope.is_rollover:
-        return Decimal("0")
-
-    from sqlalchemy import select
-    from app.core.period import get_previous_period
-    from app.models.models import MonthlySnapshot
-
-    previous_start, _ = get_previous_period(payday_day, period_start)
-    result = await db.execute(
-        select(MonthlySnapshot).where(
-            MonthlySnapshot.envelope_id == envelope.id,
-            MonthlySnapshot.year == previous_start.year,
-            MonthlySnapshot.month == previous_start.month,
-        )
-    )
-    snapshot = result.scalar_one_or_none()
-    return _to_decimal(snapshot.rollover_amount) if snapshot and snapshot.rollover_amount else Decimal("0")
-
-
-async def _reserved_monthly(envelope_id, db) -> Decimal:
-    from sqlalchemy import select
-    from app.models.models import RecurringFrequency, RecurringTransaction
-
-    result = await db.execute(
-        select(RecurringTransaction).where(
-            RecurringTransaction.envelope_id == envelope_id,
-            RecurringTransaction.is_active == True,
-        )
-    )
-    reserved = Decimal("0")
-    for recurring in result.scalars().all():
-        if recurring.frequency == RecurringFrequency.weekly:
-            reserved += recurring.amount * 4
-        elif recurring.frequency == RecurringFrequency.yearly:
-            reserved += recurring.amount / 12
-        else:
-            reserved += recurring.amount
-    return reserved
+def _monthly_reserve(amount, frequency) -> Decimal:
+    """Monthly-equivalent reserve for a recurring transaction frequency."""
+    from app.models.models import RecurringFrequency
+    if frequency == RecurringFrequency.weekly:
+        return _to_decimal(amount) * 4
+    if frequency == RecurringFrequency.yearly:
+        return _to_decimal(amount) / 12
+    return _to_decimal(amount)
 
 
 async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
@@ -263,25 +213,100 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
     periods = get_last_n_periods(payday_day, periods_count)
     envelopes = await _load_visible_envelopes(user, household_id, db)
     stats = {}
+    if not envelopes or not periods:
+        return {
+            "household_id": household_id,
+            "payday_day": payday_day,
+            "periods": periods,
+            "envelopes": envelopes,
+            "stats": stats,
+        }
+
+    # Batched fetches — a fixed handful of queries regardless of envelope/period
+    # count (was O(envelopes x periods x 4) sequential round-trips before).
+    from collections import defaultdict
+    from sqlalchemy import select
+    from app.core.period import get_previous_period
+    from app.models.models import (
+        Allocation, Income, Transaction, RecurringTransaction, MonthlySnapshot,
+    )
+
+    env_ids = [e.id for e in envelopes]
+    range_start = periods[0][0]
+    range_end = periods[-1][1]
+
+    alloc_rows = (await db.execute(
+        select(Allocation.envelope_id, Income.income_date, Allocation.amount)
+        .join(Income, Allocation.income_id == Income.id)
+        .where(
+            Allocation.envelope_id.in_(env_ids),
+            Income.income_date >= range_start,
+            Income.income_date <= range_end,
+        )
+    )).all()
+    alloc_by_env = defaultdict(list)
+    for env_id, income_date, amount in alloc_rows:
+        alloc_by_env[str(env_id)].append((income_date, amount))
+
+    txn_rows = (await db.execute(
+        select(Transaction.envelope_id, Transaction.transaction_date, Transaction.amount)
+        .where(
+            Transaction.envelope_id.in_(env_ids),
+            Transaction.is_deleted == False,
+            Transaction.transaction_date >= range_start,
+            Transaction.transaction_date <= range_end,
+        )
+    )).all()
+    txn_by_env = defaultdict(list)
+    for env_id, txn_date, amount in txn_rows:
+        txn_by_env[str(env_id)].append((txn_date, amount))
+
+    rec_rows = (await db.execute(
+        select(RecurringTransaction).where(
+            RecurringTransaction.envelope_id.in_(env_ids),
+            RecurringTransaction.is_active == True,
+        )
+    )).scalars().all()
+    reserved_by_env = defaultdict(lambda: Decimal("0"))
+    for rec in rec_rows:
+        reserved_by_env[str(rec.envelope_id)] += _monthly_reserve(rec.amount, rec.frequency)
+
+    # Each period's rollover comes from the PREVIOUS period's snapshot (year/month).
+    prev_keys = [get_previous_period(payday_day, ps)[0] for ps, _ in periods]
+    snap_rows = (await db.execute(
+        select(MonthlySnapshot).where(MonthlySnapshot.envelope_id.in_(env_ids))
+    )).scalars().all()
+    snap_map = {}
+    for s in snap_rows:
+        snap_map[(str(s.envelope_id), s.year, s.month)] = (
+            _to_decimal(s.rollover_amount) if s.rollover_amount else Decimal("0")
+        )
 
     for envelope in envelopes:
+        eid = str(envelope.id)
+        alloc_sums = _sum_by_period(alloc_by_env.get(eid, []), periods)
+        spent_pairs = txn_by_env.get(eid, [])
+        spent_sums = _sum_by_period(spent_pairs, periods)
+        counts = _count_by_period([d for d, _ in spent_pairs], periods)
+        reserved = reserved_by_env.get(eid, Decimal("0"))
+
         envelope_stats = []
-        reserved = await _reserved_monthly(envelope.id, db)
-        for period_start, period_end in periods:
-            allocated = await _allocated_for_period(envelope.id, period_start, period_end, db)
-            spent = await _spent_for_period(envelope.id, period_start, period_end, db)
-            transaction_count = await _transaction_count_for_period(envelope.id, period_start, period_end, db)
-            rollover = await _rollover_for_period(envelope, payday_day, period_start, db)
+        for i, (period_start, period_end) in enumerate(periods):
+            if envelope.is_rollover:
+                prev = prev_keys[i]
+                rollover = snap_map.get((eid, prev.year, prev.month), Decimal("0"))
+            else:
+                rollover = Decimal("0")
             envelope_stats.append({
                 "period_start": period_start,
                 "period_end": period_end,
-                "allocated": allocated,
-                "spent": spent,
-                "transaction_count": transaction_count,
+                "allocated": alloc_sums[i],
+                "spent": spent_sums[i],
+                "transaction_count": counts[i],
                 "rollover": rollover,
                 "reserved": reserved,
             })
-        stats[str(envelope.id)] = envelope_stats
+        stats[eid] = envelope_stats
 
     return {
         "household_id": household_id,

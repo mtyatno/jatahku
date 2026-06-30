@@ -11,7 +11,42 @@ from app.services.advisor import (
     detect_interval,
     normalize_description,
     _fmt_rp,
+    _period_index,
+    _sum_by_period,
+    _count_by_period,
 )
+
+
+class TestPeriodBucketing(unittest.TestCase):
+    PERIODS = [
+        (date(2026, 1, 1), date(2026, 1, 31)),
+        (date(2026, 2, 1), date(2026, 2, 28)),
+        (date(2026, 3, 1), date(2026, 3, 31)),
+    ]
+
+    def test_period_index_inclusive_boundaries(self):
+        self.assertEqual(_period_index(date(2026, 1, 1), self.PERIODS), 0)
+        self.assertEqual(_period_index(date(2026, 1, 31), self.PERIODS), 0)
+        self.assertEqual(_period_index(date(2026, 2, 15), self.PERIODS), 1)
+        self.assertEqual(_period_index(date(2026, 3, 31), self.PERIODS), 2)
+        self.assertIsNone(_period_index(date(2025, 12, 31), self.PERIODS))
+        self.assertIsNone(_period_index(date(2026, 4, 1), self.PERIODS))
+
+    def test_sum_by_period_buckets_amounts(self):
+        rows = [
+            (date(2026, 1, 5), Decimal("10000")),
+            (date(2026, 1, 20), Decimal("5000")),
+            (date(2026, 2, 2), Decimal("7000")),
+            (date(2025, 12, 9), Decimal("99999")),  # out of range — ignored
+        ]
+        self.assertEqual(
+            _sum_by_period(rows, self.PERIODS),
+            [Decimal("15000"), Decimal("7000"), Decimal("0")],
+        )
+
+    def test_count_by_period(self):
+        dates = [date(2026, 1, 5), date(2026, 1, 6), date(2026, 3, 1), date(2026, 4, 9)]
+        self.assertEqual(_count_by_period(dates, self.PERIODS), [2, 0, 1])
 
 
 class TestFmtRp(unittest.TestCase):
