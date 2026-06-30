@@ -41,6 +41,13 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "UPDATE envelopes SET purpose = 'saving' WHERE LOWER(name) = 'tabungan' AND purpose = 'expense'"
             ))
+            await conn.execute(text(
+                "UPDATE envelopes e SET budget_amount = sub.allocated "
+                "FROM (SELECT a.envelope_id, COALESCE(SUM(a.amount), 0) AS allocated "
+                "FROM allocations a GROUP BY a.envelope_id) sub "
+                "WHERE e.id = sub.envelope_id AND e.purpose = 'expense' "
+                "AND e.budget_amount = 0 AND sub.allocated > 0"
+            ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield

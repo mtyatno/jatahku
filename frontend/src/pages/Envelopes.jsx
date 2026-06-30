@@ -133,6 +133,8 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
     if (isSavingLike) {
       data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
       data.is_rollover = true;
+    } else if (purpose === 'expense' && Number(data.budget_amount) <= 0) {
+      data.budget_amount = Number(fundAmount || 500000);
     }
     const createRes = await api.createEnvelope(data);
     if (!createRes.ok) { setSaving(false); setError('Gagal buat amplop'); return; }
