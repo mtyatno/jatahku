@@ -21,6 +21,9 @@ _ESSENTIAL_KEYWORDS = {
     "makan", "belanja", "tagihan", "listrik", "air", "internet", "transport",
     "transportasi", "bensin", "sewa", "kontrak", "sekolah", "asuransi",
 }
+# Don't project depletion/overspend before this many days into the period —
+# early-period spend rates are too volatile and produce false alarms.
+_MIN_PROJECTION_DAYS = 3
 
 
 def normalize_description(text: str) -> str:
@@ -72,6 +75,14 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value or 0))
 
 
+def _is_saving_sink(item) -> bool:
+    """Pure-savings envelope that receives leftover income — purpose 'saving'
+    (or the legacy 'Tabungan' name as fallback)."""
+    if str(item.get("purpose") or "") == "saving":
+        return True
+    return str(item.get("name", "")).lower() == "tabungan"
+
+
 def allocate_income_to_targets(income_amount: Decimal, envelopes: list[dict]) -> dict:
     remaining_income = _to_decimal(income_amount)
     items = []
@@ -102,7 +113,7 @@ def allocate_income_to_targets(income_amount: Decimal, envelopes: list[dict]) ->
 
     target_items = sorted(sorted_items, key=lambda item: (item["minimum"] > 0, item.get("priority", 50)))
     for item in target_items:
-        if item["name"].lower() == "tabungan" or remaining_income <= 0:
+        if _is_saving_sink(item) or remaining_income <= 0:
             continue
         target_gap = max(item["target"] - item["recommended_amount"], Decimal("0"))
         if target_gap <= 0:
@@ -111,9 +122,9 @@ def allocate_income_to_targets(income_amount: Decimal, envelopes: list[dict]) ->
         item["recommended_amount"] += amount
         remaining_income -= amount
 
-    tabungan = next((item for item in items if item["name"].lower() == "tabungan"), None)
-    if tabungan and remaining_income > 0:
-        tabungan["recommended_amount"] += remaining_income
+    sink = next((item for item in items if _is_saving_sink(item)), None)
+    if sink and remaining_income > 0:
+        sink["recommended_amount"] += remaining_income
         remaining_income = Decimal("0")
 
     return {
@@ -154,91 +165,41 @@ async def _load_visible_envelopes(user, household_id, db):
     return result.scalars().all()
 
 
-async def _allocated_for_period(envelope_id, period_start: date, period_end: date, db) -> Decimal:
-    from sqlalchemy import func, select
-    from app.models.models import Allocation, Income
-
-    result = await db.execute(
-        select(func.coalesce(func.sum(Allocation.amount), 0))
-        .join(Income, Allocation.income_id == Income.id)
-        .where(
-            Allocation.envelope_id == envelope_id,
-            Income.income_date >= period_start,
-            Income.income_date <= period_end,
-        )
-    )
-    return _to_decimal(result.scalar())
+# ── Pure period-bucketing helpers (unit-tested; no DB) ──
+def _period_index(d: date, periods: list[tuple[date, date]]):
+    for i, (ps, pe) in enumerate(periods):
+        if ps <= d <= pe:
+            return i
+    return None
 
 
-async def _spent_for_period(envelope_id, period_start: date, period_end: date, db) -> Decimal:
-    from sqlalchemy import func, select
-    from app.models.models import Transaction
-
-    result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-        )
-    )
-    return _to_decimal(result.scalar())
+def _sum_by_period(rows, periods) -> list[Decimal]:
+    """rows: iterable of (date, amount). Returns Decimal sum per period index."""
+    sums = [Decimal("0") for _ in periods]
+    for d, amount in rows:
+        idx = _period_index(d, periods)
+        if idx is not None:
+            sums[idx] += _to_decimal(amount)
+    return sums
 
 
-async def _transaction_count_for_period(envelope_id, period_start: date, period_end: date, db) -> int:
-    from sqlalchemy import func, select
-    from app.models.models import Transaction
-
-    result = await db.execute(
-        select(func.count(Transaction.id)).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-        )
-    )
-    return int(result.scalar() or 0)
+def _count_by_period(dates, periods) -> list[int]:
+    counts = [0 for _ in periods]
+    for d in dates:
+        idx = _period_index(d, periods)
+        if idx is not None:
+            counts[idx] += 1
+    return counts
 
 
-async def _rollover_for_period(envelope, payday_day: int, period_start: date, db) -> Decimal:
-    if not envelope.is_rollover:
-        return Decimal("0")
-
-    from sqlalchemy import select
-    from app.core.period import get_previous_period
-    from app.models.models import MonthlySnapshot
-
-    previous_start, _ = get_previous_period(payday_day, period_start)
-    result = await db.execute(
-        select(MonthlySnapshot).where(
-            MonthlySnapshot.envelope_id == envelope.id,
-            MonthlySnapshot.year == previous_start.year,
-            MonthlySnapshot.month == previous_start.month,
-        )
-    )
-    snapshot = result.scalar_one_or_none()
-    return _to_decimal(snapshot.rollover_amount) if snapshot and snapshot.rollover_amount else Decimal("0")
-
-
-async def _reserved_monthly(envelope_id, db) -> Decimal:
-    from sqlalchemy import select
-    from app.models.models import RecurringFrequency, RecurringTransaction
-
-    result = await db.execute(
-        select(RecurringTransaction).where(
-            RecurringTransaction.envelope_id == envelope_id,
-            RecurringTransaction.is_active == True,
-        )
-    )
-    reserved = Decimal("0")
-    for recurring in result.scalars().all():
-        if recurring.frequency == RecurringFrequency.weekly:
-            reserved += recurring.amount * 4
-        elif recurring.frequency == RecurringFrequency.yearly:
-            reserved += recurring.amount / 12
-        else:
-            reserved += recurring.amount
-    return reserved
+def _monthly_reserve(amount, frequency) -> Decimal:
+    """Monthly-equivalent reserve for a recurring transaction frequency."""
+    from app.models.models import RecurringFrequency
+    if frequency == RecurringFrequency.weekly:
+        return _to_decimal(amount) * 4
+    if frequency == RecurringFrequency.yearly:
+        return _to_decimal(amount) / 12
+    return _to_decimal(amount)
 
 
 async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
@@ -252,25 +213,100 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
     periods = get_last_n_periods(payday_day, periods_count)
     envelopes = await _load_visible_envelopes(user, household_id, db)
     stats = {}
+    if not envelopes or not periods:
+        return {
+            "household_id": household_id,
+            "payday_day": payday_day,
+            "periods": periods,
+            "envelopes": envelopes,
+            "stats": stats,
+        }
+
+    # Batched fetches — a fixed handful of queries regardless of envelope/period
+    # count (was O(envelopes x periods x 4) sequential round-trips before).
+    from collections import defaultdict
+    from sqlalchemy import select
+    from app.core.period import get_previous_period
+    from app.models.models import (
+        Allocation, Income, Transaction, RecurringTransaction, MonthlySnapshot,
+    )
+
+    env_ids = [e.id for e in envelopes]
+    range_start = periods[0][0]
+    range_end = periods[-1][1]
+
+    alloc_rows = (await db.execute(
+        select(Allocation.envelope_id, Income.income_date, Allocation.amount)
+        .join(Income, Allocation.income_id == Income.id)
+        .where(
+            Allocation.envelope_id.in_(env_ids),
+            Income.income_date >= range_start,
+            Income.income_date <= range_end,
+        )
+    )).all()
+    alloc_by_env = defaultdict(list)
+    for env_id, income_date, amount in alloc_rows:
+        alloc_by_env[str(env_id)].append((income_date, amount))
+
+    txn_rows = (await db.execute(
+        select(Transaction.envelope_id, Transaction.transaction_date, Transaction.amount)
+        .where(
+            Transaction.envelope_id.in_(env_ids),
+            Transaction.is_deleted == False,
+            Transaction.transaction_date >= range_start,
+            Transaction.transaction_date <= range_end,
+        )
+    )).all()
+    txn_by_env = defaultdict(list)
+    for env_id, txn_date, amount in txn_rows:
+        txn_by_env[str(env_id)].append((txn_date, amount))
+
+    rec_rows = (await db.execute(
+        select(RecurringTransaction).where(
+            RecurringTransaction.envelope_id.in_(env_ids),
+            RecurringTransaction.is_active == True,
+        )
+    )).scalars().all()
+    reserved_by_env = defaultdict(lambda: Decimal("0"))
+    for rec in rec_rows:
+        reserved_by_env[str(rec.envelope_id)] += _monthly_reserve(rec.amount, rec.frequency)
+
+    # Each period's rollover comes from the PREVIOUS period's snapshot (year/month).
+    prev_keys = [get_previous_period(payday_day, ps)[0] for ps, _ in periods]
+    snap_rows = (await db.execute(
+        select(MonthlySnapshot).where(MonthlySnapshot.envelope_id.in_(env_ids))
+    )).scalars().all()
+    snap_map = {}
+    for s in snap_rows:
+        snap_map[(str(s.envelope_id), s.year, s.month)] = (
+            _to_decimal(s.rollover_amount) if s.rollover_amount else Decimal("0")
+        )
 
     for envelope in envelopes:
+        eid = str(envelope.id)
+        alloc_sums = _sum_by_period(alloc_by_env.get(eid, []), periods)
+        spent_pairs = txn_by_env.get(eid, [])
+        spent_sums = _sum_by_period(spent_pairs, periods)
+        counts = _count_by_period([d for d, _ in spent_pairs], periods)
+        reserved = reserved_by_env.get(eid, Decimal("0"))
+
         envelope_stats = []
-        reserved = await _reserved_monthly(envelope.id, db)
-        for period_start, period_end in periods:
-            allocated = await _allocated_for_period(envelope.id, period_start, period_end, db)
-            spent = await _spent_for_period(envelope.id, period_start, period_end, db)
-            transaction_count = await _transaction_count_for_period(envelope.id, period_start, period_end, db)
-            rollover = await _rollover_for_period(envelope, payday_day, period_start, db)
+        for i, (period_start, period_end) in enumerate(periods):
+            if envelope.is_rollover:
+                prev = prev_keys[i]
+                rollover = snap_map.get((eid, prev.year, prev.month), Decimal("0"))
+            else:
+                rollover = Decimal("0")
             envelope_stats.append({
                 "period_start": period_start,
                 "period_end": period_end,
-                "allocated": allocated,
-                "spent": spent,
-                "transaction_count": transaction_count,
+                "allocated": alloc_sums[i],
+                "spent": spent_sums[i],
+                "transaction_count": counts[i],
                 "rollover": rollover,
                 "reserved": reserved,
             })
-        stats[str(envelope.id)] = envelope_stats
+        stats[eid] = envelope_stats
 
     return {
         "household_id": household_id,
@@ -317,6 +353,9 @@ async def build_advisor_insights(user, db) -> dict:
     total_spent = Decimal("0")
     total_reserved = Decimal("0")
     total_free = Decimal("0")
+    expense_allocated = Decimal("0")
+    expense_spent = Decimal("0")
+    sinking_under_funded = False
 
     # Load goals for saving/sinking_fund envelopes
     from sqlalchemy import select
@@ -343,13 +382,17 @@ async def build_advisor_insights(user, db) -> dict:
         available = allocated + rollover
         remaining = available - spent
         free = remaining - reserved
+        purpose = str(getattr(envelope, "purpose", "expense") or "expense")
 
         total_allocated += allocated
         total_spent += spent
         total_reserved += reserved
         total_free += free
+        if purpose == "expense":
+            expense_allocated += allocated
+            expense_spent += spent
 
-        if available > 0 and spent > 0 and str(getattr(envelope, "purpose", "expense")) == "expense":
+        if available > 0 and spent > 0 and purpose == "expense" and days_used >= _MIN_PROJECTION_DAYS:
             projected = (spent / days_used) * days_total
             if projected > available and days_remaining > 0:
                 pct = int(spent / available * 100)
@@ -363,13 +406,12 @@ async def build_advisor_insights(user, db) -> dict:
                     f"Masih {days_remaining} hari. Proyeksi habis {max(1, int(shortage / daily_rate))} hari sebelum periode selesai.",
                     "/allocate",
                     [
-                        f"Terpakai Rp{_money(spent):,} dari Rp{_money(available):,}",
-                        f"Rata-rata Rp{_money(daily_rate):,}/hari",
+                        f"Terpakai Rp{_fmt_rp(spent)} dari Rp{_fmt_rp(available)}",
+                        f"Rata-rata Rp{_fmt_rp(daily_rate)}/hari",
                     ],
                 ))
 
         # Saving: collect item for consolidated card
-        purpose = str(getattr(envelope, "purpose", "expense"))
         goal = goals_by_env.get(str(envelope.id))
         if purpose in ("saving", "sinking_fund") and goal:
             balance = available - spent
@@ -389,13 +431,13 @@ async def build_advisor_insights(user, db) -> dict:
                 months_to_goal = max(1, round(float(months_to_goal)))
                 capped = months_to_goal > 120
 
-                line = f"{envelope.emoji} {goal.name}: {int(pct)}% (Rp{_money(balance):,} / Rp{_money(target):,})"
-                if avg_contribution <= 0 or (allocated <= 0 and not hist_allocations):
+                line = f"{envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
+                if allocated <= 0 and not hist_allocations:
                     line += " — belum ada setoran"
                 elif capped:
-                    line += f" — setoran Rp{_money(avg_contribution):,}/bln terlalu kecil, estimasi >10 tahun"
+                    line += f" — setoran Rp{_fmt_rp(avg_contribution)}/bln terlalu kecil, estimasi >10 tahun"
                 else:
-                    line += f" — estimasi {_fmt_months(months_to_goal)} (Rp{_money(avg_contribution):,}/bln)"
+                    line += f" — estimasi {_fmt_months(months_to_goal)} (Rp{_fmt_rp(avg_contribution)}/bln)"
                 saving_items.append(line)
 
             elif purpose == "sinking_fund":
@@ -406,11 +448,12 @@ async def build_advisor_insights(user, db) -> dict:
                     if allocated >= monthly_needed:
                         line = f"✅ {envelope.emoji} {goal.name}: {int(pct)}% — on track ({_fmt_months(months_remaining)})"
                     elif allocated > 0:
-                        line = f"⚠️ {envelope.emoji} {goal.name}: {int(pct)}% — butuh Rp{_money(monthly_needed):,}/bln (baru Rp{_money(allocated):,})"
+                        sinking_under_funded = True
+                        line = f"⚠️ {envelope.emoji} {goal.name}: {int(pct)}% — butuh Rp{_fmt_rp(monthly_needed)}/bln (baru Rp{_fmt_rp(allocated)})"
                     else:
-                        line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% — {_fmt_months(months_remaining)}, perlu Rp{_money(monthly_needed):,}/bln"
+                        line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% — {_fmt_months(months_remaining)}, perlu Rp{_fmt_rp(monthly_needed)}/bln"
                 else:
-                    line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_money(balance):,} / Rp{_money(target):,})"
+                    line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
                 sinking_items.append(line)
 
         if reserved > 0 and free < reserved * Decimal("0.25"):
@@ -419,11 +462,11 @@ async def build_advisor_insights(user, db) -> dict:
                 "subscription_pressure",
                 "warning",
                 f"Reserve rutin menekan amplop {envelope.name}",
-                f"Dana bebas setelah reserve tinggal Rp{_money(free):,}.",
+                f"Dana bebas setelah reserve tinggal Rp{_fmt_rp(free)}.",
                 "/langganan",
                 [
-                    f"Reserve rutin Rp{_money(reserved):,}",
-                    f"Sisa sebelum reserve Rp{_money(remaining):,}",
+                    f"Reserve rutin Rp{_fmt_rp(reserved)}",
+                    f"Sisa sebelum reserve Rp{_fmt_rp(remaining)}",
                 ],
             ))
 
@@ -440,7 +483,7 @@ async def build_advisor_insights(user, db) -> dict:
                 "allocation_drift",
                 "info",
                 f"Target {envelope.name} lebih rendah dari pola aktual",
-                f"Median historis Rp{_money(historical_median):,}, target sekarang Rp{_money(budget_target):,}.",
+                f"Median historis Rp{_fmt_rp(historical_median)}, target sekarang Rp{_fmt_rp(budget_target)}.",
                 "/allocate",
                 ["Pola ini bisa membuat amplop cepat menipis."],
             ))
@@ -456,7 +499,7 @@ async def build_advisor_insights(user, db) -> dict:
                 body_parts.append("")
             body_parts.append("📅 Dana persiapan:")
             body_parts.extend(f"  • {item}" for item in sinking_items)
-        severity = "warning" if any("⚠️" in s for s in sinking_items) else "info"
+        severity = "warning" if sinking_under_funded else "info"
         cards.append(_card(
             "goals:consolidated",
             "goal_progress",
@@ -467,20 +510,23 @@ async def build_advisor_insights(user, db) -> dict:
             ["Buka halaman amplop untuk detail dan edit target."],
         ))
 
-    if total_allocated > 0:
-        projected_total = (total_spent / days_used) * days_total
-        if projected_total > total_allocated:
-            shortage = projected_total - total_allocated
+    # Global overspend — expense envelopes only (savings/sinking inflate
+    # allocated and aren't "spent", which would mask the signal). Matches the
+    # expense-only basis of /analytics/prediction and the "Sisa bebas" KPI.
+    if expense_allocated > 0 and days_used >= _MIN_PROJECTION_DAYS:
+        projected_total = (expense_spent / days_used) * days_total
+        if projected_total > expense_allocated:
+            shortage = projected_total - expense_allocated
             cards.append(_card(
                 "budget_overspend:current",
                 "budget_overspend",
                 "danger",
                 "Budget periode ini berisiko jebol",
-                f"Proyeksi overspend sekitar Rp{_money(shortage):,} sampai gajian berikutnya.",
+                f"Proyeksi overspend sekitar Rp{_fmt_rp(shortage)} sampai gajian berikutnya.",
                 "/analytics",
                 [
-                    f"Terpakai Rp{_money(total_spent):,} dari Rp{_money(total_allocated):,}",
-                    f"Reserve rutin Rp{_money(total_reserved):,}",
+                    f"Terpakai Rp{_fmt_rp(expense_spent)} dari Rp{_fmt_rp(expense_allocated)}",
+                    f"Reserve rutin Rp{_fmt_rp(total_reserved)}",
                 ],
             ))
 
@@ -495,6 +541,11 @@ async def build_advisor_insights(user, db) -> dict:
 
 def _money(value: Decimal) -> int:
     return int(_to_decimal(value).quantize(Decimal("1")))
+
+
+def _fmt_rp(value) -> str:
+    """Indonesian Rupiah grouping with dots: 1520000 -> '1.520.000'."""
+    return f"{_money(value):,}".replace(",", ".")
 
 
 def _fmt_months(months: int) -> str:
@@ -524,8 +575,8 @@ def _is_essential_envelope(name: str) -> bool:
     return bool(set(normalized.split()) & _ESSENTIAL_KEYWORDS)
 
 
-def _allocation_priority(name: str, minimum: Decimal, essential: bool) -> int:
-    if name.lower() == "tabungan":
+def _allocation_priority(name: str, minimum: Decimal, essential: bool, purpose: str = "expense") -> int:
+    if purpose == "saving" or name.lower() == "tabungan":
         return 90
     if minimum > 0:
         return 10
@@ -574,16 +625,17 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             minimum = historical_average * Decimal("0.6")
 
         target = max(budget_target, historical_average, minimum)
-        priority = _allocation_priority(envelope.name, minimum, essential)
+        env_purpose = str(getattr(envelope, "purpose", "expense") or "expense")
+        priority = _allocation_priority(envelope.name, minimum, essential, env_purpose)
         reasons = []
         if recurring_reserve > 0:
-            reasons.append(f"Reserve langganan sekitar Rp{_money(recurring_reserve):,}/periode")
+            reasons.append(f"Reserve langganan sekitar Rp{_fmt_rp(recurring_reserve)}/periode")
         if negative_repayment > 0:
-            reasons.append(f"Perlu menutup rollover negatif Rp{_money(negative_repayment):,}")
+            reasons.append(f"Perlu menutup rollover negatif Rp{_fmt_rp(negative_repayment)}")
         if historical_average > 0:
-            reasons.append(f"Median historis Rp{_money(historical_average):,}")
+            reasons.append(f"Median historis Rp{_fmt_rp(historical_average)}")
         if not reasons and budget_target > 0:
-            reasons.append(f"Mengikuti target amplop Rp{_money(budget_target):,}")
+            reasons.append(f"Mengikuti target amplop Rp{_fmt_rp(budget_target)}")
 
         if recurring_reserve > target * Decimal("0.7") and target > 0:
             risk_level = "reserve_pressure"
@@ -599,6 +651,7 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "minimum": minimum.quantize(Decimal("1")),
             "target": target.quantize(Decimal("1")),
             "priority": priority,
+            "purpose": env_purpose,
             "is_locked": bool(getattr(envelope, "is_locked", False)),
         }
         allocation_inputs.append(allocation_input)
@@ -833,7 +886,7 @@ async def build_sinking_fund_advice(user, db) -> dict:
 
         evidence = [
             f"{len(group['transactions'])} transaksi cocok: {', '.join(group['samples'][:2])}",
-            f"Nominal {amount_info['kind']} sekitar Rp{_money(suggested_amount):,}",
+            f"Nominal {amount_info['kind']} sekitar Rp{_fmt_rp(suggested_amount)}",
         ]
         if interval.get("median_days"):
             evidence.append(f"Interval median {int(interval['median_days'])} hari")
@@ -861,7 +914,7 @@ async def build_sinking_fund_advice(user, db) -> dict:
             "frequency": frequency,
             "next_expected_date": _next_expected_date(group["dates"], {**interval, "frequency": frequency}),
             "evidence": evidence[:3],
-            "impact": f"Sisihkan sekitar Rp{_money(monthly_reserve):,}/periode untuk menjaga amplop {envelope.name} tetap siap.",
+            "impact": f"Sisihkan sekitar Rp{_fmt_rp(monthly_reserve)}/periode untuk menjaga amplop {envelope.name} tetap siap.",
             "actions": [
                 {
                     "kind": recommendation_type,
