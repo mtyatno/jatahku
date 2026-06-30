@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort, titleCase } from '../lib/utils';
+import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
@@ -402,7 +403,7 @@ function TransferModal({ env, envelopes, onClose, onDone }) {
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
         <h3 className="font-display font-bold text-lg mb-1">Geser Dana</h3>
-        <p className="text-sm text-gray-400 mb-4">Amplop: {env.emoji} {titleCase(env.name)} (sisa {formatCurrency(Number(env.remaining))})</p>
+        <p className="text-sm text-gray-400 mb-4 flex items-center gap-1.5">Amplop: <EnvelopeIcon value={env.emoji} size={16} color="currentColor" /> {titleCase(env.name)} (sisa {formatCurrency(Number(env.remaining))})</p>
 
         <div className="flex gap-2 mb-4">
           <button type="button" onClick={() => { setDirection('to'); setOtherId(''); setAmount(''); }}
@@ -508,7 +509,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   return (
     <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2.5"><span className="text-2xl">{env.emoji || '📁'}</span><div><h3 className="font-semibold">{titleCase(env.name)}</h3><p className="text-xs text-gray-400">{env.is_personal ? '🔒 Personal' : '👥 Shared'} · {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</p></div></div>
+        <div className="flex items-center gap-2.5"><EnvelopeIcon value={env.emoji} size={28} color={isSavingLike ? SAVING : BRAND} /><div><h3 className="font-semibold">{titleCase(env.name)}</h3><p className="text-xs text-gray-400 flex items-center gap-1">{env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>} <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span></p></div></div>
         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
           <button onClick={() => onTransfer(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Geser</button>
           <button onClick={() => onEdit(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Edit</button>

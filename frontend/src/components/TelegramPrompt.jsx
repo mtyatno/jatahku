@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { Icon, BRAND } from './Icon';
 
 export default function TelegramPrompt() {
   const { user } = useAuth();
@@ -44,19 +45,19 @@ export default function TelegramPrompt() {
 
         <div className="bg-gray-50 rounded-xl p-4 space-y-2">
           <div className="flex items-center gap-3 text-sm">
-            <span className="text-lg">⚡</span>
+            <Icon name="bolt" size={18} color={BRAND} />
             <span>Catat pengeluaran dalam 3 detik</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <span className="text-lg">🔔</span>
+            <Icon name="bell" size={18} color={BRAND} />
             <span>Notifikasi budget & langganan otomatis</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <span className="text-lg">📊</span>
+            <Icon name="dashboard" size={18} color={BRAND} />
             <span>Ringkasan harian & mingguan</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <span className="text-lg">🔄</span>
+            <Icon name="langganan" size={18} color={BRAND} />
             <span>Sync real-time dengan WebApp</span>
           </div>
         </div>

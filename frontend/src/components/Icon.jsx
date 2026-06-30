@@ -6,6 +6,7 @@ import {
   ChartBar, Envelope, Receipt, HandCoins, ArrowsClockwise, GearSix,
   Bell, Sun, Moon, CaretDown, Plus, Fire, Sparkle, Money, ShoppingCart,
   CheckCircle, Lock, UsersThree, Target, PiggyBank, Wallet, SignOut, ShieldCheck,
+  Warning, Trophy, TelegramLogo,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -37,6 +38,10 @@ const UI = {
   income: Money,
   expense: ShoppingCart,
   check: CheckCircle,
+  warning: Warning,
+  bolt: Lightning,
+  trophy: Trophy,
+  telegram: TelegramLogo,
   lock: Lock,
   users: UsersThree,
   target: Target,

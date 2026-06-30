@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
+import { EnvelopeIcon } from './Icon';
 
 const EMOJI_OPTIONS = ['🍜','🚗','🏠','📱','🎬','📚','👶','🏥','💊','🎁','👕','🐾','🏋️','✈️','🛒','💡','📦','🔧'];
 
@@ -275,7 +276,7 @@ export default function Onboarding({ onDone }) {
               {envelopes.map((env, i) => (
                 <div key={i} className="group">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-lg w-7">{env.emoji}</span>
+                    <span className="w-7 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span>
                     <span className="text-sm font-medium flex-1">{env.name}</span>
                     <button onClick={() => removeEnvelope(i)}
                       className="text-xs text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">✕</button>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
+import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 
 export default function Allocate() {
   const [envelopes, setEnvelopes] = useState([]);
@@ -221,7 +222,7 @@ export default function Allocate() {
                   const envReserved = Number(env.reserved || 0);
                   return (
                     <div key={env.id} className="flex items-center gap-3">
-                      <span className="text-lg w-8">{env.emoji || '📁'}</span>
+                      <span className="w-8 flex justify-center"><EnvelopeIcon value={env.emoji} size={22} /></span>
                       <div className="flex-1">
                         <div className="flex justify-between">
                           <span className="text-sm font-medium">{env.name}</span>
@@ -243,7 +244,7 @@ export default function Allocate() {
                 })}
                 {tabunganGoal && tabunganEnv && (
                   <div className="flex items-center gap-3 bg-amber-50/30 rounded-lg px-2 py-2 -mx-2">
-                    <span className="text-lg w-8">{tabunganEnv.emoji || '💰'}</span>
+                    <span className="w-8 flex justify-center"><EnvelopeIcon value={tabunganEnv.emoji} size={22} color={SAVING} /></span>
                     <div className="flex-1">
                       <div className="flex justify-between">
                         <span className="text-sm font-medium">{tabunganEnv.name}</span>
@@ -301,8 +302,8 @@ export default function Allocate() {
                 {inc.allocations && inc.allocations.length > 0 && (
                   <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-50">
                     {inc.allocations.map((a, i) => (
-                      <span key={i} className={`text-xs px-2 py-1 rounded-md ${a.auto ? 'bg-amber-50 text-amber-600' : 'bg-brand-50 text-brand-600'}`}>
-                        {a.emoji} {a.envelope} {formatShort(a.amount)}
+                      <span key={i} className={`text-xs px-2 py-1 rounded-md inline-flex items-center gap-1 ${a.auto ? 'bg-amber-50 text-amber-600' : 'bg-brand-50 text-brand-600'}`}>
+                        <EnvelopeIcon value={a.emoji} size={14} color="currentColor" /> {a.envelope} {formatShort(a.amount)}
                       </span>
                     ))}
                   </div>

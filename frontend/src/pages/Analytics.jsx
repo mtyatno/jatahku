@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
+import { Icon, EnvelopeIcon } from '../components/Icon';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -22,7 +23,7 @@ function PredictionCard({ data }) {
         <div><p className="text-xs text-gray-400">Bebas</p><p className={`font-display font-bold ${data.free > 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(data.free)}</p></div>
       </div>
       <div className="flex items-center gap-3 p-3 rounded-xl" style={{background: data.on_track ? '#E1F5EE' : '#FCEBEB'}}>
-        <span className="text-2xl">{data.on_track ? '‚úÖ' : '‚ö†Ô∏è'}</span>
+        <Icon name={data.on_track ? 'check' : 'warning'} size={26} weight="fill" color={data.on_track ? '#085041' : '#791F1F'} />
         <div>
           <p className="text-sm font-semibold" style={{color: data.on_track ? '#085041' : '#791F1F'}}>
             {data.on_track ? 'On track! Budget cukup sampai akhir bulan.' : 'Overspend! Kurangi pengeluaran.'}
@@ -59,7 +60,7 @@ function SinkingFundAdvisor({ data }) {
         <div>
           <h3 className="font-semibold text-sm">Sinking fund advisor</h3>
           <p className="text-xs text-gray-400 mt-1">
-            Reserve baru {formatShort(data.summary?.new_reserve_needed || 0)} ∑ {recommendations.length} rekomendasi
+            Reserve baru {formatShort(data.summary?.new_reserve_needed || 0)} ÔøΩ {recommendations.length} rekomendasi
           </p>
         </div>
         <span className="text-xs px-2 py-1 rounded-lg bg-brand-50 text-brand-600 font-semibold">
@@ -72,7 +73,7 @@ function SinkingFundAdvisor({ data }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">{item.title}</p>
-                <p className="text-xs text-gray-500 mt-1">{item.envelope_name} ∑ {item.frequency} ∑ {item.confidence}</p>
+                <p className="text-xs text-gray-500 mt-1">{item.envelope_name} ÔøΩ {item.frequency} ÔøΩ {item.confidence}</p>
               </div>
               <div className="text-right flex-shrink-0">
                 <p className="font-display font-bold text-brand-600">{formatShort(item.monthly_reserve)}</p>
@@ -188,7 +189,7 @@ export default function Analytics() {
                   <div key={i} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-sm" style={{background: COLORS[i % COLORS.length]}} />
-                      <span>{item.emoji} {item.name}</span>
+                      <span className="inline-flex items-center gap-1.5"><EnvelopeIcon value={item.emoji} size={16} color="currentColor" /> {item.name}</span>
                     </div>
                     <span className="font-mono font-medium">{formatShort(item.spent)}</span>
                   </div>

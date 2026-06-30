@@ -6,7 +6,7 @@ import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
-import { EnvelopeIcon } from '../components/Icon';
+import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
@@ -124,14 +124,14 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
           boxShadow: isDark ? '0 0 0 1px rgba(52,211,153,0.12), 0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
         }}>
       <div className="flex items-center gap-2 mb-4">
-        <span className="text-lg">🤖</span>
+        <Icon name="advisor" size={20} color={clr.accent} />
         <h2 className="font-display font-bold text-base" style={{ color: clr.title }}>AI Advisor</h2>
         <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: clr.accent }}>Beta</span>
       </div>
 
       {hasTactical && (
         <div className="mb-4">
-          <p className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: clr.accent }}>📊 Hari ini</p>
+          <p className="text-xs font-semibold mb-2 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="dashboard" size={14} color={clr.accent} /> Hari ini</p>
           <div className="space-y-1.5">
             {tacticalLines.map((item, i) => (
               <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? (isDark ? '#fca5a5' : '#991B1B') : item.lvl === 'warning' ? (isDark ? '#fde68a' : '#92400E') : clr.text }}>
@@ -175,7 +175,7 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
 
       {goals?.length > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
-          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide" style={{ color: clr.accent }}>🎯 Target Menabung</p>
+          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="target" size={14} color={clr.accent} /> Target Menabung</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
               const pct = Math.round(goal.progress_pct);
@@ -472,7 +472,7 @@ export default function Dashboard() {
           style={{ background: 'linear-gradient(90deg,#FEF3C7,#FDE68A)', border: '1px solid #FCD34D' }}
         >
           <div>
-            <p className="font-bold text-amber-900">🔥 Streak {celebrate} hari!</p>
+            <p className="font-bold text-amber-900 flex items-center gap-1.5"><Icon name="fire" size={18} weight="fill" /> Streak {celebrate} hari!</p>
             <p className="text-sm text-amber-800">{milestoneLabel(celebrate)}</p>
           </div>
           <button
@@ -486,11 +486,11 @@ export default function Dashboard() {
           <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
           {streak && streak.current_streak >= 1 && (
             <span
-              className="text-sm px-2.5 py-1 rounded-full font-semibold flex-shrink-0"
+              className="text-sm px-2.5 py-1 rounded-full font-semibold flex-shrink-0 inline-flex items-center gap-1"
               style={{ background: streak.logged_today ? '#FEF3C7' : '#F3F4F6', color: streak.logged_today ? '#92400E' : '#6B7280' }}
               title={`Rekor ${streak.longest_streak} hari · total ${streak.total_logged_days} hari tercatat`}
             >
-              🔥 {streak.current_streak} hari
+              <Icon name="fire" size={14} weight="fill" /> {streak.current_streak} hari
             </span>
           )}
         </div>
@@ -521,7 +521,7 @@ export default function Dashboard() {
           <ExportButtons />
           {leaderboard.length >= 2 && (
             <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white dark:bg-[#1e293b] border border-gray-200 dark:border-[#334155]">
-              <span className="text-xs font-medium text-gray-400 dark:text-gray-500">🔥 Papan disiplin</span>
+              <span className="text-xs font-medium text-gray-400 dark:text-gray-500 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
               <div className="flex items-center gap-3">
                 {leaderboard.map((m, i) => {
                   const medal = ['🥇', '🥈', '🥉'][i] || '';
@@ -624,7 +624,7 @@ export default function Dashboard() {
                         <div key={i} className="flex items-center justify-between text-xs">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <div className="w-2.5 h-2.5 flex-shrink-0 rounded-sm" style={{ background: COLORS[i % COLORS.length] }} />
-                            <span className="truncate">{item.emoji} {titleCase(item.name)}</span>
+                            <span className="truncate inline-flex items-center gap-1"><EnvelopeIcon value={item.emoji} size={14} color="currentColor" /> {titleCase(item.name)}</span>
                           </div>
                           <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                             <span className="font-mono font-medium">{formatShort(item.spent)}</span>
@@ -645,7 +645,7 @@ export default function Dashboard() {
       {shared.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg">👥 Shared</h2>
+            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="users" size={20} color={BRAND} /> Shared</h2>
             <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({shared.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -656,7 +656,7 @@ export default function Dashboard() {
       {personal.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg">🔒 Personal</h2>
+            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="lock" size={20} color={BRAND} /> Personal</h2>
             <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({personal.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
