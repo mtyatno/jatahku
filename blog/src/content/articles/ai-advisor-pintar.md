@@ -70,4 +70,4 @@ AI Advisor menghormati privasi. Di household dengan banyak anggota:
 
 ---
 
-AI Advisor adalah fondasi untuk fitur-fitur pintar selanjutnya di Jatahku. Kami akan terus mengembangkannya agar semakin akurat dan personal. Punya masukan? Kirim ke [feedback@jatahku.com](mailto:feedback@jatahku.com).
+AI Advisor adalah fondasi untuk fitur-fitur pintar selanjutnya di Jatahku. Kami akan terus mengembangkannya agar semakin akurat dan personal. Punya masukan? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).
