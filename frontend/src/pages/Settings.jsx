@@ -328,6 +328,8 @@ export default function Settings() {
   // Household
   const [members, setMembers] = useState([]);
   const [inviteCode, setInviteCode] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [joining, setJoining] = useState(false);
 
   const load = async () => {
     const res = await api.request('/user/profile');
@@ -483,6 +485,25 @@ export default function Settings() {
   const generateInvite = async () => {
     const res = await api.request('/household/invite', { method: 'POST' });
     if (res.ok) { const d = await res.json(); setInviteCode(d.code); }
+  };
+
+  const joinHousehold = async () => {
+    if (!joinCode.trim()) return;
+    setJoining(true);
+    const res = await api.request('/household/join', {
+      method: 'POST',
+      body: JSON.stringify({ code: joinCode.trim().toUpperCase() }),
+    });
+    setJoining(false);
+    if (res.ok) {
+      const d = await res.json();
+      flash(`Berhasil bergabung ke ${d.household_name}!`, 'household');
+      setJoinCode('');
+      load();
+    } else {
+      try { const d = await res.json(); flashErr(d.detail || 'Kode tidak valid', 'household'); }
+      catch { flashErr('Gagal bergabung', 'household'); }
+    }
   };
 
   const exportData = async () => {
@@ -760,27 +781,57 @@ export default function Settings() {
       {/* Household */}
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">👨‍👩‍👧 Household</h3>
-        <div className="space-y-2 mb-3">
-          {members.map((m, i) => (
-            <div key={i} className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-brand-50 flex items-center justify-center text-xs font-bold text-brand-600">
-                  {m.name?.charAt(0)?.toUpperCase() || '?'}
+        {members.length > 0 && (
+          <div className="space-y-2 mb-3">
+            {members.map((m, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-brand-50 flex items-center justify-center text-xs font-bold text-brand-600">
+                    {m.name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <span>{m.name}</span>
                 </div>
-                <span>{m.name}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${m.role === 'owner' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500'}`}>{roleLabel(m.role)}</span>
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${m.role === 'owner' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500'}`}>{roleLabel(m.role)}</span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+        <InlineFlash k="household" />
         {inviteCode ? (
-          <div className="bg-gray-50 rounded-xl p-3 text-center">
-            <p className="text-xs text-gray-400 mb-1">Kode invite (24 jam):</p>
-            <code className="font-mono text-lg font-bold text-brand-600">{inviteCode}</code>
+          <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400">Kode invite (24 jam):</p>
+              <button onClick={() => { navigator.clipboard.writeText(inviteCode); flash('Kode disalin!', 'household'); }}
+                className="text-xs text-brand-600 hover:underline">📋 Salin</button>
+            </div>
+            <code className="block font-mono text-lg font-bold text-brand-600 text-center tracking-widest">{inviteCode}</code>
+            <p className="text-xs text-gray-400">
+              Bagikan kode ini ke anggota. Mereka bisa join via:
+            </p>
+            <ul className="text-xs text-gray-400 space-y-0.5 ml-4" style={{ listStyle: 'disc' }}>
+              <li>Telegram: kirim <code className="text-brand-600">/join {inviteCode}</code> ke <a href="https://t.me/JatahkuBot" target="_blank" className="text-brand-600 underline">@JatahkuBot</a></li>
+              <li>PWA: masukkan kode di form <b>Gabung Household</b> di bawah ini</li>
+            </ul>
           </div>
         ) : (
           <button onClick={generateInvite} className="text-sm text-brand-600 hover:underline">+ Invite anggota</button>
         )}
+
+        {/* Join another household */}
+        <div className="mt-4 pt-3 border-t border-gray-100">
+          <p className="text-xs text-gray-400 mb-2">Punya kode invite? Gabung ke household lain:</p>
+          <div className="flex gap-2">
+            <input
+              type="text" className="input text-sm py-1.5 flex-1 uppercase tracking-widest text-center font-mono"
+              placeholder="Masukkan kode" maxLength={8}
+              value={joinCode} onChange={e => setJoinCode(e.target.value.toUpperCase())}
+            />
+            <button onClick={joinHousehold} disabled={joining || !joinCode.trim()}
+              className="btn-primary text-sm py-1.5 px-4 disabled:opacity-50">
+              {joining ? '...' : 'Gabung'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Payday Day */}
