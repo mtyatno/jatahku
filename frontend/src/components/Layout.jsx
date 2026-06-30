@@ -8,6 +8,7 @@ import MultiAddTransaction from './MultiAddTransaction';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
+import { Icon, EnvelopeIcon } from './Icon';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -65,7 +66,7 @@ function QuickAddIncome({ onClose }) {
             {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
               const val = allocations[env.id] || 0;
               return (
-                <div key={env.id} className="flex items-center gap-2"><span className="text-lg w-6">{env.emoji}</span><span className="text-sm flex-1">{env.name}</span>
+                <div key={env.id} className="flex items-center gap-2"><span className="w-6 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span><span className="text-sm flex-1">{env.name}</span>
                   <input type="number" className="input text-sm font-mono text-right w-28" placeholder="0" value={val || ''} min="0"
                     onChange={e => setAllocations(prev => ({ ...prev, [env.id]: Number(e.target.value) || 0 }))} />
                 </div>
@@ -89,22 +90,22 @@ function QuickAddLangganan({ onClose }) {
 }
 
 const FAB_OPTIONS = [
-  { key: 'expense', icon: '💰', label: 'Pengeluaran' },
-  { key: 'envelope', icon: '✉️', label: 'Amplop' },
-  { key: 'income', icon: '💵', label: 'Income' },
-  { key: 'langganan', icon: '🔄', label: 'Langganan' },
+  { key: 'expense', icon: 'expense', label: 'Pengeluaran' },
+  { key: 'envelope', icon: 'envelope', label: 'Amplop' },
+  { key: 'income', icon: 'income', label: 'Income' },
+  { key: 'langganan', icon: 'langganan', label: 'Langganan' },
 ];
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/envelopes', label: 'Amplop', icon: '✉️' },
-  { to: '/transactions', label: 'Transaksi', icon: '📝' },
-  { to: '/allocate', label: 'Alokasi', icon: '💰' },
-  { to: '/langganan', label: 'Langganan', icon: '🔄' },
+  { to: '/', label: 'Dashboard', icon: 'dashboard' },
+  { to: '/envelopes', label: 'Amplop', icon: 'envelope' },
+  { to: '/transactions', label: 'Transaksi', icon: 'transaksi' },
+  { to: '/allocate', label: 'Alokasi', icon: 'alokasi' },
+  { to: '/langganan', label: 'Langganan', icon: 'langganan' },
 ];
 
 const menuItems = [
-  { to: '/settings', label: 'Settings', icon: '⚙️' },
+  { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 
 export default function Layout() {
@@ -148,10 +149,10 @@ export default function Layout() {
               {[...navItems, ...menuItems].map(item => (
                 <NavLink key={item.to} to={item.to} end={item.to === '/'}
                   className={({ isActive }) =>
-                    `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
                       isActive ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
                     }`}>
-                  <span className="mr-1.5">{item.icon}</span>{item.label}
+                  <Icon name={item.icon} size={17} />{item.label}
                 </NavLink>
               ))}
             </nav>
@@ -162,10 +163,10 @@ export default function Layout() {
           <NotificationBell />
           <button
             onClick={toggleMode}
-            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-base"
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
             title={mode === 'light' ? 'Mode Gelap' : 'Mode Terang'}
           >
-            {mode === 'light' ? '🌙' : '☀️'}
+            <Icon name={mode === 'light' ? 'moon' : 'sun'} size={18} />
           </button>
           <div className="relative" ref={menuRef}>
             <button onClick={() => setMenuOpen(!menuOpen)}
@@ -174,9 +175,7 @@ export default function Layout() {
                 {initial}
               </div>
               <span className="text-sm text-gray-600 hidden sm:block">{user.name}</span>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-gray-400">
-                <path d="M3 5L6 8L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
+              <Icon name="chevron" size={14} weight="bold" className="text-gray-400" />
             </button>
 
             {menuOpen && (
@@ -188,18 +187,18 @@ export default function Layout() {
                 {user?.is_admin && (
                   <button onClick={() => { navigate('/admin'); setMenuOpen(false); }}
                     className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
-                    <span>🛡️</span> Admin
+                    <Icon name="admin" size={18} /> Admin
                   </button>
                 )}
                 <button onClick={() => { navigate('/settings'); setMenuOpen(false); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-3">
-                  <span>⚙️</span> Profil & Settings
+                  <Icon name="settings" size={18} /> Profil & Settings
                 </button>
 
                 <div className="border-t border-gray-50 mt-1 pt-1">
                   <button onClick={() => { logout(); setMenuOpen(false); }}
                     className="w-full text-left px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 flex items-center gap-3">
-                    <span>🚪</span> Logout
+                    <Icon name="logout" size={18} color="currentColor" /> Logout
                   </button>
                 </div>
               </div>
@@ -218,7 +217,7 @@ export default function Layout() {
                 `flex flex-col items-center gap-0.5 px-2 py-1 text-xs font-medium transition-colors ${
                   isActive ? 'text-brand-600' : 'text-gray-400'
                 }`}>
-              <span className="text-lg">{item.icon}</span>{item.label}
+              <Icon name={item.icon} size={22} />{item.label}
             </NavLink>
           ))}
         </div>
@@ -241,7 +240,7 @@ export default function Layout() {
                 className="flex items-center gap-2 px-3 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all"
                 style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
               >
-                <span className="text-lg">{opt.icon}</span>
+                <Icon name={opt.icon} size={20} />
                 <span>{opt.label}</span>
               </button>
             ))}
@@ -265,11 +264,11 @@ export default function Layout() {
       {fabAction && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabAction(null)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="font-display font-bold text-lg mb-4">
-              {fabAction === 'expense' && '💰 Catat pengeluaran'}
-              {fabAction === 'envelope' && '✉️ Amplop baru'}
-              {fabAction === 'income' && '💵 Income baru'}
-              {fabAction === 'langganan' && '🔄 Langganan baru'}
+            <h3 className="font-display font-bold text-lg mb-4 flex items-center gap-2">
+              {fabAction === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
+              {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
+              {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
+              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan baru</>}
             </h3>
             {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}

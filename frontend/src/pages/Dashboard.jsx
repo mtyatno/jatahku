@@ -6,6 +6,7 @@ import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
+import { EnvelopeIcon } from '../components/Icon';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
@@ -237,7 +238,7 @@ function EnvelopeRow({ env, goal }) {
         <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
           <div className="flex items-start justify-between mb-2">
             <div className="flex items-center gap-2">
-              <span className="text-lg">{env.emoji || '🐷'}</span>
+              <EnvelopeIcon value={env.emoji} size={22} color={achieved ? '#059669' : SAVING_ACCENT} />
               <span className="font-semibold text-sm">{titleCase(env.name)}</span>
               {achieved && (
                 <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: '#ECFDF5', color: '#059669' }}>🎉 Tercapai</span>
@@ -269,7 +270,7 @@ function EnvelopeRow({ env, goal }) {
       <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
         <div className="flex items-start justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-lg">{env.emoji || '🐷'}</span>
+            <EnvelopeIcon value={env.emoji} size={22} color={SAVING_ACCENT} />
             <span className="font-semibold text-sm">{titleCase(env.name)}</span>
             <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: SAVING_TRACK, color: SAVING_ACCENT }}>Menabung</span>
           </div>
@@ -300,7 +301,7 @@ function EnvelopeRow({ env, goal }) {
     <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{env.emoji || '📁'}</span>
+          <EnvelopeIcon value={env.emoji} size={22} />
           <span className="font-semibold text-sm">{titleCase(env.name)}</span>
           {badge}
         </div>
@@ -679,7 +680,7 @@ export default function Dashboard() {
               return (
                 <div key={txn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">{env?.emoji || '📁'}</span>
+                    <EnvelopeIcon value={env?.emoji} size={22} />
                     <div>
                       <p className="text-sm font-medium">{txn.description}</p>
                       <p className="text-xs text-gray-400">{env?.name} · {txn.source === 'telegram' ? '📱' : '🌐'}</p>
