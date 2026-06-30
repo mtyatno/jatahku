@@ -4,8 +4,10 @@ set -e
 echo "=== Jatahku Deploy ==="
 cd /opt/jatahku/app
 
-# Clean dirty dist files (built on server, conflict with repo)
-sudo -u jatahku git checkout -- frontend/dist/ blog/dist/ 2>/dev/null || true
+# Clean files regenerated on the server (dist + lockfiles) so they don't
+# block `git pull`. npm install rewrites package-lock.json each deploy;
+# the repo lockfile is the source of truth.
+sudo -u jatahku git checkout -- frontend/dist/ blog/dist/ frontend/package-lock.json blog/package-lock.json 2>/dev/null || true
 
 # Pull latest
 sudo -u jatahku git pull origin main
