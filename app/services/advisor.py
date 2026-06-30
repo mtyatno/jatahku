@@ -202,6 +202,28 @@ def _monthly_reserve(amount, frequency) -> Decimal:
     return _to_decimal(amount)
 
 
+async def envelope_lifetime_balance(envelope_id, db) -> Decimal:
+    """Canonical all-time accumulated balance of an envelope:
+    sum(allocations) - sum(non-deleted transactions), independent of period or
+    rollover snapshots. Single source of truth for savings goal progress so the
+    Goals page, advisor, and dashboard cards always agree."""
+    from sqlalchemy import func, select
+    from app.models.models import Allocation, Transaction
+
+    alloc = await db.execute(
+        select(func.coalesce(func.sum(Allocation.amount), 0)).where(
+            Allocation.envelope_id == envelope_id
+        )
+    )
+    spent = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.envelope_id == envelope_id,
+            Transaction.is_deleted == False,
+        )
+    )
+    return _to_decimal(alloc.scalar()) - _to_decimal(spent.scalar())
+
+
 async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
     from app.core.period import get_last_n_periods
 
@@ -414,7 +436,7 @@ async def build_advisor_insights(user, db) -> dict:
         # Saving: collect item for consolidated card
         goal = goals_by_env.get(str(envelope.id))
         if purpose in ("saving", "sinking_fund") and goal:
-            balance = available - spent
+            balance = await envelope_lifetime_balance(envelope.id, db)
             target = _to_decimal(goal.target_amount)
             pct = min(round(float(balance / target) * 100, 1) if target > 0 else 0, 100)
 

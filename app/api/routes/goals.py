@@ -14,6 +14,7 @@ from app.core.period import get_budget_period
 from app.models.models import (
     User, Envelope, HouseholdMember, Goal, Transaction, Allocation, Income,
 )
+from app.services.advisor import envelope_lifetime_balance
 
 router = APIRouter()
 
@@ -61,33 +62,10 @@ async def _compute_goal_response(goal: Goal, user: User, db: AsyncSession) -> di
     """Enrich a Goal record with computed fields (balance, progress, etc.)."""
     env = goal.envelope
     today = date.today()
-    payday_day = getattr(user, 'payday_day', None) or 1
-    period_start, _ = get_budget_period(payday_day, today)
 
-    # Spent this period
-    spent_res = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.envelope_id == env.id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= today,
-        )
-    )
-    spent = Decimal(str(spent_res.scalar()))
-
-    # Allocated this period
-    alloc_res = await db.execute(
-        select(func.coalesce(func.sum(Allocation.amount), 0))
-        .join(Income, Allocation.income_id == Income.id)
-        .where(
-            Allocation.envelope_id == env.id,
-            Income.income_date >= period_start,
-            Income.income_date <= today,
-        )
-    )
-    allocated = Decimal(str(alloc_res.scalar()))
-
-    balance = allocated - spent
+    # Canonical all-time accumulated balance (sum allocations - sum spent),
+    # shared with the advisor so goal progress matches everywhere.
+    balance = await envelope_lifetime_balance(env.id, db)
     target = goal.target_amount
 
     progress_pct = round(min(float(balance / target) * 100, 100), 1) if target > 0 else 0.0
