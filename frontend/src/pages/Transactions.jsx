@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { flushQueue, getPendingCount } from '../lib/offlineQueue';
 import QuickAddTransaction from '../components/QuickAddTransaction';
+import { EnvelopeIcon } from '../components/Icon';
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -124,7 +125,7 @@ export default function Transactions() {
           <div className="flex flex-wrap gap-2 items-center">
             <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')} style={chipStyle(filter === 'all')}>Semua</button>
             {visible.map(env => (
-              <button key={env.id} onClick={() => setFilter(env.id)} className={chipCls(filter === env.id)} style={chipStyle(filter === env.id)}>{env.emoji} {env.name}</button>
+              <button key={env.id} onClick={() => setFilter(env.id)} className={`${chipCls(filter === env.id)} inline-flex items-center gap-1.5`} style={chipStyle(filter === env.id)}><EnvelopeIcon value={env.emoji} size={15} color="currentColor" /> {env.name}</button>
             ))}
             {hidden.length > 0 && (
               <div className="relative">
@@ -136,7 +137,7 @@ export default function Transactions() {
                     {hidden.map(env => (
                       <button key={env.id} onClick={() => { setFilter(env.id); setShowMoreFilter(false); }}
                         className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${filter === env.id ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
-                        {env.emoji} {env.name}
+                        <span className="inline-flex items-center gap-1.5"><EnvelopeIcon value={env.emoji} size={15} color="currentColor" /> {env.name}</span>
                       </button>
                     ))}
                   </div>
@@ -174,7 +175,7 @@ export default function Transactions() {
                     return (
                       <div key={txn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 group">
                         <div className="flex items-center gap-3">
-                          <span className="text-lg">{env?.emoji || '📁'}</span>
+                          <EnvelopeIcon value={env?.emoji} size={22} />
                           <div>
                             <p className="text-sm font-medium">{txn.description}</p>
                             <p className="text-xs text-gray-400">

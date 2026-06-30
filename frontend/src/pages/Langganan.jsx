@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
+import { EnvelopeIcon } from '../components/Icon';
 
 export function RecurringModal({ onClose, onSaved, item }) {
   const isEdit = !!item;
@@ -153,7 +154,7 @@ export default function Langganan() {
             <div key={item.id} className="card group hover:border-brand-200 transition-all">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="text-2xl">{item.envelope_emoji || '📁'}</span>
+                  <EnvelopeIcon value={item.envelope_emoji} size={26} />
                   <div>
                     <h3 className="font-semibold">{item.description}</h3>
                     <p className="text-xs text-gray-400">
