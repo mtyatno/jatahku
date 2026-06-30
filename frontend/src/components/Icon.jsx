@@ -6,7 +6,7 @@ import {
   ChartBar, Envelope, Receipt, HandCoins, ArrowsClockwise, GearSix,
   Bell, Sun, Moon, CaretDown, Plus, Fire, Sparkle, Money, ShoppingCart,
   CheckCircle, Lock, UsersThree, Target, PiggyBank, Wallet, SignOut, ShieldCheck,
-  Warning, Trophy, TelegramLogo,
+  Warning, Trophy, TelegramLogo, X,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -33,6 +33,7 @@ const UI = {
   moon: Moon,
   chevron: CaretDown,
   plus: Plus,
+  close: X,
   fire: Fire,
   advisor: Sparkle,
   income: Money,

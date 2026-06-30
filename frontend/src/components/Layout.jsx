@@ -247,18 +247,19 @@ export default function Layout() {
           </div>
           <button
             onClick={() => setFabMenu(false)}
-            className="absolute bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-700 text-white text-3xl shadow-lg flex items-center justify-center transition-colors"
-            style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px', transform: 'rotate(45deg)' }}
-          >+</button>
+            className="absolute bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all active:scale-95"
+            style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
+            aria-label="Tutup menu"
+          ><Icon name="close" size={26} weight="bold" /></button>
         </div>
       )}
       {!fabMenu && (
         <button
           onClick={() => setFabMenu(true)}
-          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
-          style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px' }}
+          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+          style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
           title="Menu cepat"
-        >+</button>
+        ><Icon name="plus" size={26} weight="bold" /></button>
       )}
       {/* Modals for speed dial actions */}
       {fabAction && (
