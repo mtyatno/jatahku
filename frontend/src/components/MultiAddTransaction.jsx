@@ -34,7 +34,7 @@ function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove }) {
           onChange={e => onChangeEnvelope(index, e.target.value)}
         >
           <option value="">Pilih amplop</option>
-          {envelopes.map(env => (
+          {envelopes.filter(env => env.purpose !== 'saving' && env.purpose !== 'sinking_fund').map(env => (
             <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
           ))}
         </select>
@@ -221,7 +221,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         }));
       }
     } else {
-      setResultMsg({ type: 'error', text: 'Semua item gagal disimpan' });
+      const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
+      setResultMsg({ type: 'error', text: firstErr });
     }
   };
 

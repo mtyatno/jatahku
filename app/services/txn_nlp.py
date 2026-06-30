@@ -96,6 +96,8 @@ async def find_best_envelope(description, household_id, db, user_id=None):
         )
     )
     envelopes = result.scalars().all()
+    # Filter out saving/sinking_fund — NLP should only match expense envelopes
+    envelopes = [e for e in envelopes if str(getattr(e, "purpose", "expense")) == "expense"]
     if not envelopes:
         return None, False
 

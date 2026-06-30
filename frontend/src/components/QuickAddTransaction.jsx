@@ -89,7 +89,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
           <label className="label">Amplop {suggested && <span className="text-xs text-brand-600">· disarankan</span>}</label>
           <select className="input" value={envelopeId} onChange={handleEnvelopeChange} required>
             <option value="">Pilih amplop</option>
-            {envelopes.map(env => (<option key={env.id} value={env.id}>{env.emoji} {env.name}</option>))}
+            {envelopes.filter(env => env.purpose !== 'saving' && env.purpose !== 'sinking_fund').map(env => (<option key={env.id} value={env.id}>{env.emoji} {env.name}</option>))}
           </select>
         </div>
         <div className="flex items-end gap-2">
