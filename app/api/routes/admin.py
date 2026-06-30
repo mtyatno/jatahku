@@ -562,3 +562,41 @@ async def delete_promo(
         promo.is_active = False
         await db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/broadcast-article")
+async def broadcast_article(
+    req: DirectEmailRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Broadcast an email to ALL users with email addresses."""
+    result = await db.execute(
+        select(User).where(
+            User.email != None,
+            ~User.email.startswith("deleted_"),
+            ~User.email.startswith("banned_"),
+        )
+    )
+    users = result.scalars().all()
+
+    sent = 0
+    failed = 0
+    from app.services.email_service import send_email, email_template
+
+    for u in users:
+        try:
+            html = email_template(
+                req.subject,
+                f"<p>Hai {u.name},</p>" + req.body,
+                req.cta_text or None,
+                req.cta_url or None,
+            )
+            if send_email(u.email, req.subject, html):
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+
+    return {"status": "ok", "sent": sent, "failed": failed, "total": len(users)}

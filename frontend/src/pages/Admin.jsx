@@ -94,6 +94,14 @@ export default function Admin() {
   const [dmSendTg, setDmSendTg] = useState(false);
   const [dmTgText, setDmTgText] = useState('');
   const [dmSending, setDmSending] = useState(false);
+  const [articles, setArticles] = useState([]);
+
+  const ARTICLES = [
+    { title: "AI Advisor Jatahku — Asisten Keuangan Pintar di Dashboard Kamu", slug: "ai-advisor-pintar", description: "AI Advisor menganalisis pola belanja, progres tabungan, dan deadline sinking fund untuk memberikan insight personal.", url: "https://blog.jatahku.com/insight/ai-advisor-pintar/" },
+    { title: "FAB Speed Dial — 4 Inputan Cepat dalam Satu Tombol", slug: "fab-speed-dial-4-inputan", description: "Tombol + melayang sekarang bisa mencatat pengeluaran, buat amplop baru, tambah income, dan tambah langganan — semuanya tanpa pindah halaman.", url: "https://blog.jatahku.com/insight/fab-speed-dial-4-inputan/" },
+    { title: "Group & Purpose Amplop — Organisasi Keuangan yang Lebih Rapi", slug: "group-purpose-amplop", description: "Amplop sekarang punya purpose (expense/saving/sinking_fund) dan group. Setiap tipe punya perilaku berbeda.", url: "https://blog.jatahku.com/insight/group-purpose-amplop/" },
+    { title: "Memahami Budget Amount — Rencana vs Realisasi di Jatahku", slug: "memahami-budget-amount", description: "Apa itu budget_amount? Kenapa penting? Bagaimana bedanya dengan allocated? Tutorial lengkap memahami konsep budget di envelope budgeting.", url: "https://blog.jatahku.com/insight/memahami-budget-amount/" },
+  ];
 
   const loadDash = async () => {
     const res = await api.request('/admin/dashboard');
@@ -362,6 +370,55 @@ export default function Admin() {
                 }}
                 className="btn-primary text-sm py-2 disabled:opacity-50">
                 {dmSending ? 'Mengirim...' : `Kirim${dmSendTg ? ' Email + Telegram' : ' Email'}`}
+              </button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 className="font-semibold text-sm mb-3">📢 Broadcast Artikel ke Semua User</h3>
+            <div className="space-y-2">
+              <select className="input text-sm" value={dmSubject} onChange={e => {
+                const selected = ARTICLES.find(a => a.title === e.target.value);
+                if (selected) {
+                  setDmSubject(selected.title);
+                  setDmBody(`<p>${selected.description}</p><br><p><a href="${selected.url}" style="color:#0F6E56">Baca selengkapnya di blog →</a></p>`);
+                  setDmCtaText('Baca Artikel');
+                  setDmCtaUrl(selected.url);
+                }
+              }}>
+                <option value="">Pilih artikel...</option>
+                {ARTICLES.map(a => (
+                  <option key={a.slug} value={a.title}>{a.title}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400">Pilih artikel, edit subject/body kalau perlu, lalu broadcast.</p>
+              <input className="input text-sm" placeholder="Subject email" value={dmSubject} onChange={e => setDmSubject(e.target.value)} />
+              <textarea className="input text-sm font-mono" rows="4" placeholder="Isi email (HTML)" value={dmBody} onChange={e => setDmBody(e.target.value)} />
+              <div className="grid grid-cols-2 gap-2">
+                <input className="input text-sm" placeholder="Teks tombol (opsional)" value={dmCtaText} onChange={e => setDmCtaText(e.target.value)} />
+                <input className="input text-sm" placeholder="URL tombol (opsional)" value={dmCtaUrl} onChange={e => setDmCtaUrl(e.target.value)} />
+              </div>
+              <button disabled={!dmSubject || !dmBody || dmSending}
+                onClick={async () => {
+                  if (!confirm(`Broadcast "${dmSubject}" ke SEMUA user via email?`)) return;
+                  setDmSending(true);
+                  const res = await api.request('/admin/broadcast-article', {
+                    method: 'POST',
+                    body: JSON.stringify({ subject: dmSubject, body: dmBody, cta_text: dmCtaText || null, cta_url: dmCtaUrl || null }),
+                  });
+                  setDmSending(false);
+                  if (res.ok) {
+                    const d = await res.json();
+                    setActionMsg(`✅ Terkirim ke ${d.sent} user (${d.failed} gagal)`);
+                    setTimeout(() => setActionMsg(''), 6000);
+                  } else {
+                    const d = await res.json();
+                    setActionMsg(`❌ Gagal: ${d.detail}`);
+                    setTimeout(() => setActionMsg(''), 5000);
+                  }
+                }}
+                className="btn-primary text-sm py-2 disabled:opacity-50">
+                {dmSending ? 'Mengirim...' : '📢 Broadcast ke Semua User'}
               </button>
             </div>
           </div>
