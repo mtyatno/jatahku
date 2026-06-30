@@ -6,7 +6,7 @@ import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
-import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
+import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
@@ -162,8 +162,14 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
         }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
         return (
           <div key={card.id} className="rounded-xl p-3.5 mb-3 last:mb-0" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
-            <p className="text-xs font-semibold mb-1.5" style={{ color: cs.txt }}>{card.title}</p>
-            <p className="text-xs" style={{ color: cs.txt, whiteSpace: 'pre-line' }}>{card.body}</p>
+            <p className="text-xs font-semibold mb-2" style={{ color: cs.txt }}>{renderWithIcons(card.title, 15, cs.txt)}</p>
+            <div className="text-xs space-y-1.5" style={{ color: cs.txt }}>
+              {String(card.body || '').split('\n').map((line, li) =>
+                line.trim() === ''
+                  ? <div key={li} className="h-1.5" />
+                  : <p key={li} className="leading-relaxed">{renderWithIcons(line, 14, cs.txt)}</p>
+              )}
+            </div>
             {card.primary_action?.route && (
               <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 text-brand-600 hover:underline">
                 {card.primary_action.label || 'Lihat detail'} →
@@ -182,7 +188,7 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
               return (
                 <div key={goal.id}>
                   <div className="flex items-center gap-2 text-sm mb-1" style={{ color: clr.text }}>
-                    <span>{goal.envelope_emoji}</span>
+                    <EnvelopeIcon value={goal.envelope_emoji} size={18} color={SAVING_ACCENT} />
                     <span className="truncate">{goal.name}</span>
                     <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : clr.muted }}>
                       {pct}%
@@ -202,8 +208,8 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
             </Link>
           )}
           {goals.some(g => g.is_achieved) && (
-            <p className="text-xs mt-1" style={{ color: isDark ? '#86efac' : '#059669' }}>
-              ✅ {goals.filter(g => g.is_achieved).length} target tercapai!
+            <p className="text-xs mt-1 flex items-center gap-1" style={{ color: isDark ? '#86efac' : '#059669' }}>
+              <Icon name="check" size={13} weight="fill" /> {goals.filter(g => g.is_achieved).length} target tercapai!
             </p>
           )}
         </div>

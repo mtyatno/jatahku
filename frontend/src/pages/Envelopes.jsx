@@ -201,7 +201,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
 
         {/* Step 1: Basic info + funding (new only) */}
         <div className="space-y-4">
-          <div><label className="label">Emoji</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}>{e}</button>))}</div></div>
+          <div><label className="label">Ikon</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}><EnvelopeIcon value={e} size={20} color={emoji === e ? BRAND : '#6b7280'} /></button>))}</div></div>
           <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => { setName(e.target.value); setPurpose(guessPurpose(e.target.value)); }} required /></div>
 
           <div>
@@ -223,20 +223,20 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
             <label className="label">Purpose</label>
             <div className="flex gap-1.5">
               {[
-                { key: 'expense', label: '💰 Expense', desc: 'Pengeluaran rutin' },
-                { key: 'saving', label: '🎯 Saving', desc: 'Target menabung' },
-                { key: 'sinking_fund', label: '📅 Sinking Fund', desc: 'Dana persiapan' },
+                { key: 'expense', icon: 'expense', label: 'Expense', desc: 'Pengeluaran rutin' },
+                { key: 'saving', icon: 'target', label: 'Saving', desc: 'Target menabung' },
+                { key: 'sinking_fund', icon: 'calendar', label: 'Sinking Fund', desc: 'Dana persiapan' },
               ].map(p => (
                 <button key={p.key} type="button" onClick={() => {
                   if (editing && purpose !== p.key) {
-                    if (!confirm(`Ubah purpose ke "${p.label.split(' ')[1]}"? Budget atau goal mungkin terpengaruh.`)) return;
+                    if (!confirm(`Ubah purpose ke "${p.label}"? Budget atau goal mungkin terpengaruh.`)) return;
                   }
                   setPurpose(p.key);
                 }}
-                  className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight ${
+                  className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight flex flex-col items-center gap-1 ${
                     purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
                   }`}>
-                  <span className="block text-base mb-0.5">{p.label.split(' ')[0]}</span>
+                  <Icon name={p.icon} size={20} color={purpose === p.key ? BRAND : '#6b7280'} />
                   {p.desc}
                 </button>
               ))}
@@ -246,7 +246,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
           {/* Goal fields for saving/sinking_fund */}
           {isSavingLike && (
             <div className="border-t border-gray-100 pt-3 space-y-3">
-              <h4 className="font-semibold text-sm">🎯 Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
+              <h4 className="font-semibold text-sm flex items-center gap-1.5"><Icon name="target" size={16} color={BRAND} /> Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
               <div>
                 <label className="label">Nama target</label>
                 <input type="text" className="input" placeholder={purpose === 'saving' ? 'Nikah, Darurat, Liburan...' : 'Servis tahunan, Pajak...'}
@@ -274,15 +274,15 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
 
           {!editing && (
             <div className="border-t border-gray-100 pt-4">
-              <h4 className="font-semibold text-sm mb-3">💰 Sumber dana</h4>
+              <h4 className="font-semibold text-sm mb-3 flex items-center gap-1.5"><Icon name="wallet" size={16} color={BRAND} /> Sumber dana</h4>
               <div className="flex gap-2 mb-3">
                 <button type="button" onClick={() => setFundingSource('transfer')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${fundingSource === 'transfer' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
-                  ↔️ Transfer dari amplop lain
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1.5 ${fundingSource === 'transfer' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+                  <Icon name="transfer" size={16} /> Transfer dari amplop lain
                 </button>
                 <button type="button" onClick={() => setFundingSource('income')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${fundingSource === 'income' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
-                  💵 Income baru
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1.5 ${fundingSource === 'income' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
+                  <Icon name="income" size={16} /> Income baru
                 </button>
               </div>
 

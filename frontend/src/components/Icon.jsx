@@ -6,7 +6,7 @@ import {
   ChartBar, Envelope, Receipt, HandCoins, ArrowsClockwise, GearSix,
   Bell, Sun, Moon, CaretDown, Plus, Fire, Sparkle, Money, ShoppingCart,
   CheckCircle, Lock, UsersThree, Target, PiggyBank, Wallet, SignOut, ShieldCheck,
-  Warning, Trophy, TelegramLogo, X,
+  Warning, Trophy, TelegramLogo, X, CalendarBlank, ArrowsLeftRight,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -34,6 +34,8 @@ const UI = {
   chevron: CaretDown,
   plus: Plus,
   close: X,
+  calendar: CalendarBlank,
+  transfer: ArrowsLeftRight,
   fire: Fire,
   advisor: Sparkle,
   income: Money,
@@ -112,3 +114,33 @@ export function EnvelopeIcon({ value, size = 20, weight = DEFAULT_WEIGHT, classN
 }
 
 export const CATEGORY_TOKENS = Object.keys(CATEGORY);
+
+// Decorative (non-category) emoji → UI icon name, for inline text rendering.
+const DECOR_EMOJI = {
+  '🎯': 'target', '📅': 'calendar', '✅': 'check', '⚠️': 'warning',
+  '📊': 'dashboard', '🚨': 'warning', '🔄': 'langganan', '🤖': 'advisor',
+};
+
+const _EMOJI_SPLIT = /(\p{Extended_Pictographic}️?)/gu;
+
+// Render a string, converting any emoji it contains into inline Phosphor icons
+// (category emoji via the envelope map, decorative emoji via DECOR_EMOJI).
+// Plain text is preserved. Used for server-generated strings (e.g. advisor cards).
+export function renderWithIcons(text, size = 14, color) {
+  if (text == null) return null;
+  return String(text).split(_EMOJI_SPLIT).map((seg, i) => {
+    if (!seg) return null;
+    const bare = seg.replace(/️/g, '');
+    const decor = DECOR_EMOJI[seg] || DECOR_EMOJI[bare];
+    if (decor && UI[decor]) {
+      const C = UI[decor];
+      return <C key={i} size={size} weight="duotone" color={color} className="inline align-text-bottom" />;
+    }
+    const token = CATEGORY[seg] ? seg : (EMOJI_TO_TOKEN[seg] || EMOJI_TO_TOKEN[bare]);
+    if (token && CATEGORY[token]) {
+      const C = CATEGORY[token];
+      return <C key={i} size={size} weight="duotone" color={color} className="inline align-text-bottom" />;
+    }
+    return <span key={i}>{seg}</span>;
+  });
+}
