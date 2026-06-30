@@ -138,7 +138,8 @@ export default function Layout() {
       {/* Global quick-add FAB (every page) */}
       <button
         onClick={() => setFabOpen(true)}
-        className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl leading-none shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
+        className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
+        style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px' }}
         title="Catat pengeluaran"
       >+</button>
       {fabOpen && (
