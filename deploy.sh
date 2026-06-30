@@ -5,7 +5,7 @@ echo "=== Jatahku Deploy ==="
 cd /opt/jatahku/app
 
 # Clean dirty dist files (built on server, conflict with repo)
-sudo -u jatahku git checkout -- frontend/dist/ 2>/dev/null || true
+sudo -u jatahku git checkout -- frontend/dist/ blog/dist/ 2>/dev/null || true
 
 # Pull latest
 sudo -u jatahku git pull origin main
@@ -41,6 +41,14 @@ if [ -d "frontend" ]; then
     for f in landing.html privacy.html terms.html favicon.svg og-image.png og-image.svg; do
         restore_file "$f"
     done
+fi
+
+# Blog
+if [ -d "blog" ]; then
+    cd /opt/jatahku/app/blog
+    sudo -u jatahku npm install --silent 2>/dev/null || true
+    sudo -u jatahku npm run build
+    sudo cp -r dist/* /home/jatahku/web/blog.jatahku.com/public_html/
 fi
 
 # Re-register Telegram webhook (sync secret token after restart)
