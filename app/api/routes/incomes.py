@@ -150,7 +150,7 @@ async def list_incomes(
 
     result = await db.execute(
         select(Income)
-        .where(Income.household_id == hid)
+        .where(Income.household_id == hid, Income.user_id == user.id)
         .order_by(Income.created_at.desc())
         .limit(20)
     )

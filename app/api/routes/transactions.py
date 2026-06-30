@@ -96,6 +96,9 @@ async def create_transaction(
     if not envelope:
         raise HTTPException(status_code=404, detail="Envelope not found")
 
+    if str(getattr(envelope, "purpose", "expense")) in ("saving", "sinking_fund"):
+        raise HTTPException(status_code=403, detail="Amplop tabungan tidak bisa untuk pengeluaran langsung. Transfer dana ke amplop expense terlebih dahulu.")
+
     # Behavior checks
     check = await check_behavior(req.envelope_id, user.id, req.amount, db)
     if not check.allowed:
@@ -270,6 +273,10 @@ async def batch_create_transactions(
         envelope = result_env.scalar_one_or_none()
         if not envelope:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
+            continue
+
+        if str(getattr(envelope, "purpose", "expense")) in ("saving", "sinking_fund"):
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Amplop tabungan tidak bisa untuk pengeluaran langsung"))
             continue
 
         check = await check_behavior(item.envelope_id, user.id, item.amount, db)

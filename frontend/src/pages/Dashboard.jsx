@@ -377,6 +377,7 @@ export default function Dashboard() {
   const totalAllocated = envelopes.reduce((s, e) => s + Number(e.allocated), 0);
   const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = envelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
+  const totalSaving = envelopes.filter(e => e.purpose === 'saving' || e.purpose === 'sinking_fund').reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
 
   const periodLabel = selectedPeriod?.label
     || (prediction?.period_start
@@ -473,10 +474,11 @@ export default function Dashboard() {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="card"><p className="text-xs text-gray-400 font-medium">Dana dialokasi</p><p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Terpakai</p><p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Sisa</p><p className={`font-display text-xl font-bold mt-1 ${totalRemaining >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(totalRemaining)}</p></div>
+        <div className="card"><p className="text-xs text-gray-400 font-medium">Tabungan</p><p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
       </div>
 
