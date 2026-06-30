@@ -506,103 +506,100 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
     }
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const accent = isSavingLike ? SAVING : BRAND;
+  const iconTint = isSavingLike ? 'rgba(99,102,241,0.10)' : 'rgba(15,110,86,0.08)';
+  const pct = Math.round(spentRatio * 100);
+  const pctColor = spentRatio >= 0.9 ? 'text-danger-400' : spentRatio >= 0.7 ? 'text-amber-500' : 'text-gray-400';
+
   return (
-    <div className={`card group hover:border-brand-200 transition-all ${env.is_locked ? 'opacity-60' : ''}`}>
+    <div className={`card group hover:border-brand-200 transition-all relative ${env.is_locked ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2.5"><EnvelopeIcon value={env.emoji} size={28} color={isSavingLike ? SAVING : BRAND} /><div><h3 className="font-semibold">{titleCase(env.name)}</h3><p className="text-xs text-gray-400 flex items-center gap-1">{env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>} <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span></p></div></div>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-          <button onClick={() => onTransfer(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Geser</button>
-          <button onClick={() => onEdit(env)} className="text-xs text-gray-400 hover:text-brand-600 px-2 py-1 rounded">Edit</button>
-          <button onClick={() => onDelete(env.id, env.name)} className="text-xs text-gray-400 hover:text-danger-400 px-2 py-1 rounded">Hapus</button>
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: iconTint }}>
+          <EnvelopeIcon value={env.emoji} size={24} color={accent} />
         </div>
+        <button onClick={() => setMenuOpen(v => !v)}
+          className="w-8 h-8 -mr-1 -mt-1 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
+          <Icon name="dots" size={18} weight="bold" />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 top-10 z-20 w-36 bg-white rounded-xl shadow-lg border border-gray-100 py-1">
+              <button onClick={() => { setMenuOpen(false); onTransfer(env); }} className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"><Icon name="transfer" size={15} /> Geser dana</button>
+              <button onClick={() => { setMenuOpen(false); onEdit(env); }} className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"><Icon name="settings" size={15} /> Edit</button>
+              <button onClick={() => { setMenuOpen(false); onDelete(env.id, env.name); }} className="w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"><Icon name="close" size={15} /> Hapus</button>
+            </div>
+          </>
+        )}
       </div>
+
+      <h3 className="font-semibold leading-snug">{titleCase(env.name)}</h3>
+      <p className="text-xs text-gray-400 flex items-center gap-1 mt-1 mb-3">
+        {env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>}
+        <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span>
+      </p>
+
       {isUnfunded ? (
         <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana. Alokasikan income dulu.</div>
       ) : isSavingLike ? (
         <div className="mb-2">
-          {goal && (
-            <div>
-              <div className="flex justify-between items-end mb-1.5">
-                <span className={`font-display text-2xl font-bold ${remainColor}`}>{formatShort(free)}</span>
-                <span className="text-xs text-gray-400">Saldo</span>
+          <div className="flex justify-between items-end mb-2">
+            <span className={`font-display text-2xl font-bold ${remainColor}`}>{formatShort(goal ? goal.current_balance : free)}</span>
+            <span className="text-xs text-gray-400">{goal ? `Target ${formatShort(goal.target_amount)}` : 'Saldo'}</span>
+          </div>
+          {goal ? (
+            <>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.max(goal.progress_pct, 2)}%`, background: SAVING }} />
               </div>
-              <div className="flex justify-between items-end mb-1">
-                <span className="text-xs text-gray-400">🎯 {goal.name}</span>
-                <span className="text-xs font-medium text-amber-600">{Math.round(goal.progress_pct)}%</span>
+              <div className="flex items-center justify-between mt-1.5">
+                <p className="text-xs text-gray-400">{goal.name}</p>
+                <span className="text-xs font-semibold" style={{ color: SAVING }}>{Math.round(goal.progress_pct)}%</span>
               </div>
-              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                <div className="h-full bg-amber-400 rounded-full transition-all duration-700"
-                  style={{ width: `${Math.max(goal.progress_pct, 2)}%` }} />
-              </div>
-              <p className="text-xs text-gray-400 mt-1">{formatShort(goal.current_balance)} / {formatShort(goal.target_amount)}</p>
-              {goal.monthly_needed !== null && (
-                <p className="text-xs text-gray-400 mt-0.5">📅 {goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
+              {goal.monthly_needed !== null && !goal.is_achieved && (
+                <p className="text-xs text-gray-400 mt-1">{goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
               )}
               {goal.is_achieved && (
-                <span className="inline-block mt-1 text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700">✅ Tercapai</span>
+                <span className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700"><Icon name="check" size={12} weight="fill" /> Tercapai</span>
               )}
               {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
-                <span className="inline-block mt-0.5 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700">⚠️ Terlambat</span>
+                <span className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700"><Icon name="warning" size={12} weight="fill" /> Terlambat</span>
               )}
-            </div>
-          )}
-          {!goal && (
-            <div className="text-center py-3">
-              <p className="text-xs text-gray-400 mb-2">Belum ada target</p>
-              <button onClick={() => setShowGoalForm(true)} className="text-xs text-brand-600 hover:underline">+ Buat target</button>
-            </div>
+            </>
+          ) : (
+            <button onClick={() => setShowGoalForm(true)} className="text-xs font-medium hover:underline" style={{ color: SAVING }}>+ Buat target</button>
           )}
           {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
-            <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">
-              Budget: {formatShort(env.budget_amount)}/bulan
-            </p>
+            <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
           )}
+        </div>
+      ) : (
+        <div className="mb-2">
+          <div className="flex justify-between items-end mb-2">
+            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</span>
+            <span className="text-xs text-gray-400">Dana {formatShort(allocated)}</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
+          <div className="flex items-center justify-between mt-1.5">
+            <p className="text-xs text-gray-400">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
+            <span className={`text-xs font-semibold ${pctColor}`}>{pct}%</span>
+          </div>
           {rollover !== 0 && (
             rollover > 0
               ? <p className="text-xs text-brand-500 mt-1">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
               : <p className="text-xs text-danger-400 mt-1">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
           )}
-        </div>
-      ) : (
-        <div className="mb-2">
-          <div className="flex justify-between items-end mb-1.5">
-            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</span>
-            <span className="text-xs text-gray-400">Dana {formatShort(allocated)}</span>
-          </div>
-          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
-          <p className="text-xs text-gray-400 mt-1">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
-          {rollover !== 0 && (
-            rollover > 0
-              ? <p className="text-xs text-brand-500 mt-0.5">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
-              : <p className="text-xs text-danger-400 mt-0.5">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
-          )}
           {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatCurrency(reserved)}/bulan</p>}
         </div>
       )}
 
-      {/* Goal actions — only for saving/sinking_fund */}
+      {/* Goal actions — edit link only (badges + add live in the body above) */}
       {isSavingLike && goal && !showGoalForm && (
-        <div className="mt-2 pt-2 border-t border-gray-100">
-          <div className="flex items-center gap-2">
-            {goal.is_achieved && (
-              <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700">✅ Tercapai</span>
-            )}
-            {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
-              <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700">⚠️ Terlambat</span>
-            )}
-            <button onClick={() => { setShowGoalForm(true); setGoalName(goal.name); setGoalAmount(String(Math.round(Number(goal.target_amount)))); setGoalDate(goal.target_date || ''); }}
-              className="text-xs text-gray-400 hover:text-brand-600 ml-auto">
-              Edit target
-            </button>
-          </div>
-        </div>
-      )}
-
-      {isSavingLike && !goal && !showGoalForm && (
-        <div className="mt-2 pt-2 border-t border-gray-100">
-          <button onClick={() => setShowGoalForm(true)}
-            className="text-xs text-gray-400 hover:text-amber-600 transition-colors">
-            + 🎯 Tambah target tabungan
+        <div className="mt-2 pt-2 border-t border-gray-100 text-right">
+          <button onClick={() => { setShowGoalForm(true); setGoalName(goal.name); setGoalAmount(String(Math.round(Number(goal.target_amount)))); setGoalDate(goal.target_date || ''); }}
+            className="text-xs text-gray-400 hover:text-brand-600">
+            Edit target
           </button>
         </div>
       )}
@@ -633,70 +630,31 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   );
 }
 
-function EnvelopeSection({ title, envelopes, groups, goals, onEdit, onDelete, onTransfer, onGroupChanged, onGoalCreate, onGoalUpdate, onGoalDelete }) {
-  const hasGroups = envelopes.some((e) => e.group_id);
+const FILTERS = [
+  { key: 'semua', label: 'Semua', test: () => true },
+  { key: 'shared', label: 'Shared', icon: 'users', test: (e) => !e.is_personal },
+  { key: 'personal', label: 'Personal', icon: 'lock', test: (e) => e.is_personal },
+  { key: 'saving', label: 'Tabungan', icon: 'piggy', test: (e) => e.purpose === 'saving' },
+  { key: 'sinking_fund', label: 'Sinking Fund', icon: 'calendar', test: (e) => e.purpose === 'sinking_fund' },
+];
 
-  const renderGrid = (items) => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {items.map((env) => {
-        const goal = goals?.find(g => g.envelope_id === env.id);
-        return (
-          <EnvelopeCard key={env.id} env={env} goal={goal}
-            onEdit={onEdit} onDelete={onDelete} onTransfer={onTransfer}
-            onGoalCreate={onGoalCreate} onGoalUpdate={onGoalUpdate} onGoalDelete={onGoalDelete} />
-        );
-      })}
-    </div>
-  );
+const SORTS = [
+  { key: 'grup', label: 'Grup' },
+  { key: 'nama', label: 'Nama' },
+  { key: 'saldo', label: 'Saldo' },
+  { key: 'terpakai', label: 'Terpakai' },
+];
 
-  if (!hasGroups) {
-    return (
-      <div>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{title} ({envelopes.length})</h2>
-        {renderGrid(envelopes)}
-      </div>
-    );
-  }
+function envBalance(e) {
+  return Number(e.allocated || 0) + Number(e.rollover || 0) - Number(e.spent || 0);
+}
 
-  const sections = buildGroupSections(envelopes, groups);
-
-  const handleRename = async (g) => {
-    const next = window.prompt('Nama grup baru:', g.name);
-    if (!next || !next.trim() || next.trim() === g.name) return;
-    await api.renameEnvelopeGroup(g.id, next.trim());
-    onGroupChanged();
-  };
-
-  const handleDeleteGroup = async (g) => {
-    if (!confirm(`Hapus grup "${g.name}"? Amplop di dalamnya pindah ke Lainnya.`)) return;
-    await api.deleteEnvelopeGroup(g.id);
-    onGroupChanged();
-  };
-
-  return (
-    <div>
-      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{title} ({envelopes.length})</h2>
-      <div className="space-y-5">
-        {sections.map((sec) => (
-          <div key={sec.id ?? '__none__'}>
-            <div className="group flex items-center justify-between mb-2">
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-sm font-semibold text-gray-600">{sec.name}</h3>
-                <span className="text-xs text-gray-400">· saldo {formatCurrency(groupBalance(sec.envelopes))}</span>
-              </div>
-              {sec.id && (
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                  <button onClick={() => handleRename(sec)} className="text-xs text-gray-400 hover:text-brand-600">✏️ Rename</button>
-                  <button onClick={() => handleDeleteGroup(sec)} className="text-xs text-gray-400 hover:text-danger-400">🗑 Hapus</button>
-                </div>
-              )}
-            </div>
-            {renderGrid(sec.envelopes)}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function sortEnvelopes(list, sortBy) {
+  const arr = [...list];
+  if (sortBy === 'nama') arr.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sortBy === 'saldo') arr.sort((a, b) => envBalance(b) - envBalance(a));
+  else if (sortBy === 'terpakai') arr.sort((a, b) => (b.spent_ratio || 0) - (a.spent_ratio || 0));
+  return arr;
 }
 
 export default function Envelopes() {
@@ -708,6 +666,9 @@ export default function Envelopes() {
   const [editing, setEditing] = useState(null);
   const [transferTarget, setTransferTarget] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [filter, setFilter] = useState('semua');
+  const [sortBy, setSortBy] = useState('grup');
+  const [view, setView] = useState('grid');
 
   const load = () => {
     Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups(), api.getGoals()]).then(([env, grp, gls]) => {
@@ -753,30 +714,118 @@ export default function Envelopes() {
     load();
   };
 
+  const handleRenameGroup = async (g) => {
+    const next = window.prompt('Nama grup baru:', g.name);
+    if (!next || !next.trim() || next.trim() === g.name) return;
+    await api.renameEnvelopeGroup(g.id, next.trim());
+    load();
+  };
+
+  const handleDeleteGroup = async (g) => {
+    if (!confirm(`Hapus grup "${g.name}"? Amplop di dalamnya pindah ke Lainnya.`)) return;
+    await api.deleteEnvelopeGroup(g.id);
+    load();
+  };
+
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
-  const shared = envelopes.filter(e => !e.is_personal);
-  const personal = envelopes.filter(e => e.is_personal);
+  const totalSaldo = groupBalance(envelopes);
+  const counts = Object.fromEntries(FILTERS.map(f => [f.key, envelopes.filter(f.test).length]));
+  const activeFilter = FILTERS.find(f => f.key === filter) || FILTERS[0];
+  const filtered = envelopes.filter(activeFilter.test);
+  const gridCls = view === 'list' ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
+
+  const cardOf = (env) => (
+    <EnvelopeCard key={env.id} env={env} goal={goals.find(g => g.envelope_id === env.id)}
+      onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget}
+      onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-display font-bold">Amplop</h1><p className="text-sm text-gray-500">{envelopes.length} amplop aktif</p></div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">+ Amplop Baru</button>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-display font-bold">Amplop</h1>
+          <p className="text-sm text-gray-500">Kelola semua amplop keuanganmu</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="card !p-3 flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.08)' }}><Icon name="envelope" size={18} color={BRAND} /></div>
+            <div><p className="font-display font-bold text-base leading-none">{envelopes.length}</p><p className="text-xs text-gray-400 mt-0.5">Amplop aktif</p></div>
+          </div>
+          <div className="card !p-3 flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.08)' }}><Icon name="coins" size={18} color={BRAND} /></div>
+            <div><p className="font-display font-bold text-base leading-none">{formatShort(totalSaldo)}</p><p className="text-xs text-gray-400 mt-0.5">Total saldo</p></div>
+          </div>
+          <button onClick={() => setShowCreate(true)} className="btn-primary inline-flex items-center gap-1.5 flex-shrink-0"><Icon name="plus" size={16} weight="bold" /> Amplop Baru</button>
+        </div>
       </div>
+
       {envelopes.length === 0 ? (
-        <div className="card text-center py-12"><p className="text-4xl mb-3">✉️</p><p className="text-gray-500 mb-4">Belum ada amplop.</p><button onClick={() => setShowCreate(true)} className="btn-primary">Buat Amplop Pertama</button></div>
+        <div className="card text-center py-12"><div className="flex justify-center mb-3"><Icon name="envelope" size={40} color={BRAND} /></div><p className="text-gray-500 mb-4">Belum ada amplop.</p><button onClick={() => setShowCreate(true)} className="btn-primary">Buat Amplop Pertama</button></div>
       ) : (
         <>
-          {shared.length > 0 && (
-            <EnvelopeSection title="👥 Shared" envelopes={shared} groups={groups} goals={goals}
-              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load}
-              onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
-          )}
-          {personal.length > 0 && (
-            <EnvelopeSection title="🔒 Personal" envelopes={personal} groups={groups} goals={goals}
-              onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGroupChanged={load}
-              onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
+          {/* Filter tabs + controls */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {FILTERS.map(f => (
+                <button key={f.key} onClick={() => setFilter(f.key)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center gap-1.5 transition-colors ${filter === f.key ? 'bg-brand-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>
+                  {f.icon && <Icon name={f.icon} size={14} color={filter === f.key ? '#fff' : '#6b7280'} />}
+                  {f.label}
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${filter === f.key ? 'bg-white/20' : 'bg-gray-200 text-gray-500'}`}>{counts[f.key]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                  className="appearance-none text-sm border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
+                  {SORTS.map(s => <option key={s.key} value={s.key}>Urutkan: {s.label}</option>)}
+                </select>
+                <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+              <div className="flex items-center gap-0.5 border border-gray-200 rounded-lg p-0.5">
+                <button onClick={() => setView('grid')} className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === 'grid' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`} title="Grid"><Icon name="grid" size={16} /></button>
+                <button onClick={() => setView('list')} className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === 'list' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`} title="List"><Icon name="rows" size={16} /></button>
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          {filtered.length === 0 ? (
+            <div className="card text-center py-10 text-gray-400 text-sm">Tidak ada amplop di filter ini.</div>
+          ) : sortBy === 'grup' ? (
+            (() => {
+              const sections = buildGroupSections(filtered, groups);
+              const showHeaders = sections.some(s => s.id !== null);
+              if (!showHeaders) return <div className={gridCls}>{filtered.map(cardOf)}</div>;
+              return (
+                <div className="space-y-6">
+                  {sections.map(sec => (
+                    <div key={sec.id ?? '__none__'}>
+                      <div className="group flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <Icon name="group" size={16} color={BRAND} />
+                          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{sec.name}</h3>
+                          <span className="text-xs text-gray-400">· Saldo {formatCurrency(groupBalance(sec.envelopes))}</span>
+                        </div>
+                        {sec.id && (
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                            <button onClick={() => handleRenameGroup(sec)} className="text-xs text-gray-400 hover:text-brand-600">Rename</button>
+                            <button onClick={() => handleDeleteGroup(sec)} className="text-xs text-gray-400 hover:text-danger-400">Hapus</button>
+                          </div>
+                        )}
+                      </div>
+                      <div className={gridCls}>{sec.envelopes.map(cardOf)}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()
+          ) : (
+            <div className={gridCls}>{sortEnvelopes(filtered, sortBy).map(cardOf)}</div>
           )}
         </>
       )}
