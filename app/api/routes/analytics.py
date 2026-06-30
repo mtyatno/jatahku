@@ -241,6 +241,7 @@ async def spending_prediction(
             Income.income_date >= period_start,
             Income.income_date <= period_end,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            Envelope.purpose == "expense",
         )
     )
     total_allocated = float(alloc_r.scalar())
@@ -254,6 +255,7 @@ async def spending_prediction(
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            Envelope.purpose == "expense",
         )
     )
     total_spent = float(spent_r.scalar())
@@ -262,6 +264,7 @@ async def spending_prediction(
         select(Envelope.id).where(
             Envelope.household_id == hid,
             Envelope.is_active == True,
+            Envelope.purpose == "expense",
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
