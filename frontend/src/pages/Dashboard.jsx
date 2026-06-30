@@ -446,33 +446,29 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {isCurrentPeriod && <ExportButtons />}
-
-      {/* Household streak leaderboard — only when there's someone to compete with */}
-      {leaderboard.length >= 2 && (
-        <div className="card">
-          <h3 className="font-semibold text-sm mb-3">🔥 Papan disiplin rumah</h3>
-          <div className="space-y-1.5">
-            {leaderboard.map((m, i) => {
-              const medal = ['🥇', '🥈', '🥉'][i] || `${i + 1}.`;
-              return (
-                <div
-                  key={m.user_id}
-                  className="flex items-center justify-between text-sm rounded-lg px-2 py-1.5"
-                  style={m.is_me ? { background: '#F0FDF9' } : undefined}
-                >
-                  <span className="flex items-center gap-2 truncate mr-2">
-                    <span className="w-6 text-center flex-shrink-0">{medal}</span>
-                    <span className="truncate">{m.name}{m.is_me ? ' (kamu)' : ''}</span>
-                    {m.logged_today && <span className="text-xs flex-shrink-0" title="Sudah catat hari ini">✅</span>}
-                  </span>
-                  <span className="flex-shrink-0 font-semibold text-gray-700">
-                    {m.current_streak > 0 ? `🔥 ${m.current_streak} hari` : <span className="text-gray-400 font-normal">—</span>}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+      {isCurrentPeriod && (
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <ExportButtons />
+          {leaderboard.length >= 2 && (
+            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white dark:bg-[#1e293b] border border-gray-200 dark:border-[#334155]">
+              <span className="text-xs font-medium text-gray-400 dark:text-gray-500">🔥 Papan disiplin</span>
+              <div className="flex items-center gap-3">
+                {leaderboard.map((m, i) => {
+                  const medal = ['🥇', '🥈', '🥉'][i] || '';
+                  return (
+                    <span key={m.user_id} className="flex items-center gap-1 text-xs">
+                      <span className="shrink-0">{medal}</span>
+                      <span className={m.is_me ? 'font-semibold text-brand-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'}>
+                        {m.name.split(' ')[0]}{m.is_me ? '' : ''}
+                      </span>
+                      <span className="font-medium text-gray-600 dark:text-gray-300">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
+                      {m.logged_today && <span className="text-[10px]" title="Sudah catat">✅</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
