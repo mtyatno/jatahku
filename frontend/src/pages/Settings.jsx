@@ -180,13 +180,13 @@ function HardResetDialog({ profile, members, onClose, onSuccess }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
 
         {step === 1 && (
           <>
             <h3 className="text-lg font-semibold text-red-600">⚠️ Reset Semua Data?</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Data berikut akan dihapus permanen dan tidak bisa dikembalikan:</p>
-            <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1 list-disc list-inside">
+            <p className="text-sm text-gray-600">Data berikut akan dihapus permanen dan tidak bisa dikembalikan:</p>
+            <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
               <li>Semua amplop</li>
               <li>Semua transaksi</li>
               <li>Semua alokasi</li>
@@ -216,7 +216,7 @@ function HardResetDialog({ profile, members, onClose, onSuccess }) {
         {step === 2 && (
           <>
             <h3 className="text-lg font-semibold">📧 Email untuk backup</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-gray-600">
               Data kamu akan di-backup dan dikirim ke email ini sebelum dihapus. Email juga akan disimpan ke akun kamu.
             </p>
             <input
@@ -246,7 +246,7 @@ function HardResetDialog({ profile, members, onClose, onSuccess }) {
         {step === 3 && (
           <>
             <h3 className="text-lg font-semibold text-red-600">🔴 Konfirmasi Reset</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-gray-600">
               Ketik <strong className="font-mono">RESET</strong> untuk melanjutkan. Tindakan ini tidak bisa dibatalkan.
             </p>
             <input
@@ -966,7 +966,7 @@ export default function Settings() {
       </div>
 
       {/* Zona Berbahaya */}
-      <div className="card border border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-900">
+      <div className="card border border-red-200 bg-red-50">
         <h3 className="font-semibold text-sm text-red-600 mb-1">⚠️ Zona Berbahaya</h3>
         <div className="flex items-center justify-between">
           <div>

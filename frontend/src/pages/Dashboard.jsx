@@ -443,6 +443,7 @@ export default function Dashboard() {
   goals.forEach(g => { goalByEnv[g.envelope_id] = g; });
 
   const totalAllocated = envelopes.reduce((s, e) => s + Number(e.allocated), 0);
+  const totalRollover = envelopes.reduce((s, e) => s + Number(e.rollover || 0), 0);
   const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = envelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const totalSaving = envelopes.filter(e => e.purpose === 'saving' || e.purpose === 'sinking_fund').reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
@@ -520,18 +521,18 @@ export default function Dashboard() {
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <ExportButtons />
           {leaderboard.length >= 2 && (
-            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white dark:bg-[#1e293b] border border-gray-200 dark:border-[#334155]">
-              <span className="text-xs font-medium text-gray-400 dark:text-gray-500 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
+            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white border border-gray-200">
+              <span className="text-xs font-medium text-gray-400 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
               <div className="flex items-center gap-3">
                 {leaderboard.map((m, i) => {
                   const medal = ['🥇', '🥈', '🥉'][i] || '';
                   return (
                     <span key={m.user_id} className="flex items-center gap-1 text-xs">
                       <span className="shrink-0">{medal}</span>
-                      <span className={m.is_me ? 'font-semibold text-brand-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-400'}>
+                      <span className={m.is_me ? 'font-semibold text-brand-600' : 'text-gray-500'}>
                         {m.name.split(' ')[0]}{m.is_me ? '' : ''}
                       </span>
-                      <span className="font-medium text-gray-600 dark:text-gray-300">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
+                      <span className="font-medium text-gray-600">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
                       {m.logged_today && <span className="text-[10px]" title="Sudah catat">✅</span>}
                     </span>
                   );
@@ -544,7 +545,15 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="card"><p className="text-xs text-gray-400 font-medium">Dana dialokasi</p><p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p></div>
+        <div className="card">
+          <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
+          <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
+          {totalRollover !== 0 && (
+            <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
+              {totalRollover > 0 ? `+${formatShort(totalRollover)} rollover` : `−${formatShort(Math.abs(totalRollover))} dari periode lalu`}
+            </p>
+          )}
+        </div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Terpakai</p><p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Sisa bebas</p><p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p></div>
         <div className="card"><p className="text-xs text-gray-400 font-medium">Tabungan</p><p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p></div>
