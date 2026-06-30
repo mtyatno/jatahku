@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update, delete
+from sqlalchemy import select, func, update, delete, or_
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -240,7 +240,11 @@ async def export_data(
 
     # Envelopes
     env_result = await db.execute(
-        select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True)
+        select(Envelope).where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelopes = [{"name": e.name, "emoji": e.emoji, "budget": str(e.budget_amount)} for e in env_result.scalars().all()]
 
@@ -264,7 +268,11 @@ async def export_data(
     rec_result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
-        .where(Envelope.household_id == hid, RecurringTransaction.is_active == True)
+        .where(
+            Envelope.household_id == hid,
+            RecurringTransaction.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     recurring = [{"description": r.description, "amount": str(r.amount), "frequency": r.frequency.value} for r in rec_result.scalars().all()]
 
@@ -302,7 +310,10 @@ async def delete_account(
     hid = hid_result.scalar_one_or_none()
     if hid:
         await db.execute(
-            update(Envelope).where(Envelope.household_id == hid).values(is_active=False)
+            update(Envelope).where(
+                Envelope.household_id == hid,
+                Envelope.owner_id == user.id,
+            ).values(is_active=False)
         )
 
     await db.commit()
@@ -349,6 +360,14 @@ async def reset_data(
     # Guard: fail early if household not found
     if not hid:
         raise HTTPException(400, "Data tidak ditemukan")
+
+    # Only household owner can reset data
+    role_result = await db.execute(
+        select(HouseholdMember.role).where(HouseholdMember.user_id == user.id, HouseholdMember.household_id == hid)
+    )
+    role = role_result.scalar_one_or_none()
+    if role != "owner":
+        raise HTTPException(403, "Hanya owner household yang bisa reset data")
 
     # Collect envelope ids
     env_ids: list = []

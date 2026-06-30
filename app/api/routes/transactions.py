@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -86,7 +86,11 @@ async def create_transaction(
     hid = result.scalar_one_or_none()
 
     result = await db.execute(
-        select(Envelope).where(Envelope.id == req.envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == req.envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = result.scalar_one_or_none()
     if not envelope:
@@ -257,7 +261,11 @@ async def batch_create_transactions(
             continue
 
         result_env = await db.execute(
-            select(Envelope).where(Envelope.id == item.envelope_id, Envelope.household_id == hid)
+            select(Envelope).where(
+                Envelope.id == item.envelope_id,
+                Envelope.household_id == hid,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            )
         )
         envelope = result_env.scalar_one_or_none()
         if not envelope:
@@ -361,7 +369,11 @@ async def list_transactions(
     query = (
         select(Transaction)
         .join(Envelope)
-        .where(Envelope.household_id == hid, Transaction.is_deleted == False)
+        .where(
+            Envelope.household_id == hid,
+            Transaction.is_deleted == False,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     if envelope_id:
         query = query.where(Transaction.envelope_id == envelope_id)
@@ -383,7 +395,19 @@ async def delete_transaction(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Transaction).where(Transaction.id == txn_id))
+    hid = result.scalar_one_or_none()
+    if not hid:
+        raise HTTPException(status_code=404, detail="Household not found")
+
+    result = await db.execute(
+        select(Transaction)
+        .join(Envelope)
+        .where(
+            Transaction.id == txn_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")

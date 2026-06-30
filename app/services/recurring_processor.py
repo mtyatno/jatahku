@@ -57,15 +57,23 @@ async def process_recurring_transactions():
                 if not envelope:
                     continue
 
-                # Find all TG-linked users in this household
-                members_result = await db.execute(
-                    select(User)
-                    .join(HouseholdMember, HouseholdMember.user_id == User.id)
-                    .where(
-                        HouseholdMember.household_id == envelope.household_id,
-                        User.telegram_id != None,
+                # Find recipients: owner only for private, all members for shared
+                if envelope.owner_id is not None:
+                    members_result = await db.execute(
+                        select(User).where(
+                            User.id == envelope.owner_id,
+                            User.telegram_id != None,
+                        )
                     )
-                )
+                else:
+                    members_result = await db.execute(
+                        select(User)
+                        .join(HouseholdMember, HouseholdMember.user_id == User.id)
+                        .where(
+                            HouseholdMember.household_id == envelope.household_id,
+                            User.telegram_id != None,
+                        )
+                    )
                 users = members_result.scalars().all()
 
                 emoji = envelope.emoji or "📁"

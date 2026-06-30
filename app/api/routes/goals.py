@@ -155,7 +155,11 @@ async def create_goal(
 
     # Verify envelope belongs to household
     result = await db.execute(
-        select(Envelope).where(Envelope.id == req.envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == req.envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = result.scalar_one_or_none()
     if not envelope:

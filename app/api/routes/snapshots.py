@@ -3,7 +3,7 @@ from uuid import UUID
 from decimal import Decimal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -49,6 +49,7 @@ async def list_snapshots(
             Envelope.household_id == hid,
             MonthlySnapshot.year == y,
             MonthlySnapshot.month == m,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
         .order_by(Envelope.created_at)
     )

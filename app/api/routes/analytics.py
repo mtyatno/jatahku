@@ -124,12 +124,13 @@ async def monthly_trend(
         spent_r = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0))
             .join(Envelope, Transaction.envelope_id == Envelope.id)
-            .where(
-                Envelope.household_id == hid,
-                Transaction.is_deleted == False,
-                Transaction.transaction_date >= p_start,
-                Transaction.transaction_date <= p_end,
-            )
+        .where(
+            Envelope.household_id == hid,
+            Transaction.is_deleted == False,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
         )
         spent = float(spent_r.scalar())
         alloc_r = await db.execute(
@@ -140,6 +141,7 @@ async def monthly_trend(
                 Envelope.household_id == hid,
                 Income.income_date >= p_start,
                 Income.income_date <= p_end,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
             )
         )
         allocated = float(alloc_r.scalar())
@@ -175,8 +177,8 @@ async def weekly_pattern(
             Transaction.is_deleted == False,
             Transaction.transaction_date >= p_start,
             Transaction.transaction_date <= p_end,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
-        .group_by(func.extract('dow', Transaction.transaction_date))
         .order_by(func.extract('dow', Transaction.transaction_date))
     )
     rows = {int(r.dow): (float(r.total), int(r.txn_count)) for r in result.all()}
@@ -238,6 +240,7 @@ async def spending_prediction(
             Envelope.household_id == hid,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
     total_allocated = float(alloc_r.scalar())
@@ -250,12 +253,17 @@ async def spending_prediction(
             Transaction.is_deleted == False,
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
     total_spent = float(spent_r.scalar())
 
     env_r = await db.execute(
-        select(Envelope.id).where(Envelope.household_id == hid, Envelope.is_active == True)
+        select(Envelope.id).where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     env_ids = [r for r in env_r.scalars().all()]
     total_reserved = 0.0

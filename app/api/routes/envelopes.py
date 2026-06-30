@@ -379,12 +379,17 @@ async def update_envelope(
 ):
     hid = await _get_hid(user, db)
     result = await db.execute(
-        select(Envelope).where(Envelope.id == envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = result.scalar_one_or_none()
     if not envelope:
         raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
 
+    # Prevent changing ownership of personal envelopes
     if req.group_id is not None:
         grp_check = await db.execute(
             select(EnvelopeGroup).where(
@@ -418,7 +423,11 @@ async def delete_envelope(
     from datetime import date as date_cls
     hid = await _get_hid(user, db)
     result = await db.execute(
-        select(Envelope).where(Envelope.id == envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = result.scalar_one_or_none()
     if not envelope:
@@ -500,9 +509,21 @@ async def transfer_between_envelopes(
     """Transfer allocated funds from one envelope to another."""
     hid = await _get_hid(user, db)
 
-    from_env = await db.execute(select(Envelope).where(Envelope.id == from_id, Envelope.household_id == hid))
+    from_env = await db.execute(
+        select(Envelope).where(
+            Envelope.id == from_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )
     from_envelope = from_env.scalar_one_or_none()
-    to_env = await db.execute(select(Envelope).where(Envelope.id == to_id, Envelope.household_id == hid))
+    to_env = await db.execute(
+        select(Envelope).where(
+            Envelope.id == to_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )
     to_envelope = to_env.scalar_one_or_none()
 
     if not from_envelope or not to_envelope:

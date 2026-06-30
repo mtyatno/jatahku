@@ -58,6 +58,7 @@ async def list_recurring(
         .where(
             Envelope.household_id == hid,
             RecurringTransaction.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
         .order_by(RecurringTransaction.next_run)
     )
@@ -82,7 +83,11 @@ async def create_recurring(
 ):
     hid = await _get_hid(user, db)
     env_result = await db.execute(
-        select(Envelope).where(Envelope.id == req.envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == req.envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = env_result.scalar_one_or_none()
     if not envelope:
@@ -117,14 +122,24 @@ async def update_recurring(
 ):
     hid = await _get_hid(user, db)
     result = await db.execute(
-        select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(
+            RecurringTransaction.id == rec_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     rec = result.scalar_one_or_none()
     if not rec:
         raise HTTPException(status_code=404, detail="Tidak ditemukan")
 
     env_result = await db.execute(
-        select(Envelope).where(Envelope.id == req.envelope_id, Envelope.household_id == hid)
+        select(Envelope).where(
+            Envelope.id == req.envelope_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     envelope = env_result.scalar_one_or_none()
     if not envelope:
@@ -152,8 +167,15 @@ async def delete_recurring(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    hid = await _get_hid(user, db)
     result = await db.execute(
-        select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(
+            RecurringTransaction.id == rec_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
     )
     rec = result.scalar_one_or_none()
     if not rec:

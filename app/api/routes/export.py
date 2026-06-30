@@ -45,6 +45,7 @@ async def _get_export_data(user: User, db: AsyncSession, year: int, month: int, 
             Transaction.is_deleted == False,
             func.extract("year", Transaction.transaction_date) == year,
             func.extract("month", Transaction.transaction_date) == month,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
     if envelope_id:

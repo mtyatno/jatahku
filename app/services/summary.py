@@ -64,6 +64,7 @@ async def send_daily_summary(user_id=None):
                         Envelope.household_id == hid,
                         Transaction.is_deleted == False,
                         Transaction.transaction_date == today,
+                        or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
                     )
                     .order_by(Transaction.created_at.desc())
                 )
