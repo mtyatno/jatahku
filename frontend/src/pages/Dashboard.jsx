@@ -452,7 +452,10 @@ export default function Dashboard() {
   const totalRollover = envelopes.reduce((s, e) => s + Number(e.rollover || 0), 0);
   const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = envelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
-  const totalSaving = envelopes.filter(e => e.purpose === 'saving' || e.purpose === 'sinking_fund').reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
+  const savingEnvelopes = envelopes.filter(e => e.purpose === 'saving' || e.purpose === 'sinking_fund');
+  const totalSaving = savingEnvelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
+  const sharedSaving = savingEnvelopes.filter(e => !e.is_personal).reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
+  const personalSaving = totalSaving - sharedSaving;
   const sisaBebas = totalRemaining - totalSaving;
 
   const periodLabel = selectedPeriod?.label
@@ -585,7 +588,7 @@ export default function Dashboard() {
           <div className="min-w-0">
             <p className="text-xs text-gray-400 font-medium">Tabungan</p>
             <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target'}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{totalSaving > 0 ? `${formatShort(sharedSaving)} shared · ${formatShort(personalSaving)} personal` : (goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target')}</p>
           </div>
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
         </div>
