@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 
-function RecurringModal({ onClose, onSaved, item }) {
+export function RecurringModal({ onClose, onSaved, item }) {
   const isEdit = !!item;
   const [envelopes, setEnvelopes] = useState([]);
   const [desc, setDesc] = useState(item?.description || '');

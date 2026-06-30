@@ -31,7 +31,7 @@ function buildGroupSections(envelopes, groups) {
   return sections;
 }
 
-function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [], goals = [] }) {
+export function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [], goals = [] }) {
   const editingGoal = editing ? goals.find(g => g.envelope_id === editing.id) : null;
   const [step, setStep] = useState(editing ? 2 : 1); // 1=basic, 2=controls (editing skips funding)
   const [name, setName] = useState(editing?.name || '');
