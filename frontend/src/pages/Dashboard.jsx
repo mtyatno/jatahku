@@ -456,6 +456,8 @@ export default function Dashboard() {
   const totalSaving = savingEnvelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const sharedSaving = savingEnvelopes.filter(e => !e.is_personal).reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const personalSaving = totalSaving - sharedSaving;
+  const sharedSavingGoals = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id && !e.is_personal)).length;
+  const personalSavingGoals = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id && e.is_personal)).length;
   const sisaBebas = totalRemaining - totalSaving;
 
   const periodLabel = selectedPeriod?.label
@@ -553,7 +555,7 @@ export default function Dashboard() {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
@@ -586,9 +588,17 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Tabungan</p>
-            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{totalSaving > 0 ? `${formatShort(sharedSaving)} shared · ${formatShort(personalSaving)} personal` : (goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target')}</p>
+            <p className="text-xs text-gray-400 font-medium">Tabungan shared</p>
+            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(sharedSaving)}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}</p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
+        </div>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Tabungan personal</p>
+            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(personalSaving)}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}</p>
           </div>
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
         </div>
