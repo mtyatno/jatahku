@@ -1,63 +1,67 @@
-# Jatahku Agent Workflow
+# Memory: Deployment & Code Safety Rules
 
-This repository uses the Superpowers-style workflow for multi-session,
-multi-agent development. Codex, Claude, and other coding agents should use the
-same durable process so work can be resumed without chat history.
+> Shared cross-agent memory. This repo is developed by multiple agents
+> (Claude, OpenAI/Codex, DeepSeek). Keep critical rules here so every agent
+> reads them — agent-specific memory stores are not shared.
 
-## Required Development Flow
+## ⚠️ Incident History — DO NOT REPEAT
 
-For any non-trivial coding task, do not jump straight into implementation.
-Use this sequence:
+- **Landing page wiped → site down (≈2026-06-29).** `landing.html` was
+  deleted/corrupted during a deploy, so `jatahku.com` served a **blank page and
+  users could not log in**. Recovered by rollback/restore (`5964e01 restore
+  landing.html`; hardened in `ebed770 robust deploy - backup landing files,
+  clean dist before pull`).
+- **Root causes:** (1) `git add -A` staged and corrupted `landing.html` into
+  ~71KB of null bytes; (2) a dirty `frontend/dist/` conflicted on `git pull`,
+  so the deploy failed silently and clobbered the landing page.
+- **Rules that prevent recurrence:** never `git add -A`; never commit
+  `frontend/dist/`; never delete/overwrite public files (`landing.html`,
+  `app.html`) without confirming first; deploy.sh must back up landing and
+  clean `dist` before pull; after any frontend/landing deploy, verify
+  `jatahku.com` is not blank and login works.
 
-1. `brainstorming`
-   - Clarify intent, constraints, options, risks, and acceptance criteria.
-   - Output a design spec in `docs/superpowers/specs/`.
-   - The spec answers WHAT and WHY.
-2. `writing-plans`
-   - Convert the spec into a task-by-task implementation plan in
-     `docs/superpowers/plans/`.
-   - The plan answers HOW.
-   - Use checkbox syntax (`- [ ]`) for every resumable step.
-3. `executing-plans` or `subagent-driven-development`
-   - Execute the plan task by task.
-   - Update checkboxes as each step is actually completed.
-   - Use `subagent-driven-development` only when tasks are independent enough
-     to be delegated safely.
-4. Inside each task, use:
-   - `test-driven-development`: failing test first, then implementation, then
-     green test.
-   - `systematic-debugging`: when tests or runtime behavior fail, investigate
-     root cause before patching.
-5. Before claiming completion, use:
-   - `verification-before-completion`: run the verification commands and inspect
-     real output.
-   - `requesting-code-review` / `receiving-code-review`: review the diff before
-     merge when the change is meaningful.
-   - `finishing-a-development-branch`: handle merge, cleanup, and deployment
-     notes when requested.
+## Git & File Management
+- **NEVER use `git add -A`** — always stage specific files with `git add file1 file2 ...`
+- Staging all files can corrupt binary files (landing.html became 71KB of null bytes) and commit unwanted files (.superpowers/, temporary_file/, AGENTS.md, frontend/dist/)
+- `frontend/dist/` should not be committed to git
 
-## Durable State
+## Deploy Script (`deploy.sh`)
+- Located at `/opt/jatahku/app/deploy.sh` on server
+- Runs on push to main via GitHub Actions
+- Git repo is at `/opt/jatahku/app/` NOT `/opt/jatahku/`
+- Must clean dirty `frontend/dist/` before `git pull`:
+  ```bash
+  sudo -u jatahku git checkout -- frontend/dist/ 2>/dev/null || true
+  ```
+- Landing page preservation: backup to `/opt/jatahku/backups/` each deploy
+- Deploy fails silently when dist files conflict with repo
+- Run as `jatahku` user for git operations, `sudo` for file copies
 
-- Long-lived cross-feature facts belong in agent memory outside the repo.
-- Feature specs live in `docs/superpowers/specs/YYYY-MM-DD-feature-design.md`.
-- Feature plans live in `docs/superpowers/plans/YYYY-MM-DD-feature.md`.
-- `.superpowers/` and `temporary_file/` are scratch areas, not durable state.
+## Database Schema
+- **Never use `DROP TYPE IF EXISTS ... CASCADE`** in migrations — destroys enum types that columns reference, causing 500 errors
+- Use `SAEnum` cautiously; better to use plain `String(N)` for enum-like columns
+- `ALTER TABLE ADD COLUMN IF NOT EXISTS` is safe
+- `ALTER TABLE ALTER COLUMN TYPE` to force column type migration
+- `create_all` creates new tables/types but never alters existing
 
-## Plan Format
+## Service Worker (PWA)
+- Service worker at `frontend/src/sw.js`
+- Must **bypass API calls** (api.jatahku.com) — return early without `event.respondWith()`:
+  ```javascript
+  if (url.hostname === 'api.jatahku.com') return;
+  ```
+- Never cache API responses in SW — they become stale and can return `undefined`
+- Test PWA in **incognito/private window** to avoid old SW cache
+- Hard refresh (Ctrl+Shift+R) is NOT enough — must unregister old SW or use incognito
 
-Plans must be executable by a fresh session:
+## Enum vs String in Python
+- `PurposeType.expense` (enum member) does NOT equal `"expense"` (string)
+- Always convert with `str(value)` before comparison: `str(getattr(obj, "field", "default"))`
+- This applies to all SAEnum/String columns
 
-- Include goal, architecture, and tech stack.
-- Split work into `Task 1`, `Task 2`, etc.
-- Each task lists exact files to modify or create.
-- Each task uses `- [ ] Step ...` checkboxes.
-- Prefer `Step 1: Write the failing test` when behavior can be tested.
-- Include validation commands for each task.
-- Include deployment or migration notes when production behavior changes.
-
-## Current AI Advisor Work
-
-The AI enhancement feature is tracked here:
-
-- `docs/superpowers/specs/2026-06-27-ai-financial-advisor-design.md`
-- `docs/superpowers/plans/2026-06-27-ai-financial-advisor.md`
+## Advisor Insights Engine
+- Located at `app/services/advisor.py` — `build_advisor_insights()`
+- Card types: `env_depletion` (expense), `saving_progress` (saving), `sinking_fund_deadline` (sinking_fund)
+- Do NOT wrap advisor route in silent try/except — hides real errors
+- Advisor needs `load_advisor_context` to load envelope stats
+- New envelopes without spending history still get stats (all zeros) — they won't generate cards but won't crash either
