@@ -306,6 +306,13 @@ class DirectEmailRequest(BaseModel):
     telegram_text: str | None = None
 
 
+class BroadcastRequest(BaseModel):
+    subject: str
+    body: str
+    cta_text: str | None = None
+    cta_url: str | None = None
+
+
 @router.post("/send-email-user")
 async def send_email_to_user(
     req: DirectEmailRequest,
@@ -566,7 +573,7 @@ async def delete_promo(
 
 @router.post("/broadcast-article")
 async def broadcast_article(
-    req: DirectEmailRequest,
+    req: BroadcastRequest,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
