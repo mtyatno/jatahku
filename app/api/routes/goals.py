@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
@@ -131,7 +131,11 @@ async def list_goals(
         select(Goal)
         .options(selectinload(Goal.envelope))
         .join(Envelope, Goal.envelope_id == Envelope.id)
-        .where(Envelope.household_id == hid, Envelope.is_active == True)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
         .order_by(Goal.created_at)
     )
     goals = result.scalars().all()
