@@ -10,7 +10,16 @@ from app.services.advisor import (
     allocate_income_to_targets,
     detect_interval,
     normalize_description,
+    _fmt_rp,
 )
+
+
+class TestFmtRp(unittest.TestCase):
+    def test_indonesian_dot_grouping(self):
+        self.assertEqual(_fmt_rp(Decimal("1520000")), "1.520.000")
+        self.assertEqual(_fmt_rp(Decimal("970000")), "970.000")
+        self.assertEqual(_fmt_rp(0), "0")
+        self.assertEqual(_fmt_rp(Decimal("999.6")), "1.000")
 
 
 class TestNormalizeDescription(unittest.TestCase):
@@ -136,6 +145,17 @@ class TestAllocateIncomeToTargets(unittest.TestCase):
 
         self.assertEqual(by_id["makan"]["recommended_amount"], Decimal("1000000"))
         self.assertEqual(by_id["tabungan"]["recommended_amount"], Decimal("500000"))
+        self.assertEqual(result["unallocated"], Decimal("0"))
+
+    def test_leftover_goes_to_saving_purpose_even_if_not_named_tabungan(self):
+        envelopes = [
+            {"id": "makan", "name": "Makan", "minimum": Decimal("0"), "target": Decimal("1000000"), "priority": 20, "purpose": "expense"},
+            {"id": "pensiun", "name": "Dana Pensiun", "minimum": Decimal("0"), "target": Decimal("0"), "priority": 90, "purpose": "saving"},
+        ]
+        result = allocate_income_to_targets(Decimal("1500000"), envelopes)
+        by_id = {item["id"]: item for item in result["items"]}
+        self.assertEqual(by_id["makan"]["recommended_amount"], Decimal("1000000"))
+        self.assertEqual(by_id["pensiun"]["recommended_amount"], Decimal("500000"))
         self.assertEqual(result["unallocated"], Decimal("0"))
 
     def test_locked_envelopes_are_not_used_as_sources(self):
