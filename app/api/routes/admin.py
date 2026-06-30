@@ -582,21 +582,47 @@ async def broadcast_article(
 
     sent = 0
     failed = 0
-    from app.services.email_service import send_email, email_template
+    from app.services.email_service import email_template
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from email.utils import formatdate, make_msgid
 
-    for u in users:
-        try:
-            html = email_template(
-                req.subject,
-                f"<p>Hai {u.name},</p>" + req.body,
-                req.cta_text or None,
-                req.cta_url or None,
-            )
-            if send_email(u.email, req.subject, html):
+    SMTP_HOST = "localhost"
+    SMTP_PORT = 587
+    SMTP_USER = "noreply@jatahku.com"
+    SMTP_PASS = "Jatahku2026!"
+
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+        server.ehlo()
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+
+        for u in users:
+            try:
+                html = email_template(
+                    req.subject,
+                    f"<p>Hai {u.name},</p>" + req.body,
+                    req.cta_text or None,
+                    req.cta_url or None,
+                )
+                msg = MIMEMultipart("alternative")
+                msg["From"] = f"Jatahku <{SMTP_USER}>"
+                msg["To"] = u.email
+                msg["Subject"] = req.subject
+                msg["Date"] = formatdate(localtime=True)
+                msg["Message-ID"] = make_msgid(domain="jatahku.com")
+                msg["List-Unsubscribe"] = f"<mailto:{SMTP_USER}?subject=unsubscribe>"
+                msg.attach(MIMEText(f"Buka email dengan client HTML untuk melihat konten.", "plain"))
+                msg.attach(MIMEText(html, "html"))
+                server.sendmail(SMTP_USER, u.email, msg.as_string())
                 sent += 1
-            else:
+            except Exception:
                 failed += 1
-        except Exception:
-            failed += 1
+
+        server.quit()
+    except Exception:
+        failed = len(users)
 
     return {"status": "ok", "sent": sent, "failed": failed, "total": len(users)}
