@@ -562,10 +562,26 @@ export default function Dashboard() {
               : 'Belum ada rollover'}
           </p>
         </div>
-        <div className="card"><p className="text-xs text-gray-400 font-medium">Terpakai</p><p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p></div>
-        <div className="card"><p className="text-xs text-gray-400 font-medium">Sisa bebas</p><p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p></div>
-        <div className="card"><p className="text-xs text-gray-400 font-medium">Tabungan</p><p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p></div>
-        <div className="card"><p className="text-xs text-gray-400 font-medium">Amplop aktif</p><p className="font-display text-xl font-bold mt-1">{envelopes.length}</p></div>
+        <div className="card">
+          <p className="text-xs text-gray-400 font-medium">Terpakai</p>
+          <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
+          <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
+        </div>
+        <div className="card">
+          <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
+          <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
+          <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
+        </div>
+        <div className="card">
+          <p className="text-xs text-gray-400 font-medium">Tabungan</p>
+          <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p>
+          <p className="text-xs mt-0.5 text-gray-400">{goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target'}</p>
+        </div>
+        <div className="card">
+          <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
+          <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
+          <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
+        </div>
       </div>
 
       {/* Hero AI Advisor — today's status + strategic insights */}
