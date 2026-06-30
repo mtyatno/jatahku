@@ -374,9 +374,9 @@ export default function Dashboard() {
   const shared = sortEnvelopes(envelopes.filter(e => !e.is_personal));
   const personal = sortEnvelopes(envelopes.filter(e => e.is_personal));
 
-  const totalAllocated = shared.reduce((s, e) => s + Number(e.allocated), 0);
-  const totalSpent = shared.reduce((s, e) => s + Number(e.spent), 0);
-  const totalRemaining = shared.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
+  const totalAllocated = envelopes.reduce((s, e) => s + Number(e.allocated), 0);
+  const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
+  const totalRemaining = envelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
 
   const periodLabel = selectedPeriod?.label
     || (prediction?.period_start
