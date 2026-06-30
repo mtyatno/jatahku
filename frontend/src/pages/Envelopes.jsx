@@ -723,6 +723,10 @@ export default function Envelopes() {
 
   useEffect(load, [refreshTick]);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('new') === '1') setShowCreate(true);
+  }, []);
+
   const handleDelete = async (id, name) => {
     if (!confirm(`Hapus amplop "${name}"?`)) return;
     await api.deleteEnvelope(id);

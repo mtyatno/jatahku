@@ -98,6 +98,10 @@ export default function Langganan() {
   };
   useEffect(load, []);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('new') === '1') setShowAdd(true);
+  }, []);
+
   const handleDelete = async (id, name) => {
     if (!confirm(`Hapus langganan "${name}"?`)) return;
     await api.request(`/recurring/${id}`, { method: 'DELETE' });

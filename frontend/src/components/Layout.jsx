@@ -6,6 +6,13 @@ import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 import MultiAddTransaction from './MultiAddTransaction';
 
+const FAB_OPTIONS = [
+  { key: 'expense', icon: '💰', label: 'Pengeluaran' },
+  { key: 'envelope', icon: '✉️', label: 'Amplop' },
+  { key: 'income', icon: '💵', label: 'Income' },
+  { key: 'langganan', icon: '🔄', label: 'Langganan' },
+];
+
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '📊' },
   { to: '/envelopes', label: 'Amplop', icon: '✉️' },
@@ -23,7 +30,10 @@ export default function Layout() {
   const { mode, toggleMode } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  const [fabMenu, setFabMenu] = useState(false);
+  const [fabAction, setFabAction] = useState(null);
   const menuRef = useRef(null);
+  const fabRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -135,18 +145,56 @@ export default function Layout() {
 
       <TelegramPrompt />
       <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
-      {/* Global quick-add FAB (every page) */}
-      <button
-        onClick={() => setFabOpen(true)}
-        className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
-        style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px' }}
-        title="Catat pengeluaran"
-      >+</button>
-      {fabOpen && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabOpen(false)}>
+      {/* Global FAB — speed dial */}
+      {fabMenu && (
+        <div className="fixed inset-0 z-50" onClick={() => setFabMenu(false)}>
+          <div className="absolute bottom-36 right-4 md:bottom-28 md:right-6 flex flex-col-reverse items-center gap-3">
+            {FAB_OPTIONS.map((opt, i) => (
+              <button
+                key={opt.key}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFabMenu(false);
+                  if (opt.key === 'expense') {
+                    setFabAction('expense');
+                    setFabOpen(true);
+                  } else if (opt.key === 'envelope') {
+                    navigate('/envelopes?new=1');
+                  } else if (opt.key === 'income') {
+                    navigate('/allocate?new=1');
+                  } else if (opt.key === 'langganan') {
+                    navigate('/langganan?new=1');
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all"
+                style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
+              >
+                <span className="text-lg">{opt.icon}</span>
+                <span>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setFabMenu(false)}
+            className="absolute bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-700 text-white text-3xl shadow-lg flex items-center justify-center transition-colors"
+            style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px', transform: 'rotate(45deg)' }}
+          >+</button>
+        </div>
+      )}
+      {!fabMenu && (
+        <button
+          onClick={() => setFabMenu(true)}
+          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-full bg-brand-600 text-white text-3xl shadow-lg flex items-center justify-center hover:bg-brand-700 transition-colors"
+          style={{ lineHeight: 1, paddingTop: '1px', paddingLeft: '1px' }}
+          title="Menu cepat"
+        >+</button>
+      )}
+      {/* Expense modal (global) */}
+      {fabOpen && fabAction === 'expense' && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => { setFabOpen(false); setFabAction(null); }}>
           <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl" onClick={e => e.stopPropagation()}>
             <h3 className="font-display font-bold text-lg mb-4">💰 Catat pengeluaran</h3>
-            <MultiAddTransaction onSaved={() => setFabOpen(false)} onCancel={() => setFabOpen(false)} />
+            <MultiAddTransaction onSaved={() => { setFabOpen(false); setFabAction(null); }} onCancel={() => { setFabOpen(false); setFabAction(null); }} />
           </div>
         </div>
       )}

@@ -25,6 +25,10 @@ export default function Allocate() {
   };
   useEffect(load, []);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('new') === '1') setShowForm(true);
+  }, []);
+
   const incomeNum = Number(incomeAmount) || 0;
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
