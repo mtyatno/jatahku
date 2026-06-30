@@ -212,14 +212,78 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
 }
 
 
-function EnvelopeRow({ env }) {
+// Savings accent — distinct from spending-risk colors (green/amber/red)
+const SAVING_ACCENT = '#6366F1';
+const SAVING_TRACK = 'rgba(99,102,241,0.16)';
+
+function EnvelopeRow({ env, goal }) {
   const allocated = Number(env.allocated);
   const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent);
   const reserved = Number(env.reserved || 0);
   const free = Number(env.free || env.remaining);
+  const isSaving = env.purpose === 'saving' || env.purpose === 'sinking_fund';
+
+  // ── Saving / sinking fund: balance-vs-target, NOT spent-vs-budget ──
+  if (isSaving) {
+    const balance = goal ? Number(goal.current_balance) : free;
+    if (goal) {
+      const pct = Math.round(goal.progress_pct);
+      const target = Number(goal.target_amount);
+      const achieved = goal.is_achieved;
+      const toTarget = Math.max(target - Number(goal.current_balance), 0);
+      const accent = achieved ? '#059669' : SAVING_ACCENT;
+      return (
+        <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">{env.emoji || '🐷'}</span>
+              <span className="font-semibold text-sm">{titleCase(env.name)}</span>
+              {achieved && (
+                <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: '#ECFDF5', color: '#059669' }}>🎉 Tercapai</span>
+              )}
+            </div>
+            <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-2 rounded-full overflow-hidden flex-1" style={{ background: SAVING_TRACK }}>
+              <div className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(Math.max(pct, 2), 100)}%`, background: accent }} />
+            </div>
+            <span className="text-xs font-semibold w-12 text-right" style={{ color: accent }}>{pct}% target</span>
+          </div>
+          <div className="flex justify-between mt-1 text-xs text-gray-400">
+            <span>Target {formatShort(target)}</span>
+            <span>{achieved ? 'Lengkap 🎯' : `Kurang ${formatShort(toTarget)}`}</span>
+          </div>
+          {goal.monthly_needed != null && !achieved && (
+            <p className="text-xs mt-0.5" style={{ color: SAVING_ACCENT }}>
+              ≈ {formatShort(goal.monthly_needed)}/bln biar tepat waktu
+            </p>
+          )}
+        </div>
+      );
+    }
+    // Saving envelope without a target yet
+    return (
+      <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">{env.emoji || '🐷'}</span>
+            <span className="font-semibold text-sm">{titleCase(env.name)}</span>
+            <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: SAVING_TRACK, color: SAVING_ACCENT }}>Menabung</span>
+          </div>
+          <span className="font-display font-bold text-sm" style={{ color: SAVING_ACCENT }}>{formatShort(balance)}</span>
+        </div>
+        <p className="text-xs text-gray-400 mb-1">Saldo tabungan · belum ada target</p>
+        <Link to="/envelopes" className="text-xs font-medium text-brand-600 hover:underline">+ Tambah target</Link>
+      </div>
+    );
+  }
+
+  // ── Expense: spent-vs-budget (risk colors) ──
   const ratio = env.spent_ratio;
-  const isUnfunded = allocated <= 0 && rollover === 0 && env.name !== 'Tabungan';
+  const isUnfunded = allocated <= 0 && rollover === 0;
 
   const barColor = ratio >= 0.9 ? 'bg-danger-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
   const freeColor = free <= 0 ? 'text-danger-400' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
@@ -243,7 +307,7 @@ function EnvelopeRow({ env }) {
         <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
       </div>
       {isUnfunded ? (
-        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana.</div>
+        <div className="bg-gray-50 text-gray-400 text-xs px-3 py-2 rounded-lg">Belum ada dana.</div>
       ) : (
         <>
           <div className="flex items-center gap-2">
@@ -373,6 +437,9 @@ export default function Dashboard() {
 
   const shared = sortEnvelopes(envelopes.filter(e => !e.is_personal));
   const personal = sortEnvelopes(envelopes.filter(e => e.is_personal));
+
+  const goalByEnv = {};
+  goals.forEach(g => { goalByEnv[g.envelope_id] = g; });
 
   const totalAllocated = envelopes.reduce((s, e) => s + Number(e.allocated), 0);
   const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
@@ -581,7 +648,7 @@ export default function Dashboard() {
             <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({shared.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[...shared].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} />)}
+            {[...shared].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
           </div>
         </div>
       )}
@@ -592,7 +659,7 @@ export default function Dashboard() {
             <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({personal.length}) →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[...personal].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} />)}
+            {[...personal].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
           </div>
         </div>
       )}
