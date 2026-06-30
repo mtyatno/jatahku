@@ -551,36 +551,51 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div className="card">
-          <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
-          <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
-          <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
-            {totalRollover > 0
-              ? `+${formatShort(totalRollover)} rollover`
-              : totalRollover < 0
-              ? `−${formatShort(Math.abs(totalRollover))} dari periode lalu`
-              : 'Belum ada rollover'}
-          </p>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
+            <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
+            <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
+              {totalRollover > 0
+                ? `+${formatShort(totalRollover)} rollover`
+                : totalRollover < 0
+                ? `−${formatShort(Math.abs(totalRollover))} dari periode lalu`
+                : 'Belum ada rollover'}
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="wallet" size={20} color="#0F6E56" /></div>
         </div>
-        <div className="card">
-          <p className="text-xs text-gray-400 font-medium">Terpakai</p>
-          <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
-          <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Terpakai</p>
+            <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(217,119,6,0.12)' }}><Icon name="expense" size={20} color="#D97706" /></div>
         </div>
-        <div className="card">
-          <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
-          <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
-          <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
+            <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="check" size={20} color="#0F6E56" /></div>
         </div>
-        <div className="card">
-          <p className="text-xs text-gray-400 font-medium">Tabungan</p>
-          <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p>
-          <p className="text-xs mt-0.5 text-gray-400">{goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target'}</p>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Tabungan</p>
+            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(totalSaving)}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{goals.length > 0 ? `${goals.length} target aktif` : 'Tanpa target'}</p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
         </div>
-        <div className="card">
-          <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
-          <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
-          <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
+        <div className="card flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
+            <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
+            <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
+          </div>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(107,114,128,0.12)' }}><Icon name="envelope" size={20} color="#6b7280" /></div>
         </div>
       </div>
 
