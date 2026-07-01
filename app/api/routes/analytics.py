@@ -130,6 +130,7 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
         .where(
             Envelope.household_id == hid,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            Income.user_id == user.id,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
         )
