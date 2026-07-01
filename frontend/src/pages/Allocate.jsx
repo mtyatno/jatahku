@@ -142,9 +142,6 @@ export default function Allocate() {
           <h1 className="text-2xl font-display font-bold">Alokasi Income</h1>
           <p className="text-sm text-gray-500">Catat income dan distribusikan ke amplop</p>
         </div>
-        {!showForm && (
-          <button onClick={() => setShowForm(true)} className="btn-primary">+ Income Baru</button>
-        )}
       </div>
 
       {showForm && (

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { flushQueue, getPendingCount } from '../lib/offlineQueue';
-import QuickAddTransaction from '../components/QuickAddTransaction';
 import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
 
 const TIME_TABS = [
@@ -83,7 +82,6 @@ export default function Transactions() {
   const [search, setSearch] = useState('');
   const [timeTab, setTimeTab] = useState('all');
   const [sortBy, setSortBy] = useState('terbaru');
-  const [showAdd, setShowAdd] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
   const [showMoreFilter, setShowMoreFilter] = useState(false);
@@ -190,12 +188,9 @@ export default function Transactions() {
           </div>
           <p className="text-sm text-gray-500 mt-0.5">{transactions.length} transaksi</p>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {pendingCount > 0 && (
-            <span style={{ fontSize: '12px', background: '#FEF3C7', color: '#92400E', padding: '4px 10px', borderRadius: '8px', fontWeight: 600 }}>⏳ {pendingCount} pending</span>
-          )}
-          <button onClick={() => setShowAdd(!showAdd)} className="btn-primary inline-flex items-center gap-1.5"><Icon name="plus" size={16} weight="bold" /> Tambah Transaksi</button>
-        </div>
+        {pendingCount > 0 && (
+          <span style={{ fontSize: '12px', background: '#FEF3C7', color: '#92400E', padding: '4px 10px', borderRadius: '8px', fontWeight: 600 }} className="flex-shrink-0 self-start">⏳ {pendingCount} pending</span>
+        )}
       </div>
 
       {/* Stat cards */}
@@ -206,12 +201,6 @@ export default function Transactions() {
         <StatCard icon="wallet" tone="orange" label="Transaksi Terbesar" value={formatShort(largest?.amount || 0)}
           sub={largest ? `${largest.description} · ${new Date(largest.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}` : '—'} />
       </div>
-
-      {showAdd && (
-        <div className="card border-brand-200">
-          <QuickAddTransaction onSaved={() => { setShowAdd(false); load(); }} onCancel={() => setShowAdd(false)} />
-        </div>
-      )}
 
       {/* Search + sort */}
       <div className="flex items-center gap-2">

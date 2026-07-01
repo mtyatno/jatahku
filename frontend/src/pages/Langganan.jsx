@@ -131,7 +131,6 @@ export default function Langganan() {
           <h1 className="text-2xl font-display font-bold">Langganan</h1>
           <p className="text-sm text-gray-500">Pembayaran rutin yang tercatat otomatis</p>
         </div>
-        <button onClick={() => setShowAdd(true)} className="btn-primary">+ Tambah</button>
       </div>
 
       {items.length > 0 && (

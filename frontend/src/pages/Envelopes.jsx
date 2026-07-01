@@ -758,7 +758,6 @@ export default function Envelopes() {
             <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.08)' }}><Icon name="coins" size={18} color={BRAND} /></div>
             <div><p className="font-display font-bold text-base leading-none">{formatShort(totalSaldo)}</p><p className="text-xs text-gray-400 mt-0.5">Total saldo</p></div>
           </div>
-          <button onClick={() => setShowCreate(true)} className="btn-primary inline-flex items-center gap-1.5 flex-shrink-0"><Icon name="plus" size={16} weight="bold" /> Amplop Baru</button>
         </div>
       </div>
 
