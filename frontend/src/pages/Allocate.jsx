@@ -2,6 +2,23 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
+import StatCard from '../components/StatCard';
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+
+const CAT_COLORS = ['#0F6E56', '#BA7517', '#1D9E75', '#D85A30', '#534AB7', '#993556', '#378ADD', '#639922'];
+
+function categoryColor(category, index) {
+  if (category === 'Tabungan') return '#6366F1';
+  if (category === 'Sinking Fund') return '#BA7517';
+  return CAT_COLORS[index % CAT_COLORS.length];
+}
+
+function advisorLine(pct, prev) {
+  if (prev == null) return `${pct}% masuk ke tabungan. Pertahankan porsi menabungmu.`;
+  if (pct > prev) return `${pct}% masuk ke tabungan, naik dari ${prev}% bulan lalu. Kebiasaan yang bagus! 👍`;
+  if (pct < prev) return `${pct}% masuk ke tabungan, turun dari ${prev}% bulan lalu. Coba sisihkan lebih banyak bulan depan.`;
+  return `${pct}% masuk ke tabungan, sama seperti bulan lalu. Pertahankan porsi menabungmu.`;
+}
 
 export default function Allocate() {
   const [envelopes, setEnvelopes] = useState([]);
@@ -9,6 +26,7 @@ export default function Allocate() {
   const [goals, setGoals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [summary, setSummary] = useState(null);
 
   // Income + allocation form
   const [incomeAmount, setIncomeAmount] = useState('');
@@ -21,8 +39,8 @@ export default function Allocate() {
   const [advisorApplied, setAdvisorApplied] = useState(false);
 
   const load = () => {
-    Promise.all([api.getEnvelopeSummary(), api.getIncomes(), api.getGoals()])
-      .then(([env, inc, gls]) => { setEnvelopes(env); setIncomes(inc); setGoals(gls); setLoading(false); });
+    Promise.all([api.getEnvelopeSummary(), api.getIncomes(), api.getGoals(), api.getAllocationSummary()])
+      .then(([env, inc, gls, sum]) => { setEnvelopes(env); setIncomes(inc); setGoals(gls); setSummary(sum); setLoading(false); });
   };
   useEffect(load, []);
 
@@ -143,6 +161,65 @@ export default function Allocate() {
           <p className="text-sm text-gray-500">Catat income dan distribusikan ke amplop</p>
         </div>
       </div>
+
+      {summary && summary.total_income > 0 && (
+        <div className="space-y-4">
+          {/* Stat cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard icon="wallet" tone="green" label="Total Income" value={formatCurrency(summary.total_income)} sub={summary.period_label} />
+            <StatCard icon="income" tone="indigo" label="Income Masuk" value={`${summary.income_count} kali`} sub="Dalam periode ini" />
+            <StatCard icon="transfer" tone="purple" label="Transfer Internal" value={`${summary.transfer_count} kali`} sub="Dalam periode ini" />
+            <StatCard icon="chartpie" tone="orange" label="Amplop Tujuan" value={`${summary.target_envelope_count} amplop`} sub="Penerima alokasi" />
+          </div>
+
+          {/* Donut + advisor */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card lg:col-span-2">
+              <h3 className="font-semibold text-sm mb-4">Distribusi Income Bulan Ini</h3>
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                <div className="relative w-44 h-44 flex-shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={summary.distribution} dataKey="amount" nameKey="category"
+                        cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
+                        {summary.distribution.map((d, i) => <Cell key={i} fill={categoryColor(d.category, i)} />)}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className={`font-display text-2xl font-bold ${summary.allocated_pct >= 100 ? 'text-brand-600' : 'text-amber-500'}`}>{summary.allocated_pct}%</span>
+                    <span className="text-xs text-gray-400">{summary.allocated_pct >= 100 ? 'Teralokasi' : 'Terjatah'}</span>
+                  </div>
+                </div>
+                <div className="flex-1 w-full space-y-2">
+                  {summary.distribution.map((d, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: categoryColor(d.category, i) }} />
+                      <span className="flex-1 truncate">{d.category}</span>
+                      <span className="font-mono text-gray-500">{formatShort(d.amount)}</span>
+                      <span className="w-10 text-right text-gray-400">{d.pct}%</span>
+                    </div>
+                  ))}
+                  {summary.allocated_pct < 100 && (
+                    <p className="text-xs text-amber-500 pt-1">Masih ada {100 - summary.allocated_pct}% income belum dijatah.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="card flex flex-col">
+              <div className="flex items-center gap-2 mb-3">
+                <Icon name="advisor" size={20} color={SAVING} />
+                <h3 className="font-display font-bold text-base">AI Advisor</h3>
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,0.10)', color: SAVING }}>Beta</span>
+              </div>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                Dari seluruh income bulan ini, {advisorLine(summary.saving_pct, summary.saving_pct_prev)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={handleSubmit} className="card border-brand-200 space-y-4">
