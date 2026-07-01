@@ -202,6 +202,36 @@ def _monthly_reserve(amount, frequency) -> Decimal:
     return _to_decimal(amount)
 
 
+def build_allocation_distribution(rows, total_income) -> dict:
+    """Group per-envelope net allocations into named categories with percentages.
+
+    rows: list of (category_name, net_amount). Categories with equal names are
+    summed. Non-positive categories are dropped. Percentages are of total_income.
+    """
+    total = _to_decimal(total_income)
+    merged: dict[str, Decimal] = {}
+    for name, amount in rows:
+        merged[name] = merged.get(name, Decimal("0")) + _to_decimal(amount)
+
+    positive = {k: v for k, v in merged.items() if v > 0}
+    allocated_total = sum(positive.values(), Decimal("0"))
+
+    def pct(v: Decimal) -> int:
+        return int(round(float(v) / float(total) * 100)) if total > 0 else 0
+
+    distribution = [
+        {"category": name, "amount": float(amount), "pct": pct(amount)}
+        for name, amount in sorted(positive.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+    saving_amount = positive.get("Tabungan", Decimal("0")) + positive.get("Sinking Fund", Decimal("0"))
+    return {
+        "distribution": distribution,
+        "allocated_pct": pct(allocated_total),
+        "saving_amount": float(saving_amount),
+        "saving_pct": pct(saving_amount),
+    }
+
+
 async def envelope_lifetime_balance(envelope_id, db) -> Decimal:
     """Canonical all-time accumulated balance of an envelope:
     sum(allocations) - sum(non-deleted transactions), independent of period or

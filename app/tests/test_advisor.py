@@ -10,6 +10,7 @@ from app.services.advisor import (
     allocate_income_to_targets,
     detect_interval,
     normalize_description,
+    build_allocation_distribution,
     _fmt_rp,
     _period_index,
     _sum_by_period,
@@ -217,6 +218,35 @@ class TestAllocateIncomeToTargets(unittest.TestCase):
 
         self.assertEqual(by_id["gadget"]["recommended_amount"], Decimal("0"))
         self.assertEqual(by_id["tabungan"]["recommended_amount"], Decimal("800000"))
+
+
+class TestAllocationDistribution(unittest.TestCase):
+    def test_groups_and_percentages(self):
+        rows = [
+            ("Kebutuhan", Decimal("4800000")),
+            ("Tabungan", Decimal("3000000")),
+            ("Sinking Fund", Decimal("2400000")),
+            ("Lifestyle", Decimal("1200000")),
+            ("Kebutuhan", Decimal("600000")),  # digabung ke Kebutuhan
+        ]
+        out = build_allocation_distribution(rows, Decimal("12000000"))
+        cats = {d["category"]: d for d in out["distribution"]}
+        self.assertEqual(cats["Kebutuhan"]["amount"], 5400000.0)
+        self.assertEqual(cats["Kebutuhan"]["pct"], 45)
+        self.assertEqual(out["distribution"][0]["category"], "Kebutuhan")  # desc sort
+        self.assertEqual(out["allocated_pct"], 100)
+        self.assertEqual(out["saving_amount"], 5400000.0)  # Tabungan + Sinking Fund
+        self.assertEqual(out["saving_pct"], 45)
+
+    def test_drops_nonpositive_and_handles_zero_income(self):
+        rows = [("Kebutuhan", Decimal("500000")), ("Lainnya", Decimal("-100000"))]
+        out = build_allocation_distribution(rows, Decimal("500000"))
+        self.assertEqual([d["category"] for d in out["distribution"]], ["Kebutuhan"])
+        self.assertEqual(out["allocated_pct"], 100)
+        zero = build_allocation_distribution([], Decimal("0"))
+        self.assertEqual(zero["distribution"], [])
+        self.assertEqual(zero["allocated_pct"], 0)
+        self.assertEqual(zero["saving_pct"], 0)
 
 
 if __name__ == "__main__":
