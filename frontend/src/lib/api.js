@@ -241,6 +241,11 @@ class ApiClient {
     return res.ok ? res.json() : [];
   }
 
+  async getAllocationSummary() {
+    const res = await this.request('/analytics/allocation-summary');
+    return res.ok ? res.json() : null;
+  }
+
   // Transactions
   async getTransactions(envelopeId = null, limit = 50, startDate = null, endDate = null) {
     const params = new URLSearchParams({ limit });

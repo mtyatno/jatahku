@@ -10,10 +10,16 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_last_n_periods, get_period_info
 from app.models.models import (
     User, Envelope, Transaction, HouseholdMember, Allocation, Income,
-    RecurringTransaction, RecurringFrequency,
+    RecurringTransaction, RecurringFrequency, EnvelopeGroup,
 )
+from app.services.advisor import build_allocation_distribution
 
 router = APIRouter()
+
+_ID_MONTHS = [
+    "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+]
 
 
 async def _get_hid(user, db):
@@ -107,6 +113,108 @@ async def envelope_breakdown(
         .order_by(func.sum(Transaction.amount).desc().nullslast())
     )
     return [{"name": r.name, "emoji": r.emoji, "spent": float(r.spent)} for r in result.all()]
+
+
+async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tuple[list, int]:
+    """Return (rows, target_count): net SUM(Allocation.amount) per envelope in period,
+    mapped to a category name; target_count = envelopes with net > 0."""
+    result = await db.execute(
+        select(
+            Envelope.purpose,
+            EnvelopeGroup.name.label("group_name"),
+            func.coalesce(func.sum(Allocation.amount), 0).label("net"),
+        )
+        .join(Income, Allocation.income_id == Income.id)
+        .join(Envelope, Allocation.envelope_id == Envelope.id)
+        .join(EnvelopeGroup, Envelope.group_id == EnvelopeGroup.id, isouter=True)
+        .where(
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            Income.user_id == user.id,
+            Income.income_date >= period_start,
+            Income.income_date <= period_end,
+        )
+        .group_by(Envelope.id, Envelope.purpose, EnvelopeGroup.name)
+    )
+    rows = []
+    target_count = 0
+    for r in result.all():
+        if r.purpose == "sinking_fund":
+            category = "Sinking Fund"
+        elif r.purpose == "saving":
+            category = "Tabungan"
+        elif r.group_name:
+            category = r.group_name
+        else:
+            category = "Lainnya"
+        rows.append((category, r.net))
+        if r.net and r.net > 0:
+            target_count += 1
+    return rows, target_count
+
+
+async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decimal, int, int]:
+    """Return (total_income, income_count, transfer_count) for the period."""
+    result = await db.execute(
+        select(Income.amount).where(
+            Income.household_id == hid,
+            Income.user_id == user.id,
+            Income.income_date >= period_start,
+            Income.income_date <= period_end,
+        )
+    )
+    total = Decimal("0")
+    income_count = 0
+    transfer_count = 0
+    for (amount,) in result.all():
+        if amount and amount > 0:
+            total += amount
+            income_count += 1
+        else:
+            transfer_count += 1
+    return total, income_count, transfer_count
+
+
+@router.get("/allocation-summary")
+async def allocation_summary(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    """Income + allocation summary for the current budget period — for the Alokasi header."""
+    hid = await _get_hid(user, db)
+    if not hid:
+        return {
+            "period_label": "", "total_income": 0, "income_count": 0,
+            "transfer_count": 0, "target_envelope_count": 0, "distribution": [],
+            "allocated_pct": 0, "saving_amount": 0, "saving_pct": 0, "saving_pct_prev": None,
+        }
+
+    periods = get_last_n_periods(_payday(user), 2)  # [prev, current]
+    prev_start, prev_end = periods[0]
+    cur_start, cur_end = periods[-1]
+
+    total_income, income_count, transfer_count = await _income_totals(hid, user, cur_start, cur_end, db)
+    rows, target_count = await _net_alloc_by_category(hid, user, cur_start, cur_end, db)
+    dist = build_allocation_distribution(rows, total_income)
+
+    # Previous period saving_pct (for advisor comparison)
+    prev_income, _, _ = await _income_totals(hid, user, prev_start, prev_end, db)
+    saving_pct_prev = None
+    if prev_income > 0:
+        prev_rows, _ = await _net_alloc_by_category(hid, user, prev_start, prev_end, db)
+        saving_pct_prev = build_allocation_distribution(prev_rows, prev_income)["saving_pct"]
+
+    return {
+        "period_label": f"{_ID_MONTHS[cur_start.month]} {cur_start.year}",
+        "total_income": float(total_income),
+        "income_count": income_count,
+        "transfer_count": transfer_count,
+        "target_envelope_count": target_count,
+        "distribution": dist["distribution"],
+        "allocated_pct": dist["allocated_pct"],
+        "saving_amount": dist["saving_amount"],
+        "saving_pct": dist["saving_pct"],
+        "saving_pct_prev": saving_pct_prev,
+    }
 
 
 @router.get("/monthly-trend")
