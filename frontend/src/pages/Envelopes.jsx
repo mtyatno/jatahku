@@ -573,6 +573,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
           {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
             <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
           )}
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatShort(reserved)}/bulan</p>}
         </div>
       ) : (
         <div className="mb-2">
@@ -590,7 +591,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
               ? <p className="text-xs text-brand-500 mt-1">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
               : <p className="text-xs text-danger-400 mt-1">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
           )}
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatCurrency(reserved)}/bulan</p>}
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatShort(reserved)}/bulan</p>}
         </div>
       )}
 
