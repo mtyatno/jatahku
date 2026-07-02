@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
+import { envelopeInsight } from '../lib/envelopeInsight';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
@@ -458,13 +459,30 @@ function ControlBadges({ env }) {
   return <div className="flex flex-wrap gap-1 mt-2">{badges.map((b, i) => <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>{b.icon} {b.label}</span>)}</div>;
 }
 
+function AdvisorStrip({ insight, leadingIcon }) {
+  const TONE = {
+    safe:    { box: 'bg-brand-50',  text: 'text-brand-600',  color: BRAND,     glyph: 'check' },
+    warning: { box: 'bg-amber-50',  text: 'text-amber-600',  color: '#D97706', glyph: 'warning' },
+    danger:  { box: 'bg-red-50',    text: 'text-danger-400', color: '#E24B4A', glyph: 'warning' },
+    neutral: { box: 'bg-gray-50',   text: 'text-gray-500',   color: '#9CA3AF', glyph: null },
+  };
+  const t = TONE[insight.tone] || TONE.neutral;
+  return (
+    <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 ${t.box}`}>
+      <Icon name={leadingIcon} size={16} color={t.color} />
+      <span className={`text-xs font-medium flex-1 ${t.text}`}>{insight.text}</span>
+      {t.glyph && <Icon name={t.glyph} size={15} color={t.color} weight="fill" />}
+    </div>
+  );
+}
+
 function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, onGoalUpdate, onGoalDelete }) {
   const allocated = Number(env.allocated || 0);
   const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent || 0);
   const remaining = Number(env.remaining || 0);
   const reserved = Number(env.reserved || 0);
-  const free = Number(env.free || remaining);
+  const free = Number(env.free ?? remaining);
   const spentRatio = env.spent_ratio || 0;
   const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
   const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
@@ -510,16 +528,27 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const accent = isSavingLike ? SAVING : BRAND;
   const iconTint = isSavingLike ? 'rgba(99,102,241,0.10)' : 'rgba(15,110,86,0.08)';
   const pct = Math.round(spentRatio * 100);
-  const pctColor = spentRatio >= 0.9 ? 'text-danger-400' : spentRatio >= 0.7 ? 'text-amber-500' : 'text-gray-400';
+  const pctBadgeCls = spentRatio >= 0.9 ? 'bg-red-50 text-danger-400'
+    : spentRatio >= 0.7 ? 'bg-amber-50 text-amber-600'
+    : 'bg-brand-50 text-brand-600';
+  const insight = envelopeInsight(env, goal);
 
   return (
     <div className={`card group hover:border-brand-200 transition-all relative ${env.is_locked ? 'opacity-60' : ''}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: iconTint }}>
-          <EnvelopeIcon value={env.emoji} size={24} color={accent} />
+      {/* Header */}
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: iconTint }}>
+          <EnvelopeIcon value={env.emoji} size={26} color={accent} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display font-bold leading-snug truncate">{titleCase(env.name)}</h3>
+          <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+            {env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>}
+            <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span>
+          </p>
         </div>
         <button onClick={() => setMenuOpen(v => !v)}
-          className="w-8 h-8 -mr-1 -mt-1 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors">
+          className="w-8 h-8 -mr-1 -mt-1 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors flex-shrink-0">
           <Icon name="dots" size={18} weight="bold" />
         </button>
         {menuOpen && (
@@ -534,68 +563,95 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         )}
       </div>
 
-      <h3 className="font-semibold leading-snug">{titleCase(env.name)}</h3>
-      <p className="text-xs text-gray-400 flex items-center gap-1 mt-1 mb-3">
-        {env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>}
-        <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span>
-      </p>
-
+      {/* Body */}
       {isUnfunded ? (
-        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-2 rounded-lg">💡 Belum ada dana. Alokasikan income dulu.</div>
+        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-3 rounded-xl flex items-center gap-2">
+          <Icon name="warning" size={16} color="#D97706" /> Belum ada dana. Alokasikan income dulu.
+        </div>
       ) : isSavingLike ? (
-        <div className="mb-2">
-          <div className="flex justify-between items-end mb-2">
-            <span className={`font-display text-2xl font-bold ${remainColor}`}>{formatShort(goal ? goal.current_balance : free)}</span>
-            <span className="text-xs text-gray-400">{goal ? `Target ${formatShort(goal.target_amount)}` : 'Saldo'}</span>
+        <div>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Saldo</p>
+              <p className="font-display text-3xl font-bold" style={{ color: env.is_locked ? '#9CA3AF' : SAVING }}>{formatShort(goal ? goal.current_balance : free)}</p>
+            </div>
+            {goal && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0" style={{ background: 'rgba(99,102,241,0.10)', color: SAVING }}>{Math.round(goal.progress_pct)}% dari target</span>
+            )}
           </div>
           {goal ? (
             <>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden mt-3">
                 <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.max(goal.progress_pct, 2)}%`, background: SAVING }} />
               </div>
-              <div className="flex items-center justify-between mt-1.5">
-                <p className="text-xs text-gray-400">{goal.name}</p>
-                <span className="text-xs font-semibold" style={{ color: SAVING }}>{Math.round(goal.progress_pct)}%</span>
+              <div className="flex items-stretch gap-3 mt-3">
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <Icon name="calendar" size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-gray-500 leading-snug min-w-0">
+                    <p className="truncate">{goal.name}</p>
+                    {goal.is_achieved ? (
+                      <span className="inline-flex items-center gap-1 text-green-600"><Icon name="check" size={12} weight="fill" color="#16A34A" /> Tercapai</span>
+                    ) : goal.monthly_needed !== null ? (
+                      <p className="text-gray-400">{goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="w-px bg-gray-100 flex-shrink-0" />
+                <div className="text-right flex-shrink-0">
+                  <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Target</p>
+                  <p className="text-sm font-semibold text-gray-600 mt-0.5">{formatShort(goal.target_amount)}</p>
+                </div>
               </div>
-              {goal.monthly_needed !== null && !goal.is_achieved && (
-                <p className="text-xs text-gray-400 mt-1">{goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
+              {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
+                <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
               )}
-              {goal.is_achieved && (
-                <span className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium px-2 py-0.5 rounded-md bg-green-100 text-green-700"><Icon name="check" size={12} weight="fill" /> Tercapai</span>
-              )}
+              {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
               {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
-                <span className="inline-flex items-center gap-1 mt-1.5 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700"><Icon name="warning" size={12} weight="fill" /> Terlambat</span>
+                <span className="inline-flex items-center gap-1 mt-2 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700"><Icon name="warning" size={12} weight="fill" /> Terlambat</span>
               )}
             </>
           ) : (
-            <button onClick={() => setShowGoalForm(true)} className="text-xs font-medium hover:underline" style={{ color: SAVING }}>+ Buat target</button>
+            <div className="mt-3">
+              <button onClick={() => setShowGoalForm(true)} className="text-xs font-medium hover:underline" style={{ color: SAVING }}>+ Buat target</button>
+            </div>
           )}
-          {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
-            <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
-          )}
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatShort(reserved)}/bulan</p>}
         </div>
       ) : (
-        <div className="mb-2">
-          <div className="flex justify-between items-end mb-2">
-            <span className={`font-display text-2xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</span>
-            <span className="text-xs text-gray-400">Dana {formatShort(allocated)}</span>
+        <div>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Tersedia</p>
+              <p className={`font-display text-3xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</p>
+            </div>
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 ${pctBadgeCls}`}>{pct}% terpakai</span>
           </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} /></div>
-          <div className="flex items-center justify-between mt-1.5">
-            <p className="text-xs text-gray-400">Terpakai {formatCurrency(spent)} dari {formatCurrency(allocated)}</p>
-            <span className={`text-xs font-semibold ${pctColor}`}>{pct}%</span>
+          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden mt-3">
+            <div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} />
+          </div>
+          <div className="flex items-stretch gap-3 mt-3">
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <Icon name="wallet" size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
+              <div className="text-xs text-gray-500 leading-snug min-w-0">
+                <p className="truncate">Terpakai {formatCurrency(spent)}</p>
+                <p className="text-gray-400 truncate">dari {formatCurrency(allocated)}</p>
+              </div>
+            </div>
+            <div className="w-px bg-gray-100 flex-shrink-0" />
+            <div className="text-right flex-shrink-0">
+              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Awal</p>
+              <p className="text-sm font-semibold text-gray-600 mt-0.5">{formatShort(allocated)}</p>
+            </div>
           </div>
           {rollover !== 0 && (
             rollover > 0
-              ? <p className="text-xs text-brand-500 mt-1">🔄 Rollover +{formatShort(rollover)} dari bulan lalu</p>
-              : <p className="text-xs text-danger-400 mt-1">🔄 {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
+              ? <p className="text-xs text-brand-500 mt-2 flex items-center gap-1"><Icon name="langganan" size={12} /> Rollover +{formatShort(rollover)} dari bulan lalu</p>
+              : <p className="text-xs text-danger-400 mt-2 flex items-center gap-1"><Icon name="langganan" size={12} /> {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
           )}
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-0.5">⏳ Reserved: {formatShort(reserved)}/bulan</p>}
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
         </div>
       )}
 
-      {/* Goal actions — edit link only (badges + add live in the body above) */}
+      {/* Goal actions — edit link (badges + add live in the body above) */}
       {isSavingLike && goal && !showGoalForm && (
         <div className="mt-2 pt-2 border-t border-gray-100 text-right">
           <button onClick={() => { setShowGoalForm(true); setGoalName(goal.name); setGoalAmount(String(Math.round(Number(goal.target_amount)))); setGoalDate(goal.target_date || ''); }}
@@ -627,6 +683,10 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
       )}
 
       <ControlBadges env={env} />
+
+      {!isUnfunded && !showGoalForm && (
+        <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />
+      )}
     </div>
   );
 }
