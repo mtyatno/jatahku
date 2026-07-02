@@ -8,7 +8,7 @@ import {
   CheckCircle, Lock, UsersThree, Target, PiggyBank, Wallet, SignOut, ShieldCheck,
   Warning, Trophy, TelegramLogo, X, CalendarBlank, ArrowsLeftRight,
   DotsThreeVertical, SquaresFour, Rows, FolderSimple, Coins,
-  MagnifyingGlass, Globe, ChartPieSlice,
+  MagnifyingGlass, Globe, ChartPieSlice, Info,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -44,6 +44,7 @@ const UI = {
   group: FolderSimple,
   coins: Coins,
   search: MagnifyingGlass,
+  info: Info,
   globe: Globe,
   fire: Fire,
   advisor: Sparkle,

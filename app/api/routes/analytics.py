@@ -177,9 +177,11 @@ async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decim
 
 @router.get("/allocation-summary")
 async def allocation_summary(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """Income + allocation summary for the current budget period — for the Alokasi header."""
+    """Income + allocation summary for a budget period — for the Alokasi header."""
     hid = await _get_hid(user, db)
     if not hid:
         return {
@@ -188,9 +190,11 @@ async def allocation_summary(
             "allocated_pct": 0, "saving_amount": 0, "saving_pct": 0, "saving_pct_prev": None,
         }
 
-    periods = get_last_n_periods(_payday(user), 2)  # [prev, current]
-    prev_start, prev_end = periods[0]
-    cur_start, cur_end = periods[-1]
+    if period_start and period_end:
+        cur_start, cur_end = period_start, period_end
+    else:
+        cur_start, cur_end = get_budget_period(_payday(user))
+    prev_start, prev_end = get_last_n_periods(_payday(user), 2, today=cur_start)[0]
 
     total_income, income_count, transfer_count = await _income_totals(hid, user, cur_start, cur_end, db)
     rows, target_count = await _net_alloc_by_category(hid, user, cur_start, cur_end, db)

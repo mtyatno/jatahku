@@ -241,8 +241,12 @@ class ApiClient {
     return res.ok ? res.json() : [];
   }
 
-  async getAllocationSummary() {
-    const res = await this.request('/analytics/allocation-summary');
+  async getAllocationSummary(periodStart = null, periodEnd = null) {
+    const params = new URLSearchParams();
+    if (periodStart) params.set('period_start', periodStart);
+    if (periodEnd) params.set('period_end', periodEnd);
+    const qs = params.toString() ? `?${params}` : '';
+    const res = await this.request(`/analytics/allocation-summary${qs}`);
     return res.ok ? res.json() : null;
   }
 
@@ -313,8 +317,12 @@ class ApiClient {
   }
 
   // Incomes
-  async getIncomes() {
-    const res = await this.request('/incomes/');
+  async getIncomes(periodStart = null, periodEnd = null) {
+    const params = new URLSearchParams();
+    if (periodStart) params.set('period_start', periodStart);
+    if (periodEnd) params.set('period_end', periodEnd);
+    const qs = params.toString() ? `?${params}` : '';
+    const res = await this.request(`/incomes/${qs}`);
     return res.ok ? res.json() : [];
   }
 
