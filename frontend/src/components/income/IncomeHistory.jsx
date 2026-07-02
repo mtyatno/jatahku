@@ -104,7 +104,7 @@ export default function IncomeHistory({ incomes, periods, periodIdx, onPeriodCha
       ) : (
         <div className="space-y-3">
           {filtered.map((e, i) => (
-            <div key={i} className="flex gap-3">
+            <div key={`${e.kind}-${e.ts}`} className="flex gap-3">
               <DateBadge date={e.date} kind={e.kind} />
               <div className="flex-1 min-w-0">
                 {e.kind === 'income' ? <IncomeCard income={e.income} /> : <TransferCard entry={e} />}

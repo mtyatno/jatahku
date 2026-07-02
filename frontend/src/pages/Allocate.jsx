@@ -42,8 +42,8 @@ export default function Allocate() {
   const [advisorApplied, setAdvisorApplied] = useState(false);
 
   const load = () => {
-    if (periodIdx === null || periods.length === 0) return;
-    const isCurrent = periodIdx === periods.length - 1;
+    if (periodIdx === null) return;
+    const isCurrent = periods.length === 0 || periodIdx >= periods.length - 1;
     const ps = isCurrent ? null : periods[periodIdx].period_start;
     const pe = isCurrent ? null : periods[periodIdx].period_end;
     Promise.all([api.getEnvelopeSummary(), api.getIncomes(ps, pe), api.getGoals(), api.getAllocationSummary(ps, pe)])
@@ -52,7 +52,7 @@ export default function Allocate() {
   useEffect(load, [periodIdx, periods]);
 
   useEffect(() => {
-    api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length - 1); });
+    api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length > 0 ? p.length - 1 : -1); });
   }, []);
 
   useEffect(() => {
