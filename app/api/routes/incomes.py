@@ -1,18 +1,33 @@
 from decimal import Decimal
 from uuid import UUID
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from zoneinfo import ZoneInfo
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.period import get_budget_period
 from app.models.models import (
     User, Income, Allocation, Envelope, HouseholdMember,
 )
+from app.services.income_history import parse_transfer
 
 router = APIRouter()
+
+
+def _payday(user) -> int:
+    return getattr(user, "payday_day", 1) or 1
+
+
+def _fmt_time(dt, tz) -> str:
+    try:
+        zone = ZoneInfo(tz or "Asia/Jakarta")
+    except Exception:
+        zone = ZoneInfo("Asia/Jakarta")
+    return dt.astimezone(zone).strftime("%H:%M")
 
 
 class AllocationItem(BaseModel):
@@ -141,6 +156,8 @@ async def create_income(
 
 @router.get("/")
 async def list_incomes(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -148,18 +165,25 @@ async def list_incomes(
     if not hid:
         return []
 
+    if not period_start or not period_end:
+        period_start, period_end = get_budget_period(_payday(user))
+
     result = await db.execute(
         select(Income)
-        .where(Income.household_id == hid, Income.user_id == user.id)
+        .where(
+            Income.household_id == hid,
+            Income.user_id == user.id,
+            Income.income_date >= period_start,
+            Income.income_date <= period_end,
+        )
         .order_by(Income.created_at.desc())
-        .limit(20)
     )
     incomes = result.scalars().all()
 
     output = []
     for inc in incomes:
         alloc_result = await db.execute(
-            select(Allocation, Envelope.name, Envelope.emoji)
+            select(Allocation, Envelope.name, Envelope.emoji, Envelope.purpose)
             .join(Envelope, Allocation.envelope_id == Envelope.id)
             .where(
                 Allocation.income_id == inc.id,
@@ -167,14 +191,18 @@ async def list_incomes(
             )
         )
         allocs = [
-            {"envelope": name, "emoji": emoji, "amount": str(a.amount)}
-            for a, name, emoji in alloc_result.all()
+            {"envelope": name, "emoji": emoji, "amount": str(a.amount), "purpose": purpose}
+            for a, name, emoji, purpose in alloc_result.all()
         ]
+        is_transfer = inc.amount == 0
         output.append({
             "id": str(inc.id),
             "amount": str(inc.amount),
             "source": inc.description,
             "date": inc.income_date.strftime("%Y-%m-%d"),
+            "time": _fmt_time(inc.created_at, getattr(user, "timezone", None)),
+            "type": "transfer" if is_transfer else "income",
             "allocations": allocs,
+            "transfer": parse_transfer(allocs) if is_transfer else None,
         })
     return output
