@@ -488,7 +488,7 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
-  const remainColor = free <= 0 ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+  const remainColor = free <= 0 || status === 'danger' ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
 
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState(goal?.name || '');
@@ -602,10 +602,6 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
                   <p className="text-sm font-semibold text-gray-600 mt-0.5">{formatShort(goal.target_amount)}</p>
                 </div>
               </div>
-              {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
-                <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
-              )}
-              {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
               {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
                 <span className="inline-flex items-center gap-1 mt-2 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700"><Icon name="warning" size={12} weight="fill" /> Terlambat</span>
               )}
@@ -615,6 +611,10 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
               <button onClick={() => setShowGoalForm(true)} className="text-xs font-medium hover:underline" style={{ color: SAVING }}>+ Buat target</button>
             </div>
           )}
+          {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
+            <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
+          )}
+          {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
         </div>
       ) : (
         <div>
