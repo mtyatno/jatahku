@@ -4,6 +4,7 @@ import { formatCurrency, formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 import StatCard from '../components/StatCard';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import IncomeHistory from '../components/income/IncomeHistory';
 
 const CAT_COLORS = ['#0F6E56', '#BA7517', '#1D9E75', '#D85A30', '#534AB7', '#993556', '#378ADD', '#639922'];
 
@@ -27,6 +28,8 @@ export default function Allocate() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [summary, setSummary] = useState(null);
+  const [periods, setPeriods] = useState([]);
+  const [periodIdx, setPeriodIdx] = useState(null);
 
   // Income + allocation form
   const [incomeAmount, setIncomeAmount] = useState('');
@@ -39,10 +42,18 @@ export default function Allocate() {
   const [advisorApplied, setAdvisorApplied] = useState(false);
 
   const load = () => {
-    Promise.all([api.getEnvelopeSummary(), api.getIncomes(), api.getGoals(), api.getAllocationSummary()])
+    if (periodIdx === null || periods.length === 0) return;
+    const isCurrent = periodIdx === periods.length - 1;
+    const ps = isCurrent ? null : periods[periodIdx].period_start;
+    const pe = isCurrent ? null : periods[periodIdx].period_end;
+    Promise.all([api.getEnvelopeSummary(), api.getIncomes(ps, pe), api.getGoals(), api.getAllocationSummary(ps, pe)])
       .then(([env, inc, gls, sum]) => { setEnvelopes(env); setIncomes(inc); setGoals(gls); setSummary(sum); setLoading(false); });
   };
-  useEffect(load, []);
+  useEffect(load, [periodIdx, periods]);
+
+  useEffect(() => {
+    api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length - 1); });
+  }, []);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('new') === '1') setShowForm(true);
@@ -357,36 +368,12 @@ export default function Allocate() {
         </form>
       )}
 
-      {/* Income history - read only */}
-      <div>
-        <h2 className="font-display font-bold text-lg mb-3">Riwayat income</h2>
-        {incomes.length === 0 ? (
-          <div className="card text-center py-8"><p className="text-gray-400">Belum ada income tercatat</p></div>
-        ) : (
-          <div className="space-y-3">
-            {incomes.map(inc => (
-              <div key={inc.id} className="card">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className="font-semibold">{inc.source}</p>
-                    <p className="text-xs text-gray-400">{new Date(inc.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                  </div>
-                  <p className="font-display font-bold text-lg text-brand-600">+{formatShort(inc.amount)}</p>
-                </div>
-                {inc.allocations && inc.allocations.length > 0 && (
-                  <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-50">
-                    {inc.allocations.map((a, i) => (
-                      <span key={i} className={`text-xs px-2 py-1 rounded-md inline-flex items-center gap-1 ${a.auto ? 'bg-amber-50 text-amber-600' : 'bg-brand-50 text-brand-600'}`}>
-                        <EnvelopeIcon value={a.emoji} size={14} color="currentColor" /> {a.envelope} {formatShort(a.amount)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <IncomeHistory
+        incomes={incomes}
+        periods={periods}
+        periodIdx={periodIdx ?? 0}
+        onPeriodChange={setPeriodIdx}
+      />
     </div>
   );
 }
