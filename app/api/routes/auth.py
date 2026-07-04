@@ -187,8 +187,10 @@ async def forgot_password(
     if user:
         settings = get_settings()
         r = aioredis.from_url(settings.REDIS_URL)
-        token = await create_reset_token(r, str(user.id))
-        await r.close()
+        try:
+            token = await create_reset_token(r, str(user.id))
+        finally:
+            await r.close()
         reset_url = f"https://jatahku.com/reset-password?token={token}"
         # Kirim di background: respons tidak menunggu SMTP dan tidak
         # membocorkan (lewat timing) apakah email terdaftar.
@@ -210,13 +212,19 @@ async def reset_password(
 
     settings = get_settings()
     r = aioredis.from_url(settings.REDIS_URL)
-    user_id = await redeem_reset_token(r, req.token)
-    await r.close()
+    try:
+        user_id = await redeem_reset_token(r, req.token)
+    finally:
+        await r.close()
 
     if not user_id:
         raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
 
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
