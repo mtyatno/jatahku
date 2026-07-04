@@ -183,7 +183,7 @@ def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) 
         return False
 
 
-def send_password_reset_email(to_email: str, name: str, reset_url: str):
+def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
     html = email_template(
         "Reset password kamu 🔑",
         f'''<p>Hai {name},</p>
@@ -198,7 +198,7 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str):
     return send_email(to_email, "Reset password Jatahku kamu", html)
 
 
-def send_password_changed_email(to_email: str, name: str):
+def send_password_changed_email(to_email: str, name: str) -> bool:
     html = email_template(
         "Password kamu baru saja diubah 🔒",
         f'''<p>Hai {name},</p>
