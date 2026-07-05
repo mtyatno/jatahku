@@ -11,6 +11,7 @@ from sqlalchemy import select, func, or_
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User, Transaction, Envelope, HouseholdMember, Allocation
+from app.services.visibility import masked_description
 
 router = APIRouter()
 
@@ -125,7 +126,7 @@ async def export_csv(
         writer.writerow([
             txn.transaction_date.strftime("%Y-%m-%d"),
             env.name if env else "-",
-            txn.description,
+            masked_description(user.id, txn),
             int(txn.amount),
             txn.source.value,
             user_name,
@@ -196,7 +197,7 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
     for txn, user_name in transactions:
         env = env_map.get(str(txn.envelope_id))
         src = "📱 TG" if txn.source.value == "telegram" else "🌐 Web"
-        html += f"""<tr><td>{txn.transaction_date.strftime("%d %b")}</td><td>{env.name if env else '-'}</td><td>{txn.description}</td><td class="amount">Rp{int(txn.amount):,}</td><td>{src}</td></tr>"""
+        html += f"""<tr><td>{txn.transaction_date.strftime("%d %b")}</td><td>{env.name if env else '-'}</td><td>{masked_description(user.id, txn)}</td><td class="amount">Rp{int(txn.amount):,}</td><td>{src}</td></tr>"""
 
     html += f"""</table>
 <p class="footer">Digenerate oleh Jatahku — Setiap rupiah ada jatahnya.<br>{date.today().strftime("%d %B %Y %H:%M")}</p>
