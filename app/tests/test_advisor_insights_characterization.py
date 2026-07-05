@@ -18,7 +18,7 @@ import unittest
 from datetime import date
 from decimal import Decimal
 
-from app.services.advisor.core import compute_insight_cards
+from app.services.advisor.rules import compute_insight_cards
 from app.tests.advisor_fixtures import (
     build_stats,
     make_envelope,

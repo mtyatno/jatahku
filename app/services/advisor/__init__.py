@@ -1,8 +1,8 @@
 """Advisor package — dipecah dari advisor.py (Plan B1). Perilaku identik;
 __init__ mempertahankan API publik + surface yang dipakai test.
 Selama refactor, implementasi masih di core.py dan dikupas bertahap."""
+from app.services.advisor.rules import build_advisor_insights  # noqa: F401
 from app.services.advisor.core import (  # noqa: F401
-    build_advisor_insights,
     build_allocation_recommendation,
     build_sinking_fund_advice,
     build_allocation_distribution,
