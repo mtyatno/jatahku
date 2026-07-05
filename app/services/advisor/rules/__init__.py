@@ -13,10 +13,8 @@ from app.services.advisor.formatting import (
 from app.services.advisor.context import (
     _payday, load_advisor_context, envelope_lifetime_balance,
 )
-
-# Don't project depletion/overspend before this many days into the period —
-# early-period spend rates are too volatile and produce false alarms.
-_MIN_PROJECTION_DAYS = 3
+from app.services.advisor.rules._base import AdvisorContext, _MIN_PROJECTION_DAYS
+from app.services.advisor.rules.depletion import evaluate_depletion
 
 
 async def build_advisor_insights(user, db) -> dict:
@@ -63,7 +61,16 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
     days_total = max(period_info["days_total"], 1)
     days_remaining = max(period_info["days_remaining"], 0)
 
+    ctx = AdvisorContext(
+        envelopes=envelopes,
+        stats=stats,
+        period_info=period_info,
+        goals_by_env=goals_by_env,
+        balances_by_env=balances_by_env,
+    )
+
     cards = []
+    cards += evaluate_depletion(ctx)
     total_allocated = Decimal("0")
     total_spent = Decimal("0")
     total_reserved = Decimal("0")
@@ -96,25 +103,6 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
         if purpose == "expense":
             expense_allocated += allocated
             expense_spent += spent
-
-        if available > 0 and spent > 0 and purpose == "expense" and days_used >= _MIN_PROJECTION_DAYS:
-            projected = (spent / days_used) * days_total
-            if projected > available and days_remaining > 0:
-                pct = int(spent / available * 100)
-                shortage = projected - available
-                daily_rate = spent / days_used
-                cards.append(_card(
-                    f"env_depletion:{envelope.id}",
-                    "env_depletion",
-                    "danger" if shortage > available * Decimal("0.2") else "warning",
-                    f"{envelope.emoji} {envelope.name} sudah terpakai {pct}%",
-                    f"Masih {days_remaining} hari. Proyeksi habis {max(1, int(shortage / daily_rate))} hari sebelum periode selesai.",
-                    "/allocate",
-                    [
-                        f"Terpakai Rp{_fmt_rp(spent)} dari Rp{_fmt_rp(available)}",
-                        f"Rata-rata Rp{_fmt_rp(daily_rate)}/hari",
-                    ],
-                ))
 
         # Saving: collect item for consolidated card
         goal = goals_by_env.get(str(envelope.id))

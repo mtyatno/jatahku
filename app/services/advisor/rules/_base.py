@@ -6,6 +6,10 @@ groundwork for splitting `compute_insight_cards` into per-rule modules
 (Task 8); no rule logic lives here."""
 from dataclasses import dataclass
 
+# Don't project depletion/overspend before this many days into the period —
+# early-period spend rates are too volatile and produce false alarms.
+_MIN_PROJECTION_DAYS = 3
+
 
 @dataclass
 class AdvisorContext:
