@@ -15,6 +15,7 @@ from app.services.advisor.context import (
 )
 from app.services.advisor.rules._base import AdvisorContext, _MIN_PROJECTION_DAYS
 from app.services.advisor.rules.depletion import evaluate_depletion
+from app.services.advisor.rules.subscription import evaluate_subscription
 
 
 async def build_advisor_insights(user, db) -> dict:
@@ -71,6 +72,7 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
 
     cards = []
     cards += evaluate_depletion(ctx)
+    cards += evaluate_subscription(ctx)
     total_allocated = Decimal("0")
     total_spent = Decimal("0")
     total_reserved = Decimal("0")
@@ -148,20 +150,6 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
                 else:
                     line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
                 sinking_items.append(line)
-
-        if reserved > 0 and free < reserved * Decimal("0.25"):
-            cards.append(_card(
-                f"subscription_pressure:{envelope.id}",
-                "subscription_pressure",
-                "warning",
-                f"Reserve rutin menekan amplop {envelope.name}",
-                f"Dana bebas setelah reserve tinggal Rp{_fmt_rp(free)}.",
-                "/langganan",
-                [
-                    f"Reserve rutin Rp{_fmt_rp(reserved)}",
-                    f"Sisa sebelum reserve Rp{_fmt_rp(remaining)}",
-                ],
-            ))
 
         historical_spends = [
             _to_decimal(row.get("spent"))
