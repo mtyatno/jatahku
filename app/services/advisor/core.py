@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from decimal import Decimal
 
 from app.services.advisor.formatting import (
@@ -27,7 +28,6 @@ _MIN_PROJECTION_DAYS = 3
 
 
 async def build_advisor_insights(user, db) -> dict:
-    from datetime import date
     from app.core.period import get_period_info
 
     context = await load_advisor_context(user, db)
@@ -37,6 +37,36 @@ async def build_advisor_insights(user, db) -> dict:
         return {"cards": [], "dashboard_cards": []}
 
     period_info = get_period_info(context.get("payday_day", _payday(user)), date.today())
+
+    # Load goals for saving/sinking_fund envelopes
+    from sqlalchemy import select
+    from app.models.models import Goal
+    goal_result = await db.execute(
+        select(Goal).where(Goal.envelope_id.in_([e.id for e in envelopes]))
+    )
+    goals_by_env = {}
+    for g in goal_result.scalars().all():
+        goals_by_env[str(g.envelope_id)] = g
+
+    # Load lifetime balances for saving/sinking_fund envelopes that have a
+    # goal — mirrors exactly which envelopes compute_insight_cards will need
+    # a balance for (same skip-if-no-stats guard as the card loop below).
+    balances_by_env: dict[str, Decimal] = {}
+    for envelope in envelopes:
+        envelope_stats = stats.get(str(envelope.id), [])
+        if not envelope_stats:
+            continue
+        purpose = str(getattr(envelope, "purpose", "expense") or "expense")
+        goal = goals_by_env.get(str(envelope.id))
+        if purpose in ("saving", "sinking_fund") and goal:
+            balances_by_env[str(envelope.id)] = await envelope_lifetime_balance(envelope.id, db)
+
+    return compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env)
+
+
+def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env) -> dict:
+    """Pure card computation — no DB access, no await. All inputs are
+    pre-loaded by build_advisor_insights (or synthesized by tests)."""
     days_used = max(period_info["days_used"], 1)
     days_total = max(period_info["days_total"], 1)
     days_remaining = max(period_info["days_remaining"], 0)
@@ -49,16 +79,6 @@ async def build_advisor_insights(user, db) -> dict:
     expense_allocated = Decimal("0")
     expense_spent = Decimal("0")
     sinking_under_funded = False
-
-    # Load goals for saving/sinking_fund envelopes
-    from sqlalchemy import select
-    from app.models.models import Goal
-    goal_result = await db.execute(
-        select(Goal).where(Goal.envelope_id.in_([e.id for e in envelopes]))
-    )
-    goals_by_env = {}
-    for g in goal_result.scalars().all():
-        goals_by_env[str(g.envelope_id)] = g
 
     saving_items = []
     sinking_items = []
@@ -107,7 +127,7 @@ async def build_advisor_insights(user, db) -> dict:
         # Saving: collect item for consolidated card
         goal = goals_by_env.get(str(envelope.id))
         if purpose in ("saving", "sinking_fund") and goal:
-            balance = await envelope_lifetime_balance(envelope.id, db)
+            balance = balances_by_env.get(str(envelope.id), Decimal("0"))
             target = _to_decimal(goal.target_amount)
             pct = min(round(float(balance / target) * 100, 1) if target > 0 else 0, 100)
 
