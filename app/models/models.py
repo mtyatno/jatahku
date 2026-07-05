@@ -33,6 +33,7 @@ class PurposeType(str, enum.Enum):
     expense = "expense"
     saving = "saving"
     sinking_fund = "sinking_fund"
+    debt = "debt"
 
 
 # --- Mixins ---
@@ -163,6 +164,9 @@ class Envelope(TimestampMixin, Base):
     purpose: Mapped[str] = mapped_column(
         String(20), default="expense", nullable=False, server_default="expense"
     )
+    classification: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, default=None
+    )
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelopes")
@@ -194,6 +198,9 @@ class Transaction(TimestampMixin, Base):
     )
     transaction_date: Mapped[date] = mapped_column(Date, default=date.today)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_private: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Relationships
     envelope: Mapped["Envelope"] = relationship(back_populates="transactions")
