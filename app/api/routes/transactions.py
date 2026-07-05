@@ -12,6 +12,7 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior, create_pending_transaction
 from app.services.behavior import check_behavior, create_pending_transaction
+from app.services.visibility import masked_description
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ class TransactionCreate(BaseModel):
     description: str
     source: TransactionSource = TransactionSource.webapp
     transaction_date: date | None = None
+    is_private: bool = False
 
 
 class TransactionResponse(BaseModel):
@@ -34,6 +36,8 @@ class TransactionResponse(BaseModel):
     transaction_date: date
     created_at: datetime
     is_deleted: bool
+    is_private: bool = False
+    is_own: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -59,6 +63,7 @@ class BatchTransactionItem(BaseModel):
     description: str
     source: TransactionSource = TransactionSource.webapp
     transaction_date: date | None = None
+    is_private: bool = False
 
 
 class BatchTransactionCreate(BaseModel):
@@ -143,6 +148,7 @@ async def create_transaction(
         description=req.description,
         source=req.source,
         transaction_date=req.transaction_date or date.today(),
+        is_private=req.is_private,
     )
     db.add(txn)
     await db.commit()
@@ -304,6 +310,7 @@ async def batch_create_transactions(
             description=item.description,
             source=item.source,
             transaction_date=item.transaction_date or date.today(),
+            is_private=item.is_private,
         )
         db.add(txn)
         await db.commit()
@@ -393,7 +400,19 @@ async def list_transactions(
     query = query.limit(limit).offset(offset)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    txns = result.scalars().all()
+    return [
+        TransactionResponse(
+            id=t.id, envelope_id=t.envelope_id, user_id=t.user_id,
+            amount=t.amount,
+            description=masked_description(user.id, t),
+            source=t.source, transaction_date=t.transaction_date,
+            created_at=t.created_at, is_deleted=t.is_deleted,
+            is_private=t.is_private,
+            is_own=str(t.user_id) == str(user.id),
+        )
+        for t in txns
+    ]
 
 
 @router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
