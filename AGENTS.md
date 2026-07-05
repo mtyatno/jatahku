@@ -65,3 +65,29 @@
 - Do NOT wrap advisor route in silent try/except — hides real errors
 - Advisor needs `load_advisor_context` to load envelope stats
 - New envelopes without spending history still get stats (all zeros) — they won't generate cards but won't crash either
+
+## Household Visibility Contract (WAJIB)
+- Semua kode yang menampilkan **deskripsi transaksi** ke user HARUS lewat
+  `app/services/visibility.py` (`masked_description` / `present_transaction`).
+  Jangan pernah render `txn.description` mentah di permukaan lintas-anggota.
+- Kontrak: amplop **personal** (`owner_id` terisi) = hanya pemilik; amplop
+  **shared** (`owner_id` NULL) = transparan penuh KECUALI deskripsi transaksi
+  `is_private=True` milik anggota lain → diganti `"Transaksi privat"`. Nominal,
+  tanggal, amplop, dan identitas pencatat SELALU terlihat.
+- **Agregat** (saldo, spent, KPI, count di evidence advisor) selalu menghitung
+  semua transaksi termasuk yang privat.
+- `masked_description` **fail-closed**: viewer/owner ambigu → sembunyikan deskripsi.
+  Pemilik transaksi selalu melihat deskripsinya sendiri (short-circuit sebelum
+  cek `is_private`).
+- Permukaan yang sudah di-enforce: `routes/transactions.py`, `routes/export.py`,
+  `bot/handlers.py`, `services/scheduler.py`, advisor `build_sinking_fund_advice`
+  (via `select_visible_samples`). Tambahan permukaan baru WAJIB ikut kontrak ini.
+
+## Deploy Checklist — Advisor Foundation Migration (f2a7c9e4b1d3)
+Migrasi ini menambah `envelopes.classification`, `transactions.is_private`
+(purpose `debt` tidak butuh DDL). CICD tidak menjalankan alembic — jalankan manual:
+1. Cek ownership tabel: `sudo -u postgres psql jatahku -c "\dt envelopes" -c "\dt transactions"`
+2. Cek head: `alembic current` → harus `d3a9f1c5b820` sebelum upgrade
+3. `alembic upgrade head` (jika tabel owned by `postgres`, jalankan sebagai postgres)
+4. Verifikasi: `\d envelopes | grep classification`, `\d transactions | grep is_private`
+5. `sudo systemctl restart jatahku`
