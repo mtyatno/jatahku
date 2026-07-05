@@ -63,10 +63,9 @@ def _count_by_period(dates, periods) -> list[int]:
 
 def _monthly_reserve(amount, frequency) -> Decimal:
     """Monthly-equivalent reserve for a recurring transaction frequency."""
-    from app.models.models import RecurringFrequency
-    if frequency == RecurringFrequency.weekly:
-        return _to_decimal(amount) * 4
-    if frequency == RecurringFrequency.yearly:
+    if frequency == "weekly":
+        return _to_decimal(amount) * Decimal("52") / 12
+    if frequency == "yearly":
         return _to_decimal(amount) / 12
     return _to_decimal(amount)
 

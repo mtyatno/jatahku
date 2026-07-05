@@ -76,7 +76,7 @@ def _token_overlap(left: str, right: str) -> float:
 
 def _frequency_monthly_reserve(amount: Decimal, frequency: str) -> Decimal:
     if frequency == "weekly":
-        return amount * 4
+        return amount * Decimal("52") / 12
     if frequency == "quarterly":
         return amount / 3
     if frequency == "semiannual":
