@@ -832,6 +832,14 @@ def select_visible_samples(viewer_id, transactions) -> list[str]:
     return samples
 
 
+def _sinking_group_id(envelope_id, normalized: str) -> str:
+    """ID stabil per-grup sinking-fund tanpa membocorkan token deskripsi.
+    Hash dipakai agar deskripsi privat anggota lain tak muncul di body API."""
+    import hashlib
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"sfa:{envelope_id}:{digest}"
+
+
 async def build_sinking_fund_advice(user, db) -> dict:
     from sqlalchemy import select
     from app.models.models import Envelope, RecurringTransaction, Transaction
@@ -973,7 +981,7 @@ async def build_sinking_fund_advice(user, db) -> dict:
         }.get(frequency, "berulang")
 
         recommendations.append({
-            "id": f"sfa:{envelope_id}:{group['normalized'].replace(' ', '-')}",
+            "id": _sinking_group_id(envelope_id, group["normalized"]),
             "type": recommendation_type,
             "confidence": confidence,
             "envelope_id": envelope_id,

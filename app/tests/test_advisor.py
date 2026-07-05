@@ -278,5 +278,26 @@ class SelectVisibleSamplesTests(unittest.TestCase):
         self.assertEqual(select_visible_samples(me, txns), [])
 
 
+class SinkingFundIdNoRawTokensTests(unittest.TestCase):
+    def test_id_uses_stable_hash_not_raw_normalized_tokens(self):
+        import hashlib
+        from app.services.advisor import _sinking_group_id
+
+        normalized = "terapi psikolog rahasia"
+        env_id = "abc-123"
+        got = _sinking_group_id(env_id, normalized)
+        # id tidak boleh memuat token kata deskripsi
+        self.assertNotIn("terapi", got)
+        self.assertNotIn("psikolog", got)
+        self.assertNotIn("rahasia", got)
+        # stabil & deterministik
+        self.assertEqual(got, _sinking_group_id(env_id, normalized))
+        # format sfa:{env}:{hash8}
+        expected_hash = hashlib.sha256(normalized.encode()).hexdigest()[:8]
+        self.assertEqual(got, f"sfa:{env_id}:{expected_hash}")
+        # grup berbeda → id berbeda
+        self.assertNotEqual(got, _sinking_group_id(env_id, "netflix keluarga"))
+
+
 if __name__ == "__main__":
     unittest.main()
