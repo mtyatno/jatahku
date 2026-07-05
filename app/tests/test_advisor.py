@@ -249,5 +249,34 @@ class TestAllocationDistribution(unittest.TestCase):
         self.assertEqual(zero["saving_pct"], 0)
 
 
+class SelectVisibleSamplesTests(unittest.TestCase):
+    def test_excludes_other_members_private_descriptions(self):
+        from types import SimpleNamespace
+        from uuid import uuid4
+        from app.services.advisor import select_visible_samples
+
+        me, other = uuid4(), uuid4()
+        txns = [
+            SimpleNamespace(user_id=other, is_private=True, description="terapi rahasia"),
+            SimpleNamespace(user_id=other, is_private=False, description="netflix keluarga"),
+            SimpleNamespace(user_id=me, is_private=True, description="kado istri"),
+            SimpleNamespace(user_id=me, is_private=False, description="netflix keluarga"),
+        ]
+        samples = select_visible_samples(me, txns)
+        self.assertNotIn("terapi rahasia", samples)
+        self.assertIn("netflix keluarga", samples)
+        self.assertIn("kado istri", samples)  # milik sendiri boleh
+        self.assertEqual(samples.count("netflix keluarga"), 1)  # dedup
+
+    def test_all_private_returns_empty(self):
+        from types import SimpleNamespace
+        from uuid import uuid4
+        from app.services.advisor import select_visible_samples
+
+        me, other = uuid4(), uuid4()
+        txns = [SimpleNamespace(user_id=other, is_private=True, description="x")]
+        self.assertEqual(select_visible_samples(me, txns), [])
+
+
 if __name__ == "__main__":
     unittest.main()

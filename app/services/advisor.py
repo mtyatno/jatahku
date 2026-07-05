@@ -818,6 +818,20 @@ def _amount_stability(amounts: list[Decimal]) -> dict:
     return {"kind": kind, "confidence": confidence, "suggested_amount": suggested}
 
 
+def select_visible_samples(viewer_id, transactions) -> list[str]:
+    """Sampel deskripsi untuk evidence advisor — hanya dari transaksi yang
+    boleh dilihat viewer (milik sendiri atau non-privat). Dedup, urutan asli."""
+    from app.services.visibility import can_view_description
+
+    samples: list[str] = []
+    for txn in transactions:
+        if not can_view_description(viewer_id, txn):
+            continue
+        if txn.description not in samples:
+            samples.append(txn.description)
+    return samples
+
+
 async def build_sinking_fund_advice(user, db) -> dict:
     from sqlalchemy import select
     from app.models.models import Envelope, RecurringTransaction, Transaction
@@ -887,8 +901,9 @@ async def build_sinking_fund_advice(user, db) -> dict:
         group["amounts"].append(_to_decimal(transaction.amount))
         group["dates"].append(transaction.transaction_date)
         group["envelope_ids"].append(str(transaction.envelope_id))
-        if transaction.description not in group["samples"]:
-            group["samples"].append(transaction.description)
+
+    for group in groups.values():
+        group["samples"] = select_visible_samples(user.id, group["transactions"])
 
     recommendations = []
     for group in groups.values():
@@ -936,8 +951,12 @@ async def build_sinking_fund_advice(user, db) -> dict:
             else:
                 continue
 
+        if group["samples"]:
+            sample_line = f"{len(group['transactions'])} transaksi cocok: {', '.join(group['samples'][:2])}"
+        else:
+            sample_line = f"{len(group['transactions'])} transaksi serupa terdeteksi"
         evidence = [
-            f"{len(group['transactions'])} transaksi cocok: {', '.join(group['samples'][:2])}",
+            sample_line,
             f"Nominal {amount_info['kind']} sekitar Rp{_fmt_rp(suggested_amount)}",
         ]
         if interval.get("median_days"):
@@ -959,7 +978,11 @@ async def build_sinking_fund_advice(user, db) -> dict:
             "confidence": confidence,
             "envelope_id": envelope_id,
             "envelope_name": envelope.name,
-            "title": f"{group['samples'][0]} terlihat sebagai pengeluaran {title_frequency}",
+            "title": (
+                f"{group['samples'][0]} terlihat sebagai pengeluaran {title_frequency}"
+                if group["samples"]
+                else f"Pengeluaran {title_frequency} terdeteksi di amplop {envelope.name}"
+            ),
             "description": "Pola ini layak dipisah sebagai sinking fund agar dana bebas tidak terlihat lebih longgar dari kondisi sebenarnya.",
             "suggested_amount": _money(suggested_amount),
             "monthly_reserve": _money(monthly_reserve),
@@ -974,7 +997,7 @@ async def build_sinking_fund_advice(user, db) -> dict:
                     "payload": {
                         "envelope_id": envelope_id,
                         "amount": _money(suggested_amount),
-                        "description": group["samples"][0],
+                        "description": group["samples"][0] if group["samples"] else f"Rutin {envelope.name}",
                         "frequency": frequency,
                         "next_run": _next_expected_date(group["dates"], {**interval, "frequency": frequency}),
                     },
