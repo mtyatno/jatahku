@@ -352,7 +352,7 @@ async def create_envelope(
     if req.classification not in (None, "needs", "wants"):
         raise HTTPException(status_code=400, detail="classification harus 'needs' atau 'wants'")
     if req.classification is not None and req.purpose not in ("expense", "debt"):
-        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense")
+        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense atau cicilan")
     if req.purpose == "debt" and req.budget_amount <= 0:
         raise HTTPException(status_code=400, detail="Amplop cicilan harus memiliki budget")
 
@@ -405,7 +405,7 @@ async def update_envelope(
     if req.classification not in (None, "needs", "wants"):
         raise HTTPException(status_code=400, detail="classification harus 'needs' atau 'wants'")
     if req.classification is not None and req.purpose not in ("expense", "debt"):
-        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense")
+        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense atau cicilan")
     if req.purpose == "debt" and req.budget_amount <= 0:
         raise HTTPException(status_code=400, detail="Amplop cicilan harus memiliki budget")
 
