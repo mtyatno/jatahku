@@ -16,6 +16,7 @@ from app.services.advisor.context import (
 from app.services.advisor.rules._base import AdvisorContext, _MIN_PROJECTION_DAYS
 from app.services.advisor.rules.depletion import evaluate_depletion
 from app.services.advisor.rules.subscription import evaluate_subscription
+from app.services.advisor.rules.drift import evaluate_drift
 
 
 async def build_advisor_insights(user, db) -> dict:
@@ -73,6 +74,7 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
     cards = []
     cards += evaluate_depletion(ctx)
     cards += evaluate_subscription(ctx)
+    cards += evaluate_drift(ctx)
     total_allocated = Decimal("0")
     total_spent = Decimal("0")
     total_reserved = Decimal("0")
@@ -150,24 +152,6 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
                 else:
                     line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
                 sinking_items.append(line)
-
-        historical_spends = [
-            _to_decimal(row.get("spent"))
-            for row in envelope_stats[:-1]
-            if _to_decimal(row.get("spent")) > 0
-        ]
-        historical_median = _median_decimal(historical_spends)
-        budget_target = _to_decimal(getattr(envelope, "budget_amount", 0))
-        if purpose == "expense" and budget_target > 0 and historical_median > budget_target * Decimal("1.15"):
-            cards.append(_card(
-                f"allocation_drift:{envelope.id}",
-                "allocation_drift",
-                "info",
-                f"Target {envelope.name} lebih rendah dari pola aktual",
-                f"Median historis Rp{_fmt_rp(historical_median)}, target sekarang Rp{_fmt_rp(budget_target)}.",
-                "/allocate",
-                ["Pola ini bisa membuat amplop cepat menipis."],
-            ))
 
     # Consolidated goals card
     if saving_items or sinking_items:
