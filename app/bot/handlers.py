@@ -18,6 +18,7 @@ from app.models.models import (
     PendingTransaction, PendingTransactionStatus,
 )
 from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
+from app.services.visibility import masked_description
 from app.services.txn_nlp import (
     STOPWORDS, CATEGORY_KEYWORDS, extract_keywords, guess_envelope_name,
     save_learned_keywords, find_best_envelope,
@@ -688,7 +689,7 @@ async def cmd_batal(update, context):
             return
         txn.is_deleted = True
         await db.commit()
-    await update.message.reply_text(f"↩️ Dibatalkan: {format_currency(txn.amount)} — {txn.description}")
+    await update.message.reply_text(f"↩️ Dibatalkan: {format_currency(txn.amount)} — {masked_description(user.id, txn)}")
 
 async def handle_message(update, context):
     text = update.message.text.strip()
@@ -1141,7 +1142,7 @@ async def cmd_pending(update, context):
         keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data=f"cool_cancel_{p.id}")])
         status_text = "✅ Bisa dikonfirmasi" if can_confirm else f"⏳ Tunggu sampai {confirm_time}"
         await update.message.reply_text(
-            f"💰 {format_currency(p.amount)} — {p.description}\n"
+            f"💰 {format_currency(p.amount)} — {masked_description(user.id, p)}\n"
             f"Status: {status_text}",
             reply_markup=InlineKeyboardMarkup(keyboard))
 

@@ -4,6 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.rollover import create_monthly_snapshots
 from app.services.summary import send_daily_summary, send_weekly_summary
 from app.services.recurring_processor import process_recurring_transactions
+from app.services.visibility import masked_description
 
 logger = logging.getLogger("jatahku.scheduler")
 scheduler = AsyncIOScheduler()
@@ -114,7 +115,7 @@ async def check_pending_reminders():
                         chat_id=int(user.telegram_id),
                         text=(
                             f"🔔 Cooling period selesai!\n\n"
-                            f"{format_currency(pending.amount)} — {pending.description}\n"
+                            f"{format_currency(pending.amount)} — {masked_description(user.id, pending)}\n"
                             f"Amplop: {emoji} {envelope.name}\n\n"
                             f"Masih mau beli? Konfirmasi atau batalkan."
                         ),
