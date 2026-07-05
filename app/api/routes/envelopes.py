@@ -29,6 +29,7 @@ class EnvelopeCreate(BaseModel):
     daily_limit: Decimal | None = None
     cooling_threshold: Decimal | None = None
     purpose: str = "expense"
+    classification: str | None = None  # "needs" | "wants" — hanya untuk expense/debt
 
 
 class EnvelopeResponse(BaseModel):
@@ -43,6 +44,7 @@ class EnvelopeResponse(BaseModel):
     owner_id: UUID | None
     is_personal: bool = False
     purpose: str | None = None
+    classification: str | None = None
     model_config = {"from_attributes": True}
 
 
@@ -67,6 +69,7 @@ class EnvelopeSummary(BaseModel):
     group_id: UUID | None = None
     group_name: str | None = None
     purpose: str | None = None
+    classification: str | None = None
 
 
 class EnvelopeGroupCreate(BaseModel):
@@ -230,6 +233,7 @@ async def envelope_summary(
             group_id=env.group_id,
             group_name=group_names.get(env.group_id),
             purpose=env.purpose,
+            classification=env.classification,
         ))
 
     return summaries
@@ -345,6 +349,13 @@ async def create_envelope(
     elif req.purpose == "expense" and budget <= 0:
         raise HTTPException(status_code=400, detail="Amplop expense harus memiliki budget")
 
+    if req.classification not in (None, "needs", "wants"):
+        raise HTTPException(status_code=400, detail="classification harus 'needs' atau 'wants'")
+    if req.classification is not None and req.purpose not in ("expense", "debt"):
+        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense")
+    if req.purpose == "debt" and req.budget_amount <= 0:
+        raise HTTPException(status_code=400, detail="Amplop cicilan harus memiliki budget")
+
     if req.group_id is not None:
         grp_check = await db.execute(
             select(EnvelopeGroup).where(
@@ -363,6 +374,7 @@ async def create_envelope(
         daily_limit=req.daily_limit,
         cooling_threshold=req.cooling_threshold,
         purpose=req.purpose,
+        classification=req.classification,
     )
     db.add(envelope)
     await db.commit()
@@ -389,6 +401,14 @@ async def update_envelope(
     if not envelope:
         raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
 
+    # Validate purpose
+    if req.classification not in (None, "needs", "wants"):
+        raise HTTPException(status_code=400, detail="classification harus 'needs' atau 'wants'")
+    if req.classification is not None and req.purpose not in ("expense", "debt"):
+        raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense")
+    if req.purpose == "debt" and req.budget_amount <= 0:
+        raise HTTPException(status_code=400, detail="Amplop cicilan harus memiliki budget")
+
     # Prevent changing ownership of personal envelopes
     if req.group_id is not None:
         grp_check = await db.execute(
@@ -409,6 +429,7 @@ async def update_envelope(
     envelope.daily_limit = req.daily_limit
     envelope.cooling_threshold = req.cooling_threshold
     envelope.purpose = req.purpose
+    envelope.classification = req.classification
     await db.commit()
     await db.refresh(envelope)
     return envelope
