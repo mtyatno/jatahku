@@ -30,6 +30,22 @@ def normalize_description(text: str) -> str:
     return " ".join(words)
 
 
+# Frequency bands as (low, high, base_confidence_when_len>=3).
+_INTERVAL_BANDS = [
+    ("weekly", 5, 9),
+    ("monthly", 25, 35),
+    ("quarterly", 80, 100),
+    ("semiannual", 170, 195),
+    ("yearly", 350, 380),
+]
+# quarterly/semiannual never reach "high" (too few samples in practice).
+_BAND_MAX_CONFIDENCE = {"quarterly": "medium", "semiannual": "medium"}
+
+
+def _drop_confidence(level: str) -> str:
+    return {"high": "medium", "medium": "low"}.get(level, "low")
+
+
 def detect_interval(dates: list[date], normalized_text: str = "") -> dict:
     ordered_dates = sorted(set(dates))
     normalized_words = set(normalized_text.lower().split())
@@ -40,28 +56,23 @@ def detect_interval(dates: list[date], normalized_text: str = "") -> dict:
         return {"frequency": "unknown", "confidence": "low", "median_days": None}
 
     gaps = [
-        (ordered_dates[index] - ordered_dates[index - 1]).days
-        for index in range(1, len(ordered_dates))
+        (ordered_dates[i] - ordered_dates[i - 1]).days
+        for i in range(1, len(ordered_dates))
     ]
     median_gap = median(gaps)
 
-    if all(5 <= gap <= 9 for gap in gaps):
-        confidence = "high" if len(ordered_dates) >= 3 else "medium"
-        return {"frequency": "weekly", "confidence": confidence, "median_days": median_gap}
-
-    if all(25 <= gap <= 35 for gap in gaps):
-        confidence = "high" if len(ordered_dates) >= 3 else "medium"
-        return {"frequency": "monthly", "confidence": confidence, "median_days": median_gap}
-
-    if all(80 <= gap <= 100 for gap in gaps):
-        return {"frequency": "quarterly", "confidence": "medium", "median_days": median_gap}
-
-    if all(170 <= gap <= 195 for gap in gaps):
-        return {"frequency": "semiannual", "confidence": "medium", "median_days": median_gap}
-
-    if all(350 <= gap <= 380 for gap in gaps):
-        confidence = "high" if len(ordered_dates) >= 3 else "medium"
-        return {"frequency": "yearly", "confidence": confidence, "median_days": median_gap}
+    for name, low, high in _INTERVAL_BANDS:
+        if not (low <= median_gap <= high):
+            continue
+        anomalies = sum(1 for gap in gaps if not (low <= gap <= high))
+        if anomalies > 1:
+            return {"frequency": "unknown", "confidence": "low", "median_days": median_gap}
+        base = "high" if len(ordered_dates) >= 3 else "medium"
+        base = _BAND_MAX_CONFIDENCE.get(name, base)
+        if name in _BAND_MAX_CONFIDENCE and len(ordered_dates) < 3:
+            base = "medium"
+        confidence = _drop_confidence(base) if anomalies == 1 else base
+        return {"frequency": name, "confidence": confidence, "median_days": median_gap}
 
     return {"frequency": "unknown", "confidence": "low", "median_days": median_gap}
 
