@@ -6,6 +6,7 @@ from app.services.advisor.context import _monthly_reserve
 from app.services.advisor.sinking import _frequency_monthly_reserve
 from app.services.advisor.rules._base import AdvisorContext
 from app.services.advisor.rules.subscription import evaluate_subscription
+from app.services.advisor.rules.overspend import evaluate_overspend
 from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
 
 
@@ -58,6 +59,27 @@ class SubscriptionExpenseOnlyTests(unittest.TestCase):
         env = make_envelope(id="e2", name="Dana Pensiun", purpose="saving")
         ctx = _ctx([env], {"e2": [self._pressured_row()]})
         self.assertEqual(evaluate_subscription(ctx), [])
+
+
+class OverspendExpenseOnlyReserveTests(unittest.TestCase):
+    def test_evidence_reserve_excludes_saving_envelope_reserve(self):
+        # expense env overspends; a saving env carries a big reserve that must
+        # NOT appear in the overspend evidence "Reserve rutin" line.
+        exp = make_envelope(id="ex", name="Belanja", purpose="expense")
+        sav = make_envelope(id="sv", name="Tabungan", purpose="saving")
+        stats = {
+            "ex": [make_period_row(allocated=_D("1000000"), spent=_D("900000"),
+                                   transaction_count=8, reserved=_D("50000"))],
+            "sv": [make_period_row(allocated=_D("2000000"), spent=_D("0"),
+                                   reserved=_D("999000"))],
+        }
+        ctx = _ctx([exp, sav], stats, period_info=make_period_info(days_used=15, days_total=30, days_remaining=15))
+        cards = evaluate_overspend(ctx)
+        self.assertEqual(len(cards), 1)
+        evidence = " ".join(cards[0]["evidence"])
+        self.assertIn("50.000", evidence)       # expense-only reserved
+        self.assertNotIn("999.000", evidence)    # saving reserve excluded
+        self.assertNotIn("1.049.000", evidence)  # not the all-envelope sum
 
 
 if __name__ == "__main__":

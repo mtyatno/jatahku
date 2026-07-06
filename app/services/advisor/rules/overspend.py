@@ -3,8 +3,8 @@
 Projects total expense spend across the period; if it exceeds total expense
 allocation, emits one danger card. Expense envelopes only (savings/sinking
 inflate allocated and aren't "spent", which would mask the signal). The
-`total_reserved` shown in the evidence sums reserved across ALL visible
-envelopes, not just expense — replicated verbatim from the original loop.
+`expense_reserved` shown in the evidence sums reserved only for expense
+envelopes, matching the story about the expense budget.
 Returns 0 or 1 card."""
 from decimal import Decimal
 
@@ -16,7 +16,7 @@ def evaluate_overspend(ctx: AdvisorContext) -> list[dict]:
     days_used = ctx.days_used
     days_total = ctx.days_total
 
-    total_reserved = Decimal("0")
+    expense_reserved = Decimal("0")
     expense_allocated = Decimal("0")
     expense_spent = Decimal("0")
 
@@ -30,10 +30,10 @@ def evaluate_overspend(ctx: AdvisorContext) -> list[dict]:
         reserved = _to_decimal(current.get("reserved"))
         purpose = str(getattr(envelope, "purpose", "expense") or "expense")
 
-        total_reserved += reserved
         if purpose == "expense":
             expense_allocated += allocated
             expense_spent += spent
+            expense_reserved += reserved
 
     cards = []
     if expense_allocated > 0 and days_used >= _MIN_PROJECTION_DAYS:
@@ -49,7 +49,7 @@ def evaluate_overspend(ctx: AdvisorContext) -> list[dict]:
                 "/analytics",
                 [
                     f"Terpakai Rp{_fmt_rp(expense_spent)} dari Rp{_fmt_rp(expense_allocated)}",
-                    f"Reserve rutin Rp{_fmt_rp(total_reserved)}",
+                    f"Reserve rutin Rp{_fmt_rp(expense_reserved)}",
                 ],
             ))
     return cards
