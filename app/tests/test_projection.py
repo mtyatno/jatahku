@@ -4,6 +4,22 @@ from decimal import Decimal
 
 from app.services.advisor.context import _monthly_reserve
 from app.services.advisor.sinking import _frequency_monthly_reserve
+from app.services.advisor.rules._base import AdvisorContext
+from app.services.advisor.rules.subscription import evaluate_subscription
+from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
+
+
+_D = Decimal
+
+
+def _ctx(envelopes, stats, period_info=None, goals=None, balances=None):
+    return AdvisorContext(
+        envelopes=envelopes,
+        stats=stats,
+        period_info=period_info or make_period_info(),
+        goals_by_env=goals or {},
+        balances_by_env=balances or {},
+    )
 
 
 class WeeklyReserveTests(unittest.TestCase):
@@ -24,6 +40,24 @@ class WeeklyReserveTests(unittest.TestCase):
         self.assertEqual(_frequency_monthly_reserve(Decimal("300000"), "quarterly"), Decimal("100000"))
         self.assertEqual(_frequency_monthly_reserve(Decimal("1200000"), "yearly"), Decimal("100000"))
         self.assertEqual(_frequency_monthly_reserve(Decimal("600000"), "semiannual"), Decimal("100000"))
+
+
+class SubscriptionExpenseOnlyTests(unittest.TestCase):
+    def _pressured_row(self):
+        # available 500k, spent 0, reserved 500k -> free 0 < 25% of reserved
+        return make_period_row(allocated=_D("500000"), spent=_D("0"), reserved=_D("500000"))
+
+    def test_expense_envelope_triggers(self):
+        env = make_envelope(id="e1", name="Langganan", purpose="expense")
+        ctx = _ctx([env], {"e1": [self._pressured_row()]})
+        cards = evaluate_subscription(ctx)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["type"], "subscription_pressure")
+
+    def test_saving_envelope_does_not_trigger(self):
+        env = make_envelope(id="e2", name="Dana Pensiun", purpose="saving")
+        ctx = _ctx([env], {"e2": [self._pressured_row()]})
+        self.assertEqual(evaluate_subscription(ctx), [])
 
 
 if __name__ == "__main__":
