@@ -28,6 +28,9 @@ class AllocationResponsePurposeTests(unittest.TestCase):
             result = asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), Decimal("1000000"), db=None))
         self.assertTrue(result["items"])
         self.assertEqual(result["items"][0]["purpose"], "expense")
+        self.assertIn("confidence", result)
+        self.assertIsInstance(result["confidence"], str)
+        self.assertIsInstance(result["confidence_reasons"], list)
 
 
 if __name__ == "__main__":

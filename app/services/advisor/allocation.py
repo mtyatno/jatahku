@@ -3,6 +3,7 @@ from decimal import Decimal
 from app.services.advisor.formatting import _to_decimal, _money, _fmt_rp, _median_decimal
 from app.services.advisor.context import load_advisor_context
 from app.services.advisor.sinking import normalize_description, _ESSENTIAL_KEYWORDS
+from app.services.advisor.confidence import assess_confidence
 
 
 def _is_saving_sink(item) -> bool:
@@ -121,6 +122,7 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "total_recommended": 0,
             "unallocated": _money(income_amount),
             "confidence": "low",
+            "confidence_reasons": ["Belum ada amplop aktif untuk direkomendasikan."],
             "method": "no_envelopes",
             "items": [],
             "warnings": ["Belum ada amplop aktif untuk direkomendasikan."],
@@ -210,19 +212,21 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "reasons": meta["reasons"],
         })
 
-    active_history_count = sum(
-        1
-        for envelope_stats in stats.values()
-        for row in envelope_stats[:-1]
-        if _to_decimal(row.get("spent")) > 0 or _to_decimal(row.get("allocated")) > 0
-    )
-    confidence = "medium" if active_history_count >= 3 else "low"
+    # Aggregate spend per historical period (all-but-last per envelope), aligned
+    # by period index; each envelope's stats list is period-aligned oldest-first.
+    period_totals: dict[int, Decimal] = {}
+    for envelope_stats in stats.values():
+        for idx, row in enumerate(envelope_stats[:-1]):
+            period_totals[idx] = period_totals.get(idx, Decimal("0")) + _to_decimal(row.get("spent"))
+    confidence_model = assess_confidence(list(period_totals.values()))
+    confidence = confidence_model["level"]
 
     return {
         "income_amount": _money(income_amount),
         "total_recommended": _money(allocation["total_recommended"]),
         "unallocated": _money(allocation["unallocated"]),
         "confidence": confidence,
+        "confidence_reasons": confidence_model["reasons"],
         "method": "obligations_then_historical_median",
         "items": response_items,
         "warnings": allocation["warnings"],
