@@ -199,6 +199,7 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "envelope_id": item["id"],
             "name": envelope.name,
             "emoji": envelope.emoji,
+            "purpose": str(getattr(envelope, "purpose", "expense") or "expense"),
             "recommended_amount": _money(item["recommended_amount"]),
             "minimum_amount": _money(item["minimum"]),
             "target_amount": _money(item["target"]),
