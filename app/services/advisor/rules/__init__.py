@@ -54,10 +54,16 @@ async def build_advisor_insights(user, db) -> dict:
         if purpose in ("saving", "sinking_fund") and goal:
             balances_by_env[str(envelope.id)] = await envelope_lifetime_balance(envelope.id, db)
 
-    return compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env)
+    txns_by_env = context.get("current_txns_by_env", {})
+    recurring_by_env = context.get("recurring_by_env", {})
+    return compute_insight_cards(
+        envelopes, stats, period_info, goals_by_env, balances_by_env,
+        txns_by_env, recurring_by_env,
+    )
 
 
-def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env) -> dict:
+def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env,
+                          txns_by_env=None, recurring_by_env=None) -> dict:
     """Pure card computation — no DB access, no await. All inputs are
     pre-loaded by build_advisor_insights (or synthesized by tests).
 
@@ -71,6 +77,8 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
         period_info=period_info,
         goals_by_env=goals_by_env,
         balances_by_env=balances_by_env,
+        txns_by_env=txns_by_env or {},
+        recurring_by_env=recurring_by_env or {},
     )
 
     cards = (

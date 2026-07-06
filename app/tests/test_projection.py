@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from app.services.advisor.context import _monthly_reserve, load_advisor_context
 from app.services.advisor.sinking import _frequency_monthly_reserve
 from app.services.advisor.rules._base import AdvisorContext
+from app.services.advisor.rules import compute_insight_cards
 from app.services.advisor.rules.subscription import evaluate_subscription
 from app.services.advisor.rules.overspend import evaluate_overspend
 from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
@@ -99,6 +100,24 @@ class ContextShapeTests(unittest.TestCase):
         ctx = asyncio.run(load_advisor_context(user, _DB()))
         self.assertEqual(ctx.get("current_txns_by_env", "MISSING"), {})
         self.assertEqual(ctx.get("recurring_by_env", "MISSING"), {})
+
+
+class ComputeInsightCardsOptionalArgsTests(unittest.TestCase):
+    def test_accepts_txn_maps_without_error(self):
+        env = make_envelope(id="e1", name="Makan", purpose="expense")
+        stats = {"e1": [make_period_row(allocated=_D("1000000"), spent=_D("100000"), transaction_count=2)]}
+        # Passing the new optional maps must be accepted and not change a low-spend result.
+        result = compute_insight_cards(
+            [env], stats, make_period_info(days_used=10, days_total=30, days_remaining=20),
+            {}, {}, txns_by_env={"e1": []}, recurring_by_env={"e1": []},
+        )
+        self.assertEqual(result["cards"], [])
+
+    def test_context_defaults_are_empty_dicts(self):
+        ctx = AdvisorContext(envelopes=[], stats={}, period_info=make_period_info(),
+                             goals_by_env={}, balances_by_env={})
+        self.assertEqual(ctx.txns_by_env, {})
+        self.assertEqual(ctx.recurring_by_env, {})
 
 
 if __name__ == "__main__":
