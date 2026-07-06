@@ -2,6 +2,7 @@
 import asyncio
 import unittest
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from app.services.advisor.context import _monthly_reserve, load_advisor_context
@@ -10,6 +11,7 @@ from app.services.advisor.rules._base import AdvisorContext
 from app.services.advisor.rules import compute_insight_cards
 from app.services.advisor.rules.subscription import evaluate_subscription
 from app.services.advisor.rules.overspend import evaluate_overspend
+from app.services.advisor.projection import project_envelope
 from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
 
 
@@ -118,6 +120,47 @@ class ComputeInsightCardsOptionalArgsTests(unittest.TestCase):
                              goals_by_env={}, balances_by_env={})
         self.assertEqual(ctx.txns_by_env, {})
         self.assertEqual(ctx.recurring_by_env, {})
+
+
+def _txn(amount, desc="beli", d=None):
+    from datetime import date
+    return SimpleNamespace(amount=_D(str(amount)), description=desc, transaction_date=d or date(2026, 1, 5))
+
+
+class ProjectEnvelopeTests(unittest.TestCase):
+    def test_aggregate_only_matches_old_formula(self):
+        # No txns -> variable == total; new == old == (spent/days_used)*days_total.
+        out = project_envelope(_D("300000"), 3, _D("1000000"), 10, 30, 20)
+        self.assertEqual(out["projected"], _D("300000") / 10 * 30)
+        self.assertFalse(out["severity_capped"])  # aggregate-only never caps
+
+    def test_recurring_excluded_from_rate(self):
+        # 500k rent matches a 500k monthly recurring; only the 100k variable counts.
+        txns = [_txn(500000), _txn(60000), _txn(40000)]
+        out = project_envelope(_D("600000"), 3, _D("1000000"), 10, 30, 20,
+                               txns=txns, recurring_amounts=[_D("500000")])
+        # variable_total = 100k; rate = 10k/day; projected = 600k + 10k*20 = 800k
+        self.assertEqual(out["projected"], _D("800000"))
+        self.assertEqual(out["variable_count"], 2)
+
+    def test_outlier_excluded_and_reported(self):
+        # 400k outlier: > 2x median(of [400k,20k,20k,20k]=20k) AND > 30% of 500k available.
+        txns = [_txn(400000, "beli tv"), _txn(20000), _txn(20000), _txn(20000)]
+        out = project_envelope(_D("460000"), 4, _D("500000"), 10, 30, 20, txns=txns)
+        self.assertEqual(out["variable_count"], 3)
+        self.assertEqual(len(out["outliers"]), 1)
+        self.assertEqual(out["outliers"][0].description, "beli tv")
+
+    def test_thin_variable_sample_caps_severity(self):
+        # < 5 variable txns with per-txn data -> severity_capped True.
+        txns = [_txn(50000), _txn(50000)]
+        out = project_envelope(_D("100000"), 2, _D("500000"), 10, 30, 20, txns=txns)
+        self.assertTrue(out["severity_capped"])
+
+    def test_enough_variable_sample_not_capped(self):
+        txns = [_txn(50000) for _ in range(6)]
+        out = project_envelope(_D("300000"), 6, _D("500000"), 10, 30, 20, txns=txns)
+        self.assertFalse(out["severity_capped"])
 
 
 if __name__ == "__main__":
