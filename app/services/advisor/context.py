@@ -97,7 +97,10 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
 
     household_id = await _get_household_id(user, db)
     if not household_id:
-        return {"household_id": None, "periods": [], "envelopes": [], "stats": {}}
+        return {
+            "household_id": None, "periods": [], "envelopes": [], "stats": {},
+            "current_txns_by_env": {}, "recurring_by_env": {},
+        }
 
     payday_day = _payday(user)
     periods = get_last_n_periods(payday_day, periods_count)
@@ -110,6 +113,8 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
             "periods": periods,
             "envelopes": envelopes,
             "stats": stats,
+            "current_txns_by_env": {},
+            "recurring_by_env": {},
         }
 
     # Batched fetches — a fixed handful of queries regardless of envelope/period
@@ -138,8 +143,15 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
     for env_id, income_date, amount in alloc_rows:
         alloc_by_env[str(env_id)].append((income_date, amount))
 
+    from types import SimpleNamespace
+    from app.services.visibility import masked_description
+
+    current_start, current_end = periods[-1]
     txn_rows = (await db.execute(
-        select(Transaction.envelope_id, Transaction.transaction_date, Transaction.amount)
+        select(
+            Transaction.envelope_id, Transaction.transaction_date, Transaction.amount,
+            Transaction.description, Transaction.user_id, Transaction.is_private,
+        )
         .where(
             Transaction.envelope_id.in_(env_ids),
             Transaction.is_deleted == False,
@@ -147,9 +159,19 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
             Transaction.transaction_date <= range_end,
         )
     )).all()
-    txn_by_env = defaultdict(list)
-    for env_id, txn_date, amount in txn_rows:
-        txn_by_env[str(env_id)].append((txn_date, amount))
+    txn_by_env = defaultdict(list)          # (date, amount) for period bucketing (unchanged use)
+    current_txns_by_env = defaultdict(list)  # masked views, current period only
+    for env_id, txn_date, amount, description, txn_user_id, is_private in txn_rows:
+        eid = str(env_id)
+        txn_by_env[eid].append((txn_date, amount))
+        if current_start <= txn_date <= current_end:
+            masked = masked_description(
+                getattr(user, "id", None),
+                SimpleNamespace(user_id=txn_user_id, is_private=is_private, description=description),
+            )
+            current_txns_by_env[eid].append(
+                SimpleNamespace(amount=_to_decimal(amount), transaction_date=txn_date, description=masked)
+            )
 
     rec_rows = (await db.execute(
         select(RecurringTransaction).where(
@@ -158,8 +180,13 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
         )
     )).scalars().all()
     reserved_by_env = defaultdict(lambda: Decimal("0"))
+    recurring_by_env = defaultdict(list)
     for rec in rec_rows:
         reserved_by_env[str(rec.envelope_id)] += _monthly_reserve(rec.amount, rec.frequency)
+        freq = rec.frequency.value if hasattr(rec.frequency, "value") else str(rec.frequency)
+        recurring_by_env[str(rec.envelope_id)].append(
+            {"amount": _to_decimal(rec.amount), "frequency": freq, "norm": ""}
+        )
 
     # Each period's rollover comes from the PREVIOUS period's snapshot (year/month).
     prev_keys = [get_previous_period(payday_day, ps)[0] for ps, _ in periods]
@@ -204,4 +231,6 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
         "periods": periods,
         "envelopes": envelopes,
         "stats": stats,
+        "current_txns_by_env": dict(current_txns_by_env),
+        "recurring_by_env": dict(recurring_by_env),
     }

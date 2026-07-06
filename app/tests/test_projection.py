@@ -1,8 +1,10 @@
 """Unit tests for advisor reserve/projection helpers (Plan B2 §6a, §6d)."""
+import asyncio
 import unittest
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
-from app.services.advisor.context import _monthly_reserve
+from app.services.advisor.context import _monthly_reserve, load_advisor_context
 from app.services.advisor.sinking import _frequency_monthly_reserve
 from app.services.advisor.rules._base import AdvisorContext
 from app.services.advisor.rules.subscription import evaluate_subscription
@@ -80,6 +82,23 @@ class OverspendExpenseOnlyReserveTests(unittest.TestCase):
         self.assertIn("50.000", evidence)       # expense-only reserved
         self.assertNotIn("999.000", evidence)    # saving reserve excluded
         self.assertNotIn("1.049.000", evidence)  # not the all-envelope sum
+
+
+class ContextShapeTests(unittest.TestCase):
+    def test_no_household_returns_empty_txn_maps(self):
+        # _get_household_id returns None -> early return must still carry the new keys.
+        from types import SimpleNamespace
+        user = SimpleNamespace(id="u1", payday_day=1)
+
+        class _DB:
+            async def execute(self, *a, **k):
+                class _R:
+                    def scalar_one_or_none(self_inner): return None
+                return _R()
+
+        ctx = asyncio.run(load_advisor_context(user, _DB()))
+        self.assertEqual(ctx.get("current_txns_by_env", "MISSING"), {})
+        self.assertEqual(ctx.get("recurring_by_env", "MISSING"), {})
 
 
 if __name__ == "__main__":
