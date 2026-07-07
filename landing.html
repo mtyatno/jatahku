@@ -280,6 +280,172 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
   </div>
 </div></section>
 
+<!-- Product Tour -->
+<section class="section tour" style="background:var(--white)"><div class="section-in">
+  <div class="sl">Tur Produk</div>
+  <div class="st">Bukan cuma dashboard</div>
+  <div class="sd">Amplop dengan target menabung, riwayat transaksi dari semua kanal, dan alokasi income yang transparan sampai ke transfer antar amplop.</div>
+  <div class="tour-tabs">
+    <span class="tour-tab active" onclick="showTour('amplop',this)">&#9993;&#65039; Amplop</span>
+    <span class="tour-tab" onclick="showTour('transaksi',this)">&#129534; Transaksi</span>
+    <span class="tour-tab" onclick="showTour('alokasi',this)">&#128184; Alokasi Income</span>
+  </div>
+
+  <!-- Amplop -->
+  <div class="tour-panel active" id="tour-amplop">
+    <div class="mockup-wrap">
+      <div class="mockup-bar">
+        <div class="mockup-dot" style="background:#FF5F56"></div>
+        <div class="mockup-dot" style="background:#FFBD2E"></div>
+        <div class="mockup-dot" style="background:#27C93F"></div>
+        <div class="mockup-url">&#128274; jatahku.com/envelopes</div>
+      </div>
+      <div class="mockup-body">
+        <div class="mockup-top">
+          <div class="mtop-logo">Jatah<span>ku</span></div>
+          <div class="mtop-tabs">
+            <span class="mtab">Dashboard</span>
+            <span class="mtab active">Amplop</span>
+            <span class="mtab">Transaksi</span>
+            <span class="mtab">Alokasi</span>
+            <span class="mtab">Langganan</span>
+          </div>
+          <div class="mtop-streak">&#128293; 11 hari</div>
+        </div>
+        <div class="mockup-main">
+          <div class="chip-row">
+            <span class="chip active">Semua <b>11</b></span>
+            <span class="chip">Shared <b>8</b></span>
+            <span class="chip">Personal <b>3</b></span>
+            <span class="chip">Tabungan <b>4</b></span>
+            <span class="chip">Sinking Fund <b>1</b></span>
+          </div>
+          <div class="env2-grid">
+            <div class="env2">
+              <div class="env2-top"><span class="env2-name">&#128022; Tabungan Darurat</span><span class="env2-meta">Personal &middot; Tabungan</span></div>
+              <div class="env2-val violet">Rp4,2jt <span class="env2-pill violet">12% dari target</span></div>
+              <div class="goal-bar" style="margin:7px 0 8px"><i style="width:12%"></i></div>
+              <div class="env2-note">Target Rp35jt &middot; &asymp;Rp1,2jt/bln biar tepat waktu</div>
+            </div>
+            <div class="env2">
+              <div class="env2-top"><span class="env2-name">&#127836; Makan &amp; Jajan</span><span class="env2-meta">Shared &middot; Rollover</span></div>
+              <div class="env2-val">Rp2,61jt <span class="env2-pill green">39% terpakai</span></div>
+              <div class="mm-bar" style="margin:7px 0 8px"><div class="mm-bar-fill" style="width:39%;background:var(--primary)"></div></div>
+              <div class="env2-status ok">&#10003; Masih aman, tetap jaga ya!</div>
+            </div>
+            <div class="env2">
+              <div class="env2-top"><span class="env2-name">&#128218; Pendidikan</span><span class="env2-meta">Shared &middot; Rollover</span></div>
+              <div class="env2-val red">Rp113rb <span class="env2-pill red">97% terpakai</span></div>
+              <div class="mm-bar" style="margin:7px 0 8px"><div class="mm-bar-fill" style="width:97%;background:var(--red)"></div></div>
+              <div class="env2-status warn">&#9888; Sudah mepet, rem dulu</div>
+            </div>
+            <div class="env2">
+              <div class="env2-top"><span class="env2-name">&#128179; Tagihan &amp; Cicilan</span><span class="env2-meta">Shared &middot; Sinking Fund</span></div>
+              <div class="env2-val">Rp1,7jt <span class="env2-pill green">35% terpakai</span></div>
+              <div class="mm-bar" style="margin:7px 0 8px"><div class="mm-bar-fill" style="width:35%;background:var(--primary)"></div></div>
+              <div class="env2-note amber">&#9202; Reserved Rp1,2jt/bulan untuk langganan</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Transaksi -->
+  <div class="tour-panel" id="tour-transaksi">
+    <div class="mockup-wrap">
+      <div class="mockup-bar">
+        <div class="mockup-dot" style="background:#FF5F56"></div>
+        <div class="mockup-dot" style="background:#FFBD2E"></div>
+        <div class="mockup-dot" style="background:#27C93F"></div>
+        <div class="mockup-url">&#128274; jatahku.com/transactions</div>
+      </div>
+      <div class="mockup-body">
+        <div class="mockup-top">
+          <div class="mtop-logo">Jatah<span>ku</span></div>
+          <div class="mtop-tabs">
+            <span class="mtab">Dashboard</span>
+            <span class="mtab">Amplop</span>
+            <span class="mtab active">Transaksi</span>
+            <span class="mtab">Alokasi</span>
+            <span class="mtab">Langganan</span>
+          </div>
+          <div class="mtop-streak">&#128293; 11 hari</div>
+        </div>
+        <div class="mockup-main">
+          <div class="mm-cards">
+            <div class="mm-card"><div class="mm-card-label">Pengeluaran</div><div class="mm-card-val red">Rp8,03jt</div></div>
+            <div class="mm-card"><div class="mm-card-label">Jumlah transaksi</div><div class="mm-card-val green">92</div></div>
+            <div class="mm-card"><div class="mm-card-label">Terbesar</div><div class="mm-card-val amber">Rp1,6jt</div></div>
+          </div>
+          <div class="chip-row">
+            <span class="chip active">Semua <b>92</b></span>
+            <span class="chip">&#127836; Makan &amp; Jajan <b>40</b></span>
+            <span class="chip">&#127968; Kebutuhan Rumah <b>18</b></span>
+            <span class="chip">&#128218; Pendidikan <b>5</b></span>
+          </div>
+          <div class="day-head">Senin, 6 Jul <span>10 transaksi &middot; -Rp1,8jt</span></div>
+          <div class="txn2-list">
+            <div class="txn2"><div class="txn2-l"><b>Makan siang</b><span>Makan &amp; Jajan &middot; 12:24 <i class="src wa">WhatsApp</i></span></div><div class="txn2-amt">-Rp57rb</div></div>
+            <div class="txn2"><div class="txn2-l"><b>Sekolah anak</b><span>Pendidikan &middot; 11:02 <i class="src web">WebApp</i></span></div><div class="txn2-amt">-Rp1,16jt</div></div>
+            <div class="txn2"><div class="txn2-l"><b>Teh &amp; gorengan</b><span>Makan &amp; Jajan &middot; 09:41 <i class="src tg">Telegram</i></span></div><div class="txn2-amt">-Rp9rb</div></div>
+            <div class="txn2"><div class="txn2-l"><b>Pulsa internet</b><span>Kebutuhan Rumah &middot; 08:15 <i class="src wa">WhatsApp</i></span></div><div class="txn2-amt">-Rp100rb</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alokasi -->
+  <div class="tour-panel" id="tour-alokasi">
+    <div class="mockup-wrap">
+      <div class="mockup-bar">
+        <div class="mockup-dot" style="background:#FF5F56"></div>
+        <div class="mockup-dot" style="background:#FFBD2E"></div>
+        <div class="mockup-dot" style="background:#27C93F"></div>
+        <div class="mockup-url">&#128274; jatahku.com/allocate</div>
+      </div>
+      <div class="mockup-body">
+        <div class="mockup-top">
+          <div class="mtop-logo">Jatah<span>ku</span></div>
+          <div class="mtop-tabs">
+            <span class="mtab">Dashboard</span>
+            <span class="mtab">Amplop</span>
+            <span class="mtab">Transaksi</span>
+            <span class="mtab active">Alokasi</span>
+            <span class="mtab">Langganan</span>
+          </div>
+          <div class="mtop-streak">&#128293; 11 hari</div>
+        </div>
+        <div class="mockup-main">
+          <div class="mm-cards">
+            <div class="mm-card"><div class="mm-card-label">Total income <span class="mm-sub">periode ini</span></div><div class="mm-card-val green">Rp16,6jt</div></div>
+            <div class="mm-card"><div class="mm-card-label">Transfer internal</div><div class="mm-card-val green">22 kali</div></div>
+            <div class="mm-card"><div class="mm-card-label">Amplop tujuan</div><div class="mm-card-val amber">11 amplop</div></div>
+          </div>
+          <div class="alloc-card">
+            <div class="alloc-head"><b>Gaji</b> <span class="env2-pill green">Income</span><span class="alloc-amt">Rp7.000.000</span></div>
+            <div class="alloc-ok">&#10003; 100% dialokasikan ke 8 amplop</div>
+            <div class="alloc-rows">
+              <div class="alloc-row"><span>&#127836; Makan &amp; Jajan</span><div class="mm-bar"><div class="mm-bar-fill" style="width:43%;background:var(--primary)"></div></div><b>43%</b></div>
+              <div class="alloc-row"><span>&#128022; Tabungan Darurat</span><div class="mm-bar"><div class="mm-bar-fill" style="width:14%;background:var(--violet)"></div></div><b>14%</b></div>
+              <div class="alloc-row"><span>&#128179; Tagihan &amp; Cicilan</span><div class="mm-bar"><div class="mm-bar-fill" style="width:14%;background:var(--primary)"></div></div><b>14%</b></div>
+              <div class="alloc-row"><span>&#127968; Kebutuhan Rumah</span><div class="mm-bar"><div class="mm-bar-fill" style="width:7%;background:var(--primary)"></div></div><b>7%</b></div>
+            </div>
+          </div>
+          <div class="alloc-card">
+            <div class="alloc-head"><b>Transfer Internal</b> <span class="env2-pill violet">Transfer</span><span class="alloc-amt">Rp2.100.000</span></div>
+            <div class="txn2-list" style="border:none">
+              <div class="txn2"><div class="txn2-l"><b>Tabungan Darurat &rarr; Pendidikan</b><span>16:46</span></div><div class="txn2-amt" style="color:var(--violet)">Rp300.000</div></div>
+              <div class="txn2"><div class="txn2-l"><b>Kebutuhan Rumah &rarr; Makan &amp; Jajan</b><span>09:54</span></div><div class="txn2-amt" style="color:var(--violet)">Rp500.000</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
 <!-- NLP Showcase -->
 <section class="section nlp-section"><div class="section-in">
   <div class="nlp-grid">
@@ -786,6 +952,15 @@ function showNlp(id, el) {
   el.classList.add('active');
 }
 
+/* ── Product tour tab switcher ── */
+function showTour(id, el) {
+  document.querySelectorAll('.tour-panel').forEach(function(p){p.classList.remove('active')});
+  document.querySelectorAll('.tour-tab').forEach(function(t){t.classList.remove('active')});
+  document.getElementById('tour-'+id).classList.add('active');
+  el.classList.add('active');
+  trackEvent('tour_tab', id);
+}
+
 /* ── Interactive Demo ── */
 var DEMO_ENV = [
   {name:'Makan',emoji:'🍽️',allocated:3000000,spent:840000},
@@ -988,6 +1163,55 @@ window.addEventListener('scroll', function(){
 .goal-row b{font-family:var(--font-d);color:var(--violet);font-size:10.5px}
 .goal-bar{flex:1;height:4px;background:var(--violet-light);border-radius:2px;overflow:hidden}
 .goal-bar i{display:block;height:100%;background:var(--violet);border-radius:2px}
+/* Product tour */
+.tour-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
+.tour-tab{padding:8px 18px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;transition:all .2s;background:var(--bg);color:var(--text-s);border:1px solid var(--border)}
+.tour-tab.active,.tour-tab:hover{background:var(--primary-light);color:var(--primary);border-color:rgba(15,110,86,.25)}
+.tour-panel{display:none}.tour-panel.active{display:block}
+.tour .mockup-wrap{box-shadow:0 18px 60px rgba(0,0,0,.09),0 0 0 1px var(--border)}
+.chip-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.chip{padding:4px 11px;border-radius:100px;font-size:10.5px;font-weight:600;color:var(--text-s);background:var(--white);border:1px solid var(--border)}
+.chip.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.chip b{font-family:var(--font-d);font-weight:700}
+.env2-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.env2{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:13px 15px}
+.env2-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.env2-name{font-size:12.5px;font-weight:700}
+.env2-meta{font-size:9.5px;color:var(--text-t);white-space:nowrap}
+.env2-val{font-family:var(--font-d);font-size:17px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:8px}
+.env2-val.violet{color:var(--violet)}.env2-val.red{color:var(--red)}
+.env2-pill{font-family:var(--font-b);font-size:9px;font-weight:700;padding:2px 8px;border-radius:100px}
+.env2-pill.green{background:var(--primary-light);color:var(--primary)}
+.env2-pill.red{background:var(--red-light);color:var(--red)}
+.env2-pill.violet{background:var(--violet-light);color:var(--violet)}
+.env2-note{font-size:10px;color:var(--text-t)}
+.env2-note.amber{color:var(--accent)}
+.env2-status{font-size:10.5px;font-weight:600;border-radius:7px;padding:4px 9px;display:inline-block}
+.env2-status.ok{background:var(--primary-light);color:var(--primary)}
+.env2-status.warn{background:var(--red-light);color:var(--red)}
+.day-head{font-family:var(--font-d);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-s);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.day-head span{font-family:var(--font-b);font-weight:600;font-size:10.5px;color:var(--text-t);text-transform:none;letter-spacing:0}
+.txn2-list{background:var(--white);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.txn2{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border)}
+.txn2:last-child{border-bottom:none}
+.txn2-l b{display:block;font-size:12px;font-weight:600}
+.txn2-l span{font-size:10px;color:var(--text-t)}
+.txn2-amt{font-family:var(--font-d);font-size:12.5px;font-weight:700;color:var(--red);white-space:nowrap}
+.src{font-style:normal;font-size:8.5px;font-weight:700;padding:1px 7px;border-radius:100px;vertical-align:1px}
+.src.tg{background:#E7F3FB;color:#2481CC}
+.src.wa{background:#E2F5E9;color:#128C7E}
+.src.web{background:#EEEEEA;color:var(--text-s)}
+.alloc-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:13px 16px;margin-bottom:12px}
+.alloc-card:last-child{margin-bottom:0}
+.alloc-head{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px}
+.alloc-head b{font-family:var(--font-d)}
+.alloc-amt{margin-left:auto;font-family:var(--font-d);font-size:14px;font-weight:700;color:var(--primary)}
+.alloc-ok{font-size:10.5px;font-weight:600;color:var(--primary);background:var(--primary-light);border-radius:7px;padding:4px 10px;display:inline-block;margin-bottom:9px}
+.alloc-rows{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}
+.alloc-row{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--text-s)}
+.alloc-row span{flex:0 0 128px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.alloc-row .mm-bar{flex:1}
+.alloc-row b{font-family:var(--font-d);font-size:10.5px;color:var(--text)}
 @keyframes advIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 .adv-row,.adv-risk,.adv-goals{animation:advIn .55s cubic-bezier(.2,.7,.3,1) both}
 .adv-panel>*:nth-child(2){animation-delay:.25s}
@@ -1186,6 +1410,9 @@ window.addEventListener('scroll', function(){
   .mm-cards{grid-template-columns:1fr 1fr}
   .mm-envelopes{grid-template-columns:1fr 1fr}
   .diff-grid{grid-template-columns:1fr}
+  .env2-grid{grid-template-columns:1fr}
+  .alloc-rows{grid-template-columns:1fr}
+  .alloc-row span{flex-basis:110px}
 }
 @media(max-width:480px){
   .hero{padding:110px 16px 60px}
