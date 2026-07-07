@@ -1,9 +1,10 @@
 """Unit tests for advisor reserve/projection helpers (Plan B2 §6a, §6d)."""
 import asyncio
+import os
 import unittest
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.services.advisor.context import _monthly_reserve, load_advisor_context
 from app.services.advisor.sinking import _frequency_monthly_reserve
@@ -226,6 +227,26 @@ class GoalsRuleTests(unittest.TestCase):
         )
         card = evaluate_goals(ctx)[0]
         self.assertEqual(card["severity"], "warning")
+
+
+class ErrorIsolationTests(unittest.TestCase):
+    def test_one_failing_rule_is_isolated_when_not_fail_fast(self):
+        env = make_envelope(id="e1", name="Makan", purpose="expense")
+        stats = {"e1": [make_period_row(allocated=_D("1000000"), spent=_D("100000"), transaction_count=2)]}
+        # Force fail-fast OFF and make evaluate_drift raise.
+        with patch.dict(os.environ, {"ADVISOR_FAIL_FAST": "0"}), \
+             patch("app.services.advisor.rules.evaluate_drift", side_effect=RuntimeError("boom")):
+            result = compute_insight_cards([env], stats, make_period_info(), {}, {})
+        self.assertTrue(result["partial"])
+        self.assertIn("allocation_drift", result["failed_rules"])
+
+    def test_fail_fast_reraises(self):
+        env = make_envelope(id="e1", name="Makan", purpose="expense")
+        stats = {"e1": [make_period_row(allocated=_D("1000000"), spent=_D("100000"))]}
+        with patch.dict(os.environ, {"ADVISOR_FAIL_FAST": "1"}), \
+             patch("app.services.advisor.rules.evaluate_drift", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                compute_insight_cards([env], stats, make_period_info(), {}, {})
 
 
 if __name__ == "__main__":
