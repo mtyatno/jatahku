@@ -74,7 +74,7 @@ export default function Transactions() {
     getPendingCount().then(setPendingCount);
     const syncOnOnline = async () => {
       const results = await flushQueue((item) =>
-        api.createTransaction({ envelope_id: item.envelope_id, amount: item.amount, description: item.description, source: item.source })
+        api.createTransaction({ envelope_id: item.envelope_id, amount: item.amount, description: item.description, source: item.source, is_private: item.is_private ?? false })
       );
       if (results.some(r => r.success)) { load(); getPendingCount().then(setPendingCount); }
     };

@@ -103,6 +103,7 @@ async function syncPendingTransactions() {
         amount: item.amount,
         description: item.description,
         source: item.source,
+        is_private: item.is_private ?? false,
       }),
     });
 
