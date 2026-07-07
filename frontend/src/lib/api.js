@@ -178,6 +178,23 @@ class ApiClient {
     return { ok: res.ok, data: await res.json() };
   }
 
+  async updateEnvelopeClassification(env, classification) {
+    // Rebuild the full EnvelopeCreate body from a summary row (PUT replaces all fields).
+    return this.updateEnvelope(env.id, {
+      name: env.name,
+      emoji: env.emoji,
+      budget_amount: Number(env.budget_amount),
+      is_rollover: env.is_rollover,
+      group_id: env.group_id ?? null,
+      is_personal: env.is_personal,
+      is_locked: env.is_locked,
+      daily_limit: env.daily_limit ?? null,
+      cooling_threshold: env.cooling_threshold ?? null,
+      purpose: env.purpose,
+      classification,
+    });
+  }
+
   async deleteEnvelope(id) {
     const res = await this.request(`/envelopes/${id}`, { method: 'DELETE' });
     return res.ok;

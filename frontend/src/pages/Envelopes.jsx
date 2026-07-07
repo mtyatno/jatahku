@@ -4,6 +4,7 @@ import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
 import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
+import ClassificationBackfill from '../components/ClassificationBackfill';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
@@ -854,6 +855,8 @@ export default function Envelopes() {
           </div>
         </div>
       </div>
+
+      <ClassificationBackfill envelopes={envelopes} onDone={load} />
 
       {envelopes.length === 0 ? (
         <div className="card text-center py-12"><div className="flex justify-center mb-3"><Icon name="envelope" size={40} color={BRAND} /></div><p className="text-gray-500 mb-4">Belum ada amplop.</p><button onClick={() => setShowCreate(true)} className="btn-primary">Buat Amplop Pertama</button></div>
