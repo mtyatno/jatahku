@@ -368,6 +368,9 @@ class PendingTransaction(TimestampMixin, Base):
         SAEnum(PendingTransactionStatus), default=PendingTransactionStatus.pending
     )
     cooling_hours: Mapped[int] = mapped_column(Integer, default=24)
+    is_private: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     confirm_after: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
