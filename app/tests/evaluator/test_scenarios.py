@@ -31,6 +31,7 @@ class EvaluatorScenarioTests(unittest.TestCase):
         result = run_scenario([env], stats, PI, txns_by_env=txns, recurring_by_env=rec)
         # A depletion card may exist (spent already > available) but never danger,
         # and the global overspend must not be danger from a day-1 fixed bill.
+        self.assertTrue(result["cards"], "scenario must produce at least one (non-danger) card")
         for card in result["cards"]:
             self.assertNotEqual(card["severity"], "danger")
 
@@ -64,22 +65,17 @@ class EvaluatorScenarioTests(unittest.TestCase):
         # In production, context.py (Task 7) masks another household member's
         # private transaction description BEFORE it ever reaches this pipeline —
         # we feed the already-masked value here, exactly as the real pipeline
-        # would. The raw content ("terapi rahasia") must never appear anywhere
-        # in a card, unconditionally.
+        # would. This downstream harness proves that the pipeline surfaces only
+        # the masked placeholder it is given and does not reconstruct descriptions.
+        # Upstream masking (load_advisor_context) is covered by test_visibility.py + test_advisor.py.
         env = make_envelope(id="p", name="Rumah Tangga", purpose="expense")
         stats = {"p": [make_period_row(allocated=D("500000"), spent=D("460000"), transaction_count=4)]}
         txns = {"p": [make_txn(400000, "Transaksi privat"), make_txn(20000),
                       make_txn(20000), make_txn(20000)]}
         result = run_scenario([env], stats, PI, txns_by_env=txns)
-        text = evidence_text(result)
 
-        # Load-bearing, unconditional: no raw private token ever leaks into any
-        # card string (title, body, or evidence line).
-        self.assertNotIn("terapi rahasia", text)
-
-        # Prove the guard isn't vacuous: the 400k outlier DOES surface in the
-        # depletion card's evidence, but only via the masked placeholder —
-        # never as raw text.
+        # Load-bearing assertions: the 400k outlier DOES surface in the
+        # depletion card's evidence, but only via the masked placeholder.
         depletion_cards = [c for c in result["cards"] if c["type"] == "env_depletion"]
         self.assertTrue(
             depletion_cards,
