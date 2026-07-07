@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
+import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
@@ -50,6 +51,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
   const [groupId, setGroupId] = useState(editing?.group_id || '');
   const [newGroupName, setNewGroupName] = useState('');
   const [purpose, setPurpose] = useState(editing?.purpose || 'expense');
+  const [classification, setClassification] = useState(editing?.classification || null);
   const [goalName, setGoalName] = useState(editingGoal?.name || '');
   const [goalAmount, setGoalAmount] = useState(editingGoal ? String(Math.round(Number(editingGoal.target_amount))) : '');
   const [goalDate, setGoalDate] = useState(editingGoal?.target_date || '');
@@ -75,6 +77,10 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
   const fundableEnvelopes = (existingEnvelopes || []).filter(e => Number(e.remaining) > 0);
 
   const handleSubmit = async () => {
+    if (needsClassification(purpose) && !classification) {
+      setError('Pilih klasifikasi Kebutuhan atau Keinginan dulu');
+      return;
+    }
     setSaving(true);
     setError('');
 
@@ -96,6 +102,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
         cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
         group_id: resolvedGroupId,
         purpose,
+        classification: needsClassification(purpose) ? classification : null,
       };
       if (isSavingLike) {
         data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
@@ -131,6 +138,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
       cooling_threshold: coolingThreshold ? Number(coolingThreshold) : null,
       group_id: resolvedGroupId,
       purpose,
+      classification: needsClassification(purpose) ? classification : null,
     };
     if (isSavingLike) {
       data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
@@ -203,7 +211,13 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
         {/* Step 1: Basic info + funding (new only) */}
         <div className="space-y-4">
           <div><label className="label">Ikon</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}><EnvelopeIcon value={e} size={20} color={emoji === e ? BRAND : '#6b7280'} /></button>))}</div></div>
-          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => { setName(e.target.value); setPurpose(guessPurpose(e.target.value)); }} required /></div>
+          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => {
+            const v = e.target.value;
+            setName(v);
+            const p = guessPurpose(v);
+            setPurpose(p);
+            if (needsClassification(p) && !classification) setClassification(suggestClassification(v));
+          }} required /></div>
 
           <div>
             <label className="label">Grup</label>
@@ -222,17 +236,15 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
 
           <div>
             <label className="label">Purpose</label>
-            <div className="flex gap-1.5">
-              {[
-                { key: 'expense', icon: 'expense', label: 'Expense', desc: 'Pengeluaran rutin' },
-                { key: 'saving', icon: 'target', label: 'Saving', desc: 'Target menabung' },
-                { key: 'sinking_fund', icon: 'calendar', label: 'Sinking Fund', desc: 'Dana persiapan' },
-              ].map(p => (
+            <div className="grid grid-cols-2 gap-1.5">
+              {PURPOSE_OPTIONS.map(p => (
                 <button key={p.key} type="button" onClick={() => {
                   if (editing && purpose !== p.key) {
-                    if (!confirm(`Ubah purpose ke "${p.label}"? Budget atau goal mungkin terpengaruh.`)) return;
+                    if (!confirm(`Ubah purpose ke "${p.desc}"? Budget atau goal mungkin terpengaruh.`)) return;
                   }
                   setPurpose(p.key);
+                  if (!needsClassification(p.key)) setClassification(null);
+                  else if (!classification) setClassification(suggestClassification(name));
                 }}
                   className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight flex flex-col items-center gap-1 ${
                     purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
@@ -243,6 +255,27 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
               ))}
             </div>
           </div>
+
+          {needsClassification(purpose) && (
+            <div>
+              <label className="label">Klasifikasi <span className="text-danger-400">*</span></label>
+              <div className="flex gap-1.5">
+                {[
+                  { key: 'needs', label: 'Kebutuhan', icon: 'check' },
+                  { key: 'wants', label: 'Keinginan', icon: 'coffee' },
+                ].map(c => (
+                  <button key={c.key} type="button" onClick={() => setClassification(c.key)}
+                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all inline-flex items-center justify-center gap-1.5 ${
+                      classification === c.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                    }`}>
+                    <Icon name={c.icon} size={16} color={classification === c.key ? BRAND : '#6b7280'} />
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Wajib dipilih untuk amplop pengeluaran & cicilan.</p>
+            </div>
+          )}
 
           {/* Goal fields for saving/sinking_fund */}
           {isSavingLike && (
@@ -360,7 +393,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
 
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
-            <button type="button" onClick={handleSubmit} disabled={saving || (!editing && !name)}
+            <button type="button" onClick={handleSubmit} disabled={saving || (!editing && !name) || (needsClassification(purpose) && !classification)}
               className="btn-primary flex-1 disabled:opacity-50">
               {saving ? '...' : editing ? 'Simpan' : 'Buat & Alokasi'}
             </button>
