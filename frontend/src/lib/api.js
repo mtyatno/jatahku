@@ -150,6 +150,14 @@ class ApiClient {
     return loadCache(cacheKey) ?? [];
   }
 
+  async getHouseholdMembers() {
+    try {
+      const res = await this.request('/household/members');
+      if (res.ok) return res.json();
+    } catch {}
+    return [];
+  }
+
   async getEnvelopes() {
     try {
       const res = await this.request('/envelopes/');
