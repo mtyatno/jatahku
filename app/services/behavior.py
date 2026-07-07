@@ -179,6 +179,7 @@ async def create_pending_transaction(
     description: str,
     source: TransactionSource,
     cooling_hours: int = 24,
+    is_private: bool = False,
     db: AsyncSession = None,
 ) -> PendingTransaction:
     """Create a pending transaction with cooling period."""
@@ -193,6 +194,7 @@ async def create_pending_transaction(
         cooling_hours=cooling_hours,
         confirm_after=now + timedelta(hours=cooling_hours),
         expires_at=now + timedelta(hours=cooling_hours + 24),
+        is_private=is_private,
     )
     db.add(pending)
     await db.commit()
@@ -227,6 +229,7 @@ async def confirm_pending(pending_id: UUID, db: AsyncSession) -> dict:
         description=pending.description,
         source=pending.source,
         transaction_date=date.today(),
+        is_private=pending.is_private,
     )
     db.add(txn)
     pending.status = PendingTransactionStatus.confirmed
