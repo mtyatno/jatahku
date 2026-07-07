@@ -13,7 +13,8 @@ from app.services.advisor.rules.subscription import evaluate_subscription
 from app.services.advisor.rules.overspend import evaluate_overspend
 from app.services.advisor.projection import project_envelope
 from app.services.advisor.rules.depletion import evaluate_depletion
-from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
+from app.services.advisor.rules.goals import evaluate_goals
+from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info, make_goal
 
 
 _D = Decimal
@@ -197,6 +198,34 @@ class DepletionProjectionTests(unittest.TestCase):
         cards = evaluate_depletion(ctx)
         self.assertEqual(len(cards), 1)
         self.assertEqual(cards[0]["severity"], "danger")
+
+
+class GoalsRuleTests(unittest.TestCase):
+    def test_achieved_saving_shows_celebration_no_estimate(self):
+        env = make_envelope(id="s1", name="Tabungan", purpose="saving")
+        stats = {"s1": [make_period_row(allocated=_D("500000")), make_period_row(allocated=_D("500000"))]}
+        ctx = AdvisorContext(
+            envelopes=[env], stats=stats, period_info=make_period_info(),
+            goals_by_env={"s1": make_goal(name="Dana Darurat", target_amount=_D("1000000"))},
+            balances_by_env={"s1": _D("1200000")},  # >= target
+        )
+        card = evaluate_goals(ctx)[0]
+        self.assertIn("tercapai", card["body"])
+        self.assertNotIn("estimasi", card["body"])
+
+    def test_saving_stale_two_periods_escalates_to_warning(self):
+        env = make_envelope(id="s2", name="Tabungan", purpose="saving")
+        # last two period rows have allocated 0 -> stale
+        stats = {"s2": [make_period_row(allocated=_D("500000")),
+                        make_period_row(allocated=_D("0")),
+                        make_period_row(allocated=_D("0"))]}
+        ctx = AdvisorContext(
+            envelopes=[env], stats=stats, period_info=make_period_info(),
+            goals_by_env={"s2": make_goal(name="Liburan", target_amount=_D("5000000"))},
+            balances_by_env={"s2": _D("500000")},
+        )
+        card = evaluate_goals(ctx)[0]
+        self.assertEqual(card["severity"], "warning")
 
 
 if __name__ == "__main__":
