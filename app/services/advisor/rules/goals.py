@@ -1,7 +1,8 @@
 """goal_progress rule — consolidated saving & sinking-fund progress.
 
 Collects saving/sinking_fund envelopes that have a goal into one card. The
-card's severity is `warning` if any sinking fund is under-funded, else
+card's severity is `warning` if any sinking fund is under-funded or any
+saving envelope has had zero contribution for the last 2 periods, else
 `info`. Returns 0 or 1 card."""
 from datetime import date
 from decimal import Decimal
@@ -12,8 +13,16 @@ from app.services.advisor.rules._base import AdvisorContext
 
 def evaluate_goals(ctx: AdvisorContext) -> list[dict]:
     sinking_under_funded = False
+    saving_stale = False
     saving_items = []
     sinking_items = []
+
+    # Median total monthly allocation across history (for aggressive-target label).
+    hist_period_totals = {}
+    for env_stats in ctx.stats.values():
+        for idx, row in enumerate(env_stats[:-1]):
+            hist_period_totals[idx] = hist_period_totals.get(idx, Decimal("0")) + _to_decimal(row.get("allocated"))
+    median_monthly_alloc = _median_decimal(list(hist_period_totals.values()))
 
     for envelope in ctx.envelopes:
         envelope_stats = ctx.stats.get(str(envelope.id), [])
@@ -30,28 +39,39 @@ def evaluate_goals(ctx: AdvisorContext) -> list[dict]:
             pct = min(round(float(balance / target) * 100, 1) if target > 0 else 0, 100)
 
             if purpose == "saving":
-                hist_allocations = [
-                    _to_decimal(row.get("allocated"))
-                    for row in envelope_stats[:-1]
-                    if _to_decimal(row.get("allocated")) > 0
-                ]
-                avg_contribution = _median_decimal(hist_allocations) if hist_allocations else allocated
-                if avg_contribution <= 0:
-                    avg_contribution = allocated if allocated > 0 else Decimal("1")
-                months_to_goal = (target - balance) / avg_contribution if target > balance else 0
-                months_to_goal = max(1, round(float(months_to_goal)))
-                capped = months_to_goal > 120
-
-                line = f"{envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
-                if allocated <= 0 and not hist_allocations:
-                    line += " — belum ada setoran"
-                elif capped:
-                    line += f" — setoran Rp{_fmt_rp(avg_contribution)}/bln terlalu kecil, estimasi >10 tahun"
+                if target > 0 and balance >= target:
+                    saving_items.append(f"🎉 {envelope.emoji} {goal.name}: tercapai (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})")
                 else:
-                    line += f" — estimasi {_fmt_months(months_to_goal)} (Rp{_fmt_rp(avg_contribution)}/bln)"
-                saving_items.append(line)
+                    hist_allocations = [
+                        _to_decimal(row.get("allocated"))
+                        for row in envelope_stats[:-1]
+                        if _to_decimal(row.get("allocated")) > 0
+                    ]
+                    avg_contribution = _median_decimal(hist_allocations) if hist_allocations else allocated
+                    if avg_contribution <= 0:
+                        avg_contribution = allocated if allocated > 0 else Decimal("1")
+                    months_to_goal = (target - balance) / avg_contribution if target > balance else 0
+                    months_to_goal = max(1, round(float(months_to_goal)))
+                    capped = months_to_goal > 120
+
+                    line = f"{envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
+                    if allocated <= 0 and not hist_allocations:
+                        line += " — belum ada setoran"
+                    elif capped:
+                        line += f" — setoran Rp{_fmt_rp(avg_contribution)}/bln terlalu kecil, estimasi >10 tahun"
+                    else:
+                        line += f" — estimasi {_fmt_months(months_to_goal)} (Rp{_fmt_rp(avg_contribution)}/bln)"
+                    saving_items.append(line)
+
+                # Stale check: last two periods (current + previous) both zero allocation.
+                recent = [_to_decimal(r.get("allocated")) for r in envelope_stats[-2:]]
+                if len(recent) >= 2 and all(a <= 0 for a in recent):
+                    saving_stale = True
 
             elif purpose == "sinking_fund":
+                if target > 0 and balance >= target:
+                    sinking_items.append(f"🎉 {envelope.emoji} {goal.name}: tercapai (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})")
+                    continue
                 today = date.today()
                 if goal.target_date and goal.target_date > today:
                     months_remaining = max(1, (goal.target_date.year - today.year) * 12 + goal.target_date.month - today.month)
@@ -63,6 +83,8 @@ def evaluate_goals(ctx: AdvisorContext) -> list[dict]:
                         line = f"⚠️ {envelope.emoji} {goal.name}: {int(pct)}% — butuh Rp{_fmt_rp(monthly_needed)}/bln (baru Rp{_fmt_rp(allocated)})"
                     else:
                         line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% — {_fmt_months(months_remaining)}, perlu Rp{_fmt_rp(monthly_needed)}/bln"
+                    if allocated < monthly_needed and median_monthly_alloc > 0 and monthly_needed > median_monthly_alloc * Decimal("0.3"):
+                        line += " (target agresif)"
                 else:
                     line = f"📅 {envelope.emoji} {goal.name}: {int(pct)}% (Rp{_fmt_rp(balance)} / Rp{_fmt_rp(target)})"
                 sinking_items.append(line)
@@ -79,7 +101,7 @@ def evaluate_goals(ctx: AdvisorContext) -> list[dict]:
             body_parts.append("")
         body_parts.append("📅 Dana persiapan:")
         body_parts.extend(f"  • {item}" for item in sinking_items)
-    severity = "warning" if sinking_under_funded else "info"
+    severity = "warning" if (sinking_under_funded or saving_stale) else "info"
     return [_card(
         "goals:consolidated",
         "goal_progress",

@@ -115,6 +115,28 @@ class TestDetectInterval(unittest.TestCase):
         self.assertEqual(result["frequency"], "unknown")
         self.assertEqual(result["confidence"], "low")
 
+    def test_monthly_survives_one_anomalous_gap_with_lower_confidence(self):
+        # gaps 30, 30, 60 -> median 30 (monthly band), one anomaly -> monthly/medium
+        result = detect_interval([
+            date(2026, 1, 1),
+            date(2026, 1, 31),
+            date(2026, 3, 2),
+            date(2026, 5, 1),
+        ])
+        self.assertEqual(result["frequency"], "monthly")
+        self.assertEqual(result["confidence"], "medium")
+
+    def test_two_anomalies_stay_unknown(self):
+        # gaps 8, 42, 41 -> median 41, no band -> unknown (regression: keep today's behavior)
+        result = detect_interval([
+            date(2026, 1, 1),
+            date(2026, 1, 9),
+            date(2026, 2, 20),
+            date(2026, 4, 1),
+        ])
+        self.assertEqual(result["frequency"], "unknown")
+        self.assertEqual(result["confidence"], "low")
+
 
 class TestAllocateIncomeToTargets(unittest.TestCase):
     def test_obligations_are_filled_before_discretionary_targets(self):

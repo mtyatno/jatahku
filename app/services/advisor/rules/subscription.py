@@ -15,6 +15,7 @@ def evaluate_subscription(ctx: AdvisorContext) -> list[dict]:
         if not envelope_stats:
             continue
         current = envelope_stats[-1]
+        purpose = str(getattr(envelope, "purpose", "expense") or "expense")
         allocated = _to_decimal(current.get("allocated"))
         spent = _to_decimal(current.get("spent"))
         rollover = _to_decimal(current.get("rollover"))
@@ -23,7 +24,7 @@ def evaluate_subscription(ctx: AdvisorContext) -> list[dict]:
         remaining = available - spent
         free = remaining - reserved
 
-        if reserved > 0 and free < reserved * Decimal("0.25"):
+        if purpose == "expense" and reserved > 0 and free < reserved * Decimal("0.25"):
             cards.append(_card(
                 f"subscription_pressure:{envelope.id}",
                 "subscription_pressure",
