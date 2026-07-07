@@ -69,8 +69,6 @@ def detect_interval(dates: list[date], normalized_text: str = "") -> dict:
             return {"frequency": "unknown", "confidence": "low", "median_days": median_gap}
         base = "high" if len(ordered_dates) >= 3 else "medium"
         base = _BAND_MAX_CONFIDENCE.get(name, base)
-        if name in _BAND_MAX_CONFIDENCE and len(ordered_dates) < 3:
-            base = "medium"
         confidence = _drop_confidence(base) if anomalies == 1 else base
         return {"frequency": name, "confidence": confidence, "median_days": median_gap}
 

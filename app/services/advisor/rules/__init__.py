@@ -65,7 +65,7 @@ async def build_advisor_insights(user, db) -> dict:
     envelopes = context.get("envelopes", [])
     stats = context.get("stats", {})
     if not envelopes:
-        return {"cards": [], "dashboard_cards": []}
+        return {"cards": [], "dashboard_cards": [], "partial": False, "failed_rules": []}
 
     period_info = get_period_info(context.get("payday_day", _payday(user)), date.today())
 
