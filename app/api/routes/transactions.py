@@ -128,7 +128,7 @@ async def create_transaction(
         elif check.check_type == "cooling":
             pending = await create_pending_transaction(
                 req.envelope_id, user.id, req.amount, req.description,
-                req.source, cooling_hours=24, db=db,
+                req.source, cooling_hours=24, is_private=req.is_private, db=db,
             )
             raise HTTPException(
                 status_code=202,
