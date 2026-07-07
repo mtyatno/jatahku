@@ -27,8 +27,8 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap"></noscript>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&family=Caveat:wght@600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&family=Caveat:wght@600&display=swap"></noscript>
 <script>window.jk_events=[];function trackEvent(n,d){window.jk_events.push({event:n,data:d,ts:Date.now()})}</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -71,21 +71,33 @@ body{font-family:var(--font-b);color:var(--text);background:var(--bg);line-heigh
 .section{padding:96px 24px}.section-in{max-width:1100px;margin:0 auto}
 .sl{font-family:var(--font-d);font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:12px}
 .st{font-family:var(--font-d);font-size:clamp(26px,4vw,40px);font-weight:700;line-height:1.2;margin-bottom:16px;letter-spacing:-.5px}
+.st em{font-style:italic;color:var(--primary)}
 .sd{font-size:17px;color:var(--text-s);max-width:560px;margin-bottom:48px;line-height:1.65}
 
 /* Hero */
-.hero{padding:136px 24px 80px;text-align:center;position:relative;overflow:hidden}
+.hero{padding:126px 24px 80px;position:relative;overflow:hidden}
 .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 50% at 50% 0%,rgba(15,110,86,.07) 0%,transparent 60%);pointer-events:none}
+.hero-in{max-width:1160px;margin:0 auto;display:grid;grid-template-columns:440px 1fr;gap:52px;align-items:center;position:relative}
+.hero-l{text-align:left}
 .h-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;background:var(--accent-light);color:var(--accent);border-radius:100px;font-size:13px;font-weight:600;margin-bottom:24px;border:1px solid rgba(186,117,23,.2)}
-.hero h1{font-family:var(--font-d);font-size:clamp(38px,6vw,68px);font-weight:700;line-height:1.08;margin-bottom:22px;letter-spacing:-1.5px}
-.hero h1 em{font-style:normal;color:var(--primary);display:inline-block;position:relative}
+.hero h1{font-family:var(--font-d);font-size:clamp(36px,4.4vw,56px);font-weight:700;line-height:1.08;margin-bottom:20px;letter-spacing:-1.5px}
+.hero h1 em{font-style:italic;color:var(--primary);display:inline-block;position:relative}
 .hero h1 em::after{content:'';position:absolute;bottom:4px;left:0;right:0;height:8px;background:var(--primary-light);border-radius:4px;z-index:-1}
-.hero p{font-size:clamp(16px,2vw,19px);color:var(--text-s);max-width:580px;margin:0 auto 36px;line-height:1.65}
+.hero p{font-size:clamp(15px,1.6vw,17px);color:var(--text-s);max-width:480px;margin:0 0 24px;line-height:1.65}
+.h-props{display:flex;gap:26px;margin-bottom:30px;flex-wrap:wrap}
+.h-prop b{display:block;font-family:var(--font-d);font-size:14px;font-weight:700;margin-bottom:1px}
+.h-prop span{font-size:12px;color:var(--text-t)}
 .hero-cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
-.h-stats{margin-top:36px;display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap}
-.h-stat{padding:8px 20px;font-size:14px;color:var(--text-s);display:flex;align-items:center;gap:6px}
-.h-stat+.h-stat{border-left:1px solid var(--border)}
-.h-stat strong{font-family:var(--font-d);font-weight:700;color:var(--text);font-size:16px}
+.hero-l .hero-cta{justify-content:flex-start}
+.h-proof{display:flex;align-items:center;gap:14px;margin-top:28px;font-size:13px;color:var(--text-s);flex-wrap:wrap}
+.h-proof strong{font-family:var(--font-d);font-weight:700;color:var(--text);font-size:14.5px}
+.h-avatars{display:flex;padding-left:8px}
+.h-avatars span{width:29px;height:29px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;border:2px solid var(--bg);margin-left:-8px}
+/* Handwritten annotations */
+.hand{font-family:'Caveat',cursive;font-size:19px;line-height:1.2;font-weight:600;color:var(--primary);transform:rotate(-3deg)}
+.hand svg{display:block;margin-top:2px}
+.hero-note{position:absolute;top:-46px;right:14px;z-index:2;text-align:left}
+.hero-note svg{margin-left:4px}
 
 </style>
 </head>
@@ -120,21 +132,29 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 
 <!-- Hero -->
 <section class="hero">
-  <div class="h-badge">&#10022; Baru: AI Advisor &mdash; tahu sebelum jebol</div>
-  <h1>Setiap rupiah<br>ada <em>jatahnya</em></h1>
-  <p>Bukan sekadar pencatat pengeluaran. Jatahku menjaga disiplin keuanganmu: <strong>AI Advisor</strong> memperingatkan sebelum budget jebol, dan mencatat secepat chat &mdash; di web, Telegram, atau WhatsApp.</p>
-  <div class="hero-cta">
-    <a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','hero_daftar')">Mulai Gratis &rarr;</a>
-  </div>
-  <div class="h-stats">
-    <div class="h-stat">&#128101; <strong id="user-count">29</strong> pengguna aktif</div>
-    <div class="h-stat">&#128176; <strong id="managed">Rp88,8jt</strong> dikelola</div>
-    <div class="h-stat">&#9989; <strong id="txn-count">&mdash;</strong> transaksi</div>
-    <div class="h-stat">&#128274; Tanpa iklan &middot; tanpa tracking</div>
+  <div class="hero-in">
+  <div class="hero-l">
+    <div class="h-badge">&#10022; Baru: AI Advisor &mdash; tahu sebelum jebol</div>
+    <h1>Setiap rupiah<br>ada <em>jatahnya.</em></h1>
+    <p>Bukan sekadar pencatat pengeluaran. Jatahku menjaga disiplin keuanganmu: <strong>AI Advisor</strong> memperingatkan sebelum budget jebol, dan mencatat secepat chat &mdash; di web, Telegram, atau WhatsApp.</p>
+    <div class="h-props">
+      <div class="h-prop"><b>&#128172; Mudah</b><span>Cukup ketik seperti chat</span></div>
+      <div class="h-prop"><b>&#10022; Cerdas</b><span>AI paham kebiasaanmu</span></div>
+      <div class="h-prop"><b>&#128737; Terkontrol</b><span>Sesuai rencana kamu</span></div>
+    </div>
+    <div class="hero-cta">
+      <a href="/login" class="btn btn-p btn-l" onclick="trackEvent('cta_click','hero_daftar')">Mulai Gratis &rarr;</a>
+      <a href="#demo" class="btn btn-o btn-l" onclick="trackEvent('cta_click','hero_demo')">Coba demo</a>
+    </div>
+    <div class="h-proof">
+      <div class="h-avatars"><span style="background:var(--primary)">A</span><span style="background:var(--accent)">S</span><span style="background:#534AB7">R</span><span style="background:var(--primary-mid)">D</span></div>
+      <div>Dipakai <strong id="user-count">29</strong> pengguna &middot; <strong id="managed">Rp88,8jt</strong> dikelola &middot; <strong id="txn-count">&mdash;</strong> transaksi</div>
+    </div>
   </div>
 
   <!-- Dashboard Mockup -->
   <div class="hero-visual">
+    <div class="hero-note hand">AI Advisor kasih tahu<br>sebelum jebol!<svg width="42" height="36" viewBox="0 0 42 36" fill="none"><path d="M36 3C26 7 12 9 8 27" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 19l4 9 9-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <div class="mockup-wrap">
       <div class="mockup-bar">
         <div class="mockup-dot" style="background:#FF5F56"></div>
@@ -207,6 +227,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
         </div>
       </div>
     </div>
+  </div>
   </div>
 </section>
 
@@ -283,7 +304,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 <!-- Product Tour -->
 <section class="section tour" style="background:var(--white)"><div class="section-in">
   <div class="sl">Tur Produk</div>
-  <div class="st">Bukan cuma dashboard</div>
+  <div class="st">Bukan cuma <em>dashboard.</em></div>
   <div class="sd">Amplop dengan target menabung, riwayat transaksi dari semua kanal, dan alokasi income yang transparan sampai ke transfer antar amplop.</div>
   <div class="tour-tabs">
     <span class="tour-tab active" onclick="showTour('amplop',this)">&#9993;&#65039; Amplop</span>
@@ -293,6 +314,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 
   <!-- Amplop -->
   <div class="tour-panel active" id="tour-amplop">
+    <div class="tour-note hand">Warna &amp; status bikin kamu tahu<br>kondisi tiap amplop!<svg width="42" height="36" viewBox="0 0 42 36" fill="none"><path d="M36 3C26 7 12 9 8 27" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 19l4 9 9-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
     <div class="mockup-wrap">
       <div class="mockup-bar">
         <div class="mockup-dot" style="background:#FF5F56"></div>
@@ -451,7 +473,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
   <div class="nlp-grid">
     <div class="nlp-left">
       <div class="sl">Chat NLP &mdash; Telegram &amp; WhatsApp</div>
-      <div class="st" style="color:#fff">Bot yang ngerti kamu ngomong apa</div>
+      <div class="st" style="color:#fff">Bot yang ngerti kamu <em>ngomong apa.</em></div>
       <p style="font-size:16px;color:rgba(255,255,255,.65);line-height:1.7;margin-bottom:32px">Tidak perlu hafal format perintah. Cukup kirim chat seperti biasa ke bot Telegram atau WhatsApp &mdash; langsung paham, mulai dari catat pengeluaran sampai analitik budget. Di web pun sama: ketik beberapa baris sekaligus di kotak catat cepat.</p>
       <div class="nlp-tabs">
         <div class="nlp-tab active" onclick="showNlp('catat',this)">💳 Catat</div>
@@ -465,6 +487,7 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <div style="color:rgba(255,255,255,.5);font-size:13px">8 kategori intent &middot; 1000+ variasi query &middot; belajar dari kebiasaanmu</div>
     </div>
     <div class="nlp-right">
+      <div class="phone">
       <!-- Catat -->
       <div class="nlp-panel active" id="nlp-catat">
         <div class="chat-bubble right">
@@ -572,6 +595,8 @@ parkir 5000</div>
           <div class="bubble bot">&#8617;&#65039; Transaksi terakhir dibatalkan:<br><b>Rp35rb &mdash; kopi starbucks</b><br><span class="dim">Budget dikembalikan.</span></div>
         </div>
       </div>
+      </div>
+      <div class="nlp-note hand">Chat kayak ngobrol sama teman!</div>
     </div>
   </div>
 </div></section>
@@ -579,8 +604,8 @@ parkir 5000</div>
 <!-- How it works + Demo -->
 <section class="section how" id="cara-kerja"><div class="section-in">
   <div class="sl">Cara Kerja</div>
-  <div class="st">Setup dalam 2 menit, kontrol selamanya</div>
-  <div class="sd">Dari nol sampai budgeting lengkap, hanya 4 langkah.</div>
+  <div class="st">Sederhana, tapi <em>powerful.</em></div>
+  <div class="sd">Dari nol sampai budgeting lengkap, hanya 4 langkah. Setup 2 menit, kontrol selamanya.</div>
   <div class="how-steps">
     <div class="step">
       <div class="step-n">1</div>
@@ -625,7 +650,7 @@ parkir 5000</div>
   </div>
 
   <!-- Interactive Demo -->
-  <div class="demo-box">
+  <div class="demo-box" id="demo">
     <div class="demo-header">&#128172; Coba langsung &mdash; ketik pengeluaran atau pertanyaan</div>
     <div class="demo-chat" id="demo-chat">
       <div class="demo-msg bot">Halo! Coba kirim pengeluaran atau tanya budget kamu.<br>Contoh: <b>kopi 35k</b>, <b>sisa budget?</b>, <b>kapan habis?</b></div>
@@ -748,7 +773,7 @@ parkir 5000</div>
 <!-- Differentiators -->
 <section class="section diff"><div class="section-in">
   <div class="sl">Kenapa Jatahku?</div>
-  <div class="st">Bukan expense tracker biasa</div>
+  <div class="st">Bukan expense tracker <em>biasa.</em></div>
   <div class="sd">Yang lain mencatat pengeluaran. Jatahku mencegah boros sebelum terjadi &mdash; dengan behavior controls yang hanya ada di sini.</div>
   <div class="diff-grid">
     <div class="diff-item">
@@ -877,7 +902,7 @@ parkir 5000</div>
 <!-- Pricing -->
 <section class="section pricing" id="harga" style="text-align:center"><div class="section-in">
   <div class="sl">Harga</div>
-  <div class="st">Simple, tanpa ribet</div>
+  <div class="st">Simple, <em>tanpa ribet.</em></div>
   <div class="sd" style="margin:0 auto 0;text-align:center">Mulai gratis, upgrade kapan saja. Sekali bayar, selamanya.</div>
   <div class="price-cards">
     <div class="pc">
@@ -1122,7 +1147,8 @@ window.addEventListener('scroll', function(){
 </script>
 <style>
 /* Dashboard Mockup */
-.hero-visual{margin-top:64px;position:relative}
+.hero-visual{position:relative}
+.hero-in .hero-visual{margin-top:0}
 .hero-visual::before{content:'';position:absolute;bottom:-40px;left:50%;transform:translateX(-50%);width:80%;height:80px;background:radial-gradient(ellipse,rgba(15,110,86,.12) 0%,transparent 70%);filter:blur(20px);pointer-events:none}
 .mockup-wrap{max-width:920px;margin:0 auto;border-radius:20px;overflow:hidden;box-shadow:0 30px 100px rgba(0,0,0,.12),0 0 0 1px var(--border);background:var(--white)}
 .mockup-bar{height:44px;background:#f5f5f0;display:flex;align-items:center;padding:0 16px;gap:8px;border-bottom:1px solid var(--border)}
@@ -1167,7 +1193,9 @@ window.addEventListener('scroll', function(){
 .tour-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
 .tour-tab{padding:8px 18px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;transition:all .2s;background:var(--bg);color:var(--text-s);border:1px solid var(--border)}
 .tour-tab.active,.tour-tab:hover{background:var(--primary-light);color:var(--primary);border-color:rgba(15,110,86,.25)}
-.tour-panel{display:none}.tour-panel.active{display:block}
+.tour-panel{display:none;position:relative}.tour-panel.active{display:block}
+.tour-note{position:absolute;top:-52px;right:28px;z-index:2;text-align:left}
+.tour-note svg{margin-left:2px}
 .tour .mockup-wrap{box-shadow:0 18px 60px rgba(0,0,0,.09),0 0 0 1px var(--border)}
 .chip-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .chip{padding:4px 11px;border-radius:100px;font-size:10.5px;font-weight:600;color:var(--text-s);background:var(--white);border:1px solid var(--border)}
@@ -1271,6 +1299,12 @@ window.addEventListener('scroll', function(){
 .nlp-tab{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;background:rgba(255,255,255,.08);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.1)}
 .nlp-tab.active,.nlp-tab:hover{background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.25)}
 .nlp-panel{display:none}.nlp-panel.active{display:flex;flex-direction:column;gap:12px}
+/* Phone frame */
+.phone{background:#0d1418;border-radius:36px;padding:46px 16px 42px;position:relative;border:1px solid rgba(255,255,255,.14);box-shadow:0 26px 70px rgba(0,0,0,.4);max-width:400px;margin:0 auto;width:100%}
+.phone::before{content:'';position:absolute;top:16px;left:50%;transform:translateX(-50%);width:92px;height:17px;background:#000;border-radius:100px}
+.phone::after{content:'';position:absolute;bottom:15px;left:50%;transform:translateX(-50%);width:104px;height:4px;background:rgba(255,255,255,.3);border-radius:2px}
+.nlp-note{margin:18px auto 0;text-align:center;color:#9BE8CD;width:fit-content}
+.nlp-section .st em{color:#7DFFC4}
 /* How it works */
 .how{background:var(--white)}
 .how-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:56px;position:relative}
@@ -1393,10 +1427,18 @@ window.addEventListener('scroll', function(){
 .trust-item+.trust-item{border-left:1px solid var(--border)}
 @media(max-width:1024px){
   .dual-grid{grid-template-columns:1fr}
+  .hero-in{grid-template-columns:1fr;gap:44px}
+  .hero-l{text-align:center}
+  .hero p{margin:0 auto 24px}
+  .h-props{justify-content:center}
+  .hero-l .hero-cta{justify-content:center}
+  .h-proof{justify-content:center}
+  .hero-note{display:none}
 }
 @media(max-width:900px){
   .mtop-tabs{display:none}
   .mm-board{display:none}
+  .tour-note{display:none}
   .goal-row span{flex-basis:120px}
   .nlp-grid{grid-template-columns:1fr}
   .diff-grid{grid-template-columns:1fr 1fr}
