@@ -66,7 +66,7 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
-function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
+function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, goals }) {
   const { mode } = useTheme();
   const isDark = mode === 'dark';
   const tacticalLines = [];
@@ -110,7 +110,7 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
   const hasTactical = tacticalLines.length > 0;
   const hasCards = cards?.length > 0;
   const hasGoals = goals?.length > 0;
-  if (!hasTactical && !hasCards && !hasGoals) return null;
+  if (!hasTactical && !hasCards && !hasGoals && !advisorError) return null;
 
   const clr = isDark ? {
     bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b',
@@ -128,6 +128,12 @@ function HeroAdvisor({ cards, prediction, todaySpent, envelopes, goals }) {
         <h2 className="font-display font-bold text-base" style={{ color: clr.title }}>AI Advisor</h2>
         <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: clr.accent }}>Beta</span>
       </div>
+
+      {advisorError && (
+        <p className="text-xs mb-3 flex items-center gap-1.5" style={{ color: clr.muted }}>
+          <Icon name="warning" size={13} color={clr.muted} /> Insight sementara tak tersedia
+        </p>
+      )}
 
       {hasTactical && (
         <div className="mb-4">
@@ -616,6 +622,7 @@ export default function Dashboard() {
       {isCurrentPeriod && (
         <HeroAdvisor
           cards={advisorInsights?.dashboard_cards}
+          advisorError={advisorInsights?._error}
           prediction={prediction}
           todaySpent={todaySpent}
           envelopes={envelopes}

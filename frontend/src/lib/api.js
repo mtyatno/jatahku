@@ -393,9 +393,15 @@ class ApiClient {
   async getAdvisorInsights() {
     try {
       const res = await this.request('/advisor/insights');
-      if (res.ok) return res.json();
-    } catch {}
-    return { cards: [], dashboard_cards: [] };
+      if (res.ok) {
+        const data = await res.json();
+        return { cards: [], dashboard_cards: [], ...data, _error: false };
+      }
+      console.error('[advisor] insights request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] insights request error:', e);
+    }
+    return { cards: [], dashboard_cards: [], _error: true };
   }
 
   async getSinkingFundAdvice() {
