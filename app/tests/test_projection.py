@@ -12,6 +12,7 @@ from app.services.advisor.rules import compute_insight_cards
 from app.services.advisor.rules.subscription import evaluate_subscription
 from app.services.advisor.rules.overspend import evaluate_overspend
 from app.services.advisor.projection import project_envelope
+from app.services.advisor.rules.depletion import evaluate_depletion
 from app.tests.advisor_fixtures import make_envelope, make_period_row, make_period_info
 
 
@@ -161,6 +162,41 @@ class ProjectEnvelopeTests(unittest.TestCase):
         txns = [_txn(50000) for _ in range(6)]
         out = project_envelope(_D("300000"), 6, _D("500000"), 10, 30, 20, txns=txns)
         self.assertFalse(out["severity_capped"])
+
+
+class DepletionProjectionTests(unittest.TestCase):
+    def test_front_loaded_rent_does_not_trigger_danger(self):
+        # Rent 3M paid day 1 in a 3M-available envelope, matched to a recurring;
+        # tiny variable spend after -> no depletion card.
+        env = make_envelope(id="r1", name="Sewa", purpose="expense")
+        stats = {"r1": [make_period_row(allocated=_D("3000000"), spent=_D("3050000"), transaction_count=3)]}
+        txns = [_txn(3000000, "sewa"), _txn(30000), _txn(20000)]
+        ctx = AdvisorContext(
+            envelopes=[env], stats=stats,
+            period_info=make_period_info(days_used=10, days_total=30, days_remaining=20),
+            goals_by_env={}, balances_by_env={},
+            txns_by_env={"r1": txns}, recurring_by_env={"r1": [{"amount": _D("3000000"), "frequency": "monthly", "norm": ""}]},
+        )
+        # available 3M, spent 3.05M already > available -> but projection variable
+        # is only 50k; the rule still may flag because spent>available. Guard: the
+        # card, if any, must NOT be danger (capped: 2 variable txns < 5).
+        cards = evaluate_depletion(ctx)
+        for card in cards:
+            self.assertNotEqual(card["severity"], "danger")
+
+    def test_genuine_even_burn_stays_danger(self):
+        env = make_envelope(id="g1", name="Hiburan", purpose="expense")
+        stats = {"g1": [make_period_row(allocated=_D("500000"), spent=_D("400000"), transaction_count=8)]}
+        txns = [_txn(50000) for _ in range(8)]
+        ctx = AdvisorContext(
+            envelopes=[env], stats=stats,
+            period_info=make_period_info(days_used=10, days_total=30, days_remaining=20),
+            goals_by_env={}, balances_by_env={},
+            txns_by_env={"g1": txns}, recurring_by_env={},
+        )
+        cards = evaluate_depletion(ctx)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["severity"], "danger")
 
 
 if __name__ == "__main__":
