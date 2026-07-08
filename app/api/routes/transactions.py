@@ -421,6 +421,9 @@ async def delete_transaction(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    result = await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )
     hid = result.scalar_one_or_none()
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
