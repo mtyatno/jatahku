@@ -91,7 +91,8 @@ async def send_daily_summary(user_id=None):
                 days_left = period_info["days_remaining"]
 
                 from app.models.models import Allocation, Income as IncModel
-                from app.models.models import RecurringTransaction, RecurringFrequency
+                from app.models.models import RecurringTransaction
+                from app.services.reserved import recurring_monthly_reserve
 
                 # ── Build per-envelope period stats ────────────────────────
                 env_stats = []  # (env, allocated, spent, reserved, remaining, indicator)
@@ -128,12 +129,9 @@ async def send_daily_summary(user_id=None):
                     )
                     reserved = Decimal("0")
                     for rec in rec_r.scalars().all():
-                        if rec.frequency == RecurringFrequency.weekly:
-                            reserved += rec.amount * 4
-                        elif rec.frequency == RecurringFrequency.yearly:
-                            reserved += rec.amount / 12
-                        else:
-                            reserved += rec.amount
+                        reserved += recurring_monthly_reserve(
+                            rec.frequency.value, rec.amount, rec.next_run, period_end
+                        )
 
                     remaining = allocated - spent - reserved
                     if allocated > 0:
