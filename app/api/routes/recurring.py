@@ -8,11 +8,13 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.period import get_budget_period
 from app.models.models import (
     User, Envelope, HouseholdMember, RecurringTransaction, RecurringFrequency,
     Transaction, TransactionSource,
 )
 from app.services.recurring_processor import _next_date
+from app.services.recurring_status import compute_recurring_status
 
 router = APIRouter()
 
@@ -35,6 +37,7 @@ class RecurringResponse(BaseModel):
     frequency: str
     next_run: date
     is_active: bool
+    status: str = "due"
     model_config = {"from_attributes": True}
 
 
@@ -65,6 +68,11 @@ async def list_recurring(
         .order_by(RecurringTransaction.next_run)
     )
     rows = result.all()
+
+    today = date.today()
+    payday = getattr(user, "payday_day", None) or 1
+    _ps, period_end = get_budget_period(payday, today)
+
     return [
         RecurringResponse(
             id=r.id, envelope_id=r.envelope_id,
@@ -72,6 +80,7 @@ async def list_recurring(
             amount=r.amount, description=r.description,
             frequency=r.frequency.value, next_run=r.next_run,
             is_active=r.is_active,
+            status=compute_recurring_status(r.next_run, r.frequency.value, today, period_end),
         )
         for r, name, emoji in rows
     ]
