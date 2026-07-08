@@ -464,6 +464,35 @@ class ApiClient {
     const res = await this.request(`/goals/${id}`, { method: 'DELETE' });
     return res.ok;
   }
+
+  // Recurring / Langganan payment
+  async getRecurring() {
+    try { const res = await this.request('/recurring/'); if (res.ok) return res.json(); } catch {}
+    return [];
+  }
+
+  async payRecurring(id, amount = null) {
+    const res = await this.request(`/recurring/${id}/pay`, {
+      method: 'POST', body: JSON.stringify(amount == null ? {} : { amount: Number(amount) }),
+    });
+    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  }
+
+  async skipRecurring(id) {
+    const res = await this.request(`/recurring/${id}/skip`, { method: 'POST' });
+    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  }
+
+  // Undo: kembalikan next_run sebuah langganan ke nilai sebelumnya (PUT butuh body penuh)
+  async restoreRecurringNextRun(item, prevNextRun) {
+    return this.request(`/recurring/${item.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        envelope_id: item.envelope_id, amount: Number(item.amount),
+        description: item.description, frequency: item.frequency, next_run: prevNextRun,
+      }),
+    });
+  }
 }
 
 export const api = new ApiClient();
