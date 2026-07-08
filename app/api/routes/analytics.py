@@ -10,9 +10,10 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_last_n_periods, get_period_info
 from app.models.models import (
     User, Envelope, Transaction, HouseholdMember, Allocation, Income,
-    RecurringTransaction, RecurringFrequency, EnvelopeGroup,
+    RecurringTransaction, EnvelopeGroup,
 )
 from app.services.advisor import build_allocation_distribution
+from app.services.reserved import recurring_monthly_reserve
 
 router = APIRouter()
 
@@ -389,12 +390,9 @@ async def spending_prediction(
             )
         )
         for rec in rec_r.scalars().all():
-            if rec.frequency == RecurringFrequency.weekly:
-                total_reserved += float(rec.amount) * 4
-            elif rec.frequency == RecurringFrequency.yearly:
-                total_reserved += float(rec.amount) / 12
-            else:
-                total_reserved += float(rec.amount)
+            total_reserved += float(recurring_monthly_reserve(
+                rec.frequency.value, rec.amount, rec.next_run, period_end
+            ))
 
     daily_avg = total_spent / days_passed if days_passed > 0 else 0
     predicted_total = daily_avg * days_total

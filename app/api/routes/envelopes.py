@@ -12,8 +12,9 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
     User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
-    RecurringTransaction, RecurringFrequency, PurposeType,
+    RecurringTransaction, PurposeType,
 )
+from app.services.reserved import recurring_monthly_reserve
 
 router = APIRouter()
 
@@ -196,15 +197,7 @@ async def envelope_summary(
         recs = rec_result.scalars().all()
         reserved = Decimal("0")
         for rec in recs:
-            if rec.frequency == RecurringFrequency.weekly:
-                monthly_equiv = rec.amount * 4
-            elif rec.frequency == RecurringFrequency.yearly:
-                monthly_equiv = rec.amount / 12
-            elif rec.frequency == RecurringFrequency.monthly:
-                monthly_equiv = rec.amount
-            else:
-                monthly_equiv = rec.amount
-            reserved += monthly_equiv
+            reserved += recurring_monthly_reserve(rec.frequency.value, rec.amount, rec.next_run, period_end)
 
         # Core formula: remaining = allocated + rollover - spent
         remaining = allocated + rollover - spent

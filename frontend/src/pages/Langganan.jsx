@@ -1,7 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
-import { EnvelopeIcon } from '../components/Icon';
+import { EnvelopeIcon, Icon } from '../components/Icon';
+import { statusMeta, sortForPayment, unpaidMonthlyTotal } from '../lib/subscriptionStatus';
+
+const TONE_CLS = {
+  danger: 'bg-red-50 text-danger-400', warning: 'bg-amber-50 text-amber-600',
+  safe: 'bg-brand-50 text-brand-600', neutral: 'bg-gray-100 text-gray-500',
+};
 
 export function RecurringModal({ onClose, onSaved, item }) {
   const isEdit = !!item;
@@ -93,6 +99,7 @@ export default function Langganan() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [busy, setBusy] = useState(null); // id sedang diproses — cegah double-pay
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
@@ -107,6 +114,21 @@ export default function Langganan() {
     if (!confirm(`Hapus langganan "${name}"?`)) return;
     await api.request(`/recurring/${id}`, { method: 'DELETE' });
     load();
+  };
+
+  const handlePay = async (item) => {
+    if (busy) return;
+    setBusy(item.id);
+    const r = await api.payRecurring(item.id);
+    setBusy(null);
+    if (r.ok) load();
+  };
+  const handleSkip = async (item) => {
+    if (busy) return;
+    setBusy(item.id);
+    const r = await api.skipRecurring(item.id);
+    setBusy(null);
+    if (r.ok) load();
   };
 
   const freqLabel = (f) => {
@@ -137,6 +159,7 @@ export default function Langganan() {
         <div className="card">
           <p className="text-xs text-gray-400">Estimasi pengeluaran bulanan</p>
           <p className="font-display text-2xl font-bold text-amber-500">{formatCurrency(totalMonthly)}<span className="text-sm font-normal text-gray-400">/bulan</span></p>
+          <p className="text-xs text-gray-400 mt-1">Sisa belum bayar bulan ini: <b className="text-gray-600">{formatCurrency(unpaidMonthlyTotal(items))}</b></p>
         </div>
       )}
 
@@ -149,7 +172,10 @@ export default function Langganan() {
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map(item => (
+          {sortForPayment(items).map(item => {
+            const meta = statusMeta(item.status);
+            const isPaid = item.status === 'paid';
+            return (
             <div key={item.id} className="card group hover:border-brand-200 transition-all">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
@@ -164,16 +190,30 @@ export default function Langganan() {
                 <div className="text-right">
                   <p className="font-display font-bold text-lg">{formatShort(item.amount)}</p>
                   <p className="text-xs text-gray-400">Next: {new Date(item.next_run).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                  {item.status && (
+                    <span className={`inline-block text-[11px] px-1.5 py-0.5 rounded-md mt-1 ${TONE_CLS[meta.tone]}`}>{meta.label}</span>
+                  )}
                 </div>
               </div>
-              <div className="flex justify-end gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center justify-end gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                {isPaid ? (
+                  <span className="text-xs text-brand-600 flex items-center gap-1"><Icon name="check" size={14} weight="fill" /> Sudah bayar</span>
+                ) : (
+                  <>
+                    <button disabled={busy === item.id} onClick={() => handleSkip(item)}
+                      className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">Lewati</button>
+                    <button disabled={busy === item.id} onClick={() => handlePay(item)}
+                      className="text-xs font-medium px-3 py-1 rounded-lg bg-brand-600 text-white disabled:opacity-50">Bayar</button>
+                  </>
+                )}
                 <button onClick={() => setEditItem(item)}
                   className="text-xs text-brand-500 hover:underline">Edit</button>
                 <button onClick={() => handleDelete(item.id, item.description)}
                   className="text-xs text-danger-400 hover:underline">Hapus</button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

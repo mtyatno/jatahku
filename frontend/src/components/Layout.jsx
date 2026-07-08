@@ -5,6 +5,7 @@ import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 import MultiAddTransaction from './MultiAddTransaction';
+import PaySubscriptions from './PaySubscriptions';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
@@ -94,6 +95,7 @@ const FAB_OPTIONS = [
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
+  { key: 'paybill', icon: 'card', label: 'Bayar langganan' },
 ];
 
 const navItems = [
@@ -270,11 +272,13 @@ export default function Layout() {
               {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
               {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
               {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan baru</>}
+              {fabAction === 'paybill' && <><Icon name="card" size={22} /> Bayar langganan</>}
             </h3>
             {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}
             {fabAction === 'income' && <QuickAddIncome onClose={() => setFabAction(null)} />}
             {fabAction === 'langganan' && <QuickAddLangganan onClose={() => setFabAction(null)} />}
+            {fabAction === 'paybill' && <PaySubscriptions onClose={() => setFabAction(null)} />}
           </div>
         </div>
       )}

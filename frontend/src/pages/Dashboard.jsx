@@ -7,6 +7,7 @@ import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
+import { fundingState } from '../lib/envelopeFunding';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
@@ -297,12 +298,16 @@ function EnvelopeRow({ env, goal }) {
   // ── Expense: spent-vs-budget (risk colors) ──
   const ratio = env.spent_ratio;
   const isUnfunded = allocated <= 0 && rollover === 0;
+  const remaining = allocated + rollover - spent;
+  const fstate = fundingState(env);
 
-  const barColor = ratio >= 0.9 ? 'bg-danger-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
-  const freeColor = free <= 0 ? 'text-danger-400' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
+  const barColor = fstate === 'overspent' ? 'bg-danger-400' : fstate === 'reserve_short' ? 'bg-amber-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
+  const freeColor = fstate === 'overspent' ? 'text-danger-400' : fstate === 'reserve_short' ? 'text-amber-500' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
 
-  const badge = ratio >= 1.0
+  const badge = fstate === 'overspent'
     ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-100 text-danger-400 font-semibold">Habis</span>
+    : fstate === 'reserve_short'
+    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 font-medium">⚠️ kurang tagihan</span>
     : ratio >= 0.9
     ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-50 text-danger-400 font-medium">🔴 {Math.round(ratio * 100)}%</span>
     : ratio >= 0.7
@@ -342,6 +347,12 @@ function EnvelopeRow({ env, goal }) {
               {rollover > 0
                 ? `🔄 +${formatShort(rollover)} rollover`
                 : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+            </p>
+          )}
+          {fstate === 'reserve_short' && (
+            <p className="text-xs text-amber-500 mt-0.5">
+              ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
+              {' '}<Link to="/allocate" className="font-medium hover:underline">Alokasikan lagi →</Link>
             </p>
           )}
         </>
