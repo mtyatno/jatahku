@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
+import { fundingState } from '../lib/envelopeFunding';
 import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
 import ClassificationBackfill from '../components/ClassificationBackfill';
 
@@ -521,8 +523,9 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
   const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
-  const barColor = status === 'danger' ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
-  const remainColor = free <= 0 || status === 'danger' ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+  const fstate = isSavingLike ? null : fundingState(env);
+  const barColor = fstate === 'overspent' || status === 'danger' ? 'bg-danger-400' : fstate === 'reserve_short' || status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
+  const remainColor = fstate === 'overspent' || status === 'danger' ? 'text-danger-400' : fstate === 'reserve_short' ? 'text-amber-500' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
 
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState(goal?.name || '');
@@ -565,7 +568,9 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const pctBadgeCls = spentRatio >= 0.9 ? 'bg-red-50 text-danger-400'
     : spentRatio >= 0.7 ? 'bg-amber-50 text-amber-600'
     : 'bg-brand-50 text-brand-600';
-  const insight = envelopeInsight(env, goal);
+  const insight = fstate === 'reserve_short'
+    ? { text: `⚠️ Reserve tagihan ${formatShort(reserved)} > sisa ${formatShort(remaining)} — kurang ${formatShort(reserved - remaining)}`, tone: 'warning' }
+    : envelopeInsight(env, goal);
 
   return (
     <div className={`card group hover:border-brand-200 transition-all relative ${env.is_locked ? 'opacity-60' : ''}`}>
@@ -654,8 +659,9 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
         <div>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Tersedia</p>
+              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Bebas</p>
               <p className={`font-display text-3xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</p>
+              {reserved > 0 && <span className="text-[11px] text-gray-400">setelah sisihkan tagihan</span>}
             </div>
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 ${pctBadgeCls}`}>{pct}% terpakai</span>
           </div>
@@ -719,7 +725,12 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
       <ControlBadges env={env} />
 
       {!isUnfunded && !showGoalForm && (
-        <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />
+        <>
+          <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />
+          {fstate === 'reserve_short' && (
+            <Link to="/allocate" className="mt-1.5 inline-block text-xs font-medium text-amber-600 hover:underline">Alokasikan lagi →</Link>
+          )}
+        </>
       )}
     </div>
   );
