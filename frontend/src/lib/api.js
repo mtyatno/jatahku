@@ -150,6 +150,14 @@ class ApiClient {
     return loadCache(cacheKey) ?? [];
   }
 
+  async getHouseholdMembers() {
+    try {
+      const res = await this.request('/household/members');
+      if (res.ok) return res.json();
+    } catch {}
+    return [];
+  }
+
   async getEnvelopes() {
     try {
       const res = await this.request('/envelopes/');
@@ -176,6 +184,23 @@ class ApiClient {
       body: JSON.stringify(data),
     });
     return { ok: res.ok, data: await res.json() };
+  }
+
+  async updateEnvelopeClassification(env, classification) {
+    // Rebuild the full EnvelopeCreate body from a summary row (PUT replaces all fields).
+    return this.updateEnvelope(env.id, {
+      name: env.name,
+      emoji: env.emoji,
+      budget_amount: Number(env.budget_amount),
+      is_rollover: env.is_rollover,
+      group_id: env.group_id ?? null,
+      is_personal: env.is_personal,
+      is_locked: env.is_locked,
+      daily_limit: env.daily_limit ?? null,
+      cooling_threshold: env.cooling_threshold ?? null,
+      purpose: env.purpose,
+      classification,
+    });
   }
 
   async deleteEnvelope(id) {
@@ -368,9 +393,15 @@ class ApiClient {
   async getAdvisorInsights() {
     try {
       const res = await this.request('/advisor/insights');
-      if (res.ok) return res.json();
-    } catch {}
-    return { cards: [], dashboard_cards: [] };
+      if (res.ok) {
+        const data = await res.json();
+        return { cards: [], dashboard_cards: [], ...data, _error: false };
+      }
+      console.error('[advisor] insights request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] insights request error:', e);
+    }
+    return { cards: [], dashboard_cards: [], _error: true };
   }
 
   async getSinkingFundAdvice() {

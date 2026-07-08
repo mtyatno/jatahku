@@ -5,6 +5,7 @@ import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 import StatCard from '../components/StatCard';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import IncomeHistory from '../components/income/IncomeHistory';
+import { confidenceLabel, confidenceTone } from '../lib/confidenceCopy';
 
 const CAT_COLORS = ['#0F6E56', '#BA7517', '#1D9E75', '#D85A30', '#534AB7', '#993556', '#378ADD', '#639922'];
 
@@ -40,6 +41,7 @@ export default function Allocate() {
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const [advisorRecommendation, setAdvisorRecommendation] = useState(null);
   const [advisorApplied, setAdvisorApplied] = useState(false);
+  const [showConfReasons, setShowConfReasons] = useState(false);
 
   const load = () => {
     if (periodIdx === null) return;
@@ -111,6 +113,7 @@ export default function Allocate() {
     if (res.ok) {
       setAdvisorRecommendation(res.data);
       setAdvisorApplied(false);
+      setShowConfReasons(false);
     } else {
       setError(res.data?.detail || 'Gagal membuat rekomendasi alokasi');
     }
@@ -282,7 +285,25 @@ export default function Allocate() {
                 <div className="card !p-3 bg-brand-50/40 border-brand-200 space-y-2">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold">✨ Rekomendasi advisor</p>
-                    <span className="text-xs px-2 py-0.5 rounded-md bg-white text-brand-600 capitalize">Keyakinan: {advisorRecommendation.confidence}</span>
+                    <div className="relative">
+                      <button type="button" onClick={() => setShowConfReasons(v => !v)}
+                        className={`text-xs px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
+                          confidenceTone(advisorRecommendation.confidence) === 'green' ? 'bg-brand-50 text-brand-600'
+                          : confidenceTone(advisorRecommendation.confidence) === 'amber' ? 'bg-amber-50 text-amber-600'
+                          : 'bg-gray-100 text-gray-500'
+                        }`}>
+                        Keyakinan: {confidenceLabel(advisorRecommendation.confidence)}
+                        {advisorRecommendation.confidence_reasons?.length > 0 && <Icon name="info" size={13} />}
+                      </button>
+                      {showConfReasons && advisorRecommendation.confidence_reasons?.length > 0 && (
+                        <div className="absolute right-0 z-20 mt-1 w-56 rounded-lg bg-white border border-gray-200 shadow-lg p-2.5">
+                          <p className="text-[11px] font-semibold text-gray-500 mb-1">Kenapa keyakinan ini?</p>
+                          <ul className="text-xs text-gray-600 list-disc list-inside space-y-0.5">
+                            {advisorRecommendation.confidence_reasons.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex gap-3 text-xs">
                     <span className="text-gray-500">Total rekomendasi: <b className="text-gray-700">{formatShort(advisorRecommendation.total_recommended)}</b></span>
