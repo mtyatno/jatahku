@@ -187,7 +187,7 @@ export default function Transactions() {
         <div className="relative flex-1">
           <Icon name="search" size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari transaksi, merchant, atau catatan..."
-            className="w-full border border-gray-200 rounded-xl pl-11 pr-4 py-2.5 text-sm focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 placeholder:text-gray-400" />
+            className="input !pl-11" />
         </div>
         <div className="relative flex-shrink-0">
           <button onClick={() => setMoreOpen(v => !v)} className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 text-gray-600 bg-white hover:bg-gray-50 inline-flex items-center gap-2">
