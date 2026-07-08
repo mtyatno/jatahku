@@ -99,6 +99,7 @@ export default function Langganan() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [busy, setBusy] = useState(null); // id sedang diproses — cegah double-pay
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
@@ -115,8 +116,20 @@ export default function Langganan() {
     load();
   };
 
-  const handlePay = async (item) => { const r = await api.payRecurring(item.id); if (r.ok) load(); };
-  const handleSkip = async (item) => { const r = await api.skipRecurring(item.id); if (r.ok) load(); };
+  const handlePay = async (item) => {
+    if (busy) return;
+    setBusy(item.id);
+    const r = await api.payRecurring(item.id);
+    setBusy(null);
+    if (r.ok) load();
+  };
+  const handleSkip = async (item) => {
+    if (busy) return;
+    setBusy(item.id);
+    const r = await api.skipRecurring(item.id);
+    setBusy(null);
+    if (r.ok) load();
+  };
 
   const freqLabel = (f) => {
     const map = { weekly: 'Mingguan', monthly: 'Bulanan', yearly: 'Tahunan' };
@@ -187,10 +200,10 @@ export default function Langganan() {
                   <span className="text-xs text-brand-600 flex items-center gap-1"><Icon name="check" size={14} weight="fill" /> Sudah bayar</span>
                 ) : (
                   <>
-                    <button onClick={() => handleSkip(item)}
-                      className="text-xs text-gray-400 hover:text-gray-600">Lewati</button>
-                    <button onClick={() => handlePay(item)}
-                      className="text-xs font-medium px-3 py-1 rounded-lg bg-brand-600 text-white">Bayar</button>
+                    <button disabled={busy === item.id} onClick={() => handleSkip(item)}
+                      className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">Lewati</button>
+                    <button disabled={busy === item.id} onClick={() => handlePay(item)}
+                      className="text-xs font-medium px-3 py-1 rounded-lg bg-brand-600 text-white disabled:opacity-50">Bayar</button>
                   </>
                 )}
                 <button onClick={() => setEditItem(item)}

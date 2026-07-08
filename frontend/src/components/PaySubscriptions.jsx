@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { formatCurrency, formatShort } from '../lib/utils';
+import { formatCurrency } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND } from './Icon';
 import { unpaidMonthlyTotal, sortForPayment, statusMeta } from '../lib/subscriptionStatus';
 
