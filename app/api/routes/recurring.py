@@ -9,8 +9,10 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
-    User, Envelope, HouseholdMember, RecurringTransaction, RecurringFrequency
+    User, Envelope, HouseholdMember, RecurringTransaction, RecurringFrequency,
+    Transaction, TransactionSource,
 )
+from app.services.recurring_processor import _next_date
 
 router = APIRouter()
 
@@ -159,6 +161,61 @@ async def update_recurring(
         frequency=rec.frequency.value, next_run=rec.next_run,
         is_active=rec.is_active,
     )
+
+
+class PayRequest(BaseModel):
+    amount: Decimal | None = None
+
+
+async def _resolve_rec(rec_id, user, db):
+    hid = await _get_hid(user, db)
+    result = await db.execute(
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(
+            RecurringTransaction.id == rec_id,
+            Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )
+    rec = result.scalar_one_or_none()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
+    return rec
+
+
+@router.post("/{rec_id}/pay")
+async def pay_recurring(
+    rec_id: UUID,
+    req: PayRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rec = await _resolve_rec(rec_id, user, db)
+    prev = rec.next_run
+    amount = req.amount if req.amount is not None else rec.amount
+    txn = Transaction(
+        envelope_id=rec.envelope_id, user_id=user.id, amount=amount,
+        description=f"🔄 {rec.description}", source=TransactionSource.webapp,
+        transaction_date=date.today(),
+    )
+    db.add(txn)
+    rec.next_run = _next_date(rec.next_run, rec.frequency)
+    await db.commit()
+    await db.refresh(txn)
+    return {"txn_id": txn.id, "prev_next_run": prev, "next_run": rec.next_run}
+
+
+@router.post("/{rec_id}/skip")
+async def skip_recurring(
+    rec_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rec = await _resolve_rec(rec_id, user, db)
+    rec.next_run = _next_date(rec.next_run, rec.frequency)
+    await db.commit()
+    return {"next_run": rec.next_run}
 
 
 @router.delete("/{rec_id}", status_code=status.HTTP_204_NO_CONTENT)
