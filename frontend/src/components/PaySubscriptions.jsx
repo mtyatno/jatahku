@@ -32,8 +32,15 @@ export default function PaySubscriptions({ onClose }) {
     setToast({
       text: `Tercatat: ${item.description}`,
       undo: async () => {
-        await api.deleteTransaction(res.data.txn_id);
-        await api.restoreRecurringNextRun(item, res.data.prev_next_run);
+        // Only revert local state after BOTH the txn delete and the next_run
+        // restore actually succeed — otherwise the paid txn still exists and
+        // reverting the UI would silently mislead the user (money integrity).
+        const delOk = await api.deleteTransaction(res.data.txn_id);
+        const restoreRes = await api.restoreRecurringNextRun(item, res.data.prev_next_run);
+        if (!delOk || !restoreRes.ok) {
+          setToast({ text: 'Gagal mengurungkan — coba lagi' });
+          return;
+        }
         flip(item.id, 'due');
         window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
         setToast(null);
