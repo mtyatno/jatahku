@@ -524,8 +524,11 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const fstate = isSavingLike ? null : fundingState(env);
-  const barColor = fstate === 'overspent' || status === 'danger' ? 'bg-danger-400' : fstate === 'reserve_short' || status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
-  const remainColor = fstate === 'overspent' || status === 'danger' ? 'text-danger-400' : fstate === 'reserve_short' ? 'text-amber-500' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
+  // fstate takes strict precedence: a reserve_short envelope must stay amber
+  // even at a high spend ratio (status==='danger'), else the red hero/bar would
+  // contradict the amber "kurang tagihan" strip below.
+  const barColor = fstate === 'reserve_short' ? 'bg-amber-400' : (fstate === 'overspent' || status === 'danger') ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
+  const remainColor = fstate === 'reserve_short' ? 'text-amber-500' : (fstate === 'overspent' || status === 'danger') ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
 
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState(goal?.name || '');
