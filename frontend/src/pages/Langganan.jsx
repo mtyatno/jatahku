@@ -154,7 +154,7 @@ export default function Langganan() {
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-display font-bold">Langganan</h1>
