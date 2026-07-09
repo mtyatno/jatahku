@@ -4,8 +4,9 @@ import { formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon } from '../components/Icon';
 import StatCard from '../components/StatCard';
 import {
-  statusMeta, sortForPayment, unpaidMonthlyTotal,
+  statusMeta, unpaidMonthlyTotal,
   monthlyEquivalentTotal, paidMonthlyTotal, nearestDue,
+  searchSubscriptions, sortSubscriptions,
 } from '../lib/subscriptionStatus';
 
 const TONE_CLS = {
@@ -104,6 +105,8 @@ export default function Langganan() {
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [busy, setBusy] = useState(null); // id sedang diproses — cegah double-pay
+  const [search, setSearch] = useState('');
+  const [sortMode, setSortMode] = useState('priority');
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
@@ -150,6 +153,7 @@ export default function Langganan() {
   const nearest = nearestDue(items);
   const nearestIsLate = nearest?.status === 'overdue';
   const fmtDate = (d) => new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+  const shown = sortSubscriptions(searchSubscriptions(items, search), sortMode);
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
@@ -177,6 +181,24 @@ export default function Langganan() {
         </div>
       )}
 
+      {items.length > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Icon name="search" size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari langganan atau amplop..."
+              className="input !pl-11" />
+          </div>
+          <select value={sortMode} onChange={e => setSortMode(e.target.value)}
+            className="input !w-auto flex-shrink-0 text-sm">
+            <option value="priority">Prioritas bayar</option>
+            <option value="due">Jatuh tempo terdekat</option>
+            <option value="expensive">Termahal</option>
+            <option value="cheap">Termurah</option>
+            <option value="name">Nama A-Z</option>
+          </select>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-4xl mb-3">🔄</p>
@@ -184,9 +206,11 @@ export default function Langganan() {
           <p className="text-sm text-gray-400 mb-4">Tambah lewat tombol di atas atau via Telegram</p>
           <button onClick={() => setShowAdd(true)} className="btn-primary">+ Tambah Langganan</button>
         </div>
+      ) : shown.length === 0 ? (
+        <div className="card text-center py-8 text-sm text-gray-400">Tidak ada langganan yang cocok dengan "{search}"</div>
       ) : (
         <div className="space-y-3">
-          {sortForPayment(items).map(item => {
+          {shown.map(item => {
             const meta = statusMeta(item.status);
             const isPaid = item.status === 'paid';
             return (
