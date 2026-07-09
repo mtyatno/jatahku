@@ -266,8 +266,9 @@ async def monthly_trend(
             )
         )
         allocated = float(alloc_r.scalar())
+        inc_total, _, _ = await _income_totals(hid, user, p_start, p_end, db)
         label = f"{p_start.strftime('%d %b')} – {p_end.strftime('%d %b')}"
-        result.append({"month": label, "spent": spent, "allocated": allocated})
+        result.append({"month": label, "spent": spent, "allocated": allocated, "income": float(inc_total)})
     return result
 
 
