@@ -96,6 +96,24 @@ def build_allocation_distribution(rows, total_income) -> dict:
     }
 
 
+def build_envelope_distribution(env_rows, total_income) -> list[dict]:
+    """Per-envelope net allocations with percentages, for the Alokasi donut toggle.
+
+    env_rows: list of (name, emoji, net_amount). Non-positive nets are dropped,
+    result sorted by amount desc. Percentages are of total_income (0 if income <= 0).
+    """
+    total = _to_decimal(total_income)
+
+    def pct(v: Decimal) -> int:
+        return int(round(float(v) / float(total) * 100)) if total > 0 else 0
+
+    positive = [(name, emoji, _to_decimal(net)) for name, emoji, net in env_rows if _to_decimal(net) > 0]
+    return [
+        {"name": name, "emoji": emoji, "amount": float(net), "pct": pct(net)}
+        for name, emoji, net in sorted(positive, key=lambda r: r[2], reverse=True)
+    ]
+
+
 def _is_essential_envelope(name: str) -> bool:
     normalized = normalize_description(name)
     return bool(set(normalized.split()) & _ESSENTIAL_KEYWORDS)
