@@ -118,16 +118,20 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Satu endpoint gagal tidak boleh membuat halaman stuck "Loading..." —
+    // fallback per-request, bagian lain tetap tampil.
+    const safe = (path, fallback) =>
+      api.request(path).then(r => (r.ok ? r.json() : fallback)).catch(() => fallback);
     Promise.all([
-      api.request('/analytics/daily-spending').then(r => r.json()),
-      api.request('/analytics/envelope-breakdown').then(r => r.json()),
-      api.request('/analytics/monthly-trend').then(r => r.json()),
-      api.request('/analytics/prediction').then(r => r.json()),
+      safe('/analytics/daily-spending', []),
+      safe('/analytics/envelope-breakdown', []),
+      safe('/analytics/monthly-trend', []),
+      safe('/analytics/prediction', null),
       api.getSinkingFundAdvice(),
     ]).then(([d, b, t, p, sfa]) => {
-      setDaily(d.map(x => ({...x, date: new Date(x.date).getDate() + ''})));
-      setBreakdown(b.filter(x => x.spent > 0));
-      setTrend(t);
+      setDaily((Array.isArray(d) ? d : []).map(x => ({...x, date: new Date(x.date).getDate() + ''})));
+      setBreakdown((Array.isArray(b) ? b : []).filter(x => x.spent > 0));
+      setTrend(Array.isArray(t) ? t : []);
       setPrediction(p);
       setSinkingAdvice(sfa);
       setLoading(false);
