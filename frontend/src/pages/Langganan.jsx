@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { formatCurrency, formatShort } from '../lib/utils';
+import { formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon } from '../components/Icon';
-import { statusMeta, sortForPayment, unpaidMonthlyTotal } from '../lib/subscriptionStatus';
+import StatCard from '../components/StatCard';
+import {
+  statusMeta, sortForPayment, unpaidMonthlyTotal,
+  monthlyEquivalentTotal, paidMonthlyTotal, nearestDue,
+} from '../lib/subscriptionStatus';
 
 const TONE_CLS = {
   danger: 'bg-red-50 text-danger-400', warning: 'bg-amber-50 text-amber-600',
@@ -136,13 +140,16 @@ export default function Langganan() {
     return map[f] || f;
   };
 
-  const totalMonthly = items.reduce((s, i) => {
-    const amt = Number(i.amount);
-    if (i.frequency === 'monthly') return s + amt;
-    if (i.frequency === 'weekly') return s + amt * 4;
-    if (i.frequency === 'yearly') return s + amt / 12;
-    return s + amt;
-  }, 0);
+  // KPI — semua dari list /recurring/ (status server-computed), tanpa fetch tambahan
+  const totalMonthly = monthlyEquivalentTotal(items);
+  const paidTotal = paidMonthlyTotal(items);
+  const unpaidTotal = unpaidMonthlyTotal(items);
+  const monthlyCount = items.filter(i => i.frequency === 'monthly').length;
+  const paidCount = items.filter(i => i.frequency === 'monthly' && i.status === 'paid').length;
+  const overdueCount = items.filter(i => i.status === 'overdue').length;
+  const nearest = nearestDue(items);
+  const nearestIsLate = nearest?.status === 'overdue';
+  const fmtDate = (d) => new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
@@ -156,10 +163,17 @@ export default function Langganan() {
       </div>
 
       {items.length > 0 && (
-        <div className="card">
-          <p className="text-xs text-gray-400">Estimasi pengeluaran bulanan</p>
-          <p className="font-display text-2xl font-bold text-amber-500">{formatCurrency(totalMonthly)}<span className="text-sm font-normal text-gray-400">/bulan</span></p>
-          <p className="text-xs text-gray-400 mt-1">Sisa belum bayar bulan ini: <b className="text-gray-600">{formatCurrency(unpaidMonthlyTotal(items))}</b></p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard icon="langganan" tone="indigo" label="Total per Bulan"
+            value={formatShort(totalMonthly)} sub={`${items.length} langganan aktif`} />
+          <StatCard icon="check" tone="green" label="Sudah Dibayar"
+            value={formatShort(paidTotal)} sub={`${paidCount} dari ${monthlyCount} bulanan`} />
+          <StatCard icon="warning" tone={overdueCount > 0 ? 'red' : 'orange'} label="Belum Dibayar"
+            value={formatShort(unpaidTotal)}
+            sub={overdueCount > 0 ? `${overdueCount} terlambat!` : `${monthlyCount - paidCount} tagihan menunggu`} />
+          <StatCard icon="calendar" tone={nearestIsLate ? 'red' : 'purple'} label="Jatuh Tempo Terdekat"
+            value={nearest ? fmtDate(nearest.next_run) : '—'}
+            sub={nearest ? `${nearestIsLate ? 'Terlambat · ' : ''}${nearest.description}` : 'Semua terbayar'} />
         </div>
       )}
 
