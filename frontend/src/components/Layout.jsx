@@ -106,6 +106,11 @@ const navItems = [
   { to: '/langganan', label: 'Langganan', icon: 'langganan' },
 ];
 
+// Hanya tampil di nav desktop — bottom nav mobile sudah penuh (5 item).
+const desktopOnlyItems = [
+  { to: '/analytics', label: 'Analytics', icon: 'chartpie' },
+];
+
 const menuItems = [
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
@@ -148,7 +153,7 @@ export default function Layout() {
               Jatah<span className="text-brand-400">ku</span>
             </NavLink>
             <nav className="hidden md:flex items-center gap-1">
-              {[...navItems, ...menuItems].map(item => (
+              {[...navItems, ...desktopOnlyItems, ...menuItems].map(item => (
                 <NavLink key={item.to} to={item.to} end={item.to === '/'}
                   className={({ isActive }) =>
                     `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
