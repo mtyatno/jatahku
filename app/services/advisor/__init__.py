@@ -14,6 +14,7 @@ from app.services.advisor.allocation import (  # noqa: F401
     allocate_income_to_targets,
     build_allocation_distribution,
     build_allocation_recommendation,
+    build_envelope_distribution,
 )
 from app.services.advisor.sinking import (  # noqa: F401
     build_sinking_fund_advice,

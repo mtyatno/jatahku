@@ -12,7 +12,7 @@ from app.models.models import (
     User, Envelope, Transaction, HouseholdMember, Allocation, Income,
     RecurringTransaction, EnvelopeGroup,
 )
-from app.services.advisor import build_allocation_distribution
+from app.services.advisor import build_allocation_distribution, build_envelope_distribution
 from app.services.reserved import recurring_monthly_reserve
 
 router = APIRouter()
@@ -116,12 +116,15 @@ async def envelope_breakdown(
     return [{"name": r.name, "emoji": r.emoji, "spent": float(r.spent)} for r in result.all()]
 
 
-async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tuple[list, int]:
-    """Return (rows, target_count): net SUM(Allocation.amount) per envelope in period,
-    mapped to a category name; target_count = envelopes with net > 0."""
+async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tuple[list, int, list]:
+    """Return (rows, target_count, env_rows): net SUM(Allocation.amount) per envelope
+    in period. rows = (category, net) for the category donut; env_rows =
+    (name, emoji, net) for the per-envelope donut; target_count = envelopes with net > 0."""
     result = await db.execute(
         select(
             Envelope.purpose,
+            Envelope.name,
+            Envelope.emoji,
             EnvelopeGroup.name.label("group_name"),
             func.coalesce(func.sum(Allocation.amount), 0).label("net"),
         )
@@ -135,9 +138,10 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
             Income.income_date >= period_start,
             Income.income_date <= period_end,
         )
-        .group_by(Envelope.id, Envelope.purpose, EnvelopeGroup.name)
+        .group_by(Envelope.id, Envelope.purpose, Envelope.name, Envelope.emoji, EnvelopeGroup.name)
     )
     rows = []
+    env_rows = []
     target_count = 0
     for r in result.all():
         if r.purpose == "sinking_fund":
@@ -149,9 +153,10 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
         else:
             category = "Lainnya"
         rows.append((category, r.net))
+        env_rows.append((r.name, r.emoji, r.net))
         if r.net and r.net > 0:
             target_count += 1
-    return rows, target_count
+    return rows, target_count, env_rows
 
 
 async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decimal, int, int]:
@@ -188,6 +193,7 @@ async def allocation_summary(
         return {
             "period_label": "", "total_income": 0, "income_count": 0,
             "transfer_count": 0, "target_envelope_count": 0, "distribution": [],
+            "distribution_envelopes": [],
             "allocated_pct": 0, "saving_amount": 0, "saving_pct": 0, "saving_pct_prev": None,
         }
 
@@ -198,14 +204,15 @@ async def allocation_summary(
     prev_start, prev_end = get_last_n_periods(_payday(user), 2, today=cur_start)[0]
 
     total_income, income_count, transfer_count = await _income_totals(hid, user, cur_start, cur_end, db)
-    rows, target_count = await _net_alloc_by_category(hid, user, cur_start, cur_end, db)
+    rows, target_count, env_rows = await _net_alloc_by_category(hid, user, cur_start, cur_end, db)
     dist = build_allocation_distribution(rows, total_income)
+    dist_envelopes = build_envelope_distribution(env_rows, total_income)
 
     # Previous period saving_pct (for advisor comparison)
     prev_income, _, _ = await _income_totals(hid, user, prev_start, prev_end, db)
     saving_pct_prev = None
     if prev_income > 0:
-        prev_rows, _ = await _net_alloc_by_category(hid, user, prev_start, prev_end, db)
+        prev_rows, _, _ = await _net_alloc_by_category(hid, user, prev_start, prev_end, db)
         saving_pct_prev = build_allocation_distribution(prev_rows, prev_income)["saving_pct"]
 
     return {
@@ -215,6 +222,7 @@ async def allocation_summary(
         "transfer_count": transfer_count,
         "target_envelope_count": target_count,
         "distribution": dist["distribution"],
+        "distribution_envelopes": dist_envelopes,
         "allocated_pct": dist["allocated_pct"],
         "saving_amount": dist["saving_amount"],
         "saving_pct": dist["saving_pct"],

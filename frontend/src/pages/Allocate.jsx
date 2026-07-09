@@ -31,6 +31,7 @@ export default function Allocate() {
   const [summary, setSummary] = useState(null);
   const [periods, setPeriods] = useState([]);
   const [periodIdx, setPeriodIdx] = useState(null);
+  const [distView, setDistView] = useState('category'); // 'category' | 'envelope'
 
   // Income + allocation form
   const [incomeAmount, setIncomeAmount] = useState('');
@@ -189,14 +190,29 @@ export default function Allocate() {
           {/* Donut + advisor */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="card lg:col-span-2">
-              <h3 className="font-semibold text-sm mb-4">Distribusi Income Bulan Ini</h3>
+              <div className="flex items-center justify-between gap-2 mb-4">
+                <h3 className="font-semibold text-sm">Distribusi Income Bulan Ini</h3>
+                <div className="flex gap-1 flex-shrink-0">
+                  {[['category', 'Per Kategori'], ['envelope', 'Per Amplop']].map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setDistView(key)}
+                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors ${distView === key ? 'bg-brand-600 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {(() => {
+                const isEnv = distView === 'envelope';
+                const distData = isEnv ? (summary.distribution_envelopes || []) : summary.distribution;
+                const sliceColor = (d, i) => isEnv ? CAT_COLORS[i % CAT_COLORS.length] : categoryColor(d.category, i);
+                return (
               <div className="flex flex-col sm:flex-row items-center gap-4">
                 <div className="relative w-44 h-44 flex-shrink-0">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={summary.distribution} dataKey="amount" nameKey="category"
+                      <Pie data={distData} dataKey="amount" nameKey={isEnv ? 'name' : 'category'}
                         cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
-                        {summary.distribution.map((d, i) => <Cell key={i} fill={categoryColor(d.category, i)} />)}
+                        {distData.map((d, i) => <Cell key={i} fill={sliceColor(d, i)} />)}
                       </Pie>
                     </PieChart>
                   </ResponsiveContainer>
@@ -206,10 +222,16 @@ export default function Allocate() {
                   </div>
                 </div>
                 <div className="flex-1 w-full space-y-2">
-                  {summary.distribution.map((d, i) => (
+                  {distData.length === 0 && (
+                    <p className="text-sm text-gray-400">Belum ada alokasi periode ini.</p>
+                  )}
+                  {distData.map((d, i) => (
                     <div key={i} className="flex items-center gap-2 text-sm">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: categoryColor(d.category, i) }} />
-                      <span className="flex-1 truncate">{d.category}</span>
+                      {isEnv
+                        ? <EnvelopeIcon value={d.emoji} size={16} />
+                        : <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: sliceColor(d, i) }} />}
+                      {isEnv && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: sliceColor(d, i) }} />}
+                      <span className="flex-1 truncate">{isEnv ? d.name : d.category}</span>
                       <span className="font-mono text-gray-500">{formatShort(d.amount)}</span>
                       <span className="w-10 text-right text-gray-400">{d.pct}%</span>
                     </div>
@@ -219,6 +241,8 @@ export default function Allocate() {
                   )}
                 </div>
               </div>
+                );
+              })()}
             </div>
 
             <div className="card flex flex-col">
