@@ -46,3 +46,21 @@ export function sortForPayment(items) {
 export function statusMeta(status) {
   return META[status] || META.upcoming;
 }
+
+export function searchSubscriptions(items, q) {
+  const s = (q || '').trim().toLowerCase();
+  if (!s) return items || [];
+  return (items || []).filter(i =>
+    (i.description || '').toLowerCase().includes(s) ||
+    (i.envelope_name || '').toLowerCase().includes(s),
+  );
+}
+
+export function sortSubscriptions(items, mode) {
+  const arr = [...(items || [])];
+  if (mode === 'expensive') return arr.sort((a, b) => Number(b.amount) - Number(a.amount));
+  if (mode === 'cheap') return arr.sort((a, b) => Number(a.amount) - Number(b.amount));
+  if (mode === 'due') return arr.sort((a, b) => (a.next_run || '').localeCompare(b.next_run || ''));
+  if (mode === 'name') return arr.sort((a, b) => (a.description || '').localeCompare(b.description || '', 'id'));
+  return sortForPayment(arr); // 'priority' (default)
+}

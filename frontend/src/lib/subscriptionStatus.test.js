@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   unpaidMonthlyTotal, sortForPayment, statusMeta,
   monthlyEquivalentTotal, paidMonthlyTotal, nearestDue,
+  searchSubscriptions, sortSubscriptions,
 } from './subscriptionStatus.js';
 
 const it = (over) => ({ id: 'x', amount: 100000, frequency: 'monthly', status: 'due', ...over });
@@ -50,6 +51,30 @@ test('paidMonthlyTotal sums monthly paid only', () => {
     it({ id: 'c', amount: 500000, frequency: 'yearly', status: 'paid' }), // excluded (not monthly)
   ];
   assert.equal(paidMonthlyTotal(items), 380000);
+});
+
+test('searchSubscriptions matches description + envelope_name, case-insensitive', () => {
+  const items = [
+    it({ id: 'a', description: 'Netflix', envelope_name: 'Hiburan' }),
+    it({ id: 'b', description: 'Server pjm', envelope_name: 'Tagihan Hutang' }),
+  ];
+  assert.deepEqual(searchSubscriptions(items, 'netflix').map(i => i.id), ['a']);
+  assert.deepEqual(searchSubscriptions(items, 'hutang').map(i => i.id), ['b']);
+  assert.deepEqual(searchSubscriptions(items, '').map(i => i.id), ['a', 'b']); // kosong = semua
+  assert.deepEqual(searchSubscriptions(items, 'zzz'), []);
+});
+
+test('sortSubscriptions: expensive, cheap, due, name, priority fallback', () => {
+  const items = [
+    it({ id: 'a', amount: 100, description: 'Beta', status: 'paid', next_run: '2026-08-01' }),
+    it({ id: 'b', amount: 300, description: 'Alpha', status: 'due', next_run: '2026-07-15' }),
+    it({ id: 'c', amount: 200, description: 'Gamma', status: 'overdue', next_run: '2026-07-05' }),
+  ];
+  assert.deepEqual(sortSubscriptions(items, 'expensive').map(i => i.id), ['b', 'c', 'a']);
+  assert.deepEqual(sortSubscriptions(items, 'cheap').map(i => i.id), ['a', 'c', 'b']);
+  assert.deepEqual(sortSubscriptions(items, 'due').map(i => i.id), ['c', 'b', 'a']);
+  assert.deepEqual(sortSubscriptions(items, 'name').map(i => i.id), ['b', 'a', 'c']);
+  assert.deepEqual(sortSubscriptions(items, 'priority').map(i => i.id), ['c', 'b', 'a']); // = sortForPayment
 });
 
 test('nearestDue returns unpaid item with earliest next_run', () => {
