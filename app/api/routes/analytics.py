@@ -237,13 +237,13 @@ async def monthly_trend(
         spent_r = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0))
             .join(Envelope, Transaction.envelope_id == Envelope.id)
-        .where(
-            Envelope.household_id == hid,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
+            .where(
+                Envelope.household_id == hid,
+                Transaction.is_deleted == False,
+                Transaction.transaction_date >= p_start,
+                Transaction.transaction_date <= p_end,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            )
         )
         spent = float(spent_r.scalar())
         alloc_r = await db.execute(
