@@ -1,7 +1,8 @@
 ---
 title: "Panduan Lengkap Mulai Pakai Jatahku: Dari Daftar sampai Catat Pengeluaran Pertama"
-description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, onboarding wizard, hubungkan Telegram, catat pengeluaran dengan NLP, sampai baca laporan bulanan."
+description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, onboarding wizard, install ke HP sebagai app, catat pengeluaran kilat lewat tombol +, sampai baca laporan bulanan."
 pubDate: 2026-04-02
+updatedDate: 2026-07-11
 category: tutorial
 author: Tim Jatahku
 cover: /covers/panduan-lengkap.svg
@@ -14,9 +15,11 @@ Kamu baru dengar soal Jatahku dan penasaran cara pakainya? Artikel ini akan memb
 
 ## Apa Itu Jatahku?
 
-Jatahku adalah aplikasi *envelope budgeting* berbasis web yang terintegrasi dengan Telegram Bot. Idenya sederhana: **setiap rupiah yang masuk langsung dibagi ke amplop-amplop pengeluaran** sebelum kamu mulai belanja.
+Jatahku adalah aplikasi *envelope budgeting* berbasis web. Idenya sederhana: **setiap rupiah yang masuk langsung dibagi ke amplop-amplop pengeluaran** sebelum kamu mulai belanja.
 
-Bedanya dengan aplikasi keuangan lain: pencatatan pengeluaran bisa dilakukan lewat chat Telegram — semudah kirim pesan ke teman. Tidak perlu buka app, tidak perlu klik banyak tombol.
+Bedanya dengan aplikasi keuangan lain ada di kecepatan mencatat. Jatahku bisa di-install ke HP seperti aplikasi biasa (tanpa lewat Play Store atau App Store), dan pencatatan pengeluaran cukup lewat **satu tombol +** — ketik natural seperti `kopi 18k`, amplopnya terdeteksi otomatis. Bahkan tetap bisa mencatat saat tidak ada sinyal.
+
+Kalau kamu lebih suka mencatat lewat chat, Jatahku juga punya bot Telegram dan WhatsApp sebagai kanal tambahan — kita bahas di bagian akhir.
 
 ---
 
@@ -62,38 +65,58 @@ Klik **Mulai Budgeting** — semua amplop dan alokasi langsung tersimpan sekalig
 
 ---
 
-## Langkah 3: Hubungkan Telegram Bot
+## Langkah 3: Install Jatahku ke HP
 
-Ini langkah yang akan membuat pencatatan pengeluaran jadi sangat mudah.
+Jatahku adalah **Progressive Web App (PWA)** — bisa di-install langsung ke home screen HP tanpa download dari Play Store atau App Store. Setelah ter-install, tampilannya full screen seperti aplikasi biasa, buka lebih cepat, dan **tetap bisa dipakai walau sedang tidak ada internet**.
 
-1. Buka **Settings** (ikon roda gigi di sidebar)
-2. Klik **Generate Link Telegram**
-3. Klik link yang muncul — Telegram akan terbuka otomatis
-4. Kirim `/start` ke [@JatahkuBot](https://t.me/JatahkuBot)
+### Android
 
-Bot sudah mengenal kamu. Sekarang kamu bisa catat pengeluaran hanya dengan kirim pesan.
+1. Buka [jatahku.com](https://jatahku.com) di **Chrome** dan login
+2. Beberapa detik kemudian muncul banner **"Install Jatahku"** — ketuk **Install**
+3. Kalau banner tidak muncul: menu titik tiga (⋮) → **"Add to Home Screen"** / **"Install App"**
+
+### iPhone (iOS)
+
+1. Buka [jatahku.com](https://jatahku.com) di **Safari** (harus Safari) dan login
+2. Ketuk ikon **Share** (kotak dengan panah ke atas)
+3. Pilih **"Add to Home Screen"** → **Add**
+
+Ikon Jatahku langsung muncul di home screen. Update selalu otomatis — tidak ada proses update manual.
+
+> Penjelasan lengkap soal mode offline dan cara kerja PWA ada di artikel [Jatahku Kini Bisa Diinstall di HP](/insight/jatahku-pwa-install-ke-homescreen/).
 
 ---
 
-## Langkah 4: Catat Pengeluaran dengan NLP
+## Langkah 4: Catat Pengeluaran dengan Tombol +
 
-Ini fitur utama Jatahku. Kamu **tidak perlu pilih menu atau klik tombol** — cukup ketik kalimat natural seperti chat biasa, dan bot akan mengerti.
+Ini fitur utama Jatahku. Di pojok kanan bawah layar — di **halaman manapun** — ada tombol **+** melayang (*Floating Action Button*). Semua input penting berangkat dari satu tombol ini.
 
-### Format Dasar
+Ketuk **+** dan empat aksi cepat muncul:
 
-Ketik deskripsi pengeluaran diikuti nominal:
+| Aksi | Fungsi |
+|------|--------|
+| 💰 Pengeluaran | Catat pengeluaran, bisa banyak sekaligus |
+| ✉️ Amplop | Buat amplop baru |
+| 💵 Income | Tambah income + alokasi ke amplop |
+| 🔄 Langganan | Tambah langganan/tagihan rutin |
+
+Semuanya muncul sebagai modal **di halaman yang sama** — tidak perlu pindah-pindah halaman.
+
+### Catat Beberapa Pengeluaran Sekaligus
+
+Pilih **💰 Pengeluaran**, lalu ketik natural seperti menulis catatan biasa. Pisahkan dengan koma, baris baru, atau kata "dan":
 
 ```
-kopi 18k
-makan siang 35000
-grab ke kantor 22rb
-bayar listrik 250.000
-nonton bioskop 75.000
+kopi 15k
+sabun 5.000
+air mineral Rp5.000, gojek 12rb
 ```
+
+Jatahku langsung mengurai setiap baris menjadi item terpisah, lengkap dengan nominalnya — dan **menyarankan amplop yang tepat secara otomatis** berdasarkan kebiasaanmu (ditandai label "disarankan"). Kalau sarannya kurang pas, tinggal ganti dari dropdown. Klik **Simpan Semua**, selesai.
 
 ### Format Angka yang Didukung
 
-Bot memahami semua format angka Indonesia:
+Semua format angka Indonesia dimengerti:
 
 | Yang kamu ketik | Dibaca sebagai |
 |-----------------|----------------|
@@ -106,43 +129,24 @@ Bot memahami semua format angka Indonesia:
 | `1.5jt` | Rp 1.500.000 |
 | `rp17.000` | Rp 17.000 |
 
-### Deteksi Amplop Otomatis
+### Tetap Bisa Mencatat Saat Offline
 
-Bot belajar mengenali kata-kata yang kamu sering pakai dan mencocokkannya ke amplop yang tepat. Semakin sering dipakai, semakin akurat deteksinya.
+Sinyal lemah atau tidak ada internet sama sekali? Catat saja seperti biasa. Transaksi masuk antrean di HP kamu dan **otomatis terkirim ke server** begitu koneksi kembali — tanpa perlu sinkron manual.
 
-- `kopi`, `makan siang`, `warteg` → otomatis ke amplop Makan
-- `grab`, `gojek`, `bensin` → otomatis ke amplop Transport
-- `netflix`, `spotify` → otomatis ke amplop Hiburan atau Tagihan
-
-Jika bot belum yakin, ia akan menampilkan tombol pilihan amplop. Pilihanmu akan **diingat** untuk transaksi berikutnya.
-
-### Cek Saldo Amplop
-
-Ketik `/status` untuk lihat semua amplop beserta sisa saldo:
-
-```
-/status
-```
-
-Bot akan membalas dengan daftar lengkap amplop, berapa yang sudah dipakai, dan berapa sisa yang tersedia.
-
-### Perintah Bot Lainnya
-
-| Perintah | Fungsi |
-|----------|--------|
-| `/status` | Cek saldo semua amplop |
-| `/sisa` | Ringkasan sisa budget |
-| `/help` | Daftar semua perintah |
+> Detail keempat aksi cepat ini ada di artikel [FAB Speed Dial — 4 Inputan Cepat dalam Satu Tombol](/insight/fab-speed-dial-4-inputan/).
 
 ---
 
-## Pantau Budget di Webapp
+## Pantau Budget di Dashboard
 
-Selain Telegram, kamu juga bisa pantau budget lewat webapp di [jatahku.com](https://jatahku.com):
+Buka Dashboard dan hal pertama yang kamu lihat adalah **AI Advisor** — ringkasan kondisi keuanganmu hari ini: berapa yang sudah dipakai, amplop mana yang perlu diwaspadai, dan insight strategis dari pola pengeluaranmu.
 
-- **Dashboard** — ringkasan budget, peringatan amplop hampir habis, dan kabar baik jika hemat
+Selain itu ada:
+
 - **Halaman Amplop** — progress bar visual tiap amplop
-- **Analytics** — grafik tren pengeluaran bulanan
+- **Analytics** — grafik tren, heatmap pengeluaran, dan perbandingan antar periode
+
+> Selengkapnya: [AI Advisor Pintar](/insight/ai-advisor-pintar/) dan [Dashboard Analitik & Histori](/insight/dashboard-analitik-histori/).
 
 ---
 
@@ -151,18 +155,57 @@ Selain Telegram, kamu juga bisa pantau budget lewat webapp di [jatahku.com](http
 Di akhir bulan (atau kapan saja), kamu bisa lihat laporan lengkap:
 
 1. Buka halaman **Dashboard**
-2. Klik tombol **Laporan** di sudut kanan atas
+2. Klik tombol **Laporan [bulan berjalan]**
 3. Laporan PDF bulan berjalan akan terbuka
 4. Gunakan tombol **‹ ›** di toolbar untuk navigasi ke bulan-bulan sebelumnya
 5. Klik **Simpan PDF** untuk mengunduh, atau **Print** untuk cetak
+
+Butuh data mentahnya? Tombol **Download CSV** ada tepat di sebelahnya.
+
+---
+
+## Opsional: Hubungkan Telegram atau WhatsApp
+
+Suka mencatat lewat chat? Jatahku punya bot Telegram dan WhatsApp — pelengkap yang praktis saat kamu sedang di aplikasi chat dan tidak ingin berpindah app.
+
+### Cara Hubungkan Telegram
+
+1. Buka **Settings** di webapp
+2. Klik **Generate Link Telegram**
+3. Klik link yang muncul — Telegram akan terbuka otomatis
+4. Kirim `/start` ke [@JatahkuBot](https://t.me/JatahkuBot)
+
+Setelah terhubung, catat pengeluaran cukup dengan kirim pesan — format naturalnya sama persis dengan tombol +:
+
+```
+kopi 18k
+makan siang 35000
+grab ke kantor 22rb
+```
+
+Bot akan mendeteksi amplop secara otomatis. Jika belum yakin, ia menampilkan tombol pilihan amplop — dan pilihanmu **diingat** untuk transaksi berikutnya.
+
+Perintah berguna:
+
+| Perintah | Fungsi |
+|----------|--------|
+| `/status` | Cek saldo semua amplop |
+| `/sisa` | Ringkasan sisa budget |
+| `/help` | Daftar semua perintah |
+
+Semua data sinkron: transaksi yang dicatat lewat bot langsung muncul di webapp, dan sebaliknya.
+
+> Panduan lengkap: [Cara Pakai Bot Telegram Jatahku](/insight/cara-pakai-bot-telegram-jatahku/) dan [Catat Pengeluaran via WhatsApp](/insight/catat-pengeluaran-via-whatsapp/).
 
 ---
 
 ## Tips Agar Konsisten
 
-**Catat langsung, jangan tunda.** Saat bayar kopi, langsung kirim ke bot. Kalau ditunda, sering lupa.
+**Catat langsung, jangan tunda.** Saat bayar kopi, langsung ketuk **+** dan catat. Kalau ditunda, sering lupa.
 
-**Cek `/status` tiap hari.** Kebiasaan ini membantu kamu sadar sebelum amplop kosong, bukan sesudah.
+**Install ke home screen.** Satu ketukan dari home screen jauh lebih ringan daripada buka browser — makin kecil friksi, makin konsisten kebiasaanmu.
+
+**Cek Dashboard tiap hari.** AI Advisor membantu kamu sadar sebelum amplop kosong, bukan sesudah.
 
 **Mulai sederhana.** Tidak perlu langsung sempurna. 4 amplop yang rutin dicatat lebih baik dari 15 amplop yang sering terlewat.
 
