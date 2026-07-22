@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 export default function Login() {
@@ -127,6 +127,14 @@ export default function Login() {
             >
               {loading ? '...' : isRegister ? 'Buat Akun' : 'Masuk'}
             </button>
+
+            {!isRegister && (
+              <div className="text-center mt-3">
+                <Link to="/forgot-password" className="text-xs text-brand-600 hover:underline">
+                  Lupa password?
+                </Link>
+              </div>
+            )}
           </form>
         </div>
 

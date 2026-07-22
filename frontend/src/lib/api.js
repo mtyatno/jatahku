@@ -110,6 +110,38 @@ class ApiClient {
     }
   }
 
+  async forgotPassword(email) {
+    try {
+      const res = await fetch(`${API_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
+
+  async resetPassword(token, newPassword) {
+    try {
+      const res = await fetch(`${API_URL}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, new_password: newPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        this.setToken(data.access_token);
+        this.setRefreshToken(data.refresh_token);
+      }
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
+
   async getMe() {
     try {
       const res = await this.request('/auth/me');

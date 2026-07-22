@@ -45,13 +45,22 @@ export function AuthProvider({ children }) {
     return result;
   };
 
+  const resetPassword = async (token, newPassword) => {
+    const result = await api.resetPassword(token, newPassword);
+    if (result.ok) {
+      const u = await api.getMe();
+      setUser(u);
+    }
+    return result;
+  };
+
   const logout = () => {
     api.logout();
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, loginWithTgToken }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, loginWithTgToken, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );
