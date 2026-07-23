@@ -181,3 +181,32 @@ def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) 
     except Exception as e:
         logger.error(f"Backup email failed to {to_email}: {e}")
         return False
+
+
+def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
+    html = email_template(
+        "Reset password kamu 🔑",
+        f'''<p>Hai {name},</p>
+        <p>Kami menerima permintaan reset password untuk akun Jatahku kamu.
+        Klik tombol di bawah untuk membuat password baru.</p>
+        <p>Link ini berlaku <strong>30 menit</strong> dan hanya bisa dipakai sekali.</p>
+        <p>Kalau kamu tidak merasa meminta reset, abaikan email ini —
+        password kamu tetap aman.</p>''',
+        "Reset Password",
+        reset_url,
+    )
+    return send_email(to_email, "Reset password Jatahku kamu", html)
+
+
+def send_password_changed_email(to_email: str, name: str) -> bool:
+    html = email_template(
+        "Password kamu baru saja diubah 🔒",
+        f'''<p>Hai {name},</p>
+        <p>Password akun Jatahku kamu baru saja diubah.</p>
+        <p>Kalau ini kamu, tidak perlu melakukan apa-apa.</p>
+        <p>Kalau ini <strong>bukan</strong> kamu, segera amankan akun:
+        buka halaman login lalu klik "Lupa password?" untuk membuat password baru.</p>''',
+        "Buka Jatahku",
+        "https://jatahku.com",
+    )
+    return send_email(to_email, "Password kamu baru saja diubah", html)

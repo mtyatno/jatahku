@@ -4,7 +4,7 @@ import hashlib
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete, or_
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.security import hash_password, verify_password
+from app.services.email_service import send_password_changed_email
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
@@ -29,7 +30,7 @@ class ChangeEmail(BaseModel):
 
 
 class ChangePassword(BaseModel):
-    current_password: str
+    current_password: str | None = None
     new_password: str
 
 
@@ -116,6 +117,7 @@ async def get_profile(
         "name": user.name,
         "email": user.email,
         "telegram_id": user.telegram_id,
+        "has_password": bool(user.password_hash),
         "timezone": getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
         "payday_day": getattr(user, 'payday_day', 1) or 1,
         "profile_pic": getattr(user, 'profile_pic', None),
@@ -180,15 +182,20 @@ async def change_email(
 @router.put("/password")
 async def change_password(
     req: ChangePassword,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not verify_password(req.current_password, user.password_hash):
-        raise HTTPException(400, "Password lama salah")
+    # User Telegram-only belum punya password — boleh set tanpa password lama.
+    if user.password_hash:
+        if not req.current_password or not verify_password(req.current_password, user.password_hash):
+            raise HTTPException(400, "Password lama salah")
     if len(req.new_password) < 6:
         raise HTTPException(400, "Password baru minimal 6 karakter")
     user.password_hash = hash_password(req.new_password)
     await db.commit()
+    if user.email:
+        background_tasks.add_task(send_password_changed_email, user.email, user.name)
     return {"status": "updated"}
 
 

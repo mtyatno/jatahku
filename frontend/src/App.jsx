@@ -4,6 +4,8 @@ import Layout from './components/Layout';
 import { OfflineBanner, InstallPrompt } from './components/PWAPrompt';
 import Login from './pages/Login';
 import TgLogin from './pages/TgLogin';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Envelopes from './pages/Envelopes';
 import Transactions from './pages/Transactions';
@@ -23,6 +25,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/auth/tg" element={<TgLogin />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/envelopes" element={<Envelopes />} />

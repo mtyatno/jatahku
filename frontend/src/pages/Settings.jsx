@@ -650,15 +650,22 @@ export default function Settings() {
         <div className="border-t border-gray-100 pt-3 mt-3">
           {!editPwd ? (
             <div className="flex items-center justify-between">
-              <div><p className="text-xs text-gray-400">Password</p><p className="text-sm">••••••••</p></div>
-              <button onClick={() => setEditPwd(true)} className="text-xs text-brand-600 hover:underline">Ganti password</button>
+              <div>
+                <p className="text-xs text-gray-400">Password</p>
+                <p className="text-sm">{profile.has_password ? '••••••••' : '—'}</p>
+              </div>
+              <button onClick={() => setEditPwd(true)} className="text-xs text-brand-600 hover:underline">
+                {profile.has_password ? 'Ganti password' : 'Buat password'}
+              </button>
             </div>
           ) : (
             <div className="space-y-2">
-              <input className="input text-sm" type="password" placeholder="Password lama" value={currentPwd} onChange={e => setCurrentPwd(e.target.value)} />
+              {profile.has_password && (
+                <input className="input text-sm" type="password" placeholder="Password lama" value={currentPwd} onChange={e => setCurrentPwd(e.target.value)} />
+              )}
               <input className="input text-sm" type="password" placeholder="Password baru (min 6 karakter)" value={newPwd} onChange={e => setNewPwd(e.target.value)} />
               <div className="flex gap-2">
-                <button onClick={savePwd} disabled={!currentPwd || newPwd.length < 6} className="btn-primary text-sm py-1.5 disabled:opacity-50">Simpan</button>
+                <button onClick={savePwd} disabled={(profile.has_password && !currentPwd) || newPwd.length < 6} className="btn-primary text-sm py-1.5 disabled:opacity-50">Simpan</button>
                 <button onClick={() => { setEditPwd(false); setCurrentPwd(''); setNewPwd(''); }} className="text-xs text-gray-400">Batal</button>
               </div>
             </div>

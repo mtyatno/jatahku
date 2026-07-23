@@ -1,7 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -15,6 +15,8 @@ from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.deps import get_current_user
 from app.models.models import User, Household, HouseholdMember, HouseholdRole, Envelope
+from app.services.password_reset import create_reset_token, redeem_reset_token
+from app.services.email_service import send_password_reset_email, send_password_changed_email
 
 router = APIRouter()
 
@@ -33,6 +35,15 @@ class LoginRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 
 class TokenResponse(BaseModel):
@@ -151,6 +162,78 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
 
     if not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+GENERIC_FORGOT_MESSAGE = "Kalau email terdaftar, link reset sudah dikirim."
+
+
+@router.post("/forgot-password")
+@limiter.limit("3/minute")
+async def forgot_password(
+    request: Request,
+    req: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    email = req.email.strip().lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if user:
+        settings = get_settings()
+        r = aioredis.from_url(settings.REDIS_URL)
+        try:
+            token = await create_reset_token(r, str(user.id))
+        finally:
+            await r.close()
+        reset_url = f"https://jatahku.com/reset-password?token={token}"
+        # Kirim di background: respons tidak menunggu SMTP dan tidak
+        # membocorkan (lewat timing) apakah email terdaftar.
+        background_tasks.add_task(send_password_reset_email, user.email, user.name, reset_url)
+
+    return {"message": GENERIC_FORGOT_MESSAGE}
+
+
+@router.post("/reset-password", response_model=TokenResponse)
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    req: ResetPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    if not req.new_password or len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+
+    settings = get_settings()
+    r = aioredis.from_url(settings.REDIS_URL)
+    try:
+        user_id = await redeem_reset_token(r, req.token)
+    finally:
+        await r.close()
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
+
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
+
+    user.password_hash = hash_password(req.new_password)
+    await db.commit()
+
+    if user.email:
+        background_tasks.add_task(send_password_changed_email, user.email, user.name)
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
