@@ -8,7 +8,7 @@ import {
   CheckCircle, Lock, UsersThree, Target, PiggyBank, Wallet, SignOut, ShieldCheck,
   Warning, Trophy, TelegramLogo, X, CalendarBlank, ArrowsLeftRight,
   DotsThreeVertical, SquaresFour, Rows, FolderSimple, Coins,
-  MagnifyingGlass, Globe, ChartPieSlice, Info,
+  MagnifyingGlass, Globe, ChartPieSlice, Info, Microphone, Stop,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -61,6 +61,8 @@ const UI = {
   piggy: PiggyBank,
   wallet: Wallet,
   chartpie: ChartPieSlice,
+  mic: Microphone,
+  stop: Stop,
 };
 
 // Envelope category icons — tokens stored in env.emoji going forward
