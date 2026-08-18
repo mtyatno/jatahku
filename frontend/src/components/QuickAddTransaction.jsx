@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import { shouldShowPrivateToggle } from '../lib/privateToggle';
+import { parseAmount } from '../lib/parseAmount';
 import { Icon } from './Icon';
+import VoiceInput from './VoiceInput';
 
 export default function QuickAddTransaction({ onSaved, onCancel }) {
   const [amount, setAmount] = useState('');
@@ -48,6 +50,18 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     setEnvelopeId(e.target.value);
   };
 
+  const handleVoiceTranscript = (text) => {
+    userTouchedRef.current = false;
+    setSuggested(false);
+    const parsed = parseAmount(text);
+    if (parsed) {
+      setAmount(String(parsed.amount));
+      setDescription(parsed.description);
+    } else {
+      setDescription(text);
+    }
+  };
+
   const reset = () => {
     setAmount(''); setDescription(''); setEnvelopeId('');
     setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false);
@@ -91,7 +105,14 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
         </div>
         <div>
           <label className="label">Keterangan</label>
-          <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required />
+          <div className="flex items-center gap-2">
+            <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required />
+            <VoiceInput
+              onTranscript={handleVoiceTranscript}
+              onError={msg => setError(msg)}
+              disabled={saving}
+            />
+          </div>
         </div>
         <div>
           <label className="label">Amplop {suggested && <span className="text-xs text-brand-600">· disarankan</span>}</label>
