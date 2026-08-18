@@ -73,6 +73,16 @@ class TestTranscribeAudio(unittest.IsolatedAsyncioTestCase):
             text = await transcribe_audio(b"fake-audio", "audio/webm")
         self.assertEqual(text, "")
 
+    async def test_malformed_200_body_raises_transcription_error(self):
+        fake = MagicMock()
+        fake.status_code = 200
+        fake.json.side_effect = ValueError("bad json")
+        client = AsyncMock()
+        client.__aenter__.return_value.post = AsyncMock(return_value=fake)
+        with patch("app.services.transcription.httpx.AsyncClient", return_value=client):
+            with self.assertRaises(TranscriptionError):
+                await transcribe_audio(b"fake-audio", "audio/webm")
+
     async def test_multipart_filename_maps_webm(self):
         p, post = _patch_client(_fake_response(200, {"text": "ok"}))
         with p:

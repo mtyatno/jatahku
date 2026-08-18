@@ -53,7 +53,10 @@ class GroqProvider:
             raise TranscriptionError(f"provider error: {exc}") from exc
         if res.status_code != 200:
             raise TranscriptionError(f"provider status {res.status_code}")
-        return (res.json().get("text") or "").strip()
+        try:
+            return (res.json().get("text") or "").strip()
+        except Exception as exc:  # body malformed / struktur tak terduga → tetap 502
+            raise TranscriptionError(f"provider response malformed: {exc}") from exc
 
 
 # Registry provider (tanpa marker — stable). Tambah "selfhosted":

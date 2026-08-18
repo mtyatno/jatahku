@@ -22,8 +22,10 @@ class FakeAudio:
     def __init__(self, data: bytes, content_type: str):
         self._data = data
         self.content_type = content_type
+        self.read_size = None
 
-    async def read(self):
+    async def read(self, size=-1):
+        self.read_size = size
         return self._data
 
 
@@ -52,6 +54,15 @@ class TestTranscribeRequest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as ctx:
             await _transcribe_request(audio)
         self.assertEqual(ctx.exception.status_code, 413)
+
+    async def test_read_is_capped_at_max_bytes(self):
+        audio = FakeAudio(b"x" * (MAX_AUDIO_BYTES + 100), "audio/webm")
+        with patch("app.api.routes.transactions.transcribe_audio",
+                   new=AsyncMock(return_value="ok")):
+            with self.assertRaises(HTTPException) as ctx:
+                await _transcribe_request(audio)
+        self.assertEqual(ctx.exception.status_code, 413)
+        self.assertEqual(audio.read_size, MAX_AUDIO_BYTES + 1)
 
     async def test_provider_error_502(self):
         audio = FakeAudio(b"fake-audio", "audio/webm")

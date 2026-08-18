@@ -387,7 +387,7 @@ async def _transcribe_request(audio: UploadFile) -> str:
     content_type = (audio.content_type or "").split(";")[0].strip()
     if not content_type.startswith("audio/"):
         raise HTTPException(status_code=415, detail="Format audio tidak didukung")
-    data = await audio.read()
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
     if not data:
         raise HTTPException(status_code=422, detail="Tidak ada suara terdeteksi, coba lagi")
     if len(data) > MAX_AUDIO_BYTES:
