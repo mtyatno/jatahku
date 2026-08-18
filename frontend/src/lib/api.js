@@ -31,7 +31,10 @@ class ApiClient {
   }
 
   async request(path, options = {}) {
-    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    const isFormData = options.body instanceof FormData;
+    const headers = isFormData
+      ? { ...options.headers }
+      : { 'Content-Type': 'application/json', ...options.headers };
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -371,6 +374,22 @@ class ApiClient {
   async deleteTransaction(id) {
     const res = await this.request(`/transactions/${id}`, { method: 'DELETE' });
     return res.ok;
+  }
+
+  async transcribe(audioBlob) {
+    try {
+      const form = new FormData();
+      const ext = (audioBlob.type || '').includes('mp4') ? 'audio.mp4' : 'audio.webm';
+      form.append('audio', audioBlob, ext);
+      const res = await this.request('/transactions/transcribe', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Transkripsi gagal, coba lagi' } };
+    }
   }
 
   // Incomes

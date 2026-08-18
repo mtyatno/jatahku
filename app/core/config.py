@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     # Timezone
     TZ: str = "Asia/Jakarta"
 
+    # Voice transcription — provider dipilih via WHISPER_PROVIDER.
+    # "groq" = Groq API (whisper-large-v3-turbo); "selfhosted" = private whisper
+    # server (future). Kode spesifik provider ditandai "# WHISPER-PROVIDER:<name>".
+    WHISPER_PROVIDER: str = "groq"
+    # WHISPER-PROVIDER:groq — env di bawah tidak dipakai saat selfhosted aktif.
+    GROQ_API_KEY: str = ""
+    GROQ_WHISPER_MODEL: str = "whisper-large-v3-turbo"
+    GROQ_API_URL: str = "https://api.groq.com/openai/v1/audio/transcriptions"
+    # Disiapkan untuk provider selfhosted (private whisper server) — belum dipakai.
+    WHISPER_API_URL: str = ""
+    WHISPER_API_KEY: str = ""
+
     model_config = {"env_file": "/opt/jatahku/.env", "extra": "ignore"}
 
 

@@ -1,7 +1,10 @@
+import hashlib
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from pydantic import BaseModel
@@ -11,10 +14,16 @@ from app.models.models import (
     User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
 from app.services.behavior import check_behavior, create_pending_transaction
-from app.services.behavior import check_behavior, create_pending_transaction
+from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
 
 router = APIRouter()
+
+# Rate limiter lokal (pola sama dengan auth.py). Storage in-memory per instance.
+limiter = Limiter(key_func=get_remote_address)
+
+# Maks ukuran audio yang diterima (client membatasi rekaman 60 detik).
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
 
 class TransactionCreate(BaseModel):
@@ -363,6 +372,43 @@ async def batch_create_transactions(
         results.append(BatchTransactionResult(index=i, ok=True, id=txn.id, description=item.description))
 
     return results
+
+
+def transcribe_key_func(request: Request) -> str:
+    """Rate limit per-user: hash header Authorization; fallback ke IP."""
+    auth = request.headers.get("authorization", "")
+    if auth:
+        return hashlib.sha256(auth.encode()).hexdigest()[:16]
+    return get_remote_address(request)
+
+
+async def _transcribe_request(audio: UploadFile) -> str:
+    """Validasi + panggil provider. Tanpa deps framework supaya mudah di-test."""
+    content_type = (audio.content_type or "").split(";")[0].strip()
+    if not content_type.startswith("audio/"):
+        raise HTTPException(status_code=415, detail="Format audio tidak didukung")
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="Tidak ada suara terdeteksi, coba lagi")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Rekaman terlalu panjang (maks 60 detik)")
+    try:
+        text = await transcribe_audio(data, content_type)
+    except TranscriptionError:
+        raise HTTPException(status_code=502, detail="Transkripsi gagal, coba lagi")
+    if not text:
+        raise HTTPException(status_code=422, detail="Tidak ada suara terdeteksi, coba lagi")
+    return text
+
+
+@router.post("/transcribe")
+@limiter.limit("20/hour", key_func=transcribe_key_func)
+async def transcribe_endpoint(
+    request: Request,
+    audio: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    return {"text": await _transcribe_request(audio)}
 
 
 @router.get("/", response_model=list[TransactionResponse])
