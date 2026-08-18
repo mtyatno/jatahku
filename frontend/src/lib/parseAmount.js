@@ -2,43 +2,63 @@ const AMOUNT_RE = /(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+\.\d{1,2}|\d+(?:,\d+)?)\
 const MULTIPLIERS = { jt: 1_000_000, juta: 1_000_000, rb: 1_000, ribu: 1_000, k: 1_000 };
 
 export function parseAmount(text) {
-  const match = AMOUNT_RE.exec(text.trim());
-  if (!match) return null;
+  const trimmed = text.trim();
 
-  let numberStr, multiplierStr;
+  // Kumpulkan SEMUA kandidat jumlah, lalu pilih yang paling mungkin:
+  // angka ber-kata-pengali (25 ribu) menang atas angka polos yang bisa
+  // jadi kuantitas ("beli 2 kopi 25 ribu" harus membaca 25 ribu, bukan 2).
+  const candidates = [];
+  const re = new RegExp(AMOUNT_RE.source, 'gi');
+  let m;
+  while ((m = re.exec(trimmed)) !== null) {
+    let numberStr, multiplierStr;
+    if (m[1]) {
+      numberStr = m[1];
+      multiplierStr = m[2];
+    } else if (m[3]) {
+      numberStr = m[3];
+      multiplierStr = null;
+    } else {
+      continue;
+    }
 
-  if (match[1]) {
-    numberStr = match[1];
-    multiplierStr = match[2];
-  } else if (match[3]) {
-    numberStr = match[3];
-    multiplierStr = null;
-  } else {
-    return null;
+    let number;
+    if (/^\d{1,3}(\.\d{3})+$/.test(numberStr)) {
+      number = parseFloat(numberStr.replace(/\./g, ''));
+    } else if (/^\d{1,3}(,\d{3})+$/.test(numberStr)) {
+      number = parseFloat(numberStr.replace(/,/g, ''));
+    } else {
+      number = parseFloat(numberStr.replace(',', '.'));
+    }
+    if (isNaN(number)) continue;
+
+    const multiplier = multiplierStr ? (MULTIPLIERS[multiplierStr.toLowerCase()] || 1) : 1;
+    const amount = Math.round(number * multiplier);
+    if (amount <= 0) continue;
+
+    candidates.push({
+      amount,
+      multiplier,
+      index: m.index,
+      end: m.index + m[0].length,
+    });
   }
 
-  let number;
-  if (/^\d{1,3}(\.\d{3})+$/.test(numberStr)) {
-    number = parseFloat(numberStr.replace(/\./g, ''));
-  } else if (/^\d{1,3}(,\d{3})+$/.test(numberStr)) {
-    number = parseFloat(numberStr.replace(/,/g, ''));
-  } else {
-    number = parseFloat(numberStr.replace(',', '.'));
-  }
+  if (!candidates.length) return null;
 
-  if (isNaN(number)) return null;
+  // Prioritas: kandidat ber-pengali (ribu/juta/jt/rb/k); di antaranya,
+  // jumlah terbesar. Tanpa pengali, angka pertama seperti perilaku lama.
+  const withMultiplier = candidates.filter(c => c.multiplier > 1);
+  const chosen = withMultiplier.length
+    ? withMultiplier.reduce((a, b) => (b.amount > a.amount ? b : a))
+    : candidates[0];
 
-  const multiplier = multiplierStr ? (MULTIPLIERS[multiplierStr.toLowerCase()] || 1) : 1;
-  const amount = Math.round(number * multiplier);
-
-  if (amount <= 0) return null;
-
-  const before = text.trim().slice(0, match.index).trim();
-  const after = text.trim().slice(match.index + match[0].length).trim();
+  const before = trimmed.slice(0, chosen.index).trim();
+  const after = trimmed.slice(chosen.end).trim();
   let desc = (before + ' ' + after).trim();
   if (!desc) desc = 'Pengeluaran';
 
-  return { amount, description: desc };
+  return { amount: chosen.amount, description: desc };
 }
 
 // Pemisah koma: koma = pemisah item KECUALI diikuti angka (koma desimal

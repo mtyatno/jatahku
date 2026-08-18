@@ -124,3 +124,32 @@ test('parseMultiExpense: satu item spasi murni tidak terpecah', () => {
 test('parseMultiExpense: kata berakhiran "k" bukan token jumlah ("gojek")', () => {
   assert.equal(parseMultiExpense('naik gojek dan bayar tol 25 ribu'), null);
 });
+
+// ── parseAmount: prioritaskan jumlah dengan kata pengali ──
+test('parseAmount: kuantitas angka polos tidak menang atas jumlah ber-pengali', () => {
+  const r = parseAmount('beli 2 kopi 25 ribu');
+  assert.ok(r);
+  assert.equal(r.amount, 25000);
+  assert.equal(r.description, 'beli 2 kopi');
+});
+
+test('parseAmount: "2 bulan cicilan 500 ribu" membaca 500 ribu', () => {
+  const r = parseAmount('bayar 2 bulan cicilan 500 ribu');
+  assert.ok(r);
+  assert.equal(r.amount, 500000);
+  assert.equal(r.description, 'bayar 2 bulan cicilan');
+});
+
+test('parseAmount: tanpa pengali, angka pertama tetap dipakai ("5000 2 pcs")', () => {
+  const r = parseAmount('sabun 5000 2 pcs');
+  assert.ok(r);
+  assert.equal(r.amount, 5000);
+  assert.equal(r.description, 'sabun 2 pcs');
+});
+
+test('parseAmount: angka tunggal polos tidak berubah ("gojek 15000")', () => {
+  const r = parseAmount('gojek 15000');
+  assert.ok(r);
+  assert.equal(r.amount, 15000);
+  assert.equal(r.description, 'gojek');
+});
