@@ -54,3 +54,32 @@ test('parseMultiExpense: regresi placeholder textarea ("Rp5.000, gojek 12000")',
   assert.equal(items.length, 2);
   assert.deepEqual(items.map(i => i.amount), [5000, 12000]);
 });
+
+// ── pemisah campuran (koma + newline) dalam satu input ──
+test('parseMultiExpense: koma di baris pertama + item newline di baris kedua', () => {
+  const items = parseMultiExpense(
+    'mobil Rp. 400.000, tagihan Google Rp. 85.000, bendera Rp. 75.000.\nBayar tukang Rp 1.400.000');
+  assert.ok(items, 'harus terpecah');
+  assert.equal(items.length, 4);
+  assert.deepEqual(items.map(i => i.amount), [400000, 85000, 75000, 1400000]);
+  assert.equal(items[0].description, 'mobil');
+  assert.equal(items[1].description, 'tagihan Google');
+  assert.equal(items[3].description, 'Bayar tukang');
+});
+
+// ── regresi: kata sambung dalam deskripsi tidak boleh memecah item ──
+test('parseMultiExpense: "dan" dalam deskripsi tidak memecah item tanpa jumlah', () => {
+  const items = parseMultiExpense('nasi goreng 15 ribu, bakso dan es teh 10 ribu');
+  assert.ok(items);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map(i => i.amount), [15000, 10000]);
+  assert.equal(items[1].description, 'bakso dan es teh');
+});
+
+test('parseMultiExpense: "dan" sebagai pemisah saat kedua sisi ada jumlah', () => {
+  const items = parseMultiExpense('kopi 35 ribu dan gojek 20 ribu, makan 25 ribu');
+  assert.ok(items);
+  assert.equal(items.length, 3);
+  assert.deepEqual(items.map(i => i.amount), [35000, 20000, 25000]);
+  assert.deepEqual(items.map(i => i.description), ['kopi', 'gojek', 'makan']);
+});

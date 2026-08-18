@@ -41,31 +41,47 @@ export function parseAmount(text) {
   return { amount, description: desc };
 }
 
-const SEP_PATTERNS = [
-  /\s*\n+\s*/,
-  // Koma = pemisah item KECUALI diikuti angka (koma desimal "1,5").
-  // Guard ke depan (bukan lookbehind), karena pemisah item biasanya
-  // langsung menempel angka jumlah ("kopi 35.000, gojek 20.000" — koma
-  // diawali digit, lookbehind ?<!\d malah memblokir split).
-  /\s*,(?!\d)\s*|;/i,
-  /\s+(?:terus|lalu)\s+/i,
-  /\s+dan\s+/i,
-];
+// Pemisah koma: koma = pemisah item KECUALI diikuti angka (koma desimal
+// "1,5"). Guard ke depan (bukan lookbehind), karena pemisah item biasanya
+// langsung menempel angka jumlah ("kopi 35.000, gojek 20.000" — koma
+// diawali digit, lookbehind ?<!\d malah memblokir split).
+const COMMA_SEP = /\s*,(?!\d)\s*|;/i;
+const WORD_SEPS = [/\s+(?:terus|lalu)\s+/i, /\s+dan\s+/i];
 
 export function parseMultiExpense(text) {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  for (const sep of SEP_PATTERNS) {
-    const parts = trimmed.split(sep).filter(p => p.trim());
-    if (parts.length >= 2) {
-      const results = parts
-        .map(p => parseAmount(p.trim()))
-        .filter(r => r !== null);
-      if (results.length >= 2) {
-        return results;
+  // Tahap 1: pecah per baris, lalu per koma/titik-koma di dalam tiap baris.
+  // Semua jenis pemisah dipakai sekaligus — bukan "pola pertama yang cocok
+  // menang" (dulu: input campuran koma+newline hanya kebaca newline-nya).
+  const lines = trimmed.split(/\s*\n+\s*/).filter(p => p.trim());
+  const parts = [];
+  for (const line of lines) {
+    parts.push(...line.split(COMMA_SEP).filter(p => p.trim()));
+  }
+
+  // Tahap 2: "terus"/"lalu"/"dan" dipecah HANYA bila setiap sisinya punya
+  // jumlah — agar deskripsi seperti "bakso dan es teh 10 ribu" tidak terbelah.
+  const expanded = [];
+  for (const part of parts) {
+    let matched = false;
+    for (const sep of WORD_SEPS) {
+      const sides = part.split(sep).filter(p => p.trim());
+      if (sides.length >= 2 && sides.every(s => parseAmount(s))) {
+        expanded.push(...sides);
+        matched = true;
+        break;
       }
     }
+    if (!matched) expanded.push(part);
+  }
+
+  const results = expanded
+    .map(p => parseAmount(p.trim()))
+    .filter(r => r !== null);
+  if (results.length >= 2) {
+    return results;
   }
 
   return null;
