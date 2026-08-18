@@ -43,7 +43,11 @@ export function parseAmount(text) {
 
 const SEP_PATTERNS = [
   /\s*\n+\s*/,
-  /\s*(?<!\d),\s*|;/i,
+  // Koma = pemisah item KECUALI diikuti angka (koma desimal "1,5").
+  // Guard ke depan (bukan lookbehind), karena pemisah item biasanya
+  // langsung menempel angka jumlah ("kopi 35.000, gojek 20.000" — koma
+  // diawali digit, lookbehind ?<!\d malah memblokir split).
+  /\s*,(?!\d)\s*|;/i,
   /\s+(?:terus|lalu)\s+/i,
   /\s+dan\s+/i,
 ];
