@@ -83,3 +83,44 @@ test('parseMultiExpense: "dan" sebagai pemisah saat kedua sisi ada jumlah', () =
   assert.deepEqual(items.map(i => i.amount), [35000, 20000, 25000]);
   assert.deepEqual(items.map(i => i.description), ['kopi', 'gojek', 'makan']);
 });
+
+// ── spasi murni sebagai pemisah (angka + kata bilangan diglue) ──
+test('parseMultiExpense: spasi murni antar item (kata bilangan diglue)', () => {
+  const items = parseMultiExpense('kopi 35 ribu gojek 20 ribu');
+  assert.ok(items, 'harus terpecah');
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map(i => i.amount), [35000, 20000]);
+  assert.deepEqual(items.map(i => i.description), ['kopi', 'gojek']);
+});
+
+test('parseMultiExpense: spasi murni dengan ribuan bertitik', () => {
+  const items = parseMultiExpense('kopi 35.000 gojek 20.000');
+  assert.ok(items);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map(i => i.amount), [35000, 20000]);
+});
+
+test('parseMultiExpense: campuran koma + spasi murni dalam satu input', () => {
+  const items = parseMultiExpense('makan siang 25 ribu, gojek 20 ribu tol 10 ribu');
+  assert.ok(items);
+  assert.equal(items.length, 3);
+  assert.deepEqual(items.map(i => i.amount), [25000, 20000, 10000]);
+  assert.deepEqual(items.map(i => i.description), ['makan siang', 'gojek', 'tol']);
+});
+
+// ── guard kuantitas: angka polos bukan pemisah item ──
+test('parseMultiExpense: angka kuantitas tidak memecah item ("2 kopi")', () => {
+  assert.equal(parseMultiExpense('beli 2 kopi 25 ribu'), null);
+});
+
+test('parseMultiExpense: angka kuantitas tidak memecah item ("12 bulan")', () => {
+  assert.equal(parseMultiExpense('cicilan 12 bulan 500 ribu'), null);
+});
+
+test('parseMultiExpense: satu item spasi murni tidak terpecah', () => {
+  assert.equal(parseMultiExpense('bayar listrik 350 ribu'), null);
+});
+
+test('parseMultiExpense: kata berakhiran "k" bukan token jumlah ("gojek")', () => {
+  assert.equal(parseMultiExpense('naik gojek dan bayar tol 25 ribu'), null);
+});

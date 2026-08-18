@@ -48,6 +48,43 @@ export function parseAmount(text) {
 const COMMA_SEP = /\s*,(?!\d)\s*|;/i;
 const WORD_SEPS = [/\s+(?:terus|lalu)\s+/i, /\s+dan\s+/i];
 
+// Spasi murni sebagai pemisah item — dengan dua pengaman:
+// 1. "35 ribu" diglue jadi "35ribu" (spasi antara angka dan kata bilangan
+//    TIDAK PERNAH menjadi pemisah).
+// 2. Hanya token yang PASTI jumlah yang memicu split: angka+pengali
+//    (35ribu), ribuan bertitik (35.000), atau Rp... — angka polos
+//    ("2", "12", "100") ditolak karena sering kali kuantitas. Saat ragu,
+//    item tetap digabung (arah aman: deskripsi gabung lebih terlihat
+//    daripada jumlah salah).
+const MULTIPLIER_GLUE_RE = /(\d+(?:[.,]\d+)?)\s+(juta|jt|ribu|rb|k)\b/gi;
+// Wajib diawali angka — kalau tidak, kata berakhiran "k" seperti "gojek"
+// salah dikenali sebagai token jumlah.
+const MULTIPLIER_TOKEN_RE = /^\d+(?:[.,]\d+)?(juta|jt|ribu|rb|k)$/i;
+const DOTTED_AMOUNT_RE = /^\d{1,3}(\.\d{3})+$/;
+const RP_AMOUNT_RE = /^rp\.?\s*\d/i;
+
+function isAmountToken(tok) {
+  return MULTIPLIER_TOKEN_RE.test(tok) || DOTTED_AMOUNT_RE.test(tok) || RP_AMOUNT_RE.test(tok);
+}
+
+function splitBySpaces(text) {
+  const glued = text.replace(MULTIPLIER_GLUE_RE, '$1$2');
+  const tokens = glued.split(/\s+/).filter(t => t.trim());
+  const items = [];
+  let current = [];
+  for (let i = 0; i < tokens.length; i++) {
+    current.push(tokens[i]);
+    // Tutup item saat token ini adalah jumlah DAN masih ada jumlah lain
+    // di sisa teks (jika tidak, semua kata tetap satu item).
+    if (isAmountToken(tokens[i]) && tokens.slice(i + 1).some(isAmountToken)) {
+      items.push(current.join(' '));
+      current = [];
+    }
+  }
+  if (current.length) items.push(current.join(' '));
+  return items.length >= 2 ? items : null;
+}
+
 export function parseMultiExpense(text) {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -61,8 +98,8 @@ export function parseMultiExpense(text) {
     parts.push(...line.split(COMMA_SEP).filter(p => p.trim()));
   }
 
-  // Tahap 2: "terus"/"lalu"/"dan" dipecah HANYA bila setiap sisinya punya
-  // jumlah — agar deskripsi seperti "bakso dan es teh 10 ribu" tidak terbelah.
+  // Tahap 2: pecah tiap bagian lebih jauh — kata sambung ("terus"/"lalu"/
+  // "dan") bila semua sisinya punya jumlah, lalu spasi murni.
   const expanded = [];
   for (const part of parts) {
     let matched = false;
@@ -74,6 +111,13 @@ export function parseMultiExpense(text) {
         break;
       }
     }
+    if (!matched) {
+      const bySpaces = splitBySpaces(part);
+      if (bySpaces) {
+        expanded.push(...bySpaces);
+        matched = true;
+      }
+    }
     if (!matched) expanded.push(part);
   }
 
@@ -82,6 +126,16 @@ export function parseMultiExpense(text) {
     .filter(r => r !== null);
   if (results.length >= 2) {
     return results;
+  }
+
+  // Tahap 3: tidak ada koma/newline sama sekali — coba spasi murni pada
+  // seluruh teks.
+  const bySpacesAll = splitBySpaces(trimmed);
+  if (bySpacesAll) {
+    const r = bySpacesAll.map(p => parseAmount(p.trim())).filter(x => x !== null);
+    if (r.length >= 2) {
+      return r;
+    }
   }
 
   return null;
