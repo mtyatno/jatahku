@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { parseMultiExpense, parseAmount } from '../lib/parseAmount';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
+import VoiceInput from './VoiceInput';
 
 function formatRupiah(n) {
   return 'Rp ' + Number(n).toLocaleString('id-ID');
@@ -132,6 +133,14 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleVoiceTranscript = (text) => {
+    setRawText(prev => (prev ? prev + '\n' + text : text));
+  };
+
+  const handleVoiceError = (msg) => {
+    setResultMsg({ type: 'error', text: msg });
+  };
+
   const handleSaveAll = async () => {
     const pending = items.filter(i => i.envelopeId);
     if (pending.length === 0) {
@@ -233,7 +242,14 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>
+          <VoiceInput
+            onTranscript={handleVoiceTranscript}
+            onError={handleVoiceError}
+            disabled={saving}
+          />
+        </div>
         <textarea
           className="input w-full h-24 resize-y font-mono text-sm"
           placeholder={`kopi 15k\nsabun 5.000\nair mineral Rp5.000, gojek 12000\ntelor 1,5`}
