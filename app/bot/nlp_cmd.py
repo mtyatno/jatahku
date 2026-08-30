@@ -477,7 +477,7 @@ async def handle_limit_harian(update, context):
     from app.core.database import AsyncSessionLocal
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
-        _, _, envelopes = await _get_user_envelopes(tg_user, db)
+        user, _, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
         await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
@@ -514,6 +514,7 @@ async def handle_proyeksi(update, context):
     """Estimate when budget runs out based on current burn rate."""
     from app.core.database import AsyncSessionLocal
     from app.models.models import Transaction
+    from app.core.period import get_budget_period
     tg_user = update.effective_user
     now = date.today()
 
@@ -523,12 +524,15 @@ async def handle_proyeksi(update, context):
             await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
             return
 
+        payday_day = getattr(user, 'payday_day', 1) or 1
+        period_start, period_end = get_budget_period(payday_day, now)
+
         spent_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.is_deleted == False,
                 Transaction.user_id == user.id,
-                func.extract("year", Transaction.transaction_date) == now.year,
-                func.extract("month", Transaction.transaction_date) == now.month,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
             )
         )
         total_spent = Decimal(str(spent_result.scalar()))
@@ -579,16 +583,12 @@ async def handle_proyeksi(update, context):
 
 
 async def handle_comparison(update, context):
-    """Compare this month vs last month spending."""
+    """Compare this period vs last period spending."""
     from app.core.database import AsyncSessionLocal
     from app.models.models import Transaction, Envelope
+    from app.core.period import get_budget_period, get_previous_period
     tg_user = update.effective_user
     now = date.today()
-
-    if now.month == 1:
-        last_year, last_month = now.year - 1, 12
-    else:
-        last_year, last_month = now.year, now.month - 1
 
     async with AsyncSessionLocal() as db:
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
@@ -596,46 +596,55 @@ async def handle_comparison(update, context):
             await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
             return
 
-        def spend_query(y, m):
+        payday_day = getattr(user, 'payday_day', 1) or 1
+        this_start, this_end = get_budget_period(payday_day, now)
+        last_start, last_end = get_previous_period(payday_day, now)
+
+        def spend_query(p_start, p_end):
             return (
                 select(func.coalesce(func.sum(Transaction.amount), 0))
                 .join(Envelope, Transaction.envelope_id == Envelope.id)
                 .where(
                     Envelope.household_id == hid,
                     Transaction.is_deleted == False,
-                    func.extract("year", Transaction.transaction_date) == y,
-                    func.extract("month", Transaction.transaction_date) == m,
+                    Transaction.transaction_date >= p_start,
+                    Transaction.transaction_date <= p_end,
                 )
             )
 
-        this_total = Decimal(str((await db.execute(spend_query(now.year, now.month))).scalar()))
-        last_total = Decimal(str((await db.execute(spend_query(last_year, last_month))).scalar()))
+        this_total = Decimal(str((await db.execute(spend_query(this_start, this_end))).scalar()))
+        last_total = Decimal(str((await db.execute(spend_query(last_start, last_end))).scalar()))
 
-    last_month_name = date(last_year, last_month, 1).strftime("%B")
-    this_month_name = now.strftime("%B")
+    if payday_day == 1:
+        last_label = last_start.strftime("%B")
+        this_label = this_start.strftime("%B")
+    else:
+        last_label = f"{last_start.strftime('%d %b')} – {last_end.strftime('%d %b')}"
+        this_label = f"{this_start.strftime('%d %b')} – {this_end.strftime('%d %b')}"
     top_envs = sorted(envelopes, key=lambda e: e["spent"], reverse=True)[:3]
 
     if last_total == 0:
         await update.message.reply_text(
-            f"📊 {this_month_name}: {format_currency(this_total)}\n"
-            f"Data {last_month_name} belum ada untuk perbandingan."
+            f"📊 {this_label}: {format_currency(this_total)}\n"
+            f"Data {last_label} belum ada untuk perbandingan."
         )
         return
 
     diff = this_total - last_total
     pct = abs(int(diff / last_total * 100))
     verdict = (
-        f"🔴 Lebih *boros {pct}%* dari {last_month_name}." if diff > 0
-        else f"✅ Lebih *hemat {pct}%* dari {last_month_name}!" if diff < 0
-        else "➡️ Sama persis dengan bulan lalu."
+        f"🔴 Lebih *boros {pct}%* dari {last_label}." if diff > 0
+        else f"✅ Lebih *hemat {pct}%* dari {last_label}!" if diff < 0
+        else "➡️ Sama persis dengan bulan lalu." if payday_day == 1
+        else "➡️ Sama persis dengan periode sebelumnya."
     )
 
     lines = [
-        f"📊 *{this_month_name} vs {last_month_name}*\n",
-        f"{last_month_name}: {format_currency(last_total)}",
-        f"{this_month_name}: {format_currency(this_total)}",
+        f"📊 *{this_label} vs {last_label}*\n",
+        f"{last_label}: {format_currency(last_total)}",
+        f"{this_label}: {format_currency(this_total)}",
         f"\n{verdict}",
-        f"\n🔝 Terbesar bulan ini:",
+        f"\n🔝 Terbesar {'bulan' if payday_day == 1 else 'periode'} ini:",
     ]
     for e in top_envs:
         if e["spent"] > 0:
@@ -650,7 +659,7 @@ async def handle_santai(update, context):
     from app.core.database import AsyncSessionLocal
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
-        _, _, envelopes = await _get_user_envelopes(tg_user, db)
+        user, _, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
         await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")

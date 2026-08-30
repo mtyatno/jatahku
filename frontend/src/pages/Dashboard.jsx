@@ -545,31 +545,33 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {isCurrentPeriod && (
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <ExportButtons />
-          {leaderboard.length >= 2 && (
-            <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white border border-gray-200">
-              <span className="text-xs font-medium text-gray-400 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
-              <div className="flex items-center gap-3">
-                {leaderboard.map((m, i) => {
-                  const medal = ['🥇', '🥈', '🥉'][i] || '';
-                  return (
-                    <span key={m.user_id} className="flex items-center gap-1 text-xs">
-                      <span className="shrink-0">{medal}</span>
-                      <span className={m.is_me ? 'font-semibold text-brand-600' : 'text-gray-500'}>
-                        {m.name.split(' ')[0]}{m.is_me ? '' : ''}
-                      </span>
-                      <span className="font-medium text-gray-600">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
-                      {m.logged_today && <span className="text-[10px]" title="Sudah catat">✅</span>}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <ExportButtons
+          periodStart={selectedPeriod?.period_start}
+          periodEnd={selectedPeriod?.period_end}
+          periodLabel={selectedPeriod?.label}
+        />
+        {isCurrentPeriod && leaderboard.length >= 2 && (
+          <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white border border-gray-200">
+            <span className="text-xs font-medium text-gray-400 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
+            <div className="flex items-center gap-3">
+              {leaderboard.map((m, i) => {
+                const medal = ['🥇', '🥈', '🥉'][i] || '';
+                return (
+                  <span key={m.user_id} className="flex items-center gap-1 text-xs">
+                    <span className="shrink-0">{medal}</span>
+                    <span className={m.is_me ? 'font-semibold text-brand-600' : 'text-gray-500'}>
+                      {m.name.split(' ')[0]}
                     </span>
-                  );
-                })}
-              </div>
+                    <span className="font-medium text-gray-600">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
+                    {m.logged_today && <span className="text-[10px]" title="Sudah catat">✅</span>}
+                  </span>
+                );
+              })}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">

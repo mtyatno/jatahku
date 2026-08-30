@@ -1,7 +1,7 @@
 import io
 import csv
 from decimal import Decimal
-from datetime import date
+from datetime import date, timedelta
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -10,20 +10,57 @@ from sqlalchemy import select, func, or_
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.models import User, Transaction, Envelope, HouseholdMember, Allocation
+from app.core.period import get_budget_period, _safe_date
+from app.models.models import (
+    User,
+    Transaction,
+    Envelope,
+    HouseholdMember,
+    Allocation,
+    Income,
+    MonthlySnapshot,
+)
 from app.services.visibility import masked_description
 
 router = APIRouter()
 
 
-async def _get_export_data(user: User, db: AsyncSession, year: int, month: int, envelope_id: str = None):
+def _resolve_period(
+    user: User,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    year: int | None = None,
+    month: int | None = None,
+) -> tuple[date, date]:
+    """Resolve period start and end dates from query params or user payday settings."""
+    p_start = period_start if isinstance(period_start, date) else None
+    p_end = period_end if isinstance(period_end, date) else None
+    y = year if isinstance(year, int) else None
+    m = month if isinstance(month, int) else None
+
+    if p_start and p_end:
+        return p_start, p_end
+    payday_day = getattr(user, "payday_day", 1) or 1
+    if y and m:
+        target_date = _safe_date(y, m, payday_day)
+        return get_budget_period(payday_day, target_date)
+    return get_budget_period(payday_day)
+
+
+async def _get_export_data(
+    user: User,
+    db: AsyncSession,
+    period_start: date,
+    period_end: date,
+    envelope_id: str | None = None,
+):
     """Get transactions + envelope summaries for export."""
     hid_result = await db.execute(
         select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
     )
     hid = hid_result.scalar_one_or_none()
     if not hid:
-        return [], []
+        return [], [], {}
 
     # Get envelopes
     env_result = await db.execute(
@@ -36,6 +73,8 @@ async def _get_export_data(user: User, db: AsyncSession, year: int, month: int, 
     envelopes = env_result.scalars().all()
     env_map = {str(e.id): e for e in envelopes}
 
+    target_env_id = str(envelope_id) if isinstance(envelope_id, (str, UUID)) else None
+
     # Get transactions
     query = (
         select(Transaction, User.name.label("user_name"))
@@ -44,38 +83,75 @@ async def _get_export_data(user: User, db: AsyncSession, year: int, month: int, 
         .where(
             Envelope.household_id == hid,
             Transaction.is_deleted == False,
-            func.extract("year", Transaction.transaction_date) == year,
-            func.extract("month", Transaction.transaction_date) == month,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
-    if envelope_id:
-        query = query.where(Transaction.envelope_id == UUID(envelope_id))
+    if target_env_id:
+        query = query.where(Transaction.envelope_id == UUID(target_env_id))
 
     query = query.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
     result = await db.execute(query)
     transactions = result.all()
 
+    payday_day = getattr(user, "payday_day", 1) or 1
+    prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))
+
     # Envelope summaries
     summaries = []
     for env in envelopes:
-        if envelope_id and str(env.id) != envelope_id:
+        if target_env_id and str(env.id) != target_env_id:
             continue
+
+        # Spent per envelope within [period_start, period_end]
         spent_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.envelope_id == env.id,
                 Transaction.is_deleted == False,
-                func.extract("year", Transaction.transaction_date) == year,
-                func.extract("month", Transaction.transaction_date) == month,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
             )
         )
         spent = Decimal(str(spent_result.scalar()))
+
+        # Allocated per envelope within [period_start, period_end]
+        alloc_result = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+            .join(Income, Allocation.income_id == Income.id)
+            .where(
+                Allocation.envelope_id == env.id,
+                Income.income_date >= period_start,
+                Income.income_date <= period_end,
+            )
+        )
+        allocated = Decimal(str(alloc_result.scalar()))
+
+        # Rollover from MonthlySnapshot for prev_start
+        rollover = Decimal("0")
+        if env.is_rollover:
+            snap_result = await db.execute(
+                select(MonthlySnapshot.rollover_amount).where(
+                    MonthlySnapshot.envelope_id == env.id,
+                    MonthlySnapshot.year == prev_start.year,
+                    MonthlySnapshot.month == prev_start.month,
+                )
+            )
+            snap_rollover = snap_result.scalar_one_or_none()
+            if snap_rollover is not None:
+                rollover = snap_rollover
+
+        effective_budget = (allocated + rollover) if (allocated + rollover > 0) else env.budget_amount
+        remaining = (allocated + rollover) - spent
+
         summaries.append({
             "name": env.name,
             "emoji": env.emoji,
-            "budget": env.budget_amount,
+            "budget": effective_budget,
             "spent": spent,
-            "remaining": env.budget_amount - spent,
+            "remaining": remaining,
+            "allocated": allocated,
+            "rollover": rollover,
         })
 
     return transactions, summaries, env_map
@@ -83,25 +159,25 @@ async def _get_export_data(user: User, db: AsyncSession, year: int, month: int, 
 
 @router.get("/csv")
 async def export_csv(
-    year: int = Query(None),
-    month: int = Query(None),
-    envelope_id: str = Query(None),
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
+    year: int | None = Query(None),
+    month: int | None = Query(None),
+    envelope_id: str | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    now = date.today()
-    y = year or now.year
-    m = month or now.month
+    p_start, p_end = _resolve_period(user, period_start, period_end, year, month)
+    env_id = str(envelope_id) if isinstance(envelope_id, (str, UUID)) else None
 
-    transactions, summaries, env_map = await _get_export_data(user, db, y, m, envelope_id)
+    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id)
 
     output = io.StringIO()
     writer = csv.writer(output)
 
     # Header
     writer.writerow(["Jatahku — Laporan Keuangan"])
-    month_name = date(y, m, 1).strftime("%B %Y")
-    writer.writerow([f"Periode: {month_name}"])
+    writer.writerow([f"Periode: {p_start.strftime('%d %b %Y')} – {p_end.strftime('%d %b %Y')}"])
     writer.writerow([])
 
     # Summary
@@ -133,7 +209,7 @@ async def export_csv(
         ])
 
     output.seek(0)
-    filename = f"jatahku_{y}-{m:02d}.csv"
+    filename = f"jatahku_{p_start.strftime('%Y-%m-%d')}_{p_end.strftime('%Y-%m-%d')}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -144,21 +220,21 @@ async def export_csv(
 
 @router.get("/pdf")
 async def export_pdf(
-    year: int = Query(None),
-    month: int = Query(None),
-    envelope_id: str = Query(None),
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
+    year: int | None = Query(None),
+    month: int | None = Query(None),
+    envelope_id: str | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    now = date.today()
-    y = year or now.year
-    m = month or now.month
+    p_start, p_end = _resolve_period(user, period_start, period_end, year, month)
+    env_id = str(envelope_id) if isinstance(envelope_id, (str, UUID)) else None
 
-    transactions, summaries, env_map = await _get_export_data(user, db, y, m, envelope_id)
-    month_name = date(y, m, 1).strftime("%B %Y")
+    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id)
 
-    total_budget = sum(s['budget'] for s in summaries)
-    total_spent = sum(s['spent'] for s in summaries)
+    total_budget = sum((s['budget'] for s in summaries), Decimal("0"))
+    total_spent = sum((s['spent'] for s in summaries), Decimal("0"))
 
     # Generate HTML → PDF using simple HTML
     html = f"""<!DOCTYPE html>
@@ -177,7 +253,7 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
 .footer {{ margin-top: 30px; text-align: center; color: #aaa; font-size: 10px; }}
 </style></head><body>
 <h1>Jatahku</h1>
-<p class="subtitle">Laporan Keuangan — {month_name}</p>
+<p class="subtitle">Laporan Keuangan — Periode: {p_start.strftime('%d %b %Y')} – {p_end.strftime('%d %b %Y')}</p>
 
 <h2>Ringkasan Amplop</h2>
 <table>
@@ -200,14 +276,14 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
         html += f"""<tr><td>{txn.transaction_date.strftime("%d %b")}</td><td>{env.name if env else '-'}</td><td>{masked_description(user.id, txn)}</td><td class="amount">Rp{int(txn.amount):,}</td><td>{src}</td></tr>"""
 
     html += f"""</table>
-<p class="footer">Digenerate oleh Jatahku — Setiap rupiah ada jatahnya.<br>{date.today().strftime("%d %B %Y %H:%M")}</p>
+<p class="footer">Digenerate oleh Jatahku — Setiap rupiah ada jatahnya.<br>{date.today().strftime("%d %B %Y")}</p>
 </body></html>"""
 
     # Generate real PDF using weasyprint
+    filename = f"jatahku_{p_start.strftime('%Y-%m-%d')}_{p_end.strftime('%Y-%m-%d')}.pdf"
     try:
         from weasyprint import HTML as WeasyHTML
         pdf_bytes = WeasyHTML(string=html).write_pdf()
-        filename = f"jatahku_{y}-{m:02d}.pdf"
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
@@ -215,9 +291,9 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
         )
     except ImportError:
         # Fallback to HTML if weasyprint not available
-        filename = f"jatahku_{y}-{m:02d}.html"
+        html_filename = f"jatahku_{p_start.strftime('%Y-%m-%d')}_{p_end.strftime('%Y-%m-%d')}.html"
         return StreamingResponse(
             iter([html]),
             media_type="text/html",
-            headers={"Content-Disposition": f"inline; filename={filename}"},
+            headers={"Content-Disposition": f"inline; filename={html_filename}"},
         )

@@ -200,7 +200,11 @@ export default function Analytics() {
           </div>
           <p className="text-sm text-gray-500 mt-0.5">Memahami pola keuanganmu</p>
         </div>
-        <ExportButtons />
+        <ExportButtons
+          periodStart={cur.period_start}
+          periodEnd={cur.period_end}
+          periodLabel={cur.label}
+        />
       </div>
 
       {/* ── Financial Health ── */}

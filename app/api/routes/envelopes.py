@@ -463,14 +463,16 @@ async def delete_envelope(
 
     # Calculate remaining funds in this envelope
     now = date_cls.today()
+    payday_day = getattr(user, 'payday_day', 1) or 1
+    period_start, period_end = get_budget_period(payday_day, now)
     from app.models.models import Income
     alloc_result = await db.execute(
         select(func.coalesce(func.sum(Allocation.amount), 0))
         .join(Income, Allocation.income_id == Income.id)
         .where(
             Allocation.envelope_id == envelope_id,
-            func.extract("year", Income.income_date) == now.year,
-            func.extract("month", Income.income_date) == now.month,
+            Income.income_date >= period_start,
+            Income.income_date <= period_end,
         )
     )
     allocated = Decimal(str(alloc_result.scalar()))
@@ -479,8 +481,8 @@ async def delete_envelope(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.envelope_id == envelope_id,
             Transaction.is_deleted == False,
-            func.extract("year", Transaction.transaction_date) == now.year,
-            func.extract("month", Transaction.transaction_date) == now.month,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
         )
     )
     spent = Decimal(str(spent_result.scalar()))
