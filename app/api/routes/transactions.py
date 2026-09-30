@@ -47,6 +47,7 @@ class TransactionResponse(BaseModel):
     is_deleted: bool
     is_private: bool = False
     is_own: bool = True
+    is_adjustment: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -456,6 +457,7 @@ async def list_transactions(
             created_at=t.created_at, is_deleted=t.is_deleted,
             is_private=t.is_private,
             is_own=str(t.user_id) == str(user.id),
+            is_adjustment=getattr(t, "balance_check_id", None) is not None,
         )
         for t in txns
     ]
