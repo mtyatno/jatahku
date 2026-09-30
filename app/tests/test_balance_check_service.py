@@ -13,6 +13,8 @@ from decimal import Decimal as D
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy.dialects import postgresql
+
 from app.models.models import BalanceCheck, Transaction, Income, Allocation
 from app.services import balance_check as svc
 from app.tests.fakes import FakeResult, db_with, sql, executed_sql
@@ -80,13 +82,42 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
             p = await svc.build_preview(USER, db_with(), D("2"), today=TODAY)
         self.assertEqual(p["default_target_envelope_id"], TAB)
 
+    async def test_invalid_actual_400(self):
+        for bad in (D("NaN"), D("Infinity"), D("-Infinity"), D("-1"), D("1e30")):
+            with self.subTest(actual=bad):
+                with self.assertRaises(svc.BalanceCheckError) as ctx:
+                    await svc.build_preview(USER, db_with(), bad, today=TODAY)
+                self.assertEqual(ctx.exception.status_code, 400)
+
+    async def test_sub_cent_actual_is_normalized(self):
+        p = await svc.build_preview(USER, db_with(), D("2000000.004"), today=TODAY)
+        self.assertEqual((p["direction"], p["gap"], p["actual_amount"]),
+                         ("match", D("0"), D("2000000.00")))
+
+    async def test_actual_at_the_numeric_limit(self):
+        p = await svc.build_preview(USER, db_with(), D("9999999999999.99"), today=TODAY)  # muat Numeric(15, 2)
+        self.assertEqual(p["actual_amount"], D("9999999999999.99"))
+        with self.assertRaises(svc.BalanceCheckError) as ctx:  # membulat ke 10^13 → meluap
+            await svc.build_preview(USER, db_with(), D("9999999999999.995"), today=TODAY)
+        self.assertEqual(ctx.exception.status_code, 400)
+
 
 class WeightQueryTests(unittest.IsolatedAsyncioTestCase):
     async def test_excludes_adjustments(self):
         db = db_with(FakeResult(rows=[(MAKAN, D("5000"))]))
         w = await svc.load_expense_weights([MAKAN], db, TODAY)
         self.assertEqual(w, {str(MAKAN): D("5000")})
-        self.assertIn("transactions.balance_check_id IS NULL", sql(db.execute.call_args.args[0]))
+        stmt = db.execute.call_args.args[0]
+        text = sql(stmt)
+        self.assertIn("transactions.balance_check_id IS NULL", text)
+        self.assertIn("transactions.is_deleted = false", text)
+        self.assertIn("transactions.envelope_id IN", text)
+        # jendela 30 hari inklusif: [TODAY - 29 hari, TODAY]
+        self.assertIn("transactions.transaction_date >= %(transaction_date_1)s", text)
+        self.assertIn("transactions.transaction_date <= %(transaction_date_2)s", text)
+        params = stmt.compile(dialect=postgresql.dialect()).params
+        self.assertEqual(params["transaction_date_1"], date(2026, 9, 1))
+        self.assertEqual(params["transaction_date_2"], TODAY)
 
     async def test_no_envelopes_skips_query(self):
         db = db_with()
@@ -98,12 +129,25 @@ class WeightQueryTests(unittest.IsolatedAsyncioTestCase):
 @patch.object(svc, "compute_envelope_summaries", new=AsyncMock(return_value=ROWS))
 class ApplyTests(unittest.IsolatedAsyncioTestCase):
     async def assert_error(self, status, *args):
+        """Error apa pun tidak menulis apa-apa. Hasil antrean db = kunci baris household."""
+        db = recording_db(FakeResult(HID))
         with self.assertRaises(svc.BalanceCheckError) as ctx:
-            await svc.apply_balance_check(USER, recording_db(), *args, today=TODAY)
+            await svc.apply_balance_check(USER, db, *args, today=TODAY)
         self.assertEqual(ctx.exception.status_code, status)
+        self.assertEqual(db.added, [])
+        db.commit.assert_not_awaited()
+        return db
 
     async def test_stale_app_amount_409(self):
-        await self.assert_error(409, D("1660000"), D("1999000"), [])
+        db = await self.assert_error(409, D("1660000"), D("1999000"), [])
+        self.assertEqual(db.execute.await_count, 1)  # dikunci dulu, baru ketahuan basi
+
+    async def test_one_cent_off_is_stale_409(self):
+        await self.assert_error(409, D("1660000"), D("1999999.99"), [])
+
+    async def test_negative_expected_is_not_invalid(self):
+        # total app boleh negatif (overspend): bukan 400 "tidak valid", melainkan basi → 409
+        await self.assert_error(409, D("1660000"), D("-5"), [])
 
     async def test_invalid_lines_400(self):
         await self.assert_error(400, D("1660000"), D("2000000"), [(MAKAN, D("100000"))])
@@ -112,17 +156,32 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         await self.assert_error(400, D("1660000"), D("2000000"), [(TAB, D("340000"))])
 
     async def test_negative_actual_400(self):
-        await self.assert_error(400, D("-1"), D("2000000"), [])
+        db = await self.assert_error(400, D("-1"), D("2000000"), [])
+        db.execute.assert_not_called()  # ditolak sebelum kunci household
 
     async def test_absurd_actual_400(self):
-        await self.assert_error(400, D("10000000000000"), D("2000000"), [])
+        db = await self.assert_error(400, D("10000000000000"), D("2000000"), [])
+        db.execute.assert_not_called()
+
+    async def test_non_finite_or_huge_actual_400(self):
+        for bad in (D("NaN"), D("Infinity"), D("-Infinity"), D("1e30")):
+            with self.subTest(actual=bad):
+                db = await self.assert_error(400, bad, D("2000000"), [])
+                db.execute.assert_not_called()
+
+    async def test_non_finite_or_huge_expected_400(self):
+        for bad in (D("NaN"), D("Infinity"), D("1e30"), D("-1e30")):
+            with self.subTest(expected=bad):
+                db = await self.assert_error(400, D("1660000"), bad, [])
+                db.execute.assert_not_called()
 
     async def test_no_household_400(self):
         with patch.object(svc, "get_household_id", new=AsyncMock(return_value=None)):
-            await self.assert_error(400, D("1"), D("2000000"), [])
+            db = await self.assert_error(400, D("1"), D("2000000"), [])
+        db.execute.assert_not_called()  # tanpa household tak ada yang bisa dikunci
 
     async def test_unrecorded_expense_creates_tagged_transactions(self):
-        db = recording_db()
+        db = recording_db(FakeResult(HID))
         out = await svc.apply_balance_check(
             USER, db, D("1660000"), D("2000000"),
             [(MAKAN, D("227000")), (TRANS, D("113000"))], today=TODAY,
@@ -139,9 +198,45 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out["transaction_ids"], [t.id for t in txns])
         self.assertIsNone(out["income_id"])
         db.commit.assert_awaited_once()
+        # satu-satunya statement ke DB = kunci baris household (kueri saldo di-patch)
+        stmts = executed_sql(db)
+        self.assertEqual(len(stmts), 1)
+        self.assertIn("FROM households", stmts[0])
+        self.assertIn("households.id = ", stmts[0])
+        self.assertIn("FOR UPDATE", stmts[0])
+
+    async def test_household_locked_before_app_amount_is_recomputed(self):
+        # Penerus kunci harus menghitung ulang SETELAH kunci: ia melihat data yang sudah
+        # di-commit pemegang sebelumnya (READ COMMITTED) → 409, bukan double-apply.
+        db = recording_db(FakeResult(HID))
+        at_recompute = []
+
+        async def recompute(user, session):
+            at_recompute.extend(executed_sql(session))
+            return ROWS
+
+        with patch.object(svc, "compute_envelope_summaries", new=recompute):
+            await svc.apply_balance_check(USER, db, D("2000000"), D("2000000"), [], today=TODAY)
+        self.assertEqual(len(at_recompute), 1)
+        self.assertIn("FOR UPDATE", at_recompute[0])
+
+    async def test_actual_normalized_to_the_cent(self):
+        db = recording_db(FakeResult(HID))
+        await svc.apply_balance_check(
+            USER, db, D("1660000.004"), D("2000000"),
+            [(MAKAN, D("227000")), (TRANS, D("113000"))], today=TODAY,
+        )
+        check = db.added[0]
+        self.assertEqual((check.actual_amount, check.gap), (D("1660000.00"), D("-340000.00")))
+
+    async def test_sub_cent_surplus_is_a_match_without_zero_value_rows(self):
+        db = recording_db(FakeResult(HID))
+        out = await svc.apply_balance_check(USER, db, D("2000000.004"), D("2000000"), [], today=TODAY)
+        self.assertEqual((len(db.added), out["gap"]), (1, D("0")))
+        self.assertFalse(any(isinstance(o, (Income, Allocation)) for o in db.added))
 
     async def test_surplus_creates_tagged_income_and_allocation(self):
-        db = recording_db()
+        db = recording_db(FakeResult(HID))
         out = await svc.apply_balance_check(USER, db, D("2200000"), D("2000000"), [(TAB, D("200000"))], today=TODAY)
         check = db.added[0]
         income = next(o for o in db.added if isinstance(o, Income))
@@ -153,14 +248,14 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(isinstance(o, Transaction) for o in db.added))
 
     async def test_match_logs_check_only(self):
-        db = recording_db()
+        db = recording_db(FakeResult(HID))
         out = await svc.apply_balance_check(USER, db, D("2000000"), D("2000000"), [], today=TODAY)
         self.assertEqual(len(db.added), 1)
         self.assertEqual(db.added[0].gap, D("0"))
         self.assertEqual(out["transaction_ids"], [])
 
     async def test_expected_amount_compared_to_the_cent(self):
-        db = recording_db()
+        db = recording_db(FakeResult(HID))
         await svc.apply_balance_check(USER, db, D("2000000"), D("2000000.0"), [], today=TODAY)
         db.commit.assert_awaited_once()
 
@@ -193,10 +288,18 @@ class UndoTests(unittest.IsolatedAsyncioTestCase):
         db = db_with(FakeResult(latest), FakeResult(), FakeResult(rows=[uuid.uuid4()]), FakeResult(), FakeResult())
         out = await svc.undo_balance_check(USER, db, CHECK_ID)
         stmts = executed_sql(db)
+        # "terakhir" = cek household ini yang belum di-undo, terbaru dulu
         self.assertIn("balance_checks.undone_at IS NULL", stmts[0])
+        self.assertIn("balance_checks.household_id = ", stmts[0])
+        self.assertIn("ORDER BY balance_checks.created_at DESC", stmts[0])
+        # tiap penulisan dibatasi ke baris milik cek ini saja
         self.assertIn("UPDATE transactions SET is_deleted", stmts[1])
+        self.assertIn("transactions.balance_check_id = ", stmts[1])
+        self.assertIn("incomes.balance_check_id = ", stmts[2])
         self.assertIn("DELETE FROM allocations", stmts[3])
+        self.assertIn("allocations.income_id IN", stmts[3])
         self.assertIn("DELETE FROM incomes", stmts[4])
+        self.assertIn("incomes.id IN", stmts[4])
         self.assertIsNotNone(latest.undone_at)
         db.commit.assert_awaited_once()
         self.assertEqual(out["status"], "undone")
@@ -216,7 +319,10 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         db = db_with(FakeResult(SimpleNamespace(created_at=when, gap=D("-340000"))), FakeResult(2))
         s = await svc.get_status(USER, db)
         self.assertEqual(s, {"last_checked_at": when, "last_gap": D("-340000"), "member_count": 2})
-        self.assertIn("balance_checks.undone_at IS NULL", sql(db.execute.call_args_list[0].args[0]))
+        stmts = executed_sql(db)
+        self.assertIn("balance_checks.undone_at IS NULL", stmts[0])
+        self.assertIn("balance_checks.household_id = ", stmts[0])
+        self.assertIn("household_members.household_id = ", stmts[1])
 
     async def test_status_never_checked(self):
         s = await svc.get_status(USER, db_with(FakeResult(None), FakeResult(1)))

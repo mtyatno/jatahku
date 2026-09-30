@@ -10,7 +10,7 @@ from decimal import Decimal
 from sqlalchemy import select, func, update, delete
 
 from app.models.models import (
-    BalanceCheck, Transaction, Income, Allocation, HouseholdMember, TransactionSource,
+    BalanceCheck, Transaction, Income, Allocation, Household, HouseholdMember, TransactionSource,
 )
 from app.services.envelope_balance import compute_envelope_summaries, get_household_id
 
@@ -102,6 +102,19 @@ def validate_lines(gap: Decimal, lines: list[tuple], spendable_ids: set[str],
 WEIGHT_WINDOW_DAYS = 30
 
 
+def _money(value, detail: str) -> Decimal:
+    """Nominal uang >= 0, dinormalisasi ke sen (Numeric(15, 2)). NaN/Infinity, negatif, dan
+    di luar batas ditolak 400 — bukan InvalidOperation → 500."""
+    value = Decimal(value)
+    # is_finite() dulu: membandingkan NaN / men-quantize angka raksasa melempar InvalidOperation.
+    if not value.is_finite() or value < 0 or value >= MAX_AMOUNT:
+        raise BalanceCheckError(400, detail)
+    value = value.quantize(CENT)
+    if value >= MAX_AMOUNT:  # 9999999999999.995 membulat ke 10^13 → meluap Numeric(15, 2)
+        raise BalanceCheckError(400, detail)
+    return value
+
+
 def _app_amount(rows) -> Decimal:
     """Angka "Menurut Jatahku" = Σ remaining amplop terlihat (sama dgn dashboard)."""
     return sum((r["remaining"] for r in rows), ZERO)
@@ -151,6 +164,7 @@ async def load_expense_weights(envelope_ids, db, today: date) -> dict:
 
 async def build_preview(user, db, actual_amount: Decimal, today: date | None = None) -> dict:
     """Hitung selisih + saran pembagian. TIDAK menulis apa pun."""
+    actual_amount = _money(actual_amount, "Nominal uang riil tidak valid")
     today = today or date.today()
     rows = await compute_envelope_summaries(user, db)
     app_amount = _app_amount(rows)
@@ -186,15 +200,23 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
                               lines: list, today: date | None = None) -> dict:
     """Validasi ulang di server lalu tulis log + penyesuaian dalam satu commit."""
     today = today or date.today()
-    if actual_amount < 0 or actual_amount >= MAX_AMOUNT:
-        raise BalanceCheckError(400, "Nominal uang riil tidak valid")
+    actual_amount = _money(actual_amount, "Nominal uang riil tidak valid")
+    expected_app_amount = Decimal(expected_app_amount)
+    if not expected_app_amount.is_finite() or abs(expected_app_amount) >= MAX_AMOUNT:  # boleh negatif
+        raise BalanceCheckError(400, "Data selisih tidak valid, cek ulang")
     hid = await get_household_id(user, db)
     if not hid:
         raise BalanceCheckError(400, "Belum punya household")
 
+    # Serialkan apply per household: dua apply bersamaan (double-tap, dua tab, dua anggota)
+    # dengan expected_app_amount sama tak boleh sama-sama lolos cek 409 lalu sama-sama commit.
+    # Kunci dipegang sampai commit; penerusnya menghitung ulang SETELAH kunci sehingga melihat
+    # data yang di-commit pemegang sebelumnya (READ COMMITTED, default engine) → 409.
+    await db.execute(select(Household.id).where(Household.id == hid).with_for_update())
+
     rows = await compute_envelope_summaries(user, db)
     app_amount = _app_amount(rows)
-    if app_amount.quantize(CENT) != Decimal(expected_app_amount).quantize(CENT):
+    if app_amount.quantize(CENT) != expected_app_amount.quantize(CENT):
         raise BalanceCheckError(409, "Data berubah, cek ulang selisihnya")
     gap = actual_amount - app_amount
 
