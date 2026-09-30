@@ -16,6 +16,39 @@ settings = get_settings()
 logger = logging.getLogger("jatahku.summary")
 
 
+def _today_txns_query(hid, user_id, today):
+    """Transaksi 'hari ini' untuk ringkasan harian. Penyesuaian cocokkan saldo
+    dikecualikan: tanggalnya buatan, bukan belanja hari ini."""
+    return (
+        select(Transaction)
+        .join(Envelope)
+        .where(
+            Envelope.household_id == hid,
+            Transaction.is_deleted == False,
+            Transaction.transaction_date == today,
+            Transaction.balance_check_id.is_(None),
+            or_(Envelope.owner_id == None, Envelope.owner_id == user_id),
+        )
+        .order_by(Transaction.created_at.desc())
+    )
+
+
+def _week_txns_query(hid, week_start, today):
+    """Seksi 'Minggu ini' di ringkasan mingguan (tanpa penyesuaian). Seksi
+    periode (Dana/Terpakai/Sisa) dihitung terpisah dan tetap menyertakannya."""
+    return (
+        select(Transaction)
+        .join(Envelope)
+        .where(
+            Envelope.household_id == hid,
+            Transaction.is_deleted == False,
+            Transaction.transaction_date >= week_start,
+            Transaction.transaction_date <= today,
+            Transaction.balance_check_id.is_(None),
+        )
+    )
+
+
 def _to_wa(lines: list[str]) -> str:
     """Convert HTML summary lines to plain text for WhatsApp."""
     text = "\n".join(lines)
@@ -57,17 +90,7 @@ async def send_daily_summary(user_id=None):
                     continue
 
                 # Today's transactions
-                txn_result = await db.execute(
-                    select(Transaction)
-                    .join(Envelope)
-                    .where(
-                        Envelope.household_id == hid,
-                        Transaction.is_deleted == False,
-                        Transaction.transaction_date == today,
-                        or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-                    )
-                    .order_by(Transaction.created_at.desc())
-                )
+                txn_result = await db.execute(_today_txns_query(hid, user.id, today))
                 today_txns = txn_result.scalars().all()
 
                 today_total = sum(t.amount for t in today_txns)
@@ -255,16 +278,7 @@ async def send_weekly_summary(user_id=None):
                     continue
 
                 # Week's transactions
-                txn_result = await db.execute(
-                    select(Transaction)
-                    .join(Envelope)
-                    .where(
-                        Envelope.household_id == hid,
-                        Transaction.is_deleted == False,
-                        Transaction.transaction_date >= week_start,
-                        Transaction.transaction_date <= today,
-                    )
-                )
+                txn_result = await db.execute(_week_txns_query(hid, week_start, today))
                 week_txns = txn_result.scalars().all()
                 week_total = sum(t.amount for t in week_txns)
 

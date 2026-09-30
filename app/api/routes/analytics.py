@@ -76,6 +76,7 @@ async def daily_spending(
             Transaction.is_deleted == False,
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
+            Transaction.balance_check_id.is_(None),
         )
         .group_by(Transaction.transaction_date)
         .order_by(Transaction.transaction_date)
@@ -137,6 +138,7 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
             Income.user_id == user.id,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
+            Income.balance_check_id.is_(None),
         )
         .group_by(Envelope.id, Envelope.purpose, Envelope.name, Envelope.emoji, EnvelopeGroup.name)
     )
@@ -167,6 +169,7 @@ async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decim
             Income.user_id == user.id,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
+            Income.balance_check_id.is_(None),
         )
     )
     total = Decimal("0")
@@ -262,6 +265,7 @@ async def monthly_trend(
                 Envelope.household_id == hid,
                 Income.income_date >= p_start,
                 Income.income_date <= p_end,
+                Income.balance_check_id.is_(None),
                 or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
             )
         )
@@ -299,6 +303,7 @@ async def weekly_pattern(
             Transaction.is_deleted == False,
             Transaction.transaction_date >= p_start,
             Transaction.transaction_date <= p_end,
+            Transaction.balance_check_id.is_(None),
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
         .order_by(func.extract('dow', Transaction.transaction_date))

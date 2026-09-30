@@ -81,6 +81,7 @@ async def public_stats():
         today_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.is_deleted == False,
+                Transaction.balance_check_id.is_(None),
                 Transaction.transaction_date == today,
             )
         )
@@ -90,6 +91,7 @@ async def public_stats():
         week_result = await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.is_deleted == False,
+                Transaction.balance_check_id.is_(None),
                 Transaction.transaction_date >= week_ago,
             )
         )
@@ -97,7 +99,7 @@ async def public_stats():
 
         # Total transactions
         txn_count = await db.execute(
-            select(func.count(Transaction.id)).where(Transaction.is_deleted == False)
+            select(func.count(Transaction.id)).where(Transaction.is_deleted == False, Transaction.balance_check_id.is_(None))
         )
         total_txns = txn_count.scalar()
 
