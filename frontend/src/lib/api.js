@@ -544,6 +544,46 @@ class ApiClient {
       }),
     });
   }
+
+  // Cocokkan saldo
+  async getBalanceCheckStatus() {
+    try {
+      const res = await this.request('/balance-check/status');
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
+  async previewBalanceCheck(actualAmount) {
+    try {
+      const res = await this.request('/balance-check/preview', {
+        method: 'POST', body: JSON.stringify({ actual_amount: Number(actualAmount) }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  async applyBalanceCheck(payload) {
+    try {
+      const res = await this.request('/balance-check/apply', {
+        method: 'POST', body: JSON.stringify(payload),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  async undoBalanceCheck(id) {
+    try {
+      const res = await this.request(`/balance-check/${id}/undo`, { method: 'POST' });
+      return { ok: res.ok, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
 }
 
 export const api = new ApiClient();
