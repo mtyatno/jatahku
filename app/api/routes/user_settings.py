@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update, delete, or_
+from sqlalchemy import select, func, update, delete, or_, exists
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -18,7 +18,7 @@ from app.models.models import (
     RecurringTransaction, Notification, NotificationPreference,
     HouseholdMember, Household,
     Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
-    UserStreak,
+    UserStreak, BalanceCheck,
 )
 
 router = APIRouter()
@@ -453,6 +453,15 @@ async def reset_data(
     if inc_ids:
         await db.execute(delete(Allocation).where(Allocation.income_id.in_(inc_ids)))
     await db.execute(delete(Income).where(Income.user_id == user.id))
+
+    # Log cocokkan saldo household ikut dihapus — kecuali yang masih dirujuk
+    # income penyesuaian milik anggota lain (income mereka tidak ikut di-reset).
+    await db.execute(
+        delete(BalanceCheck).where(
+            BalanceCheck.household_id == hid,
+            ~exists().where(Income.balance_check_id == BalanceCheck.id),
+        )
+    )
 
     await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
 
