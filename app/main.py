@@ -48,6 +48,17 @@ async def lifespan(app: FastAPI):
                 "WHERE e.id = sub.envelope_id AND e.purpose = 'expense' "
                 "AND e.budget_amount = 0 AND sub.allocated > 0"
             ))
+            # Cocokkan saldo (spec 2026-09-30): create_all di atas sudah membuat
+            # tabel balance_checks; tambah FK nullable ke transactions & incomes.
+            for _tbl in ("transactions", "incomes"):
+                await conn.execute(text(
+                    f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS balance_check_id UUID "
+                    "REFERENCES balance_checks(id)"
+                ))
+                await conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{_tbl}_balance_check_id "
+                    f"ON {_tbl} (balance_check_id)"
+                ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield
