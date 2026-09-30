@@ -84,6 +84,7 @@ async def get_profile(
         select(func.count(Transaction.id)).where(
             Transaction.user_id == user.id,
             Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),  # sama dgn limit Basic (plan_limits)
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
         )

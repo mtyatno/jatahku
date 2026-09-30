@@ -970,6 +970,8 @@ async def handle_pengeluaran_hari_ini(update, context):
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
                 Transaction.amount > 0,
+                # penyesuaian cocokkan saldo bukan belanja hari ini
+                Transaction.balance_check_id.is_(None),
             )
             .group_by(Transaction.envelope_id)
         )
@@ -982,6 +984,7 @@ async def handle_pengeluaran_hari_ini(update, context):
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
                 Transaction.amount > 0,
+                Transaction.balance_check_id.is_(None),
             )
             .order_by(Transaction.id.desc())
             .limit(5)
@@ -1088,6 +1091,8 @@ async def handle_pengeluaran_hari_lalu(update, context):
                 Transaction.transaction_date == target_date,
                 Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                # penyesuaian cocokkan saldo bukan belanja hari ini
+                Transaction.balance_check_id.is_(None),
             )
             .order_by(Transaction.id.desc())
         )
@@ -1100,6 +1105,7 @@ async def handle_pengeluaran_hari_lalu(update, context):
                 Transaction.transaction_date == today,
                 Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                Transaction.balance_check_id.is_(None),
             )
         )
         today_total = Decimal(str(today_total_r.scalar()))

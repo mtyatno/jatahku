@@ -71,7 +71,7 @@ async def admin_dashboard(
 
     # Total transactions
     total_txns = (await db.execute(
-        select(func.count(Transaction.id)).where(Transaction.is_deleted == False)
+        select(func.count(Transaction.id)).where(Transaction.is_deleted == False, Transaction.balance_check_id.is_(None))
     )).scalar()
 
     # Today transactions
@@ -79,6 +79,7 @@ async def admin_dashboard(
         select(func.count(Transaction.id)).where(
             Transaction.is_deleted == False,
             Transaction.transaction_date == today,
+            Transaction.balance_check_id.is_(None),
         )
     )).scalar()
 
@@ -87,6 +88,7 @@ async def admin_dashboard(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.is_deleted == False,
             Transaction.transaction_date == today,
+            Transaction.balance_check_id.is_(None),
         )
     )).scalar()
 
@@ -121,12 +123,14 @@ async def admin_dashboard(
             select(func.count(Transaction.id)).where(
                 Transaction.is_deleted == False,
                 Transaction.transaction_date == d,
+                Transaction.balance_check_id.is_(None),
             )
         )).scalar()
         amount = (await db.execute(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
                 Transaction.is_deleted == False,
                 Transaction.transaction_date == d,
+                Transaction.balance_check_id.is_(None),
             )
         )).scalar()
         daily_txns.append({"date": str(d), "count": count, "amount": float(amount)})
