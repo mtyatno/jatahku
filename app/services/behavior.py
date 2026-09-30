@@ -9,6 +9,18 @@ from app.models.models import (
 from app.core.period import get_budget_period, get_previous_period
 
 
+def spent_today_query(envelope_id, user_id, today):
+    """Spent hari ini untuk daily limit. Penyesuaian cocokkan saldo tidak dihitung:
+    tanggalnya buatan dan tidak boleh memblokir belanja hari ini."""
+    return select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+        Transaction.envelope_id == envelope_id,
+        Transaction.user_id == user_id,
+        Transaction.is_deleted == False,
+        Transaction.transaction_date == today,
+        Transaction.balance_check_id.is_(None),
+    )
+
+
 class BehaviorCheckResult:
     def __init__(self):
         self.allowed = True
@@ -147,14 +159,7 @@ async def check_behavior(
 
         if not _bypass:
             today = date.today()
-            spent_today_result = await db.execute(
-                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-                    Transaction.envelope_id == envelope_id,
-                    Transaction.user_id == user_id,
-                    Transaction.is_deleted == False,
-                    Transaction.transaction_date == today,
-                )
-            )
+            spent_today_result = await db.execute(spent_today_query(envelope_id, user_id, today))
             spent_today = Decimal(str(spent_today_result.scalar()))
 
         if not _bypass and spent_today + amount > effective_daily_limit:

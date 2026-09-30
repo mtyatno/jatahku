@@ -31,6 +31,7 @@ async def _has_allocated_this_period(user, period_start, period_end, db: AsyncSe
         select(func.count()).select_from(Income).where(
             Income.household_id == hid,
             Income.amount > 0,
+            Income.balance_check_id.is_(None),  # income penyesuaian bukan gaji
             Income.income_date >= period_start,
             Income.income_date <= period_end,
         )
