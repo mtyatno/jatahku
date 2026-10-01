@@ -7,7 +7,7 @@ from sqlalchemy import select, func, update, and_
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     HouseholdMember, Household, RecurringTransaction,
@@ -15,12 +15,6 @@ from app.models.models import (
 )
 
 router = APIRouter()
-
-
-async def require_admin(user: User = Depends(get_current_user)):
-    if not getattr(user, 'is_admin', False):
-        raise HTTPException(403, "Admin access required")
-    return user
 
 
 def fmt(n):
