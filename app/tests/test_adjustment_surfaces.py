@@ -59,6 +59,7 @@ class BotTodayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stmts), 2)
         for s in stmts:
             self.assertIn(NOT_ADJ_TXN, s)
+            self.assertIn("transactions.is_deleted = false", s)  # transaksi yang sudah dihapus tak dihitung
 
     async def test_hari_lalu_excludes_adjustments(self):
         db = MagicMock()

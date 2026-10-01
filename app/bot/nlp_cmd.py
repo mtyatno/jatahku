@@ -974,6 +974,7 @@ async def handle_pengeluaran_hari_ini(update, context):
             .where(
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
+                Transaction.is_deleted == False,
                 Transaction.amount > 0,
                 # penyesuaian cocokkan saldo bukan belanja hari ini
                 Transaction.balance_check_id.is_(None),
@@ -988,6 +989,7 @@ async def handle_pengeluaran_hari_ini(update, context):
             .where(
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
+                Transaction.is_deleted == False,
                 Transaction.amount > 0,
                 Transaction.balance_check_id.is_(None),
             )
