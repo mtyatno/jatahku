@@ -52,6 +52,7 @@ async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, s
         select(func.count(Transaction.id)).where(
             Transaction.user_id == user.id,
             Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),  # penyesuaian cocokkan saldo tidak dihitung
             func.extract("year", Transaction.transaction_date) == now.year,
             func.extract("month", Transaction.transaction_date) == now.month,
         )

@@ -50,4 +50,5 @@ def present_transaction(viewer_id, txn) -> dict:
         "is_deleted": txn.is_deleted,
         "is_private": bool(getattr(txn, "is_private", False)),
         "is_own": str(getattr(txn, "user_id", "")) == str(viewer_id or ""),
+        "is_adjustment": getattr(txn, "balance_check_id", None) is not None,
     }

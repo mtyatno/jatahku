@@ -76,6 +76,7 @@ async def daily_spending(
             Transaction.is_deleted == False,
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
+            Transaction.balance_check_id.is_(None),
         )
         .group_by(Transaction.transaction_date)
         .order_by(Transaction.transaction_date)
@@ -137,6 +138,7 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
             Income.user_id == user.id,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
+            Income.balance_check_id.is_(None),
         )
         .group_by(Envelope.id, Envelope.purpose, Envelope.name, Envelope.emoji, EnvelopeGroup.name)
     )
@@ -167,6 +169,7 @@ async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decim
             Income.user_id == user.id,
             Income.income_date >= period_start,
             Income.income_date <= period_end,
+            Income.balance_check_id.is_(None),
         )
     )
     total = Decimal("0")
@@ -262,6 +265,7 @@ async def monthly_trend(
                 Envelope.household_id == hid,
                 Income.income_date >= p_start,
                 Income.income_date <= p_end,
+                Income.balance_check_id.is_(None),
                 or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
             )
         )
@@ -270,63 +274,6 @@ async def monthly_trend(
         label = f"{p_start.strftime('%d %b')} – {p_end.strftime('%d %b')}"
         result.append({"month": label, "spent": spent, "allocated": allocated, "income": float(inc_total)})
     return result
-
-
-@router.get("/weekly-pattern")
-async def weekly_pattern(
-    periods: int = Query(3, ge=1, le=6),
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
-):
-    """Average spending per day-of-week over last N budget periods."""
-    hid = await _get_hid(user, db)
-    if not hid:
-        return []
-
-    payday_day = _payday(user)
-    last_periods = get_last_n_periods(payday_day, periods)
-    p_start = last_periods[0][0]
-    p_end = last_periods[-1][1]
-
-    result = await db.execute(
-        select(
-            func.extract('dow', Transaction.transaction_date).label('dow'),
-            func.sum(Transaction.amount).label('total'),
-            func.count(Transaction.id).label('txn_count'),
-        )
-        .join(Envelope, Transaction.envelope_id == Envelope.id)
-        .where(
-            Envelope.household_id == hid,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= p_start,
-            Transaction.transaction_date <= p_end,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
-        .order_by(func.extract('dow', Transaction.transaction_date))
-    )
-    rows = {int(r.dow): (float(r.total), int(r.txn_count)) for r in result.all()}
-
-    # Count occurrences of each weekday in the date range
-    from datetime import timedelta as td
-    day_counts = [0] * 7  # index = PostgreSQL DOW (0=Sun..6=Sat)
-    cur = p_start
-    while cur <= p_end:
-        dow = cur.isoweekday() % 7  # Mon=1..Sun=7 → mod 7: Sun=0, Mon=1..Sat=6
-        day_counts[dow] += 1
-        cur += td(days=1)
-
-    _DOW_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"]
-    output = []
-    for dow in range(7):
-        total, count = rows.get(dow, (0.0, 0))
-        occurrences = day_counts[dow] or 1
-        output.append({
-            "dow": dow,
-            "name": _DOW_NAMES[dow],
-            "total": total,
-            "avg": round(total / occurrences),
-            "txn_count": count,
-        })
-    return output
 
 
 @router.get("/prediction")

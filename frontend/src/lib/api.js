@@ -287,11 +287,6 @@ class ApiClient {
     return res.ok ? res.json() : [];
   }
 
-  async getWeeklyPattern(periods = 3) {
-    const res = await this.request(`/analytics/weekly-pattern?periods=${periods}`);
-    return res.ok ? res.json() : [];
-  }
-
   async getEnvelopeBreakdown(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
     if (periodStart) params.set('period_start', periodStart);
@@ -543,6 +538,46 @@ class ApiClient {
         description: item.description, frequency: item.frequency, next_run: prevNextRun,
       }),
     });
+  }
+
+  // Cocokkan saldo
+  async getBalanceCheckStatus() {
+    try {
+      const res = await this.request('/balance-check/status');
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
+  async previewBalanceCheck(actualAmount) {
+    try {
+      const res = await this.request('/balance-check/preview', {
+        method: 'POST', body: JSON.stringify({ actual_amount: Number(actualAmount) }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  async applyBalanceCheck(payload) {
+    try {
+      const res = await this.request('/balance-check/apply', {
+        method: 'POST', body: JSON.stringify(payload),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  async undoBalanceCheck(id) {
+    try {
+      const res = await this.request(`/balance-check/${id}/undo`, { method: 'POST' });
+      return { ok: res.ok, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
   }
 }
 

@@ -201,6 +201,10 @@ class Transaction(TimestampMixin, Base):
     is_private: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Terisi = penyesuaian "cocokkan saldo" (spec 2026-09-30), bukan input user.
+    balance_check_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("balance_checks.id"), nullable=True, index=True, default=None
+    )
 
     # Relationships
     envelope: Mapped["Envelope"] = relationship(back_populates="transactions")
@@ -218,6 +222,10 @@ class Income(TimestampMixin, Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
     description: Mapped[str] = mapped_column(String(500))
     income_date: Mapped[date] = mapped_column(Date, default=date.today)
+    # Terisi = income penyesuaian "cocokkan saldo" (bukan pemasukan sungguhan).
+    balance_check_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("balance_checks.id"), nullable=True, index=True, default=None
+    )
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="incomes")
@@ -238,6 +246,22 @@ class Allocation(TimestampMixin, Base):
     # Relationships
     income: Mapped["Income"] = relationship(back_populates="allocations")
     envelope: Mapped["Envelope"] = relationship(back_populates="allocations")
+
+
+class BalanceCheck(TimestampMixin, Base):
+    """Satu kali "Cocokkan saldo": uang riil vs angka app. Penyesuaiannya adalah
+    Transaction/Income biasa yang menunjuk ke sini lewat balance_check_id."""
+    __tablename__ = "balance_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    actual_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
+    app_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
+    gap: Mapped[Decimal] = mapped_column(Numeric(15, 2))  # actual - app
+    undone_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
 
 class RecurringTransaction(TimestampMixin, Base):

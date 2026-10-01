@@ -37,3 +37,11 @@ async def get_current_user(
             detail="User not found",
         )
     return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Dependency untuk endpoint khusus admin (dashboard admin, pemicu manual
+    yang berdampak ke semua user)."""
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user

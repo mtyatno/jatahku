@@ -8,6 +8,7 @@ import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
 import { fundingState } from '../lib/envelopeFunding';
+import { formatLastChecked } from '../lib/balanceCheck';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   PieChart, Pie, Cell,
@@ -389,12 +390,17 @@ export default function Dashboard() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [balanceStatus, setBalanceStatus] = useState(null);
 
   useEffect(() => {
     const onAdded = () => setRefreshTick(t => t + 1);
     window.addEventListener('jatahku:txn-added', onAdded);
     return () => window.removeEventListener('jatahku:txn-added', onAdded);
   }, []);
+
+  useEffect(() => {
+    api.getBalanceCheckStatus().then(setBalanceStatus);
+  }, [refreshTick]);
 
   useEffect(() => {
     Promise.all([
@@ -630,6 +636,17 @@ export default function Dashboard() {
           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(107,114,128,0.12)' }}><Icon name="envelope" size={20} color="#6b7280" /></div>
         </div>
       </div>
+
+      {isCurrentPeriod && (
+        <div className="flex justify-end -mt-1">
+          <button type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('jatahku:open-action', { detail: 'balance' }))}
+            className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600">
+            <Icon name="balance" size={14} />
+            <span>Cocokkan saldo · terakhir {formatLastChecked(balanceStatus?.last_checked_at)}</span>
+          </button>
+        </div>
+      )}
 
       {/* Hero AI Advisor — today's status + strategic insights */}
       {isCurrentPeriod && (

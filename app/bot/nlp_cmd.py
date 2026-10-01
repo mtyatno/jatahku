@@ -765,7 +765,12 @@ async def handle_koreksi(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         result = await db.execute(
             select(Transaction)
-            .where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+            .where(
+                Transaction.user_id == user.id,
+                Transaction.is_deleted == False,
+                # penyesuaian cocokkan saldo bukan "transaksi terakhir yang user input"
+                Transaction.balance_check_id.is_(None),
+            )
             .order_by(Transaction.created_at.desc())
             .limit(1)
         )
@@ -969,7 +974,10 @@ async def handle_pengeluaran_hari_ini(update, context):
             .where(
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
+                Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                # penyesuaian cocokkan saldo bukan belanja hari ini
+                Transaction.balance_check_id.is_(None),
             )
             .group_by(Transaction.envelope_id)
         )
@@ -981,7 +989,9 @@ async def handle_pengeluaran_hari_ini(update, context):
             .where(
                 Transaction.user_id == user.id,
                 Transaction.transaction_date == today,
+                Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                Transaction.balance_check_id.is_(None),
             )
             .order_by(Transaction.id.desc())
             .limit(5)
@@ -1088,6 +1098,8 @@ async def handle_pengeluaran_hari_lalu(update, context):
                 Transaction.transaction_date == target_date,
                 Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                # penyesuaian cocokkan saldo bukan belanja hari ini
+                Transaction.balance_check_id.is_(None),
             )
             .order_by(Transaction.id.desc())
         )
@@ -1100,6 +1112,7 @@ async def handle_pengeluaran_hari_lalu(update, context):
                 Transaction.transaction_date == today,
                 Transaction.is_deleted == False,
                 Transaction.amount > 0,
+                Transaction.balance_check_id.is_(None),
             )
         )
         today_total = Decimal(str(today_total_r.scalar()))

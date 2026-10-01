@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import (
     User, Household, HouseholdMember, Envelope,
     Transaction, Income, Allocation, MonthlySnapshot,
-    RecurringTransaction, Goal,
+    RecurringTransaction, Goal, BalanceCheck,
 )
 
 logger = logging.getLogger("jatahku.merge")
@@ -154,6 +154,12 @@ async def merge_users(
         .values(user_id=target_user_id)
     )
 
+    # 2b. Reassign source's balance checks (log cocokkan saldo) → target
+    await db.execute(
+        update(BalanceCheck).where(BalanceCheck.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+
     # 3. Reassign personal envelopes → target
     await db.execute(
         update(Envelope).where(Envelope.owner_id == source_user_id)
@@ -171,6 +177,12 @@ async def merge_users(
         # Move incomes from discarded household
         await db.execute(
             update(Income).where(Income.household_id == discard_hh_id)
+            .values(household_id=keep_household_id)
+        )
+
+        # Move balance checks (log cocokkan saldo) from discarded household
+        await db.execute(
+            update(BalanceCheck).where(BalanceCheck.household_id == discard_hh_id)
             .values(household_id=keep_household_id)
         )
 

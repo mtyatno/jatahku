@@ -204,5 +204,6 @@ async def list_incomes(
             "type": "transfer" if is_transfer else "income",
             "allocations": allocs,
             "transfer": parse_transfer(allocs) if is_transfer else None,
+            "is_adjustment": getattr(inc, "balance_check_id", None) is not None,
         })
     return output

@@ -7,7 +7,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
@@ -48,6 +48,17 @@ async def lifespan(app: FastAPI):
                 "WHERE e.id = sub.envelope_id AND e.purpose = 'expense' "
                 "AND e.budget_amount = 0 AND sub.allocated > 0"
             ))
+            # Cocokkan saldo (spec 2026-09-30): create_all di atas sudah membuat
+            # tabel balance_checks; tambah FK nullable ke transactions & incomes.
+            for _tbl in ("transactions", "incomes"):
+                await conn.execute(text(
+                    f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS balance_check_id UUID "
+                    "REFERENCES balance_checks(id)"
+                ))
+                await conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{_tbl}_balance_check_id "
+                    f"ON {_tbl} (balance_check_id)"
+                ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield
@@ -90,6 +101,7 @@ app.include_router(payment.router, prefix="/payment", tags=["payment"])
 app.include_router(webhook.router, tags=["webhook"])
 app.include_router(cms_oauth.router, tags=["cms"])
 app.include_router(goals.router, prefix="/goals", tags=["goals"])
+app.include_router(balance_check.router, prefix="/balance-check", tags=["balance-check"])
 
 
 from starlette.middleware.base import BaseHTTPMiddleware

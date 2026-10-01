@@ -15,6 +15,7 @@ from app.models.models import (
     RecurringTransaction, PurposeType,
 )
 from app.services.reserved import recurring_monthly_reserve
+from app.services.envelope_balance import compute_envelope_summaries
 
 router = APIRouter()
 
@@ -118,118 +119,9 @@ async def envelope_summary(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _get_hid(user, db)
-    if not hid:
-        return []
-
-    result = await db.execute(
-        select(Envelope)
-        .where(
-            Envelope.household_id == hid,
-            Envelope.is_active == True,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
-        .order_by(Envelope.created_at)
-    )
-    envelopes = result.scalars().all()
-
-    group_result = await db.execute(
-        select(EnvelopeGroup.id, EnvelopeGroup.name).where(EnvelopeGroup.household_id == hid)
-    )
-    group_names = {gid: gname for gid, gname in group_result.all()}
-
-    now = date.today()
-    payday_day = getattr(user, 'payday_day', None) or 1
-    if period_start and period_end:
-        # Historical period: rollover comes from the period before period_start
-        prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))
-    else:
-        period_start, period_end = get_budget_period(payday_day, now)
-        prev_start, _ = get_previous_period(payday_day, now)
-    summaries = []
-
-    for env in envelopes:
-        # Spent this budget period
-        spent_result = await db.execute(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-                Transaction.envelope_id == env.id,
-                Transaction.is_deleted == False,
-                Transaction.transaction_date >= period_start,
-                Transaction.transaction_date <= period_end,
-            )
-        )
-        spent = Decimal(str(spent_result.scalar()))
-
-        # Allocated this budget period (from income allocations)
-        from app.models.models import Income
-        alloc_result = await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0))
-            .join(Income, Allocation.income_id == Income.id)
-            .where(
-                Allocation.envelope_id == env.id,
-                Income.income_date >= period_start,
-                Income.income_date <= period_end,
-            )
-        )
-        allocated = Decimal(str(alloc_result.scalar()))
-
-        # Rollover from previous budget period (snapshot keyed by prev_start year/month)
-        rollover = Decimal("0")
-        if env.is_rollover:
-            snap_result = await db.execute(
-                select(MonthlySnapshot).where(
-                    MonthlySnapshot.envelope_id == env.id,
-                    MonthlySnapshot.year == prev_start.year,
-                    MonthlySnapshot.month == prev_start.month,
-                )
-            )
-            snap = snap_result.scalar_one_or_none()
-            if snap and snap.rollover_amount:
-                rollover = snap.rollover_amount
-
-        # Calculate reserved from active subscriptions (monthly equivalent)
-        rec_result = await db.execute(
-            select(RecurringTransaction).where(
-                RecurringTransaction.envelope_id == env.id,
-                RecurringTransaction.is_active == True,
-            )
-        )
-        recs = rec_result.scalars().all()
-        reserved = Decimal("0")
-        for rec in recs:
-            reserved += recurring_monthly_reserve(rec.frequency.value, rec.amount, rec.next_run, period_end)
-
-        # Core formula: remaining = allocated + rollover - spent
-        remaining = allocated + rollover - spent
-        total_available = allocated + rollover
-        free = remaining - reserved  # truly free after reservations
-
-        # Funded ratio: how well funded vs target
-        funded_ratio = float(allocated / env.budget_amount) if env.budget_amount > 0 else 0.0
-
-        # Spent ratio: how much spent of available money
-        spent_ratio = float(spent / total_available) if total_available > 0 else 0.0
-
-        summaries.append(EnvelopeSummary(
-            id=env.id, name=env.name, emoji=env.emoji,
-            budget_amount=env.budget_amount, is_rollover=env.is_rollover,
-            is_personal=env.owner_id is not None,
-            is_locked=env.is_locked,
-            daily_limit=env.daily_limit,
-            cooling_threshold=env.cooling_threshold,
-            allocated=allocated,
-            rollover=rollover,
-            spent=spent, reserved=reserved, remaining=remaining,
-            free=free,
-            funded_ratio=round(funded_ratio, 4),
-            spent_ratio=round(spent_ratio, 4),
-            group_id=env.group_id,
-            group_name=group_names.get(env.group_id),
-            purpose=env.purpose,
-            classification=env.classification,
-        ))
-
-    return summaries
+    # Rumus tinggal di satu tempat (dipakai juga oleh cocokkan saldo).
+    rows = await compute_envelope_summaries(user, db, period_start, period_end)
+    return [EnvelopeSummary(**r) for r in rows]
 
 
 @router.get("/groups", response_model=list[EnvelopeGroupResponse])
