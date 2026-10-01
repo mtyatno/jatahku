@@ -74,7 +74,7 @@ async def run_monthly_snapshot(
     year: int = Query(None),
     month: int = Query(None),
     force: bool = Query(False),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
 ):
     """Manually trigger snapshot for a budget period (admin/debug).
     year/month refer to period_start year/month. Uses caller's payday_day to reconstruct period dates."""

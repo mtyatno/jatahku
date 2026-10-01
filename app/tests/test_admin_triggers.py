@@ -15,7 +15,10 @@ from app.core import deps
 from app.api.routes import admin as admin_routes
 from app.main import app
 
-TRIGGERS = ("/snapshots/daily-summary", "/snapshots/weekly-summary", "/snapshots/process-recurring")
+TRIGGERS = (
+    "/snapshots/daily-summary", "/snapshots/weekly-summary",
+    "/snapshots/process-recurring", "/snapshots/run",
+)
 
 
 def _dependency_calls(route):
