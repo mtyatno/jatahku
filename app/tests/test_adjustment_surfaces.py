@@ -17,7 +17,7 @@ from sqlalchemy.orm import configure_mappers
 
 from app.api.routes.admin import admin_dashboard
 from app.api.routes.user_settings import get_profile
-from app.bot import nlp_cmd
+from app.bot import handlers, nlp_cmd
 from app.tests.fakes import FakeResult, executed_sql
 
 # Konfigurasi mapper pertama (~50ms) jangan jatuh di dalam event loop test:
@@ -41,7 +41,7 @@ class FakeSession:
 
 def fake_update(text):
     update = MagicMock()
-    update.effective_user = SimpleNamespace(id=123)
+    update.effective_user = SimpleNamespace(id=123, first_name="Tes")
     update.message.text = text
     update.message.reply_text = AsyncMock()
     return update
@@ -71,6 +71,34 @@ class BotTodayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stmts), 2)
         for s in stmts:
             self.assertIn(NOT_ADJ_TXN, s)
+
+
+class BotLastTransactionTests(unittest.IsolatedAsyncioTestCase):
+    """'Transaksi terakhir yang user input' (/batal, koreksi) tak boleh mengenai baris penyesuaian:
+    tepat setelah cocokkan saldo, baris terbaru adalah penyesuaian (semua baris satu apply
+    ber-created_at sama)."""
+
+    async def test_batal_picks_latest_non_adjustment(self):
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[FakeResult(None)])  # scalar_one_or_none() → tak ada transaksi
+        with patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(db)), \
+             patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)):
+            await handlers.cmd_batal(fake_update("/batal"), None)
+        stmts = executed_sql(db)
+        self.assertEqual(len(stmts), 1)
+        self.assertIn("ORDER BY transactions.created_at DESC", stmts[0])  # = pemilihan "terakhir"
+        self.assertIn(NOT_ADJ_TXN, stmts[0])
+
+    async def test_koreksi_picks_latest_non_adjustment(self):
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=[FakeResult(None)])  # scalar_one_or_none() → tak ada transaksi
+        with patch("app.core.database.AsyncSessionLocal", new=lambda: FakeSession(db)), \
+             patch.object(nlp_cmd, "get_or_create_user", new=AsyncMock(return_value=USER)):
+            await nlp_cmd.handle_koreksi(fake_update("batalin yang tadi"), None)
+        stmts = executed_sql(db)
+        self.assertEqual(len(stmts), 1)
+        self.assertIn("ORDER BY transactions.created_at DESC", stmts[0])  # = pemilihan "terakhir"
+        self.assertIn(NOT_ADJ_TXN, stmts[0])
 
 
 class ProfileUsageTests(unittest.IsolatedAsyncioTestCase):

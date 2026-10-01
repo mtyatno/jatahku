@@ -678,7 +678,12 @@ async def cmd_batal(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         result = await db.execute(
-            select(Transaction).where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+            select(Transaction).where(
+                Transaction.user_id == user.id,
+                Transaction.is_deleted == False,
+                # penyesuaian cocokkan saldo bukan "transaksi terakhir yang user input"
+                Transaction.balance_check_id.is_(None),
+            )
             .order_by(Transaction.created_at.desc()).limit(1)
         )
         txn = result.scalar_one_or_none()

@@ -765,7 +765,12 @@ async def handle_koreksi(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         result = await db.execute(
             select(Transaction)
-            .where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+            .where(
+                Transaction.user_id == user.id,
+                Transaction.is_deleted == False,
+                # penyesuaian cocokkan saldo bukan "transaksi terakhir yang user input"
+                Transaction.balance_check_id.is_(None),
+            )
             .order_by(Transaction.created_at.desc())
             .limit(1)
         )
