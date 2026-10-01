@@ -9,9 +9,9 @@ import { toNumber, unassigned, allToOne, canSubmit, toApplyLines, errorText } fr
 
 function Stat({ label, value, tone = 'text-gray-800' }) {
   return (
-    <div className="rounded-xl bg-gray-50 px-2 py-2">
+    <div className="rounded-xl bg-gray-50 px-3 py-2 flex items-center justify-between gap-2 sm:block sm:text-center">
       <p className="text-[11px] text-gray-400">{label}</p>
-      <p className={`font-display font-bold text-sm ${tone}`}>{value}</p>
+      <p className={`font-display font-bold text-sm whitespace-nowrap ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -179,7 +179,7 @@ export default function BalanceCheck({ onClose }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Stat label="Menurut Jatahku" value={formatCurrency(toNumber(preview.app_amount))} />
         <Stat label="Uang riil" value={formatCurrency(toNumber(preview.actual_amount))} />
         <Stat label="Selisih" value={formatCurrency(toNumber(preview.gap))} tone={gapTone} />
