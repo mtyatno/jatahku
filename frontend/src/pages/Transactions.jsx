@@ -291,7 +291,7 @@ export default function Transactions() {
                               {txn.is_adjustment && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 shrink-0">Penyesuaian</span>}
                             </p>
                             <p className="text-xs text-gray-400 flex items-center gap-1.5 flex-wrap">
-                              <span>{env?.name}</span>
+                              <span>{env?.name ?? 'Amplop dihapus'}</span>
                               {txn.created_at && <><span>·</span><span>{new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span></>}
                               <span>·</span><SourceTag source={txn.source} />
                             </p>

@@ -326,7 +326,6 @@ async def delete_envelope(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import date as date_cls
     hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(
@@ -341,6 +340,20 @@ async def delete_envelope(
     if envelope.name == "Tabungan":
         raise HTTPException(status_code=400, detail="Amplop Tabungan tidak bisa dihapus")
 
+    # Langganan aktif harus dipindah/dihentikan dulu — kalau tidak, tagihannya
+    # tetap jalan di amplop yang sudah tidak terlihat.
+    active_subs = (await db.execute(
+        select(func.count(RecurringTransaction.id)).where(
+            RecurringTransaction.envelope_id == envelope_id,
+            RecurringTransaction.is_active == True,
+        )
+    )).scalar() or 0
+    if active_subs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amplop ini masih punya {active_subs} langganan aktif. Pindahkan atau hentikan dulu.",
+        )
+
     # Find or create Tabungan
     tab_result = await db.execute(
         select(Envelope).where(
@@ -353,53 +366,27 @@ async def delete_envelope(
         db.add(tabungan)
         await db.flush()
 
-    # Calculate remaining funds in this envelope
-    now = date_cls.today()
-    payday_day = getattr(user, 'payday_day', 1) or 1
-    period_start, period_end = get_budget_period(payday_day, now)
-    from app.models.models import Income
-    alloc_result = await db.execute(
-        select(func.coalesce(func.sum(Allocation.amount), 0))
-        .join(Income, Allocation.income_id == Income.id)
-        .where(
-            Allocation.envelope_id == envelope_id,
-            Income.income_date >= period_start,
-            Income.income_date <= period_end,
-        )
-    )
-    allocated = Decimal(str(alloc_result.scalar()))
+    # Sisa sebenarnya = rumus dashboard (alokasi + rollover − terpakai). Bisa
+    # negatif bila amplop minus: defisit itu ikut dipindah agar total uang di
+    # app tetap sama dengan uang riil.
+    rows = await compute_envelope_summaries(user, db)
+    row = next((r for r in rows if r["id"] == envelope.id), None)
+    remaining = row["remaining"] if row else Decimal("0")
 
-    spent_result = await db.execute(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-            Transaction.transaction_date >= period_start,
-            Transaction.transaction_date <= period_end,
-        )
-    )
-    spent = Decimal(str(spent_result.scalar()))
-    remaining = allocated - spent
-
-    # Transfer remaining funds to Tabungan via internal transfer
-    if remaining > 0:
-        from app.models.models import Income as IncomeModel
-        transfer = IncomeModel(
+    if remaining != 0:
+        from app.models.models import Income
+        label = "Refund" if remaining > 0 else "Tutup minus"
+        transfer = Income(
             household_id=hid, user_id=user.id, amount=Decimal("0"),
-            description=f"Refund: hapus amplop {envelope.name}",
+            description=f"{label}: hapus amplop {envelope.name}",
         )
         db.add(transfer)
         await db.flush()
         db.add(Allocation(income_id=transfer.id, envelope_id=envelope_id, amount=-remaining))
         db.add(Allocation(income_id=transfer.id, envelope_id=tabungan.id, amount=remaining))
 
-    # Move all transactions to Tabungan
-    from sqlalchemy import update
-    await db.execute(
-        update(Transaction).where(
-            Transaction.envelope_id == envelope_id,
-            Transaction.is_deleted == False,
-        ).values(envelope_id=tabungan.id)
-    )
+    # Transaksi TIDAK dipindah: tetap di amplop ini agar riwayat per periode
+    # akurat (memindahnya ke Tabungan dulu membuat pengeluaran terhitung dobel).
 
     # Soft delete
     envelope.is_active = False
