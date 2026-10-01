@@ -49,7 +49,7 @@ class SummaryTests(unittest.TestCase):
 
     def test_weekly_section_excludes_adjustments(self):
         from app.services.summary import _week_txns_query
-        self.assertIn(NOT_ADJ_TXN, sql(_week_txns_query(HID, date(2026, 9, 23), date(2026, 9, 30))))
+        self.assertIn(NOT_ADJ_TXN, sql(_week_txns_query(HID, USER_ID, date(2026, 9, 23), date(2026, 9, 30))))
 
 
 class AnalyticsTests(unittest.IsolatedAsyncioTestCase):

@@ -33,9 +33,10 @@ def _today_txns_query(hid, user_id, today):
     )
 
 
-def _week_txns_query(hid, week_start, today):
+def _week_txns_query(hid, user_id, week_start, today):
     """Seksi 'Minggu ini' di ringkasan mingguan (tanpa penyesuaian). Seksi
-    periode (Dana/Terpakai/Sisa) dihitung terpisah dan tetap menyertakannya."""
+    periode (Dana/Terpakai/Sisa) dihitung terpisah dan tetap menyertakannya.
+    Amplop pribadi anggota lain tidak ikut (privasi, sama dgn ringkasan harian)."""
     return (
         select(Transaction)
         .join(Envelope)
@@ -45,8 +46,16 @@ def _week_txns_query(hid, week_start, today):
             Transaction.transaction_date >= week_start,
             Transaction.transaction_date <= today,
             Transaction.balance_check_id.is_(None),
+            or_(Envelope.owner_id == None, Envelope.owner_id == user_id),
         )
     )
+
+
+def _env_label(env) -> tuple[str, str]:
+    """(emoji, nama pendek) untuk baris top-amplop; aman bila amplop tak ditemukan."""
+    if env is None:
+        return "📁", "Lain"
+    return env.emoji, (env.name or "Lain").split()[0]
 
 
 def _to_wa(lines: list[str]) -> str:
@@ -96,7 +105,6 @@ async def send_daily_summary(user_id=None):
                 today_total = sum(t.amount for t in today_txns)
 
                 # Get envelope summaries
-                from sqlalchemy import or_
                 env_result = await db.execute(
                     select(Envelope).where(
                         Envelope.household_id == hid,
@@ -200,8 +208,7 @@ async def send_daily_summary(user_id=None):
                     for i, (eid, amt) in enumerate(sorted_envs):
                         if i < 2:
                             env = next((e for e in envelopes if e.id == eid), None)
-                            em = env.emoji if env else "📁"
-                            nm = (env.name or "Lain").split()[0]
+                            em, nm = _env_label(env)
                             parts.append(f"{em} {nm} {format_currency(amt)}")
                             shown_total += amt
                         else:
@@ -278,12 +285,11 @@ async def send_weekly_summary(user_id=None):
                     continue
 
                 # Week's transactions
-                txn_result = await db.execute(_week_txns_query(hid, week_start, today))
+                txn_result = await db.execute(_week_txns_query(hid, user.id, week_start, today))
                 week_txns = txn_result.scalars().all()
                 week_total = sum(t.amount for t in week_txns)
 
                 # Monthly totals
-                from sqlalchemy import or_
                 env_result = await db.execute(
                     select(Envelope).where(
                         Envelope.household_id == hid,
@@ -352,8 +358,7 @@ async def send_weekly_summary(user_id=None):
                     for i, (eid, amt) in enumerate(sorted_envs):
                         if i < 2:
                             env = next((e for e in envelopes if e.id == eid), None)
-                            em = env.emoji if env else "📁"
-                            nm = (env.name or "Lain").split()[0]
+                            em, nm = _env_label(env)
                             parts.append(f"{em} {nm} {format_currency(amt)}")
                             shown += amt
                         else:
