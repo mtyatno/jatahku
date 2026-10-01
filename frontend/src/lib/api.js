@@ -239,8 +239,12 @@ class ApiClient {
   }
 
   async deleteEnvelope(id) {
-    const res = await this.request(`/envelopes/${id}`, { method: 'DELETE' });
-    return res.ok;
+    try {
+      const res = await this.request(`/envelopes/${id}`, { method: 'DELETE' });
+      return { ok: res.ok, data: res.ok ? {} : await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
   }
 
   async getEnvelopeGroups() {

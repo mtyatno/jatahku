@@ -5,6 +5,7 @@ import { formatCurrency, formatShort, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
 import { fundingState } from '../lib/envelopeFunding';
+import { errorText } from '../lib/balanceCheck';
 import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
 import ClassificationBackfill from '../components/ClassificationBackfill';
 
@@ -801,8 +802,9 @@ export default function Envelopes() {
   }, []);
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Hapus amplop "${name}"?`)) return;
-    await api.deleteEnvelope(id);
+    if (!confirm(`Hapus amplop "${name}"?\n\nSisa dananya (termasuk bila minus) dipindah ke Tabungan. Riwayat transaksinya tetap tersimpan.`)) return;
+    const res = await api.deleteEnvelope(id);
+    if (!res.ok) alert(errorText(res.data, 'Gagal menghapus amplop'));
     load();
   };
 
