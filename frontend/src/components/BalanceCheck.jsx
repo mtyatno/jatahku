@@ -162,7 +162,11 @@ export default function BalanceCheck({ onClose }) {
       <div className="space-y-4 text-center py-2">
         <div className="flex justify-center"><Icon name="check" size={40} weight="fill" color={BRAND} /></div>
         <p className="font-display font-bold text-lg">Saldo sudah cocok</p>
-        <p className="text-sm text-gray-500">Penyesuaian tercatat dengan label "Penyesuaian" dan bisa dihapus dari halaman Transaksi.</p>
+        <p className="text-sm text-gray-500">
+          {direction === 'surplus'
+            ? 'Penyesuaian tercatat sebagai pemasukan "Penyesuaian saldo" di riwayat income.'
+            : 'Penyesuaian tercatat dengan label "Penyesuaian" dan bisa dihapus dari halaman Transaksi.'}
+        </p>
         {toast && (
           <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 bg-gray-900 text-white text-sm text-left">
             <span className="truncate">{toast.text}</span>
