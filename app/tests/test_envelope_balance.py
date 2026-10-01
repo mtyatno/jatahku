@@ -12,7 +12,7 @@ from datetime import date
 from decimal import Decimal as D
 from types import SimpleNamespace
 
-from app.tests.fakes import FakeResult, db_with
+from app.tests.fakes import FakeResult, db_with, executed_sql
 
 USER_ID, HID, G1, E1, E2 = (uuid.uuid4() for _ in range(5))
 USER = SimpleNamespace(id=USER_ID, payday_day=1)
@@ -77,6 +77,19 @@ class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r["free"] for r in rows], [D("650000"), D("100000")])
         self.assertEqual(rows[0]["purpose"], "expense")
         self.assertEqual(rows[1]["is_personal"], True)
+
+    async def test_envelope_query_keeps_privacy_and_active_filters(self):
+        # Batas privasi (amplop personal anggota lain tak boleh ikut terhitung di saldo/cocokkan saldo)
+        # dan filter aktif hidup di SATU query amplop ini — kunci teks WHERE-nya.
+        from app.services.envelope_balance import compute_envelope_summaries
+        db = fake_db()
+        await compute_envelope_summaries(USER, db, PS, PE)
+        stmts = executed_sql(db)  # [0] = household id, [1] = amplop
+        self.assertIn("FROM household_members", stmts[0])
+        self.assertIn("FROM envelopes", stmts[1])
+        self.assertIn("envelopes.household_id = ", stmts[1])
+        self.assertIn("envelopes.is_active = true", stmts[1])
+        self.assertIn("envelopes.owner_id IS NULL OR envelopes.owner_id = ", stmts[1])
 
 
 if __name__ == "__main__":
