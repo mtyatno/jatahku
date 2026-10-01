@@ -120,12 +120,14 @@ export default function Transactions() {
       return (t.description || '').toLowerCase().includes(q) || (envById[t.envelope_id]?.name || '').toLowerCase().includes(q);
     });
 
-  // Stats from the current view
+  // Stats from the current view. "Pengeluaran" menyertakan penyesuaian cocokkan saldo; statistik
+  // item/hari (jumlah, rata-rata/hari, terbesar) hanya dari transaksi yang user catat sendiri.
   const total = displayed.reduce((s, t) => s + Number(t.amount), 0);
-  const count = displayed.length;
-  const distinctDays = new Set(displayed.map(t => t.transaction_date)).size || 1;
-  const avgPerDay = total / distinctDays;
-  const largest = displayed.reduce((m, t) => (Number(t.amount) > Number(m?.amount || 0) ? t : m), null);
+  const userTxns = displayed.filter(t => !t.is_adjustment);
+  const count = userTxns.length;
+  const distinctDays = new Set(userTxns.map(t => t.transaction_date)).size || 1;
+  const avgPerDay = userTxns.reduce((s, t) => s + Number(t.amount), 0) / distinctDays;
+  const largest = userTxns.reduce((m, t) => (Number(t.amount) > Number(m?.amount || 0) ? t : m), null);
 
   // Envelope chip counts from the full period set
   const chipEnvs = envelopes

@@ -162,7 +162,8 @@ export default function Analytics() {
   const delta = categoryDelta(breakdown, prevBreakdown);
   const boros = busiestWeekday(daily);
   const envById = Object.fromEntries(envelopes.map(e => [e.id, e]));
-  const topTxns = [...txns].filter(t => !t.is_deleted)
+  // Penyesuaian cocokkan saldo bukan transaksi yang user catat → tak ikut "Transaksi terbesar".
+  const topTxns = [...txns].filter(t => !t.is_deleted && !t.is_adjustment)
     .sort((a, b) => Number(b.amount) - Number(a.amount)).slice(0, 5);
   const p = prediction || {};
   const hasPred = p.total_allocated > 0;
