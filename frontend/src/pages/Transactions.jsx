@@ -284,7 +284,10 @@ export default function Transactions() {
                             <EnvelopeIcon value={env?.emoji} size={20} color={BRAND} />
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-semibold truncate">{txn.description}</p>
+                            <p className="text-sm font-semibold flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">{txn.description}</span>
+                              {txn.is_adjustment && <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 shrink-0">Penyesuaian</span>}
+                            </p>
                             <p className="text-xs text-gray-400 flex items-center gap-1.5 flex-wrap">
                               <span>{env?.name}</span>
                               {txn.created_at && <><span>·</span><span>{new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span></>}

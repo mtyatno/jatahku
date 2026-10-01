@@ -6,6 +6,7 @@ import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 import MultiAddTransaction from './MultiAddTransaction';
 import PaySubscriptions from './PaySubscriptions';
+import BalanceCheck from './BalanceCheck';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
@@ -96,6 +97,7 @@ const FAB_OPTIONS = [
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
   { key: 'paybill', icon: 'card', label: 'Bayar langganan' },
+  { key: 'balance', icon: 'balance', label: 'Cocokkan saldo' },
 ];
 
 const navItems = [
@@ -131,6 +133,13 @@ export default function Layout() {
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Pintu masuk lain (mis. link di Dashboard) membuka modal aksi FAB lewat event.
+  useEffect(() => {
+    const onOpen = (e) => { setFabMenu(false); setFabAction(e.detail); };
+    window.addEventListener('jatahku:open-action', onOpen);
+    return () => window.removeEventListener('jatahku:open-action', onOpen);
   }, []);
 
   if (loading) {
@@ -278,12 +287,14 @@ export default function Layout() {
               {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
               {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan baru</>}
               {fabAction === 'paybill' && <><Icon name="card" size={22} /> Bayar langganan</>}
+              {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
             </h3>
             {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}
             {fabAction === 'income' && <QuickAddIncome onClose={() => setFabAction(null)} />}
             {fabAction === 'langganan' && <QuickAddLangganan onClose={() => setFabAction(null)} />}
             {fabAction === 'paybill' && <PaySubscriptions onClose={() => setFabAction(null)} />}
+            {fabAction === 'balance' && <BalanceCheck onClose={() => setFabAction(null)} />}
           </div>
         </div>
       )}

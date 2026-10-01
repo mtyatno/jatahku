@@ -9,7 +9,7 @@ export default function IncomeCard({ income }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex items-center gap-2">
           <h4 className="font-semibold truncate">{income.source}</h4>
-          <span className="text-xs px-2 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(15,110,86,0.10)', color: BRAND }}>Income</span>
+          <span className="text-xs px-2 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(15,110,86,0.10)', color: BRAND }}>{income.is_adjustment ? 'Penyesuaian' : 'Income'}</span>
         </div>
         <div className="text-right shrink-0">
           <p className="font-display font-bold text-brand-600">{formatCurrency(total)}</p>
