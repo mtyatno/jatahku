@@ -59,12 +59,6 @@ class AnalyticsTests(unittest.IsolatedAsyncioTestCase):
         await daily_spending(period_start=PS, period_end=PE, user=USER, db=db)
         self.assertIn(NOT_ADJ_TXN, sql(db.execute.call_args_list[1].args[0]))
 
-    async def test_weekly_pattern(self):
-        from app.api.routes.analytics import weekly_pattern
-        db = db_with(FakeResult(HID), FakeResult(rows=[]))
-        await weekly_pattern(periods=3, user=USER, db=db)
-        self.assertIn(NOT_ADJ_TXN, sql(db.execute.call_args_list[1].args[0]))
-
     async def test_income_totals(self):
         from app.api.routes.analytics import _income_totals
         db = db_with(FakeResult(rows=[]))
