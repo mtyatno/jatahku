@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from sqlalchemy import select, func, update, delete
 
+from app.core.period import get_budget_period
 from app.models.models import (
     BalanceCheck, Transaction, Income, Allocation, Household, HouseholdMember, TransactionSource,
 )
@@ -144,6 +145,13 @@ def _latest_check_query(hid):
     )
 
 
+def _in_current_period(check, user) -> bool:
+    """Cek dibuat di periode budget berjalan user (tanggal lokal server, sama
+    dengan konvensi date.today() untuk transaction_date penyesuaian)."""
+    period_start, _ = get_budget_period(getattr(user, "payday_day", 1) or 1)
+    return check.created_at.astimezone().date() >= period_start
+
+
 async def load_expense_weights(envelope_ids, db, today: date) -> dict:
     """Σ pengeluaran tercatat (bukan penyesuaian) per amplop, 30 hari terakhir."""
     if not envelope_ids:
@@ -274,6 +282,9 @@ async def undo_balance_check(user, db, check_id) -> dict:
         raise BalanceCheckError(400, "Hanya penyesuaian terakhir yang bisa dibatalkan")
     if str(latest.user_id) != str(user.id):
         raise BalanceCheckError(403, "Hanya pembuat penyesuaian yang bisa membatalkan")
+    # Penyesuaian periode lalu sudah masuk snapshot rollover; membatalkannya membuat rollover basi.
+    if not _in_current_period(latest, user):
+        raise BalanceCheckError(400, "Cek saldo dari periode lalu tidak bisa dibatalkan")
 
     await db.execute(
         update(Transaction)
@@ -294,13 +305,16 @@ async def undo_balance_check(user, db, check_id) -> dict:
 async def get_status(user, db) -> dict:
     hid = await get_household_id(user, db)
     if not hid:
-        return {"last_checked_at": None, "last_gap": None, "member_count": 0}
+        return {"last_checked_at": None, "last_gap": None, "undo_check_id": None, "member_count": 0}
     latest = (await db.execute(_latest_check_query(hid))).scalar_one_or_none()
     member_count = (await db.execute(
         select(func.count()).select_from(HouseholdMember).where(HouseholdMember.household_id == hid)
     )).scalar() or 0
+    # Selisih memuat amplop pribadi pembuatnya (privasi) → hanya terlihat oleh pembuat cek itu.
+    mine = latest is not None and str(latest.user_id) == str(user.id)
     return {
         "last_checked_at": latest.created_at if latest else None,
-        "last_gap": latest.gap if latest else None,
+        "last_gap": latest.gap if mine else None,
+        "undo_check_id": latest.id if mine and _in_current_period(latest, user) else None,
         "member_count": member_count,
     }

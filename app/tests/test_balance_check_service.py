@@ -8,7 +8,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import unittest
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal as D
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -262,8 +262,9 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
 
 @patch.object(svc, "get_household_id", new=AsyncMock(return_value=HID))
 class UndoTests(unittest.IsolatedAsyncioTestCase):
-    def latest(self, user_id=USER_ID, check_id=CHECK_ID):
-        return SimpleNamespace(id=check_id, user_id=user_id, undone_at=None)
+    def latest(self, user_id=USER_ID, check_id=CHECK_ID, created_at=None):
+        return SimpleNamespace(id=check_id, user_id=user_id, undone_at=None,
+                               created_at=created_at or datetime.now(timezone.utc))
 
     async def assert_error(self, status, db, check_id=CHECK_ID):
         with self.assertRaises(svc.BalanceCheckError) as ctx:
@@ -284,6 +285,17 @@ class UndoTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_household_404(self):
         with patch.object(svc, "get_household_id", new=AsyncMock(return_value=None)):
             await self.assert_error(404, db_with())
+
+    async def test_previous_period_check_400_and_nothing_written(self):
+        # Cek 60 hari lalu sudah masuk snapshot rollover → tak boleh dibatalkan.
+        old = self.latest(created_at=datetime.now(timezone.utc) - timedelta(days=60))
+        db = db_with(FakeResult(), FakeResult(old))
+        await self.assert_error(400, db)
+        stmts = executed_sql(db)
+        self.assertEqual(len(stmts), 2)  # kunci + baca cek terakhir, tak ada tulis
+        self.assertFalse(any(s.lstrip().upper().startswith(("UPDATE", "DELETE")) for s in stmts))
+        self.assertIsNone(old.undone_at)
+        db.commit.assert_not_awaited()
 
     async def test_household_locked_before_latest_check_is_read(self):
         # Kunci dulu, baru baca "cek terakhir": undo & apply bersamaan tak boleh saling menyalip
@@ -332,24 +344,44 @@ class UndoTests(unittest.IsolatedAsyncioTestCase):
 
 @patch.object(svc, "get_household_id", new=AsyncMock(return_value=HID))
 class StatusTests(unittest.IsolatedAsyncioTestCase):
+    def check(self, user_id=USER_ID, days_ago=0, gap="-340000", check_id=CHECK_ID):
+        return SimpleNamespace(id=check_id, user_id=user_id, gap=D(gap),
+                               created_at=datetime.now(timezone.utc) - timedelta(days=days_ago))
+
     async def test_status_with_history(self):
-        when = datetime(2026, 9, 20, 3, 0, tzinfo=timezone.utc)
-        db = db_with(FakeResult(SimpleNamespace(created_at=when, gap=D("-340000"))), FakeResult(2))
+        latest = self.check()
+        db = db_with(FakeResult(latest), FakeResult(2))
         s = await svc.get_status(USER, db)
-        self.assertEqual(s, {"last_checked_at": when, "last_gap": D("-340000"), "member_count": 2})
+        self.assertEqual(s, {"last_checked_at": latest.created_at, "last_gap": D("-340000"),
+                             "undo_check_id": CHECK_ID, "member_count": 2})
         stmts = executed_sql(db)
         self.assertIn("balance_checks.undone_at IS NULL", stmts[0])
         self.assertIn("balance_checks.household_id = ", stmts[0])
         self.assertIn("household_members.household_id = ", stmts[1])
 
+    async def test_status_other_member_check_hides_gap_and_undo(self):
+        latest = self.check(user_id=uuid.uuid4())
+        s = await svc.get_status(USER, db_with(FakeResult(latest), FakeResult(2)))
+        self.assertIsNone(s["undo_check_id"])
+        self.assertIsNone(s["last_gap"])
+        self.assertEqual(s["last_checked_at"], latest.created_at)
+
+    async def test_status_own_check_from_previous_period_has_no_undo(self):
+        latest = self.check(days_ago=60)
+        s = await svc.get_status(USER, db_with(FakeResult(latest), FakeResult(1)))
+        self.assertIsNone(s["undo_check_id"])
+        self.assertEqual(s["last_gap"], D("-340000"))  # milik sendiri → selisih tetap terlihat
+
     async def test_status_never_checked(self):
         s = await svc.get_status(USER, db_with(FakeResult(None), FakeResult(1)))
-        self.assertEqual(s, {"last_checked_at": None, "last_gap": None, "member_count": 1})
+        self.assertEqual(s, {"last_checked_at": None, "last_gap": None, "undo_check_id": None,
+                             "member_count": 1})
 
     async def test_status_without_household(self):
         with patch.object(svc, "get_household_id", new=AsyncMock(return_value=None)):
             s = await svc.get_status(USER, db_with())
-        self.assertEqual(s, {"last_checked_at": None, "last_gap": None, "member_count": 0})
+        self.assertEqual(s, {"last_checked_at": None, "last_gap": None, "undo_check_id": None,
+                             "member_count": 0})
 
 
 if __name__ == "__main__":

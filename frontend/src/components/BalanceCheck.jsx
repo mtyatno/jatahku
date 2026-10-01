@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND } from './Icon';
-import { toNumber, unassigned, allToOne, canSubmit, toApplyLines, errorText } from '../lib/balanceCheck';
+import { toNumber, unassigned, allToOne, canSubmit, toApplyLines, errorText, formatLastChecked } from '../lib/balanceCheck';
 
 // Modal "Cocokkan saldo" — spec docs/superpowers/specs/2026-09-30-cocokkan-saldo-design.md
 // Langkah: input uang riil → hasil (cocok / tak tercatat / lebih) → selesai + undo 6 dtk.
+// Cek terakhir milik sendiri di periode berjalan bisa dibatalkan kapan saja dari langkah input.
 
 function Stat({ label, value, tone = 'text-gray-800' }) {
   return (
@@ -28,10 +29,19 @@ export default function BalanceCheck({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);          // { token, text, undo? }
+  const [status, setStatus] = useState(null);        // GET /balance-check/status
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoneNote, setUndoneNote] = useState(false);
 
-  useEffect(() => {
-    api.getBalanceCheckStatus().then(s => { if (s?.member_count) setMemberCount(s.member_count); });
-  }, []);
+  // Status (cek terakhir + boleh-undo) dimuat saat mount dan disegarkan setiap cek berubah,
+  // supaya tombol "Batalkan cek terakhir" tak menunjuk cek yang sudah basi.
+  const refreshStatus = async () => {
+    const s = await api.getBalanceCheckStatus();
+    setStatus(s || null);
+    if (s?.member_count) setMemberCount(s.member_count);
+  };
+
+  useEffect(() => { refreshStatus(); }, []);
 
   const direction = preview?.direction;
   const gapAbs = preview ? Math.abs(toNumber(preview.gap)) : 0;
@@ -55,7 +65,26 @@ export default function BalanceCheck({ onClose }) {
     return true;
   };
 
-  const check = async () => { setError(null); await loadPreview(); };
+  const check = async () => { setError(null); setUndoneNote(false); await loadPreview(); };
+
+  const undoLastCheck = async () => {
+    if (!status?.undo_check_id) return;
+    setBusy(true);
+    setError(null);
+    const u = await api.undoBalanceCheck(status.undo_check_id);
+    if (!u.ok) {
+      setConfirmUndo(false);
+      setError(errorText(u.data, 'Gagal membatalkan — coba lagi'));
+      await refreshStatus();  // mis. cek sudah bukan yang terakhir → tombol hilang
+      setBusy(false);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+    await refreshStatus();
+    setBusy(false);
+    setConfirmUndo(false);
+    setUndoneNote(true);
+  };
 
   const setLineAmount = (id, value) =>
     setLines(prev => prev.map(l => (l.envelope_id === id ? { ...l, amount: value } : l)));
@@ -87,6 +116,7 @@ export default function BalanceCheck({ onClose }) {
     if (!res.ok) { setError(errorText(res.data, 'Gagal menyimpan')); return; }
     window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
     if (direction === 'match') { onClose(); return; }
+    refreshStatus();
 
     const checkId = res.data.id;
     const token = Date.now();
@@ -102,6 +132,7 @@ export default function BalanceCheck({ onClose }) {
         }
         window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
         setToast(null);
+        refreshStatus();
         if (!(await loadPreview())) {
           setStep('input');
           setError('Penyesuaian dibatalkan, tapi selisih gagal dihitung ulang. Coba cek lagi.');
@@ -144,6 +175,36 @@ export default function BalanceCheck({ onClose }) {
             Jumlahkan uang tunai + saldo semua rekening & e-wallet.
             {memberCount > 1 && ' Termasuk uang bersama, tanpa uang pribadi anggota lain.'}
           </p>
+          {status?.undo_check_id && (() => {
+            const gap = toNumber(status.last_gap);
+            const label = gap === 0 ? 'cocok'
+              : gap < 0 ? `−${formatCurrency(Math.abs(gap))} tak tercatat`
+              : `+${formatCurrency(gap)} uang lebih`;
+            return (
+              <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2 space-y-2">
+                <p className="text-xs text-gray-500">
+                  Cek terakhir: {formatLastChecked(status.last_checked_at)} · selisih {label}
+                </p>
+                {confirmUndo ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-600">Penyesuaian dari cek itu akan dihapus. Lanjutkan?</p>
+                    <div className="flex gap-2">
+                      <button type="button" className="btn-outline !py-1 !px-3 text-xs disabled:opacity-50"
+                        disabled={busy} onClick={undoLastCheck}>
+                        {busy ? 'Membatalkan…' : 'Ya, batalkan'}
+                      </button>
+                      <button type="button" className="btn-outline !py-1 !px-3 text-xs disabled:opacity-50"
+                        disabled={busy} onClick={() => setConfirmUndo(false)}>Tidak</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button type="button" className="btn-outline !py-1 !px-3 text-xs disabled:opacity-50"
+                    disabled={busy} onClick={() => setConfirmUndo(true)}>Batalkan cek terakhir</button>
+                )}
+              </div>
+            );
+          })()}
+          {undoneNote && <p className="text-sm text-brand-600 mt-2">Cek terakhir dibatalkan.</p>}
         </div>
         {error && <p className="text-sm text-danger-400">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -166,6 +227,9 @@ export default function BalanceCheck({ onClose }) {
           {direction === 'surplus'
             ? 'Penyesuaian tercatat sebagai pemasukan "Penyesuaian saldo" di riwayat income.'
             : 'Penyesuaian tercatat dengan label "Penyesuaian" dan bisa dihapus dari halaman Transaksi.'}
+        </p>
+        <p className="text-xs text-gray-400">
+          Salah input? Kamu bisa membatalkannya lewat menu Cocokkan saldo selama masih di periode ini.
         </p>
         {toast && (
           <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 bg-gray-900 text-white text-sm text-left">
