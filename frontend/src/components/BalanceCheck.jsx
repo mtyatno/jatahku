@@ -102,11 +102,15 @@ export default function BalanceCheck({ onClose }) {
         }
         window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
         setToast(null);
-        await loadPreview();
+        if (!(await loadPreview())) {
+          setStep('input');
+          setError('Penyesuaian dibatalkan, tapi selisih gagal dihitung ulang. Coba cek lagi.');
+        }
       },
     });
-    // Tombol Batalkan hanya 6 detik (pola sama dengan bayar langganan).
-    setTimeout(() => setToast(t => (t && t.token === token ? { token, text: t.text } : t)), 6000);
+    // Tombol Batalkan hanya 6 detik (pola sama dengan bayar langganan). Teks dikembalikan ke
+    // "Saldo sudah cocok": undo yang gagal berarti penyesuaian masih berlaku, jadi teks ini akurat.
+    setTimeout(() => setToast(t => (t && t.token === token ? { token, text: 'Saldo sudah cocok' } : t)), 6000);
   };
 
   // Render function (bukan komponen) supaya input tidak re-mount & kehilangan fokus.
