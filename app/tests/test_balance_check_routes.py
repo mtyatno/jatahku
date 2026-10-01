@@ -89,5 +89,20 @@ class RegistrationTests(unittest.TestCase):
             self.assertIn(p, paths)
 
 
+class AuthTests(unittest.TestCase):
+    """Semua endpoint membaca/menulis uang household → wajib login (pola test_admin_triggers)."""
+
+    def test_every_balance_check_route_requires_login(self):
+        from app.core import deps
+        from app.main import app
+        expected = {"/balance-check/status", "/balance-check/preview",
+                    "/balance-check/apply", "/balance-check/{check_id}/undo"}
+        routes = [r for r in app.routes if getattr(r, "path", "").startswith("/balance-check/")]
+        self.assertTrue(expected <= {r.path for r in routes})  # keempat endpoint ada (tes tak kosong)
+        for r in routes:  # dan endpoint baru di prefix ini pun harus ikut wajib login
+            calls = {d.call for d in r.dependant.dependencies}
+            self.assertIn(deps.get_current_user, calls, r.path)
+
+
 if __name__ == "__main__":
     unittest.main()
