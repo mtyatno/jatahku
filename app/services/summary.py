@@ -55,7 +55,8 @@ def _env_label(env) -> tuple[str, str]:
     """(emoji, nama pendek) untuk baris top-amplop; aman bila amplop tak ditemukan."""
     if env is None:
         return "📁", "Lain"
-    return env.emoji, (env.name or "Lain").split()[0]
+    parts = (env.name or "").split()
+    return env.emoji, (parts[0] if parts else "Lain")
 
 
 def _to_wa(lines: list[str]) -> str:

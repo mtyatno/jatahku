@@ -68,6 +68,10 @@ class EnvLabelTests(unittest.TestCase):
     def test_blank_name_falls_back(self):
         self.assertEqual(summary._env_label(SimpleNamespace(emoji="", name=None)), ("", "Lain"))
 
+    def test_whitespace_only_name_falls_back(self):
+        # "   ".split() == [] → dulu IndexError saat mengambil kata pertama
+        self.assertEqual(summary._env_label(SimpleNamespace(emoji="🍜", name="   ")), ("🍜", "Lain"))
+
 
 if __name__ == "__main__":
     unittest.main()
