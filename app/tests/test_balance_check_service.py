@@ -203,7 +203,7 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stmts), 1)
         self.assertIn("FROM households", stmts[0])
         self.assertIn("households.id = ", stmts[0])
-        self.assertIn("FOR UPDATE", stmts[0])
+        self.assertIn("FOR NO KEY UPDATE", stmts[0])
 
     async def test_household_locked_before_app_amount_is_recomputed(self):
         # Penerus kunci harus menghitung ulang SETELAH kunci: ia melihat data yang sudah
@@ -218,7 +218,7 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(svc, "compute_envelope_summaries", new=recompute):
             await svc.apply_balance_check(USER, db, D("2000000"), D("2000000"), [], today=TODAY)
         self.assertEqual(len(at_recompute), 1)
-        self.assertIn("FOR UPDATE", at_recompute[0])
+        self.assertIn("FOR NO KEY UPDATE", at_recompute[0])
 
     async def test_actual_normalized_to_the_cent(self):
         db = recording_db(FakeResult(HID))
@@ -270,45 +270,63 @@ class UndoTests(unittest.IsolatedAsyncioTestCase):
             await svc.undo_balance_check(USER, db, check_id)
         self.assertEqual(ctx.exception.status_code, status)
 
+    # Statement pertama setiap undo = kunci baris household (hasilnya tak dipakai) → FakeResult() kosong.
+
     async def test_not_latest_400(self):
-        await self.assert_error(400, db_with(FakeResult(self.latest())), check_id=uuid.uuid4())
+        await self.assert_error(400, db_with(FakeResult(), FakeResult(self.latest())), check_id=uuid.uuid4())
 
     async def test_nothing_to_undo_400(self):
-        await self.assert_error(400, db_with(FakeResult(None)))
+        await self.assert_error(400, db_with(FakeResult(), FakeResult(None)))
 
     async def test_other_member_403(self):
-        await self.assert_error(403, db_with(FakeResult(self.latest(user_id=uuid.uuid4()))))
+        await self.assert_error(403, db_with(FakeResult(), FakeResult(self.latest(user_id=uuid.uuid4()))))
 
     async def test_no_household_404(self):
         with patch.object(svc, "get_household_id", new=AsyncMock(return_value=None)):
             await self.assert_error(404, db_with())
 
+    async def test_household_locked_before_latest_check_is_read(self):
+        # Kunci dulu, baru baca "cek terakhir": undo & apply bersamaan tak boleh saling menyalip
+        # (undo membatalkan cek yang sudah bukan yang terakhir). Berlaku juga di jalur penolakan.
+        db = db_with(FakeResult(), FakeResult(None))
+        await self.assert_error(400, db)
+        stmts = executed_sql(db)
+        self.assertEqual(len(stmts), 2)
+        self.assertIn("FROM households", stmts[0])
+        self.assertIn("FOR NO KEY UPDATE", stmts[0])
+        self.assertIn("FROM balance_checks", stmts[1])
+
     async def test_undo_soft_deletes_txns_and_removes_income(self):
         latest = self.latest()
-        db = db_with(FakeResult(latest), FakeResult(), FakeResult(rows=[uuid.uuid4()]), FakeResult(), FakeResult())
+        db = db_with(FakeResult(), FakeResult(latest), FakeResult(), FakeResult(rows=[uuid.uuid4()]),
+                     FakeResult(), FakeResult())
         out = await svc.undo_balance_check(USER, db, CHECK_ID)
         stmts = executed_sql(db)
+        # kunci household dulu (sama dengan apply) — undo tak boleh menyalip apply yang sedang jalan
+        self.assertIn("FROM households", stmts[0])
+        self.assertIn("households.id = ", stmts[0])
+        self.assertIn("FOR NO KEY UPDATE", stmts[0])
         # "terakhir" = cek household ini yang belum di-undo, terbaru dulu
-        self.assertIn("balance_checks.undone_at IS NULL", stmts[0])
-        self.assertIn("balance_checks.household_id = ", stmts[0])
-        self.assertIn("ORDER BY balance_checks.created_at DESC", stmts[0])
+        self.assertIn("balance_checks.undone_at IS NULL", stmts[1])
+        self.assertIn("balance_checks.household_id = ", stmts[1])
+        self.assertIn("ORDER BY balance_checks.created_at DESC", stmts[1])
         # tiap penulisan dibatasi ke baris milik cek ini saja
-        self.assertIn("UPDATE transactions SET is_deleted", stmts[1])
-        self.assertIn("transactions.balance_check_id = ", stmts[1])
-        self.assertIn("incomes.balance_check_id = ", stmts[2])
-        self.assertIn("DELETE FROM allocations", stmts[3])
-        self.assertIn("allocations.income_id IN", stmts[3])
-        self.assertIn("DELETE FROM incomes", stmts[4])
-        self.assertIn("incomes.id IN", stmts[4])
+        self.assertIn("UPDATE transactions SET is_deleted", stmts[2])
+        self.assertIn("transactions.balance_check_id = ", stmts[2])
+        self.assertIn("incomes.balance_check_id = ", stmts[3])
+        self.assertIn("DELETE FROM allocations", stmts[4])
+        self.assertIn("allocations.income_id IN", stmts[4])
+        self.assertIn("DELETE FROM incomes", stmts[5])
+        self.assertIn("incomes.id IN", stmts[5])
         self.assertIsNotNone(latest.undone_at)
         db.commit.assert_awaited_once()
         self.assertEqual(out["status"], "undone")
 
     async def test_undo_without_income(self):
         latest = self.latest()
-        db = db_with(FakeResult(latest), FakeResult(), FakeResult(rows=[]))
+        db = db_with(FakeResult(), FakeResult(latest), FakeResult(), FakeResult(rows=[]))
         await svc.undo_balance_check(USER, db, CHECK_ID)
-        self.assertEqual(db.execute.await_count, 3)
+        self.assertEqual(db.execute.await_count, 4)  # kunci + cek terakhir + update txn + cari income
         self.assertIsNotNone(latest.undone_at)
 
 

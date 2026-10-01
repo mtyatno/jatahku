@@ -212,7 +212,9 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
     # dengan expected_app_amount sama tak boleh sama-sama lolos cek 409 lalu sama-sama commit.
     # Kunci dipegang sampai commit; penerusnya menghitung ulang SETELAH kunci sehingga melihat
     # data yang di-commit pemegang sebelumnya (READ COMMITTED, default engine) → 409.
-    await db.execute(select(Household.id).where(Household.id == hid).with_for_update())
+    # key_share=True → FOR NO KEY UPDATE: tetap menserialkan apply/undo, tapi tidak memblokir
+    # insert ber-FK ke household (income, amplop) selama apply berjalan.
+    await db.execute(select(Household.id).where(Household.id == hid).with_for_update(key_share=True))
 
     rows = await compute_envelope_summaries(user, db)
     app_amount = _app_amount(rows)
@@ -264,6 +266,9 @@ async def undo_balance_check(user, db, check_id) -> dict:
     hid = await get_household_id(user, db)
     if not hid:
         raise BalanceCheckError(404, "Penyesuaian tidak ditemukan")
+    # Kunci yang sama dengan apply_balance_check: undo tak boleh menyalip apply yang sedang jalan
+    # (yang membuat "cek terakhir" baru) maupun undo lain, jadi dikunci SEBELUM membaca cek terakhir.
+    await db.execute(select(Household.id).where(Household.id == hid).with_for_update(key_share=True))
     latest = (await db.execute(_latest_check_query(hid))).scalar_one_or_none()
     if latest is None or str(latest.id) != str(check_id):
         raise BalanceCheckError(400, "Hanya penyesuaian terakhir yang bisa dibatalkan")
