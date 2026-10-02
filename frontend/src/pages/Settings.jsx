@@ -310,14 +310,6 @@ export default function Settings() {
   const [linkLoading, setLinkLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Link WA
-  const [waStatus, setWaStatus] = useState({ linked: false });
-  const [waCodeInput, setWaCodeInput] = useState('');
-  const [waLinking, setWaLinking] = useState(false);
-  const [waAutoCode, setWaAutoCode] = useState('');
-  const [waPhone, setWaPhone] = useState('');
-  const [waSavingPhone, setWaSavingPhone] = useState(false);
-
   // Delete
   const [showDelete, setShowDelete] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -346,19 +338,9 @@ export default function Settings() {
     const mRes = await api.request('/household/members');
     if (mRes.ok) setMembers(await mRes.json());
     setLoading(false);
-    const waRes = await api.getWhatsAppStatus();
-    setWaStatus(waRes);
-    setWaPhone(waRes.phone || '');
   };
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const waCode = params.get('wa');
-    if (waCode) {
-      setWaCodeInput(waCode);
-      setWaAutoCode(waCode);
-      window.history.replaceState({}, '', '/settings');
-    }
     load();
   }, []);
 
@@ -443,43 +425,6 @@ export default function Settings() {
     const res = await api.request('/auth/link/generate', { method: 'POST' });
     if (res.ok) { const data = await res.json(); setLinkCode(data.code); }
     setLinkLoading(false);
-  };
-
-  useEffect(() => {
-    if (waAutoCode && !waStatus.linked && !loading) {
-      setWaAutoCode('');
-      linkWhatsApp();
-    }
-  }, [waStatus, loading]);
-
-  const linkWhatsApp = async () => {
-    if (!waCodeInput.trim()) return;
-    setWaLinking(true);
-    const res = await api.linkWhatsApp(waCodeInput.trim());
-    setWaLinking(false);
-    if (res.ok) {
-      setWaCodeInput('');
-      flash('WhatsApp terhubung!', 'wa');
-      load();
-    } else {
-      const d = await res.json();
-      flashErr(d.detail || 'Kode tidak valid', 'wa');
-    }
-  };
-
-  const unlinkWhatsApp = async () => {
-    if (!confirm('Putuskan koneksi WhatsApp?')) return;
-    const res = await api.unlinkWhatsApp();
-    if (res.ok) { flash('WhatsApp diputus', 'wa'); load(); }
-    else flashErr('Gagal memutus koneksi', 'wa');
-  };
-
-  const saveWaPhone = async () => {
-    setWaSavingPhone(true);
-    const res = await api.saveWhatsAppPhone(waPhone);
-    setWaSavingPhone(false);
-    if (res.ok) flash('Nomor HP disimpan', 'wa-phone');
-    else flashErr('Format nomor tidak valid', 'wa-phone');
   };
 
   const generateInvite = async () => {
@@ -729,61 +674,6 @@ export default function Settings() {
           </div>
         </div>
       )}
-
-      {/* WhatsApp */}
-      {waStatus && !waStatus.linked ? (
-        <div className="card border-brand-200">
-          <h3 className="font-semibold text-sm mb-2">💬 Hubungkan WhatsApp</h3>
-          <p className="text-xs text-gray-500 mb-4">
-            Catat pengeluaran via WhatsApp dengan NLP yang sama seperti Telegram.
-          </p>
-          {waStatus.bot_phone && (
-            <div className="bg-gray-50 rounded-lg px-3 py-2 mb-4 flex items-center gap-2">
-              <span className="text-xs text-gray-500">Nomor WA Jatahku:</span>
-              <span className="text-sm font-mono font-semibold text-gray-800">{waStatus.bot_phone}</span>
-            </div>
-          )}
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">Hubungkan akun</p>
-              <p className="text-xs text-gray-500 mb-2">
-                Kirim <code className="bg-gray-100 px-1 rounded">/link</code> ke nomor di atas, lalu tap link yang dikirim bot.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  className="input flex-1"
-                  placeholder="Masukkan kode 6 digit"
-                  value={waCodeInput}
-                  onChange={e => setWaCodeInput(e.target.value)}
-                  maxLength={6}
-                />
-                <button
-                  onClick={linkWhatsApp}
-                  disabled={waLinking || waCodeInput.length !== 6}
-                  className="btn-primary disabled:opacity-50 whitespace-nowrap"
-                >
-                  {waLinking ? '...' : 'Hubungkan'}
-                </button>
-              </div>
-              <InlineFlash k="wa" />
-            </div>
-          </div>
-        </div>
-      ) : waStatus?.linked ? (
-        <div className="card">
-          <h3 className="font-semibold text-sm mb-2">💬 WhatsApp</h3>
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-sm text-brand-600">✅ Terhubung</span>
-              {waStatus.phone && <p className="text-xs text-gray-500 mt-0.5">+{waStatus.phone}</p>}
-            </div>
-            <button onClick={unlinkWhatsApp} className="text-xs text-gray-400 hover:text-danger-400">
-              Putuskan
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       {/* Household */}
       <div className="card">
