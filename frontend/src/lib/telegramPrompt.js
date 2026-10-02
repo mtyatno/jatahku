@@ -5,6 +5,15 @@
 // sekali per minggu; tidak pernah bila Telegram/WhatsApp sudah tertaut.
 export const TELEGRAM_PROMPT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Kode link dari /auth/link/generate berlaku 5 menit sejak DIBUAT (LINK_TTL
+// backend), bukan sejak tombol ditekan. `marginMs` untuk menyegarkan kode yang
+// hampir mati sebelum Telegram dibuka.
+export const LINK_CODE_TTL_MS = 5 * 60 * 1000;
+
+export function isLinkCodeUsable(codeAt, now, marginMs = 0) {
+  return codeAt > 0 && now - codeAt < LINK_CODE_TTL_MS - marginMs;
+}
+
 export function shouldShowTelegramPrompt({
   telegramLinked, whatsappLinked, hasEnvelopes, justOnboarded, lastShownAt, now,
 }) {

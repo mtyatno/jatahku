@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
-import { shouldShowTelegramPrompt } from '../lib/telegramPrompt';
+import { shouldShowTelegramPrompt, isLinkCodeUsable } from '../lib/telegramPrompt';
 import { Icon, BRAND } from './Icon';
 
 const LAST_SHOWN_KEY = 'jatahku_tg_prompt_last_shown';
-const LINK_TTL_MS = 5 * 60 * 1000; // sama dengan LINK_TTL kode di backend
 
 function readLastShown() {
   try {
@@ -86,9 +85,8 @@ export default function TelegramPrompt() {
   // berhenti saat kode kedaluwarsa.
   useEffect(() => {
     if (!show || phase !== 'waiting') return;
-    const started = Date.now();
     const interval = setInterval(async () => {
-      if (Date.now() - started > LINK_TTL_MS) {
+      if (!isLinkCodeUsable(codeAt, Date.now())) {
         clearInterval(interval);
         setPhase('expired');
         return;
@@ -102,10 +100,10 @@ export default function TelegramPrompt() {
       } catch { /* jaringan putus sesaat: coba lagi di putaran berikutnya */ }
     }, 3000);
     return () => clearInterval(interval);
-  }, [show, phase]);
+  }, [show, phase, codeAt]);
 
   const openBot = (e) => {
-    if (!code || Date.now() - codeAt > LINK_TTL_MS - 15000) {
+    if (!code || !isLinkCodeUsable(codeAt, Date.now(), 15000)) {
       e.preventDefault();
       prepareCode();
       return;
