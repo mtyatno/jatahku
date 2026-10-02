@@ -1,102 +1,23 @@
 ---
-title: "Catat Pengeluaran Lewat WhatsApp: Jatahku Kini Hadir di WA"
-description: "Jatahku sekarang bisa diakses via WhatsApp. Catat pengeluaran, cek saldo amplop, dan terima ringkasan harian — semua tanpa buka aplikasi."
+title: "Bot WhatsApp Jatahku Dihentikan: Catat Lewat Telegram atau Webapp"
+description: "Bot WhatsApp Jatahku sudah dihentikan karena koneksinya tidak stabil. Mencatat secepat chat tetap bisa lewat bot Telegram @JatahkuBot atau langsung di webapp."
 pubDate: 2026-04-18
+updatedDate: 2026-10-02
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/bot-whatsapp.svg
-featured: true
+cover: /covers/cara-pakai-bot-telegram.svg
+featured: false
 ---
 
-Selama ini Jatahku bisa diakses lewat Telegram dan webapp. Mulai sekarang, ada satu cara baru yang lebih dekat dengan keseharian banyak orang Indonesia: **WhatsApp**.
+**Pembaruan 2 Oktober 2026:** bot WhatsApp Jatahku sudah dihentikan.
 
-Kamu bisa catat pengeluaran, cek saldo amplop, dan terima ringkasan harian — cukup lewat chat WA, tanpa perlu buka aplikasi lain.
+Koneksi bot WhatsApp kami bergantung pada sesi WhatsApp Web yang otomatis terputus kalau tidak aktif sekitar dua minggu. Akibatnya bot bisa mati tanpa pemberitahuan, dan pengeluaran yang kamu kirim tidak tercatat. Daripada pencatatanmu hilang diam-diam, fitur ini kami hentikan.
 
----
+## Tetap Bisa Mencatat Secepat Chat
 
-## Cara Menghubungkan Akun
+- **Telegram:** kirim `kopi 35k` ke [@JatahkuBot](https://t.me/JatahkuBot). Belum punya akun? Ketik `/start`, lalu ketuk link yang dikirim bot untuk menyiapkan budget, tanpa perlu daftar dulu.
+- **Webapp:** catat langsung di [jatahku.com](https://jatahku.com) lewat tombol +, termasuk banyak transaksi sekaligus.
 
-Sebelum bisa pakai, akun Jatahku kamu perlu dihubungkan ke nomor WhatsApp.
+Transaksi yang pernah kamu catat lewat WhatsApp tetap aman di akunmu.
 
-**Langkah 1:** Kirim pesan `/link` ke nomor WhatsApp Jatahku.
-
-Bot akan membalas dengan sebuah link, contoh:
-
-```
-Tap link berikut untuk menghubungkan akun WhatsApp:
-
-https://jatahku.com/settings?wa=482910
-
-Berlaku 5 menit.
-```
-
-**Langkah 2:** Tap link tersebut. Kamu akan diarahkan ke halaman Settings Jatahku, dan akun langsung terhubung otomatis — tanpa perlu copy-paste kode.
-
-Setelah terhubung, semua fitur bot langsung bisa dipakai.
-
----
-
-## Catat Pengeluaran dengan Bahasa Natural
-
-Sama seperti bot Telegram, kamu cukup ketik pengeluaran dalam bahasa sehari-hari:
-
-```
-kopi 18k
-```
-
-Bot akan langsung mencatat ke amplop yang paling sesuai berdasarkan riwayat kamu.
-
-Kalau ada lebih dari satu amplop yang cocok, bot akan menampilkan pilihan bernomor:
-
-```
-Pilih amplop untuk "kopi 18k":
-
-1. ☕ Makan & Minum  (sisa Rp 234.000)
-2. 🎉 Hiburan        (sisa Rp 87.000)
-
-Balas dengan angka.
-```
-
-Balas `1` atau `2` — transaksi langsung tercatat.
-
----
-
-## Multi-Input: Catat Beberapa Sekaligus
-
-Kalau ada beberapa pengeluaran sekaligus, ketik dalam satu pesan dipisah koma atau baris baru:
-
-```
-kopi 18k, makan siang 35k, bensin 50k
-```
-
-Bot akan memproses semuanya sekaligus. Transaksi yang langsung dikenali akan **dicatat otomatis**. Yang belum pasti amplop-nya akan ditanyakan satu per satu.
-
----
-
-## Perintah yang Tersedia
-
-| Perintah | Fungsi |
-|----------|--------|
-| `/status` | Ringkasan budget periode ini |
-| `/amplop` | Daftar semua amplop dan sisa saldo |
-| `/webapp` | Link login ke WebApp tanpa password |
-| `/link` | Hubungkan atau ganti akun |
-
----
-
-## Ringkasan Harian & Mingguan
-
-Sama seperti Telegram, bot WhatsApp juga mengirim:
-
-- **Ringkasan harian** setiap jam 8 malam — pengeluaran hari ini, status setiap amplop, dan apakah kamu masih on track
-- **Ringkasan mingguan** setiap Senin pagi — total minggu lalu, burn rate, dan prediksi akhir periode
-
-Kamu tidak perlu melakukan apa-apa. Selama akun terhubung, ringkasan akan terkirim otomatis.
-
----
-
-## Cara Menemukan Nomor WhatsApp Jatahku
-
-Buka [jatahku.com/settings](https://jatahku.com/settings), scroll ke bagian **WhatsApp**. Nomor bot akan ditampilkan di sana — simpan ke kontak HP kamu, lalu kirim `/link` untuk memulai.
-
-Kalau kamu sudah pakai bot Telegram dan mau coba WA juga, keduanya bisa aktif bersamaan — transaksi yang dicatat dari salah satu channel akan langsung terlihat di dashboard dan channel lainnya.
+> Panduan: [Cara Pakai Bot Telegram Jatahku](/insight/cara-pakai-bot-telegram-jatahku/) dan [Panduan Lengkap Mulai Pakai Jatahku](/insight/panduan-lengkap-mulai-pakai-jatahku/).
