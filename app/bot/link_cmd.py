@@ -1,3 +1,5 @@
+import logging
+
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
@@ -5,18 +7,28 @@ from app.core.config import get_settings
 
 settings = get_settings()
 API = settings.API_URL
+logger = logging.getLogger("jatahku.bot")
 
 
 async def link_with_code(update, code):
     """Tautkan Telegram ke akun web pakai kode dari web. Dipakai /link KODE dan
     deep link /start link_KODE, supaya bentrok akun selalu ditangani API."""
     tg_id = str(update.effective_user.id)
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            f"{API}/auth/link/telegram",
-            json={"code": code, "telegram_id": tg_id},
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"{API}/auth/link/telegram",
+                json={"code": code, "telegram_id": tg_id},
+            )
+        data = res.json()
+    except (httpx.HTTPError, ValueError):
+        # API tak terjangkau atau error 500 berbody non-JSON: jangan diam saja.
+        logger.exception("Link Telegram gagal untuk %s", tg_id)
+        await update.message.reply_text(
+            "❌ Gagal menghubungkan akun. Coba lagi sebentar lagi, "
+            "atau buat link baru dari Settings di web."
         )
-    data = res.json()
+        return
 
     if res.status_code != 200:
         detail = data.get("detail", "Gagal menghubungkan")

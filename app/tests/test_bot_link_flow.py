@@ -72,6 +72,29 @@ class LinkWithCodeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Budi", text)
         self.assertIn("kopi 35k", text)
 
+    async def test_server_error_without_json_still_gets_a_reply(self):
+        class HtmlErrorResponse(FakeResponse):
+            def json(self):
+                raise ValueError("Internal Server Error (bukan JSON)")
+
+        FakeClient, _ = fake_http(HtmlErrorResponse(500, None))
+        update = make_update()
+        with patch.object(link_cmd.httpx, "AsyncClient", FakeClient):
+            await link_cmd.link_with_code(update, "123456")
+
+        update.message.reply_text.assert_awaited_once()
+        self.assertIn("Gagal", update.message.reply_text.await_args.args[0])
+
+    async def test_unreachable_api_still_gets_a_reply(self):
+        FakeClient, client = fake_http(None)
+        client.post = AsyncMock(side_effect=link_cmd.httpx.ConnectError("api down"))
+        update = make_update()
+        with patch.object(link_cmd.httpx, "AsyncClient", FakeClient):
+            await link_cmd.link_with_code(update, "123456")
+
+        update.message.reply_text.assert_awaited_once()
+        self.assertIn("Gagal", update.message.reply_text.await_args.args[0])
+
 
 def session_returning(user):
     """Pengganti AsyncSessionLocal: query akun berdasarkan telegram_id → `user`."""
