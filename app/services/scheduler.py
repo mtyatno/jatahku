@@ -212,8 +212,8 @@ async def run_user_summaries():
 async def send_checkin_nudge(user, local_today, db):
     """Send a once-a-day Telegram nudge if the user hasn't logged today.
 
-    No-ops when: the user has no Telegram, already logged activity today, or a
-    nudge was already sent today (anti-spam). The 'no spending' button keeps the
+    No-ops when: the user has no Telegram, has no envelopes yet (can't log),
+    already logged activity today, or a nudge was already sent today (anti-spam). The 'no spending' button keeps the
     streak alive without forcing a transaction."""
     from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
     from app.models.models import UserStreak
@@ -224,6 +224,12 @@ async def send_checkin_nudge(user, local_today, db):
 
     settings = get_settings()
     if not settings.TELEGRAM_BOT_TOKEN:
+        return
+
+    # Belum punya amplop → pencatatan diblok; jangan diminta mencatat tiap malam.
+    from app.bot.handlers import _is_setup_complete
+    setup_ok, _ = await _is_setup_complete(user, db)
+    if not setup_ok:
         return
 
     streak = await db.get(UserStreak, user.id)

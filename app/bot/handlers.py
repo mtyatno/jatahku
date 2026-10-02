@@ -20,6 +20,7 @@ from app.models.models import (
 from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
 from app.bot.link_cmd import link_with_code
+from app.bot.tglogin_cmd import reply_setup_needed
 from app.services.txn_nlp import (
     STOPWORDS, CATEGORY_KEYWORDS, extract_keywords, guess_envelope_name,
     save_learned_keywords, find_best_envelope,
@@ -271,9 +272,8 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
     return envelope_data
 
 async def _is_setup_complete(user, db):
-    """Check if user has linked WebApp + has envelopes."""
-    if not user.email:
-        return False, "not_linked"
+    """Siap dipakai lewat bot = punya household dengan minimal satu amplop aktif.
+    Email tidak disyaratkan: akun dari /start onboarding lewat login sekali ketuk."""
     hid = await get_household_id(user, db)
     if not hid:
         return False, "no_household"
@@ -311,31 +311,8 @@ async def cmd_start(update, context):
             f"Ketik /status untuk cek budget atau /help untuk panduan.",
             parse_mode="Markdown",
         )
-    elif reason == "no_envelopes":
-        await update.message.reply_text(
-            f"Hai {tg_user.first_name}! \U0001f44b\n\n"
-            f"Akun Telegram sudah terhubung.\n"
-            f"Tapi kamu belum setup budget.\n\n"
-            f"\U0001f310 Buka *jatahku.com* untuk:\n"
-            f"1. Input income bulanan\n"
-            f"2. Pilih template amplop\n"
-            f"3. Alokasikan dana\n\n"
-            f"Setelah itu, kamu bisa catat pengeluaran di sini!",
-            parse_mode="Markdown",
-        )
     else:
-        await update.message.reply_text(
-            f"Hai {tg_user.first_name}! \U0001f44b\n"
-            f"Selamat datang di *Jatahku* \u2014 pengendali keuangan kamu.\n\n"
-            f"Untuk mulai, hubungkan Telegram ke WebApp:\n\n"
-            f"1\ufe0f\u20e3 Buka *jatahku.com*\n"
-            f"2\ufe0f\u20e3 Daftar / Login\n"
-            f"3\ufe0f\u20e3 Masuk ke Settings\n"
-            f"4\ufe0f\u20e3 Generate kode link\n"
-            f"5\ufe0f\u20e3 Kirim `/link KODE` di sini\n\n"
-            f"\U0001f4d6 /help untuk panduan lengkap",
-            parse_mode="Markdown",
-        )
+        await reply_setup_needed(update, user)
 
 
 # ── Daily-limit bypass helpers ────────────────────────────────────────────────
@@ -780,7 +757,7 @@ async def handle_message(update, context):
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
             setup_ok, reason = await _is_setup_complete(user, db)
             if not setup_ok:
-                await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com\nKetik /start untuk panduan.")
+                await reply_setup_needed(update, user)
                 return
             hid = await get_household_id(user, db)
             from sqlalchemy import or_ as sql_or
@@ -850,15 +827,7 @@ async def handle_message(update, context):
 
         setup_ok, reason = await _is_setup_complete(user, db)
         if not setup_ok:
-            if reason == "not_linked":
-                await update.message.reply_text(
-                    "⚠️ Hubungkan Telegram ke WebApp dulu.\n"
-                    "Buka jatahku.com → Settings → Link Telegram\n\n"
-                    "Ketik /start untuk panduan.")
-            else:
-                await update.message.reply_text(
-                    "⚠️ Belum ada amplop. Setup budget dulu di jatahku.com\n\n"
-                    "Ketik /start untuk panduan.")
+            await reply_setup_needed(update, user)
             return
 
         hid = await get_household_id(user, db)

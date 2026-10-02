@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
-import { shouldShowTelegramPrompt, isLinkCodeUsable } from '../lib/telegramPrompt';
+import { telegramPromptMode, isLinkCodeUsable } from '../lib/telegramPrompt';
 import { Icon, BRAND } from './Icon';
 
 const LAST_SHOWN_KEY = 'jatahku_tg_prompt_last_shown';
@@ -32,6 +32,8 @@ function takeJustOnboarded() {
 export default function TelegramPrompt() {
   const { user } = useAuth();
   const [show, setShow] = useState(false);
+  // 'connect' = ajak hubungkan Telegram; 'return' = datang dari bot, baru onboarding
+  const [mode, setMode] = useState('connect');
   // ready → waiting (bot dibuka, menunggu START) → linked | expired
   const [phase, setPhase] = useState('ready');
   const [code, setCode] = useState(null);
@@ -39,26 +41,36 @@ export default function TelegramPrompt() {
   const [codeError, setCodeError] = useState(false);
 
   useEffect(() => {
-    if (!user || user.telegram_id) return;
+    if (!user) return;
     let cancelled = false;
     const justOnboarded = takeJustOnboarded();
+    const reveal = (m, delay) => setTimeout(() => {
+      if (!cancelled) { setMode(m); setShow(true); }
+    }, delay);
+
+    if (user.telegram_id) {
+      // Datang dari bot: setelah onboarding di web, ajak kembali ke Telegram.
+      if (telegramPromptMode({ telegramLinked: true, justOnboarded }) === 'return') reveal('return', 800);
+      return () => { cancelled = true; };
+    }
+
     Promise.all([
       justOnboarded ? Promise.resolve(null) : api.getEnvelopeSummary(),
       api.getWhatsAppStatus(),
     ]).then(([envs, wa]) => {
       if (cancelled) return;
       const now = Date.now();
-      const visible = shouldShowTelegramPrompt({
-        telegramLinked: !!user.telegram_id,
+      const m = telegramPromptMode({
+        telegramLinked: false,
         whatsappLinked: !!wa?.linked,
         hasEnvelopes: Array.isArray(envs) && envs.length > 0,
         justOnboarded,
         lastShownAt: readLastShown(),
         now,
       });
-      if (!visible) return;
+      if (m !== 'connect') return;
       markShown(now);
-      setTimeout(() => { if (!cancelled) setShow(true); }, justOnboarded ? 800 : 500);
+      reveal('connect', justOnboarded ? 800 : 500);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [user]);
@@ -79,7 +91,7 @@ export default function TelegramPrompt() {
     }
   };
 
-  useEffect(() => { if (show) prepareCode(); }, [show]);
+  useEffect(() => { if (show && mode === 'connect') prepareCode(); }, [show, mode]);
 
   // Setelah bot dibuka: cek tiap 3 detik apakah Telegram sudah tertaut,
   // berhenti saat kode kedaluwarsa.
@@ -121,7 +133,25 @@ export default function TelegramPrompt() {
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 animate-fade-in">
-        {phase === 'linked' ? (
+        {mode === 'return' ? (
+          <div className="text-center space-y-3">
+            <span className="w-14 h-14 rounded-full mx-auto flex items-center justify-center" style={{ background: 'rgba(15,110,86,0.10)' }}>
+              <Icon name="check" size={28} color={BRAND} />
+            </span>
+            <h2 className="font-display text-xl font-bold">Budget kamu siap!</h2>
+            <p className="text-sm text-gray-500 leading-relaxed">
+              Kembali ke Telegram dan catat pengeluaran pertamamu. Cukup kirim <span className="font-mono text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded">kopi 35k</span> ke @JatahkuBot.
+            </p>
+            <a href="https://t.me/JatahkuBot" target="_blank" rel="noreferrer" onClick={() => setShow(false)}
+              className="btn-primary w-full justify-center text-center py-3">
+              Buka @JatahkuBot →
+            </a>
+            <button onClick={() => setShow(false)}
+              className="text-sm text-gray-400 hover:text-gray-600 py-2 transition-colors">
+              Nanti saja
+            </button>
+          </div>
+        ) : phase === 'linked' ? (
           <div className="text-center space-y-3">
             <span className="w-14 h-14 rounded-full mx-auto flex items-center justify-center" style={{ background: 'rgba(15,110,86,0.10)' }}>
               <Icon name="check" size={28} color={BRAND} />

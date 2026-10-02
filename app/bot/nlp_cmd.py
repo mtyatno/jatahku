@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import select, func
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
     get_or_create_user, get_household_id, _is_setup_complete, format_currency,
@@ -415,7 +416,7 @@ async def handle_sisa(update, context):
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
-        await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+        await reply_setup_needed(update, user)
         return
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
@@ -480,7 +481,7 @@ async def handle_limit_harian(update, context):
         user, _, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
-        await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+        await reply_setup_needed(update, user)
         return
 
     total_free = sum(e["free"] for e in envelopes)
@@ -521,7 +522,7 @@ async def handle_proyeksi(update, context):
     async with AsyncSessionLocal() as db:
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
         if envelopes is None:
-            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            await reply_setup_needed(update, user)
             return
 
         payday_day = getattr(user, 'payday_day', 1) or 1
@@ -593,7 +594,7 @@ async def handle_comparison(update, context):
     async with AsyncSessionLocal() as db:
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
         if envelopes is None:
-            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            await reply_setup_needed(update, user)
             return
 
         payday_day = getattr(user, 'payday_day', 1) or 1
@@ -662,7 +663,7 @@ async def handle_santai(update, context):
         user, _, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
-        await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+        await reply_setup_needed(update, user)
         return
 
     total_free = sum(e["free"] for e in envelopes)
@@ -708,10 +709,10 @@ async def handle_emosi(update, context):
     from app.core.database import AsyncSessionLocal
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
-        _, _, envelopes = await _get_user_envelopes(tg_user, db)
+        user, _, envelopes = await _get_user_envelopes(tg_user, db)
 
     if envelopes is None:
-        await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+        await reply_setup_needed(update, user)
         return
 
     total_spent = sum(e["spent"] for e in envelopes)
@@ -854,7 +855,7 @@ async def handle_multi_expense(update, context, items):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         setup_ok, _ = await _is_setup_complete(user, db)
         if not setup_ok:
-            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            await reply_setup_needed(update, user)
             return
         hid = await get_household_id(user, db)
 
@@ -962,7 +963,7 @@ async def handle_pengeluaran_hari_ini(update, context):
     async with AsyncSessionLocal() as db:
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
         if envelopes is None:
-            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            await reply_setup_needed(update, user)
             return
 
         today = date.today()
@@ -1087,7 +1088,7 @@ async def handle_pengeluaran_hari_lalu(update, context):
     async with AsyncSessionLocal() as db:
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
         if envelopes is None:
-            await update.message.reply_text("⚠️ Setup budget dulu di jatahku.com")
+            await reply_setup_needed(update, user)
             return
 
         # Transactions on target date

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldShowTelegramPrompt, isLinkCodeUsable } from './telegramPrompt.js';
+import { shouldShowTelegramPrompt, isLinkCodeUsable, telegramPromptMode } from './telegramPrompt.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0);
@@ -57,4 +57,20 @@ test('a code about to die is refreshed before opening Telegram', () => {
 
 test('no code yet is not usable', () => {
   assert.equal(isLinkCodeUsable(0, NOW), false);
+});
+
+test('user from the bot who just onboarded is sent back to Telegram', () => {
+  assert.equal(telegramPromptMode({ ...base, telegramLinked: true, justOnboarded: true }), 'return');
+});
+
+test('user from the bot sees nothing on a normal visit', () => {
+  assert.equal(telegramPromptMode({ ...base, telegramLinked: true }), null);
+});
+
+test('web user who just onboarded is asked to connect Telegram', () => {
+  assert.equal(telegramPromptMode({ ...base, justOnboarded: true }), 'connect');
+});
+
+test('WhatsApp user who just onboarded is not asked about Telegram', () => {
+  assert.equal(telegramPromptMode({ ...base, whatsappLinked: true, justOnboarded: true }), null);
 });
