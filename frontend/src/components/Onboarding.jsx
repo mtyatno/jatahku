@@ -165,7 +165,6 @@ export default function Onboarding({ onDone }) {
 
     setSaving(false);
     sessionStorage.setItem('just_onboarded', '1');
-    sessionStorage.removeItem('tg_prompt_dismissed');
     onDone();
   };
 

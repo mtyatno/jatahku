@@ -1,3 +1,5 @@
+import logging
+
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
@@ -5,6 +7,71 @@ from app.core.config import get_settings
 
 settings = get_settings()
 API = settings.API_URL
+logger = logging.getLogger("jatahku.bot")
+
+
+async def link_with_code(update, code):
+    """Tautkan Telegram ke akun web pakai kode dari web. Dipakai /link KODE dan
+    deep link /start link_KODE, supaya bentrok akun selalu ditangani API."""
+    tg_id = str(update.effective_user.id)
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(
+                f"{API}/auth/link/telegram",
+                json={"code": code, "telegram_id": tg_id},
+            )
+        data = res.json()
+    except (httpx.HTTPError, ValueError):
+        # API tak terjangkau atau error 500 berbody non-JSON: jangan diam saja.
+        logger.exception("Link Telegram gagal untuk %s", tg_id)
+        await update.message.reply_text(
+            "❌ Gagal menghubungkan akun. Coba lagi sebentar lagi, "
+            "atau buat link baru dari Settings di web."
+        )
+        return
+
+    if res.status_code != 200:
+        detail = data.get("detail", "Gagal menghubungkan")
+        await update.message.reply_text(f"❌ {detail}")
+        return
+
+    if data.get("status") == "conflict":
+        # Show merge options
+        conflict = data["conflict"]
+        src = conflict["source"]
+        tgt = conflict["target"]
+
+        text = (
+            f"⚠️ Akun Telegram kamu sudah punya data:\n\n"
+            f"📱 Akun Telegram: {src['name']}\n"
+            f"   🏠 {src['household_name']} ({src['envelopes']} amplop, {src['transactions']} transaksi)\n\n"
+            f"🌐 Akun WebApp: {tgt['name']}\n"
+            f"   🏠 {tgt['household_name']} ({tgt['envelopes']} amplop)\n\n"
+            f"Data akan di-merge. Pilih household mana yang mau dipakai:"
+        )
+
+        keyboard = []
+        if src.get("household_id"):
+            keyboard.append([InlineKeyboardButton(
+                f"🏠 {src['household_name']} (dari Telegram)",
+                callback_data=f"merge_{code}_{src['household_id']}"
+            )])
+        if tgt.get("household_id"):
+            keyboard.append([InlineKeyboardButton(
+                f"🏠 {tgt['household_name']} (dari WebApp)",
+                callback_data=f"merge_{code}_{tgt['household_id']}"
+            )])
+        keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data="merge_cancel")])
+
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    await update.message.reply_text(
+        f"✅ Berhasil! Akun Telegram terhubung dengan {data.get('user_name', '')}.\n\n"
+        f"Sekarang catat pengeluaran cukup lewat chat, misalnya:\n"
+        f"• kopi 35k\n"
+        f"• makan siang 25rb"
+    )
 
 
 async def cmd_link(update, context):
@@ -12,52 +79,7 @@ async def cmd_link(update, context):
     tg_id = str(tg_user.id)
 
     if context.args and len(context.args) == 1:
-        code = context.args[0].strip()
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"{API}/auth/link/telegram",
-                json={"code": code, "telegram_id": tg_id},
-            )
-        data = res.json()
-
-        if res.status_code == 200:
-            if data.get("status") == "conflict":
-                # Show merge options
-                conflict = data["conflict"]
-                src = conflict["source"]
-                tgt = conflict["target"]
-
-                text = (
-                    f"⚠️ Akun Telegram kamu sudah punya data:\n\n"
-                    f"📱 Akun Telegram: {src['name']}\n"
-                    f"   🏠 {src['household_name']} ({src['envelopes']} amplop, {src['transactions']} transaksi)\n\n"
-                    f"🌐 Akun WebApp: {tgt['name']}\n"
-                    f"   🏠 {tgt['household_name']} ({tgt['envelopes']} amplop)\n\n"
-                    f"Data akan di-merge. Pilih household mana yang mau dipakai:"
-                )
-
-                keyboard = []
-                if src.get("household_id"):
-                    keyboard.append([InlineKeyboardButton(
-                        f"🏠 {src['household_name']} (dari Telegram)",
-                        callback_data=f"merge_{code}_{src['household_id']}"
-                    )])
-                if tgt.get("household_id"):
-                    keyboard.append([InlineKeyboardButton(
-                        f"🏠 {tgt['household_name']} (dari WebApp)",
-                        callback_data=f"merge_{code}_{tgt['household_id']}"
-                    )])
-                keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data="merge_cancel")])
-
-                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            else:
-                await update.message.reply_text(
-                    f"✅ Berhasil! Akun Telegram terhubung dengan {data.get('user_name', '')}.\n\n"
-                    f"Data Telegram dan WebApp sekarang sync otomatis."
-                )
-        else:
-            detail = data.get("detail", "Gagal menghubungkan")
-            await update.message.reply_text(f"❌ {detail}")
+        await link_with_code(update, context.args[0].strip())
     else:
         # Check if this Telegram ID is already linked to a WebApp account
         from app.core.database import AsyncSessionLocal
@@ -67,7 +89,8 @@ async def cmd_link(update, context):
             result = await db.execute(select(User).where(User.telegram_id == tg_id))
             linked_user = result.scalar_one_or_none()
 
-        if linked_user:
+        # Akun bot dari /start tak punya email — belum tertaut ke akun web.
+        if linked_user and linked_user.email:
             await update.message.reply_text(
                 f"✅ <b>Telegram sudah terhubung ke WebApp!</b>\n\n"
                 f"Akun: <b>{linked_user.name or linked_user.email}</b>\n\n"
@@ -80,21 +103,15 @@ async def cmd_link(update, context):
             )
             return
 
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"{API}/auth/link/generate-for-telegram",
-                json={"telegram_id": tg_id},
-            )
-        if res.status_code == 200:
-            code = res.json()["code"]
-            await update.message.reply_text(
-                f"🔗 Kode link: <b>{code}</b>\n\n"
-                f"Buka {settings.APP_URL}/login → klik 'Punya akun Telegram?' → masukkan kode.\n\n"
-                f"Berlaku 5 menit.",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text("❌ Gagal generate kode. Coba lagi.")
+        # Penautan selalu dimulai dari web: Settings membuka bot lewat deep
+        # link berisi kode, jadi user tak perlu mengetik kode di sini.
+        await update.message.reply_text(
+            f"🔗 Telegram ini belum terhubung ke akun Jatahku di web.\n\n"
+            f"Caranya:\n"
+            f"1. Masuk atau daftar di {settings.APP_URL}\n"
+            f"2. Buka Settings, tekan \"Generate Link Telegram\"\n"
+            f"3. Tekan \"Buka @JatahkuBot\", akun langsung tersambung"
+        )
 
 
 async def handle_merge_callback(update, context):

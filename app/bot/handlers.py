@@ -19,6 +19,7 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
+from app.bot.link_cmd import link_with_code
 from app.services.txn_nlp import (
     STOPWORDS, CATEGORY_KEYWORDS, extract_keywords, guess_envelope_name,
     save_learned_keywords, find_best_envelope,
@@ -293,26 +294,9 @@ async def cmd_start(update, context):
     if context.args and len(context.args) > 0:
         arg = context.args[0]
         if arg.startswith("link_"):
-            code = arg.replace("link_", "")
-            import redis.asyncio as aioredis
-            from app.core.config import get_settings
-            r = aioredis.from_url(get_settings().REDIS_URL)
-            user_id = await r.get(f"link:webapp:{code}")
-            await r.close()
-            if user_id:
-                async with AsyncSessionLocal() as db:
-                    result = await db.execute(select(User).where(User.id == user_id.decode()))
-                    webapp_user = result.scalar_one_or_none()
-                    if webapp_user:
-                        webapp_user.telegram_id = str(tg_user.id)
-                        await db.commit()
-                        await update.message.reply_text(
-                            f"\u2705 Berhasil! Akun terhubung dengan {webapp_user.name}.\n\n"
-                            f"Sekarang kirim pengeluaran lewat chat:\n"
-                            f"\u2022 `kopi 35k`\n\u2022 `makan 25rb`",
-                            parse_mode="Markdown")
-                        return
-            await update.message.reply_text("\u274c Kode expired. Generate baru di jatahku.com/settings")
+            # Lewat API yang sama dengan /link KODE: bentrok dengan akun bot
+            # dari /start ditangani di sana (gabung otomatis / pilihan merge).
+            await link_with_code(update, arg[len("link_"):])
             return
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name or "User", db)
