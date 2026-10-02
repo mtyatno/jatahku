@@ -6,6 +6,8 @@ from app.models.models import (
     User, Household, HouseholdMember, Envelope,
     Transaction, Income, Allocation, MonthlySnapshot,
     RecurringTransaction, Goal, BalanceCheck,
+    Notification, NotificationPreference, UserStreak,
+    PendingTransaction, PaymentOrder,
 )
 
 logger = logging.getLogger("jatahku.merge")
@@ -222,6 +224,30 @@ async def merge_users(
     # 7. Remove source memberships
     await db.execute(
         delete(HouseholdMember).where(HouseholdMember.user_id == source_user_id)
+    )
+
+    # 7b. Sisa baris milik source yang FK-nya ke users.id tanpa CASCADE.
+    # Riwayat (notifikasi, transaksi tertunda, order pembayaran) pindah ke
+    # target; streak & preferensi notifikasi bersifat per-akun → dihapus.
+    # Tanpa ini DELETE users di langkah 8 gagal (FK violation) — akun bot-only
+    # hampir selalu punya user_streaks dari check-in nudge.
+    await db.execute(
+        update(Notification).where(Notification.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+    await db.execute(
+        update(PendingTransaction).where(PendingTransaction.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+    await db.execute(
+        update(PaymentOrder).where(PaymentOrder.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+    await db.execute(
+        delete(NotificationPreference).where(NotificationPreference.user_id == source_user_id)
+    )
+    await db.execute(
+        delete(UserStreak).where(UserStreak.user_id == source_user_id)
     )
 
     # 8. Delete source user
