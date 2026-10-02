@@ -77,7 +77,8 @@ async def cmd_link(update, context):
             result = await db.execute(select(User).where(User.telegram_id == tg_id))
             linked_user = result.scalar_one_or_none()
 
-        if linked_user:
+        # Akun bot dari /start tak punya email — belum tertaut ke akun web.
+        if linked_user and linked_user.email:
             await update.message.reply_text(
                 f"✅ <b>Telegram sudah terhubung ke WebApp!</b>\n\n"
                 f"Akun: <b>{linked_user.name or linked_user.email}</b>\n\n"
@@ -90,21 +91,15 @@ async def cmd_link(update, context):
             )
             return
 
-        async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"{API}/auth/link/generate-for-telegram",
-                json={"telegram_id": tg_id},
-            )
-        if res.status_code == 200:
-            code = res.json()["code"]
-            await update.message.reply_text(
-                f"🔗 Kode link: <b>{code}</b>\n\n"
-                f"Buka {settings.APP_URL}/login → klik 'Punya akun Telegram?' → masukkan kode.\n\n"
-                f"Berlaku 5 menit.",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text("❌ Gagal generate kode. Coba lagi.")
+        # Penautan selalu dimulai dari web: Settings membuka bot lewat deep
+        # link berisi kode, jadi user tak perlu mengetik kode di sini.
+        await update.message.reply_text(
+            f"🔗 Telegram ini belum terhubung ke akun Jatahku di web.\n\n"
+            f"Caranya:\n"
+            f"1. Masuk atau daftar di {settings.APP_URL}\n"
+            f"2. Buka Settings, tekan \"Generate Link Telegram\"\n"
+            f"3. Tekan \"Buka @JatahkuBot\", akun langsung tersambung"
+        )
 
 
 async def handle_merge_callback(update, context):

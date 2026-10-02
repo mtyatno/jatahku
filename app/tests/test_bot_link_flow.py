@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.bot import handlers, link_cmd
+from app.tests.fakes import FakeResult
 
 
 def make_update(tg_id=777, first_name="Budi"):
@@ -70,6 +71,53 @@ class LinkWithCodeTests(unittest.IsolatedAsyncioTestCase):
         text = update.message.reply_text.await_args.args[0]
         self.assertIn("Budi", text)
         self.assertIn("kopi 35k", text)
+
+
+def session_returning(user):
+    """Pengganti AsyncSessionLocal: query akun berdasarkan telegram_id → `user`."""
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=FakeResult(user))
+
+    class FakeSession:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, *exc):
+            return False
+
+    return lambda: FakeSession()
+
+
+class NoHttp:
+    async def __aenter__(self):
+        raise AssertionError("/link tanpa kode tak boleh membuat kode lewat API")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class LinkWithoutCodeTests(unittest.IsolatedAsyncioTestCase):
+    async def reply_for(self, user):
+        update = make_update()
+        with patch("app.core.database.AsyncSessionLocal", new=session_returning(user)), \
+             patch.object(link_cmd.httpx, "AsyncClient", NoHttp):
+            await link_cmd.cmd_link(update, SimpleNamespace(args=[]))
+        return update.message.reply_text.await_args.args[0]
+
+    async def test_bot_only_account_is_not_told_it_is_linked(self):
+        bot_only = SimpleNamespace(name="Budi", email=None, telegram_id="777")
+        text = await self.reply_for(bot_only)
+        self.assertNotIn("sudah terhubung", text)
+        self.assertIn("Generate Link Telegram", text)
+
+    async def test_unknown_telegram_user_gets_web_steps(self):
+        text = await self.reply_for(None)
+        self.assertIn("Generate Link Telegram", text)
+
+    async def test_linked_web_account_is_told_it_is_linked(self):
+        web = SimpleNamespace(name="Budi", email="budi@example.com", telegram_id="777")
+        text = await self.reply_for(web)
+        self.assertIn("sudah terhubung", text)
 
 
 if __name__ == "__main__":
