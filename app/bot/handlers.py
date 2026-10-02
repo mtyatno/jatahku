@@ -271,9 +271,8 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
     return envelope_data
 
 async def _is_setup_complete(user, db):
-    """Check if user has linked WebApp + has envelopes."""
-    if not user.email:
-        return False, "not_linked"
+    """Siap dipakai lewat bot = punya household dengan minimal satu amplop aktif.
+    Email tidak disyaratkan: akun dari /start onboarding lewat login sekali ketuk."""
     hid = await get_household_id(user, db)
     if not hid:
         return False, "no_household"
