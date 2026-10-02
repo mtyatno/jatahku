@@ -11,8 +11,8 @@ from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.core.security import hash_password, create_access_token, create_refresh_token
 from app.core.phone import normalize_phone
-from app.models.models import User
-from app.services.merge import get_merge_preview, merge_users
+from app.models.models import User, HouseholdMember
+from app.services.merge import get_merge_preview, merge_users, is_empty_bot_account
 
 settings = get_settings()
 router = APIRouter()
@@ -74,6 +74,30 @@ async def link_telegram_account(
     existing_user = existing.scalar_one_or_none()
 
     if existing_user and str(existing_user.id) != user_id:
+        # Akun bot dari /start yang belum dipakai → gabung otomatis ke akun web,
+        # tak perlu bertanya household mana yang dipertahankan.
+        if await is_empty_bot_account(existing_user, db):
+            result = await db.execute(select(User).where(User.id == UUID(user_id)))
+            target = result.scalar_one_or_none()
+            if not target:
+                raise HTTPException(status_code=404, detail="User tidak ditemukan")
+            keep = (await db.execute(
+                select(HouseholdMember.household_id).where(HouseholdMember.user_id == target.id)
+            )).scalar_one_or_none()
+            merged = await merge_users(
+                source_user_id=existing_user.id,
+                target_user_id=target.id,
+                keep_household_id=keep,
+                db=db,
+            )
+            if "error" in merged:
+                raise HTTPException(status_code=400, detail=merged["error"])
+
+            r = await _redis()
+            await r.delete(f"link:webapp:{req.code}")
+            await r.close()
+            return LinkResult(status="linked", user_name=target.name)
+
         # Conflict! TG already has an account
         preview = await get_merge_preview(existing_user.id, UUID(user_id), db)
 
