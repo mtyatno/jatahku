@@ -66,7 +66,7 @@ export function InstallPrompt() {
       boxShadow: '0 8px 32px rgba(0,0,0,0.15)', border: '1px solid #E8E8E4',
       display: 'flex', alignItems: 'center', gap: '12px',
     }}>
-      <img src="/icon-192.svg" alt="" width="44" height="44" style={{ borderRadius: '10px', flexShrink: 0 }} />
+      <img src="/icons/icon-192.png" alt="" width="44" height="44" style={{ borderRadius: '10px', flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: '14px', color: '#2C2C2A' }}>Install Jatahku</div>
         <div style={{ fontSize: '12px', color: '#5F5E5A', marginTop: '2px' }}>Akses cepat dari home screen</div>

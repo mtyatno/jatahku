@@ -40,7 +40,8 @@ if [ -d "frontend" ]; then
             sudo cp "$dest" "$backup"
         fi
     }
-    for f in landing.html privacy.html terms.html favicon.svg og-image.png og-image.svg; do
+    # favicon.svg is owned by frontend/public now — restoring it would put the old icon back
+    for f in landing.html privacy.html terms.html og-image.png og-image.svg; do
         restore_file "$f"
     done
 fi
