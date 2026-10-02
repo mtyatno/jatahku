@@ -23,3 +23,11 @@ export function shouldShowTelegramPrompt({
   if (lastShownAt == null) return true;
   return now - lastShownAt >= TELEGRAM_PROMPT_INTERVAL_MS;
 }
+
+// Mode modal: 'connect' = ajak hubungkan Telegram; 'return' = user datang dari
+// bot (sudah tertaut) dan baru selesai onboarding di web → ajak kembali ke
+// Telegram untuk mencatat pertama kali; null = tidak tampil.
+export function telegramPromptMode(params) {
+  if (params.telegramLinked) return params.justOnboarded ? 'return' : null;
+  return shouldShowTelegramPrompt(params) ? 'connect' : null;
+}
