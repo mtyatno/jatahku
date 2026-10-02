@@ -1,7 +1,7 @@
 """Cocokkan saldo — spec docs/superpowers/specs/2026-09-30-cocokkan-saldo-design.md.
 
 Penyesuaian = Transaction/Income BIASA yang ditandai balance_check_id, supaya
-semua surface saldo (web, bot TG/WA, advisor, rollover) otomatis konsisten.
+semua surface saldo (web, bot Telegram, advisor, rollover) otomatis konsisten.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
