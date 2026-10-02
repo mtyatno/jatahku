@@ -5,6 +5,7 @@ from sqlalchemy import select, func
 from app.core.database import AsyncSessionLocal
 from app.models.models import Envelope, HouseholdMember
 from app.bot.handlers import get_or_create_user, get_household_id, format_currency
+from app.bot.tglogin_cmd import reply_setup_needed
 
 
 async def _get_envelope_by_name(name, hid, user_id, db):
@@ -224,9 +225,7 @@ async def cmd_controls(update, context):
         envs = await _list_envelopes_names(hid, user.id, db)
 
     if not envs:
-        await update.message.reply_text(
-            "Belum ada amplop. Setup dulu di /webapp atau ketik /template."
-        )
+        await reply_setup_needed(update, user)
         return
 
     active, inactive = [], []

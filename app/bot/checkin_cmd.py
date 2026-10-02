@@ -1,5 +1,6 @@
 import re
 from decimal import Decimal
+from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
     get_or_create_user, get_household_id, _is_setup_complete, format_currency,
@@ -52,9 +53,7 @@ async def handle_whatif(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         setup_ok, _ = await _is_setup_complete(user, db)
         if not setup_ok:
-            await update.message.reply_text(
-                "⚠️ Setup budget dulu di jatahku.com"
-            )
+            await reply_setup_needed(update, user)
             return
 
         hid = await get_household_id(user, db)
