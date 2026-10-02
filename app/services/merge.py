@@ -13,6 +13,40 @@ from app.models.models import (
 logger = logging.getLogger("jatahku.merge")
 
 
+async def is_empty_bot_account(user: User, db: AsyncSession) -> bool:
+    """Akun yang dibuat bot lewat /start lalu tak pernah dipakai (tanpa email,
+    tanpa amplop/transaksi/income, household tidak dibagi) — aman digabung
+    otomatis ke akun web tanpa menanyakan household mana yang dipertahankan."""
+    if user.email:
+        return False
+
+    hid = (await db.execute(
+        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
+    )).scalar_one_or_none()
+    if hid is not None:
+        members = (await db.execute(
+            select(func.count(HouseholdMember.id)).where(HouseholdMember.household_id == hid)
+        )).scalar()
+        if members > 1:
+            return False
+        envelopes = (await db.execute(
+            select(func.count(Envelope.id)).where(Envelope.household_id == hid)
+        )).scalar()
+        if envelopes:
+            return False
+
+    transactions = (await db.execute(
+        select(func.count(Transaction.id)).where(Transaction.user_id == user.id)
+    )).scalar()
+    if transactions:
+        return False
+
+    incomes = (await db.execute(
+        select(func.count(Income.id)).where(Income.user_id == user.id)
+    )).scalar()
+    return not incomes
+
+
 async def get_merge_preview(source_user_id: UUID, target_user_id: UUID, db: AsyncSession) -> dict:
     """Preview what will be merged. Source = TG user (will be deleted), Target = WebApp user (keeps)."""
 
