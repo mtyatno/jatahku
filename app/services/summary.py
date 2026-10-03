@@ -1,4 +1,3 @@
-import re
 import html
 import logging
 from decimal import Decimal
@@ -66,13 +65,6 @@ def _esc(s) -> str:
     """Escape teks input user untuk pesan Telegram parse_mode="HTML"."""
     return html.escape("" if s is None else str(s), quote=False)
 
-
-def _to_wa(lines: list[str]) -> str:
-    """Convert HTML summary lines to plain text for WhatsApp (tanpa entity HTML)."""
-    text = "\n".join(lines)
-    text = re.sub(r"<b>(.*?)</b>", r"*\1*", text)
-    text = re.sub(r"<[^>]+>", "", text)
-    return html.unescape(text)
 
 DAY_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
@@ -158,12 +150,12 @@ def _top_parts(by_env: dict, envs: dict, total) -> list[str]:
 
 
 async def send_daily_summary(user_id=None):
-    """Send daily spending summary to all TG/WA-linked users at 8 PM."""
+    """Send daily spending summary to all Telegram-linked users at 8 PM."""
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN else None
     today = date.today()
 
     async with AsyncSessionLocal() as db:
-        query = select(User).where(or_(User.telegram_id != None, User.whatsapp_id != None))
+        query = select(User).where(User.telegram_id != None)
         if user_id:
             query = query.where(User.id == user_id)
         result = await db.execute(query)
@@ -245,11 +237,6 @@ async def send_daily_summary(user_id=None):
                     )
                     logger.info(f"Daily summary sent to TG {user.telegram_id}")
 
-                if user.whatsapp_id:
-                    from app.bot.wa_handlers import waha_send
-                    await waha_send(user.whatsapp_id, _to_wa(lines))
-                    logger.info(f"Daily summary sent to WA {user.whatsapp_id}")
-
             except Exception as e:
                 logger.error(f"Failed daily summary for user {user.id}: {e}")
 
@@ -261,7 +248,7 @@ async def send_weekly_summary(user_id=None):
     week_start, _ = _week_window(today)
 
     async with AsyncSessionLocal() as db:
-        query = select(User).where(or_(User.telegram_id != None, User.whatsapp_id != None))
+        query = select(User).where(User.telegram_id != None)
         if user_id:
             query = query.where(User.id == user_id)
         result = await db.execute(query)
@@ -378,11 +365,6 @@ async def send_weekly_summary(user_id=None):
                         parse_mode="HTML",
                     )
                     logger.info(f"Weekly summary sent to TG {user.telegram_id}")
-
-                if user.whatsapp_id:
-                    from app.bot.wa_handlers import waha_send
-                    await waha_send(user.whatsapp_id, _to_wa(lines))
-                    logger.info(f"Weekly summary sent to WA {user.whatsapp_id}")
 
             except Exception as e:
                 logger.error(f"Failed weekly summary for user {user.id}: {e}")

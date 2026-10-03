@@ -60,10 +60,8 @@ class User(TimestampMixin, Base):
     telegram_id: Mapped[str | None] = mapped_column(
         String(50), unique=True, index=True
     )
-    whatsapp_id: Mapped[str | None] = mapped_column(
-        String(50), unique=True, index=True
-    )
-    phone: Mapped[str | None] = mapped_column(String(20))
+    # Kolom whatsapp_id & phone masih ada di DB (fitur WhatsApp dihapus Okt 2026,
+    # sengaja tanpa migrasi) — tidak dipetakan lagi di model.
     password_hash: Mapped[str | None] = mapped_column(String(255))
     timezone: Mapped[str | None] = mapped_column(String(30), default="Asia/Jakarta")
     profile_pic: Mapped[str | None] = mapped_column(String(500), nullable=True)

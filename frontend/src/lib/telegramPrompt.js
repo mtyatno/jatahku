@@ -1,8 +1,8 @@
 // Kapan modal "Hubungkan Telegram" muncul. Data funnel Okt 2026: semua user
 // yang bertahan memakai bot, jadi ajakan ini penting — tapi dulu muncul di
-// SETIAP sesi (dismiss hanya di sessionStorage), termasuk untuk user WhatsApp.
+// SETIAP sesi (dismiss hanya di sessionStorage).
 // Aturan: tepat setelah onboarding selalu muncul; selebihnya paling sering
-// sekali per minggu; tidak pernah bila Telegram/WhatsApp sudah tertaut.
+// sekali per minggu; tidak pernah bila Telegram sudah tertaut.
 export const TELEGRAM_PROMPT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Kode link dari /auth/link/generate berlaku 5 menit sejak DIBUAT (LINK_TTL
@@ -15,9 +15,9 @@ export function isLinkCodeUsable(codeAt, now, marginMs = 0) {
 }
 
 export function shouldShowTelegramPrompt({
-  telegramLinked, whatsappLinked, hasEnvelopes, justOnboarded, lastShownAt, now,
+  telegramLinked, hasEnvelopes, justOnboarded, lastShownAt, now,
 }) {
-  if (telegramLinked || whatsappLinked) return false;
+  if (telegramLinked) return false;
   if (justOnboarded) return true;
   if (!hasEnvelopes) return false;
   if (lastShownAt == null) return true;

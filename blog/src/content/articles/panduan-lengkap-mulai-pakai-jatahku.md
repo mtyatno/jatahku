@@ -2,7 +2,7 @@
 title: "Panduan Lengkap Mulai Pakai Jatahku: Dari Daftar sampai Catat Pengeluaran Pertama"
 description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, onboarding wizard, install ke HP sebagai app, catat pengeluaran kilat lewat tombol +, sampai baca laporan bulanan."
 pubDate: 2026-04-02
-updatedDate: 2026-07-11
+updatedDate: 2026-10-02
 category: tutorial
 author: Tim Jatahku
 cover: /covers/panduan-lengkap.svg
@@ -19,7 +19,7 @@ Jatahku adalah aplikasi *envelope budgeting* berbasis web. Idenya sederhana: **s
 
 Bedanya dengan aplikasi keuangan lain ada di kecepatan mencatat. Jatahku bisa di-install ke HP seperti aplikasi biasa (tanpa lewat Play Store atau App Store), dan pencatatan pengeluaran cukup lewat **satu tombol +** — ketik natural seperti `kopi 18k`, amplopnya terdeteksi otomatis. Bahkan tetap bisa mencatat saat tidak ada sinyal.
 
-Kalau kamu lebih suka mencatat lewat chat, Jatahku juga punya bot Telegram dan WhatsApp sebagai kanal tambahan — kita bahas di bagian akhir.
+Kalau kamu lebih suka mencatat lewat chat, Jatahku juga punya bot Telegram sebagai kanal tambahan — kita bahas di bagian akhir.
 
 ---
 
@@ -164,9 +164,9 @@ Butuh data mentahnya? Tombol **Download CSV** ada tepat di sebelahnya.
 
 ---
 
-## Opsional: Hubungkan Telegram atau WhatsApp
+## Opsional: Hubungkan Telegram
 
-Suka mencatat lewat chat? Jatahku punya bot Telegram dan WhatsApp — pelengkap yang praktis saat kamu sedang di aplikasi chat dan tidak ingin berpindah app.
+Suka mencatat lewat chat? Jatahku punya bot Telegram — pelengkap yang praktis saat kamu sedang di aplikasi chat dan tidak ingin berpindah app.
 
 ### Cara Hubungkan Telegram
 
@@ -195,7 +195,7 @@ Perintah berguna:
 
 Semua data sinkron: transaksi yang dicatat lewat bot langsung muncul di webapp, dan sebaliknya.
 
-> Panduan lengkap: [Cara Pakai Bot Telegram Jatahku](/insight/cara-pakai-bot-telegram-jatahku/) dan [Catat Pengeluaran via WhatsApp](/insight/catat-pengeluaran-via-whatsapp/).
+> Panduan lengkap: [Cara Pakai Bot Telegram Jatahku](/insight/cara-pakai-bot-telegram-jatahku/).
 
 ---
 

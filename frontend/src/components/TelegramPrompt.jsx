@@ -54,15 +54,11 @@ export default function TelegramPrompt() {
       return () => { cancelled = true; };
     }
 
-    Promise.all([
-      justOnboarded ? Promise.resolve(null) : api.getEnvelopeSummary(),
-      api.getWhatsAppStatus(),
-    ]).then(([envs, wa]) => {
+    (justOnboarded ? Promise.resolve(null) : api.getEnvelopeSummary()).then((envs) => {
       if (cancelled) return;
       const now = Date.now();
       const m = telegramPromptMode({
         telegramLinked: false,
-        whatsappLinked: !!wa?.linked,
         hasEnvelopes: Array.isArray(envs) && envs.length > 0,
         justOnboarded,
         lastShownAt: readLastShown(),

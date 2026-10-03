@@ -1,4 +1,4 @@
-"""Angka ringkasan harian/mingguan TG/WA = dashboard (rollover, cadangan, sisa
+"""Angka ringkasan harian/mingguan Telegram = dashboard (rollover, cadangan, sisa
 bebas), nama amplop aman untuk parse_mode HTML, "Minggu ini" = 7 hari.
 
 Run: python -m unittest app.tests.test_summary_numbers -v
@@ -91,11 +91,6 @@ class EnvelopeLineTests(unittest.TestCase):
         self.assertIn("<b>habis</b>", line)
 
 
-class ToWaTests(unittest.TestCase):
-    def test_bold_converted_and_entities_unescaped(self):
-        self.assertEqual(summary._to_wa(["<b>Rp1</b> &amp; &lt;x&gt;"]), "*Rp1* & <x>")
-
-
 class WeekWindowTests(unittest.TestCase):
     def test_seven_days_inclusive(self):
         self.assertEqual(summary._week_window(date(2026, 10, 5)),
@@ -114,11 +109,11 @@ class FakeSession:
 
 
 class SenderIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    """Loop per-user: user WA-only melewati sender penuh; DB di-mock."""
+    """Loop per-user: user Telegram melewati sender penuh; DB & Bot di-mock."""
 
     def setUp(self):
         self.env_id = uuid.uuid4()
-        self.user = SimpleNamespace(id=uuid.uuid4(), telegram_id=None, whatsapp_id="628123@c.us",
+        self.user = SimpleNamespace(id=uuid.uuid4(), telegram_id="777",
                                     payday_day=1, timezone=None)
         self.rows = [
             # free = 100k + 50k - 30k - 20k = 100k (Rp100rb; tanpa rollover akan Rp50rb)
@@ -143,35 +138,39 @@ class SenderIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def run_sender(self, sender):
         db = self.make_db()
         compute = AsyncMock(return_value=self.rows)
-        send = AsyncMock()
+        bot_cls = MagicMock()
+        bot_cls.return_value.send_message = AsyncMock()
         with patch.object(summary, "AsyncSessionLocal", new=lambda: FakeSession(db)), \
                 patch.object(summary, "compute_envelope_summaries", new=compute), \
-                patch("app.bot.wa_handlers.waha_send", new=send), \
+                patch.object(summary, "Bot", new=bot_cls), \
+                patch.object(summary.settings, "TELEGRAM_BOT_TOKEN", "token"), \
                 patch.object(summary.logger, "error") as log_error:
             await sender(user_id=self.user.id)
         log_error.assert_not_called()
         compute.assert_awaited_once_with(self.user, db)
         self.assertEqual(db.execute.await_count, 3)
         self.assertIn("FROM users", executed_sql(db)[0])
+        send = bot_cls.return_value.send_message
         send.assert_awaited_once()
-        chat_id, text = send.await_args.args
-        self.assertEqual(chat_id, "628123@c.us")
-        return text
+        kwargs = send.await_args.kwargs
+        self.assertEqual(kwargs["chat_id"], 777)
+        self.assertEqual(kwargs["parse_mode"], "HTML")
+        return kwargs["text"]
 
     async def test_daily(self):
         text = await self.run_sender(summary.send_daily_summary)
-        self.assertIn("🍜 Kopi&Teh & Jajan · *Rp100rb*", text)
-        self.assertNotIn("&amp;", text)
-        self.assertIn("🍜 Kopi&Teh Rp30rb", text)  # top-2 hari ini
+        self.assertIn("🍜 Kopi&amp;Teh &amp; Jajan · <b>Rp100rb</b>", text)
+        self.assertNotIn("Kopi&Teh", text)  # '&' mentah merusak parse_mode HTML
+        self.assertIn("🍜 Kopi&amp;Teh Rp30rb", text)  # top-2 hari ini
 
     async def test_weekly(self):
         text = await self.run_sender(summary.send_weekly_summary)
         # dana = 150k + 500k ; terpakai 30k ; sisa bebas = 100k (tabungan tidak ikut)
-        self.assertIn("Dana:     *Rp650rb*", text)
-        self.assertIn("Terpakai: *Rp30rb*", text)
-        self.assertIn("Sisa:     *Rp100rb*", text)
-        self.assertIn("🍜 Kopi&Teh Rp30rb", text)
-        self.assertNotIn("&amp;", text)
+        self.assertIn("Dana:     <b>Rp650rb</b>", text)
+        self.assertIn("Terpakai: <b>Rp30rb</b>", text)
+        self.assertIn("Sisa:     <b>Rp100rb</b>", text)
+        self.assertIn("🍜 Kopi&amp;Teh Rp30rb", text)
+        self.assertNotIn("Kopi&Teh", text)
         self.assertIn("1/7 hari", text)
         ws, we = summary._week_window(date.today())
         self.assertIn(f"Minggu ini · {ws.strftime('%d')}–{we.strftime('%d %b')}", text)

@@ -27,13 +27,6 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_USERNAME: str = "JatahkuBot"
     TELEGRAM_WEBHOOK_SECRET: str = ""
 
-    # WhatsApp (WAHA)
-    WAHA_URL: str = "http://localhost:3000"
-    WAHA_API_KEY: str = ""         # key to call WAHA API (sendText, etc.)
-    WAHA_WEBHOOK_SECRET: str = ""  # key to validate incoming webhooks (optional)
-    WAHA_SESSION: str = "default"
-    WAHA_PHONE: str = ""           # bot's WA number shown to users (e.g. 6285965897364)
-
     # Admin
     ADMIN_SECRET: str = ""
     ADMIN_TELEGRAM_ID: str = ""

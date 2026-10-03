@@ -6,7 +6,6 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0);
 const base = {
   telegramLinked: false,
-  whatsappLinked: false,
   hasEnvelopes: true,
   justOnboarded: false,
   lastShownAt: null,
@@ -19,10 +18,6 @@ test('shown right after onboarding even if shown earlier today', () => {
 
 test('never shown once Telegram is linked', () => {
   assert.equal(shouldShowTelegramPrompt({ ...base, justOnboarded: true, telegramLinked: true }), false);
-});
-
-test('never shown once WhatsApp is linked', () => {
-  assert.equal(shouldShowTelegramPrompt({ ...base, justOnboarded: true, whatsappLinked: true }), false);
 });
 
 test('not shown before onboarding is done', () => {
@@ -69,8 +64,4 @@ test('user from the bot sees nothing on a normal visit', () => {
 
 test('web user who just onboarded is asked to connect Telegram', () => {
   assert.equal(telegramPromptMode({ ...base, justOnboarded: true }), 'connect');
-});
-
-test('WhatsApp user who just onboarded is not asked about Telegram', () => {
-  assert.equal(telegramPromptMode({ ...base, whatsappLinked: true, justOnboarded: true }), null);
 });
