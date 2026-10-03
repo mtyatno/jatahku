@@ -29,12 +29,15 @@ def evaluate_subscription(ctx: AdvisorContext) -> list[dict]:
                 f"subscription_pressure:{envelope.id}",
                 "subscription_pressure",
                 "warning",
-                f"Reserve rutin menekan amplop {envelope.name}",
-                f"Dana bebas setelah reserve tinggal Rp{_fmt_rp(free)}.",
+                (f"{envelope.emoji} {envelope.name}: sisa bebas Rp{_fmt_rp(free)}" if free >= 0
+                 else f"{envelope.emoji} {envelope.name}: kurang Rp{_fmt_rp(-free)} untuk tagihan"),
+                "Sebagian besar dana amplop ini sudah disisihkan untuk tagihan rutin. "
+                "Hindari belanja lain dari amplop ini.",
                 "/langganan",
                 [
-                    f"Reserve rutin Rp{_fmt_rp(reserved)}",
-                    f"Sisa sebelum reserve Rp{_fmt_rp(remaining)}",
+                    f"Sisa dana amplop Rp{_fmt_rp(remaining)}",
+                    f"Disisihkan untuk tagihan Rp{_fmt_rp(reserved)}",
+                    f"Sisa bebas Rp{_fmt_rp(free)}",
                 ],
             ))
     return cards

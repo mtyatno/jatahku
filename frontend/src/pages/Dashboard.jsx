@@ -103,170 +103,124 @@ function AdviceCalc({ detail, clr }) {
   );
 }
 
-function HeroAdvisor({ cards, notes, advisorError, prediction, todaySpent, goals }) {
-  const { mode } = useTheme();
-  const isDark = mode === 'dark';
-  const [openId, setOpenId] = useState(null);
-  const tacticalLines = [];
-  const safeDaily = prediction?.safe_daily;
-  const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
+const ACTION_TYPES = ['env_depletion', 'subscription_pressure'];
 
-  if (hasPrediction && safeDaily > 0) {
-    if (todaySpent > 0) {
-      const ratio = todaySpent / safeDaily;
-      const sisa = safeDaily - todaySpent;
-      if (ratio >= 1.5) {
-        tacticalLines.push({ icon: '🔴', text: `Overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, lvl: 'danger' });
-      } else if (ratio >= 1.0) {
-        tacticalLines.push({ icon: '🟠', text: `Pengeluaran ${formatCurrency(todaySpent)} melebihi batas aman ${formatCurrency(safeDaily)}/hari`, lvl: 'warning' });
-      } else if (ratio <= 0.5) {
-        tacticalLines.push({ icon: '🎉', text: `Hari ini hemat! Sisa ${formatCurrency(sisa)} bisa ditabung.`, lvl: 'reward' });
-      } else {
-        tacticalLines.push({ icon: '✅', text: `Pengeluaran ${formatCurrency(todaySpent)} — masih aman, sisa ${formatCurrency(sisa)}.`, lvl: 'safe' });
-      }
-    } else {
-      tacticalLines.push({ icon: '🎉', text: `Belum ada pengeluaran hari ini. Jatah ${formatCurrency(safeDaily)} masih utuh!`, lvl: 'reward' });
-    }
-  }
-
-  const hasTactical = tacticalLines.length > 0;
-  const hasCards = cards?.length > 0;
-  const hasNotes = notes?.length > 0;
-  const hasGoals = goals?.length > 0;
-  if (!hasTactical && !hasCards && !hasNotes && !hasGoals && !advisorError) return null;
-
-  const clr = isDark ? {
-    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b', inset: '#0f172a',
-    dot: { danger: '#f87171', warning: '#fbbf24', info: '#60a5fa', positive: '#34d399' },
-  } : {
-    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8', inset: '#F1F5F9',
-    dot: { danger: '#DC2626', warning: '#D97706', info: '#2563EB', positive: '#059669' },
-  };
-
+function AdvisorRow({ open, onToggle, dot, clr, children, title }) {
   return (
-        <div className="rounded-2xl p-5" style={{
-          background: clr.bg, border: `1px solid ${clr.border}`,
-          boxShadow: isDark ? '0 0 0 1px rgba(52,211,153,0.12), 0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
-        }}>
-      <div className="flex items-center gap-2 mb-4">
-        <Icon name="advisor" size={20} color={clr.accent} />
-        <h2 className="font-display font-bold text-base" style={{ color: clr.title }}>AI Advisor</h2>
-        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: clr.accent }}>Beta</span>
-      </div>
-
-      {advisorError && (
-        <p className="text-xs mb-3 flex items-center gap-1.5" style={{ color: clr.muted }}>
-          <Icon name="warning" size={13} color={clr.muted} /> Insight sementara tak tersedia
-        </p>
-      )}
-
-      {hasTactical && (
-        <div className="mb-4">
-          <p className="text-xs font-semibold mb-2 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="dashboard" size={14} color={clr.accent} /> Hari ini</p>
-          <div className="space-y-1.5">
-            {tacticalLines.map((item, i) => (
-              <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? (isDark ? '#fca5a5' : '#991B1B') : item.lvl === 'warning' ? (isDark ? '#fde68a' : '#92400E') : clr.text }}>
-                <span className="shrink-0">{item.icon}</span>
-                <span dangerouslySetInnerHTML={{__html: item.text.replace(/(\d[\d.,]*(?:\s*(?:jt|juta|rb|ribu|k|%|x|hari)))/gi, '<b>$1</b>')}} />
-              </p>
-            ))}
-          </div>
-          {safeDaily > 0 && (
-            <p className="text-xs mt-2" style={{ color: clr.muted }}>
-              Batas aman <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
-            </p>
-          )}
-        </div>
-      )}
-
-      {(hasCards || hasNotes) && (
-        <div className={hasTactical ? 'pt-3 border-t' : ''} style={{ borderColor: clr.border }}>
-          <p className="text-xs font-semibold mb-1 uppercase tracking-wide" style={{ color: clr.accent }}>Saran</p>
-          <div className="divide-y" style={{ borderColor: clr.border }}>
-            {(cards || []).map(card => {
-              const open = openId === card.id;
-              const lines = card.detail ? [] : (card.evidence || []);
-              return (
-                <div key={card.id} className="py-2.5" style={{ borderColor: clr.border }}>
-                  <div className="flex items-start gap-2">
-                    <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: clr.dot[card.severity] || clr.muted }} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold" style={{ color: clr.title }}>{renderWithIcons(card.title, 15, clr.title)}</p>
-                      <p className="text-xs mt-0.5 leading-relaxed" style={{ color: clr.text }}>{renderWithIcons(card.body, 13, clr.text)}</p>
-                      <div className="flex items-center gap-3 mt-1">
-                        {(card.detail || lines.length > 0) && (
-                          <button type="button" onClick={() => setOpenId(open ? null : card.id)}
-                            className="text-xs font-medium hover:underline" style={{ color: clr.accent }}>
-                            {open ? 'Tutup hitungan' : 'Lihat hitungan'}
-                          </button>
-                        )}
-                        {open && card.primary_action?.route && (
-                          <Link to={card.primary_action.route} className="text-xs hover:underline" style={{ color: clr.muted }}>
-                            {card.primary_action.label} →
-                          </Link>
-                        )}
-                      </div>
-                      {open && card.detail && <AdviceCalc detail={card.detail} clr={clr} />}
-                      {open && !card.detail && (
-                        <div className="mt-2 rounded-lg px-3 py-2 text-xs space-y-0.5" style={{ background: clr.inset, color: clr.text }}>
-                          {lines.map((l, i) => <p key={i}>{renderWithIcons(l, 13, clr.text)}</p>)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {hasNotes && (
-            <p className="text-xs mt-1" style={{ color: clr.muted }}>
-              Tidak diproyeksikan: {notes.map(n => `${n.name} (${n.reason})`).join(', ')}.
-            </p>
-          )}
-        </div>
-      )}
-
-      {goals?.length > 0 && (
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="target" size={14} color={clr.accent} /> Target Menabung</p>
-            <InfoTooltip text="Target penabungan yang sedang berjalan. Progress bar menunjukkan seberapa jauh Anda sudah menabung menuju target" position="bottom" />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
-              const pct = Math.round(goal.progress_pct);
-              return (
-                <div key={goal.id}>
-                  <div className="flex items-center gap-2 text-sm mb-1" style={{ color: clr.text }}>
-                    <EnvelopeIcon value={goal.envelope_emoji} size={18} color={SAVING_ACCENT} />
-                    <span className="truncate">{goal.name}</span>
-                    <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : clr.muted }}>
-                      {pct}%
-                    </span>
-                  </div>
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? '#334155' : '#F1F5F9' }}>
-                    <div className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${Math.max(pct, 2)}%`, background: pct > 0 ? '#D97706' : (isDark ? '#475569' : '#E5E7EB') }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {goals.filter(g => !g.is_achieved).length > 4 && (
-            <Link to="/envelopes" className="text-xs mt-2 inline-block" style={{ color: clr.accent }}>
-              → Lihat {goals.filter(g => !g.is_achieved).length} target
-            </Link>
-          )}
-          {goals.some(g => g.is_achieved) && (
-            <p className="text-xs mt-1 flex items-center gap-1" style={{ color: isDark ? '#86efac' : '#059669' }}>
-              <Icon name="check" size={13} weight="fill" /> {goals.filter(g => g.is_achieved).length} target tercapai!
-            </p>
-          )}
-        </div>
-      )}
+    <div className="py-3" style={{ borderColor: clr.border }}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 text-left">
+        {dot && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: dot }} />}
+        <span className="flex-1 min-w-0 text-sm font-medium leading-snug" style={{ color: clr.title }}>{title}</span>
+        <span className="text-xs shrink-0 transition-transform" style={{ color: clr.muted, transform: open ? 'rotate(180deg)' : 'none' }}>▾</span>
+      </button>
+      {open && <div className={dot ? 'pl-5' : ''}>{children}</div>}
     </div>
   );
 }
+
+function HeroAdvisor({ cards, advisorError, prediction, todaySpent, goals }) {
+  const { mode } = useTheme();
+  const isDark = mode === 'dark';
+  const [openId, setOpenId] = useState(null);
+  const toggle = (id) => setOpenId(openId === id ? null : id);
+
+  const safeDaily = prediction?.safe_daily || 0;
+  const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
+  const showToday = hasPrediction && safeDaily > 0;
+  const overToday = todaySpent > safeDaily;
+  const leftToday = Math.floor(Math.abs(safeDaily - todaySpent) / 1000) * 1000;
+  const items = (cards || [])
+    .filter(c => ACTION_TYPES.includes(c.type) && (c.severity === 'danger' || c.severity === 'warning'))
+    .slice(0, 2);
+  const activeGoals = (goals || []).filter(g => !g.is_achieved);
+  if (!showToday && !items.length && !activeGoals.length && !advisorError) return null;
+
+  const clr = isDark ? {
+    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#94a3b8', inset: '#0f172a',
+    dot: { danger: '#f87171', warning: '#fbbf24' },
+  } : {
+    bg: '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#64748B', inset: '#F1F5F9',
+    dot: { danger: '#DC2626', warning: '#D97706' },
+  };
+
+  return (
+    <div className="rounded-2xl px-5 py-4" style={{
+      background: clr.bg, border: `1px solid ${clr.border}`,
+      boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
+    }}>
+      <div className="flex items-center gap-2 mb-1">
+        <Icon name="advisor" size={18} color={clr.accent} />
+        <h2 className="font-display font-bold text-sm" style={{ color: clr.title }}>AI Advisor</h2>
+      </div>
+
+      {advisorError && (
+        <p className="text-xs py-2" style={{ color: clr.muted }}>Saran sementara tidak tersedia.</p>
+      )}
+
+      <div className="divide-y" style={{ borderColor: clr.border }}>
+        {showToday && (
+          <AdvisorRow clr={clr} open={openId === 'today'} onToggle={() => toggle('today')}
+            title={overToday
+              ? <>Hari ini sudah lewat <b>{formatCurrency(leftToday)}</b> dari jatah harian</>
+              : <>Hari ini masih aman belanja <b>{formatCurrency(leftToday)}</b></>}>
+            <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
+              <CalcRow label="Sisa bebas semua amplop" value={formatCurrency(prediction.free)} />
+              <CalcRow label="Hari tersisa" value={`${prediction.days_left} hari`} />
+              <CalcRow label="Jatah per hari = sisa ÷ hari" value={formatCurrency(safeDaily)} strong color={clr.accent} />
+              <CalcRow label="Terpakai hari ini" value={`− ${formatCurrency(todaySpent)}`} />
+            </div>
+          </AdvisorRow>
+        )}
+
+        {items.map(card => (
+          <AdvisorRow key={card.id} clr={clr} dot={clr.dot[card.severity]}
+            open={openId === card.id} onToggle={() => toggle(card.id)}
+            title={renderWithIcons(card.title, 15, clr.title)}>
+            <p className="text-xs mt-1.5 leading-relaxed" style={{ color: clr.text }}>{card.body}</p>
+            {card.detail
+              ? <AdviceCalc detail={card.detail} clr={clr} />
+              : (card.evidence?.length > 0 && (
+                <div className="mt-2 rounded-lg px-3 py-2 text-xs space-y-0.5" style={{ background: clr.inset, color: clr.text }}>
+                  {card.evidence.map((l, i) => <p key={i}>{l}</p>)}
+                </div>
+              ))}
+            {card.primary_action?.route && (
+              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 hover:underline" style={{ color: clr.accent }}>
+                {card.primary_action.label} →
+              </Link>
+            )}
+          </AdvisorRow>
+        ))}
+
+        {activeGoals.length > 0 && (
+          <AdvisorRow clr={clr} open={openId === 'goals'} onToggle={() => toggle('goals')}
+            title={<>Target menabung: <b>{activeGoals.length}</b> berjalan</>}>
+            <div className="mt-2 space-y-2.5">
+              {activeGoals.map(goal => {
+                const pct = Math.round(goal.progress_pct);
+                return (
+                  <div key={goal.id}>
+                    <div className="flex items-center gap-2 text-xs mb-1" style={{ color: clr.text }}>
+                      <EnvelopeIcon value={goal.envelope_emoji} size={14} color={SAVING_ACCENT} />
+                      <span className="truncate">{goal.name}</span>
+                      <span className="font-semibold ml-auto">{pct}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? '#334155' : '#F1F5F9' }}>
+                      <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 2)}%`, background: SAVING_ACCENT }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <Link to="/envelopes" className="inline-block text-xs font-medium hover:underline" style={{ color: clr.accent }}>Atur target →</Link>
+            </div>
+          </AdvisorRow>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 
 // Savings accent — distinct from spending-risk colors (green/amber/red)
@@ -732,8 +686,7 @@ export default function Dashboard() {
       {/* Hero AI Advisor — today's status + strategic insights */}
       {isCurrentPeriod && (
         <HeroAdvisor
-          cards={advisorInsights?.dashboard_cards}
-          notes={advisorInsights?.notes}
+          cards={advisorInsights?.cards}
           advisorError={advisorInsights?._error}
           prediction={prediction}
           todaySpent={todaySpent}
