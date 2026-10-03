@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
     Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, Income,
-    MonthlySnapshot,
+    MonthlySnapshot, RecurringTransaction,
 )
-from app.services.reserved import envelope_reserved
+from app.services.reserved import recurring_monthly_reserve
 
 
 async def get_household_id(user, db: AsyncSession):
@@ -102,8 +102,17 @@ async def compute_envelope_summaries(
             if snap and snap.rollover_amount:
                 rollover = snap.rollover_amount
 
-        # Tagihan langganan yang belum dibayar periode ini (setara-bulanan)
-        reserved = await envelope_reserved(db, env.id, period_start, period_end)
+        # Calculate reserved from active subscriptions (monthly equivalent)
+        rec_result = await db.execute(
+            select(RecurringTransaction).where(
+                RecurringTransaction.envelope_id == env.id,
+                RecurringTransaction.is_active == True,
+            )
+        )
+        recs = rec_result.scalars().all()
+        reserved = Decimal("0")
+        for rec in recs:
+            reserved += recurring_monthly_reserve(rec.frequency.value, rec.amount, rec.next_run, period_end)
 
         # Core formula: remaining = allocated + rollover - spent
         remaining = allocated + rollover - spent

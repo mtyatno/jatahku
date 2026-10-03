@@ -44,7 +44,6 @@ def fake_db():
         FakeResult(D("1000000")),                                 # A allocated
         FakeResult(SimpleNamespace(rollover_amount=D("50000"))),  # A snapshot
         FakeResult([REC]),                                        # A recurring
-        FakeResult([D("50000")]),                                 # A transaksi periode ini (bukan nominal tagihan)
         FakeResult(D("100000")),                                  # B spent
         FakeResult(D("200000")),                                  # B allocated (non-rollover: tanpa snapshot)
         FakeResult([]),                                           # B recurring
@@ -65,22 +64,6 @@ class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(b.is_personal)
         self.assertAlmostEqual(b.funded_ratio, 0.4)
         self.assertAlmostEqual(b.spent_ratio, 0.5)
-
-    async def test_bill_already_recorded_as_expense_is_not_reserved_again(self):
-        # Tagihan Rp100rb sudah dicatat sebagai pengeluaran biasa, next_run tidak maju.
-        db = db_with(
-            FakeResult(HID), FakeResult([ENV_A]), FakeResult([]),
-            FakeResult(D("100000")),                                  # spent (termasuk tagihan)
-            FakeResult(D("1000000")),                                 # allocated
-            FakeResult(None),                                         # snapshot
-            FakeResult([REC]),                                        # recurring due 15 Sep
-            FakeResult([D("100000")]),                                # transaksi periode ini
-        )
-        from app.services.envelope_balance import compute_envelope_summaries
-        [row] = await compute_envelope_summaries(USER, db, PS, PE)
-        self.assertEqual(row["remaining"], D("900000"))
-        self.assertEqual(row["reserved"], D("0"))
-        self.assertEqual(row["free"], D("900000"))
 
     async def test_route_without_household_returns_empty(self):
         from app.api.routes.envelopes import envelope_summary

@@ -32,7 +32,6 @@ class PredictionRolloverTests(unittest.IsolatedAsyncioTestCase):
             FakeResult(D("11290000")),       # rollover dari periode lalu
             FakeResult([eid]),               # amplop expense
             FakeResult([BILL]),              # langganan amplop itu
-            FakeResult([]),                  # transaksi amplop itu (tak ada yang cocok)
         )
         out = await spending_prediction(period_start=PS, period_end=PE, user=USER, db=db)
         self.assertEqual(out["total_rollover"], 11290000.0)
