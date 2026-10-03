@@ -19,6 +19,12 @@ export function formatShort(amount) {
   return `Rp${val.toLocaleString('id-ID')}`;
 }
 
+// formatShort ikut menyingkat angka minus: -1.867.174 → -Rp1.86jt
+export function formatShortSigned(amount) {
+  const val = Number(amount);
+  return val < 0 ? `-${formatShort(-val)}` : formatShort(val);
+}
+
 export function spentRatio(spent, budget) {
   if (!budget || budget == 0) return 0;
   return Math.min(Number(spent) / Number(budget), 1);
