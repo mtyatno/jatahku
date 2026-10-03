@@ -158,6 +158,10 @@ html[data-theme*="-dark"] .text-gray-700,
 html[data-theme*="-dark"] .text-gray-800,
 html[data-theme*="-dark"] .text-gray-900 { color: var(--text) !important; }
 
+/* Info "i" button: gray-200 is not darkened, so its light icon vanished */
+html[data-theme*="-dark"] .info-tip { background-color: #334155; color: var(--text-muted) !important; }
+html[data-theme*="-dark"] .info-tip:hover { background-color: #475569; color: var(--text) !important; }
+
 /* Gray backgrounds */
 html[data-theme*="-dark"] .bg-gray-50,
 html[data-theme*="-dark"] .bg-gray-100 { background-color: #1e293b !important; }

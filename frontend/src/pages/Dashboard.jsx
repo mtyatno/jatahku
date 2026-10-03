@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
-import { formatShort, formatCurrency, titleCase } from '../lib/utils';
+import { formatShort, formatShortSigned, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
+import { KpiCard, Meter, FundsBar, EnvelopeStrip, SpendSparkline, kpiPalette } from '../components/KpiCard';
+import { envelopeStrip, fundsBreakdown, freeShare, savingsProgress, dailySeries, localDateStr } from '../lib/kpiVisuals';
 import { fundingState } from '../lib/envelopeFunding';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
@@ -391,6 +393,7 @@ function sortEnvelopes(envs) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { mode } = useTheme();
   const [envelopes, setEnvelopes] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -510,6 +513,21 @@ export default function Dashboard() {
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
 
+  const isDark = mode === 'dark';
+  const kc = kpiPalette(isDark);
+  const fundsTotal = totalAllocated + totalRollover;
+  const spendSeries = dailySeries(
+    daily,
+    prediction?.period_start || selectedPeriod?.period_start,
+    prediction?.period_end || selectedPeriod?.period_end,
+    localDateStr(),
+  );
+  const funds = fundsBreakdown(envelopes);
+  const freePart = freeShare(envelopes);
+  const sharedProgress = savingsProgress(goals, envelopes, false);
+  const personalProgress = savingsProgress(goals, envelopes, true);
+  const pct = (v) => (v > 0 && v < 0.005 ? '<1%' : `${Math.round(v * 100)}%`);
+
   const milestoneLabel = (n) => ({
     3: 'Kebiasaan baik dimulai 🌱', 7: 'Seminggu penuh disiplin!', 14: '2 minggu konsisten 💪',
     30: 'Sebulan penuh nyatat! 🏆', 50: '50 hari, luar biasa 🌟', 100: '100 hari, kamu legend 👑',
@@ -598,78 +616,80 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
-              <InfoTooltip text="Alokasi periode ini ditambah sisa dari periode lalu" position="bottom" />
-            </div>
-            <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
-            <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
-              {totalRollover > 0
-                ? `+${formatShort(totalRollover)} rollover`
-                : totalRollover < 0
-                ? `−${formatShort(Math.abs(totalRollover))} dari periode lalu`
-                : 'Belum ada rollover'}
-            </p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="wallet" size={20} color="#0F6E56" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Terpakai</p>
-              <InfoTooltip text="Pengeluaran periode ini termasuk penyesuaian cocokkan saldo" position="bottom" />
-            </div>
-            <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(217,119,6,0.12)' }}><Icon name="expense" size={20} color="#D97706" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
-              <InfoTooltip text="Total saldo amplop dikurangi amplop tabungan dan uang yang disimpan untuk tagihan" position="bottom" />
-            </div>
-            <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="check" size={20} color="#0F6E56" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Tabungan shared</p>
-              <InfoTooltip text="Saldo amplop tabungan yang dibagikan dengan anggota rumah tangga lainnya" position="bottom" />
-            </div>
-            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(sharedSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Tabungan personal</p>
-              <InfoTooltip text="Saldo amplop tabungan pribadi Anda" position="bottom" />
-            </div>
-            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(personalSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
-              <InfoTooltip text="Jumlah amplop yang sedang Anda gunakan (shared dan personal)" position="bottom" />
-            </div>
-            <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(107,114,128,0.12)' }}><Icon name="envelope" size={20} color="#6b7280" /></div>
-        </div>
+        <KpiCard
+          label="Dana dialokasi" icon="wallet" color={kc.brand} isDark={isDark}
+          info="Alokasi periode ini ditambah sisa dari periode lalu. Batang: posisi dana itu sekarang, dari kiri: terpakai, tagihan, tabungan, bebas. Sentuh batang untuk angkanya."
+          value={formatShort(totalAllocated)}
+          sub={totalRollover > 0
+            ? `+${formatShort(totalRollover)} rollover`
+            : totalRollover < 0
+            ? <span className="text-danger-400">−{formatShort(Math.abs(totalRollover))} dari periode lalu</span>
+            : 'Belum ada rollover'}
+        >
+          <FundsBar
+            track={kc.track}
+            ariaLabel={`Terpakai ${formatShort(funds.spent)}, tagihan ${formatShort(funds.reserved)}, tabungan ${formatShort(funds.saving)}, bebas ${formatShort(funds.free)}`}
+            parts={[
+              { key: 'spent', label: 'Terpakai', value: funds.spent, color: kc.amber },
+              { key: 'reserved', label: 'Tagihan', value: funds.reserved, color: kc.reserved },
+              { key: 'saving', label: 'Tabungan', value: funds.saving, color: kc.indigo },
+              { key: 'free', label: 'Bebas', value: funds.free, color: kc.brandMeter },
+            ]}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Terpakai" icon="expense" color={kc.amber} isDark={isDark}
+          info="Pengeluaran periode ini termasuk penyesuaian cocokkan saldo. Garis: belanja per hari sejak awal periode. Sentuh garis untuk angka per hari."
+          value={formatShort(totalSpent)}
+          sub={fundsTotal > 0 ? `${Math.round(totalSpent / fundsTotal * 100)}% dari dana` : 'Belum ada dana'}
+        >
+          <SpendSparkline series={spendSeries} color={kc.amber} fill={kc.amberFill} track={kc.track} ring="var(--card-bg)" />
+        </KpiCard>
+        <KpiCard
+          label="Sisa bebas" icon="coins" color={kc.brand} isDark={isDark}
+          info="Total saldo amplop dikurangi amplop tabungan dan uang yang disimpan untuk tagihan. Batang: porsi dana belanja yang masih bebas."
+          value={formatShortSigned(sisaBebas)}
+          valueClassName={sisaBebas < 0 ? 'text-danger-400' : ''}
+          sub={isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}
+        >
+          <Meter
+            value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
+            label={freePart != null ? pct(freePart) : null}
+            ariaLabel={freePart != null ? `${pct(freePart)} dana belanja masih bebas` : 'Belum ada dana belanja'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Tabungan shared" icon="piggy" color={kc.indigo} isDark={isDark}
+          info="Saldo amplop tabungan yang dibagikan dengan anggota rumah tangga lainnya. Batang: kemajuan menuju target."
+          value={formatShort(sharedSaving)}
+          sub={sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}
+        >
+          <Meter
+            value={sharedProgress} color={kc.indigo} track={kc.indigoTrack}
+            label={sharedProgress != null ? pct(sharedProgress) : null}
+            ariaLabel={sharedProgress != null ? `${pct(sharedProgress)} dari target tercapai` : 'Belum ada target'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Tabungan personal" icon="piggy" color={kc.indigo} isDark={isDark}
+          info="Saldo amplop tabungan pribadi Anda. Batang: kemajuan menuju target."
+          value={formatShort(personalSaving)}
+          sub={personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}
+        >
+          <Meter
+            value={personalProgress} color={kc.indigo} track={kc.indigoTrack}
+            label={personalProgress != null ? pct(personalProgress) : null}
+            ariaLabel={personalProgress != null ? `${pct(personalProgress)} dari target tercapai` : 'Belum ada target'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Amplop aktif" icon="envelope" color={kc.slate} isDark={isDark}
+          info="Jumlah amplop yang sedang Anda gunakan (shared dan personal). Tiap titik satu amplop: merah habis, kuning hampir habis, hijau aman, ungu tabungan, abu-abu belum ada dana. Sentuh titik untuk nama amplopnya."
+          value={envelopes.length}
+          sub={`${shared.length} shared · ${personal.length} personal`}
+        >
+          <EnvelopeStrip strip={envelopeStrip(envelopes)} colors={kc.status} />
+        </KpiCard>
       </div>
 
       {isCurrentPeriod && (
