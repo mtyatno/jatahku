@@ -24,7 +24,6 @@ export function InfoTooltip({ text, position = 'top' }) {
         onMouseEnter={() => setIsVisible(true)}
         onMouseLeave={() => setIsVisible(false)}
         className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-700 flex-shrink-0 ml-1"
-        title={text}
         aria-label="Info"
       >
         <Icon name="info" size={12} />
