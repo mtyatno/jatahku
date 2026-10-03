@@ -7,6 +7,7 @@ import { formatShort, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
+import { InfoTooltip } from '../components/InfoTooltip';
 import { fundingState } from '../lib/envelopeFunding';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
@@ -583,7 +584,10 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
+              <InfoTooltip text="Alokasi periode ini ditambah sisa dari periode lalu" position="bottom" />
+            </div>
             <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
             <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
               {totalRollover > 0
@@ -597,7 +601,10 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Terpakai</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Terpakai</p>
+              <InfoTooltip text="Pengeluaran bulan ini termasuk penyesuaian rekonsiliasi" position="bottom" />
+            </div>
             <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
             <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
           </div>
@@ -605,7 +612,10 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
+              <InfoTooltip text="Total saldo amplop dikurangi amplop tabungan dan uang yang disimpan untuk tagihan" position="bottom" />
+            </div>
             <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
             <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
           </div>
@@ -613,7 +623,10 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Tabungan shared</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Tabungan shared</p>
+              <InfoTooltip text="Saldo amplop tabungan yang dibagikan dengan anggota rumah tangga lainnya" position="bottom" />
+            </div>
             <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(sharedSaving)}</p>
             <p className="text-xs mt-0.5 text-gray-400">{sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}</p>
           </div>
@@ -621,7 +634,10 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Tabungan personal</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Tabungan personal</p>
+              <InfoTooltip text="Saldo amplop tabungan pribadi Anda" position="bottom" />
+            </div>
             <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(personalSaving)}</p>
             <p className="text-xs mt-0.5 text-gray-400">{personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}</p>
           </div>
@@ -629,7 +645,10 @@ export default function Dashboard() {
         </div>
         <div className="card flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
+              <InfoTooltip text="Jumlah amplop yang sedang Anda gunakan (shared dan personal)" position="bottom" />
+            </div>
             <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
             <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
           </div>
