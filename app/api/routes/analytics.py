@@ -13,7 +13,7 @@ from app.models.models import (
     RecurringTransaction, EnvelopeGroup,
 )
 from app.services.advisor import build_allocation_distribution, build_envelope_distribution
-from app.services.reserved import recurring_monthly_reserve
+from app.services.reserved import envelope_reserved
 
 router = APIRouter()
 
@@ -340,15 +340,7 @@ async def spending_prediction(
     env_ids = [r for r in env_r.scalars().all()]
     total_reserved = 0.0
     for eid in env_ids:
-        rec_r = await db.execute(
-            select(RecurringTransaction).where(
-                RecurringTransaction.envelope_id == eid, RecurringTransaction.is_active == True
-            )
-        )
-        for rec in rec_r.scalars().all():
-            total_reserved += float(recurring_monthly_reserve(
-                rec.frequency.value, rec.amount, rec.next_run, period_end
-            ))
+        total_reserved += float(await envelope_reserved(db, eid, period_start, period_end))
 
     daily_avg = total_spent / days_passed if days_passed > 0 else 0
     predicted_total = daily_avg * days_total
