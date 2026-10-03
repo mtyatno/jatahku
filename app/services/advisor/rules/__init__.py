@@ -65,7 +65,7 @@ async def build_advisor_insights(user, db) -> dict:
     envelopes = context.get("envelopes", [])
     stats = context.get("stats", {})
     if not envelopes:
-        return {"cards": [], "dashboard_cards": [], "partial": False, "failed_rules": []}
+        return {"cards": [], "dashboard_cards": [], "notes": [], "partial": False, "failed_rules": []}
 
     period_info = get_period_info(context.get("payday_day", _payday(user)), date.today())
 
@@ -144,6 +144,7 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
         "period_end": str(period_info["period_end"]),
         "cards": cards,
         "dashboard_cards": cards[:3],
+        "notes": ctx.notes,
         "partial": bool(failed_rules),
         "failed_rules": failed_rules,
     }

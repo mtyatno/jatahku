@@ -422,7 +422,7 @@ class ApiClient {
       const res = await this.request('/advisor/insights');
       if (res.ok) {
         const data = await res.json();
-        return { cards: [], dashboard_cards: [], ...data, _error: false };
+        return { cards: [], dashboard_cards: [], notes: [], ...data, _error: false };
       }
       console.error('[advisor] insights request failed:', res.status);
     } catch (e) {

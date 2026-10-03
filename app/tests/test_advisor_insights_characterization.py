@@ -68,8 +68,11 @@ class EnvDepletionScenarioTests(unittest.TestCase):
         self.assertEqual(card["type"], "env_depletion")
         self.assertEqual(card["severity"], "danger")  # shortage 700k > 20% of 500k available
         self.assertIn("Hiburan", card["title"])
-        self.assertIn("80%", card["title"])
-        self.assertIn("Proyeksi habis", card["body"])
+        # 100k left over 20 days -> 5k/day; rate 40k/day empties it in 2 days.
+        self.assertIn("maksimal Rp5.000/hari", card["title"])
+        self.assertIn("80%", card["body"])
+        self.assertEqual(card["detail"]["safe_daily"], 5000)
+        self.assertEqual(card["detail"]["days_early"], 18)
         self.assertEqual(result["dashboard_cards"], result["cards"][:3])
 
 
@@ -93,8 +96,9 @@ class BudgetOverspendScenarioTests(unittest.TestCase):
         overspend, depletion = result["cards"]
         self.assertEqual(overspend["type"], "budget_overspend")
         self.assertEqual(overspend["severity"], "danger")
-        self.assertIn("jebol", overspend["title"])
-        self.assertIn("Proyeksi overspend", overspend["body"])
+        self.assertIn("maksimal", overspend["title"])
+        self.assertIn("total kurang sekitar", overspend["body"])
+        self.assertEqual(overspend["detail"]["remaining"], 800000)
 
         self.assertEqual(depletion["type"], "env_depletion")
         self.assertEqual(depletion["severity"], "warning")  # boundary: shortage == 20% exactly

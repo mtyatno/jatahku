@@ -69,64 +69,44 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
-function CardDetailModal({ card, onClose }) {
-  if (!card) return null;
-
+function CalcRow({ label, value, strong, color }) {
   return (
-    <>
-      {/* Overlay */}
-      <div
-        className="fixed inset-0 bg-black/50 z-40"
-        onClick={onClose}
-        style={{ backdropFilter: 'blur(2px)' }}
-      />
-      {/* Modal */}
-      <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-xl z-50 max-w-md w-[calc(100%-2rem)]">
-        <div className="flex items-start justify-between mb-4">
-          <p className="text-sm font-semibold flex-1">{renderWithIcons(card.title, 15, 'currentColor')}</p>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg ml-2 flex-shrink-0"
-          >×</button>
-        </div>
-
-        {card.evidence && card.evidence.length > 0 && (
-          <div className="space-y-2 mb-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Detail perhitungan</p>
-            {card.evidence.map((line, i) => (
-              <p key={i} className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">
-                {renderWithIcons(line, 13, 'currentColor')}
-              </p>
-            ))}
-          </div>
-        )}
-
-        <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-4">
-          {String(card.body || '').split('\n').map((line, li) => (
-            <span key={li}>
-              {renderWithIcons(line, 13, 'currentColor')}
-              {li < String(card.body || '').split('\n').length - 1 && <br />}
-            </span>
-          ))}
-        </p>
-
-        {card.primary_action?.route && (
-          <a
-            href={card.primary_action.route}
-            className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
-          >
-            {card.primary_action.label || 'Lihat detail'} →
-          </a>
-        )}
-      </div>
-    </>
+    <div className="flex justify-between gap-3 py-0.5">
+      <span>{label}</span>
+      <span className={strong ? 'font-semibold' : ''} style={color ? { color } : undefined}>{value}</span>
+    </div>
   );
 }
 
-function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, goals }) {
+function AdviceCalc({ detail, clr }) {
+  const d = detail;
+  const excluded = [
+    d.excluded_adjustment > 0 && `penyesuaian cocokkan saldo ${formatCurrency(d.excluded_adjustment)}`,
+    d.excluded_recurring > 0 && `tagihan rutin ${formatCurrency(d.excluded_recurring)}`,
+    d.excluded_outlier > 0 && `belanja besar satu kali ${formatCurrency(d.excluded_outlier)}`,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
+      <CalcRow label="Dana amplop" value={formatCurrency(d.available)} />
+      <CalcRow label="Terpakai" value={`− ${formatCurrency(d.spent)}`} />
+      <CalcRow label="Sisa" value={formatCurrency(d.remaining)} strong />
+      <div className="my-1.5 border-t" style={{ borderColor: clr.border }} />
+      <CalcRow label={`Hari tersisa${d.period_end ? ` (s.d. ${d.period_end})` : ''}`} value={`${d.days_remaining} hari`} />
+      {d.remaining > 0 && (
+        <CalcRow label="Batas aman = sisa ÷ hari tersisa" value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+      )}
+      <CalcRow label={`Kecepatan sekarang (${d.days_used} hari berjalan)`} value={`${formatCurrency(d.daily_rate)}/hari`} />
+      {excluded.length > 0 && (
+        <p className="mt-1.5" style={{ color: clr.muted }}>Tidak dihitung sebagai kebiasaan harian: {excluded.join(', ')}.</p>
+      )}
+    </div>
+  );
+}
+
+function HeroAdvisor({ cards, notes, advisorError, prediction, todaySpent, goals }) {
   const { mode } = useTheme();
   const isDark = mode === 'dark';
-  const [selectedCard, setSelectedCard] = useState(null);
+  const [openId, setOpenId] = useState(null);
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
   const hasPrediction = prediction && prediction.total_allocated > 0;
@@ -149,31 +129,18 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
     }
   }
 
-  const urgent = [...(envelopes || [])]
-    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
-    .sort((a, b) => b.spent_ratio - a.spent_ratio)
-    .slice(0, 3);
-
-  urgent.forEach(e => {
-    const pct = Math.round(e.spent_ratio * 100);
-    if (e.spent_ratio >= 1.0) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, lvl: 'danger' });
-    } else if (e.spent_ratio >= 0.9) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, lvl: 'danger' });
-    } else {
-      tacticalLines.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, lvl: 'warning' });
-    }
-  });
-
   const hasTactical = tacticalLines.length > 0;
   const hasCards = cards?.length > 0;
+  const hasNotes = notes?.length > 0;
   const hasGoals = goals?.length > 0;
-  if (!hasTactical && !hasCards && !hasGoals && !advisorError) return null;
+  if (!hasTactical && !hasCards && !hasNotes && !hasGoals && !advisorError) return null;
 
   const clr = isDark ? {
-    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b',
+    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b', inset: '#0f172a',
+    dot: { danger: '#f87171', warning: '#fbbf24', info: '#60a5fa', positive: '#34d399' },
   } : {
-    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8',
+    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8', inset: '#F1F5F9',
+    dot: { danger: '#DC2626', warning: '#D97706', info: '#2563EB', positive: '#059669' },
   };
 
   return (
@@ -212,40 +179,50 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
         </div>
       )}
 
-      {hasCards && (
-        <div className="space-y-2">
-          {cards.map((card) => {
-            const cs = isDark ? {
-              danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
-              warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
-              info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
-              positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
-            }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
-              danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
-              warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
-              info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
-              positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
-            }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
-
-            return (
-              <button
-                key={card.id}
-                onClick={() => setSelectedCard(card)}
-                className="w-full text-left rounded-lg p-3 transition-opacity hover:opacity-80 active:opacity-90 cursor-pointer"
-                style={{ background: cs.bg, border: `1px solid ${cs.border}` }}
-              >
-                <p className="text-xs font-semibold mb-1" style={{ color: cs.txt }}>
-                  {renderWithIcons(card.title, 14, cs.txt)}
-                </p>
-                <p className="text-xs leading-relaxed line-clamp-2" style={{ color: cs.txt, opacity: 0.9 }}>
-                  {String(card.body || '').split('\n')[0]}
-                </p>
-                <p className="text-xs font-medium mt-2" style={{ color: cs.txt, opacity: 0.7 }}>
-                  Lihat detail →
-                </p>
-              </button>
-            );
-          })}
+      {(hasCards || hasNotes) && (
+        <div className={hasTactical ? 'pt-3 border-t' : ''} style={{ borderColor: clr.border }}>
+          <p className="text-xs font-semibold mb-1 uppercase tracking-wide" style={{ color: clr.accent }}>Saran</p>
+          <div className="divide-y" style={{ borderColor: clr.border }}>
+            {(cards || []).map(card => {
+              const open = openId === card.id;
+              const lines = card.detail ? [] : (card.evidence || []);
+              return (
+                <div key={card.id} className="py-2.5" style={{ borderColor: clr.border }}>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: clr.dot[card.severity] || clr.muted }} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold" style={{ color: clr.title }}>{renderWithIcons(card.title, 15, clr.title)}</p>
+                      <p className="text-xs mt-0.5 leading-relaxed" style={{ color: clr.text }}>{renderWithIcons(card.body, 13, clr.text)}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        {(card.detail || lines.length > 0) && (
+                          <button type="button" onClick={() => setOpenId(open ? null : card.id)}
+                            className="text-xs font-medium hover:underline" style={{ color: clr.accent }}>
+                            {open ? 'Tutup hitungan' : 'Lihat hitungan'}
+                          </button>
+                        )}
+                        {open && card.primary_action?.route && (
+                          <Link to={card.primary_action.route} className="text-xs hover:underline" style={{ color: clr.muted }}>
+                            {card.primary_action.label} →
+                          </Link>
+                        )}
+                      </div>
+                      {open && card.detail && <AdviceCalc detail={card.detail} clr={clr} />}
+                      {open && !card.detail && (
+                        <div className="mt-2 rounded-lg px-3 py-2 text-xs space-y-0.5" style={{ background: clr.inset, color: clr.text }}>
+                          {lines.map((l, i) => <p key={i}>{renderWithIcons(l, 13, clr.text)}</p>)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {hasNotes && (
+            <p className="text-xs mt-1" style={{ color: clr.muted }}>
+              Tidak diproyeksikan: {notes.map(n => `${n.name} (${n.reason})`).join(', ')}.
+            </p>
+          )}
         </div>
       )}
 
@@ -286,11 +263,6 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
             </p>
           )}
         </div>
-      )}
-
-      {/* Detail Modal */}
-      {selectedCard && (
-        <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
       )}
     </div>
   );
@@ -761,10 +733,10 @@ export default function Dashboard() {
       {isCurrentPeriod && (
         <HeroAdvisor
           cards={advisorInsights?.dashboard_cards}
+          notes={advisorInsights?.notes}
           advisorError={advisorInsights?._error}
           prediction={prediction}
           todaySpent={todaySpent}
-          envelopes={envelopes}
           goals={goals}
         />
       )}
