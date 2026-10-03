@@ -151,6 +151,7 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
         select(
             Transaction.envelope_id, Transaction.transaction_date, Transaction.amount,
             Transaction.description, Transaction.user_id, Transaction.is_private,
+            Transaction.balance_check_id,
         )
         .where(
             Transaction.envelope_id.in_(env_ids),
@@ -161,7 +162,7 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
     )).all()
     txn_by_env = defaultdict(list)          # (date, amount) for period bucketing (unchanged use)
     current_txns_by_env = defaultdict(list)  # masked views, current period only
-    for env_id, txn_date, amount, description, txn_user_id, is_private in txn_rows:
+    for env_id, txn_date, amount, description, txn_user_id, is_private, balance_check_id in txn_rows:
         eid = str(env_id)
         txn_by_env[eid].append((txn_date, amount))
         if current_start <= txn_date <= current_end:
@@ -170,7 +171,10 @@ async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
                 SimpleNamespace(user_id=txn_user_id, is_private=is_private, description=description),
             )
             current_txns_by_env[eid].append(
-                SimpleNamespace(amount=_to_decimal(amount), transaction_date=txn_date, description=masked)
+                SimpleNamespace(
+                    amount=_to_decimal(amount), transaction_date=txn_date, description=masked,
+                    is_adjustment=balance_check_id is not None,
+                )
             )
 
     rec_rows = (await db.execute(

@@ -69,9 +69,44 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
-function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, goals }) {
+function CalcRow({ label, value, strong, color }) {
+  return (
+    <div className="flex justify-between gap-3 py-0.5">
+      <span>{label}</span>
+      <span className={strong ? 'font-semibold' : ''} style={color ? { color } : undefined}>{value}</span>
+    </div>
+  );
+}
+
+function AdviceCalc({ detail, clr }) {
+  const d = detail;
+  const excluded = [
+    d.excluded_adjustment > 0 && `penyesuaian cocokkan saldo ${formatCurrency(d.excluded_adjustment)}`,
+    d.excluded_recurring > 0 && `tagihan rutin ${formatCurrency(d.excluded_recurring)}`,
+    d.excluded_outlier > 0 && `belanja besar satu kali ${formatCurrency(d.excluded_outlier)}`,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
+      <CalcRow label="Dana amplop" value={formatCurrency(d.available)} />
+      <CalcRow label="Terpakai" value={`− ${formatCurrency(d.spent)}`} />
+      <CalcRow label="Sisa" value={formatCurrency(d.remaining)} strong />
+      <div className="my-1.5 border-t" style={{ borderColor: clr.border }} />
+      <CalcRow label={`Hari tersisa${d.period_end ? ` (s.d. ${d.period_end})` : ''}`} value={`${d.days_remaining} hari`} />
+      {d.remaining > 0 && (
+        <CalcRow label="Batas aman = sisa ÷ hari tersisa" value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+      )}
+      <CalcRow label={`Kecepatan sekarang (${d.days_used} hari berjalan)`} value={`${formatCurrency(d.daily_rate)}/hari`} />
+      {excluded.length > 0 && (
+        <p className="mt-1.5" style={{ color: clr.muted }}>Tidak dihitung sebagai kebiasaan harian: {excluded.join(', ')}.</p>
+      )}
+    </div>
+  );
+}
+
+function HeroAdvisor({ cards, notes, advisorError, prediction, todaySpent, goals }) {
   const { mode } = useTheme();
   const isDark = mode === 'dark';
+  const [openId, setOpenId] = useState(null);
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
   const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
@@ -94,31 +129,18 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
     }
   }
 
-  const urgent = [...(envelopes || [])]
-    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
-    .sort((a, b) => b.spent_ratio - a.spent_ratio)
-    .slice(0, 3);
-
-  urgent.forEach(e => {
-    const pct = Math.round(e.spent_ratio * 100);
-    if (e.spent_ratio >= 1.0) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, lvl: 'danger' });
-    } else if (e.spent_ratio >= 0.9) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, lvl: 'danger' });
-    } else {
-      tacticalLines.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, lvl: 'warning' });
-    }
-  });
-
   const hasTactical = tacticalLines.length > 0;
   const hasCards = cards?.length > 0;
+  const hasNotes = notes?.length > 0;
   const hasGoals = goals?.length > 0;
-  if (!hasTactical && !hasCards && !hasGoals && !advisorError) return null;
+  if (!hasTactical && !hasCards && !hasNotes && !hasGoals && !advisorError) return null;
 
   const clr = isDark ? {
-    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b',
+    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b', inset: '#0f172a',
+    dot: { danger: '#f87171', warning: '#fbbf24', info: '#60a5fa', positive: '#34d399' },
   } : {
-    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8',
+    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8', inset: '#F1F5F9',
+    dot: { danger: '#DC2626', warning: '#D97706', info: '#2563EB', positive: '#059669' },
   };
 
   return (
@@ -157,36 +179,52 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
         </div>
       )}
 
-      {hasCards && cards.map((card, ci) => {
-        const cs = isDark ? {
-          danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
-          warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
-          info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
-          positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
-        }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
-          danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
-          warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
-          info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
-          positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
-        }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
-        return (
-          <div key={card.id} className="rounded-xl p-3.5 mb-3 last:mb-0" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
-            <p className="text-xs font-semibold mb-2" style={{ color: cs.txt }}>{renderWithIcons(card.title, 15, cs.txt)}</p>
-            <div className="text-xs space-y-1.5" style={{ color: cs.txt }}>
-              {String(card.body || '').split('\n').map((line, li) =>
-                line.trim() === ''
-                  ? <div key={li} className="h-1.5" />
-                  : <p key={li} className="leading-relaxed">{renderWithIcons(line, 14, cs.txt)}</p>
-              )}
-            </div>
-            {card.primary_action?.route && (
-              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 text-brand-600 hover:underline">
-                {card.primary_action.label || 'Lihat detail'} →
-              </Link>
-            )}
+      {(hasCards || hasNotes) && (
+        <div className={hasTactical ? 'pt-3 border-t' : ''} style={{ borderColor: clr.border }}>
+          <p className="text-xs font-semibold mb-1 uppercase tracking-wide" style={{ color: clr.accent }}>Saran</p>
+          <div className="divide-y" style={{ borderColor: clr.border }}>
+            {(cards || []).map(card => {
+              const open = openId === card.id;
+              const lines = card.detail ? [] : (card.evidence || []);
+              return (
+                <div key={card.id} className="py-2.5" style={{ borderColor: clr.border }}>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ background: clr.dot[card.severity] || clr.muted }} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold" style={{ color: clr.title }}>{renderWithIcons(card.title, 15, clr.title)}</p>
+                      <p className="text-xs mt-0.5 leading-relaxed" style={{ color: clr.text }}>{renderWithIcons(card.body, 13, clr.text)}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        {(card.detail || lines.length > 0) && (
+                          <button type="button" onClick={() => setOpenId(open ? null : card.id)}
+                            className="text-xs font-medium hover:underline" style={{ color: clr.accent }}>
+                            {open ? 'Tutup hitungan' : 'Lihat hitungan'}
+                          </button>
+                        )}
+                        {open && card.primary_action?.route && (
+                          <Link to={card.primary_action.route} className="text-xs hover:underline" style={{ color: clr.muted }}>
+                            {card.primary_action.label} →
+                          </Link>
+                        )}
+                      </div>
+                      {open && card.detail && <AdviceCalc detail={card.detail} clr={clr} />}
+                      {open && !card.detail && (
+                        <div className="mt-2 rounded-lg px-3 py-2 text-xs space-y-0.5" style={{ background: clr.inset, color: clr.text }}>
+                          {lines.map((l, i) => <p key={i}>{renderWithIcons(l, 13, clr.text)}</p>)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+          {hasNotes && (
+            <p className="text-xs mt-1" style={{ color: clr.muted }}>
+              Tidak diproyeksikan: {notes.map(n => `${n.name} (${n.reason})`).join(', ')}.
+            </p>
+          )}
+        </div>
+      )}
 
       {goals?.length > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
@@ -695,10 +733,10 @@ export default function Dashboard() {
       {isCurrentPeriod && (
         <HeroAdvisor
           cards={advisorInsights?.dashboard_cards}
+          notes={advisorInsights?.notes}
           advisorError={advisorInsights?._error}
           prediction={prediction}
           todaySpent={todaySpent}
-          envelopes={envelopes}
           goals={goals}
         />
       )}

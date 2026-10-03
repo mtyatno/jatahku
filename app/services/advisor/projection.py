@@ -13,6 +13,8 @@ Two modes:
 - Per-txn (real data): exclude recurring-matched (amount within ±10% of an
   active recurring) and outlier (> 2x median txn AND > 30% of available)
   transactions from the rate; cap severity when fewer than 5 variable txns.
+  Balance-check adjustments (cocokkan saldo) are also excluded: they are a
+  lump correction, not a daily habit.
 """
 from decimal import Decimal
 
@@ -48,13 +50,17 @@ def project_envelope(spent_total, transaction_count, available,
     recurring_amounts = recurring_amounts or []
 
     if txns:
-        amounts = [_txn_amount(t) for t in txns]
+        amounts = [_txn_amount(t) for t in txns if not getattr(t, "is_adjustment", False)]
         median = _median_decimal(amounts)
         variable_total = Decimal("0")
         variable_count = 0
         outliers = []
+        excluded = {"recurring": Decimal("0"), "outlier": Decimal("0"), "adjustment": Decimal("0")}
         for t in txns:
             amount = _txn_amount(t)
+            if getattr(t, "is_adjustment", False):
+                excluded["adjustment"] += amount
+                continue
             is_recurring = _matches_recurring(amount, recurring_amounts)
             is_outlier = (
                 median > 0
@@ -62,7 +68,10 @@ def project_envelope(spent_total, transaction_count, available,
                 and amount > available * _OUTLIER_AVAIL_FRAC
             )
             if is_recurring or is_outlier:
-                if is_outlier and not is_recurring:
+                if is_recurring:
+                    excluded["recurring"] += amount
+                else:
+                    excluded["outlier"] += amount
                     outliers.append(t)
                 continue
             variable_total += amount
@@ -72,6 +81,7 @@ def project_envelope(spent_total, transaction_count, available,
         variable_total = spent_total
         variable_count = int(transaction_count or 0)
         outliers = []
+        excluded = {"recurring": Decimal("0"), "outlier": Decimal("0"), "adjustment": Decimal("0")}
         severity_capped = False  # aggregate-only: no per-txn basis to cap
 
     variable_rate = variable_total / days_used
@@ -82,4 +92,5 @@ def project_envelope(spent_total, transaction_count, available,
         "variable_count": variable_count,
         "severity_capped": severity_capped,
         "outliers": outliers,
+        "excluded": excluded,
     }

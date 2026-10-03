@@ -20,6 +20,8 @@ class AdvisorContext:
     balances_by_env: dict
     txns_by_env: dict = field(default_factory=dict)
     recurring_by_env: dict = field(default_factory=dict)
+    # Envelopes a rule chose not to project, with a short reason for the UI.
+    notes: list = field(default_factory=list)
 
     @property
     def days_used(self) -> int:
