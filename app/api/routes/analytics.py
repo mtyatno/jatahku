@@ -10,7 +10,7 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_last_n_periods, get_period_info
 from app.models.models import (
     User, Envelope, Transaction, HouseholdMember, Allocation, Income,
-    RecurringTransaction, EnvelopeGroup,
+    RecurringTransaction, EnvelopeGroup, MonthlySnapshot,
 )
 from app.services.advisor import build_allocation_distribution, build_envelope_distribution
 from app.services.reserved import envelope_reserved
@@ -329,6 +329,24 @@ async def spending_prediction(
     )
     total_spent = float(spent_r.scalar())
 
+    # Rollover periode lalu = dana yang sudah ada di amplop sebelum alokasi baru.
+    prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))
+    rollover_r = await db.execute(
+        select(func.coalesce(func.sum(MonthlySnapshot.rollover_amount), 0))
+        .join(Envelope, MonthlySnapshot.envelope_id == Envelope.id)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            Envelope.is_rollover == True,
+            Envelope.purpose == "expense",
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            MonthlySnapshot.year == prev_start.year,
+            MonthlySnapshot.month == prev_start.month,
+        )
+    )
+    total_rollover = float(rollover_r.scalar())
+    total_available = total_allocated + total_rollover
+
     env_r = await db.execute(
         select(Envelope.id).where(
             Envelope.household_id == hid,
@@ -344,13 +362,15 @@ async def spending_prediction(
 
     daily_avg = total_spent / days_passed if days_passed > 0 else 0
     predicted_total = daily_avg * days_total
-    remaining = total_allocated - total_spent
+    remaining = total_available - total_spent
     free = remaining - total_reserved
     safe_daily = free / days_left if days_left > 0 else 0
-    on_track = predicted_total <= total_allocated
+    on_track = predicted_total <= total_available
 
     return {
         "total_allocated": total_allocated,
+        "total_rollover": total_rollover,
+        "total_available": total_available,
         "total_spent": total_spent,
         "total_reserved": total_reserved,
         "remaining": remaining,
