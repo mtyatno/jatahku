@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { formatCurrency, formatShort, titleCase } from '../lib/utils';
+import { formatCurrency, formatShort, formatShortSigned, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
 import { fundingState } from '../lib/envelopeFunding';
+import { envelopeRow } from '../lib/envelopeRow';
 import { errorText } from '../lib/balanceCheck';
 import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
 import ClassificationBackfill from '../components/ClassificationBackfill';
@@ -740,6 +741,276 @@ function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, o
   );
 }
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+const ROW_AMOUNT_CLS = { safe: 'text-brand-600', warning: 'text-amber-500', danger: 'text-danger-400', muted: 'text-gray-400' };
+const ROW_NOTE_CLS = { muted: 'text-gray-500', safe: 'text-brand-600', warning: 'text-amber-600', danger: 'text-danger-400' };
+
+function ActionButton({ icon, onClick, children }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors">
+      <Icon name={icon} size={16} /> {children}
+    </button>
+  );
+}
+
+function CompactDetail({ env, goal, onEdit, onDelete, onTransfer, onGoal }) {
+  const allocated = Number(env.allocated || 0);
+  const rollover = Number(env.rollover || 0);
+  const spent = Number(env.spent || 0);
+  const remaining = Number(env.remaining || 0);
+  const reserved = Number(env.reserved || 0);
+  const spentRatio = env.spent_ratio || 0;
+  const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
+  const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
+  const fstate = isSavingLike ? null : fundingState(env);
+  const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
+  const barColor = fstate === 'reserve_short' ? 'bg-amber-400' : (fstate === 'overspent' || status === 'danger') ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
+  const insight = fstate === 'reserve_short'
+    ? { text: `Tagihan butuh ${formatShort(reserved)}, sisa ${formatShort(remaining)}`, tone: 'warning' }
+    : envelopeInsight(env, goal);
+
+  const lines = [];
+  if (isSavingLike) {
+    if (goal) {
+      lines.push(['Target', formatShort(goal.target_amount)]);
+      if (!goal.is_achieved && goal.monthly_needed != null) {
+        lines.push(['Perlu per bulan', `${formatShort(goal.monthly_needed)} · ${goal.months_remaining} bln`]);
+      }
+    }
+    if (env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0) lines.push(['Budget bulanan', formatShort(env.budget_amount)]);
+  } else if (!isUnfunded) {
+    lines.push(['Terpakai', formatShort(spent)]);
+    lines.push(['Dana awal', formatShort(allocated)]);
+    if (rollover !== 0) {
+      lines.push(rollover > 0
+        ? ['Rollover', `+${formatShort(rollover)}`, 'text-brand-600']
+        : ['Rollover', formatShortSigned(rollover), 'text-danger-400']);
+    }
+  }
+  if (reserved > 0) lines.push(['Disisihkan untuk tagihan', formatShort(reserved), 'text-amber-600']);
+
+  return (
+    <div className="px-4 pb-4 sm:pl-[68px]">
+      <p className="text-xs text-gray-400 flex items-center gap-1">
+        {env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>}
+        <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span>
+      </p>
+
+      {isUnfunded ? (
+        <div className="mt-3 bg-amber-50 text-amber-600 text-sm px-3 py-3 rounded-xl flex items-center gap-2">
+          <Icon name="warning" size={16} color="#D97706" /> Belum ada dana.
+          <Link to="/allocate" className="font-semibold hover:underline">Alokasikan</Link>
+        </div>
+      ) : isSavingLike && goal ? (
+        <>
+          <p className="mt-3 text-sm text-gray-600 truncate">{goal.name}</p>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden mt-2">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(goal.progress_pct, 2)}%`, background: env.is_locked ? '#D1D5DB' : SAVING }} />
+          </div>
+        </>
+      ) : !isSavingLike ? (
+        <div className="h-2 bg-gray-100 rounded-full overflow-hidden mt-3">
+          <div className={`h-full rounded-full ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(Math.min(spentRatio, 1) * 100, 1)}%` }} />
+        </div>
+      ) : null}
+
+      {lines.length > 0 && (
+        <dl className="mt-3 space-y-2 text-sm">
+          {lines.map(([label, value, cls]) => (
+            <div key={label} className="flex items-baseline justify-between gap-3">
+              <dt className="text-gray-500">{label}</dt>
+              <dd className={`font-semibold tabular-nums text-right ${cls || 'text-gray-700'}`}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <ControlBadges env={env} />
+      {!isUnfunded && <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />}
+      {fstate === 'reserve_short' && (
+        <Link to="/allocate" className="mt-1.5 inline-block text-xs font-medium text-amber-600 hover:underline">Alokasikan lagi →</Link>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mt-4">
+        {isSavingLike && <ActionButton icon="target" onClick={() => onGoal(env)}>{goal ? 'Ubah target' : 'Buat target'}</ActionButton>}
+        <ActionButton icon="transfer" onClick={() => onTransfer(env)}>Geser dana</ActionButton>
+        <ActionButton icon="edit" onClick={() => onEdit(env)}>Edit</ActionButton>
+        <button type="button" onClick={() => onDelete(env.id, env.name)}
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-danger-400 hover:bg-red-50 transition-colors">
+          <Icon name="trash" size={16} /> Hapus
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CompactRow({ env, goal, open, onToggle, first, ...actions }) {
+  const row = envelopeRow(env, goal);
+  const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
+  const detailRef = useRef(null);
+
+  useEffect(() => {
+    if (!open || !detailRef.current) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    detailRef.current.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }, [open]);
+
+  const amountCls = env.is_locked ? 'text-gray-400' : row.tone === 'saving' ? '' : ROW_AMOUNT_CLS[row.tone];
+  const amountStyle = !env.is_locked && row.tone === 'saving' ? { color: SAVING } : undefined;
+
+  return (
+    <li className={first ? '' : 'border-t border-gray-100'}>
+      <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={open ? `env-detail-${env.id}` : undefined}
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-gray-50 transition-colors">
+        {/* Warna ikon lewat currentColor + kelas tema, supaya tetap terbaca di mode gelap. */}
+        <span className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${isSavingLike ? '' : 'bg-brand-50 text-brand-600'}`}
+          style={isSavingLike ? { background: 'rgba(99,102,241,0.12)', color: SAVING } : undefined}>
+          <EnvelopeIcon value={env.emoji} size={22} color="currentColor" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-start gap-1.5">
+            <span className="font-semibold text-gray-800 leading-snug line-clamp-2 break-words">{titleCase(env.name)}</span>
+            {env.is_locked && <Icon name="lock" size={13} className="text-gray-400 flex-shrink-0 mt-1" />}
+          </span>
+          <span className={`block text-xs mt-0.5 truncate ${ROW_NOTE_CLS[row.noteTone]}`}>{row.note}</span>
+        </span>
+        <span className={`font-display font-bold tabular-nums whitespace-nowrap ${amountCls}`} style={amountStyle}>{formatShortSigned(row.amount)}</span>
+        <Icon name="chevron" size={14} weight="bold" className={`text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div id={`env-detail-${env.id}`} ref={detailRef} className="scroll-mb-24">
+          <CompactDetail env={env} goal={goal} {...actions} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+function CompactEnvelopeList({ sections, goals, onRenameGroup, onDeleteGroup, ...actions }) {
+  const [openId, setOpenId] = useState(null);
+  const wide = useMediaQuery('(min-width: 1024px)');
+
+  const header = (sec) => sec.name && (
+    <div className="group flex items-center justify-between gap-2 px-1 mb-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider truncate">{sec.name}</h3>
+        {sec.id && (
+          <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex gap-2">
+            <button onClick={() => onRenameGroup(sec)} className="text-xs text-gray-400 hover:text-brand-600">Rename</button>
+            <button onClick={() => onDeleteGroup(sec)} className="text-xs text-gray-400 hover:text-danger-400">Hapus</button>
+          </span>
+        )}
+      </div>
+      <span className="text-xs font-semibold text-gray-500 tabular-nums whitespace-nowrap">{formatShortSigned(groupBalance(sec.envelopes))}</span>
+    </div>
+  );
+
+  const card = (envs, key) => (
+    <ul key={key} className="card !p-0 overflow-hidden">
+      {envs.map((env, i) => (
+        <CompactRow key={env.id} env={env} goal={goals.find(g => g.envelope_id === env.id)} first={i === 0}
+          open={openId === env.id} onToggle={() => setOpenId(id => (id === env.id ? null : env.id))} {...actions} />
+      ))}
+    </ul>
+  );
+
+  const section = (sec) => (
+    <section key={sec.id ?? '__none__'}>
+      {header(sec)}
+      {card(sec.envelopes, 'list')}
+    </section>
+  );
+
+  let content;
+  if (!wide) {
+    content = <div className="space-y-6">{sections.map(section)}</div>;
+  } else if (sections.length === 1) {
+    // Desktop: dua kolom yang menumpuk sendiri-sendiri, jadi membuka satu amplop tidak menggeser kolom sebelah.
+    const sec = sections[0];
+    const half = Math.ceil(sec.envelopes.length / 2);
+    content = (
+      <section>
+        {header(sec)}
+        <div className="grid grid-cols-2 gap-6 items-start">
+          {card(sec.envelopes.slice(0, half), 'a')}
+          {sec.envelopes.length > 1 && card(sec.envelopes.slice(half), 'b')}
+        </div>
+      </section>
+    );
+  } else {
+    content = (
+      <div className="grid grid-cols-2 gap-6 items-start">
+        <div className="space-y-6">{sections.filter((_, i) => i % 2 === 0).map(section)}</div>
+        <div className="space-y-6">{sections.filter((_, i) => i % 2 === 1).map(section)}</div>
+      </div>
+    );
+  }
+  // Ruang bawah supaya angka di baris terakhir tidak tertutup tombol + yang melayang.
+  return <div className="pb-20">{content}</div>;
+}
+
+function GoalModal({ env, goal, onClose, onSave, onDelete }) {
+  const [name, setName] = useState(goal?.name || '');
+  const [amount, setAmount] = useState(goal ? String(Math.round(Number(goal.target_amount))) : '');
+  const [date, setDate] = useState(goal?.target_date || '');
+  const [saving, setSaving] = useState(false);
+  const valid = name.trim() && Number(amount) > 0;
+
+  const handleSave = async () => {
+    if (!valid) return;
+    setSaving(true);
+    await onSave({ envelope_id: env.id, name: name.trim(), target_amount: Number(amount), target_date: date || null });
+    setSaving(false);
+    onClose();
+  };
+
+  const handleDelete = async () => {
+    if (await onDelete(goal.id)) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-lg mb-1">{goal ? 'Ubah target' : 'Buat target'}</h3>
+        <p className="text-sm text-gray-400 mb-4 flex items-center gap-1.5">Amplop: <EnvelopeIcon value={env.emoji} size={16} color="currentColor" /> {titleCase(env.name)}</p>
+        <div className="space-y-3">
+          <div>
+            <label className="label" htmlFor="goal-name">Nama target</label>
+            <input id="goal-name" type="text" className="input" placeholder="Nikah, Darurat, Liburan..." value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="goal-amount">Jumlah target (Rp)</label>
+            <input id="goal-amount" type="number" className="input font-mono" placeholder="10000000" min="1" value={amount} onChange={e => setAmount(e.target.value)} />
+          </div>
+          <div>
+            <label className="label" htmlFor="goal-date">Tanggal target <span className="normal-case font-normal text-gray-400">(opsional)</span></label>
+            <input id="goal-date" type="date" className="input" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex gap-2 mt-5">
+          {goal && (
+            <button type="button" onClick={handleDelete} className="px-3 py-2.5 rounded-xl text-sm font-semibold text-danger-400 hover:bg-red-50 transition-colors">Hapus</button>
+          )}
+          <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+          <button type="button" onClick={handleSave} disabled={!valid || saving} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Simpan'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const FILTERS = [
   { key: 'semua', label: 'Semua', test: () => true },
   { key: 'shared', label: 'Shared', icon: 'users', test: (e) => !e.is_personal },
@@ -754,6 +1025,22 @@ const SORTS = [
   { key: 'saldo', label: 'Saldo' },
   { key: 'terpakai', label: 'Terpakai' },
 ];
+
+const VIEW_KEY = 'jatahku_envelopes_view';
+const VIEWS = [
+  { key: 'compact', icon: 'compact', title: 'Ringkas' },
+  { key: 'grid', icon: 'grid', title: 'Grid' },
+  { key: 'list', icon: 'rows', title: 'List' },
+];
+
+function readView() {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return VIEWS.some(x => x.key === v) ? v : 'grid';
+  } catch {
+    return 'grid';
+  }
+}
 
 function envBalance(e) {
   return Number(e.allocated || 0) + Number(e.rollover || 0) - Number(e.spent || 0);
@@ -778,7 +1065,13 @@ export default function Envelopes() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [filter, setFilter] = useState('semua');
   const [sortBy, setSortBy] = useState('grup');
-  const [view, setView] = useState('grid');
+  const [view, setViewState] = useState(readView);
+  const [goalTarget, setGoalTarget] = useState(null);
+
+  const setView = (v) => {
+    setViewState(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch {}
+  };
 
   const load = () => {
     Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups(), api.getGoals()]).then(([env, grp, gls]) => {
@@ -820,9 +1113,10 @@ export default function Envelopes() {
   };
 
   const handleGoalDelete = async (id) => {
-    if (!confirm('Hapus target ini?')) return;
+    if (!confirm('Hapus target ini?')) return false;
     await api.deleteGoal(id);
     load();
+    return true;
   };
 
   const handleRenameGroup = async (g) => {
@@ -899,8 +1193,12 @@ export default function Envelopes() {
                 <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
               <div className="flex items-center gap-0.5 border border-gray-200 rounded-lg p-0.5">
-                <button onClick={() => setView('grid')} className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === 'grid' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`} title="Grid"><Icon name="grid" size={16} /></button>
-                <button onClick={() => setView('list')} className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === 'list' ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`} title="List"><Icon name="rows" size={16} /></button>
+                {VIEWS.map(v => (
+                  <button key={v.key} onClick={() => setView(v.key)} title={v.title} aria-label={v.title} aria-pressed={view === v.key}
+                    className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === v.key ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>
+                    <Icon name={v.icon} size={16} />
+                  </button>
+                ))}
               </div>
             </div>
           </div>
@@ -908,6 +1206,18 @@ export default function Envelopes() {
           {/* Content */}
           {filtered.length === 0 ? (
             <div className="card text-center py-10 text-gray-400 text-sm">Tidak ada amplop di filter ini.</div>
+          ) : view === 'compact' ? (
+            (() => {
+              const grouped = sortBy === 'grup' ? buildGroupSections(filtered, groups) : [];
+              const sections = grouped.some(s => s.id !== null)
+                ? grouped
+                : [{ id: null, name: null, envelopes: sortEnvelopes(filtered, sortBy) }];
+              return (
+                <CompactEnvelopeList sections={sections} goals={goals}
+                  onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGoal={setGoalTarget}
+                  onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} />
+              );
+            })()
           ) : sortBy === 'grup' ? (
             (() => {
               const sections = buildGroupSections(filtered, groups);
@@ -943,6 +1253,14 @@ export default function Envelopes() {
       )}
       {(showCreate || editing) && <CreateModal editing={editing} envelopes={envelopes} groups={groups} goals={goals} onClose={() => { setShowCreate(false); setEditing(null); }} onCreated={load} />}
       {transferTarget && <TransferModal env={transferTarget} envelopes={envelopes} onClose={() => setTransferTarget(null)} onDone={load} />}
+      {goalTarget && (() => {
+        const goal = goals.find(g => g.envelope_id === goalTarget.id);
+        return (
+          <GoalModal env={goalTarget} goal={goal} onClose={() => setGoalTarget(null)}
+            onSave={(data) => (goal ? handleGoalUpdate(goal.id, data) : handleGoalCreate(data))}
+            onDelete={handleGoalDelete} />
+        );
+      })()}
     </div>
   );
 }
