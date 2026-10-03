@@ -514,233 +514,6 @@ function AdvisorStrip({ insight, leadingIcon }) {
   );
 }
 
-function EnvelopeCard({ env, goal, onEdit, onDelete, onTransfer, onGoalCreate, onGoalUpdate, onGoalDelete }) {
-  const allocated = Number(env.allocated || 0);
-  const rollover = Number(env.rollover || 0);
-  const spent = Number(env.spent || 0);
-  const remaining = Number(env.remaining || 0);
-  const reserved = Number(env.reserved || 0);
-  const free = Number(env.free ?? remaining);
-  const spentRatio = env.spent_ratio || 0;
-  const isSavingLike = env.purpose === 'saving' || env.purpose === 'sinking_fund';
-  const isUnfunded = !isSavingLike && allocated <= 0 && rollover === 0;
-  const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
-  const fstate = isSavingLike ? null : fundingState(env);
-  // fstate takes strict precedence: a reserve_short envelope must stay amber
-  // even at a high spend ratio (status==='danger'), else the red hero/bar would
-  // contradict the amber "kurang tagihan" strip below.
-  const barColor = fstate === 'reserve_short' ? 'bg-amber-400' : (fstate === 'overspent' || status === 'danger') ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
-  const remainColor = fstate === 'reserve_short' ? 'text-amber-500' : (fstate === 'overspent' || status === 'danger') ? 'text-danger-400' : status === 'warning' ? 'text-amber-400' : 'text-brand-600';
-
-  const [showGoalForm, setShowGoalForm] = useState(false);
-  const [goalName, setGoalName] = useState(goal?.name || '');
-  const [goalAmount, setGoalAmount] = useState(goal ? String(Math.round(Number(goal.target_amount))) : '');
-  const [goalDate, setGoalDate] = useState(goal?.target_date || '');
-  const [goalSaving, setGoalSaving] = useState(false);
-
-  const handleGoalSubmit = async () => {
-    if (!goalName.trim() || !goalAmount || Number(goalAmount) <= 0) return;
-    setGoalSaving(true);
-    const data = {
-      envelope_id: env.id,
-      name: goalName.trim(),
-      target_amount: Number(goalAmount),
-      target_date: goalDate || null,
-    };
-    if (goal) {
-      await onGoalUpdate(goal.id, data);
-    } else {
-      await onGoalCreate(data);
-    }
-    setGoalSaving(false);
-    setShowGoalForm(false);
-  };
-
-  const handleGoalDeleteClick = async () => {
-    if (goal) {
-      await onGoalDelete(goal.id);
-      setShowGoalForm(false);
-      setGoalName('');
-      setGoalAmount('');
-      setGoalDate('');
-    }
-  };
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const accent = isSavingLike ? SAVING : BRAND;
-  const iconTint = isSavingLike ? 'rgba(99,102,241,0.10)' : 'rgba(15,110,86,0.08)';
-  const pct = Math.round(spentRatio * 100);
-  const pctBadgeCls = spentRatio >= 0.9 ? 'bg-red-50 text-danger-400'
-    : spentRatio >= 0.7 ? 'bg-amber-50 text-amber-600'
-    : 'bg-brand-50 text-brand-600';
-  const insight = fstate === 'reserve_short'
-    ? { text: `⚠️ Reserve tagihan ${formatShort(reserved)} > sisa ${formatShort(remaining)} — kurang ${formatShort(reserved - remaining)}`, tone: 'warning' }
-    : envelopeInsight(env, goal);
-
-  return (
-    <div className={`card group hover:border-brand-200 transition-all relative ${env.is_locked ? 'opacity-60' : ''}`}>
-      {/* Header */}
-      <div className="flex items-start gap-3 mb-4">
-        <div className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: iconTint }}>
-          <EnvelopeIcon value={env.emoji} size={26} color={accent} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-display font-bold leading-snug truncate">{titleCase(env.name)}</h3>
-          <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-            {env.is_personal ? <><Icon name="lock" size={12} /> Personal</> : <><Icon name="users" size={12} /> Shared</>}
-            <span>· {isSavingLike ? (env.purpose === 'sinking_fund' ? 'Sinking Fund' : 'Tabungan') : env.is_rollover ? 'Rollover' : 'Reset'}</span>
-          </p>
-        </div>
-        <button onClick={() => setMenuOpen(v => !v)}
-          className="w-8 h-8 -mr-1 -mt-1 rounded-lg flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors flex-shrink-0">
-          <Icon name="dots" size={18} weight="bold" />
-        </button>
-        {menuOpen && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-            <div className="absolute right-0 top-10 z-20 w-36 bg-white rounded-xl shadow-lg border border-gray-100 py-1">
-              <button onClick={() => { setMenuOpen(false); onTransfer(env); }} className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"><Icon name="transfer" size={15} /> Geser dana</button>
-              <button onClick={() => { setMenuOpen(false); onEdit(env); }} className="w-full text-left px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 flex items-center gap-2"><Icon name="settings" size={15} /> Edit</button>
-              <button onClick={() => { setMenuOpen(false); onDelete(env.id, env.name); }} className="w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"><Icon name="close" size={15} /> Hapus</button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Body */}
-      {isUnfunded ? (
-        <div className="bg-amber-50 text-amber-600 text-xs px-3 py-3 rounded-xl flex items-center gap-2">
-          <Icon name="warning" size={16} color="#D97706" /> Belum ada dana. Alokasikan income dulu.
-        </div>
-      ) : isSavingLike ? (
-        <div>
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Saldo</p>
-              <p className="font-display text-3xl font-bold" style={{ color: env.is_locked ? '#9CA3AF' : SAVING }}>{formatShort(goal ? goal.current_balance : free)}</p>
-            </div>
-            {goal && (
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0" style={{ background: 'rgba(99,102,241,0.10)', color: SAVING }}>{Math.round(goal.progress_pct)}% dari target</span>
-            )}
-          </div>
-          {goal ? (
-            <>
-              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden mt-3">
-                <div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.max(goal.progress_pct, 2)}%`, background: SAVING }} />
-              </div>
-              <div className="flex items-stretch gap-3 mt-3">
-                <div className="flex items-start gap-2 flex-1 min-w-0">
-                  <Icon name="calendar" size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
-                  <div className="text-xs text-gray-500 leading-snug min-w-0">
-                    <p className="truncate">{goal.name}</p>
-                    {goal.is_achieved ? (
-                      <span className="inline-flex items-center gap-1 text-green-600"><Icon name="check" size={12} weight="fill" color="#16A34A" /> Tercapai</span>
-                    ) : goal.monthly_needed !== null ? (
-                      <p className="text-gray-400">{goal.months_remaining} bulan · {formatShort(goal.monthly_needed)}/bln</p>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="w-px bg-gray-100 flex-shrink-0" />
-                <div className="text-right flex-shrink-0">
-                  <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Target</p>
-                  <p className="text-sm font-semibold text-gray-600 mt-0.5">{formatShort(goal.target_amount)}</p>
-                </div>
-              </div>
-              {goal.target_date && new Date(goal.target_date) < new Date() && !goal.is_achieved && (
-                <span className="inline-flex items-center gap-1 mt-2 text-xs font-medium px-2 py-0.5 rounded-md bg-red-100 text-red-700"><Icon name="warning" size={12} weight="fill" /> Terlambat</span>
-              )}
-            </>
-          ) : (
-            <div className="mt-3">
-              <button onClick={() => setShowGoalForm(true)} className="text-xs font-medium hover:underline" style={{ color: SAVING }}>+ Buat target</button>
-            </div>
-          )}
-          {env.purpose === 'sinking_fund' && Number(env.budget_amount) > 0 && (
-            <p className="text-xs text-gray-400 mt-2">Budget {formatShort(env.budget_amount)}/bulan</p>
-          )}
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
-        </div>
-      ) : (
-        <div>
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Bebas</p>
-              <p className={`font-display text-3xl font-bold ${env.is_locked ? 'text-gray-400' : remainColor}`}>{formatShort(free)}</p>
-              {reserved > 0 && <span className="text-[11px] text-gray-400">setelah sisihkan tagihan</span>}
-            </div>
-            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap flex-shrink-0 ${pctBadgeCls}`}>{pct}% terpakai</span>
-          </div>
-          <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden mt-3">
-            <div className={`h-full rounded-full transition-all duration-700 ${env.is_locked ? 'bg-gray-300' : barColor}`} style={{ width: `${Math.max(spentRatio * 100, 1)}%` }} />
-          </div>
-          <div className="flex items-stretch gap-3 mt-3">
-            <div className="flex items-start gap-2 flex-1 min-w-0">
-              <Icon name="wallet" size={16} className="text-gray-400 mt-0.5 flex-shrink-0" />
-              <div className="text-xs text-gray-500 leading-snug min-w-0">
-                <p className="truncate">Terpakai {formatCurrency(spent)}</p>
-                <p className="text-gray-400 truncate">dari {formatCurrency(allocated)}</p>
-              </div>
-            </div>
-            <div className="w-px bg-gray-100 flex-shrink-0" />
-            <div className="text-right flex-shrink-0">
-              <p className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">Dana Awal</p>
-              <p className="text-sm font-semibold text-gray-600 mt-0.5">{formatShort(allocated)}</p>
-            </div>
-          </div>
-          {rollover !== 0 && (
-            rollover > 0
-              ? <p className="text-xs text-brand-500 mt-2 flex items-center gap-1"><Icon name="langganan" size={12} /> Rollover +{formatShort(rollover)} dari bulan lalu</p>
-              : <p className="text-xs text-danger-400 mt-2 flex items-center gap-1"><Icon name="langganan" size={12} /> {formatShort(Math.abs(rollover))} minus dari bulan lalu</p>
-          )}
-          {reserved > 0 && <p className="text-xs text-amber-500 mt-1 flex items-center gap-1"><Icon name="warning" size={12} /> Reserved {formatShort(reserved)}/bulan</p>}
-        </div>
-      )}
-
-      {/* Goal actions — edit link (badges + add live in the body above) */}
-      {isSavingLike && goal && !showGoalForm && (
-        <div className="mt-2 pt-2 border-t border-gray-100 text-right">
-          <button onClick={() => { setShowGoalForm(true); setGoalName(goal.name); setGoalAmount(String(Math.round(Number(goal.target_amount)))); setGoalDate(goal.target_date || ''); }}
-            className="text-xs text-gray-400 hover:text-brand-600">
-            Edit target
-          </button>
-        </div>
-      )}
-
-      {isSavingLike && showGoalForm && (
-        <div className="mt-2 pt-2 border-t border-gray-100 space-y-2">
-          <input type="text" className="input text-sm py-1.5" placeholder="Nama target (Nikah, Darurat...)"
-            value={goalName} onChange={e => setGoalName(e.target.value)} />
-          <input type="number" className="input text-sm py-1.5 font-mono" placeholder="Jumlah target (Rp)"
-            value={goalAmount} onChange={e => setGoalAmount(e.target.value)} min="1" />
-          <input type="date" className="input text-sm py-1.5"
-            value={goalDate} onChange={e => setGoalDate(e.target.value)} />
-          <div className="flex gap-2">
-            <button onClick={handleGoalSubmit} disabled={goalSaving}
-              className="text-xs px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50">
-              {goalSaving ? '...' : goal ? 'Simpan' : 'Buat Target'}
-            </button>
-            <button onClick={() => setShowGoalForm(false)} className="text-xs px-3 py-1.5 rounded-lg text-gray-400 hover:text-gray-600">Batal</button>
-            {goal && (
-              <button onClick={handleGoalDeleteClick} className="text-xs px-3 py-1.5 rounded-lg text-red-400 hover:text-red-600 ml-auto">Hapus</button>
-            )}
-          </div>
-        </div>
-      )}
-
-      <ControlBadges env={env} />
-
-      {!isUnfunded && !showGoalForm && (
-        <>
-          <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />
-          {fstate === 'reserve_short' && (
-            <Link to="/allocate" className="mt-1.5 inline-block text-xs font-medium text-amber-600 hover:underline">Alokasikan lagi →</Link>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 function useMediaQuery(query) {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
@@ -1026,22 +799,6 @@ const SORTS = [
   { key: 'terpakai', label: 'Terpakai' },
 ];
 
-const VIEW_KEY = 'jatahku_envelopes_view';
-const VIEWS = [
-  { key: 'compact', icon: 'compact', title: 'Ringkas' },
-  { key: 'grid', icon: 'grid', title: 'Grid' },
-  { key: 'list', icon: 'rows', title: 'List' },
-];
-
-function readView() {
-  try {
-    const v = localStorage.getItem(VIEW_KEY);
-    return VIEWS.some(x => x.key === v) ? v : 'grid';
-  } catch {
-    return 'grid';
-  }
-}
-
 function envBalance(e) {
   return Number(e.allocated || 0) + Number(e.rollover || 0) - Number(e.spent || 0);
 }
@@ -1065,13 +822,8 @@ export default function Envelopes() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [filter, setFilter] = useState('semua');
   const [sortBy, setSortBy] = useState('grup');
-  const [view, setViewState] = useState(readView);
   const [goalTarget, setGoalTarget] = useState(null);
 
-  const setView = (v) => {
-    setViewState(v);
-    try { localStorage.setItem(VIEW_KEY, v); } catch {}
-  };
 
   const load = () => {
     Promise.all([api.getEnvelopeSummary(), api.getEnvelopeGroups(), api.getGoals()]).then(([env, grp, gls]) => {
@@ -1138,13 +890,8 @@ export default function Envelopes() {
   const counts = Object.fromEntries(FILTERS.map(f => [f.key, envelopes.filter(f.test).length]));
   const activeFilter = FILTERS.find(f => f.key === filter) || FILTERS[0];
   const filtered = envelopes.filter(activeFilter.test);
-  const gridCls = view === 'list' ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
 
-  const cardOf = (env) => (
-    <EnvelopeCard key={env.id} env={env} goal={goals.find(g => g.envelope_id === env.id)}
-      onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget}
-      onGoalCreate={handleGoalCreate} onGoalUpdate={handleGoalUpdate} onGoalDelete={handleGoalDelete} />
-  );
+
 
   return (
     <div className="space-y-5">
@@ -1192,21 +939,13 @@ export default function Envelopes() {
                 </select>
                 <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
-              <div className="flex items-center gap-0.5 border border-gray-200 rounded-lg p-0.5">
-                {VIEWS.map(v => (
-                  <button key={v.key} onClick={() => setView(v.key)} title={v.title} aria-label={v.title} aria-pressed={view === v.key}
-                    className={`w-8 h-7 rounded-md flex items-center justify-center transition-colors ${view === v.key ? 'bg-brand-50 text-brand-600' : 'text-gray-400 hover:bg-gray-50'}`}>
-                    <Icon name={v.icon} size={16} />
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
 
           {/* Content */}
           {filtered.length === 0 ? (
             <div className="card text-center py-10 text-gray-400 text-sm">Tidak ada amplop di filter ini.</div>
-          ) : view === 'compact' ? (
+          ) : (
             (() => {
               const grouped = sortBy === 'grup' ? buildGroupSections(filtered, groups) : [];
               const sections = grouped.some(s => s.id !== null)
@@ -1218,36 +957,6 @@ export default function Envelopes() {
                   onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} />
               );
             })()
-          ) : sortBy === 'grup' ? (
-            (() => {
-              const sections = buildGroupSections(filtered, groups);
-              const showHeaders = sections.some(s => s.id !== null);
-              if (!showHeaders) return <div className={gridCls}>{filtered.map(cardOf)}</div>;
-              return (
-                <div className="space-y-6">
-                  {sections.map(sec => (
-                    <div key={sec.id ?? '__none__'}>
-                      <div className="group flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <Icon name="group" size={16} color={BRAND} />
-                          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">{sec.name}</h3>
-                          <span className="text-xs text-gray-400">· Saldo {formatCurrency(groupBalance(sec.envelopes))}</span>
-                        </div>
-                        {sec.id && (
-                          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                            <button onClick={() => handleRenameGroup(sec)} className="text-xs text-gray-400 hover:text-brand-600">Rename</button>
-                            <button onClick={() => handleDeleteGroup(sec)} className="text-xs text-gray-400 hover:text-danger-400">Hapus</button>
-                          </div>
-                        )}
-                      </div>
-                      <div className={gridCls}>{sec.envelopes.map(cardOf)}</div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()
-          ) : (
-            <div className={gridCls}>{sortEnvelopes(filtered, sortBy).map(cardOf)}</div>
           )}
         </>
       )}
