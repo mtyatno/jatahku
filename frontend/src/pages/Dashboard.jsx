@@ -74,7 +74,7 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
   const isDark = mode === 'dark';
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
-  const hasPrediction = prediction && prediction.total_allocated > 0;
+  const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
 
   if (hasPrediction && safeDaily > 0) {
     if (todaySpent > 0) {

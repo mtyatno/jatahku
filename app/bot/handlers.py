@@ -208,9 +208,9 @@ async def _streak_line(db, user) -> str:
 
 async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: int = 1):
     from sqlalchemy import or_
-    from app.models.models import Income, RecurringTransaction, MonthlySnapshot
+    from app.models.models import Income, MonthlySnapshot
     from app.core.period import get_budget_period, get_previous_period
-    from app.services.reserved import recurring_monthly_reserve
+    from app.services.reserved import envelope_reserved
     period_start, period_end = get_budget_period(payday_day)
     prev_start, _ = get_previous_period(payday_day)
     query = select(Envelope).where(Envelope.household_id == household_id, Envelope.is_active == True)
@@ -252,17 +252,7 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
             if snap and snap.rollover_amount:
                 rollover = snap.rollover_amount
         # Reserved from subscriptions
-        rec_result = await db.execute(
-            select(RecurringTransaction).where(
-                RecurringTransaction.envelope_id == env.id,
-                RecurringTransaction.is_active == True,
-            )
-        )
-        reserved = Decimal("0")
-        for rec in rec_result.scalars().all():
-            reserved += recurring_monthly_reserve(
-                rec.frequency.value, rec.amount, rec.next_run, period_end
-            )
+        reserved = await envelope_reserved(db, env.id, period_start, period_end)
         remaining = allocated + rollover - spent
         free = remaining - reserved
         envelope_data.append({
