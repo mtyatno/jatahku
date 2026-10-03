@@ -190,7 +190,10 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
 
       {goals?.length > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
-          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="target" size={14} color={clr.accent} /> Target Menabung</p>
+          <div className="flex items-center gap-1.5 mb-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="target" size={14} color={clr.accent} /> Target Menabung</p>
+            <InfoTooltip text="Target penabungan yang sedang berjalan. Progress bar menunjukkan seberapa jauh Anda sudah menabung menuju target" position="bottom" />
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
               const pct = Math.round(goal.progress_pct);
@@ -259,7 +262,10 @@ function EnvelopeRow({ env, goal }) {
                 <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: '#ECFDF5', color: '#059669' }}>🎉 Tercapai</span>
               )}
             </div>
-            <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
+            <div className="flex items-center gap-1">
+              <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
+              <InfoTooltip text="Saldo saat ini untuk envelope tabungan" position="left" />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="h-2 rounded-full overflow-hidden flex-1" style={{ background: SAVING_TRACK }}>
@@ -324,7 +330,10 @@ function EnvelopeRow({ env, goal }) {
           <span className="font-semibold text-sm">{titleCase(env.name)}</span>
           {badge}
         </div>
-        <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
+        <div className="flex items-center gap-1">
+          <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
+          <InfoTooltip text="Dana yang tersisa untuk dibelanjakan (alokasi - pengeluaran - reserve)" position="left" />
+        </div>
       </div>
       {isUnfunded ? (
         <div className="bg-gray-50 text-gray-400 text-xs px-3 py-2 rounded-lg">Belum ada dana.</div>
@@ -340,20 +349,35 @@ function EnvelopeRow({ env, goal }) {
             </span>
           </div>
           <div className="flex justify-between mt-1 text-xs text-gray-400">
-            <span>Terpakai {formatShort(spent)}</span>
-            {reserved > 0 && <span>⏳ {formatShort(reserved)}</span>}
-            <span>Dana {formatShort(allocated)}</span>
+            <span className="flex items-center gap-1">
+              Terpakai {formatShort(spent)}
+              <InfoTooltip text="Pengeluaran di periode ini" position="top" />
+            </span>
+            {reserved > 0 && <span className="flex items-center gap-1">
+              ⏳ {formatShort(reserved)}
+              <InfoTooltip text="Tagihan yang sudah disimpan untuk periode depan" position="top" />
+            </span>}
+            <span className="flex items-center gap-1">
+              Dana {formatShort(allocated)}
+              <InfoTooltip text="Alokasi periode ini untuk envelope" position="top" />
+            </span>
           </div>
           {rollover !== 0 && (
             <p className={`text-xs mt-0.5 ${rollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
-              {rollover > 0
-                ? `🔄 +${formatShort(rollover)} rollover`
-                : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+              <span className="flex items-center gap-1">
+                {rollover > 0
+                  ? `🔄 +${formatShort(rollover)} rollover`
+                  : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+                <InfoTooltip text={rollover > 0 ? "Sisa periode lalu yang terbawa ke periode ini" : "Kekurangan dari periode lalu yang dikurangi dari periode ini"} position="top" />
+              </span>
             </p>
           )}
           {fstate === 'reserve_short' && (
-            <p className="text-xs text-amber-500 mt-0.5">
-              ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
+            <p className="text-xs text-amber-500 mt-0.5 flex items-center gap-1">
+              <span>
+                ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
+              </span>
+              <InfoTooltip text="Uang yang disimpan untuk tagihan lebih besar dari dana tersisa. Alokasikan lagi untuk menghindari keterlambatan pembayaran" position="top" />
               {' '}<Link to="/allocate" className="font-medium hover:underline">Alokasikan lagi →</Link>
             </p>
           )}
@@ -603,7 +627,7 @@ export default function Dashboard() {
           <div className="min-w-0">
             <div className="flex items-center gap-1">
               <p className="text-xs text-gray-400 font-medium">Terpakai</p>
-              <InfoTooltip text="Pengeluaran bulan ini termasuk penyesuaian rekonsiliasi" position="bottom" />
+              <InfoTooltip text="Pengeluaran periode ini termasuk penyesuaian cocokkan saldo" position="bottom" />
             </div>
             <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
             <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
@@ -685,7 +709,10 @@ export default function Dashboard() {
           {chartData.length > 0 && (
             <div className="card">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
+                <div className="flex items-center gap-1">
+                  <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
+                  <InfoTooltip text="Grafik pengeluaran harian selama periode ini. Garis merah adalah batas aman yang disarankan per hari" position="bottom" />
+                </div>
                 {prediction?.safe_daily > 0 && (
                   <span className="text-xs text-gray-400 flex items-center gap-1">
                     <span className="inline-block w-4 border-t-2 border-dashed border-danger-400"></span>
@@ -717,7 +744,10 @@ export default function Dashboard() {
           {breakdown.length > 0 && (
             <div className="card">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Breakdown amplop</h3>
+                <div className="flex items-center gap-1">
+                  <h3 className="font-semibold text-sm">Breakdown amplop</h3>
+                  <InfoTooltip text="Perbandingan pengeluaran antara amplop-amplop Anda dalam bentuk pie chart" position="bottom" />
+                </div>
                 <span className="text-xs text-gray-400">Total {formatShort(breakdown.reduce((s, x) => s + x.spent, 0))}</span>
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
