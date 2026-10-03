@@ -69,9 +69,64 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
+function CardDetailModal({ card, onClose }) {
+  if (!card) return null;
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        className="fixed inset-0 bg-black/50 z-40"
+        onClick={onClose}
+        style={{ backdropFilter: 'blur(2px)' }}
+      />
+      {/* Modal */}
+      <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-xl z-50 max-w-md w-[calc(100%-2rem)]">
+        <div className="flex items-start justify-between mb-4">
+          <p className="text-sm font-semibold flex-1">{renderWithIcons(card.title, 15, 'currentColor')}</p>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg ml-2 flex-shrink-0"
+          >×</button>
+        </div>
+
+        {card.evidence && card.evidence.length > 0 && (
+          <div className="space-y-2 mb-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Detail perhitungan</p>
+            {card.evidence.map((line, i) => (
+              <p key={i} className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">
+                {renderWithIcons(line, 13, 'currentColor')}
+              </p>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed mb-4">
+          {String(card.body || '').split('\n').map((line, li) => (
+            <span key={li}>
+              {renderWithIcons(line, 13, 'currentColor')}
+              {li < String(card.body || '').split('\n').length - 1 && <br />}
+            </span>
+          ))}
+        </p>
+
+        {card.primary_action?.route && (
+          <a
+            href={card.primary_action.route}
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
+          >
+            {card.primary_action.label || 'Lihat detail'} →
+          </a>
+        )}
+      </div>
+    </>
+  );
+}
+
 function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, goals }) {
   const { mode } = useTheme();
   const isDark = mode === 'dark';
+  const [selectedCard, setSelectedCard] = useState(null);
   const tacticalLines = [];
   const safeDaily = prediction?.safe_daily;
   const hasPrediction = prediction && prediction.total_allocated > 0;
@@ -157,36 +212,42 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
         </div>
       )}
 
-      {hasCards && cards.map((card, ci) => {
-        const cs = isDark ? {
-          danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
-          warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
-          info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
-          positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
-        }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
-          danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
-          warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
-          info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
-          positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
-        }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
-        return (
-          <div key={card.id} className="rounded-xl p-3.5 mb-3 last:mb-0" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
-            <p className="text-xs font-semibold mb-2" style={{ color: cs.txt }}>{renderWithIcons(card.title, 15, cs.txt)}</p>
-            <div className="text-xs space-y-1.5" style={{ color: cs.txt }}>
-              {String(card.body || '').split('\n').map((line, li) =>
-                line.trim() === ''
-                  ? <div key={li} className="h-1.5" />
-                  : <p key={li} className="leading-relaxed">{renderWithIcons(line, 14, cs.txt)}</p>
-              )}
-            </div>
-            {card.primary_action?.route && (
-              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 text-brand-600 hover:underline">
-                {card.primary_action.label || 'Lihat detail'} →
-              </Link>
-            )}
-          </div>
-        );
-      })}
+      {hasCards && (
+        <div className="space-y-2">
+          {cards.map((card) => {
+            const cs = isDark ? {
+              danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
+              warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
+              info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
+              positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
+            }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
+              danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
+              warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
+              info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
+              positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
+            }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
+
+            return (
+              <button
+                key={card.id}
+                onClick={() => setSelectedCard(card)}
+                className="w-full text-left rounded-lg p-3 transition-opacity hover:opacity-80 active:opacity-90 cursor-pointer"
+                style={{ background: cs.bg, border: `1px solid ${cs.border}` }}
+              >
+                <p className="text-xs font-semibold mb-1" style={{ color: cs.txt }}>
+                  {renderWithIcons(card.title, 14, cs.txt)}
+                </p>
+                <p className="text-xs leading-relaxed line-clamp-2" style={{ color: cs.txt, opacity: 0.9 }}>
+                  {String(card.body || '').split('\n')[0]}
+                </p>
+                <p className="text-xs font-medium mt-2" style={{ color: cs.txt, opacity: 0.7 }}>
+                  Lihat detail →
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {goals?.length > 0 && (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
@@ -225,6 +286,11 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, g
             </p>
           )}
         </div>
+      )}
+
+      {/* Detail Modal */}
+      {selectedCard && (
+        <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} />
       )}
     </div>
   );
