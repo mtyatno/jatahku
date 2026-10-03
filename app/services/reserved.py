@@ -19,16 +19,18 @@ def recurring_monthly_reserve(frequency_value: str, amount: Decimal, next_run: d
     return amount
 
 
-def reserve_for_recs(recs, paid_amounts, period_end: date) -> Decimal:
-    """Total reserved satu amplop. Tagihan bulanan yang masih jatuh tempo periode ini
+def reserve_for_recs(recs, paid_amounts, period_start: date, period_end: date) -> Decimal:
+    """Total reserved satu amplop. Tagihan bulanan yang jatuh tempo di dalam periode ini
     dianggap sudah dibayar bila amplopnya sudah punya transaksi periode ini dengan
     nominal persis sama (dicatat manual, lewat bot, atau penyesuaian cocokkan saldo).
-    Satu transaksi hanya melunasi satu tagihan."""
+    Satu transaksi hanya melunasi satu tagihan. Tagihan telat dari periode lalu tidak
+    dicocokkan: pembayarannya melunasi yang telat, tagihan periode ini tetap disisihkan."""
     pool = list(paid_amounts)
     total = Decimal("0")
     for rec in recs:
         reserve = recurring_monthly_reserve(rec.frequency.value, rec.amount, rec.next_run, period_end)
-        if rec.frequency.value == "monthly" and reserve and rec.amount in pool:
+        in_period = period_start <= rec.next_run <= period_end
+        if rec.frequency.value == "monthly" and in_period and rec.amount in pool:
             pool.remove(rec.amount)
             continue
         total += reserve
@@ -43,7 +45,8 @@ async def envelope_reserved(db, envelope_id, period_start: date, period_end: dat
         )
     )).scalars().all()
     due_monthly = any(
-        r.frequency.value == "monthly" and r.next_run <= period_end for r in recs
+        r.frequency.value == "monthly" and period_start <= r.next_run <= period_end
+        for r in recs
     )
     paid_amounts = []
     if due_monthly:
@@ -55,4 +58,4 @@ async def envelope_reserved(db, envelope_id, period_start: date, period_end: dat
                 Transaction.transaction_date <= period_end,
             )
         )).scalars().all()
-    return reserve_for_recs(recs, [Decimal(str(a)) for a in paid_amounts], period_end)
+    return reserve_for_recs(recs, [Decimal(str(a)) for a in paid_amounts], period_start, period_end)

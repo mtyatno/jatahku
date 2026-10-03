@@ -1,10 +1,14 @@
+import os
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("JWT_SECRET", "test-secret")
+
 import unittest
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from app.services.reserved import recurring_monthly_reserve, reserve_for_recs
 
-PE = date(2026, 7, 31)
+PS, PE = date(2026, 7, 1), date(2026, 7, 31)
 
 
 class ReservedTests(unittest.TestCase):
@@ -27,17 +31,21 @@ def rec(freq, amount, next_run):
 
 class ReserveForRecsTests(unittest.TestCase):
     def test_due_bill_with_matching_payment_is_not_reserved(self):
-        self.assertEqual(reserve_for_recs([rec("monthly", "1600000", date(2026, 7, 6))], [Decimal("1600000")], PE), Decimal("0"))
+        self.assertEqual(reserve_for_recs([rec("monthly", "1600000", date(2026, 7, 6))], [Decimal("1600000")], PS, PE), Decimal("0"))
 
     def test_due_bill_without_matching_payment_stays_reserved(self):
-        self.assertEqual(reserve_for_recs([rec("monthly", "1600000", date(2026, 7, 6))], [Decimal("50000")], PE), Decimal("1600000"))
+        self.assertEqual(reserve_for_recs([rec("monthly", "1600000", date(2026, 7, 6))], [Decimal("50000")], PS, PE), Decimal("1600000"))
 
     def test_one_payment_settles_only_one_bill(self):
         recs = [rec("monthly", "100000", date(2026, 7, 6)), rec("monthly", "100000", date(2026, 7, 20))]
-        self.assertEqual(reserve_for_recs(recs, [Decimal("100000")], PE), Decimal("100000"))
+        self.assertEqual(reserve_for_recs(recs, [Decimal("100000")], PS, PE), Decimal("100000"))
+
+    def test_late_bill_from_last_period_is_not_matched(self):
+        # Tagihan 26 Jun dibayar telat bulan ini; tagihan Juli belum dibayar, harus tetap disisihkan.
+        self.assertEqual(reserve_for_recs([rec("monthly", "3100000", date(2026, 6, 26))], [Decimal("3100000")], PS, PE), Decimal("3100000"))
 
     def test_yearly_is_not_matched_against_payments(self):
-        self.assertEqual(reserve_for_recs([rec("yearly", "1200000", date(2027, 1, 1))], [Decimal("100000")], PE), Decimal("100000"))
+        self.assertEqual(reserve_for_recs([rec("yearly", "1200000", date(2027, 1, 1))], [Decimal("100000")], PS, PE), Decimal("100000"))
 
 
 if __name__ == "__main__":
