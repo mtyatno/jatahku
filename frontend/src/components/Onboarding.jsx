@@ -258,7 +258,7 @@ export default function Onboarding({ onDone }) {
     }
   };
 
-  const isCustomInvalid = initialCashMode === 'custom' && (!startingCash || Number(startingCash) <= 0);
+  const isCustomInvalid = initialCashMode === 'custom' && !(Number(startingCash) > 0);
   const isSubmitDisabled = saving || remainder < 0 || envelopes.length === 0 || isCustomInvalid;
 
   const getSubmitButtonLabel = () => {
@@ -342,7 +342,11 @@ export default function Onboarding({ onDone }) {
                       max="31"
                       className="input w-24 text-center font-mono text-lg"
                       value={workingDays}
-                      onChange={e => setWorkingDays(e.target.value)}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v === '') { setWorkingDays(''); return; }
+                        setWorkingDays(Math.min(31, Math.max(1, parseInt(v) || 1)));
+                      }}
                     />
                     <span className="text-sm text-gray-500">hari / bulan (standar 26 hari)</span>
                   </div>
