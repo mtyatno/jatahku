@@ -165,8 +165,55 @@ function QuickAddIncome({ onClose }) {
   );
 }
 
-function QuickAddLangganan({ onClose }) {
-  return <RecurringModal onClose={onClose} onSaved={onClose} />;
+function CombinedLanggananModal({ onClose }) {
+  const [tab, setTab] = useState('add');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getRecurring().then(d => {
+      setItems(d || []);
+      const unpaid = d?.some(i => i.status !== 'paid');
+      if (unpaid) setTab('pay');
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 border-b border-gray-200">
+        <button
+          onClick={() => setTab('add')}
+          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+            tab === 'add'
+              ? 'border-brand-600 text-brand-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Tambah Langganan
+        </button>
+        <button
+          onClick={() => setTab('pay')}
+          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+            tab === 'pay'
+              ? 'border-brand-600 text-brand-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Bayar Langganan
+        </button>
+      </div>
+
+      <div>
+        {tab === 'add' && <RecurringModal onClose={onClose} onSaved={() => { api.getRecurring().then(d => setItems(d || [])); }} />}
+        {tab === 'pay' && loading ? (
+          <div className="text-center py-8 text-gray-400">Loading...</div>
+        ) : (
+          <PaySubscriptions onClose={onClose} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 const FAB_OPTIONS = [
@@ -174,7 +221,6 @@ const FAB_OPTIONS = [
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
-  { key: 'paybill', icon: 'card', label: 'Bayar langganan' },
   { key: 'balance', icon: 'balance', label: 'Cocokkan saldo' },
 ];
 
@@ -363,15 +409,13 @@ export default function Layout() {
               {fabAction === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
               {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
               {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
-              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan baru</>}
-              {fabAction === 'paybill' && <><Icon name="card" size={22} /> Bayar langganan</>}
+              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
               {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
             </h3>
             {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}
             {fabAction === 'income' && <QuickAddIncome onClose={() => setFabAction(null)} />}
-            {fabAction === 'langganan' && <QuickAddLangganan onClose={() => setFabAction(null)} />}
-            {fabAction === 'paybill' && <PaySubscriptions onClose={() => setFabAction(null)} />}
+            {fabAction === 'langganan' && <CombinedLanggananModal onClose={() => setFabAction(null)} />}
             {fabAction === 'balance' && <BalanceCheck onClose={() => setFabAction(null)} />}
           </div>
         </div>

@@ -515,6 +515,16 @@ class PromoCreate(BaseModel):
     valid_days: int | None = None
 
 
+class PromoUpdate(BaseModel):
+    code: str | None = None
+    discount_pct: int | None = None
+    is_free: bool | None = None
+    max_uses: int | None = None
+    event_name: str | None = None
+    valid_days: int | None = None
+    is_active: bool | None = None
+
+
 @router.post("/promo-codes")
 async def create_promo(
     req: PromoCreate,
@@ -552,7 +562,87 @@ async def list_promos(
         "max_uses": p.max_uses, "used_count": p.used_count,
         "event_name": p.event_name, "is_active": p.is_active,
         "valid_until": p.valid_until.isoformat() if p.valid_until else None,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
     } for p in promos]
+
+
+@router.patch("/promo-codes/{promo_id}")
+async def update_promo(
+    promo_id: UUID,
+    req: PromoUpdate,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
+    promo = r.scalar_one_or_none()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Promo code not found")
+
+    if req.code is not None:
+        new_code = req.code.strip().upper()
+        if not new_code:
+            raise HTTPException(status_code=400, detail="Kode promo tidak boleh kosong")
+        if new_code != promo.code:
+            dup_r = await db.execute(
+                select(PromoCode).where(PromoCode.code == new_code, PromoCode.id != promo_id)
+            )
+            if dup_r.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Kode promo sudah digunakan")
+            promo.code = new_code
+
+    if req.is_free is not None:
+        promo.is_free = req.is_free
+        if req.is_free:
+            promo.discount_pct = 100
+        elif req.discount_pct is not None:
+            promo.discount_pct = req.discount_pct
+    elif req.discount_pct is not None:
+        promo.discount_pct = req.discount_pct
+
+    if req.max_uses is not None:
+        promo.max_uses = req.max_uses if req.max_uses > 0 else None
+
+    if req.event_name is not None:
+        promo.event_name = req.event_name.strip() if req.event_name.strip() else None
+
+    if req.valid_days is not None:
+        if req.valid_days > 0:
+            promo.valid_until = datetime.utcnow() + timedelta(days=req.valid_days)
+        else:
+            promo.valid_until = None
+
+    if req.is_active is not None:
+        promo.is_active = req.is_active
+
+    await db.commit()
+    return {
+        "id": str(promo.id),
+        "code": promo.code,
+        "discount_pct": promo.discount_pct,
+        "is_free": promo.is_free,
+        "max_uses": promo.max_uses,
+        "used_count": promo.used_count,
+        "event_name": promo.event_name,
+        "is_active": promo.is_active,
+        "valid_until": promo.valid_until.isoformat() if promo.valid_until else None,
+        "created_at": promo.created_at.isoformat() if promo.created_at else None,
+    }
+
+
+@router.post("/promo-codes/{promo_id}/toggle-active")
+async def toggle_promo_active(
+    promo_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
+    promo = r.scalar_one_or_none()
+    if not promo:
+        raise HTTPException(status_code=404, detail="Promo code not found")
+
+    promo.is_active = not promo.is_active
+    await db.commit()
+    return {"status": "updated", "is_active": promo.is_active}
 
 
 @router.delete("/promo-codes/{promo_id}")
