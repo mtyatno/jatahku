@@ -6,6 +6,29 @@ import { EnvelopeIcon } from './Icon';
 const EMOJI_OPTIONS = ['🍜','🚗','🏠','📱','🎬','📚','👶','🏥','💊','🎁','👕','🐾','🏋️','✈️','🛒','💡','📦','🔧'];
 
 const TEMPLATES = {
+  driver_ojol: {
+    label: '🛵 Driver & Kurir',
+    desc: 'Operasional narik harian & perawatan motor',
+    envelopes: [
+      { emoji: '⛽', name: 'Bensin & Operasional', pct: 25, purpose: 'expense' },
+      { emoji: '🍜', name: 'Makan di Jalan', pct: 20, purpose: 'expense' },
+      { emoji: '📱', name: 'Pulsa & Kuota Narik', pct: 8, purpose: 'expense' },
+      { emoji: '🔧', name: 'Servis & Ganti Oli', pct: 12, purpose: 'sinking_fund' },
+      { emoji: '🏠', name: 'Kebutuhan Rumah', pct: 25, purpose: 'expense' },
+      { emoji: '💰', name: 'Tabungan / Darurat', pct: 10, purpose: 'saving' },
+    ],
+  },
+  freelance_bisnis: {
+    label: '🛠️ Freelance & Usaha Mandiri',
+    desc: 'Biaya hidup fleksibel & alat kerja',
+    envelopes: [
+      { emoji: '💻', name: 'Operasional & Internet', pct: 15, purpose: 'expense' },
+      { emoji: '🍜', name: 'Biaya Hidup Harian', pct: 35, purpose: 'expense' },
+      { emoji: '🏠', name: 'Sewa / Tagihan', pct: 20, purpose: 'expense' },
+      { emoji: '🔧', name: 'Alat Kerja & Maintenance', pct: 10, purpose: 'sinking_fund' },
+      { emoji: '💰', name: 'Dana Darurat & Pajak', pct: 20, purpose: 'saving' },
+    ],
+  },
   karyawan: {
     label: '💼 Karyawan', desc: 'Budget standar pekerja kantoran',
     envelopes: [
@@ -96,7 +119,7 @@ export default function Onboarding({ onDone }) {
       pct: env.pct,
       amount: Math.round(incomeNum * env.pct / 100),
       isTemplate: true,
-      purpose: 'expense',
+      purpose: env.purpose || 'expense',
     })));
     setStep(3);
   };
