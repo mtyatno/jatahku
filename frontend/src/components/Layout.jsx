@@ -47,25 +47,25 @@ function QuickAddIncome({ onClose }) {
     setLoadingAuto(true);
     setError('');
     try {
-      const res = await api.request('/advisor/allocation-pattern');
+      const res = await api.request('/advisor/allocation-recommendation', { method: 'POST', body: JSON.stringify({ income_amount: incomeNum }) });
       setLoadingAuto(false);
-      if (!res.ok) { setError('Gagal mendapatkan pola alokasi'); return; }
+      if (!res.ok) { setError('Gagal mendapatkan saran alokasi'); return; }
       const data = await res.json();
       const items = data.items || [];
-      if (items.length === 0) { setError('Belum ada pola alokasi historis. Sisa akan masuk Tabungan.'); return; }
       const newAllocations = {}, newPercentages = {};
       items.forEach(item => {
-        const pct = Number(item.percentage) || 0;
-        if (pct > 0) {
+        const amt = Number(item.recommended_amount) || 0;
+        if (amt > 0) {
+          newAllocations[item.envelope_id] = amt;
+          const pct = incomeNum > 0 ? Math.round((amt / incomeNum) * 100) : 0;
           newPercentages[item.envelope_id] = pct;
-          newAllocations[item.envelope_id] = Math.round((incomeNum * pct) / 100);
         }
       });
       setAllocations(newAllocations);
       setPercentages(newPercentages);
     } catch (err) {
       setLoadingAuto(false);
-      setError('Gagal mendapatkan pola alokasi');
+      setError('Gagal mendapatkan saran alokasi');
     }
   };
 
