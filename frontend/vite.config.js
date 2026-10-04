@@ -10,6 +10,7 @@ export default defineConfig({
       srcDir: 'src',
       filename: 'sw.js',
       registerType: 'autoUpdate',
+      injectRegister: null,
       manifest: false, // use our own manifest.json
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
