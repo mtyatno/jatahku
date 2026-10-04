@@ -42,6 +42,10 @@ const TEMPLATES = {
 
 export default function Onboarding({ onDone }) {
   const [step, setStep] = useState(1);
+  const [incomeType, setIncomeType] = useState('daily'); // 'daily' | 'weekly' | 'monthly'
+  const [dailyIncome, setDailyIncome] = useState('');
+  const [workingDays, setWorkingDays] = useState(26);
+  const [weeklyIncome, setWeeklyIncome] = useState('');
   const [income, setIncome] = useState('');
   const [paydayDay, setPaydayDay] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -54,6 +58,13 @@ export default function Onboarding({ onDone }) {
   const [newPct, setNewPct] = useState('');
   const [newPurpose, setNewPurpose] = useState('expense');
 
+  const handleIncomeTypeChange = (type) => {
+    setIncomeType(type);
+    if (type !== 'monthly') {
+      setPaydayDay(1);
+    }
+  };
+
   const guessPurpose = (name) => {
     const n = name.toLowerCase();
     const savingKw = ['tabungan','nikah','darurat','liburan','umroh','rumah','mobil','motor','pendidikan','sekolah','kuliah','dp','menikah','haji','investasi','pensiun'];
@@ -63,7 +74,11 @@ export default function Onboarding({ onDone }) {
     return 'expense';
   };
 
-  const incomeNum = Number(income) || 0;
+  const incomeNum = incomeType === 'daily'
+    ? (Number(dailyIncome) || 0) * (Number(workingDays) || 0)
+    : incomeType === 'weekly'
+    ? (Number(weeklyIncome) || 0) * 4
+    : (Number(income) || 0);
   const totalAllocated = envelopes.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
@@ -131,9 +146,10 @@ export default function Onboarding({ onDone }) {
     setError('');
 
     // Save payday_day
+    const finalPayday = incomeType === 'monthly' ? paydayDay : 1;
     await api.request('/user/profile', {
       method: 'PUT',
-      body: JSON.stringify({ payday_day: paydayDay }),
+      body: JSON.stringify({ payday_day: finalPayday }),
     });
 
     const envelopeIds = [];
@@ -183,35 +199,177 @@ export default function Onboarding({ onDone }) {
         <div className="space-y-4">
           <div className="card space-y-5">
             <div>
-              <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
-              <p className="text-sm text-gray-500 mb-3">Total pemasukan per bulan (gaji, freelance, dll).</p>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
-                <input type="number" className="input pl-12 text-right font-mono text-xl" placeholder="8000000"
-                  value={income} onChange={e => setIncome(e.target.value)} min="0" autoFocus />
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Pola Pemasukan</p>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-gray-100 rounded-xl">
+                {[
+                  { key: 'daily', label: '🛵 Harian' },
+                  { key: 'weekly', label: '📅 Mingguan' },
+                  { key: 'monthly', label: '💼 Bulanan' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => handleIncomeTypeChange(tab.key)}
+                    className={`py-2 px-3 rounded-lg text-sm font-medium transition-all text-center ${
+                      incomeType === tab.key
+                        ? 'bg-white text-brand-600 shadow-sm font-semibold'
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-              {incomeNum > 0 && <p className="text-sm text-brand-600 mt-2 text-right font-medium">{formatCurrency(incomeNum)}/bulan</p>}
             </div>
 
-            <div className="border-t border-gray-100 pt-4">
-              <h3 className="font-semibold text-base mb-1">📅 Tanggal gajian kamu?</h3>
-              <p className="text-sm text-gray-500 mb-3">Untuk hitung periode budget yang akurat. Bisa diubah nanti.</p>
-              <div className="flex items-center gap-3">
-                <input
-                  type="number" min="1" max="31"
-                  className="input w-20 text-center font-mono text-lg"
-                  value={paydayDay}
-                  onChange={e => setPaydayDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
-                />
-                <span className="text-sm text-gray-500">setiap bulan</span>
+            {incomeType === 'daily' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">Rata-rata pendapatan bersih per hari</h3>
+                  <p className="text-sm text-gray-500 mb-3">Estimasi pemasukan harian setelah operasional/bensin.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="150000"
+                      value={dailyIncome}
+                      onChange={e => setDailyIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <h3 className="font-semibold text-base mb-1">Hari narik/kerja per bulan</h3>
+                  <p className="text-sm text-gray-500 mb-3">Jumlah hari kerja aktif dalam sebulan.</p>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      className="input w-24 text-center font-mono text-lg"
+                      value={workingDays}
+                      onChange={e => setWorkingDays(e.target.value)}
+                    />
+                    <span className="text-sm text-gray-500">hari / bulan (standar 26 hari)</span>
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        {dailyIncome ? formatCurrency(Number(dailyIncome) || 0) : 'Rp 0'} × {workingDays || 0} hari
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan.</span>
+                </div>
               </div>
-              <p className="text-xs text-gray-400 mt-2">
-                Contoh: isi 25 jika gajian tiap tanggal 25
-              </p>
-            </div>
+            )}
+
+            {incomeType === 'weekly' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">Rata-rata pemasukan per minggu</h3>
+                  <p className="text-sm text-gray-500 mb-3">Estimasi pemasukan mingguan rata-rata.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="1500000"
+                      value={weeklyIncome}
+                      onChange={e => setWeeklyIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        {weeklyIncome ? formatCurrency(Number(weeklyIncome) || 0) : 'Rp 0'} × 4 minggu
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan.</span>
+                </div>
+              </div>
+            )}
+
+            {incomeType === 'monthly' && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
+                  <p className="text-sm text-gray-500 mb-3">Total pemasukan per bulan (gaji, freelance, dll).</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="8000000"
+                      value={income}
+                      onChange={e => setIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                  {incomeNum > 0 && (
+                    <p className="text-sm text-brand-600 mt-2 text-right font-medium">
+                      {formatCurrency(incomeNum)}/bulan
+                    </p>
+                  )}
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <h3 className="font-semibold text-base mb-1">📅 Tanggal gajian kamu?</h3>
+                  <p className="text-sm text-gray-500 mb-3">Untuk hitung periode budget yang akurat. Bisa diubah nanti.</p>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      className="input w-20 text-center font-mono text-lg"
+                      value={paydayDay}
+                      onChange={e => setPaydayDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
+                    />
+                    <span className="text-sm text-gray-500">setiap bulan</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Contoh: isi 25 jika gajian tiap tanggal 25
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
-          <button onClick={() => setStep(2)} disabled={incomeNum <= 0}
-            className="btn-primary w-full disabled:opacity-50">Lanjut →</button>
+          <button
+            onClick={() => setStep(2)}
+            disabled={incomeNum <= 0}
+            className="btn-primary w-full disabled:opacity-50"
+          >
+            Lanjut →
+          </button>
         </div>
       )}
 
