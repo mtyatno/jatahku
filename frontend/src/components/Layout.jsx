@@ -46,27 +46,27 @@ function QuickAddIncome({ onClose }) {
     if (incomeNum <= 0) { setError('Masukkan jumlah income terlebih dahulu'); return; }
     setLoadingAuto(true);
     setError('');
-    const { ok, data } = await api.getAllocationRecommendation(incomeNum);
-    setLoadingAuto(false);
-    if (!ok) { setError('Gagal mendapatkan rekomendasi alokasi'); return; }
-
-    const items = data.items || [];
-    const newAllocations = {};
-    items.forEach(item => {
-      const amt = Number(item.recommended_amount) || 0;
-      if (amt > 0) newAllocations[item.envelope_id] = amt;
-    });
-    setAllocations(newAllocations);
-
-    // Calculate percentages
-    const newPercentages = {};
-    items.forEach(item => {
-      const amt = Number(item.recommended_amount) || 0;
-      if (amt > 0) {
-        newPercentages[item.envelope_id] = Math.round((amt / incomeNum) * 100);
-      }
-    });
-    setPercentages(newPercentages);
+    try {
+      const res = await api.request('/advisor/allocation-pattern');
+      setLoadingAuto(false);
+      if (!res.ok) { setError('Gagal mendapatkan pola alokasi'); return; }
+      const data = await res.json();
+      const items = data.items || [];
+      if (items.length === 0) { setError('Belum ada pola alokasi historis. Sisa akan masuk Tabungan.'); return; }
+      const newAllocations = {}, newPercentages = {};
+      items.forEach(item => {
+        const pct = Number(item.percentage) || 0;
+        if (pct > 0) {
+          newPercentages[item.envelope_id] = pct;
+          newAllocations[item.envelope_id] = Math.round((incomeNum * pct) / 100);
+        }
+      });
+      setAllocations(newAllocations);
+      setPercentages(newPercentages);
+    } catch (err) {
+      setLoadingAuto(false);
+      setError('Gagal mendapatkan pola alokasi');
+    }
   };
 
   const handlePercentageChange = (envId, pct) => {
