@@ -39,9 +39,21 @@ function buildGroupSections(envelopes, groups) {
   return sections;
 }
 
+const PURPOSE_EXPLANATIONS = {
+  'expense': { title: 'Pengeluaran rutin', desc: 'Untuk pengeluaran sehari-hari seperti makan, transport, pulsa, dll.' },
+  'debt': { title: 'Cicilan/Utang', desc: 'Untuk cicilan, cicilan kredit, atau hutang yang perlu dibayar berkala.' },
+  'saving': { title: 'Target menabung', desc: 'Untuk menabung ke tujuan spesifik seperti liburan, nikah, atau darurat.' },
+  'sinking_fund': { title: 'Dana persiapan', desc: 'Untuk mengumpulkan dana untuk pengeluaran tahunan/berkala seperti pajak, asuransi.' },
+};
+
+const CLASSIFICATION_EXPLANATIONS = {
+  'needs': { title: 'Kebutuhan', desc: 'Pengeluaran yang tidak bisa ditunda' },
+  'wants': { title: 'Keinginan', desc: 'Pengeluaran yang bisa dikurangi atau ditunda' },
+};
+
 export function CreateModal({ onClose, onCreated, editing, envelopes: existingEnvelopes, groups = [], goals = [] }) {
   const editingGoal = editing ? goals.find(g => g.envelope_id === editing.id) : null;
-  const [step, setStep] = useState(editing ? 2 : 1); // 1=basic, 2=controls (editing skips funding)
+  const [step, setStep] = useState(editing ? 1 : 1); // 1=name, 2=purpose, 3=classification, 4=advanced
   const [name, setName] = useState(editing?.name || '');
   const [emoji, setEmoji] = useState(editing?.emoji || '📁');
   const [budget, setBudget] = useState(editing ? String(Math.round(Number(editing.budget_amount))) : '');
@@ -50,7 +62,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
   const [isLocked, setIsLocked] = useState(editing?.is_locked ?? false);
   const [dailyLimit, setDailyLimit] = useState(editing?.daily_limit ? String(Math.round(Number(editing.daily_limit))) : '');
   const [coolingThreshold, setCoolingThreshold] = useState(editing?.cooling_threshold ? String(Math.round(Number(editing.cooling_threshold))) : '');
-  const [showControls, setShowControls] = useState(!!(editing?.is_locked || editing?.daily_limit || editing?.cooling_threshold));
+  const [showAdvanced, setShowAdvanced] = useState(!!(editing?.is_locked || editing?.daily_limit || editing?.cooling_threshold || editing?.group_id));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [groupId, setGroupId] = useState(editing?.group_id || '');
@@ -208,201 +220,308 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
   const selectedSource = fundableEnvelopes.find(e => e.id === transferFrom);
   const maxTransfer = selectedSource ? Number(selectedSource.remaining) : 0;
 
+  const stepReady = {
+    1: name.trim().length > 0,
+    2: true,
+    3: !needsClassification(purpose) || !!classification,
+    4: true,
+  };
+
+  const canNext = stepReady[step];
+  const canFinish = stepReady[1] && stepReady[3] && (!editing || true);
+
+  // Hide scrollbar style
+  const scrollbarHideStyle = { scrollbarWidth: 'none', msOverflowStyle: 'none' };
+
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-lg mb-4">{editing ? `Edit ${titleCase(editing.name)}` : 'Amplop baru'}</h3>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h3 className="font-display font-bold text-lg">{editing ? `Edit ${titleCase(editing.name)}` : 'Amplop baru'}</h3>
+          {!editing && <p className="text-xs text-gray-400 mt-1">Langkah {step} dari 4</p>}
+        </div>
 
-        {/* Step 1: Basic info + funding (new only) */}
-        <div className="space-y-4">
-          <div><label className="label">Ikon</label><div className="flex flex-wrap gap-1.5">{EMOJIS.map(e => (<button key={e} type="button" onClick={() => setEmoji(e)} className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${emoji === e ? 'bg-brand-50 ring-2 ring-brand-400' : 'bg-gray-50 hover:bg-gray-100'}`}><EnvelopeIcon value={e} size={20} color={emoji === e ? BRAND : '#6b7280'} /></button>))}</div></div>
-          <div><label className="label">Nama amplop</label><input type="text" className="input" placeholder="Darurat, Liburan..." value={name} onChange={e => {
-            const v = e.target.value;
-            setName(v);
-            const p = guessPurpose(v);
-            setPurpose(p);
-            if (needsClassification(p) && !classification) setClassification(suggestClassification(v));
-          }} required /></div>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6" style={scrollbarHideStyle}>
+          {step === 1 && (
+            <div className="space-y-4">
+              <div>
+                <label className="label">Pilih ikon</label>
+                <div className="grid grid-cols-6 gap-2">
+                  {EMOJIS.map(e => (
+                    <button key={e} type="button" onClick={() => setEmoji(e)}
+                      className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg transition-all ${
+                        emoji === e ? 'bg-brand-50 ring-2 ring-brand-400 scale-110' : 'bg-gray-50 hover:bg-gray-100'
+                      }`}>
+                      <EnvelopeIcon value={e} size={20} color="currentColor" />
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          <div>
-            <label className="label">Grup</label>
-            <select className="input" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">Tanpa grup</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-              <option value="__new__">+ Grup baru…</option>
-            </select>
-            {groupId === '__new__' && (
-              <input type="text" className="input mt-2" placeholder="Nama grup baru (mis. Tabungan)"
-                value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
-            )}
-          </div>
-
-          <div>
-            <label className="label">Purpose</label>
-            <div className="grid grid-cols-2 gap-1.5">
-              {PURPOSE_OPTIONS.map(p => (
-                <button key={p.key} type="button" onClick={() => {
-                  if (editing && purpose !== p.key) {
-                    if (!confirm(`Ubah purpose ke "${p.desc}"? Budget atau goal mungkin terpengaruh.`)) return;
-                  }
-                  setPurpose(p.key);
-                  if (!needsClassification(p.key)) setClassification(null);
-                  else if (!classification) setClassification(suggestClassification(name));
-                }}
-                  className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all text-center leading-tight flex flex-col items-center gap-1 ${
-                    purpose === p.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
-                  }`}>
-                  <Icon name={p.icon} size={20} color={purpose === p.key ? BRAND : '#6b7280'} />
-                  {p.desc}
-                </button>
-              ))}
+              <div>
+                <label className="label">Nama amplop</label>
+                <input type="text" className="input" placeholder="Darurat, Liburan..."
+                  value={name} onChange={e => {
+                    const v = e.target.value;
+                    setName(v);
+                    const p = guessPurpose(v);
+                    setPurpose(p);
+                    if (needsClassification(p) && !classification) setClassification(suggestClassification(v));
+                  }} autoFocus />
+                <p className="text-xs text-gray-400 mt-2">Sebut nama yang deskriptif untuk amplop ini.</p>
+              </div>
             </div>
-          </div>
+          )}
 
-          {needsClassification(purpose) && (
-            <div>
-              <label className="label">Klasifikasi <span className="text-danger-400">*</span></label>
-              <div className="flex gap-1.5">
+          {step === 2 && (
+            <div className="space-y-3">
+              <label className="label">Jenis amplop</label>
+              <div className="space-y-2">
+                {PURPOSE_OPTIONS.map(p => {
+                  const exp = PURPOSE_EXPLANATIONS[p.key];
+                  return (
+                    <button key={p.key} type="button"
+                      onClick={() => {
+                        if (editing && purpose !== p.key) {
+                          if (!confirm(`Ubah jenis ke "${exp.title}"? Budget atau goal mungkin terpengaruh.`)) return;
+                        }
+                        setPurpose(p.key);
+                        if (!needsClassification(p.key)) setClassification(null);
+                        else if (!classification) setClassification(suggestClassification(name));
+                      }}
+                      className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                        purpose === p.key
+                          ? 'bg-brand-50 border-brand-400'
+                          : 'bg-gray-50 border-gray-100 hover:border-gray-200'
+                      }`}>
+                      <div className="flex items-start gap-2.5">
+                        <Icon name={p.icon} size={20} color={purpose === p.key ? BRAND : '#6b7280'} className="mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className={`font-semibold text-sm ${purpose === p.key ? 'text-brand-600' : 'text-gray-700'}`}>{exp.title}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{exp.desc}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {step === 3 && needsClassification(purpose) && (
+            <div className="space-y-3">
+              <label className="label">Kategori pengeluaran <span className="text-danger-400">*</span></label>
+              <div className="space-y-2">
                 {[
-                  { key: 'needs', label: 'Kebutuhan', icon: 'check' },
-                  { key: 'wants', label: 'Keinginan', icon: 'coffee' },
+                  { key: 'needs', exp: CLASSIFICATION_EXPLANATIONS['needs'] },
+                  { key: 'wants', exp: CLASSIFICATION_EXPLANATIONS['wants'] },
                 ].map(c => (
                   <button key={c.key} type="button" onClick={() => setClassification(c.key)}
-                    className={`flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all inline-flex items-center justify-center gap-1.5 ${
-                      classification === c.key ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                    className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                      classification === c.key
+                        ? 'bg-brand-50 border-brand-400'
+                        : 'bg-gray-50 border-gray-100 hover:border-gray-200'
                     }`}>
-                    <Icon name={c.icon} size={16} color={classification === c.key ? BRAND : '#6b7280'} />
-                    {c.label}
+                    <div className="flex items-start gap-2.5">
+                      <Icon name={c.key === 'needs' ? 'check' : 'coffee'} size={20}
+                        color={classification === c.key ? BRAND : '#6b7280'} className="mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className={`font-semibold text-sm ${classification === c.key ? 'text-brand-600' : 'text-gray-700'}`}>{c.exp.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{c.exp.desc}</p>
+                      </div>
+                    </div>
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-400 mt-1">Wajib dipilih untuk amplop pengeluaran & cicilan.</p>
             </div>
           )}
 
-          {/* Goal fields for saving/sinking_fund */}
-          {isSavingLike && (
-            <div className="border-t border-gray-100 pt-3 space-y-3">
-              <h4 className="font-semibold text-sm flex items-center gap-1.5"><Icon name="target" size={16} color={BRAND} /> Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</h4>
+          {step === 3 && !needsClassification(purpose) && (
+            <div className="space-y-4">
               <div>
-                <label className="label">Nama target</label>
-                <input type="text" className="input" placeholder={purpose === 'saving' ? 'Nikah, Darurat, Liburan...' : 'Servis tahunan, Pajak...'}
-                  value={goalName} onChange={e => setGoalName(e.target.value)} />
-              </div>
-              <div>
-                <label className="label">Jumlah target (Rp)</label>
-                <input type="number" className="input font-mono" placeholder="10000000"
-                  value={goalAmount} onChange={e => setGoalAmount(e.target.value)} min="1" />
-              </div>
-              <div>
-                <label className="label">Tanggal target <span className="text-xs text-gray-400">(opsional)</span></label>
-                <input type="date" className="input"
-                  value={goalDate} onChange={e => setGoalDate(e.target.value)} />
-              </div>
-              {purpose === 'sinking_fund' && (
+                <label className="label">Target {purpose === 'sinking_fund' ? 'dana persiapan' : 'menabung'}</label>
                 <div>
-                  <label className="label">Budget bulanan <span className="text-xs text-gray-400">(opsional)</span></label>
-                  <input type="number" className="input font-mono" placeholder="Kosongkan = hanya target"
-                    value={budget} onChange={e => setBudget(e.target.value)} min="0" />
+                  <input type="text" className="input" placeholder={purpose === 'saving' ? 'Nikah, Darurat, Liburan...' : 'Servis tahunan, Pajak...'}
+                    value={goalName} onChange={e => setGoalName(e.target.value)} />
+                  <p className="text-xs text-gray-400 mt-2">(opsional) Beri nama target untuk amplop ini.</p>
                 </div>
+              </div>
+              {isSavingLike && (
+                <>
+                  <div>
+                    <label className="label">Jumlah target (Rp)</label>
+                    <input type="number" className="input font-mono" placeholder="10000000"
+                      value={goalAmount} onChange={e => setGoalAmount(e.target.value)} min="1" />
+                  </div>
+                  <div>
+                    <label className="label">Tanggal target</label>
+                    <input type="date" className="input" value={goalDate} onChange={e => setGoalDate(e.target.value)} />
+                    <p className="text-xs text-gray-400 mt-2">(opsional) Kapan ingin mencapai target ini?</p>
+                  </div>
+                </>
               )}
             </div>
           )}
 
-          {!editing && (
-            <div className="border-t border-gray-100 pt-4">
-              <h4 className="font-semibold text-sm mb-3 flex items-center gap-1.5"><Icon name="wallet" size={16} color={BRAND} /> Sumber dana</h4>
-              <div className="flex gap-2 mb-3">
-                <button type="button" onClick={() => setFundingSource('transfer')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1.5 ${fundingSource === 'transfer' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
-                  <Icon name="transfer" size={16} /> Transfer dari amplop lain
-                </button>
-                <button type="button" onClick={() => setFundingSource('income')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all inline-flex items-center gap-1.5 ${fundingSource === 'income' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'}`}>
-                  <Icon name="income" size={16} /> Income baru
+          {step === 4 && (
+            <div className="space-y-4">
+              {/* Advanced settings toggle */}
+              <div>
+                <button type="button" onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-sm font-medium text-brand-600 hover:underline flex items-center gap-1.5 w-full">
+                  <Icon name={showAdvanced ? 'chevron' : 'chevron'} size={16} weight="bold" className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                  Pengaturan lainnya
                 </button>
               </div>
 
-              {fundingSource === 'transfer' && (
-                <div className="space-y-3">
+              {showAdvanced && (
+                <div className="space-y-4 bg-brand-50 p-3 rounded-xl">
+                  {/* Group */}
                   <div>
-                    <label className="label">Transfer dari</label>
-                    <select className="input" value={transferFrom} onChange={e => setTransferFrom(e.target.value)}>
-                      <option value="">Pilih amplop sumber</option>
-                      {fundableEnvelopes.map(env => (
-                        <option key={env.id} value={env.id}>{env.emoji} {env.name} (sisa {formatShort(env.remaining)})</option>
+                    <label className="label text-xs">Grup</label>
+                    <select className="input text-sm" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                      <option value="">Tanpa grup</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
                       ))}
+                      <option value="__new__">+ Grup baru…</option>
                     </select>
-                  </div>
-                  <div>
-                    <label className="label">Jumlah transfer (Rp)</label>
-                    <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
-                      onChange={e => setFundAmount(e.target.value)} min="1" max={maxTransfer} />
-                    {transferFrom && <p className="text-xs text-gray-400 mt-1">Max: {formatCurrency(maxTransfer)}</p>}
-                  </div>
-                </div>
-              )}
-
-              {fundingSource === 'income' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="label">Total income baru (Rp)</label>
-                    <input type="number" className="input font-mono" placeholder="1000000" value={newIncomeAmount}
-                      onChange={e => setNewIncomeAmount(e.target.value)} min="1" />
-                  </div>
-                  <div>
-                    <label className="label">Keterangan</label>
-                    <input type="text" className="input" value={newIncomeDesc}
-                      onChange={e => setNewIncomeDesc(e.target.value)} placeholder="Bonus, Freelance..." />
-                  </div>
-                  <div>
-                    <label className="label">Alokasi ke amplop ini (Rp)</label>
-                    <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
-                      onChange={e => setFundAmount(e.target.value)} min="1"
-                      max={Number(newIncomeAmount) || undefined} />
-                    {Number(newIncomeAmount) > 0 && Number(fundAmount) > 0 && Number(newIncomeAmount) > Number(fundAmount) && (
-                      <p className="text-xs text-brand-600 mt-1">Sisa {formatCurrency(Number(newIncomeAmount) - Number(fundAmount))} → Tabungan</p>
+                    {groupId === '__new__' && (
+                      <input type="text" className="input text-sm mt-2" placeholder="Nama grup baru (mis. Tabungan)"
+                        value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
                     )}
                   </div>
+
+                  {/* Rollover & Personal */}
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={rollover} onChange={e => setRollover(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
+                      <span className="text-sm text-gray-700">Rollover sisa ke bulan depan</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={isPersonal} onChange={e => setIsPersonal(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" />
+                      <span className="text-sm text-gray-700">Personal (hanya kamu)</span>
+                    </label>
+                  </div>
+
+                  {/* Behavior Controls */}
+                  <div className="border-t border-brand-100 pt-3">
+                    <p className="text-xs font-semibold text-gray-600 mb-2">🎯 Behavior controls</p>
+                    <div className="space-y-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-danger-400" />
+                        <span className="text-sm text-gray-700">🔒 Kunci amplop (tidak bisa diubah)</span>
+                      </label>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">📊 Daily limit (Rp/hari)</label>
+                        <input type="number" className="input text-sm font-mono mt-1" placeholder="Kosongkan = no limit"
+                          value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} min="0" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">⏳ Cooling threshold (Rp)</label>
+                        <input type="number" className="input text-sm font-mono mt-1" placeholder="Kosongkan = no cooling"
+                          value={coolingThreshold} onChange={e => setCoolingThreshold(e.target.value)} min="0" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Budget for editing */}
+              {editing && (
+                <div>
+                  <label className="label">Budget target (Rp)</label>
+                  <input type="number" className="input font-mono" placeholder="1500000" value={budget} onChange={e => setBudget(e.target.value)} min="0" />
+                </div>
+              )}
+
+              {/* Funding for new envelopes */}
+              {!editing && (
+                <div className="border-t border-gray-100 pt-4">
+                  <h4 className="font-semibold text-sm mb-3 flex items-center gap-1.5"><Icon name="wallet" size={16} color={BRAND} /> Sumber dana</h4>
+                  <div className="flex gap-2 mb-3">
+                    <button type="button" onClick={() => setFundingSource('transfer')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
+                        fundingSource === 'transfer' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'
+                      }`}>
+                      <Icon name="transfer" size={16} /> Transfer
+                    </button>
+                    <button type="button" onClick={() => setFundingSource('income')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
+                        fundingSource === 'income' ? 'bg-brand-50 text-brand-600 ring-1 ring-brand-400' : 'bg-gray-50 text-gray-500'
+                      }`}>
+                      <Icon name="income" size={16} /> Income
+                    </button>
+                  </div>
+
+                  {fundingSource === 'transfer' && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="label text-sm">Transfer dari amplop</label>
+                        <select className="input" value={transferFrom} onChange={e => setTransferFrom(e.target.value)}>
+                          <option value="">Pilih amplop sumber</option>
+                          {fundableEnvelopes.map(env => (
+                            <option key={env.id} value={env.id}>{env.emoji} {env.name} (sisa {formatShort(env.remaining)})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label text-sm">Jumlah (Rp)</label>
+                        <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
+                          onChange={e => setFundAmount(e.target.value)} min="1" max={maxTransfer} />
+                        {transferFrom && <p className="text-xs text-gray-400 mt-1">Max: {formatCurrency(maxTransfer)}</p>}
+                      </div>
+                    </div>
+                  )}
+
+                  {fundingSource === 'income' && (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="label text-sm">Total income (Rp)</label>
+                        <input type="number" className="input font-mono" placeholder="1000000" value={newIncomeAmount}
+                          onChange={e => setNewIncomeAmount(e.target.value)} min="1" />
+                      </div>
+                      <div>
+                        <label className="label text-sm">Sumber</label>
+                        <input type="text" className="input" value={newIncomeDesc}
+                          onChange={e => setNewIncomeDesc(e.target.value)} placeholder="Gaji, Bonus, Freelance..." />
+                      </div>
+                      <div>
+                        <label className="label text-sm">Alokasi ke amplop ini (Rp)</label>
+                        <input type="number" className="input font-mono" placeholder="500000" value={fundAmount}
+                          onChange={e => setFundAmount(e.target.value)} min="1"
+                          max={Number(newIncomeAmount) || undefined} />
+                        {Number(newIncomeAmount) > 0 && Number(fundAmount) > 0 && Number(newIncomeAmount) > Number(fundAmount) && (
+                          <p className="text-xs text-brand-600 mt-1">Sisa {formatCurrency(Number(newIncomeAmount) - Number(fundAmount))} → Tabungan</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          {editing && (
-            <div><label className="label">Budget target (Rp)</label><input type="number" className="input font-mono" placeholder="1500000" value={budget} onChange={e => setBudget(e.target.value)} min="0" /></div>
-          )}
+          {error && <div className="mt-4 bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
+        </div>
 
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={rollover} onChange={e => setRollover(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" /><span className="text-sm text-gray-600">Rollover sisa ke bulan depan</span></label>
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isPersonal} onChange={e => setIsPersonal(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-brand-600" /><span className="text-sm text-gray-600">Personal (hanya kamu)</span></label>
-          </div>
-
-          <div className="border-t border-gray-100 pt-3">
-            <button type="button" onClick={() => setShowControls(!showControls)}
-              className="text-sm font-medium text-brand-600 hover:underline flex items-center gap-1">
-              ⚙️ Behavior controls {showControls ? '▲' : '▼'}
+        {/* Footer */}
+        <div className="border-t border-gray-100 px-6 py-4 flex gap-2 bg-gray-50">
+          <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+          {step < 4 && (
+            <button type="button" onClick={() => setStep(step + 1)} disabled={!canNext}
+              className="btn-primary flex-1 disabled:opacity-50">
+              Lanjut →
             </button>
-            {showControls && (
-              <div className="mt-3 space-y-3 bg-gray-50 rounded-xl p-4">
-                <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={isLocked} onChange={e => setIsLocked(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-danger-400" /><span className="text-sm text-gray-600">🔒 Kunci amplop</span></label>
-                <div><label className="label">📊 Daily limit (Rp/hari)</label><input type="number" className="input font-mono" placeholder="Kosongkan = no limit" value={dailyLimit} onChange={e => setDailyLimit(e.target.value)} min="0" /></div>
-                <div><label className="label">⏳ Cooling threshold (Rp)</label><input type="number" className="input font-mono" placeholder="Kosongkan = no cooling" value={coolingThreshold} onChange={e => setCoolingThreshold(e.target.value)} min="0" /></div>
-              </div>
-            )}
-          </div>
-
-          {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
-
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
-            <button type="button" onClick={handleSubmit} disabled={saving || (!editing && !name) || (needsClassification(purpose) && !classification)}
+          )}
+          {step === 4 && (
+            <button type="button" onClick={handleSubmit} disabled={saving || !canFinish}
               className="btn-primary flex-1 disabled:opacity-50">
               {saving ? '...' : editing ? 'Simpan' : 'Buat & Alokasi'}
             </button>
-          </div>
+          )}
         </div>
       </div>
     </div>
