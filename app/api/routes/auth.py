@@ -17,6 +17,7 @@ from app.core.deps import get_current_user
 from app.models.models import User, Household, HouseholdMember, HouseholdRole, Envelope
 from app.services.password_reset import create_reset_token, redeem_reset_token
 from app.services.email_service import send_password_reset_email, send_password_changed_email
+from app.services.google_auth import verify_google_credential
 
 router = APIRouter()
 
@@ -25,7 +26,6 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
-    promo_code: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -39,6 +39,10 @@ class RefreshRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+
+
+class GoogleCredentialRequest(BaseModel):
+    credential: str
 
 
 class ResetPasswordRequest(BaseModel):
@@ -62,6 +66,53 @@ class UserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+async def _create_user(db: AsyncSession, *, email: str, name: str, password_hash: str | None, google_id: str | None = None) -> User:
+    """User baru + household default dengan dia sebagai owner (belum di-commit)."""
+    user = User(email=email, name=name, password_hash=password_hash, google_id=google_id)
+    db.add(user)
+    await db.flush()
+
+    household = Household(name=f"Rumah {name}")
+    db.add(household)
+    await db.flush()
+
+    db.add(HouseholdMember(user_id=user.id, household_id=household.id, role=HouseholdRole.owner))
+    await db.flush()
+    return user
+
+
+async def _notify_admin_new_user(user: User, via: str) -> None:
+    try:
+        from telegram import Bot
+        settings = get_settings()
+        if settings.TELEGRAM_BOT_TOKEN and settings.ADMIN_TELEGRAM_ID:
+            plan = "Pro 🎉" if user.plan == "pro" else "Basic"
+            await Bot(token=settings.TELEGRAM_BOT_TOKEN).send_message(
+                chat_id=int(settings.ADMIN_TELEGRAM_ID),
+                text=f"👤 *User baru!*\n\nNama: {user.name}\nEmail: `{user.email}`\nPlan: {plan}\nVia: {via}",
+                parse_mode="Markdown",
+            )
+    except Exception:
+        pass  # Jangan block register jika notif gagal
+
+
+def _tokens(user: User) -> TokenResponse:
+    return TokenResponse(
+        access_token=create_access_token(str(user.id)),
+        refresh_token=create_refresh_token(str(user.id)),
+    )
+
+
+async def _google_claims(credential: str) -> dict:
+    client_id = get_settings().GOOGLE_CLIENT_ID
+    if not client_id:
+        raise HTTPException(status_code=503, detail="Masuk dengan Google belum diaktifkan")
+    claims = await verify_google_credential(credential, client_id)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Verifikasi Google gagal, coba lagi")
+    return claims
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -79,71 +130,9 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Create user
-    user = User(
-        email=req.email,
-        name=req.name,
-        password_hash=hash_password(req.password),
-    )
-    db.add(user)
-    await db.flush()
-
-    # Create default household
-    household = Household(name=f"Rumah {req.name}")
-    db.add(household)
-    await db.flush()
-
-    # Add user as owner
-    membership = HouseholdMember(
-        user_id=user.id,
-        household_id=household.id,
-        role=HouseholdRole.owner,
-    )
-    db.add(membership)
-    await db.flush()
-
-    # Apply promo code if provided
-    if req.promo_code:
-        from app.models.models import PromoCode
-        from datetime import datetime as dt, timezone as _tz
-        promo_result = await db.execute(
-            select(PromoCode).where(
-                PromoCode.code == req.promo_code.upper(),
-                PromoCode.is_active == True,
-            )
-        )
-        promo = promo_result.scalar_one_or_none()
-        if promo:
-            now = dt.now(_tz.utc)
-            valid = True
-            if promo.valid_from and now < promo.valid_from:
-                valid = False
-            if promo.valid_until and now > promo.valid_until:
-                valid = False
-            if promo.max_uses and promo.used_count >= promo.max_uses:
-                valid = False
-            if valid and promo.is_free:
-                user.plan = "pro"
-                promo.used_count += 1
-
+    user = await _create_user(db, email=req.email, name=req.name, password_hash=hash_password(req.password))
     await db.commit()
-
-    # Notify admin on Telegram (fire-and-forget)
-    try:
-        from telegram import Bot
-        from app.core.config import get_settings as _gs
-        _s = _gs()
-        if _s.TELEGRAM_BOT_TOKEN and _s.ADMIN_TELEGRAM_ID:
-            _bot = Bot(token=_s.TELEGRAM_BOT_TOKEN)
-            _plan = "Pro 🎉" if user.plan == "pro" else "Basic"
-            _promo = f" · promo `{req.promo_code.upper()}`" if req.promo_code and user.plan == "pro" else ""
-            await _bot.send_message(
-                chat_id=int(_s.ADMIN_TELEGRAM_ID),
-                text=f"👤 *User baru!*\n\nNama: {user.name}\nEmail: `{user.email}`\nPlan: {_plan}{_promo}",
-                parse_mode="Markdown",
-            )
-    except Exception:
-        pass  # Jangan block register jika notif gagal
+    await _notify_admin_new_user(user, via="email")
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
@@ -262,6 +251,68 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
 @router.get("/me", response_model=UserResponse)
 async def get_me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.get("/google/config")
+async def google_config():
+    return {"client_id": get_settings().GOOGLE_CLIENT_ID or None}
+
+
+@router.post("/google", response_model=TokenResponse)
+@limiter.limit("10/minute")
+async def google_login(request: Request, req: GoogleCredentialRequest, db: AsyncSession = Depends(get_db)):
+    """Masuk atau daftar dengan Google. Email yang sudah terdaftar otomatis disambungkan."""
+    claims = await _google_claims(req.credential)
+
+    user = (await db.execute(select(User).where(User.google_id == claims["sub"]))).scalar_one_or_none()
+    if user:
+        return _tokens(user)
+
+    user = (await db.execute(select(User).where(User.email == claims["email"]))).scalar_one_or_none()
+    if user:
+        user.google_id = claims["sub"]
+        await db.commit()
+        return _tokens(user)
+
+    user = await _create_user(db, email=claims["email"], name=claims["name"], password_hash=None, google_id=claims["sub"])
+    await db.commit()
+    await _notify_admin_new_user(user, via="Google")
+    return _tokens(user)
+
+
+@router.post("/google/link")
+@limiter.limit("10/minute")
+async def google_link(
+    request: Request,
+    req: GoogleCredentialRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    claims = await _google_claims(req.credential)
+
+    owner = (await db.execute(select(User).where(User.google_id == claims["sub"]))).scalar_one_or_none()
+    if owner and owner.id != user.id:
+        raise HTTPException(status_code=400, detail="Akun Google ini sudah tersambung ke akun Jatahku lain")
+
+    if not user.email:
+        taken = (await db.execute(select(User).where(User.email == claims["email"]))).scalar_one_or_none()
+        if not taken:
+            user.email = claims["email"]
+
+    user.google_id = claims["sub"]
+    await db.commit()
+    return {"status": "linked", "email": user.email}
+
+
+@router.post("/google/unlink")
+async def google_unlink(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not user.google_id:
+        raise HTTPException(status_code=400, detail="Akun Google belum tersambung")
+    if not user.password_hash and not user.telegram_id:
+        raise HTTPException(status_code=400, detail="Buat password dulu supaya tetap bisa masuk setelah Google diputus")
+    user.google_id = None
+    await db.commit()
+    return {"status": "unlinked"}
 
 
 @router.get("/tg-login", response_model=TokenResponse)

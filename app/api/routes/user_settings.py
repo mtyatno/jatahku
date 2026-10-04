@@ -119,6 +119,7 @@ async def get_profile(
         "email": user.email,
         "telegram_id": user.telegram_id,
         "has_password": bool(user.password_hash),
+        "google_connected": bool(getattr(user, "google_id", None)),
         "timezone": getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
         "payday_day": getattr(user, 'payday_day', 1) or 1,
         "profile_pic": getattr(user, 'profile_pic', None),
@@ -304,6 +305,7 @@ async def delete_account(
     user.name = "Deleted User"
     user.password_hash = "DELETED"
     user.telegram_id = None
+    user.google_id = None
     user.profile_pic = None
 
     # Soft delete transactions

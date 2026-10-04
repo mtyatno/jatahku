@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import GoogleButton from '../components/GoogleButton';
 import { useTheme } from '../hooks/useTheme';
 import { formatCurrency } from '../lib/utils';
 
@@ -141,6 +142,54 @@ const THEME_OPTIONS = [
   { id: 'laut',  label: '🌊 Laut',  from: '#2563eb', to: '#60a5fa' },
   { id: 'senja', label: '🌅 Senja', from: '#d97706', to: '#fbbf24' },
 ];
+
+function GoogleAccountCard({ connected, onChange }) {
+  const [clientId, setClientId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getGoogleClientId().then(setClientId);
+  }, []);
+
+  if (!clientId && !connected) return null;
+
+  const link = async (credential) => {
+    setBusy(true);
+    setError('');
+    const res = await api.request('/auth/google/link', { method: 'POST', body: JSON.stringify({ credential }) });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) onChange(); else setError(data.detail || 'Gagal menyambungkan Google');
+  };
+
+  const unlink = async () => {
+    setBusy(true);
+    setError('');
+    const res = await api.request('/auth/google/unlink', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) onChange(); else setError(data.detail || 'Gagal memutus Google');
+  };
+
+  return (
+    <div className="card">
+      <h3 className="font-semibold text-sm mb-2">🔑 Akun Google</h3>
+      {connected ? (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-brand-600">✅ Tersambung, bisa masuk dengan Google</span>
+          <button onClick={unlink} disabled={busy} className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">Putuskan</button>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-gray-500 mb-3">Sambungkan supaya berikutnya bisa masuk dengan satu ketukan, tanpa password.</p>
+          <GoogleButton clientId={clientId} onCredential={link} text="continue_with" />
+        </>
+      )}
+      {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+    </div>
+  );
+}
 
 function HardResetDialog({ profile, members, onClose, onSuccess }) {
   const [step, setStep] = useState(1);
@@ -674,6 +723,8 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      <GoogleAccountCard connected={profile.google_connected} onChange={load} />
 
       {/* Household */}
       <div className="card">

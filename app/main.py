@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
                 "WHERE e.id = sub.envelope_id AND e.purpose = 'expense' "
                 "AND e.budget_amount = 0 AND sub.allocated > 0"
             ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255)"
+            ))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_id ON users (google_id)"
+            ))
             # Cocokkan saldo (spec 2026-09-30): create_all di atas sudah membuat
             # tabel balance_checks; tambah FK nullable ke transactions & incomes.
             for _tbl in ("transactions", "incomes"):
