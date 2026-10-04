@@ -411,6 +411,14 @@ export default function Dashboard() {
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [balanceStatus, setBalanceStatus] = useState(null);
+  const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
+
+  useEffect(() => {
+    const mode = sessionStorage.getItem('onboarded_income_mode');
+    if (mode === 'daily' || mode === 'weekly') {
+      setShowOnboardingGuide(true);
+    }
+  }, []);
 
   useEffect(() => {
     const onAdded = () => setRefreshTick(t => t + 1);
@@ -549,6 +557,28 @@ export default function Dashboard() {
             onClick={() => setCelebrate(null)}
             className="text-amber-700 text-sm px-3 py-1 rounded-lg hover:bg-amber-200/60 flex-shrink-0"
           >Tutup</button>
+        </div>
+      )}
+      {showOnboardingGuide && (
+        <div className="card border-brand-200 bg-brand-50/40 p-4 flex items-start justify-between gap-3">
+          <div className="flex gap-3">
+            <span className="text-2xl">🎉</span>
+            <div>
+              <h4 className="font-semibold text-brand-900 text-sm">Amplop Jatahmu Sudah Siap!</h4>
+              <p className="text-xs text-brand-700 mt-1">
+                Target jatah bulanan sudah terpasang. Tiap kali selesai narik order atau menerima uang, tekan tombol <strong>+ Pemasukan</strong> untuk membagi uang ke amplop-amplopmu.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              sessionStorage.removeItem('onboarded_income_mode');
+              setShowOnboardingGuide(false);
+            }}
+            className="text-gray-400 hover:text-gray-600 text-sm px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       )}
       <div>

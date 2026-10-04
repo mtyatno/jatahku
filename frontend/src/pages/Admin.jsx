@@ -448,6 +448,16 @@ function PaymentsTab({ onAction }) {
   const [newPromo, setNewPromo] = useState({ code: '', discount_pct: 0, is_free: false, max_uses: '', event_name: '', valid_days: '' });
   const [showAddBank, setShowAddBank] = useState(false);
   const [showAddPromo, setShowAddPromo] = useState(false);
+  const [editingPromoId, setEditingPromoId] = useState(null);
+  const [editPromo, setEditPromo] = useState({
+    code: '',
+    discount_pct: 0,
+    is_free: false,
+    max_uses: '',
+    event_name: '',
+    valid_days: '',
+    clear_validity: false,
+  });
 
   const load = async () => {
     const url = filter ? `/admin/payment-orders?status=${filter}` : '/admin/payment-orders';
@@ -514,10 +524,70 @@ function PaymentsTab({ onAction }) {
     }
   };
 
-  const deletePromo = async (id) => {
-    if (!confirm('Nonaktifkan promo ini?')) return;
-    await api.request(`/admin/promo-codes/${id}`, { method: 'DELETE' });
-    onAction(); load();
+  const startEditPromo = (p) => {
+    setEditingPromoId(p.id);
+    setEditPromo({
+      code: p.code,
+      discount_pct: p.discount_pct || 0,
+      is_free: p.is_free || false,
+      max_uses: p.max_uses ?? '',
+      event_name: p.event_name || '',
+      valid_days: '',
+      clear_validity: false,
+    });
+  };
+
+  const cancelEditPromo = () => {
+    setEditingPromoId(null);
+  };
+
+  const saveEditPromo = async (id) => {
+    try {
+      const payload = {
+        code: editPromo.code.trim().toUpperCase(),
+        is_free: editPromo.is_free,
+        discount_pct: editPromo.is_free ? 100 : (parseInt(editPromo.discount_pct) || 0),
+        max_uses: editPromo.max_uses !== '' ? parseInt(editPromo.max_uses) : 0,
+        event_name: editPromo.event_name.trim(),
+      };
+      if (editPromo.clear_validity) {
+        payload.valid_days = 0;
+      } else if (editPromo.valid_days !== '') {
+        payload.valid_days = parseInt(editPromo.valid_days) || 0;
+      }
+
+      const r = await api.request(`/admin/promo-codes/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert('Gagal update promo: ' + (err.detail || r.status));
+        return;
+      }
+      setEditingPromoId(null);
+      onAction();
+      load();
+    } catch (e) {
+      alert('Gagal update promo: ' + e.message);
+    }
+  };
+
+  const togglePromoActive = async (p) => {
+    const actionLabel = p.is_active ? 'Nonaktifkan' : 'Aktifkan';
+    if (!confirm(`${actionLabel} promo ${p.code}?`)) return;
+    try {
+      const r = await api.request(`/admin/promo-codes/${p.id}/toggle-active`, { method: 'POST' });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(`Gagal ${actionLabel.toLowerCase()} promo: ` + (err.detail || r.status));
+        return;
+      }
+      onAction();
+      load();
+    } catch (e) {
+      alert(`Gagal ${actionLabel.toLowerCase()} promo: ` + e.message);
+    }
   };
 
   return (
@@ -549,16 +619,139 @@ function PaymentsTab({ onAction }) {
       {/* Promo Codes */}
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">🎁 Kode Promo</h3>
-        {promos.map(p => (
-          <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-50">
-            <div>
-              <span className="font-mono font-bold text-brand-600">{p.code}</span>
-              <span className="text-xs text-gray-400 ml-2">{p.is_free ? 'FREE' : `-${p.discount_pct}%`} · {p.used_count}/{p.max_uses || '∞'} used</span>
-              {p.event_name && <span className="text-xs text-amber-600 ml-1">· {p.event_name}</span>}
+        {promos.map(p => {
+          const isExpired = p.valid_until && new Date(p.valid_until) < new Date();
+          return (
+            <div key={p.id} className="py-2.5 border-b border-gray-50 last:border-0">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-brand-600">{p.code}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${p.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {p.is_active ? 'Aktif' : 'Nonaktif'}
+                    </span>
+                    {isExpired && (
+                      <span className="text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">
+                        Expired
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400 flex flex-wrap items-center gap-1">
+                    <span>{p.is_free ? 'FREE' : `-${p.discount_pct}%`}</span>
+                    <span>·</span>
+                    <span>{p.used_count}/{p.max_uses || '∞'} used</span>
+                    {p.event_name && (
+                      <>
+                        <span>·</span>
+                        <span className="text-amber-600">{p.event_name}</span>
+                      </>
+                    )}
+                    <span>·</span>
+                    <span>
+                      {p.valid_until
+                        ? `s.d. ${new Date(p.valid_until).toLocaleDateString('id-ID')}`
+                        : 'Selamanya'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => editingPromoId === p.id ? cancelEditPromo() : startEditPromo(p)}
+                    className="text-xs text-brand-600 hover:underline font-medium"
+                  >
+                    {editingPromoId === p.id ? 'Tutup' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={() => togglePromoActive(p)}
+                    className={`text-xs hover:underline ${p.is_active ? 'text-red-400' : 'text-green-600'}`}
+                  >
+                    {p.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Inline Edit Form */}
+              {editingPromoId === p.id && (
+                <div className="mt-3 space-y-2.5 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <p className="text-xs font-semibold text-gray-700">Edit Promo: {p.code}</p>
+                  <input
+                    className="input text-sm"
+                    placeholder="Kode promo (contoh: MERDEKA)"
+                    value={editPromo.code}
+                    onChange={e => setEditPromo({...editPromo, code: e.target.value.toUpperCase()})}
+                  />
+                  <div className="flex gap-2 items-center">
+                    <label className="flex items-center gap-1 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={editPromo.is_free}
+                        onChange={e => setEditPromo({...editPromo, is_free: e.target.checked, discount_pct: e.target.checked ? 100 : 0})}
+                      /> Gratis
+                    </label>
+                    {!editPromo.is_free && (
+                      <input
+                        className="input text-sm w-28"
+                        type="number"
+                        min="1"
+                        max="100"
+                        placeholder="Diskon %"
+                        value={editPromo.discount_pct}
+                        onChange={e => setEditPromo({...editPromo, discount_pct: parseInt(e.target.value) || 0})}
+                      />
+                    )}
+                  </div>
+                  <input
+                    className="input text-sm"
+                    type="number"
+                    min="0"
+                    placeholder="Max penggunaan (kosongkan/0 = unlimited)"
+                    value={editPromo.max_uses}
+                    onChange={e => setEditPromo({...editPromo, max_uses: e.target.value})}
+                  />
+                  <input
+                    className="input text-sm"
+                    placeholder="Event (contoh: 17 Agustus)"
+                    value={editPromo.event_name}
+                    onChange={e => setEditPromo({...editPromo, event_name: e.target.value})}
+                  />
+                  <div>
+                    <input
+                      className="input text-sm"
+                      type="number"
+                      min="0"
+                      placeholder="Perpanjang berlaku berapa hari dari sekarang"
+                      value={editPromo.valid_days}
+                      disabled={editPromo.clear_validity}
+                      onChange={e => setEditPromo({...editPromo, valid_days: e.target.value})}
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-gray-500 mt-1.5">
+                      <input
+                        type="checkbox"
+                        checked={editPromo.clear_validity}
+                        onChange={e => setEditPromo({...editPromo, clear_validity: e.target.checked, valid_days: e.target.checked ? '' : editPromo.valid_days})}
+                      /> Jadikan berlaku selamanya (hapus batas kedaluwarsa)
+                    </label>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => saveEditPromo(p.id)}
+                      disabled={!editPromo.code.trim()}
+                      className="btn-primary text-sm py-1.5 px-3 disabled:opacity-50"
+                    >
+                      Simpan Perubahan
+                    </button>
+                    <button
+                      onClick={cancelEditPromo}
+                      className="text-xs text-gray-400 hover:text-gray-600 px-2"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <button onClick={() => deletePromo(p.id)} className="text-xs text-red-400 hover:underline">{p.is_active ? 'Nonaktifkan' : 'Inactive'}</button>
-          </div>
-        ))}
+          );
+        })}
         {!showAddPromo ? (
           <button onClick={() => setShowAddPromo(true)} className="text-sm text-brand-600 hover:underline mt-2">+ Buat promo</button>
         ) : (

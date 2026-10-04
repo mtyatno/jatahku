@@ -6,6 +6,29 @@ import { EnvelopeIcon } from './Icon';
 const EMOJI_OPTIONS = ['🍜','🚗','🏠','📱','🎬','📚','👶','🏥','💊','🎁','👕','🐾','🏋️','✈️','🛒','💡','📦','🔧'];
 
 const TEMPLATES = {
+  driver_ojol: {
+    label: '🛵 Driver & Kurir',
+    desc: 'Operasional narik harian & perawatan motor',
+    envelopes: [
+      { emoji: '⛽', name: 'Bensin & Operasional', pct: 25, purpose: 'expense' },
+      { emoji: '🍜', name: 'Makan di Jalan', pct: 20, purpose: 'expense' },
+      { emoji: '📱', name: 'Pulsa & Kuota Narik', pct: 8, purpose: 'expense' },
+      { emoji: '🔧', name: 'Servis & Ganti Oli', pct: 12, purpose: 'sinking_fund' },
+      { emoji: '🏠', name: 'Kebutuhan Rumah', pct: 25, purpose: 'expense' },
+      { emoji: '💰', name: 'Tabungan / Darurat', pct: 10, purpose: 'saving' },
+    ],
+  },
+  freelance_bisnis: {
+    label: '🛠️ Freelance & Usaha Mandiri',
+    desc: 'Biaya hidup fleksibel & alat kerja',
+    envelopes: [
+      { emoji: '💻', name: 'Operasional & Internet', pct: 15, purpose: 'expense' },
+      { emoji: '🍜', name: 'Biaya Hidup Harian', pct: 35, purpose: 'expense' },
+      { emoji: '🏠', name: 'Sewa / Tagihan', pct: 20, purpose: 'expense' },
+      { emoji: '🔧', name: 'Alat Kerja & Maintenance', pct: 10, purpose: 'sinking_fund' },
+      { emoji: '💰', name: 'Dana Darurat & Pajak', pct: 20, purpose: 'saving' },
+    ],
+  },
   karyawan: {
     label: '💼 Karyawan', desc: 'Budget standar pekerja kantoran',
     envelopes: [
@@ -42,6 +65,10 @@ const TEMPLATES = {
 
 export default function Onboarding({ onDone }) {
   const [step, setStep] = useState(1);
+  const [incomeType, setIncomeType] = useState('monthly'); // 'daily' | 'weekly' | 'monthly' | 'irregular'
+  const [dailyIncome, setDailyIncome] = useState('');
+  const [workingDays, setWorkingDays] = useState(26);
+  const [weeklyIncome, setWeeklyIncome] = useState('');
   const [income, setIncome] = useState('');
   const [paydayDay, setPaydayDay] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -53,6 +80,17 @@ export default function Onboarding({ onDone }) {
   const [newEmoji, setNewEmoji] = useState('📦');
   const [newPct, setNewPct] = useState('');
   const [newPurpose, setNewPurpose] = useState('expense');
+  const [initialCashMode, setInitialCashMode] = useState('zero');
+  const [startingCash, setStartingCash] = useState('');
+
+  const handleIncomeTypeChange = (type) => {
+    setIncomeType(type);
+    setInitialCashMode(type === 'monthly' ? 'full' : 'zero');
+    setStartingCash('');
+    if (type !== 'monthly') {
+      setPaydayDay(1);
+    }
+  };
 
   const guessPurpose = (name) => {
     const n = name.toLowerCase();
@@ -63,12 +101,20 @@ export default function Onboarding({ onDone }) {
     return 'expense';
   };
 
-  const incomeNum = Number(income) || 0;
+  const incomeNum = incomeType === 'daily'
+    ? (Number(dailyIncome) || 0) * (Number(workingDays) || 0)
+    : incomeType === 'weekly'
+    ? (Number(weeklyIncome) || 0) * 4
+    : (incomeType === 'monthly' || incomeType === 'irregular')
+    ? (Number(income) || 0)
+    : 0;
   const totalAllocated = envelopes.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
   const handleSelectTemplate = (key) => {
     setSelectedTemplate(key);
+    setInitialCashMode(incomeType === 'monthly' ? 'full' : 'zero');
+    setStartingCash('');
     if (key === 'custom') {
       setEnvelopes([]);
       setStep(3);
@@ -81,7 +127,7 @@ export default function Onboarding({ onDone }) {
       pct: env.pct,
       amount: Math.round(incomeNum * env.pct / 100),
       isTemplate: true,
-      purpose: 'expense',
+      purpose: env.purpose || 'expense',
     })));
     setStep(3);
   };
@@ -118,7 +164,12 @@ export default function Onboarding({ onDone }) {
   };
 
   const handleCreate = async () => {
-    if (envelopes.length === 0 && selectedTemplate === 'custom') { onDone(); return; }
+    if (envelopes.length === 0 && selectedTemplate === 'custom') {
+      sessionStorage.setItem('just_onboarded', '1');
+      sessionStorage.setItem('onboarded_income_mode', incomeType);
+      onDone();
+      return;
+    }
     if (totalAllocated > incomeNum) {
       setError(`Total alokasi (${formatCurrency(totalAllocated)}) melebihi income (${formatCurrency(incomeNum)})`);
       return;
@@ -130,42 +181,100 @@ export default function Onboarding({ onDone }) {
     setSaving(true);
     setError('');
 
-    // Save payday_day
-    await api.request('/user/profile', {
-      method: 'PUT',
-      body: JSON.stringify({ payday_day: paydayDay }),
-    });
-
-    const envelopeIds = [];
-    for (const env of envelopes) {
-      const amount = Number(env.amount) || 0;
-      const res = await api.createEnvelope({
-        name: env.name, emoji: env.emoji,
-        budget_amount: amount,
-        is_rollover: true, is_personal: false,
-        purpose: env.purpose || 'expense',
+    try {
+      // 1. Save payday_day: 1 for daily/weekly, or chosen paydayDay for monthly
+      const finalPayday = incomeType === 'monthly' ? paydayDay : 1;
+      await api.request('/user/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ payday_day: finalPayday }),
       });
-      if (res.ok) {
-        envelopeIds.push({ id: res.data.id, amount });
+
+      // 2. Create envelopes with target monthly budget_amount
+      const envelopeIds = [];
+      for (const env of envelopes) {
+        const targetAmount = Number(env.amount) || 0;
+        const res = await api.createEnvelope({
+          name: env.name,
+          emoji: env.emoji,
+          budget_amount: targetAmount,
+          is_rollover: true,
+          is_personal: false,
+          purpose: env.purpose || 'expense',
+        });
+        if (res.ok) {
+          envelopeIds.push({
+            id: res.data.id,
+            targetAmount,
+            pct: Number(env.pct) || (incomeNum > 0 ? Math.round((targetAmount / incomeNum) * 100) : 0),
+          });
+        }
       }
+
+      // 3. Conditional Income Record
+      const startingCashNum = Number(startingCash) || 0;
+      if (incomeType === 'monthly' && initialCashMode === 'full') {
+        // Monthly salary full initial allocation
+        const incomeAllocations = envelopeIds
+          .filter(e => e.targetAmount > 0)
+          .map(e => ({ envelope_id: e.id, amount: e.targetAmount }));
+
+        await api.request('/incomes/', {
+          method: 'POST',
+          body: JSON.stringify({
+            amount: incomeNum,
+            source: 'Gaji',
+            allocations: incomeAllocations,
+          }),
+        });
+      } else if (initialCashMode === 'custom' && startingCashNum > 0) {
+        // Prorate starting cash across envelopes according to percentage
+        const incomeAllocations = envelopeIds.map(e => ({
+          envelope_id: e.id,
+          amount: Math.round(startingCashNum * (e.pct / 100)),
+        })).filter(e => e.amount > 0);
+
+        const totalAlloc = incomeAllocations.reduce((s, a) => s + a.amount, 0);
+        if (totalAlloc > startingCashNum && incomeAllocations.length > 0) {
+          incomeAllocations[0].amount = Math.max(0, incomeAllocations[0].amount - (totalAlloc - startingCashNum));
+        }
+
+        await api.request('/incomes/', {
+          method: 'POST',
+          body: JSON.stringify({
+            amount: startingCashNum,
+            source: 'Saldo Awal',
+            allocations: incomeAllocations.filter(e => e.amount > 0),
+          }),
+        });
+      }
+      // If initialCashMode === 'zero': NO income is created.
+
+      setSaving(false);
+      sessionStorage.setItem('just_onboarded', '1');
+      sessionStorage.setItem('onboarded_income_mode', incomeType);
+      onDone();
+    } catch (err) {
+      console.error('Failed to finish onboarding:', err);
+      setError('Gagal menyiapkan amplop. Silakan periksa koneksi dan coba lagi.');
+      setSaving(false);
     }
+  };
 
-    const incomeAllocations = envelopeIds
-      .filter(e => e.amount > 0)
-      .map(e => ({ envelope_id: e.id, amount: e.amount }));
+  const isCustomInvalid = initialCashMode === 'custom' && !(Number(startingCash) > 0);
+  const isSubmitDisabled = saving || remainder < 0 || envelopes.length === 0 || isCustomInvalid;
 
-    await api.request('/incomes/', {
-      method: 'POST',
-      body: JSON.stringify({
-        amount: incomeNum,
-        source: 'Gaji',
-        allocations: incomeAllocations,
-      }),
-    });
-
-    setSaving(false);
-    sessionStorage.setItem('just_onboarded', '1');
-    onDone();
+  const getSubmitButtonLabel = () => {
+    if (saving) return 'Membuat amplop & alokasi...';
+    if (initialCashMode === 'zero') {
+      return 'Mulai Budgeting (Saldo Rp 0) →';
+    }
+    if (initialCashMode === 'custom') {
+      const cash = Number(startingCash) || 0;
+      return cash > 0
+        ? `Mulai Budgeting (Kas ${formatCurrency(cash)}) →`
+        : 'Mulai Budgeting (Saldo Rp 0) →';
+    }
+    return `Mulai Budgeting → (${envelopes.length} amplop)`;
   };
 
   return (
@@ -183,35 +292,223 @@ export default function Onboarding({ onDone }) {
         <div className="space-y-4">
           <div className="card space-y-5">
             <div>
-              <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
-              <p className="text-sm text-gray-500 mb-3">Total pemasukan per bulan (gaji, freelance, dll).</p>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
-                <input type="number" className="input pl-12 text-right font-mono text-xl" placeholder="8000000"
-                  value={income} onChange={e => setIncome(e.target.value)} min="0" autoFocus />
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Pola Pemasukan</p>
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl">
+                {[
+                  { key: 'monthly', label: '💼 Bulanan', desc: 'Gaji/Honorar tetap' },
+                  { key: 'weekly', label: '📅 Mingguan', desc: 'Mingguan teratur' },
+                  { key: 'daily', label: '🛵 Harian', desc: 'Ojek/Dagang/Harian' },
+                  { key: 'irregular', label: '📊 Tidak Tentu', desc: 'Fluktuatif' },
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => handleIncomeTypeChange(tab.key)}
+                    className={`py-2.5 px-2 rounded-lg text-sm font-medium transition-all text-center flex flex-col items-center gap-0.5 ${
+                      incomeType === tab.key
+                        ? 'bg-white text-brand-600 shadow-sm font-semibold'
+                        : 'text-gray-500 hover:text-gray-900'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className="text-xs text-gray-400 font-normal">{tab.desc}</span>
+                  </button>
+                ))}
               </div>
-              {incomeNum > 0 && <p className="text-sm text-brand-600 mt-2 text-right font-medium">{formatCurrency(incomeNum)}/bulan</p>}
             </div>
 
-            <div className="border-t border-gray-100 pt-4">
-              <h3 className="font-semibold text-base mb-1">📅 Tanggal gajian kamu?</h3>
-              <p className="text-sm text-gray-500 mb-3">Untuk hitung periode budget yang akurat. Bisa diubah nanti.</p>
-              <div className="flex items-center gap-3">
-                <input
-                  type="number" min="1" max="31"
-                  className="input w-20 text-center font-mono text-lg"
-                  value={paydayDay}
-                  onChange={e => setPaydayDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
-                />
-                <span className="text-sm text-gray-500">setiap bulan</span>
+            {incomeType === 'daily' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">Rata-rata pendapatan bersih per hari</h3>
+                  <p className="text-sm text-gray-500 mb-3">Estimasi pemasukan harian setelah operasional/bensin.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="150000"
+                      value={dailyIncome}
+                      onChange={e => setDailyIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <h3 className="font-semibold text-base mb-1">Hari narik/kerja per bulan</h3>
+                  <p className="text-sm text-gray-500 mb-3">Jumlah hari kerja aktif dalam sebulan.</p>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      className="input w-24 text-center font-mono text-lg"
+                      value={workingDays}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v === '') { setWorkingDays(''); return; }
+                        setWorkingDays(Math.min(31, Math.max(1, parseInt(v) || 1)));
+                      }}
+                    />
+                    <span className="text-sm text-gray-500">hari / bulan (standar 26 hari)</span>
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        {dailyIncome ? formatCurrency(Number(dailyIncome) || 0) : 'Rp 0'} × {workingDays || 0} hari
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan.</span>
+                </div>
               </div>
-              <p className="text-xs text-gray-400 mt-2">
-                Contoh: isi 25 jika gajian tiap tanggal 25
-              </p>
-            </div>
+            )}
+
+            {incomeType === 'weekly' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">Rata-rata pemasukan per minggu</h3>
+                  <p className="text-sm text-gray-500 mb-3">Estimasi pemasukan mingguan rata-rata.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="1500000"
+                      value={weeklyIncome}
+                      onChange={e => setWeeklyIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        {weeklyIncome ? formatCurrency(Number(weeklyIncome) || 0) : 'Rp 0'} × 4 minggu
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan.</span>
+                </div>
+              </div>
+            )}
+
+            {incomeType === 'monthly' && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="font-semibold text-lg mb-1">💰 Berapa income bulanan kamu?</h3>
+                  <p className="text-sm text-gray-500 mb-3">Total pemasukan per bulan (gaji, freelance, dll).</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="8000000"
+                      value={income}
+                      onChange={e => setIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                  {incomeNum > 0 && (
+                    <p className="text-sm text-brand-600 mt-2 text-right font-medium">
+                      {formatCurrency(incomeNum)}/bulan
+                    </p>
+                  )}
+                </div>
+
+                <div className="border-t border-gray-100 pt-4">
+                  <h3 className="font-semibold text-base mb-1">📅 Tanggal gajian kamu?</h3>
+                  <p className="text-sm text-gray-500 mb-3">Untuk hitung periode budget yang akurat. Bisa diubah nanti.</p>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      className="input w-20 text-center font-mono text-lg"
+                      value={paydayDay}
+                      onChange={e => setPaydayDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
+                    />
+                    <span className="text-sm text-gray-500">setiap bulan</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Contoh: isi 25 jika gajian tiap tanggal 25
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {incomeType === 'irregular' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">📊 Estimasi rata-rata income bulanan</h3>
+                  <p className="text-sm text-gray-500 mb-3">Lihat pendapatan 3 bulan lalu, hitung rata-ratanya.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="5000000"
+                      value={income}
+                      onChange={e => setIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        Rata-rata pendapatan bulan-bulan sebelumnya
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan. Bisa diubah nanti di Pengaturan.</span>
+                </div>
+              </div>
+            )}
           </div>
-          <button onClick={() => setStep(2)} disabled={incomeNum <= 0}
-            className="btn-primary w-full disabled:opacity-50">Lanjut →</button>
+          <button
+            onClick={() => setStep(2)}
+            disabled={incomeNum <= 0}
+            className="btn-primary w-full disabled:opacity-50"
+          >
+            Lanjut →
+          </button>
         </div>
       )}
 
@@ -360,6 +657,175 @@ export default function Onboarding({ onDone }) {
             )}
           </div>
 
+          {/* Initial Balance Selection Card */}
+          <div className="card space-y-3">
+            <div>
+              <h3 className="font-semibold text-base mb-1">
+                {incomeType === 'monthly' ? 'Saldo Awal Bulan Ini' : 'Saldo Awal Saat Ini'}
+              </h3>
+              <p className="text-xs text-gray-500">
+                {incomeType === 'monthly'
+                  ? 'Pilih apakah gaji bulan ini sudah cair atau ingin mulai dari Rp 0.'
+                  : 'Pilih kondisi uang kas yang kamu miliki saat ini.'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {incomeType !== 'monthly' ? (
+                <>
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      initialCashMode === 'zero'
+                        ? 'border-brand-500 bg-brand-50/40 ring-1 ring-brand-500'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initialCashMode"
+                      value="zero"
+                      checked={initialCashMode === 'zero'}
+                      onChange={() => setInitialCashMode('zero')}
+                      className="mt-0.5 text-brand-600 focus:ring-brand-500"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-gray-900">Mulai saldo dari Rp 0</span>
+                        <span className="text-xs bg-brand-100 text-brand-700 font-medium px-2 py-0.5 rounded-full">Direkomendasikan</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                        Amplop disiapkan dengan target jatah bulanan. Saldo akan diisi setiap kali kamu mencatat pemasukan harian via tombol <strong>+ Pemasukan</strong> di dashboard.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      initialCashMode === 'custom'
+                        ? 'border-brand-500 bg-brand-50/40 ring-1 ring-brand-500'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initialCashMode"
+                      value="custom"
+                      checked={initialCashMode === 'custom'}
+                      onChange={() => setInitialCashMode('custom')}
+                      className="mt-0.5 text-brand-600 focus:ring-brand-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-semibold text-gray-900">Ada uang pegangan hari ini</span>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Masukkan uang kas yang ada sekarang untuk langsung dibagi ke amplop.
+                      </p>
+                    </div>
+                  </label>
+
+                  {initialCashMode === 'custom' && (
+                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-3 mt-1">
+                      <div>
+                        <label className="text-xs font-semibold text-gray-700 block mb-1">
+                          Uang pegangan saat ini:
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">Rp</span>
+                          <input
+                            type="number"
+                            className="input pl-10 text-right font-mono text-base py-1.5"
+                            placeholder="100000"
+                            value={startingCash}
+                            onChange={e => setStartingCash(e.target.value)}
+                            min="0"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+
+                      {Number(startingCash) > 0 && envelopes.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                            Simulasi alokasi saldo awal ({formatCurrency(Number(startingCash))}):
+                          </p>
+                          <div className="space-y-1 bg-white p-2.5 rounded-lg border border-gray-200">
+                            {envelopes.map((env, i) => {
+                              const alloc = Math.round((Number(startingCash) || 0) * ((Number(env.pct) || 0) / 100));
+                              return (
+                                <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0">
+                                  <span className="flex items-center gap-1.5 truncate">
+                                    <span>{env.emoji}</span>
+                                    <span className="truncate">{env.name}</span>
+                                    <span className="text-gray-400">({env.pct || 0}%)</span>
+                                  </span>
+                                  <span className="font-mono font-medium text-brand-600 shrink-0 ml-2">
+                                    {formatCurrency(alloc)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      initialCashMode === 'full'
+                        ? 'border-brand-500 bg-brand-50/40 ring-1 ring-brand-500'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initialCashMode"
+                      value="full"
+                      checked={initialCashMode === 'full'}
+                      onChange={() => setInitialCashMode('full')}
+                      className="mt-0.5 text-brand-600 focus:ring-brand-500"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-gray-900">
+                          Isi saldo penuh dari gaji ({formatCurrency(incomeNum)})
+                        </span>
+                        <span className="text-xs bg-brand-100 text-brand-700 font-medium px-2 py-0.5 rounded-full">Direkomendasikan</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                        Semua amplop langsung terisi sesuai target bulanan untuk memulai budgeting periode ini.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                      initialCashMode === 'zero'
+                        ? 'border-brand-500 bg-brand-50/40 ring-1 ring-brand-500'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initialCashMode"
+                      value="zero"
+                      checked={initialCashMode === 'zero'}
+                      onChange={() => setInitialCashMode('zero')}
+                      className="mt-0.5 text-brand-600 focus:ring-brand-500"
+                    />
+                    <div className="flex-1">
+                      <span className="text-sm font-semibold text-gray-900">Mulai saldo dari Rp 0 (Gaji belum cair)</span>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                        Amplop disiapkan dengan target jatah bulanan. Saldo akan diisi nanti saat gajian lewat tombol <strong>+ Pemasukan</strong> di dashboard.
+                      </p>
+                    </div>
+                  </label>
+                </>
+              )}
+            </div>
+          </div>
+
           {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
 
           {remainder < 0 && (
@@ -368,9 +834,9 @@ export default function Onboarding({ onDone }) {
             </div>
           )}
 
-          <button onClick={handleCreate} disabled={saving || remainder < 0 || envelopes.length === 0}
+          <button onClick={handleCreate} disabled={isSubmitDisabled}
             className="btn-primary w-full disabled:opacity-50">
-            {saving ? 'Membuat amplop & alokasi...' : `Mulai Budgeting → (${envelopes.length} amplop)`}
+            {getSubmitButtonLabel()}
           </button>
         </div>
       )}
