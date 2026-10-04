@@ -31,7 +31,9 @@ function QuickAddIncome({ onClose }) {
   const [incomeAmount, setIncomeAmount] = useState('');
   const [incomeDesc, setIncomeDesc] = useState('Gaji');
   const [allocations, setAllocations] = useState({});
+  const [percentages, setPercentages] = useState({});
   const [saving, setSaving] = useState(false);
+  const [loadingAuto, setLoadingAuto] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
   useEffect(() => { api.getEnvelopeSummary().then(e => { setEnvelopes(e); setReady(true); }); }, []);
@@ -39,6 +41,73 @@ function QuickAddIncome({ onClose }) {
   const incomeNum = Number(incomeAmount) || 0;
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
+
+  const handleAutoAllocate = async () => {
+    if (incomeNum <= 0) { setError('Masukkan jumlah income terlebih dahulu'); return; }
+    setLoadingAuto(true);
+    setError('');
+    const { ok, data } = await api.getAllocationRecommendation(incomeNum);
+    setLoadingAuto(false);
+    if (!ok) { setError('Gagal mendapatkan rekomendasi alokasi'); return; }
+
+    const items = data.items || [];
+    const newAllocations = {};
+    items.forEach(item => {
+      const amt = Number(item.recommended_amount) || 0;
+      if (amt > 0) newAllocations[item.envelope_id] = amt;
+    });
+    setAllocations(newAllocations);
+
+    // Calculate percentages
+    const newPercentages = {};
+    items.forEach(item => {
+      const amt = Number(item.recommended_amount) || 0;
+      if (amt > 0) {
+        newPercentages[item.envelope_id] = Math.round((amt / incomeNum) * 100);
+      }
+    });
+    setPercentages(newPercentages);
+  };
+
+  const handlePercentageChange = (envId, pct) => {
+    const newPct = Number(pct) || 0;
+    if (newPct > 100) return;
+
+    const newPercentages = { ...percentages };
+    if (newPct === 0) {
+      delete newPercentages[envId];
+    } else {
+      newPercentages[envId] = newPct;
+    }
+    setPercentages(newPercentages);
+
+    // Calculate new allocations from percentages
+    const newAllocations = {};
+    let totalPct = 0;
+    Object.entries(newPercentages).forEach(([id, pct]) => {
+      const amt = Math.round((incomeNum * pct) / 100);
+      newAllocations[id] = amt;
+      totalPct += pct;
+    });
+    setAllocations(newAllocations);
+  };
+
+  const handleAmountChange = (envId, amt) => {
+    const newAmt = Number(amt) || 0;
+    const newAllocations = { ...allocations };
+    if (newAmt === 0) {
+      delete newAllocations[envId];
+      const newPercentages = { ...percentages };
+      delete newPercentages[envId];
+      setPercentages(newPercentages);
+    } else {
+      if (newAmt > incomeNum) return;
+      newAllocations[envId] = newAmt;
+      const pct = incomeNum > 0 ? Math.round((newAmt / incomeNum) * 100) : 0;
+      setPercentages({ ...percentages, [envId]: pct });
+    }
+    setAllocations(newAllocations);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -55,7 +124,7 @@ function QuickAddIncome({ onClose }) {
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div><label className="label">Jumlah income (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
-        <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji, Freelance..." value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
+        <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji atau Pendapatan harian" value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
       </div>
       {incomeNum > 0 && (
         <div className="space-y-3">
@@ -64,13 +133,22 @@ function QuickAddIncome({ onClose }) {
             <span className="text-gray-400">Dialokasi: <b className="text-amber-500">{totalAllocated.toLocaleString('id-ID')}</b></span>
             <span className="text-gray-400">Sisa: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{remainder.toLocaleString('id-ID')}</b></span>
           </div>
+          <button type="button" onClick={handleAutoAllocate} disabled={loadingAuto} className="text-xs px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-50">
+            {loadingAuto ? 'Memproses...' : 'Bagi otomatis'}
+          </button>
           <div className="space-y-2 max-h-48 overflow-y-auto">
             {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
               const val = allocations[env.id] || 0;
+              const pct = percentages[env.id] || 0;
               return (
-                <div key={env.id} className="flex items-center gap-2"><span className="w-6 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span><span className="text-sm flex-1">{env.name}</span>
-                  <input type="number" className="input text-sm font-mono text-right w-28" placeholder="0" value={val || ''} min="0"
-                    onChange={e => setAllocations(prev => ({ ...prev, [env.id]: Number(e.target.value) || 0 }))} />
+                <div key={env.id} className="flex items-center gap-2">
+                  <span className="w-6 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span>
+                  <span className="text-sm flex-1">{env.name}</span>
+                  <input type="number" className="input text-xs font-mono text-right w-16" placeholder="%" min="0" max="100"
+                    value={pct || ''} onChange={e => handlePercentageChange(env.id, e.target.value)} />
+                  <span className="text-xs text-gray-500 w-4">%</span>
+                  <input type="number" className="input text-sm font-mono text-right w-24" placeholder="0" value={val || ''} min="0"
+                    onChange={e => handleAmountChange(env.id, e.target.value)} />
                 </div>
               );
             })}
