@@ -65,7 +65,7 @@ const TEMPLATES = {
 
 export default function Onboarding({ onDone }) {
   const [step, setStep] = useState(1);
-  const [incomeType, setIncomeType] = useState('daily'); // 'daily' | 'weekly' | 'monthly'
+  const [incomeType, setIncomeType] = useState('monthly'); // 'daily' | 'weekly' | 'monthly' | 'irregular'
   const [dailyIncome, setDailyIncome] = useState('');
   const [workingDays, setWorkingDays] = useState(26);
   const [weeklyIncome, setWeeklyIncome] = useState('');
@@ -105,7 +105,9 @@ export default function Onboarding({ onDone }) {
     ? (Number(dailyIncome) || 0) * (Number(workingDays) || 0)
     : incomeType === 'weekly'
     ? (Number(weeklyIncome) || 0) * 4
-    : (Number(income) || 0);
+    : (incomeType === 'monthly' || incomeType === 'irregular')
+    ? (Number(income) || 0)
+    : 0;
   const totalAllocated = envelopes.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
@@ -291,23 +293,25 @@ export default function Onboarding({ onDone }) {
           <div className="card space-y-5">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Pola Pemasukan</p>
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-gray-100 rounded-xl">
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl">
                 {[
-                  { key: 'daily', label: '🛵 Harian' },
-                  { key: 'weekly', label: '📅 Mingguan' },
-                  { key: 'monthly', label: '💼 Bulanan' },
+                  { key: 'monthly', label: '💼 Bulanan', desc: 'Gaji/Honorar tetap' },
+                  { key: 'weekly', label: '📅 Mingguan', desc: 'Mingguan teratur' },
+                  { key: 'daily', label: '🛵 Harian', desc: 'Ojek/Dagang/Harian' },
+                  { key: 'irregular', label: '📊 Tidak Tentu', desc: 'Fluktuatif' },
                 ].map(tab => (
                   <button
                     key={tab.key}
                     type="button"
                     onClick={() => handleIncomeTypeChange(tab.key)}
-                    className={`py-2 px-3 rounded-lg text-sm font-medium transition-all text-center ${
+                    className={`py-2.5 px-2 rounded-lg text-sm font-medium transition-all text-center flex flex-col items-center gap-0.5 ${
                       incomeType === tab.key
                         ? 'bg-white text-brand-600 shadow-sm font-semibold'
                         : 'text-gray-500 hover:text-gray-900'
                     }`}
                   >
-                    {tab.label}
+                    <span>{tab.label}</span>
+                    <span className="text-xs text-gray-400 font-normal">{tab.desc}</span>
                   </button>
                 ))}
               </div>
@@ -454,6 +458,46 @@ export default function Onboarding({ onDone }) {
                   <p className="text-xs text-gray-400 mt-2">
                     Contoh: isi 25 jika gajian tiap tanggal 25
                   </p>
+                </div>
+              </div>
+            )}
+
+            {incomeType === 'irregular' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold text-base mb-1">📊 Estimasi rata-rata income bulanan</h3>
+                  <p className="text-sm text-gray-500 mb-3">Lihat pendapatan 3 bulan lalu, hitung rata-ratanya.</p>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">Rp</span>
+                    <input
+                      type="number"
+                      className="input pl-12 text-right font-mono text-xl"
+                      placeholder="5000000"
+                      value={income}
+                      onChange={e => setIncome(e.target.value)}
+                      min="0"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {incomeNum > 0 && (
+                  <div className="p-3 bg-brand-50/60 rounded-xl border border-brand-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-brand-700 font-medium">Target Budget Bulanan</p>
+                      <p className="text-xs text-gray-500">
+                        Rata-rata pendapatan bulan-bulan sebelumnya
+                      </p>
+                    </div>
+                    <p className="font-display text-lg font-bold text-brand-600">
+                      {formatCurrency(incomeNum)}<span className="text-xs font-normal text-gray-500">/bulan</span>
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 flex items-center gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100">
+                  <span className="text-base">🗓️</span>
+                  <span>Siklus evaluasi budget dihitung per tanggal 1 setiap bulan. Bisa diubah nanti di Pengaturan.</span>
                 </div>
               </div>
             )}
