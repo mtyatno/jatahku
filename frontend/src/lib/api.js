@@ -77,12 +77,12 @@ class ApiClient {
   }
 
   // Auth
-  async register(email, password, name, promoCode) {
+  async register(email, password, name) {
     try {
       const res = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name, promo_code: promoCode || undefined }),
+        body: JSON.stringify({ email, password, name }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -155,6 +155,32 @@ class ApiClient {
       }
     } catch {}
     return loadCache('me');
+  }
+
+  async getGoogleClientId() {
+    try {
+      const res = await fetch(`${API_URL}/auth/google/config`);
+      if (res.ok) return (await res.json()).client_id || null;
+    } catch {}
+    return null;
+  }
+
+  async loginWithGoogle(credential) {
+    try {
+      const res = await fetch(`${API_URL}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        this.setToken(data.access_token);
+        this.setRefreshToken(data.refresh_token);
+      }
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
   }
 
   async loginWithTgToken(token) {
