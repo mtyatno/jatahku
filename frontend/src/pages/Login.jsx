@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import GoogleButton from '../components/GoogleButton';
 
 export default function Login() {
-  const { user, login, register } = useAuth();
+  const { user, login, register, loginWithGoogle } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [promoCode, setPromoCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -21,7 +21,7 @@ export default function Login() {
 
     try {
       const result = isRegister
-        ? await register(email, password, name, promoCode)
+        ? await register(email, password, name)
         : await login(email, password);
 
       if (!result.ok) {
@@ -29,6 +29,17 @@ export default function Login() {
       }
     } catch {
       setError('Terjadi kesalahan jaringan. Silakan coba lagi.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async (credential) => {
+    setError('');
+    setLoading(true);
+    try {
+      const result = await loginWithGoogle(credential);
+      if (!result.ok) setError(result.data?.detail || 'Masuk dengan Google gagal');
     } finally {
       setLoading(false);
     }
@@ -63,6 +74,12 @@ export default function Login() {
               Daftar
             </button>
           </div>
+
+          <GoogleButton
+            onCredential={handleGoogle}
+            text={isRegister ? 'signup_with' : 'continue_with'}
+            divider="atau pakai email"
+          />
 
           <form onSubmit={handleSubmit} className="space-y-3">
             {isRegister && (
@@ -100,19 +117,6 @@ export default function Login() {
                 required
               />
             </div>
-
-            {isRegister && (
-              <div>
-                <label className="label">Kode Promo <span className="text-gray-400 font-normal">(opsional)</span></label>
-                <input
-                  type="text"
-                  className="input uppercase"
-                  placeholder="Contoh: EARLY100"
-                  value={promoCode}
-                  onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                />
-              </div>
-            )}
 
             {error && (
               <div className="text-sm text-danger-400 bg-red-50 px-3 py-2 rounded-lg">
