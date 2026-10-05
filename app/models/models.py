@@ -71,6 +71,7 @@ class User(TimestampMixin, Base):
     default_is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     plan: Mapped[str | None] = mapped_column(String(10), default="basic")
     payday_day: Mapped[int] = mapped_column(Integer, default=1)
+    income_type: Mapped[str] = mapped_column(String(20), default="monthly")
     last_login: Mapped[datetime | None] = mapped_column(nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 

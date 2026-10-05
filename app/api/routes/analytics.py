@@ -364,7 +364,16 @@ async def spending_prediction(
     predicted_total = daily_avg * days_total
     remaining = total_available - total_spent
     free = remaining - total_reserved
-    safe_daily = free / days_left if days_left > 0 else 0
+
+    # safe_daily calculation differs by income_type:
+    # - monthly/irregular: remaining / days_left (original logic)
+    # - daily/weekly: allocated / days_total (spread across full period)
+    income_type = getattr(user, 'income_type', 'monthly') or 'monthly'
+    if income_type in ('daily', 'weekly'):
+        safe_daily = (total_allocated + total_rollover) / days_total if days_total > 0 else 0
+    else:
+        safe_daily = free / days_left if days_left > 0 else 0
+
     on_track = predicted_total <= total_available
 
     return {
