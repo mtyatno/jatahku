@@ -94,9 +94,20 @@ function AdviceCalc({ detail, clr }) {
       <CalcRow label="Terpakai" value={`− ${formatCurrency(d.spent)}`} />
       <CalcRow label="Sisa" value={formatCurrency(d.remaining)} strong />
       <div className="my-1.5 border-t" style={{ borderColor: clr.border }} />
-      <CalcRow label={`Hari tersisa${d.period_end ? ` (s.d. ${d.period_end})` : ''}`} value={`${d.days_remaining} hari`} />
-      {d.remaining > 0 && (
-        <CalcRow label="Batas aman = sisa ÷ hari tersisa" value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+      {d.horizon_days ? (
+        <>
+          <CalcRow label="Sampai income berikutnya" value={`${d.horizon_days} hari`} />
+          {d.remaining > 0 && (
+            <CalcRow label={`Batas aman = sisa ÷ ${d.horizon_days} hari`} value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+          )}
+        </>
+      ) : (
+        <>
+          <CalcRow label={`Hari tersisa${d.period_end ? ` (s.d. ${d.period_end})` : ''}`} value={`${d.days_remaining} hari`} />
+          {d.remaining > 0 && (
+            <CalcRow label="Batas aman = sisa ÷ hari tersisa" value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+          )}
+        </>
       )}
       <CalcRow label={`Kecepatan sekarang (${d.days_used} hari berjalan)`} value={`${formatCurrency(d.daily_rate)}/hari`} />
       {excluded.length > 0 && (
