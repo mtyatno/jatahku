@@ -366,12 +366,20 @@ async def spending_prediction(
     free = remaining - total_reserved
 
     # safe_daily calculation differs by income_type:
-    # - monthly/irregular: remaining / days_left (original logic)
-    # - daily/weekly: allocated / days_total (spread across full period)
+    # - monthly/irregular: free / days_left (original: stretch remaining to period end)
+    # - daily: free / avg_days_between_incomes (expect income every 1-2 days)
+    # - weekly: free / days_until_next_week (7 days or estimated weekly gap)
     income_type = getattr(user, 'income_type', 'monthly') or 'monthly'
-    if income_type in ('daily', 'weekly'):
-        safe_daily = (total_allocated + total_rollover) / days_total if days_total > 0 else 0
+
+    if income_type == 'daily':
+        # For daily earners, assume income arrives ~every 1 day on average.
+        # Use 1 day as denominator for conservative, realistic daily limit.
+        safe_daily = free / 1.0 if free >= 0 else 0
+    elif income_type == 'weekly':
+        # For weekly earners, assume income every 7 days.
+        safe_daily = free / 7.0 if free >= 0 else 0
     else:
+        # monthly/irregular: original logic (remaining budget / days until period end)
         safe_daily = free / days_left if days_left > 0 else 0
 
     on_track = predicted_total <= total_available
