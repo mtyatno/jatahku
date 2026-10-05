@@ -36,6 +36,7 @@ function QuickAddIncome({ onClose }) {
   const [incomeDesc, setIncomeDesc] = useState('Gaji');
   const [allocations, setAllocations] = useState({});
   const [percentages, setPercentages] = useState({});
+  const [typedAmounts, setTypedAmounts] = useState({});
   const [saving, setSaving] = useState(false);
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [error, setError] = useState('');
@@ -75,6 +76,7 @@ function QuickAddIncome({ onClose }) {
       });
       setAllocations(newAllocations);
       setPercentages(newPercentages);
+      setTypedAmounts({});
     } catch (err) {
       setLoadingAuto(false);
       setError('Gagal mendapatkan saran alokasi');
@@ -84,42 +86,60 @@ function QuickAddIncome({ onClose }) {
   const handlePercentageChange = (envId, pct) => {
     const newPct = Number(pct) || 0;
     if (newPct > 100) return;
-
     const newPercentages = { ...percentages };
+    const newAllocations = { ...allocations };
     if (newPct === 0) {
       delete newPercentages[envId];
+      delete newAllocations[envId];
     } else {
       newPercentages[envId] = newPct;
+      newAllocations[envId] = floorRupiah((incomeNum * newPct) / 100);
     }
     setPercentages(newPercentages);
-
-    // Calculate new allocations from percentages
-    const newAllocations = {};
-    let totalPct = 0;
-    Object.entries(newPercentages).forEach(([id, pct]) => {
-      const amt = floorRupiah((incomeNum * pct) / 100);
-      newAllocations[id] = amt;
-      totalPct += pct;
-    });
     setAllocations(newAllocations);
+    setTypedAmounts(prev => { const next = { ...prev }; delete next[envId]; return next; });
   };
 
   const handleAmountChange = (envId, amt) => {
     const newAmt = Number(amt) || 0;
     const newAllocations = { ...allocations };
+    const newPercentages = { ...percentages };
     if (newAmt === 0) {
       delete newAllocations[envId];
-      const newPercentages = { ...percentages };
       delete newPercentages[envId];
-      setPercentages(newPercentages);
     } else {
       if (newAmt > incomeNum) return;
       newAllocations[envId] = newAmt;
-      const pct = incomeNum > 0 ? Math.round((newAmt / incomeNum) * 100) : 0;
-      setPercentages({ ...percentages, [envId]: pct });
+      newPercentages[envId] = incomeNum > 0 ? Math.round((newAmt / incomeNum) * 100) : 0;
     }
     setAllocations(newAllocations);
+    setPercentages(newPercentages);
+    setTypedAmounts(prev => {
+      const next = { ...prev };
+      if (newAmt === 0) delete next[envId]; else next[envId] = true;
+      return next;
+    });
   };
+
+  // When the income changes, percent-based rows follow it; rupiah amounts the user typed stay put.
+  useEffect(() => {
+    if (incomeNum <= 0) return;
+    setAllocations(prev => {
+      const next = {};
+      Object.keys(prev).forEach(id => {
+        next[id] = typedAmounts[id] ? prev[id] : floorRupiah((incomeNum * (percentages[id] || 0)) / 100);
+      });
+      return next;
+    });
+    setPercentages(prev => {
+      const next = { ...prev };
+      Object.keys(typedAmounts).forEach(id => {
+        if (allocations[id]) next[id] = Math.round((allocations[id] / incomeNum) * 100);
+      });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomeNum]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
