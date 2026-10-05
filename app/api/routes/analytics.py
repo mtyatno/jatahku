@@ -365,21 +365,20 @@ async def spending_prediction(
     remaining = total_available - total_spent
     free = remaining - total_reserved
 
-    # safe_daily calculation differs by income_type:
-    # - monthly/irregular: free / days_left (original: stretch remaining to period end)
-    # - daily: free / avg_days_between_incomes (expect income every 1-2 days)
-    # - weekly: free / days_until_next_week (7 days or estimated weekly gap)
-    income_type = getattr(user, 'income_type', 'monthly') or 'monthly'
+    # safe_days = how many days `free` (already net of today's spending) must cover:
+    # - daily/weekly: until the next expected income, 1 / 7 days
+    # - monthly/irregular, NULL/unknown, and any period that has already ended:
+    #   until the period ends (days_left), the original formula
+    income_type = getattr(user, 'income_type', None)
+    if income_type not in ('daily', 'weekly', 'irregular'):
+        income_type = 'monthly'
+    per_income_days = {'daily': 1, 'weekly': 7}.get(income_type)
 
-    if income_type == 'daily':
-        # For daily earners, assume income arrives ~every 1 day on average.
-        # Use 1 day as denominator for conservative, realistic daily limit.
-        safe_daily = free / 1.0 if free >= 0 else 0
-    elif income_type == 'weekly':
-        # For weekly earners, assume income every 7 days.
-        safe_daily = free / 7.0 if free >= 0 else 0
+    if per_income_days and today <= period_end:
+        safe_days = per_income_days
+        safe_daily = free / safe_days if free >= 0 else 0
     else:
-        # monthly/irregular: original logic (remaining budget / days until period end)
+        safe_days = days_left
         safe_daily = free / days_left if days_left > 0 else 0
 
     on_track = predicted_total <= total_available
@@ -394,6 +393,8 @@ async def spending_prediction(
         "free": free,
         "daily_avg": round(daily_avg),
         "safe_daily": round(safe_daily),
+        "safe_days": safe_days,
+        "income_type": income_type,
         "predicted_total": round(predicted_total),
         "on_track": on_track,
         "days_passed": days_passed,

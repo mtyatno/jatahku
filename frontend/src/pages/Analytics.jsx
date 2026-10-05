@@ -304,7 +304,7 @@ export default function Analytics() {
                   <YAxis tick={{fontSize: 11}} tickLine={false} axisLine={false}
                     tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
                   <Tooltip content={<CustomTooltip />} />
-                  {p.safe_daily > 0 && <ReferenceLine y={p.safe_daily} stroke="#E24B4A" strokeDasharray="4 4" />}
+                  {p.safe_daily > 0 && <ReferenceLine y={p.safe_daily} stroke="#E24B4A" strokeDasharray="4 4" ifOverflow="extendDomain" />}
                   <Bar dataKey="total" name="Pengeluaran" fill="#0F6E56" radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
