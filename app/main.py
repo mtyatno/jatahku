@@ -65,6 +65,11 @@ async def lifespan(app: FastAPI):
                     f"CREATE INDEX IF NOT EXISTS ix_{_tbl}_balance_check_id "
                     f"ON {_tbl} (balance_check_id)"
                 ))
+            # Income type untuk daily/weekly/irregular earners (spec 2026-10-05):
+            # safe_daily calculation adjusts per income_type.
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS income_type VARCHAR(20) DEFAULT 'monthly'"
+            ))
     print(f"🚀 {settings.APP_NAME} starting...")
     start_scheduler()
     yield

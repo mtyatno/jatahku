@@ -182,11 +182,11 @@ export default function Onboarding({ onDone }) {
     setError('');
 
     try {
-      // 1. Save payday_day: 1 for daily/weekly, or chosen paydayDay for monthly
+      // 1. Save payday_day & income_type: payday 1 for daily/weekly, or chosen paydayDay for monthly
       const finalPayday = incomeType === 'monthly' ? paydayDay : 1;
       await api.request('/user/profile', {
         method: 'PUT',
-        body: JSON.stringify({ payday_day: finalPayday }),
+        body: JSON.stringify({ payday_day: finalPayday, income_type: incomeType }),
       });
 
       // 2. Create envelopes with target monthly budget_amount

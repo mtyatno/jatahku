@@ -364,7 +364,23 @@ async def spending_prediction(
     predicted_total = daily_avg * days_total
     remaining = total_available - total_spent
     free = remaining - total_reserved
-    safe_daily = free / days_left if days_left > 0 else 0
+
+    # safe_days = how many days `free` (already net of today's spending) must cover:
+    # - daily/weekly: until the next expected income, 1 / 7 days
+    # - monthly/irregular, NULL/unknown, and any period that has already ended:
+    #   until the period ends (days_left), the original formula
+    income_type = getattr(user, 'income_type', None)
+    if income_type not in ('daily', 'weekly', 'irregular'):
+        income_type = 'monthly'
+    per_income_days = {'daily': 1, 'weekly': 7}.get(income_type)
+
+    if per_income_days and today <= period_end:
+        safe_days = per_income_days
+        safe_daily = free / safe_days if free >= 0 else 0
+    else:
+        safe_days = days_left
+        safe_daily = free / days_left if days_left > 0 else 0
+
     on_track = predicted_total <= total_available
 
     return {
@@ -377,6 +393,8 @@ async def spending_prediction(
         "free": free,
         "daily_avg": round(daily_avg),
         "safe_daily": round(safe_daily),
+        "safe_days": safe_days,
+        "income_type": income_type,
         "predicted_total": round(predicted_total),
         "on_track": on_track,
         "days_passed": days_passed,

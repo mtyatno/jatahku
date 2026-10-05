@@ -10,6 +10,7 @@ import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
 import { KpiCard, Meter, FundsBar, EnvelopeStrip, SpendSparkline, kpiPalette } from '../components/KpiCard';
 import { envelopeStrip, fundsBreakdown, freeShare, savingsProgress, dailySeries, localDateStr } from '../lib/kpiVisuals';
+import { todayAdvice } from '../lib/advisorToday';
 import { fundingState } from '../lib/envelopeFunding';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
@@ -107,6 +108,13 @@ function AdviceCalc({ detail, clr }) {
 
 const ACTION_TYPES = ['env_depletion', 'subscription_pressure'];
 
+// Uang pecahan terkecil Rp100: jatah harian dan selisihnya dibulatkan ke bawah ke kelipatan Rp100.
+const floorRp100 = (v) => Math.floor((Number(v) || 0) / 100) * 100;
+// Format singkat angka kelipatan Rp100 tanpa membulatkan lagi: 1.900 → Rp1,9rb, 50.000 → Rp50rb.
+const shortRp100 = (v) => (v >= 1000
+  ? `Rp${(v / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })}rb`
+  : `Rp${v}`);
+
 function AdvisorRow({ open, onToggle, dot, clr, children, title }) {
   return (
     <div className="py-3" style={{ borderColor: clr.border }}>
@@ -121,22 +129,20 @@ function AdvisorRow({ open, onToggle, dot, clr, children, title }) {
   );
 }
 
-function HeroAdvisor({ cards, advisorError, prediction, todaySpent, goals }) {
+function HeroAdvisor({ cards, advisorError, prediction, safeDaily, todaySpent, goals }) {
   const { mode } = useTheme();
   const isDark = mode === 'dark';
   const [openId, setOpenId] = useState(null);
   const toggle = (id) => setOpenId(openId === id ? null : id);
 
-  const safeDaily = prediction?.safe_daily || 0;
-  const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
-  const showToday = hasPrediction && safeDaily > 0;
-  const overToday = todaySpent > safeDaily;
-  const leftToday = Math.floor(Math.abs(safeDaily - todaySpent) / 1000) * 1000;
+  const today = todayAdvice(prediction, todaySpent, safeDaily);
+  const overBy = floorRp100(today.overBy);
+  const rounded = safeDaily !== (prediction?.safe_daily || 0) || overBy !== today.overBy;
   const items = (cards || [])
     .filter(c => ACTION_TYPES.includes(c.type) && (c.severity === 'danger' || c.severity === 'warning'))
     .slice(0, 2);
   const activeGoals = (goals || []).filter(g => !g.is_achieved);
-  if (!showToday && !items.length && !activeGoals.length && !advisorError) return null;
+  if (!today.show && !items.length && !activeGoals.length && !advisorError) return null;
 
   const clr = isDark ? {
     bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#94a3b8', inset: '#0f172a',
@@ -161,16 +167,27 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, goals }) {
       )}
 
       <div className="divide-y" style={{ borderColor: clr.border }}>
-        {showToday && (
+        {today.show && (
           <AdvisorRow clr={clr} open={openId === 'today'} onToggle={() => toggle('today')}
-            title={overToday
-              ? <>Hari ini sudah lewat <b>{formatCurrency(leftToday)}</b> dari jatah harian</>
-              : <>Hari ini masih aman belanja <b>{formatCurrency(leftToday)}</b></>}>
+            title={today.over
+              ? <>Hari ini sudah lewat <b>{formatCurrency(overBy)}</b> dari jatah harian</>
+              : <>Hari ini masih aman belanja <b>{formatCurrency(safeDaily)}</b></>}>
             <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
               <CalcRow label="Sisa bebas semua amplop" value={formatCurrency(prediction.free)} />
-              <CalcRow label="Hari tersisa" value={`${prediction.days_left} hari`} />
-              <CalcRow label="Jatah per hari = sisa ÷ hari" value={formatCurrency(safeDaily)} strong color={clr.accent} />
-              <CalcRow label="Terpakai hari ini" value={`− ${formatCurrency(todaySpent)}`} />
+              {today.perIncome ? (
+                <>
+                  <CalcRow label="Sampai income berikutnya" value={`${today.days} hari`} />
+                  <CalcRow label={`Jatah hari ini = sisa ÷ ${today.days} hari`} value={formatCurrency(safeDaily)} strong color={clr.accent} />
+                  <CalcRow label="Terpakai hari ini (sudah dipotong)" value={formatCurrency(todaySpent)} />
+                </>
+              ) : (
+                <>
+                  <CalcRow label="Hari tersisa" value={`${prediction.days_left} hari`} />
+                  <CalcRow label="Jatah per hari = sisa ÷ hari" value={formatCurrency(safeDaily)} strong color={clr.accent} />
+                  <CalcRow label="Terpakai hari ini" value={`− ${formatCurrency(todaySpent)}`} />
+                </>
+              )}
+              {rounded && <p className="mt-1" style={{ color: clr.muted }}>Dibulatkan ke bawah ke kelipatan Rp100.</p>}
             </div>
           </AdvisorRow>
         )}
@@ -516,6 +533,9 @@ export default function Dashboard() {
       ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
       : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' }));
   const daysLeft = prediction?.days_left ?? 0;
+  // Satu-satunya tempat jatah aman per hari dibulatkan (ke bawah, Rp100). Judul advisor,
+  // rinciannya, baris Sisa bebas, dan garis Batas aman semua membaca angka ini.
+  const safeDaily = floorRp100(prediction?.safe_daily);
 
   const chartData = buildDailyData(daily, prediction, selectedPeriod);
   const todayStr = new Date().toISOString().split('T')[0];
@@ -680,7 +700,7 @@ export default function Dashboard() {
           info="Total saldo amplop dikurangi amplop tabungan dan uang yang disimpan untuk tagihan. Batang: porsi dana belanja yang masih bebas."
           value={formatShortSigned(sisaBebas)}
           valueClassName={sisaBebas < 0 ? 'text-danger-400' : ''}
-          sub={isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}
+          sub={isCurrentPeriod && safeDaily > 0 ? `≈${shortRp100(safeDaily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}
         >
           <Meter
             value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
@@ -739,6 +759,7 @@ export default function Dashboard() {
           cards={advisorInsights?.cards}
           advisorError={advisorInsights?._error}
           prediction={prediction}
+          safeDaily={safeDaily}
           todaySpent={todaySpent}
           goals={goals}
         />
@@ -754,10 +775,10 @@ export default function Dashboard() {
                   <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
                   <InfoTooltip text="Grafik pengeluaran harian selama periode ini. Garis merah adalah batas aman yang disarankan per hari" position="bottom" />
                 </div>
-                {prediction?.safe_daily > 0 && (
+                {safeDaily > 0 && (
                   <span className="text-xs text-gray-400 flex items-center gap-1">
                     <span className="inline-block w-4 border-t-2 border-dashed border-danger-400"></span>
-                    Batas aman {formatShort(prediction.safe_daily)}/hari
+                    Batas aman {shortRp100(safeDaily)}/hari
                   </span>
                 )}
               </div>
@@ -767,9 +788,9 @@ export default function Dashboard() {
                   <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={45}
                     tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
                   <Tooltip content={<CustomTooltip />} />
-                  {prediction?.safe_daily > 0 && (
-                    <ReferenceLine y={prediction.safe_daily} stroke="#E24B4A" strokeDasharray="4 3" strokeWidth={1.5}
-                      label={{ value: '', position: 'right' }} />
+                  {safeDaily > 0 && (
+                    <ReferenceLine y={safeDaily} stroke="#E24B4A" strokeDasharray="4 3" strokeWidth={1.5}
+                      ifOverflow="extendDomain" label={{ value: '', position: 'right' }} />
                   )}
                   <Bar dataKey="total" name="Pengeluaran" radius={[3, 3, 0, 0]}
                     fill="#0F6E56"
