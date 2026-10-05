@@ -131,7 +131,7 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, goals }) {
   const hasPrediction = prediction && (prediction.total_available ?? prediction.total_allocated) > 0;
   const showToday = hasPrediction && safeDaily > 0;
   const overToday = todaySpent > safeDaily;
-  const leftToday = Math.floor(Math.abs(safeDaily - todaySpent) / 1000) * 1000;
+  const leftToday = Math.abs(safeDaily - todaySpent);
   const items = (cards || [])
     .filter(c => ACTION_TYPES.includes(c.type) && (c.severity === 'danger' || c.severity === 'warning'))
     .slice(0, 2);
@@ -165,7 +165,7 @@ function HeroAdvisor({ cards, advisorError, prediction, todaySpent, goals }) {
           <AdvisorRow clr={clr} open={openId === 'today'} onToggle={() => toggle('today')}
             title={overToday
               ? <>Hari ini sudah lewat <b>{formatCurrency(leftToday)}</b> dari jatah harian</>
-              : <>Hari ini masih aman belanja <b>{formatCurrency(leftToday)}</b></>}>
+              : <>Hari ini masih aman belanja <b>{formatCurrency(safeDaily)}</b></>}>
             <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
               <CalcRow label="Sisa bebas semua amplop" value={formatCurrency(prediction.free)} />
               <CalcRow label="Hari tersisa" value={`${prediction.days_left} hari`} />
