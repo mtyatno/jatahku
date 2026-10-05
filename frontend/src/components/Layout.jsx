@@ -154,8 +154,8 @@ function QuickAddIncome({ onClose }) {
   if (!ready) return <div className="text-center py-8 text-gray-400">Loading...</div>;
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div><label className="label">Jumlah income (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div><label className="label">Jumlah (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
         <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji atau Pendapatan harian" value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
       </div>
       {incomeNum > 0 && (
@@ -178,14 +178,18 @@ function QuickAddIncome({ onClose }) {
               const val = allocations[env.id] || 0;
               const pct = percentages[env.id] || 0;
               return (
-                <div key={env.id} className="flex items-center gap-2">
-                  <span className="w-6 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span>
-                  <span className="text-sm flex-1">{env.name}</span>
-                  <input type="number" className="input text-xs font-mono text-right w-16" placeholder="%" min="0" max="100"
-                    value={pct || ''} onChange={e => handlePercentageChange(env.id, e.target.value)} />
-                  <span className="text-xs text-gray-500 w-4">%</span>
-                  <input type="number" className="input text-sm font-mono text-right w-24" placeholder="0" value={val || ''} min="0"
-                    onChange={e => handleAmountChange(env.id, e.target.value)} />
+                <div key={env.id} className="flex items-start gap-2">
+                  <span className="w-6 flex-shrink-0 flex justify-center pt-2"><EnvelopeIcon value={env.emoji} size={20} /></span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm line-clamp-2 block mb-1.5">{env.name}</span>
+                    <div className="flex items-center gap-1">
+                      <input type="number" className="input text-xs font-mono text-right w-12" placeholder="%" min="0" max="100"
+                        value={pct || ''} onChange={e => handlePercentageChange(env.id, e.target.value)} />
+                      <span className="text-xs text-gray-500 flex-shrink-0">%</span>
+                      <input type="number" className="input text-xs font-mono text-right flex-1 min-w-0" placeholder="0" value={val || ''} min="0"
+                        onChange={e => handleAmountChange(env.id, e.target.value)} />
+                    </div>
+                  </div>
                 </div>
               );
             })}
