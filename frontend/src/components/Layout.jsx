@@ -26,6 +26,10 @@ function QuickAddEnvelope({ onClose }) {
     : <div className="text-center py-8 text-gray-400">Loading...</div>;
 }
 
+// Smallest rupiah denomination in use is Rp100, so allocations snap to it; the leftover goes to Tabungan.
+const RUPIAH_STEP = 100;
+const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
+
 function QuickAddIncome({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
   const [incomeAmount, setIncomeAmount] = useState('');
@@ -51,14 +55,22 @@ function QuickAddIncome({ onClose }) {
       setLoadingAuto(false);
       if (!res.ok) { setError('Gagal mendapatkan saran alokasi'); return; }
       const data = await res.json();
-      const items = data.items || [];
+      const isSink = it => it.purpose === 'saving' || (it.name || '').toLowerCase() === 'tabungan';
+      const fundable = new Set(envelopes.filter(e => e.name !== 'Tabungan' && !e.is_locked).map(e => String(e.id)));
+      const needs = (data.items || [])
+        .filter(it => !isSink(it) && fundable.has(String(it.envelope_id)))
+        .map(it => ({ id: it.envelope_id, need: Math.max(Number(it.target_amount) || 0, Number(it.minimum_amount) || 0) }))
+        .filter(it => it.need > 0);
+      const totalNeed = needs.reduce((s, it) => s + it.need, 0);
+      if (totalNeed <= 0) { setError('Belum ada target atau riwayat belanja amplop untuk dijadikan acuan. Isi manual dulu, ya.'); return; }
+      // Split in proportion to each envelope's monthly need, so a small or daily income is shared instead of filling one envelope first.
+      const scale = Math.min(1, incomeNum / totalNeed);
       const newAllocations = {}, newPercentages = {};
-      items.forEach(item => {
-        const amt = Number(item.recommended_amount) || 0;
+      needs.forEach(({ id, need }) => {
+        const amt = floorRupiah(need * scale);
         if (amt > 0) {
-          newAllocations[item.envelope_id] = amt;
-          const pct = incomeNum > 0 ? Math.round((amt / incomeNum) * 100) : 0;
-          newPercentages[item.envelope_id] = pct;
+          newAllocations[id] = amt;
+          newPercentages[id] = Math.round((amt / incomeNum) * 100);
         }
       });
       setAllocations(newAllocations);
@@ -85,7 +97,7 @@ function QuickAddIncome({ onClose }) {
     const newAllocations = {};
     let totalPct = 0;
     Object.entries(newPercentages).forEach(([id, pct]) => {
-      const amt = Math.round((incomeNum * pct) / 100);
+      const amt = floorRupiah((incomeNum * pct) / 100);
       newAllocations[id] = amt;
       totalPct += pct;
     });
@@ -131,8 +143,13 @@ function QuickAddIncome({ onClose }) {
           <div className="flex gap-3 text-sm">
             <span className="text-gray-400">Income: <b className="text-gray-700">{incomeNum.toLocaleString('id-ID')}</b></span>
             <span className="text-gray-400">Dialokasi: <b className="text-amber-500">{totalAllocated.toLocaleString('id-ID')}</b></span>
-            <span className="text-gray-400">Sisa: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{remainder.toLocaleString('id-ID')}</b></span>
+            <span className="text-gray-400">{remainder >= 0 ? 'Sisa' : 'Kelebihan'}: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{Math.abs(remainder).toLocaleString('id-ID')}</b></span>
           </div>
+          {remainder < 0 && (
+            <p className="text-xs text-red-500">
+              Total alokasi {Math.round((totalAllocated / incomeNum) * 100)}% dari income, lebih Rp{Math.abs(remainder).toLocaleString('id-ID')}. Kurangi persen atau jumlah di salah satu amplop supaya bisa disimpan.
+            </p>
+          )}
           <button type="button" onClick={handleAutoAllocate} disabled={loadingAuto} className="text-xs px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-50">
             {loadingAuto ? 'Memproses...' : 'Bagi otomatis'}
           </button>
