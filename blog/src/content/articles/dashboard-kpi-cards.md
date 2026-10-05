@@ -12,9 +12,9 @@ Buka Dashboard, dan bagian paling atas langsung menjawab "keuanganku gimana peri
 
 ## 1. Dana dialokasi
 
-Total alokasi periode ini ditambah sisa dari periode lalu. Di bawah angkanya tertulis berapa rollover yang ikut, misalnya "+Rp150rb rollover".
+Total alokasi periode ini. Di bawah angkanya tertulis sisa dari periode lalu yang ikut terbawa, misalnya "+Rp150rb rollover".
 
-Batangnya menunjukkan posisi dana itu sekarang, dari kiri ke kanan:
+Batangnya menunjukkan posisi seluruh dana (alokasi ditambah rollover) sekarang, dari kiri ke kanan:
 
 - **Terpakai**: yang sudah dibelanjakan
 - **Tagihan**: yang disisihkan untuk langganan

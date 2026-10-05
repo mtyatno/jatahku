@@ -1,6 +1,6 @@
 ---
 title: "Bagi Otomatis: Income Dibagi ke Amplop Sesuai Kebutuhannya"
-description: "Tombol Bagi otomatis membagi income ke semua amplop sebanding dengan kebutuhan bulanan masing-masing. Nominalnya dibulatkan ke Rp100 dan sisanya masuk Tabungan."
+description: "Tombol Bagi otomatis membagi income ke amplop-amplopmu sebanding dengan kebutuhan bulanan masing-masing. Nominalnya dibulatkan ke Rp100 dan sisanya masuk amplop Tabungan."
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
@@ -16,7 +16,7 @@ Kalau pemasukannya kecil, misalnya hasil narik hari ini, godaannya adalah memasu
 
 1. Ketuk tombol **+** di pojok kanan bawah, lalu pilih **Income**.
 2. Di jendela **Income baru**, isi **Jumlah (Rp)** dan **Keterangan**, misalnya "Gaji" atau "Pendapatan harian".
-3. Ketuk **Bagi otomatis**. Setiap amplop langsung terisi persen dan nominalnya.
+3. Ketuk **Bagi otomatis**. Amplop yang ikut dibagi langsung terisi persen dan nominalnya.
 4. Periksa hasilnya, ubah kalau perlu, lalu ketuk **Simpan Income**.
 
 ## Cara Membaginya
@@ -25,15 +25,15 @@ Kalau pemasukannya kecil, misalnya hasil narik hari ini, godaannya adalah memasu
 
 **2. Bagi sebanding.** Kalau income lebih kecil dari total kebutuhan, setiap amplop mendapat porsi yang sama besar dari kebutuhannya. Rumusnya: kebutuhan amplop × (income ÷ total kebutuhan). Kalau income lebih besar dari total kebutuhan, setiap amplop mendapat kebutuhannya penuh.
 
-**3. Bulatkan ke bawah ke kelipatan Rp100.** Rp100 adalah pecahan rupiah terkecil yang masih dipakai, jadi tidak ada nominal seperti Rp17.352. Karena dibulatkan ke bawah, totalnya tidak pernah melebihi income.
+**3. Bulatkan ke bawah ke kelipatan Rp100.** Jadi tidak ada nominal seperti Rp17.352 yang sulit dibayar dengan uang tunai. Karena dibulatkan ke bawah, totalnya tidak pernah melebihi income.
 
-**4. Sisa masuk Tabungan.** Selisih karena pembulatan, atau kelebihan income di atas total kebutuhan, ditampilkan sebagai "💰 … → Tabungan" dan masuk ke amplop Tabungan saat disimpan.
+**4. Sisa masuk Tabungan.** Selisih karena pembulatan, atau kelebihan income di atas total kebutuhan, ditampilkan sebagai "💰 … → Tabungan". Saat disimpan, sisa itu masuk ke amplop bernama **Tabungan**. Kalau amplop dengan nama persis itu belum ada, Jatahku membuatnya otomatis.
 
-Amplop berjenis **Target menabung** dan amplop yang dikunci tidak ikut dibagi otomatis. Kamu tetap bisa mengisinya secara manual.
+Yang tidak ikut dibagi otomatis: amplop berjenis **Target menabung**, amplop yang dikunci, amplop Tabungan itu sendiri, dan amplop yang belum punya kebutuhan sama sekali. Kamu tetap bisa mengisinya secara manual.
 
 ## Contoh: Pendapatan Harian Rp150.000
 
-Misalkan seorang driver ojol memakai template Driver & Kurir, dan kebutuhan bulanan amplopnya seperti di tabel. Totalnya Rp3.500.000. Hari ini dia mendapat Rp150.000, jadi setiap amplop mendapat 150.000 ÷ 3.500.000, sekitar 4,3% dari kebutuhannya.
+Misalkan seorang driver ojol punya lima amplop dengan kebutuhan bulanan seperti di tabel. Totalnya Rp3.500.000. Hari ini dia mendapat Rp150.000, jadi setiap amplop mendapat 150.000 ÷ 3.500.000, sekitar 4,3% dari kebutuhannya.
 
 | Amplop | Kebutuhan bulanan | Sebelum dibulatkan | Dapat |
 |---|---|---|---|
@@ -43,7 +43,7 @@ Misalkan seorang driver ojol memakai template Driver & Kurir, dan kebutuhan bula
 | 🔧 Servis & Ganti Oli | Rp250.000 | ±Rp10.714 | **Rp10.700** |
 | 🏠 Kebutuhan Rumah | Rp1.300.000 | ±Rp55.714 | **Rp55.700** |
 
-Totalnya Rp149.800. Sisa Rp200 masuk Tabungan. Amplop "💰 Tabungan / Darurat" berjenis Target menabung, jadi tidak ikut dibagi.
+Totalnya Rp149.800. Sisa Rp200 masuk amplop Tabungan.
 
 Dengan amplop yang sama, gaji Rp5.000.000 akan mengisi setiap amplop sesuai kebutuhannya penuh (total Rp3.500.000), dan Rp1.500.000 sisanya masuk Tabungan.
 

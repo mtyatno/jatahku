@@ -10,7 +10,7 @@ featured: false
 
 Membuat amplop melibatkan beberapa keputusan: namanya apa, untuk belanja rutin atau menabung, termasuk kebutuhan atau keinginan, dan dananya dari mana. Sekarang keputusan-keputusan itu dipisah ke dalam empat langkah pendek.
 
-Buka form **Amplop baru** dari halaman Amplop, atau dari tombol **+** di pojok kanan bawah lalu pilih **Amplop**. Di bawah judulnya ada keterangan "Langkah 1 dari 4". Tombol **Lanjut →** membawamu ke langkah berikutnya.
+Buka form **Amplop baru** dari tombol **+** di pojok kanan bawah, lalu pilih **Amplop**. Kalau kamu belum punya amplop sama sekali, halaman Amplop juga menampilkan tombol **Buat Amplop Pertama**. Di bawah judulnya ada keterangan "Langkah 1 dari 4". Tombol **Lanjut →** membawamu ke langkah berikutnya.
 
 ## Langkah 1: Ikon dan Nama
 
@@ -44,7 +44,7 @@ Isi langkah ini tergantung jenis amplop yang kamu pilih.
 
 Jatahku juga menyarankan kategorinya dari nama amplop. Nama seperti "Makan" atau "Listrik" disarankan sebagai Kebutuhan, sedangkan "Kopi" atau "Nongkrong" sebagai Keinginan.
 
-**Target menabung dan Dana persiapan** mengisi targetnya: nama target (opsional), **Jumlah target (Rp)**, dan **Tanggal target** (opsional).
+**Target menabung dan Dana persiapan** bisa langsung diberi target: nama target, **Jumlah target (Rp)**, dan **Tanggal target** (opsional). Targetnya baru tersimpan kalau nama target dan jumlahnya sama-sama diisi. Kalau nama targetnya dikosongkan, amplop tetap dibuat tanpa target.
 
 ## Langkah 4: Pengaturan Lainnya dan Sumber Dana
 
@@ -66,7 +66,7 @@ Ketuk **Buat & Alokasi**, dan amplop langsung siap dipakai.
 
 1. Pilih ikon, ketik "Pajak STNK". Jenisnya otomatis ditebak sebagai Dana persiapan.
 2. Biarkan pilihan **Dana persiapan**.
-3. Isi jumlah target dan tanggal jatuh tempo pajaknya.
+3. Isi nama target (misalnya "Pajak STNK 2027"), jumlah target, dan tanggal jatuh tempo pajaknya.
 4. Lewati Pengaturan lainnya, pilih sumber dana, lalu ketuk **Buat & Alokasi**.
 
 Ada masukan soal form ini? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).

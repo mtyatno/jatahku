@@ -35,7 +35,7 @@ Batas aman hari ini = **sisa bebas ÷ jumlah hari yang harus ditutup**, lalu dib
 | Mingguan | 7 hari |
 | Bulanan dan Tidak Tentu | sisa hari sampai periode budget selesai |
 
-Sisa bebas di sini sudah dipotong belanja hari ini, uang yang disisihkan untuk tagihan langganan, dan saldo amplop tabungan. Penjelasan lengkapnya ada di artikel [Sisa Bebas di Dashboard](/insight/sisa-bebas-dengan-bill-reserve/).
+Sisa bebas di sini dihitung dari amplop Pengeluaran rutin, sudah dipotong belanja hari ini dan uang yang disisihkan untuk tagihan langganan. Amplop tabungan dan Cicilan/Utang tidak ikut. Penjelasan lengkapnya ada di artikel [Sisa Bebas di Dashboard](/insight/sisa-bebas-dengan-bill-reserve/).
 
 **Contoh hitungan:**
 

@@ -25,8 +25,7 @@
 <text x="640" y="421" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="400" fill="white">Kebutuhan Rumah</text>
 <text x="1080" y="421" text-anchor="end" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="white">Rp55.700</text>
 <line x1="640" y1="447" x2="1080" y2="447" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
-<text x="640" y="479" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#4ADE80">Sisa → Tabungan</text>
-<text x="1080" y="479" text-anchor="end" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#4ADE80">Rp200</text>
+<text x="640" y="479" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="#4ADE80">200 → Tabungan</text>
 <text x="60" y="580" text-anchor="start" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
 <text x="170" y="580" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="400" fill="rgba(255,255,255,0.45)">jatahku.com</text>
 </svg>

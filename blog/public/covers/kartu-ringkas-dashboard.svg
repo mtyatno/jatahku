@@ -12,11 +12,11 @@
 <text x="60" y="405" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Satu angka, satu grafik</text>
 <rect x="615" y="112" width="238" height="126" rx="16" fill="rgba(255,255,255,0.12)"/>
 <text x="633" y="146" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.6)">Dana dialokasi</text>
-<text x="633" y="184" text-anchor="start" font-family="system-ui,sans-serif" font-size="26" font-weight="800" fill="white">Rp2.65jt</text>
-<rect x="633" y="208" width="70" height="10" rx="2" fill="#FBBF24"/>
-<rect x="703" y="208" width="20" height="10" rx="2" fill="#CBD5E1"/>
-<rect x="723" y="208" width="35" height="10" rx="2" fill="#A5B4FC"/>
-<rect x="758" y="208" width="77" height="10" rx="2" fill="#4ADE80"/>
+<text x="633" y="184" text-anchor="start" font-family="system-ui,sans-serif" font-size="26" font-weight="800" fill="white">Rp2.5jt</text>
+<rect x="633" y="208" width="83.8" height="10" rx="2" fill="#FBBF24"/>
+<rect x="716.8" y="208" width="22.8" height="10" rx="2" fill="#CBD5E1"/>
+<rect x="739.5999999999999" y="208" width="38.1" height="10" rx="2" fill="#A5B4FC"/>
+<rect x="777.6999999999999" y="208" width="57.2" height="10" rx="2" fill="#4ADE80"/>
 <rect x="865" y="112" width="238" height="126" rx="16" fill="rgba(255,255,255,0.12)"/>
 <text x="883" y="146" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.6)">Terpakai</text>
 <text x="883" y="184" text-anchor="start" font-family="system-ui,sans-serif" font-size="26" font-weight="800" fill="white">Rp1.1jt</text>
@@ -25,7 +25,7 @@
 <text x="633" y="286" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.6)">Sisa bebas</text>
 <text x="633" y="324" text-anchor="start" font-family="system-ui,sans-serif" font-size="26" font-weight="800" fill="white">Rp751rb</text>
 <rect x="633" y="348" width="200" height="10" rx="5" fill="rgba(255,255,255,0.2)"/>
-<rect x="633" y="348" width="92" height="10" rx="5" fill="#4ADE80"/>
+<rect x="633" y="348" width="70" height="10" rx="5" fill="#4ADE80"/>
 <rect x="865" y="252" width="238" height="126" rx="16" fill="rgba(255,255,255,0.12)"/>
 <text x="883" y="286" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="600" fill="rgba(255,255,255,0.6)">Tabungan shared</text>
 <text x="883" y="324" text-anchor="start" font-family="system-ui,sans-serif" font-size="26" font-weight="800" fill="white">Rp500rb</text>

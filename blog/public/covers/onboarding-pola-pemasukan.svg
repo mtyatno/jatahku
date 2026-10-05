@@ -11,7 +11,9 @@
 <text x="60" y="330" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Pemasukan</text>
 <text x="60" y="405" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Onboarding 3 langkah</text>
 <text x="640" y="140" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Pola Pemasukan</text>
-<text x="640" y="175" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="400" fill="rgba(255,255,255,0.6)">Langkah 1 dari 3</text>
+<rect x="640" y="163" width="64" height="10" rx="5" fill="#4ADE80"/>
+<rect x="714" y="163" width="64" height="10" rx="5" fill="rgba(255,255,255,0.25)"/>
+<rect x="788" y="163" width="64" height="10" rx="5" fill="rgba(255,255,255,0.25)"/>
 <rect x="630" y="205" width="225" height="105" rx="16" fill="rgba(255,255,255,0.12)"/>
 <text x="650" y="250" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Bulanan</text>
 <text x="650" y="283" text-anchor="start" font-family="system-ui,sans-serif" font-size="16" font-weight="400" fill="rgba(255,255,255,0.6)">Gaji/Honorar tetap</text>

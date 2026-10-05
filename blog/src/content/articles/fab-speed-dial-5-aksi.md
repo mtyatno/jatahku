@@ -20,7 +20,7 @@ Membuka **Catat pengeluaran**. Kamu bisa mengetik beberapa pengeluaran sekaligus
 kopi 18k, bensin 20k dan parkir 2rb
 ```
 
-Teks itu terbaca sebagai tiga pengeluaran: kopi Rp18.000, bensin Rp20.000, dan parkir Rp2.000. Periksa daftarnya, lalu ketuk **Simpan Semua**.
+Teks itu terbaca sebagai tiga pengeluaran: kopi Rp18.000, bensin Rp20.000, dan parkir Rp2.000. Jatahku menyarankan amplop untuk setiap baris. Pastikan setiap baris sudah punya amplop, karena baris tanpa amplop tidak ikut disimpan. Lalu ketuk **Simpan Semua**.
 
 ## 2. Amplop
 
@@ -45,9 +45,9 @@ Aksi ini belum ada di versi empat aksi. Gunanya untuk menyamakan catatan Jatahku
 
 Jatahku bertanya **"Berapa total uangmu sekarang?"**, yaitu uang tunai ditambah saldo semua rekening dan e-wallet. Lalu ada tiga kemungkinan:
 
-- **Saldo sudah cocok**: catatanmu sudah sesuai.
-- **Ada Rp… pengeluaran yang belum tercatat**: uangmu lebih sedikit dari catatan. Jatahku menyarankan pembagian selisih itu ke amplop berdasarkan pola belanjamu 30 hari terakhir, dan kamu bisa mengubahnya sebelum menyimpan penyesuaian.
-- **Uangmu Rp… lebih banyak dari catatan**: mungkin ada pemasukan yang belum dicatat. Pilih amplop tujuan di **Masukkan ke**.
+- **Sama dengan catatan**: muncul "Cocok! Catatanmu sama dengan uang riil." Tidak ada yang perlu disesuaikan.
+- **Lebih sedikit dari catatan**: muncul "Ada Rp… pengeluaran yang belum tercatat". Jatahku menyarankan pembagian selisih itu ke amplop berdasarkan pola belanjamu 30 hari terakhir, dan kamu bisa mengubahnya sebelum menyimpan penyesuaian.
+- **Lebih banyak dari catatan**: muncul "Uangmu Rp… lebih banyak dari catatan". Mungkin ada pemasukan yang belum dicatat. Pilih amplop tujuannya di **Masukkan ke**.
 
 Cocokkan saldo juga bisa dibuka dari tautan "Cocokkan saldo · terakhir …" di Dashboard. Kalau ternyata salah, cek terakhir bisa dibatalkan dari jendela yang sama.
 
