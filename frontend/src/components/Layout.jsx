@@ -26,6 +26,10 @@ function QuickAddEnvelope({ onClose }) {
     : <div className="text-center py-8 text-gray-400">Loading...</div>;
 }
 
+// Smallest rupiah note in use is Rp1.000, so allocations snap to it; the leftover goes to Tabungan.
+const RUPIAH_STEP = 1000;
+const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
+
 function QuickAddIncome({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
   const [incomeAmount, setIncomeAmount] = useState('');
@@ -63,7 +67,7 @@ function QuickAddIncome({ onClose }) {
       const scale = Math.min(1, incomeNum / totalNeed);
       const newAllocations = {}, newPercentages = {};
       needs.forEach(({ id, need }) => {
-        const amt = Math.floor(need * scale);
+        const amt = floorRupiah(need * scale);
         if (amt > 0) {
           newAllocations[id] = amt;
           newPercentages[id] = Math.round((amt / incomeNum) * 100);
@@ -93,7 +97,7 @@ function QuickAddIncome({ onClose }) {
     const newAllocations = {};
     let totalPct = 0;
     Object.entries(newPercentages).forEach(([id, pct]) => {
-      const amt = Math.round((incomeNum * pct) / 100);
+      const amt = floorRupiah((incomeNum * pct) / 100);
       newAllocations[id] = amt;
       totalPct += pct;
     });
