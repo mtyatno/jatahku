@@ -4,7 +4,7 @@ description: "Tombol + di Jatahku sekarang punya 5 pilihan aksi: Pengeluaran, Am
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/fab-speed-dial.svg
+cover: /covers/fitur-baru-april-2026.svg
 featured: false
 ---
 

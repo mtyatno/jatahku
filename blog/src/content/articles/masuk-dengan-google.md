@@ -4,7 +4,7 @@ description: "Bisa login Jatahku dengan akun Google — tidak perlu ingat passwo
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/google-signin.svg
+cover: /covers/panduan-lengkap.svg
 featured: false
 ---
 
@@ -46,9 +46,8 @@ Klik satu tombol → redirect ke Google → select akun → kembali ke Jatahku �
 1. Buka [jatahku.com](https://jatahku.com) → **"Masuk"**
 2. Klik **"Masuk dengan Google"**
 3. Google login
-4. Jatahku tanya: "Email Gmail kamu cocok dengan akun Jatahku ada?"
-5. Kalau cocok → otomatis link akun, masuk langsung
-6. Kalau tidak cocok → opsi bikin akun baru atau pilih akun existing yang lain
+4. **Otomatis:** Kalau email Gmail cocok dengan akun Jatahku yang sudah ada → langsung link dan masuk
+5. **Kalau email baru:** Jatahku akan bikin akun baru dengan email Google itu — tanpa verifikasi lagi
 
 ---
 

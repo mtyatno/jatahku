@@ -4,7 +4,7 @@ description: "AI Advisor sekarang hitung 'sisa aman' berdasarkan tipe pendapatan
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/ai-advisor-daily-weekly.svg
+cover: /covers/panduan-lengkap.svg
 featured: true
 ---
 

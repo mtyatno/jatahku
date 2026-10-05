@@ -4,7 +4,7 @@ description: "Sisa Bebas sekarang sudah mengurangi uang yang disisihkan untuk su
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/sisa-bebas-accurate.svg
+cover: /covers/cara-pakai-bot-telegram.svg
 featured: false
 ---
 
@@ -71,8 +71,8 @@ Sisa Bebas = Total Alokasi − Terpakai − Bill Reserve − Saving Envelope Bal
 - **Total terpakai: Rp1.100.000**
 
 **Bill Reserve (langganan/recurring):**
-- Asuransi motor: Rp250.000 (due date 8, sudah terlewat, masih reserve)
-- Streaming: Rp49.000 (due date 10)
+- Asuransi motor: Rp250.000 (tanggal 8, sudah terlewat, masih di-reserve)
+- Netflix: Rp49.000 (tanggal 10)
 - **Total reserve: Rp299.000**
 
 **Saving envelope:**
@@ -119,25 +119,25 @@ Aman untuk belanja hari ini
 
 ### 2. AI Advisor Daily Line
 ```
-Batas aman hari ini: Rp24.000/hari
+Batas aman hari ini: Rp24.200/hari
 (Rp751.000 sisa ÷ 31 hari tersisa)
 ```
 
-### 3. Per-Amplop Suggestion
+*Catatan: Untuk ojek driver dan daily earner, sisa aman dihitung sampai income berikutnya (bisa 1-3 hari), bukan sampai 31 hari.*
+
+### 3. Notifikasi per Amplop
 ```
 🍜 Makan
 Balance: Rp300.000
-Daily limit based on sisa bebas: Rp10.000/hari
+Status: On track ✅
 ```
 
-### 4. Analytics & Insights
-```
-Budget forecast:
-- Terpakai: Rp1.100.000
-- Reserve (langganan): Rp299.000
-- Saving target: Rp500.000
-- Benar-benar bebas: Rp751.000
-```
+### 4. Dashboard Breakdown
+Dashboard menampilkan visual breakdown yang detail:
+- **Terpakai:** Rp1.100.000
+- **Reserve (langganan):** Rp299.000
+- **Saving target:** Rp500.000
+- **Benar-benar bebas:** Rp751.000
 
 ---
 
@@ -162,7 +162,7 @@ Kalau ada langganan yang due date sudah lewat (misal streaming sudah missed paym
 - Status: ⚠️ Overdue
 - Reserve: Tetap di-hold sampai dibayar atau di-skip
 
-Rudi akan lihat warning: "Netflix Rp49.000 overdue dari 10 Oktober — perlu bayar atau skip segera."
+Rudi akan lihat warning: "Streaming overdue dari 10 Oktober — perlu bayar atau skip segera."
 
 ---
 

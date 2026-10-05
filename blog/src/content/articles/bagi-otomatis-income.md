@@ -4,7 +4,7 @@ description: "Bagi Otomatis membagi income sesuai target setiap amplop, bukan se
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/bagi-otomatis-income.svg
+cover: /covers/fitur-cooling-period.svg
 featured: false
 ---
 

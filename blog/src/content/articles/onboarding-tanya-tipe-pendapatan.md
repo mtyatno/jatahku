@@ -4,7 +4,7 @@ description: "Pertanyaan pertama saat daftar Jatahku kini adalah: kamu dapat inc
 pubDate: 2026-10-05
 category: tutorial
 author: Tim Jatahku
-cover: /covers/onboarding-income-type.svg
+cover: /covers/cara-mulai-envelope-budgeting.svg
 featured: false
 ---
 

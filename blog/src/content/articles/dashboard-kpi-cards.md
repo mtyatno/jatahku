@@ -4,7 +4,7 @@ description: "Dashboard sekarang punya KPI cards yang menampilkan Dana Dialokasi
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/dashboard-kpi-cards.svg
+cover: /covers/dashboard-analitik-histori.svg
 featured: false
 ---
 

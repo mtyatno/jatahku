@@ -4,7 +4,7 @@ description: "Membuat amplop baru di Jatahku sekarang jadi proses 4-step yang fo
 pubDate: 2026-10-05
 category: tutorial
 author: Tim Jatahku
-cover: /covers/amplop-baru-4-langkah.svg
+cover: /covers/sinking-fund.svg
 featured: false
 ---
 
