@@ -10,10 +10,10 @@ from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_last_n_periods, get_period_info
 from app.models.models import (
     User, Envelope, Transaction, HouseholdMember, Allocation, Income,
-    RecurringTransaction, EnvelopeGroup,
+    RecurringTransaction, EnvelopeGroup, MonthlySnapshot,
 )
 from app.services.advisor import build_allocation_distribution, build_envelope_distribution
-from app.services.reserved import recurring_monthly_reserve
+from app.services.reserved import envelope_reserved
 
 router = APIRouter()
 
@@ -329,6 +329,24 @@ async def spending_prediction(
     )
     total_spent = float(spent_r.scalar())
 
+    # Rollover periode lalu = dana yang sudah ada di amplop sebelum alokasi baru.
+    prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))
+    rollover_r = await db.execute(
+        select(func.coalesce(func.sum(MonthlySnapshot.rollover_amount), 0))
+        .join(Envelope, MonthlySnapshot.envelope_id == Envelope.id)
+        .where(
+            Envelope.household_id == hid,
+            Envelope.is_active == True,
+            Envelope.is_rollover == True,
+            Envelope.purpose == "expense",
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+            MonthlySnapshot.year == prev_start.year,
+            MonthlySnapshot.month == prev_start.month,
+        )
+    )
+    total_rollover = float(rollover_r.scalar())
+    total_available = total_allocated + total_rollover
+
     env_r = await db.execute(
         select(Envelope.id).where(
             Envelope.household_id == hid,
@@ -340,31 +358,43 @@ async def spending_prediction(
     env_ids = [r for r in env_r.scalars().all()]
     total_reserved = 0.0
     for eid in env_ids:
-        rec_r = await db.execute(
-            select(RecurringTransaction).where(
-                RecurringTransaction.envelope_id == eid, RecurringTransaction.is_active == True
-            )
-        )
-        for rec in rec_r.scalars().all():
-            total_reserved += float(recurring_monthly_reserve(
-                rec.frequency.value, rec.amount, rec.next_run, period_end
-            ))
+        total_reserved += float(await envelope_reserved(db, eid, period_start, period_end))
 
     daily_avg = total_spent / days_passed if days_passed > 0 else 0
     predicted_total = daily_avg * days_total
-    remaining = total_allocated - total_spent
+    remaining = total_available - total_spent
     free = remaining - total_reserved
-    safe_daily = free / days_left if days_left > 0 else 0
-    on_track = predicted_total <= total_allocated
+
+    # safe_days = how many days `free` (already net of today's spending) must cover:
+    # - daily/weekly: until the next expected income, 1 / 7 days
+    # - monthly/irregular, NULL/unknown, and any period that has already ended:
+    #   until the period ends (days_left), the original formula
+    income_type = getattr(user, 'income_type', None)
+    if income_type not in ('daily', 'weekly', 'irregular'):
+        income_type = 'monthly'
+    per_income_days = {'daily': 1, 'weekly': 7}.get(income_type)
+
+    if per_income_days and today <= period_end:
+        safe_days = per_income_days
+        safe_daily = free / safe_days if free >= 0 else 0
+    else:
+        safe_days = days_left
+        safe_daily = free / days_left if days_left > 0 else 0
+
+    on_track = predicted_total <= total_available
 
     return {
         "total_allocated": total_allocated,
+        "total_rollover": total_rollover,
+        "total_available": total_available,
         "total_spent": total_spent,
         "total_reserved": total_reserved,
         "remaining": remaining,
         "free": free,
         "daily_avg": round(daily_avg),
         "safe_daily": round(safe_daily),
+        "safe_days": safe_days,
+        "income_type": income_type,
         "predicted_total": round(predicted_total),
         "on_track": on_track,
         "days_passed": days_passed,

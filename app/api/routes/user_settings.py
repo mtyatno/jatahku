@@ -38,6 +38,7 @@ class UpdateProfile(BaseModel):
     name: str | None = None
     timezone: str | None = None
     payday_day: int | None = None
+    income_type: str | None = None
 
 
 class DefaultBehavior(BaseModel):
@@ -119,8 +120,10 @@ async def get_profile(
         "email": user.email,
         "telegram_id": user.telegram_id,
         "has_password": bool(user.password_hash),
+        "google_connected": bool(getattr(user, "google_id", None)),
         "timezone": getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
         "payday_day": getattr(user, 'payday_day', 1) or 1,
+        "income_type": getattr(user, 'income_type', 'monthly') or 'monthly',
         "profile_pic": getattr(user, 'profile_pic', None),
         "plan": plan,
         "default_cooling_threshold": str(user.default_cooling_threshold) if getattr(user, 'default_cooling_threshold', None) else None,
@@ -160,6 +163,11 @@ async def update_profile(
         if not (1 <= req.payday_day <= 31):
             raise HTTPException(400, "payday_day harus antara 1 dan 31")
         user.payday_day = req.payday_day
+    if req.income_type is not None:
+        valid_types = ['monthly', 'weekly', 'daily', 'irregular']
+        if req.income_type not in valid_types:
+            raise HTTPException(400, f"Invalid income_type. Options: {', '.join(valid_types)}")
+        user.income_type = req.income_type
     await db.commit()
     return {"status": "updated"}
 
@@ -304,6 +312,7 @@ async def delete_account(
     user.name = "Deleted User"
     user.password_hash = "DELETED"
     user.telegram_id = None
+    user.google_id = None
     user.profile_pic = None
 
     # Soft delete transactions

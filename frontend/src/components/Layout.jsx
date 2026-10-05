@@ -26,12 +26,19 @@ function QuickAddEnvelope({ onClose }) {
     : <div className="text-center py-8 text-gray-400">Loading...</div>;
 }
 
+// Smallest rupiah denomination in use is Rp100, so allocations snap to it; the leftover goes to Tabungan.
+const RUPIAH_STEP = 100;
+const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
+
 function QuickAddIncome({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
   const [incomeAmount, setIncomeAmount] = useState('');
   const [incomeDesc, setIncomeDesc] = useState('Gaji');
   const [allocations, setAllocations] = useState({});
+  const [percentages, setPercentages] = useState({});
+  const [typedAmounts, setTypedAmounts] = useState({});
   const [saving, setSaving] = useState(false);
+  const [loadingAuto, setLoadingAuto] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
   useEffect(() => { api.getEnvelopeSummary().then(e => { setEnvelopes(e); setReady(true); }); }, []);
@@ -39,6 +46,100 @@ function QuickAddIncome({ onClose }) {
   const incomeNum = Number(incomeAmount) || 0;
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
+
+  const handleAutoAllocate = async () => {
+    if (incomeNum <= 0) { setError('Masukkan jumlah income terlebih dahulu'); return; }
+    setLoadingAuto(true);
+    setError('');
+    try {
+      const res = await api.request('/advisor/allocation-recommendation', { method: 'POST', body: JSON.stringify({ income_amount: incomeNum }) });
+      setLoadingAuto(false);
+      if (!res.ok) { setError('Gagal mendapatkan saran alokasi'); return; }
+      const data = await res.json();
+      const isSink = it => it.purpose === 'saving' || (it.name || '').toLowerCase() === 'tabungan';
+      const fundable = new Set(envelopes.filter(e => e.name !== 'Tabungan' && !e.is_locked).map(e => String(e.id)));
+      const needs = (data.items || [])
+        .filter(it => !isSink(it) && fundable.has(String(it.envelope_id)))
+        .map(it => ({ id: it.envelope_id, need: Math.max(Number(it.target_amount) || 0, Number(it.minimum_amount) || 0) }))
+        .filter(it => it.need > 0);
+      const totalNeed = needs.reduce((s, it) => s + it.need, 0);
+      if (totalNeed <= 0) { setError('Belum ada target atau riwayat belanja amplop untuk dijadikan acuan. Isi manual dulu, ya.'); return; }
+      // Split in proportion to each envelope's monthly need, so a small or daily income is shared instead of filling one envelope first.
+      const scale = Math.min(1, incomeNum / totalNeed);
+      const newAllocations = {}, newPercentages = {};
+      needs.forEach(({ id, need }) => {
+        const amt = floorRupiah(need * scale);
+        if (amt > 0) {
+          newAllocations[id] = amt;
+          newPercentages[id] = Math.round((amt / incomeNum) * 100);
+        }
+      });
+      setAllocations(newAllocations);
+      setPercentages(newPercentages);
+      setTypedAmounts({});
+    } catch (err) {
+      setLoadingAuto(false);
+      setError('Gagal mendapatkan saran alokasi');
+    }
+  };
+
+  const handlePercentageChange = (envId, pct) => {
+    const newPct = Number(pct) || 0;
+    if (newPct > 100) return;
+    const newPercentages = { ...percentages };
+    const newAllocations = { ...allocations };
+    if (newPct === 0) {
+      delete newPercentages[envId];
+      delete newAllocations[envId];
+    } else {
+      newPercentages[envId] = newPct;
+      newAllocations[envId] = floorRupiah((incomeNum * newPct) / 100);
+    }
+    setPercentages(newPercentages);
+    setAllocations(newAllocations);
+    setTypedAmounts(prev => { const next = { ...prev }; delete next[envId]; return next; });
+  };
+
+  const handleAmountChange = (envId, amt) => {
+    const newAmt = Number(amt) || 0;
+    const newAllocations = { ...allocations };
+    const newPercentages = { ...percentages };
+    if (newAmt === 0) {
+      delete newAllocations[envId];
+      delete newPercentages[envId];
+    } else {
+      if (newAmt > incomeNum) return;
+      newAllocations[envId] = newAmt;
+      newPercentages[envId] = incomeNum > 0 ? Math.round((newAmt / incomeNum) * 100) : 0;
+    }
+    setAllocations(newAllocations);
+    setPercentages(newPercentages);
+    setTypedAmounts(prev => {
+      const next = { ...prev };
+      if (newAmt === 0) delete next[envId]; else next[envId] = true;
+      return next;
+    });
+  };
+
+  // When the income changes, percent-based rows follow it; rupiah amounts the user typed stay put.
+  useEffect(() => {
+    if (incomeNum <= 0) return;
+    setAllocations(prev => {
+      const next = {};
+      Object.keys(prev).forEach(id => {
+        next[id] = typedAmounts[id] ? prev[id] : floorRupiah((incomeNum * (percentages[id] || 0)) / 100);
+      });
+      return next;
+    });
+    setPercentages(prev => {
+      const next = { ...prev };
+      Object.keys(typedAmounts).forEach(id => {
+        if (allocations[id]) next[id] = Math.round((allocations[id] / incomeNum) * 100);
+      });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomeNum]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -53,24 +154,42 @@ function QuickAddIncome({ onClose }) {
   if (!ready) return <div className="text-center py-8 text-gray-400">Loading...</div>;
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div><label className="label">Jumlah income (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
-        <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji, Freelance..." value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
+      <div className="grid grid-cols-2 gap-3 items-end">
+        <div><label className="label">Jumlah (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
+        <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji atau Pendapatan harian" value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
       </div>
       {incomeNum > 0 && (
         <div className="space-y-3">
           <div className="flex gap-3 text-sm">
             <span className="text-gray-400">Income: <b className="text-gray-700">{incomeNum.toLocaleString('id-ID')}</b></span>
             <span className="text-gray-400">Dialokasi: <b className="text-amber-500">{totalAllocated.toLocaleString('id-ID')}</b></span>
-            <span className="text-gray-400">Sisa: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{remainder.toLocaleString('id-ID')}</b></span>
+            <span className="text-gray-400">{remainder >= 0 ? 'Sisa' : 'Kelebihan'}: <b className={remainder >= 0 ? 'text-brand-600' : 'text-red-500'}>{Math.abs(remainder).toLocaleString('id-ID')}</b></span>
           </div>
+          {remainder < 0 && (
+            <p className="text-xs text-red-500">
+              Total alokasi {Math.round((totalAllocated / incomeNum) * 100)}% dari income, lebih Rp{Math.abs(remainder).toLocaleString('id-ID')}. Kurangi persen atau jumlah di salah satu amplop supaya bisa disimpan.
+            </p>
+          )}
+          <button type="button" onClick={handleAutoAllocate} disabled={loadingAuto} className="text-xs px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:opacity-50">
+            {loadingAuto ? 'Memproses...' : 'Bagi otomatis'}
+          </button>
           <div className="space-y-2 max-h-48 overflow-y-auto">
             {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
               const val = allocations[env.id] || 0;
+              const pct = percentages[env.id] || 0;
               return (
-                <div key={env.id} className="flex items-center gap-2"><span className="w-6 flex justify-center"><EnvelopeIcon value={env.emoji} size={20} /></span><span className="text-sm flex-1">{env.name}</span>
-                  <input type="number" className="input text-sm font-mono text-right w-28" placeholder="0" value={val || ''} min="0"
-                    onChange={e => setAllocations(prev => ({ ...prev, [env.id]: Number(e.target.value) || 0 }))} />
+                <div key={env.id} className="flex items-start gap-2">
+                  <span className="w-6 flex-shrink-0 flex justify-center pt-2"><EnvelopeIcon value={env.emoji} size={20} /></span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm line-clamp-2 block mb-1.5">{env.name}</span>
+                    <div className="flex items-center gap-1">
+                      <input type="number" className="input text-xs font-mono text-right w-12" placeholder="%" min="0" max="100"
+                        value={pct || ''} onChange={e => handlePercentageChange(env.id, e.target.value)} />
+                      <span className="text-xs text-gray-500 flex-shrink-0">%</span>
+                      <input type="number" className="input text-xs font-mono text-right flex-1 min-w-0" placeholder="0" value={val || ''} min="0"
+                        onChange={e => handleAmountChange(env.id, e.target.value)} />
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -87,8 +206,55 @@ function QuickAddIncome({ onClose }) {
   );
 }
 
-function QuickAddLangganan({ onClose }) {
-  return <RecurringModal onClose={onClose} onSaved={onClose} />;
+function CombinedLanggananModal({ onClose }) {
+  const [tab, setTab] = useState('add');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getRecurring().then(d => {
+      setItems(d || []);
+      const unpaid = d?.some(i => i.status !== 'paid');
+      if (unpaid) setTab('pay');
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 border-b border-gray-200">
+        <button
+          onClick={() => setTab('add')}
+          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+            tab === 'add'
+              ? 'border-brand-600 text-brand-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Tambah Langganan
+        </button>
+        <button
+          onClick={() => setTab('pay')}
+          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+            tab === 'pay'
+              ? 'border-brand-600 text-brand-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Bayar Langganan
+        </button>
+      </div>
+
+      <div>
+        {tab === 'add' && <RecurringModal onClose={onClose} onSaved={() => { api.getRecurring().then(d => setItems(d || [])); }} />}
+        {tab === 'pay' && loading ? (
+          <div className="text-center py-8 text-gray-400">Loading...</div>
+        ) : (
+          <PaySubscriptions onClose={onClose} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 const FAB_OPTIONS = [
@@ -96,7 +262,6 @@ const FAB_OPTIONS = [
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
-  { key: 'paybill', icon: 'card', label: 'Bayar langganan' },
   { key: 'balance', icon: 'balance', label: 'Cocokkan saldo' },
 ];
 
@@ -285,15 +450,13 @@ export default function Layout() {
               {fabAction === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
               {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
               {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
-              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan baru</>}
-              {fabAction === 'paybill' && <><Icon name="card" size={22} /> Bayar langganan</>}
+              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
               {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
             </h3>
             {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}
             {fabAction === 'income' && <QuickAddIncome onClose={() => setFabAction(null)} />}
-            {fabAction === 'langganan' && <QuickAddLangganan onClose={() => setFabAction(null)} />}
-            {fabAction === 'paybill' && <PaySubscriptions onClose={() => setFabAction(null)} />}
+            {fabAction === 'langganan' && <CombinedLanggananModal onClose={() => setFabAction(null)} />}
             {fabAction === 'balance' && <BalanceCheck onClose={() => setFabAction(null)} />}
           </div>
         </div>

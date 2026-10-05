@@ -166,9 +166,10 @@ export default function Analytics() {
   const topTxns = [...txns].filter(t => !t.is_deleted && !t.is_adjustment)
     .sort((a, b) => Number(b.amount) - Number(a.amount)).slice(0, 5);
   const p = prediction || {};
-  const hasPred = p.total_allocated > 0;
-  const spentPct = hasPred ? Math.min(Math.round((p.total_spent / p.total_allocated) * 100), 100) : 0;
-  const cashflow = hasPred ? p.total_allocated - p.predicted_total : null;
+  const available = p.total_available ?? p.total_allocated ?? 0;
+  const hasPred = available > 0;
+  const spentPct = hasPred ? Math.min(Math.round((p.total_spent / available) * 100), 100) : 0;
+  const cashflow = hasPred ? available - p.predicted_total : null;
   const perhatian = envelopes.filter(e => (e.purpose || 'expense') === 'expense' && fundingState(e) !== 'ok').length;
   const subsTotal = monthlyEquivalentTotal(recurring);
   const subsUnpaid = unpaidMonthlyTotal(recurring);
@@ -219,7 +220,7 @@ export default function Analytics() {
               </span>
             )}
           </div>
-          <p className="font-display text-2xl font-bold">{formatShort(p.total_allocated || 0)}</p>
+          <p className="font-display text-2xl font-bold">{formatShort(available)}</p>
           <div className="h-2 rounded-full bg-gray-100 overflow-hidden mt-2 mb-3">
             <div className={`h-full rounded-full ${spentPct >= 90 ? 'bg-danger-400' : spentPct >= 70 ? 'bg-amber-400' : 'bg-brand-400'}`} style={{ width: `${spentPct}%` }} />
           </div>
@@ -303,7 +304,7 @@ export default function Analytics() {
                   <YAxis tick={{fontSize: 11}} tickLine={false} axisLine={false}
                     tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
                   <Tooltip content={<CustomTooltip />} />
-                  {p.safe_daily > 0 && <ReferenceLine y={p.safe_daily} stroke="#E24B4A" strokeDasharray="4 4" />}
+                  {p.safe_daily > 0 && <ReferenceLine y={p.safe_daily} stroke="#E24B4A" strokeDasharray="4 4" ifOverflow="extendDomain" />}
                   <Bar dataKey="total" name="Pengeluaran" fill="#0F6E56" radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>

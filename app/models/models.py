@@ -63,6 +63,7 @@ class User(TimestampMixin, Base):
     # Kolom whatsapp_id & phone masih ada di DB (fitur WhatsApp dihapus Okt 2026,
     # sengaja tanpa migrasi) — tidak dipetakan lagi di model.
     password_hash: Mapped[str | None] = mapped_column(String(255))
+    google_id: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(30), default="Asia/Jakarta")
     profile_pic: Mapped[str | None] = mapped_column(String(500), nullable=True)
     default_cooling_threshold: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
@@ -70,6 +71,7 @@ class User(TimestampMixin, Base):
     default_is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     plan: Mapped[str | None] = mapped_column(String(10), default="basic")
     payday_day: Mapped[int] = mapped_column(Integer, default=1)
+    income_type: Mapped[str] = mapped_column(String(20), default="monthly")
     last_login: Mapped[datetime | None] = mapped_column(nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 

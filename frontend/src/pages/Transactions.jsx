@@ -193,7 +193,11 @@ export default function Transactions() {
         </div>
         <div className="relative flex-shrink-0">
           <button onClick={() => setMoreOpen(v => !v)} className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 text-gray-600 bg-white hover:bg-gray-50 inline-flex items-center gap-2">
-            Filter Lainnya <Icon name="chevron" size={14} weight="bold" className="text-gray-400" />
+            Filter Lainnya
+            {source !== 'all' && (
+              <span className="w-2 h-2 rounded-full bg-brand-600 flex-shrink-0"></span>
+            )}
+            <Icon name="chevron" size={14} weight="bold" className="text-gray-400" />
           </button>
           {moreOpen && (
             <>
@@ -204,45 +208,57 @@ export default function Transactions() {
                   <button key={s.key} onClick={() => { setSortBy(s.key); setMoreOpen(false); }}
                     className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${sortBy === s.key ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>{s.label}</button>
                 ))}
+                <div className="h-px bg-gray-100 my-1" />
+                <p className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sumber</p>
+                <button onClick={() => { setSource('all'); setMoreOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${source === 'all' ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
+                  Semua Sumber
+                </button>
+                <button onClick={() => { setSource('telegram'); setMoreOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${source === 'telegram' ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
+                  <Icon name="telegram" size={14} color={source === 'telegram' ? '#229ED9' : '#6b7280'} /> Telegram
+                </button>
+                <button onClick={() => { setSource('webapp'); setMoreOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 ${source === 'webapp' ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
+                  <Icon name="globe" size={14} color={source === 'webapp' ? '#6b7280' : '#6b7280'} /> WebApp
+                </button>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Envelope + source chips */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <button onClick={() => setFilter('all')} className={chipCls(filter === 'all')}>Semua <span className={countBadge(filter === 'all')}>{transactions.length}</span></button>
-        {visibleEnvs.map(env => (
-          <button key={env.id} onClick={() => setFilter(env.id)} className={chipCls(filter === env.id)}>
-            <EnvelopeIcon value={env.emoji} size={15} color="currentColor" /> {env.name} <span className={countBadge(filter === env.id)}>{env._c}</span>
-          </button>
-        ))}
-        {hiddenEnvs.length > 0 && (
-          <div className="relative">
-            <button onClick={() => setShowMoreFilter(v => !v)} className={chipCls(activeInHidden)}>
-              {activeInHidden ? <><EnvelopeIcon value={envById[filter]?.emoji} size={15} color="currentColor" /> {envById[filter]?.name}</> : <>+{hiddenEnvs.length} lainnya</>}
-              <Icon name="chevron" size={13} weight="bold" />
-            </button>
-            {showMoreFilter && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setShowMoreFilter(false)} />
-                <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-100 rounded-xl shadow-lg py-1 min-w-[200px] max-h-64 overflow-y-auto">
-                  {hiddenEnvs.map(env => (
-                    <button key={env.id} onClick={() => { setFilter(env.id); setShowMoreFilter(false); }}
-                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center justify-between ${filter === env.id ? 'text-brand-600 font-medium' : 'text-gray-600'}`}>
-                      <span className="inline-flex items-center gap-1.5"><EnvelopeIcon value={env.emoji} size={15} color="currentColor" /> {env.name}</span>
-                      <span className="text-xs text-gray-400">{env._c}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+      {/* Envelope filter dropdown */}
+      <div className="relative">
+        <button onClick={() => setShowMoreFilter(v => !v)}
+          className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 text-gray-600 bg-white hover:bg-gray-50 inline-flex items-center gap-2 transition-colors">
+          {filter === 'all' ? (
+            <>Semua Amplop <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{transactions.length}</span></>
+          ) : (
+            <><EnvelopeIcon value={envById[filter]?.emoji} size={15} color="currentColor" /> {envById[filter]?.name}</>
+          )}
+          <Icon name="chevron" size={14} weight="bold" className="text-gray-400" />
+        </button>
+        {showMoreFilter && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowMoreFilter(false)} />
+            <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-gray-100 rounded-xl shadow-lg py-1 min-w-[240px] max-h-80 overflow-y-auto">
+              <button onClick={() => { setFilter('all'); setShowMoreFilter(false); }}
+                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center justify-between ${filter === 'all' ? 'text-brand-600 font-medium bg-brand-50' : 'text-gray-600'}`}>
+                <span>Semua Amplop</span>
+                <span className="text-xs text-gray-400">{transactions.length}</span>
+              </button>
+              <div className="h-px bg-gray-100 my-1" />
+              {chipEnvs.map(env => (
+                <button key={env.id} onClick={() => { setFilter(env.id); setShowMoreFilter(false); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 flex items-center justify-between ${filter === env.id ? 'text-brand-600 font-medium bg-brand-50' : 'text-gray-600'}`}>
+                  <span className="inline-flex items-center gap-1.5"><EnvelopeIcon value={env.emoji} size={15} color="currentColor" /> {env.name}</span>
+                  <span className="text-xs text-gray-400">{env._c}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
-        <div className="w-px h-5 bg-gray-200 mx-1" />
-        <button onClick={() => setSource(source === 'telegram' ? 'all' : 'telegram')} className={chipCls(source === 'telegram')}><Icon name="telegram" size={14} color={source === 'telegram' ? '#fff' : '#229ED9'} /> Telegram</button>
-        <button onClick={() => setSource(source === 'webapp' ? 'all' : 'webapp')} className={chipCls(source === 'webapp')}><Icon name="globe" size={14} color={source === 'webapp' ? '#fff' : '#6b7280'} /> WebApp</button>
       </div>
 
       {/* Time tabs */}

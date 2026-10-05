@@ -3,10 +3,14 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
-import { formatShort, formatCurrency, titleCase } from '../lib/utils';
+import { formatShort, formatShortSigned, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
+import { InfoTooltip } from '../components/InfoTooltip';
+import { KpiCard, Meter, FundsBar, EnvelopeStrip, SpendSparkline, kpiPalette } from '../components/KpiCard';
+import { envelopeStrip, fundsBreakdown, freeShare, savingsProgress, dailySeries, localDateStr } from '../lib/kpiVisuals';
+import { todayAdvice } from '../lib/advisorToday';
 import { fundingState } from '../lib/envelopeFunding';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
@@ -68,163 +72,185 @@ function buildDailyData(raw, prediction, periodDates = null) {
   return result;
 }
 
-function HeroAdvisor({ cards, advisorError, prediction, todaySpent, envelopes, goals }) {
-  const { mode } = useTheme();
-  const isDark = mode === 'dark';
-  const tacticalLines = [];
-  const safeDaily = prediction?.safe_daily;
-  const hasPrediction = prediction && prediction.total_allocated > 0;
-
-  if (hasPrediction && safeDaily > 0) {
-    if (todaySpent > 0) {
-      const ratio = todaySpent / safeDaily;
-      const sisa = safeDaily - todaySpent;
-      if (ratio >= 1.5) {
-        tacticalLines.push({ icon: '🔴', text: `Overspend ${ratio.toFixed(1)}x dari batas aman (${formatCurrency(safeDaily)}/hari)`, lvl: 'danger' });
-      } else if (ratio >= 1.0) {
-        tacticalLines.push({ icon: '🟠', text: `Pengeluaran ${formatCurrency(todaySpent)} melebihi batas aman ${formatCurrency(safeDaily)}/hari`, lvl: 'warning' });
-      } else if (ratio <= 0.5) {
-        tacticalLines.push({ icon: '🎉', text: `Hari ini hemat! Sisa ${formatCurrency(sisa)} bisa ditabung.`, lvl: 'reward' });
-      } else {
-        tacticalLines.push({ icon: '✅', text: `Pengeluaran ${formatCurrency(todaySpent)} — masih aman, sisa ${formatCurrency(sisa)}.`, lvl: 'safe' });
-      }
-    } else {
-      tacticalLines.push({ icon: '🎉', text: `Belum ada pengeluaran hari ini. Jatah ${formatCurrency(safeDaily)} masih utuh!`, lvl: 'reward' });
-    }
-  }
-
-  const urgent = [...(envelopes || [])]
-    .filter(e => Number(e.allocated) > 0 && e.spent_ratio >= 0.7)
-    .sort((a, b) => b.spent_ratio - a.spent_ratio)
-    .slice(0, 3);
-
-  urgent.forEach(e => {
-    const pct = Math.round(e.spent_ratio * 100);
-    if (e.spent_ratio >= 1.0) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} sudah habis (${pct}%)`, lvl: 'danger' });
-    } else if (e.spent_ratio >= 0.9) {
-      tacticalLines.push({ icon: '🔴', text: `${e.emoji} ${titleCase(e.name)} hampir habis (${pct}%)`, lvl: 'danger' });
-    } else {
-      tacticalLines.push({ icon: '⚠️', text: `${e.emoji} ${titleCase(e.name)} mulai menipis (${pct}%)`, lvl: 'warning' });
-    }
-  });
-
-  const hasTactical = tacticalLines.length > 0;
-  const hasCards = cards?.length > 0;
-  const hasGoals = goals?.length > 0;
-  if (!hasTactical && !hasCards && !hasGoals && !advisorError) return null;
-
-  const clr = isDark ? {
-    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#64748b',
-  } : {
-    bg: hasPrediction ? '#F8FAFC' : '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#94A3B8',
-  };
-
+function CalcRow({ label, value, strong, color }) {
   return (
-        <div className="rounded-2xl p-5" style={{
-          background: clr.bg, border: `1px solid ${clr.border}`,
-          boxShadow: isDark ? '0 0 0 1px rgba(52,211,153,0.12), 0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
-        }}>
-      <div className="flex items-center gap-2 mb-4">
-        <Icon name="advisor" size={20} color={clr.accent} />
-        <h2 className="font-display font-bold text-base" style={{ color: clr.title }}>AI Advisor</h2>
-        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#0F6E5610', color: clr.accent }}>Beta</span>
-      </div>
+    <div className="flex justify-between gap-3 py-0.5">
+      <span>{label}</span>
+      <span className={strong ? 'font-semibold' : ''} style={color ? { color } : undefined}>{value}</span>
+    </div>
+  );
+}
 
-      {advisorError && (
-        <p className="text-xs mb-3 flex items-center gap-1.5" style={{ color: clr.muted }}>
-          <Icon name="warning" size={13} color={clr.muted} /> Insight sementara tak tersedia
-        </p>
+function AdviceCalc({ detail, clr }) {
+  const d = detail;
+  const excluded = [
+    d.excluded_adjustment > 0 && `penyesuaian cocokkan saldo ${formatCurrency(d.excluded_adjustment)}`,
+    d.excluded_recurring > 0 && `tagihan rutin ${formatCurrency(d.excluded_recurring)}`,
+    d.excluded_outlier > 0 && `belanja besar satu kali ${formatCurrency(d.excluded_outlier)}`,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
+      <CalcRow label="Dana amplop" value={formatCurrency(d.available)} />
+      <CalcRow label="Terpakai" value={`− ${formatCurrency(d.spent)}`} />
+      <CalcRow label="Sisa" value={formatCurrency(d.remaining)} strong />
+      <div className="my-1.5 border-t" style={{ borderColor: clr.border }} />
+      {d.horizon_days ? (
+        <>
+          <CalcRow label="Sampai income berikutnya" value={`${d.horizon_days} hari`} />
+          {d.remaining > 0 && (
+            <CalcRow label={`Batas aman = sisa ÷ ${d.horizon_days} hari`} value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+          )}
+        </>
+      ) : (
+        <>
+          <CalcRow label={`Hari tersisa${d.period_end ? ` (s.d. ${d.period_end})` : ''}`} value={`${d.days_remaining} hari`} />
+          {d.remaining > 0 && (
+            <CalcRow label="Batas aman = sisa ÷ hari tersisa" value={`${formatCurrency(d.safe_daily)}/hari`} strong color={clr.accent} />
+          )}
+        </>
       )}
-
-      {hasTactical && (
-        <div className="mb-4">
-          <p className="text-xs font-semibold mb-2 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="dashboard" size={14} color={clr.accent} /> Hari ini</p>
-          <div className="space-y-1.5">
-            {tacticalLines.map((item, i) => (
-              <p key={i} className="text-sm flex items-start gap-1.5" style={{ color: item.lvl === 'danger' ? (isDark ? '#fca5a5' : '#991B1B') : item.lvl === 'warning' ? (isDark ? '#fde68a' : '#92400E') : clr.text }}>
-                <span className="shrink-0">{item.icon}</span>
-                <span dangerouslySetInnerHTML={{__html: item.text.replace(/(\d[\d.,]*(?:\s*(?:jt|juta|rb|ribu|k|%|x|hari)))/gi, '<b>$1</b>')}} />
-              </p>
-            ))}
-          </div>
-          {safeDaily > 0 && (
-            <p className="text-xs mt-2" style={{ color: clr.muted }}>
-              Batas aman <strong>{formatCurrency(safeDaily)}/hari</strong> · Sisa {prediction.days_left} hari · Dana bebas {formatCurrency(prediction.free)}
-            </p>
-          )}
-        </div>
-      )}
-
-      {hasCards && cards.map((card, ci) => {
-        const cs = isDark ? {
-          danger: { bg: '#450a0a', border: '#7f1d1d', txt: '#fca5a5' },
-          warning: { bg: '#2d1f00', border: '#78350f', txt: '#fde68a' },
-          info: { bg: '#172554', border: '#1e40af', txt: '#93c5fd' },
-          positive: { bg: '#052e16', border: '#166534', txt: '#86efac' },
-        }[card.severity] || { bg: '#1e293b', border: '#475569', txt: '#cbd5e1' } : {
-          danger: { bg: '#FEF2F2', border: '#FECACA', txt: '#7F1D1D' },
-          warning: { bg: '#FFFBEB', border: '#FDE68A', txt: '#78350F' },
-          info: { bg: '#EFF6FF', border: '#BFDBFE', txt: '#1E3A8A' },
-          positive: { bg: '#F0FDF9', border: '#A7F3D0', txt: '#065F46' },
-        }[card.severity] || { bg: '#F8FAFC', border: '#E2E8F0', txt: '#475569' };
-        return (
-          <div key={card.id} className="rounded-xl p-3.5 mb-3 last:mb-0" style={{ background: cs.bg, border: `1px solid ${cs.border}` }}>
-            <p className="text-xs font-semibold mb-2" style={{ color: cs.txt }}>{renderWithIcons(card.title, 15, cs.txt)}</p>
-            <div className="text-xs space-y-1.5" style={{ color: cs.txt }}>
-              {String(card.body || '').split('\n').map((line, li) =>
-                line.trim() === ''
-                  ? <div key={li} className="h-1.5" />
-                  : <p key={li} className="leading-relaxed">{renderWithIcons(line, 14, cs.txt)}</p>
-              )}
-            </div>
-            {card.primary_action?.route && (
-              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 text-brand-600 hover:underline">
-                {card.primary_action.label || 'Lihat detail'} →
-              </Link>
-            )}
-          </div>
-        );
-      })}
-
-      {goals?.length > 0 && (
-        <div className="mt-3 pt-3 border-t" style={{ borderColor: clr.border }}>
-          <p className="text-xs font-semibold mb-2.5 uppercase tracking-wide flex items-center gap-1.5" style={{ color: clr.accent }}><Icon name="target" size={14} color={clr.accent} /> Target Menabung</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {goals.filter(g => !g.is_achieved).slice(0, 4).map(goal => {
-              const pct = Math.round(goal.progress_pct);
-              return (
-                <div key={goal.id}>
-                  <div className="flex items-center gap-2 text-sm mb-1" style={{ color: clr.text }}>
-                    <EnvelopeIcon value={goal.envelope_emoji} size={18} color={SAVING_ACCENT} />
-                    <span className="truncate">{goal.name}</span>
-                    <span className="font-semibold ml-auto text-xs" style={{ color: goal.is_achieved ? '#059669' : pct > 0 ? '#D97706' : clr.muted }}>
-                      {pct}%
-                    </span>
-                  </div>
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? '#334155' : '#F1F5F9' }}>
-                    <div className="h-full rounded-full transition-all duration-700"
-                      style={{ width: `${Math.max(pct, 2)}%`, background: pct > 0 ? '#D97706' : (isDark ? '#475569' : '#E5E7EB') }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {goals.filter(g => !g.is_achieved).length > 4 && (
-            <Link to="/envelopes" className="text-xs mt-2 inline-block" style={{ color: clr.accent }}>
-              → Lihat {goals.filter(g => !g.is_achieved).length} target
-            </Link>
-          )}
-          {goals.some(g => g.is_achieved) && (
-            <p className="text-xs mt-1 flex items-center gap-1" style={{ color: isDark ? '#86efac' : '#059669' }}>
-              <Icon name="check" size={13} weight="fill" /> {goals.filter(g => g.is_achieved).length} target tercapai!
-            </p>
-          )}
-        </div>
+      <CalcRow label={`Kecepatan sekarang (${d.days_used} hari berjalan)`} value={`${formatCurrency(d.daily_rate)}/hari`} />
+      {excluded.length > 0 && (
+        <p className="mt-1.5" style={{ color: clr.muted }}>Tidak dihitung sebagai kebiasaan harian: {excluded.join(', ')}.</p>
       )}
     </div>
   );
 }
+
+const ACTION_TYPES = ['env_depletion', 'subscription_pressure'];
+
+// Uang pecahan terkecil Rp100: jatah harian dan selisihnya dibulatkan ke bawah ke kelipatan Rp100.
+const floorRp100 = (v) => Math.floor((Number(v) || 0) / 100) * 100;
+// Format singkat angka kelipatan Rp100 tanpa membulatkan lagi: 1.900 → Rp1,9rb, 50.000 → Rp50rb.
+const shortRp100 = (v) => (v >= 1000
+  ? `Rp${(v / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })}rb`
+  : `Rp${v}`);
+
+function AdvisorRow({ open, onToggle, dot, clr, children, title }) {
+  return (
+    <div className="py-3" style={{ borderColor: clr.border }}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 text-left">
+        {dot && <span className="w-2 h-2 rounded-full shrink-0" style={{ background: dot }} />}
+        <span className="flex-1 min-w-0 text-sm font-medium leading-snug" style={{ color: clr.title }}>{title}</span>
+        <span className="text-xs shrink-0 transition-transform" style={{ color: clr.muted, transform: open ? 'rotate(180deg)' : 'none' }}>▾</span>
+      </button>
+      {open && <div className={dot ? 'pl-5' : ''}>{children}</div>}
+    </div>
+  );
+}
+
+function HeroAdvisor({ cards, advisorError, prediction, safeDaily, todaySpent, goals }) {
+  const { mode } = useTheme();
+  const isDark = mode === 'dark';
+  const [openId, setOpenId] = useState(null);
+  const toggle = (id) => setOpenId(openId === id ? null : id);
+
+  const today = todayAdvice(prediction, todaySpent, safeDaily);
+  const overBy = floorRp100(today.overBy);
+  const rounded = safeDaily !== (prediction?.safe_daily || 0) || overBy !== today.overBy;
+  const items = (cards || [])
+    .filter(c => ACTION_TYPES.includes(c.type) && (c.severity === 'danger' || c.severity === 'warning'))
+    .slice(0, 2);
+  const activeGoals = (goals || []).filter(g => !g.is_achieved);
+  if (!today.show && !items.length && !activeGoals.length && !advisorError) return null;
+
+  const clr = isDark ? {
+    bg: '#1e293b', border: '#334155', accent: '#34d399', title: '#f1f5f9', text: '#cbd5e1', muted: '#94a3b8', inset: '#0f172a',
+    dot: { danger: '#f87171', warning: '#fbbf24' },
+  } : {
+    bg: '#FFFFFF', border: '#E2E8F0', accent: '#0F6E56', title: '#1E293B', text: '#475569', muted: '#64748B', inset: '#F1F5F9',
+    dot: { danger: '#DC2626', warning: '#D97706' },
+  };
+
+  return (
+    <div className="rounded-2xl px-5 py-4" style={{
+      background: clr.bg, border: `1px solid ${clr.border}`,
+      boxShadow: isDark ? '0 4px 20px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15,110,86,0.06)',
+    }}>
+      <div className="flex items-center gap-2 mb-1">
+        <Icon name="advisor" size={18} color={clr.accent} />
+        <h2 className="font-display font-bold text-sm" style={{ color: clr.title }}>AI Advisor</h2>
+      </div>
+
+      {advisorError && (
+        <p className="text-xs py-2" style={{ color: clr.muted }}>Saran sementara tidak tersedia.</p>
+      )}
+
+      <div className="divide-y" style={{ borderColor: clr.border }}>
+        {today.show && (
+          <AdvisorRow clr={clr} open={openId === 'today'} onToggle={() => toggle('today')}
+            title={today.over
+              ? <>Hari ini sudah lewat <b>{formatCurrency(overBy)}</b> dari jatah harian</>
+              : <>Hari ini masih aman belanja <b>{formatCurrency(safeDaily)}</b></>}>
+            <div className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: clr.inset, color: clr.text }}>
+              <CalcRow label="Sisa bebas semua amplop" value={formatCurrency(prediction.free)} />
+              {today.perIncome ? (
+                <>
+                  <CalcRow label="Sampai income berikutnya" value={`${today.days} hari`} />
+                  <CalcRow label={`Jatah hari ini = sisa ÷ ${today.days} hari`} value={formatCurrency(safeDaily)} strong color={clr.accent} />
+                  <CalcRow label="Terpakai hari ini (sudah dipotong)" value={formatCurrency(todaySpent)} />
+                </>
+              ) : (
+                <>
+                  <CalcRow label="Hari tersisa" value={`${prediction.days_left} hari`} />
+                  <CalcRow label="Jatah per hari = sisa ÷ hari" value={formatCurrency(safeDaily)} strong color={clr.accent} />
+                  <CalcRow label="Terpakai hari ini" value={`− ${formatCurrency(todaySpent)}`} />
+                </>
+              )}
+              {rounded && <p className="mt-1" style={{ color: clr.muted }}>Dibulatkan ke bawah ke kelipatan Rp100.</p>}
+            </div>
+          </AdvisorRow>
+        )}
+
+        {items.map(card => (
+          <AdvisorRow key={card.id} clr={clr} dot={clr.dot[card.severity]}
+            open={openId === card.id} onToggle={() => toggle(card.id)}
+            title={renderWithIcons(card.title, 15, clr.title)}>
+            <p className="text-xs mt-1.5 leading-relaxed" style={{ color: clr.text }}>{card.body}</p>
+            {card.detail
+              ? <AdviceCalc detail={card.detail} clr={clr} />
+              : (card.evidence?.length > 0 && (
+                <div className="mt-2 rounded-lg px-3 py-2 text-xs space-y-0.5" style={{ background: clr.inset, color: clr.text }}>
+                  {card.evidence.map((l, i) => <p key={i}>{l}</p>)}
+                </div>
+              ))}
+            {card.primary_action?.route && (
+              <Link to={card.primary_action.route} className="inline-block text-xs font-medium mt-2 hover:underline" style={{ color: clr.accent }}>
+                {card.primary_action.label} →
+              </Link>
+            )}
+          </AdvisorRow>
+        ))}
+
+        {activeGoals.length > 0 && (
+          <AdvisorRow clr={clr} open={openId === 'goals'} onToggle={() => toggle('goals')}
+            title={<>Target menabung: <b>{activeGoals.length}</b> berjalan</>}>
+            <div className="mt-2 space-y-2.5">
+              {activeGoals.map(goal => {
+                const pct = Math.round(goal.progress_pct);
+                return (
+                  <div key={goal.id}>
+                    <div className="flex items-center gap-2 text-xs mb-1" style={{ color: clr.text }}>
+                      <EnvelopeIcon value={goal.envelope_emoji} size={14} color={SAVING_ACCENT} />
+                      <span className="truncate">{goal.name}</span>
+                      <span className="font-semibold ml-auto">{pct}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: isDark ? '#334155' : '#F1F5F9' }}>
+                      <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 2)}%`, background: SAVING_ACCENT }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <Link to="/envelopes" className="inline-block text-xs font-medium hover:underline" style={{ color: clr.accent }}>Atur target →</Link>
+            </div>
+          </AdvisorRow>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 
 // Savings accent — distinct from spending-risk colors (green/amber/red)
@@ -258,7 +284,10 @@ function EnvelopeRow({ env, goal }) {
                 <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: '#ECFDF5', color: '#059669' }}>🎉 Tercapai</span>
               )}
             </div>
-            <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
+            <div className="flex items-center gap-1">
+              <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
+              <InfoTooltip text="Saldo saat ini untuk envelope tabungan" position="left" />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="h-2 rounded-full overflow-hidden flex-1" style={{ background: SAVING_TRACK }}>
@@ -323,7 +352,10 @@ function EnvelopeRow({ env, goal }) {
           <span className="font-semibold text-sm">{titleCase(env.name)}</span>
           {badge}
         </div>
-        <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
+        <div className="flex items-center gap-1">
+          <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
+          <InfoTooltip text="Dana yang tersisa untuk dibelanjakan (alokasi - pengeluaran - reserve)" position="left" />
+        </div>
       </div>
       {isUnfunded ? (
         <div className="bg-gray-50 text-gray-400 text-xs px-3 py-2 rounded-lg">Belum ada dana.</div>
@@ -339,20 +371,35 @@ function EnvelopeRow({ env, goal }) {
             </span>
           </div>
           <div className="flex justify-between mt-1 text-xs text-gray-400">
-            <span>Terpakai {formatShort(spent)}</span>
-            {reserved > 0 && <span>⏳ {formatShort(reserved)}</span>}
-            <span>Dana {formatShort(allocated)}</span>
+            <span className="flex items-center gap-1">
+              Terpakai {formatShort(spent)}
+              <InfoTooltip text="Pengeluaran di periode ini" position="top" />
+            </span>
+            {reserved > 0 && <span className="flex items-center gap-1">
+              ⏳ {formatShort(reserved)}
+              <InfoTooltip text="Tagihan yang sudah disimpan untuk periode depan" position="top" />
+            </span>}
+            <span className="flex items-center gap-1">
+              Dana {formatShort(allocated)}
+              <InfoTooltip text="Alokasi periode ini untuk envelope" position="top" />
+            </span>
           </div>
           {rollover !== 0 && (
             <p className={`text-xs mt-0.5 ${rollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
-              {rollover > 0
-                ? `🔄 +${formatShort(rollover)} rollover`
-                : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+              <span className="flex items-center gap-1">
+                {rollover > 0
+                  ? `🔄 +${formatShort(rollover)} rollover`
+                  : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
+                <InfoTooltip text={rollover > 0 ? "Sisa periode lalu yang terbawa ke periode ini" : "Kekurangan dari periode lalu yang dikurangi dari periode ini"} position="top" />
+              </span>
             </p>
           )}
           {fstate === 'reserve_short' && (
-            <p className="text-xs text-amber-500 mt-0.5">
-              ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
+            <p className="text-xs text-amber-500 mt-0.5 flex items-center gap-1">
+              <span>
+                ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
+              </span>
+              <InfoTooltip text="Uang yang disimpan untuk tagihan lebih besar dari dana tersisa. Alokasikan lagi untuk menghindari keterlambatan pembayaran" position="top" />
               {' '}<Link to="/allocate" className="font-medium hover:underline">Alokasikan lagi →</Link>
             </p>
           )}
@@ -374,6 +421,7 @@ function sortEnvelopes(envs) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { mode } = useTheme();
   const [envelopes, setEnvelopes] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -391,6 +439,14 @@ export default function Dashboard() {
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [balanceStatus, setBalanceStatus] = useState(null);
+  const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
+
+  useEffect(() => {
+    const mode = sessionStorage.getItem('onboarded_income_mode');
+    if (mode === 'daily' || mode === 'weekly') {
+      setShowOnboardingGuide(true);
+    }
+  }, []);
 
   useEffect(() => {
     const onAdded = () => setRefreshTick(t => t + 1);
@@ -488,10 +544,28 @@ export default function Dashboard() {
       ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
       : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' }));
   const daysLeft = prediction?.days_left ?? 0;
+  // Satu-satunya tempat jatah aman per hari dibulatkan (ke bawah, Rp100). Judul advisor,
+  // rinciannya, baris Sisa bebas, dan garis Batas aman semua membaca angka ini.
+  const safeDaily = floorRp100(prediction?.safe_daily);
 
   const chartData = buildDailyData(daily, prediction, selectedPeriod);
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
+
+  const isDark = mode === 'dark';
+  const kc = kpiPalette(isDark);
+  const fundsTotal = totalAllocated + totalRollover;
+  const spendSeries = dailySeries(
+    daily,
+    prediction?.period_start || selectedPeriod?.period_start,
+    prediction?.period_end || selectedPeriod?.period_end,
+    localDateStr(),
+  );
+  const funds = fundsBreakdown(envelopes);
+  const freePart = freeShare(envelopes);
+  const sharedProgress = savingsProgress(goals, envelopes, false);
+  const personalProgress = savingsProgress(goals, envelopes, true);
+  const pct = (v) => (v > 0 && v < 0.005 ? '<1%' : `${Math.round(v * 100)}%`);
 
   const milestoneLabel = (n) => ({
     3: 'Kebiasaan baik dimulai 🌱', 7: 'Seminggu penuh disiplin!', 14: '2 minggu konsisten 💪',
@@ -514,6 +588,28 @@ export default function Dashboard() {
             onClick={() => setCelebrate(null)}
             className="text-amber-700 text-sm px-3 py-1 rounded-lg hover:bg-amber-200/60 flex-shrink-0"
           >Tutup</button>
+        </div>
+      )}
+      {showOnboardingGuide && (
+        <div className="card border-brand-200 bg-brand-50/40 p-4 flex items-start justify-between gap-3">
+          <div className="flex gap-3">
+            <span className="text-2xl">🎉</span>
+            <div>
+              <h4 className="font-semibold text-brand-900 text-sm">Amplop Jatahmu Sudah Siap!</h4>
+              <p className="text-xs text-brand-700 mt-1">
+                Target jatah bulanan sudah terpasang. Tiap kali selesai narik order atau menerima uang, tekan tombol <strong>+ Pemasukan</strong> untuk membagi uang ke amplop-amplopmu.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              sessionStorage.removeItem('onboarded_income_mode');
+              setShowOnboardingGuide(false);
+            }}
+            className="text-gray-400 hover:text-gray-600 text-sm px-2 py-1"
+          >
+            ✕
+          </button>
         </div>
       )}
       <div>
@@ -581,60 +677,80 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Dana dialokasi</p>
-            <p className="font-display text-xl font-bold mt-1">{formatShort(totalAllocated)}</p>
-            <p className={`text-xs mt-0.5 ${totalRollover > 0 ? 'text-brand-500' : totalRollover < 0 ? 'text-danger-400' : 'text-gray-400'}`}>
-              {totalRollover > 0
-                ? `+${formatShort(totalRollover)} rollover`
-                : totalRollover < 0
-                ? `−${formatShort(Math.abs(totalRollover))} dari periode lalu`
-                : 'Belum ada rollover'}
-            </p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="wallet" size={20} color="#0F6E56" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Terpakai</p>
-            <p className="font-display text-xl font-bold mt-1 text-amber-400">{formatShort(totalSpent)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{totalAllocated > 0 ? `${Math.round(totalSpent / totalAllocated * 100)}% dari dialokasi` : 'Belum ada alokasi'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(217,119,6,0.12)' }}><Icon name="expense" size={20} color="#D97706" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Sisa bebas</p>
-            <p className={`font-display text-xl font-bold mt-1 ${sisaBebas >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(sisaBebas)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{isCurrentPeriod && prediction?.safe_daily > 0 ? `≈${formatShort(prediction.safe_daily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.10)' }}><Icon name="check" size={20} color="#0F6E56" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Tabungan shared</p>
-            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(sharedSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Tabungan personal</p>
-            <p className="font-display text-xl font-bold mt-1 text-amber-600">{formatShort(personalSaving)}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(186,117,23,0.12)' }}><Icon name="piggy" size={20} color="#BA7517" /></div>
-        </div>
-        <div className="card flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs text-gray-400 font-medium">Amplop aktif</p>
-            <p className="font-display text-xl font-bold mt-1">{envelopes.length}</p>
-            <p className="text-xs mt-0.5 text-gray-400">{shared.length} shared · {personal.length} personal</p>
-          </div>
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(107,114,128,0.12)' }}><Icon name="envelope" size={20} color="#6b7280" /></div>
-        </div>
+        <KpiCard
+          label="Dana dialokasi" icon="wallet" color={kc.brand} isDark={isDark}
+          info="Alokasi periode ini ditambah sisa dari periode lalu. Batang: posisi dana itu sekarang, dari kiri: terpakai, tagihan, tabungan, bebas. Sentuh batang untuk angkanya."
+          value={formatShort(totalAllocated)}
+          sub={totalRollover > 0
+            ? `+${formatShort(totalRollover)} rollover`
+            : totalRollover < 0
+            ? <span className="text-danger-400">−{formatShort(Math.abs(totalRollover))} dari periode lalu</span>
+            : 'Belum ada rollover'}
+        >
+          <FundsBar
+            track={kc.track}
+            ariaLabel={`Terpakai ${formatShort(funds.spent)}, tagihan ${formatShort(funds.reserved)}, tabungan ${formatShort(funds.saving)}, bebas ${formatShort(funds.free)}`}
+            parts={[
+              { key: 'spent', label: 'Terpakai', value: funds.spent, color: kc.amber },
+              { key: 'reserved', label: 'Tagihan', value: funds.reserved, color: kc.reserved },
+              { key: 'saving', label: 'Tabungan', value: funds.saving, color: kc.indigo },
+              { key: 'free', label: 'Bebas', value: funds.free, color: kc.brandMeter },
+            ]}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Terpakai" icon="expense" color={kc.amber} isDark={isDark}
+          info="Pengeluaran periode ini termasuk penyesuaian cocokkan saldo. Garis: belanja per hari sejak awal periode. Sentuh garis untuk angka per hari."
+          value={formatShort(totalSpent)}
+          sub={fundsTotal > 0 ? `${Math.round(totalSpent / fundsTotal * 100)}% dari dana` : 'Belum ada dana'}
+        >
+          <SpendSparkline series={spendSeries} color={kc.amber} fill={kc.amberFill} track={kc.track} ring="var(--card-bg)" />
+        </KpiCard>
+        <KpiCard
+          label="Sisa bebas" icon="coins" color={kc.brand} isDark={isDark}
+          info="Total saldo amplop dikurangi amplop tabungan dan uang yang disimpan untuk tagihan. Batang: porsi dana belanja yang masih bebas."
+          value={formatShortSigned(sisaBebas)}
+          valueClassName={sisaBebas < 0 ? 'text-danger-400' : ''}
+          sub={isCurrentPeriod && safeDaily > 0 ? `≈${shortRp100(safeDaily)}/hari aman` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}
+        >
+          <Meter
+            value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
+            label={freePart != null ? pct(freePart) : null}
+            ariaLabel={freePart != null ? `${pct(freePart)} dana belanja masih bebas` : 'Belum ada dana belanja'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Tabungan shared" icon="piggy" color={kc.indigo} isDark={isDark}
+          info="Saldo amplop tabungan yang dibagikan dengan anggota rumah tangga lainnya. Batang: kemajuan menuju target."
+          value={formatShort(sharedSaving)}
+          sub={sharedSavingGoals > 0 ? `${sharedSavingGoals} target aktif` : 'Tanpa target'}
+        >
+          <Meter
+            value={sharedProgress} color={kc.indigo} track={kc.indigoTrack}
+            label={sharedProgress != null ? pct(sharedProgress) : null}
+            ariaLabel={sharedProgress != null ? `${pct(sharedProgress)} dari target tercapai` : 'Belum ada target'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Tabungan personal" icon="piggy" color={kc.indigo} isDark={isDark}
+          info="Saldo amplop tabungan pribadi Anda. Batang: kemajuan menuju target."
+          value={formatShort(personalSaving)}
+          sub={personalSavingGoals > 0 ? `${personalSavingGoals} target aktif` : 'Tanpa target'}
+        >
+          <Meter
+            value={personalProgress} color={kc.indigo} track={kc.indigoTrack}
+            label={personalProgress != null ? pct(personalProgress) : null}
+            ariaLabel={personalProgress != null ? `${pct(personalProgress)} dari target tercapai` : 'Belum ada target'}
+          />
+        </KpiCard>
+        <KpiCard
+          label="Amplop aktif" icon="envelope" color={kc.slate} isDark={isDark}
+          info="Jumlah amplop yang sedang Anda gunakan (shared dan personal). Tiap titik satu amplop: merah habis, kuning hampir habis, hijau aman, ungu tabungan, abu-abu belum ada dana. Sentuh titik untuk nama amplopnya."
+          value={envelopes.length}
+          sub={`${shared.length} shared · ${personal.length} personal`}
+        >
+          <EnvelopeStrip strip={envelopeStrip(envelopes)} colors={kc.status} />
+        </KpiCard>
       </div>
 
       {isCurrentPeriod && (
@@ -651,11 +767,11 @@ export default function Dashboard() {
       {/* Hero AI Advisor — today's status + strategic insights */}
       {isCurrentPeriod && (
         <HeroAdvisor
-          cards={advisorInsights?.dashboard_cards}
+          cards={advisorInsights?.cards}
           advisorError={advisorInsights?._error}
           prediction={prediction}
+          safeDaily={safeDaily}
           todaySpent={todaySpent}
-          envelopes={envelopes}
           goals={goals}
         />
       )}
@@ -666,11 +782,14 @@ export default function Dashboard() {
           {chartData.length > 0 && (
             <div className="card">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
-                {prediction?.safe_daily > 0 && (
+                <div className="flex items-center gap-1">
+                  <h3 className="font-semibold text-sm">Pengeluaran harian</h3>
+                  <InfoTooltip text="Grafik pengeluaran harian selama periode ini. Garis merah adalah batas aman yang disarankan per hari" position="bottom" />
+                </div>
+                {safeDaily > 0 && (
                   <span className="text-xs text-gray-400 flex items-center gap-1">
                     <span className="inline-block w-4 border-t-2 border-dashed border-danger-400"></span>
-                    Batas aman {formatShort(prediction.safe_daily)}/hari
+                    Batas aman {shortRp100(safeDaily)}/hari
                   </span>
                 )}
               </div>
@@ -680,9 +799,9 @@ export default function Dashboard() {
                   <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={45}
                     tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}jt` : v >= 1000 ? `${Math.round(v/1000)}k` : v} />
                   <Tooltip content={<CustomTooltip />} />
-                  {prediction?.safe_daily > 0 && (
-                    <ReferenceLine y={prediction.safe_daily} stroke="#E24B4A" strokeDasharray="4 3" strokeWidth={1.5}
-                      label={{ value: '', position: 'right' }} />
+                  {safeDaily > 0 && (
+                    <ReferenceLine y={safeDaily} stroke="#E24B4A" strokeDasharray="4 3" strokeWidth={1.5}
+                      ifOverflow="extendDomain" label={{ value: '', position: 'right' }} />
                   )}
                   <Bar dataKey="total" name="Pengeluaran" radius={[3, 3, 0, 0]}
                     fill="#0F6E56"
@@ -698,7 +817,10 @@ export default function Dashboard() {
           {breakdown.length > 0 && (
             <div className="card">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-sm">Breakdown amplop</h3>
+                <div className="flex items-center gap-1">
+                  <h3 className="font-semibold text-sm">Breakdown amplop</h3>
+                  <InfoTooltip text="Perbandingan pengeluaran antara amplop-amplop Anda dalam bentuk pie chart" position="bottom" />
+                </div>
                 <span className="text-xs text-gray-400">Total {formatShort(breakdown.reduce((s, x) => s + x.spent, 0))}</span>
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">

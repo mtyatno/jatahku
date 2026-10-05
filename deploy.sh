@@ -7,7 +7,11 @@ cd /opt/jatahku/app
 # Clean files regenerated on the server (dist + lockfiles) so they don't
 # block `git pull`. npm install rewrites package-lock.json each deploy;
 # the repo lockfile is the source of truth.
-sudo -u jatahku git checkout -- frontend/dist/ blog/dist/ frontend/package-lock.json blog/package-lock.json 2>/dev/null || true
+# One path per checkout: a path git doesn't track (blog/dist/) makes a combined
+# checkout abort without restoring any of the others.
+for p in frontend/dist/ blog/dist/ frontend/package-lock.json blog/package-lock.json; do
+    sudo -u jatahku git checkout -- "$p" 2>/dev/null || true
+done
 
 # Pull latest
 sudo -u jatahku git pull origin main

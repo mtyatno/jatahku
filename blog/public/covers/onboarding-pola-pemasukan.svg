@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0A4F3E"/><stop offset="100%" stop-color="#116653"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+<circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+<rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+<rect x="60" y="60" width="148" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+<text x="134.0" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">TUTORIAL</text>
+<text x="60" y="200" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Mulai dari</text>
+<text x="60" y="265" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Pola</text>
+<text x="60" y="330" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Pemasukan</text>
+<text x="60" y="405" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Onboarding 3 langkah</text>
+<text x="640" y="140" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Pola Pemasukan</text>
+<rect x="640" y="163" width="64" height="10" rx="5" fill="#4ADE80"/>
+<rect x="714" y="163" width="64" height="10" rx="5" fill="rgba(255,255,255,0.25)"/>
+<rect x="788" y="163" width="64" height="10" rx="5" fill="rgba(255,255,255,0.25)"/>
+<rect x="630" y="205" width="225" height="105" rx="16" fill="rgba(255,255,255,0.12)"/>
+<text x="650" y="250" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Bulanan</text>
+<text x="650" y="283" text-anchor="start" font-family="system-ui,sans-serif" font-size="16" font-weight="400" fill="rgba(255,255,255,0.6)">Gaji/Honorar tetap</text>
+<rect x="865" y="205" width="225" height="105" rx="16" fill="rgba(255,255,255,0.12)"/>
+<text x="885" y="250" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Mingguan</text>
+<text x="885" y="283" text-anchor="start" font-family="system-ui,sans-serif" font-size="16" font-weight="400" fill="rgba(255,255,255,0.6)">Mingguan teratur</text>
+<rect x="630" y="325" width="225" height="105" rx="16" fill="rgba(255,255,255,0.24)" stroke="white" stroke-width="3"/>
+<text x="650" y="370" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Harian</text>
+<text x="650" y="403" text-anchor="start" font-family="system-ui,sans-serif" font-size="16" font-weight="400" fill="rgba(255,255,255,0.6)">Ojek/Dagang/Harian</text>
+<rect x="865" y="325" width="225" height="105" rx="16" fill="rgba(255,255,255,0.12)"/>
+<text x="885" y="370" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Tidak Tentu</text>
+<text x="885" y="403" text-anchor="start" font-family="system-ui,sans-serif" font-size="16" font-weight="400" fill="rgba(255,255,255,0.6)">Fluktuatif</text>
+<rect x="630" y="460" width="460" height="50" rx="14" fill="rgba(255,255,255,0.22)"/>
+<text x="860" y="492" text-anchor="middle" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="white">Lanjut →</text>
+<text x="60" y="580" text-anchor="start" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+<text x="170" y="580" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="400" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

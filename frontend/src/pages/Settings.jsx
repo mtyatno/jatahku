@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import GoogleButton from '../components/GoogleButton';
 import { useTheme } from '../hooks/useTheme';
 import { formatCurrency } from '../lib/utils';
 
@@ -141,6 +142,54 @@ const THEME_OPTIONS = [
   { id: 'laut',  label: '🌊 Laut',  from: '#2563eb', to: '#60a5fa' },
   { id: 'senja', label: '🌅 Senja', from: '#d97706', to: '#fbbf24' },
 ];
+
+function GoogleAccountCard({ connected, onChange }) {
+  const [clientId, setClientId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getGoogleClientId().then(setClientId);
+  }, []);
+
+  if (!clientId && !connected) return null;
+
+  const link = async (credential) => {
+    setBusy(true);
+    setError('');
+    const res = await api.request('/auth/google/link', { method: 'POST', body: JSON.stringify({ credential }) });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) onChange(); else setError(data.detail || 'Gagal menyambungkan Google');
+  };
+
+  const unlink = async () => {
+    setBusy(true);
+    setError('');
+    const res = await api.request('/auth/google/unlink', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (res.ok) onChange(); else setError(data.detail || 'Gagal memutus Google');
+  };
+
+  return (
+    <div className="card">
+      <h3 className="font-semibold text-sm mb-2">🔑 Akun Google</h3>
+      {connected ? (
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-brand-600">✅ Tersambung, bisa masuk dengan Google</span>
+          <button onClick={unlink} disabled={busy} className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">Putuskan</button>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-gray-500 mb-3">Sambungkan supaya berikutnya bisa masuk dengan satu ketukan, tanpa password.</p>
+          <GoogleButton clientId={clientId} onCredential={link} text="continue_with" />
+        </>
+      )}
+      {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+    </div>
+  );
+}
 
 function HardResetDialog({ profile, members, onClose, onSuccess }) {
   const [step, setStep] = useState(1);
@@ -323,6 +372,9 @@ export default function Settings() {
   const [joinCode, setJoinCode] = useState('');
   const [joining, setJoining] = useState(false);
 
+  // Income type
+  const [incomeType, setIncomeType] = useState('monthly');
+
   const load = async () => {
     const res = await api.request('/user/profile');
     if (res.ok) {
@@ -334,6 +386,7 @@ export default function Settings() {
       setCooling(p.default_cooling_threshold || '');
       setDailyLimit(p.default_daily_limit || '');
       setDefaultLocked(p.default_is_locked);
+      setIncomeType(p.income_type || 'monthly');
     }
     const mRes = await api.request('/household/members');
     if (mRes.ok) setMembers(await mRes.json());
@@ -391,6 +444,14 @@ export default function Settings() {
     setPaydayDay(day);
     await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ payday_day: day }) });
     flash('Tanggal gajian diperbarui', 'payday');
+  };
+
+  const saveIncomeType = async (val) => {
+    const valid = ['monthly', 'weekly', 'daily', 'irregular'];
+    if (!valid.includes(val)) return;
+    setIncomeType(val);
+    await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ income_type: val }) });
+    flash('Jenis pendapatan diperbarui', 'income_type');
   };
 
   const saveBehavior = async () => {
@@ -675,6 +736,8 @@ export default function Settings() {
         </div>
       )}
 
+      <GoogleAccountCard connected={profile.google_connected} onChange={load} />
+
       {/* Household */}
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">👨‍👩‍👧 Household</h3>
@@ -751,6 +814,34 @@ export default function Settings() {
         <p className="text-xs text-gray-400 mt-2">
           Contoh: gajian tgl 25 → periode 25 Mar – 24 Apr
         </p>
+      </div>
+
+      {/* Income Type */}
+      <div className="card">
+        <h3 className="font-semibold text-sm mb-1">💼 Jenis Pendapatan</h3>
+        <p className="text-xs text-gray-400 mb-3">Mempengaruhi perhitungan rekomendasi belanja harian.</p>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { id: 'monthly', label: '📅 Bulanan', desc: 'Gaji tetap setiap bulan' },
+            { id: 'weekly', label: '📆 Mingguan', desc: 'Pendapatan setiap minggu' },
+            { id: 'daily', label: '📈 Harian', desc: 'Pendapatan setiap hari' },
+            { id: 'irregular', label: '❓ Tidak Tentu', desc: 'Pendapatan tidak teratur' },
+          ].map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => saveIncomeType(opt.id)}
+              className={`rounded-xl p-3 text-left transition-all border-2 ${
+                incomeType === opt.id
+                  ? 'border-brand-600 bg-brand-50'
+                  : 'border-gray-100 hover:border-gray-200'
+              }`}
+            >
+              <div className="font-medium text-sm">{opt.label}</div>
+              <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+            </button>
+          ))}
+        </div>
+        <InlineFlash k="income_type" />
       </div>
 
       {/* Timezone */}

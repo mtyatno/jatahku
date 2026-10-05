@@ -158,6 +158,10 @@ html[data-theme*="-dark"] .text-gray-700,
 html[data-theme*="-dark"] .text-gray-800,
 html[data-theme*="-dark"] .text-gray-900 { color: var(--text) !important; }
 
+/* Info "i" button: gray-200 is not darkened, so its light icon vanished */
+html[data-theme*="-dark"] .info-tip { background-color: #334155; color: var(--text-muted) !important; }
+html[data-theme*="-dark"] .info-tip:hover { background-color: #475569; color: var(--text) !important; }
+
 /* Gray backgrounds */
 html[data-theme*="-dark"] .bg-gray-50,
 html[data-theme*="-dark"] .bg-gray-100 { background-color: #1e293b !important; }
@@ -190,4 +194,14 @@ html[data-theme*="-dark"] .border-red-200 { border-color: #7f1d1d !important; }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide number input spinners for cleaner mobile UI */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }

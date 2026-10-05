@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0A4F3E"/><stop offset="100%" stop-color="#116653"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+<circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+<rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+<rect x="60" y="60" width="148" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+<text x="134.0" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">TUTORIAL</text>
+<text x="60" y="200" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Amplop Baru</text>
+<text x="60" y="265" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">4 Langkah</text>
+<text x="60" y="340" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Satu langkah,</text>
+<text x="60" y="370" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">satu keputusan</text>
+<text x="640" y="140" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">Amplop baru</text>
+<text x="640" y="175" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="400" fill="rgba(255,255,255,0.6)">Langkah 1 dari 4</text>
+<rect x="630" y="215" width="460" height="58" rx="14" fill="rgba(255,255,255,0.12)"/>
+<circle cx="665" cy="244" r="17" fill="rgba(255,255,255,0.25)"/>
+<text x="665" y="251" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="800" fill="white">1</text>
+<text x="698" y="250" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="white">Pilih ikon · Nama amplop</text>
+<rect x="630" y="285" width="460" height="58" rx="14" fill="rgba(255,255,255,0.12)"/>
+<circle cx="665" cy="314" r="17" fill="rgba(255,255,255,0.25)"/>
+<text x="665" y="321" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="800" fill="white">2</text>
+<text x="698" y="320" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="white">Jenis amplop</text>
+<rect x="630" y="355" width="460" height="58" rx="14" fill="rgba(255,255,255,0.12)"/>
+<circle cx="665" cy="384" r="17" fill="rgba(255,255,255,0.25)"/>
+<text x="665" y="391" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="800" fill="white">3</text>
+<text x="698" y="390" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="white">Kategori pengeluaran / Target</text>
+<rect x="630" y="425" width="460" height="58" rx="14" fill="rgba(255,255,255,0.12)"/>
+<circle cx="665" cy="454" r="17" fill="rgba(255,255,255,0.25)"/>
+<text x="665" y="461" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="800" fill="white">4</text>
+<text x="698" y="460" text-anchor="start" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="white">Pengaturan lainnya · Sumber dana</text>
+<text x="60" y="580" text-anchor="start" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+<text x="170" y="580" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="400" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

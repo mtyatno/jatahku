@@ -251,3 +251,40 @@ class ErrorIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdjustmentExclusionTests(unittest.TestCase):
+    """A cocokkan-saldo lump is not a daily habit: it must not drive a
+    depletion projection (Bapak's 2026-10-03 dashboard report)."""
+
+    def _txn(self, amount, adjustment=False):
+        return SimpleNamespace(amount=_D(amount), description="x", is_adjustment=adjustment)
+
+    def test_projection_excludes_adjustments_from_rate(self):
+        proj = project_envelope(
+            _D("280000"), 1, _D("1000000"), 7, 30, 23,
+            txns=[self._txn("280000", adjustment=True)],
+        )
+        self.assertEqual(proj["variable_rate"], _D("0"))
+        self.assertEqual(proj["excluded"]["adjustment"], _D("280000"))
+
+    def test_adjustment_only_envelope_is_noted_not_carded(self):
+        env = make_envelope(id="env-m", name="Makan & Jajan")
+        stats = {"env-m": [make_period_row(allocated=_D("1000000"), spent=_D("280000"), transaction_count=1)]}
+        ctx = _ctx([env], stats, make_period_info(days_used=7, days_total=30, days_remaining=23))
+        ctx.txns_by_env = {"env-m": [self._txn("280000", adjustment=True)]}
+        self.assertEqual(evaluate_depletion(ctx), [])
+        self.assertEqual(len(ctx.notes), 1)
+        self.assertIn("cocokkan saldo", ctx.notes[0]["reason"])
+
+    def test_card_detail_matches_title(self):
+        env = make_envelope(id="env-h", name="Hiburan")
+        stats = {"env-h": [make_period_row(allocated=_D("600000"), spent=_D("400000"), transaction_count=8)]}
+        ctx = _ctx([env], stats, make_period_info(days_used=10, days_total=30, days_remaining=20))
+        ctx.txns_by_env = {"env-h": [self._txn("50000") for _ in range(8)]}
+        (card,) = evaluate_depletion(ctx)
+        d = card["detail"]
+        self.assertEqual(d["remaining"], 200000)
+        self.assertEqual(d["safe_daily"], 10000)
+        self.assertEqual(d["daily_rate"], 40000)
+        self.assertIn("Rp10.000/hari", card["title"])

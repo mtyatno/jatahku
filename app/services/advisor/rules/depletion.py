@@ -1,18 +1,50 @@
 """env_depletion rule — per-envelope depletion projection.
 
-Flags expense envelopes whose current spend rate, projected across the whole
-period, would exceed the available budget before the period ends."""
+Flags expense envelopes whose current spend rate would empty them before the
+money is next replenished: the period end for monthly earners, the next
+expected income for daily and weekly earners (`ctx.income_days`). Each card
+leads with an action (a safe daily amount until then) and carries a
+structured `detail` so the UI can show the calculation behind it.
+
+Envelopes whose spending this period is only bills or balance adjustments
+have no daily habit to project; they are skipped and listed in `ctx.notes`."""
+from datetime import date
 from decimal import Decimal
 
-from app.services.advisor.formatting import _to_decimal, _fmt_rp, _card
+from app.services.advisor.formatting import _to_decimal, _fmt_rp, _card, _money
 from app.services.advisor.rules._base import AdvisorContext, _MIN_PROJECTION_DAYS
 from app.services.advisor.projection import project_envelope
+
+_BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
+
+def _fmt_date(value) -> str:
+    if isinstance(value, str):
+        value = date.fromisoformat(value[:10])
+    return f"{value.day} {_BULAN[value.month - 1]}"
+
+
+def _floor_rp100(value: Decimal) -> Decimal:
+    """A safe daily limit is advice; round it down to Rp100 (the smallest coin in use)
+    so following it never overshoots."""
+    return (value // 100) * 100 if value > 0 else Decimal("0")
+
+
+def _skip_reason(excluded: dict) -> str:
+    if excluded["recurring"] > 0 and excluded["adjustment"] > 0:
+        return "isinya tagihan rutin dan penyesuaian saldo"
+    if excluded["recurring"] > 0:
+        return "isinya tagihan rutin"
+    if excluded["adjustment"] > 0:
+        return "isinya penyesuaian cocokkan saldo"
+    return "isinya pengeluaran satu kali"
 
 
 def evaluate_depletion(ctx: AdvisorContext) -> list[dict]:
     days_used = ctx.days_used
     days_total = ctx.days_total
     days_remaining = ctx.days_remaining
+    period_end = ctx.period_info.get("period_end")
 
     cards = []
     for envelope in ctx.envelopes:
@@ -27,36 +59,109 @@ def evaluate_depletion(ctx: AdvisorContext) -> list[dict]:
         purpose = str(getattr(envelope, "purpose", "expense") or "expense")
         transaction_count = int(current.get("transaction_count") or 0)
 
-        if available > 0 and spent > 0 and purpose == "expense" and days_used >= _MIN_PROJECTION_DAYS:
-            proj = project_envelope(
-                spent, transaction_count, available, days_used, days_total, days_remaining,
-                txns=ctx.txns_by_env.get(str(envelope.id)),
-                recurring_amounts=ctx.recurring_by_env.get(str(envelope.id)),
+        if not (available > 0 and spent > 0 and purpose == "expense" and days_used >= _MIN_PROJECTION_DAYS):
+            continue
+        proj = project_envelope(
+            spent, transaction_count, available, days_used, days_total, days_remaining,
+            txns=ctx.txns_by_env.get(str(envelope.id)),
+            recurring_amounts=ctx.recurring_by_env.get(str(envelope.id)),
+        )
+        daily_rate = proj["variable_rate"]
+        remaining = available - spent
+        name = f"{envelope.emoji} {envelope.name}"
+
+        if daily_rate <= 0 and remaining > 0:
+            ctx.notes.append({
+                "envelope_id": str(envelope.id),
+                "name": name,
+                "reason": _skip_reason(proj["excluded"]),
+            })
+            continue
+        if days_remaining <= 0:
+            continue
+        horizon = min(ctx.income_days, days_remaining) if ctx.income_days else None
+        if horizon:
+            # Only what must last until the next income matters, not the period end.
+            needed = daily_rate * horizon
+            if remaining > 0 and needed <= remaining:
+                continue
+            shortage = needed - remaining
+        else:
+            if proj["projected"] <= available:
+                continue
+            shortage = proj["projected"] - available
+        severity = "danger" if shortage > available * Decimal("0.2") else "warning"
+        if proj["severity_capped"] and severity == "danger":
+            severity = "warning"
+        pct = int(spent / available * 100)
+
+        if remaining > 0 and horizon:
+            safe_daily = _floor_rp100(remaining / horizon)
+            days_early = 0
+            if horizon == 1:
+                title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)} hari ini"
+                body = (
+                    f"Biasanya Rp{_fmt_rp(daily_rate)}/hari, sisa amplop tinggal "
+                    f"Rp{_fmt_rp(remaining)} sampai income berikutnya besok."
+                )
+            else:
+                title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)}/hari"
+                body = (
+                    f"Kalau tetap Rp{_fmt_rp(daily_rate)}/hari, sisa Rp{_fmt_rp(remaining)} "
+                    f"habis sebelum income berikutnya ({horizon} hari lagi)."
+                )
+        elif remaining > 0:
+            safe_daily = _floor_rp100(remaining / days_remaining)
+            days_until_empty = int(remaining / daily_rate)
+            days_early = max(1, days_remaining - days_until_empty)
+            title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)}/hari"
+            body = (
+                f"Sudah terpakai {pct}%. Kalau tetap Rp{_fmt_rp(daily_rate)}/hari, "
+                f"sisa Rp{_fmt_rp(remaining)} habis {days_early} hari sebelum periode selesai."
             )
-            projected = proj["projected"]
-            if projected > available and days_remaining > 0:
-                pct = int(spent / available * 100)
-                shortage = projected - available
-                daily_rate = proj["variable_rate"] if proj["variable_rate"] > 0 else (spent / days_used)
-                severity = "danger" if shortage > available * Decimal("0.2") else "warning"
-                if proj["severity_capped"] and severity == "danger":
-                    severity = "warning"
-                evidence = [
-                    f"Terpakai Rp{_fmt_rp(spent)} dari Rp{_fmt_rp(available)}",
-                    f"Rata-rata variabel Rp{_fmt_rp(daily_rate)}/hari",
-                ]
-                if proj["outliers"]:
-                    biggest = max(proj["outliers"], key=lambda t: _to_decimal(getattr(t, "amount", 0)))
-                    evidence.append(
-                        f"Pengeluaran besar satu kali Rp{_fmt_rp(_to_decimal(getattr(biggest, 'amount', 0)))} ({getattr(biggest, 'description', '')})"
-                    )
-                cards.append(_card(
-                    f"env_depletion:{envelope.id}",
-                    "env_depletion",
-                    severity,
-                    f"{envelope.emoji} {envelope.name} sudah terpakai {pct}%",
-                    f"Masih {days_remaining} hari. Proyeksi habis {max(1, int(shortage / daily_rate)) if daily_rate > 0 else days_remaining} hari sebelum periode selesai.",
-                    "/allocate",
-                    evidence,
-                ))
+        else:
+            safe_daily = Decimal("0")
+            days_early = 0 if horizon else days_remaining
+            title = f"{name}: dana sudah habis"
+            body = (
+                f"Sudah lewat Rp{_fmt_rp(-remaining)} dari dana amplop. "
+                f"Pindahkan dana dari amplop lain atau tahan belanja di amplop ini."
+            )
+
+        evidence = [
+            f"Terpakai Rp{_fmt_rp(spent)} dari Rp{_fmt_rp(available)}",
+            f"Rata-rata variabel Rp{_fmt_rp(daily_rate)}/hari",
+        ]
+        if proj["outliers"]:
+            biggest = max(proj["outliers"], key=lambda t: _to_decimal(getattr(t, "amount", 0)))
+            evidence.append(
+                f"Pengeluaran besar satu kali Rp{_fmt_rp(_to_decimal(getattr(biggest, 'amount', 0)))} ({getattr(biggest, 'description', '')})"
+            )
+        card = _card(
+            f"env_depletion:{envelope.id}",
+            "env_depletion",
+            severity,
+            title,
+            body,
+            "/allocate",
+            evidence,
+        )
+        card["primary_action"]["label"] = "Atur alokasi"
+        excluded = proj["excluded"]
+        card["detail"] = {
+            "available": _money(available),
+            "spent": _money(spent),
+            "remaining": _money(remaining),
+            "days_used": days_used,
+            "days_remaining": days_remaining,
+            "daily_rate": _money(daily_rate),
+            "safe_daily": _money(safe_daily),
+            "days_early": days_early,
+            "horizon_days": horizon,
+            "period_end": _fmt_date(period_end) if period_end else None,
+            "excluded_recurring": _money(excluded["recurring"]),
+            "excluded_adjustment": _money(excluded["adjustment"]),
+            "excluded_outlier": _money(excluded["outlier"]),
+        }
+        cards.append(card)
     return cards

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0A4F3E"/><stop offset="100%" stop-color="#116653"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+<circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+<rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+<rect x="60" y="60" width="192" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+<text x="156.0" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+<text x="60" y="200" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Batas Aman</text>
+<text x="60" y="265" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Ikut Ritme</text>
+<text x="60" y="330" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Pendapatan</text>
+<text x="60" y="405" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Harian, mingguan, bulanan</text>
+<text x="640" y="140" text-anchor="start" font-family="system-ui,sans-serif" font-size="22" font-weight="700" fill="white">AI Advisor</text>
+<text x="640" y="190" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="400" fill="rgba(255,255,255,0.6)">Hari ini masih aman belanja</text>
+<text x="640" y="245" text-anchor="start" font-family="system-ui,sans-serif" font-size="44" font-weight="800" fill="white">Rp180.000</text>
+<rect x="630" y="300" width="460" height="56" rx="14" fill="rgba(255,255,255,0.22)"/>
+<text x="652" y="336" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="white">Harian</text>
+<text x="1070" y="336" text-anchor="end" font-family="system-ui,sans-serif" font-size="20" font-weight="400" fill="white">sisa ÷ 1 hari</text>
+<rect x="630" y="368" width="460" height="56" rx="14" fill="rgba(255,255,255,0.12)"/>
+<text x="652" y="404" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="white">Mingguan</text>
+<text x="1070" y="404" text-anchor="end" font-family="system-ui,sans-serif" font-size="20" font-weight="400" fill="rgba(255,255,255,0.6)">sisa ÷ 7 hari</text>
+<rect x="630" y="436" width="460" height="56" rx="14" fill="rgba(255,255,255,0.12)"/>
+<text x="652" y="472" text-anchor="start" font-family="system-ui,sans-serif" font-size="20" font-weight="700" fill="white">Bulanan</text>
+<text x="1070" y="472" text-anchor="end" font-family="system-ui,sans-serif" font-size="20" font-weight="400" fill="rgba(255,255,255,0.6)">sisa ÷ hari tersisa</text>
+<text x="60" y="580" text-anchor="start" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+<text x="170" y="580" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="400" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>
