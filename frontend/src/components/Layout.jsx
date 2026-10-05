@@ -26,8 +26,8 @@ function QuickAddEnvelope({ onClose }) {
     : <div className="text-center py-8 text-gray-400">Loading...</div>;
 }
 
-// Smallest rupiah note in use is Rp1.000, so allocations snap to it; the leftover goes to Tabungan.
-const RUPIAH_STEP = 1000;
+// Smallest rupiah denomination in use is Rp100, so allocations snap to it; the leftover goes to Tabungan.
+const RUPIAH_STEP = 100;
 const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
 
 function QuickAddIncome({ onClose }) {
