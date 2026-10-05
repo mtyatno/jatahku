@@ -12,7 +12,7 @@ Sebelumnya, **Sisa Bebas = Total Alokasi − Terpakai**
 
 Artinya, jika alokasi Rp2.000.000 dan sudah belanja Rp800.000, maka Sisa Bebas = **Rp1.200.000**.
 
-Tapi ada masalahnya: Di dalam Rp1.200.000 itu, ada uang yang **sudah disisihkan untuk langganan**. Misalnya streaming bulanan Rp29.000 due date Rp10, atau asuransi mobil Rp250.000 due date Rp15.
+Tapi ada masalahnya: Di dalam Rp1.200.000 itu, ada uang yang **sudah disisihkan untuk langganan**. Misalnya streaming Rp29.000 (tanggal 10), atau asuransi mobil Rp250.000 (tanggal 15).
 
 Kalau user tidak hati-hati, bisa pakai Rp1.200.000 itu semua, terus waktu langganan due, tidak ada uang untuk bayar.
 
@@ -52,12 +52,12 @@ Sisa Bebas = Total Alokasi − Terpakai − Bill Reserve − Saving Envelope Bal
 **Breakdown:**
 - **Total Alokasi:** Dana yang dialokasikan periode ini + rollover dari periode lalu
 - **Terpakai:** Spending yang sudah terjadi
-- **Bill Reserve:** Uang yang disisihkan untuk langganan (sudah due atau akan due minggu ini)
+- **Bill Reserve:** Uang yang disisihkan untuk langganan yang sudah due atau akan due dalam periode ini
 - **Saving Envelope Balance:** Uang yang ada di amplop saving/sinking fund (tidak termasuk "bebas" karena untuk tujuan khusus)
 
 ---
 
-## Contoh Real: Rudi Ojek Driver
+## Contoh Real: Rudi Karyawan Bulanan
 
 **Alokasi Rudi bulan ini:**
 - Total alokasi: Rp2.500.000
@@ -120,10 +120,8 @@ Aman untuk belanja hari ini
 ### 2. AI Advisor Daily Line
 ```
 Batas aman hari ini: Rp24.200/hari
-(Rp751.000 sisa ÷ 31 hari tersisa)
+(Rp751.000 sisa ÷ 31 hari tersisa bulan ini)
 ```
-
-*Catatan: Untuk ojek driver dan daily earner, sisa aman dihitung sampai income berikutnya (bisa 1-3 hari), bukan sampai 31 hari.*
 
 ### 3. Notifikasi per Amplop
 ```

@@ -57,13 +57,13 @@ Klik satu tombol → redirect ke Google → select akun → kembali ke Jatahku �
 
 Tidak perlu isi form email, tidak perlu bikin password rumit, tidak perlu ingat password nanti.
 
-**Sebelumnya:** Email + password → email verification → confirm → baru bisa login (5+ langkah)
+**Sebelumnya:** Email + password → setup → login (3+ langkah)
 
-**Sekarang:** Klik Google button → allow → login (2-3 langkah)
+**Sekarang:** Klik Google button → allow → login (2 langkah)
 
 ### ✅ Aman
 
-Google handle authentication — Jatahku tidak perlu simpan password user. Lebih aman buat user (tidak ada risk password di-hack di Jatahku), lebih aman untuk Jatahku (tidak perlu manage database password).
+Google handle authentication. User yang login dengan Google tidak perlu password di Jatahku. Lebih aman (tidak ada risk password di-hack di Jatahku) dan lebih simple (satu password untuk Google, berlaku di mana-mana).
 
 ### ✅ Single Sign-On
 
@@ -75,42 +75,15 @@ Lupa password? Tidak masalah — bisa login dengan Google. Atau update password 
 
 ---
 
-## Account Linking: Telegram, Email, dan Google
+## Account Linking: Sambungkan Google di Settings
 
-Satu akun Jatahku sekarang bisa di-link dengan **tiga cara login berbeda**:
+Setelah login, bisa sambungkan akun Google di **Settings → Akun Google**. 
 
-### Skenario 1: User Mulai dari Google
+Jatahku akan kasih opsi:
+- **Tersambung, bisa masuk dengan Google** — kalau sudah berhasil link
+- **Sambungkan** — kalau belum, klik untuk link dengan Google
 
-User A mulai dari "Daftar dengan Google".
-
-- Akun terbuat di Jatahku dengan email Gmail-nya
-- Nanti, di Settings bisa link akun Telegram atau email+password
-
-**Contoh:**
-```
-Account: Muhammad Ihsan
-Login methods:
-- Google (ihsan@gmail.com) ✓ PRIMARY
-- Telegram (@IhsanUser) ✓
-- Email (ihsan@example.com) + Password ✓
-```
-
-Ihsan bisa login dengan salah satu dari tiga cara itu.
-
-### Skenario 2: User Mulai dari Email, Nambah Google Later
-
-User B dulu pakai email + password.
-
-Nanti di Settings → Account, bisa klik "Link dengan Google".
-
-**Hasil:**
-```
-Account: Budi Hartono
-Login methods:
-- Email (budi@jatahku.id) + Password ✓ PRIMARY
-- Google (budi.hartono@gmail.com) ✓
-- Telegram (@BudiH) ✓
-```
+Setelah di-link, berikutnya bisa login pakai Google atau email+password (pilih salah satu saat masuk).
 
 ---
 
@@ -125,40 +98,6 @@ Jatahku **tidak bisa baca** isi email user atau kontak atau apapun di akun Gmail
 ### ✅ Tidak Ada Sync Otomatis
 
 Jatahku tidak sync GMail, kontak, atau data Google lainnya. Login dengan Google hanya untuk masuk — selesai.
-
----
-
-## Di Mana Tombol Google Signin?
-
-### Halaman Login
-```
-┌─────────────────────────────────────────┐
-│ Jatahku                                 │
-│ Setiap rupiah ada jatahnya             │
-│                                          │
-│ [Masuk] [Daftar]                        │
-│                                          │
-│ [Google logo] Masuk dengan Google       │
-│ atau gunakan email                      │
-│                                          │
-│ Email: [________________]                │
-│ Password: [________________]             │
-│ [Masuk dengan Email]                    │
-└─────────────────────────────────────────┘
-```
-
-### Halaman Daftar
-```
-┌─────────────────────────────────────────┐
-│ [Google logo] Daftar dengan Google      │
-│ atau gunakan email                      │
-│                                          │
-│ Nama: [________________]                 │
-│ Email: [________________]                │
-│ Password: [________________]             │
-│ [Daftar dengan Email]                   │
-└─────────────────────────────────────────┘
-```
 
 ---
 
@@ -185,9 +124,9 @@ Total waktu: **< 2 menit**. Rina tidak perlu ingat password, tidak perlu email v
 
 ## FAQ: Login dengan Google
 
-**Q: Kalau akun Gmail saya di-hack, bagaimana Jatahku-nya?**
+**Q: Kalau akun Gmail saya di-hack?**
 
-A: Kalau Gmail di-hack, orang itu bisa login ke Jatahku pakai Gmail tersebut. Segera update password Gmail, dan pergi ke Jatahku Settings untuk remove Google link atau set password backup.
+A: Orang itu bisa login ke Jatahku pakai Gmail tersebut. Segera update password Gmail. Di Jatahku, bisa remove Google link di Settings, atau set password backup email agar tetap bisa login tanpa Google.
 
 **Q: Bisa login dengan akun Google kerja/organizational?**
 
