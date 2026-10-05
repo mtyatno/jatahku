@@ -11,7 +11,7 @@ from decimal import Decimal
 from app.services.advisor.formatting import _to_decimal, _fmt_rp, _card
 from app.services.advisor.rules._base import AdvisorContext, _MIN_PROJECTION_DAYS
 from app.services.advisor.projection import project_envelope
-from app.services.advisor.rules.depletion import _floor_thousand, _fmt_date
+from app.services.advisor.rules.depletion import _floor_rp100, _fmt_date
 from app.services.advisor.formatting import _money
 
 
@@ -67,7 +67,7 @@ def evaluate_overspend(ctx: AdvisorContext) -> list[dict]:
             has_txn_data = any(ctx.txns_by_env.get(str(e.id)) for e in ctx.envelopes)
             severity = "warning" if (has_txn_data and total_variable_count < 5) else "danger"
             remaining = expense_allocated - expense_spent
-            safe_daily = _floor_thousand(remaining / days_remaining) if remaining > 0 and days_remaining > 0 else Decimal("0")
+            safe_daily = _floor_rp100(remaining / days_remaining) if remaining > 0 and days_remaining > 0 else Decimal("0")
             if remaining > 0:
                 title = f"Semua amplop belanja: maksimal Rp{_fmt_rp(safe_daily)}/hari"
                 body = (

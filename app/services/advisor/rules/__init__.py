@@ -97,11 +97,12 @@ async def build_advisor_insights(user, db) -> dict:
     return compute_insight_cards(
         envelopes, stats, period_info, goals_by_env, balances_by_env,
         txns_by_env, recurring_by_env,
+        income_type=getattr(user, "income_type", None),
     )
 
 
 def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_by_env,
-                          txns_by_env=None, recurring_by_env=None) -> dict:
+                          txns_by_env=None, recurring_by_env=None, income_type=None) -> dict:
     """Pure card computation — no DB access, no await. All inputs are
     pre-loaded by build_advisor_insights (or synthesized by tests).
 
@@ -123,6 +124,7 @@ def compute_insight_cards(envelopes, stats, period_info, goals_by_env, balances_
         balances_by_env=balances_by_env,
         txns_by_env=txns_by_env or {},
         recurring_by_env=recurring_by_env or {},
+        income_days={"daily": 1, "weekly": 7}.get(income_type),
     )
 
     module_globals = sys.modules[__name__].__dict__

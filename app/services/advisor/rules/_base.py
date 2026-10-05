@@ -20,6 +20,8 @@ class AdvisorContext:
     balances_by_env: dict
     txns_by_env: dict = field(default_factory=dict)
     recurring_by_env: dict = field(default_factory=dict)
+    # Days until the next expected income (1 daily, 7 weekly); None = the period end.
+    income_days: int | None = None
     # Envelopes a rule chose not to project, with a short reason for the UI.
     notes: list = field(default_factory=list)
 

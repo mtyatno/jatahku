@@ -1,9 +1,10 @@
 """env_depletion rule — per-envelope depletion projection.
 
-Flags expense envelopes whose current spend rate, projected across the whole
-period, would exceed the available budget before the period ends. Each card
-leads with an action (a safe daily amount until the period ends) and carries
-a structured `detail` so the UI can show the calculation behind it.
+Flags expense envelopes whose current spend rate would empty them before the
+money is next replenished: the period end for monthly earners, the next
+expected income for daily and weekly earners (`ctx.income_days`). Each card
+leads with an action (a safe daily amount until then) and carries a
+structured `detail` so the UI can show the calculation behind it.
 
 Envelopes whose spending this period is only bills or balance adjustments
 have no daily habit to project; they are skipped and listed in `ctx.notes`."""
@@ -23,9 +24,10 @@ def _fmt_date(value) -> str:
     return f"{value.day} {_BULAN[value.month - 1]}"
 
 
-def _floor_thousand(value: Decimal) -> Decimal:
-    """A safe daily limit is advice; round it down so following it never overshoots."""
-    return (value // 1000) * 1000 if value >= 1000 else value.quantize(Decimal("1"))
+def _floor_rp100(value: Decimal) -> Decimal:
+    """A safe daily limit is advice; round it down to Rp100 (the smallest coin in use)
+    so following it never overshoots."""
+    return (value // 100) * 100 if value > 0 else Decimal("0")
 
 
 def _skip_reason(excluded: dict) -> str:
@@ -75,17 +77,41 @@ def evaluate_depletion(ctx: AdvisorContext) -> list[dict]:
                 "reason": _skip_reason(proj["excluded"]),
             })
             continue
-        if proj["projected"] <= available or days_remaining <= 0:
+        if days_remaining <= 0:
             continue
-
-        shortage = proj["projected"] - available
+        horizon = min(ctx.income_days, days_remaining) if ctx.income_days else None
+        if horizon:
+            # Only what must last until the next income matters, not the period end.
+            needed = daily_rate * horizon
+            if remaining > 0 and needed <= remaining:
+                continue
+            shortage = needed - remaining
+        else:
+            if proj["projected"] <= available:
+                continue
+            shortage = proj["projected"] - available
         severity = "danger" if shortage > available * Decimal("0.2") else "warning"
         if proj["severity_capped"] and severity == "danger":
             severity = "warning"
         pct = int(spent / available * 100)
 
-        if remaining > 0:
-            safe_daily = _floor_thousand(remaining / days_remaining)
+        if remaining > 0 and horizon:
+            safe_daily = _floor_rp100(remaining / horizon)
+            days_early = 0
+            if horizon == 1:
+                title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)} hari ini"
+                body = (
+                    f"Biasanya Rp{_fmt_rp(daily_rate)}/hari, sisa amplop tinggal "
+                    f"Rp{_fmt_rp(remaining)} sampai income berikutnya besok."
+                )
+            else:
+                title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)}/hari"
+                body = (
+                    f"Kalau tetap Rp{_fmt_rp(daily_rate)}/hari, sisa Rp{_fmt_rp(remaining)} "
+                    f"habis sebelum income berikutnya ({horizon} hari lagi)."
+                )
+        elif remaining > 0:
+            safe_daily = _floor_rp100(remaining / days_remaining)
             days_until_empty = int(remaining / daily_rate)
             days_early = max(1, days_remaining - days_until_empty)
             title = f"{name}: maksimal Rp{_fmt_rp(safe_daily)}/hari"
@@ -95,7 +121,7 @@ def evaluate_depletion(ctx: AdvisorContext) -> list[dict]:
             )
         else:
             safe_daily = Decimal("0")
-            days_early = days_remaining
+            days_early = 0 if horizon else days_remaining
             title = f"{name}: dana sudah habis"
             body = (
                 f"Sudah lewat Rp{_fmt_rp(-remaining)} dari dana amplop. "
@@ -131,6 +157,7 @@ def evaluate_depletion(ctx: AdvisorContext) -> list[dict]:
             "daily_rate": _money(daily_rate),
             "safe_daily": _money(safe_daily),
             "days_early": days_early,
+            "horizon_days": horizon,
             "period_end": _fmt_date(period_end) if period_end else None,
             "excluded_recurring": _money(excluded["recurring"]),
             "excluded_adjustment": _money(excluded["adjustment"]),
