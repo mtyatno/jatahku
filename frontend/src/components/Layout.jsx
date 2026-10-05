@@ -154,7 +154,7 @@ function QuickAddIncome({ onClose }) {
   if (!ready) return <div className="text-center py-8 text-gray-400">Loading...</div>;
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 items-end">
         <div><label className="label">Jumlah (Rp)</label><input type="number" className="input font-mono" placeholder="8000000" value={incomeAmount} onChange={e => setIncomeAmount(e.target.value)} required min="1" /></div>
         <div><label className="label">Keterangan</label><input type="text" className="input" placeholder="Gaji atau Pendapatan harian" value={incomeDesc} onChange={e => setIncomeDesc(e.target.value)} required /></div>
       </div>
