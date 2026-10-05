@@ -1,176 +1,61 @@
 ---
-title: "FAB Speed Dial: 5 Aksi Cepat dalam Satu Tombol"
-description: "Tombol + di Jatahku sekarang punya 5 pilihan aksi: Pengeluaran, Amplop Baru, Income, Langganan, dan Cocokkan Saldo — semua tanpa pindah halaman."
+title: "Tombol + Kini Punya 5 Aksi Cepat, Termasuk Cocokkan Saldo"
+description: "Tombol + di Jatahku sekarang berisi lima aksi: Pengeluaran, Amplop, Income, Langganan, dan Cocokkan saldo. Langganan juga punya dua tab, untuk menambah dan membayar."
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/fitur-baru-april-2026.svg
+cover: /covers/fab-5-aksi.svg
 featured: false
 ---
 
-Sebelumnya, tombol **+** di pojok kanan bawah Jatahku hanya bisa untuk satu aksi: tambah pengeluaran. Kalau mau tambah amplop baru atau income, harus navigasi ke halaman lain.
+Tombol **+** hijau di pojok kanan bawah Jatahku adalah menu cepat yang ada di setiap halaman aplikasi. Waktu pertama dikenalkan, isinya empat aksi (baca [FAB Speed Dial — 4 Inputan Cepat dalam Satu Tombol](/insight/fab-speed-dial-4-inputan/)). Sekarang isinya lima, dan aksi Langganan jadi lebih lengkap.
 
-Sekarang, **tombol + adalah speed dial** dengan 5 pilihan aksi — semuanya bisa diakses dari halaman manapun tanpa pindah-pindah halaman.
+Ketuk **+**, dan lima pilihan muncul di atasnya. Setiap pilihan membuka jendela di halaman yang sedang kamu buka, jadi kamu tidak perlu pindah halaman. Ketuk **×** untuk menutup menunya.
 
----
+## 1. Pengeluaran
 
-## 5 Aksi dalam Speed Dial
+Membuka **Catat pengeluaran**. Kamu bisa mengetik beberapa pengeluaran sekaligus, dipisah dengan koma, baris baru, atau kata "dan". Contohnya:
 
-Klik tombol +, muncul 5 pilihan melayang di sekitarnya:
+```
+kopi 18k, bensin 20k dan parkir 2rb
+```
 
-### 1️⃣ 💰 Pengeluaran
+Teks itu terbaca sebagai tiga pengeluaran: kopi Rp18.000, bensin Rp20.000, dan parkir Rp2.000. Periksa daftarnya, lalu ketuk **Simpan Semua**.
 
-Catat transaksi atau belanja ke amplop tertentu.
+## 2. Amplop
 
-**Contoh:** Baru aja belanja makan Rp35.000 → klik speed dial → Pengeluaran → pilih amplop Makan → catat Rp35.000 → selesai.
+Membuka form **Amplop baru** yang terdiri dari empat langkah. Panduannya ada di artikel [Bikin Amplop Baru Lewat 4 Langkah Singkat](/insight/amplop-baru-4-langkah/).
 
-**Fitur:**
-- Multi-input (catat banyak transaksi sekaligus)
-- Dari bot Telegram: "kopi 35k" sama aja → langsung tercatat
-- Bisa pilih amplop, deskripsi, tanggal
+## 3. Income
 
-### 2️⃣ ✉️ Amplop Baru
+Membuka **Income baru**. Isi jumlah dan keterangannya, lalu ketuk **Bagi otomatis** untuk membagi income ke amplop sesuai kebutuhan masing-masing. Detailnya ada di artikel [Bagi Otomatis](/insight/bagi-otomatis-income/).
 
-Bikin amplop baru dengan 4-step form.
+## 4. Langganan
 
-**Contoh:** Punya tujuan baru → klik speed dial → Amplop → jawab 4 langkah → jadi.
+Membuka **Langganan** dengan dua tab:
 
-**Dari halaman manapun:** Kalau lagi lihat Dashboard atau Analytics, bisa langsung buat amplop baru tanpa perlu navigate ke halaman Envelopes.
+- **Tambah Langganan**: daftarkan tagihan rutin baru, misalnya internet atau streaming.
+- **Bayar Langganan**: lihat tagihan langgananmu dan bayar yang belum lunas.
 
-### 3️⃣ 💵 Income Baru
+Kalau ada tagihan yang belum dibayar, jendela ini langsung terbuka di tab **Bayar Langganan**.
 
-Tambah income dan langsung bagi ke amplop dengan Bagi Otomatis.
+## 5. Cocokkan Saldo
 
-**Contoh:** Baru dapat Rp500.000 → klik speed dial → Income → ketik 500k → Bagi Otomatis → review hasil → simpan.
+Aksi ini belum ada di versi empat aksi. Gunanya untuk menyamakan catatan Jatahku dengan uang yang benar-benar kamu pegang.
 
-**Fitur:**
-- Bisa ketik jumlah atau choose dari income reguler
-- Bagi Otomatis auto-suggest alokasi
-- Manual edit kalau perlu
+Jatahku bertanya **"Berapa total uangmu sekarang?"**, yaitu uang tunai ditambah saldo semua rekening dan e-wallet. Lalu ada tiga kemungkinan:
 
-### 4️⃣ 🔄 Langganan
+- **Saldo sudah cocok**: catatanmu sudah sesuai.
+- **Ada Rp… pengeluaran yang belum tercatat**: uangmu lebih sedikit dari catatan. Jatahku menyarankan pembagian selisih itu ke amplop berdasarkan pola belanjamu 30 hari terakhir, dan kamu bisa mengubahnya sebelum menyimpan penyesuaian.
+- **Uangmu Rp… lebih banyak dari catatan**: mungkin ada pemasukan yang belum dicatat. Pilih amplop tujuan di **Masukkan ke**.
 
-Tambah atau bayar langganan/subscription.
+Cocokkan saldo juga bisa dibuka dari tautan "Cocokkan saldo · terakhir …" di Dashboard. Kalau ternyata salah, cek terakhir bisa dibatalkan dari jendela yang sama.
 
-**Contoh:** Baru beli streaming tahunan → klik speed dial → Langganan → tambah → pilih amplop → set due date → selesai.
+## Kapan Dipakai?
 
-**Dengan FAB:** Tidak perlu pindah halaman ke tab Langganan — langsung bisa dari dashboard atau manapun.
+- Baru belanja: **Pengeluaran**, supaya tidak lupa.
+- Baru terima uang: **Income**, lalu **Bagi otomatis**.
+- Tagihan jatuh tempo: **Langganan**, tab Bayar.
+- Seminggu sekali: **Cocokkan saldo**, supaya catatan tetap sesuai kenyataan.
 
-### 5️⃣ ⚖️ Cocokkan Saldo
-
-Reconcile saldo real dengan record Jatahku.
-
-**Contoh:** Buka e-wallet, saldo ternyata Rp2.850.000, tapi Jatahku catat Rp2.900.000 (beda Rp50.000) → klik speed dial → Cocokkan Saldo → input saldo real → sistem adjust.
-
-**Kapan perlu?** Kalau ada transaksi yang lupa dicatat atau fee yang tidak tercatat.
-
----
-
-## Cara Pakai FAB Speed Dial
-
-### Di Phone
-
-1. **Klik tombol + di pojok kanan bawah**
-   - 5 pilihan akan muncul melayang di sekitar tombol +
-
-2. **Pilih salah satu aksi**
-   - Contoh: klik ikon 💰 untuk Pengeluaran
-
-3. **Form modal terbuka di halaman yang sama**
-   - Input data, simpan
-
-4. **Kembali ke halaman asli**
-   - Form tutup otomatis setelah simpan
-
-Tidak ada page loading, tidak ada delay — semuanya instant.
-
-### Di Desktop
-
-Sama seperti phone, tapi tombol + di pojok kanan bawah, atau kadang di pojok atas kalau desktop view berbeda.
-
----
-
-## Keuntungan FAB Speed Dial
-
-### ✅ Akses Cepat dari Mana Saja
-
-Saat lagi lihat Analytics chart, bisa langsung catat pengeluaran tanpa perlu balik ke dashboard atau pindah halaman.
-
-### ✅ Tidak Perlu Memorize Menu
-
-Cuma satu tombol — mudah diingat. Tidak perlu cari "dimana sih letak Langganan?" atau "Amplop baru di tab apa?"
-
-### ✅ Mengurangi Friction
-
-**Sebelum:** Catat pengeluaran → pindah ke halaman Transaksi → klik + → input. (3 step)
-
-**Sekarang:** Klik + di dashboard → input → selesai. (2 step, instant)
-
-### ✅ Workflow Alami
-
-Orang-orang sering multi-task: buka app, cek balance, lihat analytics, tiba-tiba ingat harus catat pengeluaran. Speed dial membuat workflow ini smooth — catat dari mana saja.
-
----
-
-## Contoh Alur: Rudi Catat Bensin
-
-Rudi lagi lihat Dashboard (analytics).
-
-Tiba-tiba ingat belum catat pembelian bensin Rp50.000 tadi pagi.
-
-**Cara lama:**
-1. Tutup analytics
-2. Pindah ke halaman Transaksi
-3. Klik +
-4. Pilih Pengeluaran
-5. Input Bensin 50k
-6. Simpan
-
-**Cara baru:**
-1. Klik + di dashboard
-2. Pilih Pengeluaran
-3. Input Bensin 50k
-4. Simpan
-5. Balik ke analytics
-
-Lebih simple, lebih cepat, lebih natural.
-
----
-
-## Tips Menggunakan FAB
-
-### 💡 Catat Pengeluaran Sesegera Mungkin
-
-Kalau baru belanja, langsung catat dengan speed dial. Jangan ditunda-tunda sampai lupa detail transaksinya (berapa nominal, jam berapa, kemana).
-
-### 💡 Bagi Otomatis untuk Income Besar
-
-Saat dapat gaji atau income besar, selalu gunakan Bagi Otomatis terlebih dahulu. Review alokasi yang suggest, baru simpan atau edit.
-
-### 💡 Reconcile Mingguan
-
-Set reminder: setiap Minggu pagi, buka Jatahku → speed dial → Cocokkan Saldo. Pastikan record akurat, ada koreksi bisa langsung adjust.
-
-### 💡 Amplop Baru Kapan Dibutuhkan
-
-Jangan bikin amplop terlalu banyak dari awal. Bikin amplop baru pas sudah ada kebutuhan — speed dial membuat ini sangat mudah.
-
----
-
-## Perbedaan: FAB Speed Dial vs Navigation Menu
-
-| Aksi | Via FAB | Via Menu |
-|------|---------|----------|
-| **Catat Pengeluaran** | 1-2 tap | 3 tap |
-| **Amplop Baru** | 1-2 tap | 3 tap + navigate |
-| **Income Baru** | 1-2 tap | 3 tap + navigate |
-| **Langganan** | 1-2 tap | 3 tap |
-| **Cocokkan Saldo** | 1-2 tap | Find di Settings |
-
-FAB lebih cepat karena **akses dari halaman manapun**, tanpa perlu navigasi.
-
----
-
-Speed dial adalah fitur yang terlihat simple tapi significantly mengurangi friction dalam daily usage. Terutama buat pengguna yang sering multitask atau on-the-go.
-
-Punya feedback tentang FAB speed dial? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).
+Punya masukan soal tombol +? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).

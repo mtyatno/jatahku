@@ -1,152 +1,72 @@
 ---
-title: "AI Advisor Jatahku Kini Memahami Buruh Harian & Mingguan"
-description: "AI Advisor sekarang hitung 'sisa aman' berdasarkan tipe pendapatan: harian, mingguan, atau bulanan. Ojek driver dan pedagang harian akhirnya punya panduan belanja yang realistis, bukan asumsi gajian bulanan."
+title: "AI Advisor Kini Ikut Ritme Pendapatanmu: Harian, Mingguan, atau Bulanan"
+description: "Batas aman belanja di AI Advisor sekarang dihitung dari jenis pendapatanmu. Yang dapat uang setiap hari tidak lagi diminta berhemat seolah gajian masih sebulan lagi."
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/panduan-lengkap.svg
+cover: /covers/ai-advisor-ritme-pendapatan.svg
 featured: true
 ---
 
-Sebelumnya, **AI Advisor Jatahku asumsi semua user dapat gaji setiap akhir bulan**. Hasilnya, advice yang diberikan tidak akurat untuk ojek driver, pedagang harian, atau freelancer yang pendapatannya tidak pasti.
+Sebelumnya, AI Advisor menghitung batas aman belanja dengan cara yang sama untuk semua orang: **sisa bebas dibagi sisa hari sampai periode budget selesai**.
 
-Sekarang semuanya berubah. AI Advisor memahami **tiga tipe pendapatan**: harian, mingguan, dan bulanan — dan memberikan saran belanja yang sesuai dengan ritme pendapatanmu.
+Cara itu pas untuk yang gajian bulanan. Tapi bayangkan driver ojol yang punya sisa bebas Rp180.000 dan periodenya masih 20 hari. Dengan cara lama, batas amannya hanya Rp9.000 per hari, padahal besok dia sudah dapat pemasukan lagi.
 
----
+Sekarang AI Advisor memperhitungkan **jenis pendapatan** kamu.
 
-## Masalah: Batas Aman yang Salah untuk Buruh Harian
+## Atur Jenis Pendapatan
 
-Bayangkan Rudi, ojek driver. Income harian sekitar Rp150.000, tapi tidak setiap hari dapat pasangan. Rudi punya Rp1.500.000 di amplop Makan.
+Buka **Settings → 💼 Jenis Pendapatan** dan pilih salah satu:
 
-**Dengan logika lama (bulanan):**
-- Jatah harian = Rp1.500.000 ÷ 30 hari = **Rp50.000/hari**
+- **📅 Bulanan**: gaji tetap setiap bulan
+- **📆 Mingguan**: pendapatan setiap minggu
+- **📈 Harian**: pendapatan setiap hari
+- **❓ Tidak Tentu**: pendapatan tidak teratur
 
-Tapi kalau Rudi macet seminggu — tidak ada income — uang itu akan habis sebelum gajian. Jatah Rp50.000 terasa aman, padahal tidak.
+Akun baru sudah ditanya soal ini saat onboarding. Akun yang dibuat sebelumnya dihitung sebagai **Bulanan** sampai kamu mengubahnya di Settings.
 
-**Dengan logika baru (harian):**
-- Rudi set income type sebagai "Harian"
-- AI Advisor hitung safe daily berdasarkan **hari sampai income berikutnya**, bukan sampai akhir bulan
-- Jatah berubah real-time: hari pertama setelah dapat income = jatah besar, semakin dekat ke hari berikutnya tanpa income = jatah mengecil
-- Rudi selalu tahu: "Hari ini batas aman berapa agar tidak kurang saat menunggu income esok hari?"
+## Cara Hitungnya
 
----
+Batas aman hari ini = **sisa bebas ÷ jumlah hari yang harus ditutup**, lalu dibulatkan ke bawah ke kelipatan Rp100.
 
-## Tiga Tipe Pendapatan, Tiga Cara Hitung
+| Jenis pendapatan | Sisa bebas dibagi |
+|---|---|
+| Harian | 1 hari, karena pemasukan berikutnya datang besok |
+| Mingguan | 7 hari |
+| Bulanan dan Tidak Tentu | sisa hari sampai periode budget selesai |
 
-### 🛵 Harian (Daily Earner)
+Sisa bebas di sini sudah dipotong belanja hari ini, uang yang disisihkan untuk tagihan langganan, dan saldo amplop tabungan. Penjelasan lengkapnya ada di artikel [Sisa Bebas di Dashboard](/insight/sisa-bebas-dengan-bill-reserve/).
 
-Untuk pengguna dengan income tidak pasti setiap hari.
+**Contoh hitungan:**
 
-**Contoh:** Ojek driver, tukang ojek, pedagang kaki lima, pekerja harian.
+| Jenis | Sisa bebas | Dibagi | Aman hari ini |
+|---|---|---|---|
+| Harian | Rp180.000 | 1 hari | Rp180.000 |
+| Mingguan | Rp420.000 | 7 hari | Rp60.000 |
+| Bulanan | Rp751.000 | 20 hari tersisa | Rp37.500 (dari Rp37.550, dibulatkan ke bawah) |
 
-**Cara kerja:**
-- Dashboard menampilkan "**Batas aman hari ini sampai income berikutnya**"
-- Setiap envelope juga punya saran daily limit yang disesuaikan dengan **hari sampai income terdekat** — bukan 30 hari
-- Amplop dengan sinking fund (servis motor, asuransi) berubah batas amannya kalau ada deadline — lebih ketat sampai deadline tercapai
+Untuk pendapatan **Harian**, seluruh sisa bebas boleh dipakai hari ini karena besok ada pemasukan baru. AI Advisor baru bilang kamu lewat batas kalau sisa bebasnya sudah minus.
 
-**Contoh real:** Rudi dapat Rp200.000 hari ini. Besok mungkin dapat Rp150.000, lusa nggak dapat. AI Advisor tahu: "Ada 3 hari sebelum kamu mungkin dapat income lagi, jadi hari ini batas aman Rp20.000, besok Rp25.000, lusa Rp30.000."
+## Di Mana Terlihat?
 
-### 📅 Mingguan (Weekly Earner)
+**1. Baris pertama kartu AI Advisor di Dashboard.** Bunyinya "Hari ini masih aman belanja Rp…", atau "Hari ini sudah lewat Rp… dari jatah harian" kalau sudah kelewatan. Ketuk barisnya untuk melihat hitungannya:
 
-Untuk pengguna yang pendapatannya paling stabil dalam seminggu.
+- Harian dan Mingguan: "Sisa bebas semua amplop", "Sampai income berikutnya", "Jatah hari ini = sisa ÷ … hari", dan "Terpakai hari ini (sudah dipotong)".
+- Bulanan dan Tidak Tentu: "Sisa bebas semua amplop", "Hari tersisa", "Jatah per hari = sisa ÷ hari", dan "Terpakai hari ini".
 
-**Contoh:** Karyawan paruh waktu yang digaji mingguan, pedagang yang rutin dapat income setiap hari Jumat.
+**2. Kartu Sisa bebas.** Di bawah angkanya ada baris "≈Rp…/hari aman" dengan angka yang sama.
 
-**Cara kerja:**
-- Batas aman dihitung dari **hari sampai payday mingguan berikutnya** — bukan sampai akhir bulan
-- Setiap amplop disesuaikan dengan siklus 7 hari
+**3. Grafik Pengeluaran harian.** Garis putus-putus "Batas aman Rp…/hari" juga memakai angka yang sama.
 
-**Contoh real:** Siti pedagang mingguan. Setiap Jumat dapat Rp600.000. Pada hari Sabtu batas amannya paling besar, semakin dekat ke Jumat berikutnya jatah mengecil.
+**4. Peringatan per amplop.** Untuk pendapatan Harian dan Mingguan, AI Advisor memperingatkan sebuah amplop hanya kalau isinya diperkirakan habis sebelum pemasukan berikutnya, dengan kecepatan belanjamu saat ini. Contohnya:
 
-### 💼 Bulanan (Monthly Earner) & Tidak Tentu (Irregular)
+- Harian: **"🍜 Makan di Jalan: maksimal Rp25.000 hari ini"**, dengan penjelasan "Biasanya Rp35.000/hari, sisa amplop tinggal Rp25.000 sampai income berikutnya besok."
+- Mingguan: **"⛽ Bensin & Operasional: maksimal Rp20.000/hari"**, dengan penjelasan "Kalau tetap Rp30.000/hari, sisa Rp140.000 habis sebelum income berikutnya (7 hari lagi)."
 
-Tetap sama seperti sebelumnya:
-- Bulanan: batas aman dihitung dari hari ini sampai akhir periode budget
-- Tidak Tentu: logika mirip bulanan, tapi kasih warning lebih sering
+Setiap peringatan punya tautan **Atur alokasi** yang membuka halaman Alokasi.
 
----
+## Kenapa Ini Penting?
 
-## Di Mana Perubahan Ini Terasa?
+Batas aman yang terlalu ketat sama tidak bergunanya dengan yang terlalu longgar. Driver ojol, pedagang, dan pekerja harian sekarang mendapat angka yang mengikuti kapan uang mereka benar-benar masuk, bukan asumsi gajian akhir bulan.
 
-### 1. Dashboard Hero Advisor
-
-Baris pertama berubah jadi:
-
-**🛵 Harian:** "Rp80.000/hari sampai income berikutnya (dalam 3 hari)"
-
-**📅 Mingguan:** "Rp90.000/hari sampai payday Jumat"
-
-**💼 Bulanan:** "Rp50.000/hari sampai akhir bulan" (tetap sama)
-
-### 2. Saran per Amplop
-
-Di halaman Amplop atau kartu AI Advisor, saran limit juga berubah:
-
-**🛵 Harian — Makan di Jalan:**
-> ⚠️ Makan sudah pakai 60%. Sampai income berikutnya (2 hari), batas aman **Rp8.000/hari**.
-
-**📅 Mingguan — Transportasi:**
-> ✅ Transportasi on track. Sampai payday minggu depan, batas aman **Rp15.000/hari**.
-
-### 3. Amplop dengan Sinking Fund
-
-Sinkking fund (dana persiapan tahunan) punya special handling:
-
-**Kalau deadline masuk periode ini:**
-> ⚠️ Pajak tahunan jatuh tempo 20 hari lagi. Harus sisih **Rp20.000/hari** agar tidak ketinggalan.
-
-**Kalau deadline jauh:**
-> ✅ Servis motor on track. Target tercapai sebelum deadline bulan depan.
-
----
-
-## Cara Set Income Type
-
-### Di Onboarding (User Baru)
-
-Saat pertama kali sign up, Jatahku akan tanya: **"Kamu dapat income gimana?"**
-
-- 🛵 Harian (tidak pasti setiap hari)
-- 📅 Mingguan (stabil per minggu)
-- 💼 Bulanan (dapat gaji setiap bulan)
-- ❓ Tidak tentu (irregular)
-
-Jawab sekali — selesai. Dashboard langsung menyesuaikan.
-
-### Di Settings (User Existing)
-
-Buka **Settings** → **Jenis Pendapatan** → pilih tipe baru.
-
-Saat berganti income type, semua saran AI Advisor akan recalculate otomatis.
-
----
-
-## Privacy & Household
-
-Kalau pakai fitur **Household** (berbagi budget dengan pasangan):
-
-- Setiap anggota tetap punya income type sendiri
-- Dashboard setiap orang menampilkan batas aman berdasarkan income type mereka — tidak tercampur
-- Amplop shared tetap shared, tapi saran limit dikalibrasi per person
-
-Contoh: Suami income bulanan, istri harian. Mereka share amplop "Belanja Bulanan". Istri lihat batas aman per hari sampai income berikutnya, suami lihat batas aman per hari sampai akhir bulan.
-
----
-
-## Hasil yang Diharapkan
-
-Dengan AI Advisor yang paham tipe pendapatan:
-
-✅ **Ojek driver** tidak lagi panik di hari ketiga tanpa income — sudah tahu jatah aman berapa
-
-✅ **Pedagang harian** bisa manage amplop sinking fund (asuransi, servis) tanpa stress — sistem sudah hitung ketat sampai deadline
-
-✅ **User mingguan** akhirnya punya saran yang cocok dengan ritme mereka — bukan misguided monthly average
-
-✅ **Tidak perlu setup manual** — cukup jawab satu pertanyaan saat onboarding, semuanya auto-adjust
-
----
-
-Teknologi envelope budgeting baru bekerja sesuai cara uang benar-benar bergerak di tangan pengguna. Bukan asumsi ideal — tapi kenyataan.
-
-Ada pertanyaan atau masukan? Hubungi [hi@jatahku.com](mailto:hi@jatahku.com).
+Punya masukan? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).

@@ -1,151 +1,71 @@
 ---
-title: "Onboarding Jatahku Mulai dengan Tipe Pendapatanmu"
-description: "Pertanyaan pertama saat daftar Jatahku kini adalah: kamu dapat income gimana? Harian, mingguan, bulanan? Jawab sekali — sistem otomatis menyesuaikan semuanya dari awal."
+title: "Onboarding Baru: Jatahku Tanya Pola Pemasukanmu Lebih Dulu"
+description: "Saat pertama menyiapkan budget, pertanyaan pertama Jatahku sekarang adalah pola pemasukanmu: bulanan, mingguan, harian, atau tidak tentu. Jawabannya langsung dipakai AI Advisor."
 pubDate: 2026-10-05
 category: tutorial
 author: Tim Jatahku
-cover: /covers/cara-mulai-envelope-budgeting.svg
+cover: /covers/onboarding-pola-pemasukan.svg
 featured: false
 ---
 
-Dulu, saat pertama kali sign up Jatahku, yang ditanya adalah:
-1. Nama
-2. Email
-3. Password
-4. Membuat amplop pertama
+Tidak semua orang gajian sebulan sekali. Ada yang dibayar per minggu, ada yang dapat uang setiap hari dari narik atau berdagang, ada juga yang pemasukannya naik turun.
 
-Sistem asumsi setiap user dapat gaji bulanan. Hasilnya, user harian atau mingguan harus setup manual di Settings nanti — ribet dan sering terlupa.
+Karena itu, setup awal Jatahku sekarang dimulai dengan satu pertanyaan: **bagaimana pola pemasukanmu?**
 
-Sekarang **pertanyaan pertama adalah: Bagaimana cara kamu dapat income?**
+Setup ini muncul di Dashboard setelah kamu mendaftar (lewat email atau Google) dan belum punya amplop. Judulnya "Selamat datang!", dan isinya tiga langkah.
 
----
+## Langkah 1: Pola Pemasukan
 
-## Langkah-Langkah Onboarding Baru
+Pilih salah satu dari empat:
 
-### Langkah 1: Tipe Pendapatan
+- **💼 Bulanan**: "Gaji/Honorar tetap"
+- **📅 Mingguan**: "Mingguan teratur"
+- **🛵 Harian**: "Ojek/Dagang/Harian"
+- **📊 Tidak Tentu**: "Fluktuatif"
 
-Saat pertama buka Jatahku, ada 4 pilihan:
+Pertanyaan berikutnya menyesuaikan pilihanmu:
 
-> **🛵 Harian** — Dapat income tidak pasti, bisa hari ini ada, besok mungkin nggak
-> *Contoh: Ojek driver, pedagang kaki lima, tukang ojek*
+| Pola | Yang ditanyakan |
+|---|---|
+| Harian | "Rata-rata pendapatan bersih per hari" dan "Hari narik/kerja per bulan" (standarnya 26 hari) |
+| Mingguan | "Rata-rata pemasukan per minggu" |
+| Bulanan | "Berapa income bulanan kamu?" dan "Tanggal gajian kamu?" |
+| Tidak Tentu | "Estimasi rata-rata income bulanan" |
 
-> **📅 Mingguan** — Dapat income stabil per minggu
-> *Contoh: Karyawan paruh waktu, pedagang yang dapat tiap Jumat*
+Untuk Harian dan Mingguan, Jatahku langsung menghitung **Target Budget Bulanan**. Misalnya Rp150.000 × 26 hari = Rp3.900.000 per bulan, atau Rp500.000 × 4 minggu = Rp2.000.000 per bulan.
 
-> **💼 Bulanan** — Dapat gaji setiap bulan
-> *Contoh: Karyawan kantoran, PNS*
+## Langkah 2: Pilih Template Amplop
 
-> **❓ Tidak Tentu** — Pendapatan tidak teratur atau campuran
-> *Contoh: Freelancer dengan project yang datang random*
+Ada enam template yang bisa dipilih:
 
-Pilih satu. Sistem akan ingat dan otomatis hitung advice berdasarkan ini.
+- **🛵 Driver & Kurir**: Bensin & Operasional, Makan di Jalan, Pulsa & Kuota Narik, Servis & Ganti Oli, Kebutuhan Rumah, Tabungan / Darurat
+- **🛠️ Freelance & Usaha Mandiri**: Operasional & Internet, Biaya Hidup Harian, Sewa / Tagihan, Alat Kerja & Maintenance, Dana Darurat & Pajak
+- **💼 Karyawan**: Makan, Transport, Hiburan, Tagihan
+- **🎓 Mahasiswa**: Makan, Transport, Hiburan, Kuliah
+- **👨‍👩‍👧 Keluarga**: Makan, Transport, Rumah, Tagihan, Hiburan
+- **✏️ Custom**: buat amplop sendiri dari nol
 
-### Langkah 2: Jumlah Income
+## Langkah 3: Sesuaikan Alokasi dan Saldo Awal
 
-Tanyakan: "Berapa income kamu per periode?"
+Di langkah terakhir kamu bisa menyesuaikan alokasi tiap amplop, lalu memilih saldo awal.
 
-**Untuk pengguna harian:** "Rata-rata dapat berapa per hari?" + "Kerja berapa hari dalam sebulan?" (sistem akan hitung estimasi bulanan)
+- **Bulanan**: pilih "Isi saldo penuh dari gaji" kalau gaji bulan ini sudah cair, atau "Mulai saldo dari Rp 0 (Gaji belum cair)".
+- **Mingguan, Harian, dan Tidak Tentu**: pilih "Mulai saldo dari Rp 0" (yang direkomendasikan), atau "Ada uang pegangan hari ini" untuk langsung membagi uang yang kamu pegang sekarang ke amplop.
 
-**Untuk pengguna mingguan:** "Berapa per minggu?"
+Ketuk **Mulai Budgeting** dan amplopmu siap dipakai.
 
-**Untuk pengguna bulanan:** "Berapa gaji bulanan?"
+## Apa Gunanya Pola Pemasukan?
 
-### Langkah 3: Amplop Template
+Pilihanmu disimpan sebagai **Jenis Pendapatan**, dan dipakai AI Advisor di Dashboard untuk menghitung batas aman belanja hari ini:
 
-Pilih template amplop berdasarkan tipe pekerjaan:
+- Harian: sisa bebas dibagi 1 hari
+- Mingguan: sisa bebas dibagi 7 hari
+- Bulanan dan Tidak Tentu: sisa bebas dibagi sisa hari sampai periode budget selesai
 
-- 🛵 **Driver & Kurir** — Bensin, Makan di Jalan, Pulsa, Servis, Rumah, Tabungan
-- 🛠️ **Freelance & Usaha** — Operasional, Biaya Hidup, Sewa, Alat Kerja, Dana Darurat
-- 💼 **Karyawan** — Makan, Transport, Hiburan, Tagihan
-- 🎓 **Mahasiswa** — Makan, Transport, Hiburan, Kuliah
-- 👨‍👩‍👧 **Keluarga** — Makan, Transport, Rumah, Tagihan, Hiburan
-- ✏️ **Custom** — Buat sendiri dari nol
+Penjelasan lengkapnya ada di artikel [AI Advisor Kini Ikut Ritme Pendapatanmu](/insight/ai-advisor-daily-weekly-earners/).
 
-### Langkah 4: Saldo Awal (Opsional)
+## Sudah Punya Akun Sebelumnya?
 
-"Berapa uang yang sekarang kamu punya?" — ini untuk set starting cash di amplop-amplop.
+Akun yang dibuat sebelum onboarding ini belum pernah ditanya, jadi dihitung sebagai **Bulanan**. Kalau pemasukanmu harian atau mingguan, buka **Settings → 💼 Jenis Pendapatan** dan pilih yang sesuai. Pengaturan ini juga bisa diubah kapan saja kalau pola pemasukanmu berubah.
 
-**Untuk pengguna bulanan:** sistem bisa kasih opsi isi amplop dengan alokasi full (asumsi gajian baru turun) atau zero (amplop kosong dulu).
-
-**Untuk pengguna harian/mingguan:** default zero — lebih aman tidak assume.
-
----
-
-## Apa yang Berubah Setelah Onboarding?
-
-### 1. AI Advisor Langsung Akurat
-
-Setelah pilih tipe pendapatan, AI Advisor **sudah tahu cara kamu dapat uang**. 
-
-**Untuk ojek driver:** "Batas aman hari ini sampai order datang lagi"
-**Untuk karyawan mingguan:** "Batas aman sampai payday minggu depan"
-**Untuk karyawan bulanan:** "Batas aman sampai gajian akhir bulan"
-
-### 2. Saran Amplop Sesuai Profesi
-
-Template amplop yang dipilih sudah dikalibrasi untuk tipe pekerjaan:
-
-**Driver:** ada "Bensin & Operasional" + "Servis Motor" (expense + sinking fund)
-**Freelancer:** ada "Operasional & Internet" + "Alat Kerja" (biaya bisnis)
-**Karyawan:** ada "Tagihan" (predictable fixed costs)
-
-### 3. Tidak Perlu Manual Setup di Settings
-
-Sebelumnya, tipe pendapatan diset di Settings → Jenis Pendapatan. Sekarang sudah terangkai dari hari pertama.
-
-Kalau nanti tipe pendapatan berubah (misalnya switch dari freelance ke karyawan tetap), bisa update di Settings kapan saja.
-
----
-
-## Skenario: Siti Pedagang Mingguan
-
-**Siti mulai sign up Jatahku:**
-
-1. **Tanya: Bagaimana cara dapat income?**
-   → Siti pilih "📅 Mingguan"
-
-2. **Tanya: Berapa per minggu?**
-   → Siti: "Rp500.000 per minggu"
-   → Sistem catat: income mingguan, estimasi bulanan Rp2.000.000
-
-3. **Pilih template amplop:**
-   → Siti pilih "Freelance & Usaha" (mirip dengan bisnis pedagang)
-
-4. **Set saldo awal (opsional):**
-   → Siti kasih Rp0 (baru mulai)
-
-**Hasilnya:**
-- Dashboard sudah tahu: "Siti penghasilan mingguan"
-- AI Advisor menampilkan: "Sisa aman Rp X/hari sampai payday Jumat" (assume Jumat adalah payday)
-- Amplop Siti sudah siap: Operasional, Biaya Hidup, Sewa, Alat Kerja, Dana Darurat
-- Saat Siti dapat income Rp500.000 minggu depan, klik Bagi Otomatis langsung dapat alokasi yang fair
-
-Siti tidak perlu manual setup lagi. Semua sudah jalan dari hari pertama.
-
----
-
-## Kalau Mau Ubah Tipe Pendapatan?
-
-Tipe pendapatan tidak bersifat "final" — bisa diubah kapan saja di **Settings → Jenis Pendapatan**.
-
-**Saat ubah tipe pendapatan:**
-- AI Advisor otomatis recalculate semua saran
-- Dashboard refresh dengan batas aman yang baru
-- Amplop tetap ada (tidak dihapus)
-
-Contoh: Rudi awalnya harian (ojek), tahun depan sekolah jadi tidak bisa full time. Ubah ke "Tidak Tentu" di Settings → selesai, sistem adjust.
-
----
-
-## Mengapa Ini Penting?
-
-Untuk pengguna daily dan weekly earners terutama, **tipe pendapatan adalah fondasi semua advice**. Kalau sistem dari awal tahu cara kamu dapat uang, semua rekomendasi jadi lebih relevan:
-
-✅ Tidak perlu manual hitung "berapa hari sampai gajian"
-✅ AI Advisor langsung kasih saran yang cocok dengan ritme pendapatanmu
-✅ Amplop template sudah sesuai dengan profesi
-✅ Satu pertanyaan di awal — semuanya otomatis adjust
-
-Onboarding yang lebih cerdas = Jatahku yang lebih berguna dari hari pertama.
-
-Punya pertanyaan saat onboarding? Chat kami di [hi@jatahku.com](mailto:hi@jatahku.com).
+Ada pertanyaan soal setup awal? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).

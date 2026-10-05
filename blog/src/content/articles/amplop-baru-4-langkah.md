@@ -1,220 +1,72 @@
 ---
-title: "Amplop Baru Jadi Mudah: 4 Langkah Terstruktur"
-description: "Membuat amplop baru di Jatahku sekarang jadi proses 4-step yang fokus pada satu aspek per langkah, tanpa overwhelming di awal."
+title: "Bikin Amplop Baru Sekarang Lewat 4 Langkah Singkat"
+description: "Form Amplop baru dibagi menjadi empat langkah: nama, jenis, kategori atau target, lalu pengaturan dan sumber dana. Satu langkah, satu keputusan."
 pubDate: 2026-10-05
 category: tutorial
 author: Tim Jatahku
-cover: /covers/sinking-fund.svg
+cover: /covers/amplop-baru-4-langkah.svg
 featured: false
 ---
 
-Sebelumnya, saat bikin amplop baru, user dihadapkan dengan **satu form besar berisi 15+ field**:
+Membuat amplop melibatkan beberapa keputusan: namanya apa, untuk belanja rutin atau menabung, termasuk kebutuhan atau keinginan, dan dananya dari mana. Sekarang keputusan-keputusan itu dipisah ke dalam empat langkah pendek.
 
-- Nama amplop
-- Emoji
-- Budget amount
-- Purpose (expense/saving/sinking_fund)
-- Target amount (untuk saving)
-- Target date
-- Classification (needs/wants)
-- Minimum monthly reserve
-- Is rollover?
-- Is personal?
-- Daily limit
-- Cooling period threshold
-- Group
+Buka form **Amplop baru** dari halaman Amplop, atau dari tombol **+** di pojok kanan bawah lalu pilih **Amplop**. Di bawah judulnya ada keterangan "Langkah 1 dari 4". Tombol **Lanjut →** membawamu ke langkah berikutnya.
 
-Hasilnya, banyak user bingung dan skip field yang penting. Atau paling parah, tidak jadi bikin amplop sama sekali.
+## Langkah 1: Ikon dan Nama
 
-Sekarang **proses membuat amplop dibagi jadi 4 langkah** — setiap langkah fokus pada satu pertanyaan. User tidak overwhelmed, dan semua field penting tersedia tapi tidak terasa mendesak.
+Pilih ikon di **Pilih ikon**, lalu isi **Nama amplop**.
 
----
+Sambil kamu mengetik, Jatahku menebak jenis amplopnya dari nama itu:
 
-## 4 Langkah Membuat Amplop Baru
+- Nama seperti "Liburan", "Nikah", atau "Darurat" ditebak sebagai **Target menabung**.
+- Nama seperti "Pajak", "Asuransi", "STNK", atau "Servis" ditebak sebagai **Dana persiapan**.
+- Nama lainnya ditebak sebagai **Pengeluaran rutin**.
 
-### Langkah 1️⃣: Nama & Emoji
+Tebakan ini hanya titik awal. Kamu bisa menggantinya di langkah 2.
 
-**Pertanyaan:** "Amplop untuk apa?"
+## Langkah 2: Jenis Amplop
 
-Di langkah ini, user pilih:
-- **Nama amplop** — contoh: "Makan", "Sewa Rumah", "Tabungan Nikah"
-- **Emoji** — sistem suggest beberapa emoji populer (🍜, 🏠, 💰, 🚗, 📱, ✈️, dll)
+Di **Jenis amplop** ada empat pilihan:
 
-Saat user ketik nama, sistem juga **auto-suggest purpose** berdasarkan keyword:
+- **Pengeluaran rutin**: untuk pengeluaran sehari-hari seperti makan, transport, pulsa
+- **Cicilan/Utang**: untuk cicilan, kredit, atau utang yang dibayar berkala
+- **Target menabung**: untuk menabung ke tujuan tertentu seperti liburan, nikah, atau dana darurat
+- **Dana persiapan**: untuk mengumpulkan dana pengeluaran tahunan atau berkala seperti pajak dan asuransi
 
-> User ketik "Tabungan Nikah"
->
-> Sistem suggest: "Ini untuk menabung? Purpose: **Saving**" (bisa di-agree atau ubah di langkah 2)
+## Langkah 3: Kategori atau Target
 
-**Keep it simple:** Cuma 2 input, tidak ada yang ribet.
+Isi langkah ini tergantung jenis amplop yang kamu pilih.
 
-### Langkah 2️⃣: Tujuan (Purpose)
+**Pengeluaran rutin dan Cicilan/Utang** wajib memilih **Kategori pengeluaran**:
 
-**Pertanyaan:** "Amplop ini untuk apa tujuannya?"
+- **Kebutuhan**: pengeluaran yang tidak bisa ditunda
+- **Keinginan**: pengeluaran yang bisa dikurangi atau ditunda
 
-Tiga pilihan:
+Jatahku juga menyarankan kategorinya dari nama amplop. Nama seperti "Makan" atau "Listrik" disarankan sebagai Kebutuhan, sedangkan "Kopi" atau "Nongkrong" sebagai Keinginan.
 
-**💰 Expense** — Pengeluaran rutin (Makan, Transport, Hiburan)
-- Alokasi setiap periode, boleh dipakai sampai habis
-- Tidak ada target date atau goal
+**Target menabung dan Dana persiapan** mengisi targetnya: nama target (opsional), **Jumlah target (Rp)**, dan **Tanggal target** (opsional).
 
-**🎯 Saving** — Target menabung (Liburan, Nikah, Rumah)
-- Harus set target amount dan target date
-- Ada progress bar menuju goal
-- Sistem warn kalau setoran terlalu kecil
+## Langkah 4: Pengaturan Lainnya dan Sumber Dana
 
-**📅 Sinking Fund** — Dana persiapan tahunan/berkala (Pajak, Asuransi, Servis)
-- Harus set deadline dan target amount
-- Sistem warn kalau perlu sisih lebih banyak tiap bulan agar tepat waktu
-- Otomatis di-reserve sampai due date
+**Pengaturan lainnya** tersembunyi sampai kamu mengetuknya, jadi amplop sederhana tidak perlu mengisinya. Isinya:
 
-**Smart suggestion:** Kalau user pernah buat amplop serupa (contoh: sudah ada "Tabungan Liburan 2026"), sistem kasih opsi: "Pake template tabungan sebelumnya?" untuk copy-paste target amount.
+- **Grup**: masukkan amplop ke grup yang sudah ada, atau buat grup baru
+- **Rollover sisa ke bulan depan**: aktif dari awal
+- **Personal (hanya kamu)**: amplop tidak dibagikan ke anggota rumah tangga lain
+- **🎯 Behavior controls**: **🔒 Kunci amplop**, **📊 Daily limit (Rp/hari)**, dan **⏳ Cooling threshold (Rp)**. Cara kerja cooling period dibahas di [artikel ini](/insight/fitur-cooling-period-anti-belanja-impulsif/).
 
-### Langkah 3️⃣: Klasifikasi (Needs vs Wants)
+Di bagian **Sumber dana**, pilih dari mana amplop baru ini diisi:
 
-**Pertanyaan:** "Ini kebutuhan atau keinginan?"
+- **Transfer**: ambil dari amplop lain, lalu isi jumlahnya
+- **Income**: catat pemasukan baru dan tentukan berapa yang masuk ke amplop ini. Sisanya masuk Tabungan.
 
-Hanya muncul **jika purpose = Expense**.
+Ketuk **Buat & Alokasi**, dan amplop langsung siap dipakai.
 
-**Kebutuhan (Needs):**
-- Tidak bisa ditunda
-- Contoh: Makan, Transport, Listrik, Asuransi
-- Sistem prioritas ini saat alokasi atau budget squeeze
+## Contoh: Amplop "Pajak STNK"
 
-**Keinginan (Wants):**
-- Bisa dikurangi atau ditunda
-- Contoh: Hiburan, Kopi di Kafe, Belanja Baju
-- Sistem tahu ini flexible spending — bisa dikurangi kalau cash tight
+1. Pilih ikon, ketik "Pajak STNK". Jenisnya otomatis ditebak sebagai Dana persiapan.
+2. Biarkan pilihan **Dana persiapan**.
+3. Isi jumlah target dan tanggal jatuh tempo pajaknya.
+4. Lewati Pengaturan lainnya, pilih sumber dana, lalu ketuk **Buat & Alokasi**.
 
-**Efek apa?**
-- Analytics menghitung spending trend per kategori
-- Budget alert lebih smart: "Makan naik 20%, perlu cut di Hiburan?"
-
-### Langkah 4️⃣: Pengaturan Lanjutan (Opsional)
-
-**Pertanyaan:** "Ada pengaturan khusus?"
-
-Di sini, user bisa set hal-hal advanced (semua optional):
-
-**📌 Rollover**
-- "Kalau bulan ini sisa, boleh di-carry ke bulan depan?"
-- Default: YES (kebanyakan amplop suka rollover)
-- Contoh: "Amplop Transportasi bulan ini sisa Rp50.000, pindah ke bulan depan"
-
-**🔒 Lock/Personal**
-- "Amplop ini personal atau boleh dipakai keluarga?"
-- Default: Shared
-- Kalau di-lock, tidak bisa di-allocate dalam household
-
-**📊 Daily Limit**
-- "Batas belanja harian berapa?"
-- Default: Auto-calculate berdasarkan target tahunan
-- Contoh: Amplop Makan budget Rp1.500.000/bulan → daily limit default Rp50.000/hari
-
-**❄️ Cooling Period**
-- "Setelah belanja, berapa jam baru boleh belanja lagi?"
-- Default: OFF (untuk anti-belanja impulsif)
-- Contoh: Set 3 jam → setelah belanja Makan, tidak bisa belanja di amplop ini selama 3 jam
-
-**📁 Group**
-- "Amplop ini masuk group mana?"
-- Default: Tidak ada group
-- Contoh: Group "Cicilan", "Sewa", "Tabungan"
-
-**Tooltip untuk setiap setting:** User bisa klik `?` di setiap field untuk penjelasan detail.
-
----
-
-## Visualisasi: Dari Start ke Finish
-
-```
-┌─────────────────────────────────────────┐
-│ Langkah 1️⃣: Nama & Emoji                │
-│                                          │
-│ Amplop: [Makan di Jalan      ]          │
-│ Emoji:  [🍜]  🚗 📱 🍕 🏪      │
-│                                          │
-│ [Lanjut]                                │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│ Langkah 2️⃣: Tujuan                      │
-│                                          │
-│ 💰 Expense (untuk pengeluaran rutin)    │
-│ 🎯 Saving  (untuk menabung)             │
-│ 📅 Sinking Fund (untuk persiapan)       │
-│                                          │
-│ ☑ 💰 Expense                           │
-│ [Lanjut]                                │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│ Langkah 3️⃣: Klasifikasi                 │
-│                                          │
-│ ☑ Kebutuhan (Tidak bisa ditunda)        │
-│ ○ Keinginan (Bisa dikurangi)            │
-│                                          │
-│ [Lanjut]                                │
-└─────────────────────────────────────────┘
-                    ↓
-┌─────────────────────────────────────────┐
-│ Langkah 4️⃣: Pengaturan Lanjutan         │
-│                                          │
-│ ☑ Rollover sisa ke bulan depan          │
-│ ☐ Personal (private amplop)             │
-│ Daily Limit: [Auto] Rp50.000/hari       │
-│ Cooling Period: [OFF] atau [2 jam]      │
-│ Group: [Tidak ada]                      │
-│                                          │
-│ [Selesai] atau [Edit Lagi]              │
-└─────────────────────────────────────────┘
-```
-
----
-
-## Untuk User Baru vs Experienced
-
-**User Baru:**
-- Lebih suka simple — tinggal 4 langkah, step 4 mostly default
-
-**User Experienced:**
-- Bisa langsung ke step 4 kalau mau banyak custom
-- Semua field advance tersedia tanpa dilewatin dari langkah sebelumnya
-
-Sistem flexible — tidak force user untuk step-by-step kalau tidak perlu.
-
----
-
-## Contoh: Rudi Buat Amplop "Servis Motor"
-
-**Rudi buka FAB → Amplop Baru**
-
-**Langkah 1:** Ketik "Servis Motor", pilih emoji 🔧 ✓
-
-**Langkah 2:** Sistem suggest "Ini persiapan tahunan kan? Purpose: **Sinking Fund**"
-Rudi agree ✓
-
-**Langkah 3:** Skip (tidak applicable karena bukan Expense)
-
-**Langkah 4:** 
-- Rollover: ON (default)
-- Cooling Period: OFF (default)
-- Target amount: Rp500.000
-- Due date: 12 bulan (tahunan)
-- Klik Selesai ✓
-
-**Hasilnya:** Amplop "Servis Motor" buat Sinking Fund, target Rp500.000 setahun, dengan progress bar untuk tracking.
-
----
-
-## Mengapa 4 Langkah Lebih Baik?
-
-✅ **Tidak overwhelming** — satu pertanyaan per langkah
-✅ **Smart defaults** — sistem suggest based on nama & purpose
-✅ **Semua field penting tersedia** — tanpa ribet
-✅ **Flexible** — user bisa skip atau custom di mana saja
-✅ **Progressive disclosure** — langkah 4 optional, muncul kalau dibutuhkan
-
-Proses ini terutama membantu **user baru yang belum familiar** dengan konsep expense/saving/sinking fund — mereka tidak perlu semua field sekaligus, tapi semua aspek penting tetap covered.
-
-Sudah coba buat amplop baru? Feedback Bapak tentang UX flow-nya ke [hi@jatahku.com](mailto:hi@jatahku.com).
+Ada masukan soal form ini? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).

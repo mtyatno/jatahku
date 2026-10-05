@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0A4F3E"/><stop offset="100%" stop-color="#116653"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+<circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+<rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+<rect x="60" y="60" width="192" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+<text x="156.0" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+<text x="60" y="200" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Tombol +</text>
+<text x="60" y="265" text-anchor="start" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">5 Aksi Cepat</text>
+<text x="60" y="340" text-anchor="start" font-family="system-ui,sans-serif" font-size="21" font-weight="400" fill="rgba(255,255,255,0.6)">Dari halaman mana saja</text>
+<rect x="760" y="115" width="280" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="900" y="149" text-anchor="middle" font-family="system-ui,sans-serif" font-size="21" font-weight="700" fill="#0F6E56">Cocokkan saldo</text>
+<rect x="760" y="179" width="280" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="900" y="213" text-anchor="middle" font-family="system-ui,sans-serif" font-size="21" font-weight="700" fill="#0F6E56">Langganan</text>
+<rect x="760" y="243" width="280" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="900" y="277" text-anchor="middle" font-family="system-ui,sans-serif" font-size="21" font-weight="700" fill="#0F6E56">Income</text>
+<rect x="760" y="307" width="280" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="900" y="341" text-anchor="middle" font-family="system-ui,sans-serif" font-size="21" font-weight="700" fill="#0F6E56">Amplop</text>
+<rect x="760" y="371" width="280" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="900" y="405" text-anchor="middle" font-family="system-ui,sans-serif" font-size="21" font-weight="700" fill="#0F6E56">Pengeluaran</text>
+<rect x="950" y="448" width="80" height="80" rx="22" fill="#1D9E75" stroke="white" stroke-width="3"/>
+<line x1="990" y1="468" x2="990" y2="508" stroke="white" stroke-width="7" stroke-linecap="round"/>
+<line x1="970" y1="488" x2="1010" y2="488" stroke="white" stroke-width="7" stroke-linecap="round"/>
+<text x="60" y="580" text-anchor="start" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+<text x="170" y="580" text-anchor="start" font-family="system-ui,sans-serif" font-size="17" font-weight="400" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>

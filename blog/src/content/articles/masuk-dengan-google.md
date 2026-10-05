@@ -1,163 +1,54 @@
 ---
-title: "Masuk dengan Google: Login Jatahku Jadi Lebih Gampang"
-description: "Bisa login Jatahku dengan akun Google — tidak perlu ingat password, tidak perlu daftar email lagi. Link akun existing atau buat baru, semuanya seamless."
+title: "Masuk dengan Google: Daftar dan Login Jatahku Tanpa Password"
+description: "Sekarang kamu bisa daftar dan masuk Jatahku dengan akun Google. Kalau email Gmail-mu sudah terdaftar, akunnya langsung tersambung."
 pubDate: 2026-10-05
 category: update-fitur
 author: Tim Jatahku
-cover: /covers/panduan-lengkap.svg
+cover: /covers/masuk-dengan-google.svg
 featured: false
 ---
 
-Sebelumnya, saat mau login Jatahku, pilihan hanya:
-1. Email + Password
-2. Telegram (@JatahkuBot)
+Selain email dan password, atau lewat bot Telegram, sekarang kamu bisa masuk Jatahku dengan **akun Google**. Tidak perlu membuat atau mengingat password baru.
 
-Kalau user lupa password atau baru daftar, harus isi form email dan buat password — sesuatu yang sering user malas lakukan atau malah lupa.
+## Cara Pakainya
 
-Sekarang ada pilihan ketiga: **Masuk dengan Google**.
+1. Buka [jatahku.com](https://jatahku.com) dan masuk ke halaman login.
+2. Di tab **Masuk** atau **Daftar**, ketuk tombol Google di atas formulir. Di bawah tombol itu ada tulisan "atau pakai email" untuk yang tetap ingin memakai email.
+3. Google menampilkan pilihan akun. Pilih akun Google yang ingin dipakai.
+4. Selesai, kamu langsung masuk ke Jatahku.
 
-Klik satu tombol → redirect ke Google → select akun → kembali ke Jatahku → selesai. Tidak perlu password, tidak perlu form, tidak perlu email verification.
+Apa yang terjadi berikutnya tergantung akunmu:
 
----
+- **Belum punya akun Jatahku**: akun baru otomatis dibuat dengan nama dan email dari Google, tanpa password. Setelah itu Dashboard menampilkan setup awal untuk menyiapkan amplopmu (baca [Onboarding Baru: Jatahku Tanya Pola Pemasukanmu Lebih Dulu](/insight/onboarding-tanya-tipe-pendapatan/)).
+- **Sudah punya akun Jatahku dengan email yang sama**: akun Google-mu otomatis disambungkan ke akun itu, dan kamu masuk ke akun lamamu dengan semua amplop dan transaksinya.
 
-## Cara Login dengan Google
+## Menyambungkan Google dari Settings
 
-### Saat Pertama Kali
+Kalau kamu biasa masuk lewat email atau Telegram, kamu bisa menyambungkan Google dari **Settings**, di kartu **🔑 Akun Google**:
 
-**Kalau belum punya akun Jatahku:**
+- Kalau belum tersambung, ada keterangan "Sambungkan supaya berikutnya bisa masuk dengan satu ketukan, tanpa password" dan tombol Google di bawahnya.
+- Kalau sudah tersambung, tertulis "✅ Tersambung, bisa masuk dengan Google", dengan tombol **Putuskan** untuk melepasnya.
 
-1. Buka [jatahku.com](https://jatahku.com)
-2. Klik **"Daftar"**
-3. Lihat opsi **"Daftar dengan Google"** (besar, eye-catching)
-4. Klik tombol Google
-5. Browser redirect ke Google login
-6. Pilih akun Gmail yang mau dipakai
-7. Google tanya: "Boleh akun ini akses Jatahku?"
-8. Klik "Allow"
-9. Redirect balik ke Jatahku
-10. Setup onboarding (tipe pendapatan, dll)
+Satu akun Google hanya bisa tersambung ke satu akun Jatahku. Kalau akun Jatahku-mu belum punya email (misalnya dibuat lewat Telegram), email Google akan dipakai sebagai email akunmu, selama email itu belum dipakai akun Jatahku lain.
 
-**Selesai.** Akun sudah jadi, tidak perlu password, tidak perlu email verification.
+## Akun Google Tanpa Password
 
-### Saat Sudah Punya Akun
+Akun yang dibuat lewat Google tidak punya password Jatahku. Kalau suatu saat ingin bisa masuk dengan email dan password juga, buka **Settings** dan pilih **Buat password** di bagian Password.
 
-**Kalau sudah ada akun Jatahku (email + password):**
+Sebelum memutus sambungan Google, akunmu harus punya cara masuk lain, yaitu password atau Telegram yang tersambung. Kalau belum ada, Jatahku akan meminta kamu membuat password dulu supaya tetap bisa masuk setelah Google diputus.
 
-1. Buka [jatahku.com](https://jatahku.com) → **"Masuk"**
-2. Klik **"Masuk dengan Google"**
-3. Google login
-4. **Otomatis:** Kalau email Gmail cocok dengan akun Jatahku yang sudah ada → langsung link dan masuk
-5. **Kalau email baru:** Jatahku akan bikin akun baru dengan email Google itu — tanpa verifikasi lagi
+## Tanya Jawab
 
----
+**Apakah Jatahku tahu password Google saya?**
 
-## Keuntungan Login dengan Google
+Tidak. Password Google hanya kamu ketik di halaman Google. Jatahku menerima tanda masuk dari Google, memeriksanya ke Google, lalu memakai nama dan alamat email akunmu.
 
-### ✅ Cepat dan Gampang
+**Apakah saya masih bisa masuk dengan email dan password?**
 
-Tidak perlu isi form email, tidak perlu bikin password rumit, tidak perlu ingat password nanti.
+Bisa, selama akunmu punya password. Akun yang dibuat lewat Google bisa menambahkannya lewat **Buat password** di Settings.
 
-**Sebelumnya:** Email + password → setup → login (3+ langkah)
+**Saya lupa sudah pernah daftar pakai email yang sama. Apakah akan jadi dua akun?**
 
-**Sekarang:** Klik Google button → allow → login (2 langkah)
+Tidak. Kalau email Google-mu sama dengan email akun Jatahku yang sudah ada, keduanya otomatis tersambung menjadi satu akun.
 
-### ✅ Aman
-
-Google handle authentication. User yang login dengan Google tidak perlu password di Jatahku. Lebih aman (tidak ada risk password di-hack di Jatahku) dan lebih simple (satu password untuk Google, berlaku di mana-mana).
-
-### ✅ Single Sign-On
-
-Kalau user sudah login di Chrome/device, cukup klik Google button → langsung masuk tanpa perlu type password lagi.
-
-### ✅ Account Recovery
-
-Lupa password? Tidak masalah — bisa login dengan Google. Atau update password di Google, automatic terupdate di Jatahku juga.
-
----
-
-## Account Linking: Sambungkan Google di Settings
-
-Setelah login, bisa sambungkan akun Google di **Settings → Akun Google**. 
-
-Jatahku akan kasih opsi:
-- **Tersambung, bisa masuk dengan Google** — kalau sudah berhasil link
-- **Sambungkan** — kalau belum, klik untuk link dengan Google
-
-Setelah di-link, berikutnya bisa login pakai Google atau email+password (pilih salah satu saat masuk).
-
----
-
-## Privacy & Data
-
-### ✅ Jatahku tidak Baca Email Gmail
-
-Login dengan Google hanya untuk **authentication** — verifikasi "kamu siapa".
-
-Jatahku **tidak bisa baca** isi email user atau kontak atau apapun di akun Gmail. Google hanya send "oke, orang ini valid" ke Jatahku.
-
-### ✅ Tidak Ada Sync Otomatis
-
-Jatahku tidak sync GMail, kontak, atau data Google lainnya. Login dengan Google hanya untuk masuk — selesai.
-
----
-
-## Skenario: Rina Daftar dengan Google
-
-**Rina buka jatahku.com untuk pertama kali.**
-
-1. Rina: "Saya mau coba budgeting app ini"
-2. Lihat tombol "Daftar dengan Google" → Klik
-3. Google: "Pilih akun mana?"
-4. Rina: Select rina.santoso@gmail.com
-5. Google: "Boleh Jatahku akses data ini?"
-6. Rina: Allow
-7. **Redirect ke Jatahku → Onboarding start**
-8. Tanya tipe pendapatan: "Harian" (Rina ojek driver)
-9. Tanya income: "Rp150.000/hari, kerja 20 hari"
-10. Pilih template: "Driver & Kurir"
-11. Setup saldo awal: "Rp0"
-12. **Selesai → Dashboard ready**
-
-Total waktu: **< 2 menit**. Rina tidak perlu ingat password, tidak perlu email verification — langsung bisa mulai budgeting.
-
----
-
-## FAQ: Login dengan Google
-
-**Q: Kalau akun Gmail saya di-hack?**
-
-A: Orang itu bisa login ke Jatahku pakai Gmail tersebut. Segera update password Gmail. Di Jatahku, bisa remove Google link di Settings, atau set password backup email agar tetap bisa login tanpa Google.
-
-**Q: Bisa login dengan akun Google kerja/organizational?**
-
-A: Tergantung konfigurasi Gmail. Biasanya bisa, tapi beberapa organisasi blokir third-party app. Hubungi admin IT kamu.
-
-**Q: Gimana kalau dua orang pakai email Gmail yang sama?**
-
-A: Tidak mungkin — Gmail unique per person. Tapi bisa pakai dua Gmail yang berbeda untuk dua akun Jatahku.
-
-**Q: Harus bikin Gmail baru untuk Jatahku?**
-
-A: Tidak, pakai Gmail yang sudah ada. Atau bikin Gmail baru kalau mau terpisah.
-
----
-
-## Keamanan & Best Practice
-
-✅ **Gunakan password Google yang kuat** — jangan shared, jangan simple
-
-✅ **Enable 2-factor authentication di Google** — double-check saat login
-
-✅ **Review koneksi app di Google Settings** — lihat app mana aja yang bisa akses Gmail mu
-
-✅ **Logout Jatahku di device shared** — jangan biarkan session tetap aktif
-
----
-
-Login dengan Google adalah step kecil tapi penting untuk **membuat Jatahku lebih accessible**. Terutama untuk:
-
-✅ **User baru** yang malas isi form
-✅ **Mobile user** yang prefer convenience
-✅ **Multiple account** yang ingin terpisah
-
-Google signin already live di jatahku.com. Coba sekarang, atau kalau punya feedback, kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).
+Ada pertanyaan? Kirim ke [hi@jatahku.com](mailto:hi@jatahku.com).
