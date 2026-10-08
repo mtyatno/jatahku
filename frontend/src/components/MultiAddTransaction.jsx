@@ -4,12 +4,22 @@ import { parseMultiExpense, parseAmount } from '../lib/parseAmount';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
+import FundEnvelopeModal from './FundEnvelopeModal';
+import { Icon } from './Icon';
 
 function formatRupiah(n) {
   return 'Rp ' + Number(n).toLocaleString('id-ID');
 }
 
-function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove }) {
+function isInsufficientFundsError(errMsg) {
+  if (!errMsg) return false;
+  const lower = String(errMsg).toLowerCase();
+  return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
+}
+
+function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove, onFundEnvelope }) {
+  const isShortage = isInsufficientFundsError(item.error);
+
   return (
     <div className={`
       group flex flex-col md:grid md:grid-cols-12 gap-2 md:gap-3 items-start md:items-center
@@ -41,8 +51,22 @@ function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove }) {
         </select>
         {item.suggested && <span className="text-xs text-brand-600">· disarankan</span>}
       </div>
-      <div className="md:col-span-1">
-        {item.error && <span className="text-xs text-red-500" title={item.error}>Gagal</span>}
+      <div className="md:col-span-1 flex items-center gap-1.5 flex-wrap">
+        {item.error && (
+          <span className="text-xs text-red-500 font-medium" title={item.error}>
+            Gagal
+          </span>
+        )}
+        {isShortage && item.envelopeId && (
+          <button
+            type="button"
+            onClick={() => onFundEnvelope(index)}
+            className="text-xs text-brand-600 hover:text-brand-700 underline font-medium hover:bg-brand-50 px-1 py-0.5 rounded transition-colors"
+            title="Geser dana dari amplop lain atau top-up"
+          >
+            Geser
+          </button>
+        )}
         {item.saving && <span className="text-xs text-gray-400">...</span>}
       </div>
     </div>
@@ -57,11 +81,56 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const [resultMsg, setResultMsg] = useState(null);
   const [showSingleForm, setShowSingleForm] = useState(false);
   const [singleFormKey, setSingleFormKey] = useState(0);
+  const [fundingTarget, setFundingTarget] = useState(null);
   const debounceRef = useRef(null);
   const lastParsedRef = useRef('');
   const userTouchedRef = useRef({});
 
-  useEffect(() => { api.getEnvelopes().then(setEnvelopes); }, []);
+  const loadEnvelopes = useCallback(async () => {
+    try {
+      const data = await api.getEnvelopeSummary();
+      setEnvelopes(Array.isArray(data) ? data : []);
+    } catch {
+      const fallback = await api.getEnvelopes();
+      setEnvelopes(Array.isArray(fallback) ? fallback : []);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEnvelopes();
+  }, [loadEnvelopes]);
+
+  const handleOpenFundModal = (index) => {
+    const item = items[index];
+    if (!item || !item.envelopeId) return;
+    const env = envelopes.find(e => e.id === item.envelopeId);
+    if (!env) return;
+    const remaining = Number(env.remaining || 0);
+    const needed = Math.max(0, item.amount - remaining);
+    setFundingTarget({
+      envelope: env,
+      neededAmount: needed > 0 ? needed : item.amount,
+      itemIndex: index,
+    });
+  };
+
+  const handleFundSuccess = async ({ type, amount, fromName, targetEnvelope }) => {
+    await loadEnvelopes();
+    if (fundingTarget && fundingTarget.itemIndex != null) {
+      setItems(prev => prev.map((item, idx) =>
+        idx === fundingTarget.itemIndex ? { ...item, error: null } : item
+      ));
+    }
+    const actionDesc = type === 'transfer'
+      ? `Berhasil menggeser ${formatRupiah(amount)} dari ${fromName || 'amplop lain'} ke ${targetEnvelope.name}.`
+      : `Berhasil menambah dana ${formatRupiah(amount)} ke ${targetEnvelope.name}.`;
+
+    setResultMsg({
+      type: 'mixed',
+      text: `${actionDesc} Silakan klik Simpan Semua untuk melanjutkan.`,
+    });
+    setFundingTarget(null);
+  };
 
   const applySuggestions = useCallback((parsedItems) => {
     if (!navigator.onLine || parsedItems.length === 0) return;
@@ -290,6 +359,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                   envelopes={envelopes}
                   onChangeEnvelope={handleEnvelopeChange}
                   onRemove={handleRemove}
+                  onFundEnvelope={handleOpenFundModal}
                 />
               ))}
             </div>
@@ -303,7 +373,29 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           resultMsg.type === 'mixed' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
           'bg-red-50 border border-red-200'
         }`} style={resultMsg.type === 'error' ? {color:'#E24B4A'} : undefined}>
-          {resultMsg.text}
+          <div className="font-medium">{resultMsg.text}</div>
+          {resultMsg.type === 'error' && isInsufficientFundsError(resultMsg.text) && (() => {
+            const failedItemIndex = items.findIndex(i => isInsufficientFundsError(i.error));
+            const candidateIndex = failedItemIndex !== -1 ? failedItemIndex : items.findIndex(i => i.envelopeId);
+            const candidateItem = candidateIndex !== -1 ? items[candidateIndex] : null;
+            const targetEnv = candidateItem ? envelopes.find(e => e.id === candidateItem.envelopeId) : null;
+            if (!targetEnv) return null;
+            return (
+              <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
+                <span className="text-red-700 font-normal">
+                  Amplop <strong>{targetEnv.name}</strong> butuh tambahan dana.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleOpenFundModal(candidateIndex)}
+                  className="bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1.5 text-xs font-medium flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Icon name="transfer" size={13} />
+                  Geser / Isi Dana ({targetEnv.name})
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -339,6 +431,17 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           </div>
         )}
       </div>
+
+      {fundingTarget && (
+        <FundEnvelopeModal
+          isOpen={!!fundingTarget}
+          onClose={() => setFundingTarget(null)}
+          targetEnvelope={fundingTarget.envelope}
+          neededAmount={fundingTarget.neededAmount}
+          envelopes={envelopes}
+          onSuccess={handleFundSuccess}
+        />
+      )}
     </div>
   );
 }

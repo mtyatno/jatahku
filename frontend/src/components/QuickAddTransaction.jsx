@@ -1,10 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import { shouldShowPrivateToggle } from '../lib/privateToggle';
 import { parseAmount } from '../lib/parseAmount';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
+import FundEnvelopeModal from './FundEnvelopeModal';
+
+function isInsufficientFundsError(errMsg) {
+  if (!errMsg) return false;
+  const lower = String(errMsg).toLowerCase();
+  return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
+}
 
 export default function QuickAddTransaction({ onSaved, onCancel }) {
   const [amount, setAmount] = useState('');
@@ -16,10 +23,21 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const [suggested, setSuggested] = useState(false);
   const [isPrivate, setIsPrivate] = useState(false);
   const [memberCount, setMemberCount] = useState(1);
+  const [showFundModal, setShowFundModal] = useState(false);
   const userTouchedRef = useRef(false);
   const debounceRef = useRef(null);
 
-  useEffect(() => { api.getEnvelopes().then(setEnvelopes); }, []);
+  const loadEnvelopes = useCallback(async () => {
+    try {
+      const data = await api.getEnvelopeSummary();
+      setEnvelopes(Array.isArray(data) ? data : []);
+    } catch {
+      const fallback = await api.getEnvelopes();
+      setEnvelopes(Array.isArray(fallback) ? fallback : []);
+    }
+  }, []);
+
+  useEffect(() => { loadEnvelopes(); }, [loadEnvelopes]);
   useEffect(() => { api.getHouseholdMembers().then(m => setMemberCount(m.length)); }, []);
 
   // Debounced envelope suggestion as the user types the description.
@@ -96,6 +114,15 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     }
   };
 
+  const handleFundSuccess = async () => {
+    await loadEnvelopes();
+    setError('');
+  };
+
+  const neededAmount = selectedEnv
+    ? Math.max(0, Number(amount || 0) - Number(selectedEnv.remaining || 0)) || Number(amount || 0)
+    : Number(amount || 0);
+
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -136,7 +163,35 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
           </span>
         </label>
       )}
-      {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>{error}</div>}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{color:'#E24B4A'}}>
+          <div>{error}</div>
+          {isInsufficientFundsError(error) && selectedEnv && (
+            <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
+              <span className="text-red-700">Amplop <strong>{selectedEnv.name}</strong> butuh tambahan dana.</span>
+              <button
+                type="button"
+                onClick={() => setShowFundModal(true)}
+                className="bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1 text-xs font-medium flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                <Icon name="transfer" size={13} />
+                Geser / Isi Dana ({selectedEnv.name})
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showFundModal && selectedEnv && (
+        <FundEnvelopeModal
+          isOpen={showFundModal}
+          onClose={() => setShowFundModal(false)}
+          targetEnvelope={selectedEnv}
+          neededAmount={neededAmount}
+          envelopes={envelopes}
+          onSuccess={handleFundSuccess}
+        />
+      )}
     </form>
   );
 }

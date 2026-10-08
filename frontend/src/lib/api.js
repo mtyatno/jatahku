@@ -273,6 +273,19 @@ class ApiClient {
     }
   }
 
+  async transferEnvelope(fromId, toId, amount) {
+    try {
+      const res = await this.request(
+        `/envelopes/transfer?from_id=${fromId}&to_id=${toId}&amount=${amount}`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
   async getEnvelopeGroups() {
     try {
       const res = await this.request('/envelopes/groups');
