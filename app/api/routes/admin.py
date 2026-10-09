@@ -191,7 +191,7 @@ async def list_users(
     )
     txn_stats = {
         row.user_id: {"txn_count": row.txn_count, "last_txn_at": row.last_txn_at}
-        for row in txn_stats_res
+        for row in txn_stats_res.all()
     }
 
     # 2. Total spent this month per user
@@ -209,7 +209,7 @@ async def list_users(
         )
         .group_by(Transaction.user_id)
     )
-    month_spent_map = {row.user_id: float(row.month_spent) for row in month_spent_res}
+    month_spent_map = {row.user_id: float(row.month_spent) for row in month_spent_res.all()}
 
     # 3. Active envelopes count per user (via household membership)
     env_count_res = await db.execute(
@@ -224,7 +224,7 @@ async def list_users(
         )
         .group_by(HouseholdMember.user_id)
     )
-    env_count_map = {row.user_id: row.env_count for row in env_count_res}
+    env_count_map = {row.user_id: row.env_count for row in env_count_res.all()}
 
     user_list = []
     for u in users:

@@ -83,7 +83,8 @@ class GoogleLoginTests(unittest.IsolatedAsyncioTestCase):
         db = db_with(FakeResult(user))
         res = await self.call(db)
         self.assertTrue(res.access_token)
-        db.commit.assert_not_awaited()
+        self.assertIsNotNone(user.last_login)
+        db.commit.assert_awaited_once()
 
     async def test_existing_email_account_gets_linked(self):
         user = SimpleNamespace(id=uuid.uuid4(), google_id=None, email="budi@example.com")
