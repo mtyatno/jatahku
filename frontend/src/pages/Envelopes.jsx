@@ -1038,9 +1038,26 @@ export default function Envelopes() {
         <div className="card text-center py-12"><div className="flex justify-center mb-3"><Icon name="envelope" size={40} color={BRAND} /></div><p className="text-gray-500 mb-4">Belum ada amplop.</p><button onClick={() => setShowCreate(true)} className="btn-primary">Buat Amplop Pertama</button></div>
       ) : (
         <>
-          {/* Filter tabs + controls */}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
-            <div className="flex flex-wrap items-center gap-1.5">
+          {/* Filter tabs (desktop) / dropdown (mobile) + controls */}
+          <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3">
+            {/* Mobile: Filter dropdown */}
+            <div className="relative flex-1 md:hidden">
+              <select
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                className="w-full appearance-none text-sm border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-gray-600 bg-white hover:bg-gray-50 cursor-pointer"
+              >
+                {FILTERS.map(f => (
+                  <option key={f.key} value={f.key}>
+                    Filter: {f.label} ({counts[f.key]})
+                  </option>
+                ))}
+              </select>
+              <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+
+            {/* Desktop: Filter pill buttons */}
+            <div className="hidden md:flex flex-wrap items-center gap-1.5">
               {FILTERS.map(f => (
                 <button key={f.key} onClick={() => setFilter(f.key)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center gap-1.5 transition-colors ${filter === f.key ? 'bg-brand-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>
@@ -1050,14 +1067,14 @@ export default function Envelopes() {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-                  className="appearance-none text-sm border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
-                  {SORTS.map(s => <option key={s.key} value={s.key}>Urutkan: {s.label}</option>)}
-                </select>
-                <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
+
+            {/* Sort controls (both mobile & desktop) */}
+            <div className="relative flex-1 md:flex-initial">
+              <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                className="w-full md:w-auto appearance-none text-sm border border-gray-200 rounded-lg pl-3 pr-8 py-1.5 text-gray-600 bg-white hover:bg-gray-50 cursor-pointer">
+                {SORTS.map(s => <option key={s.key} value={s.key}>Urutkan: {s.label}</option>)}
+              </select>
+              <Icon name="chevron" size={14} weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>
           </div>
 
