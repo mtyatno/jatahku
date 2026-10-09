@@ -5,7 +5,7 @@ export default function IncomeCard({ income }) {
   const total = Number(income.amount) || 0;
   const allocs = income.allocations || [];
   return (
-    <div className="card border-l-2" style={{ borderLeftColor: BRAND }}>
+    <div className="card">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex items-center gap-2">
           <h4 className="font-semibold truncate">{income.source}</h4>

@@ -9,7 +9,7 @@ export default function TransferCard({ entry }) {
   const transfers = entry.transfers || [];
   const shown = expanded ? transfers : transfers.slice(0, 4);
   return (
-    <div className="card border-l-2" style={{ borderLeftColor: TRANSFER }}>
+    <div className="card">
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
