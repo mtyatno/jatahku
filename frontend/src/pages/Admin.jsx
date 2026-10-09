@@ -1,7 +1,49 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, formatShort } from '../lib/utils';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
+
+function formatDate(isoStr) {
+  if (!isoStr) return '-';
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch {
+    return '-';
+  }
+}
+
+function timeAgo(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return null;
+    const now = new Date();
+    const diffSec = Math.floor((now - d) / 1000);
+    if (diffSec < 60) return 'baru saja';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m lalu`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}j lalu`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return 'kemarin';
+    if (diffDays < 7) return `${diffDays}h lalu`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} mg lalu`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)} bln lalu`;
+    return `${Math.floor(diffDays / 365)} thn lalu`;
+  } catch {
+    return null;
+  }
+}
+
+const STATUS_CONFIG = {
+  active: { label: 'Aktif', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', desc: 'Ada transaksi ≤ 7 hari terakhir' },
+  idle: { label: 'Jarang', bg: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500', desc: 'Transaksi 8–30 hari terakhir' },
+  dormant: { label: 'Dormant', bg: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500', desc: '> 30 hari tidak ada transaksi' },
+  no_txn: { label: 'Belum Catat', bg: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400', desc: '0 transaksi sejak daftar' },
+  banned: { label: 'Banned', bg: 'bg-red-100 text-red-800 border-red-300', dot: 'bg-red-700', desc: 'Akun diblokir' },
+};
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -25,50 +67,480 @@ function KPI({ label, value, sub, color }) {
   );
 }
 
-function UserRow({ u, onAction }) {
+function UserRow({ u, onAction, onSelectUser, onQuickDm }) {
   const [loading, setLoading] = useState(false);
+  const statusCfg = STATUS_CONFIG[u.status] || STATUS_CONFIG.dormant;
+  const lastActiveStr = timeAgo(u.last_txn_at);
 
-  const doAction = async (action) => {
+  const doAction = async (e, action) => {
+    e.stopPropagation();
     if (action === 'ban' && !confirm(`Ban ${u.name}?`)) return;
     setLoading(true);
     await onAction(u.id, action);
     setLoading(false);
   };
 
+  const handleDmClick = (e) => {
+    e.stopPropagation();
+    onQuickDm(u.id);
+  };
+
   return (
-    <div className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-brand-50 flex items-center justify-center text-sm font-bold text-brand-600">
-          {u.name?.charAt(0)?.toUpperCase() || '?'}
+    <div
+      onClick={() => onSelectUser(u.id)}
+      className="group p-3 sm:p-3.5 border-b border-gray-100 last:border-0 hover:bg-emerald-50/20 transition-all cursor-pointer rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+    >
+      <div className="flex items-start gap-3 min-w-0">
+        <div className="relative shrink-0 mt-0.5">
+          <div className="w-10 h-10 rounded-full bg-brand-50 border border-brand-100 flex items-center justify-center text-sm font-bold text-brand-700">
+            {u.name?.charAt(0)?.toUpperCase() || '?'}
+          </div>
+          <span
+            className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${statusCfg.dot}`}
+            title={`${statusCfg.label}: ${statusCfg.desc}`}
+          />
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold">{u.name}</span>
-            {u.is_admin && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Admin</span>}
-            <span className={`text-xs px-1.5 py-0.5 rounded ${u.plan === 'pro' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-              {u.plan === 'pro' ? 'Pro' : 'Free'}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm font-semibold text-gray-900 group-hover:text-brand-700 transition-colors truncate">
+              {u.name}
+            </span>
+            {u.is_admin && (
+              <span className="text-[10px] font-medium bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">
+                Admin
+              </span>
+            )}
+            <span
+              className={`text-[10px] font-medium px-1.5 py-0.2 rounded ${
+                u.plan === 'pro' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              {u.plan === 'pro' ? 'Pro' : 'Basic'}
+            </span>
+            <span className={`text-[10px] font-medium px-1.5 py-0.2 rounded border ${statusCfg.bg}`}>
+              {statusCfg.label}
+            </span>
+            {u.auth_provider === 'google' && (
+              <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                Google
+              </span>
+            )}
+            {u.telegram_id && (
+              <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200">
+                📱 TG
+              </span>
+            )}
+          </div>
+
+          <p className="text-xs text-gray-500 truncate mt-0.5">
+            {u.email || <span className="text-gray-400 italic">Tanpa email (TG-only)</span>}
+          </p>
+
+          <div className="flex items-center gap-2 mt-1.5 text-[11px] text-gray-500 flex-wrap">
+            <span className="inline-flex items-center gap-1 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+              📁 <b className="text-gray-700">{u.envelopes_count || 0}</b> amplop
+            </span>
+            <span className="inline-flex items-center gap-1 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+              📝 <b className="text-gray-700">{u.txn_count || 0}</b> txn
+            </span>
+            <span className="inline-flex items-center gap-1 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+              💰 Bulan ini: <b className="text-gray-700">{formatShort(u.month_spent || 0)}</b>
+            </span>
+            <span className="inline-flex items-center gap-1 text-gray-500">
+              ⏱️ {lastActiveStr ? `Aktif ${lastActiveStr}` : 'Belum pernah catat'}
+            </span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-400">
+              Daftar {formatDate(u.created_at)}
             </span>
           </div>
-          <p className="text-xs text-gray-400">{u.email} · {u.txn_count} txn {u.telegram_id ? '· 📱 TG' : ''}</p>
         </div>
       </div>
-      <div className="flex gap-1">
+
+      <div className="flex items-center gap-1 shrink-0 self-end sm:self-center" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={handleDmClick}
+          title="Kirim Direct Message ke user ini"
+          className="text-xs px-2.5 py-1 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium"
+        >
+          ✉️ DM
+        </button>
         {u.plan !== 'pro' ? (
-          <button onClick={() => doAction('upgrade')} disabled={loading}
-            className="text-xs px-2 py-1 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 disabled:opacity-50">⬆ Pro</button>
+          <button
+            onClick={(e) => doAction(e, 'upgrade')}
+            disabled={loading}
+            title="Upgrade ke Pro"
+            className="text-xs px-2.5 py-1 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 font-medium disabled:opacity-50"
+          >
+            ⬆ Pro
+          </button>
         ) : (
-          <button onClick={() => doAction('downgrade')} disabled={loading}
-            className="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded-lg hover:bg-gray-100 disabled:opacity-50">⬇ Basic</button>
+          <button
+            onClick={(e) => doAction(e, 'downgrade')}
+            disabled={loading}
+            title="Downgrade ke Basic"
+            className="text-xs px-2.5 py-1 bg-gray-50 text-gray-500 rounded-lg hover:bg-gray-100 font-medium disabled:opacity-50"
+          >
+            ⬇ Basic
+          </button>
         )}
         {!u.is_admin ? (
-          <button onClick={() => doAction('make_admin')} disabled={loading}
-            className="text-xs px-2 py-1 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 disabled:opacity-50">👑</button>
+          <button
+            onClick={(e) => doAction(e, 'make_admin')}
+            disabled={loading}
+            title="Jadikan Admin"
+            className="text-xs px-2 py-1 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 disabled:opacity-50"
+          >
+            👑
+          </button>
         ) : (
-          <button onClick={() => doAction('remove_admin')} disabled={loading}
-            className="text-xs px-2 py-1 bg-gray-50 text-gray-400 rounded-lg hover:bg-gray-100 disabled:opacity-50">👤</button>
+          <button
+            onClick={(e) => doAction(e, 'remove_admin')}
+            disabled={loading}
+            title="Hapus Hak Admin"
+            className="text-xs px-2 py-1 bg-gray-50 text-gray-400 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+          >
+            👤
+          </button>
         )}
-        <button onClick={() => doAction('ban')} disabled={loading}
-          className="text-xs px-2 py-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-100 disabled:opacity-50">🚫</button>
+        <button
+          onClick={(e) => doAction(e, 'ban')}
+          disabled={loading}
+          title="Ban User"
+          className="text-xs px-2 py-1 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 disabled:opacity-50"
+        >
+          🚫
+        </button>
+        <button
+          onClick={() => onSelectUser(u.id)}
+          className="text-xs px-2.5 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium ml-1"
+        >
+          Detail →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserDetailModal({ userId, onClose, onAction, onQuickDm }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDetail = async () => {
+      setLoading(true);
+      setError('');
+      const res = await api.request(`/admin/users/${userId}/detail`);
+      if (res.ok) {
+        const d = await res.json();
+        if (isMounted) setData(d);
+      } else {
+        if (isMounted) setError('Gagal memuat detail user');
+      }
+      if (isMounted) setLoading(false);
+    };
+    fetchDetail();
+    return () => { isMounted = false; };
+  }, [userId]);
+
+  const doAction = async (action) => {
+    if (action === 'ban' && !confirm(`Ban ${data?.user?.name}?`)) return;
+    setActionLoading(true);
+    await onAction(userId, action);
+    const res = await api.request(`/admin/users/${userId}/detail`);
+    if (res.ok) setData(await res.json());
+    setActionLoading(false);
+  };
+
+  const copyUserId = () => {
+    if (navigator?.clipboard && userId) {
+      navigator.clipboard.writeText(userId);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    }
+  };
+
+  if (!userId) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/40 backdrop-blur-xs overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-gray-100 max-h-[92vh] flex flex-col overflow-hidden my-auto">
+        {/* Header */}
+        <div className="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/60 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-full bg-brand-100 text-brand-700 font-bold flex items-center justify-center text-base shrink-0">
+              {data?.user?.name?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-bold text-base text-gray-900 truncate">{data?.user?.name || 'Memuat...'}</h3>
+                {data?.user?.plan === 'pro' ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-medium">Pro</span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">Basic</span>
+                )}
+                {data?.user?.is_admin && (
+                  <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-medium">Admin</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                <span className="truncate">{data?.user?.email || 'Tanpa email (TG-only)'}</span>
+                <span>·</span>
+                <button
+                  onClick={copyUserId}
+                  className="font-mono text-gray-400 hover:text-gray-700 cursor-pointer flex items-center gap-1"
+                  title="Salin User ID"
+                >
+                  ID: {userId.slice(0, 8)}... {copiedId ? '✓ disalin' : '📋'}
+                </button>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center text-sm transition-colors shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
+          {loading ? (
+            <div className="py-16 text-center text-gray-400 text-sm">
+              <div className="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-2" />
+              <p>Memuat detail user...</p>
+            </div>
+          ) : error ? (
+            <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm text-center">{error}</div>
+          ) : (
+            <>
+              {/* Status Banner */}
+              {(() => {
+                const statusCfg = STATUS_CONFIG[data.user.status] || STATUS_CONFIG.dormant;
+                return (
+                  <div className={`p-3 rounded-xl border flex items-center justify-between ${statusCfg.bg}`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${statusCfg.dot}`} />
+                      <span className="font-semibold text-xs sm:text-sm">Status: {statusCfg.label}</span>
+                    </div>
+                    <span className="text-xs opacity-80">{statusCfg.desc}</span>
+                  </div>
+                );
+              })()}
+
+              {/* KPI Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <p className="text-[11px] text-gray-500">Total Transaksi</p>
+                  <p className="font-bold text-lg text-gray-900 mt-0.5">{data.stats.txn_count}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5 truncate">
+                    {data.stats.last_txn_at ? `Terakhir: ${timeAgo(data.stats.last_txn_at)}` : 'Belum pernah'}
+                  </p>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <p className="text-[11px] text-gray-500">Amplop Aktif</p>
+                  <p className="font-bold text-lg text-gray-900 mt-0.5">{data.stats.envelopes_count}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5 truncate">di {data.household?.name || 'Rumah'}</p>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <p className="text-[11px] text-gray-500">Belanja Bulan Ini</p>
+                  <p className="font-bold text-lg text-brand-700 mt-0.5">{formatCurrency(data.stats.month_spent)}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5 truncate">All-time: {formatShort(data.stats.total_spent)}</p>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <p className="text-[11px] text-gray-500">Auth & Koneksi</p>
+                  <p className="font-bold text-sm text-gray-900 mt-1 capitalize">
+                    {data.user.auth_provider === 'google' ? '🌐 Google' : data.user.auth_provider === 'telegram' ? '📱 Telegram' : '✉️ Email'}
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5 truncate">
+                    {data.user.telegram_id ? `📱 TG linked` : 'Belum link TG'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Account Meta List */}
+              <div className="bg-gray-50/70 p-3.5 rounded-xl border border-gray-100 space-y-2 text-xs">
+                <h4 className="font-semibold text-gray-700 mb-2">Informasi Akun & Pengaturan</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-gray-600">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Tanggal Daftar:</span>
+                    <span className="font-medium text-gray-800">{formatDate(data.user.created_at)} ({timeAgo(data.user.created_at)})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Terakhir Login:</span>
+                    <span className="font-medium text-gray-800">
+                      {data.user.last_login ? `${formatDate(data.user.last_login)} (${timeAgo(data.user.last_login)})` : 'Belum pernah login webapp'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Tipe Penghasilan:</span>
+                    <span className="font-medium text-gray-800 capitalize">{data.user.income_type || 'Monthly'} (Payday: Tgl {data.user.payday_day || 1})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Timezone:</span>
+                    <span className="font-medium text-gray-800">{data.user.timezone || 'Asia/Jakarta'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Household:</span>
+                    <span className="font-medium text-gray-800">
+                      {data.household ? `${data.household.name} (${data.household.role}, ${data.household.members_count} anggota)` : '-'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Telegram ID:</span>
+                    <span className="font-medium text-gray-800">{data.user.telegram_id || '-'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Amplop List */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold text-xs sm:text-sm text-gray-900 flex items-center gap-1.5">
+                    📁 Amplop Aktif ({data.envelopes?.length || 0})
+                  </h4>
+                  {data.envelopes?.length > 0 && (
+                    <span className="text-xs text-gray-400">
+                      Total Budget: {formatCurrency(data.envelopes.reduce((sum, e) => sum + (e.budget_amount || 0), 0))}
+                    </span>
+                  )}
+                </div>
+                {data.envelopes?.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-dashed border-gray-200 text-center">
+                    Belum memiliki amplop
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-0.5">
+                    {data.envelopes.map(env => (
+                      <div key={env.id} className="p-2.5 rounded-lg border border-gray-100 bg-white flex items-center justify-between text-xs shadow-2xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-base shrink-0">{env.emoji || '📦'}</span>
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 truncate">{env.name}</p>
+                            <div className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5">
+                              <span className="capitalize">{env.purpose?.replace('_', ' ')}</span>
+                              {env.classification && (
+                                <>
+                                  <span>·</span>
+                                  <span className="capitalize font-medium text-gray-600">{env.classification}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="font-semibold text-gray-700 shrink-0 ml-2">
+                          {formatShort(env.budget_amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Recent Transactions List */}
+              <div>
+                <h4 className="font-semibold text-xs sm:text-sm text-gray-900 mb-2 flex items-center gap-1.5">
+                  📝 Transaksi Terakhir ({data.recent_transactions?.length || 0})
+                </h4>
+                {data.recent_transactions?.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-dashed border-gray-200 text-center">
+                    Belum pernah mencatat transaksi
+                  </p>
+                ) : (
+                  <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden bg-white max-h-56 overflow-y-auto">
+                    {data.recent_transactions.map(txn => (
+                      <div key={txn.id} className="p-2.5 flex items-center justify-between text-xs hover:bg-gray-50">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="text-sm shrink-0">{txn.envelope_emoji || '📝'}</span>
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 truncate">
+                              {txn.description || txn.envelope_name}
+                            </p>
+                            <p className="text-[10px] text-gray-400">
+                              {txn.transaction_date} · {txn.envelope_name} · via {txn.source}
+                              {txn.is_balance_check && ' · ⚖️ cocokkan saldo'}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-bold text-gray-900 shrink-0 ml-2">
+                          {formatCurrency(txn.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="p-3.5 sm:p-4 border-t border-gray-100 bg-gray-50/60 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => {
+                onClose();
+                onQuickDm(userId);
+              }}
+              className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors"
+            >
+              ✉️ Kirim DM
+            </button>
+            {data?.user?.plan !== 'pro' ? (
+              <button
+                onClick={() => doAction('upgrade')}
+                disabled={actionLoading}
+                className="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg font-medium hover:bg-emerald-100 disabled:opacity-50"
+              >
+                ⬆ Upgrade ke Pro
+              </button>
+            ) : (
+              <button
+                onClick={() => doAction('downgrade')}
+                disabled={actionLoading}
+                className="text-xs px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50"
+              >
+                ⬇ Downgrade ke Basic
+              </button>
+            )}
+            {!data?.user?.is_admin ? (
+              <button
+                onClick={() => doAction('make_admin')}
+                disabled={actionLoading}
+                className="text-xs px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg font-medium hover:bg-amber-100 disabled:opacity-50"
+              >
+                👑 Jadikan Admin
+              </button>
+            ) : (
+              <button
+                onClick={() => doAction('remove_admin')}
+                disabled={actionLoading}
+                className="text-xs px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg font-medium hover:bg-gray-200 disabled:opacity-50"
+              >
+                👤 Hapus Admin
+              </button>
+            )}
+            <button
+              onClick={() => doAction('ban')}
+              disabled={actionLoading}
+              className="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 disabled:opacity-50"
+            >
+              🚫 Ban User
+            </button>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-xs px-4 py-1.5 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 ml-auto"
+          >
+            Tutup
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -78,6 +550,9 @@ export default function Admin() {
   const [dash, setDash] = useState(null);
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
+  const [userFilter, setUserFilter] = useState('all');
+  const [userSort, setUserSort] = useState('newest');
+  const [selectedUserId, setSelectedUserId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('dashboard');
@@ -95,6 +570,15 @@ export default function Admin() {
   const [dmTgText, setDmTgText] = useState('');
   const [dmSending, setDmSending] = useState(false);
   const [articles, setArticles] = useState([]);
+
+  const handleQuickDm = (userId) => {
+    setDmUserId(userId);
+    setTab('tools');
+    setTimeout(() => {
+      const dmEl = document.getElementById('dm-section');
+      if (dmEl) dmEl.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  };
 
   const ARTICLES = [
     { title: "AI Advisor Jatahku — Asisten Keuangan Pintar di Dashboard Kamu", slug: "ai-advisor-pintar", description: "AI Advisor menganalisis pola belanja, progres tabungan, dan deadline sinking fund untuk memberikan insight personal.", url: "https://blog.jatahku.com/insight/ai-advisor-pintar/" },
@@ -184,6 +668,39 @@ export default function Admin() {
   const signups = d.charts.signups.map(s => ({ ...s, date: s.date.slice(5) }));
   const txns = d.charts.daily_txns.map(t => ({ ...t, date: t.date.slice(5) }));
 
+  const userCounts = {
+    all: users.length,
+    active: users.filter(u => u.status === 'active').length,
+    idle: users.filter(u => u.status === 'idle').length,
+    no_txn: users.filter(u => u.status === 'no_txn').length,
+    dormant: users.filter(u => u.status === 'dormant').length,
+    pro: users.filter(u => u.plan === 'pro').length,
+    basic: users.filter(u => u.plan !== 'pro').length,
+    tg: users.filter(u => Boolean(u.telegram_id)).length,
+  };
+
+  const filteredUsers = users.filter(u => {
+    if (userFilter === 'active') return u.status === 'active';
+    if (userFilter === 'idle') return u.status === 'idle';
+    if (userFilter === 'no_txn') return u.status === 'no_txn';
+    if (userFilter === 'dormant') return u.status === 'dormant';
+    if (userFilter === 'pro') return u.plan === 'pro';
+    if (userFilter === 'basic') return u.plan !== 'pro';
+    if (userFilter === 'tg') return Boolean(u.telegram_id);
+    return true;
+  }).sort((a, b) => {
+    if (userSort === 'newest') return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    if (userSort === 'oldest') return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+    if (userSort === 'last_active') {
+      const aTime = a.last_txn_at ? new Date(a.last_txn_at).getTime() : 0;
+      const bTime = b.last_txn_at ? new Date(b.last_txn_at).getTime() : 0;
+      return bTime - aTime;
+    }
+    if (userSort === 'most_txns') return (b.txn_count || 0) - (a.txn_count || 0);
+    if (userSort === 'most_spent') return (b.month_spent || 0) - (a.month_spent || 0);
+    return 0;
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -246,17 +763,80 @@ export default function Admin() {
       )}
 
       {tab === 'users' && (
-        <>
-          <div className="flex gap-2">
-            <input className="input text-sm flex-1" placeholder="Cari nama atau email..." value={search}
-              onChange={e => handleSearch(e.target.value)} />
-            <span className="text-sm text-gray-400 self-center">{users.length} users</span>
+        <div className="space-y-3">
+          {/* Filter Chips */}
+          <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
+            {[
+              { id: 'all', label: 'Semua', count: userCounts.all },
+              { id: 'active', label: '🟢 Aktif', count: userCounts.active },
+              { id: 'idle', label: '🟡 Jarang', count: userCounts.idle },
+              { id: 'no_txn', label: '⚪ Belum Catat', count: userCounts.no_txn },
+              { id: 'dormant', label: '🔴 Dormant', count: userCounts.dormant },
+              { id: 'pro', label: 'Pro', count: userCounts.pro },
+              { id: 'basic', label: 'Basic', count: userCounts.basic },
+              { id: 'tg', label: '📱 Telegram', count: userCounts.tg },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setUserFilter(f.id)}
+                className={`px-3 py-1.5 rounded-xl font-medium whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                  userFilter === f.id
+                    ? 'bg-brand-600 text-white shadow-2xs'
+                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <span>{f.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${userFilter === f.id ? 'bg-brand-700/60 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                  {f.count}
+                </span>
+              </button>
+            ))}
           </div>
-          <div className="card">
-            {users.map(u => <UserRow key={u.id} u={u} onAction={handleUserAction} />)}
-            {users.length === 0 && <p className="text-center text-gray-400 py-8 text-sm">Tidak ada user ditemukan</p>}
+
+          {/* Search bar & Sort controls */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              className="input text-sm flex-1"
+              placeholder="Cari nama atau email..."
+              value={search}
+              onChange={e => handleSearch(e.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <select
+                className="input text-xs py-2 w-auto"
+                value={userSort}
+                onChange={e => setUserSort(e.target.value)}
+              >
+                <option value="newest">📅 Terbaru Daftar</option>
+                <option value="oldest">📅 Terlama Daftar</option>
+                <option value="last_active">⏱️ Terakhir Transaksi</option>
+                <option value="most_txns">📝 Transaksi Terbanyak</option>
+                <option value="most_spent">💰 Belanja Terbanyak (Bulan Ini)</option>
+              </select>
+              <span className="text-xs text-gray-400 whitespace-nowrap">
+                {filteredUsers.length} user
+              </span>
+            </div>
           </div>
-        </>
+
+          {/* User List Card */}
+          <div className="card divide-y divide-gray-50 p-2 sm:p-3">
+            {filteredUsers.map(u => (
+              <UserRow
+                key={u.id}
+                u={u}
+                onAction={handleUserAction}
+                onSelectUser={setSelectedUserId}
+                onQuickDm={handleQuickDm}
+              />
+            ))}
+            {filteredUsers.length === 0 && (
+              <p className="text-center text-gray-400 py-10 text-sm">
+                Tidak ada user ditemukan untuk filter ini
+              </p>
+            )}
+          </div>
+        </div>
       )}
 
 
@@ -320,7 +900,7 @@ export default function Admin() {
             </div>
           </div>
 
-          <div className="card">
+          <div id="dm-section" className="card">
             <h3 className="font-semibold text-sm mb-3">✉️ Direct Message ke User</h3>
             <div className="space-y-2">
               <select className="input text-sm" value={dmUserId} onChange={e => setDmUserId(e.target.value)}>
@@ -435,6 +1015,15 @@ export default function Admin() {
         </div>
       )}
       {tab === 'payments' && <PaymentsTab onAction={() => { setActionMsg('✅ Done'); setTimeout(() => setActionMsg(''), 3000); }} />}
+
+      {selectedUserId && (
+        <UserDetailModal
+          userId={selectedUserId}
+          onClose={() => setSelectedUserId(null)}
+          onAction={handleUserAction}
+          onQuickDm={handleQuickDm}
+        />
+      )}
     </div>
   );
 }

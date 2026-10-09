@@ -151,7 +151,8 @@ async def admin_dashboard(
 async def list_users(
     search: str = Query(None),
     plan: str = Query(None),
-    limit: int = Query(50),
+    status: str = Query(None),
+    limit: int = Query(200),
     offset: int = Query(0),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -167,24 +168,289 @@ async def list_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
+    if not users:
+        return []
+
+    user_ids = [u.id for u in users]
+    today = date.today()
+    now = datetime.now(timezone.utc)
+
+    # 1. Total transactions & last transaction created_at
+    txn_stats_res = await db.execute(
+        select(
+            Transaction.user_id,
+            func.count(Transaction.id).label("txn_count"),
+            func.max(Transaction.created_at).label("last_txn_at"),
+        )
+        .where(
+            Transaction.user_id.in_(user_ids),
+            Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),
+        )
+        .group_by(Transaction.user_id)
+    )
+    txn_stats = {
+        row.user_id: {"txn_count": row.txn_count, "last_txn_at": row.last_txn_at}
+        for row in txn_stats_res
+    }
+
+    # 2. Total spent this month per user
+    month_spent_res = await db.execute(
+        select(
+            Transaction.user_id,
+            func.coalesce(func.sum(Transaction.amount), 0).label("month_spent"),
+        )
+        .where(
+            Transaction.user_id.in_(user_ids),
+            Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),
+            func.extract("year", Transaction.transaction_date) == today.year,
+            func.extract("month", Transaction.transaction_date) == today.month,
+        )
+        .group_by(Transaction.user_id)
+    )
+    month_spent_map = {row.user_id: float(row.month_spent) for row in month_spent_res}
+
+    # 3. Active envelopes count per user (via household membership)
+    env_count_res = await db.execute(
+        select(
+            HouseholdMember.user_id,
+            func.count(Envelope.id).label("env_count"),
+        )
+        .join(Envelope, Envelope.household_id == HouseholdMember.household_id)
+        .where(
+            HouseholdMember.user_id.in_(user_ids),
+            Envelope.is_active == True,
+        )
+        .group_by(HouseholdMember.user_id)
+    )
+    env_count_map = {row.user_id: row.env_count for row in env_count_res}
+
     user_list = []
     for u in users:
-        txn_count = (await db.execute(
-            select(func.count(Transaction.id)).where(
-                Transaction.user_id == u.id, Transaction.is_deleted == False
-            )
-        )).scalar()
+        t_data = txn_stats.get(u.id, {"txn_count": 0, "last_txn_at": None})
+        txn_count = t_data["txn_count"]
+        last_txn_at = t_data["last_txn_at"]
+        month_spent = month_spent_map.get(u.id, 0.0)
+        env_count = env_count_map.get(u.id, 0)
+
+        # Auth provider
+        if u.google_id:
+            auth_provider = "google"
+        elif (not u.email or "@telegram" in (u.email or "")) and u.telegram_id:
+            auth_provider = "telegram"
+        else:
+            auth_provider = "email"
+
+        # Status calculation
+        if (u.email and u.email.startswith("banned_")) or getattr(u, 'password_hash', None) == "BANNED":
+            user_status = "banned"
+        elif txn_count == 0:
+            user_status = "no_txn"
+        elif last_txn_at:
+            dt = last_txn_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            days_ago = (now - dt).days
+            if days_ago <= 7:
+                user_status = "active"
+            elif days_ago <= 30:
+                user_status = "idle"
+            else:
+                user_status = "dormant"
+        else:
+            user_status = "dormant"
+
         user_list.append({
             "id": str(u.id),
             "name": u.name,
             "email": u.email,
             "plan": getattr(u, 'plan', 'basic') or 'basic',
             "telegram_id": u.telegram_id,
+            "google_id": u.google_id,
             "is_admin": getattr(u, 'is_admin', False),
             "txn_count": txn_count,
-            "created_at": u.created_at.isoformat(),
+            "envelopes_count": env_count,
+            "month_spent": month_spent,
+            "auth_provider": auth_provider,
+            "status": user_status,
+            "income_type": getattr(u, 'income_type', 'monthly') or 'monthly',
+            "payday_day": getattr(u, 'payday_day', 1) or 1,
+            "timezone": getattr(u, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+            "last_txn_at": last_txn_at.isoformat() if last_txn_at else None,
         })
+
+    if status:
+        user_list = [u for u in user_list if u["status"] == status]
+
     return user_list
+
+
+@router.get("/users/{user_id}/detail")
+async def get_user_detail(
+    user_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+    today = date.today()
+    now = datetime.now(timezone.utc)
+
+    # 1. Transactions stats
+    txn_stat_res = await db.execute(
+        select(
+            func.count(Transaction.id).label("txn_count"),
+            func.max(Transaction.created_at).label("last_txn_at"),
+            func.coalesce(func.sum(Transaction.amount), 0).label("total_spent"),
+        ).where(
+            Transaction.user_id == u.id,
+            Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),
+        )
+    )
+    txn_row = txn_stat_res.one()
+    txn_count = txn_row.txn_count or 0
+    last_txn_at = txn_row.last_txn_at
+    total_spent = float(txn_row.total_spent or 0)
+
+    # 2. Month spent
+    month_spent_res = await db.execute(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.user_id == u.id,
+            Transaction.is_deleted == False,
+            Transaction.balance_check_id.is_(None),
+            func.extract("year", Transaction.transaction_date) == today.year,
+            func.extract("month", Transaction.transaction_date) == today.month,
+        )
+    )
+    month_spent = float(month_spent_res.scalar() or 0)
+
+    # 3. Household & Envelopes
+    hm_res = await db.execute(
+        select(HouseholdMember, Household)
+        .join(Household, Household.id == HouseholdMember.household_id)
+        .where(HouseholdMember.user_id == u.id)
+    )
+    hm_row = hm_res.first()
+    household_data = None
+    envelopes_data = []
+
+    if hm_row:
+        hm, hh = hm_row
+        member_count = (await db.execute(
+            select(func.count(HouseholdMember.id)).where(HouseholdMember.household_id == hh.id)
+        )).scalar()
+
+        role_str = hm.role.value if hasattr(hm.role, "value") else str(hm.role)
+        household_data = {
+            "id": str(hh.id),
+            "name": hh.name,
+            "role": role_str,
+            "members_count": member_count or 1,
+            "currency": hh.currency,
+        }
+
+        env_res = await db.execute(
+            select(Envelope)
+            .where(Envelope.household_id == hh.id, Envelope.is_active == True)
+            .order_by(Envelope.name)
+        )
+        for env in env_res.scalars().all():
+            envelopes_data.append({
+                "id": str(env.id),
+                "name": env.name,
+                "emoji": env.emoji or "",
+                "budget_amount": float(env.budget_amount or 0),
+                "purpose": env.purpose.value if hasattr(env.purpose, "value") else str(env.purpose or "expense"),
+                "classification": env.classification,
+                "is_rollover": env.is_rollover,
+                "is_personal": env.owner_id is not None,
+            })
+
+    # 4. Recent transactions (last 10)
+    txns_res = await db.execute(
+        select(Transaction, Envelope.name, Envelope.emoji)
+        .outerjoin(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Transaction.user_id == u.id, Transaction.is_deleted == False)
+        .order_by(Transaction.created_at.desc())
+        .limit(10)
+    )
+    recent_txns = []
+    for txn, env_name, env_emoji in txns_res.all():
+        source_val = txn.source.value if hasattr(txn.source, "value") else str(txn.source or "webapp")
+        recent_txns.append({
+            "id": str(txn.id),
+            "amount": float(txn.amount),
+            "description": txn.description or "",
+            "transaction_date": str(txn.transaction_date),
+            "created_at": txn.created_at.isoformat() if txn.created_at else None,
+            "envelope_name": env_name or "Tanpa Amplop",
+            "envelope_emoji": env_emoji or "",
+            "source": source_val,
+            "is_balance_check": txn.balance_check_id is not None,
+        })
+
+    # Auth provider
+    if u.google_id:
+        auth_provider = "google"
+    elif (not u.email or "@telegram" in (u.email or "")) and u.telegram_id:
+        auth_provider = "telegram"
+    else:
+        auth_provider = "email"
+
+    # Status
+    if (u.email and u.email.startswith("banned_")) or getattr(u, 'password_hash', None) == "BANNED":
+        user_status = "banned"
+    elif txn_count == 0:
+        user_status = "no_txn"
+    elif last_txn_at:
+        dt = last_txn_at
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        days_ago = (now - dt).days
+        if days_ago <= 7:
+            user_status = "active"
+        elif days_ago <= 30:
+            user_status = "idle"
+        else:
+            user_status = "dormant"
+    else:
+        user_status = "dormant"
+
+    return {
+        "user": {
+            "id": str(u.id),
+            "name": u.name,
+            "email": u.email,
+            "plan": getattr(u, 'plan', 'basic') or 'basic',
+            "telegram_id": u.telegram_id,
+            "google_id": u.google_id,
+            "is_admin": getattr(u, 'is_admin', False),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+            "income_type": getattr(u, 'income_type', 'monthly') or 'monthly',
+            "payday_day": getattr(u, 'payday_day', 1) or 1,
+            "timezone": getattr(u, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
+            "auth_provider": auth_provider,
+            "status": user_status,
+        },
+        "stats": {
+            "txn_count": txn_count,
+            "envelopes_count": len(envelopes_data),
+            "month_spent": month_spent,
+            "total_spent": total_spent,
+            "last_txn_at": last_txn_at.isoformat() if last_txn_at else None,
+        },
+        "household": household_data,
+        "envelopes": envelopes_data,
+        "recent_transactions": recent_txns,
+    }
 
 
 class UserAction(BaseModel):

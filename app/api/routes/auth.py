@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 import redis.asyncio as aioredis
@@ -131,6 +132,7 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = await _create_user(db, email=req.email, name=req.name, password_hash=hash_password(req.password))
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     await _notify_admin_new_user(user, via="email")
 
@@ -151,6 +153,9 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
 
     if not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    user.last_login = datetime.now(timezone.utc)
+    await db.commit()
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
@@ -266,15 +271,19 @@ async def google_login(request: Request, req: GoogleCredentialRequest, db: Async
 
     user = (await db.execute(select(User).where(User.google_id == claims["sub"]))).scalar_one_or_none()
     if user:
+        user.last_login = datetime.now(timezone.utc)
+        await db.commit()
         return _tokens(user)
 
     user = (await db.execute(select(User).where(User.email == claims["email"]))).scalar_one_or_none()
     if user:
         user.google_id = claims["sub"]
+        user.last_login = datetime.now(timezone.utc)
         await db.commit()
         return _tokens(user)
 
     user = await _create_user(db, email=claims["email"], name=claims["name"], password_hash=None, google_id=claims["sub"])
+    user.last_login = datetime.now(timezone.utc)
     await db.commit()
     await _notify_admin_new_user(user, via="Google")
     return _tokens(user)
