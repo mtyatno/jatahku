@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-theme="hijau-dark">
   <head>
     <link rel="icon" href="/favicon.ico" sizes="48x48">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-    <meta name="theme-color" content="#0F6E56">
+    <meta name="theme-color" content="#0f172a">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Jatahku">
@@ -14,6 +14,21 @@
     <title>Jatahku — Setiap rupiah ada jatahnya</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      (function() {
+        try {
+          var raw = localStorage.getItem('jatahku_theme');
+          var p = raw ? JSON.parse(raw) : null;
+          var validColors = ['hijau', 'laut', 'senja'];
+          var validModes = ['light', 'dark'];
+          var color = (p && validColors.indexOf(p.color) !== -1) ? p.color : 'hijau';
+          var mode = (p && validModes.indexOf(p.mode) !== -1) ? p.mode : 'dark';
+          document.documentElement.setAttribute('data-theme', color + '-' + mode);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'hijau-dark');
+        }
+      })();
+    </script>
   </head>
   <body class="bg-page font-body text-gray-900">
     <div id="root"></div>

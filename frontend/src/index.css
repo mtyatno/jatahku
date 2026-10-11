@@ -1,11 +1,11 @@
 /* ── FALLBACK: harus di atas semua [data-theme] agar bisa di-override ── */
 :root {
-  --brand-50: #E1F5EE; --brand-100: #9FE1CB; --brand-200: #5DCAA5;
-  --brand-400: #1D9E75; --brand-600: #0F6E56;
-  --brand-800: #085041; --brand-900: #04342C;
-  --surface: #F1EFE8; --page: #FAFAF8;
-  --card-bg: #ffffff; --border: #e5e7eb;
-  --text: #2C2C2A; --text-muted: #6b7280;
+  --brand-50: #1e3a2f; --brand-100: #14532d; --brand-200: #166534;
+  --brand-400: #34d399; --brand-600: #10b981;
+  --brand-800: #6ee7b7; --brand-900: #a7f3d0;
+  --surface: #1e293b; --page: #0f172a;
+  --card-bg: #1e293b; --border: #334155;
+  --text: #e2e8f0; --text-muted: #94a3b8;
 }
 
 /* ── TEMA: Hijau ── */
