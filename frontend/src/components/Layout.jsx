@@ -408,40 +408,41 @@ export default function Layout() {
       <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
       {/* Global FAB — speed dial */}
       {fabMenu && (
-        <div className="fixed inset-0 z-50" onClick={() => setFabMenu(false)}>
-          <div className="absolute bottom-36 right-4 md:bottom-28 md:right-6 flex flex-col-reverse items-center gap-3">
-            {FAB_OPTIONS.map((opt, i) => (
-              <button
-                key={opt.key}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setFabMenu(false);
-                  setFabAction(opt.key);
-                }}
-                className="flex items-center gap-2 px-3 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all"
-                style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
-              >
-                <Icon name={opt.icon} size={20} />
-                <span>{opt.label}</span>
-              </button>
-            ))}
+        <div className="fixed inset-0 z-50" onClick={() => setFabMenu(false)} />
+      )}
+      <div className="fixed bottom-24 md:bottom-6 inset-x-0 pointer-events-none z-50">
+        <div className="max-w-6xl mx-auto px-4 flex justify-end">
+          <div className="pointer-events-auto relative">
+            {fabMenu && (
+              <div className="absolute bottom-16 right-0 flex flex-col-reverse items-end gap-3 pb-2">
+                {FAB_OPTIONS.map((opt, i) => (
+                  <button
+                    key={opt.key}
+                    onClick={() => {
+                      setFabMenu(false);
+                      setFabAction(opt.key);
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all whitespace-nowrap"
+                    style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
+                  >
+                    <Icon name={opt.icon} size={20} />
+                    <span>{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setFabMenu(m => !m)}
+              className={`w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all active:scale-95 ${!fabMenu ? 'hover:scale-105' : ''}`}
+              style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
+              title={fabMenu ? 'Tutup menu' : 'Menu cepat'}
+              aria-label={fabMenu ? 'Tutup menu' : 'Menu cepat'}
+            >
+              <Icon name={fabMenu ? 'close' : 'plus'} size={26} weight="bold" />
+            </button>
           </div>
-          <button
-            onClick={() => setFabMenu(false)}
-            className="absolute bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all active:scale-95"
-            style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
-            aria-label="Tutup menu"
-          ><Icon name="close" size={26} weight="bold" /></button>
         </div>
-      )}
-      {!fabMenu && (
-        <button
-          onClick={() => setFabMenu(true)}
-          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-50 w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all hover:scale-105 active:scale-95"
-          style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
-          title="Menu cepat"
-        ><Icon name="plus" size={26} weight="bold" /></button>
-      )}
+      </div>
       {/* Modals for speed dial actions */}
       {fabAction && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabAction(null)}>
