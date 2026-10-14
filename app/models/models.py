@@ -493,3 +493,62 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# --- Scan struk (OCR tanpa LLM) ---
+
+class ReceiptScan(Base):
+    """Satu kali scan struk. Dipakai untuk kuota bulanan, metrik akurasi, dan
+    belajar dari koreksi. Teks OCR (ocr_lines) dihapus setelah feedback diproses."""
+    __tablename__ = "receipt_scans"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    engine: Mapped[str] = mapped_column(String(20), default="rapidocr")  # rapidocr | llm
+    merchant: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    merchant_key: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    parsed_total: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    parsed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    confidence: Mapped[str] = mapped_column(String(10), default="gagal")
+    total_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ocr_lines: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list; dikosongkan setelah feedback
+    final_total: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    final_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    final_merchant: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(12), nullable=True)  # accepted | corrected | discarded
+    feedback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReceiptTotalLabel(Base):
+    """Profil toko (dipakai bersama semua user): label baris yang berisi total
+    akhir, dipelajari dari koreksi. Contoh: INDOMARET → "TOTAL BELANJA"."""
+    __tablename__ = "receipt_total_labels"
+
+    merchant_key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    label: Mapped[str] = mapped_column(String(100), primary_key=True)
+    hits: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ReceiptMerchantAlias(Base):
+    """Nama toko salah-baca OCR → nama yang benar (dari koreksi user)."""
+    __tablename__ = "receipt_merchant_aliases"
+
+    raw_key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    merchant: Mapped[str] = mapped_column(String(100))
+    hits: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ReceiptLearnVote(Base):
+    """Satu suara per user untuk tiap hal yang dipelajari (label total / alias toko).
+    Data belajar baru dipakai setelah disetujui ≥ 2 user BERBEDA, supaya satu
+    user tidak bisa mengubah hasil scan user lain."""
+    __tablename__ = "receipt_learn_votes"
+
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # label | alias
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(String(100), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

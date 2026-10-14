@@ -10,6 +10,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 - `kopi 35k` atau `35rb kopi`
 - `makan siang rp25.000`
 - `grab 15000`
+- 📸 Kirim *foto struk* — total & tanggal terbaca otomatis
 
 *Langganan Otomatis:*
 - `sewa server 250k tiap bulan`

@@ -104,6 +104,7 @@ async function syncPendingTransactions() {
         description: item.description,
         source: item.source,
         is_private: item.is_private ?? false,
+        ...(item.transaction_date ? { transaction_date: item.transaction_date } : {}),
       }),
     });
 

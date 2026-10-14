@@ -269,6 +269,19 @@ async def send_checkin_nudge(user, local_today, db):
         logger.error(f"Failed to send check-in nudge to {user.id}: {e}")
 
 
+async def purge_receipt_ocr_text():
+    """Privasi: hapus teks OCR struk yang tidak pernah diberi feedback (>24 jam)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.receipt_scan import purge_stale_ocr_text
+    try:
+        async with AsyncSessionLocal() as db:
+            n = await purge_stale_ocr_text(db)
+        if n:
+            logger.info(f"Purged OCR text from {n} stale receipt scans")
+    except Exception as e:
+        logger.error(f"purge_receipt_ocr_text failed: {e}")
+
+
 def start_scheduler():
     """Start the APScheduler with monthly snapshot job."""
     scheduler.add_job(
@@ -299,6 +312,13 @@ def start_scheduler():
         hour=0,  # 07:00 WIB = 00:00 UTC
         minute=1,
         id="recurring_transactions",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        purge_receipt_ocr_text,
+        trigger="interval",
+        hours=1,
+        id="purge_receipt_ocr_text",
         replace_existing=True,
     )
     scheduler.start()

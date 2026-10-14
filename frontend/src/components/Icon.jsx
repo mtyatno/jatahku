@@ -9,7 +9,7 @@ import {
   Warning, Trophy, TelegramLogo, X, CalendarBlank, ArrowsLeftRight,
   DotsThreeVertical, SquaresFour, Rows, ListDashes, FolderSimple, Coins,
   PencilSimple, Trash,
-  MagnifyingGlass, Globe, ChartPieSlice, Info, Microphone, Stop, Scales,
+  MagnifyingGlass, Globe, ChartPieSlice, Info, Microphone, Stop, Scales, Camera,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -67,6 +67,7 @@ const UI = {
   chartpie: ChartPieSlice,
   mic: Microphone,
   stop: Stop,
+  camera: Camera,
   balance: Scales,
 };
 

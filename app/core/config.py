@@ -53,6 +53,26 @@ class Settings(BaseSettings):
     WHISPER_API_URL: str = ""
     WHISPER_API_KEY: str = ""
 
+    # Scan struk (OCR RapidOCR, tanpa LLM). Kuota scan per bulan untuk Basic;
+    # Pro tanpa batas bulanan (tetap kena rate limit per jam di endpoint).
+    RECEIPT_SCAN_LIMIT_BASIC: int = 15
+
+    # Fallback LLM (Groq vision) untuk struk yang gagal dibaca OCR.
+    # MATI secara default. Biaya dikunci plafon bulanan global (rupiah) +
+    # kuota per user; setelah plafon tercapai fallback berhenti sampai bulan depan.
+    RECEIPT_LLM_ENABLED: bool = False
+    RECEIPT_LLM_MODEL: str = "qwen/qwen3.8-27b"
+    RECEIPT_LLM_API_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+    RECEIPT_LLM_MONTHLY_BUDGET_IDR: int = 100_000
+    RECEIPT_LLM_USER_MONTHLY_BASIC: int = 3
+    RECEIPT_LLM_USER_MONTHLY_PRO: int = 10
+    RECEIPT_LLM_MAX_OUTPUT_TOKENS: int = 400
+    # Harga per 1 juta token (USD) + kurs untuk estimasi biaya. Kurs dibuat
+    # konservatif (lebih tinggi dari pasar) supaya plafon tidak terlampaui.
+    RECEIPT_LLM_PRICE_IN_USD: float = 0.80
+    RECEIPT_LLM_PRICE_OUT_USD: float = 4.00
+    RECEIPT_LLM_USD_IDR: int = 17_500
+
     model_config = {"env_file": "/opt/jatahku/.env", "extra": "ignore"}
 
 

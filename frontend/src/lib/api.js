@@ -430,6 +430,32 @@ class ApiClient {
     }
   }
 
+  // Scan struk: foto (sudah dikompres) → toko/tanggal/total.
+  async scanReceipt(imageBlob) {
+    try {
+      const form = new FormData();
+      form.append('image', imageBlob, 'struk.jpg');
+      const res = await this.request('/transactions/scan-receipt', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Gagal mengirim foto. Cek koneksi lalu coba lagi.' } };
+    }
+  }
+
+  // Nilai akhir yang disimpan user → bahan belajar scan struk (best-effort).
+  async receiptFeedback(scanId, payload) {
+    try {
+      await this.request(`/transactions/scan-receipt/${scanId}/feedback`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch {}
+  }
+
   // Incomes
   async getIncomes(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
