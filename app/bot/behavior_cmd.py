@@ -212,8 +212,9 @@ async def cmd_setcooling(update, context):
             envelope.cooling_threshold = threshold
             await db.commit()
             await update.message.reply_text(
-                f"✅ Cooling period {emoji} {envelope.name}: {format_currency(threshold)}\n\n"
-                f"Pembelian >= {format_currency(threshold)} harus tunggu 24 jam.")
+                f"✅ Batas cooling {emoji} {envelope.name}: {format_currency(threshold)}\n\n"
+                f"Pengeluaran tetap langsung tercatat — tidak ada lagi tahan 24 jam. "
+                f"Batas ini akan dipakai fitur refleksi \"Sepadan?\" yang segera hadir.")
 
 
 async def cmd_controls(update, context):

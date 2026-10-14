@@ -13,7 +13,7 @@ from app.core.deps import get_current_user
 from app.models.models import (
     User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
-from app.services.behavior import check_behavior, create_pending_transaction
+from app.services.behavior import check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
 from app.services.plan_limits import check_transaction_limit
 from app.services.transcription import transcribe_audio, TranscriptionError
@@ -143,45 +143,25 @@ async def create_transaction(
     if not limit_ok:
         raise HTTPException(status_code=403, detail=limit_msg)
 
-    # Behavior checks
+    # Behavior checks — satu kali (dulu dua kali, dan cek pertama menolak cooling
+    # sebelum pending sempat dibuat). Cooling tidak lagi menahan pencatatan.
     check = await check_behavior(req.envelope_id, user.id, req.amount, db)
+    if not check.allowed and check.check_type == "daily_limit" and req.raise_daily_limit:
+        # Dikonfirmasi user → limit dinaikkan sampai tengah malam, lalu cek ulang.
+        await _raise_daily_limit(user.id, envelope.id)
+        check = await check_behavior(req.envelope_id, user.id, req.amount, db)
     if not check.allowed:
         if check.check_type == "locked":
             raise HTTPException(status_code=403, detail=f"Amplop dikunci. Tidak bisa belanja.")
-        elif check.check_type == "daily_limit":
-            if req.raise_daily_limit:
-                # Dikonfirmasi user → limit dinaikkan sampai tengah malam; cek di bawah lolos.
-                await _raise_daily_limit(user.id, envelope.id)
-            else:
-                raise HTTPException(status_code=403, detail=daily_limit_message(envelope.name, check.details))
-        elif check.check_type == "cooling":
-            raise HTTPException(status_code=403, detail=f"Pembelian >= {check.details['threshold']} perlu cooling period 24 jam. Gunakan Telegram untuk transaksi ini.")
-
-    # Run behavior checks
-    check = await check_behavior(req.envelope_id, user.id, req.amount, db)
-    if not check.allowed:
-        if check.check_type == "locked":
-            raise HTTPException(status_code=403, detail=f"🔒 Amplop {check.details.get('envelope_name', '')} sedang dikunci.")
         elif check.check_type == "not_funded":
             raise HTTPException(status_code=403, detail=f"💸 {check.reason}")
         elif check.check_type == "insufficient":
             d = check.details
             raise HTTPException(status_code=403, detail=f"💸 Dana tidak cukup. Sisa: Rp{int(d.get('available', 0)):,}, diminta: Rp{int(d.get('requested', 0)):,}")
-        elif check.check_type == "cooling":
-            pending = await create_pending_transaction(
-                req.envelope_id, user.id, req.amount, req.description,
-                req.source, cooling_hours=24, is_private=req.is_private, db=db,
-            )
-            raise HTTPException(
-                status_code=202,
-                detail=f"⏳ Cooling period aktif. Pembelian >= Rp{int(check.details['threshold']):,} perlu tunggu 24 jam. Cek /pending di Telegram.",
-            )
         elif check.check_type == "daily_limit":
-            d = check.details
-            raise HTTPException(
-                status_code=403,
-                detail=f"⚠️ Melebihi limit harian. Limit: Rp{int(d['daily_limit']):,}/hari, sudah terpakai: Rp{int(d['spent_today']):,}, sisa: Rp{int(d['remaining_today']):,}",
-            )
+            raise HTTPException(status_code=403, detail=daily_limit_message(envelope.name, check.details))
+        else:
+            raise HTTPException(status_code=403, detail=check.reason or "Transaksi tidak bisa dicatat.")
 
     txn = Transaction(
         envelope_id=req.envelope_id,
@@ -304,8 +284,6 @@ async def batch_create_transactions(
             elif check.check_type == "insufficient":
                 d = check.details
                 msg = f"Dana tidak cukup. Sisa: Rp{int(d.get('available', 0)):,}, diminta: Rp{int(d.get('requested', 0)):,}"
-            elif check.check_type == "cooling":
-                msg = f"Pembelian >= Rp{int(check.details.get('threshold', 0)):,} perlu cooling period 24 jam"
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=msg))
             continue
 

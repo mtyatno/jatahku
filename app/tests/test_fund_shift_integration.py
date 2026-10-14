@@ -30,7 +30,7 @@ from app.services import streak as _streak, txn_nlp as _txn_nlp  # noqa: F401
 from app.core.database import Base
 from app.models.models import (
     Allocation, Envelope, Household, HouseholdMember, HouseholdRole, Income,
-    Transaction, User,
+    PendingTransaction, Transaction, User,
 )
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -473,14 +473,58 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Top-up pemasukan Rp5rb", call.args[0])
         self.assertEqual(await self.goal_notifs(), 1)
 
-        # Transaksi tertahan cooling → dana top-up tetap di amplop → target terlewati
+        # Cooling tidak lagi menahan pencatatan (Pikir-Pikir Fase 0): kopi di atas
+        # ambang tetap tercatat, top-up habis terpakai lagi → target tidak terlewati.
         async with self.Session() as db:
             jajan = await db.get(Envelope, self.env["Jajan"].id)
             jajan.cooling_threshold = D("1000")
             await db.commit()
         call = await topup_kopi()
-        self.assertIn("Cooling period aktif", call.args[0])
-        self.assertEqual(await self.goal_notifs(), 2)
+        self.assertIn("✅", call.args[0])
+        self.assertNotIn("Cooling", call.args[0])
+        self.assertEqual(await self.goal_notifs(), 1)
+        self.assertEqual(await self.count(PendingTransaction), 0)
+
+    async def test_large_expense_recorded_despite_cooling_threshold(self):
+        """Pikir-Pikir Fase 0: cooling threshold (amplop maupun default user) tidak
+        lagi menahan pencatatan di web maupun bot. Dulu web menolak (403) dan tidak
+        mencatat apa pun; bot membuat transaksi pending."""
+        from app.api.routes.transactions import (
+            BatchTransactionCreate, BatchTransactionItem, TransactionCreate,
+            batch_create_transactions, create_transaction,
+        )
+        async with self.Session() as db:
+            (await db.get(Envelope, self.env["Transport"].id)).cooling_threshold = D("1000")
+            (await self.web_user(db)).default_cooling_threshold = D("1000")  # berlaku ke Makan
+            await db.commit()
+        tr, mk = self.env["Transport"].id, self.env["Makan"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:  # web, satu item
+                txn = await create_transaction(
+                    TransactionCreate(envelope_id=tr, amount=D("50000"), description="servis motor"),
+                    await self.web_user(db), db)
+            self.assertEqual(txn.amount, D("50000"))
+            async with self.Session() as db:  # web, multi-item
+                out = await batch_create_transactions(BatchTransactionCreate(items=[
+                    BatchTransactionItem(envelope_id=tr, amount=D("40000"), description="ban"),
+                    BatchTransactionItem(envelope_id=mk, amount=D("5000"), description="nasi"),
+                ]), await self.web_user(db), db)
+            self.assertEqual([(r.ok, r.error) for r in out], [(True, None), (True, None)])
+
+        # bot, multi-item
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        await self.go(lambda: batch_cmd.handle_multi_expense(
+            update, None, [(D("30000"), "bensin"), (D("2000"), "parkir")]),
+            {"bensin": "Transport", "parkir": "Makan"})
+        text = update.message.reply_text.call_args.args[0]
+        self.assertIn("2 transaksi dicatat", text)
+        self.assertNotIn("cooling", text.lower())
+
+        self.assertEqual(await self.count(Transaction), 5)
+        self.assertEqual(await self.count(PendingTransaction), 0)
+        self.assertEqual(await self.remaining("Transport"), D("80000"))  # 200rb − 50 − 40 − 30
 
     async def test_telegram_text_escapes_markdown(self):
         await self.add_goal("Transport", 250000)

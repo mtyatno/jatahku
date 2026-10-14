@@ -17,7 +17,7 @@ from app.models.models import (
     Envelope, Transaction, Allocation, Income, TransactionSource,
     PendingTransaction, PendingTransactionStatus,
 )
-from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
+from app.services.behavior import check_behavior, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
 from app.services.expense_rules import (
     FUNDS_BLOCKS, after_expense_recorded, check_expense, is_spendable,
@@ -739,23 +739,6 @@ async def handle_fund_shift_callback(update, context):
         # Semua aturan lagi (sama dengan web) dengan dana yang sudah ditambahkan.
         check = await check_expense(target_env, user, amount, db)
         if not check.allowed:
-            if check.check_type == "cooling":
-                # create_pending_transaction meng-commit dana tambahan sekalian.
-                pending = await create_pending_transaction(
-                    target_env.id, user.id, amount, description,
-                    TransactionSource.telegram, cooling_hours=24, db=db)
-                await _notify_goals(db, user, goals_before)
-                confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
-                await query.edit_message_text(
-                    (funding_line + "\n\n" if funding_line else "")
-                    + f"⏳ Cooling period aktif\n\n"
-                    f"{format_currency(amount)} — {_esc(description)}\n"
-                    f"Amplop: {target_env.emoji or '📁'} {_esc(target_env.name)}\n\n"
-                    f"Bisa dikonfirmasi setelah:\n🕐 {confirm_time} WIB (24 jam)\n\n"
-                    f"Ketik /pending untuk lihat status.",
-                    parse_mode="HTML",
-                )
-                return
             if check.check_type == "daily_limit":
                 # Dana tambahan tetap disimpan: alur konfirmasi limit harian mencatat
                 # transaksi tanpa cek dana ulang, jadi dananya harus sudah ada.
@@ -1236,25 +1219,6 @@ async def handle_message(update, context):
                         str(tg_user.id), d, envelope, settings,
                     )
                     return
-                elif check.check_type == "cooling":
-                    pending = await create_pending_transaction(
-                        envelope.id, user.id, amount, description,
-                        TransactionSource.telegram, cooling_hours=24, db=db)
-                    from datetime import datetime, timezone
-                    confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
-                    keyboard = [
-                        [InlineKeyboardButton("❌ Batalkan", callback_data=f"cool_cancel_{pending.id}")],
-                    ]
-                    emoji = envelope.emoji or "📁"
-                    await update.message.reply_text(
-                        f"⏳ Cooling period aktif\n\n"
-                        f"{format_currency(amount)} — {description}\n"
-                        f"Amplop: {emoji} {envelope.name}\n\n"
-                        f"Transaksi bisa dikonfirmasi setelah:\n"
-                        f"🕐 {confirm_time} WIB (24 jam)\n\n"
-                        f"Saya akan kirim reminder saat sudah bisa dikonfirmasi.",
-                        reply_markup=InlineKeyboardMarkup(keyboard))
-                    return
 
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
@@ -1404,20 +1368,6 @@ async def _handle_txn_callback(update, context):
                     lambda t, **kw: query.edit_message_text(t, **kw),
                     str(query.from_user.id), d, envelope, settings,
                 )
-                return
-            elif check.check_type == "cooling":
-                pending = await create_pending_transaction(
-                    envelope.id, user.id, amount, description,
-                    TransactionSource.telegram, cooling_hours=24, db=db)
-                confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
-                emoji = envelope.emoji or "📁"
-                await query.edit_message_text(
-                    f"⏳ Cooling period aktif\n\n"
-                    f"{format_currency(amount)} — {description}\n"
-                    f"Amplop: {emoji} {envelope.name}\n\n"
-                    f"Bisa dikonfirmasi setelah:\n"
-                    f"🕐 {confirm_time} WIB (24 jam)\n\n"
-                    f"Ketik /pending untuk lihat status.")
                 return
 
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,

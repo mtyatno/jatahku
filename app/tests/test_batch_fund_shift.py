@@ -78,9 +78,7 @@ class World:
         self.bal = {e.id: D(str(b)) for e, b, _ in rows}
         self.res = {e.id: D(str(r)) for e, _, r in rows}
         self.locked = set()
-        self.cooling = {}      # env_id -> ambang cooling
         self.daily = {}        # env_id -> limit harian
-        self.pending = []
         self.plan_cap = None   # batas transaksi paket (None = Pro)
         self.bypass = set()    # amplop yang limit hariannya sudah dinaikkan hari ini
         self.added = []
@@ -109,9 +107,6 @@ class World:
         self.savepoints.append(sp)
         return sp
 
-    async def create_pending(self, envelope_id, user_id, amount, description, source, cooling_hours=24, db=None):
-        self.pending.append((envelope_id, amount, description))
-
     def _add(self, obj):
         self.added.append(obj)
         if isinstance(obj, Allocation):
@@ -135,8 +130,6 @@ class World:
         if amount > self.bal[env_id]:
             return BehaviorCheckResult.blocked("insufficient", "Dana tidak cukup.",
                                                available=self.bal[env_id], requested=amount)
-        if env_id in self.cooling and amount >= self.cooling[env_id]:
-            return BehaviorCheckResult.blocked("cooling", "Perlu cooling period.")
         if env_id in self.daily and env_id not in self.bypass:
             spent_today = sum(t.amount for t in self.of(Transaction) if t.envelope_id == env_id)
             if spent_today + amount > self.daily[env_id]:
@@ -167,7 +160,6 @@ class World:
             patch.object(expense_rules, "check_transaction_limit", new=self.plan_check),
             patch.object(batch_cmd, "after_expense_recorded", new=AsyncMock(return_value=None)),
             patch.object(batch_cmd, "raise_daily_limit_today", new=self.raise_limit),
-            patch.object(batch_cmd, "create_pending_transaction", new=self.create_pending),
         ]
         if matches is not None:
             ps.append(patch.object(batch_cmd, "find_best_envelope",
@@ -285,22 +277,21 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Rp15rb — martabak\n🍔 Makan · sisa Rp5rb\nKurang <b>Rp10rb</b>", text)
 
     async def test_behavior_checks_match_web(self):
-        """Kunci, cooling, dan limit harian berlaku untuk item yang langsung dikenali,
-        sama seperti POST /transactions/batch di web."""
+        """Kunci dan limit harian berlaku untuk item yang langsung dikenali, sama
+        seperti POST /transactions/batch di web. Pengeluaran besar langsung
+        tercatat (cooling tidak lagi menahan — Pikir-Pikir Fase 0)."""
         w = World((self.makan, 500000, 0), (self.jajan, 500000, 0), (self.transport, 500000, 0))
         w.locked.add(self.jajan.id)
-        w.cooling[self.makan.id] = D("300000")
         w.daily[self.transport.id] = D("50000")
         reply = await w.send(
             [(D("20000"), "kopi"), (D("350000"), "sepatu"), (D("40000"), "ojek"),
              (D("20000"), "parkir"), (D("10000"), "sate")],
             [self.jajan, self.makan, self.transport, self.transport, self.makan])
 
-        self.assertEqual([t.description for t in w.of(Transaction)], ["ojek", "sate"])
-        self.assertEqual([p[2] for p in w.pending], ["sepatu"])
+        self.assertEqual([t.description for t in w.of(Transaction)], ["sepatu", "ojek", "sate"])
         text = reply.call_args.args[0]
         self.assertIn("kopi: Amplop sedang dikunci. Tidak dicatat.", text)
-        self.assertIn("sepatu: masuk cooling period", text)
+        self.assertNotIn("cooling", text.lower())
         # ojek 40rb sudah memakai limit 50rb → parkir 20rb ditawari naikkan limit
         self.assertIn("Limit harian terlampaui", text)
         self.assertIn("kelebihan <b>Rp10rb</b>", text)
@@ -311,10 +302,10 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
 
         edit = await w.tap(f"blimit_{key}_0_y")
         self.assertEqual(w.bypass, {self.transport.id})
-        self.assertEqual([t.description for t in w.of(Transaction)], ["ojek", "sate", "parkir"])
+        self.assertEqual([t.description for t in w.of(Transaction)], ["sepatu", "ojek", "sate", "parkir"])
         text = edit.call_args.args[0]
-        self.assertIn("3 transaksi dicatat", text)
-        self.assertIn("Total: <b>Rp70rb</b>", text)
+        self.assertIn("4 transaksi dicatat", text)
+        self.assertIn("Total: <b>Rp420rb</b>", text)
 
     async def test_skip_daily_limit_offer(self):
         w = World((self.transport, 500000, 0))
@@ -469,16 +460,6 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.w.added, [])                       # transfer dibatalkan
         self.assertEqual(self.w.bal[self.makan.id], D("100000"))
         self.assertIn("Dana tidak digeser", edit.call_args.args[0])
-
-    async def test_cooling_after_shift_goes_pending_and_keeps_transfer(self):
-        self.w.cooling[self.jajan.id] = D("30000")
-        self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)}],
-                    stage="shift", sources=[str(self.makan.id)])
-        edit = await self.w.tap(f"bshift_{KEY}_0_0")
-        self.assertEqual(len(self.w.of(Income)), 1)
-        self.assertEqual(self.w.of(Transaction), [])
-        self.assertEqual([p[2] for p in self.w.pending], ["kopi"])
-        self.assertIn("cooling period", edit.call_args.args[0])
 
     async def test_stale_or_double_tap_does_nothing(self):
         self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)},

@@ -5,9 +5,9 @@ service bersama app/services/expense_rules.py dan app/services/fund_shift.py.
 
 Alur:
 1. Item yang amplopnya dikenali dicek berurutan dengan check_expense (amplop
-   tabungan, batas paket, kunci, dana, cooling, limit harian), sehingga item
+   tabungan, batas paket, kunci, dana, limit harian), sehingga item
    sebelumnya ikut terhitung untuk item berikutnya. Yang lolos dicatat;
-   cooling → transaksi pending; blok lain → tidak dicatat (alasan di ringkasan).
+   blok lain → tidak dicatat (alasan di ringkasan).
 2. Item tanpa amplop atau yang kurang dana masuk antrean dan diproses satu per
    satu di satu pesan yang diedit:
    - amplop belum dikenali → user memilih amplop (tanpa tabungan/sinking fund,
@@ -34,7 +34,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.handlers import (
     AsyncSessionLocal, _esc, _is_setup_complete, _spendable_rows, _streak_text,
-    create_pending_transaction, find_best_envelope, format_currency,
+    find_best_envelope, format_currency,
     get_envelopes_with_spent, get_household_id, get_or_create_user, settings,
 )
 from app.bot.tglogin_cmd import reply_setup_needed
@@ -94,7 +94,7 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
     (geser dari `source_env`, atau top-up pemasukan bila `topup`). Semua aturan
     check_expense tetap berlaku; hasilnya masuk ke ringkasan.
 
-    Mengembalikan "recorded" | "pending" | "blocked" | "limit". "limit" = item
+    Mengembalikan "recorded" | "blocked" | "limit". "limit" = item
     menunggu keputusan "naikkan limit hari ini" (dana tambahan, bila ada,
     tetap disimpan — sama dengan alur satu item)."""
     amount, desc = Decimal(item["amount"]), item["desc"]
@@ -144,15 +144,6 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
             await notify_goals_reached(db, user, goals_before)
             item["info"] = info
         return "limit"
-    elif check.check_type == "cooling":
-        # create_pending_transaction meng-commit dana tambahan sekalian.
-        await create_pending_transaction(
-            target_env.id, user.id, amount, desc,
-            TransactionSource.telegram, cooling_hours=24, db=db)
-        await notify_goals_reached(db, user, goals_before)
-        data.setdefault("notes", []).append(
-            f"⏳ {_item_label(item)}: masuk cooling period 24 jam (/pending){info}")
-        return "pending"
     else:
         # Tanpa dana tambahan tidak ada perubahan yang perlu dibatalkan.
         if savepoint is not None:
@@ -224,7 +215,7 @@ async def render_step(key, data, user, hid, db, flash=None):
             )
             return text, InlineKeyboardMarkup(keyboard), False
         if check.allowed or check.check_type not in FUNDS_BLOCKS:
-            # Dana cukup (mis. sudah diisi), atau terblokir hal lain (kunci, cooling…).
+            # Dana cukup (mis. sudah diisi), atau terblokir hal lain (kunci, batas paket…).
             await _record_item(db, user, hid, data, item, target_env, check=check)
             data["pos"] += 1
             continue
