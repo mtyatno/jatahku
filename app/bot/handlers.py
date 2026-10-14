@@ -580,6 +580,7 @@ async def handle_fund_shift_callback(update, context):
                     f"kekurangan {format_currency(moved)}. Dana tidak digeser — kirim ulang transaksinya."
                 )
                 return
+            savepoint = await db.begin_nested()
             record_transfer(db, hid, user.id, source_env, target_env, moved)
             await db.flush()
 
@@ -620,7 +621,8 @@ async def handle_fund_shift_callback(update, context):
                     tg_user_id, d, target_env, settings,
                 )
                 return
-            await db.rollback()
+            if moved > 0:
+                await savepoint.rollback()  # lihat batch_cmd._record_item: hindari rollback penuh
             await query.edit_message_text(f"⚠️ {check.reason}\n\nDana tidak digeser.")
             return
 

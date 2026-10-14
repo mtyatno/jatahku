@@ -77,6 +77,9 @@ class World:
         self.bal = {e.id: D(str(b)) for e, b, _ in rows}
         self.res = {e.id: D(str(r)) for e, _, r in rows}
         self.locked = set()
+        self.cooling = {}      # env_id -> ambang cooling
+        self.daily = {}        # env_id -> limit harian
+        self.pending = []
         self.added = []
         self.db = MagicMock()
         self.db.execute = AsyncMock(return_value=FakeResult(USER))
@@ -84,7 +87,27 @@ class World:
         self.db.flush = AsyncMock()
         self.db.commit = AsyncMock()
         self.db.rollback = AsyncMock()
+        self.savepoints = []
+        self.db.begin_nested = AsyncMock(side_effect=self._begin_nested)
         self.redis = FakeRedis()
+
+    async def _begin_nested(self):
+        mark = len(self.added)
+        sp = MagicMock()
+
+        async def rollback():
+            for obj in reversed(self.added[mark:]):
+                if isinstance(obj, Allocation):
+                    self.bal[obj.envelope_id] -= obj.amount
+                elif isinstance(obj, Transaction):
+                    self.bal[obj.envelope_id] += obj.amount
+            del self.added[mark:]
+        sp.rollback = AsyncMock(side_effect=rollback)
+        self.savepoints.append(sp)
+        return sp
+
+    async def create_pending(self, envelope_id, user_id, amount, description, source, cooling_hours=24, db=None):
+        self.pending.append((envelope_id, amount, description))
 
     def _add(self, obj):
         self.added.append(obj)
@@ -109,6 +132,12 @@ class World:
         if amount > self.bal[env_id]:
             return BehaviorCheckResult.blocked("insufficient", "Dana tidak cukup.",
                                                available=self.bal[env_id], requested=amount)
+        if env_id in self.cooling and amount >= self.cooling[env_id]:
+            return BehaviorCheckResult.blocked("cooling", "Perlu cooling period.")
+        if env_id in self.daily:
+            spent_today = sum(t.amount for t in self.of(Transaction) if t.envelope_id == env_id)
+            if spent_today + amount > self.daily[env_id]:
+                return BehaviorCheckResult.blocked("daily_limit", "Melebihi limit harian.")
         return BehaviorCheckResult.ok()
 
     def patches(self, matches=None):
@@ -121,7 +150,7 @@ class World:
             patch.object(batch_cmd, "get_envelopes_with_spent", new=self.envs_with_spent),
             patch.object(batch_cmd, "check_behavior", new=self.check),
             patch.object(batch_cmd, "save_learned_keywords", new=AsyncMock()),
-            patch.object(batch_cmd, "create_pending_transaction", new=AsyncMock()),
+            patch.object(batch_cmd, "create_pending_transaction", new=self.create_pending),
         ]
         if matches is not None:
             ps.append(patch.object(batch_cmd, "find_best_envelope",
@@ -170,27 +199,6 @@ class World:
 
 def buttons(reply_markup):
     return [row[0].callback_data for row in reply_markup.inline_keyboard]
-
-
-# ── Rencana (murni) ──────────────────────────────────────────────────────────
-
-class PlanTests(unittest.TestCase):
-    def test_running_balance_across_items_in_same_envelope(self):
-        makan = env("Makan")
-        items = [(D("30000"), "sate", makan), (D("10000"), "es teh", makan),
-                 (D("15000"), "martabak", makan), (D("5000"), "parkir", None)]
-        record, queue = batch_cmd.plan_items(items, {str(makan.id): D("45000")})
-        self.assertEqual([d for _, d, _ in record], ["sate", "es teh"])
-        self.assertEqual(queue, [
-            {"amount": 15000, "desc": "martabak", "env_id": str(makan.id)},  # 30+10 sudah memakai 40 dari 45
-            {"amount": 5000, "desc": "parkir", "env_id": None},
-        ])
-
-    def test_unfunded_envelope_is_queued(self):
-        jajan = env("Jajan")
-        record, queue = batch_cmd.plan_items([(D("1"), "x", jajan)], {str(jajan.id): D("-5000")})
-        self.assertEqual(record, [])
-        self.assertEqual(queue[0]["env_id"], str(jajan.id))
 
 
 # ── Pesan multi-item ─────────────────────────────────────────────────────────
@@ -248,6 +256,45 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("🔁 +Rp20rb dari 🚌 Transport", text)
         self.assertIn("Total: <b>Rp50rb</b>", text)
         self.assertEqual(w.redis.store, {})
+
+    async def test_items_in_same_envelope_count_against_each_other(self):
+        w = World((self.makan, 45000, 0), (self.transport, 0, 0))
+        reply = await w.send([(D("30000"), "sate"), (D("10000"), "es teh"), (D("15000"), "martabak")],
+                             [self.makan] * 3)
+        self.assertEqual([t.description for t in w.of(Transaction)], ["sate", "es teh"])
+        # 30+10 sudah memakai 40 dari 45 → martabak kurang 10rb; tak ada sumber → dicatat sebagai catatan
+        self.assertIn("martabak: 🍔 Makan kurang Rp10rb", reply.call_args.args[0])
+
+    async def test_behavior_checks_match_web(self):
+        """Kunci, cooling, dan limit harian berlaku untuk item yang langsung dikenali,
+        sama seperti POST /transactions/batch di web."""
+        w = World((self.makan, 500000, 0), (self.jajan, 500000, 0), (self.transport, 500000, 0))
+        w.locked.add(self.jajan.id)
+        w.cooling[self.makan.id] = D("300000")
+        w.daily[self.transport.id] = D("50000")
+        reply = await w.send(
+            [(D("20000"), "kopi"), (D("350000"), "sepatu"), (D("40000"), "ojek"),
+             (D("20000"), "parkir"), (D("10000"), "sate")],
+            [self.jajan, self.makan, self.transport, self.transport, self.makan])
+
+        self.assertEqual([t.description for t in w.of(Transaction)], ["ojek", "sate"])
+        self.assertEqual([p[2] for p in w.pending], ["sepatu"])
+        text = reply.call_args.args[0]
+        self.assertIn("2 transaksi dicatat", text)
+        self.assertIn("kopi: Amplop sedang dikunci. Tidak dicatat.", text)
+        self.assertIn("sepatu: masuk cooling period", text)
+        # ojek 40rb sudah memakai limit 50rb → parkir 20rb melewati limit
+        self.assertIn("parkir: Melebihi limit harian. Tidak dicatat. Kirim sebagai pesan terpisah", text)
+        self.assertIn("Total: <b>Rp50rb</b>", text)
+        w.db.rollback.assert_not_awaited()  # rollback penuh akan meng-expire objek sesi
+
+    async def test_short_and_locked_is_not_offered_a_shift(self):
+        w = World((self.makan, 100000, 0), (self.jajan, 0, 0))
+        w.locked.add(self.jajan.id)
+        reply = await w.send([(D("20000"), "kopi"), (D("10000"), "sate")], [self.jajan, self.makan])
+        self.assertIsNone(reply.call_args.kwargs["reply_markup"])
+        self.assertIn("kopi: Amplop sedang dikunci", reply.call_args.args[0])
+        self.assertEqual(w.of(Income), [])
 
     async def test_no_source_can_cover_is_noted_and_rest_continues(self):
         w = World((self.makan, 100000, 0), (self.jajan, 0, 0))
@@ -331,9 +378,21 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
                 self.w.locked.add(self.jajan.id)
         self.w.db.add.side_effect = add_then_lock
         edit = await self.w.tap(f"bshift_{KEY}_0_0")
-        self.w.db.rollback.assert_awaited_once()
-        self.assertEqual(self.w.of(Transaction), [])
+        self.w.savepoints[0].rollback.assert_awaited_once()
+        self.w.db.rollback.assert_not_awaited()
+        self.assertEqual(self.w.added, [])                       # transfer dibatalkan
+        self.assertEqual(self.w.bal[self.makan.id], D("100000"))
         self.assertIn("Dana tidak digeser", edit.call_args.args[0])
+
+    async def test_cooling_after_shift_goes_pending_and_keeps_transfer(self):
+        self.w.cooling[self.jajan.id] = D("30000")
+        self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)}],
+                    stage="shift", sources=[str(self.makan.id)])
+        edit = await self.w.tap(f"bshift_{KEY}_0_0")
+        self.assertEqual(len(self.w.of(Income)), 1)
+        self.assertEqual(self.w.of(Transaction), [])
+        self.assertEqual([p[2] for p in self.w.pending], ["kopi"])
+        self.assertIn("cooling period", edit.call_args.args[0])
 
     async def test_stale_or_double_tap_does_nothing(self):
         self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)},

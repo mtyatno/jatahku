@@ -67,6 +67,8 @@ def fake_db():
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
+    db.savepoint = MagicMock(rollback=AsyncMock())
+    db.begin_nested = AsyncMock(return_value=db.savepoint)
     return db
 
 
@@ -258,7 +260,8 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         before = [row(self.target, 20000), row(self.makan, 100000)]
         locked = BehaviorCheckResult.blocked("locked", "Amplop Jajan sedang dikunci.")
         q = await self.run_cb(f"fshift:{self.token}:0", self.patches(before, check=locked))
-        self.db.rollback.assert_awaited_once()
+        self.db.savepoint.rollback.assert_awaited_once()
+        self.db.rollback.assert_not_awaited()  # rollback penuh meng-expire objek sesi
         self.db.commit.assert_not_awaited()
         self.assertEqual(self.added(Transaction), [])
         self.assertIn("Dana tidak digeser", q.edit_message_text.call_args.args[0])

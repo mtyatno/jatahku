@@ -1,9 +1,11 @@
 """Pencatatan multi-item via Telegram: "makan 30k, parkir 5k, kopi 20k".
 
 Alur:
-1. Item yang amplopnya dikenali dan dananya cukup langsung dicatat. Sisa amplop
-   dihitung berjalan, jadi beberapa item di amplop yang sama ikut terhitung.
-2. Sisanya masuk antrean dan diproses satu per satu di satu pesan yang diedit:
+1. Item yang amplopnya dikenali melewati cek perilaku yang sama dengan web
+   (check_behavior: kunci, dana, cooling, limit harian), berurutan, sehingga item
+   sebelumnya ikut terhitung untuk item berikutnya. Yang lolos dicatat; cooling
+   → transaksi pending; kunci/limit harian → tidak dicatat (alasan di ringkasan).
+2. Item tanpa amplop atau yang kurang dana masuk antrean dan diproses satu per satu di satu pesan yang diedit:
    - amplop belum dikenali  → user memilih amplop
    - amplop kurang dana     → tawaran geser dana dari amplop lain (sama seperti
                               pencatatan satu item, lihat handlers._send_fund_shift_offer)
@@ -38,36 +40,7 @@ LOCK_TTL = 30
 FUNDS_BLOCKS = ("not_funded", "insufficient")
 
 
-# ── Logika murni ─────────────────────────────────────────────────────────────
-
-def plan_items(items, remaining_by_env):
-    """Bagi item menjadi (langsung_dicatat, antrean).
-
-    items: list (amount, desc, envelope|None) sesuai urutan pesan.
-    remaining_by_env: {str(envelope_id): sisa} — dimutasi tidak; disalin.
-
-    Item dengan amplop yang dananya cukup (setelah dikurangi item sebelumnya di
-    amplop yang sama) dicatat langsung. Item tanpa amplop, atau yang kurang dana,
-    masuk antrean dengan urutan aslinya.
-    """
-    running = {k: Decimal(v) for k, v in remaining_by_env.items()}
-    record, queue = [], []
-    for amount, desc, env in items:
-        if env is None:
-            queue.append({"amount": int(amount), "desc": desc, "env_id": None})
-            continue
-        key = str(env.id)
-        if key not in running:
-            # Amplop di luar data saldo (tidak seharusnya terjadi): perilaku lama — catat.
-            record.append((amount, desc, env))
-            continue
-        if Decimal(amount) <= running[key]:
-            running[key] -= Decimal(amount)
-            record.append((amount, desc, env))
-        else:
-            queue.append({"amount": int(amount), "desc": desc, "env_id": key})
-    return record, queue
-
+# ── Format ───────────────────────────────────────────────────────────────────
 
 def _env_label(env) -> str:
     return f"{env.emoji or '📁'} {_esc(env.name)}"
@@ -118,7 +91,12 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
     amount, desc = Decimal(item["amount"]), item["desc"]
     shift_info = f" · 🔁 +{format_currency(moved)} dari {_env_label(source_env)}" if moved > 0 else ""
 
+    savepoint = None
     if moved > 0:
+        # Savepoint, bukan db.rollback(): rollback penuh meng-expire semua objek
+        # sesi (user, amplop) dan aksesnya sesudah itu gagal di async
+        # (MissingGreenlet) — padahal item antrean berikutnya masih memakainya.
+        savepoint = await db.begin_nested()
         record_transfer(db, hid, user.id, source_env, target_env, moved)
         await db.flush()
         check = None  # dana berubah — cek ulang
@@ -141,8 +119,12 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
         data.setdefault("notes", []).append(
             f"⏳ {_item_label(item)}: masuk cooling period 24 jam (/pending){shift_info}")
     else:
-        await db.rollback()
+        # Tanpa transfer tidak ada perubahan yang perlu dibatalkan.
+        if savepoint is not None:
+            await savepoint.rollback()
         tail = " Dana tidak digeser." if moved > 0 else ""
+        if check.check_type == "daily_limit":
+            tail += " Kirim sebagai pesan terpisah untuk opsi naikkan limit hari ini."
         data.setdefault("notes", []).append(
             f"⚠️ {_item_label(item)}: {_esc(check.reason)} Tidak dicatat.{tail}")
 
@@ -341,29 +323,30 @@ async def handle_multi_expense(update, context, items):
         if not env_data:
             await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
             return
-        matched = []
-        for amount, desc in items:
-            env, _ = await find_best_envelope(desc, hid, db, user_id=user.id)
-            matched.append((amount, desc, env))
-        record, queue = plan_items(
-            matched, {str(e["envelope"].id): e["remaining"] for e in env_data})
-
-        for amount, desc, env in record:
-            _add_txn(db, user, env, amount, desc)
-            await save_learned_keywords(user.id, desc, env.id, db)
-        if record:
-            await db.commit()
-
         key = secrets.token_hex(4)
         data = {
             "user_id": str(user.id),
-            "queue": queue,
+            "queue": [],
             "pos": 0,
             "stage": "pick",
-            "auto_lines": [f"{_env_label(env)}: {format_currency(a)} — {_esc(d)}" for a, d, env in record],
+            "auto_lines": [],
             "notes": [],
-            "total": int(sum(Decimal(a) for a, _, _ in record)),
+            "total": 0,
         }
+        for amount, desc in items:
+            env, _ = await find_best_envelope(desc, hid, db, user_id=user.id)
+            item = {"amount": int(amount), "desc": desc, "env_id": str(env.id) if env else None}
+            if env is None:
+                data["queue"].append(item)
+                continue
+            # Sama dengan POST /transactions/batch di web: setiap item dicek, dan
+            # item yang sudah tercatat ikut terhitung untuk item berikutnya.
+            check = await check_behavior(env.id, user.id, Decimal(amount), db)
+            if not check.allowed and check.check_type in FUNDS_BLOCKS:
+                data["queue"].append(item)  # → tawaran geser dana
+                continue
+            await _record_item(db, user, hid, data, item, env, check=check)
+
         text, markup, done = await render_step(key, data, user, hid, db)
 
     if not done:
