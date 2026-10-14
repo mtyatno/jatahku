@@ -297,24 +297,76 @@ def is_nabung(text): return bool(NABUNG_RE.search(text))
 def is_pengeluaran_hari_ini(text): return bool(PENGELUARAN_HARI_INI_RE.search(text))
 
 
+_CORRECTION_NEW_RE = re.compile(r"\b(?:jadi|menjadi)\s*$", re.IGNORECASE)
+_CORRECTION_OLD_RE = re.compile(r"\bbukan\s*$", re.IGNORECASE)
+
+
+def correction_amount(text):
+    """Nominal BARU di pesan koreksi, atau None.
+
+    "30k jadi 25k" → 25k; "harusnya 25k bukan 30k" → 25k; selain itu nominal
+    pertama, yang ber-pengali diutamakan. (parse_amount memilih nominal
+    terbesar — cocok untuk pencatatan, tapi salah untuk koreksi.)"""
+    from app.bot.handlers import _amount_candidates
+    cands = _amount_candidates(text)
+    if not cands:
+        return None
+    for c in cands:
+        if _CORRECTION_NEW_RE.search(text[:c["start"]]):
+            return Decimal(str(int(c["amount"])))
+    cands = [c for c in cands if not _CORRECTION_OLD_RE.search(text[:c["start"]])] or cands
+    chosen = next((c for c in cands if c["multiplier"] > 1), cands[0])
+    return Decimal(str(int(chosen["amount"])))
+
+
 def parse_multi_expense(text):
-    """Parse multi-expense input. Supports separators: newline, , ; terus lalu dan.
+    """Pecah satu pesan jadi beberapa pengeluaran. Port 1:1 parseMultiExpense()
+    di frontend/src/lib/parseAmount.js (kasus uji bersama: parseAmount.cases.json).
+
+    Pemisah: baris baru, koma/titik-koma (kecuali koma desimal "1,5"), kata
+    sambung "terus/lalu/dan" (bila semua sisi punya nominal), dan spasi murni
+    antar nominal yang pasti ("kopi 6jt gojek 1juta", "35k kopi 20k parkir").
     Returns list of (amount, desc) with >= 2 items, or None.
     """
-    # Try separators in priority order
-    sep_patterns = [
-        r"\s*\n+\s*",           # newline / Enter (highest priority)
-        r"\s*(?<!\d),\s*|[;]",  # comma only if not preceded by digit (avoids splitting decimal 1,6)
-        r"\s+(?:terus|lalu)\s+",
-        r"\s+dan\s+",
-    ]
-    for sep in sep_patterns:
-        parts = re.split(sep, text, flags=re.IGNORECASE)
-        if len(parts) >= 2:
-            results = [parse_amount(p.strip()) for p in parts if p.strip()]
-            results = [r for r in results if r is not None]
-            if len(results) >= 2:
-                return results
+    from app.bot.handlers import _COMMA_SEP, _WORD_SEPS, _split_by_spaces
+
+    trimmed = text.strip()
+    if not trimmed:
+        return None
+
+    # Tahap 1: per baris, lalu per koma/titik-koma di dalam tiap baris
+    parts = []
+    for line in (p for p in re.split(r"\s*\n+\s*", trimmed) if p.strip()):
+        parts.extend(p for p in _COMMA_SEP.split(line) if p.strip())
+
+    # Tahap 2: kata sambung (semua sisi punya nominal), lalu spasi murni
+    expanded = []
+    for part in parts:
+        matched = False
+        for sep in _WORD_SEPS:
+            sides = [p for p in sep.split(part) if p.strip()]
+            if len(sides) >= 2 and all(parse_amount(s) for s in sides):
+                expanded.extend(sides)
+                matched = True
+                break
+        if not matched:
+            by_spaces = _split_by_spaces(part)
+            if by_spaces:
+                expanded.extend(by_spaces)
+                matched = True
+        if not matched:
+            expanded.append(part)
+
+    results = [r for r in (parse_amount(p.strip()) for p in expanded) if r is not None]
+    if len(results) >= 2:
+        return results
+
+    # Tahap 3: spasi murni pada seluruh teks
+    by_spaces_all = _split_by_spaces(trimmed)
+    if by_spaces_all:
+        results = [r for r in (parse_amount(p.strip()) for p in by_spaces_all) if r is not None]
+        if len(results) >= 2:
+            return results
     return None
 
 
@@ -760,7 +812,7 @@ async def handle_koreksi(update, context):
     tg_user = update.effective_user
     text = update.message.text.strip()
 
-    new_parsed = parse_amount(text)
+    new_amount_val = correction_amount(text)
 
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
@@ -780,8 +832,8 @@ async def handle_koreksi(update, context):
             await update.message.reply_text("Tidak ada transaksi yang bisa dikoreksi.")
             return
 
-        if new_parsed:
-            new_amount, _ = new_parsed
+        if new_amount_val is not None:
+            new_amount = new_amount_val
             old_amount = txn.amount
             txn.amount = new_amount
             await db.commit()

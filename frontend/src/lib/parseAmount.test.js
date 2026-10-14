@@ -153,3 +153,24 @@ test('parseAmount: angka tunggal polos tidak berubah ("gojek 15000")', () => {
   assert.equal(r.amount, 15000);
   assert.equal(r.description, 'gojek');
 });
+
+// ── Kasus uji bersama web + bot (parseAmount.cases.json) ──
+// Bot menjalankan file yang sama lewat app/tests/test_parse_amount_parity.py,
+// jadi kedua parser dijamin membaca teks dengan cara yang sama.
+import { readFileSync } from 'node:fs';
+
+const SHARED = JSON.parse(readFileSync(new URL('./parseAmount.cases.json', import.meta.url), 'utf8'));
+
+for (const c of SHARED.multi) {
+  test(`kasus bersama parseMultiExpense: ${JSON.stringify(c.input)}`, () => {
+    const got = parseMultiExpense(c.input);
+    assert.deepEqual(got && got.map(i => [i.amount, i.description]), c.expect);
+  });
+}
+
+for (const c of SHARED.amount) {
+  test(`kasus bersama parseAmount: ${JSON.stringify(c.input)}`, () => {
+    const got = parseAmount(c.input);
+    assert.deepEqual(got && [got.amount, got.description], c.expect);
+  });
+}

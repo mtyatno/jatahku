@@ -32,9 +32,14 @@ from app.services.txn_nlp import (
 settings = get_settings()
 logger = logging.getLogger("jatahku.bot")
 
+# ── Parser nominal — port 1:1 dari frontend/src/lib/parseAmount.js ──────────
+# Web dan bot WAJIB membaca teks yang sama dengan cara yang sama. Kasus uji
+# bersama: frontend/src/lib/parseAmount.cases.json (dipakai tes JS & Python).
+# Ubah keduanya sekaligus.
+
 # Matches amount anywhere in text: "35k kopi", "kopi 35k", "beli kopi 35rb"
 AMOUNT_ANYWHERE = re.compile(
-    r"(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+\.\d{1,2}|\d+(?:[,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)", re.IGNORECASE
+    r"(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+\.\d{1,2}|\d+(?:[,]\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)", re.IGNORECASE
 )
 MULTIPLIERS = {"jt": 1_000_000, "juta": 1_000_000, "rb": 1_000, "ribu": 1_000, "k": 1_000}
 
@@ -50,53 +55,96 @@ SUB_PATTERNS = [
 # Keywords that imply recurring/subscription
 SUB_KEYWORDS = re.compile(r"\b(?:langganan|sewa|nyewa|kontrak|ngontrak|subscribe|subscription|berlangganan)\b", re.IGNORECASE)
 
+
+def _amount_candidates(text):
+    """Semua kandidat nominal di teks: list dict(amount, multiplier, start, end)."""
+    from decimal import ROUND_HALF_UP
+    out = []
+    for m in AMOUNT_ANYWHERE.finditer(text):
+        if m.group(1):
+            number_str, mult_str = m.group(1), m.group(2)
+        elif m.group(3):
+            number_str, mult_str = m.group(3), None
+        else:
+            continue
+        # dot-thousand 1.500 / comma-thousand 1,500 / decimal comma 1,5
+        if re.match(r"^\d{1,3}(\.\d{3})+$", number_str):
+            number_str = number_str.replace(".", "")
+        elif re.match(r"^\d{1,3}(,\d{3})+$", number_str):
+            number_str = number_str.replace(",", "")
+        else:
+            number_str = number_str.replace(",", ".")
+        try:
+            number = Decimal(number_str)
+        except Exception:
+            continue
+        multiplier = MULTIPLIERS.get(mult_str.lower(), 1) if mult_str else 1
+        amount = (number * multiplier).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        if amount <= 0:
+            continue
+        out.append({"amount": amount, "multiplier": multiplier, "start": m.start(), "end": m.end()})
+    return out
+
+
 def parse_amount(text):
-    """Parse amount from anywhere in text. Returns (amount, description) or None."""
-    match = AMOUNT_ANYWHERE.search(text.strip())
-    if not match:
-        return None
+    """Parse nominal + deskripsi. Returns (amount, description) or None.
 
-    if match.group(1):
-        number_str = match.group(1)
-        multiplier_str = match.group(2)
-    elif match.group(3):
-        number_str = match.group(3)
-        multiplier_str = None
-    else:
+    Sama dengan parseAmount() web: nominal ber-pengali (ribu/juta/jt/rb/k)
+    menang atas angka polos yang bisa jadi kuantitas ("beli 2 kopi 25 ribu" →
+    25 ribu); di antaranya yang terbesar. Tanpa pengali: angka pertama.
+    """
+    trimmed = text.strip()
+    cands = _amount_candidates(trimmed)
+    if not cands:
         return None
-
-    # Handle thousand separators:
-    # dot-thousand:   1.500 or 1.500.000 → 1500 / 1500000
-    # comma-thousand: 1,500 or 1,500,000 → 1500 / 1500000
-    # decimal comma:  1,5 or 1,50 → 1.5
-    if re.match(r"^\d{1,3}(\.\d{3})+$", number_str):
-        number_str = number_str.replace(".", "")
-        number = float(number_str)
-    elif re.match(r"^\d{1,3}(,\d{3})+$", number_str):
-        number_str = number_str.replace(",", "")
-        number = float(number_str)
-    else:
-        number_str = number_str.replace(",", ".")
-        number = float(number_str)
-
-    try:
-        pass
-    except ValueError:
-        return None
-
-    multiplier = MULTIPLIERS.get(multiplier_str.lower(), 1) if multiplier_str else 1
-    amount = Decimal(str(int(number * multiplier)))
-    if amount <= 0:
-        return None
-    # Description = everything except the amount part + clean "rp" prefix
-    desc = text.strip()[:match.start()].strip() + " " + text.strip()[match.end():].strip()
-    desc = desc.strip()
-    # Clean up subscription keywords from description
-    for pat, _, _ in SUB_PATTERNS:
-        desc = pat.sub("", desc).strip()
+    with_mult = [c for c in cands if c["multiplier"] > 1]
+    chosen = max(with_mult, key=lambda c: c["amount"]) if with_mult else cands[0]
+    desc = (trimmed[:chosen["start"]].strip() + " " + trimmed[chosen["end"]:].strip()).strip()
     if not desc:
         desc = "Pengeluaran"
-    return amount, desc
+    return Decimal(str(int(chosen["amount"]))), desc
+
+
+# Pemisah item — lihat komentar di parseAmount.js untuk alasan tiap aturan.
+_COMMA_SEP = re.compile(r"\s*,(?!\d)\s*|;")
+_WORD_SEPS = [re.compile(r"\s+(?:terus|lalu)\s+", re.IGNORECASE), re.compile(r"\s+dan\s+", re.IGNORECASE)]
+_MULTIPLIER_GLUE_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s+(juta|jt|ribu|rb|k)\b", re.IGNORECASE)
+_RP_GLUE_RE = re.compile(r"\b(rp\.?)\s+(?=\d)", re.IGNORECASE)  # "Rp 5.000" → "Rp5.000"
+_MULTIPLIER_TOKEN_RE = re.compile(r"^\d+(?:[.,]\d+)?(juta|jt|ribu|rb|k)$", re.IGNORECASE)
+_DOTTED_AMOUNT_RE = re.compile(r"^\d{1,3}(\.\d{3})+$")
+_RP_AMOUNT_RE = re.compile(r"^rp\.?\s*\d", re.IGNORECASE)
+
+
+def _is_amount_token(tok):
+    """Token yang PASTI nominal: angka+pengali, ribuan bertitik, atau Rp...
+    Angka polos ("2", "12") bukan — sering kali kuantitas."""
+    return bool(_MULTIPLIER_TOKEN_RE.match(tok) or _DOTTED_AMOUNT_RE.match(tok) or _RP_AMOUNT_RE.match(tok))
+
+
+def _split_by_spaces(text):
+    """Pecah item yang hanya dipisah spasi: "kopi 6jt gojek 1juta",
+    "35k kopi 20k parkir". None bila hanya satu item."""
+    glued = _RP_GLUE_RE.sub(r"\1", _MULTIPLIER_GLUE_RE.sub(r"\1\2", text))
+    tokens = [t for t in re.split(r"\s+", glued) if t.strip()]
+    items, current = [], []
+    amount_first = bool(tokens) and _is_amount_token(tokens[0])
+    for i, tok in enumerate(tokens):
+        if amount_first:
+            # "35k kopi 20k parkir": item baru dimulai di setiap nominal
+            if i > 0 and _is_amount_token(tok) and current:
+                items.append(" ".join(current))
+                current = []
+            current.append(tok)
+        else:
+            # "kopi 35k parkir 20k": item ditutup setelah nominal, selama
+            # masih ada nominal lain di sisa teks
+            current.append(tok)
+            if _is_amount_token(tok) and any(_is_amount_token(t) for t in tokens[i + 1:]):
+                items.append(" ".join(current))
+                current = []
+    if current:
+        items.append(" ".join(current))
+    return items if len(items) >= 2 else None
 
 
 def parse_subscription(text):
@@ -139,6 +187,7 @@ def parse_subscription(text):
             for p, _, _ in SUB_PATTERNS:
                 clean_desc = p.sub("", clean_desc).strip()
             clean_desc = SUB_KEYWORDS.sub("", clean_desc).strip()
+            clean_desc = re.sub(r"\s+", " ", clean_desc).strip()
             return amount, clean_desc or desc, freq_name, months
     # Check subscription keywords (sewa, langganan, kontrak, etc) → default monthly
     if SUB_KEYWORDS.search(text):
