@@ -19,7 +19,9 @@ from sqlalchemy.orm import configure_mappers
 from app.bot import handlers
 from app.models.models import Allocation, Income, Transaction
 from app.services.behavior import BehaviorCheckResult
-from app.services.fund_shift import compute_shortfall, pick_sources, record_transfer
+from app.services.fund_shift import (
+    compute_shortfall, pick_sources, record_topup, record_transfer, transfer_error,
+)
 from app.tests.fakes import FakeResult
 
 configure_mappers()
@@ -107,22 +109,18 @@ class PickSourcesTests(unittest.TestCase):
         out = pick_sources(data, self.target.id, D("15000"))
         self.assertEqual([s["envelope"] for s in out], [self.transport])
 
-    def test_uses_free_funds_not_reserved_subscription_money(self):
-        # sisa 100rb tapi 95rb dicadangkan untuk langganan → bebas cuma 5rb
+    def test_uses_remaining_like_the_web_modal(self):
+        # Modal web membatasi geser dengan sisa amplop sumber (bukan dana bebas)
         data = [row(self.target, 0), row(self.langganan, 100000, reserved=95000)]
-        self.assertEqual(pick_sources(data, self.target.id, D("15000")), [])
+        out = pick_sources(data, self.target.id, D("15000"))
+        self.assertEqual([s["envelope"] for s in out], [self.langganan])
 
-    def test_expense_envelopes_first_then_largest_free(self):
+    def test_largest_remaining_first_any_purpose(self):
+        # Urutan pilihan modal web: sisa terbesar dulu; amplop tabungan juga sumber sah
         data = [row(self.target, 0), row(self.tabungan, 900000),
                 row(self.makan, 30000), row(self.transport, 80000)]
         out = pick_sources(data, self.target.id, D("15000"))
-        self.assertEqual([s["envelope"] for s in out], [self.transport, self.makan, self.tabungan])
-
-    def test_purpose_enum_is_normalised(self):
-        e = env("Makan", purpose=SimpleNamespace(value="expense"))
-        t = env("Tabungan", purpose="saving")
-        out = pick_sources([row(t, 900000), row(e, 20000)], self.target.id, D("1000"))
-        self.assertEqual(out[0]["envelope"], e)
+        self.assertEqual([s["envelope"] for s in out], [self.tabungan, self.transport, self.makan])
 
     def test_limit_and_zero_shortfall(self):
         data = [row(env(f"E{i}"), 100000) for i in range(6)]
@@ -146,6 +144,39 @@ class RecordTransferTests(unittest.TestCase):
         self.assertTrue(all(a.income_id == income.id for a in allocs.values()))
 
 
+class TransferRuleTests(unittest.TestCase):
+    """Aturan yang juga ditegakkan POST /envelopes/transfer."""
+
+    def test_valid(self):
+        self.assertIsNone(transfer_error(row(env("A"), 50000), row(env("B"), 0), D("50000")))
+
+    def test_more_than_source_remaining(self):
+        err = transfer_error(row(env("Makan"), 50000), row(env("B"), 0), D("50001"))
+        self.assertEqual(err, "Maksimal transfer dari Makan: Rp50.000")
+
+    def test_missing_same_or_nonpositive(self):
+        a = row(env("A"), 50000)
+        self.assertEqual(transfer_error(None, a, D("1")), "Amplop tidak ditemukan")
+        self.assertEqual(transfer_error(a, a, D("1")), "Amplop sumber dan tujuan tidak boleh sama")
+        self.assertEqual(transfer_error(a, row(env("B"), 0), D("0")), "Jumlah harus lebih dari 0")
+
+    def test_accepts_web_summary_rows(self):
+        e = env("Makan")
+        web_row = {"id": e.id, "name": "Makan", "remaining": D("1000")}
+        self.assertIn("Maksimal", transfer_error(web_row, {"id": uuid.uuid4(), "name": "B", "remaining": D("0")}, D("2000")))
+
+
+class RecordTopupTests(unittest.TestCase):
+    def test_income_fully_allocated_like_web_topup_tab(self):
+        db = MagicMock()
+        dst = env("Jajan")
+        income = record_topup(db, HID, USER.id, dst, D("15000"))
+        added = [c.args[0] for c in db.add.call_args_list]
+        self.assertEqual((income.amount, income.description), (D("15000"), "Top-up Jajan"))
+        alloc, = [a for a in added if isinstance(a, Allocation)]
+        self.assertEqual((alloc.envelope_id, alloc.amount, alloc.income_id), (dst.id, D("15000"), income.id))
+
+
 # ── Tawaran di bot ───────────────────────────────────────────────────────────
 
 class OfferTests(unittest.IsolatedAsyncioTestCase):
@@ -163,8 +194,10 @@ class OfferTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Kurang <b>Rp15rb</b>", text)
         self.assertIn("kopi &lt;susu&gt;", text)  # deskripsi user di-escape untuk HTML
         buttons = send.call_args.kwargs["reply_markup"].inline_keyboard
-        self.assertIn("Makan", buttons[0][0].text)
+        self.assertIn("Makan (sisa Rp100rb)", buttons[0][0].text)
         self.assertTrue(buttons[0][0].callback_data.startswith("fshift:"))
+        self.assertIn("Top-up pemasukan Rp15rb", buttons[1][0].text)
+        self.assertTrue(buttons[1][0].callback_data.endswith(":t"))
         self.assertTrue(buttons[-1][0].callback_data.endswith(":x"))
         self.assertLessEqual(len(buttons[0][0].callback_data.encode()), 64)
 
@@ -174,7 +207,7 @@ class OfferTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["sources"], [str(makan.id)])
         self.assertEqual(payload["amount"], "35000")
 
-    async def test_no_source_can_cover_points_to_allocate(self):
+    async def test_no_source_can_cover_still_offers_topup(self):
         target = env("Jajan")
         data = [row(target, 0), row(env("Makan"), 1000)]
         redis = FakeRedis()
@@ -183,9 +216,10 @@ class OfferTests(unittest.IsolatedAsyncioTestCase):
              patch("redis.asyncio.from_url", return_value=redis):
             await handlers._send_fund_shift_offer(send, str(TG_ID), USER, HID, target,
                                                   D("35000"), "kopi", MagicMock())
-        self.assertIn("jatahku.com/allocate", send.call_args.args[0])
-        self.assertNotIn("reply_markup", send.call_args.kwargs)
-        self.assertEqual(redis.store, {})
+        self.assertIn("Tidak ada amplop lain yang sisanya cukup", send.call_args.args[0])
+        cbs = [r[0].callback_data for r in send.call_args.kwargs["reply_markup"].inline_keyboard]
+        self.assertEqual([c.rsplit(":", 1)[1] for c in cbs], ["t", "x"])
+        self.assertEqual(json.loads(next(iter(redis.store.values())))["sources"], [])
 
 
 # ── Callback ─────────────────────────────────────────────────────────────────
@@ -208,9 +242,8 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
             patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(self.db)),
             patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)),
             patch.object(handlers, "get_envelopes_with_spent", new=AsyncMock(side_effect=[before, after])),
-            patch.object(handlers, "check_behavior", new=AsyncMock(return_value=check or BehaviorCheckResult.ok())),
-            patch.object(handlers, "save_learned_keywords", new=AsyncMock()),
-            patch.object(handlers, "_streak_line", new=AsyncMock(return_value="")),
+            patch.object(handlers, "check_expense", new=AsyncMock(return_value=check or BehaviorCheckResult.ok())),
+            patch.object(handlers, "after_expense_recorded", new=AsyncMock(return_value=None)),
         ]
 
     async def run_cb(self, data, patches):
@@ -248,7 +281,29 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         q = await self.run_cb(f"fshift:{self.token}:0", self.patches(before))
         self.db.add.assert_not_called()
         self.db.commit.assert_not_awaited()
-        self.assertIn("tidak cukup", q.edit_message_text.call_args.args[0])
+        self.assertIn("Maksimal transfer dari Makan: Rp5.000", q.edit_message_text.call_args.args[0])
+
+    async def test_topup_records_income_then_expense(self):
+        before = [row(self.target, 20000), row(self.makan, 0)]
+        after = [row(self.target, 0), row(self.makan, 0)]
+        q = await self.run_cb(f"fshift:{self.token}:t", self.patches(before, after))
+        inc, = self.added(Income)
+        self.assertEqual((inc.amount, inc.description), (D("15000"), "Top-up Jajan"))
+        alloc, = self.added(Allocation)
+        self.assertEqual((alloc.envelope_id, alloc.amount), (self.target.id, D("15000")))
+        self.assertEqual(len(self.added(Transaction)), 1)
+        self.db.commit.assert_awaited_once()
+        text = q.edit_message_text.call_args.args[0]
+        self.assertIn("💰 Top-up pemasukan Rp15rb → ☕ Jajan", text)
+        self.assertNotIn("Makan", text)
+
+    async def test_topup_undone_when_blocked(self):
+        before = [row(self.target, 20000), row(self.makan, 0)]
+        limit = BehaviorCheckResult.blocked("plan_limit", "Limit 50 transaksi/bulan tercapai.")
+        q = await self.run_cb(f"fshift:{self.token}:t", self.patches(before, check=limit))
+        self.db.savepoint.rollback.assert_awaited_once()
+        self.db.commit.assert_not_awaited()
+        self.assertIn("Pemasukan tidak dicatat", q.edit_message_text.call_args.args[0])
 
     async def test_target_already_topped_up_records_without_transfer(self):
         before = [row(self.target, 50000), row(self.makan, 100000)]
@@ -304,8 +359,7 @@ class WiringTests(unittest.IsolatedAsyncioTestCase):
              patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))), \
              patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)), \
              patch.object(handlers, "find_best_envelope", new=AsyncMock(return_value=(target, True))), \
-             patch("app.services.plan_limits.check_transaction_limit", new=AsyncMock(return_value=(True, ""))), \
-             patch.object(handlers, "check_behavior", new=AsyncMock(return_value=check)), \
+             patch.object(handlers, "check_expense", new=AsyncMock(return_value=check)), \
              patch.object(handlers, "_send_fund_shift_offer", new=offer):
             await handlers.handle_message(update, None)
         return offer, target
@@ -319,6 +373,29 @@ class WiringTests(unittest.IsolatedAsyncioTestCase):
     async def test_not_funded_triggers_offer(self):
         offer, _ = await self.check_message(BehaviorCheckResult.blocked("not_funded", "x"))
         offer.assert_awaited_once()
+
+    async def test_saving_envelope_and_plan_limit_are_refused_like_web(self):
+        for check_type, expect in [("not_spendable", "🏦"), ("plan_limit", "jatahku.com/settings")]:
+            offer = AsyncMock()
+            update = MagicMock()
+            update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+            update.message.text = "kopi 35k"
+            update.message.reply_text = AsyncMock()
+            rl = MagicMock(incr=AsyncMock(return_value=1), expire=AsyncMock(), aclose=AsyncMock())
+            db = fake_db()
+            with patch("redis.asyncio.from_url", return_value=rl), \
+                 patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(db)), \
+                 patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)), \
+                 patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))), \
+                 patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)), \
+                 patch.object(handlers, "find_best_envelope", new=AsyncMock(return_value=(env("Tabungan"), True))), \
+                 patch.object(handlers, "check_expense",
+                              new=AsyncMock(return_value=BehaviorCheckResult.blocked(check_type, "ditolak"))), \
+                 patch.object(handlers, "_send_fund_shift_offer", new=offer):
+                await handlers.handle_message(update, None)
+            offer.assert_not_awaited()
+            db.add.assert_not_called()
+            self.assertIn(expect, update.message.reply_text.call_args.args[0])
 
 
 if __name__ == "__main__":

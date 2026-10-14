@@ -18,6 +18,7 @@ from sqlalchemy.orm import configure_mappers
 
 from app.bot import batch_cmd
 from app.models.models import Allocation, Income, Transaction
+from app.services import expense_rules
 from app.services.behavior import BehaviorCheckResult
 from app.tests.fakes import FakeResult
 
@@ -80,6 +81,7 @@ class World:
         self.cooling = {}      # env_id -> ambang cooling
         self.daily = {}        # env_id -> limit harian
         self.pending = []
+        self.plan_cap = None   # batas transaksi paket (None = Pro)
         self.added = []
         self.db = MagicMock()
         self.db.execute = AsyncMock(return_value=FakeResult(USER))
@@ -140,6 +142,11 @@ class World:
                 return BehaviorCheckResult.blocked("daily_limit", "Melebihi limit harian.")
         return BehaviorCheckResult.ok()
 
+    async def plan_check(self, user, db):
+        if self.plan_cap is not None and len(self.of(Transaction)) >= self.plan_cap:
+            return False, f"Limit {self.plan_cap} transaksi/bulan tercapai."
+        return True, ""
+
     def patches(self, matches=None):
         ps = [
             patch("redis.asyncio.from_url", return_value=self.redis),
@@ -148,8 +155,10 @@ class World:
             patch.object(batch_cmd, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))),
             patch.object(batch_cmd, "get_household_id", new=AsyncMock(return_value=HID)),
             patch.object(batch_cmd, "get_envelopes_with_spent", new=self.envs_with_spent),
-            patch.object(batch_cmd, "check_behavior", new=self.check),
-            patch.object(batch_cmd, "save_learned_keywords", new=AsyncMock()),
+            # check_expense asli (aturan bersama web + TG); hanya lapisan di bawahnya disimulasikan
+            patch.object(expense_rules, "check_behavior", new=self.check),
+            patch.object(expense_rules, "check_transaction_limit", new=self.plan_check),
+            patch.object(batch_cmd, "after_expense_recorded", new=AsyncMock(return_value=None)),
             patch.object(batch_cmd, "create_pending_transaction", new=self.create_pending),
         ]
         if matches is not None:
@@ -228,11 +237,11 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("kopi &lt;3&gt;", text)
         cbs = buttons(reply.call_args.kwargs["reply_markup"])
         key = cbs[0].split("_")[1]
-        self.assertEqual(cbs, [f"bshift_{key}_0_0", f"bshift_{key}_0_1", f"bshift_{key}_0_skip"])
+        self.assertEqual(cbs, [f"bshift_{key}_0_0", f"bshift_{key}_0_1", f"bshift_{key}_0_t", f"bshift_{key}_0_skip"])
         self.assertTrue(all(len(c.encode()) <= 64 for c in cbs))
         state = json.loads(next(v for k, v in w.redis.store.items() if k.startswith("batch:")))
         self.assertEqual((state["pos"], state["stage"]), (0, "shift"))
-        # Makan (bebas 70rb setelah sate) dan Transport (40rb) sama-sama cukup; terbesar dulu
+        # Makan (sisa 70rb setelah sate) dan Transport (40rb) sama-sama cukup; sisa terbesar dulu (seperti web)
         self.assertEqual(state["sources"], [str(self.makan.id), str(self.transport.id)])
 
     async def test_each_short_envelope_is_offered_in_turn(self):
@@ -262,8 +271,9 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         reply = await w.send([(D("30000"), "sate"), (D("10000"), "es teh"), (D("15000"), "martabak")],
                              [self.makan] * 3)
         self.assertEqual([t.description for t in w.of(Transaction)], ["sate", "es teh"])
-        # 30+10 sudah memakai 40 dari 45 → martabak kurang 10rb; tak ada sumber → dicatat sebagai catatan
-        self.assertIn("martabak: 🍔 Makan kurang Rp10rb", reply.call_args.args[0])
+        # 30+10 sudah memakai 40 dari 45 → martabak kurang 10rb; tak ada sumber → tawaran top-up
+        text = reply.call_args.args[0]
+        self.assertIn("Rp15rb — martabak\n🍔 Makan · sisa Rp5rb\nKurang <b>Rp10rb</b>", text)
 
     async def test_behavior_checks_match_web(self):
         """Kunci, cooling, dan limit harian berlaku untuk item yang langsung dikenali,
@@ -296,14 +306,34 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("kopi: Amplop sedang dikunci", reply.call_args.args[0])
         self.assertEqual(w.of(Income), [])
 
-    async def test_no_source_can_cover_is_noted_and_rest_continues(self):
+    async def test_no_source_can_cover_offers_topup(self):
         w = World((self.makan, 100000, 0), (self.jajan, 0, 0))
         reply = await w.send([(D("500000"), "tv"), (D("20000"), "kopi")], [self.jajan, self.makan])
         text = reply.call_args.args[0]
-        self.assertIn("1 transaksi dicatat", text)
-        self.assertIn("kurang Rp500rb", text)
-        self.assertIn("Tidak dicatat", text)
+        self.assertIn("🍔 Makan: Rp20rb — kopi", text)
+        self.assertIn("Tidak ada amplop lain yang sisanya cukup", text)
+        cbs = buttons(reply.call_args.kwargs["reply_markup"])
+        key = cbs[0].split("_")[1]
+        self.assertEqual(cbs, [f"bshift_{key}_0_t", f"bshift_{key}_0_skip"])
+
+        edit = await w.tap(f"bshift_{key}_0_t")
+        inc, = w.of(Income)
+        self.assertEqual((inc.amount, inc.description), (D("500000"), "Top-up Jajan"))
+        self.assertEqual([t.description for t in w.of(Transaction)], ["kopi", "tv"])
+        self.assertEqual(w.bal[self.jajan.id], D("0"))
+        self.assertIn("💰 top-up +Rp500rb", edit.call_args.args[0])
         self.assertEqual(w.redis.store, {})
+
+    async def test_saving_envelope_and_plan_limit_like_web(self):
+        tabungan = env("Tabungan", "🏦", purpose="saving")
+        w = World((self.makan, 100000, 0), (tabungan, 500000, 0))
+        w.plan_cap = 2
+        reply = await w.send([(D("10000"), "a"), (D("10000"), "b"), (D("10000"), "c"), (D("5000"), "d")],
+                             [self.makan, tabungan, self.makan, self.makan])
+        self.assertEqual([t.description for t in w.of(Transaction)], ["a", "c"])
+        text = reply.call_args.args[0]
+        self.assertIn("b: Amplop tabungan tidak bisa untuk pengeluaran langsung", text)
+        self.assertIn("d: Limit 2 transaksi/bulan tercapai.", text)
 
 
 # ── Tombol antrean ───────────────────────────────────────────────────────────
@@ -336,8 +366,20 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.w.seed([{"amount": 15000, "desc": "kopi", "env_id": None}])
         edit = await self.w.tap(f"batch_{KEY}_0_{uuid.uuid4()}")
         self.assertEqual(self.w.of(Transaction), [])
-        self.assertIn("tidak tersedia", edit.call_args.args[0])
+        self.assertIn("tidak bisa dipilih", edit.call_args.args[0])
         self.assertEqual(self.w.redis.batch()["pos"], 0)
+
+    async def test_saving_envelope_hidden_and_refused_in_picker(self):
+        tabungan = env("Tabungan", "🏦", purpose="saving")
+        self.w.envs.append(tabungan)
+        self.w.bal[tabungan.id], self.w.res[tabungan.id] = D("900000"), D("0")
+        self.w.seed([{"amount": 15000, "desc": "kopi", "env_id": None},
+                     {"amount": 5000, "desc": "parkir", "env_id": None}])
+        edit = await self.w.tap(f"batch_{KEY}_0_{tabungan.id}")  # tombol lama/rekayasa
+        self.assertEqual(self.w.of(Transaction), [])
+        self.assertIn("tidak bisa dipilih", edit.call_args.args[0])
+        shown = buttons(edit.call_args.kwargs["reply_markup"])
+        self.assertFalse(any(str(tabungan.id) in c for c in shown))  # seperti dropdown web
 
     async def test_source_drained_meanwhile_asks_again(self):
         transport = env("Transport", "🚌")
@@ -348,16 +390,18 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         self.w.bal[self.makan.id] = D("5000")
         edit = await self.w.tap(f"bshift_{KEY}_0_0")
         self.assertEqual(self.w.added, [])
-        self.assertIn("tidak cukup. Pilih amplop lain", edit.call_args.args[0])
+        self.assertIn("Maksimal transfer dari Makan: Rp5.000. Pilih cara lain", edit.call_args.args[0])
         self.assertEqual(self.w.redis.batch()["sources"], [str(transport.id)])  # tawaran disegarkan
 
-    async def test_source_drained_and_nothing_else_is_noted(self):
+    async def test_source_drained_and_only_topup_remains(self):
         self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)}],
                     stage="shift", sources=[str(self.makan.id)])
         self.w.bal[self.makan.id] = D("5000")
         edit = await self.w.tap(f"bshift_{KEY}_0_0")
         self.assertEqual(self.w.added, [])
-        self.assertIn("tidak ada amplop lain dengan dana bebas cukup", edit.call_args.args[0])
+        self.assertIn("Tidak ada amplop lain yang sisanya cukup", edit.call_args.args[0])
+        st = self.w.redis.batch()
+        self.assertEqual((st["stage"], st["sources"]), ("shift", []))  # tinggal top-up / lewati
 
     async def test_skip_shift_moves_on_without_transfer(self):
         self.w.seed([{"amount": 35000, "desc": "kopi", "env_id": str(self.jajan.id)}],

@@ -13,7 +13,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import importlib.util
-import json
 import unittest
 from datetime import date
 from decimal import Decimal as D
@@ -23,6 +22,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import func, select
 
 from app.bot import batch_cmd, handlers
+# Impor di luar event loop: impor pertama yang lambat di dalam tes memicu
+# peringatan "Executing <Task ...> took 0.2 seconds" di mode debug asyncio.
+from app.api.routes import envelopes as _envelopes_routes, transactions as _txn_routes  # noqa: F401
+from app.services import streak as _streak, txn_nlp as _txn_nlp  # noqa: F401
 from app.core.database import Base
 from app.models.models import (
     Allocation, Envelope, Household, HouseholdMember, HouseholdRole, Income,
@@ -80,16 +83,18 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             db.add(HouseholdMember(user_id=user.id, household_id=hh.id, role=HouseholdRole.owner))
             self.env = {}
             for name, kw in [("Makan", {}), ("Jajan", {"daily_limit": D("10000")}),
-                             ("Transport", {}), ("Hobi", {"is_locked": True})]:
+                             ("Transport", {}), ("Hobi", {"is_locked": True}),
+                             ("Tabungan", {"purpose": "saving"})]:
                 e = Envelope(household_id=hh.id, name=name, emoji="📁", budget_amount=D("0"), **kw)
                 db.add(e)
                 self.env[name] = e
             await db.flush()
-            inc = Income(household_id=hh.id, user_id=user.id, amount=D("310000"),
+            inc = Income(household_id=hh.id, user_id=user.id, amount=D("1310000"),
                          description="Gaji", income_date=date.today())
             db.add(inc)
             await db.flush()
-            for name, amt in [("Makan", 10000), ("Transport", 200000), ("Hobi", 100000)]:
+            for name, amt in [("Makan", 10000), ("Transport", 200000), ("Hobi", 100000),
+                              ("Tabungan", 1000000)]:
                 db.add(Allocation(income_id=inc.id, envelope_id=self.env[name].id, amount=D(amt)))
             await db.commit()
             self.user_id, self.hid = user.id, hh.id
@@ -102,10 +107,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch("redis.asyncio.from_url", return_value=self.redis),
             patch.object(handlers, "AsyncSessionLocal", new=self.Session),
             patch.object(batch_cmd, "AsyncSessionLocal", new=self.Session),
-            patch.object(batch_cmd, "save_learned_keywords", new=AsyncMock()),
-            patch.object(handlers, "save_learned_keywords", new=AsyncMock()),
-            patch.object(handlers, "_streak_line", new=AsyncMock(return_value="")),
-        ]
+        ]  # streak & pembelajaran kata kunci (after_expense_recorded) berjalan sungguhan
         if matches is not None:
             async def find(desc, hid, db, user_id=None):
                 name = matches.get(desc)
@@ -162,7 +164,12 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         call = update.message.reply_text.call_args
         self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])
         btns = [r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard]
-        self.assertEqual(len(btns), 3)  # Transport, Hobi (dana bebas ada), Lewati
+        labels = [r[0].text for r in call.kwargs["reply_markup"].inline_keyboard]
+        # Sumber sah sama dengan modal web: amplop lain dengan sisa cukup, sisa terbesar dulu
+        self.assertEqual([l.split(" (")[0] for l in labels[:3]],
+                         ["🔁 📁 Tabungan", "🔁 📁 Transport", "🔁 📁 Hobi"])
+        self.assertIn("Top-up pemasukan Rp20rb", labels[3])
+        self.assertEqual(len(btns), 5)
         transport_btn = next(b for b, r in zip(btns, call.kwargs["reply_markup"].inline_keyboard)
                              if "Transport" in r[0].text)
 
@@ -219,6 +226,55 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         call = await self.tap(btn)  # ketukan kedua
         self.assertIn("expired", call.args[0])
         self.assertEqual(await self.remaining("Transport"), D("175000"))
+
+
+    # ── Sisi web: aturan yang sama ditegakkan server ─────────────────────────
+
+    async def web_user(self, db):
+        return (await db.execute(select(User).where(User.id == self.user_id))).scalar_one()
+
+    async def test_web_transfer_enforces_same_rule_as_bot(self):
+        from fastapi import HTTPException
+        from app.api.routes.envelopes import transfer_between_envelopes
+        mk, tr = self.env["Makan"].id, self.env["Transport"].id
+        async with self.Session() as db:
+            with self.assertRaises(HTTPException) as ctx:
+                await transfer_between_envelopes(tr, mk, D("200001"), await self.web_user(db), db)
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertIn("Maksimal transfer dari Transport", ctx.exception.detail)
+        async with self.Session() as db:
+            out = await transfer_between_envelopes(tr, mk, D("200000"), await self.web_user(db), db)
+        self.assertEqual(out["status"], "transferred")
+        self.assertEqual(await self.remaining("Transport"), D("0"))
+        self.assertEqual(await self.remaining("Makan"), D("210000"))
+
+    async def test_web_refuses_saving_envelope_and_plan_limit(self):
+        from fastapi import HTTPException
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        async with self.Session() as db:
+            req = TransactionCreate(envelope_id=self.env["Tabungan"].id, amount=D("1000"), description="x")
+            with self.assertRaises(HTTPException) as ctx:
+                await create_transaction(req, await self.web_user(db), db)
+            self.assertIn("Amplop tabungan", ctx.exception.detail)
+        with patch("app.api.routes.transactions.check_transaction_limit",
+                   new=AsyncMock(return_value=(False, "Limit 50 transaksi/bulan tercapai."))):
+            async with self.Session() as db:
+                req = TransactionCreate(envelope_id=self.env["Transport"].id, amount=D("1000"), description="x")
+                with self.assertRaises(HTTPException) as ctx:
+                    await create_transaction(req, await self.web_user(db), db)
+                self.assertIn("Limit 50", ctx.exception.detail)
+        self.assertEqual(await self.count(Transaction), 0)
+
+    async def test_web_create_runs_shared_after_hook(self):
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:
+                req = TransactionCreate(envelope_id=self.env["Transport"].id, amount=D("1000"),
+                                        description="ojek kantor")
+                await create_transaction(req, await self.web_user(db), db)
+        from app.models.models import UserEnvelopeKeyword, UserStreak
+        self.assertGreater(await self.count(UserEnvelopeKeyword), 0)
+        self.assertEqual(await self.count(UserStreak), 1)
 
 
 if __name__ == "__main__":

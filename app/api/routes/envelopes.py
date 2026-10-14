@@ -401,48 +401,23 @@ async def transfer_between_envelopes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Transfer allocated funds from one envelope to another."""
+    """Transfer allocated funds from one envelope to another.
+
+    Aturan (amplop aktif yang boleh diakses, jumlah ≤ sisa sumber) dan bentuk
+    datanya dari app/services/fund_shift.py — sama dengan geser dana di bot."""
+    from app.services.envelope_balance import compute_envelope_summaries
+    from app.services.fund_shift import record_transfer, transfer_error
+
     hid = await _get_hid(user, db)
+    rows = {str(r["id"]): r for r in await compute_envelope_summaries(user, db)}
+    source_row, target_row = rows.get(str(from_id)), rows.get(str(to_id))
+    error = transfer_error(source_row, target_row, amount)
+    if error:
+        raise HTTPException(status_code=404 if error == "Amplop tidak ditemukan" else 400, detail=error)
 
-    from_env = await db.execute(
-        select(Envelope).where(
-            Envelope.id == from_id,
-            Envelope.household_id == hid,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
-    )
-    from_envelope = from_env.scalar_one_or_none()
-    to_env = await db.execute(
-        select(Envelope).where(
-            Envelope.id == to_id,
-            Envelope.household_id == hid,
-            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
-        )
-    )
-    to_envelope = to_env.scalar_one_or_none()
-
-    if not from_envelope or not to_envelope:
-        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Jumlah harus lebih dari 0")
-
-    # Create internal transfer allocations (negative from source, positive to target)
-    # We use a special "transfer" income
-    from app.models.models import Income
-    transfer_income = Income(
-        household_id=hid,
-        user_id=user.id,
-        amount=Decimal("0"),  # net zero
-        description=f"Transfer: {from_envelope.name} → {to_envelope.name}",
-    )
-    db.add(transfer_income)
-    await db.flush()
-
-    # Negative allocation from source
-    db.add(Allocation(income_id=transfer_income.id, envelope_id=from_id, amount=-amount))
-    # Positive allocation to target
-    db.add(Allocation(income_id=transfer_income.id, envelope_id=to_id, amount=amount))
-
+    from_envelope = (await db.execute(select(Envelope).where(Envelope.id == from_id))).scalar_one()
+    to_envelope = (await db.execute(select(Envelope).where(Envelope.id == to_id))).scalar_one()
+    record_transfer(db, hid, user.id, from_envelope, to_envelope, amount)
     await db.commit()
     return {
         "status": "transferred",

@@ -14,6 +14,8 @@ from app.models.models import (
     User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
 from app.services.behavior import check_behavior, create_pending_transaction
+from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
+from app.services.plan_limits import check_transaction_limit
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
 
@@ -111,8 +113,12 @@ async def create_transaction(
     if not envelope:
         raise HTTPException(status_code=404, detail="Envelope not found")
 
-    if str(getattr(envelope, "purpose", "expense")) in ("saving", "sinking_fund"):
-        raise HTTPException(status_code=403, detail="Amplop tabungan tidak bisa untuk pengeluaran langsung. Transfer dana ke amplop expense terlebih dahulu.")
+    # Aturan bersama web + Telegram (app/services/expense_rules.py)
+    if not is_spendable(envelope):
+        raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
+    limit_ok, limit_msg = await check_transaction_limit(user, db)
+    if not limit_ok:
+        raise HTTPException(status_code=403, detail=limit_msg)
 
     # Behavior checks
     check = await check_behavior(req.envelope_id, user.id, req.amount, db)
@@ -164,21 +170,8 @@ async def create_transaction(
     await db.commit()
     await db.refresh(txn)
 
-    # Keep the discipline streak alive (best-effort; never block the txn).
-    try:
-        from app.services.streak import record_activity
-        await record_activity(db, user.id, getattr(user, "timezone", None))
-    except Exception:
-        pass
-
-    # Best-effort: learn keyword -> envelope from this transaction so web input
-    # enriches the same per-user learning the bot uses. Never block the txn.
-    try:
-        from app.services.txn_nlp import save_learned_keywords
-        await save_learned_keywords(user.id, req.description, req.envelope_id, db)
-        await db.commit()
-    except Exception:
-        pass
+    # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot.
+    await after_expense_recorded(db, user, req.envelope_id, req.description)
 
     # Best-effort: check if any goal on this envelope has been achieved. Never block.
     try:
@@ -291,8 +284,12 @@ async def batch_create_transactions(
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
             continue
 
-        if str(getattr(envelope, "purpose", "expense")) in ("saving", "sinking_fund"):
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Amplop tabungan tidak bisa untuk pengeluaran langsung"))
+        if not is_spendable(envelope):
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=NOT_SPENDABLE_MSG))
+            continue
+        limit_ok, limit_msg = await check_transaction_limit(user, db)
+        if not limit_ok:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=limit_msg))
             continue
 
         check = await check_behavior(item.envelope_id, user.id, item.amount, db)
@@ -326,18 +323,7 @@ async def batch_create_transactions(
         await db.commit()
         await db.refresh(txn)
 
-        try:
-            from app.services.streak import record_activity
-            await record_activity(db, user.id, getattr(user, "timezone", None))
-        except Exception:
-            pass
-
-        try:
-            from app.services.txn_nlp import save_learned_keywords
-            await save_learned_keywords(user.id, item.description, item.envelope_id, db)
-            await db.commit()
-        except Exception:
-            pass
+        await after_expense_recorded(db, user, item.envelope_id, item.description)
 
         try:
             from app.services.notification_service import send_notification
