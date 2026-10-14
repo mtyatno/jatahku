@@ -379,6 +379,21 @@ def _payments(lines: list[str]):
     return cash, change, cards
 
 
+def payment_line_indices(lines: list[str]) -> list[int]:
+    """Indeks baris tunai/kembali/non-tunai yang dipakai _payments (urut naik)."""
+    out = []
+    first = next((i for i, l in enumerate(lines) if _is_summary(l.upper())), 0)
+    for i, line in enumerate(lines):
+        if i < first:
+            continue
+        up = line.upper()
+        if _skip_line(up) or "TOTAL" in up:
+            continue
+        if (CHANGE_KEYS.search(up) or CARD_KEYS.search(up) or CASH_KEYS.search(up)) and _amount_for(lines, i):
+            out.append(i)
+    return out
+
+
 def payment_amounts(lines: list[str]) -> set[int]:
     """Nominal yang benar-benar dibayar menurut struk (tunai − kembali, non-tunai,
     atau tunai pas). Dipakai untuk memvalidasi koreksi sebelum dipelajari."""
@@ -483,14 +498,15 @@ def find_total(lines: list[str], learned_labels: list[str] | None = None):
 # global & pajak/service. Σ barang − diskon + pajak harus = total.
 
 DISCOUNT_KEYS = re.compile(r"VOUCHER|\bVC\b|DISKON|\bDISC|POTONGAN|PROMO|CASHBACK|HEMAT")
-# Diskon sebagai label baris (di awal), bukan kata di nama barang ("PAKET PROMO").
-DISCOUNT_LABEL = re.compile(r"^(VOUCHER|VC|DISKON|DISC|DISCOUNT|POTONGAN|PROMO|CASHBACK|HEMAT)\b")
+# Baris diskon: kata diskon di mana saja ("SPESIAL DISKON"), kecuali PROMO yang
+# harus di awal ("PAKET PROMO 25.000" itu barang, "PROMO 5.000" itu potongan).
+DISCOUNT_LABEL = re.compile(r"\b(VOUCHER|VC|DISKON|DISC|DISCOUNT|POTONGAN|CASHBACK|HEMAT)\b|^PROMO\b")
 # Ringkasan diskon ("TOTAL DISC", "ANDA HEMAT"): jangan dihitung dua kali.
 DISCOUNT_SUMMARY = re.compile(r"TOTAL\s*(DISC|DISKON|HEMAT|POTONGAN|VOUCHER|PROMO)|ANDA\s*HEMAT|^HEMAT\b")
 # Baris ringkasan/pembayaran: kata kunci di AWAL baris, supaya nama barang seperti
 # "SENSODYNE TOTAL CARE" atau "CASHEW" tidak memotong daftar barang.
 SUMMARY_START = re.compile(
-    r"^(SUB\s*-?\s*TOTAL|GRAND\s*TOTAL|TOTAL|HARGA\s*JUAL|JUMLAH|TAGIHAN|NETTO|NET\s*TOTAL|BAYAR|PEMBAYARAN"
+    r"^[^A-Z0-9]*(?:\d+\s*(?:ITEM|ITEMS|PCS|QTY|BRG|BARANG)\s*[:.]?\s*)?(SUB\s*-?\s*TOTAL|GRAND\s*TOTAL|TOTAL|HARGA\s*JUAL|JUMLAH|TAGIHAN|NETTO|NET\s*TOTAL|BAYAR|PEMBAYARAN"
     r"|TUNAI|CASH|KEMBALI(AN)?|CHANGE|NON\s*TUNAI|DEBIT|KREDIT|CREDIT|QRIS|GOPAY|OVO|DANA|SHOPEEPAY|LINKAJA"
     r"|FLAZZ|E-?MONEY|BRIZZI|EDC|ANDA\s*HEMAT|HARUS\s*DI\s*BAYAR|YANG\s*DIBAYAR)\b"
 )
@@ -800,6 +816,17 @@ def _annotate(items: list[ReceiptItem], adjustments: list[ReceiptAdjustment], to
     return rec
 
 
+_TOTALISH_WORDS = {"BAYAR", "BYR", "JUMLAH", "JML", "TAGIHAN", "TTL", "GRAND", "NETTO", "NETT", "TOTAL"}
+
+
+def _looks_like_total_label(name: str) -> bool:
+    """Nama baris mirip label total yang tidak dikenali ("BAYAR", "JML", "TOTL")."""
+    for word in re.findall(r"[A-Z]+", name.upper()):
+        if word in _TOTALISH_WORDS or word.startswith("TOT") or _levenshtein1(word, "TOTAL"):
+            return True
+    return False
+
+
 def _flag_mismatches(items: list[ReceiptItem]) -> None:
     """Tandai qty × harga ≠ subtotal tanpa mengoreksi (total belum bisa dipercaya)."""
     for it in items:
@@ -820,6 +847,9 @@ def extract_items(lines: list[str], total: int | None, total_idx: int | None, *,
     end = next((i for i, l in enumerate(lines) if _is_summary(l.upper())), len(lines))
     if total_idx is not None and total_idx < end:
         end = total_idx
+    pay_idx = payment_line_indices(lines)
+    if pay_idx and pay_idx[0] < end:  # mis. "BCA DEBIT 69.300" tanpa baris TOTAL
+        end = pay_idx[0]
     # Awal: sesudah baris tanggal/kasir di kepala struk (kalau ada).
     date_idx = next((i for i, l in enumerate(lines[:end]) if _DATE_LIKE.search(l.upper())), None)
     start = date_idx + 1 if date_idx is not None else 0
@@ -902,11 +932,13 @@ def parse_receipt(
     if not trusted:
         # Total = tebakan "nominal terbesar" (tidak ada baris TOTAL yang dikenali).
         guess_item = next((it for it in items if it.line <= guess_idx <= it.line_end), None)
-        if guess_item is not None and len(items) > 1 and \
-                reconcile([it for it in items if it is not guess_item], adjustments, None).expected == guess_item.amount:
-            # Baris berlabel asing ("BAYAR 50.000") yang = jumlah barang lain → itu totalnya.
+        others = [it for it in items if it is not guess_item]
+        if guess_item is not None and others and guess_item is items[-1] \
+                and _looks_like_total_label(guess_item.name) \
+                and reconcile(others, adjustments, None).expected == guess_item.amount:
+            # Baris paling bawah berlabel asing ("BAYAR 50.000") = jumlah barang lain → itu totalnya.
             items.remove(guess_item)
-            total, conf, source = guess_item.amount, "sedang", "items"
+            total, conf, source = guess_item.amount, "rendah", "items"
             evidence = [f'"{lines[guess_idx]}" dianggap total: sama dengan jumlah {len(items)} barang lainnya']
             rec = reconcile(items, adjustments, total)
         elif guess_item is not None and items and rec.expected >= MIN_AMOUNT:
@@ -931,16 +963,26 @@ def parse_receipt(
             if post and with_post in paid:
                 adjustments.extend(post)
                 total, conf, source = with_post, "tinggi", "payment"
+                label = None  # total yang dibayar tidak ada di baris berlabel → jangan dipelajari
                 evidence.append(f"Rincian + pajak/service = {with_post}, cocok dengan pembayaran")
                 rec = reconcile(items, adjustments, total)
         if rec.status == "cocok":
             evidence.append(f"Rincian {len(items)} barang cocok dengan total")
             contradicted = bool(paid) and total not in paid
             weight = 96 if (label and label in learned) else (_line_weight(lines[total_idx]) if total_idx is not None else 0)
+            # Pajak/service sesudah baris TOTAL yang tidak terbukti → total itu mungkin
+            # sebelum pajak; jangan dinaikkan.
+            trailing = charges_between(lines, total_idx + 1, _first_payment_idx(lines, total_idx + 1)) \
+                if (total_idx is not None and source != "payment") else []
+            if trailing:
+                evidence.append("Ada pajak/service sesudah baris TOTAL — cek total yang dibayar")
             # Naik ke "tinggi" hanya untuk baris total akhir (bukan SUBTOTAL/HARGA JUAL)
             # yang tidak dibantah pembayaran.
-            if conf != "tinggi" and not contradicted and weight >= 70:
+            if conf != "tinggi" and not contradicted and weight >= 70 and not trailing:
                 conf, source = "tinggi", source or "items"
+            elif conf != "tinggi" and source == "payment":
+                # Tanpa baris TOTAL, tapi Σ rincian = nominal pembayaran → dua sumber sepakat.
+                conf = "tinggi"
     return ReceiptParse(
         merchant=merchant,
         date=find_date(lines, today, max_age_days),

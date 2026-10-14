@@ -320,6 +320,47 @@ class TestReceiptItemsReviewCases(unittest.TestCase):
         self.assertEqual((p.total, p.confidence, p.confidence_source), (70000, "tinggi", "payment"))
 
 
+class TestReceiptItemsSecondReview(unittest.TestCase):
+    """Kasus dari review kedua (perbaikan rincian barang)."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_real_item_equal_to_others_is_not_taken_as_total(self):
+        p = self.parse("WARUNG\nNASI GORENG 20.000\nES TEH 5.000\nKERUPUK 5.000\nAYAM 10.000")
+        self.assertEqual((p.total, p.confidence), (40000, "rendah"))
+        self.assertEqual(len(p.items), 4)
+        p = self.parse("TOKO\nROTI 5.000\nSUSU 5.000")
+        self.assertEqual(p.total, 10000)
+
+    def test_pre_tax_total_without_payment_is_not_upgraded(self):
+        p = self.parse("CAFE\n14/10/2026\nSteak 1 60.000 60.000\nTOTAL 60.000\nSERVICE 5% 3.000\nPB1 10% 6.300")
+        self.assertNotEqual(p.confidence, "tinggi")
+
+    def test_folded_tax_clears_total_label(self):
+        p = self.parse("WARUNG NASI AMPERA\n14/10/2026\nNasi 2 x 6.000 12.000\nEs Teh 2 x 5.000 10.000\n"
+                       "Subtotal 22.000\nPB1 10% 2.200\nTunai 50.000\nKembali 25.800")
+        self.assertEqual(p.total, 24200)
+        self.assertIsNone(p.total_label)
+
+    def test_card_line_without_total_ends_items_and_confirms(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nMINYAK 1 49.300 49.300\nBCA DEBIT 69.300")
+        self.assertEqual([i.name for i in p.items], ["GULA", "MINYAK"])
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+
+    def test_counted_subtotal_line_is_not_an_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nROTI 1 5.000 5.000\n3 ITEM SUBTOTAL 25.000\nTOTAL 25.000")
+        self.assertEqual(len(p.items), 2)
+        self.assertEqual(p.reconciliation.status, "cocok")
+
+    def test_discount_word_inside_label_and_promo_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nSPESIAL DISKON 5.000\nTOTAL 15.000")
+        self.assertEqual((len(p.items), p.items[0].discount, p.reconciliation.status), (1, 5000, "cocok"))
+        p = self.parse("TOKO\n14/10/2026\nPAKET PROMO 1 25.000 25.000\nTOTAL 25.000")
+        self.assertEqual([i.name for i in p.items], ["PAKET PROMO"])
+
+
 class TestBuildLines(unittest.TestCase):
     @staticmethod
     def box(x0, y0, x1, y1):
@@ -491,6 +532,15 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scan.outcome, "accepted")
         self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
 
+    async def test_learned_label_comes_from_paid_amount_line(self):
+        user = _user()
+        lines = ["CAFE KOPI", "KOPI 1 22.000 22.000", "SUBTOTAL 22.000", "PB1 2.200", "TUNAI 50.000", "KEMBALI 25.800"]
+        scan = self._scan(user, lines, parsed_total=24200, confidence="tinggi", label="SUBTOTAL")
+        db = self._feedback_db(scan)
+        await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=24200, merchant="Toko Maju")
+        # Nominal yang dibayar hanya ada di baris pembayaran → tidak ada label dipelajari.
+        self.assertEqual([v for v in self._inserted(db, "receipt_learn_votes") if v["kind"] == "label"], [])
+
     async def test_alias_name_is_sanitized(self):
         self.assertEqual(receipt_scan.clean_merchant_name("Indo<b>maret</b>`!"), "Indobmaretb")
         self.assertIsNone(receipt_scan.clean_merchant_name("!!"))
@@ -616,6 +666,57 @@ class TestLlmBudget(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(receipt_llm._parse_reply("bukan json"))
         far = receipt_llm._parse_reply('{"total": 9200, "merchant": "A", "date": "2001-01-01"}')
         self.assertIsNone(far["date"])  # tanggal di luar jendela 1 tahun ditolak
+
+
+class FakeRedisKV:
+    """Redis tiruan untuk idempotensi (get/set nx/delete)."""
+    def __init__(self):
+        self.d = {}
+
+    async def get(self, k):
+        return self.d.get(k)
+
+    async def set(self, k, v, nx=False, ex=None):
+        if nx and k in self.d:
+            return None
+        self.d[k] = v
+        return True
+
+    async def delete(self, k):
+        self.d.pop(k, None)
+
+    async def aclose(self):
+        pass
+
+
+class TestIdempotency(unittest.IsolatedAsyncioTestCase):
+    async def test_resend_after_lost_response_is_deduplicated(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            self.assertIsNone(await idempotency.lookup("u1", "ref-a"))
+            self.assertTrue(await idempotency.reserve("u1", "ref-a"))
+            self.assertFalse(await idempotency.reserve("u1", "ref-a"))  # kiriman ganda bersamaan
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), idempotency.PENDING)
+            await idempotency.store("u1", "ref-a", "txn-1")
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), "txn-1")  # kirim ulang → transaksi lama
+            await idempotency.release("u1", "ref-a")  # sudah tercatat → tidak dilepas
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), "txn-1")
+
+    async def test_failed_create_releases_reservation(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            await idempotency.reserve("u1", "ref-b")
+            await idempotency.release("u1", "ref-b")
+            self.assertTrue(await idempotency.reserve("u1", "ref-b"))
+
+    async def test_no_ref_or_redis_down_fails_open(self):
+        from app.services import idempotency
+        self.assertTrue(await idempotency.reserve("u1", None))
+        with patch.object(idempotency, "_redis", side_effect=RuntimeError("redis mati")):
+            self.assertTrue(await idempotency.reserve("u1", "ref-c"))
+            self.assertIsNone(await idempotency.lookup("u1", "ref-c"))
 
 
 class TestUploadValidation(unittest.IsolatedAsyncioTestCase):

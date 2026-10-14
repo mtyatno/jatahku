@@ -51,6 +51,14 @@ function isReady(item) {
   return !!item.envelopeId;
 }
 
+// Kunci idempotensi per transaksi: kirim ulang (respons hilang) tidak tercatat dua kali.
+function newRef() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch {}
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 const patchPlanGroup = (item, gid, patch) => ({
   ...item,
   plan: (item.plan || []).map(g => (g.id === gid ? { ...g, ...patch } : g)),
@@ -293,8 +301,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
     debounceRef.current = setTimeout(() => {
       lastParsedRef.current = txt;
-      // Item dari struk tidak ikut terhapus saat teks diketik ulang.
-      const keepReceipts = prev => prev.filter(i => i.origin === 'receipt');
+      // Baris dari struk & baris yang tertahan setelah simpan sebagian tidak ikut
+      // terhapus saat teks diketik ulang (hanya baris hasil teks yang diganti).
+      const keepReceipts = prev => prev.filter(i => i.origin !== 'text');
       if (!txt) {
         setItems(keepReceipts);
         return;
@@ -352,7 +361,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
   // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang).
   const handleUnlockReceipt = (key) => {
-    setItems(prev => prev.map(item => (item.key === key && !(item.plan || []).some(g => g.saved)
+    setItems(prev => prev.map(item => (item.key === key && !item.uncertain && !(item.plan || []).some(g => g.saved)
       ? { ...item, plan: null, error: null } : item)));
   };
 
@@ -393,6 +402,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     source: 'webapp',
     ...(item.transactionDate ? { transaction_date: item.transactionDate } : {}),
     ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
+    ...(item.ref ? { client_ref: item.ref } : {}),
   });
 
   // Satu entri → satu atau beberapa transaksi. Struk dengan rincian memakai
@@ -408,6 +418,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           amount: g.amount,
           description: g.description,
           raiseDailyLimit: g.raiseLimit,
+          ref: g.ref,
         }),
       }));
     }
@@ -419,14 +430,22 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       setResultMsg({ type: 'error', text: 'Isi nominal struk dulu sebelum menyimpan' });
       return;
     }
-    const pending = items.filter(isReady);
-    if (pending.length === 0) {
+    if (!items.some(isReady)) {
       setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
       return;
     }
-    // Bekukan rencana tiap struk sekarang; percobaan ulang memakai rencana yang sama.
+    // Setiap transaksi diberi kunci idempotensi sekali, lalu dipakai ulang di
+    // percobaan berikutnya; rencana struk dibekukan dengan kuncinya.
     const plans = {};
-    pending.forEach(item => { if (hasReceiptItems(item)) plans[item.key] = receiptPlan(item); });
+    const withRefs = items.map(item => {
+      if (!isReady(item)) return item;
+      if (hasReceiptItems(item)) {
+        plans[item.key] = receiptPlan(item).map(g => (g.ref ? g : { ...g, ref: newRef() }));
+        return { ...item, plan: plans[item.key] };
+      }
+      return item.ref ? item : { ...item, ref: newRef() };
+    });
+    const pending = withRefs.filter(isReady);
     const parts = pending.flatMap(item => toParts(item, plans[item.key]));
 
     setSaving(true);
@@ -438,7 +457,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
       setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      const left = items.filter(i => !isReady(i));
+      const left = withRefs.filter(i => !isReady(i));
       finishWith(left);
       if (left.length === 0) onSaved?.();
       return;
@@ -448,9 +467,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setSaving(false);
 
     if (!result.ok) {
-      // Tidak ada yang pasti tersimpan → rencana tetap dibekukan agar percobaan
-      // ulang mengirim bagian yang sama; "Ubah rincian" membukanya lagi.
-      setItems(prev => prev.map(item => (plans[item.key] ? { ...item, plan: item.plan || plans[item.key] } : item)));
+      // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Rencana &
+      // kunci idempotensi dipertahankan, jadi percobaan ulang tidak mencatat dua kali;
+      // struk ditandai "belum pasti" sehingga rinciannya tidak bisa diubah dulu.
+      setItems(withRefs.map(item => (plans[item.key] ? { ...item, uncertain: true } : item)));
       setResultMsg({ type: 'error', text: 'Gagal menyimpan. Coba lagi.' });
       return;
     }
@@ -487,12 +507,12 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     });
 
-    const nextItems = items
+    const nextItems = withRefs
       .filter(item => !okKeys.has(item.key))
       .map(item => {
         if (nextPlans[item.key]) {
           const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
-          return { ...item, plan: nextPlans[item.key], error: firstErr };
+          return { ...item, plan: nextPlans[item.key], uncertain: false, error: firstErr };
         }
         return errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null };
       });
@@ -516,17 +536,15 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     }
   };
 
-  // Sesudah ada yang tersimpan: daftar = sisa entri, dan kotak teks ditulis ulang
-  // hanya berisi baris yang belum tersimpan. Kalau tidak, mengetik ulang akan
-  // mem-parse ulang baris yang sudah tercatat → tercatat dua kali.
+  // Sesudah ada yang tersimpan: kotak teks dikosongkan dan baris teks yang
+  // tersisa tetap di daftar sebagai baris "tertahan" (tidak di-parse ulang).
+  // Kalau teks lama dibiarkan, mengetik ulang akan mem-parse ulang baris yang
+  // sudah tercatat → tercatat dua kali; kalau teks ditulis ulang, nominal bisa
+  // terbaca lain ("beli 3 roti 15000" → Rp3).
   const finishWith = (left) => {
-    setItems(left);
-    const text = left
-      .filter(i => i.origin === 'text')
-      .map(i => `${i.description} ${Math.round(Number(i.amount) || 0)}`)
-      .join('\n');
-    setRawText(text);
-    lastParsedRef.current = text.trim();
+    setItems(left.map(i => (i.origin === 'text' ? { ...i, origin: 'held' } : i)));
+    setRawText('');
+    lastParsedRef.current = '';
   };
 
   const hasItems = items.length > 0;

@@ -105,6 +105,7 @@ async function syncPendingTransactions() {
         source: item.source,
         is_private: item.is_private ?? false,
         ...(item.transaction_date ? { transaction_date: item.transaction_date } : {}),
+        ...(item.client_ref ? { client_ref: item.client_ref } : {}),
       }),
     });
 

@@ -319,8 +319,9 @@ async def apply_feedback(
             # jadi syarat pembayaran berlaku di kedua cabang.
             if final_mkey and total and lines and scan.engine == "rapidocr" \
                     and int(total) in payment_amounts(lines):
-                label = scan.total_label if (same_total and scan.total_label) \
-                    else find_label_for_amount(lines, int(total))
+                # Selalu dari baris yang memuat nominal yang dibayar (bukan label
+                # baris yang dipakai parser, yang bisa SUBTOTAL sebelum pajak).
+                label = find_label_for_amount(lines, int(total))
             else:
                 label = None
             if final_mkey and label:

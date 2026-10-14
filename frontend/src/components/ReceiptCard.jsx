@@ -274,7 +274,12 @@ export default function ReceiptCard({
               )}
             </div>
           ))}
-          {frozen && !saving && (
+          {frozen && !saving && entry.uncertain && (
+            <div className="pt-1 text-amber-700">
+              Hasil simpan belum pasti (koneksi terputus). Tekan Simpan Semua lagi — yang sudah tercatat tidak akan tercatat dua kali.
+            </div>
+          )}
+          {frozen && !saving && !entry.uncertain && (
             <div className="flex items-center gap-3 flex-wrap pt-1">
               {!anySaved ? (
                 <button type="button" onClick={() => onUnlock(entry.key)} className="text-brand-600 underline font-medium">
