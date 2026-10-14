@@ -106,14 +106,19 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     ocr = ocr or read_receipt_lines
     llm = llm or try_llm_fallback
 
+    user_id, plan = user.id, _plan(user)
     quota = await get_quota(user, db)
     if quota.limit is not None and quota.used >= quota.limit:
         raise ScanQuotaExceeded(quota.limit)
     # Lepas koneksi DB selama menunggu/menjalankan OCR (bisa beberapa detik),
     # supaya antrean scan tidak menghabiskan pool koneksi API & bot.
-    await db.rollback()
+    # PENTING: commit, BUKAN rollback. Rollback meng-expire semua objek di sesi
+    # (termasuk `user` milik pemanggil); akses atributnya sesudah itu memicu
+    # lazy-load → MissingGreenlet di AsyncSession. Commit dengan
+    # expire_on_commit=False melepas koneksi tanpa meng-expire objek.
+    await db.commit()
 
-    result = await ocr(image_bytes, owner=user.id)
+    result = await ocr(image_bytes, owner=user_id)
     aliases, profiles = await _load_learning(db)
     parsed = parse_receipt(result.lines, merchant_aliases=aliases, merchant_profiles=profiles)
 
@@ -122,7 +127,7 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     confidence, evidence = parsed.confidence, list(parsed.evidence)
     if confidence in ("rendah", "gagal"):
         try:
-            fb = await llm(image_bytes, content_type, user.id, _plan(user))
+            fb = await llm(image_bytes, content_type, user_id, plan)
         except Exception as exc:  # fallback opsional; hasil OCR tetap dipakai
             logger.warning("fallback LLM gagal: %s", exc)
             fb = None
@@ -135,7 +140,7 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
             evidence.append("Dibaca ulang dengan AI cadangan")
 
     scan = ReceiptScan(
-        user_id=user.id,
+        user_id=user_id,
         engine=engine,
         merchant=merchant,
         merchant_key=merchant_key(merchant),
