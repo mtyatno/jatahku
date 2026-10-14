@@ -1,4 +1,6 @@
 // Custom Service Worker — Jatahku PWA
+import { idbStore, syncQueue } from './lib/offlineSync.js';
+import { newRef } from './lib/ref.js';
 // vite-plugin-pwa (injectManifest) will replace self.__WB_MANIFEST
 
 const manifest = self.__WB_MANIFEST || [];
@@ -65,57 +67,44 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ── Background Sync ──────────────────────────────────────────────
+// Antrean transaksi offline dikirim SEKALI lewat /transactions/batch (logika
+// bersama app: lib/offlineSync.js). Transaksi yang ditolak tidak dibuang: ditandai
+// dan ditampilkan di app untuk diperbaiki / dicoba lagi / dihapus.
+
+const API = 'https://api.jatahku.com';
+
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-transactions') {
     event.waitUntil(syncPendingTransactions());
   }
 });
 
-function openQueueDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('jatahku-offline', 1);
-    req.onupgradeneeded = (e) =>
-      e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
-    req.onsuccess = (e) => resolve(e.target.result);
-    req.onerror = (e) => reject(e.target.error);
-  });
-}
-
 async function syncPendingTransactions() {
-  const db = await openQueueDB();
+  const store = idbStore();
+  const items = await store.all();
+  // Service worker tidak bisa membaca localStorage: pakai token antrean terbaru.
+  const token = items
+    .filter(it => it.token)
+    .sort((a, b) => (b.queuedAt || 0) - (a.queuedAt || 0))[0]?.token;
+  if (!token) return;
 
-  const items = await new Promise((resolve, reject) => {
-    const tx = db.transaction('queue', 'readonly');
-    const req = tx.objectStore('queue').getAll();
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-
-  for (const item of items) {
-    const res = await fetch('https://api.jatahku.com/transactions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${item.token}`,
-      },
-      body: JSON.stringify({
-        envelope_id: item.envelope_id,
-        amount: item.amount,
-        description: item.description,
-        source: item.source,
-        is_private: item.is_private ?? false,
-        ...(item.transaction_date ? { transaction_date: item.transaction_date } : {}),
-        ...(item.client_ref ? { client_ref: item.client_ref } : {}),
-      }),
-    });
-
-    if (res.ok) {
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction('queue', 'readwrite');
-        const req = tx.objectStore('queue').delete(item.id);
-        req.onsuccess = resolve;
-        req.onerror = () => reject(req.error);
+  const send = async (payloads) => {
+    try {
+      const res = await fetch(`${API}/transactions/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items: payloads }),
       });
+      const data = await res.json().catch(() => null);
+      return { ok: res.ok && Array.isArray(data), status: res.status, data: Array.isArray(data) ? data : (data || {}) };
+    } catch {
+      return { ok: false, status: 0, data: [] };
     }
-  }
+  };
+
+  const summary = await syncQueue({ store, send, newRef });
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  clients.forEach(c => c.postMessage({ type: 'jatahku:offline-synced', summary }));
+  // Masih ada yang menunggu (server sibuk / token kedaluwarsa) → minta browser mencoba lagi nanti.
+  if (summary.kept > 0) throw new Error('offline queue: retry later');
 }

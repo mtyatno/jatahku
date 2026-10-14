@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
-import { flushQueue, getPendingCount } from '../lib/offlineQueue';
+import { getPendingCount } from '../lib/offlineQueue';
 import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
 import StatCard from '../components/StatCard';
 
@@ -71,18 +71,12 @@ export default function Transactions() {
 
   useEffect(() => {
     api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length - 1); });
-    getPendingCount().then(setPendingCount);
-    const syncOnOnline = async () => {
-      const results = await flushQueue(async (item) => {
-        const res = await api.createTransaction({ envelope_id: item.envelope_id, amount: item.amount, description: item.description, source: item.source, is_private: item.is_private ?? false, ...(item.transaction_date ? { transaction_date: item.transaction_date } : {}), ...(item.client_ref ? { client_ref: item.client_ref } : {}) });
-        // 409 (masih diproses kiriman lain) & 5xx bisa berhasil nanti → biarkan di antrean.
-        if (!res.ok && (res.status === 409 || res.status >= 500)) throw new Error(`retry ${res.status}`);
-        return res;
-      });
-      if (results.some(r => r.success)) { load(); getPendingCount().then(setPendingCount); }
-    };
-    window.addEventListener('online', syncOnOnline);
-    return () => window.removeEventListener('online', syncOnOnline);
+    // Antrean offline disinkronkan oleh OfflineQueueCenter (Layout); di sini cukup
+    // jumlah yang masih menunggu.
+    const updatePending = () => getPendingCount().then(setPendingCount).catch(() => {});
+    updatePending();
+    window.addEventListener('jatahku:offline-queue', updatePending);
+    return () => window.removeEventListener('jatahku:offline-queue', updatePending);
   }, []);
 
   useEffect(() => {

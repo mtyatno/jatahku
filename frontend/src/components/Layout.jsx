@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
+import OfflineQueueCenter from './OfflineQueueCenter';
 import MultiAddTransaction from './MultiAddTransaction';
 import PaySubscriptions from './PaySubscriptions';
 import BalanceCheck from './BalanceCheck';
@@ -436,6 +437,7 @@ export default function Layout() {
       </nav>
 
       <TelegramPrompt />
+      <OfflineQueueCenter />
       <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
       {/* Global FAB — speed dial */}
       {fabMenu && (

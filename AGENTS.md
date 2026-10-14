@@ -65,6 +65,12 @@
 - Never cache API responses in SW — they become stale and can return `undefined`
 - Test PWA in **incognito/private window** to avoid old SW cache
 - Hard refresh (Ctrl+Shift+R) is NOT enough — must unregister old SW or use incognito
+- **Offline transaction queue** (IndexedDB `jatahku-offline`): synced by the app
+  (`OfflineQueueCenter` in Layout: on load + `online`) and by the SW background
+  sync, both through `src/lib/offlineSync.js` — ONE `POST /transactions/batch` per
+  sync, only when the queue has items. Never drop a queued transaction silently:
+  rejected ones are kept with `rejected: {message}` and shown for fix/retry/delete;
+  5xx/401/offline keep them pending. Every item carries a `client_ref`.
 
 ## Enum vs String in Python
 - `PurposeType.expense` (enum member) does NOT equal `"expense"` (string)
