@@ -4,6 +4,8 @@ import { parseMultiExpense, parseAmount } from '../lib/parseAmount';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
+import ReceiptInput from './ReceiptInput';
+import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
 
@@ -17,8 +19,10 @@ function isInsufficientFundsError(errMsg) {
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
-function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove, onFundEnvelope }) {
+function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope }) {
   const isShortage = isInsufficientFundsError(item.error);
+  const isReceipt = item.origin === 'receipt';
+  const doubtful = isReceipt && item.confidence !== 'tinggi';
 
   return (
     <div className={`
@@ -29,20 +33,55 @@ function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove, onFundEnv
       <div className="flex items-center gap-2 md:col-span-5 min-w-0">
         <button
           type="button"
-          onClick={() => onRemove(index)}
+          onClick={() => onRemove(item.key)}
           className="shrink-0 text-gray-400 hover:text-red-500 text-sm leading-none p-1"
           title="Hapus item"
         >&times;</button>
-        <span className="text-sm text-gray-800 truncate">{item.description}</span>
+        {isReceipt ? (
+          <div className="flex flex-col gap-1 min-w-0 w-full">
+            <span className="text-xs text-brand-600 inline-flex items-center gap-1">
+              <Icon name="camera" size={12} /> Dari struk{doubtful && <span className="text-amber-600"> · {confidenceLabel(item.confidence)}</span>}
+            </span>
+            <input
+              className="input text-sm py-1 w-full"
+              value={item.description}
+              onChange={e => onChangeField(item.key, 'description', e.target.value)}
+              aria-label="Keterangan struk"
+            />
+            <input
+              type="date"
+              className="input text-xs py-1 w-full md:w-40"
+              value={item.transactionDate || ''}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={e => onChangeField(item.key, 'transactionDate', e.target.value || null)}
+              aria-label="Tanggal struk"
+            />
+          </div>
+        ) : (
+          <span className="text-sm text-gray-800 truncate">{item.description}</span>
+        )}
       </div>
-      <div className="md:col-span-2">
-        <span className="text-sm font-mono text-gray-700">{formatRupiah(item.amount)}</span>
+      <div className="md:col-span-2 w-full">
+        {isReceipt ? (
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            className={`input text-sm py-1 font-mono w-full ${doubtful || !item.amount ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
+            value={item.amount || ''}
+            placeholder="Nominal"
+            onChange={e => onChangeField(item.key, 'amount', Number(e.target.value) || 0)}
+            aria-label="Total struk"
+          />
+        ) : (
+          <span className="text-sm font-mono text-gray-700">{formatRupiah(item.amount)}</span>
+        )}
       </div>
       <div className="md:col-span-4 w-full">
         <select
           className={`input text-sm py-1.5 w-full ${!item.envelopeId ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
           value={item.envelopeId}
-          onChange={e => onChangeEnvelope(index, e.target.value)}
+          onChange={e => onChangeEnvelope(item.key, e.target.value)}
         >
           <option value="">Pilih amplop</option>
           {envelopes.filter(env => env.purpose !== 'saving' && env.purpose !== 'sinking_fund').map(env => (
@@ -60,7 +99,7 @@ function ItemRow({ item, index, envelopes, onChangeEnvelope, onRemove, onFundEnv
         {isShortage && item.envelopeId && (
           <button
             type="button"
-            onClick={() => onFundEnvelope(index)}
+            onClick={() => onFundEnvelope(item.key)}
             className="text-xs text-brand-600 hover:text-brand-700 underline font-medium hover:bg-brand-50 px-1 py-0.5 rounded transition-colors"
             title="Geser dana dari amplop lain atau top-up"
           >
@@ -84,7 +123,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const [fundingTarget, setFundingTarget] = useState(null);
   const debounceRef = useRef(null);
   const lastParsedRef = useRef('');
-  const userTouchedRef = useRef({});
+  const keySeq = useRef(0);
+  const nextKey = () => `i${++keySeq.current}`;
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -100,8 +140,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     loadEnvelopes();
   }, [loadEnvelopes]);
 
-  const handleOpenFundModal = (index) => {
-    const item = items[index];
+  const handleOpenFundModal = (key) => {
+    const item = items.find(i => i.key === key);
     if (!item || !item.envelopeId) return;
     const env = envelopes.find(e => e.id === item.envelopeId);
     if (!env) return;
@@ -110,15 +150,15 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setFundingTarget({
       envelope: env,
       neededAmount: needed > 0 ? needed : item.amount,
-      itemIndex: index,
+      itemKey: key,
     });
   };
 
   const handleFundSuccess = async ({ type, amount, fromName, targetEnvelope }) => {
     await loadEnvelopes();
-    if (fundingTarget && fundingTarget.itemIndex != null) {
-      setItems(prev => prev.map((item, idx) =>
-        idx === fundingTarget.itemIndex ? { ...item, error: null } : item
+    if (fundingTarget && fundingTarget.itemKey != null) {
+      setItems(prev => prev.map(item =>
+        item.key === fundingTarget.itemKey ? { ...item, error: null } : item
       ));
     }
     const actionDesc = type === 'transfer'
@@ -132,19 +172,23 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setFundingTarget(null);
   };
 
-  const applySuggestions = useCallback((parsedItems) => {
-    if (!navigator.onLine || parsedItems.length === 0) return;
-    const descriptions = parsedItems.map(i => i.description);
+  // Saran amplop untuk item tertentu; dicocokkan lewat key (bukan indeks)
+  // supaya aman walau ada item struk di daftar yang sama.
+  const applySuggestions = useCallback((targetItems) => {
+    if (!navigator.onLine || targetItems.length === 0) return;
+    const descriptions = targetItems.map(i => i.description);
     api.batchSuggestEnvelopes(descriptions).then(res => {
       if (!res || !res.results) return;
-      setItems(prev => prev.map((item, i) => {
-        if (userTouchedRef.current[i]) return item;
-        const match = res.results.find(r => r.index === i);
-        if (match && match.confident && match.envelope_id) {
-          return { ...item, envelopeId: match.envelope_id, suggested: true };
-        }
-        return item;
-      }));
+      const byKey = {};
+      res.results.forEach(r => {
+        const target = targetItems[r.index];
+        if (target && r.confident && r.envelope_id) byKey[target.key] = r.envelope_id;
+      });
+      setItems(prev => prev.map(item => (
+        !item.touched && byKey[item.key]
+          ? { ...item, envelopeId: byKey[item.key], suggested: true }
+          : item
+      )));
     });
   }, []);
 
@@ -155,9 +199,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
     debounceRef.current = setTimeout(() => {
       lastParsedRef.current = txt;
+      // Item dari struk tidak ikut terhapus saat teks diketik ulang.
+      const keepReceipts = prev => prev.filter(i => i.origin === 'receipt');
       if (!txt) {
-        setItems([]);
-        userTouchedRef.current = {};
+        setItems(keepReceipts);
         return;
       }
 
@@ -167,39 +212,53 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         if (single) {
           parsed = [single];
         } else {
-          setItems([]);
-          userTouchedRef.current = {};
+          setItems(keepReceipts);
           return;
         }
       }
 
-      const newItems = parsed.map((p, i) => ({
+      const newItems = parsed.map(p => ({
         ...p,
+        key: nextKey(),
+        origin: 'text',
         envelopeId: '',
         suggested: false,
+        touched: false,
         error: null,
         saving: false,
       }));
 
       setResultMsg(null);
-      setItems(newItems);
-      userTouchedRef.current = {};
+      setItems(prev => [...keepReceipts(prev), ...newItems]);
       applySuggestions(newItems);
     }, 300);
 
     return () => clearTimeout(debounceRef.current);
   }, [rawText, applySuggestions]);
 
-  const handleEnvelopeChange = (index, value) => {
-    userTouchedRef.current[index] = true;
-    setItems(prev => prev.map((item, i) =>
-      i === index ? { ...item, envelopeId: value, suggested: false, error: null } : item
+  const handleEnvelopeChange = (key, value) => {
+    setItems(prev => prev.map(item =>
+      item.key === key ? { ...item, envelopeId: value, suggested: false, touched: true, error: null } : item
     ));
   };
 
-  const handleRemove = (index) => {
-    delete userTouchedRef.current[index];
-    setItems(prev => prev.filter((_, i) => i !== index));
+  const handleFieldChange = (key, field, value) => {
+    setItems(prev => prev.map(item => (item.key === key ? { ...item, [field]: value, error: null } : item)));
+  };
+
+  const handleRemove = (key) => {
+    const removed = items.find(i => i.key === key);
+    if (removed?.origin === 'receipt' && removed.scanId) {
+      api.receiptFeedback(removed.scanId, feedbackFor(removed, false));
+    }
+    setItems(prev => prev.filter(i => i.key !== key));
+  };
+
+  const handleReceiptResult = (result) => {
+    const item = receiptToItem(result, nextKey());
+    setItems(prev => [item, ...prev]);
+    setResultMsg(scanMessage(result));
+    applySuggestions([item]);
   };
 
   const handleVoiceTranscript = (text) => {
@@ -210,7 +269,19 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setResultMsg({ type: 'error', text: msg });
   };
 
+  const toPayload = (item) => ({
+    envelope_id: item.envelopeId,
+    amount: item.amount,
+    description: (item.description || '').trim() || 'Belanja',
+    source: 'webapp',
+    ...(item.transactionDate ? { transaction_date: item.transactionDate } : {}),
+  });
+
   const handleSaveAll = async () => {
+    if (items.some(i => i.envelopeId && !(Number(i.amount) > 0))) {
+      setResultMsg({ type: 'error', text: 'Isi nominal struk dulu sebelum menyimpan' });
+      return;
+    }
     const pending = items.filter(i => i.envelopeId);
     if (pending.length === 0) {
       setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
@@ -225,12 +296,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       let queued = 0;
       for (const item of items) {
         if (!item.envelopeId) continue;
-        await enqueueTransaction({
-          envelope_id: item.envelopeId,
-          amount: item.amount,
-          description: item.description,
-          source: 'webapp',
-        });
+        await enqueueTransaction(toPayload(item));
         queued++;
       }
       setSaving(false);
@@ -238,17 +304,11 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       setRawText('');
       setItems([]);
       lastParsedRef.current = '';
-      userTouchedRef.current = {};
       onSaved?.();
       return;
     }
 
-    const payload = pending.map((item, i) => ({
-      envelope_id: item.envelopeId,
-      amount: item.amount,
-      description: item.description,
-      source: 'webapp',
-    }));
+    const payload = pending.map(toPayload);
 
     const result = await api.batchCreateTransactions(payload);
     setSaving(false);
@@ -258,25 +318,28 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       return;
     }
 
+    // Hasil batch berindeks sesuai `pending` (bukan `items`) → petakan ke key.
     const data = result.data || [];
-    let successCount = 0;
-    const failedIndices = [];
-
+    const okKeys = new Set();
+    const errByKey = {};
     data.forEach(r => {
-      if (r.ok) {
-        successCount++;
-      } else {
-        failedIndices.push(r.index);
+      const item = pending[r.index];
+      if (!item) return;
+      if (r.ok) okKeys.add(item.key);
+      else errByKey[item.key] = r.error || 'Gagal';
+    });
+    const successCount = okKeys.size;
+
+    // Bahan belajar scan struk: nilai akhir yang benar-benar tersimpan.
+    pending.forEach(item => {
+      if (item.origin === 'receipt' && item.scanId && okKeys.has(item.key)) {
+        api.receiptFeedback(item.scanId, feedbackFor(item, true));
       }
     });
 
-    setItems(prev => prev.map((item, i) => {
-      const r = data.find(d => d.index === i);
-      if (r && !r.ok) {
-        return { ...item, error: r.error || 'Gagal' };
-      }
-      return { ...item, error: null };
-    }));
+    setItems(prev => prev.map(item => (
+      errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null }
+    )));
 
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
@@ -286,17 +349,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         setRawText('');
         setItems([]);
         lastParsedRef.current = '';
-        userTouchedRef.current = {};
         onSaved?.();
       } else {
         setResultMsg({
           type: 'mixed',
           text: `${successCount} berhasil, ${failedCount} gagal`,
         });
-        setItems(prev => prev.filter((_, i) => {
-          const r = data.find(d => d.index === i);
-          return r && !r.ok;
-        }));
+        setItems(prev => prev.filter(item => !okKeys.has(item.key)));
       }
     } else {
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
@@ -313,11 +372,18 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       <div>
         <div className="flex items-center justify-between mb-1">
           <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>
-          <VoiceInput
-            onTranscript={handleVoiceTranscript}
-            onError={handleVoiceError}
-            disabled={saving}
-          />
+          <div className="flex items-center gap-3 shrink-0">
+            <ReceiptInput
+              onResult={handleReceiptResult}
+              onError={handleVoiceError}
+              disabled={saving}
+            />
+            <VoiceInput
+              onTranscript={handleVoiceTranscript}
+              onError={handleVoiceError}
+              disabled={saving}
+            />
+          </div>
         </div>
         <textarea
           className="input w-full h-24 resize-y font-mono text-sm"
@@ -330,7 +396,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
       {!hasItems && !saving && (
         <div className="text-center py-4 text-gray-400 text-sm">
-          Ketik pengeluaran Anda di atas
+          Ketik pengeluaran Anda di atas, atau foto struk
         </div>
       )}
 
@@ -351,13 +417,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
               <span className="col-span-1"></span>
             </div>
             <div className="px-3">
-              {items.map((item, i) => (
+              {items.map(item => (
                 <ItemRow
-                  key={i}
+                  key={item.key}
                   item={item}
-                  index={i}
                   envelopes={envelopes}
                   onChangeEnvelope={handleEnvelopeChange}
+                  onChangeField={handleFieldChange}
                   onRemove={handleRemove}
                   onFundEnvelope={handleOpenFundModal}
                 />
@@ -375,9 +441,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         }`} style={resultMsg.type === 'error' ? {color:'#E24B4A'} : undefined}>
           <div className="font-medium">{resultMsg.text}</div>
           {resultMsg.type === 'error' && isInsufficientFundsError(resultMsg.text) && (() => {
-            const failedItemIndex = items.findIndex(i => isInsufficientFundsError(i.error));
-            const candidateIndex = failedItemIndex !== -1 ? failedItemIndex : items.findIndex(i => i.envelopeId);
-            const candidateItem = candidateIndex !== -1 ? items[candidateIndex] : null;
+            const candidateItem = items.find(i => isInsufficientFundsError(i.error)) || items.find(i => i.envelopeId) || null;
             const targetEnv = candidateItem ? envelopes.find(e => e.id === candidateItem.envelopeId) : null;
             if (!targetEnv) return null;
             return (
@@ -387,7 +451,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleOpenFundModal(candidateIndex)}
+                  onClick={() => handleOpenFundModal(candidateItem.key)}
                   className="bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1.5 text-xs font-medium flex items-center gap-1.5 shadow-sm transition-all"
                 >
                   <Icon name="transfer" size={13} />

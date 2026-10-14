@@ -759,6 +759,8 @@ export default function Admin() {
               </ResponsiveContainer>
             </div>
           </div>
+
+          <ReceiptScanCard />
         </>
       )}
 
@@ -1399,6 +1401,48 @@ function PaymentsTab({ onAction }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Scan struk: akurasi bulan ini (diterima tanpa koreksi) + pemakaian fallback LLM vs plafon.
+function ReceiptScanCard() {
+  const [s, setS] = useState(null);
+  useEffect(() => {
+    api.request('/admin/receipt-scans/stats')
+      .then(r => (r.ok ? r.json() : null))
+      .then(setS)
+      .catch(() => setS(null));
+  }, []);
+  if (!s) return null;
+  const llm = s.llm_budget;
+  const rp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+  return (
+    <div className="card">
+      <h3 className="font-semibold text-sm mb-3">📸 Scan Struk (bulan ini)</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div><div className="text-xs text-gray-400">Total scan</div><div className="font-bold text-lg">{s.total}</div></div>
+        <div>
+          <div className="text-xs text-gray-400">Akurasi (tanpa koreksi)</div>
+          <div className="font-bold text-lg text-brand-600">{s.accuracy_pct == null ? '—' : `${s.accuracy_pct}%`}</div>
+          <div className="text-xs text-gray-400">{s.accepted} pas · {s.corrected} dikoreksi</div>
+        </div>
+        <div><div className="text-xs text-gray-400">Dibatalkan / belum disimpan</div><div className="font-bold text-lg">{s.discarded} / {s.pending}</div></div>
+        <div>
+          <div className="text-xs text-gray-400">Fallback AI</div>
+          {llm ? (
+            <>
+              <div className="font-bold text-lg">{llm.enabled ? 'Aktif' : 'Mati'}</div>
+              <div className="text-xs text-gray-400">{rp(llm.spent_idr)} dari plafon {rp(llm.budget_idr)} · {llm.calls}x</div>
+            </>
+          ) : <div className="text-xs text-gray-400">Tidak tersedia</div>}
+        </div>
+      </div>
+      {s.most_corrected?.length > 0 && (
+        <div className="mt-3 text-xs text-gray-500">
+          Paling sering dikoreksi: {s.most_corrected.map(m => `${m.merchant_key} (${m.count})`).join(', ')}
+        </div>
+      )}
     </div>
   );
 }
