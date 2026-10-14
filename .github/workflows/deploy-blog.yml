@@ -7,6 +7,14 @@ on:
       - 'blog/**'
       - '.github/workflows/deploy-blog.yml'
 
+# Antrean: satu deploy blog dalam satu waktu; run baru menunggu. Grupnya sengaja
+# BERBEDA dari "Deploy Jatahku": GitHub hanya menyimpan satu run yang menunggu per
+# grup, jadi grup bersama bisa membatalkan deploy aplikasi yang sedang menunggu
+# demi deploy blog.
+concurrency:
+  group: deploy-blog-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest

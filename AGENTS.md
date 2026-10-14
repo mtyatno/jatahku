@@ -28,6 +28,12 @@
 ## Deploy Script (`deploy.sh`)
 - Located at `/opt/jatahku/app/deploy.sh` on server
 - Runs on push to main via GitHub Actions
+- **One deploy at a time.** `.github/workflows/deploy.yml` uses `concurrency`
+  (`cancel-in-progress: false`): a newer push waits for the running deploy.
+  Keep it — two `deploy.sh` runs overlapping (`git pull` + `npm run build` into
+  the same `frontend/dist/`) can publish a broken build, the same failure mode as
+  the blank-landing incident. Don't start a manual `deploy.sh` while an Actions
+  deploy is running (manual runs are not queued).
 - Git repo is at `/opt/jatahku/app/` NOT `/opt/jatahku/`
 - Must clean dirty `frontend/dist/` before `git pull`:
   ```bash
