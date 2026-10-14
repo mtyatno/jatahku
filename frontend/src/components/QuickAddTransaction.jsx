@@ -153,9 +153,13 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
         setUncertain(false);
       }
       const detail = typeof result.data?.detail === 'string' ? result.data.detail : '';
-      setError(maybeSaved
-        ? 'Hasil simpan belum pasti. Coba simpan lagi — tidak akan tercatat dua kali.'
-        : (detail || 'Gagal menyimpan transaksi'));
+      if (maybeSaved) {
+        setError(detail
+          ? `${detail} Tekan Simpan lagi — tidak akan tercatat dua kali.`
+          : 'Hasil simpan belum pasti. Coba simpan lagi — tidak akan tercatat dua kali.');
+      } else {
+        setError(detail || 'Gagal menyimpan transaksi');
+      }
     }
   };
 
