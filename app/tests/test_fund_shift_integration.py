@@ -527,6 +527,26 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await create_transaction(req, await self.web_user(db), db)
         self.assertEqual(await self.count(Transaction), 1)
 
+    async def test_receipt_items_teach_per_item_envelope_suggestions(self):
+        """Struk dicatat per barang ("SABUN MANDI (Indomaret)") → kata kunci barang
+        dipelajari → scan berikutnya menyarankan amplop per barang dari nama barang."""
+        from app.api.routes.transactions import BatchSuggestEnvelopeRequest, suggest_envelopes
+        t, m = self.env["Transport"].id, self.env["Makan"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            out = await self.web_batch([
+                {"envelope_id": t, "amount": D("3000"), "description": "SABUN MANDI (Indomaret)"},
+                {"envelope_id": m, "amount": D("2000"), "description": "ROTI TAWAR (Indomaret)"},
+            ])
+            self.assertTrue(all(r.ok for r in out))
+            async with self.Session() as db:
+                res = await suggest_envelopes(
+                    BatchSuggestEnvelopeRequest(descriptions=["SABUN CAIR", "ROTI TAWAR", "XYZ QWERTY"]),
+                    await self.web_user(db), db)
+        got = [(r["envelope_id"], r["confident"]) for r in res["results"]]
+        self.assertEqual(got[0], (str(t), True))
+        self.assertEqual(got[1], (str(m), True))
+        self.assertEqual(got[2], (None, False))
+
     async def test_web_long_description_is_trimmed_not_failed(self):
         from app.api.routes.transactions import TransactionCreate, create_transaction
         t = self.env["Transport"].id

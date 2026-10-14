@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   reconcileItems, splitByItem, itemDescription, summarizePlan, toReceiptItems, itemNet, buildPlan,
+  applyItemSuggestions,
 } from './receiptSplit.js';
 
 // Struk Indomaret asli (#1): 8 barang 149.500, voucher melekat 9.000, total 140.500.
@@ -135,6 +136,20 @@ test('summarizePlan: ringkas per amplop, status simpan & barang gagal', () => {
   assert.equal(rows[1].error, 'Dana tidak cukup');
   assert.equal(rows[0].raiseLimit, true);
   assert.equal(rows[0].error, null);
+});
+
+test('applyItemSuggestions: hanya barang yang amplopnya belum dipilih user', () => {
+  const items = [
+    { id: 'a', name: 'SABUN', envelopeId: '' },
+    { id: 'b', name: 'KOPI', envelopeId: 'e3' },              // sudah dipilih
+    { id: 'c', name: 'ROTI', envelopeId: '', envTouched: true }, // user memilih "ikut amplop struk"
+    { id: 'd', name: 'DOBEL', envelopeId: '', removed: true },
+    { id: 'e', name: 'TEH', envelopeId: '' },                 // tidak ada saran
+  ];
+  const out = applyItemSuggestions(items, { a: 'e-rumah', b: 'e1', c: 'e1', d: 'e1' });
+  assert.deepEqual(out.map(it => [it.id, it.envelopeId, !!it.suggested]),
+    [['a', 'e-rumah', true], ['b', 'e3', false], ['c', '', false], ['d', '', false], ['e', '', false]]);
+  assert.equal(out[1], items[1]); // tidak berubah → objek yang sama
 });
 
 test('toReceiptItems & itemNet', () => {
