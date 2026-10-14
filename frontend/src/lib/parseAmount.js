@@ -1,3 +1,6 @@
+// Port Python 1:1 di app/bot/handlers.py (parse_amount, _split_by_spaces) dan
+// app/bot/nlp_cmd.py (parse_multi_expense). Kasus uji bersama:
+// parseAmount.cases.json — ubah kedua sisi sekaligus.
 const AMOUNT_RE = /(?:rp\.?\s*)?(\d{1,3}(?:\.\d{3})+|\d+\.\d{1,2}|\d+(?:,\d+)?)\s*(jt|juta|rb|ribu|k)?(?!\w)|(?:rp\.?\s*)(\d+)/i;
 const MULTIPLIERS = { jt: 1_000_000, juta: 1_000_000, rb: 1_000, ribu: 1_000, k: 1_000 };
 
@@ -77,6 +80,8 @@ const WORD_SEPS = [/\s+(?:terus|lalu)\s+/i, /\s+dan\s+/i];
 //    item tetap digabung (arah aman: deskripsi gabung lebih terlihat
 //    daripada jumlah salah).
 const MULTIPLIER_GLUE_RE = /(\d+(?:[.,]\d+)?)\s+(juta|jt|ribu|rb|k)\b/gi;
+// "Rp 5.000" → "Rp5.000" supaya jadi satu token nominal.
+const RP_GLUE_RE = /\b(rp\.?)\s+(?=\d)/gi;
 // Wajib diawali angka — kalau tidak, kata berakhiran "k" seperti "gojek"
 // salah dikenali sebagai token jumlah.
 const MULTIPLIER_TOKEN_RE = /^\d+(?:[.,]\d+)?(juta|jt|ribu|rb|k)$/i;
@@ -88,17 +93,27 @@ function isAmountToken(tok) {
 }
 
 function splitBySpaces(text) {
-  const glued = text.replace(MULTIPLIER_GLUE_RE, '$1$2');
+  const glued = text.replace(MULTIPLIER_GLUE_RE, '$1$2').replace(RP_GLUE_RE, '$1');
   const tokens = glued.split(/\s+/).filter(t => t.trim());
   const items = [];
   let current = [];
+  // Urutan nominal-dulu ("35k kopi 20k parkir"): item baru dimulai di setiap
+  // nominal. Urutan deskripsi-dulu ("kopi 35k parkir 20k"): item ditutup
+  // setelah nominal selama masih ada nominal lain di sisa teks.
+  const amountFirst = tokens.length > 0 && isAmountToken(tokens[0]);
   for (let i = 0; i < tokens.length; i++) {
-    current.push(tokens[i]);
-    // Tutup item saat token ini adalah jumlah DAN masih ada jumlah lain
-    // di sisa teks (jika tidak, semua kata tetap satu item).
-    if (isAmountToken(tokens[i]) && tokens.slice(i + 1).some(isAmountToken)) {
-      items.push(current.join(' '));
-      current = [];
+    if (amountFirst) {
+      if (i > 0 && isAmountToken(tokens[i]) && current.length) {
+        items.push(current.join(' '));
+        current = [];
+      }
+      current.push(tokens[i]);
+    } else {
+      current.push(tokens[i]);
+      if (isAmountToken(tokens[i]) && tokens.slice(i + 1).some(isAmountToken)) {
+        items.push(current.join(' '));
+        current = [];
+      }
     }
   }
   if (current.length) items.push(current.join(' '));
