@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
@@ -7,6 +7,7 @@ import TelegramPrompt from './TelegramPrompt';
 import MultiAddTransaction from './MultiAddTransaction';
 import PaySubscriptions from './PaySubscriptions';
 import BalanceCheck from './BalanceCheck';
+import ChatPanel from './ChatPanel';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
@@ -258,6 +259,7 @@ function CombinedLanggananModal({ onClose }) {
 }
 
 const FAB_OPTIONS = [
+  { key: 'chat', icon: 'chat', label: 'Chat bot' },
   { key: 'expense', icon: 'expense', label: 'Pengeluaran' },
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
@@ -288,9 +290,17 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [fabMenu, setFabMenu] = useState(false);
   const [fabAction, setFabAction] = useState(null);
+  // Chat bot: dipasang sekali saat pertama dibuka, lalu hanya disembunyikan,
+  // supaya balasan yang sedang ditunggu tidak hilang saat panel ditutup.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMounted, setChatMounted] = useState(false);
   const menuRef = useRef(null);
   const fabRef = useRef(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const openChat = () => { setFabMenu(false); setChatMounted(true); setChatOpen(true); };
+  const closeChat = useCallback(() => setChatOpen(false), []);
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -302,10 +312,24 @@ export default function Layout() {
 
   // Pintu masuk lain (mis. link di Dashboard) membuka modal aksi FAB lewat event.
   useEffect(() => {
-    const onOpen = (e) => { setFabMenu(false); setFabAction(e.detail); };
+    const onOpen = (e) => {
+      setFabMenu(false);
+      if (e.detail === 'chat') { setChatMounted(true); setChatOpen(true); } else setFabAction(e.detail);
+    };
     window.addEventListener('jatahku:open-action', onOpen);
     return () => window.removeEventListener('jatahku:open-action', onOpen);
   }, []);
+
+  // Pintasan PWA / tautan: ?chat=1 membuka chat bot.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('chat') !== '1') return;
+    setChatMounted(true);
+    setChatOpen(true);
+    params.delete('chat');
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
+  }, [location.search, location.pathname, navigate]);
 
   if (loading) {
     return (
@@ -341,6 +365,14 @@ export default function Layout() {
 
           {/* Notifications + Profile */}
           <div className="flex items-center gap-1">
+          <button
+            onClick={openChat}
+            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${chatOpen ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:bg-gray-100'}`}
+            title="Chat bot"
+            aria-label="Buka chat bot"
+          >
+            <Icon name="chat" size={19} />
+          </button>
           <NotificationBell />
           <button
             onClick={toggleMode}
@@ -420,7 +452,7 @@ export default function Layout() {
                     key={opt.key}
                     onClick={() => {
                       setFabMenu(false);
-                      setFabAction(opt.key);
+                      if (opt.key === 'chat') openChat(); else setFabAction(opt.key);
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all whitespace-nowrap"
                     style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
@@ -443,6 +475,7 @@ export default function Layout() {
           </div>
         </div>
       </div>
+      {chatMounted && <ChatPanel open={chatOpen} onClose={closeChat} />}
       {/* Modals for speed dial actions */}
       {fabAction && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabAction(null)}>

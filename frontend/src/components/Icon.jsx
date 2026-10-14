@@ -10,6 +10,7 @@ import {
   DotsThreeVertical, SquaresFour, Rows, ListDashes, FolderSimple, Coins,
   PencilSimple, Trash,
   MagnifyingGlass, Globe, ChartPieSlice, Info, Microphone, Stop, Scales, Camera,
+  ChatCircleDots, PaperPlaneRight, ArrowClockwise, Broom,
   // categories
   ForkKnife, Coffee, Car, Bus, House, Lightning, WifiHigh, ShoppingBag,
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
@@ -69,6 +70,10 @@ const UI = {
   stop: Stop,
   camera: Camera,
   balance: Scales,
+  chat: ChatCircleDots,
+  send: PaperPlaneRight,
+  retry: ArrowClockwise,
+  clear: Broom,
 };
 
 // Envelope category icons — tokens stored in env.emoji going forward

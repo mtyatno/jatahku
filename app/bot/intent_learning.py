@@ -157,4 +157,5 @@ async def handle_intent_learn_callback(query, context, settings):
         class _FakeUpdate:
             effective_user = query.from_user
             message = query.message
+            effective_message = query.message  # dipakai reply_setup_needed
         await handler(_FakeUpdate(), context)

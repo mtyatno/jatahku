@@ -6,6 +6,32 @@ from sqlalchemy import select, or_
 from app.core.database import AsyncSessionLocal
 from app.models.models import Envelope, RecurringTransaction, RecurringFrequency
 from app.bot.handlers import get_or_create_user, get_household_id, format_currency, parse_amount
+from app.bot.channel import txn_source
+
+
+def _visible_to(user_id):
+    """Amplop shared (owner_id NULL) atau milik user sendiri — kontrak
+    visibilitas household yang sama dengan API web."""
+    return or_(Envelope.owner_id == None, Envelope.owner_id == user_id)
+
+
+async def _visible_rec(query, db):
+    """(user, langganan) dari tombol, hanya bila langganan itu ada di household
+    user dan amplopnya terlihat olehnya. Selain itu (None, None)."""
+    import uuid
+    try:
+        rec_id = uuid.UUID(query.data.split("_", 1)[1])
+    except (IndexError, ValueError):
+        return None, None
+    tg_user = query.from_user
+    user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+    hid = await get_household_id(user, db)
+    result = await db.execute(
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(RecurringTransaction.id == rec_id, Envelope.household_id == hid, _visible_to(user.id))
+    )
+    return user, result.scalar_one_or_none()
 
 
 async def cmd_langganan(update, context):
@@ -21,7 +47,8 @@ async def cmd_langganan(update, context):
         result = await db.execute(
             select(RecurringTransaction, Envelope.name, Envelope.emoji)
             .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
-            .where(Envelope.household_id == hid, RecurringTransaction.is_active == True)
+            .where(Envelope.household_id == hid, RecurringTransaction.is_active == True,
+                   _visible_to(user.id))
             .order_by(RecurringTransaction.next_run)
         )
         rows = result.all()
@@ -105,9 +132,10 @@ async def cmd_tambah_langganan(update, context):
             select(Envelope).where(
                 Envelope.household_id == hid, Envelope.is_active == True,
                 sqlfunc.lower(Envelope.name) == env_name.lower(),
-            )
+                _visible_to(user.id),
+            ).order_by(Envelope.created_at)
         )
-        envelope = env_result.scalar_one_or_none()
+        envelope = env_result.scalars().first()
         if not envelope:
             await update.message.reply_text(f"Amplop '{env_name}' nggak ditemukan.")
             return
@@ -150,7 +178,8 @@ async def cmd_hapus_langganan(update, context):
         result = await db.execute(
             select(RecurringTransaction, Envelope.emoji)
             .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
-            .where(Envelope.household_id == hid, RecurringTransaction.is_active == True)
+            .where(Envelope.household_id == hid, RecurringTransaction.is_active == True,
+                   _visible_to(user.id))
         )
         rows = result.all()
 
@@ -181,12 +210,8 @@ async def handle_delrec_callback(update, context):
         await query.edit_message_text("👍 Dibatalkan.")
         return
 
-    rec_id = query.data.split("_", 1)[1]
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
-        )
-        rec = result.scalar_one_or_none()
+        _, rec = await _visible_rec(query, db)
         if not rec:
             await query.edit_message_text("Tidak ditemukan.")
             return
@@ -202,14 +227,10 @@ async def handle_recpay_callback(update, context):
     """User confirms payment — record transaction + advance next_run."""
     query = update.callback_query
     await query.answer()
-    rec_id = query.data.split("_", 1)[1]
 
     from app.models.models import Transaction, TransactionSource
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
-        )
-        rec = result.scalar_one_or_none()
+        user, rec = await _visible_rec(query, db)
         if not rec:
             await query.edit_message_text("Langganan tidak ditemukan.")
             return
@@ -219,16 +240,13 @@ async def handle_recpay_callback(update, context):
         )
         envelope = env_result.scalar_one_or_none()
 
-        tg_user = query.from_user
-        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-
         # Record transaction
         txn = Transaction(
             envelope_id=rec.envelope_id,
             user_id=user.id,
             amount=rec.amount,
             description=f"🔄 {rec.description}",
-            source=TransactionSource.telegram,
+            source=txn_source(),
             transaction_date=date.today(),
         )
         db.add(txn)
@@ -251,13 +269,9 @@ async def handle_recskip_callback(update, context):
     """Skip this month — advance next_run without recording."""
     query = update.callback_query
     await query.answer()
-    rec_id = query.data.split("_", 1)[1]
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
-        )
-        rec = result.scalar_one_or_none()
+        _, rec = await _visible_rec(query, db)
         if not rec:
             await query.edit_message_text("Langganan tidak ditemukan.")
             return
@@ -276,13 +290,9 @@ async def handle_recstop_callback(update, context):
     """Stop subscription entirely."""
     query = update.callback_query
     await query.answer()
-    rec_id = query.data.split("_", 1)[1]
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(RecurringTransaction).where(RecurringTransaction.id == rec_id)
-        )
-        rec = result.scalar_one_or_none()
+        _, rec = await _visible_rec(query, db)
         if not rec:
             await query.edit_message_text("Langganan tidak ditemukan.")
             return

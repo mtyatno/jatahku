@@ -2,6 +2,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 
+AKUN_TELEGRAM = """*Akun:*
+/webapp — Login ke WebApp tanpa password
+/link \\[kode\\] — Hubungkan dengan WebApp
+/unlink — Lepas koneksi Telegram
+
+"""
+
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send comprehensive help guide."""
     text = """📖 *Panduan Jatahku*
@@ -36,12 +44,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /invite — Buat kode invite
 /join \\[kode\\] — Gabung household
 
-*Akun:*
-/webapp — Login ke WebApp tanpa password
-/link \\[kode\\] — Hubungkan dengan WebApp
-/unlink — Lepas koneksi Telegram
-
-*Tips:*
+{akun}*Tips:*
 - Ketik angka dengan format apapun: 35k, 35rb, 35.000, rp35000
 - Bot otomatis pilih amplop yang tepat
 - Jika ragu, bot akan tanya amplop mana
@@ -49,5 +52,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🌐 Dashboard: jatahku.com
 ⭐ Upgrade Pro: jatahku.com/upgrade"""
 
+    from app.bot.channel import is_web
+    # Perintah akun hanya bermakna di Telegram; di chat webapp user sudah login.
+    text = text.replace("{akun}", "" if is_web() else AKUN_TELEGRAM)
     await update.message.reply_text(text, parse_mode="Markdown")
 

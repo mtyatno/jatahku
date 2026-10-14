@@ -196,6 +196,16 @@ html[data-theme*="-dark"] .border-red-200 { border-color: #7f1d1d !important; }
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Chat bot: titik "mengetik" + baris chip tanpa scrollbar */
+@keyframes chatDot {
+  0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+/* Gelembung pesan user: brand-600 di mode gelap terlalu terang untuk teks putih */
+html[data-theme*="-dark"] .chat-mine { background-color: var(--brand-200) !important; }
+
 /* Hide number input spinners for cleaner mobile UI */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {

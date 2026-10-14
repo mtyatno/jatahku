@@ -17,5 +17,13 @@
   "screenshots": [
     { "src": "/og-image.png", "sizes": "1200x630", "type": "image/png", "form_factor": "wide" }
   ],
-  "categories": ["finance", "utilities"]
+  "categories": ["finance", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Chat bot — catat & cek jatah",
+      "short_name": "Chat bot",
+      "url": "/transactions?chat=1",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
 }

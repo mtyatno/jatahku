@@ -1,5 +1,6 @@
 import re
 import logging
+import uuid
 from decimal import Decimal
 from datetime import date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -22,6 +23,7 @@ from app.services.visibility import masked_description
 from app.services.expense_rules import (
     FUNDS_BLOCKS, after_expense_recorded, check_expense, is_spendable,
 )
+from app.bot.channel import find_chat_user, is_web, is_web_chat_id, txn_source
 from app.bot.link_cmd import link_with_code
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.services.txn_nlp import (
@@ -220,10 +222,14 @@ def progress_bar(spent, budget, width=10):
     return "█" * filled + "░" * (width - filled)
 
 async def get_or_create_user(telegram_id, name, db):
-    result = await db.execute(select(User).where(User.telegram_id == str(telegram_id)))
-    user = result.scalar_one_or_none()
+    """User pemilik percakapan. `telegram_id` bisa juga id chat web
+    (`web:<uuid>`, lihat app/bot/channel.py): akun web tidak pernah dibuat
+    dari sini — sudah ada karena user sudah login."""
+    user = await find_chat_user(telegram_id, db)
     if user:
         return user
+    if is_web_chat_id(telegram_id):
+        raise LookupError("akun chat web tidak ditemukan")
     user = User(telegram_id=str(telegram_id), name=name)
     db.add(user)
     await db.flush()
@@ -512,10 +518,7 @@ async def handle_daily_limit_callback(update, context):
             await query.edit_message_text("⚠️ Amplop tidak ditemukan.")
             return
 
-        user_r = await db.execute(
-            select(User).where(User.telegram_id == user_id)
-        )
-        user = user_r.scalar_one_or_none()
+        user = await find_chat_user(user_id, db)
         if not user:
             await query.edit_message_text("⚠️ User tidak ditemukan.")
             return
@@ -525,7 +528,7 @@ async def handle_daily_limit_callback(update, context):
             user_id=user.id,
             amount=amount,
             description=description,
-            source=TransactionSource.telegram,
+            source=txn_source(),
             transaction_date=txn_date,
         )
         db.add(txn)
@@ -690,8 +693,7 @@ async def handle_fund_shift_callback(update, context):
     scan_id = payload.get("scan_id")
 
     async with AsyncSessionLocal() as db:
-        user_r = await db.execute(select(User).where(User.telegram_id == tg_user_id))
-        user = user_r.scalar_one_or_none()
+        user = await find_chat_user(tg_user_id, db)
         if not user:
             await query.edit_message_text("⚠️ User tidak ditemukan.")
             return
@@ -763,7 +765,7 @@ async def handle_fund_shift_callback(update, context):
 
         db.add(Transaction(
             envelope_id=target_env.id, user_id=user.id, amount=amount,
-            description=description, source=TransactionSource.telegram,
+            description=description, source=txn_source(),
             transaction_date=txn_date,
         ))
         await db.commit()
@@ -893,7 +895,8 @@ async def cmd_amplop_baru(update, context):
         await update.message.reply_text(
             "Format: /amplop_baru [nama] [budget]\n\n"
             "Contoh:\n• /amplop_baru Makan 1.5jt\n• /amplop_baru Transport 500k\n\n"
-            "Tip: amplop dan alokasi lebih mudah diatur lewat /webapp."
+            + ("Tip: amplop dan alokasi lebih mudah diatur di menu Amplop." if is_web()
+               else "Tip: amplop dan alokasi lebih mudah diatur lewat /webapp.")
         )
         return
     name = context.args[0]
@@ -906,6 +909,11 @@ async def cmd_amplop_baru(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
+        from app.services.plan_limits import check_envelope_limit
+        allowed, limit_msg = await check_envelope_limit(user, db)
+        if not allowed:
+            await update.message.reply_text(f"⚠️ {limit_msg}\n\nUpgrade di jatahku.com/upgrade")
+            return
         db.add(Envelope(household_id=hid, name=name, budget_amount=budget, is_rollover=True))
         await db.commit()
     await update.message.reply_text(f"✅ Amplop '{name}' dibuat! Budget: {format_currency(budget)}/bulan.")
@@ -916,21 +924,32 @@ TEMPLATES = {
     "tpl_keluarga": [("🍜","Makan",3000000),("🚗","Transport",1000000),("🏠","Rumah",2000000),("📱","Tagihan",800000),("🎬","Hiburan",500000),("💰","Tabungan",2000000)],
 }
 
+async def _visible_envelopes(db, hid, user_id):
+    """Amplop aktif household yang terlihat oleh user (shared + miliknya)."""
+    from sqlalchemy import or_
+    result = await db.execute(
+        select(Envelope).where(
+            Envelope.household_id == hid, Envelope.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user_id),
+        ).order_by(Envelope.created_at)
+    )
+    return result.scalars().all()
+
+
 async def cmd_template(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
-        env_result = await db.execute(
-            select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True)
-            .order_by(Envelope.created_at)
-        )
-        existing = env_result.scalars().all()
+        existing = await _visible_envelopes(db, hid, user.id)
 
     if existing:
         env_lines = "\n".join(f"{e.emoji or '📁'} {e.name}" for e in existing)
         is_linked = bool(user.telegram_id)
-        webapp_hint = "Ketik /webapp untuk buka dashboard WebApp." if is_linked else "Buka jatahku.com untuk kelola amplop."
+        if is_web():
+            webapp_hint = "Kelola amplop di menu Amplop."
+        else:
+            webapp_hint = "Ketik /webapp untuk buka dashboard WebApp." if is_linked else "Buka jatahku.com untuk kelola amplop."
         await update.message.reply_text(
             f"✅ <b>Budget kamu sudah siap!</b>\n\n"
             f"<b>{len(existing)} amplop aktif:</b>\n{env_lines}\n\n"
@@ -961,6 +980,15 @@ async def handle_template_callback(update, context):
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
+        # Tombol template bisa ditekan dua kali / setelah amplop dibuat di tempat lain.
+        if await _visible_envelopes(db, hid, user.id):
+            await query.edit_message_text("✅ Amplop sudah ada — template tidak dibuat lagi. Cek /status.")
+            return
+        from app.services.plan_limits import check_envelope_limit
+        allowed, limit_msg = await check_envelope_limit(user, db)
+        if not allowed:
+            await query.edit_message_text(f"⚠️ {limit_msg}")
+            return
         for emoji, name, budget in template:
             db.add(Envelope(household_id=hid, name=name, emoji=emoji, budget_amount=Decimal(str(budget)), is_rollover=True))
         await db.commit()
@@ -1221,7 +1249,7 @@ async def handle_message(update, context):
                     return
 
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
-                description=description, source=TransactionSource.telegram, transaction_date=date.today())
+                description=description, source=txn_source(), transaction_date=date.today())
             db.add(txn)
             await db.commit()
             streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
@@ -1319,6 +1347,10 @@ async def _handle_txn_callback(update, context):
     amount = Decimal(str(data["amount"]))
     description = data["desc"]
     envelope_id = data["envs"].get(env_idx)
+    try:
+        envelope_id = uuid.UUID(str(envelope_id)) if envelope_id else None
+    except ValueError:
+        envelope_id = None
     # Dari scan struk: tanggal struk + scan_id untuk feedback belajar (opsional).
     txn_date = date.today()
     if data.get("date"):
@@ -1371,7 +1403,7 @@ async def _handle_txn_callback(update, context):
                 return
 
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
-            description=description, source=TransactionSource.telegram, transaction_date=txn_date)
+            description=description, source=txn_source(), transaction_date=txn_date)
         db.add(txn)
         await db.commit()
         streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
@@ -1444,8 +1476,21 @@ async def handle_cooling_callback(update, context):
         await query.edit_message_text("Error: data tidak valid.")
         return
     action = parts[1]  # confirm or cancel
-    pending_id = parts[2]
+    try:
+        pending_id = uuid.UUID(parts[2])
+    except ValueError:
+        await query.edit_message_text("Error: data tidak valid.")
+        return
     async with AsyncSessionLocal() as db:
+        # Hanya transaksi pending milik user sendiri.
+        tg_user = query.from_user
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        owned = await db.execute(select(PendingTransaction.id).where(
+            PendingTransaction.id == pending_id, PendingTransaction.user_id == user.id,
+        ))
+        if owned.scalar_one_or_none() is None:
+            await query.edit_message_text("❌ Transaksi pending tidak ditemukan")
+            return
         if action == "confirm":
             result = await confirm_pending(pending_id, db)
             if "error" in result:
@@ -1528,7 +1573,7 @@ async def handle_addsub_callback(update, context):
         from app.models.models import Transaction as TxnModel, TransactionSource
         txn = TxnModel(
             envelope_id=env_id, user_id=user.id, amount=amount,
-            description=f"🔄 {desc}", source=TransactionSource.telegram,
+            description=f"🔄 {desc}", source=txn_source(),
             transaction_date=date.today(),
         )
         db.add(txn)
@@ -1592,62 +1637,87 @@ async def post_init(application):
     ])
 
 
-def create_bot_app():
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+def bot_commands() -> dict:
+    """Perintah /nama → handler. Satu daftar untuk Telegram dan chat webapp
+    (app/bot/web_adapter.py), supaya keduanya selalu punya perintah yang sama."""
     from app.bot.help_cmd import cmd_help
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("amplop", cmd_amplop))
-    app.add_handler(CommandHandler("amplop_baru", cmd_amplop_baru))
-    app.add_handler(CommandHandler("template", cmd_template))
-    app.add_handler(CommandHandler("batal", cmd_batal))
-    from app.bot.link_cmd import cmd_link, cmd_unlink, handle_merge_callback, handle_unlink_callback
-    app.add_handler(CommandHandler("link", cmd_link))
-    app.add_handler(CommandHandler("unlink", cmd_unlink))
-    app.add_handler(CommandHandler("pending", cmd_pending))
-    from app.bot.behavior_cmd import cmd_lock, cmd_setlimit, cmd_setcooling, cmd_controls, handle_lock_callback
-    app.add_handler(CommandHandler("lock", cmd_lock))
-    app.add_handler(CommandHandler("setlimit", cmd_setlimit))
-    app.add_handler(CommandHandler("setcooling", cmd_setcooling))
-    app.add_handler(CommandHandler("controls", cmd_controls))
-    app.add_handler(CallbackQueryHandler(handle_lock_callback, pattern=r"^lock_"))
-    from app.bot.recurring_cmd import cmd_langganan, cmd_tambah_langganan, cmd_hapus_langganan, handle_delrec_callback, handle_recpay_callback, handle_recskip_callback, handle_recstop_callback
-    app.add_handler(CommandHandler("langganan", cmd_langganan))
-    app.add_handler(CommandHandler("tambah_langganan", cmd_tambah_langganan))
-    app.add_handler(CommandHandler("hapus_langganan", cmd_hapus_langganan))
-    app.add_handler(CallbackQueryHandler(handle_delrec_callback, pattern=r"^delrec_"))
-    app.add_handler(CallbackQueryHandler(handle_recpay_callback, pattern=r"^recpay_"))
-    app.add_handler(CallbackQueryHandler(handle_recskip_callback, pattern=r"^recskip_"))
-    app.add_handler(CallbackQueryHandler(handle_recstop_callback, pattern=r"^recstop_"))
-    app.add_handler(CallbackQueryHandler(handle_addsub_callback, pattern=r"^addsub_"))
-    app.add_handler(CallbackQueryHandler(handle_merge_callback, pattern=r"^merge_"))
-    app.add_handler(CallbackQueryHandler(handle_unlink_callback, pattern=r"^unlink_"))
-    app.add_handler(CallbackQueryHandler(handle_cooling_callback, pattern=r"^cool_"))
-    app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^checkin_"))
+    from app.bot.link_cmd import cmd_link, cmd_unlink
+    from app.bot.behavior_cmd import cmd_lock, cmd_setlimit, cmd_setcooling, cmd_controls
+    from app.bot.recurring_cmd import cmd_langganan, cmd_tambah_langganan, cmd_hapus_langganan
     from app.bot.household_cmd import cmd_invite, cmd_join
-    app.add_handler(CommandHandler("invite", cmd_invite))
-    app.add_handler(CommandHandler("join", cmd_join))
     from app.bot.tglogin_cmd import cmd_webapp
-    app.add_handler(CommandHandler("webapp", cmd_webapp))
-    app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
-    app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
+    return {
+        "start": cmd_start,
+        "help": cmd_help,
+        "status": cmd_status,
+        "amplop": cmd_amplop,
+        "amplop_baru": cmd_amplop_baru,
+        "template": cmd_template,
+        "batal": cmd_batal,
+        "link": cmd_link,
+        "unlink": cmd_unlink,
+        "pending": cmd_pending,
+        "lock": cmd_lock,
+        "setlimit": cmd_setlimit,
+        "setcooling": cmd_setcooling,
+        "controls": cmd_controls,
+        "langganan": cmd_langganan,
+        "tambah_langganan": cmd_tambah_langganan,
+        "hapus_langganan": cmd_hapus_langganan,
+        "invite": cmd_invite,
+        "join": cmd_join,
+        "webapp": cmd_webapp,
+    }
+
+
+async def handle_intent_learn(update, context):
+    from app.bot.intent_learning import handle_intent_learn_callback
+    await handle_intent_learn_callback(update.callback_query, context, settings)
+
+
+def bot_callbacks() -> list:
+    """(pola callback_data, handler) berurutan — yang pertama cocok dipakai.
+    Satu daftar untuk Telegram dan chat webapp."""
+    from app.bot.link_cmd import handle_merge_callback, handle_unlink_callback
+    from app.bot.behavior_cmd import handle_lock_callback
+    from app.bot.recurring_cmd import (
+        handle_delrec_callback, handle_recpay_callback, handle_recskip_callback,
+        handle_recstop_callback,
+    )
     from app.bot.batch_cmd import (
         handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
     )
-    app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
-    app.add_handler(CallbackQueryHandler(handle_batch_shift_callback, pattern=r"^bshift_"))
-    app.add_handler(CallbackQueryHandler(handle_batch_limit_callback, pattern=r"^blimit_"))
     from app.bot.receipt_cmd import handle_struk_callback
-    app.add_handler(CallbackQueryHandler(handle_struk_callback, pattern=r"^struk_"))
-    async def _handle_intent_learn(update, context):
-        from app.bot.intent_learning import handle_intent_learn_callback
-        await handle_intent_learn_callback(update.callback_query, context, settings)
-    app.add_handler(CallbackQueryHandler(_handle_intent_learn, pattern=r"^intentlearn:"))
-    app.add_handler(CallbackQueryHandler(handle_daily_limit_callback, pattern=r"^dlimit:"))
-    app.add_handler(CallbackQueryHandler(handle_fund_shift_callback, pattern=r"^fshift:"))
+    return [
+        (r"^lock_", handle_lock_callback),
+        (r"^delrec_", handle_delrec_callback),
+        (r"^recpay_", handle_recpay_callback),
+        (r"^recskip_", handle_recskip_callback),
+        (r"^recstop_", handle_recstop_callback),
+        (r"^addsub_", handle_addsub_callback),
+        (r"^merge_", handle_merge_callback),
+        (r"^unlink_", handle_unlink_callback),
+        (r"^cool_", handle_cooling_callback),
+        (r"^checkin_", handle_checkin_callback),
+        (r"^tpl_", handle_template_callback),
+        (r"^t_", handle_txn_callback),
+        (r"^batch_", handle_batch_callback),
+        (r"^bshift_", handle_batch_shift_callback),
+        (r"^blimit_", handle_batch_limit_callback),
+        (r"^struk_", handle_struk_callback),
+        (r"^intentlearn:", handle_intent_learn),
+        (r"^dlimit:", handle_daily_limit_callback),
+        (r"^fshift:", handle_fund_shift_callback),
+    ]
+
+
+def create_bot_app():
+    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
+    for name, handler in bot_commands().items():
+        app.add_handler(CommandHandler(name, handler))
+    for pattern, handler in bot_callbacks():
+        app.add_handler(CallbackQueryHandler(handler, pattern=pattern))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    from telegram.ext import MessageHandler as MsgHandler
-    app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
 
     return app

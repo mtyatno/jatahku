@@ -1,4 +1,5 @@
 import { saveCache, loadCache } from './localCache';
+import { clearAllHistory } from './chatHistory';
 
 const API_URL = import.meta.env.PROD
   ? 'https://api.jatahku.com'
@@ -73,6 +74,7 @@ class ApiClient {
   logout() {
     this.setToken(null);
     this.setRefreshToken(null);
+    clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
     window.location.href = '/login';
   }
 
@@ -614,6 +616,30 @@ class ApiClient {
       return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
     } catch {
       return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  // Chat bot di webapp — handler bot Telegram yang sama (app/bot/web_adapter.py).
+  // clientId = id pesan di riwayat lokal: kirim ulang dengan id sama tidak dicatat dua kali.
+  async chatSend(text, clientId) {
+    return this._chat('/bot/chat/message', { text, client_id: clientId });
+  }
+
+  async chatAction(messageId, data) {
+    return this._chat('/bot/chat/action', { message_id: messageId, data });
+  }
+
+  async _chat(path, body) {
+    try {
+      const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
+      if (res.ok) {
+        const d = await res.json().catch(() => ({}));
+        return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
+      }
+      if (res.status === 429) return { ok: false, error: 'Terlalu banyak pesan. Tunggu sebentar, ya.' };
+      return { ok: false, error: 'Bot sedang tidak bisa dihubungi. Coba lagi.' };
+    } catch {
+      return { ok: false, error: 'Koneksi gagal. Coba lagi.' };
     }
   }
 
