@@ -33,10 +33,6 @@ MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_DESCRIPTION = 500
 
 
-def _fit_description(v: str) -> str:
-    return v[:MAX_DESCRIPTION]
-
-
 class TransactionCreate(BaseModel):
     envelope_id: UUID
     amount: Decimal
@@ -49,7 +45,10 @@ class TransactionCreate(BaseModel):
     # Kunci idempotensi dari klien: kirim ulang tidak mencatat dua kali.
     client_ref: str | None = Field(default=None, max_length=64)
 
-    _fit = field_validator("description")(_fit_description)
+    @field_validator("description")
+    @classmethod
+    def fit_description(cls, v: str) -> str:
+        return v[:MAX_DESCRIPTION]
 
 
 class TransactionResponse(BaseModel):
@@ -94,7 +93,10 @@ class BatchTransactionItem(BaseModel):
     raise_daily_limit: bool = False
     client_ref: str | None = Field(default=None, max_length=64)
 
-    _fit = field_validator("description")(_fit_description)
+    @field_validator("description")
+    @classmethod
+    def fit_description(cls, v: str) -> str:
+        return v[:MAX_DESCRIPTION]
 
 
 def _rp(x) -> str:
