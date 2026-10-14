@@ -277,5 +277,102 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count(UserStreak), 1)
 
 
+    # ── Notifikasi goal: hanya saat saldo melewati target ───────────────────
+
+    async def add_goal(self, env_name, target):
+        from app.models.models import Goal
+        async with self.Session() as db:
+            db.add(Goal(envelope_id=self.env[env_name].id, name="Dana_Darurat", target_amount=D(target)))
+            await db.commit()
+
+    async def goal_notifs(self):
+        from app.models.models import Notification
+        return await self.count(Notification, Notification.title == "🎯 Goal tercapai!")
+
+    async def income(self, env_name, amount):
+        from app.api.routes.incomes import AllocationItem, IncomeCreate, create_income
+        async with self.Session() as db:
+            req = IncomeCreate(amount=D(amount), source="Bonus",
+                               allocations=[AllocationItem(envelope_id=self.env[env_name].id, amount=D(amount))])
+            await create_income(req, await self.web_user(db), db)
+
+    async def test_goal_notified_once_when_income_crosses_target(self):
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        await self.add_goal("Transport", 250000)  # saldo awal 200rb
+        await self.income("Transport", 30000)     # 230rb: belum
+        self.assertEqual(await self.goal_notifs(), 0)
+        await self.income("Transport", 30000)     # 260rb: melewati target
+        self.assertEqual(await self.goal_notifs(), 1)
+        await self.income("Transport", 30000)     # 290rb: sudah tercapai, tidak berulang
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:      # pengeluaran tidak pernah memicu notifikasi goal
+                await create_transaction(TransactionCreate(envelope_id=self.env["Transport"].id,
+                                                           amount=D("1000"), description="ojek"),
+                                         await self.web_user(db), db)
+        self.assertEqual(await self.goal_notifs(), 1)
+
+    async def test_goal_notified_via_web_transfer_and_bot_topup(self):
+        from app.api.routes.envelopes import transfer_between_envelopes
+        await self.add_goal("Makan", 50000)  # saldo awal 10rb
+        async with self.Session() as db:
+            await transfer_between_envelopes(self.env["Transport"].id, self.env["Makan"].id, D("50000"),
+                                             await self.web_user(db), db)
+        self.assertEqual(await self.goal_notifs(), 1)
+
+        await self.add_goal("Jajan", 1)  # saldo 0
+
+        async def topup_kopi():
+            async def offer():
+                async with self.Session() as db:
+                    send = AsyncMock()
+                    await handlers._send_fund_shift_offer(send, str(TG_ID), await self.web_user(db), self.hid,
+                                                          self.env["Jajan"], D("5000"), "kopi", db)
+                    return send.call_args
+            call = await self.go(offer)
+            btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                       if r[0].callback_data.endswith(":t"))
+            return await self.tap(btn)
+
+        # Top-up langsung habis dipakai transaksinya → saldo tak pernah mencapai target
+        call = await topup_kopi()
+        self.assertIn("Top-up pemasukan Rp5rb", call.args[0])
+        self.assertEqual(await self.goal_notifs(), 1)
+
+        # Transaksi tertahan cooling → dana top-up tetap di amplop → target terlewati
+        async with self.Session() as db:
+            jajan = await db.get(Envelope, self.env["Jajan"].id)
+            jajan.cooling_threshold = D("1000")
+            await db.commit()
+        call = await topup_kopi()
+        self.assertIn("Cooling period aktif", call.args[0])
+        self.assertEqual(await self.goal_notifs(), 2)
+
+    async def test_telegram_text_escapes_markdown(self):
+        await self.add_goal("Transport", 250000)
+        sent = []
+
+        class FakeBot:
+            def __init__(self, token):
+                pass
+
+            async def send_message(self, chat_id, text, parse_mode):
+                sent.append(text)
+        with patch("app.services.notification_service.Bot", FakeBot), \
+             patch("app.services.notification_service.settings",
+                   SimpleNamespace(TELEGRAM_BOT_TOKEN="x")):
+            await self.income("Transport", 60000)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Dana\\_Darurat", sent[0])  # nama goal ber-underscore tidak merusak Markdown
+
+
+class GoalCrossingTests(unittest.TestCase):
+    def test_crossed(self):
+        from app.services.goal_notify import crossed
+        self.assertTrue(crossed(D("99"), D("100"), D("100")))
+        self.assertFalse(crossed(D("100"), D("150"), D("100")))   # sudah tercapai sebelumnya
+        self.assertFalse(crossed(D("50"), D("99"), D("100")))
+        self.assertFalse(crossed(D("150"), D("90"), D("100")))    # turun (pengeluaran)
+
+
 if __name__ == "__main__":
     unittest.main()

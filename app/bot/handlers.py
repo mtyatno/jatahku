@@ -486,6 +486,13 @@ def _esc(text) -> str:
     return html.escape(str(text or ""), quote=False)
 
 
+async def _notify_goals(db, user, goals_before):
+    """Notifikasi goal yang baru tercapai karena dana tambahan (app/services/goal_notify.py)."""
+    if goals_before:
+        from app.services.goal_notify import notify_goals_reached
+        await notify_goals_reached(db, user, goals_before)
+
+
 def _funding_line(kind, amount, target_env, source_env=None) -> str:
     """Satu baris ringkas tentang dana yang ditambahkan ke amplop tujuan."""
     dst = f"{target_env.emoji or '📁'} {_esc(target_env.name)}"
@@ -620,7 +627,10 @@ async def handle_fund_shift_callback(update, context):
 
         funded = compute_shortfall(target["remaining"], amount)
         savepoint = None
+        goals_before = {}
         if funded > 0:
+            from app.services.goal_notify import goal_snapshot
+            goals_before = await goal_snapshot(db, hid)
             if not topup:
                 error = transfer_error(source, target, funded)
                 if error:
@@ -649,6 +659,7 @@ async def handle_fund_shift_callback(update, context):
                 pending = await create_pending_transaction(
                     target_env.id, user.id, amount, description,
                     TransactionSource.telegram, cooling_hours=24, db=db)
+                await _notify_goals(db, user, goals_before)
                 confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
                 await query.edit_message_text(
                     (funding_line + "\n\n" if funding_line else "")
@@ -664,6 +675,7 @@ async def handle_fund_shift_callback(update, context):
                 # Dana tambahan tetap disimpan: alur konfirmasi limit harian mencatat
                 # transaksi tanpa cek dana ulang, jadi dananya harus sudah ada.
                 await db.commit()
+                await _notify_goals(db, user, goals_before)
                 d = check.details
                 d["description"] = description
                 prefix = funding_line + "\n\n" if funding_line else ""
@@ -685,6 +697,7 @@ async def handle_fund_shift_callback(update, context):
             transaction_date=date.today(),
         ))
         await db.commit()
+        await _notify_goals(db, user, goals_before)
         streak_line = _streak_text(await after_expense_recorded(db, user, target_env.id, description))
 
         env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)

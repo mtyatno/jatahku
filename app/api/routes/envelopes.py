@@ -373,6 +373,9 @@ async def delete_envelope(
     row = next((r for r in rows if r["id"] == envelope.id), None)
     remaining = row["remaining"] if row else Decimal("0")
 
+    from app.services.goal_notify import goal_snapshot, notify_goals_reached
+    goals_before = await goal_snapshot(db, hid) if remaining > 0 else {}
+
     if remaining != 0:
         from app.models.models import Income
         label = "Refund" if remaining > 0 else "Tutup minus"
@@ -391,6 +394,7 @@ async def delete_envelope(
     # Soft delete
     envelope.is_active = False
     await db.commit()
+    await notify_goals_reached(db, user, goals_before)  # sisa masuk Tabungan bisa menuntaskan goal
 
 
 @router.post("/transfer")
@@ -415,10 +419,13 @@ async def transfer_between_envelopes(
     if error:
         raise HTTPException(status_code=404 if error == "Amplop tidak ditemukan" else 400, detail=error)
 
+    from app.services.goal_notify import goal_snapshot, notify_goals_reached
+    goals_before = await goal_snapshot(db, hid)
     from_envelope = (await db.execute(select(Envelope).where(Envelope.id == from_id))).scalar_one()
     to_envelope = (await db.execute(select(Envelope).where(Envelope.id == to_id))).scalar_one()
     record_transfer(db, hid, user.id, from_envelope, to_envelope, amount)
     await db.commit()
+    await notify_goals_reached(db, user, goals_before)
     return {
         "status": "transferred",
         "from": from_envelope.name,

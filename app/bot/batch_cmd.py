@@ -38,6 +38,7 @@ from app.bot.handlers import (
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.models.models import Transaction, TransactionSource, User
 from app.services.expense_rules import FUNDS_BLOCKS, after_expense_recorded, check_expense
+from app.services.goal_notify import goal_snapshot, notify_goals_reached
 from app.services.fund_shift import (
     compute_shortfall, pick_sources, record_topup, record_transfer, transfer_error,
 )
@@ -96,7 +97,9 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
                 else f" · 🔁 +{format_currency(funded)} dari {_env_label(source_env)}")
 
     savepoint = None
+    goals_before = {}
     if funded > 0:
+        goals_before = await goal_snapshot(db, hid)
         # Savepoint, bukan db.rollback(): rollback penuh meng-expire semua objek
         # sesi (user, amplop) dan aksesnya sesudah itu gagal di async
         # (MissingGreenlet) — padahal item antrean berikutnya masih memakainya.
@@ -117,6 +120,7 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
             transaction_date=date.today(),
         ))
         await db.commit()
+        await notify_goals_reached(db, user, goals_before)
         streak = _streak_text(await after_expense_recorded(db, user, target_env.id, desc)).strip()
         if streak:
             data["streak"] = streak
@@ -129,6 +133,7 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
         await create_pending_transaction(
             target_env.id, user.id, amount, desc,
             TransactionSource.telegram, cooling_hours=24, db=db)
+        await notify_goals_reached(db, user, goals_before)
         data.setdefault("notes", []).append(
             f"⏳ {_item_label(item)}: masuk cooling period 24 jam (/pending){info}")
     else:
