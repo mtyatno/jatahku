@@ -103,7 +103,7 @@ export default function Upgrade() {
               <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-bold">⭐ LIFETIME</span>
             </div>
             <div className="space-y-2 text-sm">
-              {['Unlimited amplop', 'Unlimited transaksi/bulan', 'Unlimited langganan', 'Cooling period & envelope lock', 'Daily spending limit', 'Export CSV & laporan', 'Analytics & prediksi', 'Household bersama'].map((f, i) => (
+              {['Unlimited amplop', 'Unlimited transaksi/bulan', 'Unlimited langganan', 'Export CSV & laporan', 'Analytics & prediksi', 'Household bersama'].map((f, i) => (
                 <div key={i} className="flex items-center gap-2"><span className="text-brand-600 font-bold">✓</span><span>{f}</span></div>
               ))}
             </div>

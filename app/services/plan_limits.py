@@ -90,7 +90,8 @@ async def check_recurring_limit(user: User, db: AsyncSession) -> tuple[bool, str
 
 def is_pro_feature(feature: str) -> bool:
     """Check if a feature is Pro-only."""
-    pro_features = ["behavior_controls", "export", "analytics"]
+    # Behavior controls (kunci, limit harian, cooling/Pikir-Pikir) untuk semua paket.
+    pro_features = ["export", "analytics"]
     return feature in pro_features
 
 

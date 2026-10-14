@@ -7,8 +7,8 @@ supaya web dan Telegram selalu memutuskan hal yang sama.
 Urutan cek (check_expense):
 1. Amplop tabungan / sinking fund tidak bisa untuk pengeluaran langsung.
 2. Batas transaksi per bulan sesuai paket (Basic: 50, Pro: tanpa batas).
-3. check_behavior: kunci amplop, dana (belum didanai / tidak cukup), cooling
-   period, limit harian.
+3. check_behavior: kunci amplop, dana (belum didanai / tidak cukup), limit
+   harian. Cooling period tidak lagi menahan pencatatan (Pikir-Pikir Fase 0).
 """
 from decimal import Decimal
 

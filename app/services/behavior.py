@@ -51,7 +51,7 @@ class BehaviorCheckResult:
     def __init__(self):
         self.allowed = True
         self.reason = None
-        self.check_type = None  # "locked", "daily_limit", "cooling"
+        self.check_type = None  # "locked", "not_funded", "insufficient", "daily_limit"
         self.details = {}
 
     @staticmethod
@@ -74,7 +74,13 @@ async def check_behavior(
     amount: Decimal,
     db: AsyncSession,
 ) -> BehaviorCheckResult:
-    """Run all behavior checks before recording a transaction."""
+    """Run all behavior checks before recording a transaction.
+
+    Cooling period TIDAK lagi menahan pencatatan (Pikir-Pikir Fase 0, Okt 2026):
+    user Jatahku mencatat SETELAH membayar, jadi menahan catatan hanya membuat
+    data hilang. cooling_threshold tetap disimpan untuk fitur refleksi
+    "Sepadan?" (lihat dokumen desain Pikir-Pikir).
+    """
 
     result = await db.execute(select(Envelope).where(Envelope.id == envelope_id))
     envelope = result.scalar_one_or_none()
@@ -87,7 +93,6 @@ async def check_behavior(
     user = user_result.scalar_one_or_none()
 
     effective_is_locked = envelope.is_locked or (user.default_is_locked if user else False)
-    effective_cooling = envelope.cooling_threshold if envelope.cooling_threshold is not None else (user.default_cooling_threshold if user else None)
     effective_daily_limit = envelope.daily_limit if envelope.daily_limit is not None else (user.default_daily_limit if user else None)
 
     # Check 1: Envelope lock
@@ -159,18 +164,7 @@ async def check_behavior(
             requested=amount,
         )
 
-    # Check 3: Cooling period (check BEFORE daily limit — big purchases need cooling regardless)
-    if effective_cooling is not None and amount >= effective_cooling:
-        return BehaviorCheckResult.blocked(
-            "cooling",
-            f"Pembelian >= Rp{int(effective_cooling):,} perlu cooling period.",
-            envelope_name=envelope.name,
-            threshold=effective_cooling,
-            amount=amount,
-            cooling_hours=24,
-        )
-
-    # Check 4: Daily limit (skipped if user has a temp bypass active for today)
+    # Check 3: Daily limit (skipped if user has a temp bypass active for today)
     if effective_daily_limit is not None:
         # Check Redis temp bypass set when user confirmed a limit override
         _bypass = False
@@ -213,7 +207,10 @@ async def create_pending_transaction(
     is_private: bool = False,
     db: AsyncSession = None,
 ) -> PendingTransaction:
-    """Create a pending transaction with cooling period."""
+    """Create a pending transaction with cooling period.
+
+    Sejak Pikir-Pikir Fase 0 tidak ada jalur pencatatan yang membuat pending
+    baru. confirm/cancel/get_user_pending tetap dipakai untuk baris lama."""
     now = datetime.now(timezone.utc)
     pending = PendingTransaction(
         envelope_id=envelope_id,

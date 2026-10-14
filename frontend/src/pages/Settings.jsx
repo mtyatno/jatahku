@@ -863,7 +863,7 @@ export default function Settings() {
           <div>
             <label className="text-sm text-gray-600">Cooling threshold (Rp)</label>
             <input className="input text-sm mt-1" type="number" placeholder="Contoh: 500000" value={cooling} onChange={e => setCooling(e.target.value)} />
-            <p className="text-xs text-gray-400 mt-1">Transaksi di atas jumlah ini harus tunggu 24 jam</p>
+            <p className="text-xs text-gray-400 mt-1">Transaksi tetap langsung tercatat. Batas ini akan dipakai fitur refleksi "Sepadan?" yang segera hadir.</p>
           </div>
           <div>
             <label className="text-sm text-gray-600">Daily limit (Rp)</label>
