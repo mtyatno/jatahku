@@ -443,7 +443,18 @@ export default function Layout() {
         <div className="fixed inset-0 z-50" onClick={() => setFabMenu(false)} />
       )}
       <div className="fixed bottom-24 md:bottom-6 inset-x-0 pointer-events-none z-50">
-        <div className="max-w-6xl mx-auto px-4 flex justify-end">
+        <div className="max-w-6xl mx-auto px-4 flex justify-end items-center gap-3">
+          {/* Mobile: chat sekali ketuk, di jangkauan jempol di samping FAB */}
+          {!fabMenu && (
+            <button
+              onClick={openChat}
+              className="md:hidden pointer-events-auto w-12 h-12 rounded-2xl bg-white border border-brand-200 text-brand-600 shadow-lg flex items-center justify-center transition-all active:scale-95"
+              title="Chat bot"
+              aria-label="Buka chat bot"
+            >
+              <Icon name="chat" size={24} weight="fill" />
+            </button>
+          )}
           <div className="pointer-events-auto relative">
             {fabMenu && (
               <div className="absolute bottom-16 right-0 flex flex-col-reverse items-end gap-3 pb-2">

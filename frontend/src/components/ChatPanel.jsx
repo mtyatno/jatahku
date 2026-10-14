@@ -6,12 +6,15 @@ import { PREFILL_COMMANDS, formatBotText, inAppPath, safeHref } from '../lib/cha
 import {
   applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage,
 } from '../lib/chatHistory';
+import { DRAG_SLOP, dragOffset, shouldDismiss } from '../lib/sheetGesture';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 
 // Chat bot Jatahku di dalam webapp: otak yang sama dengan @JatahkuBot di
 // Telegram (backend menjalankan handler bot lewat app/bot/web_adapter.py).
-// Mobile: layar penuh. Desktop: panel samping, halaman tetap terlihat.
+// Mobile: bottom sheet hampir layar penuh — ditutup dari jangkauan jempol
+// (tombol ⌄ di samping kotak ketik, tarik ke bawah, atau tombol/gestur Back
+// Android). Desktop: panel samping, halaman tetap terlihat.
 
 const QUICK = [
   { label: 'Sisa jatah', text: 'sisa' },
@@ -33,6 +36,7 @@ const EXAMPLES = [
 ];
 
 const TOAST_MS = 2800;
+const SHEET_MS = 300; // durasi animasi buka/tutup
 const isDesktop = () => typeof window !== 'undefined' && !!window.matchMedia?.('(min-width: 768px)')?.matches;
 
 function timeLabel(ts) {
@@ -128,6 +132,82 @@ export default function ChatPanel({ open, onClose }) {
   const toastTimer = useRef(null);
   const lastCount = useRef(messages.length);
   const loadedFor = useRef(uid);
+  const sheetRef = useRef(null);
+  const drag = useRef(null);       // { y, t, dy } selama header ditarik
+  const pushedRef = useRef(false); // entri riwayat browser untuk tombol Back
+
+  // Fase animasi: closed → opening → open → closing → closed.
+  const [phase, setPhase] = useState('closed');
+  useEffect(() => {
+    if (open) {
+      setPhase('opening');
+      let f2;
+      const f1 = requestAnimationFrame(() => { f2 = requestAnimationFrame(() => setPhase('open')); });
+      return () => { cancelAnimationFrame(f1); cancelAnimationFrame(f2); };
+    }
+    setPhase(p => (p === 'closed' ? 'closed' : 'closing'));
+    const t = setTimeout(() => setPhase('closed'), SHEET_MS);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  // Mobile: membuka chat menambah satu entri riwayat, jadi tombol/gestur Back
+  // menutup chat (bukan meninggalkan halaman).
+  useEffect(() => {
+    if (!open || isDesktop()) return;
+    try {
+      // Sekali saja per pembukaan (efek bisa berjalan dua kali di StrictMode).
+      if (!window.history.state?.jatahkuChat) {
+        window.history.pushState({ ...(window.history.state || {}), jatahkuChat: true }, '');
+      }
+      pushedRef.current = true;
+    } catch { /* riwayat tidak tersedia — tetap bisa ditutup lewat tombol */ }
+    const onPop = () => {
+      if (window.history.state?.jatahkuChat) return;
+      pushedRef.current = false;
+      onClose();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [open, onClose]);
+
+  const close = useCallback(() => {
+    if (pushedRef.current && window.history.state?.jatahkuChat) {
+      window.history.back(); // popstate di atas yang menutup panel
+      return;
+    }
+    pushedRef.current = false;
+    onClose();
+  }, [onClose]);
+
+  // Tarik header ke bawah untuk menutup (mobile).
+  const onDragStart = (e) => {
+    if (isDesktop() || e.button > 0) return;
+    drag.current = { y: e.clientY, t: performance.now(), dy: 0, active: false };
+  };
+  const onDragMove = (e) => {
+    const d = drag.current;
+    if (!d) return;
+    d.dy = e.clientY - d.y;
+    if (!d.active && Math.abs(d.dy) < DRAG_SLOP) return;
+    if (!d.active) {
+      d.active = true;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    const el = sheetRef.current;
+    if (el) {
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dragOffset(d.dy)}px)`;
+    }
+  };
+  const onDragEnd = () => {
+    const d = drag.current;
+    drag.current = null;
+    const el = sheetRef.current;
+    if (!d || !d.active || !el) return;
+    el.style.transition = '';
+    el.style.transform = '';
+    if (shouldDismiss(d.dy, performance.now() - d.t)) close();
+  };
 
   // Ganti akun → muat riwayat milik akun itu.
   useEffect(() => {
@@ -156,14 +236,21 @@ export default function ChatPanel({ open, onClose }) {
     lastCount.current = messages.length;
   }, [messages.length, pending, open]);
 
+  // Panel baru dirender saat fase 'opening' — baru saat itu daftar pesan ada.
+  const opening = phase === 'opening';
   useLayoutEffect(() => {
-    if (open && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [open]);
+    if (opening && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [opening]);
+
+  // Desktop: langsung siap mengetik. Mobile tidak, supaya keyboard tidak
+  // menutupi riwayat saat chat baru dibuka.
+  useEffect(() => {
+    if (phase === 'open' && isDesktop()) inputRef.current?.focus();
+  }, [phase]);
 
   useEffect(() => {
     if (!open) return;
-    if (isDesktop()) inputRef.current?.focus();
-    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     // Kunci gulir halaman di belakang panel layar penuh (mobile).
     const prev = document.body.style.overflow;
@@ -172,7 +259,7 @@ export default function ChatPanel({ open, onClose }) {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open, close]);
 
   // Tinggi kotak ketik mengikuti isi (maks ±4 baris).
   useLayoutEffect(() => {
@@ -235,8 +322,16 @@ export default function ChatPanel({ open, onClose }) {
     const path = inAppPath(href, window.location.host);
     if (path) {
       e?.preventDefault();
-      navigate(path);
-      if (!isDesktop()) onClose();
+      if (!isDesktop()) {
+        // Ganti entri riwayat milik chat, supaya Back dari halaman itu tidak
+        // kembali ke entri chat yang sudah tertutup.
+        const replace = pushedRef.current && !!window.history.state?.jatahkuChat;
+        pushedRef.current = false;
+        navigate(path, { replace });
+        onClose();
+      } else {
+        navigate(path);
+      }
     } else if (!e) {
       window.open(href, '_blank', 'noopener,noreferrer');
     }
@@ -273,19 +368,39 @@ export default function ChatPanel({ open, onClose }) {
     }
   };
 
+  if (phase === 'closed') return null;
+  const shown = phase === 'open';
+
   return (
+    <>
+      {/* Latar redup di mobile — ketuk untuk menutup */}
+      <div
+        className={`md:hidden fixed inset-0 z-[69] bg-black/40 transition-opacity duration-300 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        onClick={close}
+        aria-hidden="true"
+      />
     <div
-      className={`fixed inset-x-0 top-0 h-[100dvh] z-[70] md:left-auto md:top-14 md:bottom-0 md:h-auto md:w-[420px] md:border-l md:border-gray-100 md:shadow-2xl bg-page flex flex-col ${open ? '' : 'hidden'}`}
+      ref={sheetRef}
+      className={`fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)_+_0.75rem)] z-[70] rounded-t-3xl overflow-hidden shadow-2xl
+        md:left-auto md:top-14 md:w-[420px] md:rounded-none md:border-l md:border-gray-100
+        bg-page flex flex-col transition-transform duration-300 ease-[cubic-bezier(.32,.72,0,1)] motion-reduce:transition-none
+        ${shown ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full'}`}
       role="dialog"
       aria-modal={!isDesktop()}
       aria-label="Chat Jatahku"
     >
-      {/* Header */}
-      <div className="bg-white border-b border-gray-100 shrink-0" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      {/* Header — di mobile juga pegangan untuk ditarik ke bawah */}
+      <div
+        className="bg-white border-b border-gray-100 shrink-0 touch-none md:touch-auto select-none md:select-auto"
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+      >
+        <div className="md:hidden flex justify-center pt-2" aria-hidden="true">
+          <span className="w-10 h-1.5 rounded-full bg-gray-300" />
+        </div>
         <div className="h-14 px-3 flex items-center gap-3">
-          <button type="button" onClick={onClose} className="md:hidden w-9 h-9 -ml-1 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100" aria-label="Tutup chat">
-            <Icon name="close" size={22} weight="bold" />
-          </button>
           <div className="w-9 h-9 rounded-xl text-white flex items-center justify-center shrink-0"
             style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)' }}>
             <Icon name="chat" size={20} weight="fill" />
@@ -301,7 +416,7 @@ export default function ChatPanel({ open, onClose }) {
             title="Hapus riwayat chat" aria-label="Hapus riwayat chat">
             <Icon name="clear" size={19} />
           </button>
-          <button type="button" onClick={onClose} className="hidden md:flex w-9 h-9 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600" aria-label="Tutup chat">
+          <button type="button" onClick={close} className="hidden md:flex w-9 h-9 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600" aria-label="Tutup chat">
             <Icon name="close" size={20} weight="bold" />
           </button>
         </div>
@@ -393,6 +508,12 @@ export default function ChatPanel({ open, onClose }) {
           ))}
         </div>
         <form className="flex items-end gap-2 p-3" onSubmit={e => { e.preventDefault(); send(input); }}>
+          {/* Tutup di jangkauan jempol (mobile); desktop memakai X di header */}
+          <button type="button" onClick={close}
+            className="md:hidden w-11 h-11 shrink-0 rounded-xl bg-gray-100 text-gray-500 flex items-center justify-center active:scale-95 transition-transform"
+            aria-label="Tutup chat" title="Tutup chat">
+            <Icon name="chevron" size={22} weight="bold" />
+          </button>
           <textarea
             ref={inputRef}
             rows={1}
@@ -414,5 +535,6 @@ export default function ChatPanel({ open, onClose }) {
         </form>
       </div>
     </div>
+    </>
   );
 }
