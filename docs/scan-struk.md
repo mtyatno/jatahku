@@ -74,7 +74,11 @@ selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
   itu, atau sisanya dilewati. "Ubah rincian" hanya tersedia selama belum ada yang
   tercatat.
 - Kata kunci → amplop dipelajari dari keterangan tiap barang (hook yang sama dengan
-  transaksi biasa), jadi "sabun" yang pernah ke Kebutuhan Rumah ikut tercatat.
+  transaksi biasa). Setelah scan, nama barang dikirim ke `POST /transactions/suggest-envelopes`;
+  saran yang yakin mengisi amplop barang yang belum dipilih user (ditandai
+  "disarankan"), jadi "SABUN MANDI" yang pernah dicatat ke Kebutuhan Rumah otomatis
+  terpilih untuk "SABUN CAIR" di struk berikutnya. Pilihan manual tidak pernah ditimpa,
+  dan saran yang datang setelah struk disimpan diabaikan.
 - Paket Basic (50 transaksi/bulan): tiap barang dihitung satu transaksi.
 
 **Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)

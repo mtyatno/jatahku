@@ -48,6 +48,7 @@ export default function ReceiptCard({
   const anySaved = frozen && entry.plan.some(g => g.saved);
   const rows = useMemo(() => summarizePlan(plan), [plan]);
   const perItem = plan.some(g => g.itemId != null);
+  const suggestedCount = items.filter(it => it.suggested && !it.removed).length;
   const spread = adjustments.length > 0 || rec.status === 'selisih';
   const locked = frozen || saving;
   const [open, setOpen] = useState(() => rec.status !== 'cocok');
@@ -212,17 +213,20 @@ export default function ReceiptCard({
                       {it.suggestion === 0 ? 'Hapus barang ini' : `Pakai ${rupiah(it.suggestion)}`}
                     </button>
                   )}
-                  <select
-                    className="ml-auto text-[11px] bg-transparent border border-gray-200 rounded px-1 py-0.5 max-w-[55%]"
-                    value={it.envelopeId}
-                    onChange={e => patchItem(it.id, { envelopeId: e.target.value })}
-                    aria-label={`Amplop ${it.name}`}
-                  >
-                    <option value="">Ikut amplop struk</option>
-                    {expenseEnvs.map(env => (
-                      <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
-                    ))}
-                  </select>
+                  <span className="ml-auto flex items-center gap-1 min-w-0 max-w-[60%]">
+                    {it.suggested && <span className="text-brand-600 shrink-0">disarankan</span>}
+                    <select
+                      className="min-w-0 text-[11px] bg-transparent border border-gray-200 rounded px-1 py-0.5"
+                      value={it.envelopeId}
+                      onChange={e => patchItem(it.id, { envelopeId: e.target.value, suggested: false, envTouched: true })}
+                      aria-label={`Amplop ${it.name}`}
+                    >
+                      <option value="">Ikut amplop struk</option>
+                      {expenseEnvs.map(env => (
+                        <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
+                      ))}
+                    </select>
+                  </span>
                 </div>
               </li>
             )))}
@@ -244,6 +248,11 @@ export default function ReceiptCard({
               ? `Dicatat ${plan.length} transaksi, 1 per barang${spread ? ' (diskon/pajak/selisih dibagi proporsional)' : ''}:`
               : 'Disimpan ke:'}
           </div>
+          {suggestedCount > 0 && !frozen && (
+            <div className="text-brand-600">
+              Amplop {suggestedCount} barang disarankan dari catatanmu sebelumnya — cek di daftar barang.
+            </div>
+          )}
           {rows.map(row => {
             const firstFailed = row.failed[0];
             const canFix = frozen && !!firstFailed && !entry.uncertain;

@@ -7,7 +7,7 @@ import VoiceInput from './VoiceInput';
 import ReceiptInput from './ReceiptInput';
 import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
-import { buildPlan } from '../lib/receiptSplit';
+import { buildPlan, applyItemSuggestions } from '../lib/receiptSplit';
 import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
@@ -408,11 +408,31 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setItems(prev => prev.filter(i => i.key !== key));
   };
 
+  // Saran amplop per barang dari kata kunci yang sudah dipelajari (mis. "sabun"
+  // pernah dicatat ke Kebutuhan Rumah). Hanya mengisi barang yang amplopnya belum
+  // dipilih user, dan tidak menyentuh struk yang sedang/sudah disimpan.
+  const suggestReceiptItems = useCallback((entry) => {
+    const targets = (entry.receiptItems || []).filter(it => !it.removed && String(it.name || '').trim().length >= 3);
+    if (!navigator.onLine || targets.length === 0) return;
+    api.batchSuggestEnvelopes(targets.map(it => it.name)).then(res => {
+      if (!res || !res.results) return;
+      const byItem = {};
+      res.results.forEach(r => {
+        const t = targets[r.index];
+        if (t && r.confident && r.envelope_id) byItem[t.id] = r.envelope_id;
+      });
+      if (Object.keys(byItem).length === 0 || savingRef.current) return;
+      setItems(prev => prev.map(i => (i.key === entry.key && !i.plan && !i.uncertain
+        ? { ...i, receiptItems: applyItemSuggestions(i.receiptItems, byItem) } : i)));
+    });
+  }, []);
+
   const handleReceiptResult = (result) => {
     const item = receiptToItem(result, nextKey());
     setItems(prev => [item, ...prev]);
     setResultMsg(scanMessage(result));
     applySuggestions([item]);
+    suggestReceiptItems(item);
   };
 
   const handleVoiceTranscript = (text) => {

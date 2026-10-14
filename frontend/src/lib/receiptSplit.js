@@ -122,6 +122,17 @@ export function summarizePlan(plan) {
   });
 }
 
+// Saran amplop per barang ({ itemId: envelopeId }, dari kata kunci yang sudah
+// dipelajari) → hanya untuk barang yang amplopnya belum dipilih user. Ditandai
+// `suggested` supaya kelihatan sebagai saran.
+export function applyItemSuggestions(items, byItemId) {
+  return (items || []).map(it => {
+    const env = byItemId?.[it.id];
+    if (!env || it.envelopeId || it.envTouched || it.removed) return it;
+    return { ...it, envelopeId: env, suggested: true };
+  });
+}
+
 // Hasil API → barang yang bisa diedit di kartu struk.
 export function toReceiptItems(apiItems) {
   return (apiItems || []).map((it, idx) => ({
