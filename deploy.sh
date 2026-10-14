@@ -20,6 +20,29 @@ sudo -u jatahku git pull origin main
 sudo chown -R jatahku:jatahku /opt/jatahku/app/
 sudo systemctl restart jatahku
 
+# Pastikan proses API yang melayani benar-benar menjalankan commit yang baru
+# di-pull (/health melaporkan commit-nya, lihat app/core/version.py). Kalau
+# tidak, hentikan deploy sebelum frontend baru dipasang — frontend & backend
+# tetap di versi yang sama — dan tampilkan log service untuk diagnosis.
+EXPECTED=$(sudo -u jatahku git -C /opt/jatahku/app rev-parse HEAD)
+RUNNING=""
+for i in $(seq 1 30); do
+    RUNNING=$(curl -s --max-time 3 http://127.0.0.1:8000/health 2>/dev/null \
+        | python3 -c "import sys,json;print(json.load(sys.stdin).get('commit',''))" 2>/dev/null || true)
+    if [ "$RUNNING" = "$EXPECTED" ]; then
+        break
+    fi
+    sleep 2
+done
+if [ "$RUNNING" != "$EXPECTED" ]; then
+    echo "❌ API menjalankan '${RUNNING:-tidak menjawab}', seharusnya $EXPECTED"
+    sudo systemctl status jatahku --no-pager -n 0 || true
+    sudo journalctl -u jatahku -n 40 --no-pager || true
+    sudo ss -ltnp 2>/dev/null | grep ':8000' || true
+    exit 1
+fi
+echo "✅ API menjalankan ${EXPECTED:0:7}"
+
 # Frontend
 if [ -d "frontend" ]; then
     cd /opt/jatahku/app/frontend

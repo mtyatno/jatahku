@@ -47,6 +47,7 @@
 - Frontend builds to `/home/jatahku/web/jatahku.com/public_html/`
 - Nginx: landing.html at /, app.html for React SPA routes
 - Backend: systemd `jatahku.service` → uvicorn port 8000
+- Verifikasi: `api.jatahku.com/health` → `commit` yang berjalan; `jatahku.com/version.json` → commit build web (dicek otomatis oleh deploy.sh & workflow)
 
 ## Current Stats
 - 29 users, 3 TG linked, Rp88.8jt managed

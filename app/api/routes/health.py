@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.core.database import get_db
 from app.core.config import get_settings
+from app.core.version import COMMIT, STARTED_AT
 import redis.asyncio as aioredis
 
 router = APIRouter(tags=["health"])
@@ -21,7 +24,10 @@ async def root():
 
 
 @router.get("/health")
-async def health_check(db: AsyncSession = Depends(get_db)):
+async def health_check(response: Response, db: AsyncSession = Depends(get_db)):
+    # Jangan pernah di-cache (proxy/CDN/alat fetch): deploy membaca `commit`
+    # dari sini untuk memastikan proses yang melayani adalah kode terbaru.
+    response.headers["Cache-Control"] = "no-store"
     checks = {"api": "ok", "database": "error", "redis": "error"}
 
     # Check PostgreSQL
@@ -43,7 +49,14 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         checks["redis"] = str(e)
 
     status = "healthy" if all(v == "ok" for v in checks.values()) else "degraded"
-    return {"status": status, "checks": checks}
+    return {
+        "status": status,
+        "checks": checks,
+        # Kode yang dimuat proses ini (lihat app/core/version.py)
+        "commit": COMMIT,
+        "started_at": STARTED_AT.isoformat(),
+        "uptime_s": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
+    }
 
 
 @router.get("/api-stats")
