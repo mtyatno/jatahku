@@ -440,6 +440,214 @@ async def handle_daily_limit_callback(update, context):
     )
 
 
+# ── Geser dana saat amplop kurang dana ────────────────────────────────────────
+# Padanan FundEnvelopeModal di web: pengeluaran yang terblokir "not_funded" /
+# "insufficient" ditawari menggeser kekurangannya dari amplop lain, lalu
+# transaksinya langsung dicatat.
+
+FUND_SHIFT_TTL = 600  # detik
+
+
+def _esc(text) -> str:
+    import html
+    return html.escape(str(text or ""), quote=False)
+
+
+async def _send_fund_shift_offer(send_fn, tg_user_id, user, hid, envelope, amount, description, db):
+    """Tampilkan kekurangan dana + tombol amplop sumber yang bisa menutupinya."""
+    import secrets, json
+    import redis.asyncio as aioredis
+    from app.services.fund_shift import compute_shortfall, pick_sources
+
+    payday_day = getattr(user, "payday_day", 1) or 1
+    env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+    target = next((e for e in env_data if e["envelope"].id == envelope.id), None)
+    target_remaining = target["remaining"] if target else Decimal("0")
+    shortfall = compute_shortfall(target_remaining, amount)
+    sources = pick_sources(env_data, envelope.id, shortfall)
+
+    emoji = envelope.emoji or "📁"
+    text = (
+        f"💸 <b>Dana amplop kurang</b>\n\n"
+        f"{format_currency(amount)} — {_esc(description)}\n"
+        f"{emoji} {_esc(envelope.name)} · sisa {format_currency(max(target_remaining, Decimal('0')))}\n"
+        f"Kurang <b>{format_currency(shortfall)}</b>"
+    )
+
+    if not sources:
+        await send_fn(
+            text + "\n\nTidak ada amplop lain dengan dana bebas yang cukup untuk menutupinya. "
+            "Tambah pemasukan di jatahku.com/allocate lalu kirim ulang transaksinya.",
+            parse_mode="HTML",
+        )
+        return
+
+    token = secrets.token_hex(8)
+    r = aioredis.from_url(settings.REDIS_URL)
+    try:
+        await r.setex(f"fshift:{tg_user_id}:{token}", FUND_SHIFT_TTL, json.dumps({
+            "envelope_id": str(envelope.id),
+            "amount": str(amount),
+            "description": description,
+            "sources": [str(s["envelope"].id) for s in sources],
+        }))
+    finally:
+        await r.aclose()
+
+    keyboard = []
+    for idx, s in enumerate(sources):
+        src = s["envelope"]
+        keyboard.append([InlineKeyboardButton(
+            f"{src.emoji or '📁'} {src.name} (bebas {format_currency(s['free'])})",
+            callback_data=f"fshift:{token}:{idx}",
+        )])
+    keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data=f"fshift:{token}:x")])
+
+    await send_fn(
+        text + f"\n\nGeser <b>{format_currency(shortfall)}</b> dari amplop lain "
+        f"supaya transaksi ini tetap tercatat?",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_fund_shift_callback(update, context):
+    """fshift:{token}:{idx|x} — geser kekurangan dari amplop terpilih lalu catat."""
+    import json, uuid
+    import redis.asyncio as aioredis
+    from app.services.fund_shift import compute_shortfall, record_transfer
+
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        return
+    _, token, choice = parts
+    tg_user_id = str(query.from_user.id)
+    key = f"fshift:{tg_user_id}:{token}"
+
+    r = aioredis.from_url(settings.REDIS_URL)
+    try:
+        if choice == "x":
+            await r.delete(key)
+            await query.edit_message_text("❌ Transaksi dibatalkan. Dana tidak digeser.")
+            return
+        # getdel: ambil sekaligus hapus → tombol yang diketuk dua kali tidak menggeser dua kali
+        raw = await r.getdel(key)
+    finally:
+        await r.aclose()
+
+    if not raw:
+        await query.edit_message_text("⏰ Transaksi sudah diproses atau sesi expired. Kirim ulang.")
+        return
+
+    payload = json.loads(raw)
+    try:
+        source_id = payload["sources"][int(choice)]
+    except (ValueError, IndexError):
+        await query.edit_message_text("Error: pilihan tidak valid.")
+        return
+    target_id = payload["envelope_id"]
+    amount = Decimal(payload["amount"])
+    description = payload.get("description") or "Pengeluaran"
+
+    async with AsyncSessionLocal() as db:
+        user_r = await db.execute(select(User).where(User.telegram_id == tg_user_id))
+        user = user_r.scalar_one_or_none()
+        if not user:
+            await query.edit_message_text("⚠️ User tidak ditemukan.")
+            return
+        hid = await get_household_id(user, db)
+        payday_day = getattr(user, "payday_day", 1) or 1
+
+        # Hitung ulang dari data terbaru: saldo bisa berubah selama tombol menunggu.
+        # get_envelopes_with_spent juga membatasi ke amplop aktif yang boleh diakses user.
+        env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+        by_id = {str(e["envelope"].id): e for e in env_data}
+        target, source = by_id.get(target_id), by_id.get(source_id)
+        if not target or not source:
+            await query.edit_message_text("⚠️ Amplop sudah tidak tersedia. Kirim ulang transaksinya.")
+            return
+        target_env, source_env = target["envelope"], source["envelope"]
+
+        moved = compute_shortfall(target["remaining"], amount)
+        if moved > 0:
+            if source["free"] < moved:
+                await query.edit_message_text(
+                    f"⚠️ Dana bebas {source_env.emoji or '📁'} {source_env.name} tinggal "
+                    f"{format_currency(max(source['free'], Decimal('0')))}, tidak cukup menutup "
+                    f"kekurangan {format_currency(moved)}. Dana tidak digeser — kirim ulang transaksinya."
+                )
+                return
+            record_transfer(db, hid, user.id, source_env, target_env, moved)
+            await db.flush()
+
+        moved_line = (
+            f"🔁 {format_currency(moved)} digeser dari {source_env.emoji or '📁'} {_esc(source_env.name)} "
+            f"→ {target_env.emoji or '📁'} {_esc(target_env.name)}"
+            if moved > 0 else ""
+        )
+
+        # Cek perilaku lagi (cooling, limit harian, kunci) dengan dana yang sudah digeser.
+        check = await check_behavior(target_env.id, user.id, amount, db)
+        if not check.allowed:
+            if check.check_type == "cooling":
+                # create_pending_transaction meng-commit transfer sekalian.
+                pending = await create_pending_transaction(
+                    target_env.id, user.id, amount, description,
+                    TransactionSource.telegram, cooling_hours=24, db=db)
+                confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
+                await query.edit_message_text(
+                    (moved_line + "\n\n" if moved_line else "")
+                    + f"⏳ Cooling period aktif\n\n"
+                    f"{format_currency(amount)} — {_esc(description)}\n"
+                    f"Amplop: {target_env.emoji or '📁'} {_esc(target_env.name)}\n\n"
+                    f"Bisa dikonfirmasi setelah:\n🕐 {confirm_time} WIB (24 jam)\n\n"
+                    f"Ketik /pending untuk lihat status.",
+                    parse_mode="HTML",
+                )
+                return
+            if check.check_type == "daily_limit":
+                # Transfer tetap disimpan: alur konfirmasi limit harian mencatat
+                # transaksi tanpa cek dana ulang, jadi dananya harus sudah ada.
+                await db.commit()
+                d = check.details
+                d["description"] = description
+                prefix = moved_line + "\n\n" if moved_line else ""
+                await _send_daily_limit_blocked(
+                    lambda t, **kw: query.edit_message_text(prefix + t, **kw),
+                    tg_user_id, d, target_env, settings,
+                )
+                return
+            await db.rollback()
+            await query.edit_message_text(f"⚠️ {check.reason}\n\nDana tidak digeser.")
+            return
+
+        db.add(Transaction(
+            envelope_id=target_env.id, user_id=user.id, amount=amount,
+            description=description, source=TransactionSource.telegram,
+            transaction_date=date.today(),
+        ))
+        await save_learned_keywords(user.id, description, target_env.id, db)
+        await db.commit()
+        streak_line = await _streak_line(db, user)
+
+        env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+        by_id = {str(e["envelope"].id): e for e in env_data}
+        target_left = by_id[target_id]["remaining"] if target_id in by_id else Decimal("0")
+        source_left = by_id[source_id]["remaining"] if source_id in by_id else Decimal("0")
+
+    lines = [f"✅ {format_currency(amount)} — {_esc(description)}"]
+    if moved_line:
+        lines.append(moved_line)
+    lines.append("")
+    lines.append(f"{target_env.emoji or '📁'} {_esc(target_env.name)} · sisa <b>{format_currency(target_left)}</b>")
+    if moved > 0:
+        lines.append(f"{source_env.emoji or '📁'} {_esc(source_env.name)} · sisa <b>{format_currency(source_left)}</b>")
+    await query.edit_message_text("\n".join(lines) + _esc(streak_line), parse_mode="HTML")
+
+
 async def cmd_status(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
@@ -866,16 +1074,11 @@ async def handle_message(update, context):
                 if check.check_type == "locked":
                     await update.message.reply_text(f"🔒 {check.reason}")
                     return
-                elif check.check_type == "not_funded":
-                    await update.message.reply_text(
-                        f"💸 {check.reason}\n\nBuka jatahku.com/allocate untuk alokasi income.")
-                    return
-                elif check.check_type == "insufficient":
-                    d = check.details
-                    await update.message.reply_text(
-                        f"💸 {check.reason}\n\n"
-                        f"Sisa dana: {format_currency(d['available'])}\n"
-                        f"Diminta: {format_currency(d['requested'])}")
+                elif check.check_type in ("not_funded", "insufficient"):
+                    await _send_fund_shift_offer(
+                        lambda t, **kw: update.message.reply_text(t, **kw),
+                        str(tg_user.id), user, hid, envelope, amount, description, db,
+                    )
                     return
                 elif check.check_type == "daily_limit":
                     d = check.details
@@ -998,16 +1201,11 @@ async def handle_txn_callback(update, context):
             if check.check_type == "locked":
                 await query.edit_message_text(f"🔒 {check.reason}")
                 return
-            elif check.check_type == "not_funded":
-                await query.edit_message_text(
-                    f"💸 {check.reason}\nBuka jatahku.com/allocate untuk alokasi income.")
-                return
-            elif check.check_type == "insufficient":
-                d = check.details
-                await query.edit_message_text(
-                    f"💸 {check.reason}\n"
-                    f"Sisa dana: {format_currency(d['available'])}\n"
-                    f"Diminta: {format_currency(d['requested'])}")
+            elif check.check_type in ("not_funded", "insufficient"):
+                await _send_fund_shift_offer(
+                    lambda t, **kw: query.edit_message_text(t, **kw),
+                    str(tg_user.id), user, hid, envelope, amount, description, db,
+                )
                 return
             elif check.check_type == "daily_limit":
                 d = check.details
@@ -1381,6 +1579,7 @@ def create_bot_app():
         await handle_intent_learn_callback(update.callback_query, context, settings)
     app.add_handler(CallbackQueryHandler(_handle_intent_learn, pattern=r"^intentlearn:"))
     app.add_handler(CallbackQueryHandler(handle_daily_limit_callback, pattern=r"^dlimit:"))
+    app.add_handler(CallbackQueryHandler(handle_fund_shift_callback, pattern=r"^fshift:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
