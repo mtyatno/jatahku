@@ -5,7 +5,9 @@ import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
 import ReceiptInput from './ReceiptInput';
+import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
+import { isSplit, splitByEnvelope, groupDescription } from '../lib/receiptSplit';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
 
@@ -28,6 +30,22 @@ function isInsufficientFundsError(errMsg) {
   if (!errMsg) return false;
   const lower = String(errMsg).toLowerCase();
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
+}
+
+// Struk dengan rincian barang yang dipecah ke >1 amplop (disimpan per amplop).
+function isSplitReceipt(item) {
+  return item.origin === 'receipt' && (item.receiptItems || []).length > 0
+    && isSplit(item.receiptItems, item.envelopeId);
+}
+
+function receiptGroups(item) {
+  return splitByEnvelope(item.receiptItems, item.amount, item.envelopeId);
+}
+
+// Siap disimpan: punya amplop (struk dipecah: setiap bagian punya amplop).
+function isReady(item) {
+  if (isSplitReceipt(item)) return receiptGroups(item).every(g => g.envelopeId);
+  return !!item.envelopeId;
 }
 
 function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
@@ -165,25 +183,50 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     loadEnvelopes();
   }, [loadEnvelopes]);
 
-  const handleOpenFundModal = (key) => {
+  // envId/amount opsional: bagian struk yang dipecah per amplop.
+  const handleOpenFundModal = (key, envId = null, amount = null) => {
     const item = items.find(i => i.key === key);
-    if (!item || !item.envelopeId) return;
-    const env = envelopes.find(e => e.id === item.envelopeId);
+    if (!item) return;
+    let targetEnv = envId;
+    let targetAmount = amount;
+    if (!targetEnv && isSplitReceipt(item)) {
+      const failed = receiptGroups(item).find(g => isInsufficientFundsError(item.groupErrors?.[g.envelopeId]));
+      if (failed) { targetEnv = failed.envelopeId; targetAmount = failed.amount; }
+    }
+    targetEnv = targetEnv || item.envelopeId;
+    targetAmount = targetAmount ?? item.amount;
+    if (!targetEnv) return;
+    const env = envelopes.find(e => e.id === targetEnv);
     if (!env) return;
     const remaining = Number(env.remaining || 0);
-    const needed = Math.max(0, item.amount - remaining);
+    const needed = Math.max(0, targetAmount - remaining);
     setFundingTarget({
       envelope: env,
-      neededAmount: needed > 0 ? needed : item.amount,
+      neededAmount: needed > 0 ? needed : targetAmount,
       itemKey: key,
+      groupEnv: envId || (isSplitReceipt(item) ? targetEnv : null),
     });
   };
 
   // User mengonfirmasi: item ini dicatat dan limit harian amplopnya dinaikkan
   // sampai tengah malam saat disimpan (backend: raise_daily_limit, sama dengan bot).
-  const handleRaiseLimit = (key) => {
+  const handleRaiseLimit = (key, envId = null) => {
     const item = items.find(i => i.key === key);
     if (!item) return;
+    if (envId && isSplitReceipt(item)) {
+      const env = envelopes.find(e => e.id === envId);
+      setItems(prev => prev.map(i => (i.key === key ? {
+        ...i,
+        raiseLimitEnvs: { ...(i.raiseLimitEnvs || {}), [envId]: true },
+        groupErrors: { ...(i.groupErrors || {}), [envId]: undefined },
+        error: null,
+      } : i)));
+      setResultMsg({
+        type: 'mixed',
+        text: `Limit harian ${env ? env.name : 'amplop'} akan dinaikkan sementara (kembali normal besok). Klik Simpan Semua untuk melanjutkan.`,
+      });
+      return;
+    }
     const env = envelopes.find(e => e.id === item.envelopeId);
     setItems(prev => prev.map(i => (i.key === key ? { ...i, raiseDailyLimit: true, error: null } : i)));
     setResultMsg({
@@ -195,9 +238,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const handleFundSuccess = async ({ type, amount, fromName, targetEnvelope }) => {
     await loadEnvelopes();
     if (fundingTarget && fundingTarget.itemKey != null) {
-      setItems(prev => prev.map(item =>
-        item.key === fundingTarget.itemKey ? { ...item, error: null } : item
-      ));
+      setItems(prev => prev.map(item => {
+        if (item.key !== fundingTarget.itemKey) return item;
+        if (fundingTarget.groupEnv) {
+          return { ...item, error: null, groupErrors: { ...(item.groupErrors || {}), [fundingTarget.groupEnv]: undefined } };
+        }
+        return { ...item, error: null };
+      }));
     }
     const actionDesc = type === 'transfer'
       ? `Berhasil menggeser ${formatRupiah(amount)} dari ${fromName || 'amplop lain'} ke ${targetEnvelope.name}.`
@@ -284,6 +331,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setItems(prev => prev.map(item => (item.key === key ? { ...item, [field]: value, error: null } : item)));
   };
 
+  const handleReceiptChange = (key, patch) => {
+    setItems(prev => prev.map(item => (item.key === key ? { ...item, ...patch, error: null } : item)));
+  };
+
   const handleRemove = (key) => {
     const removed = items.find(i => i.key === key);
     if (removed?.origin === 'receipt' && removed.scanId) {
@@ -316,40 +367,56 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
   });
 
+  // Satu entri → satu atau beberapa transaksi. Struk yang dipecah menjadi
+  // 1 transaksi per amplop (bagian yang sudah tersimpan tidak dikirim ulang).
+  const toParts = (item) => {
+    if (isSplitReceipt(item)) {
+      return receiptGroups(item)
+        .filter(g => !item.savedGroups?.[g.envelopeId])
+        .map(g => ({
+          key: item.key,
+          envelopeId: g.envelopeId,
+          payload: toPayload({
+            ...item,
+            envelopeId: g.envelopeId,
+            amount: g.amount,
+            description: groupDescription(item.description, g.names, { split: true }),
+            raiseDailyLimit: !!item.raiseLimitEnvs?.[g.envelopeId],
+          }),
+        }));
+    }
+    return [{ key: item.key, envelopeId: null, payload: toPayload(item) }];
+  };
+
   const handleSaveAll = async () => {
-    if (items.some(i => i.envelopeId && !(Number(i.amount) > 0))) {
+    if (items.some(i => isReady(i) && !(Number(i.amount) > 0))) {
       setResultMsg({ type: 'error', text: 'Isi nominal struk dulu sebelum menyimpan' });
       return;
     }
-    const pending = items.filter(i => i.envelopeId);
+    const pending = items.filter(isReady);
     if (pending.length === 0) {
       setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
       return;
     }
+    const parts = pending.flatMap(toParts);
 
-    const missing = items.length - pending.length;
     setSaving(true);
     setResultMsg(null);
 
     if (!navigator.onLine) {
-      let queued = 0;
-      for (const item of items) {
-        if (!item.envelopeId) continue;
-        await enqueueTransaction(toPayload(item));
-        queued++;
+      for (const part of parts) {
+        await enqueueTransaction(part.payload);
       }
       setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       setRawText('');
-      setItems([]);
+      setItems(prev => prev.filter(i => !isReady(i)));
       lastParsedRef.current = '';
       onSaved?.();
       return;
     }
 
-    const payload = pending.map(toPayload);
-
-    const result = await api.batchCreateTransactions(payload);
+    const result = await api.batchCreateTransactions(parts.map(p => p.payload));
     setSaving(false);
 
     if (!result.ok) {
@@ -357,17 +424,30 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       return;
     }
 
-    // Hasil batch berindeks sesuai `pending` (bukan `items`) → petakan ke key.
+    // Hasil batch berindeks sesuai `parts` → petakan ke entri (key) & amplopnya.
     const data = result.data || [];
     const okKeys = new Set();
     const errByKey = {};
+    const savedByKey = {};
+    const groupErrByKey = {};
+    let successCount = 0;
     data.forEach(r => {
-      const item = pending[r.index];
-      if (!item) return;
-      if (r.ok) okKeys.add(item.key);
-      else errByKey[item.key] = r.error || 'Gagal';
+      const part = parts[r.index];
+      if (!part) return;
+      if (r.ok) successCount++;
+      if (part.envelopeId) {
+        if (r.ok) (savedByKey[part.key] = savedByKey[part.key] || {})[part.envelopeId] = true;
+        else (groupErrByKey[part.key] = groupErrByKey[part.key] || {})[part.envelopeId] = r.error || 'Gagal';
+      } else if (r.ok) okKeys.add(part.key);
+      else errByKey[part.key] = r.error || 'Gagal';
     });
-    const successCount = okKeys.size;
+    // Struk dipecah selesai jika semua bagiannya tersimpan.
+    pending.forEach(item => {
+      if (!isSplitReceipt(item)) return;
+      const saved = { ...(item.savedGroups || {}), ...(savedByKey[item.key] || {}) };
+      if (receiptGroups(item).every(g => saved[g.envelopeId])) okKeys.add(item.key);
+    });
+    const failedCount = data.length - successCount;
 
     // Bahan belajar scan struk: nilai akhir yang benar-benar tersimpan.
     pending.forEach(item => {
@@ -376,25 +456,33 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     });
 
-    setItems(prev => prev.map(item => (
-      errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null }
-    )));
+    setItems(prev => prev
+      .filter(item => !okKeys.has(item.key))
+      .map(item => {
+        if (savedByKey[item.key] || groupErrByKey[item.key]) {
+          const groupErrors = groupErrByKey[item.key] || {};
+          return {
+            ...item,
+            savedGroups: { ...(item.savedGroups || {}), ...(savedByKey[item.key] || {}) },
+            groupErrors,
+            error: Object.values(groupErrors)[0] || null,
+          };
+        }
+        return errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null };
+      }));
 
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      const failedCount = data.length - successCount;
-      if (failedCount === 0) {
+      if (failedCount === 0 && pending.length === items.length) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
         setRawText('');
-        setItems([]);
         lastParsedRef.current = '';
         onSaved?.();
       } else {
         setResultMsg({
           type: 'mixed',
-          text: `${successCount} berhasil, ${failedCount} gagal`,
+          text: failedCount ? `${successCount} berhasil, ${failedCount} gagal` : `${successCount} transaksi berhasil disimpan`,
         });
-        setItems(prev => prev.filter(item => !okKeys.has(item.key)));
       }
     } else {
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
@@ -403,8 +491,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   };
 
   const hasItems = items.length > 0;
-  const selectedCount = items.filter(i => i.envelopeId).length;
+  const selectedCount = items.filter(isReady).length;
   const unselectedCount = items.length - selectedCount;
+  const hasReceiptCard = items.some(i => i.origin === 'receipt' && (i.receiptItems || []).length > 0);
 
   return (
     <div className="space-y-4">
@@ -448,7 +537,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
             </span>
           </div>
 
-          <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+          <div className={`${hasReceiptCard ? 'max-h-[65vh]' : 'max-h-64'} overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100`}>
             <div className="hidden md:grid md:grid-cols-12 gap-3 px-3 py-2 bg-gray-50 rounded-t-xl text-xs font-medium text-gray-500">
               <span className="col-span-5">Keterangan</span>
               <span className="col-span-2">Jumlah</span>
@@ -456,7 +545,17 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
               <span className="col-span-1"></span>
             </div>
             <div className="px-3">
-              {items.map(item => (
+              {items.map(item => (item.origin === 'receipt' && (item.receiptItems || []).length > 0 ? (
+                <ReceiptCard
+                  key={item.key}
+                  entry={item}
+                  envelopes={envelopes}
+                  onChange={handleReceiptChange}
+                  onRemove={handleRemove}
+                  onFundGroup={handleOpenFundModal}
+                  onRaiseLimitGroup={handleRaiseLimit}
+                />
+              ) : (
                 <ItemRow
                   key={item.key}
                   item={item}
@@ -467,7 +566,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                   onFundEnvelope={handleOpenFundModal}
                   onRaiseLimit={handleRaiseLimit}
                 />
-              ))}
+              )))}
             </div>
           </div>
         </>

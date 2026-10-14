@@ -575,6 +575,28 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestBotItemsSummary(unittest.TestCase):
+    def test_summary_cocok_and_selisih(self):
+        from app.bot.receipt_cmd import _items_summary, MAX_ITEM_LINES
+        ok = _items_summary({
+            "items": [{"name": "SOKLN SOFTR ROSY 720", "amount": 18900, "discount": 3000, "flag": "ok"}],
+            "adjustments": [{"label": "VC PL", "amount": 5900, "kind": "discount"}],
+            "reconciliation": {"status": "cocok", "diff": 0},
+        })
+        self.assertIn("cocok dengan total", ok)
+        self.assertIn("voucher −Rp 3.000", ok)
+        self.assertIn("VC PL  −Rp 5.900", ok)
+        self.assertNotIn("webapp", ok)
+        many = [{"name": f"BARANG {i}", "amount": 1000, "flag": "ok"} for i in range(MAX_ITEM_LINES + 3)]
+        many[0].update(flag="cek", suggestion=1900)
+        bad = _items_summary({"items": many, "reconciliation": {"status": "selisih", "diff": -900}})
+        self.assertIn("lebih Rp 900", bad)
+        self.assertIn("mungkin Rp 1.900?", bad)
+        self.assertIn("+3 barang lagi", bad)
+        self.assertIn("webapp", bad)
+        self.assertEqual(_items_summary({"items": []}), "")
+
+
 class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
     async def test_photo_flow_offers_suggested_envelope_first_and_keeps_date(self):
         from app.bot import receipt_cmd

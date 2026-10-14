@@ -38,6 +38,42 @@ def _rp(n) -> str:
     return "Rp " + f"{int(n):,}".replace(",", ".")
 
 
+MAX_ITEM_LINES = 12
+
+
+def _items_summary(result: dict) -> str:
+    """Rincian ringkas untuk pesan bot (teks biasa, tanpa Markdown)."""
+    items = result.get("items") or []
+    rec = result.get("reconciliation") or {}
+    if not items:
+        return ""
+    n = len(items)
+    if rec.get("status") == "cocok":
+        head = f"Rincian {n} barang ✅ cocok dengan total"
+    else:
+        diff = rec.get("diff") or 0
+        word = "kurang" if diff > 0 else "lebih"
+        head = f"Rincian {n} barang ⚠️ {word} {_rp(abs(diff))} dari total"
+    lines = [head]
+    for it in items[:MAX_ITEM_LINES]:
+        name = (it.get("name") or "Barang")[:28]
+        row = f"• {name}  {_rp(it.get('amount') or 0)}"
+        if it.get("discount"):
+            row += f" (voucher −{_rp(it['discount'])})"
+        if it.get("flag") == "cek":
+            sug = it.get("suggestion")
+            row += " ⚠️ " + ("terbaca dobel?" if sug == 0 else f"mungkin {_rp(sug)}?" if sug else "cek")
+        lines.append(row)
+    if n > MAX_ITEM_LINES:
+        lines.append(f"… +{n - MAX_ITEM_LINES} barang lagi")
+    for adj in result.get("adjustments") or []:
+        sign = "−" if adj.get("kind") == "discount" else "+"
+        lines.append(f"{(adj.get('label') or 'Penyesuaian')[:28]}  {sign}{_rp(adj.get('amount') or 0)}")
+    if rec.get("status") != "cocok":
+        lines.append("💡 Koreksi rincian & pecah per amplop bisa di webapp (tombol Struk).")
+    return "\n".join(lines)
+
+
 async def _rate_limited(tg_id) -> bool:
     try:
         import redis.asyncio as aioredis
@@ -162,10 +198,12 @@ async def handle_receipt_photo(update, context):
                      InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{result['scan_id']}")])
 
     conf = CONF_TEXT.get(result.get("confidence"), "")
+    summary = _items_summary(result)
     await status.edit_text(
         f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"
         f"Total: {_rp(total)}  {conf}\n\n"
-        f"Masuk ke amplop mana?{quota_line}",
+        + (f"{summary}\n\n" if summary else "")
+        + f"Masuk ke amplop mana?{quota_line}",
         reply_markup=InlineKeyboardMarkup(keyboard))
 
 

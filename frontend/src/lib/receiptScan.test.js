@@ -32,6 +32,28 @@ test('scanMessage: kuota Basic ditampilkan, keyakinan rendah minta cek', () => {
   assert.doesNotMatch(pro.text, /Sisa scan/);
 });
 
+test('receiptToItem: membawa rincian barang & penyesuaian', () => {
+  const item = receiptToItem({
+    scan_id: 's3', merchant: 'Indomaret', total: 70600, date: null, confidence: 'tinggi',
+    items: [{ name: 'IDM F.TIS', amount: 37800, discount: 0, unit_price: 37800, qty: 1, flag: 'ok' }],
+    adjustments: [{ label: 'VC PL', amount: 5900, kind: 'discount' }],
+  }, 'k3');
+  assert.equal(item.receiptItems.length, 1);
+  assert.equal(item.receiptItems[0].unitPrice, 37800);
+  assert.equal(item.adjustments[0].kind, 'discount');
+  assert.deepEqual(item.savedGroups, {});
+});
+
+test('scanMessage: rincian cocok / selisih disebut', () => {
+  const base = { merchant: 'Indomaret', total: 140500, confidence: 'tinggi', quota: { limit: null } };
+  const cocok = scanMessage({ ...base, items: [{}, {}], reconciliation: { status: 'cocok', diff: 0 } });
+  assert.match(cocok.text, /2 barang cocok/);
+  assert.equal(cocok.type, 'success');
+  const beda = scanMessage({ ...base, items: [{}], reconciliation: { status: 'selisih', diff: -7600 } });
+  assert.match(beda.text, /selisih Rp 7\.600/);
+  assert.equal(beda.type, 'mixed');
+});
+
 test('scanMessage: total gagal dibaca → error minta isi manual', () => {
   assert.equal(scanMessage({ total: null, confidence: 'gagal', quota: {} }).type, 'error');
 });

@@ -1,4 +1,5 @@
 // Logika murni scan struk (tanpa DOM) — dipakai MultiAddTransaction & ReceiptInput.
+import { toReceiptItems } from './receiptSplit.js';
 
 const MAX_SIDE = 1600;
 
@@ -36,6 +37,12 @@ export function receiptToItem(result, key) {
     touched: false,
     error: null,
     saving: false,
+    // Rincian barang (bisa kosong kalau barang tidak terbaca).
+    receiptItems: toReceiptItems(result.items),
+    adjustments: (result.adjustments || []).map(a => ({ ...a, amount: Number(a.amount) || 0 })),
+    savedGroups: {},
+    groupErrors: {},
+    raiseLimitEnvs: {},
   };
 }
 
@@ -52,9 +59,15 @@ export function scanMessage(result) {
   }
   const toko = result.merchant ? `${result.merchant} ` : '';
   const yakin = result.confidence === 'tinggi' ? '' : ` Mohon cek nominalnya (${confidenceLabel(result.confidence)}).`;
+  const rec = result.reconciliation;
+  const n = (result.items || []).length;
+  let rincian = '';
+  if (rec && n > 0 && rec.status === 'cocok') rincian = ` ${n} barang cocok dengan total.`;
+  else if (rec && n > 0 && rec.status === 'selisih') rincian = ` Rincian ${n} barang selisih ${rupiah(Math.abs(rec.diff))} — cek barang yang ditandai.`;
+  const ok = result.confidence === 'tinggi' && (!rec || rec.status !== 'selisih');
   return {
-    type: result.confidence === 'tinggi' ? 'success' : 'mixed',
-    text: `Struk ${toko}terbaca: ${rupiah(result.total)}.${yakin} Pilih amplop lalu simpan.${sisa}`,
+    type: ok ? 'success' : 'mixed',
+    text: `Struk ${toko}terbaca: ${rupiah(result.total)}.${rincian}${yakin} Pilih amplop lalu simpan.${sisa}`,
   };
 }
 
