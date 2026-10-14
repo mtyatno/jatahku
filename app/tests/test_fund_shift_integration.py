@@ -13,6 +13,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import importlib.util
+import json
 import unittest
 from datetime import date
 from decimal import Decimal as D
@@ -61,6 +62,9 @@ class FakeRedis:
         self.store.pop(k, None)
 
     async def aclose(self):
+        pass
+
+    async def close(self):  # klien lama di handle_txn_callback memakai close()
         pass
 
 
@@ -128,14 +132,18 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def tap(self, data):
         q = MagicMock()
         q.data = data
-        q.from_user = SimpleNamespace(id=TG_ID)
+        q.from_user = SimpleNamespace(id=TG_ID, first_name="Tes")
         q.answer = AsyncMock()
         q.edit_message_text = AsyncMock()
-        update = SimpleNamespace(callback_query=q)
+        update = SimpleNamespace(callback_query=q, effective_user=SimpleNamespace(id=TG_ID, first_name="Tes"))
         if data.startswith("bshift_"):
             fn = batch_cmd.handle_batch_shift_callback
         elif data.startswith("blimit_"):
             fn = batch_cmd.handle_batch_limit_callback
+        elif data.startswith("t_"):
+            fn = handlers.handle_txn_callback
+        elif data.startswith("dlimit:"):
+            fn = handlers.handle_daily_limit_callback
         elif data.startswith("batch_"):
             fn = batch_cmd.handle_batch_callback
         else:
@@ -256,6 +264,57 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 ]), await self.web_user(db), db)
         self.assertTrue(out[0].ok)
         self.assertEqual(await self.count(Transaction), 1)
+
+    # ── Struk: tanggal struk & feedback terbawa lewat isi dana / naikkan limit ─
+
+    def seed_receipt(self, env_name, amount):
+        self.redis.store["txn:rcpt0001"] = json.dumps({
+            "amount": amount, "desc": "Indomaret", "envs": {"0": str(self.env[env_name].id)},
+            "date": "2026-10-10", "scan_id": "scan-1"})
+
+    async def receipt_txn(self):
+        async with self.Session() as db:
+            return (await db.execute(select(Transaction))).scalars().all()
+
+    async def test_receipt_date_kept_through_fund_shift(self):
+        self.seed_receipt("Makan", 30000)  # Makan sisa 10rb → kurang 20rb
+        feedback = AsyncMock()
+        with patch("app.services.receipt_scan.apply_feedback", new=feedback):
+            call = await self.tap("t_rcpt0001_0")
+            self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])
+            btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                       if "Transport" in r[0].text)
+            call = await self.tap(btn)
+        self.assertIn("digeser dari", call.args[0])
+        txn, = await self.receipt_txn()
+        self.assertEqual(txn.transaction_date, date(2026, 10, 10))
+        feedback.assert_awaited_once()
+        self.assertEqual(feedback.call_args.kwargs["txn_date"], date(2026, 10, 10))
+
+    async def test_receipt_date_kept_through_daily_limit_raise(self):
+        await self.income("Jajan", 50000)  # limit harian Jajan 10rb
+        self.seed_receipt("Jajan", 20000)
+        feedback = AsyncMock()
+        with patch("app.services.receipt_scan.apply_feedback", new=feedback):
+            call = await self.tap("t_rcpt0001_0")
+            self.assertIn("Limit harian terlampaui", call.args[0])
+            btn = call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+            await self.tap(btn)
+        txn, = await self.receipt_txn()
+        self.assertEqual(txn.transaction_date, date(2026, 10, 10))
+        feedback.assert_awaited_once()
+
+    async def test_receipt_feedback_failure_does_not_break_reply(self):
+        """Dulu: db.rollback() setelah feedback gagal → user/amplop ter-expire → crash."""
+        self.seed_receipt("Transport", 5000)
+
+        async def failing_feedback(user, scan_id, db, **kw):
+            await db.execute(select(User))  # gagal SETELAH menyentuh DB, seperti kegagalan sungguhan
+            raise RuntimeError("x")
+        with patch("app.services.receipt_scan.apply_feedback", new=failing_feedback):
+            call = await self.tap("t_rcpt0001_0")
+        self.assertIn("Masuk ke 📁 Transport", call.args[0])
+        self.assertEqual(len(await self.receipt_txn()), 1)
 
     async def test_blocked_after_shift_rolls_back_and_queue_continues(self):
         """Blok setelah dana digeser (di sini: amplop dikunci di antara tawaran dan
