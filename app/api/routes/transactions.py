@@ -35,6 +35,8 @@ class TransactionCreate(BaseModel):
     source: TransactionSource = TransactionSource.webapp
     transaction_date: date | None = None
     is_private: bool = False
+    # User mengonfirmasi "Catat, naikkan limit hari ini" (sama dengan bot)
+    raise_daily_limit: bool = False
 
 
 class TransactionResponse(BaseModel):
@@ -76,6 +78,27 @@ class BatchTransactionItem(BaseModel):
     source: TransactionSource = TransactionSource.webapp
     transaction_date: date | None = None
     is_private: bool = False
+    raise_daily_limit: bool = False
+
+
+def _rp(x) -> str:
+    return f"Rp{int(x):,}".replace(",", ".")
+
+
+def daily_limit_message(envelope_name: str, d: dict) -> str:
+    """Pesan blok limit harian. Frontend mengenali frasa "limit harian" untuk
+    menawarkan tombol "Catat, naikkan limit hari ini"."""
+    return (f"Melebihi limit harian {envelope_name}: limit {_rp(d.get('daily_limit', 0))}/hari, "
+            f"terpakai {_rp(d.get('spent_today', 0))}, diminta {_rp(d.get('requested', 0))}.")
+
+
+async def _raise_daily_limit(user_id, envelope_id) -> None:
+    """Naikkan limit harian hari ini (fungsi yang sama dengan bot)."""
+    from app.services.behavior import raise_daily_limit_today
+    try:
+        await raise_daily_limit_today(user_id, envelope_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Gagal menaikkan limit harian. Coba lagi sebentar.")
 
 
 class BatchTransactionCreate(BaseModel):
@@ -126,8 +149,11 @@ async def create_transaction(
         if check.check_type == "locked":
             raise HTTPException(status_code=403, detail=f"Amplop dikunci. Tidak bisa belanja.")
         elif check.check_type == "daily_limit":
-            d = check.details
-            raise HTTPException(status_code=403, detail=f"Melebihi limit harian. Limit: {d['daily_limit']}, terpakai: {d['spent_today']}, diminta: {d['requested']}")
+            if req.raise_daily_limit:
+                # Dikonfirmasi user → limit dinaikkan sampai tengah malam; cek di bawah lolos.
+                await _raise_daily_limit(user.id, envelope.id)
+            else:
+                raise HTTPException(status_code=403, detail=daily_limit_message(envelope.name, check.details))
         elif check.check_type == "cooling":
             raise HTTPException(status_code=403, detail=f"Pembelian >= {check.details['threshold']} perlu cooling period 24 jam. Gunakan Telegram untuk transaksi ini.")
 
@@ -260,13 +286,19 @@ async def batch_create_transactions(
             continue
 
         check = await check_behavior(item.envelope_id, user.id, item.amount, db)
+        if not check.allowed and check.check_type == "daily_limit" and item.raise_daily_limit:
+            try:
+                from app.services.behavior import raise_daily_limit_today
+                await raise_daily_limit_today(user.id, envelope.id)
+                check = await check_behavior(item.envelope_id, user.id, item.amount, db)
+            except Exception:
+                pass  # Redis gagal → tetap dilaporkan sebagai melebihi limit harian
         if not check.allowed:
             msg = check.reason or ""
             if check.check_type == "locked":
                 msg = f"Amplop dikunci. Tidak bisa belanja."
             elif check.check_type == "daily_limit":
-                d = check.details
-                msg = f"Melebihi limit harian. Limit: {d.get('daily_limit',0)}, terpakai: {d.get('spent_today',0)}"
+                msg = daily_limit_message(envelope.name, check.details)
             elif check.check_type == "not_funded":
                 msg = check.reason or "Amplop belum didanai"
             elif check.check_type == "insufficient":

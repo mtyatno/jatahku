@@ -13,6 +13,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import importlib.util
+import json
 import unittest
 from datetime import date
 from decimal import Decimal as D
@@ -61,6 +62,9 @@ class FakeRedis:
         self.store.pop(k, None)
 
     async def aclose(self):
+        pass
+
+    async def close(self):  # klien lama di handle_txn_callback memakai close()
         pass
 
 
@@ -128,12 +132,18 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def tap(self, data):
         q = MagicMock()
         q.data = data
-        q.from_user = SimpleNamespace(id=TG_ID)
+        q.from_user = SimpleNamespace(id=TG_ID, first_name="Tes")
         q.answer = AsyncMock()
         q.edit_message_text = AsyncMock()
-        update = SimpleNamespace(callback_query=q)
+        update = SimpleNamespace(callback_query=q, effective_user=SimpleNamespace(id=TG_ID, first_name="Tes"))
         if data.startswith("bshift_"):
             fn = batch_cmd.handle_batch_shift_callback
+        elif data.startswith("blimit_"):
+            fn = batch_cmd.handle_batch_limit_callback
+        elif data.startswith("t_"):
+            fn = handlers.handle_txn_callback
+        elif data.startswith("dlimit:"):
+            fn = handlers.handle_daily_limit_callback
         elif data.startswith("batch_"):
             fn = batch_cmd.handle_batch_callback
         else:
@@ -179,29 +189,154 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         transport_btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
                              if "Transport" in r[0].text)
 
-        # kopi: geser 20rb, tapi limit harian Jajan 10rb → transfer dibatalkan (savepoint),
-        # lalu antrean lanjut ke xyz — di sinilah rollback penuh dulu memicu MissingGreenlet
+        # kopi: geser 20rb, tapi limit harian Jajan 10rb → dana tetap tersimpan, lalu
+        # ditawari "naikkan limit hari ini" (sama dengan web & alur satu item)
         call = await self.tap(transport_btn)
+        self.assertIn("Limit harian terlampaui", call.args[0])
+        self.assertIn("Dana untuk item ini sudah ditambahkan", call.args[0])
+        limit_btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                         if r[0].callback_data.endswith("_y"))
+
+        # ✅ → bypass Redis ditulis lewat raise_daily_limit_today, check_behavior asli lolos
+        call = await self.tap(limit_btn)
         self.assertIn("Masuk ke amplop mana?", call.args[0])
+        self.assertTrue(any(k.startswith("dlimit_temp:") for k in self.redis.store))
         xyz_btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
                        if "Transport" in r[0].text)
 
         call = await self.tap(xyz_btn)
         text = call.args[0]
-        self.assertIn("3 transaksi dicatat", text)
+        self.assertIn("4 transaksi dicatat", text)
         self.assertIn("🔁 +Rp20rb dari 📁 Transport", text)
+        self.assertIn("📁 Jajan: Rp20rb — kopi · 🔁 +Rp20rb dari 📁 Transport", text)
         self.assertIn("mainan", text)
-        self.assertIn("Melebihi limit harian", text)
-        self.assertIn("Dana tidak digeser", text)
         self.assertIsNone(call.kwargs["reply_markup"])
-        self.assertEqual(self.redis.store, {})
+        self.assertFalse(any(k.startswith("batch") for k in self.redis.store))
 
-        self.assertEqual(await self.count(Transaction), 3)               # parkir, sate, xyz
-        self.assertEqual(await self.count(Income, Income.amount == 0), 1)  # hanya geser untuk sate
-        self.assertEqual(await self.remaining("Transport"), D("168000"))  # 200 − 5 − 20 − 7
+        self.assertEqual(await self.count(Transaction), 4)               # parkir, sate, kopi, xyz
+        self.assertEqual(await self.count(Income, Income.amount == 0), 2)  # geser untuk sate & kopi
+        self.assertEqual(await self.remaining("Transport"), D("148000"))  # 200 − 5 − 20 − 20 − 7
         self.assertEqual(await self.remaining("Makan"), D("0"))
         self.assertEqual(await self.remaining("Jajan"), D("0"))
         self.assertEqual(await self.remaining("Hobi"), D("100000"))
+
+    # ── Naikkan limit harian: web memakai mekanisme yang sama dengan bot ─────
+
+    async def test_web_raise_daily_limit_single(self):
+        from fastapi import HTTPException
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        await self.income("Jajan", 50000)  # Jajan: limit harian 10rb
+        jajan = self.env["Jajan"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:
+                with self.assertRaises(HTTPException) as ctx:
+                    await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("20000"), description="kopi"),
+                                             await self.web_user(db), db)
+            self.assertEqual(ctx.exception.status_code, 403)
+            self.assertEqual(ctx.exception.detail,
+                             "Melebihi limit harian Jajan: limit Rp10.000/hari, terpakai Rp0, diminta Rp20.000.")
+            self.assertEqual(await self.count(Transaction), 0)
+
+            async with self.Session() as db:
+                await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("20000"), description="kopi",
+                                                           raise_daily_limit=True), await self.web_user(db), db)
+            self.assertIn(f"dlimit_temp:{self.user_id}:{jajan}", self.redis.store)  # kunci yang sama dengan bot
+            async with self.Session() as db:  # sisa hari ini limitnya sudah dinaikkan — sama dengan bot
+                await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("5000"), description="es"),
+                                         await self.web_user(db), db)
+        self.assertEqual(await self.count(Transaction), 2)
+
+    async def test_web_raise_daily_limit_batch(self):
+        from app.api.routes.transactions import BatchTransactionCreate, BatchTransactionItem, batch_create_transactions
+        await self.income("Jajan", 50000)
+        jajan = self.env["Jajan"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:
+                out = await batch_create_transactions(BatchTransactionCreate(items=[
+                    BatchTransactionItem(envelope_id=jajan, amount=D("20000"), description="kopi"),
+                ]), await self.web_user(db), db)
+            self.assertFalse(out[0].ok)
+            self.assertIn("limit harian Jajan", out[0].error)
+            async with self.Session() as db:
+                out = await batch_create_transactions(BatchTransactionCreate(items=[
+                    BatchTransactionItem(envelope_id=jajan, amount=D("20000"), description="kopi",
+                                         raise_daily_limit=True),
+                ]), await self.web_user(db), db)
+        self.assertTrue(out[0].ok)
+        self.assertEqual(await self.count(Transaction), 1)
+
+    # ── Struk: tanggal struk & feedback terbawa lewat isi dana / naikkan limit ─
+
+    def seed_receipt(self, env_name, amount):
+        self.redis.store["txn:rcpt0001"] = json.dumps({
+            "amount": amount, "desc": "Indomaret", "envs": {"0": str(self.env[env_name].id)},
+            "date": "2026-10-10", "scan_id": "scan-1"})
+
+    async def receipt_txn(self):
+        async with self.Session() as db:
+            return (await db.execute(select(Transaction))).scalars().all()
+
+    async def test_receipt_date_kept_through_fund_shift(self):
+        self.seed_receipt("Makan", 30000)  # Makan sisa 10rb → kurang 20rb
+        feedback = AsyncMock()
+        with patch("app.services.receipt_scan.apply_feedback", new=feedback):
+            call = await self.tap("t_rcpt0001_0")
+            self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])
+            btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                       if "Transport" in r[0].text)
+            call = await self.tap(btn)
+        self.assertIn("digeser dari", call.args[0])
+        txn, = await self.receipt_txn()
+        self.assertEqual(txn.transaction_date, date(2026, 10, 10))
+        feedback.assert_awaited_once()
+        self.assertEqual(feedback.call_args.kwargs["txn_date"], date(2026, 10, 10))
+
+    async def test_receipt_date_kept_through_daily_limit_raise(self):
+        await self.income("Jajan", 50000)  # limit harian Jajan 10rb
+        self.seed_receipt("Jajan", 20000)
+        feedback = AsyncMock()
+        with patch("app.services.receipt_scan.apply_feedback", new=feedback):
+            call = await self.tap("t_rcpt0001_0")
+            self.assertIn("Limit harian terlampaui", call.args[0])
+            btn = call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+            await self.tap(btn)
+        txn, = await self.receipt_txn()
+        self.assertEqual(txn.transaction_date, date(2026, 10, 10))
+        feedback.assert_awaited_once()
+
+    async def test_receipt_feedback_failure_does_not_break_reply(self):
+        """Dulu: db.rollback() setelah feedback gagal → user/amplop ter-expire → crash."""
+        self.seed_receipt("Transport", 5000)
+
+        async def failing_feedback(user, scan_id, db, **kw):
+            await db.execute(select(User))  # gagal SETELAH menyentuh DB, seperti kegagalan sungguhan
+            raise RuntimeError("x")
+        with patch("app.services.receipt_scan.apply_feedback", new=failing_feedback):
+            call = await self.tap("t_rcpt0001_0")
+        self.assertIn("Masuk ke 📁 Transport", call.args[0])
+        self.assertEqual(len(await self.receipt_txn()), 1)
+
+    async def test_blocked_after_shift_rolls_back_and_queue_continues(self):
+        """Blok setelah dana digeser (di sini: amplop dikunci di antara tawaran dan
+        ketukan) dibatalkan dengan savepoint; item berikutnya tetap diproses.
+        Dengan db.rollback() penuh, langkah ini dulu crash (MissingGreenlet)."""
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        await self.go(lambda: batch_cmd.handle_multi_expense(
+            update, None, [(D("30000"), "sate"), (D("7000"), "xyz")]), {"sate": "Makan"})
+        btn = next(r[0].callback_data for r in update.message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard
+                   if "Transport" in r[0].text)
+        async with self.Session() as db:
+            makan = await db.get(Envelope, self.env["Makan"].id)
+            makan.is_locked = True
+            await db.commit()
+
+        call = await self.tap(btn)
+        self.assertIn("Dana tidak digeser", call.args[0])
+        self.assertIn("Masuk ke amplop mana?", call.args[0])  # antrean lanjut ke xyz
+        self.assertEqual(await self.count(Income, Income.amount == 0), 0)
+        self.assertEqual(await self.remaining("Transport"), D("200000"))
 
     async def test_single_item_offer_and_shift(self):
         async def offer():

@@ -19,14 +19,20 @@ function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Ditolak karena limit harian → tawarkan "naikkan limit hari ini" (sama dengan bot).
+function isDailyLimitError(errMsg) {
+  return !!errMsg && String(errMsg).toLowerCase().includes('limit harian');
+}
+
 function isInsufficientFundsError(errMsg) {
   if (!errMsg) return false;
   const lower = String(errMsg).toLowerCase();
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
-function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope }) {
+function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
   const isShortage = isInsufficientFundsError(item.error);
+  const isOverDailyLimit = isDailyLimitError(item.error);
   const isReceipt = item.origin === 'receipt';
   const doubtful = isReceipt && item.confidence !== 'tinggi';
 
@@ -112,6 +118,19 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
             Geser
           </button>
         )}
+        {isOverDailyLimit && item.envelopeId && (
+          <button
+            type="button"
+            onClick={() => onRaiseLimit(item.key)}
+            className="text-xs text-brand-600 hover:text-brand-700 underline font-medium hover:bg-brand-50 px-1 py-0.5 rounded transition-colors"
+            title="Catat dan naikkan limit harian amplop ini sampai tengah malam"
+          >
+            Naikkan limit
+          </button>
+        )}
+        {item.raiseDailyLimit && !item.error && (
+          <span className="text-xs text-brand-600" title="Limit harian dinaikkan sementara saat disimpan">limit ↑</span>
+        )}
         {item.saving && <span className="text-xs text-gray-400">...</span>}
       </div>
     </div>
@@ -157,6 +176,19 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       envelope: env,
       neededAmount: needed > 0 ? needed : item.amount,
       itemKey: key,
+    });
+  };
+
+  // User mengonfirmasi: item ini dicatat dan limit harian amplopnya dinaikkan
+  // sampai tengah malam saat disimpan (backend: raise_daily_limit, sama dengan bot).
+  const handleRaiseLimit = (key) => {
+    const item = items.find(i => i.key === key);
+    if (!item) return;
+    const env = envelopes.find(e => e.id === item.envelopeId);
+    setItems(prev => prev.map(i => (i.key === key ? { ...i, raiseDailyLimit: true, error: null } : i)));
+    setResultMsg({
+      type: 'mixed',
+      text: `Limit harian ${env ? env.name : 'amplop'} akan dinaikkan sementara (kembali normal besok). Klik Simpan Semua untuk melanjutkan.`,
     });
   };
 
@@ -281,6 +313,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     description: (item.description || '').trim() || 'Belanja',
     source: 'webapp',
     ...(item.transactionDate ? { transaction_date: item.transactionDate } : {}),
+    ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
   });
 
   const handleSaveAll = async () => {
@@ -432,6 +465,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                   onChangeField={handleFieldChange}
                   onRemove={handleRemove}
                   onFundEnvelope={handleOpenFundModal}
+                  onRaiseLimit={handleRaiseLimit}
                 />
               ))}
             </div>

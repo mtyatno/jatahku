@@ -386,6 +386,34 @@ async def cmd_start(update, context):
         await reply_setup_needed(update, user)
 
 
+async def _receipt_feedback_saved(user_id, scan_id, amount, txn_date, description):
+    """Feedback belajar scan struk setelah transaksinya tersimpan (best-effort).
+
+    Sesi terpisah: apply_feedback meng-commit sendiri, dan kalau gagal, sesi
+    pemanggil tidak perlu rollback penuh (yang meng-expire objek sesi dan
+    membuat akses atribut sesudahnya gagal di async — MissingGreenlet)."""
+    if not scan_id:
+        return
+    try:
+        from app.services.receipt_scan import apply_feedback
+        async with AsyncSessionLocal() as fdb:
+            fuser = await fdb.get(User, user_id)
+            if fuser is not None:
+                await apply_feedback(fuser, scan_id, fdb, saved=True, total=int(amount),
+                                     txn_date=txn_date, merchant=description)
+    except Exception as exc:
+        logger.warning("feedback struk gagal: %s", exc)
+
+
+def _parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # ── Daily-limit bypass helpers ────────────────────────────────────────────────
 
 async def _send_daily_limit_blocked(send_fn, user_id, d, envelope, settings):
@@ -408,6 +436,9 @@ async def _send_daily_limit_blocked(send_fn, user_id, d, envelope, settings):
         "envelope_id": str(envelope.id),
         "amount":      str(requested),
         "description": d.get("description", ""),
+        # dari scan struk (opsional): tanggal struk + scan_id untuk feedback
+        "date":        d.get("date"),
+        "scan_id":     d.get("scan_id"),
     })
     r = aioredis.from_url(settings.REDIS_URL)
     await r.setex(f"dlimit_pending:{user_id}:{token}", 600, payload)
@@ -468,6 +499,8 @@ async def handle_daily_limit_callback(update, context):
     envelope_id = payload["envelope_id"]
     amount      = Decimal(payload["amount"])
     description = payload.get("description", "")
+    txn_date    = _parse_iso_date(payload.get("date")) or date.today()
+    scan_id     = payload.get("scan_id")
 
     # Record transaction
     import uuid
@@ -493,19 +526,16 @@ async def handle_daily_limit_callback(update, context):
             amount=amount,
             description=description,
             source=TransactionSource.telegram,
-            transaction_date=date.today(),
+            transaction_date=txn_date,
         )
         db.add(txn)
         await db.commit()
         await after_expense_recorded(db, user, envelope.id, description)
+        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
 
-        # Set temp bypass until midnight — use DB user UUID to match check_behavior
-        now      = datetime.now()
-        midnight = datetime.combine(now.date() + timedelta(days=1), time.min)
-        ttl      = int((midnight - now).total_seconds())
-        r2 = aioredis.from_url(settings.REDIS_URL)
-        await r2.setex(f"dlimit_temp:{user.id}:{envelope_id}", ttl, "1")
-        await r2.aclose()
+        # Limit dinaikkan sampai tengah malam — fungsi yang sama dengan web
+        from app.services.behavior import raise_daily_limit_today
+        await raise_daily_limit_today(user.id, envelope.id)
 
         # Fetch updated remaining for envelope
         from app.bot.nlp_cmd import _get_user_envelopes
@@ -551,7 +581,8 @@ def _funding_line(kind, amount, target_env, source_env=None) -> str:
     return f"💰 Top-up pemasukan {format_currency(amount)} → {dst}"
 
 
-async def _send_fund_shift_offer(send_fn, tg_user_id, user, hid, envelope, amount, description, db):
+async def _send_fund_shift_offer(send_fn, tg_user_id, user, hid, envelope, amount, description, db,
+                                 txn_date=None, scan_id=None):
     """Tampilkan kekurangan dana + dua cara mengisinya, sama dengan modal web:
     geser dari amplop lain (tombol per amplop sumber) atau top-up pemasukan."""
     import secrets, json
@@ -588,6 +619,9 @@ async def _send_fund_shift_offer(send_fn, tg_user_id, user, hid, envelope, amoun
             "amount": str(amount),
             "description": description,
             "sources": [str(s["envelope"].id) for s in sources],
+            # dari scan struk (opsional): tanggal struk + scan_id untuk feedback
+            "date": txn_date.isoformat() if txn_date else None,
+            "scan_id": scan_id,
         }))
     finally:
         await r.aclose()
@@ -652,6 +686,8 @@ async def handle_fund_shift_callback(update, context):
     target_id = payload["envelope_id"]
     amount = Decimal(payload["amount"])
     description = payload.get("description") or "Pengeluaran"
+    txn_date = _parse_iso_date(payload.get("date")) or date.today()
+    scan_id = payload.get("scan_id")
 
     async with AsyncSessionLocal() as db:
         user_r = await db.execute(select(User).where(User.telegram_id == tg_user_id))
@@ -727,6 +763,8 @@ async def handle_fund_shift_callback(update, context):
                 await _notify_goals(db, user, goals_before)
                 d = check.details
                 d["description"] = description
+                d["date"] = txn_date.isoformat()
+                d["scan_id"] = scan_id
                 prefix = funding_line + "\n\n" if funding_line else ""
                 await _send_daily_limit_blocked(
                     lambda t, **kw: query.edit_message_text(prefix + t, **kw),
@@ -743,11 +781,12 @@ async def handle_fund_shift_callback(update, context):
         db.add(Transaction(
             envelope_id=target_env.id, user_id=user.id, amount=amount,
             description=description, source=TransactionSource.telegram,
-            transaction_date=date.today(),
+            transaction_date=txn_date,
         ))
         await db.commit()
         await _notify_goals(db, user, goals_before)
         streak_line = _streak_text(await after_expense_recorded(db, user, target_env.id, description))
+        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
 
         env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         by_id = {str(e["envelope"].id): e for e in env_data}
@@ -1332,7 +1371,13 @@ async def _handle_txn_callback(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
         payday_day = getattr(user, 'payday_day', 1) or 1
-        result = await db.execute(select(Envelope).where(Envelope.id == envelope_id))
+        import uuid as _uuid
+        try:
+            env_uuid = _uuid.UUID(str(envelope_id))
+        except ValueError:
+            await query.edit_message_text("Error: amplop tidak valid.")
+            return
+        result = await db.execute(select(Envelope).where(Envelope.id == env_uuid))
         envelope = result.scalar_one_or_none()
         if not envelope:
             await query.edit_message_text("Amplop nggak ditemukan.")
@@ -1347,11 +1392,14 @@ async def _handle_txn_callback(update, context):
                 await _send_fund_shift_offer(
                     lambda t, **kw: query.edit_message_text(t, **kw),
                     str(tg_user.id), user, hid, envelope, amount, description, db,
+                    txn_date=txn_date, scan_id=scan_id,
                 )
                 return
             elif check.check_type == "daily_limit":
                 d = check.details
                 d["description"] = description
+                d["date"] = txn_date.isoformat()
+                d["scan_id"] = scan_id
                 await _send_daily_limit_blocked(
                     lambda t, **kw: query.edit_message_text(t, **kw),
                     str(query.from_user.id), d, envelope, settings,
@@ -1378,13 +1426,9 @@ async def _handle_txn_callback(update, context):
         await db.commit()
         streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
         if scan_id:
-            try:
-                from app.services.receipt_scan import apply_feedback
-                await apply_feedback(user, scan_id, db, saved=True, total=int(amount),
-                                     txn_date=txn_date, merchant=description)
-            except Exception as exc:  # feedback best-effort, jangan ganggu transaksi
-                logger.warning("feedback struk gagal: %s", exc)
-                await db.rollback()  # sesi tetap bisa dipakai untuk balasan di bawah
+            # Sesi terpisah — dulu db.rollback() di sini meng-expire user/amplop
+            # sehingga baris di bawah (user.id, envelope.emoji) gagal (MissingGreenlet).
+            await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
             r = aioredis.from_url(get_settings().REDIS_URL)
             await r.delete(f"txn:{txn_key}")  # cegah tersimpan dua kali dari tombol yang sama
             await r.aclose()
@@ -1638,9 +1682,12 @@ def create_bot_app():
     app.add_handler(CommandHandler("webapp", cmd_webapp))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
-    from app.bot.batch_cmd import handle_batch_callback, handle_batch_shift_callback
+    from app.bot.batch_cmd import (
+        handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
+    )
     app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(handle_batch_shift_callback, pattern=r"^bshift_"))
+    app.add_handler(CallbackQueryHandler(handle_batch_limit_callback, pattern=r"^blimit_"))
     from app.bot.receipt_cmd import handle_struk_callback
     app.add_handler(CallbackQueryHandler(handle_struk_callback, pattern=r"^struk_"))
     async def _handle_intent_learn(update, context):

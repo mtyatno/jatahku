@@ -14,6 +14,8 @@ Alur:
      sama dengan dropdown web)
    - amplop kurang dana    → geser dari amplop lain atau top-up pemasukan
                              (dua tab modal web)
+   - melebihi limit harian → "Catat, naikkan limit hari ini" (sama dengan web
+                             dan alur satu item)
 3. Di akhir tampil ringkasan: yang tercatat (dan dana yang ditambahkan), item
    yang dilewati / tertahan beserta alasannya, total, dan streak.
 
@@ -37,6 +39,7 @@ from app.bot.handlers import (
 )
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.models.models import Transaction, TransactionSource, User
+from app.services.behavior import raise_daily_limit_today
 from app.services.expense_rules import FUNDS_BLOCKS, after_expense_recorded, check_expense
 from app.services.goal_notify import goal_snapshot, notify_goals_reached
 from app.services.fund_shift import (
@@ -89,9 +92,13 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
                        funded=Decimal("0"), topup=False, check=None):
     """Catat satu item, opsional setelah menambah `funded` ke amplop tujuan
     (geser dari `source_env`, atau top-up pemasukan bila `topup`). Semua aturan
-    check_expense tetap berlaku; hasilnya masuk ke ringkasan."""
+    check_expense tetap berlaku; hasilnya masuk ke ringkasan.
+
+    Mengembalikan "recorded" | "pending" | "blocked" | "limit". "limit" = item
+    menunggu keputusan "naikkan limit hari ini" (dana tambahan, bila ada,
+    tetap disimpan — sama dengan alur satu item)."""
     amount, desc = Decimal(item["amount"]), item["desc"]
-    info = ""
+    info = item.get("info", "")
     if funded > 0:
         info = (f" · 💰 top-up +{format_currency(funded)}" if topup
                 else f" · 🔁 +{format_currency(funded)} dari {_env_label(source_env)}")
@@ -128,6 +135,15 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
             f"{_env_label(target_env)}: {_item_label(item)}{info}")
         if "total" in data:
             data["total"] += int(amount)
+        return "recorded"
+    elif check.check_type == "daily_limit":
+        # Tawarkan "naikkan limit hari ini". Dana tambahan disimpan: setelah limit
+        # dinaikkan, transaksinya dicatat tanpa perlu mengisi dana lagi.
+        if savepoint is not None:
+            await db.commit()
+            await notify_goals_reached(db, user, goals_before)
+            item["info"] = info
+        return "limit"
     elif check.check_type == "cooling":
         # create_pending_transaction meng-commit dana tambahan sekalian.
         await create_pending_transaction(
@@ -136,6 +152,7 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
         await notify_goals_reached(db, user, goals_before)
         data.setdefault("notes", []).append(
             f"⏳ {_item_label(item)}: masuk cooling period 24 jam (/pending){info}")
+        return "pending"
     else:
         # Tanpa dana tambahan tidak ada perubahan yang perlu dibatalkan.
         if savepoint is not None:
@@ -143,10 +160,9 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
         tail = ""
         if funded > 0:
             tail = " Pemasukan tidak dicatat." if topup else " Dana tidak digeser."
-        if check.check_type == "daily_limit":
-            tail += " Kirim sebagai pesan terpisah untuk opsi naikkan limit hari ini."
         data.setdefault("notes", []).append(
             f"⚠️ {_item_label(item)}: {_esc(check.reason)} Tidak dicatat.{tail}")
+        return "blocked"
 
 
 # ── Langkah antrean ──────────────────────────────────────────────────────────
@@ -186,8 +202,29 @@ async def render_step(key, data, user, hid, db, flash=None):
         target_env = target["envelope"]
 
         check = await check_expense(target_env, user, Decimal(item["amount"]), db)
+        if not check.allowed and check.check_type == "daily_limit":
+            data["stage"] = "limit"
+            d = {"daily_limit": 0, "spent_today": 0, "remaining_today": 0,
+                 "requested": item["amount"], **(check.details or {})}
+            over = max(Decimal(d["requested"]) - Decimal(d["remaining_today"]), Decimal("0"))
+            funded_line = "\n🔁 Dana untuk item ini sudah ditambahkan." if item.get("info") else ""
+            keyboard = [
+                [InlineKeyboardButton("✅ Catat, naikkan limit hari ini", callback_data=f"blimit_{key}_{pos}_y")],
+                [InlineKeyboardButton("⏭ Lewati item ini", callback_data=f"blimit_{key}_{pos}_skip")],
+            ]
+            text = (
+                f"{_progress_header(data, flash)}"
+                f"⚠️ <b>Limit harian terlampaui</b>{progress}\n\n"
+                f"{_item_label(item)}\n"
+                f"{_env_label(target_env)}\n"
+                f"Limit {format_currency(d['daily_limit'])} · terpakai {format_currency(d['spent_today'])} · "
+                f"kelebihan <b>{format_currency(over)}</b>{funded_line}\n\n"
+                f"Tetap catat? Limit hari ini dinaikkan sementara dan otomatis kembali ke "
+                f"<b>{format_currency(d['daily_limit'])}</b> besok."
+            )
+            return text, InlineKeyboardMarkup(keyboard), False
         if check.allowed or check.check_type not in FUNDS_BLOCKS:
-            # Dana cukup (mis. sudah diisi), atau terblokir hal lain (kunci, cooling, limit…).
+            # Dana cukup (mis. sudah diisi), atau terblokir hal lain (kunci, cooling…).
             await _record_item(db, user, hid, data, item, target_env, check=check)
             data["pos"] += 1
             continue
@@ -263,9 +300,37 @@ async def _shift_step(db, user, hid, data, choice):
         error = transfer_error(source, target, funded)
         if error:
             return f"⚠️ {_esc(error)}. Pilih cara lain."
-    await _record_item(db, user, hid, data, item, target["envelope"],
-                       source_env=source["envelope"] if source else None,
-                       funded=funded, topup=topup)
+    status = await _record_item(db, user, hid, data, item, target["envelope"],
+                                source_env=source["envelope"] if source else None,
+                                funded=funded, topup=topup)
+    if status != "limit":
+        data["pos"] += 1
+    return None
+
+
+async def _limit_step(db, user, hid, data, choice):
+    item = data["queue"][data["pos"]]
+    if choice == "skip":
+        kept = " Dana tambahan tetap tersimpan." if item.get("info") else ""
+        data.setdefault("notes", []).append(
+            f"⏭ {_item_label(item)}: dilewati (melebihi limit harian).{kept}")
+        data["pos"] += 1
+        return None
+    if choice != "y":
+        return None
+    payday_day = getattr(user, "payday_day", 1) or 1
+    env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+    target = next((e for e in env_data if str(e["envelope"].id) == item["env_id"]), None)
+    if not target:
+        return None  # render_step mencatatnya sebagai tidak tersedia
+    try:
+        # Fungsi yang sama dengan web dan alur satu item di bot
+        await raise_daily_limit_today(user.id, target["envelope"].id)
+    except Exception:
+        return "⚠️ Gagal menaikkan limit harian. Coba lagi."
+    if await _record_item(db, user, hid, data, item, target["envelope"]) == "limit":
+        data.setdefault("notes", []).append(
+            f"⚠️ {_item_label(item)}: limit harian belum bisa dinaikkan. Tidak dicatat.")
     data["pos"] += 1
     return None
 
@@ -324,6 +389,11 @@ async def handle_batch_callback(update, context):
     await _run_callback(update, "pick", _pick_step)
 
 
+async def handle_batch_limit_callback(update, context):
+    """blimit_{key}_{pos}_{y|skip} — naikkan limit harian lalu catat item antrean."""
+    await _run_callback(update, "limit", _limit_step)
+
+
 async def handle_batch_shift_callback(update, context):
     """bshift_{key}_{pos}_{source_idx|t|skip} — geser dana / top-up untuk item antrean."""
     await _run_callback(update, "shift", _shift_step)
@@ -366,8 +436,8 @@ async def handle_multi_expense(update, context, items):
             # Sama dengan POST /transactions/batch di web: setiap item dicek, dan
             # item yang sudah tercatat ikut terhitung untuk item berikutnya.
             check = await check_expense(env, user, Decimal(amount), db)
-            if not check.allowed and check.check_type in FUNDS_BLOCKS:
-                data["queue"].append(item)  # → tawaran isi dana
+            if not check.allowed and check.check_type in FUNDS_BLOCKS + ("daily_limit",):
+                data["queue"].append(item)  # → tawaran isi dana / naikkan limit harian
                 continue
             await _record_item(db, user, hid, data, item, env, check=check)
 
