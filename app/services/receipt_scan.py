@@ -26,7 +26,8 @@ from app.models.models import (
 )
 from app.services.receipt_parser import (
     CARD_KEYS, CASH_KEYS, CHANGE_KEYS, MASKED, NOISE_LINE, NOT_TOTAL,
-    _label_of, amounts_in, merchant_key, parse_receipt, payment_amounts,
+    ReceiptAdjustment, ReceiptItem, Reconciliation,
+    _label_of, amounts_in, merchant_key, parse_receipt, payment_amounts, reconcile,
 )
 
 logger = logging.getLogger("jatahku.receipt")
@@ -125,6 +126,7 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     engine = "rapidocr"
     merchant, total, txn_date = parsed.merchant, parsed.total, parsed.date
     confidence, evidence = parsed.confidence, list(parsed.evidence)
+    items, adjustments, rec = parsed.items, parsed.adjustments, parsed.reconciliation
     if confidence in ("rendah", "gagal"):
         try:
             fb = await llm(image_bytes, content_type, user_id, plan)
@@ -138,6 +140,11 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
             txn_date = fb.get("date") or txn_date
             confidence = "sedang"
             evidence.append("Dibaca ulang dengan AI cadangan")
+            # Rincian OCR dicocokkan ulang ke total versi AI (tanpa tanda lama).
+            for it in items:
+                if it.flag == "cek":
+                    it.flag, it.note, it.suggestion = "ok", None, None
+            rec = reconcile(items, adjustments, total)
 
     scan = ReceiptScan(
         user_id=user_id,
@@ -165,6 +172,37 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
         "engine": engine,
         "ocr_seconds": round(result.seconds, 2),
         "quota": quota.as_dict(),
+        **items_payload(items, adjustments, rec),
+    }
+
+
+def items_payload(items: list[ReceiptItem], adjustments: list[ReceiptAdjustment],
+                  rec: Reconciliation | None) -> dict:
+    """Rincian barang untuk klien (web & bot)."""
+    return {
+        "items": [
+            {
+                "name": it.name,
+                "qty": it.qty,
+                "unit_price": it.unit_price,
+                "amount": it.amount,
+                "discount": it.discount,
+                "flag": it.flag,
+                "note": it.note,
+                "suggestion": it.suggestion,
+            }
+            for it in items
+        ],
+        "adjustments": [{"label": a.label, "amount": a.amount, "kind": a.kind} for a in adjustments],
+        "reconciliation": None if rec is None else {
+            "items_total": rec.items_total,
+            "discounts": rec.discounts,
+            "charges": rec.charges,
+            "expected": rec.expected,
+            "diff": rec.diff,
+            "status": rec.status,
+            "note": rec.note,
+        },
     }
 
 

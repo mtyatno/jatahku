@@ -133,6 +133,135 @@ SUBTOTAL 70.000"""
         self.assertEqual(p.merchant, "Indomaret")
 
 
+class TestReceiptItems(unittest.TestCase):
+    """Rincian barang: Σ barang − diskon + pajak harus = total struk."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text, **kw):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY, **kw)
+
+    def test_real_receipts_items_reconcile(self):
+        expected_items = {"s1": 8, "s2": 5, "s3": 4, "s4": 2}
+        for rec in FIXTURES["receipts"]:
+            with self.subTest(rec["id"]):
+                p = parse_receipt(rec["lines"], today=date(2026, 10, 15), max_age_days=4000)
+                self.assertEqual(p.reconciliation.status, "cocok", [(i.name, i.amount) for i in p.items])
+                self.assertEqual(len(p.items), expected_items[rec["id"]])
+                self.assertEqual(p.reconciliation.diff, 0)
+
+    def test_inline_voucher_attaches_to_item_above(self):
+        p = parse_receipt(FIXTURES["receipts"][0]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        by_name = {i.name: i for i in p.items}
+        self.assertEqual(by_name["SOKLN SOFTR ROSY 720"].discount, 3000)
+        self.assertEqual(by_name["YC SS BKR SAPI KEJU"].discount, 5000)
+        self.assertEqual(p.reconciliation.items_total, 149500)
+
+    def test_global_vouchers_after_subtotal(self):
+        p = parse_receipt(FIXTURES["receipts"][2]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        self.assertEqual(sorted(a.amount for a in p.adjustments if a.kind == "discount"), [5900, 22900])
+
+    def test_garbled_line_total_uses_unit_price(self):
+        p = parse_receipt(FIXTURES["receipts"][3]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        roti = p.items[1]
+        self.assertEqual((roti.amount, roti.flag), (4500, "auto"))
+        self.assertIn("40", roti.note)
+
+    def test_merged_qty_and_price(self):
+        p = parse_receipt(FIXTURES["receipts"][0]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        choco = next(i for i in p.items if i.name.startswith("CHOCOLITO"))
+        self.assertEqual((choco.qty, choco.unit_price, choco.amount), (1.0, 6000, 6000))
+
+    def test_pack_count_kept_in_name(self):
+        self.assertIn("20S", normalize_line("CAMEL ACT.P MINT 20S 29300 29.300"))
+
+    def test_tax_line_counts_as_charge(self):
+        p = self.parse("""WARUNG NASI AMPERA
+Tgl: 13 Okt 2026
+Nasi Putih 2 x 6.000 12.000
+Es Teh 2 x 5.000 10.000
+Subtotal 22.000
+PB1 10% 2.200
+Grand Total Rp 24.200""")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual(p.reconciliation.charges, 2200)
+        self.assertEqual(p.items[0].qty, 2.0)
+
+    def test_two_line_item(self):
+        p = self.parse("""TOKO A
+14/10/2026
+INDOMIE GORENG SPECIAL
+2 X 3.500 7.000
+TOTAL 7.000""")
+        self.assertEqual(len(p.items), 1)
+        self.assertEqual((p.items[0].name, p.items[0].amount, p.items[0].qty), ("INDOMIE GORENG SPECIAL", 7000, 2.0))
+
+    def test_misread_subtotal_fixed_by_unit_price(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,800
+AQUA 600ML 2 3800 7,600
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual((p.items[0].amount, p.items[0].flag), (37900, "auto"))
+
+    def test_misread_digit_without_unit_price_is_suggested(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 37,800
+TOTAL : 37,900
+TUNAI : 40,000
+KEMBALI : 2,100""")
+        it = p.items[0]
+        self.assertEqual((it.flag, it.suggestion, it.amount), ("cek", 37900, 37800))
+        self.assertEqual(p.reconciliation.diff, 100)
+        self.assertEqual(p.confidence, "tinggi")  # total tetap terbukti oleh pembayaran
+
+    def test_missing_item_reported(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,900
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual(p.reconciliation.diff, 7600)
+        self.assertIn("belum masuk rincian", p.reconciliation.note)
+
+    def test_duplicate_flags_only_second_copy(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,900
+AQUA 600ML 2 3800 7,600
+AQUA 600ML 2 3800 7,600
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual([i.flag for i in p.items], ["ok", "ok", "cek"])
+        self.assertEqual(p.items[2].suggestion, 0)
+
+    def test_items_upgrade_confidence(self):
+        p = self.parse("""TOKO MAJU
+14/10/2026
+GULA 1KG 1 18.000 18.000
+MINYAK 2L 1 38.000 38.000
+TOTAL 56.000""")
+        self.assertEqual((p.total, p.confidence), (56000, "tinggi"))
+        self.assertTrue(any("cocok" in e for e in p.evidence))
+
+    def test_no_total_line_uses_items(self):
+        p = self.parse("WARUNG BU TINI\nNASI RAMES 15.000\nES JERUK 5.000")
+        self.assertEqual((p.total, p.confidence), (20000, "rendah"))
+
+    def test_grocery_name_not_turned_into_keyword(self):
+        p = self.parse("PASAR SEGAR\nBAYAM 7.500\nWORTEL 1KG 12.000\nTOTAL 19.500")
+        self.assertEqual([i.name for i in p.items], ["BAYAM", "WORTEL 1KG"])
+
+    def test_address_postal_code_is_not_an_item(self):
+        p = self.parse("TOKO A\nKEC. CIKARANG UTARA, KAB. BEKASI, 17534\nROTI 9.000\nTOTAL 9.000")
+        self.assertEqual([i.name for i in p.items], ["ROTI"])
+
+
 class TestBuildLines(unittest.TestCase):
     @staticmethod
     def box(x0, y0, x1, y1):
@@ -209,6 +338,10 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(out["total"], 51000)
         self.assertEqual(out["engine"], "rapidocr")
+        self.assertEqual(len(out["items"]), 5)
+        self.assertEqual(out["reconciliation"]["status"], "cocok")
+        self.assertEqual(out["items"][1]["discount"], 4800)  # voucher KOBE melekat ke barangnya
+        json.dumps(out)  # bisa diserialisasi untuk respons API
         self.assertIsNone(out["quota"]["limit"])
         llm.assert_not_awaited()  # keyakinan tinggi → LLM tidak dipanggil
         saved = db.add.call_args[0][0]
