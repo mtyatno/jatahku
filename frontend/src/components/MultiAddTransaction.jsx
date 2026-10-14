@@ -637,15 +637,16 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       const done = applyResult(updated, okKeys);
       const heldCount = endSaving();
+      // Basic: kuota bulan ini habis sesudah input ini → beri tahu (panel tidak
+      // ditutup otomatis supaya pesannya terbaca).
+      const quotaNotice = data.find(r => r.quota_notice)?.quota_notice || null;
+      const savedText = failedCount ? `${successCount} berhasil, ${failedCount} gagal` : `${successCount} transaksi berhasil disimpan`;
       // Suara/struk yang mulai diproses selama menyimpan: panel jangan ditutup.
-      if (done && heldCount === 0 && !inputBusy()) {
-        setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
+      if (done && heldCount === 0 && !inputBusy() && !quotaNotice) {
+        setResultMsg({ type: 'success', text: savedText });
         onSaved?.();
       } else {
-        setResultMsg({
-          type: 'mixed',
-          text: failedCount ? `${successCount} berhasil, ${failedCount} gagal` : `${successCount} transaksi berhasil disimpan`,
-        });
+        setResultMsg({ type: 'mixed', text: quotaNotice ? `${savedText}. ${quotaNotice}` : savedText });
       }
     } else {
       applyResult(updated, new Set(), pendingKeys.size > 0);
@@ -805,7 +806,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           <div className="mt-3">
             <QuickAddTransaction
               key={singleFormKey}
-              onSaved={() => { setSingleFormKey(k => k + 1); }}
+              onSaved={(info) => {
+                setSingleFormKey(k => k + 1);
+                if (info?.quotaNotice) setResultMsg({ type: 'mixed', text: info.quotaNotice });
+              }}
             />
           </div>
         )}

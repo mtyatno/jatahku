@@ -547,6 +547,130 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got[1], (str(m), True))
         self.assertEqual(got[2], (None, False))
 
+    # ── Kuota Basic: input yang dimulai saat kuota masih ada diselesaikan utuh ──
+
+    async def fill_month(self, n, env_name="Transport"):
+        from app.models.models import TransactionSource
+        async with self.Session() as db:
+            for i in range(n):
+                db.add(Transaction(envelope_id=self.env[env_name].id, user_id=self.user_id,
+                                   amount=D("100"), description=f"isi {i}",
+                                   source=TransactionSource.webapp, transaction_date=date.today()))
+            await db.commit()
+
+    async def test_basic_quota_web_batch_finishes_started_input(self):
+        from fastapi import HTTPException
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        await self.fill_month(48)
+        t = self.env["Transport"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": f"barang {i}",
+                                         "client_ref": f"q{i}"} for i in range(4)])
+            self.assertTrue(all(r.ok for r in out))            # 48 + 4 = 52: tetap selesai utuh
+            self.assertIn("sudah habis (sudah 52 transaksi)", out[0].quota_notice)
+            nxt = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "baru",
+                                         "client_ref": "q-new"}])
+            async with self.Session() as db:
+                with self.assertRaises(HTTPException) as cm:
+                    await create_transaction(TransactionCreate(envelope_id=t, amount=D("1000"), description="satu"),
+                                             await self.web_user(db), db)
+        self.assertFalse(nxt[0].ok)                            # input berikutnya ditolak
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis", nxt[0].error)
+        self.assertEqual(cm.exception.status_code, 403)
+        self.assertIn("bisa lagi mulai 1 ", cm.exception.detail)
+        self.assertEqual(await self.count(Transaction), 52)
+
+    async def test_basic_quota_resend_of_started_input_still_allowed(self):
+        await self.fill_month(48)
+        t, m = self.env["Transport"].id, self.env["Makan"].id
+        items = [{"envelope_id": t, "amount": D("1000"), "description": "a", "client_ref": "r-a"},
+                 {"envelope_id": t, "amount": D("1000"), "description": "b", "client_ref": "r-b"},
+                 {"envelope_id": m, "amount": D("30000"), "description": "c", "client_ref": "r-c"}]  # Makan sisa 10rb
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            out = await self.web_batch(items)
+            self.assertEqual([r.ok for r in out], [True, True, False])  # 50 → kuota habis
+            self.assertIn("sudah habis", out[0].quota_notice)
+            await self.income("Makan", 50000)
+            again = await self.web_batch([items[2], {"envelope_id": t, "amount": D("1000"),
+                                                     "description": "baru", "client_ref": "r-new"}])
+        self.assertTrue(again[0].ok)        # bagian dari input yang dimulai saat kuota ada
+        self.assertFalse(again[1].ok)       # input baru
+        self.assertIn("sudah habis", again[1].error)
+        self.assertEqual(await self.count(Transaction), 51)
+
+    async def test_pro_batch_has_no_quota_bookkeeping(self):
+        async with self.Session() as db:
+            (await self.web_user(db)).plan = "pro"
+            await db.commit()
+        await self.fill_month(60)
+        t = self.env["Transport"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "x", "client_ref": "p1"}])
+        self.assertTrue(out[0].ok)
+        self.assertIsNone(out[0].quota_notice)
+        self.assertFalse(any(k.startswith("quotapass:") for k in self.redis.store))
+
+    async def test_basic_quota_bot_multi_item_finishes_message(self):
+        await self.fill_month(48)
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        matches = {"parkir": "Transport", "bensin": "Transport", "tol": "Transport"}
+        items = [(D("1000"), "parkir"), (D("2000"), "bensin"), (D("3000"), "tol")]
+        await self.go(lambda: batch_cmd.handle_multi_expense(update, None, items), matches)
+        text = update.message.reply_text.call_args.args[0]
+        self.assertIn("3 transaksi dicatat", text)
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis (sudah 51 transaksi)", text)
+        update.message.reply_text = AsyncMock()
+        await self.go(lambda: batch_cmd.handle_multi_expense(update, None, [(D("1000"), "parkir")]), matches)
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis", update.message.reply_text.call_args.args[0])
+        self.assertEqual(await self.count(Transaction), 51)
+
+    async def test_basic_quota_bot_queue_finishes_after_crossing(self):
+        await self.fill_month(49)
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        matches = {"parkir": "Transport", "sate": "Makan"}
+        await self.go(lambda: batch_cmd.handle_multi_expense(
+            update, None, [(D("1000"), "parkir"), (D("30000"), "sate")]), matches)
+        call = update.message.reply_text.call_args       # parkir tercatat (50), sate kurang dana
+        self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])
+        btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                   if "Transport" in r[0].text)
+        call = await self.tap(btn)                       # geser → tetap tercatat walau sudah 50
+        self.assertIn("2 transaksi dicatat", call.args[0])
+        self.assertIn("sudah habis (sudah 51 transaksi)", call.args[0])
+        self.assertEqual(await self.count(Transaction), 51)
+
+    async def test_basic_quota_bot_single_item_notice_then_block(self):
+        await self.fill_month(49)
+        self.redis.store["txn:k1"] = json.dumps({"amount": 5000, "desc": "kopi",
+                                                 "envs": {"0": str(self.env["Transport"].id)}})
+        call = await self.tap("t_k1_0")
+        self.assertIn("✅", call.args[0])
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis (sudah 50 transaksi)", call.args[0])
+        self.redis.store["txn:k2"] = json.dumps({"amount": 5000, "desc": "teh",
+                                                 "envs": {"0": str(self.env["Transport"].id)}})
+        call = await self.tap("t_k2_0")
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis", call.args[0])
+        self.assertNotIn("✅", call.args[0])
+        self.assertEqual(await self.count(Transaction), 50)
+
+    async def test_basic_quota_bot_fund_shift_finishes_started_input(self):
+        await self.fill_month(49)
+        self.seed_receipt("Makan", 30000)  # Makan sisa 10rb → kurang 20rb
+        with patch("app.services.receipt_scan.apply_feedback", new=AsyncMock()):
+            call = await self.tap("t_rcpt0001_0")
+            self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])
+            await self.fill_month(1)        # kuota habis selagi tombol menunggu
+            btn = next(r[0].callback_data for r in call.kwargs["reply_markup"].inline_keyboard
+                       if "Transport" in r[0].text)
+            call = await self.tap(btn)
+        self.assertIn("digeser dari", call.args[0])
+        self.assertIn("sudah habis (sudah 51 transaksi)", call.args[0])
+        self.assertEqual(await self.count(Transaction), 51)
+
     async def test_web_long_description_is_trimmed_not_failed(self):
         from app.api.routes.transactions import TransactionCreate, create_transaction
         t = self.env["Transport"].id

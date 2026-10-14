@@ -144,8 +144,14 @@ class World:
 
     async def plan_check(self, user, db):
         if self.plan_cap is not None and len(self.of(Transaction)) >= self.plan_cap:
-            return False, f"Limit {self.plan_cap} transaksi/bulan tercapai."
+            return False, f"Kuota {self.plan_cap} transaksi bulan ini sudah habis."
         return True, ""
+
+    async def quota_notice(self, user, db):
+        n = len(self.of(Transaction))
+        if self.plan_cap is not None and n >= self.plan_cap:
+            return f"Kuota {self.plan_cap} transaksi bulan ini sudah habis (sudah {n} transaksi)."
+        return None
 
     def patches(self, matches=None):
         ps = [
@@ -158,6 +164,8 @@ class World:
             # check_expense asli (aturan bersama web + TG); hanya lapisan di bawahnya disimulasikan
             patch.object(expense_rules, "check_behavior", new=self.check),
             patch.object(expense_rules, "check_transaction_limit", new=self.plan_check),
+            patch.object(batch_cmd, "check_transaction_limit", new=self.plan_check),
+            patch.object(batch_cmd, "quota_notice_after_input", new=self.quota_notice),
             patch.object(batch_cmd, "after_expense_recorded", new=AsyncMock(return_value=None)),
             patch.object(batch_cmd, "raise_daily_limit_today", new=self.raise_limit),
         ]
@@ -358,15 +366,22 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(w.redis.store, {})
 
     async def test_saving_envelope_and_plan_limit_like_web(self):
+        # Kuota Basic dicek sekali di awal pesan: pesan yang dimulai saat kuota masih
+        # ada diselesaikan utuh (walau melewati batas), lalu user diberi tahu.
         tabungan = env("Tabungan", "🏦", purpose="saving")
         w = World((self.makan, 100000, 0), (tabungan, 500000, 0))
         w.plan_cap = 2
         reply = await w.send([(D("10000"), "a"), (D("10000"), "b"), (D("10000"), "c"), (D("5000"), "d")],
                              [self.makan, tabungan, self.makan, self.makan])
-        self.assertEqual([t.description for t in w.of(Transaction)], ["a", "c"])
+        self.assertEqual([t.description for t in w.of(Transaction)], ["a", "c", "d"])
         text = reply.call_args.args[0]
         self.assertIn("b: Amplop tabungan tidak bisa untuk pengeluaran langsung", text)
-        self.assertIn("d: Limit 2 transaksi/bulan tercapai.", text)
+        self.assertIn("Kuota 2 transaksi bulan ini sudah habis (sudah 3 transaksi)", text)
+
+        # Pesan berikutnya (kuota sudah habis sejak awal) ditolak utuh.
+        reply = await w.send([(D("1000"), "e")], [self.makan])
+        self.assertEqual(len(w.of(Transaction)), 3)
+        self.assertIn("Kuota 2 transaksi bulan ini sudah habis", reply.call_args.args[0])
 
 
 # ── Tombol antrean ───────────────────────────────────────────────────────────

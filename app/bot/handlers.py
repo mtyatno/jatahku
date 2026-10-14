@@ -279,6 +279,19 @@ def _spendable_rows(env_data):
     return [e for e in env_data if is_spendable(e["envelope"])]
 
 
+async def _quota_line(user, db, html: bool = False) -> str:
+    """Baris pemberitahuan sesudah input tercatat bila kuota Basic bulan ini kini
+    habis (input berikutnya menunggu reset bulan depan). Best-effort."""
+    try:
+        from app.services.plan_limits import quota_notice_after_input
+        notice = await quota_notice_after_input(user, db)
+    except Exception:
+        return ""
+    if not notice:
+        return ""
+    return f"\n\n⚠️ {_esc(notice) if html else notice}"
+
+
 async def _reply_blocked_basic(send_fn, check) -> bool:
     """Balasan untuk blok yang tidak punya alur lanjutan. True bila ditangani."""
     if check.check_type == "locked":
@@ -545,12 +558,13 @@ async def handle_daily_limit_callback(update, context):
         _, _, envs = await _get_user_envelopes(query.from_user, db)
         env_data = next((e for e in (envs or []) if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
+        quota_line = await _quota_line(user, db, html=True)
 
     emoji = envelope.emoji or "📁"
     await query.edit_message_text(
         f"✅ <b>{format_currency(amount)}</b> — {description}\n"
         f"{emoji} {envelope.name} · sisa <b>{format_currency(remaining)}</b>\n\n"
-        f"<i>Limit harian dinaikkan sementara sampai tengah malam.</i>",
+        f"<i>Limit harian dinaikkan sementara sampai tengah malam.</i>{quota_line}",
         parse_mode="HTML",
     )
 
@@ -739,7 +753,9 @@ async def handle_fund_shift_callback(update, context):
         undone = "Pemasukan tidak dicatat." if topup else "Dana tidak digeser."
 
         # Semua aturan lagi (sama dengan web) dengan dana yang sudah ditambahkan.
-        check = await check_expense(target_env, user, amount, db)
+        # Kuota Basic sudah lolos di awal input ini (tawaran geser dana hanya muncul
+        # sesudah cek kuota) → input diselesaikan walau kuota terlewati sementara itu.
+        check = await check_expense(target_env, user, amount, db, skip_plan_limit=True)
         if not check.allowed:
             if check.check_type == "daily_limit":
                 # Dana tambahan tetap disimpan: alur konfirmasi limit harian mencatat
@@ -777,6 +793,7 @@ async def handle_fund_shift_callback(update, context):
         by_id = {str(e["envelope"].id): e for e in env_data}
         target_left = by_id[target_id]["remaining"] if target_id in by_id else Decimal("0")
         source_left = by_id[source_id]["remaining"] if source_id in by_id else Decimal("0")
+        quota_line = await _quota_line(user, db, html=True)
 
     lines = [f"✅ {format_currency(amount)} — {_esc(description)}"]
     if funding_line:
@@ -785,7 +802,7 @@ async def handle_fund_shift_callback(update, context):
     lines.append(f"{target_env.emoji or '📁'} {_esc(target_env.name)} · sisa <b>{format_currency(target_left)}</b>")
     if source_env is not None and funded > 0:
         lines.append(f"{source_env.emoji or '📁'} {_esc(source_env.name)} · sisa <b>{format_currency(source_left)}</b>")
-    await query.edit_message_text("\n".join(lines) + _esc(streak_line), parse_mode="HTML")
+    await query.edit_message_text("\n".join(lines) + _esc(streak_line) + quota_line, parse_mode="HTML")
 
 
 async def cmd_status(update, context):
@@ -1270,10 +1287,11 @@ async def handle_message(update, context):
                 elif ratio >= 0.7:
                     warning = f"\n\n🟡 Mulai menipis. Sisa untuk {days_left} hari."
             emoji = envelope.emoji or "📁"
+            quota_line = await _quota_line(user, db)
             await update.message.reply_text(
                 f"✅ {format_currency(amount)} — {description}\n"
                 f"Masuk ke {emoji} {envelope.name}\n\n"
-                f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}{streak_line}"
+                f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}{streak_line}{quota_line}"
             )
         else:
             envelopes_data = _spendable_rows(await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day))
@@ -1417,11 +1435,12 @@ async def _handle_txn_callback(update, context):
         envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
+        quota_line = await _quota_line(user, db)
     emoji = envelope.emoji or "📁"
     await query.edit_message_text(
         f"✅ {format_currency(amount)} — {description}\n"
         f"Masuk ke {emoji} {envelope.name}\n\n"
-        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)}){streak_line}"
+        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)}){streak_line}{quota_line}"
     )
 
 async def handle_checkin_callback(update, context):

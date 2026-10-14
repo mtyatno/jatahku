@@ -40,12 +40,39 @@ async def check_envelope_limit(user: User, db: AsyncSession) -> tuple[bool, str]
     return True, ""
 
 
-async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
-    """Check if user can create more transactions this month."""
+MONTHS_ID = ("Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
+             "Agustus", "September", "Oktober", "November", "Desember")
+
+
+def quota_reset_date(today: date | None = None) -> date:
+    """Kuota transaksi dihitung per bulan kalender → reset tanggal 1 bulan depan."""
+    t = today or date.today()
+    return date(t.year + (t.month == 12), t.month % 12 + 1, 1)
+
+
+def _reset_text(today: date | None = None) -> str:
+    d = quota_reset_date(today)
+    return f"{d.day} {MONTHS_ID[d.month - 1]} {d.year}"
+
+
+def quota_exhausted_message(limit: int, today: date | None = None) -> str:
+    """Input baru ditolak karena kuota bulan ini sudah habis."""
+    return (f"Kuota {limit} transaksi bulan ini sudah habis. Pencatatan berikutnya bisa lagi "
+            f"mulai {_reset_text(today)}, atau upgrade ke Pro untuk tanpa batas.")
+
+
+def has_txn_limit(user: User) -> bool:
+    """Paket ini punya batas transaksi bulanan (Basic)?"""
+    plan = getattr(user, 'plan', 'basic') or 'basic'
+    return PLAN_LIMITS.get(plan, PLAN_LIMITS["basic"])["txn_per_month"] != -1
+
+
+async def monthly_txn_usage(user: User, db: AsyncSession) -> tuple[int, int] | None:
+    """(terpakai, batas) transaksi bulan ini; None untuk paket tanpa batas."""
     plan = getattr(user, 'plan', 'basic') or 'basic'
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["basic"])
     if limits["txn_per_month"] == -1:
-        return True, ""
+        return None
 
     now = date.today()
     count = (await db.execute(
@@ -57,10 +84,35 @@ async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, s
             func.extract("month", Transaction.transaction_date) == now.month,
         )
     )).scalar()
+    return int(count or 0), limits["txn_per_month"]
 
-    if count >= limits["txn_per_month"]:
-        return False, f"Limit {limits['txn_per_month']} transaksi/bulan tercapai. Upgrade ke Pro untuk unlimited."
+
+async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
+    """Boleh MEMULAI input pengeluaran baru? (Basic: < 50 transaksi bulan ini.)
+
+    Aturan pemilik produk (15 Okt 2026): input yang dimulai saat kuota masih ada
+    diselesaikan utuh walau di tengah jalan melewati batas — jadi cek ini dipakai
+    sekali di awal input, bukan per transaksi (lihat app/services/quota_pass.py).
+    Sesudah input selesai, quota_notice_after_input memberi tahu bila kuota habis."""
+    usage = await monthly_txn_usage(user, db)
+    if usage is None:
+        return True, ""
+    used, limit = usage
+    if used >= limit:
+        return False, quota_exhausted_message(limit)
     return True, ""
+
+
+async def quota_notice_after_input(user: User, db: AsyncSession) -> str | None:
+    """Pemberitahuan sesudah satu input selesai, bila kuota bulan ini kini habis."""
+    usage = await monthly_txn_usage(user, db)
+    if usage is None:
+        return None
+    used, limit = usage
+    if used < limit:
+        return None
+    return (f"Kuota {limit} transaksi bulan ini sudah habis (sudah {used} transaksi). "
+            f"Input berikutnya bisa lagi mulai {_reset_text()}, atau upgrade ke Pro untuk tanpa batas.")
 
 
 async def check_recurring_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
