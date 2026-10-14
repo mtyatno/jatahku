@@ -41,7 +41,7 @@ export function receiptToItem(result, key) {
     receiptItems: toReceiptItems(result.items),
     adjustments: (result.adjustments || []).map(a => ({ ...a, amount: Number(a.amount) || 0 })),
     confidenceSource: result.confidence_source || null,
-    plan: null, // rencana simpan per amplop; dibekukan saat pertama disimpan
+    plan: null, // rencana simpan (1 transaksi per barang); dibekukan saat pertama disimpan
   };
 }
 

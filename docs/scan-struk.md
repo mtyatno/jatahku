@@ -6,8 +6,9 @@ ONNX Runtime, CPU) + parser aturan. Fallback LLM Groq tersedia tapi **mati
 secara default** dan dikunci plafon biaya.
 
 Selain total, parser membaca **rincian barang** dan mencocokkannya dengan total
-struk (Σ barang − diskon + pajak = total). Di webapp, barang bisa dipecah ke
-beberapa amplop (satu transaksi per amplop, Σ selalu = total struk).
+struk (Σ barang − diskon + pajak = total). Di webapp, **tiap barang dicatat sebagai
+satu transaksi** di amplopnya sendiri, mis. `ROTI TAWAR (Indomaret)`; Σ selalu =
+total struk.
 
 ## Alur
 
@@ -22,7 +23,7 @@ foto ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receip
              ├─ rincian barang → rekonsiliasi dengan total (cocok | selisih | kosong)
              ├─ (opsional) keyakinan rendah/gagal → fallback LLM ber-plafon
              └─ simpan ReceiptScan → user cek rincian, pilih amplop (per barang
-                boleh beda), simpan → 1 transaksi per amplop (client_ref per transaksi)
+                boleh beda), simpan → 1 transaksi per barang (client_ref per transaksi)
                                         │
               POST /scan-receipt/{id}/feedback (nilai akhir) ─► belajar
 ```
@@ -55,19 +56,26 @@ flag `ok|auto|cek`, note, suggestion), `adjustments[]` (label, amount, kind
 `discount|charge`), `reconciliation` (items_total, discounts, charges, expected,
 diff, status, note), `confidence_source`.
 
-**Webapp (kartu struk).** Bilah cocok/selisih, keterangan per barang, tombol pakai
-saran, hapus barang, dan **Tambah "Lainnya"** untuk menutup selisih. Tiap barang
-bisa memilih amplop sendiri (default: amplop struk).
-- Pecah per amplop: voucher barang mengurangi barang itu; diskon global, pajak, dan
-  selisih yang belum terjelaskan dibagi proporsional menurut nilai bersih barang.
-  Pembulatan sisa terbesar → Σ nominal per amplop **selalu = total struk**
-  (`frontend/src/lib/receiptSplit.js`).
-- Keterangan transaksi: `Indomaret (3 barang)` — **nama barang sengaja tidak
-  ditulis**, karena amplop bersama menampilkan keterangan ke anggota rumah tangga.
-- Rencana simpan dibekukan saat pertama disimpan. Kalau sebagian bagian gagal
-  (saldo/limit), bagian yang sudah tercatat tidak dikirim ulang; bagian yang gagal
-  bisa diisi amplopnya, dinaikkan limitnya, dipindah amplop, atau dilewati.
-  "Ubah rincian" hanya tersedia selama belum ada bagian yang tercatat.
+**Webapp (kartu struk).** Bilah cocok/selisih, keterangan per barang, nama barang
+bisa diedit, tombol pakai saran, hapus barang, dan **Tambah "Lainnya"** untuk menutup
+selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
+- **1 transaksi per barang**, keterangan `NAMA BARANG (Toko)` — nama barang di depan
+  supaya daftar transaksi mudah dipindai (permintaan pemilik produk, Okt 2026;
+  versi awal menggabung per amplop jadi `Indomaret (3 barang)`). Seperti transaksi
+  lain, keterangan di amplop bersama terlihat oleh anggota rumah tangga.
+- Nominal: voucher barang mengurangi barang itu; diskon global, pajak, dan selisih
+  yang belum terjelaskan dibagi proporsional menurut nilai bersih barang. Pembulatan
+  sisa terbesar → Σ nominal **selalu = total struk** (`frontend/src/lib/receiptSplit.js`).
+  Barang yang bagiannya 0 (gratis karena voucher) tidak dicatat.
+- Rencana simpan ditampilkan ringkas per amplop ("Belanja · 2 barang · Rp…") dan
+  dibekukan saat pertama disimpan. Kalau sebagian gagal (saldo/limit), yang sudah
+  tercatat tidak dikirim ulang; perbaikan (geser dana sebesar Σ barang yang gagal,
+  naikkan limit, pindah amplop) berlaku untuk semua barang yang gagal di amplop
+  itu, atau sisanya dilewati. "Ubah rincian" hanya tersedia selama belum ada yang
+  tercatat.
+- Kata kunci → amplop dipelajari dari keterangan tiap barang (hook yang sama dengan
+  transaksi biasa), jadi "sabun" yang pernah ke Kebutuhan Rumah ikut tercatat.
+- Paket Basic (50 transaksi/bulan): tiap barang dihitung satu transaksi.
 
 **Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)
 dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di
@@ -183,4 +191,4 @@ asli (fixture baris OCR di `app/tests/fixtures/receipt_ocr_lines.json`, nomor
 kartu disamarkan; keempatnya rincian `cocok`), kasus rincian (dua baris, voucher,
 pajak, salah baca digit, dobel), gerbang belajar, idempotensi, dan ringkasan bot.
 Frontend: `node --test src/lib/receiptScan.test.js src/lib/receiptSplit.test.js`
-dari folder `frontend` (pecah per amplop: Σ selalu = total).
+dari folder `frontend` (catat per barang: Σ selalu = total, diuji acak).

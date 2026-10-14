@@ -1,9 +1,10 @@
-// Rincian struk: cocokkan barang dengan total & pecah per amplop (logika murni, tanpa DOM).
+// Rincian struk: cocokkan barang dengan total & catat per barang (logika murni, tanpa DOM).
 //
-// Aturan: total struk = yang benar-benar dibayar dan jadi patokan. Σ nominal per
-// amplop SELALU = total. Diskon/voucher yang melekat ke barang mengurangi barang
-// itu; diskon global, pajak, dan selisih yang belum terjelaskan dibagi
-// proporsional menurut nilai bersih tiap barang.
+// Aturan: total struk = yang benar-benar dibayar dan jadi patokan. Setiap barang
+// dicatat sebagai satu transaksi di amplopnya sendiri, dan Σ nominal semua
+// transaksi SELALU = total. Voucher yang melekat ke barang mengurangi barang itu;
+// diskon global, pajak, dan selisih yang belum terjelaskan dibagi proporsional
+// menurut nilai bersih tiap barang (pembulatan sisa terbesar).
 
 export function itemNet(it) {
   return Math.max(0, (Number(it.amount) || 0) - (Number(it.discount) || 0));
@@ -32,71 +33,93 @@ export function effectiveEnvelope(item, defaultEnvelopeId) {
   return item.envelopeId || defaultEnvelopeId || '';
 }
 
-// Barang dipecah ke lebih dari satu amplop?
-export function isSplit(items, defaultEnvelopeId) {
-  const envs = new Set(liveItems(items).map(it => effectiveEnvelope(it, defaultEnvelopeId)));
-  return envs.size > 1;
-}
-
-// Nominal per amplop: [{ envelopeId, amount, names }], Σ amount === total (pembulatan
-// sisa terbesar). Tanpa barang/nilai → seluruh total ke amplop struk.
-export function splitByEnvelope(items, total, defaultEnvelopeId) {
-  const t = Math.max(0, Math.round(Number(total) || 0));
-  const live = liveItems(items);
-  const order = [];
-  const groups = {};
-  for (const it of live) {
-    const env = effectiveEnvelope(it, defaultEnvelopeId);
-    if (!groups[env]) {
-      groups[env] = { envelopeId: env, weight: 0, names: [] };
-      order.push(env);
-    }
-    groups[env].weight += itemNet(it);
-    groups[env].names.push(it.name);
-  }
-  const weightSum = order.reduce((s, env) => s + groups[env].weight, 0);
-  if (order.length === 0 || weightSum <= 0) {
-    return [{ envelopeId: defaultEnvelopeId || '', amount: t, names: live.map(it => it.name) }];
-  }
-  // Amplop struk (default) di urutan pertama.
-  order.sort((a, b) => (a === (defaultEnvelopeId || '') ? -1 : b === (defaultEnvelopeId || '') ? 1 : 0));
-  const exact = order.map(env => (t * groups[env].weight) / weightSum);
-  const floors = exact.map(Math.floor);
-  let rest = t - floors.reduce((s, v) => s + v, 0);
+// Bagi `total` (bilangan bulat) menurut bobot; Σ hasil === total.
+function largestRemainder(total, weights) {
+  const sum = weights.reduce((s, w) => s + w, 0);
+  const exact = weights.map(w => (total * w) / sum);
+  const out = exact.map(Math.floor);
+  let rest = total - out.reduce((s, v) => s + v, 0);
   const byFraction = exact
     .map((v, i) => ({ i, frac: v - Math.floor(v) }))
     .sort((a, b) => b.frac - a.frac || a.i - b.i);
-  for (let k = 0; rest > 0; k = (k + 1) % byFraction.length, rest--) floors[byFraction[k].i] += 1;
-  const out = order
-    .map((env, i) => ({ envelopeId: env, amount: floors[i], names: groups[env].names }))
-    .filter(g => g.amount > 0);
+  for (let k = 0; rest > 0; k = (k + 1) % byFraction.length, rest--) out[byFraction[k].i] += 1;
+  return out;
+}
+
+// Bagian per barang: [{ itemId, name, envelopeId, amount }], Σ amount === total.
+// Barang yang bagiannya 0 (mis. gratis karena voucher) tidak dicatat. Tanpa
+// barang/nilai → seluruh total jadi satu bagian di amplop struk (itemId null).
+export function splitByItem(items, total, defaultEnvelopeId) {
+  const t = Math.max(0, Math.round(Number(total) || 0));
+  const live = liveItems(items);
+  const weights = live.map(itemNet);
+  const whole = [{ itemId: null, name: null, envelopeId: defaultEnvelopeId || '', amount: t }];
+  if (live.length === 0 || weights.every(w => w <= 0)) return whole;
+  const amounts = largestRemainder(t, weights);
+  const out = live
+    .map((it, i) => ({ itemId: it.id ?? `i${i}`, name: it.name, envelopeId: effectiveEnvelope(it, defaultEnvelopeId), amount: amounts[i] }))
+    .filter(p => p.amount > 0);
   // Total 0 → tetap satu bagian (validasi nominal menolaknya saat simpan).
-  return out.length ? out : [{ envelopeId: order[0], amount: 0, names: groups[order[0]].names }];
+  return out.length ? out : whole;
 }
 
-// Keterangan transaksi per amplop: "Indomaret (3 barang)". Nama barang sengaja
-// tidak dimasukkan: amplop bersama menampilkan keterangan ke anggota rumah tangga.
-export function groupDescription(merchant, count, { split } = {}) {
-  const base = ((merchant || '').trim() || 'Belanja').slice(0, 100);
-  if (!split || !count) return base;
-  return `${base} (${count} barang)`;
+// Keterangan transaksi per barang: "Roti Tawar (Indomaret)". Nama barang di depan
+// supaya daftar transaksi mudah dipindai; nama toko di belakang sebagai konteks.
+export function itemDescription(merchant, name) {
+  const item = String(name || '').trim() || 'Barang';
+  const shop = String(merchant || '').trim().slice(0, 100);
+  return (shop ? `${item} (${shop})` : item).slice(0, 500);
 }
 
-// Rencana simpan struk: 1 transaksi per amplop. Dibekukan saat pertama disimpan,
+// Rencana simpan struk: 1 transaksi per barang. Dibekukan saat pertama disimpan,
 // supaya percobaan ulang mengirim bagian yang sama persis (Σ tetap = total).
 export function buildPlan(entry) {
-  const groups = splitByEnvelope(entry.receiptItems, entry.amount, entry.envelopeId);
-  const split = groups.length > 1;
-  return groups.map((g, i) => ({
+  const merchant = String(entry.description || '').trim();
+  return splitByItem(entry.receiptItems, entry.amount, entry.envelopeId).map((p, i) => ({
     id: `g${i}`,
-    envelopeId: g.envelopeId,
-    amount: g.amount,
-    count: g.names.length,
-    description: groupDescription(entry.description, g.names.length, { split }),
+    itemId: p.itemId,
+    name: p.name,
+    envelopeId: p.envelopeId,
+    amount: p.amount,
+    description: p.itemId === null
+      ? (merchant || 'Belanja').slice(0, 500)
+      : itemDescription(merchant, p.name),
     saved: false,
     error: null,
     raiseLimit: false,
   }));
+}
+
+// Ringkasan rencana per amplop untuk ditampilkan (urutan kemunculan pertama):
+// [{ envelopeId, amount, count, savedCount, allSaved, failed[], failedAmount,
+//    error, raiseLimit }]. `failed` = bagian yang belum tersimpan & punya error.
+export function summarizePlan(plan) {
+  const rows = [];
+  const byEnv = new Map();
+  for (const g of plan || []) {
+    const env = g.envelopeId || '';
+    if (!byEnv.has(env)) {
+      const row = { envelopeId: env, amount: 0, count: 0, savedCount: 0, groups: [] };
+      byEnv.set(env, row);
+      rows.push(row);
+    }
+    const row = byEnv.get(env);
+    row.amount += Number(g.amount) || 0;
+    row.count += 1;
+    if (g.saved) row.savedCount += 1;
+    row.groups.push(g);
+  }
+  return rows.map(row => {
+    const failed = row.groups.filter(g => !g.saved && g.error);
+    return {
+      ...row,
+      allSaved: row.savedCount === row.count,
+      failed,
+      failedAmount: failed.reduce((s, g) => s + (Number(g.amount) || 0), 0),
+      error: failed[0]?.error || null,
+      raiseLimit: row.groups.some(g => !g.saved && g.raiseLimit),
+    };
+  });
 }
 
 // Hasil API → barang yang bisa diedit di kartu struk.

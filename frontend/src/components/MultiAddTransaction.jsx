@@ -33,7 +33,7 @@ function isInsufficientFundsError(errMsg) {
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
-// Struk dengan rincian barang → disimpan lewat rencana per amplop.
+// Struk dengan rincian barang → disimpan lewat rencana (1 transaksi per barang).
 function hasReceiptItems(item) {
   return item.origin === 'receipt' && (item.receiptItems || []).length > 0;
 }
@@ -52,10 +52,14 @@ function isReady(item) {
   return !!item.envelopeId;
 }
 
-const patchPlanGroup = (item, gid, patch) => ({
+// Struk dicatat per barang, jadi masalah amplop (dana kurang, limit harian,
+// pindah amplop) berlaku untuk SEMUA barang yang belum tersimpan di amplop itu.
+const patchPlanEnvelope = (item, envelopeId, patch) => ({
   ...item,
-  plan: (item.plan || []).map(g => (g.id === gid ? { ...g, ...patch } : g)),
+  plan: (item.plan || []).map(g => (!g.saved && g.envelopeId === envelopeId ? { ...g, ...patch } : g)),
 });
+
+const groupEnvelope = (item, gid) => (item.plan || []).find(g => g.id === gid)?.envelopeId;
 
 function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
   const isShortage = isInsufficientFundsError(item.error);
@@ -227,7 +231,14 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     let targetGid = gid;
     if (!targetEnv && hasReceiptItems(item)) {
       const failed = insufficientGroup(item);
-      if (failed) { targetEnv = failed.envelopeId; targetAmount = failed.amount; targetGid = failed.id; }
+      if (failed) {
+        targetEnv = failed.envelopeId;
+        targetGid = failed.id;
+        // Semua barang di amplop itu yang gagal karena dana kurang.
+        targetAmount = (item.plan || [])
+          .filter(g => !g.saved && g.envelopeId === failed.envelopeId && isInsufficientFundsError(g.error))
+          .reduce((sum, g) => sum + g.amount, 0);
+      }
     }
     targetEnv = targetEnv || item.envelopeId;
     targetAmount = targetAmount ?? item.amount;
@@ -250,10 +261,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     const item = items.find(i => i.key === key);
     if (!item) return;
     if (gid && item.plan) {
-      const group = item.plan.find(g => g.id === gid);
-      const env = envelopes.find(e => e.id === group?.envelopeId);
+      const envId = groupEnvelope(item, gid);
+      const env = envelopes.find(e => e.id === envId);
       setItems(prev => prev.map(i => (i.key === key
-        ? { ...patchPlanGroup(i, gid, { raiseLimit: true, error: null }), error: null } : i)));
+        ? { ...patchPlanEnvelope(i, envId, { raiseLimit: true, error: null }), error: null } : i)));
       setResultMsg({
         type: 'mixed',
         text: `Limit harian ${env ? env.name : 'amplop'} akan dinaikkan sementara (kembali normal besok). Klik Simpan Semua untuk melanjutkan.`,
@@ -274,7 +285,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       setItems(prev => prev.map(item => {
         if (item.key !== fundingTarget.itemKey) return item;
         if (fundingTarget.groupId && item.plan) {
-          return { ...patchPlanGroup(item, fundingTarget.groupId, { error: null }), error: null };
+          return { ...patchPlanEnvelope(item, fundingTarget.envelope.id, { error: null }), error: null };
         }
         return { ...item, error: null };
       }));
@@ -370,9 +381,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   };
 
   // Bagian yang gagal dipindah ke amplop lain (nominal tetap).
+  // Barang yang belum tersimpan di amplop bagian `gid` dipindah ke amplop lain.
   const handleRetargetGroup = (key, gid, envelopeId) => {
     setItems(prev => prev.map(item => (item.key === key
-      ? patchPlanGroup(item, gid, { envelopeId, error: null, raiseLimit: false }) : item)));
+      ? patchPlanEnvelope(item, groupEnvelope(item, gid), { envelopeId, error: null, raiseLimit: false }) : item)));
   };
 
   // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang).
@@ -436,7 +448,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   });
 
   // Satu entri → satu atau beberapa transaksi. Struk dengan rincian memakai
-  // rencana per amplop; bagian yang sudah tersimpan tidak dikirim ulang.
+  // rencana (1 transaksi per barang); bagian yang sudah tersimpan tidak dikirim ulang.
   const toParts = (item, plan) => {
     if (plan) {
       return plan.filter(g => !g.saved).map(g => ({
