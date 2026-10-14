@@ -109,6 +109,10 @@ async def create_income(
         if not env_check.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=f"Amplop {alloc.envelope_id} tidak ditemukan")
 
+    # Goal yang baru tercapai karena pemasukan ini dinotifikasi (app/services/goal_notify.py)
+    from app.services.goal_notify import goal_snapshot, notify_goals_reached
+    goals_before = await goal_snapshot(db, hid)
+
     # Create income
     income = Income(
         household_id=hid,
@@ -144,6 +148,7 @@ async def create_income(
         alloc_details.append({"envelope": "Tabungan", "emoji": "💰", "amount": str(remainder), "auto": True})
 
     await db.commit()
+    await notify_goals_reached(db, user, goals_before)
 
     return IncomeResponse(
         id=income.id,

@@ -19,6 +19,9 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior, create_pending_transaction, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
+from app.services.expense_rules import (
+    FUNDS_BLOCKS, after_expense_recorded, check_expense, is_spendable,
+)
 from app.bot.link_cmd import link_with_code
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.services.txn_nlp import (
@@ -188,14 +191,11 @@ async def get_household_id(user, db):
     result = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
     return result.scalar_one_or_none()
 
-async def _streak_line(db, user) -> str:
-    """Record today's activity and return a short streak line for chat replies.
-
-    Best-effort: a streak failure must never break expense logging."""
+def _streak_text(res) -> str:
+    """Baris streak untuk balasan chat dari hasil record_activity (boleh None)."""
     try:
-        from app.services.streak import record_activity, milestone_message
-        res = await record_activity(db, user.id, getattr(user, "timezone", None))
-        if not res.advanced:
+        from app.services.streak import milestone_message
+        if res is None or not res.advanced:
             return ""
         celebrate = milestone_message(res)
         if celebrate:
@@ -205,6 +205,38 @@ async def _streak_line(db, user) -> str:
         return ""
     except Exception:
         return ""
+
+
+async def _streak_line(db, user) -> str:
+    """Record today's activity and return a short streak line for chat replies.
+
+    Best-effort: a streak failure must never break expense logging."""
+    try:
+        from app.services.streak import record_activity
+        return _streak_text(await record_activity(db, user.id, getattr(user, "timezone", None)))
+    except Exception:
+        return ""
+
+
+def _spendable_rows(env_data):
+    """Pilihan amplop untuk pengeluaran — tanpa tabungan/sinking fund, sama
+    dengan dropdown web."""
+    return [e for e in env_data if is_spendable(e["envelope"])]
+
+
+async def _reply_blocked_basic(send_fn, check) -> bool:
+    """Balasan untuk blok yang tidak punya alur lanjutan. True bila ditangani."""
+    if check.check_type == "locked":
+        await send_fn(f"🔒 {check.reason}")
+    elif check.check_type == "not_spendable":
+        await send_fn(f"🏦 {check.reason}")
+    elif check.check_type == "plan_limit":
+        await send_fn(f"⚠️ {check.reason}\n\nUpgrade di jatahku.com/settings")
+    elif check.check_type == "error":
+        await send_fn(f"⚠️ {check.reason}")
+    else:
+        return False
+    return True
 
 async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: int = 1):
     from sqlalchemy import or_
@@ -416,6 +448,7 @@ async def handle_daily_limit_callback(update, context):
         )
         db.add(txn)
         await db.commit()
+        await after_expense_recorded(db, user, envelope.id, description)
 
         # Set temp bypass until midnight — use DB user UUID to match check_behavior
         now      = datetime.now()
@@ -438,6 +471,248 @@ async def handle_daily_limit_callback(update, context):
         f"<i>Limit harian dinaikkan sementara sampai tengah malam.</i>",
         parse_mode="HTML",
     )
+
+
+# ── Geser dana saat amplop kurang dana ────────────────────────────────────────
+# Padanan FundEnvelopeModal di web: pengeluaran yang terblokir "not_funded" /
+# "insufficient" ditawari menggeser kekurangannya dari amplop lain, lalu
+# transaksinya langsung dicatat.
+
+FUND_SHIFT_TTL = 600  # detik
+
+
+def _esc(text) -> str:
+    import html
+    return html.escape(str(text or ""), quote=False)
+
+
+async def _notify_goals(db, user, goals_before):
+    """Notifikasi goal yang baru tercapai karena dana tambahan (app/services/goal_notify.py)."""
+    if goals_before:
+        from app.services.goal_notify import notify_goals_reached
+        await notify_goals_reached(db, user, goals_before)
+
+
+def _funding_line(kind, amount, target_env, source_env=None) -> str:
+    """Satu baris ringkas tentang dana yang ditambahkan ke amplop tujuan."""
+    dst = f"{target_env.emoji or '📁'} {_esc(target_env.name)}"
+    if kind == "shift":
+        return (f"🔁 {format_currency(amount)} digeser dari "
+                f"{source_env.emoji or '📁'} {_esc(source_env.name)} → {dst}")
+    return f"💰 Top-up pemasukan {format_currency(amount)} → {dst}"
+
+
+async def _send_fund_shift_offer(send_fn, tg_user_id, user, hid, envelope, amount, description, db):
+    """Tampilkan kekurangan dana + dua cara mengisinya, sama dengan modal web:
+    geser dari amplop lain (tombol per amplop sumber) atau top-up pemasukan."""
+    import secrets, json
+    import redis.asyncio as aioredis
+    from app.services.fund_shift import compute_shortfall, pick_sources
+
+    payday_day = getattr(user, "payday_day", 1) or 1
+    env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+    target = next((e for e in env_data if e["envelope"].id == envelope.id), None)
+    target_remaining = target["remaining"] if target else Decimal("0")
+    shortfall = compute_shortfall(target_remaining, amount)
+    sources = pick_sources(env_data, envelope.id, shortfall)
+
+    emoji = envelope.emoji or "📁"
+    text = (
+        f"💸 <b>Dana amplop kurang</b>\n\n"
+        f"{format_currency(amount)} — {_esc(description)}\n"
+        f"{emoji} {_esc(envelope.name)} · sisa {format_currency(max(target_remaining, Decimal('0')))}\n"
+        f"Kurang <b>{format_currency(shortfall)}</b>\n\n"
+    )
+    if sources:
+        text += (f"Geser <b>{format_currency(shortfall)}</b> dari amplop lain, atau catat "
+                 f"pemasukan sebesar kekurangannya, supaya transaksi ini tetap tercatat?")
+    else:
+        text += (f"Tidak ada amplop lain yang sisanya cukup. Catat pemasukan "
+                 f"<b>{format_currency(shortfall)}</b> ke {emoji} {_esc(envelope.name)} "
+                 f"supaya transaksi ini tetap tercatat?")
+
+    token = secrets.token_hex(8)
+    r = aioredis.from_url(settings.REDIS_URL)
+    try:
+        await r.setex(f"fshift:{tg_user_id}:{token}", FUND_SHIFT_TTL, json.dumps({
+            "envelope_id": str(envelope.id),
+            "amount": str(amount),
+            "description": description,
+            "sources": [str(s["envelope"].id) for s in sources],
+        }))
+    finally:
+        await r.aclose()
+
+    keyboard = []
+    for idx, s in enumerate(sources):
+        src = s["envelope"]
+        keyboard.append([InlineKeyboardButton(
+            f"🔁 {src.emoji or '📁'} {src.name} (sisa {format_currency(s['remaining'])})",
+            callback_data=f"fshift:{token}:{idx}",
+        )])
+    keyboard.append([InlineKeyboardButton(
+        f"💰 Top-up pemasukan {format_currency(shortfall)}", callback_data=f"fshift:{token}:t")])
+    keyboard.append([InlineKeyboardButton("❌ Batalkan", callback_data=f"fshift:{token}:x")])
+
+    await send_fn(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def handle_fund_shift_callback(update, context):
+    """fshift:{token}:{idx|t|x} — geser dari amplop terpilih (idx) atau top-up
+    pemasukan (t) sebesar kekurangan, lalu catat transaksinya; x = batal."""
+    import json
+    import redis.asyncio as aioredis
+    from app.services.fund_shift import (
+        compute_shortfall, record_topup, record_transfer, transfer_error,
+    )
+
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        return
+    _, token, choice = parts
+    tg_user_id = str(query.from_user.id)
+    key = f"fshift:{tg_user_id}:{token}"
+
+    r = aioredis.from_url(settings.REDIS_URL)
+    try:
+        if choice == "x":
+            await r.delete(key)
+            await query.edit_message_text("❌ Transaksi dibatalkan. Dana tidak diubah.")
+            return
+        # getdel: ambil sekaligus hapus → tombol yang diketuk dua kali tidak diproses dua kali
+        raw = await r.getdel(key)
+    finally:
+        await r.aclose()
+
+    if not raw:
+        await query.edit_message_text("⏰ Transaksi sudah diproses atau sesi expired. Kirim ulang.")
+        return
+
+    payload = json.loads(raw)
+    topup = choice == "t"
+    source_id = None
+    if not topup:
+        try:
+            source_id = payload["sources"][int(choice)]
+        except (ValueError, IndexError):
+            await query.edit_message_text("Error: pilihan tidak valid.")
+            return
+    target_id = payload["envelope_id"]
+    amount = Decimal(payload["amount"])
+    description = payload.get("description") or "Pengeluaran"
+
+    async with AsyncSessionLocal() as db:
+        user_r = await db.execute(select(User).where(User.telegram_id == tg_user_id))
+        user = user_r.scalar_one_or_none()
+        if not user:
+            await query.edit_message_text("⚠️ User tidak ditemukan.")
+            return
+        hid = await get_household_id(user, db)
+        payday_day = getattr(user, "payday_day", 1) or 1
+
+        # Hitung ulang dari data terbaru: saldo bisa berubah selama tombol menunggu.
+        # get_envelopes_with_spent juga membatasi ke amplop aktif yang boleh diakses user.
+        env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+        by_id = {str(e["envelope"].id): e for e in env_data}
+        target = by_id.get(target_id)
+        source = by_id.get(source_id) if source_id else None
+        if not target or (not topup and not source):
+            await query.edit_message_text("⚠️ Amplop sudah tidak tersedia. Kirim ulang transaksinya.")
+            return
+        target_env = target["envelope"]
+        source_env = source["envelope"] if source else None
+
+        funded = compute_shortfall(target["remaining"], amount)
+        savepoint = None
+        goals_before = {}
+        if funded > 0:
+            from app.services.goal_notify import goal_snapshot
+            goals_before = await goal_snapshot(db, hid)
+            if not topup:
+                error = transfer_error(source, target, funded)
+                if error:
+                    await query.edit_message_text(
+                        f"⚠️ {_esc(error)}. Dana tidak digeser — kirim ulang transaksinya.",
+                        parse_mode="HTML")
+                    return
+            # Savepoint, bukan db.rollback(): rollback penuh meng-expire objek sesi
+            # (lihat batch_cmd._record_item).
+            savepoint = await db.begin_nested()
+            if topup:
+                record_topup(db, hid, user.id, target_env, funded)
+            else:
+                record_transfer(db, hid, user.id, source_env, target_env, funded)
+            await db.flush()
+
+        funding_line = (_funding_line("topup" if topup else "shift", funded, target_env, source_env)
+                        if funded > 0 else "")
+        undone = "Pemasukan tidak dicatat." if topup else "Dana tidak digeser."
+
+        # Semua aturan lagi (sama dengan web) dengan dana yang sudah ditambahkan.
+        check = await check_expense(target_env, user, amount, db)
+        if not check.allowed:
+            if check.check_type == "cooling":
+                # create_pending_transaction meng-commit dana tambahan sekalian.
+                pending = await create_pending_transaction(
+                    target_env.id, user.id, amount, description,
+                    TransactionSource.telegram, cooling_hours=24, db=db)
+                await _notify_goals(db, user, goals_before)
+                confirm_time = pending.confirm_after.strftime("%d %b %H:%M")
+                await query.edit_message_text(
+                    (funding_line + "\n\n" if funding_line else "")
+                    + f"⏳ Cooling period aktif\n\n"
+                    f"{format_currency(amount)} — {_esc(description)}\n"
+                    f"Amplop: {target_env.emoji or '📁'} {_esc(target_env.name)}\n\n"
+                    f"Bisa dikonfirmasi setelah:\n🕐 {confirm_time} WIB (24 jam)\n\n"
+                    f"Ketik /pending untuk lihat status.",
+                    parse_mode="HTML",
+                )
+                return
+            if check.check_type == "daily_limit":
+                # Dana tambahan tetap disimpan: alur konfirmasi limit harian mencatat
+                # transaksi tanpa cek dana ulang, jadi dananya harus sudah ada.
+                await db.commit()
+                await _notify_goals(db, user, goals_before)
+                d = check.details
+                d["description"] = description
+                prefix = funding_line + "\n\n" if funding_line else ""
+                await _send_daily_limit_blocked(
+                    lambda t, **kw: query.edit_message_text(prefix + t, **kw),
+                    tg_user_id, d, target_env, settings,
+                )
+                return
+            if savepoint is not None:
+                await savepoint.rollback()
+            await query.edit_message_text(
+                f"⚠️ {_esc(check.reason)}\n\n{undone if funded > 0 else 'Transaksi tidak dicatat.'}",
+                parse_mode="HTML")
+            return
+
+        db.add(Transaction(
+            envelope_id=target_env.id, user_id=user.id, amount=amount,
+            description=description, source=TransactionSource.telegram,
+            transaction_date=date.today(),
+        ))
+        await db.commit()
+        await _notify_goals(db, user, goals_before)
+        streak_line = _streak_text(await after_expense_recorded(db, user, target_env.id, description))
+
+        env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+        by_id = {str(e["envelope"].id): e for e in env_data}
+        target_left = by_id[target_id]["remaining"] if target_id in by_id else Decimal("0")
+        source_left = by_id[source_id]["remaining"] if source_id in by_id else Decimal("0")
+
+    lines = [f"✅ {format_currency(amount)} — {_esc(description)}"]
+    if funding_line:
+        lines.append(funding_line)
+    lines.append("")
+    lines.append(f"{target_env.emoji or '📁'} {_esc(target_env.name)} · sisa <b>{format_currency(target_left)}</b>")
+    if source_env is not None and funded > 0:
+        lines.append(f"{source_env.emoji or '📁'} {_esc(source_env.name)} · sisa <b>{format_currency(source_left)}</b>")
+    await query.edit_message_text("\n".join(lines) + _esc(streak_line), parse_mode="HTML")
 
 
 async def cmd_status(update, context):
@@ -682,7 +957,7 @@ async def handle_message(update, context):
         is_santai, is_emosi, is_koreksi, is_nabung, parse_multi_expense,
         is_pengeluaran_hari_ini, is_pengeluaran_hari_lalu, strip_date_numbers,
         handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
-        handle_santai, handle_emosi, handle_koreksi, handle_nabung, handle_multi_expense,
+        handle_santai, handle_emosi, handle_koreksi, handle_nabung,
         handle_pengeluaran_hari_ini, handle_pengeluaran_hari_lalu,
     )
     if is_emosi(text) and not parse_amount(text):
@@ -720,6 +995,7 @@ async def handle_message(update, context):
     # Multi-expense: "makan 30k, parkir 5k, kopi 20k"
     multi_items = parse_multi_expense(text)
     if multi_items:
+        from app.bot.batch_cmd import handle_multi_expense
         await handle_multi_expense(update, context, multi_items)
         return
 
@@ -824,7 +1100,7 @@ async def handle_message(update, context):
         payday_day = getattr(user, 'payday_day', 1) or 1
         envelope, confident = await find_best_envelope(description, hid, db, user_id=user.id)
         if not envelope:
-            envelopes_check = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+            envelopes_check = _spendable_rows(await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day))
             if not envelopes_check:
                 await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
                 return
@@ -853,29 +1129,16 @@ async def handle_message(update, context):
                 reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if confident:
-            # Check plan limits
-            from app.services.plan_limits import check_transaction_limit
-            limit_ok, limit_msg = await check_transaction_limit(user, db)
-            if not limit_ok:
-                await update.message.reply_text(f"\u26a0\ufe0f {limit_msg}\n\nUpgrade di jatahku.com/settings")
-                return
-
-            # Run behavior checks
-            check = await check_behavior(envelope.id, user.id, amount, db)
+            # Aturan yang sama dengan web (app/services/expense_rules.py)
+            check = await check_expense(envelope, user, amount, db)
             if not check.allowed:
-                if check.check_type == "locked":
-                    await update.message.reply_text(f"🔒 {check.reason}")
+                if await _reply_blocked_basic(update.message.reply_text, check):
                     return
-                elif check.check_type == "not_funded":
-                    await update.message.reply_text(
-                        f"💸 {check.reason}\n\nBuka jatahku.com/allocate untuk alokasi income.")
-                    return
-                elif check.check_type == "insufficient":
-                    d = check.details
-                    await update.message.reply_text(
-                        f"💸 {check.reason}\n\n"
-                        f"Sisa dana: {format_currency(d['available'])}\n"
-                        f"Diminta: {format_currency(d['requested'])}")
+                elif check.check_type in FUNDS_BLOCKS:
+                    await _send_fund_shift_offer(
+                        lambda t, **kw: update.message.reply_text(t, **kw),
+                        str(tg_user.id), user, hid, envelope, amount, description, db,
+                    )
                     return
                 elif check.check_type == "daily_limit":
                     d = check.details
@@ -908,9 +1171,8 @@ async def handle_message(update, context):
             txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
                 description=description, source=TransactionSource.telegram, transaction_date=date.today())
             db.add(txn)
-            await save_learned_keywords(user.id, description, envelope.id, db)
             await db.commit()
-            streak_line = await _streak_line(db, user)
+            streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
             envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
             remaining = env_data["remaining"] if env_data else Decimal("0")
@@ -934,7 +1196,7 @@ async def handle_message(update, context):
                 f"Sisa: {format_currency(remaining)} (dana {format_currency(budget)}){warning}{streak_line}"
             )
         else:
-            envelopes_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+            envelopes_data = _spendable_rows(await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day))
             import redis.asyncio as aioredis, json as json_mod, secrets
             from app.core.config import get_settings
             txn_key = secrets.token_hex(4)
@@ -992,22 +1254,16 @@ async def handle_txn_callback(update, context):
             await query.edit_message_text("Amplop nggak ditemukan.")
             return
 
-        # Run behavior checks
-        check = await check_behavior(envelope.id, user.id, amount, db)
+        # Aturan yang sama dengan web (app/services/expense_rules.py)
+        check = await check_expense(envelope, user, amount, db)
         if not check.allowed:
-            if check.check_type == "locked":
-                await query.edit_message_text(f"🔒 {check.reason}")
+            if await _reply_blocked_basic(query.edit_message_text, check):
                 return
-            elif check.check_type == "not_funded":
-                await query.edit_message_text(
-                    f"💸 {check.reason}\nBuka jatahku.com/allocate untuk alokasi income.")
-                return
-            elif check.check_type == "insufficient":
-                d = check.details
-                await query.edit_message_text(
-                    f"💸 {check.reason}\n"
-                    f"Sisa dana: {format_currency(d['available'])}\n"
-                    f"Diminta: {format_currency(d['requested'])}")
+            elif check.check_type in FUNDS_BLOCKS:
+                await _send_fund_shift_offer(
+                    lambda t, **kw: query.edit_message_text(t, **kw),
+                    str(tg_user.id), user, hid, envelope, amount, description, db,
+                )
                 return
             elif check.check_type == "daily_limit":
                 d = check.details
@@ -1035,9 +1291,8 @@ async def handle_txn_callback(update, context):
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
             description=description, source=TransactionSource.telegram, transaction_date=date.today())
         db.add(txn)
-        await save_learned_keywords(user.id, description, envelope.id, db)
         await db.commit()
-        streak_line = await _streak_line(db, user)
+        streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
         envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
@@ -1215,91 +1470,6 @@ async def handle_addsub_callback(update, context):
     )
 
 
-async def handle_batch_callback(update, context):
-    """Handle envelope selection for multi-item batch queue.
-    callback_data: batch_{key}_{idx}_{env_id|skip}
-    """
-    query = update.callback_query
-    await query.answer()
-
-    parts = query.data.split("_", 3)  # batch, key, idx, env_id_or_skip
-    if len(parts) < 4:
-        await query.edit_message_text("Error: data tidak valid.")
-        return
-    _, batch_key, idx_str, choice = parts
-    idx = int(idx_str)
-
-    import redis.asyncio as aioredis, json as json_mod
-    r = aioredis.from_url(settings.REDIS_URL)
-    raw = await r.get(f"batch:{batch_key}")
-    if not raw:
-        await query.edit_message_text("⏰ Session expired. Kirim ulang pesan.")
-        await r.aclose()
-        return
-
-    data = json_mod.loads(raw.decode())
-    queue = data["queue"]
-    auto_lines = data["auto_lines"]
-    env_list = data["envs"]
-    user_id = data["user_id"]
-
-    item = queue[idx]
-    amount = Decimal(str(item["amount"]))
-    description = item["desc"]
-
-    if choice != "skip":
-        env_id = choice
-        tg_user = update.effective_user
-        async with AsyncSessionLocal() as db:
-            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            env_result = await db.execute(select(Envelope).where(Envelope.id == env_id))
-            envelope = env_result.scalar_one_or_none()
-            if not envelope:
-                await query.edit_message_text("Amplop tidak ditemukan.")
-                await r.aclose()
-                return
-
-            # Behavior check
-            check = await check_behavior(envelope.id, user.id, amount, db)
-            if not check.allowed:
-                msg = f"⚠️ {check.reason}"
-                if check.check_type == "insufficient":
-                    d = check.details
-                    msg += f"\nSisa dana: {format_currency(d['available'])}"
-                await query.edit_message_text(msg)
-                await r.aclose()
-                return
-
-            txn = Transaction(
-                envelope_id=envelope.id, user_id=user.id, amount=amount,
-                description=description, source=TransactionSource.telegram,
-                transaction_date=date.today(),
-            )
-            db.add(txn)
-            await save_learned_keywords(user.id, description, envelope.id, db)
-            await db.commit()
-
-        env_emoji = next((e["emoji"] for e in env_list if e["id"] == env_id), "📁")
-        env_name = next((e["name"] for e in env_list if e["id"] == env_id), "")
-        auto_lines = auto_lines + [f"{env_emoji} {env_name}: {format_currency(amount)} — {description}"]
-        data["auto_lines"] = auto_lines
-
-    # Move to next unresolved item
-    next_idx = idx + 1
-    if next_idx < len(queue):
-        # Update Redis with new auto_lines, ask next item
-        await r.set(f"batch:{batch_key}", json_mod.dumps(data), ex=600)
-        await r.aclose()
-        from app.bot.nlp_cmd import _ask_batch_item
-        await _ask_batch_item(query, batch_key, queue, next_idx, auto_lines, env_list, is_edit=True)
-    else:
-        await r.delete(f"batch:{batch_key}")
-        await r.aclose()
-        # All done — show final summary
-        lines = ["✅ *Semua item selesai!*\n"] + auto_lines
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
-
-
 async def handle_non_text(update, context):
     """Handle photos, stickers, voice, etc."""
     if update.message.photo:
@@ -1375,12 +1545,15 @@ def create_bot_app():
     app.add_handler(CommandHandler("webapp", cmd_webapp))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
+    from app.bot.batch_cmd import handle_batch_callback, handle_batch_shift_callback
     app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
+    app.add_handler(CallbackQueryHandler(handle_batch_shift_callback, pattern=r"^bshift_"))
     async def _handle_intent_learn(update, context):
         from app.bot.intent_learning import handle_intent_learn_callback
         await handle_intent_learn_callback(update.callback_query, context, settings)
     app.add_handler(CallbackQueryHandler(_handle_intent_learn, pattern=r"^intentlearn:"))
     app.add_handler(CallbackQueryHandler(handle_daily_limit_callback, pattern=r"^dlimit:"))
+    app.add_handler(CallbackQueryHandler(handle_fund_shift_callback, pattern=r"^fshift:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     from telegram.ext import MessageHandler as MsgHandler
     app.add_handler(MsgHandler(filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_non_text))
