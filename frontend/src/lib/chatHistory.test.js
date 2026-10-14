@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyOps, clearAllHistory, loadHistory, saveHistory, historyKey, looksLikeChange, userMessage, MAX_MESSAGES,
+  applyOps, clearAllHistory, loadHistory, saveHistory, historyKey, looksLikeChange, userMessage, userPhotoMessage, MAX_MESSAGES,
 } from './chatHistory.js';
 
 function memStorage(init = {}) {
@@ -80,4 +80,25 @@ test('logout menghapus riwayat chat semua akun, data lain tetap', () => {
   store.setItem('jatahku_theme', '{}');
   clearAllHistory(store);
   assert.deepEqual(Object.keys(s), ['jatahku_theme']);
+});
+
+test('pesan "Membaca struk..." yang dihapus bot hilang dari riwayat', () => {
+  const ops = [
+    { type: 'message', id: 'b1', text: '🧾 Membaca struk...', format: 'plain', buttons: [] },
+    { type: 'delete', id: 'b1' },
+    { type: 'message', id: 'b2', text: '👋 Budget kamu belum disiapkan.', format: 'plain', buttons: [] },
+  ];
+  let { messages } = applyOps([], ops);
+  assert.deepEqual(messages.map(m => m.id), ['b2']);
+  // kirim ulang (ops sama dari server) tidak menggandakan
+  ({ messages } = applyOps(messages, ops));
+  assert.deepEqual(messages.map(m => m.id), ['b2']);
+});
+
+test('pesan foto struk dari user', () => {
+  const m = userPhotoMessage('data:image/jpeg;base64,xx', 5);
+  assert.equal(m.kind, 'photo');
+  assert.equal(m.role, 'user');
+  assert.equal(m.status, 'sending');
+  assert.equal(typeof m.text, 'string'); // tetap lolos filter riwayat lokal
 });

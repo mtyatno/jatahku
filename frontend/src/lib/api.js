@@ -633,6 +633,22 @@ class ApiClient {
     return this._chat('/bot/chat/action', { message_id: messageId, data });
   }
 
+  // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Struk).
+  async chatPhoto(blob, clientId) {
+    try {
+      const form = new FormData();
+      form.append('image', blob, 'struk.jpg');
+      if (clientId) form.append('client_id', clientId);
+      const res = await this.request('/bot/chat/photo', { method: 'POST', body: form });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
+      if (res.status === 429) return { ok: false, error: 'Terlalu banyak scan. Tunggu sebentar, ya.' };
+      return { ok: false, error: (typeof d.detail === 'string' && d.detail) || 'Foto tidak bisa dikirim. Coba lagi.' };
+    } catch {
+      return { ok: false, error: 'Gagal mengirim foto. Cek koneksi lalu coba lagi.' };
+    }
+  }
+
   async _chat(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });

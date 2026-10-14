@@ -1,33 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { fitDimensions } from '../lib/receiptScan';
+import { compressImage } from '../lib/receiptImage';
 import { Icon } from './Icon';
-
-// Kompres foto di HP sebelum upload: sisi panjang ≤1600px, JPEG 85% (±200–400 KB).
-// createImageBitmap + imageOrientation menghormati rotasi EXIF foto kamera.
-async function compressImage(file) {
-  let source;
-  try {
-    source = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  } catch {
-    source = await new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
-      img.src = url;
-    });
-  }
-  const { width, height } = fitDimensions(source.width, source.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  canvas.getContext('2d').drawImage(source, 0, 0, width, height);
-  if (source.close) source.close();
-  return new Promise((resolve, reject) =>
-    canvas.toBlob(b => (b ? resolve(b) : reject(new Error('encode'))), 'image/jpeg', 0.85)
-  );
-}
 
 // Tombol "Struk": pilih/ambil foto → kompres → scan di server.
 // onResult(hasilApi) saat berhasil; onError(pesan) saat gagal.

@@ -5,12 +5,12 @@ Pesan dan tombol diproses oleh handler bot Telegram yang sama lewat
 """
 import hashlib
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from app.bot.web_adapter import run_action, run_message
+from app.bot.web_adapter import run_action, run_message, run_photo
 from app.core.deps import get_current_user
 from app.models.models import User
 
@@ -50,3 +50,18 @@ async def chat_message(request: Request, body: ChatMessageIn, user: User = Depen
 @limiter.limit("60/minute", key_func=chat_key_func)
 async def chat_action(request: Request, body: ChatActionIn, user: User = Depends(get_current_user)):
     return {"ops": await run_action(user, body.message_id, body.data)}
+
+
+@router.post("/photo")
+@limiter.limit("30/hour", key_func=chat_key_func)
+async def chat_photo(
+    request: Request,
+    image: UploadFile = File(...),
+    client_id: str | None = Form(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    user: User = Depends(get_current_user),
+):
+    """Foto struk dari chat → alur scan struk bot (kuota & batas sama)."""
+    # Validasi format/ukuran sama dengan tombol Struk di form transaksi.
+    from app.api.routes.transactions import _read_receipt_upload
+    data, mime = await _read_receipt_upload(image)
+    return {"ops": await run_photo(user, data, mime, client_id)}

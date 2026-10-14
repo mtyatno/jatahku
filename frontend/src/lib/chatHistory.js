@@ -1,8 +1,9 @@
 // Riwayat chat bot di webapp: disimpan lokal per user (seperti riwayat chat
 // Telegram di HP), dan "ops" dari server diterapkan ke daftar pesan.
 //
-// Pesan: { id, role: 'user' | 'bot', text, format, buttons, ts, status? }
+// Pesan: { id, role: 'user' | 'bot', text, format, buttons, ts, status?, kind?, thumb? }
 //   status (pesan user saja): 'sending' | 'failed'
+//   kind 'photo' (pesan user): foto struk; thumb = data URL kecil untuk pratinjau
 
 export const MAX_MESSAGES = 100;
 const KEY_PREFIX = 'jatahku_chat_';
@@ -57,6 +58,14 @@ export function userMessage(text, now = Date.now()) {
   return { id: localId(), role: 'user', text, format: 'plain', buttons: [], ts: now, status: 'sending' };
 }
 
+// Foto struk yang dikirim user. `thumb` kecil (±5 KB) supaya riwayat lokal tetap ringan.
+export function userPhotoMessage(thumb, now = Date.now()) {
+  return {
+    id: localId(), role: 'user', kind: 'photo', text: '📷 Foto struk', thumb: thumb || null,
+    format: 'plain', buttons: [], ts: now, status: 'sending',
+  };
+}
+
 export function setStatus(messages, id, status) {
   return messages.map(m => (m.id === id ? { ...m, status } : m));
 }
@@ -72,6 +81,10 @@ export function applyOps(messages, ops, now = Date.now()) {
       continue;
     }
     const idx = list.findIndex(m => m.id === op.id);
+    if (op.type === 'delete') {
+      if (idx !== -1) list.splice(idx, 1);
+      continue;
+    }
     if (op.type === 'message' || (op.type === 'edit' && idx === -1)) {
       if (op.type === 'message' && idx !== -1) continue; // duplikat
       list.push({

@@ -75,7 +75,10 @@ def _items_summary(result: dict) -> str:
     if len(adjustments) > MAX_ADJ_LINES:
         lines.append(f"… +{len(adjustments) - MAX_ADJ_LINES} penyesuaian lagi")
     if rec.get("status") != "cocok":
-        lines.append("💡 Koreksi rincian & pecah per amplop bisa di webapp (tombol Struk).")
+        from app.bot.channel import is_web
+        lines.append("💡 Koreksi rincian & pecah per amplop: tombol + → Pengeluaran → Struk."
+                     if is_web() else
+                     "💡 Koreksi rincian & pecah per amplop bisa di webapp (tombol Struk).")
     text = "\n".join(lines)
     return text if len(text) <= MAX_SUMMARY_CHARS else text[:MAX_SUMMARY_CHARS - 1] + "…"
 

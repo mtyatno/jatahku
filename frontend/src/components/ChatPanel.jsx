@@ -4,8 +4,9 @@ import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { PREFILL_COMMANDS, formatBotText, inAppPath, safeHref } from '../lib/chatFormat';
 import {
-  applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage,
+  applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage, userPhotoMessage,
 } from '../lib/chatHistory';
+import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
@@ -209,6 +210,8 @@ export default function ChatPanel({ open, onClose }) {
   const drag = useRef(null);       // status tarikan header (mobile)
   const pushedRef = useRef(false); // entri riwayat browser untuk tombol Back
   const atBottom = useRef(true);   // daftar pesan sedang di paling bawah?
+  const photoFiles = useRef(new Map()); // id pesan foto → blob (untuk kirim ulang di sesi ini)
+  const fileRef = useRef(null);
   const [mode, setMode] = useState('half'); // tinggi sheet mobile: 'half' | 'full'
 
   // Fase animasi: closed → opening → open → closing → closed.
@@ -369,7 +372,7 @@ export default function ChatPanel({ open, onClose }) {
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !open) return;
-    if (messages.length !== lastCount.current || pending === 'message') {
+    if (messages.length !== lastCount.current || pending === 'message' || pending === 'photo') {
       el.scrollTop = el.scrollHeight;
     }
     lastCount.current = messages.length;
@@ -433,6 +436,55 @@ export default function ChatPanel({ open, onClose }) {
     setMessages(m => setStatus(m, msg.id, undefined));
     receive(res.ops);
   }, [receive, showToast]);
+
+  // Foto struk → alur scan struk bot (sama dengan kirim foto ke @JatahkuBot).
+  const deliverPhoto = useCallback(async (msg) => {
+    const blob = photoFiles.current.get(msg.id);
+    if (!blob) { showToast('Foto sudah tidak tersimpan. Pilih ulang fotonya.'); return; }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setMessages(m => setStatus(m, msg.id, 'failed'));
+      showToast('Kamu sedang offline. Foto belum terkirim.');
+      return;
+    }
+    setMessages(m => setStatus(m, msg.id, 'sending'));
+    setPending('photo');
+    const res = await api.chatPhoto(blob, msg.id);
+    setPending(null);
+    if (!res.ok) {
+      setMessages(m => setStatus(m, msg.id, 'failed'));
+      showToast(res.error);
+      return;
+    }
+    photoFiles.current.delete(msg.id);
+    setMessages(m => setStatus(m, msg.id, undefined));
+    receive(res.ops);
+  }, [receive, showToast]);
+
+  const onPickPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // foto yang sama bisa dipilih ulang
+    if (!file || pending) return;
+    if (!file.type.startsWith('image/')) { showToast('Pilih file foto (JPG/PNG)'); return; }
+    setPending('photo');
+    let blob;
+    try {
+      blob = await compressImage(file);
+    } catch {
+      setPending(null);
+      showToast('Foto tidak bisa dibuka. Coba foto ulang atau pilih format JPG.');
+      return;
+    }
+    const msg = userPhotoMessage(await thumbnailDataUrl(blob));
+    photoFiles.current.set(msg.id, blob);
+    setMessages(m => [...m, msg]);
+    setPending(null);
+    deliverPhoto(msg);
+  };
+
+  const retry = (m) => {
+    if (pending) return;
+    if (m.kind === 'photo') deliverPhoto(m); else deliver(m);
+  };
 
   const send = useCallback((raw) => {
     const text = (raw ?? '').trim();
@@ -552,7 +604,7 @@ export default function ChatPanel({ open, onClose }) {
           <div className="min-w-0 flex-1">
             <p className="font-display font-bold text-[15px] leading-tight">Chat Jatahku</p>
             <p className="text-[11.5px] text-gray-400 leading-tight truncate">
-              {pending === 'message' ? 'mengetik…' : 'Catat & cek jatah, sama seperti di Telegram'}
+              {pending === 'message' ? 'mengetik…' : pending === 'photo' ? 'membaca struk…' : 'Catat & cek jatah, sama seperti di Telegram'}
             </p>
           </div>
           <button type="button" onClick={clearChat} disabled={!messages.length}
@@ -595,18 +647,25 @@ export default function ChatPanel({ open, onClose }) {
                       ? 'chat-mine bg-brand-600 text-white rounded-2xl rounded-tr-md'
                       : 'bg-white border border-gray-100 rounded-2xl rounded-tl-md text-gray-800'
                   } ${m.status === 'sending' ? 'opacity-70' : ''}`}>
-                    {mine ? m.text : (
+                    {mine && m.kind === 'photo' ? (
+                      m.thumb
+                        ? <img src={m.thumb} alt="Foto struk" className="block max-w-[180px] max-h-60 rounded-xl -mx-1 -mt-0.5 object-cover" />
+                        : m.text
+                    ) : mine ? m.text : (
                       <BotText text={m.text} format={m.format} onCommand={onCommand} onLink={openLink} />
                     )}
                     <span className={`block text-right text-[10px] mt-0.5 ${mine ? 'text-white/70' : 'text-gray-400'}`}>
                       {m.edited && !mine ? 'diubah · ' : ''}{timeLabel(m.ts)}
                     </span>
                   </div>
-                  {mine && m.status === 'failed' && (
-                    <button type="button" onClick={() => !pending && deliver(m)}
+                  {mine && m.status === 'failed' && (m.kind !== 'photo' || photoFiles.current.has(m.id)) && (
+                    <button type="button" onClick={() => retry(m)}
                       className="mt-1 inline-flex items-center gap-1 text-[11.5px] text-red-500 hover:underline">
                       <Icon name="retry" size={13} weight="bold" /> Gagal terkirim · Kirim ulang
                     </button>
+                  )}
+                  {mine && m.status === 'failed' && m.kind === 'photo' && !photoFiles.current.has(m.id) && (
+                    <span className="mt-1 text-[11.5px] text-red-500">Gagal terkirim · pilih ulang fotonya</span>
                   )}
                   {!mine && m.buttons?.length > 0 && (
                     <div className="mt-1.5 w-full max-w-[85%] space-y-1.5">
@@ -632,7 +691,7 @@ export default function ChatPanel({ open, onClose }) {
               </Fragment>
             );
           })}
-          {pending === 'message' && <TypingBubble />}
+          {(pending === 'message' || pending === 'photo') && <TypingBubble />}
         </div>
       </div>
 
@@ -644,6 +703,14 @@ export default function ChatPanel({ open, onClose }) {
             onError={showToast}
             disabled={!!pending}
           />
+          {/* Foto struk: kamera atau galeri (HP menawarkan keduanya) */}
+          <button type="button" onClick={() => fileRef.current?.click()} disabled={!!pending}
+            className="inline-flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700 disabled:opacity-50 shrink-0"
+            title="Catat dari foto struk" aria-label="Kirim foto struk">
+            <Icon name="camera" size={16} /> Struk
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto}
+            aria-hidden="true" tabIndex={-1} />
           <span className="w-px h-4 bg-gray-200 shrink-0" />
           {QUICK.map(q => (
             <button key={q.text} type="button" onClick={() => send(q.text)} disabled={!!pending}
