@@ -37,6 +37,7 @@ from app.bot.handlers import (
     find_best_envelope, format_currency,
     get_envelopes_with_spent, get_household_id, get_or_create_user, settings,
 )
+from app.bot.channel import find_chat_user, txn_source
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.models.models import Transaction, TransactionSource, User
 from app.services.behavior import raise_daily_limit_today
@@ -123,7 +124,7 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
     if check.allowed:
         db.add(Transaction(
             envelope_id=target_env.id, user_id=user.id, amount=amount,
-            description=desc, source=TransactionSource.telegram,
+            description=desc, source=txn_source(),
             transaction_date=date.today(),
         ))
         await db.commit()
@@ -354,9 +355,7 @@ async def _run_callback(update, expected_stage, step):
                 return  # tombol lama / sudah diproses
 
             async with AsyncSessionLocal() as db:
-                user = (await db.execute(
-                    select(User).where(User.telegram_id == str(query.from_user.id))
-                )).scalar_one_or_none()
+                user = await find_chat_user(query.from_user.id, db)
                 if not user or str(user.id) != str(data.get("user_id")):
                     return  # bukan pemilik antrean ini
                 hid = await get_household_id(user, db)

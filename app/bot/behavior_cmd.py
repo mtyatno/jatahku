@@ -277,9 +277,22 @@ async def handle_lock_callback(update, context):
     if len(parts) < 2:
         await query.edit_message_text("Error.")
         return
-    envelope_id = parts[1]
+    import uuid
+    from sqlalchemy import or_
+    try:
+        envelope_id = uuid.UUID(parts[1])
+    except ValueError:
+        await query.edit_message_text("Amplop nggak ditemukan.")
+        return
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Envelope).where(Envelope.id == envelope_id))
+        # Hanya amplop di household user yang terlihat olehnya (shared / miliknya).
+        tg_user = query.from_user
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        hid = await get_household_id(user, db)
+        result = await db.execute(select(Envelope).where(
+            Envelope.id == envelope_id, Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        ))
         envelope = result.scalar_one_or_none()
         if not envelope:
             await query.edit_message_text("Amplop nggak ditemukan.")

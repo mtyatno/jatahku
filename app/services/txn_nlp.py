@@ -89,12 +89,16 @@ async def save_learned_keywords(user_id, description: str, envelope_id, db):
 
 
 async def find_best_envelope(description, household_id, db, user_id=None):
+    from sqlalchemy import or_
     from app.models.models import Envelope
-    result = await db.execute(
-        select(Envelope).where(
-            Envelope.household_id == household_id, Envelope.is_active == True,
-        )
+    query = select(Envelope).where(
+        Envelope.household_id == household_id, Envelope.is_active == True,
     )
+    if user_id:
+        # Amplop personal anggota lain tidak boleh jadi tujuan (kontrak
+        # visibilitas household — sama dengan dropdown amplop di web).
+        query = query.where(or_(Envelope.owner_id == None, Envelope.owner_id == user_id))
+    result = await db.execute(query)
     envelopes = result.scalars().all()
     # Filter out saving/sinking_fund — NLP should only match expense envelopes
     envelopes = [e for e in envelopes if str(getattr(e, "purpose", "expense")) == "expense"]

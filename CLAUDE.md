@@ -15,6 +15,7 @@
 - `api/routes/` — auth, envelopes, transactions, incomes, link, snapshots, household, export, recurring, analytics, notifications, user_settings, admin, payment, health
 - `bot/handlers.py` — Telegram bot: NLP parser, commands, inline keyboards, Redis-backed callbacks
 - `bot/help_cmd.py, link_cmd.py, behavior_cmd.py, recurring_cmd.py, household_cmd.py`
+- `bot/web_adapter.py` + `bot/channel.py` + `api/routes/bot_chat.py` — chat bot di webapp memakai handler bot yang sama (lihat `docs/chat-bot-web.md`); perintah/tombol baru didaftarkan di `bot_commands()`/`bot_callbacks()`
 - `services/` — behavior.py, merge.py, rollover.py, scheduler.py, summary.py, recurring_processor.py, notification_service.py, email_service.py, plan_limits.py
 
 **Frontend:** `/opt/jatahku/frontend/`

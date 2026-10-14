@@ -23,6 +23,16 @@ async def create_login_url(user_id) -> str:
 async def reply_setup_needed(update, user):
     """Balasan untuk akun yang belum punya amplop: satu ketukan ke onboarding web
     (sudah login, tanpa daftar), lalu kembali mencatat di chat."""
+    from app.bot.channel import is_web
+    if is_web():
+        # Chat di webapp: user sudah login, cukup arahkan ke pembuatan amplop.
+        await update.effective_message.reply_text(
+            "👋 Budget kamu belum disiapkan.\n\n"
+            "Buat amplop dulu: ketuk tombol + lalu pilih Amplop, atau buka menu Amplop. "
+            "Bisa juga ketik /template untuk pakai template.\n\n"
+            "Setelah itu catat pengeluaran di sini, misalnya: kopi 35k"
+        )
+        return
     url = await create_login_url(user.id)
     await update.effective_message.reply_text(
         "👋 Budget kamu belum disiapkan.\n\n"
