@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { confidenceLabel } from '../lib/receiptScan';
-import { reconcileItems, buildPlan } from '../lib/receiptSplit';
+import { reconcileItems, buildPlan, summarizePlan } from '../lib/receiptSplit';
 
 function rupiah(n) {
   return 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -28,11 +28,13 @@ function fmtQty(q) {
 
 const toInt = v => Math.max(0, Math.round(Number(v) || 0));
 
-// Kartu struk dengan rincian barang: cocokkan Σ barang dengan total struk, dan
-// pecah barang ke amplop berbeda (disimpan 1 transaksi per amplop).
+// Kartu struk dengan rincian barang: cocokkan Σ barang dengan total struk; tiap
+// barang dicatat sebagai 1 transaksi ("Roti Tawar (Indomaret)") di amplopnya.
 //
-// Setelah percobaan simpan pertama, rencana per amplop (entry.plan) dibekukan:
-// rincian terkunci, percobaan ulang mengirim bagian yang belum tersimpan saja.
+// Setelah percobaan simpan pertama, rencana (entry.plan) dibekukan: rincian
+// terkunci, percobaan ulang mengirim bagian yang belum tersimpan saja. Rencana
+// ditampilkan ringkas per amplop; perbaikan (geser dana, naikkan limit, pindah
+// amplop) berlaku untuk semua barang yang gagal di amplop itu.
 export default function ReceiptCard({
   entry, envelopes, saving,
   onChange, onRemove, onFundGroup, onRaiseLimitGroup, onRetargetGroup, onUnlock, onSkipRest,
@@ -44,6 +46,9 @@ export default function ReceiptCard({
   const plan = entry.plan || livePlan;
   const frozen = !!entry.plan;
   const anySaved = frozen && entry.plan.some(g => g.saved);
+  const rows = useMemo(() => summarizePlan(plan), [plan]);
+  const perItem = plan.some(g => g.itemId != null);
+  const spread = adjustments.length > 0 || rec.status === 'selisih';
   const locked = frozen || saving;
   const [open, setOpen] = useState(() => rec.status !== 'cocok');
   const doubtful = entry.confidence !== 'tinggi';
@@ -54,8 +59,8 @@ export default function ReceiptCard({
     const env = envelopes.find(e => e.id === id);
     return env ? `${env.emoji || ''} ${env.name}`.trim() : 'Pilih amplop';
   };
-  // Tampilkan rencana kalau dipecah, kalau barang diarahkan ke amplop lain,
-  // atau sesudah percobaan simpan (status per bagian).
+  // Tampilkan rencana kalau lebih dari satu transaksi, kalau barang diarahkan ke
+  // amplop lain, atau sesudah percobaan simpan (status per amplop).
   const showPlan = frozen || plan.length > 1 || (plan[0] && plan[0].envelopeId !== entry.envelopeId);
 
   const patchItem = (id, patch) => onChange(entry.key, {
@@ -231,49 +236,59 @@ export default function ReceiptCard({
         </fieldset>
       )}
 
-      {/* Rencana simpan per amplop */}
+      {/* Rencana simpan: 1 transaksi per barang, diringkas per amplop */}
       {showPlan && (
         <div className="rounded-lg border border-gray-100 px-2.5 py-2 space-y-1.5 text-xs">
           <div className="text-gray-500">
-            {plan.length > 1
-              ? `Disimpan sebagai ${plan.length} transaksi (diskon & selisih dibagi proporsional):`
+            {perItem && plan.length > 1
+              ? `Dicatat ${plan.length} transaksi, 1 per barang${spread ? ' (diskon/pajak/selisih dibagi proporsional)' : ''}:`
               : 'Disimpan ke:'}
           </div>
-          {plan.map(g => (
-            <div key={g.id} className="flex items-center gap-2 flex-wrap">
-              {frozen && !g.saved && g.error && !entry.uncertain ? (
-                <select
-                  className="flex-1 min-w-0 text-xs bg-transparent border border-gray-200 rounded px-1 py-0.5"
-                  value={g.envelopeId}
-                  disabled={saving}
-                  onChange={e => onRetargetGroup(entry.key, g.id, e.target.value)}
-                  aria-label="Pindahkan bagian ke amplop lain"
-                >
-                  {expenseEnvs.map(env => (
-                    <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <span className={`flex-1 min-w-0 truncate ${!g.envelopeId ? 'text-amber-600' : 'text-gray-700'}`}>
-                  {envName(g.envelopeId)} <span className="text-gray-400">· {g.count} barang</span>
-                </span>
-              )}
-              <span className="font-mono text-gray-700">{rupiah(g.amount)}</span>
-              {g.saved && <span className="text-green-600">tersimpan ✓</span>}
-              {g.raiseLimit && !g.saved && !g.error && <span className="text-brand-600">limit ↑</span>}
-              {g.error && !g.saved && (
-                <span className="w-full flex items-center gap-2 flex-wrap text-red-500">
-                  <span title={g.error}>Gagal: {g.error}</span>
-                  {isInsufficient(g.error) && !entry.uncertain && (
-                    <button type="button" disabled={saving} onClick={() => onFundGroup(entry.key, g.envelopeId, g.amount, g.id)} className="text-brand-600 underline font-medium">Geser</button>
-                  )}
-                  {isDailyLimit(g.error) && !entry.uncertain && (
-                    <button type="button" disabled={saving} onClick={() => onRaiseLimitGroup(entry.key, g.id)} className="text-brand-600 underline font-medium">Naikkan limit</button>
-                  )}
-                </span>
-              )}
-            </div>
-          ))}
+          {rows.map(row => {
+            const firstFailed = row.failed[0];
+            const canFix = frozen && !!firstFailed && !entry.uncertain;
+            return (
+              <div key={row.envelopeId || 'tanpa-amplop'} className="flex items-center gap-2 flex-wrap">
+                {canFix ? (
+                  <select
+                    className="flex-1 min-w-0 text-xs bg-transparent border border-gray-200 rounded px-1 py-0.5"
+                    value={row.envelopeId}
+                    disabled={saving}
+                    onChange={e => onRetargetGroup(entry.key, firstFailed.id, e.target.value)}
+                    aria-label="Pindahkan barang yang gagal ke amplop lain"
+                  >
+                    {expenseEnvs.map(env => (
+                      <option key={env.id} value={env.id}>{env.emoji} {env.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className={`flex-1 min-w-0 truncate ${!row.envelopeId ? 'text-amber-600' : 'text-gray-700'}`}>
+                    {envName(row.envelopeId)}
+                    {perItem && <span className="text-gray-400"> · {row.count} barang</span>}
+                  </span>
+                )}
+                <span className="font-mono text-gray-700">{rupiah(row.amount)}</span>
+                {row.allSaved && <span className="text-green-600">tersimpan ✓</span>}
+                {!row.allSaved && row.savedCount > 0 && (
+                  <span className="text-green-600">{row.savedCount}/{row.count} tersimpan</span>
+                )}
+                {row.raiseLimit && !row.error && <span className="text-brand-600">limit ↑</span>}
+                {row.error && (
+                  <span className="w-full flex items-center gap-2 flex-wrap text-red-500">
+                    <span title={row.error}>
+                      Gagal{row.failed.length > 1 ? ` (${row.failed.length} barang)` : ''}: {row.error}
+                    </span>
+                    {isInsufficient(row.error) && !entry.uncertain && (
+                      <button type="button" disabled={saving} onClick={() => onFundGroup(entry.key, row.envelopeId, row.failedAmount, firstFailed.id)} className="text-brand-600 underline font-medium">Geser</button>
+                    )}
+                    {isDailyLimit(row.error) && !entry.uncertain && (
+                      <button type="button" disabled={saving} onClick={() => onRaiseLimitGroup(entry.key, firstFailed.id)} className="text-brand-600 underline font-medium">Naikkan limit</button>
+                    )}
+                  </span>
+                )}
+              </div>
+            );
+          })}
           {frozen && !saving && entry.uncertain && (
             <div className="pt-1 text-amber-700">
               Hasil simpan belum pasti (koneksi terputus). Tekan Simpan Semua lagi — yang sudah tercatat tidak akan tercatat dua kali.
