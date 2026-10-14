@@ -36,6 +36,12 @@
 - Landing page preservation: backup to `/opt/jatahku/backups/` each deploy
 - Deploy fails silently when dist files conflict with repo
 - Run as `jatahku` user for git operations, `sudo` for file copies
+- **Cek versi yang tayang lewat commit, bukan tebakan.** `GET /health` mengembalikan
+  `commit` (kode yang dimuat proses API, `app/core/version.py`, `Cache-Control: no-store`)
+  dan `https://jatahku.com/version.json` berisi commit build frontend. deploy.sh
+  berhenti bila API lokal tidak menjalankan HEAD; workflow gagal bila API/web publik
+  tidak menjalankan `github.sha` (atau yang lebih baru). Jangan menilai versi dari
+  `openapi.json` lewat alat fetch — pernah terbaca salinan cache lama.
 
 ## Database Schema
 - **Never use `DROP TYPE IF EXISTS ... CASCADE`** in migrations — destroys enum types that columns reference, causing 500 errors

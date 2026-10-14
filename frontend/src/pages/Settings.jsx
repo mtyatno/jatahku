@@ -975,6 +975,11 @@ export default function Settings() {
         <button onClick={logout} className="text-sm text-red-400 hover:underline">Logout dari Jatahku</button>
       </div>
 
+      {/* Versi aplikasi — membantu memastikan PWA sudah memuat versi terbaru */}
+      <p className="text-center text-[11px] text-gray-400 font-mono" title={APP_COMMIT}>
+        Versi {APP_COMMIT.slice(0, 7)}
+      </p>
+
       {showReset && (
         <HardResetDialog
           profile={profile}
@@ -986,6 +991,9 @@ export default function Settings() {
     </div>
   );
 }
+
+// Diisi vite (define) dari commit yang di-build; 'dev' bila tidak tersedia.
+const APP_COMMIT = typeof __APP_COMMIT__ !== 'undefined' ? __APP_COMMIT__ : 'dev';
 
 function UsageBar({ label, used, limit }) {
   const unlimited = limit === -1;

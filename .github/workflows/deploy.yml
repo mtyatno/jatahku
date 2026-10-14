@@ -33,6 +33,8 @@ jobs:
   deploy-backend:
     runs-on: ubuntu-latest
     needs: deploy-blog
+    permissions:
+      contents: read
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@v1
@@ -44,21 +46,46 @@ jobs:
             sudo git -C /opt/jatahku/app reset --hard HEAD
             sudo /opt/jatahku/deploy.sh
 
-      - name: Health check
+      - name: Verifikasi versi yang tayang
+        # Lulus hanya bila API (/health) dan web (version.json) yang diakses publik
+        # menjalankan commit ini — atau commit yang lebih baru bila push lain
+        # menyusul. Dulu cukup HTTP 200, sehingga proses API lama yang masih
+        # hidup pun dianggap sukses.
+        env:
+          EXPECTED: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Waiting for service to be ready..."
-          sleep 15
-          for i in {1..5}; do
-            RESPONSE=$(curl -sL --max-time 10 https://api.jatahku.com/health 2>&1 || true)
-            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --max-time 10 https://api.jatahku.com/health 2>/dev/null || echo "000")
-            echo "Attempt $i: HTTP $STATUS — $RESPONSE"
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed"
+          field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))" 2>/dev/null || true; }
+          has_commit() {
+            [ "$1" = "$EXPECTED" ] && return 0
+            case "$1" in ''|unknown) return 1;; esac
+            [ "$(gh api "repos/$REPO/compare/$EXPECTED...$1" --jq .status 2>/dev/null)" = "ahead" ]
+          }
+          ok_api=""; ok_web=""
+          sleep 10
+          for i in $(seq 1 12); do
+            t=$(date +%s)
+            if [ -z "$ok_api" ]; then
+              body=$(curl -s --max-time 10 -H 'Cache-Control: no-cache' "https://api.jatahku.com/health?t=$t" || true)
+              status=$(printf '%s' "$body" | field status)
+              commit=$(printf '%s' "$body" | field commit)
+              echo "API #$i: status=${status:-?} commit=${commit:-?}"
+              if [ "$status" = "healthy" ] && has_commit "$commit"; then ok_api=1; fi
+            fi
+            if [ -z "$ok_web" ]; then
+              web=$(curl -s --max-time 10 -H 'Cache-Control: no-cache' "https://jatahku.com/version.json?t=$t" || true)
+              wcommit=$(printf '%s' "$web" | field commit)
+              echo "Web #$i: commit=${wcommit:-?}"
+              if has_commit "$wcommit"; then ok_web=1; fi
+            fi
+            if [ -n "$ok_api" ] && [ -n "$ok_web" ]; then
+              echo "✅ API & web menjalankan ${EXPECTED:0:7} (atau lebih baru)"
               exit 0
             fi
             sleep 10
           done
-          echo "Health check failed after 5 attempts"
+          echo "❌ Versi tayang tidak sesuai ${EXPECTED:0:7} — api: ${ok_api:-BELUM}, web: ${ok_web:-BELUM} (1 = ok)"
           exit 1
 
       - name: Notify Telegram on failure
