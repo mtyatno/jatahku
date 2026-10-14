@@ -216,10 +216,10 @@ def format_currency(amount):
 
 def progress_bar(spent, budget, width=10):
     if budget == 0:
-        return "░" * width
+        return "▱" * width
     ratio = min(float(spent / budget), 1.0)
     filled = int(ratio * width)
-    return "█" * filled + "░" * (width - filled)
+    return "▰" * filled + "▱" * (width - filled)
 
 async def get_or_create_user(telegram_id, name, db):
     """User pemilik percakapan. `telegram_id` bisa juga id chat web
@@ -838,7 +838,7 @@ async def cmd_status(update, context):
     # Budget-level bar (how much of budget is spent)
     pct_spent = int(float(total_spent / total_allocated * 100)) if total_allocated > 0 else 0
     filled = round(pct_spent / 100 * 6)
-    budget_bar = "▓" * filled + "░" * (6 - filled)
+    budget_bar = "▰" * filled + "▱" * (6 - filled)
 
     lines = [f"📊 <b>Budget · {period_label}</b>"]
     lines.append(
@@ -861,7 +861,7 @@ async def cmd_status(update, context):
             if spent > 0:
                 pct = int(ratio * 100)
                 f2 = round(ratio * 6)
-                bar = "▓" * f2 + "░" * (6 - f2)
+                bar = "▰" * f2 + "▱" * (6 - f2)
                 lines.append(f"{indicator} {emoji} {name} · <b>{free_str}</b>  {bar} {pct}%")
             else:
                 lines.append(f"{indicator} {emoji} {name} · <b>{free_str}</b>")

@@ -8,6 +8,7 @@ import {
 } from '../lib/chatHistory';
 import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
+import ChatText from './ChatText';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 
@@ -150,7 +151,10 @@ function BotText({ text, format, onCommand, onLink }) {
     }
     const cls = [n.b && 'font-semibold', n.i && 'italic', n.u && 'underline', n.s && 'line-through']
       .filter(Boolean).join(' ');
-    return cls ? <span key={i} className={cls}>{n.v}</span> : <Fragment key={i}>{n.v}</Fragment>;
+    // Emoji, bar teks & garis dari bot → ikon dan elemen visual aplikasi.
+    return cls
+      ? <span key={i} className={cls}><ChatText text={n.v} /></span>
+      : <Fragment key={i}><ChatText text={n.v} /></Fragment>;
   });
 }
 
@@ -678,7 +682,7 @@ export default function ChatPanel({ open, onClose }) {
                                 className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-brand-200 bg-white text-brand-600 text-[13px] font-medium hover:bg-brand-50 active:scale-[0.98] transition-all disabled:opacity-60 disabled:active:scale-100">
                                 <span className="inline-flex items-center justify-center gap-1.5 max-w-full">
                                   {busy && <span className="w-3 h-3 rounded-full border-2 border-brand-400 border-t-transparent animate-spin shrink-0" />}
-                                  <span className="truncate">{b.text}</span>
+                                  <span className="truncate"><ChatText text={b.text} size={15} /></span>
                                 </span>
                               </button>
                             );
