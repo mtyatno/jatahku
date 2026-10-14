@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reconcileItems, splitByEnvelope, isSplit, groupDescription, toReceiptItems, itemNet,
+  reconcileItems, splitByEnvelope, isSplit, groupDescription, toReceiptItems, itemNet, buildPlan,
 } from './receiptSplit.js';
 
 // Struk Indomaret asli (#1): 8 barang 149.500, voucher melekat 9.000, total 140.500.
@@ -69,10 +69,34 @@ test('splitByEnvelope: tanpa barang → total ke amplop struk', () => {
   assert.deepEqual(splitByEnvelope([], 9200, 'e1').map(x => [x.envelopeId, x.amount]), [['e1', 9200]]);
 });
 
-test('groupDescription: nama toko saja bila tidak dipecah; ringkas bila dipecah', () => {
-  assert.equal(groupDescription('Indomaret', ['A', 'B'], { split: false }), 'Indomaret');
-  assert.equal(groupDescription('Indomaret', ['INDOMI KARI AYAM', 'AQUA 600ML', 'ROTI'], { split: true }),
-    'Indomaret: Indomi Kari Ayam, Aqua 600ml +1');
+test('groupDescription: nama toko (+ jumlah barang bila dipecah), tanpa nama barang', () => {
+  assert.equal(groupDescription('Indomaret', 2, { split: false }), 'Indomaret');
+  assert.equal(groupDescription('Indomaret', 3, { split: true }), 'Indomaret (3 barang)');
+});
+
+test('splitByEnvelope: total 0 dengan beberapa amplop tetap menghasilkan satu bagian', () => {
+  const g = splitByEnvelope([{ name: 'A', amount: 1000, envelopeId: 'e2' }, { name: 'B', amount: 0 }], 0, 'e1');
+  assert.equal(g.length, 1);
+  assert.equal(g[0].amount, 0);
+});
+
+test('buildPlan: semua barang ke amplop lain → satu bagian ke amplop itu (bukan amplop struk)', () => {
+  const plan = buildPlan({
+    description: 'Apotek', amount: 61000, envelopeId: 'e-belanja',
+    receiptItems: [{ name: 'VITAMIN', amount: 61000, envelopeId: 'e-sehat' }],
+  });
+  assert.deepEqual(plan.map(g => [g.envelopeId, g.amount, g.description]), [['e-sehat', 61000, 'Apotek']]);
+});
+
+test('buildPlan: dipecah → id stabil, deskripsi berjumlah barang, Σ = total', () => {
+  const plan = buildPlan({
+    description: 'Indomaret', amount: 140500, envelopeId: 'e1',
+    receiptItems: S1.map((it, i) => (i === 3 ? { ...it, envelopeId: 'e2' } : it)),
+  });
+  assert.deepEqual(plan.map(g => g.id), ['g0', 'g1']);
+  assert.equal(plan.reduce((s, g) => s + g.amount, 0), 140500);
+  assert.equal(plan[1].description, 'Indomaret (1 barang)');
+  assert.ok(plan.every(g => g.saved === false && g.error === null));
 });
 
 test('toReceiptItems & itemNet', () => {

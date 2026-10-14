@@ -7,7 +7,7 @@ import VoiceInput from './VoiceInput';
 import ReceiptInput from './ReceiptInput';
 import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
-import { isSplit, splitByEnvelope, groupDescription } from '../lib/receiptSplit';
+import { buildPlan } from '../lib/receiptSplit';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
 
@@ -32,21 +32,29 @@ function isInsufficientFundsError(errMsg) {
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
-// Struk dengan rincian barang yang dipecah ke >1 amplop (disimpan per amplop).
-function isSplitReceipt(item) {
-  return item.origin === 'receipt' && (item.receiptItems || []).length > 0
-    && isSplit(item.receiptItems, item.envelopeId);
+// Struk dengan rincian barang → disimpan lewat rencana per amplop.
+function hasReceiptItems(item) {
+  return item.origin === 'receipt' && (item.receiptItems || []).length > 0;
 }
 
-function receiptGroups(item) {
-  return splitByEnvelope(item.receiptItems, item.amount, item.envelopeId);
+// Rencana yang dibekukan (sesudah percobaan simpan) atau dihitung dari isian sekarang.
+function receiptPlan(item) {
+  return item.plan || buildPlan(item);
 }
 
-// Siap disimpan: punya amplop (struk dipecah: setiap bagian punya amplop).
+// Siap disimpan: punya amplop (struk: setiap bagian yang belum tersimpan punya amplop).
 function isReady(item) {
-  if (isSplitReceipt(item)) return receiptGroups(item).every(g => g.envelopeId);
+  if (hasReceiptItems(item)) {
+    const left = receiptPlan(item).filter(g => !g.saved);
+    return left.length > 0 && left.every(g => g.envelopeId);
+  }
   return !!item.envelopeId;
 }
+
+const patchPlanGroup = (item, gid, patch) => ({
+  ...item,
+  plan: (item.plan || []).map(g => (g.id === gid ? { ...g, ...patch } : g)),
+});
 
 function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
   const isShortage = isInsufficientFundsError(item.error);
@@ -183,15 +191,19 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     loadEnvelopes();
   }, [loadEnvelopes]);
 
-  // envId/amount opsional: bagian struk yang dipecah per amplop.
-  const handleOpenFundModal = (key, envId = null, amount = null) => {
+  // Bagian struk yang gagal karena dana kurang (untuk banner & tombol Geser).
+  const insufficientGroup = (item) => (item.plan || []).find(g => !g.saved && isInsufficientFundsError(g.error));
+
+  // envId/amount/gid opsional: bagian struk tertentu.
+  const handleOpenFundModal = (key, envId = null, amount = null, gid = null) => {
     const item = items.find(i => i.key === key);
     if (!item) return;
     let targetEnv = envId;
     let targetAmount = amount;
-    if (!targetEnv && isSplitReceipt(item)) {
-      const failed = receiptGroups(item).find(g => isInsufficientFundsError(item.groupErrors?.[g.envelopeId]));
-      if (failed) { targetEnv = failed.envelopeId; targetAmount = failed.amount; }
+    let targetGid = gid;
+    if (!targetEnv && hasReceiptItems(item)) {
+      const failed = insufficientGroup(item);
+      if (failed) { targetEnv = failed.envelopeId; targetAmount = failed.amount; targetGid = failed.id; }
     }
     targetEnv = targetEnv || item.envelopeId;
     targetAmount = targetAmount ?? item.amount;
@@ -204,23 +216,20 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       envelope: env,
       neededAmount: needed > 0 ? needed : targetAmount,
       itemKey: key,
-      groupEnv: envId || (isSplitReceipt(item) ? targetEnv : null),
+      groupId: targetGid,
     });
   };
 
   // User mengonfirmasi: item ini dicatat dan limit harian amplopnya dinaikkan
   // sampai tengah malam saat disimpan (backend: raise_daily_limit, sama dengan bot).
-  const handleRaiseLimit = (key, envId = null) => {
+  const handleRaiseLimit = (key, gid = null) => {
     const item = items.find(i => i.key === key);
     if (!item) return;
-    if (envId && isSplitReceipt(item)) {
-      const env = envelopes.find(e => e.id === envId);
-      setItems(prev => prev.map(i => (i.key === key ? {
-        ...i,
-        raiseLimitEnvs: { ...(i.raiseLimitEnvs || {}), [envId]: true },
-        groupErrors: { ...(i.groupErrors || {}), [envId]: undefined },
-        error: null,
-      } : i)));
+    if (gid && item.plan) {
+      const group = item.plan.find(g => g.id === gid);
+      const env = envelopes.find(e => e.id === group?.envelopeId);
+      setItems(prev => prev.map(i => (i.key === key
+        ? { ...patchPlanGroup(i, gid, { raiseLimit: true, error: null }), error: null } : i)));
       setResultMsg({
         type: 'mixed',
         text: `Limit harian ${env ? env.name : 'amplop'} akan dinaikkan sementara (kembali normal besok). Klik Simpan Semua untuk melanjutkan.`,
@@ -240,8 +249,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     if (fundingTarget && fundingTarget.itemKey != null) {
       setItems(prev => prev.map(item => {
         if (item.key !== fundingTarget.itemKey) return item;
-        if (fundingTarget.groupEnv) {
-          return { ...item, error: null, groupErrors: { ...(item.groupErrors || {}), [fundingTarget.groupEnv]: undefined } };
+        if (fundingTarget.groupId && item.plan) {
+          return { ...patchPlanGroup(item, fundingTarget.groupId, { error: null }), error: null };
         }
         return { ...item, error: null };
       }));
@@ -335,6 +344,25 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setItems(prev => prev.map(item => (item.key === key ? { ...item, ...patch, error: null } : item)));
   };
 
+  // Bagian yang gagal dipindah ke amplop lain (nominal tetap).
+  const handleRetargetGroup = (key, gid, envelopeId) => {
+    setItems(prev => prev.map(item => (item.key === key
+      ? patchPlanGroup(item, gid, { envelopeId, error: null, raiseLimit: false }) : item)));
+  };
+
+  // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang).
+  const handleUnlockReceipt = (key) => {
+    setItems(prev => prev.map(item => (item.key === key && !(item.plan || []).some(g => g.saved)
+      ? { ...item, plan: null, error: null } : item)));
+  };
+
+  // Sebagian sudah tercatat; sisanya dilewati (struk keluar dari daftar).
+  const handleSkipRest = (key) => {
+    const item = items.find(i => i.key === key);
+    if (item?.scanId) api.receiptFeedback(item.scanId, feedbackFor(item, false));
+    setItems(prev => prev.filter(i => i.key !== key));
+  };
+
   const handleRemove = (key) => {
     const removed = items.find(i => i.key === key);
     if (removed?.origin === 'receipt' && removed.scanId) {
@@ -367,25 +395,23 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
   });
 
-  // Satu entri → satu atau beberapa transaksi. Struk yang dipecah menjadi
-  // 1 transaksi per amplop (bagian yang sudah tersimpan tidak dikirim ulang).
-  const toParts = (item) => {
-    if (isSplitReceipt(item)) {
-      return receiptGroups(item)
-        .filter(g => !item.savedGroups?.[g.envelopeId])
-        .map(g => ({
-          key: item.key,
+  // Satu entri → satu atau beberapa transaksi. Struk dengan rincian memakai
+  // rencana per amplop; bagian yang sudah tersimpan tidak dikirim ulang.
+  const toParts = (item, plan) => {
+    if (plan) {
+      return plan.filter(g => !g.saved).map(g => ({
+        key: item.key,
+        gid: g.id,
+        payload: toPayload({
+          ...item,
           envelopeId: g.envelopeId,
-          payload: toPayload({
-            ...item,
-            envelopeId: g.envelopeId,
-            amount: g.amount,
-            description: groupDescription(item.description, g.names, { split: true }),
-            raiseDailyLimit: !!item.raiseLimitEnvs?.[g.envelopeId],
-          }),
-        }));
+          amount: g.amount,
+          description: g.description,
+          raiseDailyLimit: g.raiseLimit,
+        }),
+      }));
     }
-    return [{ key: item.key, envelopeId: null, payload: toPayload(item) }];
+    return [{ key: item.key, gid: null, payload: toPayload(item) }];
   };
 
   const handleSaveAll = async () => {
@@ -398,7 +424,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
       return;
     }
-    const parts = pending.flatMap(toParts);
+    // Bekukan rencana tiap struk sekarang; percobaan ulang memakai rencana yang sama.
+    const plans = {};
+    pending.forEach(item => { if (hasReceiptItems(item)) plans[item.key] = receiptPlan(item); });
+    const parts = pending.flatMap(item => toParts(item, plans[item.key]));
 
     setSaving(true);
     setResultMsg(null);
@@ -409,10 +438,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
       setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      setRawText('');
-      setItems(prev => prev.filter(i => !isReady(i)));
-      lastParsedRef.current = '';
-      onSaved?.();
+      const left = items.filter(i => !isReady(i));
+      finishWith(left);
+      if (left.length === 0) onSaved?.();
       return;
     }
 
@@ -420,32 +448,35 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setSaving(false);
 
     if (!result.ok) {
+      // Tidak ada yang pasti tersimpan → rencana tetap dibekukan agar percobaan
+      // ulang mengirim bagian yang sama; "Ubah rincian" membukanya lagi.
+      setItems(prev => prev.map(item => (plans[item.key] ? { ...item, plan: item.plan || plans[item.key] } : item)));
       setResultMsg({ type: 'error', text: 'Gagal menyimpan. Coba lagi.' });
       return;
     }
 
-    // Hasil batch berindeks sesuai `parts` → petakan ke entri (key) & amplopnya.
+    // Hasil batch berindeks sesuai `parts` → petakan ke entri (key) & bagiannya.
     const data = result.data || [];
     const okKeys = new Set();
     const errByKey = {};
-    const savedByKey = {};
-    const groupErrByKey = {};
+    const groupResult = {}; // key → gid → { ok, error }
     let successCount = 0;
     data.forEach(r => {
       const part = parts[r.index];
       if (!part) return;
       if (r.ok) successCount++;
-      if (part.envelopeId) {
-        if (r.ok) (savedByKey[part.key] = savedByKey[part.key] || {})[part.envelopeId] = true;
-        else (groupErrByKey[part.key] = groupErrByKey[part.key] || {})[part.envelopeId] = r.error || 'Gagal';
+      if (part.gid) {
+        (groupResult[part.key] = groupResult[part.key] || {})[part.gid] = { ok: r.ok, error: r.ok ? null : (r.error || 'Gagal') };
       } else if (r.ok) okKeys.add(part.key);
       else errByKey[part.key] = r.error || 'Gagal';
     });
-    // Struk dipecah selesai jika semua bagiannya tersimpan.
-    pending.forEach(item => {
-      if (!isSplitReceipt(item)) return;
-      const saved = { ...(item.savedGroups || {}), ...(savedByKey[item.key] || {}) };
-      if (receiptGroups(item).every(g => saved[g.envelopeId])) okKeys.add(item.key);
+    const nextPlans = {};
+    Object.entries(plans).forEach(([key, plan]) => {
+      const res = groupResult[key] || {};
+      nextPlans[key] = plan.map(g => (res[g.id]
+        ? { ...g, saved: g.saved || res[g.id].ok, error: res[g.id].error }
+        : g));
+      if (nextPlans[key].every(g => g.saved)) okKeys.add(key);
     });
     const failedCount = data.length - successCount;
 
@@ -456,27 +487,21 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     });
 
-    setItems(prev => prev
+    const nextItems = items
       .filter(item => !okKeys.has(item.key))
       .map(item => {
-        if (savedByKey[item.key] || groupErrByKey[item.key]) {
-          const groupErrors = groupErrByKey[item.key] || {};
-          return {
-            ...item,
-            savedGroups: { ...(item.savedGroups || {}), ...(savedByKey[item.key] || {}) },
-            groupErrors,
-            error: Object.values(groupErrors)[0] || null,
-          };
+        if (nextPlans[item.key]) {
+          const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
+          return { ...item, plan: nextPlans[item.key], error: firstErr };
         }
         return errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null };
-      }));
+      });
 
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      if (failedCount === 0 && pending.length === items.length) {
+      finishWith(nextItems);
+      if (nextItems.length === 0) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
-        setRawText('');
-        lastParsedRef.current = '';
         onSaved?.();
       } else {
         setResultMsg({
@@ -485,15 +510,29 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         });
       }
     } else {
+      setItems(nextItems);
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
       setResultMsg({ type: 'error', text: firstErr });
     }
   };
 
+  // Sesudah ada yang tersimpan: daftar = sisa entri, dan kotak teks ditulis ulang
+  // hanya berisi baris yang belum tersimpan. Kalau tidak, mengetik ulang akan
+  // mem-parse ulang baris yang sudah tercatat → tercatat dua kali.
+  const finishWith = (left) => {
+    setItems(left);
+    const text = left
+      .filter(i => i.origin === 'text')
+      .map(i => `${i.description} ${Math.round(Number(i.amount) || 0)}`)
+      .join('\n');
+    setRawText(text);
+    lastParsedRef.current = text.trim();
+  };
+
   const hasItems = items.length > 0;
   const selectedCount = items.filter(isReady).length;
   const unselectedCount = items.length - selectedCount;
-  const hasReceiptCard = items.some(i => i.origin === 'receipt' && (i.receiptItems || []).length > 0);
+  const hasReceiptCard = items.some(hasReceiptItems);
 
   return (
     <div className="space-y-4">
@@ -544,16 +583,20 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
               <span className="col-span-4">Amplop</span>
               <span className="col-span-1"></span>
             </div>
-            <div className="px-3">
-              {items.map(item => (item.origin === 'receipt' && (item.receiptItems || []).length > 0 ? (
+            <fieldset disabled={saving} className="px-3">
+              {items.map(item => (hasReceiptItems(item) ? (
                 <ReceiptCard
                   key={item.key}
                   entry={item}
                   envelopes={envelopes}
+                  saving={saving}
                   onChange={handleReceiptChange}
                   onRemove={handleRemove}
                   onFundGroup={handleOpenFundModal}
                   onRaiseLimitGroup={handleRaiseLimit}
+                  onRetargetGroup={handleRetargetGroup}
+                  onUnlock={handleUnlockReceipt}
+                  onSkipRest={handleSkipRest}
                 />
               ) : (
                 <ItemRow
@@ -567,7 +610,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                   onRaiseLimit={handleRaiseLimit}
                 />
               )))}
-            </div>
+            </fieldset>
           </div>
         </>
       )}
@@ -581,7 +624,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           <div className="font-medium">{resultMsg.text}</div>
           {resultMsg.type === 'error' && isInsufficientFundsError(resultMsg.text) && (() => {
             const candidateItem = items.find(i => isInsufficientFundsError(i.error)) || items.find(i => i.envelopeId) || null;
-            const targetEnv = candidateItem ? envelopes.find(e => e.id === candidateItem.envelopeId) : null;
+            const group = candidateItem ? insufficientGroup(candidateItem) : null;
+            const targetEnvId = group ? group.envelopeId : candidateItem?.envelopeId;
+            const targetEnv = targetEnvId ? envelopes.find(e => e.id === targetEnvId) : null;
             if (!targetEnv) return null;
             return (
               <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">

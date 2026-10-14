@@ -262,6 +262,64 @@ TOTAL 56.000""")
         self.assertEqual([i.name for i in p.items], ["ROTI"])
 
 
+class TestReceiptItemsReviewCases(unittest.TestCase):
+    """Kasus dari review independen (rincian barang)."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_subtotal_before_tax_resolves_to_paid_amount(self):
+        p = self.parse("RESTO\n14/10/2026\nNasi 2 x 6.000 12.000\nEs Teh 2 x 5.000 10.000\n"
+                       "Subtotal 22.000\nPB1 10% 2.200\nTunai 50.000\nKembali 25.800")
+        self.assertEqual((p.total, p.confidence, p.confidence_source), (24200, "tinggi", "payment"))
+
+    def test_tax_after_total_line_resolves_to_card_amount(self):
+        p = self.parse("RESTO\n14/10/2026\nSteak 1 60.000 60.000\nTOTAL 60.000\nSERVICE 5% 3.000\n"
+                       "PB1 10% 6.300\nDEBIT BCA 69.300")
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+        self.assertEqual(p.reconciliation.charges, 9300)
+
+    def test_items_never_upgrade_a_total_the_payment_contradicts(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nTOTAL 20.000\nDEBIT BCA 35.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual(p.confidence, "rendah")
+
+    def test_items_never_upgrade_a_subtotal_line(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nHARGA JUAL 20.000")
+        self.assertNotEqual(p.confidence, "tinggi")
+
+    def test_unlabelled_total_line_not_counted_as_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 20.000\nMINYAK 30.000\nBAYAR 50.000")
+        self.assertEqual(p.total, 50000)
+        self.assertEqual([i.name for i in p.items], ["GULA", "MINYAK"])
+
+    def test_two_line_item_guess(self):
+        p = self.parse("TOKO\nINDOMIE GORENG SPECIAL\n2 X 3.500 7.000\nAQUA 600ML 3.000")
+        self.assertEqual((p.total, p.confidence_source), (10000, "items_sum"))
+        self.assertTrue(all(i.flag == "ok" for i in p.items))
+
+    def test_total_discount_summary_not_double_counted(self):
+        p = self.parse("ALFAMART\n14-10-2026\nROTI 1 25.000 25.000\nDisc. (5.000)\nSUSU 1 25.000 25.000\n"
+                       "Total Disc. (5.000)\nTotal Belanja 45.000\nTunai 50.000\nKembali 5.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+
+    def test_absurd_number_is_ignored(self):
+        p = self.parse("TOKO\nBARANG 10.000.000.000.000\nTOTAL 9.000")
+        self.assertEqual(p.total, 9000)
+
+    def test_no_auto_fix_against_guessed_total(self):
+        p = self.parse("TOKO\nSUSU 2 5.000 15.000\nROTI 5.000")
+        susu = p.items[0]
+        self.assertEqual((susu.amount, susu.flag), (15000, "cek"))  # ditandai, tidak diubah
+
+    def test_keywords_inside_item_names(self):
+        p = self.parse("TOKO\n14/10/2026\nSENSODYNE TOTAL CARE 1 25000 25.000\nCASHEW 1 30000 30.000\n"
+                       "KARTU UCAPAN 1 5000 5.000\nPAKET PROMO 1 10000 10.000\nTOTAL 70.000\nTUNAI 70.000")
+        self.assertEqual(len(p.items), 4)
+        self.assertEqual((p.total, p.confidence, p.confidence_source), (70000, "tinggi", "payment"))
+
+
 class TestBuildLines(unittest.TestCase):
     @staticmethod
     def box(x0, y0, x1, y1):
@@ -423,6 +481,16 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scan.outcome, "corrected")
         self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
 
+    async def test_accepted_total_without_payment_proof_is_not_learned(self):
+        user = _user()
+        # "tinggi" karena rincian cocok, tapi tidak ada baris pembayaran.
+        scan = self._scan(user, ["TOKO MAJU", "GULA 20.000", "JML BYR 20.000"],
+                          parsed_total=20000, confidence="tinggi", label="JML BYR")
+        db = self._feedback_db(scan)
+        await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=20000, merchant="Toko Maju")
+        self.assertEqual(scan.outcome, "accepted")
+        self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
+
     async def test_alias_name_is_sanitized(self):
         self.assertEqual(receipt_scan.clean_merchant_name("Indo<b>maret</b>`!"), "Indobmaretb")
         self.assertIsNone(receipt_scan.clean_merchant_name("!!"))
@@ -571,9 +639,6 @@ class TestUploadValidation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((data, ct), (b"jpg", "image/jpeg"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestBotItemsSummary(unittest.TestCase):
     def test_summary_cocok_and_selisih(self):
@@ -637,3 +702,6 @@ class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Tabungan", " ".join(r[0].text for r in rows))  # amplop tabungan disembunyikan
         stored = json.loads(redis.set.call_args[0][1])
         self.assertEqual((stored["date"], stored["scan_id"], stored["amount"]), ("2026-10-14", "abc", 51000))
+
+if __name__ == "__main__":
+    unittest.main()

@@ -40,9 +40,8 @@ export function receiptToItem(result, key) {
     // Rincian barang (bisa kosong kalau barang tidak terbaca).
     receiptItems: toReceiptItems(result.items),
     adjustments: (result.adjustments || []).map(a => ({ ...a, amount: Number(a.amount) || 0 })),
-    savedGroups: {},
-    groupErrors: {},
-    raiseLimitEnvs: {},
+    confidenceSource: result.confidence_source || null,
+    plan: null, // rencana simpan per amplop; dibekukan saat pertama disimpan
   };
 }
 

@@ -67,22 +67,36 @@ export function splitByEnvelope(items, total, defaultEnvelopeId) {
     .map((v, i) => ({ i, frac: v - Math.floor(v) }))
     .sort((a, b) => b.frac - a.frac || a.i - b.i);
   for (let k = 0; rest > 0; k = (k + 1) % byFraction.length, rest--) floors[byFraction[k].i] += 1;
-  return order
+  const out = order
     .map((env, i) => ({ envelopeId: env, amount: floors[i], names: groups[env].names }))
-    .filter(g => g.amount > 0 || order.length === 1);
+    .filter(g => g.amount > 0);
+  // Total 0 → tetap satu bagian (validasi nominal menolaknya saat simpan).
+  return out.length ? out : [{ envelopeId: order[0], amount: 0, names: groups[order[0]].names }];
 }
 
-function titleCase(s) {
-  return String(s || '').toLowerCase().replace(/(^|[\s(&./-])([a-z])/g, (_, a, b) => a + b.toUpperCase());
+// Keterangan transaksi per amplop: "Indomaret (3 barang)". Nama barang sengaja
+// tidak dimasukkan: amplop bersama menampilkan keterangan ke anggota rumah tangga.
+export function groupDescription(merchant, count, { split } = {}) {
+  const base = ((merchant || '').trim() || 'Belanja').slice(0, 100);
+  if (!split || !count) return base;
+  return `${base} (${count} barang)`;
 }
 
-// Keterangan transaksi per amplop: "Indomaret: Indomie Kari, Aqua +2".
-export function groupDescription(merchant, names, { split } = {}) {
-  const base = (merchant || '').trim() || 'Belanja';
-  if (!split || !names || names.length === 0) return base;
-  const shown = names.slice(0, 2).map(titleCase).join(', ');
-  const more = names.length > 2 ? ` +${names.length - 2}` : '';
-  return `${base}: ${shown}${more}`.slice(0, 120);
+// Rencana simpan struk: 1 transaksi per amplop. Dibekukan saat pertama disimpan,
+// supaya percobaan ulang mengirim bagian yang sama persis (Σ tetap = total).
+export function buildPlan(entry) {
+  const groups = splitByEnvelope(entry.receiptItems, entry.amount, entry.envelopeId);
+  const split = groups.length > 1;
+  return groups.map((g, i) => ({
+    id: `g${i}`,
+    envelopeId: g.envelopeId,
+    amount: g.amount,
+    count: g.names.length,
+    description: groupDescription(entry.description, g.names.length, { split }),
+    saved: false,
+    error: null,
+    raiseLimit: false,
+  }));
 }
 
 // Hasil API → barang yang bisa diedit di kartu struk.

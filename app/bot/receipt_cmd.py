@@ -39,6 +39,8 @@ def _rp(n) -> str:
 
 
 MAX_ITEM_LINES = 12
+MAX_ADJ_LINES = 5
+MAX_SUMMARY_CHARS = 2500  # pesan Telegram maks 4096 karakter
 
 
 def _items_summary(result: dict) -> str:
@@ -66,12 +68,16 @@ def _items_summary(result: dict) -> str:
         lines.append(row)
     if n > MAX_ITEM_LINES:
         lines.append(f"… +{n - MAX_ITEM_LINES} barang lagi")
-    for adj in result.get("adjustments") or []:
+    adjustments = result.get("adjustments") or []
+    for adj in adjustments[:MAX_ADJ_LINES]:
         sign = "−" if adj.get("kind") == "discount" else "+"
         lines.append(f"{(adj.get('label') or 'Penyesuaian')[:28]}  {sign}{_rp(adj.get('amount') or 0)}")
+    if len(adjustments) > MAX_ADJ_LINES:
+        lines.append(f"… +{len(adjustments) - MAX_ADJ_LINES} penyesuaian lagi")
     if rec.get("status") != "cocok":
         lines.append("💡 Koreksi rincian & pecah per amplop bisa di webapp (tombol Struk).")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return text if len(text) <= MAX_SUMMARY_CHARS else text[:MAX_SUMMARY_CHARS - 1] + "…"
 
 
 async def _rate_limited(tg_id) -> bool:
@@ -198,6 +204,10 @@ async def handle_receipt_photo(update, context):
                      InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{result['scan_id']}")])
 
     conf = CONF_TEXT.get(result.get("confidence"), "")
+    if result.get("confidence") == "tinggi" and result.get("confidence_source") == "items":
+        conf = "✅ cocok dengan rincian barang"
+    elif result.get("confidence_source") == "items_sum":
+        conf = "⚠️ dihitung dari rincian, cek dengan struk"
     summary = _items_summary(result)
     await status.edit_text(
         f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"

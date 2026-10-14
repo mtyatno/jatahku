@@ -41,7 +41,7 @@ test('receiptToItem: membawa rincian barang & penyesuaian', () => {
   assert.equal(item.receiptItems.length, 1);
   assert.equal(item.receiptItems[0].unitPrice, 37800);
   assert.equal(item.adjustments[0].kind, 'discount');
-  assert.deepEqual(item.savedGroups, {});
+  assert.equal(item.plan, null);
 });
 
 test('scanMessage: rincian cocok / selisih disebut', () => {
