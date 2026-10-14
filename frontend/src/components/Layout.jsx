@@ -259,7 +259,6 @@ function CombinedLanggananModal({ onClose }) {
 }
 
 const FAB_OPTIONS = [
-  { key: 'chat', icon: 'chat', label: 'Chat bot' },
   { key: 'expense', icon: 'expense', label: 'Pengeluaran' },
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
@@ -463,7 +462,7 @@ export default function Layout() {
                     key={opt.key}
                     onClick={() => {
                       setFabMenu(false);
-                      if (opt.key === 'chat') openChat(); else setFabAction(opt.key);
+                      setFabAction(opt.key);
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all whitespace-nowrap"
                     style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}

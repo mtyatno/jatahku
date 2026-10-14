@@ -6,15 +6,17 @@ import { PREFILL_COMMANDS, formatBotText, inAppPath, safeHref } from '../lib/cha
 import {
   applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage,
 } from '../lib/chatHistory';
-import { DRAG_SLOP, dragOffset, shouldDismiss } from '../lib/sheetGesture';
+import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 
 // Chat bot Jatahku di dalam webapp: otak yang sama dengan @JatahkuBot di
 // Telegram (backend menjalankan handler bot lewat app/bot/web_adapter.py).
-// Mobile: bottom sheet hampir layar penuh — ditutup dari jangkauan jempol
-// (tombol ⌄ di samping kotak ketik, tarik ke bawah, atau tombol/gestur Back
-// Android). Desktop: panel samping, halaman tetap terlihat.
+// Mobile: bottom sheet setinggi setengah layar HP (dihitung dari tinggi layar
+// yang sedang dipakai), bisa ditarik ke atas jadi penuh; ditutup dari jangkauan
+// jempol (tombol ⌄ di samping kotak ketik, tarik ke bawah, ketuk latar, atau
+// Back Android). Saat keyboard terbuka sheet otomatis penuh di atas keyboard.
+// Desktop: panel samping, halaman tetap terlihat.
 
 const QUICK = [
   { label: 'Sisa jatah', text: 'sisa' },
@@ -38,6 +40,77 @@ const EXAMPLES = [
 const TOAST_MS = 2800;
 const SHEET_MS = 300; // durasi animasi buka/tutup
 const isDesktop = () => typeof window !== 'undefined' && !!window.matchMedia?.('(min-width: 768px)')?.matches;
+
+// ── Ukuran layar untuk sheet mobile ───────────────────────────────────────────
+
+let safeTopCache = null;
+function safeAreaTop() {
+  if (safeTopCache !== null) return safeTopCache;
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:env(safe-area-inset-top);visibility:hidden;pointer-events:none';
+    document.body.appendChild(probe);
+    safeTopCache = probe.getBoundingClientRect().height || 0;
+    probe.remove();
+  } catch {
+    safeTopCache = 0;
+  }
+  return safeTopCache;
+}
+
+const isEditing = () => {
+  const el = typeof document !== 'undefined' ? document.activeElement : null;
+  return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
+};
+
+let tallestSeen = 0; // tinggi layar tanpa keyboard (browser yang ikut mengecilkan layout)
+
+function measureViewport() {
+  if (typeof window === 'undefined') return { desktop: false, screenH: 800, availH: 800, inset: 0, keyboard: false, safeTop: 0 };
+  const innerH = window.innerHeight;
+  const vv = window.visualViewport;
+  const editing = isEditing();
+  tallestSeen = editing ? Math.max(tallestSeen, innerH) : innerH;
+  const inset = keyboardInset(innerH, vv?.height, vv?.offsetTop);
+  const keyboard = editing && (inset > 0 || innerH < tallestSeen - 120);
+  return {
+    desktop: isDesktop(),
+    screenH: tallestSeen,
+    availH: innerH - inset,
+    inset,
+    keyboard,
+    safeTop: safeAreaTop(),
+  };
+}
+
+// Ukuran layar terkini (berubah saat keyboard muncul/hilang atau HP diputar).
+function useViewport(active) {
+  const [vp, setVp] = useState(measureViewport);
+  useEffect(() => {
+    if (!active) return;
+    let raf = 0;
+    const update = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setVp(measureViewport()));
+    };
+    update();
+    const vv = window.visualViewport;
+    window.addEventListener('resize', update);
+    window.addEventListener('focusin', update);
+    window.addEventListener('focusout', update);
+    vv?.addEventListener('resize', update);
+    vv?.addEventListener('scroll', update);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', update);
+      window.removeEventListener('focusin', update);
+      window.removeEventListener('focusout', update);
+      vv?.removeEventListener('resize', update);
+      vv?.removeEventListener('scroll', update);
+    };
+  }, [active]);
+  return vp;
+}
 
 function timeLabel(ts) {
   try { return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
@@ -133,8 +206,10 @@ export default function ChatPanel({ open, onClose }) {
   const lastCount = useRef(messages.length);
   const loadedFor = useRef(uid);
   const sheetRef = useRef(null);
-  const drag = useRef(null);       // { y, t, dy } selama header ditarik
+  const drag = useRef(null);       // status tarikan header (mobile)
   const pushedRef = useRef(false); // entri riwayat browser untuk tombol Back
+  const atBottom = useRef(true);   // daftar pesan sedang di paling bawah?
+  const [mode, setMode] = useState('half'); // tinggi sheet mobile: 'half' | 'full'
 
   // Fase animasi: closed → opening → open → closing → closed.
   const [phase, setPhase] = useState('closed');
@@ -149,6 +224,36 @@ export default function ChatPanel({ open, onClose }) {
     const t = setTimeout(() => setPhase('closed'), SHEET_MS);
     return () => clearTimeout(t);
   }, [open]);
+
+  // Sheet mobile: setengah tinggi layar HP ini, atau penuh. Keyboard terbuka →
+  // penuh di atas keyboard supaya kotak ketik & pesan terakhir tetap terlihat.
+  const vp = useViewport(phase !== 'closed');
+  const heights = sheetHeights(vp.screenH, vp.safeTop, vp.availH);
+  const sheetMode = vp.keyboard ? 'full' : mode;
+  const targetH = heights[sheetMode];
+  useEffect(() => { if (open) setMode('half'); }, [open]); // selalu mulai setengah
+
+  useLayoutEffect(() => {
+    const el = sheetRef.current;
+    if (!el) return;
+    if (vp.desktop) {
+      el.style.height = '';
+      el.style.bottom = '';
+      return;
+    }
+    if (drag.current?.active) return;
+    el.style.height = `${targetH}px`;
+    el.style.bottom = `${vp.inset}px`;
+  }, [targetH, vp.inset, vp.desktop, phase]);
+
+  // Daftar pesan tetap menempel di bawah saat tinggi sheet berubah.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [phase === 'closed']);
 
   // Mobile: membuka chat menambah satu entri riwayat, jadi tombol/gestur Back
   // menutup chat (bukan meninggalkan halaman).
@@ -179,34 +284,68 @@ export default function ChatPanel({ open, onClose }) {
     onClose();
   }, [onClose]);
 
-  // Tarik header ke bawah untuk menutup (mobile).
+  // Tarik header: ke atas → penuh, ke bawah → setengah / tutup (mobile).
+  const paintHeight = (h) => {
+    const el = sheetRef.current;
+    if (!el) return;
+    el.style.transition = 'none';
+    if (h >= heights.half) {
+      el.style.height = `${h}px`;
+      el.style.transform = 'translateY(0px)';
+    } else {
+      // Di bawah setengah layar sheet turun utuh (siap ditutup).
+      el.style.height = `${heights.half}px`;
+      el.style.transform = `translateY(${heights.half - h}px)`;
+    }
+  };
   const onDragStart = (e) => {
-    if (isDesktop() || e.button > 0) return;
-    drag.current = { y: e.clientY, t: performance.now(), dy: 0, active: false };
+    if (vp.desktop || e.button > 0) return;
+    const now = performance.now();
+    const startH = sheetRef.current?.getBoundingClientRect().height || targetH;
+    drag.current = { y: e.clientY, startH, h: startH, active: false, lastY: e.clientY, lastT: now, v: 0 };
   };
   const onDragMove = (e) => {
     const d = drag.current;
     if (!d) return;
-    d.dy = e.clientY - d.y;
-    if (!d.active && Math.abs(d.dy) < DRAG_SLOP) return;
+    const dy = e.clientY - d.y;
+    if (!d.active && Math.abs(dy) < DRAG_SLOP) return;
     if (!d.active) {
       d.active = true;
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
-    const el = sheetRef.current;
-    if (el) {
-      el.style.transition = 'none';
-      el.style.transform = `translateY(${dragOffset(d.dy)}px)`;
-    }
+    const now = performance.now();
+    const dt = now - d.lastT;
+    if (dt > 0) d.v = 0.7 * ((d.lastY - e.clientY) / dt) + 0.3 * d.v; // px/ms, + = ke atas
+    d.lastY = e.clientY;
+    d.lastT = now;
+    d.h = dragHeight(d.startH, dy, heights.full);
+    paintHeight(d.h);
   };
   const onDragEnd = () => {
     const d = drag.current;
     drag.current = null;
     const el = sheetRef.current;
     if (!d || !d.active || !el) return;
+    const v = performance.now() - d.lastT > 80 ? 0 : d.v; // berhenti sebelum dilepas
+    const snap = pickSnap(d.h, v, heights);
     el.style.transition = '';
+    if (snap === 'closed') {
+      el.style.transform = 'translateY(100%)';
+      close();
+      return;
+    }
     el.style.transform = '';
-    if (shouldDismiss(d.dy, performance.now() - d.t)) close();
+    if (snap === 'half' && vp.keyboard) inputRef.current?.blur(); // tutup keyboard dulu
+    setMode(snap);
+    el.style.height = `${heights[snap]}px`;
+  };
+  const toggleSize = () => {
+    if (mode === 'full' || vp.keyboard) {
+      if (vp.keyboard) inputRef.current?.blur();
+      setMode('half');
+    } else {
+      setMode('full');
+    }
   };
 
   // Ganti akun → muat riwayat milik akun itu.
@@ -375,15 +514,15 @@ export default function ChatPanel({ open, onClose }) {
     <>
       {/* Latar redup di mobile — ketuk untuk menutup */}
       <div
-        className={`md:hidden fixed inset-0 z-[69] bg-black/40 transition-opacity duration-300 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        className={`md:hidden fixed inset-0 z-[69] bg-black/30 transition-opacity duration-300 motion-reduce:transition-none ${shown ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={close}
         aria-hidden="true"
       />
     <div
       ref={sheetRef}
-      className={`fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)_+_0.75rem)] z-[70] rounded-t-3xl overflow-hidden shadow-2xl
+      className={`fixed inset-x-0 bottom-0 z-[70] rounded-t-3xl overflow-hidden shadow-2xl
         md:left-auto md:top-14 md:w-[420px] md:rounded-none md:border-l md:border-gray-100
-        bg-page flex flex-col transition-transform duration-300 ease-[cubic-bezier(.32,.72,0,1)] motion-reduce:transition-none
+        bg-page flex flex-col transition-[transform,height] duration-300 ease-[cubic-bezier(.32,.72,0,1)] motion-reduce:transition-none
         ${shown ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full'}`}
       role="dialog"
       aria-modal={!isDesktop()}
@@ -397,8 +536,13 @@ export default function ChatPanel({ open, onClose }) {
         onPointerUp={onDragEnd}
         onPointerCancel={onDragEnd}
       >
-        <div className="md:hidden flex justify-center pt-2" aria-hidden="true">
-          <span className="w-10 h-1.5 rounded-full bg-gray-300" />
+        <div className="md:hidden flex justify-center">
+          <button type="button" onClick={toggleSize}
+            className="px-6 pt-2 pb-1"
+            aria-label={sheetMode === 'full' ? 'Perkecil chat' : 'Perbesar chat'}
+            title={sheetMode === 'full' ? 'Perkecil' : 'Perbesar'}>
+            <span className="block w-10 h-1.5 rounded-full bg-gray-300" />
+          </button>
         </div>
         <div className="h-14 px-3 flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl text-white flex items-center justify-center shrink-0"
@@ -431,7 +575,8 @@ export default function ChatPanel({ open, onClose }) {
               role="status">{toast}</div>
           </div>
         )}
-        <div ref={listRef} className="h-full overflow-y-auto overscroll-contain px-3 py-4 space-y-2.5">
+        <div ref={listRef} className="h-full overflow-y-auto overscroll-contain px-3 py-4 space-y-2.5"
+          onScroll={e => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
           {messages.length === 0 && <Welcome name={firstName} onExample={onExample} />}
           {messages.map((m, idx) => {
             const prev = messages[idx - 1];
@@ -510,7 +655,7 @@ export default function ChatPanel({ open, onClose }) {
         <form className="flex items-end gap-2 p-3" onSubmit={e => { e.preventDefault(); send(input); }}>
           {/* Tutup di jangkauan jempol (mobile); desktop memakai X di header */}
           <button type="button" onClick={close}
-            className="md:hidden w-11 h-11 shrink-0 rounded-xl bg-gray-100 text-gray-500 flex items-center justify-center active:scale-95 transition-transform"
+            className="md:hidden w-11 h-11 shrink-0 rounded-xl bg-gray-100 border border-gray-200 text-gray-500 flex items-center justify-center active:scale-95 transition-transform"
             aria-label="Tutup chat" title="Tutup chat">
             <Icon name="chevron" size={22} weight="bold" />
           </button>

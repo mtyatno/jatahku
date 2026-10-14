@@ -6,10 +6,15 @@ PWA "Chat bot"). Otaknya **handler bot Telegram yang sama** — tidak ada logika
 kedua yang harus dirawat.
 
 **Mobile = bottom sheet yang bisa dibuka-tutup dengan jempol:**
-- buka: tombol chat di samping FAB (sekali ketuk);
-- tutup: tombol ⌄ di kiri kotak ketik, tarik header ke bawah, ketuk latar
-  redup di atas sheet, atau tombol/gestur Back Android (membuka chat menambah
-  satu entri riwayat; menutup lewat tombol mengambilnya kembali).
+- buka: tombol chat di samping FAB (sekali ketuk); FAB tidak lagi punya opsi chat;
+- tinggi awal **setengah layar HP yang sedang dipakai** (dihitung dari tinggi
+  layar, jadi menyesuaikan HP pendek/tinggi); tarik pegangan ke atas atau ketuk
+  pegangan → penuh, tarik/ketuk lagi → setengah (`lib/sheetGesture.js`);
+- keyboard terbuka → sheet otomatis penuh tepat di atas keyboard (Visual
+  Viewport API), kembali setengah saat keyboard ditutup;
+- tutup: tombol ⌄ di kiri kotak ketik, tarik ke bawah dari setengah, ketuk
+  latar redup, atau tombol/gestur Back Android (membuka chat menambah satu
+  entri riwayat; menutup lewat tombol mengambilnya kembali).
 
 Desktop: panel samping di bawah header, ditutup dengan X.
 
