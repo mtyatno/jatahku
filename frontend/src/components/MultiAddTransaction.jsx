@@ -13,6 +13,12 @@ function formatRupiah(n) {
   return 'Rp ' + Number(n).toLocaleString('id-ID');
 }
 
+// Tanggal hari ini di zona waktu perangkat (toISOString memakai UTC → salah sebelum 07:00 WIB).
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function isInsufficientFundsError(errMsg) {
   if (!errMsg) return false;
   const lower = String(errMsg).toLowerCase();
@@ -52,7 +58,7 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
               type="date"
               className="input text-xs py-1 w-full md:w-40"
               value={item.transactionDate || ''}
-              max={new Date().toISOString().slice(0, 10)}
+              max={localToday()}
               onChange={e => onChangeField(item.key, 'transactionDate', e.target.value || null)}
               aria-label="Tanggal struk"
             />

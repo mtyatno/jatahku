@@ -98,6 +98,9 @@ def _parse_reply(content: str) -> dict | None:
             parsed_date = date.fromisoformat(data["date"][:10])
         except ValueError:
             parsed_date = None
+        # Sama dengan parser OCR: tolak tanggal masa depan / lebih dari setahun lalu.
+        if parsed_date and not (-1 <= (date.today() - parsed_date).days <= 366):
+            parsed_date = None
     merchant = data.get("merchant")
     merchant = str(merchant).strip()[:100] if merchant else None
     if total is None and merchant is None and parsed_date is None:
@@ -135,6 +138,8 @@ async def try_llm_fallback(image_bytes: bytes, content_type: str, user_id, plan:
             await r.decr(user_key)
             return None
 
+        # Default: anggap ditagih sebesar reservasi. Reservasi hanya dikembalikan
+        # kalau request pasti tidak sampai/ditolak (tidak ditagih Groq).
         actual = reserve
         result = None
         try:
@@ -160,12 +165,15 @@ async def try_llm_fallback(image_bytes: bytes, content_type: str, user_id, plan:
                 usage = payload.get("usage") or {}
                 if usage:
                     actual = _cost_idr(int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0)))
-                content = (payload.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                result = _parse_reply(content)
-            else:
-                actual = 0  # request ditolak → tidak ditagih
-        except (httpx.HTTPError, ValueError, KeyError):
-            actual = 0
+                message = ((payload.get("choices") or [{}])[0] or {}).get("message") or {}
+                result = _parse_reply(message.get("content") or "")
+            elif 400 <= res.status_code < 500:
+                actual = 0  # ditolak (kunci/limit/format) → tidak ditagih
+            # 5xx: tidak pasti → reservasi tetap dihitung
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            actual = 0  # request tidak pernah terkirim
+        except Exception:  # timeout baca, respons rusak, dll. → tetap dihitung
+            result = None
         # 3) Sesuaikan reservasi ke biaya sebenarnya. Reservasi sudah dibuat
         #    pesimis, jadi biasanya ini pengembalian; kalaupun lebih, selisihnya
         #    dicatat agar panggilan berikutnya ikut tertahan plafon.

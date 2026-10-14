@@ -33,7 +33,10 @@ OCR_ALIASES = {
 }
 
 # Bobot lebih tinggi = lebih mungkin total akhir yang dibayar.
+# Urutan = urutan pengecekan (yang pertama cocok dipakai), jadi SUB TOTAL
+# dicek paling awal agar tidak tertangkap pola TOTAL biasa.
 TOTAL_KEYS: list[tuple[re.Pattern, int]] = [
+    (re.compile(r"SUB\s*-?\s*TOTAL"), 30),
     (re.compile(r"GRAND\s*TOTAL"), 100),
     (re.compile(r"TOTAL\s*(BAYAR|PEMBAYARAN|TAGIHAN|BELANJA|HARGA|AKHIR|PENJUALAN|PAYMENT|DUE)"), 95),
     (re.compile(r"JUMLAH\s*(BAYAR|TAGIHAN|PEMBAYARAN)"), 90),
@@ -43,8 +46,11 @@ TOTAL_KEYS: list[tuple[re.Pattern, int]] = [
     (re.compile(r"TAGIHAN"), 60),
     (re.compile(r"HARGA\s*JUAL"), 50),
     (re.compile(r"JUMLAH([^A-Z]|$)"), 45),
-    (re.compile(r"SUB\s*-?\s*TOTAL"), 30),
 ]
+# "TOTAL (INCL. TAX)" tetap baris total walau memuat kata pajak.
+TOTAL_INCL_TAX = re.compile(r"TOTAL\s*\(?\s*(INCL|INC\b|TERMASUK|SETELAH|AFTER|NETT)")
+# Nomor kartu/akun tersamar: "**** 1234", "XXXX8899".
+MASKED = re.compile(r"\*{2,}|X{4,}")
 # Baris ini BUKAN total walau ada kata TOTAL.
 NOT_TOTAL = re.compile(
     r"TOTAL\s*(ITEM|QTY|JML|JUMLAH\s*ITEM|DISKON|DISC|HEMAT|POTONGAN|PPN|PAJAK|POIN|POINT)"
@@ -115,17 +121,24 @@ def _levenshtein1(a: str, b: str) -> bool:
     return a[i:] == b[i + 1:]
 
 
-def _fix_word(word: str, aliases: dict[str, str]) -> str:
+def _exact_alias(word: str, aliases: dict[str, str]) -> str:
     up = word.upper()
-    if up in aliases:
-        return aliases[up]
-    if up in OCR_ALIASES:
-        return OCR_ALIASES[up]
+    return aliases.get(up) or OCR_ALIASES.get(up) or word
+
+
+def _fuzzy_keyword(word: str) -> str:
+    up = word.upper()
     if len(up) >= 5 and up.isalpha() and up not in VOCAB:
         for v in VOCAB:
             if len(v) >= 5 and _levenshtein1(up, v):
                 return v
     return word
+
+
+# Kata tepat sebelum nominal / titik dua = label baris ("TUNAL : 50.000").
+# Pencocokan toleran HANYA di posisi ini, supaya nama toko/barang seperti
+# "TUNAS JAYA" tidak berubah jadi "TUNAI JAYA".
+_LABEL_WORD = re.compile(r"\b([A-Za-z]{5,})(?=\s*[:=]?\s*(?:RP\.?\s*)?\(?\d)", re.I)
 
 
 _DIGITISH = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1", "|": "1", "S": "5", "$": "5", "B": "8"})
@@ -142,7 +155,8 @@ def normalize_line(line: str, aliases: dict[str, str] | None = None) -> str:
         lambda m: m.group(1) + m.group(2).translate(_DIGITISH),
         line,
     )
-    line = re.sub(r"[A-Za-z0-9]+", lambda m: _fix_word(m.group(0), aliases), line)
+    line = re.sub(r"[A-Za-z0-9]+", lambda m: _exact_alias(m.group(0), aliases), line)
+    line = _LABEL_WORD.sub(lambda m: _fuzzy_keyword(m.group(1)), line)
     return re.sub(r"\s+", " ", line).strip()
 
 
@@ -268,35 +282,64 @@ def _amount_for(lines: list[str], i: int) -> tuple[int, int] | None:
     return None
 
 
-def find_total(lines: list[str], learned_labels: list[str] | None = None):
-    learned = [lbl for lbl in (learned_labels or []) if lbl]
-    candidates: list[tuple[int, int, int, str]] = []  # (weight, line_idx, value, raw_line)
-    cash = change = card = None
+def _skip_line(up: str) -> bool:
+    """Baris yang nominalnya bukan uang belanja: nomor kartu tersamar, ID, telp."""
+    return bool(NOISE_LINE.search(up) or MASKED.search(up))
 
+
+def _payments(lines: list[str]):
+    """(tunai, kembali, [non-tunai]) — masing-masing (nilai, baris) atau None."""
+    cash = change = None
+    cards: list[tuple[int, str]] = []
     for i, line in enumerate(lines):
         up = line.upper()
+        if _skip_line(up) or "TOTAL" in up:
+            continue
         if CHANGE_KEYS.search(up):
             a = _amount_for(lines, i)
             if a and change is None:
                 change = (a[0], line)
-            continue
-        if CARD_KEYS.search(up) and "TOTAL" not in up:  # "NON TUNAI" mengandung TUNAI
+        elif CARD_KEYS.search(up):  # dicek sebelum tunai: "NON TUNAI" mengandung TUNAI
             a = _amount_for(lines, i)
-            if a and card is None:
-                card = (a[0], line)
-            continue
-        if CASH_KEYS.search(up) and "TOTAL" not in up:
+            if a:
+                cards.append((a[0], line))
+        elif CASH_KEYS.search(up):
             a = _amount_for(lines, i)
             if a and cash is None:
                 cash = (a[0], line)
+    return cash, change, cards
+
+
+def payment_amounts(lines: list[str]) -> set[int]:
+    """Nominal yang benar-benar dibayar menurut struk (tunai − kembali, non-tunai,
+    atau tunai pas). Dipakai untuk memvalidasi koreksi sebelum dipelajari."""
+    cash, change, cards = _payments(lines)
+    out = {v for v, _ in cards}
+    if cash and change and cash[0] > change[0]:
+        out.add(cash[0] - change[0])
+    elif cash and not change:
+        out.add(cash[0])
+    return out
+
+
+def find_total(lines: list[str], learned_labels: list[str] | None = None):
+    learned = [lbl for lbl in (learned_labels or []) if lbl]
+    candidates: list[tuple[int, int, int, str]] = []  # (weight, line_idx, value, raw_line)
+    cash, change, cards = _payments(lines)
+
+    for i, line in enumerate(lines):
+        up = line.upper()
+        if _skip_line(up):
+            continue
+        if "TOTAL" not in up and (CHANGE_KEYS.search(up) or CARD_KEYS.search(up) or CASH_KEYS.search(up)):
             continue
         label = _label_of(line)
         if label and label in learned:  # profil toko hasil belajar
             a = _amount_for(lines, i)
             if a:
-                candidates.append((98, i, a[0], line))
+                candidates.append((96, i, a[0], line))
                 continue
-        if NOT_TOTAL.search(up):
+        if NOT_TOTAL.search(up) and not TOTAL_INCL_TAX.search(up):
             continue
         for rx, weight in TOTAL_KEYS:
             if rx.search(up):
@@ -306,40 +349,50 @@ def find_total(lines: list[str], learned_labels: list[str] | None = None):
                 break
 
     candidates.sort(key=lambda c: (-c[0], -c[1]))
-    best = candidates[0] if candidates else None
-    if cash and change and cash[0] > change[0]:
-        paid = cash[0] - change[0]
-    elif cash and not change:
-        paid = cash[0]  # uang pas
-    else:
-        paid = None
+    exact = cash[0] - change[0] if (cash and change and cash[0] > change[0]) else None
+    pas = cash[0] if (cash and not change) else None
+    card_values = [v for v, _ in cards]
+    confirmations = set(card_values) | {v for v in (exact, pas) if v is not None}
 
     evidence = []
-    if best:
-        evidence.append(f'Baris "{best[3]}" → {best[2]}')
-    if paid is not None:
-        evidence.append(f"Tunai {cash[0]} − kembali {change[0]} = {paid}" if change else f"Dibayar pas {cash[0]}")
-    if card:
-        evidence.append(f'Non-tunai "{card[1]}" → {card[0]}')
+    if exact is not None:
+        evidence.append(f"Tunai {cash[0]} − kembali {change[0]} = {exact}")
+    if pas is not None:
+        evidence.append(f"Tunai {pas} (tanpa kembalian)")
+    for v, line in cards:
+        evidence.append(f'Non-tunai "{line}" → {v}')
 
     def result(value, conf, line=None):
+        if line:
+            evidence.insert(0, f'Baris "{line}" → {value}')
         return value, conf, evidence, (_label_of(line) if line else None)
 
-    if best and (best[2] == paid or (card and best[2] == card[0])):
-        return result(best[2], "tinggi", best[3])
-    if best and best[0] >= 70:
-        return result(best[2], "sedang", best[3])
-    if paid is not None:
-        return result(paid, "sedang")
-    if card:
-        return result(card[0], "sedang")
-    if best:
-        return result(best[2], "rendah", best[3])
+    # 1) Kandidat yang dikonfirmasi pembayaran = keyakinan tinggi.
+    for w, _, value, line in candidates:
+        if value in confirmations:
+            return result(value, "tinggi", line)
+
+    # 2) Kandidat terbaik, diturunkan kalau bertentangan dengan pembayaran.
+    if candidates:
+        w, _, value, line = candidates[0]
+        contradicted = exact is not None or bool(card_values)
+        if contradicted:
+            evidence.append("Total tidak cocok dengan pembayaran — mohon dicek")
+            return result(value, "rendah", line)
+        return result(value, "sedang" if w >= 70 else "rendah", line)
+
+    # 3) Tanpa baris TOTAL: pakai pembayaran.
+    if exact is not None:
+        return result(exact, "sedang")
+    if card_values:
+        return result(card_values[-1], "sedang")
+    if pas is not None:  # bisa jadi uang yang diserahkan, bukan total
+        return result(pas, "rendah")
 
     biggest = None
     for line in lines:
         up = line.upper()
-        if CASH_KEYS.search(up) or NOISE_LINE.search(up):
+        if CASH_KEYS.search(up) or _skip_line(up):
             continue
         for v in amounts_in(line):
             if biggest is None or v > biggest[0]:

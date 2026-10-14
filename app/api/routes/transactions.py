@@ -7,7 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
@@ -355,9 +355,23 @@ async def _read_receipt_upload(image: UploadFile) -> tuple[bytes, str]:
     return data, content_type
 
 
+def receipt_key_func(request: Request) -> str:
+    """Rate limit per user (klaim `sub` JWT), stabil walau token di-refresh."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        try:
+            import jwt as pyjwt
+            sub = pyjwt.decode(auth[7:], options={"verify_signature": False}).get("sub")
+            if sub:
+                return f"user:{sub}"
+        except Exception:
+            pass
+    return transcribe_key_func(request)
+
+
 async def run_receipt_scan(user: User, data: bytes, content_type: str, db: AsyncSession) -> dict:
     """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web."""
-    from app.services.receipt_ocr import OcrFailed, OcrUnavailable
+    from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
     from app.services.receipt_scan import ScanQuotaExceeded, scan_receipt
 
     try:
@@ -369,15 +383,17 @@ async def run_receipt_scan(user: User, data: bytes, content_type: str, db: Async
         )
     except OcrUnavailable:
         raise HTTPException(status_code=503, detail="Scan struk sedang tidak tersedia. Catat manual dulu ya.")
+    except OcrBusy:
+        raise HTTPException(status_code=503, detail="Scan struk sedang ramai. Coba lagi beberapa detik lagi.")
     except OcrFailed:
-        raise HTTPException(status_code=422, detail="Foto tidak bisa dibuka. Coba foto ulang.")
+        raise HTTPException(status_code=422, detail="Foto tidak bisa dibuka atau resolusinya terlalu besar. Coba foto ulang.")
 
 
 class ReceiptFeedback(BaseModel):
     saved: bool
-    total: Decimal | None = None
+    total: Decimal | None = Field(default=None, gt=0, lt=10**12)
     transaction_date: date | None = None
-    merchant: str | None = None
+    merchant: str | None = Field(default=None, max_length=200)
 
 
 @router.get("/scan-receipt/quota")
@@ -390,7 +406,7 @@ async def receipt_scan_quota(
 
 
 @router.post("/scan-receipt")
-@limiter.limit("30/hour", key_func=transcribe_key_func)
+@limiter.limit("30/hour", key_func=receipt_key_func)
 async def scan_receipt_endpoint(
     request: Request,
     image: UploadFile = File(...),

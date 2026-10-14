@@ -1220,6 +1220,33 @@ async def handle_message(update, context):
                 reply_markup=InlineKeyboardMarkup(keyboard))
             return
 async def handle_txn_callback(update, context):
+    """Kunci per sesi tombol (SET NX) supaya dua ketukan cepat — yang di mode
+    webhook diproses bersamaan — tidak menyimpan transaksi ganda."""
+    parts = (update.callback_query.data or "").split("_", 2)
+    lock_key = f"txnlock:{parts[1]}" if len(parts) >= 3 else None
+    r = None
+    if lock_key:
+        try:
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(settings.REDIS_URL)
+            if not await r.set(lock_key, "1", nx=True, ex=30):
+                await r.aclose()
+                await update.callback_query.answer("Sedang diproses...")
+                return
+        except Exception:
+            r = None  # Redis mati → lanjut tanpa kunci (fail open, perilaku lama)
+    try:
+        await _handle_txn_callback(update, context)
+    finally:
+        if r is not None:
+            try:
+                await r.delete(lock_key)
+                await r.aclose()
+            except Exception:
+                pass
+
+
+async def _handle_txn_callback(update, context):
     query = update.callback_query
     await query.answer()
     # t_{redis_key}_{env_idx}
@@ -1308,6 +1335,7 @@ async def handle_txn_callback(update, context):
                                      txn_date=txn_date, merchant=description)
             except Exception as exc:  # feedback best-effort, jangan ganggu transaksi
                 logger.warning("feedback struk gagal: %s", exc)
+                await db.rollback()  # sesi tetap bisa dipakai untuk balasan di bawah
             r = aioredis.from_url(get_settings().REDIS_URL)
             await r.delete(f"txn:{txn_key}")  # cegah tersimpan dua kali dari tombol yang sama
             await r.aclose()

@@ -8,24 +8,34 @@ Teks OCR disimpan sementara hanya untuk proses belajar ini, lalu dihapus.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.models import ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, User
+from app.models.models import (
+    ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, User,
+)
 from app.services.receipt_parser import (
-    CARD_KEYS, CASH_KEYS, CHANGE_KEYS, NOISE_LINE, NOT_TOTAL,
-    _label_of, amounts_in, merchant_key, parse_receipt,
+    CARD_KEYS, CASH_KEYS, CHANGE_KEYS, MASKED, NOISE_LINE, NOT_TOTAL,
+    _label_of, amounts_in, merchant_key, parse_receipt, payment_amounts,
 )
 
-# Label baru dari koreksi baru dipakai parser setelah dikonfirmasi ≥ 2 kali,
-# supaya satu koreksi keliru tidak merusak profil toko untuk semua user.
+logger = logging.getLogger("jatahku.receipt")
+
+# Data belajar baru dipakai parser setelah disetujui ≥ 2 user BERBEDA,
+# supaya satu user (atau satu koreksi keliru) tidak merusak hasil user lain.
 MIN_LABEL_HITS = 2
+# Teks OCR scan yang tidak pernah diberi feedback dihapus setelah ini.
+OCR_TEXT_RETENTION = timedelta(hours=24)
 
 
 class ScanQuotaExceeded(Exception):
@@ -51,16 +61,23 @@ def _plan(user: User) -> str:
     return str(getattr(user, "plan", "basic") or "basic")
 
 
-def _month_start() -> datetime:
-    today = date.today()
-    return datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+def _month_start(tz_name: str | None = None) -> datetime:
+    """Awal bulan berjalan di zona waktu user (default Asia/Jakarta)."""
+    try:
+        tz = ZoneInfo(tz_name or get_settings().TZ)
+    except Exception:
+        tz = ZoneInfo("Asia/Jakarta")
+    now = datetime.now(tz)
+    return datetime(now.year, now.month, 1, tzinfo=tz)
 
 
 async def get_quota(user: User, db: AsyncSession) -> Quota:
+    # Scan yang totalnya sama sekali tidak terbaca tidak memotong kuota.
     used = (await db.execute(
         select(func.count(ReceiptScan.id)).where(
             ReceiptScan.user_id == user.id,
-            ReceiptScan.created_at >= _month_start(),
+            ReceiptScan.created_at >= _month_start(getattr(user, "timezone", None)),
+            ReceiptScan.confidence != "gagal",
         )
     )).scalar() or 0
     limit = None if _plan(user) == "pro" else get_settings().RECEIPT_SCAN_LIMIT_BASIC
@@ -92,8 +109,11 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     quota = await get_quota(user, db)
     if quota.limit is not None and quota.used >= quota.limit:
         raise ScanQuotaExceeded(quota.limit)
+    # Lepas koneksi DB selama menunggu/menjalankan OCR (bisa beberapa detik),
+    # supaya antrean scan tidak menghabiskan pool koneksi API & bot.
+    await db.rollback()
 
-    result = await ocr(image_bytes)
+    result = await ocr(image_bytes, owner=user.id)
     aliases, profiles = await _load_learning(db)
     parsed = parse_receipt(result.lines, merchant_aliases=aliases, merchant_profiles=profiles)
 
@@ -101,7 +121,11 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     merchant, total, txn_date = parsed.merchant, parsed.total, parsed.date
     confidence, evidence = parsed.confidence, list(parsed.evidence)
     if confidence in ("rendah", "gagal"):
-        fb = await llm(image_bytes, content_type, user.id, _plan(user))
+        try:
+            fb = await llm(image_bytes, content_type, user.id, _plan(user))
+        except Exception as exc:  # fallback opsional; hasil OCR tetap dipakai
+            logger.warning("fallback LLM gagal: %s", exc)
+            fb = None
         if fb and fb.get("total"):
             engine = "llm"
             total = fb["total"]
@@ -139,23 +163,49 @@ async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: As
     }
 
 
-async def _bump_label(db: AsyncSession, mkey: str, label: str) -> None:
-    row = await db.get(ReceiptTotalLabel, (mkey, label))
-    if row:
-        row.hits += 1
-    else:
-        db.add(ReceiptTotalLabel(merchant_key=mkey, label=label, hits=1))
+async def _vote(db: AsyncSession, kind: str, key: str, value: str, user_id) -> int:
+    """Catat suara user (sekali per user) dan kembalikan jumlah user berbeda."""
+    await db.execute(
+        pg_insert(ReceiptLearnVote)
+        .values(kind=kind, key=key, value=value, user_id=user_id)
+        .on_conflict_do_nothing()
+    )
+    return int((await db.execute(
+        select(func.count()).select_from(ReceiptLearnVote).where(
+            ReceiptLearnVote.kind == kind, ReceiptLearnVote.key == key, ReceiptLearnVote.value == value,
+        )
+    )).scalar() or 0)
 
 
-async def _bump_alias(db: AsyncSession, raw_key: str, merchant: str) -> None:
-    row = await db.get(ReceiptMerchantAlias, raw_key)
-    if row:
-        if row.merchant == merchant:
-            row.hits += 1
-        else:  # koreksi bertentangan → mulai ulang dengan nama baru
-            row.merchant, row.hits = merchant, 1
-    else:
-        db.add(ReceiptMerchantAlias(raw_key=raw_key, merchant=merchant, hits=1))
+async def _learn_label(db: AsyncSession, mkey: str, label: str, user_id) -> None:
+    users = await _vote(db, "label", mkey, label, user_id)
+    await db.execute(
+        pg_insert(ReceiptTotalLabel)
+        .values(merchant_key=mkey, label=label, hits=users)
+        .on_conflict_do_update(index_elements=["merchant_key", "label"], set_={"hits": users})
+    )
+
+
+async def _learn_alias(db: AsyncSession, raw_key: str, merchant: str, user_id) -> None:
+    users = await _vote(db, "alias", raw_key, merchant, user_id)
+    # Nama dengan dukungan user terbanyak yang menang untuk alias ini.
+    await db.execute(
+        pg_insert(ReceiptMerchantAlias)
+        .values(raw_key=raw_key, merchant=merchant, hits=users)
+        .on_conflict_do_update(
+            index_elements=["raw_key"],
+            set_={"merchant": merchant, "hits": users},
+            where=ReceiptMerchantAlias.hits <= users,
+        )
+    )
+
+
+def clean_merchant_name(name: str | None) -> str | None:
+    """Nama toko dari input user → aman ditampilkan ke user lain."""
+    if not name:
+        return None
+    cleaned = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9&'.\- ]", "", name)).strip()[:40]
+    return cleaned if len(cleaned) >= 2 else None
 
 
 def find_label_for_amount(lines: list[str], amount: int) -> str | None:
@@ -168,7 +218,8 @@ def find_label_for_amount(lines: list[str], amount: int) -> str | None:
         if amount not in amounts_in(line):
             continue
         up = line.upper()
-        if NOT_TOTAL.search(up) or CASH_KEYS.search(up) or CHANGE_KEYS.search(up) or CARD_KEYS.search(up) or NOISE_LINE.search(up):
+        if (NOT_TOTAL.search(up) or CASH_KEYS.search(up) or CHANGE_KEYS.search(up)
+                or CARD_KEYS.search(up) or NOISE_LINE.search(up) or MASKED.search(up)):
             continue
         label = _label_of(line)
         if label and len(label) >= 3:
@@ -209,37 +260,64 @@ async def apply_feedback(
     scan.outcome = "accepted" if (same_total and same_merchant) else "corrected"
 
     lines = json.loads(scan.ocr_lines) if scan.ocr_lines else []
-    final_mkey = merchant_key(scan.final_merchant or scan.merchant)
+    clean_name = clean_merchant_name(scan.final_merchant)
+    final_mkey = merchant_key(clean_name or scan.merchant)
 
-    # Belajar label total untuk toko ini (hanya dari scan OCR, bukan hasil LLM).
-    if final_mkey and total and lines and scan.engine == "rapidocr":
-        label = scan.total_label if same_total else find_label_for_amount(lines, int(total))
-        if label:
-            await _bump_label(db, final_mkey, label)
+    try:
+        # SAVEPOINT: kalau proses belajar gagal (mis. bentrok tulis bersamaan),
+        # hanya bagian ini yang dibatalkan; outcome scan tetap tersimpan.
+        async with db.begin_nested():
+            # Label total: hanya dari scan OCR, dan hanya jika nilainya terbukti
+            # oleh pembayaran di struk itu sendiri (tunai−kembali / non-tunai).
+            # Mencatat sebagian item saja (total ≠ pembayaran) tidak dipelajari.
+            if final_mkey and total and lines and scan.engine == "rapidocr":
+                if same_total and scan.confidence == "tinggi":
+                    label = scan.total_label
+                elif int(total) in payment_amounts(lines):
+                    label = find_label_for_amount(lines, int(total))
+                else:
+                    label = None
+                if label:
+                    await _learn_label(db, final_mkey, label, user.id)
 
-    # Belajar alias nama toko yang salah-baca.
-    if scan.merchant and scan.final_merchant and not same_merchant:
-        raw_key = merchant_key(scan.merchant)
-        if raw_key and raw_key != merchant_key(scan.final_merchant):
-            await _bump_alias(db, raw_key, scan.final_merchant)
+            # Alias nama toko yang salah-baca.
+            if scan.merchant and clean_name and not same_merchant:
+                raw_key = merchant_key(scan.merchant)
+                if raw_key and raw_key != merchant_key(clean_name):
+                    await _learn_alias(db, raw_key, clean_name, user.id)
+    except Exception as exc:  # belajar itu bonus; jangan gagalkan feedback
+        logger.warning("belajar dari struk gagal: %s", exc)
 
     scan.ocr_lines = None  # privasi: teks struk tidak disimpan setelah dipakai belajar
     await db.commit()
     return scan
 
 
+async def purge_stale_ocr_text(db: AsyncSession) -> int:
+    """Hapus teks OCR dari scan yang tidak pernah diberi feedback (tab ditutup,
+    tombol bot diabaikan, tersimpan offline). Dijalankan scheduler tiap jam."""
+    cutoff = datetime.now(timezone.utc) - OCR_TEXT_RETENTION
+    res = await db.execute(
+        update(ReceiptScan)
+        .where(ReceiptScan.ocr_lines.isnot(None), ReceiptScan.created_at < cutoff)
+        .values(ocr_lines=None, outcome=func.coalesce(ReceiptScan.outcome, "expired"))
+    )
+    await db.commit()
+    return res.rowcount or 0
+
+
 async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dict:
     """Untuk Admin: berapa scan yang diterima tanpa koreksi."""
-    since = since or _month_start()
+    since = since or _month_start()  # zona waktu default app
     rows = (await db.execute(
         select(ReceiptScan.outcome, ReceiptScan.engine, func.count(ReceiptScan.id))
         .where(ReceiptScan.created_at >= since)
         .group_by(ReceiptScan.outcome, ReceiptScan.engine)
     )).all()
-    out = {"total": 0, "accepted": 0, "corrected": 0, "discarded": 0, "pending": 0, "llm": 0}
+    out = {"total": 0, "accepted": 0, "corrected": 0, "discarded": 0, "expired": 0, "pending": 0, "llm": 0}
     for outcome, engine, n in rows:
         out["total"] += n
-        out[outcome or "pending"] += n
+        out[outcome or "pending"] = out.get(outcome or "pending", 0) + n
         if engine == "llm":
             out["llm"] += n
     judged = out["accepted"] + out["corrected"]

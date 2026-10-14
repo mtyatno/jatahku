@@ -101,6 +101,33 @@ SUBTOTAL 70.000"""
         p = self.parse(text, merchant_profiles={"TOKOMAJU": ["JML BYR"]})
         self.assertEqual(p.total, 77000)
 
+    def test_subtotal_not_taken_when_total_incl_tax(self):
+        p = self.parse("RESTO A\nSUB TOTAL 100.000\nPAJAK 10% 10.000\nTOTAL (INCL. TAX) 115.500")
+        self.assertEqual(p.total, 115500)
+
+    def test_masked_card_number_never_a_total(self):
+        p = self.parse("TOKO B\nNO KARTU 5264 82** **** 1234\nKARTU: 4567 **** **** 8899\nDEBIT BCA 140.500")
+        self.assertEqual(p.total, 140500)
+
+    def test_cash_without_change_is_low_confidence(self):
+        p = self.parse("WARKOP\nKOPI 18.000\nTUNAI 50.000")
+        self.assertEqual(p.confidence, "rendah")
+
+    def test_total_contradicting_payment_is_low_confidence(self):
+        p = self.parse("TOKO C\nTOTAL 60.000\nTUNAI 150.000\nKEMBALI 9.500")
+        self.assertEqual(p.confidence, "rendah")
+
+    def test_fuzzy_fix_does_not_rename_merchant_or_items(self):
+        p = self.parse("TUNAS JAYA\nBERAS 5KG 75.000\nTOTAL 75.000")
+        self.assertEqual(p.merchant, "Tunas Jaya")
+        p = self.parse("TOKO X\nTUNAS JAYA 12.000\nTOTAL 12.000\nTUNAL 20.000\nKEHBALI 8.000")
+        self.assertEqual((p.total, p.confidence), (12000, "tinggi"))
+
+    def test_learned_label_cannot_override_payment_confirmed_total(self):
+        text = "INDOMARET\nINDOMIE GORENG 3.500\nTOTAL 50.000\nTUNAI 50.000"
+        p = self.parse(text, merchant_profiles={"INDOMARET": ["INDOMIE GORENG"]})
+        self.assertEqual((p.total, p.confidence), (50000, "tinggi"))
+
     def test_learned_merchant_alias(self):
         p = self.parse("1NDOMAREI\nTOTAL 9.000", merchant_aliases={"1NDOMAREI": "Indomaret"})
         self.assertEqual(p.merchant, "Indomaret")
@@ -125,6 +152,30 @@ class TestBuildLines(unittest.TestCase):
         self.assertEqual(lines, ["TOTAL:  9,200"])
 
 
+def _blank_png(width, height):
+    """PNG polos 1-bit: file kecil (KB) tapi resolusi besar — pola bom dekompresi."""
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("1", (width, height)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestImageGuard(unittest.TestCase):
+    def test_decompression_bomb_rejected_before_decode(self):
+        from app.services.receipt_ocr import OcrFailed, check_dimensions
+        bomb = _blank_png(8000, 8000)  # 64 MP
+        self.assertLess(len(bomb), 100_000)
+        with self.assertRaises(OcrFailed):
+            check_dimensions(bomb)
+        check_dimensions(_blank_png(4000, 3000))  # foto HP 12 MP lolos
+
+    def test_garbage_bytes_rejected(self):
+        from app.services.receipt_ocr import OcrFailed, check_dimensions
+        with self.assertRaises(OcrFailed):
+            check_dimensions(b"bukan gambar")
+
+
 class TestLearning(unittest.TestCase):
     def test_label_for_corrected_amount_skips_payment_lines(self):
         lines = ["ROTI 9.200", "JML BYR 9.200", "TUNAI 9.200", "NON TUNAI 9.200"]
@@ -142,6 +193,7 @@ def _user(plan="basic"):
 class TestScanFlow(unittest.IsolatedAsyncioTestCase):
     async def test_basic_quota_exceeded(self):
         db = db_with(FakeResult(15))
+        db.rollback = AsyncMock()
         with self.assertRaises(receipt_scan.ScanQuotaExceeded):
             await receipt_scan.scan_receipt(_user(), b"img", "image/jpeg", db, ocr=AsyncMock(), llm=AsyncMock())
 
@@ -149,6 +201,7 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         lines = FIXTURES["receipts"][1]["lines"]
         db = db_with(FakeResult(500), FakeResult(rows=[]), FakeResult(rows=[]))
         db.refresh = AsyncMock()
+        db.rollback = AsyncMock()
         llm = AsyncMock()
         out = await receipt_scan.scan_receipt(
             _user("pro"), b"img", "image/jpeg", db,
@@ -164,6 +217,7 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
     async def test_low_confidence_uses_llm_fallback(self):
         db = db_with(FakeResult(0), FakeResult(rows=[]), FakeResult(rows=[]))
         db.refresh = AsyncMock()
+        db.rollback = AsyncMock()
         llm = AsyncMock(return_value={"merchant": "Toko A", "date": None, "total": 12000})
         out = await receipt_scan.scan_receipt(
             _user(), b"img", "image/jpeg", db,
@@ -171,27 +225,79 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((out["engine"], out["total"], out["merchant"]), ("llm", 12000, "Toko A"))
         self.assertEqual(out["quota"], {"limit": 15, "used": 1, "remaining": 14})
+        db.rollback.assert_awaited()  # koneksi DB dilepas sebelum OCR
 
-    async def test_feedback_correction_learns_label_and_clears_text(self):
-        user = _user()
-        scan = SimpleNamespace(
-            user_id=user.id, outcome=None, engine="rapidocr", merchant="Toko Maju", parsed_total=Decimal(70000),
-            total_label="SUBTOTAL", ocr_lines=json.dumps(["TOKO MAJU", "SUBTOTAL 70.000", "JML BYR 77.000"]),
+    async def test_llm_crash_keeps_ocr_result(self):
+        db = db_with(FakeResult(0), FakeResult(rows=[]), FakeResult(rows=[]))
+        db.refresh = AsyncMock(); db.rollback = AsyncMock()
+        out = await receipt_scan.scan_receipt(
+            _user(), b"img", "image/jpeg", db,
+            ocr=AsyncMock(return_value=OcrResult(lines=["TOKO", "45.500"], score=0.5, seconds=1.0)),
+            llm=AsyncMock(side_effect=RuntimeError("redis mati")),
+        )
+        self.assertEqual((out["engine"], out["total"]), ("rapidocr", 45500))
+
+    @staticmethod
+    def _feedback_db(scan):
+        db = MagicMock()
+        db.get = AsyncMock(return_value=scan)
+        db.commit = AsyncMock()
+        db.execute = AsyncMock(return_value=FakeResult(1))
+        nested = MagicMock()
+        nested.__aenter__ = AsyncMock(return_value=None)
+        nested.__aexit__ = AsyncMock(return_value=False)
+        db.begin_nested = MagicMock(return_value=nested)
+        return db
+
+    @staticmethod
+    def _scan(user, lines, parsed_total=70000, confidence="rendah", label="SUBTOTAL"):
+        return SimpleNamespace(
+            user_id=user.id, outcome=None, engine="rapidocr", merchant="Toko Maju", parsed_total=Decimal(parsed_total),
+            confidence=confidence, total_label=label, ocr_lines=json.dumps(lines),
             feedback_at=None, final_total=None, final_date=None, final_merchant=None,
         )
-        db = MagicMock()
-        db.get = AsyncMock(side_effect=[scan, None])  # scan, lalu label belum ada
-        db.commit = AsyncMock()
+
+    @staticmethod
+    def _inserted(db, table):
+        from sqlalchemy.dialects import postgresql
+        out = []
+        for call in db.execute.call_args_list:
+            stmt = call.args[0]
+            if getattr(getattr(stmt, "table", None), "name", None) == table:
+                out.append(stmt.compile(dialect=postgresql.dialect()).params)
+        return out
+
+    async def test_feedback_correction_learns_label_when_payment_confirms(self):
+        user = _user()
+        scan = self._scan(user, ["TOKO MAJU", "SUBTOTAL 70.000", "JML BYR 77.000", "TUNAI 100.000", "KEMBALI 23.000"])
+        db = self._feedback_db(scan)
         await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=77000, merchant="Toko Maju")
         self.assertEqual(scan.outcome, "corrected")
-        learned = db.add.call_args[0][0]
-        self.assertEqual((learned.merchant_key, learned.label), ("TOKOMAJU", "JML BYR"))
+        votes = self._inserted(db, "receipt_learn_votes")
+        self.assertEqual((votes[0]["kind"], votes[0]["key"], votes[0]["value"]), ("label", "TOKOMAJU", "JML BYR"))
+        self.assertEqual(votes[0]["user_id"], user.id)
+        self.assertTrue(self._inserted(db, "receipt_total_labels"))
         self.assertIsNone(scan.ocr_lines)
+
+    async def test_partial_item_correction_is_not_learned(self):
+        user = _user()
+        # User hanya mencatat satu item (3.500) — tidak cocok pembayaran 50.000.
+        scan = self._scan(user, ["INDOMARET", "INDOMIE GORENG 3.500", "TOTAL 50.000", "TUNAI 50.000"],
+                          parsed_total=50000, confidence="tinggi", label="TOTAL")
+        db = self._feedback_db(scan)
+        await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=3500, merchant="Toko Maju")
+        self.assertEqual(scan.outcome, "corrected")
+        self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
+
+    async def test_alias_name_is_sanitized(self):
+        self.assertEqual(receipt_scan.clean_merchant_name("Indo<b>maret</b>`!"), "Indobmaretb")
+        self.assertIsNone(receipt_scan.clean_merchant_name("!!"))
 
     async def test_feedback_ignores_other_users_scan(self):
         scan = SimpleNamespace(user_id=uuid4(), outcome=None)
         db = MagicMock(); db.get = AsyncMock(return_value=scan); db.commit = AsyncMock()
         self.assertIsNone(await receipt_scan.apply_feedback(_user(), uuid4(), db, saved=False))
+        self.assertIsNone(await receipt_scan.apply_feedback(_user(), "bukan-uuid", db, saved=False))
         db.commit.assert_not_awaited()
 
 
@@ -277,18 +383,37 @@ class TestLlmBudget(unittest.IsolatedAsyncioTestCase):
         results = [await self._call(r, _llm_settings(RECEIPT_LLM_MONTHLY_BUDGET_IDR=10**6)) for _ in range(4)]
         self.assertEqual([bool(x) for x in results], [True, True, True, False])
 
-    async def test_api_error_refunds_quota_and_budget(self):
+    async def test_rejected_request_refunds_quota_and_budget(self):
         r = FakeRedis()
         bad = AsyncMock()
-        bad.__aenter__.return_value.post = AsyncMock(return_value=MagicMock(status_code=500))
+        bad.__aenter__.return_value.post = AsyncMock(return_value=MagicMock(status_code=401))
         self.assertIsNone(await self._call(r, _llm_settings(), client=bad))
         month = receipt_llm._month_key()
         self.assertEqual(r.d[f"receipt_llm:cost:{month}"], 0)
         self.assertEqual(r.d[f"receipt_llm:user:u1:{month}"], 0)
 
+    async def test_timeout_keeps_reservation(self):
+        # Request mungkin sudah diproses & ditagih → reservasi tidak dikembalikan.
+        r = FakeRedis()
+        slow = AsyncMock()
+        slow.__aenter__.return_value.post = AsyncMock(side_effect=receipt_llm.httpx.ReadTimeout("lambat"))
+        self.assertIsNone(await self._call(r, _llm_settings(), client=slow))
+        self.assertEqual(r.d[f"receipt_llm:cost:{receipt_llm._month_key()}"], receipt_llm.worst_case_cost_idr())
+
+    async def test_repeated_timeouts_still_capped(self):
+        r = FakeRedis()
+        slow = AsyncMock()
+        slow.__aenter__.return_value.post = AsyncMock(side_effect=receipt_llm.httpx.ReadTimeout("lambat"))
+        settings = _llm_settings(RECEIPT_LLM_MONTHLY_BUDGET_IDR=300, RECEIPT_LLM_USER_MONTHLY_BASIC=100)
+        for _ in range(20):
+            await self._call(r, settings, client=slow)
+        self.assertLessEqual(r.d[f"receipt_llm:cost:{receipt_llm._month_key()}"], 300)
+
     def test_parse_reply_strips_thinking_and_rejects_garbage(self):
         self.assertEqual(receipt_llm._parse_reply('<think>hmm</think>{"total":"Rp 9.200","merchant":null,"date":null}')["total"], 9200)
         self.assertIsNone(receipt_llm._parse_reply("bukan json"))
+        far = receipt_llm._parse_reply('{"total": 9200, "merchant": "A", "date": "2001-01-01"}')
+        self.assertIsNone(far["date"])  # tanggal di luar jendela 1 tahun ditolak
 
 
 class TestUploadValidation(unittest.IsolatedAsyncioTestCase):

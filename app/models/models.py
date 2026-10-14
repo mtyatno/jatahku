@@ -539,3 +539,16 @@ class ReceiptMerchantAlias(Base):
     merchant: Mapped[str] = mapped_column(String(100))
     hits: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ReceiptLearnVote(Base):
+    """Satu suara per user untuk tiap hal yang dipelajari (label total / alias toko).
+    Data belajar baru dipakai setelah disetujui ≥ 2 user BERBEDA, supaya satu
+    user tidak bisa mengubah hasil scan user lain."""
+    __tablename__ = "receipt_learn_votes"
+
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # label | alias
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(String(100), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

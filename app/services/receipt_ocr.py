@@ -10,13 +10,24 @@ Entry point: await read_receipt_lines(image_bytes) -> OcrResult.
 from __future__ import annotations
 
 import asyncio
+import io
+import os
 from dataclasses import dataclass
+
+# Batas piksel untuk decoder OpenCV (default ±1 gigapiksel bisa >3 GB RAM).
+# Harus di-set sebelum cv2 diimpor pertama kali.
+os.environ.setdefault("OPENCV_IO_MAX_IMAGE_PIXELS", str(40_000_000))
 
 MAX_SIDE = 2000  # foto HP besar diperkecil dulu: lebih cepat, akurasi tetap
 # Tumpang-tindih vertikal minimum agar dua kotak dianggap sebaris. Baris yang
 # bersebelahan di struk praktis tidak bertumpang-tindih, jadi 0.35 aman dan
 # masih menangkap kertas yang melengkung.
 MIN_OVERLAP = 0.35
+# Foto HP 50 MP masih lolos; gambar raksasa (bom dekompresi: PNG kecil
+# 16000×16000) ditolak sebelum didekode.
+MAX_PIXELS = 30_000_000
+# Antrean OCR: lebih dari ini yang menunggu → tolak (503) daripada menumpuk.
+MAX_WAITING = 4
 
 
 class OcrUnavailable(Exception):
@@ -24,7 +35,11 @@ class OcrUnavailable(Exception):
 
 
 class OcrFailed(Exception):
-    """Gambar rusak / tidak bisa didekode."""
+    """Gambar rusak / tidak bisa didekode / terlalu besar."""
+
+
+class OcrBusy(Exception):
+    """Antrean OCR penuh atau scan user ini masih berjalan."""
 
 
 @dataclass
@@ -104,6 +119,19 @@ def _load_engine():
     return RapidOCR()
 
 
+def check_dimensions(image_bytes: bytes) -> None:
+    """Baca ukuran dari header gambar (tanpa dekode) dan tolak yang kebesaran."""
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            width, height = im.size
+    except Exception as exc:  # format tak dikenal, rusak, atau DecompressionBombError
+        raise OcrFailed("gambar tidak bisa dibaca") from exc
+    if width * height > MAX_PIXELS:
+        raise OcrFailed("resolusi gambar terlalu besar")
+
+
 def _run_ocr(engine, image_bytes: bytes) -> OcrResult:
     import time
 
@@ -111,6 +139,7 @@ def _run_ocr(engine, image_bytes: bytes) -> OcrResult:
     import numpy as np
 
     t0 = time.time()
+    check_dimensions(image_bytes)
     img = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise OcrFailed("gambar tidak bisa dibaca")
@@ -129,10 +158,36 @@ def _run_ocr(engine, image_bytes: bytes) -> OcrResult:
     )
 
 
-async def read_receipt_lines(image_bytes: bytes) -> OcrResult:
-    global _engine
-    async with _engine_lock:
-        if _engine is None:
-            _engine = await asyncio.to_thread(_load_engine)
-    async with _ocr_slot:
-        return await asyncio.to_thread(_run_ocr, _engine, image_bytes)
+_waiting = 0
+_in_flight: set = set()
+
+
+async def read_receipt_lines(image_bytes: bytes, owner=None) -> OcrResult:
+    """OCR satu foto. `owner` (user id) membatasi 1 scan berjalan per user.
+
+    Catatan: batas "1 OCR bersamaan" berlaku per proses — jalankan uvicorn
+    dengan 1 worker (setiap worker memuat model sendiri, ±340 MB).
+    """
+    global _engine, _waiting
+    if owner is not None and owner in _in_flight:
+        raise OcrBusy("scan sebelumnya masih diproses")
+    if _waiting >= MAX_WAITING:
+        raise OcrBusy("antrean scan penuh")
+    check_dimensions(image_bytes)  # tolak cepat sebelum masuk antrean
+    if owner is not None:
+        _in_flight.add(owner)
+    _waiting += 1
+    queued = True
+    try:
+        async with _engine_lock:
+            if _engine is None:
+                _engine = await asyncio.to_thread(_load_engine)
+        async with _ocr_slot:
+            _waiting -= 1  # keluar antrean, mulai diproses
+            queued = False
+            return await asyncio.to_thread(_run_ocr, _engine, image_bytes)
+    finally:
+        if queued:
+            _waiting -= 1
+        if owner is not None:
+            _in_flight.discard(owner)

@@ -73,7 +73,7 @@ async def handle_receipt_photo(update, context):
         get_or_create_user, get_household_id, get_envelopes_with_spent, _is_setup_complete,
     )
     from app.bot.tglogin_cmd import reply_setup_needed
-    from app.services.receipt_ocr import OcrFailed, OcrUnavailable
+    from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
     from app.services.receipt_scan import ScanQuotaExceeded, scan_receipt
     from app.services.txn_nlp import find_best_envelope
 
@@ -106,6 +106,9 @@ async def handle_receipt_photo(update, context):
                 "Upgrade ke Pro di jatahku.com/settings untuk scan tanpa batas.",
                 parse_mode="Markdown")
             return
+        except OcrBusy:
+            await status.edit_text("⏳ Scan struk sedang ramai. Kirim ulang fotonya sebentar lagi ya.")
+            return
         except (OcrUnavailable, OcrFailed) as exc:
             logger.warning("scan struk gagal: %s", exc)
             await status.edit_text("😕 Scan struk sedang tidak bisa. Catat manual dulu, misalnya: `kopi 35rb`",
@@ -119,11 +122,11 @@ async def handle_receipt_photo(update, context):
                       if quota.get("limit") is not None else "")
 
         if not total:
+            # Tanpa parse_mode: nama toko dari OCR bisa mengandung karakter Markdown.
             await status.edit_text(
                 "😕 Total struk tidak terbaca.\n\n"
-                "Tips: foto tegak lurus, terang, tanpa bayangan. Atau ketik manual:\n"
-                f"`{merchant.lower()} 45rb`{quota_line}",
-                parse_mode="Markdown")
+                "Tips: foto tegak lurus, terang, tanpa bayangan. Atau ketik manual, misalnya:\n"
+                f"{merchant.lower()} 45rb{quota_line}")
             return
 
         hid = await get_household_id(user, db)
