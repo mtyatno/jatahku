@@ -70,12 +70,12 @@ DAY_ID = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
 
 
 def _short_bar(spent, allocated, width=6):
-    """▓▓▓░░░ style bar, width chars."""
+    """▰▰▰▱▱▱ style bar, width chars."""
     if not allocated or allocated <= 0:
         return ""
     ratio = min(float(spent / allocated), 1.0)
     filled = round(ratio * width)
-    return "▓" * filled + "░" * (width - filled)
+    return "▰" * filled + "▱" * (width - filled)
 
 
 # Sama dengan KPI dashboard "Sisa bebas" (Dashboard.jsx): tabungan & sinking fund tidak ikut.

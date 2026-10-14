@@ -487,7 +487,7 @@ async def handle_sisa(update, context):
     # Top-level bar: % spent of total allocation
     pct_spent = int(float(total_spent / total_alloc * 100)) if total_alloc > 0 else 0
     filled = round(pct_spent / 100 * 6)
-    budget_bar = "▓" * filled + "░" * (6 - filled)
+    budget_bar = "▰" * filled + "▱" * (6 - filled)
 
     # Daily safe limit based on remaining
     safe_daily = total_free / days_left if days_left > 0 else Decimal("0")
@@ -516,7 +516,7 @@ async def handle_sisa(update, context):
             if allocated > 0 and spent > 0:
                 pct = int(float(spent / allocated) * 100)
                 f2  = round(pct / 100 * 6)
-                bar = "▓" * f2 + "░" * (6 - f2)
+                bar = "▰" * f2 + "▱" * (6 - f2)
                 indicator = "🔴" if pct >= 90 else ("🟡" if pct >= 70 else "🟢")
                 lines.append(f"{indicator} {emoji} {name} · <b>{format_currency(free)}</b>  {bar} {pct}%")
             else:
@@ -985,7 +985,7 @@ async def handle_pengeluaran_hari_ini(update, context):
         name = env.name or "—"
         pct = int(float(spent / total_today) * 100) if total_today > 0 else 0
         filled = round(pct / 100 * 6)
-        bar = "▓" * filled + "░" * (6 - filled)
+        bar = "▰" * filled + "▱" * (6 - filled)
         lines.append(f"{emoji} {name}  {bar} <b>{format_currency(spent)}</b> ({pct}%)")
 
     # ── Recent transactions ─────────────────────────────────────────
@@ -1090,7 +1090,7 @@ async def handle_pengeluaran_hari_lalu(update, context):
             name = env.name if env else "—"
             pct = int(float(spent / target_total) * 100) if target_total > 0 else 0
             filled = round(pct / 100 * 6)
-            bar = "▓" * filled + "░" * (6 - filled)
+            bar = "▰" * filled + "▱" * (6 - filled)
             lines.append(f"{emoji} {name}  {bar} <b>{format_currency(spent)}</b> ({pct}%)")
 
         # Full transaction list

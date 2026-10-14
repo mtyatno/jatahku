@@ -47,6 +47,17 @@ ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapte
 - Teks yang berbeda per kanal memakai `is_web()` (mis. `/help`, ajakan setup,
   petunjuk `/template` & `/amplop_baru`).
 
+## Tampilan balasan
+
+Bot menulis teks yang sama untuk Telegram dan web: emoji, bar `▰▰▰▱▱▱`, dan
+garis `────`. Di web, `components/ChatText.jsx` (+ `lib/chatIcons.js`) mengubahnya
+menjadi bahasa visual aplikasi: emoji dekoratif → ikon Phosphor (✅ ⚠️ 💡 📊 …),
+emoji amplop → ikon kategori yang sama dengan halaman Amplop, 🟢🟡🔴⚪ → titik
+status, bar teks → bar pemakaian sungguhan, garis → pemisah tipis. Emoji yang
+tidak dipetakan (wajah, keluarga) tetap tampil sebagai emoji. Emoji baru di
+balasan bot cukup ditambahkan ke `CHAT_EMOJI`. Telegram tetap memakai emoji
+(set emoji Telegram sendiri) dengan bar `▰▱`.
+
 ## Foto struk
 
 Tombol **Struk** (di samping Suara) mengirim foto ke `POST /bot/chat/photo`.
