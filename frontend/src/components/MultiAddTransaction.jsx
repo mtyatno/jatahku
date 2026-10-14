@@ -191,6 +191,15 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   // baris itu di-parse ulang jadi salinan tanpa kunci idempotensi.
   const savingRef = useRef(false);
   const heldTranscripts = useRef([]);
+  // Suara/struk yang masih diproses: Simpan Semua ditahan sampai hasilnya masuk,
+  // supaya hasilnya tidak tiba di tengah penyimpanan atau hilang saat panel ditutup.
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  // Versi ref untuk dibaca di akhir penyimpanan (closure handleSaveAll sudah basi).
+  const inputBusyRef = useRef({ voice: false, scan: false });
+  const handleVoiceBusy = useCallback((b) => { inputBusyRef.current.voice = b; setVoiceBusy(b); }, []);
+  const handleScanBusy = useCallback((b) => { inputBusyRef.current.scan = b; setScanBusy(b); }, []);
+  const inputBusy = () => inputBusyRef.current.voice || inputBusyRef.current.scan;
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -447,6 +456,14 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   };
 
   const handleSaveAll = async () => {
+    if (savingRef.current || voiceBusy || scanBusy) return;
+    // Teks yang baru diketik belum dibaca (jeda 300 ms). Kalau disimpan sekarang,
+    // pembacaan yang tertunda mengganti baris yang sedang disimpan dengan salinan
+    // tanpa kunci idempotensi → bisa tercatat dua kali.
+    if (rawText.trim() !== lastParsedRef.current) {
+      setResultMsg({ type: 'error', text: 'Teks baru masih dibaca — cek barisnya, lalu tekan Simpan Semua lagi.' });
+      return;
+    }
     if (items.some(i => isReady(i) && !(Number(i.amount) > 0))) {
       setResultMsg({ type: 'error', text: 'Isi nominal struk dulu sebelum menyimpan' });
       return;
@@ -501,11 +518,19 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       const done = applyResult({}, new Set(pending.map(i => i.key)));
       const heldCount = endSaving();
-      if (done && heldCount === 0) onSaved?.();
+      if (done && heldCount === 0 && !inputBusy()) onSaved?.();
       return;
     }
 
     const result = await api.batchCreateTransactions(parts.map(p => p.payload));
+
+    if (!result.ok && result.status >= 400 && result.status < 500 && result.status !== 409) {
+      // Ditolak utuh (mis. 401/422): tidak ada yang tercatat → baris tetap bisa diedit.
+      endSaving();
+      const detail = typeof result.data?.detail === 'string' ? result.data.detail : '';
+      setResultMsg({ type: 'error', text: detail || 'Gagal menyimpan. Periksa isian lalu coba lagi.' });
+      return;
+    }
 
     if (!result.ok) {
       // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Baris yang
@@ -580,7 +605,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       const done = applyResult(updated, okKeys);
       const heldCount = endSaving();
-      if (done && heldCount === 0) {
+      // Suara/struk yang mulai diproses selama menyimpan: panel jangan ditutup.
+      if (done && heldCount === 0 && !inputBusy()) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
         onSaved?.();
       } else {
@@ -611,11 +637,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
             <ReceiptInput
               onResult={handleReceiptResult}
               onError={handleVoiceError}
+              onBusyChange={handleScanBusy}
               disabled={saving}
             />
             <VoiceInput
               onTranscript={handleVoiceTranscript}
               onError={handleVoiceError}
+              onBusyChange={handleVoiceBusy}
               disabled={saving}
             />
           </div>
@@ -719,10 +747,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         <button
           type="button"
           onClick={handleSaveAll}
-          disabled={saving || !hasItems}
+          disabled={saving || !hasItems || voiceBusy || scanBusy}
           className="btn-primary disabled:opacity-50"
         >
-          {saving ? 'Menyimpan...' : `Simpan Semua${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+          {saving ? 'Menyimpan...'
+            : scanBusy ? 'Menunggu struk...'
+              : voiceBusy ? 'Menunggu suara...'
+                : `Simpan Semua${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="btn-outline" disabled={saving}>Batal</button>

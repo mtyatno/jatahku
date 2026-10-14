@@ -31,12 +31,25 @@ async function compressImage(file) {
 
 // Tombol "Struk": pilih/ambil foto → kompres → scan di server.
 // onResult(hasilApi) saat berhasil; onError(pesan) saat gagal.
-export default function ReceiptInput({ onResult, onError, disabled = false }) {
+// onBusyChange(bool): true selama membaca struk (induk menahan tombol Simpan).
+export default function ReceiptInput({ onResult, onError, onBusyChange, disabled = false }) {
   const [scanning, setScanning] = useState(false);
   const inputRef = useRef(null);
   const mountedRef = useRef(true);
+  const busyCbRef = useRef(onBusyChange);
+  busyCbRef.current = onBusyChange;
 
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      busyCbRef.current?.(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    busyCbRef.current?.(scanning);
+  }, [scanning]);
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];

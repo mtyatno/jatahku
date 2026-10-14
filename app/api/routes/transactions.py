@@ -7,7 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
@@ -27,6 +27,15 @@ limiter = Limiter(key_func=get_remote_address)
 # Maks ukuran audio yang diterima (client membatasi rekaman 60 detik).
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
+# = panjang kolom transactions.description. Keterangan yang lebih panjang (mis.
+# hasil dikte) dipotong; dulu gagal 500 saat commit dan klien menganggapnya
+# "belum pasti", sehingga kirim ulang terus gagal.
+MAX_DESCRIPTION = 500
+
+
+def _fit_description(v: str) -> str:
+    return v[:MAX_DESCRIPTION]
+
 
 class TransactionCreate(BaseModel):
     envelope_id: UUID
@@ -39,6 +48,8 @@ class TransactionCreate(BaseModel):
     raise_daily_limit: bool = False
     # Kunci idempotensi dari klien: kirim ulang tidak mencatat dua kali.
     client_ref: str | None = Field(default=None, max_length=64)
+
+    _fit = field_validator("description")(_fit_description)
 
 
 class TransactionResponse(BaseModel):
@@ -82,6 +93,8 @@ class BatchTransactionItem(BaseModel):
     is_private: bool = False
     raise_daily_limit: bool = False
     client_ref: str | None = Field(default=None, max_length=64)
+
+    _fit = field_validator("description")(_fit_description)
 
 
 def _rp(x) -> str:

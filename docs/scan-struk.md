@@ -86,9 +86,14 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   Masih `pending` → 409 (batch: `pending: true`). Gagal sebelum commit → reservasi
   dilepas. Redis mati → fail open (perilaku lama, tanpa dedup).
 - Klien: respons hilang / 409 / 5xx → baris ditandai "belum pasti" dan dikunci
-  (nominal & amplop tidak bisa diubah) dengan kunci yang sama; tekan Simpan lagi.
-  Penolakan pasti (mis. saldo kurang, 4xx selain 409) → tidak tercatat; baris bisa
-  diedit lagi.
+  (nominal & amplop tidak bisa diubah) dengan kunci yang sama; tekan Simpan lagi
+  (quick-add mengirim ulang permintaan yang sama persis). Penolakan pasti (mis.
+  saldo kurang, 4xx selain 409) → tidak tercatat; baris bisa diedit lagi.
+- Simpan ditahan selama suara direkam/ditranskripsi atau struk sedang dibaca, dan
+  selama teks yang baru diketik belum selesai dibaca — supaya hasilnya tidak masuk
+  di tengah penyimpanan atau hilang saat panel ditutup.
+- Keterangan lebih dari 500 karakter (panjang kolom) dipotong di server; dulu gagal
+  500 dan kirim ulang tidak pernah berhasil.
 - Tidak ada tabel atau paket baru.
 
 ## Belajar dari koreksi (tanpa LLM)

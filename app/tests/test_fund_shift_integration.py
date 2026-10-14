@@ -486,6 +486,62 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(out[0].ok)
         self.assertEqual(await self.count(Transaction), 1)
 
+    async def test_web_concurrent_send_loses_reservation(self):
+        """Dua kiriman bersamaan: keduanya lolos lookup, hanya satu yang dapat reservasi."""
+        from fastapi import HTTPException
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        from app.services import idempotency
+        t = self.env["Transport"].id
+        self.redis.store[self.ref_key("race")] = "pending"   # kiriman pertama sedang membuat
+
+        async def lookup_before_reserve(user_id, ref):
+            return None  # lookup terjadi sebelum kiriman pertama mereservasi
+        with patch("redis.asyncio.from_url", return_value=self.redis), \
+                patch.object(idempotency, "lookup", lookup_before_reserve):
+            async with self.Session() as db:
+                with self.assertRaises(HTTPException) as cm:
+                    await create_transaction(TransactionCreate(envelope_id=t, amount=D("1000"),
+                                                               description="x", client_ref="race"),
+                                             await self.web_user(db), db)
+            out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "x",
+                                         "client_ref": "race"}])
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertTrue(out[0].pending)
+        self.assertEqual(await self.count(Transaction), 0)
+
+    async def test_web_failed_commit_releases_ref(self):
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        req = TransactionCreate(envelope_id=self.env["Transport"].id, amount=D("15000"),
+                                description="ojek", client_ref="ref-crash")
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:
+                async def boom():
+                    raise RuntimeError("koneksi DB putus")
+                db.commit = boom
+                with self.assertRaises(RuntimeError):
+                    await create_transaction(req, await self.web_user(db), db)
+            self.assertNotIn(self.ref_key("ref-crash"), self.redis.store)
+            async with self.Session() as db:
+                await create_transaction(req, await self.web_user(db), db)
+            async with self.Session() as db:
+                await create_transaction(req, await self.web_user(db), db)
+        self.assertEqual(await self.count(Transaction), 1)
+
+    async def test_web_long_description_is_trimmed_not_failed(self):
+        from app.api.routes.transactions import TransactionCreate, create_transaction
+        t = self.env["Transport"].id
+        with patch("redis.asyncio.from_url", return_value=self.redis):
+            async with self.Session() as db:
+                single = await create_transaction(
+                    TransactionCreate(envelope_id=t, amount=D("1000"), description="a" * 700),
+                    await self.web_user(db), db)
+            out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "b" * 501}])
+        self.assertEqual(len(single.description), 500)
+        self.assertTrue(out[0].ok)
+        async with self.Session() as db:
+            lengths = sorted(len(d) for d in (await db.execute(select(Transaction.description))).scalars())
+        self.assertEqual(lengths, [500, 500])
+
 
     # ── Notifikasi goal: hanya saat saldo melewati target ───────────────────
 
