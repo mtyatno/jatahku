@@ -15,7 +15,8 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
-from app.services.plan_limits import check_transaction_limit
+from app.services.plan_limits import check_transaction_limit, has_txn_limit, quota_notice_after_input
+from app.services import quota_pass
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
 
@@ -66,6 +67,11 @@ class TransactionResponse(BaseModel):
     is_adjustment: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class TransactionCreateResponse(TransactionResponse):
+    # Basic: kuota bulan ini habis sesudah input ini → pemberitahuan untuk user.
+    quota_notice: str | None = None
 
 
 class SuggestEnvelopeRequest(BaseModel):
@@ -132,9 +138,17 @@ class BatchTransactionResult(BaseModel):
     # True = kiriman lain dengan client_ref yang sama masih diproses; hasil
     # belum pasti (klien jangan menganggapnya gagal permanen).
     pending: bool = False
+    # Basic: kuota bulan ini habis sesudah kiriman ini (sama di setiap baris).
+    quota_notice: str | None = None
 
 
-@router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
+async def _created(txn, user, db) -> TransactionCreateResponse:
+    out = TransactionCreateResponse.model_validate(txn)
+    out.quota_notice = await quota_notice_after_input(user, db)
+    return out
+
+
+@router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     req: TransactionCreate,
     user: User = Depends(get_current_user),
@@ -147,7 +161,7 @@ async def create_transaction(
     if existing_ref:
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
-            return existing  # sudah tercatat sebelumnya (kirim ulang)
+            return await _created(existing, user, db)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     # Verify envelope belongs to user's household
     result = await db.execute(
@@ -169,8 +183,10 @@ async def create_transaction(
     # Aturan bersama web + Telegram (app/services/expense_rules.py)
     if not is_spendable(envelope):
         raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
+    # Kuota Basic dicek di awal input; bagian dari input yang dimulai saat kuota
+    # masih ada (client_ref berizin) tetap boleh — lihat app/services/quota_pass.py.
     limit_ok, limit_msg = await check_transaction_limit(user, db)
-    if not limit_ok:
+    if not limit_ok and not await quota_pass.held(user.id, [req.client_ref]):
         raise HTTPException(status_code=403, detail=limit_msg)
 
     # Behavior checks — satu kali (dulu dua kali, dan cek pertama menolak cooling
@@ -217,7 +233,7 @@ async def create_transaction(
     # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot.
     await after_expense_recorded(db, user, req.envelope_id, req.description)
 
-    return txn
+    return await _created(txn, user, db)
 
 
 @router.post("/suggest-envelope")
@@ -278,6 +294,17 @@ async def batch_create_transactions(
     hid = result.scalar_one_or_none()
 
     from app.services import idempotency
+    # Satu kiriman = satu input. Kuota Basic dicek SEKALI di awal: bila masih ada,
+    # seluruh kiriman diselesaikan walau melewati batas, dan client_ref-nya diberi
+    # izin supaya kirim ulang bagian yang gagal juga boleh (quota_pass).
+    quota_ok, quota_msg = await check_transaction_limit(user, db)
+    refs = [it.client_ref for it in req.items if it.client_ref]
+    if quota_ok:
+        if has_txn_limit(user):  # Pro tanpa batas → tidak perlu izin
+            await quota_pass.grant(user.id, refs)
+        allowed_refs = None  # semua boleh
+    else:
+        allowed_refs = await quota_pass.held(user.id, refs)
     results = []
     for i, item in enumerate(req.items):
         existing_ref = await idempotency.lookup(user.id, item.client_ref)
@@ -307,9 +334,8 @@ async def batch_create_transactions(
         if not is_spendable(envelope):
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=NOT_SPENDABLE_MSG))
             continue
-        limit_ok, limit_msg = await check_transaction_limit(user, db)
-        if not limit_ok:
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=limit_msg))
+        if allowed_refs is not None and item.client_ref not in allowed_refs:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=quota_msg))
             continue
 
         check = await check_behavior(item.envelope_id, user.id, item.amount, db)
@@ -360,6 +386,11 @@ async def batch_create_transactions(
 
         results.append(BatchTransactionResult(index=i, ok=True, id=txn.id, description=item.description))
 
+    if any(r.ok for r in results):
+        notice = await quota_notice_after_input(user, db)
+        if notice:
+            for r in results:
+                r.quota_notice = notice
     return results
 
 

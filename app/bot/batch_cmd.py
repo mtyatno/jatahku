@@ -19,6 +19,11 @@ Alur:
 3. Di akhir tampil ringkasan: yang tercatat (dan dana yang ditambahkan), item
    yang dilewati / tertahan beserta alasannya, total, dan streak.
 
+Kuota Basic (50 transaksi/bulan) dicek sekali di awal pesan: bila masih ada,
+semua item pesan itu diselesaikan walau melewati batas (`quota_pass` di state),
+lalu ringkasan memberi tahu bila kuota kini habis. Bila sudah habis sejak awal,
+pesan ditolak utuh.
+
 State antrean disimpan di Redis `batch:{key}` (TTL 10 menit). Ketukan tombol
 diserialkan dengan kunci `batchlock:{key}` dan dicocokkan dengan posisi antrean
 saat ini, jadi ketukan ganda atau tombol lama tidak mencatat/menggeser dua kali.
@@ -42,6 +47,7 @@ from app.bot.tglogin_cmd import reply_setup_needed
 from app.models.models import Transaction, TransactionSource, User
 from app.services.behavior import raise_daily_limit_today
 from app.services.expense_rules import FUNDS_BLOCKS, after_expense_recorded, check_expense
+from app.services.plan_limits import check_transaction_limit, quota_notice_after_input
 from app.services.goal_notify import goal_snapshot, notify_goals_reached
 from app.services.fund_shift import (
     compute_shortfall, pick_sources, record_topup, record_transfer, transfer_error,
@@ -74,6 +80,8 @@ def render_summary(data) -> str:
         out += ["", f"💸 Total: <b>{format_currency(data['total'])}</b>"]
     if data.get("streak"):
         out += ["", data["streak"]]
+    if data.get("quota_notice"):
+        out += ["", f"⚠️ {_esc(data['quota_notice'])}"]
     return "\n".join(out)
 
 
@@ -119,7 +127,8 @@ async def _record_item(db, user, hid, data, item, target_env, source_env=None,
         await db.flush()
         check = None  # dana berubah — cek ulang
     if check is None:
-        check = await check_expense(target_env, user, amount, db)
+        check = await check_expense(target_env, user, amount, db,
+                                    skip_plan_limit=data.get("quota_pass", False))
 
     if check.allowed:
         db.add(Transaction(
@@ -193,7 +202,8 @@ async def render_step(key, data, user, hid, db, flash=None):
             continue
         target_env = target["envelope"]
 
-        check = await check_expense(target_env, user, Decimal(item["amount"]), db)
+        check = await check_expense(target_env, user, Decimal(item["amount"]), db,
+                                    skip_plan_limit=data.get("quota_pass", False))
         if not check.allowed and check.check_type == "daily_limit":
             data["stage"] = "limit"
             d = {"daily_limit": 0, "spent_today": 0, "remaining_today": 0,
@@ -245,6 +255,8 @@ async def render_step(key, data, user, hid, db, flash=None):
         )
         return text, InlineKeyboardMarkup(keyboard), False
 
+    if data.get("auto_lines") and "quota_notice" not in data:
+        data["quota_notice"] = await quota_notice_after_input(user, db)
     return render_summary(data), None, True
 
 
@@ -407,6 +419,12 @@ async def handle_multi_expense(update, context, items):
         if not env_data:
             await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
             return
+        # Kuota Basic dicek sekali di awal pesan (lihat docstring modul).
+        quota_ok, quota_msg = await check_transaction_limit(user, db)
+        if not quota_ok:
+            await update.message.reply_text(
+                f"⚠️ {_esc(quota_msg)}\n\nUpgrade di jatahku.com/settings", parse_mode="HTML")
+            return
         key = secrets.token_hex(4)
         data = {
             "user_id": str(user.id),
@@ -416,6 +434,7 @@ async def handle_multi_expense(update, context, items):
             "auto_lines": [],
             "notes": [],
             "total": 0,
+            "quota_pass": True,
         }
         for amount, desc in items:
             env, _ = await find_best_envelope(desc, hid, db, user_id=user.id)
@@ -425,7 +444,7 @@ async def handle_multi_expense(update, context, items):
                 continue
             # Sama dengan POST /transactions/batch di web: setiap item dicek, dan
             # item yang sudah tercatat ikut terhitung untuk item berikutnya.
-            check = await check_expense(env, user, Decimal(amount), db)
+            check = await check_expense(env, user, Decimal(amount), db, skip_plan_limit=True)
             if not check.allowed and check.check_type in FUNDS_BLOCKS + ("daily_limit",):
                 data["queue"].append(item)  # → tawaran isi dana / naikkan limit harian
                 continue

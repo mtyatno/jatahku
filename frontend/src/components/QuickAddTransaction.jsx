@@ -141,7 +141,9 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     if (result.ok) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       reset();
-      onSaved?.();
+      // Basic: kuota bulan ini habis sesudah transaksi ini → induk menampilkannya.
+      const quotaNotice = result.data?.quota_notice;
+      onSaved?.(quotaNotice ? { quotaNotice } : undefined);
     } else {
       // 409 (masih diproses) & 5xx: mungkin sudah tercatat → kunci dipertahankan &
       // isian dikunci. Ditolak pasti (4xx lain) → tidak tercatat; kunci baru.

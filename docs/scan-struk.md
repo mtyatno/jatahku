@@ -79,7 +79,10 @@ selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
   "disarankan"), jadi "SABUN MANDI" yang pernah dicatat ke Kebutuhan Rumah otomatis
   terpilih untuk "SABUN CAIR" di struk berikutnya. Pilihan manual tidak pernah ditimpa,
   dan saran yang datang setelah struk disimpan diabaikan.
-- Paket Basic (50 transaksi/bulan): tiap barang dihitung satu transaksi.
+- Paket Basic (50 transaksi/bulan): tiap barang dihitung satu transaksi. Kuota dicek
+  sekali di awal simpan: struk yang mulai disimpan saat kuota masih ada selalu selesai
+  utuh (juga kirim ulang bagian yang gagal), lalu user diberi tahu kuota habis sampai
+  tanggal 1 bulan depan (`app/services/quota_pass.py`).
 
 **Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)
 dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di

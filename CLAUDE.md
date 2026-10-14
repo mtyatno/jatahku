@@ -37,6 +37,7 @@
 
 ## Pricing
 - Basic: 6 envelopes, 50 txn/month, 5 subscriptions, household enabled
+- Basic txn quota is checked once at the START of an input (web save, bot message): an input started under quota always finishes, even past 50 (receipt per item, multi-item, resends of failed parts via `quota_pass`), then the user is told the quota is used up until the 1st of next month. Next inputs are refused. See `services/plan_limits.py`, `services/quota_pass.py`
 - Pro (Rp79k one-time): unlimited everything + behavior controls + export + analytics
 - First 100 users: free Pro promotion (all 29 current users are Pro)
 - Household sharing: basic user can use shared envelopes from pro user

@@ -6,7 +6,10 @@ supaya web dan Telegram selalu memutuskan hal yang sama.
 
 Urutan cek (check_expense):
 1. Amplop tabungan / sinking fund tidak bisa untuk pengeluaran langsung.
-2. Batas transaksi per bulan sesuai paket (Basic: 50, Pro: tanpa batas).
+2. Batas transaksi per bulan sesuai paket (Basic: 50, Pro: tanpa batas) — hanya
+   di AWAL input: langkah lanjutan input yang sama (antrean multi-item, geser
+   dana) memakai skip_plan_limit=True, jadi input yang dimulai saat kuota masih
+   ada selalu selesai utuh (aturan pemilik produk, 15 Okt 2026).
 3. check_behavior: kunci amplop, dana (belum didanai / tidak cukup), limit
    harian. Cooling period tidak lagi menahan pencatatan (Pikir-Pikir Fase 0).
 """
@@ -34,15 +37,19 @@ def is_spendable(env) -> bool:
     return envelope_purpose(env) not in NON_SPENDABLE_PURPOSES
 
 
-async def check_expense(envelope, user, amount: Decimal, db) -> BehaviorCheckResult:
+async def check_expense(envelope, user, amount: Decimal, db, *,
+                        skip_plan_limit: bool = False) -> BehaviorCheckResult:
     """Semua aturan sebelum pengeluaran dicatat. check_type tambahan di luar
-    check_behavior: "not_spendable" dan "plan_limit"."""
+    check_behavior: "not_spendable" dan "plan_limit".
+
+    skip_plan_limit: langkah lanjutan dari input yang sudah lolos cek kuota di awal."""
     if not is_spendable(envelope):
         return BehaviorCheckResult.blocked(
             "not_spendable", NOT_SPENDABLE_MSG, envelope_name=envelope.name)
-    ok, msg = await check_transaction_limit(user, db)
-    if not ok:
-        return BehaviorCheckResult.blocked("plan_limit", msg)
+    if not skip_plan_limit:
+        ok, msg = await check_transaction_limit(user, db)
+        if not ok:
+            return BehaviorCheckResult.blocked("plan_limit", msg)
     return await check_behavior(envelope.id, user.id, Decimal(amount), db)
 
 
