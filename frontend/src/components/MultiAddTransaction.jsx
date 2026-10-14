@@ -186,6 +186,11 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const nextKey = () => `i${++keySeq.current}`;
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
+  // Transkrip suara yang selesai saat menyimpan ditahan dulu: kalau langsung
+  // ditambahkan ke kotak teks yang masih berisi baris yang sedang disimpan,
+  // baris itu di-parse ulang jadi salinan tanpa kunci idempotensi.
+  const savingRef = useRef(false);
+  const heldTranscripts = useRef([]);
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -390,7 +395,21 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   };
 
   const handleVoiceTranscript = (text) => {
+    if (savingRef.current) {
+      heldTranscripts.current.push(text);
+      return;
+    }
     setRawText(prev => (prev ? prev + '\n' + text : text));
+  };
+
+  // Selesai menyimpan: lepas status & tambahkan transkrip yang tertahan.
+  // Mengembalikan jumlah transkrip yang baru masuk ke kotak teks.
+  const endSaving = () => {
+    savingRef.current = false;
+    setSaving(false);
+    const queued = heldTranscripts.current.splice(0);
+    if (queued.length) setRawText(prev => [prev, ...queued].filter(Boolean).join('\n'));
+    return queued.length;
   };
 
   const handleVoiceError = (msg) => {
@@ -451,6 +470,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     const pending = snapshot.filter(isReady);
     const parts = pending.flatMap(item => toParts(item, plans[item.key]));
 
+    savingRef.current = true;
     setSaving(true);
     setResultMsg(null);
 
@@ -478,15 +498,14 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       for (const part of parts) {
         await enqueueTransaction(part.payload);
       }
-      setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       const done = applyResult({}, new Set(pending.map(i => i.key)));
-      if (done) onSaved?.();
+      const heldCount = endSaving();
+      if (done && heldCount === 0) onSaved?.();
       return;
     }
 
     const result = await api.batchCreateTransactions(parts.map(p => p.payload));
-    setSaving(false);
 
     if (!result.ok) {
       // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Baris yang
@@ -502,6 +521,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         };
       });
       applyResult(updated, new Set());
+      endSaving();
       setResultMsg({ type: 'error', text: 'Koneksi terputus saat menyimpan. Tekan Simpan Semua lagi — tidak akan tercatat dua kali.' });
       return;
     }
@@ -559,7 +579,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       const done = applyResult(updated, okKeys);
-      if (done) {
+      const heldCount = endSaving();
+      if (done && heldCount === 0) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
         onSaved?.();
       } else {
@@ -570,6 +591,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     } else {
       applyResult(updated, new Set(), pendingKeys.size > 0);
+      endSaving();
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
       setResultMsg({ type: 'error', text: firstErr });
     }

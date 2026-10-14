@@ -76,6 +76,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   };
 
   const handleVoiceTranscript = (text) => {
+    if (uncertain) return;
     userTouchedRef.current = false;
     setSuggested(false);
     const parsed = parseAmount(text);
@@ -90,9 +91,13 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   // Kunci idempotensi transaksi yang sedang diisi; dipakai ulang saat kirim
   // ulang (respons hilang) dan diganti baru setelah berhasil.
   const clientRefRef = useRef(null);
+  // Hasil simpan belum pasti (koneksi putus / 409 / 5xx): isian dikunci sampai
+  // terkirim ulang, supaya kunci yang sama tidak membawa nilai berbeda.
+  const [uncertain, setUncertain] = useState(false);
 
   const reset = () => {
     clientRefRef.current = null;
+    setUncertain(false);
     setAmount(''); setDescription(''); setEnvelopeId('');
     setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false);
   };
@@ -120,6 +125,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       result = await api.createTransaction(payload);
     } catch {
       setSaving(false);
+      setUncertain(true);
       setError('Koneksi terputus. Coba simpan lagi — tidak akan tercatat dua kali.');
       return;
     }
@@ -129,9 +135,18 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       reset();
       onSaved?.();
     } else {
-      // Ditolak pasti (bukan 409 "masih diproses") → tidak tercatat; kunci baru.
-      if (result.status !== 409) clientRefRef.current = null;
-      setError(result.data?.detail || 'Gagal menyimpan transaksi');
+      // 409 (masih diproses) & 5xx: mungkin sudah tercatat → kunci dipertahankan &
+      // isian dikunci. Ditolak pasti (4xx lain) → tidak tercatat; kunci baru.
+      const maybeSaved = result.status === 409 || result.status >= 500;
+      if (maybeSaved) {
+        setUncertain(true);
+      } else {
+        clientRefRef.current = null;
+        setUncertain(false);
+      }
+      setError(maybeSaved
+        ? 'Hasil simpan belum pasti. Coba simpan lagi — tidak akan tercatat dua kali.'
+        : (result.data?.detail || 'Gagal menyimpan transaksi'));
     }
   };
 
@@ -157,22 +172,22 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div>
           <label className="label">Jumlah (Rp)</label>
-          <input type="number" className="input font-mono" placeholder="35000" value={amount} onChange={e => setAmount(e.target.value)} required min="1" />
+          <input type="number" className="input font-mono" placeholder="35000" value={amount} onChange={e => setAmount(e.target.value)} required min="1" disabled={uncertain} />
         </div>
         <div>
           <label className="label">Keterangan</label>
           <div className="flex items-center gap-2">
-            <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required />
+            <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required disabled={uncertain} />
             <VoiceInput
               onTranscript={handleVoiceTranscript}
               onError={msg => setError(msg)}
-              disabled={saving}
+              disabled={saving || uncertain}
             />
           </div>
         </div>
         <div>
           <label className="label">Amplop {suggested && <span className="text-xs text-brand-600">· disarankan</span>}</label>
-          <select className="input" value={envelopeId} onChange={handleEnvelopeChange} required>
+          <select className="input" value={envelopeId} onChange={handleEnvelopeChange} required disabled={uncertain}>
             <option value="">Pilih amplop</option>
             {envelopes.filter(env => env.purpose !== 'saving' && env.purpose !== 'sinking_fund').map(env => (<option key={env.id} value={env.id}>{env.emoji} {env.name}</option>))}
           </select>
@@ -184,7 +199,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       </div>
       {showPrivate && (
         <label className="flex items-start gap-2 cursor-pointer">
-          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)}
+          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} disabled={uncertain}
             className="w-4 h-4 mt-0.5 rounded border-gray-300 text-brand-600" />
           <span className="text-xs text-gray-600">
             <span className="inline-flex items-center gap-1 font-medium"><Icon name="lock" size={13} /> Sembunyikan deskripsi dari anggota lain</span>
