@@ -499,13 +499,9 @@ async def handle_daily_limit_callback(update, context):
         await db.commit()
         await after_expense_recorded(db, user, envelope.id, description)
 
-        # Set temp bypass until midnight — use DB user UUID to match check_behavior
-        now      = datetime.now()
-        midnight = datetime.combine(now.date() + timedelta(days=1), time.min)
-        ttl      = int((midnight - now).total_seconds())
-        r2 = aioredis.from_url(settings.REDIS_URL)
-        await r2.setex(f"dlimit_temp:{user.id}:{envelope_id}", ttl, "1")
-        await r2.aclose()
+        # Limit dinaikkan sampai tengah malam — fungsi yang sama dengan web
+        from app.services.behavior import raise_daily_limit_today
+        await raise_daily_limit_today(user.id, envelope.id)
 
         # Fetch updated remaining for envelope
         from app.bot.nlp_cmd import _get_user_envelopes
@@ -1638,9 +1634,12 @@ def create_bot_app():
     app.add_handler(CommandHandler("webapp", cmd_webapp))
     app.add_handler(CallbackQueryHandler(handle_template_callback, pattern=r"^tpl_"))
     app.add_handler(CallbackQueryHandler(handle_txn_callback, pattern=r"^t_"))
-    from app.bot.batch_cmd import handle_batch_callback, handle_batch_shift_callback
+    from app.bot.batch_cmd import (
+        handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
+    )
     app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(handle_batch_shift_callback, pattern=r"^bshift_"))
+    app.add_handler(CallbackQueryHandler(handle_batch_limit_callback, pattern=r"^blimit_"))
     from app.bot.receipt_cmd import handle_struk_callback
     app.add_handler(CallbackQueryHandler(handle_struk_callback, pattern=r"^struk_"))
     async def _handle_intent_learn(update, context):

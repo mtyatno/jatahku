@@ -7,6 +7,12 @@ import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 import FundEnvelopeModal from './FundEnvelopeModal';
 
+// Server menolak karena limit harian (pesan memuat "limit harian") → tawarkan
+// "Catat, naikkan limit hari ini" — sama dengan tombol di bot Telegram.
+function isDailyLimitError(errMsg) {
+  return !!errMsg && String(errMsg).toLowerCase().includes('limit harian');
+}
+
 function isInsufficientFundsError(errMsg) {
   if (!errMsg) return false;
   const lower = String(errMsg).toLowerCase();
@@ -88,11 +94,10 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const selectedEnv = envelopes.find(e => e.id === envelopeId);
   const showPrivate = shouldShowPrivateToggle(memberCount, selectedEnv);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const submit = async (extra = {}) => {
     if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
     setSaving(true); setError('');
-    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false };
+    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, ...extra };
 
     if (!navigator.onLine) {
       await enqueueTransaction(payload);
@@ -113,6 +118,14 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       setError(result.data?.detail || 'Gagal menyimpan transaksi');
     }
   };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    submit();
+  };
+
+  // User mengonfirmasi: limit harian amplop ini dinaikkan sampai tengah malam.
+  const handleRaiseDailyLimit = () => submit({ raise_daily_limit: true });
 
   const handleFundSuccess = async () => {
     await loadEnvelopes();
@@ -176,6 +189,21 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
               >
                 <Icon name="transfer" size={13} />
                 Geser / Isi Dana ({selectedEnv.name})
+              </button>
+            </div>
+          )}
+          {isDailyLimitError(error) && selectedEnv && (
+            <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
+              <span className="text-red-700">
+                Tetap catat? Limit harian <strong>{selectedEnv.name}</strong> dinaikkan sementara dan otomatis kembali besok.
+              </span>
+              <button
+                type="button"
+                onClick={handleRaiseDailyLimit}
+                disabled={saving}
+                className="bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1 text-xs font-medium flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+              >
+                {saving ? '...' : 'Catat, naikkan limit hari ini'}
               </button>
             </div>
           )}

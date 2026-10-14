@@ -21,6 +21,32 @@ def spent_today_query(envelope_id, user_id, today):
     )
 
 
+def daily_limit_bypass_key(user_id, envelope_id) -> str:
+    """Kunci Redis "limit harian dinaikkan hari ini" untuk satu user + amplop."""
+    return f"dlimit_temp:{user_id}:{envelope_id}"
+
+
+def seconds_until_midnight(now=None) -> int:
+    from datetime import time as _time
+    now = now or datetime.now()
+    midnight = datetime.combine(now.date() + timedelta(days=1), _time.min)
+    return max(1, int((midnight - now).total_seconds()))
+
+
+async def raise_daily_limit_today(user_id, envelope_id) -> None:
+    """Naikkan limit harian amplop ini untuk user sampai tengah malam (setelah
+    user mengonfirmasi). SATU-SATUNYA penulis bypass — dipakai web
+    (POST /transactions dengan raise_daily_limit) dan bot (tombol "Catat,
+    naikkan limit hari ini"). check_behavior membaca kunci yang sama."""
+    import redis.asyncio as aioredis
+    from app.core.config import get_settings as _gs
+    r = aioredis.from_url(_gs().REDIS_URL)
+    try:
+        await r.setex(daily_limit_bypass_key(user_id, envelope_id), seconds_until_midnight(), "1")
+    finally:
+        await r.aclose()
+
+
 class BehaviorCheckResult:
     def __init__(self):
         self.allowed = True
@@ -152,7 +178,7 @@ async def check_behavior(
             import redis.asyncio as aioredis
             from app.core.config import get_settings as _gs
             _r = aioredis.from_url(_gs().REDIS_URL)
-            _bypass = bool(await _r.get(f"dlimit_temp:{user_id}:{envelope_id}"))
+            _bypass = bool(await _r.get(daily_limit_bypass_key(user_id, envelope_id)))
             await _r.aclose()
         except Exception:
             pass

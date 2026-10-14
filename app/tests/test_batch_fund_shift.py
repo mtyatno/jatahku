@@ -82,6 +82,7 @@ class World:
         self.daily = {}        # env_id -> limit harian
         self.pending = []
         self.plan_cap = None   # batas transaksi paket (None = Pro)
+        self.bypass = set()    # amplop yang limit hariannya sudah dinaikkan hari ini
         self.added = []
         self.db = MagicMock()
         self.db.execute = AsyncMock(return_value=FakeResult(USER))
@@ -136,11 +137,17 @@ class World:
                                                available=self.bal[env_id], requested=amount)
         if env_id in self.cooling and amount >= self.cooling[env_id]:
             return BehaviorCheckResult.blocked("cooling", "Perlu cooling period.")
-        if env_id in self.daily:
+        if env_id in self.daily and env_id not in self.bypass:
             spent_today = sum(t.amount for t in self.of(Transaction) if t.envelope_id == env_id)
             if spent_today + amount > self.daily[env_id]:
-                return BehaviorCheckResult.blocked("daily_limit", "Melebihi limit harian.")
+                return BehaviorCheckResult.blocked(
+                    "daily_limit", "Melebihi limit harian.", daily_limit=self.daily[env_id],
+                    spent_today=spent_today, requested=amount,
+                    remaining_today=max(self.daily[env_id] - spent_today, D("0")))
         return BehaviorCheckResult.ok()
+
+    async def raise_limit(self, user_id, envelope_id):
+        self.bypass.add(envelope_id)
 
     async def plan_check(self, user, db):
         if self.plan_cap is not None and len(self.of(Transaction)) >= self.plan_cap:
@@ -159,6 +166,7 @@ class World:
             patch.object(expense_rules, "check_behavior", new=self.check),
             patch.object(expense_rules, "check_transaction_limit", new=self.plan_check),
             patch.object(batch_cmd, "after_expense_recorded", new=AsyncMock(return_value=None)),
+            patch.object(batch_cmd, "raise_daily_limit_today", new=self.raise_limit),
             patch.object(batch_cmd, "create_pending_transaction", new=self.create_pending),
         ]
         if matches is not None:
@@ -188,6 +196,7 @@ class World:
         q.edit_message_text = AsyncMock()
         update = SimpleNamespace(callback_query=q)
         handler = (batch_cmd.handle_batch_shift_callback if data.startswith("bshift_")
+                   else batch_cmd.handle_batch_limit_callback if data.startswith("blimit_")
                    else batch_cmd.handle_batch_callback)
         ps = self.patches()
         for p in ps:
@@ -290,13 +299,46 @@ class MultiMessageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([t.description for t in w.of(Transaction)], ["ojek", "sate"])
         self.assertEqual([p[2] for p in w.pending], ["sepatu"])
         text = reply.call_args.args[0]
-        self.assertIn("2 transaksi dicatat", text)
         self.assertIn("kopi: Amplop sedang dikunci. Tidak dicatat.", text)
         self.assertIn("sepatu: masuk cooling period", text)
-        # ojek 40rb sudah memakai limit 50rb → parkir 20rb melewati limit
-        self.assertIn("parkir: Melebihi limit harian. Tidak dicatat. Kirim sebagai pesan terpisah", text)
-        self.assertIn("Total: <b>Rp50rb</b>", text)
+        # ojek 40rb sudah memakai limit 50rb → parkir 20rb ditawari naikkan limit
+        self.assertIn("Limit harian terlampaui", text)
+        self.assertIn("kelebihan <b>Rp10rb</b>", text)
+        cbs = buttons(reply.call_args.kwargs["reply_markup"])
+        key = cbs[0].split("_")[1]
+        self.assertEqual(cbs, [f"blimit_{key}_0_y", f"blimit_{key}_0_skip"])
         w.db.rollback.assert_not_awaited()  # rollback penuh akan meng-expire objek sesi
+
+        edit = await w.tap(f"blimit_{key}_0_y")
+        self.assertEqual(w.bypass, {self.transport.id})
+        self.assertEqual([t.description for t in w.of(Transaction)], ["ojek", "sate", "parkir"])
+        text = edit.call_args.args[0]
+        self.assertIn("3 transaksi dicatat", text)
+        self.assertIn("Total: <b>Rp70rb</b>", text)
+
+    async def test_skip_daily_limit_offer(self):
+        w = World((self.transport, 500000, 0))
+        w.daily[self.transport.id] = D("10000")
+        reply = await w.send([(D("20000"), "parkir"), (D("5000"), "tol")], [self.transport, self.transport])
+        key = buttons(reply.call_args.kwargs["reply_markup"])[0].split("_")[1]
+        edit = await w.tap(f"blimit_{key}_0_skip")
+        self.assertEqual([t.description for t in w.of(Transaction)], ["tol"])
+        self.assertEqual(w.bypass, set())
+        self.assertIn("parkir: dilewati (melebihi limit harian).", edit.call_args.args[0])
+
+    async def test_daily_limit_after_shift_keeps_funds_then_offers_raise(self):
+        w = World((self.makan, 100000, 0), (self.jajan, 0, 0))
+        w.daily[self.jajan.id] = D("10000")
+        reply = await w.send([(D("20000"), "kopi"), (D("1000"), "x")], [self.jajan, self.makan])
+        key = buttons(reply.call_args.kwargs["reply_markup"])[0].split("_")[1]
+        edit = await w.tap(f"bshift_{key}_0_0")              # geser dari Makan
+        self.assertEqual(len(w.of(Income)), 1)                # dana tetap tersimpan
+        self.assertEqual(w.of(Transaction)[-1].description, "x")
+        self.assertIn("Limit harian terlampaui", edit.call_args.args[0])
+        self.assertEqual(json.loads(w.redis.store[f"batch:{key}"])["stage"], "limit")
+        edit = await w.tap(f"blimit_{key}_0_y")
+        self.assertIn("🍔 Makan", edit.call_args.args[0])
+        self.assertIn("☕ Jajan: Rp20rb — kopi · 🔁 +Rp20rb dari 🍔 Makan", edit.call_args.args[0])
 
     async def test_short_and_locked_is_not_offered_a_shift(self):
         w = World((self.makan, 100000, 0), (self.jajan, 0, 0))
