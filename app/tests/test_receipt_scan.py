@@ -225,7 +225,8 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((out["engine"], out["total"], out["merchant"]), ("llm", 12000, "Toko A"))
         self.assertEqual(out["quota"], {"limit": 15, "used": 1, "remaining": 14})
-        db.rollback.assert_awaited()  # koneksi DB dilepas sebelum OCR
+        db.rollback.assert_not_awaited()  # rollback meng-expire `user` → MissingGreenlet (bug prod 15 Okt)
+        db.commit.assert_awaited()  # koneksi DB dilepas sebelum OCR lewat commit
 
     async def test_llm_crash_keeps_ocr_result(self):
         db = db_with(FakeResult(0), FakeResult(rows=[]), FakeResult(rows=[]))
