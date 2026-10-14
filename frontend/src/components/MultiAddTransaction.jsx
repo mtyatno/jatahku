@@ -5,7 +5,10 @@ import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
 import ReceiptInput from './ReceiptInput';
+import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
+import { buildPlan } from '../lib/receiptSplit';
+import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
 
@@ -30,18 +33,49 @@ function isInsufficientFundsError(errMsg) {
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
+// Struk dengan rincian barang → disimpan lewat rencana per amplop.
+function hasReceiptItems(item) {
+  return item.origin === 'receipt' && (item.receiptItems || []).length > 0;
+}
+
+// Rencana yang dibekukan (sesudah percobaan simpan) atau dihitung dari isian sekarang.
+function receiptPlan(item) {
+  return item.plan || buildPlan(item);
+}
+
+// Siap disimpan: punya amplop (struk: setiap bagian yang belum tersimpan punya amplop).
+function isReady(item) {
+  if (hasReceiptItems(item)) {
+    const left = receiptPlan(item).filter(g => !g.saved);
+    return left.length > 0 && left.every(g => g.envelopeId);
+  }
+  return !!item.envelopeId;
+}
+
+const patchPlanGroup = (item, gid, patch) => ({
+  ...item,
+  plan: (item.plan || []).map(g => (g.id === gid ? { ...g, ...patch } : g)),
+});
+
 function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
   const isShortage = isInsufficientFundsError(item.error);
   const isOverDailyLimit = isDailyLimitError(item.error);
   const isReceipt = item.origin === 'receipt';
   const doubtful = isReceipt && item.confidence !== 'tinggi';
 
+  // Hasil simpan belum pasti: isian dikunci supaya kirim ulang (kunci yang sama)
+  // tidak membawa nilai berbeda dari yang mungkin sudah tercatat.
   return (
-    <div className={`
+    <fieldset disabled={!!item.uncertain} className={`
       group flex flex-col md:grid md:grid-cols-12 gap-2 md:gap-3 items-start md:items-center
       py-2 md:py-1.5 border-b border-gray-100 last:border-0
       ${!item.envelopeId ? 'bg-amber-50/50 -mx-2 px-2 rounded' : ''}
     `}>
+      {item.uncertain && (
+        <span className="md:col-span-12 text-xs text-amber-700">
+          Hasil simpan belum pasti — tekan Simpan Semua lagi (tidak akan tercatat dua kali).
+        </span>
+      )}
       <div className="flex items-center gap-2 md:col-span-5 min-w-0">
         <button
           type="button"
@@ -133,7 +167,7 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
         )}
         {item.saving && <span className="text-xs text-gray-400">...</span>}
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -150,6 +184,22 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const lastParsedRef = useRef('');
   const keySeq = useRef(0);
   const nextKey = () => `i${++keySeq.current}`;
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  // Transkrip suara yang selesai saat menyimpan ditahan dulu: kalau langsung
+  // ditambahkan ke kotak teks yang masih berisi baris yang sedang disimpan,
+  // baris itu di-parse ulang jadi salinan tanpa kunci idempotensi.
+  const savingRef = useRef(false);
+  const heldTranscripts = useRef([]);
+  // Suara/struk yang masih diproses: Simpan Semua ditahan sampai hasilnya masuk,
+  // supaya hasilnya tidak tiba di tengah penyimpanan atau hilang saat panel ditutup.
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  // Versi ref untuk dibaca di akhir penyimpanan (closure handleSaveAll sudah basi).
+  const inputBusyRef = useRef({ voice: false, scan: false });
+  const handleVoiceBusy = useCallback((b) => { inputBusyRef.current.voice = b; setVoiceBusy(b); }, []);
+  const handleScanBusy = useCallback((b) => { inputBusyRef.current.scan = b; setScanBusy(b); }, []);
+  const inputBusy = () => inputBusyRef.current.voice || inputBusyRef.current.scan;
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -165,25 +215,51 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     loadEnvelopes();
   }, [loadEnvelopes]);
 
-  const handleOpenFundModal = (key) => {
+  // Bagian struk yang gagal karena dana kurang (untuk banner & tombol Geser).
+  const insufficientGroup = (item) => (item.plan || []).find(g => !g.saved && isInsufficientFundsError(g.error));
+
+  // envId/amount/gid opsional: bagian struk tertentu.
+  const handleOpenFundModal = (key, envId = null, amount = null, gid = null) => {
     const item = items.find(i => i.key === key);
-    if (!item || !item.envelopeId) return;
-    const env = envelopes.find(e => e.id === item.envelopeId);
+    if (!item) return;
+    let targetEnv = envId;
+    let targetAmount = amount;
+    let targetGid = gid;
+    if (!targetEnv && hasReceiptItems(item)) {
+      const failed = insufficientGroup(item);
+      if (failed) { targetEnv = failed.envelopeId; targetAmount = failed.amount; targetGid = failed.id; }
+    }
+    targetEnv = targetEnv || item.envelopeId;
+    targetAmount = targetAmount ?? item.amount;
+    if (!targetEnv) return;
+    const env = envelopes.find(e => e.id === targetEnv);
     if (!env) return;
     const remaining = Number(env.remaining || 0);
-    const needed = Math.max(0, item.amount - remaining);
+    const needed = Math.max(0, targetAmount - remaining);
     setFundingTarget({
       envelope: env,
-      neededAmount: needed > 0 ? needed : item.amount,
+      neededAmount: needed > 0 ? needed : targetAmount,
       itemKey: key,
+      groupId: targetGid,
     });
   };
 
   // User mengonfirmasi: item ini dicatat dan limit harian amplopnya dinaikkan
   // sampai tengah malam saat disimpan (backend: raise_daily_limit, sama dengan bot).
-  const handleRaiseLimit = (key) => {
+  const handleRaiseLimit = (key, gid = null) => {
     const item = items.find(i => i.key === key);
     if (!item) return;
+    if (gid && item.plan) {
+      const group = item.plan.find(g => g.id === gid);
+      const env = envelopes.find(e => e.id === group?.envelopeId);
+      setItems(prev => prev.map(i => (i.key === key
+        ? { ...patchPlanGroup(i, gid, { raiseLimit: true, error: null }), error: null } : i)));
+      setResultMsg({
+        type: 'mixed',
+        text: `Limit harian ${env ? env.name : 'amplop'} akan dinaikkan sementara (kembali normal besok). Klik Simpan Semua untuk melanjutkan.`,
+      });
+      return;
+    }
     const env = envelopes.find(e => e.id === item.envelopeId);
     setItems(prev => prev.map(i => (i.key === key ? { ...i, raiseDailyLimit: true, error: null } : i)));
     setResultMsg({
@@ -195,9 +271,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const handleFundSuccess = async ({ type, amount, fromName, targetEnvelope }) => {
     await loadEnvelopes();
     if (fundingTarget && fundingTarget.itemKey != null) {
-      setItems(prev => prev.map(item =>
-        item.key === fundingTarget.itemKey ? { ...item, error: null } : item
-      ));
+      setItems(prev => prev.map(item => {
+        if (item.key !== fundingTarget.itemKey) return item;
+        if (fundingTarget.groupId && item.plan) {
+          return { ...patchPlanGroup(item, fundingTarget.groupId, { error: null }), error: null };
+        }
+        return { ...item, error: null };
+      }));
     }
     const actionDesc = type === 'transfer'
       ? `Berhasil menggeser ${formatRupiah(amount)} dari ${fromName || 'amplop lain'} ke ${targetEnvelope.name}.`
@@ -237,8 +317,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
     debounceRef.current = setTimeout(() => {
       lastParsedRef.current = txt;
-      // Item dari struk tidak ikut terhapus saat teks diketik ulang.
-      const keepReceipts = prev => prev.filter(i => i.origin === 'receipt');
+      // Baris dari struk & baris yang tertahan setelah simpan sebagian tidak ikut
+      // terhapus saat teks diketik ulang (hanya baris hasil teks yang diganti).
+      const keepReceipts = prev => prev.filter(i => i.origin !== 'text');
       if (!txt) {
         setItems(keepReceipts);
         return;
@@ -284,6 +365,29 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setItems(prev => prev.map(item => (item.key === key ? { ...item, [field]: value, error: null } : item)));
   };
 
+  const handleReceiptChange = (key, patch) => {
+    setItems(prev => prev.map(item => (item.key === key ? { ...item, ...patch, error: null } : item)));
+  };
+
+  // Bagian yang gagal dipindah ke amplop lain (nominal tetap).
+  const handleRetargetGroup = (key, gid, envelopeId) => {
+    setItems(prev => prev.map(item => (item.key === key
+      ? patchPlanGroup(item, gid, { envelopeId, error: null, raiseLimit: false }) : item)));
+  };
+
+  // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang).
+  const handleUnlockReceipt = (key) => {
+    setItems(prev => prev.map(item => (item.key === key && !item.uncertain && !(item.plan || []).some(g => g.saved)
+      ? { ...item, plan: null, error: null } : item)));
+  };
+
+  // Sebagian sudah tercatat; sisanya dilewati (struk keluar dari daftar).
+  const handleSkipRest = (key) => {
+    const item = items.find(i => i.key === key);
+    if (item?.scanId) api.receiptFeedback(item.scanId, feedbackFor(item, false));
+    setItems(prev => prev.filter(i => i.key !== key));
+  };
+
   const handleRemove = (key) => {
     const removed = items.find(i => i.key === key);
     if (removed?.origin === 'receipt' && removed.scanId) {
@@ -300,7 +404,21 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   };
 
   const handleVoiceTranscript = (text) => {
+    if (savingRef.current) {
+      heldTranscripts.current.push(text);
+      return;
+    }
     setRawText(prev => (prev ? prev + '\n' + text : text));
+  };
+
+  // Selesai menyimpan: lepas status & tambahkan transkrip yang tertahan.
+  // Mengembalikan jumlah transkrip yang baru masuk ke kotak teks.
+  const endSaving = () => {
+    savingRef.current = false;
+    setSaving(false);
+    const queued = heldTranscripts.current.splice(0);
+    if (queued.length) setRawText(prev => [prev, ...queued].filter(Boolean).join('\n'));
+    return queued.length;
   };
 
   const handleVoiceError = (msg) => {
@@ -314,60 +432,153 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     source: 'webapp',
     ...(item.transactionDate ? { transaction_date: item.transactionDate } : {}),
     ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
+    ...(item.ref ? { client_ref: item.ref } : {}),
   });
 
+  // Satu entri → satu atau beberapa transaksi. Struk dengan rincian memakai
+  // rencana per amplop; bagian yang sudah tersimpan tidak dikirim ulang.
+  const toParts = (item, plan) => {
+    if (plan) {
+      return plan.filter(g => !g.saved).map(g => ({
+        key: item.key,
+        gid: g.id,
+        payload: toPayload({
+          ...item,
+          envelopeId: g.envelopeId,
+          amount: g.amount,
+          description: g.description,
+          raiseDailyLimit: g.raiseLimit,
+          ref: g.ref,
+        }),
+      }));
+    }
+    return [{ key: item.key, gid: null, payload: toPayload(item) }];
+  };
+
   const handleSaveAll = async () => {
-    if (items.some(i => i.envelopeId && !(Number(i.amount) > 0))) {
+    if (savingRef.current || voiceBusy || scanBusy) return;
+    // Teks yang baru diketik belum dibaca (jeda 300 ms). Kalau disimpan sekarang,
+    // pembacaan yang tertunda mengganti baris yang sedang disimpan dengan salinan
+    // tanpa kunci idempotensi → bisa tercatat dua kali.
+    if (rawText.trim() !== lastParsedRef.current) {
+      setResultMsg({ type: 'error', text: 'Teks baru masih dibaca — cek barisnya, lalu tekan Simpan Semua lagi.' });
+      return;
+    }
+    if (items.some(i => isReady(i) && !(Number(i.amount) > 0))) {
       setResultMsg({ type: 'error', text: 'Isi nominal struk dulu sebelum menyimpan' });
       return;
     }
-    const pending = items.filter(i => i.envelopeId);
-    if (pending.length === 0) {
+    if (!items.some(isReady)) {
       setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
       return;
     }
+    // Setiap transaksi diberi kunci idempotensi sekali, lalu dipakai ulang di
+    // percobaan berikutnya; rencana struk dibekukan bersama kuncinya.
+    const plans = {};
+    const snapshot = items.map(item => {
+      if (!isReady(item)) return item;
+      if (hasReceiptItems(item)) {
+        plans[item.key] = receiptPlan(item).map(g => (g.ref ? g : { ...g, ref: newRef() }));
+        return { ...item, plan: plans[item.key] };
+      }
+      return item.ref ? item : { ...item, ref: newRef() };
+    });
+    const snapshotKeys = new Set(snapshot.map(i => i.key));
+    const pending = snapshot.filter(isReady);
+    const parts = pending.flatMap(item => toParts(item, plans[item.key]));
 
-    const missing = items.length - pending.length;
+    savingRef.current = true;
     setSaving(true);
     setResultMsg(null);
 
-    if (!navigator.onLine) {
-      let queued = 0;
-      for (const item of items) {
-        if (!item.envelopeId) continue;
-        await enqueueTransaction(toPayload(item));
-        queued++;
+    // Terapkan hasil ke daftar TERBARU: entri yang masuk selama menyimpan (mis.
+    // scan struk yang baru selesai) tetap ada. Baris teks yang tersisa jadi baris
+    // "tertahan" dan kotak teks dikosongkan, supaya mengetik ulang tidak mem-parse
+    // ulang baris yang mungkin sudah tercatat.
+    // holdText=false: tidak ada yang tercatat & tidak ada yang belum pasti → baris
+    // teks tetap bisa diedit lewat kotak teks seperti biasa.
+    const applyResult = (updatedByKey, removeKeys, holdText = true) => {
+      const hold = i => (holdText && i.origin === 'text' ? { ...i, origin: 'held' } : i);
+      setItems(prev => prev
+        .filter(i => !removeKeys.has(i.key))
+        .map(i => (updatedByKey[i.key] ? hold(updatedByKey[i.key]) : (snapshotKeys.has(i.key) ? hold(i) : i))));
+      if (holdText) {
+        setRawText('');
+        lastParsedRef.current = '';
       }
-      setSaving(false);
+      const arrivals = itemsRef.current.filter(i => !snapshotKeys.has(i.key));
+      const leftover = snapshot.filter(i => !removeKeys.has(i.key));
+      return leftover.length === 0 && arrivals.length === 0;
+    };
+
+    if (!navigator.onLine) {
+      for (const part of parts) {
+        await enqueueTransaction(part.payload);
+      }
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      setRawText('');
-      setItems([]);
-      lastParsedRef.current = '';
-      onSaved?.();
+      const done = applyResult({}, new Set(pending.map(i => i.key)));
+      const heldCount = endSaving();
+      if (done && heldCount === 0 && !inputBusy()) onSaved?.();
       return;
     }
 
-    const payload = pending.map(toPayload);
+    const result = await api.batchCreateTransactions(parts.map(p => p.payload));
 
-    const result = await api.batchCreateTransactions(payload);
-    setSaving(false);
+    if (!result.ok && result.status >= 400 && result.status < 500 && result.status !== 409) {
+      // Ditolak utuh (mis. 401/422): tidak ada yang tercatat → baris tetap bisa diedit.
+      endSaving();
+      const detail = typeof result.data?.detail === 'string' ? result.data.detail : '';
+      setResultMsg({ type: 'error', text: detail || 'Gagal menyimpan. Periksa isian lalu coba lagi.' });
+      return;
+    }
 
     if (!result.ok) {
-      setResultMsg({ type: 'error', text: 'Gagal menyimpan. Coba lagi.' });
+      // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Baris yang
+      // dikirim ditandai "belum pasti" & dikunci; kunci idempotensinya dipertahankan,
+      // jadi Simpan Semua lagi tidak mencatat dua kali.
+      const updated = {};
+      pending.forEach(item => {
+        updated[item.key] = {
+          ...item,
+          uncertain: true,
+          error: null,
+          ...(plans[item.key] ? { plan: plans[item.key].map(g => ({ ...g, error: null })) } : {}),
+        };
+      });
+      applyResult(updated, new Set());
+      endSaving();
+      setResultMsg({ type: 'error', text: 'Koneksi terputus saat menyimpan. Tekan Simpan Semua lagi — tidak akan tercatat dua kali.' });
       return;
     }
 
-    // Hasil batch berindeks sesuai `pending` (bukan `items`) → petakan ke key.
+    // Hasil batch berindeks sesuai `parts` → petakan ke entri (key) & bagiannya.
     const data = result.data || [];
     const okKeys = new Set();
     const errByKey = {};
+    const pendingKeys = new Set();
+    const groupResult = {}; // key → gid → { ok, error, pending }
+    let successCount = 0;
     data.forEach(r => {
-      const item = pending[r.index];
-      if (!item) return;
-      if (r.ok) okKeys.add(item.key);
-      else errByKey[item.key] = r.error || 'Gagal';
+      const part = parts[r.index];
+      if (!part) return;
+      if (r.ok) successCount++;
+      if (r.pending) pendingKeys.add(part.key);
+      if (part.gid) {
+        (groupResult[part.key] = groupResult[part.key] || {})[part.gid] = {
+          ok: r.ok, pending: !!r.pending, error: r.ok ? null : (r.error || 'Gagal'),
+        };
+      } else if (r.ok) okKeys.add(part.key);
+      else errByKey[part.key] = r.error || 'Gagal';
     });
-    const successCount = okKeys.size;
+    const nextPlans = {};
+    Object.entries(plans).forEach(([key, plan]) => {
+      const res = groupResult[key] || {};
+      nextPlans[key] = plan.map(g => (res[g.id]
+        ? { ...g, saved: g.saved || res[g.id].ok, error: res[g.id].error }
+        : g));
+      if (nextPlans[key].every(g => g.saved)) okKeys.add(key);
+    });
+    const failedCount = data.length - successCount;
 
     // Bahan belajar scan struk: nilai akhir yang benar-benar tersimpan.
     pending.forEach(item => {
@@ -376,35 +587,46 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     });
 
-    setItems(prev => prev.map(item => (
-      errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null }
-    )));
+    const updated = {};
+    pending.forEach(item => {
+      if (okKeys.has(item.key)) return;
+      // "Sedang diproses" = kiriman lain dengan kunci yang sama belum selesai:
+      // belum pasti, bukan gagal permanen.
+      const uncertain = pendingKeys.has(item.key);
+      if (nextPlans[item.key]) {
+        const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
+        updated[item.key] = { ...item, plan: nextPlans[item.key], uncertain, error: firstErr };
+      } else {
+        updated[item.key] = { ...item, uncertain, error: errByKey[item.key] || null };
+      }
+    });
 
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      const failedCount = data.length - successCount;
-      if (failedCount === 0) {
+      const done = applyResult(updated, okKeys);
+      const heldCount = endSaving();
+      // Suara/struk yang mulai diproses selama menyimpan: panel jangan ditutup.
+      if (done && heldCount === 0 && !inputBusy()) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
-        setRawText('');
-        setItems([]);
-        lastParsedRef.current = '';
         onSaved?.();
       } else {
         setResultMsg({
           type: 'mixed',
-          text: `${successCount} berhasil, ${failedCount} gagal`,
+          text: failedCount ? `${successCount} berhasil, ${failedCount} gagal` : `${successCount} transaksi berhasil disimpan`,
         });
-        setItems(prev => prev.filter(item => !okKeys.has(item.key)));
       }
     } else {
+      applyResult(updated, new Set(), pendingKeys.size > 0);
+      endSaving();
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
       setResultMsg({ type: 'error', text: firstErr });
     }
   };
 
   const hasItems = items.length > 0;
-  const selectedCount = items.filter(i => i.envelopeId).length;
+  const selectedCount = items.filter(isReady).length;
   const unselectedCount = items.length - selectedCount;
+  const hasReceiptCard = items.some(hasReceiptItems);
 
   return (
     <div className="space-y-4">
@@ -415,11 +637,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
             <ReceiptInput
               onResult={handleReceiptResult}
               onError={handleVoiceError}
+              onBusyChange={handleScanBusy}
               disabled={saving}
             />
             <VoiceInput
               onTranscript={handleVoiceTranscript}
               onError={handleVoiceError}
+              onBusyChange={handleVoiceBusy}
               disabled={saving}
             />
           </div>
@@ -448,15 +672,29 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
             </span>
           </div>
 
-          <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+          <div className={`${hasReceiptCard ? 'max-h-[65vh]' : 'max-h-64'} overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100`}>
             <div className="hidden md:grid md:grid-cols-12 gap-3 px-3 py-2 bg-gray-50 rounded-t-xl text-xs font-medium text-gray-500">
               <span className="col-span-5">Keterangan</span>
               <span className="col-span-2">Jumlah</span>
               <span className="col-span-4">Amplop</span>
               <span className="col-span-1"></span>
             </div>
-            <div className="px-3">
-              {items.map(item => (
+            <fieldset disabled={saving} className="px-3">
+              {items.map(item => (hasReceiptItems(item) ? (
+                <ReceiptCard
+                  key={item.key}
+                  entry={item}
+                  envelopes={envelopes}
+                  saving={saving}
+                  onChange={handleReceiptChange}
+                  onRemove={handleRemove}
+                  onFundGroup={handleOpenFundModal}
+                  onRaiseLimitGroup={handleRaiseLimit}
+                  onRetargetGroup={handleRetargetGroup}
+                  onUnlock={handleUnlockReceipt}
+                  onSkipRest={handleSkipRest}
+                />
+              ) : (
                 <ItemRow
                   key={item.key}
                   item={item}
@@ -467,8 +705,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
                   onFundEnvelope={handleOpenFundModal}
                   onRaiseLimit={handleRaiseLimit}
                 />
-              ))}
-            </div>
+              )))}
+            </fieldset>
           </div>
         </>
       )}
@@ -482,7 +720,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           <div className="font-medium">{resultMsg.text}</div>
           {resultMsg.type === 'error' && isInsufficientFundsError(resultMsg.text) && (() => {
             const candidateItem = items.find(i => isInsufficientFundsError(i.error)) || items.find(i => i.envelopeId) || null;
-            const targetEnv = candidateItem ? envelopes.find(e => e.id === candidateItem.envelopeId) : null;
+            const group = candidateItem ? insufficientGroup(candidateItem) : null;
+            const targetEnvId = group ? group.envelopeId : candidateItem?.envelopeId;
+            const targetEnv = targetEnvId ? envelopes.find(e => e.id === targetEnvId) : null;
             if (!targetEnv) return null;
             return (
               <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
@@ -507,10 +747,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         <button
           type="button"
           onClick={handleSaveAll}
-          disabled={saving || !hasItems}
+          disabled={saving || !hasItems || voiceBusy || scanBusy}
           className="btn-primary disabled:opacity-50"
         >
-          {saving ? 'Menyimpan...' : `Simpan Semua${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+          {saving ? 'Menyimpan...'
+            : scanBusy ? 'Menunggu struk...'
+              : voiceBusy ? 'Menunggu suara...'
+                : `Simpan Semua${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="btn-outline" disabled={saving}>Batal</button>

@@ -133,6 +133,257 @@ SUBTOTAL 70.000"""
         self.assertEqual(p.merchant, "Indomaret")
 
 
+class TestReceiptItems(unittest.TestCase):
+    """Rincian barang: Σ barang − diskon + pajak harus = total struk."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text, **kw):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY, **kw)
+
+    def test_real_receipts_items_reconcile(self):
+        expected_items = {"s1": 8, "s2": 5, "s3": 4, "s4": 2}
+        for rec in FIXTURES["receipts"]:
+            with self.subTest(rec["id"]):
+                p = parse_receipt(rec["lines"], today=date(2026, 10, 15), max_age_days=4000)
+                self.assertEqual(p.reconciliation.status, "cocok", [(i.name, i.amount) for i in p.items])
+                self.assertEqual(len(p.items), expected_items[rec["id"]])
+                self.assertEqual(p.reconciliation.diff, 0)
+
+    def test_inline_voucher_attaches_to_item_above(self):
+        p = parse_receipt(FIXTURES["receipts"][0]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        by_name = {i.name: i for i in p.items}
+        self.assertEqual(by_name["SOKLN SOFTR ROSY 720"].discount, 3000)
+        self.assertEqual(by_name["YC SS BKR SAPI KEJU"].discount, 5000)
+        self.assertEqual(p.reconciliation.items_total, 149500)
+
+    def test_global_vouchers_after_subtotal(self):
+        p = parse_receipt(FIXTURES["receipts"][2]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        self.assertEqual(sorted(a.amount for a in p.adjustments if a.kind == "discount"), [5900, 22900])
+
+    def test_garbled_line_total_uses_unit_price(self):
+        p = parse_receipt(FIXTURES["receipts"][3]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        roti = p.items[1]
+        self.assertEqual((roti.amount, roti.flag), (4500, "auto"))
+        self.assertIn("40", roti.note)
+
+    def test_merged_qty_and_price(self):
+        p = parse_receipt(FIXTURES["receipts"][0]["lines"], today=date(2026, 10, 15), max_age_days=4000)
+        choco = next(i for i in p.items if i.name.startswith("CHOCOLITO"))
+        self.assertEqual((choco.qty, choco.unit_price, choco.amount), (1.0, 6000, 6000))
+
+    def test_pack_count_kept_in_name(self):
+        self.assertIn("20S", normalize_line("CAMEL ACT.P MINT 20S 29300 29.300"))
+
+    def test_tax_line_counts_as_charge(self):
+        p = self.parse("""WARUNG NASI AMPERA
+Tgl: 13 Okt 2026
+Nasi Putih 2 x 6.000 12.000
+Es Teh 2 x 5.000 10.000
+Subtotal 22.000
+PB1 10% 2.200
+Grand Total Rp 24.200""")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual(p.reconciliation.charges, 2200)
+        self.assertEqual(p.items[0].qty, 2.0)
+
+    def test_two_line_item(self):
+        p = self.parse("""TOKO A
+14/10/2026
+INDOMIE GORENG SPECIAL
+2 X 3.500 7.000
+TOTAL 7.000""")
+        self.assertEqual(len(p.items), 1)
+        self.assertEqual((p.items[0].name, p.items[0].amount, p.items[0].qty), ("INDOMIE GORENG SPECIAL", 7000, 2.0))
+
+    def test_misread_subtotal_fixed_by_unit_price(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,800
+AQUA 600ML 2 3800 7,600
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual((p.items[0].amount, p.items[0].flag), (37900, "auto"))
+
+    def test_misread_digit_without_unit_price_is_suggested(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 37,800
+TOTAL : 37,900
+TUNAI : 40,000
+KEMBALI : 2,100""")
+        it = p.items[0]
+        self.assertEqual((it.flag, it.suggestion, it.amount), ("cek", 37900, 37800))
+        self.assertEqual(p.reconciliation.diff, 100)
+        self.assertEqual(p.confidence, "tinggi")  # total tetap terbukti oleh pembayaran
+
+    def test_missing_item_reported(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,900
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual(p.reconciliation.diff, 7600)
+        self.assertIn("belum masuk rincian", p.reconciliation.note)
+
+    def test_duplicate_flags_only_second_copy(self):
+        p = self.parse("""INDOMARET
+14.10.26-10:00/1/A/01
+SCORA GENTLE CLEAN75 1 37900 37,900
+AQUA 600ML 2 3800 7,600
+AQUA 600ML 2 3800 7,600
+TOTAL : 45,500
+TUNAI : 50,000
+KEMBALI : 4,500""")
+        self.assertEqual([i.flag for i in p.items], ["ok", "ok", "cek"])
+        self.assertEqual(p.items[2].suggestion, 0)
+
+    def test_items_upgrade_confidence(self):
+        p = self.parse("""TOKO MAJU
+14/10/2026
+GULA 1KG 1 18.000 18.000
+MINYAK 2L 1 38.000 38.000
+TOTAL 56.000""")
+        self.assertEqual((p.total, p.confidence), (56000, "tinggi"))
+        self.assertTrue(any("cocok" in e for e in p.evidence))
+
+    def test_no_total_line_uses_items(self):
+        p = self.parse("WARUNG BU TINI\nNASI RAMES 15.000\nES JERUK 5.000")
+        self.assertEqual((p.total, p.confidence), (20000, "rendah"))
+
+    def test_grocery_name_not_turned_into_keyword(self):
+        p = self.parse("PASAR SEGAR\nBAYAM 7.500\nWORTEL 1KG 12.000\nTOTAL 19.500")
+        self.assertEqual([i.name for i in p.items], ["BAYAM", "WORTEL 1KG"])
+
+    def test_address_postal_code_is_not_an_item(self):
+        p = self.parse("TOKO A\nKEC. CIKARANG UTARA, KAB. BEKASI, 17534\nROTI 9.000\nTOTAL 9.000")
+        self.assertEqual([i.name for i in p.items], ["ROTI"])
+
+
+class TestReceiptItemsReviewCases(unittest.TestCase):
+    """Kasus dari review independen (rincian barang)."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_subtotal_before_tax_resolves_to_paid_amount(self):
+        p = self.parse("RESTO\n14/10/2026\nNasi 2 x 6.000 12.000\nEs Teh 2 x 5.000 10.000\n"
+                       "Subtotal 22.000\nPB1 10% 2.200\nTunai 50.000\nKembali 25.800")
+        self.assertEqual((p.total, p.confidence, p.confidence_source), (24200, "tinggi", "payment"))
+
+    def test_tax_after_total_line_resolves_to_card_amount(self):
+        p = self.parse("RESTO\n14/10/2026\nSteak 1 60.000 60.000\nTOTAL 60.000\nSERVICE 5% 3.000\n"
+                       "PB1 10% 6.300\nDEBIT BCA 69.300")
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+        self.assertEqual(p.reconciliation.charges, 9300)
+
+    def test_items_never_upgrade_a_total_the_payment_contradicts(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nTOTAL 20.000\nDEBIT BCA 35.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertEqual(p.confidence, "rendah")
+
+    def test_items_never_upgrade_a_subtotal_line(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nHARGA JUAL 20.000")
+        self.assertNotEqual(p.confidence, "tinggi")
+
+    def test_unlabelled_total_line_not_counted_as_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 20.000\nMINYAK 30.000\nBAYAR 50.000")
+        self.assertEqual(p.total, 50000)
+        self.assertEqual([i.name for i in p.items], ["GULA", "MINYAK"])
+
+    def test_two_line_item_guess(self):
+        p = self.parse("TOKO\nINDOMIE GORENG SPECIAL\n2 X 3.500 7.000\nAQUA 600ML 3.000")
+        self.assertEqual((p.total, p.confidence_source), (10000, "items_sum"))
+        self.assertTrue(all(i.flag == "ok" for i in p.items))
+
+    def test_total_discount_summary_not_double_counted(self):
+        p = self.parse("ALFAMART\n14-10-2026\nROTI 1 25.000 25.000\nDisc. (5.000)\nSUSU 1 25.000 25.000\n"
+                       "Total Disc. (5.000)\nTotal Belanja 45.000\nTunai 50.000\nKembali 5.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+
+    def test_absurd_number_is_ignored(self):
+        p = self.parse("TOKO\nBARANG 10.000.000.000.000\nTOTAL 9.000")
+        self.assertEqual(p.total, 9000)
+
+    def test_no_auto_fix_against_guessed_total(self):
+        p = self.parse("TOKO\nSUSU 2 5.000 15.000\nROTI 5.000")
+        susu = p.items[0]
+        self.assertEqual((susu.amount, susu.flag), (15000, "cek"))  # ditandai, tidak diubah
+
+    def test_keywords_inside_item_names(self):
+        p = self.parse("TOKO\n14/10/2026\nSENSODYNE TOTAL CARE 1 25000 25.000\nCASHEW 1 30000 30.000\n"
+                       "KARTU UCAPAN 1 5000 5.000\nPAKET PROMO 1 10000 10.000\nTOTAL 70.000\nTUNAI 70.000")
+        self.assertEqual(len(p.items), 4)
+        self.assertEqual((p.total, p.confidence, p.confidence_source), (70000, "tinggi", "payment"))
+
+
+class TestReceiptItemsSecondReview(unittest.TestCase):
+    """Kasus dari review kedua (perbaikan rincian barang)."""
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_real_item_equal_to_others_is_not_taken_as_total(self):
+        p = self.parse("WARUNG\nNASI GORENG 20.000\nES TEH 5.000\nKERUPUK 5.000\nAYAM 10.000")
+        self.assertEqual((p.total, p.confidence), (40000, "rendah"))
+        self.assertEqual(len(p.items), 4)
+        p = self.parse("TOKO\nROTI 5.000\nSUSU 5.000")
+        self.assertEqual(p.total, 10000)
+
+    def test_pre_tax_total_without_payment_is_not_upgraded(self):
+        p = self.parse("CAFE\n14/10/2026\nSteak 1 60.000 60.000\nTOTAL 60.000\nSERVICE 5% 3.000\nPB1 10% 6.300")
+        self.assertNotEqual(p.confidence, "tinggi")
+
+    def test_folded_tax_clears_total_label(self):
+        p = self.parse("WARUNG NASI AMPERA\n14/10/2026\nNasi 2 x 6.000 12.000\nEs Teh 2 x 5.000 10.000\n"
+                       "Subtotal 22.000\nPB1 10% 2.200\nTunai 50.000\nKembali 25.800")
+        self.assertEqual(p.total, 24200)
+        self.assertIsNone(p.total_label)
+
+    def test_card_line_without_total_ends_items_and_confirms(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nMINYAK 1 49.300 49.300\nBCA DEBIT 69.300")
+        self.assertEqual([i.name for i in p.items], ["GULA", "MINYAK"])
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+
+    def test_counted_subtotal_line_is_not_an_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nROTI 1 5.000 5.000\n3 ITEM SUBTOTAL 25.000\nTOTAL 25.000")
+        self.assertEqual(len(p.items), 2)
+        self.assertEqual(p.reconciliation.status, "cocok")
+
+    def test_discount_word_inside_label_and_promo_item(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nSPESIAL DISKON 5.000\nTOTAL 15.000")
+        self.assertEqual((len(p.items), p.items[0].discount, p.reconciliation.status), (1, 5000, "cocok"))
+        p = self.parse("TOKO\n14/10/2026\nPAKET PROMO 1 25.000 25.000\nTOTAL 25.000")
+        self.assertEqual([i.name for i in p.items], ["PAKET PROMO"])
+
+
+class TestReceiptItemsThirdReview(unittest.TestCase):
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_payment_words_inside_item_names_without_total(self):
+        p = self.parse("KONTER PULSA\n14/10/2026\nTOP UP GOPAY 50.000\nPULSA 25.000\nVOUCHER GAME 20.000\n"
+                       "KARTU PERDANA 15.000\nSTIKER 5.000\nBATERAI 10.000")
+        self.assertEqual(len(p.items), 6)
+        self.assertEqual((p.total, p.confidence_source), (125000, "items_sum"))
+
+    def test_positive_voucher_line_becomes_item_when_that_reconciles(self):
+        p = self.parse("KONTER PULSA\n14/10/2026\nTOP UP GOPAY 50.000\nVOUCHER GAME 20.000\n"
+                       "KARTU PERDANA 15.000\nTOTAL 85.000\nTUNAI 100.000\nKEMBALI 15.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertIn("VOUCHER GAME", [i.name for i in p.items])
+
+    def test_bank_prefixed_card_line_still_a_payment(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nMINYAK 1 49.300 49.300\nBCA DEBIT 69.300")
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+
+
 class TestBuildLines(unittest.TestCase):
     @staticmethod
     def box(x0, y0, x1, y1):
@@ -209,6 +460,10 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(out["total"], 51000)
         self.assertEqual(out["engine"], "rapidocr")
+        self.assertEqual(len(out["items"]), 5)
+        self.assertEqual(out["reconciliation"]["status"], "cocok")
+        self.assertEqual(out["items"][1]["discount"], 4800)  # voucher KOBE melekat ke barangnya
+        json.dumps(out)  # bisa diserialisasi untuk respons API
         self.assertIsNone(out["quota"]["limit"])
         llm.assert_not_awaited()  # keyakinan tinggi → LLM tidak dipanggil
         saved = db.add.call_args[0][0]
@@ -289,6 +544,25 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=3500, merchant="Toko Maju")
         self.assertEqual(scan.outcome, "corrected")
         self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
+
+    async def test_accepted_total_without_payment_proof_is_not_learned(self):
+        user = _user()
+        # "tinggi" karena rincian cocok, tapi tidak ada baris pembayaran.
+        scan = self._scan(user, ["TOKO MAJU", "GULA 20.000", "JML BYR 20.000"],
+                          parsed_total=20000, confidence="tinggi", label="JML BYR")
+        db = self._feedback_db(scan)
+        await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=20000, merchant="Toko Maju")
+        self.assertEqual(scan.outcome, "accepted")
+        self.assertEqual(self._inserted(db, "receipt_learn_votes"), [])
+
+    async def test_learned_label_comes_from_paid_amount_line(self):
+        user = _user()
+        lines = ["CAFE KOPI", "KOPI 1 22.000 22.000", "SUBTOTAL 22.000", "PB1 2.200", "TUNAI 50.000", "KEMBALI 25.800"]
+        scan = self._scan(user, lines, parsed_total=24200, confidence="tinggi", label="SUBTOTAL")
+        db = self._feedback_db(scan)
+        await receipt_scan.apply_feedback(user, uuid4(), db, saved=True, total=24200, merchant="Toko Maju")
+        # Nominal yang dibayar hanya ada di baris pembayaran → tidak ada label dipelajari.
+        self.assertEqual([v for v in self._inserted(db, "receipt_learn_votes") if v["kind"] == "label"], [])
 
     async def test_alias_name_is_sanitized(self):
         self.assertEqual(receipt_scan.clean_merchant_name("Indo<b>maret</b>`!"), "Indobmaretb")
@@ -417,6 +691,66 @@ class TestLlmBudget(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(far["date"])  # tanggal di luar jendela 1 tahun ditolak
 
 
+class FakeRedisKV:
+    """Redis tiruan untuk idempotensi (get/set nx/delete)."""
+    def __init__(self):
+        self.d = {}
+
+    async def get(self, k):
+        return self.d.get(k)
+
+    async def set(self, k, v, nx=False, ex=None):
+        if nx and k in self.d:
+            return None
+        self.d[k] = v
+        return True
+
+    async def delete(self, k):
+        self.d.pop(k, None)
+
+    async def aclose(self):
+        pass
+
+
+class TestIdempotency(unittest.IsolatedAsyncioTestCase):
+    async def test_resend_after_lost_response_is_deduplicated(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            self.assertIsNone(await idempotency.lookup("u1", "ref-a"))
+            self.assertTrue(await idempotency.reserve("u1", "ref-a"))
+            self.assertFalse(await idempotency.reserve("u1", "ref-a"))  # kiriman ganda bersamaan
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), idempotency.PENDING)
+            await idempotency.store("u1", "ref-a", "txn-1")
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), "txn-1")  # kirim ulang → transaksi lama
+            await idempotency.release("u1", "ref-a")  # sudah tercatat → tidak dilepas
+            self.assertEqual(await idempotency.lookup("u1", "ref-a"), "txn-1")
+
+    async def test_failed_create_releases_reservation(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            await idempotency.reserve("u1", "ref-b")
+            await idempotency.release("u1", "ref-b")
+            self.assertTrue(await idempotency.reserve("u1", "ref-b"))
+
+    async def test_forget_removes_stale_key(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            await idempotency.store("u1", "ref-d", "txn-hilang")
+            await idempotency.forget("u1", "ref-d")
+            self.assertIsNone(await idempotency.lookup("u1", "ref-d"))
+            self.assertTrue(await idempotency.reserve("u1", "ref-d"))
+
+    async def test_no_ref_or_redis_down_fails_open(self):
+        from app.services import idempotency
+        self.assertTrue(await idempotency.reserve("u1", None))
+        with patch.object(idempotency, "_redis", side_effect=RuntimeError("redis mati")):
+            self.assertTrue(await idempotency.reserve("u1", "ref-c"))
+            self.assertIsNone(await idempotency.lookup("u1", "ref-c"))
+
+
 class TestUploadValidation(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_non_image_and_oversize(self):
         from app.api.routes.transactions import MAX_RECEIPT_BYTES, _read_receipt_upload
@@ -438,8 +772,27 @@ class TestUploadValidation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((data, ct), (b"jpg", "image/jpeg"))
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+class TestBotItemsSummary(unittest.TestCase):
+    def test_summary_cocok_and_selisih(self):
+        from app.bot.receipt_cmd import _items_summary, MAX_ITEM_LINES
+        ok = _items_summary({
+            "items": [{"name": "SOKLN SOFTR ROSY 720", "amount": 18900, "discount": 3000, "flag": "ok"}],
+            "adjustments": [{"label": "VC PL", "amount": 5900, "kind": "discount"}],
+            "reconciliation": {"status": "cocok", "diff": 0},
+        })
+        self.assertIn("cocok dengan total", ok)
+        self.assertIn("voucher −Rp 3.000", ok)
+        self.assertIn("VC PL  −Rp 5.900", ok)
+        self.assertNotIn("webapp", ok)
+        many = [{"name": f"BARANG {i}", "amount": 1000, "flag": "ok"} for i in range(MAX_ITEM_LINES + 3)]
+        many[0].update(flag="cek", suggestion=1900)
+        bad = _items_summary({"items": many, "reconciliation": {"status": "selisih", "diff": -900}})
+        self.assertIn("lebih Rp 900", bad)
+        self.assertIn("mungkin Rp 1.900?", bad)
+        self.assertIn("+3 barang lagi", bad)
+        self.assertIn("webapp", bad)
+        self.assertEqual(_items_summary({"items": []}), "")
 
 
 class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
@@ -482,3 +835,6 @@ class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Tabungan", " ".join(r[0].text for r in rows))  # amplop tabungan disembunyikan
         stored = json.loads(redis.set.call_args[0][1])
         self.assertEqual((stored["date"], stored["scan_id"], stored["amount"]), ("2026-10-14", "abc", 51000))
+
+if __name__ == "__main__":
+    unittest.main()

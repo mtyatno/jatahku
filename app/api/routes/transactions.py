@@ -7,7 +7,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
@@ -27,6 +27,11 @@ limiter = Limiter(key_func=get_remote_address)
 # Maks ukuran audio yang diterima (client membatasi rekaman 60 detik).
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
+# = panjang kolom transactions.description. Keterangan yang lebih panjang (mis.
+# hasil dikte) dipotong; dulu gagal 500 saat commit dan klien menganggapnya
+# "belum pasti", sehingga kirim ulang terus gagal.
+MAX_DESCRIPTION = 500
+
 
 class TransactionCreate(BaseModel):
     envelope_id: UUID
@@ -37,6 +42,13 @@ class TransactionCreate(BaseModel):
     is_private: bool = False
     # User mengonfirmasi "Catat, naikkan limit hari ini" (sama dengan bot)
     raise_daily_limit: bool = False
+    # Kunci idempotensi dari klien: kirim ulang tidak mencatat dua kali.
+    client_ref: str | None = Field(default=None, max_length=64)
+
+    @field_validator("description")
+    @classmethod
+    def fit_description(cls, v: str) -> str:
+        return v[:MAX_DESCRIPTION]
 
 
 class TransactionResponse(BaseModel):
@@ -79,6 +91,12 @@ class BatchTransactionItem(BaseModel):
     transaction_date: date | None = None
     is_private: bool = False
     raise_daily_limit: bool = False
+    client_ref: str | None = Field(default=None, max_length=64)
+
+    @field_validator("description")
+    @classmethod
+    def fit_description(cls, v: str) -> str:
+        return v[:MAX_DESCRIPTION]
 
 
 def _rp(x) -> str:
@@ -111,6 +129,9 @@ class BatchTransactionResult(BaseModel):
     id: UUID | None = None
     description: str
     error: str | None = None
+    # True = kiriman lain dengan client_ref yang sama masih diproses; hasil
+    # belum pasti (klien jangan menganggapnya gagal permanen).
+    pending: bool = False
 
 
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
@@ -119,6 +140,15 @@ async def create_transaction(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services import idempotency
+    existing_ref = await idempotency.lookup(user.id, req.client_ref)
+    if existing_ref == idempotency.PENDING:
+        raise HTTPException(status_code=409, detail="Transaksi ini sedang diproses. Coba lagi sebentar.")
+    if existing_ref:
+        existing = await db.get(Transaction, UUID(existing_ref))
+        if existing and existing.user_id == user.id:
+            return existing  # sudah tercatat sebelumnya (kirim ulang)
+        await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     # Verify envelope belongs to user's household
     result = await db.execute(
         select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
@@ -163,6 +193,8 @@ async def create_transaction(
         else:
             raise HTTPException(status_code=403, detail=check.reason or "Transaksi tidak bisa dicatat.")
 
+    if not await idempotency.reserve(user.id, req.client_ref):
+        raise HTTPException(status_code=409, detail="Transaksi ini sedang diproses. Coba lagi sebentar.")
     txn = Transaction(
         envelope_id=req.envelope_id,
         user_id=user.id,
@@ -173,7 +205,13 @@ async def create_transaction(
         is_private=req.is_private,
     )
     db.add(txn)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await idempotency.release(user.id, req.client_ref)
+        raise
+    # Catat kunci segera setelah commit (id sudah ada), sebelum langkah lain.
+    await idempotency.store(user.id, req.client_ref, txn.id)
     await db.refresh(txn)
 
     # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot.
@@ -239,8 +277,17 @@ async def batch_create_transactions(
     )
     hid = result.scalar_one_or_none()
 
+    from app.services import idempotency
     results = []
     for i, item in enumerate(req.items):
+        existing_ref = await idempotency.lookup(user.id, item.client_ref)
+        if existing_ref == idempotency.PENDING:
+            results.append(BatchTransactionResult(index=i, ok=False, pending=True, description=item.description,
+                                                  error="Sedang diproses, coba lagi sebentar"))
+            continue
+        if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
+            results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
+            continue
         if not hid:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Household not found"))
             continue
@@ -287,6 +334,10 @@ async def batch_create_transactions(
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=msg))
             continue
 
+        if not await idempotency.reserve(user.id, item.client_ref):
+            results.append(BatchTransactionResult(index=i, ok=False, pending=True, description=item.description,
+                                                  error="Sedang diproses, coba lagi sebentar"))
+            continue
         txn = Transaction(
             envelope_id=item.envelope_id,
             user_id=user.id,
@@ -297,7 +348,12 @@ async def batch_create_transactions(
             is_private=item.is_private,
         )
         db.add(txn)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await idempotency.release(user.id, item.client_ref)
+            raise
+        await idempotency.store(user.id, item.client_ref, txn.id)
         await db.refresh(txn)
 
         await after_expense_recorded(db, user, item.envelope_id, item.description)

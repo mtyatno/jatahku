@@ -5,6 +5,10 @@ dan bot Telegram (kirim foto). Tanpa LLM: OCR **RapidOCR** (model PaddleOCR via
 ONNX Runtime, CPU) + parser aturan. Fallback LLM Groq tersedia tapi **mati
 secara default** dan dikunci plafon biaya.
 
+Selain total, parser membaca **rincian barang** dan mencocokkannya dengan total
+struk (Σ barang − diskon + pajak = total). Di webapp, barang bisa dipecah ke
+beberapa amplop (satu transaksi per amplop, Σ selalu = total struk).
+
 ## Alur
 
 ```
@@ -15,11 +19,82 @@ foto ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receip
              ├─ RapidOCR → baris teks (susun kiri→kanan, tahan struk melengkung)
              ├─ parser: toko, tanggal, total + cek silang tunai−kembali / non-tunai
              │    keyakinan: tinggi | sedang | rendah | gagal
+             ├─ rincian barang → rekonsiliasi dengan total (cocok | selisih | kosong)
              ├─ (opsional) keyakinan rendah/gagal → fallback LLM ber-plafon
-             └─ simpan ReceiptScan → user cek, pilih amplop, simpan
+             └─ simpan ReceiptScan → user cek rincian, pilih amplop (per barang
+                boleh beda), simpan → 1 transaksi per amplop (client_ref per transaksi)
                                         │
               POST /scan-receipt/{id}/feedback (nilai akhir) ─► belajar
 ```
+
+## Rincian barang
+
+**Membaca.** Daerah barang: dari baris tanggal sampai baris ringkasan/pembayaran
+pertama (SUBTOTAL, TOTAL, TUNAI, …). Tiap baris dibaca dari kanan:
+`NAMA [QTY] [HARGA SATUAN] JUMLAH`. Ditangani juga: barang dua baris (nama di
+atas, angka di bawah), qty yang menempel ke harga, format qty di depan, voucher
+yang melekat ke barang di atasnya, serta diskon global dan pajak/servis di antara
+SUBTOTAL dan TOTAL. Baris "diskon" bernilai positif yang ambigu diputuskan lewat
+rekonsiliasi.
+
+**Mencocokkan.** Σ barang − diskon + pajak/servis dibanding total struk →
+`cocok` / `selisih` / `kosong`. Barang diperbaiki otomatis (`flag: auto`, dengan
+keterangan) **hanya kalau terbukti**: qty × harga satuan, atau satu digit salah
+baca yang dikonfirmasi harga satuan. Selain itu barang ditandai `cek` dengan saran
+nilai (`suggestion`; `0` = kemungkinan terbaca dobel) — tidak diubah diam-diam.
+
+**Keyakinan.** `tinggi` dari pembayaran (tunai − kembali / non-tunai), atau dari
+rincian yang cocok asalkan tidak dibantah pembayaran, baris totalnya berlabel
+kuat (TOTAL, GRAND TOTAL, TOTAL BAYAR, …; bukan SUBTOTAL atau label lemah seperti
+JUMLAH), dan tidak ada pajak/servis setelah TOTAL.
+Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`.
+`confidence_source`: `payment` | `items` | `items_sum`.
+
+**Respons API** (tambahan): `items[]` (name, qty, unit_price, amount, discount,
+flag `ok|auto|cek`, note, suggestion), `adjustments[]` (label, amount, kind
+`discount|charge`), `reconciliation` (items_total, discounts, charges, expected,
+diff, status, note), `confidence_source`.
+
+**Webapp (kartu struk).** Bilah cocok/selisih, keterangan per barang, tombol pakai
+saran, hapus barang, dan **Tambah "Lainnya"** untuk menutup selisih. Tiap barang
+bisa memilih amplop sendiri (default: amplop struk).
+- Pecah per amplop: voucher barang mengurangi barang itu; diskon global, pajak, dan
+  selisih yang belum terjelaskan dibagi proporsional menurut nilai bersih barang.
+  Pembulatan sisa terbesar → Σ nominal per amplop **selalu = total struk**
+  (`frontend/src/lib/receiptSplit.js`).
+- Keterangan transaksi: `Indomaret (3 barang)` — **nama barang sengaja tidak
+  ditulis**, karena amplop bersama menampilkan keterangan ke anggota rumah tangga.
+- Rencana simpan dibekukan saat pertama disimpan. Kalau sebagian bagian gagal
+  (saldo/limit), bagian yang sudah tercatat tidak dikirim ulang; bagian yang gagal
+  bisa diisi amplopnya, dinaikkan limitnya, dipindah amplop, atau dilewati.
+  "Ubah rincian" hanya tersedia selama belum ada bagian yang tercatat.
+
+**Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)
+dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di
+webapp; bot tetap mencatat total sebagai satu transaksi.
+
+## Kirim ulang aman (idempotensi)
+
+Respons simpan bisa hilang (sinyal putus, 5xx) padahal transaksi sudah tercatat.
+Supaya "Simpan" lagi tidak mencatat dua kali:
+
+- Web mengirim `client_ref` (UUID) per transaksi di `POST /transactions` dan
+  `POST /transactions/batch`; antrean offline & service worker ikut meneruskannya.
+- Server (`app/services/idempotency.py`, Redis `txnref:{user_id}:{ref}`): `pending`
+  (SET NX, 120 dtk) selama dibuat → ID transaksi (2 hari) setelah commit. Ref yang
+  sama dikirim lagi → transaksi yang sudah ada dikembalikan, tidak dibuat baru.
+  Masih `pending` → 409 (batch: `pending: true`). Gagal sebelum commit → reservasi
+  dilepas. Redis mati → fail open (perilaku lama, tanpa dedup).
+- Klien: respons hilang / 409 / 5xx → baris ditandai "belum pasti" dan dikunci
+  (nominal & amplop tidak bisa diubah) dengan kunci yang sama; tekan Simpan lagi
+  (quick-add mengirim ulang permintaan yang sama persis). Penolakan pasti (mis.
+  saldo kurang, 4xx selain 409) → tidak tercatat; baris bisa diedit lagi.
+- Simpan ditahan selama suara direkam/ditranskripsi atau struk sedang dibaca, dan
+  selama teks yang baru diketik belum selesai dibaca — supaya hasilnya tidak masuk
+  di tengah penyimpanan atau hilang saat panel ditutup.
+- Keterangan lebih dari 500 karakter (panjang kolom) dipotong di server; dulu gagal
+  500 dan kirim ulang tidak pernah berhasil.
+- Tidak ada tabel atau paket baru.
 
 ## Belajar dari koreksi (tanpa LLM)
 
@@ -36,6 +111,9 @@ Pengaman agar data bersama tidak "teracuni":
   tidak mengajari apa pun.
 - Label hasil belajar tidak bisa mengalahkan total yang cocok dengan pembayaran.
 - Nama toko dari user dibersihkan (huruf/angka/&'.-, maks 40) sebelum jadi alias.
+
+Koreksi rincian barang belum dipelajari — feedback hanya membawa total, tanggal,
+dan nama toko.
 
 Teks OCR (`receipt_scans.ocr_lines`) dihapus begitu feedback diproses; scan yang
 tidak pernah diberi feedback dibersihkan scheduler setelah 24 jam (outcome `expired`).
@@ -59,6 +137,9 @@ Mati kecuali `RECEIPT_LLM_ENABLED=true` di `/opt/jatahku/.env` (pakai `GROQ_API_
   kuota user. Timeout / 5xx tetap dihitung (mungkin sudah ditagih Groq).
 
 ## Deploy (manual, sekali)
+
+Rincian barang & idempotensi tidak menambah paket maupun tabel — cukup merge
+(deploy otomatis). Langkah di bawah hanya untuk pemasangan awal scan struk.
 
 Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 
@@ -99,4 +180,7 @@ tersedia" dan bot menyarankan catat manual — fitur lain tidak terpengaruh.
 
 `python -m unittest app.tests.test_receipt_scan -v` — termasuk 4 struk Indomaret
 asli (fixture baris OCR di `app/tests/fixtures/receipt_ocr_lines.json`, nomor
-kartu disamarkan). Frontend: `node --test frontend/src/lib/receiptScan.test.js`.
+kartu disamarkan; keempatnya rincian `cocok`), kasus rincian (dua baris, voucher,
+pajak, salah baca digit, dobel), gerbang belajar, idempotensi, dan ringkasan bot.
+Frontend: `node --test src/lib/receiptScan.test.js src/lib/receiptSplit.test.js`
+dari folder `frontend` (pecah per amplop: Σ selalu = total).

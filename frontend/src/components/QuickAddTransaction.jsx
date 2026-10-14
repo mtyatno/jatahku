@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
 import { enqueueTransaction } from '../lib/offlineQueue';
+import { newRef } from '../lib/ref';
 import { shouldShowPrivateToggle } from '../lib/privateToggle';
 import { parseAmount } from '../lib/parseAmount';
 import { Icon } from './Icon';
@@ -30,8 +31,15 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const [isPrivate, setIsPrivate] = useState(false);
   const [memberCount, setMemberCount] = useState(1);
   const [showFundModal, setShowFundModal] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  // Hasil simpan belum pasti (koneksi putus / 409 / 5xx): isian dikunci.
+  const [uncertain, setUncertain] = useState(false);
   const userTouchedRef = useRef(false);
   const debounceRef = useRef(null);
+  // Permintaan yang sedang dikirim atau hasilnya belum pasti. Selama ada, "Simpan"
+  // mengirim ulang permintaan yang SAMA persis (client_ref sama) — server
+  // mengembalikan transaksi yang sudah tercatat, bukan membuat baru.
+  const sentRef = useRef(null);
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -54,7 +62,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       const res = await api.suggestEnvelope(desc);
-      if (res && res.confident && res.envelope_id && !userTouchedRef.current) {
+      if (res && res.confident && res.envelope_id && !userTouchedRef.current && !sentRef.current) {
         setEnvelopeId(res.envelope_id);
         setSuggested(true);
       }
@@ -75,6 +83,11 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   };
 
   const handleVoiceTranscript = (text) => {
+    // Simpan ditahan selama suara diproses, jadi ini hanya penjagaan.
+    if (sentRef.current) {
+      setError('Rekaman suara diabaikan: transaksi ini belum selesai disimpan. Tekan Simpan lagi, lalu rekam ulang.');
+      return;
+    }
     userTouchedRef.current = false;
     setSuggested(false);
     const parsed = parseAmount(text);
@@ -87,6 +100,8 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   };
 
   const reset = () => {
+    sentRef.current = null;
+    setUncertain(false);
     setAmount(''); setDescription(''); setEnvelopeId('');
     setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false);
   };
@@ -95,9 +110,14 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const showPrivate = shouldShowPrivateToggle(memberCount, selectedEnv);
 
   const submit = async (extra = {}) => {
-    if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
+    if (voiceBusy) return;
+    let payload = sentRef.current;
+    if (!payload) {
+      if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
+      payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, client_ref: newRef(), ...extra };
+      sentRef.current = payload;
+    }
     setSaving(true); setError('');
-    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, ...extra };
 
     if (!navigator.onLine) {
       await enqueueTransaction(payload);
@@ -108,14 +128,38 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       return;
     }
 
-    const result = await api.createTransaction(payload);
+    let result;
+    try {
+      result = await api.createTransaction(payload);
+    } catch {
+      setSaving(false);
+      setUncertain(true);
+      setError('Koneksi terputus. Coba simpan lagi — tidak akan tercatat dua kali.');
+      return;
+    }
     setSaving(false);
     if (result.ok) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       reset();
       onSaved?.();
     } else {
-      setError(result.data?.detail || 'Gagal menyimpan transaksi');
+      // 409 (masih diproses) & 5xx: mungkin sudah tercatat → kunci dipertahankan &
+      // isian dikunci. Ditolak pasti (4xx lain) → tidak tercatat; kunci baru.
+      const maybeSaved = result.status === 409 || result.status >= 500;
+      if (maybeSaved) {
+        setUncertain(true);
+      } else {
+        sentRef.current = null;
+        setUncertain(false);
+      }
+      const detail = typeof result.data?.detail === 'string' ? result.data.detail : '';
+      if (maybeSaved) {
+        setError(detail
+          ? `${detail} Tekan Simpan lagi — tidak akan tercatat dua kali.`
+          : 'Hasil simpan belum pasti. Coba simpan lagi — tidak akan tercatat dua kali.');
+      } else {
+        setError(detail || 'Gagal menyimpan transaksi');
+      }
     }
   };
 
@@ -141,34 +185,35 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div>
           <label className="label">Jumlah (Rp)</label>
-          <input type="number" className="input font-mono" placeholder="35000" value={amount} onChange={e => setAmount(e.target.value)} required min="1" />
+          <input type="number" className="input font-mono" placeholder="35000" value={amount} onChange={e => setAmount(e.target.value)} required min="1" disabled={saving || uncertain} />
         </div>
         <div>
           <label className="label">Keterangan</label>
           <div className="flex items-center gap-2">
-            <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required />
+            <input type="text" className="input" placeholder="Starbucks, Gojek..." value={description} onChange={handleDescChange} required maxLength={500} disabled={saving || uncertain} />
             <VoiceInput
               onTranscript={handleVoiceTranscript}
               onError={msg => setError(msg)}
-              disabled={saving}
+              onBusyChange={setVoiceBusy}
+              disabled={saving || uncertain}
             />
           </div>
         </div>
         <div>
           <label className="label">Amplop {suggested && <span className="text-xs text-brand-600">· disarankan</span>}</label>
-          <select className="input" value={envelopeId} onChange={handleEnvelopeChange} required>
+          <select className="input" value={envelopeId} onChange={handleEnvelopeChange} required disabled={saving || uncertain}>
             <option value="">Pilih amplop</option>
             {envelopes.filter(env => env.purpose !== 'saving' && env.purpose !== 'sinking_fund').map(env => (<option key={env.id} value={env.id}>{env.emoji} {env.name}</option>))}
           </select>
         </div>
         <div className="flex items-end gap-2">
-          <button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Simpan'}</button>
+          <button type="submit" disabled={saving || voiceBusy} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Simpan'}</button>
           {onCancel && <button type="button" onClick={onCancel} className="btn-outline">Batal</button>}
         </div>
       </div>
       {showPrivate && (
         <label className="flex items-start gap-2 cursor-pointer">
-          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)}
+          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} disabled={saving || uncertain}
             className="w-4 h-4 mt-0.5 rounded border-gray-300 text-brand-600" />
           <span className="text-xs text-gray-600">
             <span className="inline-flex items-center gap-1 font-medium"><Icon name="lock" size={13} /> Sembunyikan deskripsi dari anggota lain</span>
@@ -200,7 +245,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
               <button
                 type="button"
                 onClick={handleRaiseDailyLimit}
-                disabled={saving}
+                disabled={saving || voiceBusy}
                 className="bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-2.5 py-1 text-xs font-medium flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
               >
                 {saving ? '...' : 'Catat, naikkan limit hari ini'}

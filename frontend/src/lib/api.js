@@ -373,7 +373,7 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return { ok: res.ok, data: await res.json() };
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
   }
 
   async suggestEnvelope(description) {
@@ -398,17 +398,21 @@ class ApiClient {
     return null;
   }
 
+  // status 0 = tidak sampai/terputus. ok=false dengan status 2xx/0/409/5xx berarti
+  // hasilnya belum pasti (sebagian mungkin sudah tercatat).
   async batchCreateTransactions(items) {
+    let res;
     try {
-      const res = await this.request('/transactions/batch', {
+      res = await this.request('/transactions/batch', {
         method: 'POST',
         body: JSON.stringify({ items }),
       });
-      const data = await res.json();
-      return { ok: res.ok, data };
     } catch {
-      return { ok: false, data: [] };
+      return { ok: false, status: 0, data: [] };
     }
+    const data = await res.json().catch(() => null);
+    if (res.ok && Array.isArray(data)) return { ok: true, status: res.status, data };
+    return { ok: false, status: res.status, data: data && !Array.isArray(data) ? data : {} };
   }
 
   async deleteTransaction(id) {
