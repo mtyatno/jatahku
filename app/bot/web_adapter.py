@@ -9,7 +9,11 @@ JSON yang dirender webapp:
     {"type": "message", "id", "text", "format", "buttons"}  # pesan bot baru
     {"type": "edit",    "id", "text", "format", "buttons"}  # ganti pesan (tombol ditekan)
     {"type": "buttons", "id", "buttons"}                    # ganti tombol saja
+    {"type": "delete",  "id"}                               # hapus pesan bot
     {"type": "toast",   "text"}                             # notifikasi singkat
+
+Foto struk dari webapp diproses `handle_non_text` yang sama dengan foto di
+Telegram (→ app/bot/receipt_cmd.py), lewat pengganti `PhotoSize`/`Document`.
 
 `format` = "html" | "markdown" | "plain" (parse_mode Telegram apa adanya);
 `buttons` = baris tombol `[[{"text", "data"} | {"text", "url"}]]`.
@@ -137,6 +141,10 @@ class Outbox:
         if text:
             self.ops.append({"type": "toast", "text": str(text)})
 
+    def delete(self, msg_id):
+        self.ops.append({"type": "delete", "id": msg_id})
+        self.buttons[msg_id] = []
+
     async def persist(self, user_id):
         """Catat tombol yang dikirim/diubah, supaya hanya tombol itu yang bisa ditekan."""
         if not self.buttons:
@@ -171,8 +179,39 @@ class WebChatUser:
         self.full_name = name or self.first_name
 
 
+class WebFile:
+    """Pengganti telegram.File: isi file sudah ada di memori (upload webapp)."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+        self.file_size = len(data)
+
+    async def download_as_bytearray(self, *_, **__):
+        return bytearray(self._data)
+
+
+class WebPhotoSize:
+    """Pengganti telegram.PhotoSize (foto JPEG dari webapp)."""
+
+    def __init__(self, data: bytes):
+        self._data = data
+        self.file_size = len(data)
+
+    async def get_file(self, *_, **__):
+        return WebFile(self._data)
+
+
+class WebDocument(WebPhotoSize):
+    """Pengganti telegram.Document (gambar non-JPEG, mis. PNG/WebP)."""
+
+    def __init__(self, data: bytes, mime_type: str):
+        super().__init__(data)
+        self.mime_type = mime_type
+        self.file_name = "struk"
+
+
 class WebMessage:
-    """Pengganti telegram.Message: pesan user (teks) atau pesan bot (tombol)."""
+    """Pengganti telegram.Message: pesan user (teks/foto) atau pesan bot (tombol)."""
 
     photo = sticker = voice = audio = document = None
 
@@ -191,6 +230,11 @@ class WebMessage:
     async def edit_text(self, text, parse_mode=None, reply_markup=None, **_):
         self._outbox.edit(self.message_id, text, parse_mode, reply_markup)
         return self
+
+    async def delete(self, *_, **__):
+        if self.message_id:
+            self._outbox.delete(self.message_id)
+        return True
 
 
 class WebCallbackQuery:
@@ -355,12 +399,8 @@ async def _store_request(user_id, client_id, ops):
             pass
 
 
-async def run_message(user, text: str, client_id: str | None = None) -> list[dict]:
-    """Proses satu pesan teks dari chat webapp. `user` = User yang login.
-    `client_id` (dari webapp) membuat kirim ulang pesan yang sama aman."""
-    text = (text or "").strip()
-    if not text:
-        return []
+async def _run_user_message(user, client_id, dispatch) -> list[dict]:
+    """Jalankan satu pesan user (teks/foto) sekali saja per `client_id`."""
     if client_id:
         earlier = await _claim_request(user.id, client_id)
         if earlier is not None:
@@ -369,7 +409,7 @@ async def run_message(user, text: str, client_id: str | None = None) -> list[dic
     tg_user = WebChatUser(user)
     with web_channel():
         try:
-            await _dispatch_text(outbox, tg_user, text)
+            await dispatch(outbox, tg_user)
         except Exception:
             logger.exception("webchat: gagal memproses pesan")
             outbox.send(ERROR_REPLY)
@@ -377,6 +417,35 @@ async def run_message(user, text: str, client_id: str | None = None) -> list[dic
     if client_id:
         await _store_request(user.id, client_id, ops)
     return ops
+
+
+async def run_message(user, text: str, client_id: str | None = None) -> list[dict]:
+    """Proses satu pesan teks dari chat webapp. `user` = User yang login.
+    `client_id` (dari webapp) membuat kirim ulang pesan yang sama aman."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    return await _run_user_message(user, client_id, lambda outbox, tg_user: _dispatch_text(outbox, tg_user, text))
+
+
+JPEG_MIME = {"image/jpeg", "image/jpg"}
+
+
+async def run_photo(user, data: bytes, mime: str, client_id: str | None = None) -> list[dict]:
+    """Foto struk dari chat webapp → alur foto bot Telegram (scan struk).
+    JPEG dikirim sebagai foto, format lain sebagai dokumen gambar — sama
+    dengan dua cara user Telegram mengirim gambar."""
+    from app.bot.handlers import handle_non_text
+
+    async def dispatch(outbox, tg_user):
+        message = WebMessage(outbox, from_user=tg_user)
+        if mime in JPEG_MIME:
+            message.photo = [WebPhotoSize(data)]
+        else:
+            message.document = WebDocument(data, mime)
+        await handle_non_text(WebUpdate(tg_user, message=message), WebContext())
+
+    return await _run_user_message(user, client_id, dispatch)
 
 
 async def run_action(user, message_id: str, data: str) -> list[dict]:

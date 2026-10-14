@@ -23,6 +23,7 @@ Desktop: panel samping di bawah header, ditutup dengan X.
 ```
 ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapter.run_message
               ──POST /bot/chat/action  {message_id, data}──▶ web_adapter.run_action
+              ──POST /bot/chat/photo   (image, client_id)──▶ web_adapter.run_photo
                                                               │
                          handler app/bot/* (handle_message, /status, callback t_, fshift:, …)
                                                               │
@@ -45,6 +46,18 @@ ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapte
   `merge_`/`unlink_`) tidak dijalankan di web; `/start` mengabaikan deep link.
 - Teks yang berbeda per kanal memakai `is_web()` (mis. `/help`, ajakan setup,
   petunjuk `/template` & `/amplop_baru`).
+
+## Foto struk
+
+Tombol **Struk** (di samping Suara) mengirim foto ke `POST /bot/chat/photo`.
+Foto dikompres di HP dulu (`lib/receiptImage.js`, sama dengan tombol Struk di
+form), divalidasi sama dengan `/transactions/scan-receipt` (JPG/PNG/WebP, maks
+8 MB), lalu dijalankan lewat `handle_non_text` → `receipt_cmd.handle_receipt_photo`
+— alur yang sama dengan kirim foto ke @JatahkuBot: kuota scan bulanan, batas per
+jam, pilih amplop lewat tombol, "Nominal salah", feedback belajar. Foto JPEG
+masuk sebagai `photo`, format lain sebagai `document`. Kirim ulang dengan
+`client_id` yang sama tidak memindai dua kali (kuota aman). Riwayat lokal hanya
+menyimpan pratinjau kecil (±2–5 KB), bukan fotonya.
 
 ## Keamanan
 

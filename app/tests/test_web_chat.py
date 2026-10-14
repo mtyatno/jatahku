@@ -24,7 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import func, select
 
-from app.bot import behavior_cmd, channel, handlers, help_cmd, recurring_cmd, tglogin_cmd, web_adapter
+from app.bot import behavior_cmd, channel, handlers, help_cmd, receipt_cmd, recurring_cmd, tglogin_cmd, web_adapter
+from app.services import receipt_scan
 # Impor di luar event loop (lihat test_fund_shift_integration).
 from app.services import streak as _streak, txn_nlp as _txn_nlp  # noqa: F401
 from app.core.database import Base
@@ -286,6 +287,24 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         cb.assert_not_called()
         self.assertEqual(ops, [{"type": "toast", "text": web_adapter.BUTTONS_UNAVAILABLE}])
 
+    async def test_photo_for_account_without_envelopes_removes_status_message(self):
+        fake_user = SimpleNamespace(id=self.user.id, name="Sari")
+
+        class NoDb:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=fake_user)), \
+             patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(False, "no_envelopes"))), \
+             patch.object(receipt_cmd, "AsyncSessionLocal", new=NoDb):
+            ops = await web_adapter.run_photo(self.user, b"x", "image/jpeg")
+        self.assertEqual([o["type"] for o in ops], ["message", "delete", "message"])
+        self.assertEqual(ops[1]["id"], ops[0]["id"])
+        self.assertIn("Budget kamu belum disiapkan", ops[2]["text"])
+
     async def test_reply_from_callback_message_appends_new_message(self):
         # intent_learning memakai query.message sebagai update.message
         self.redis.store[btn_key(self.user, "aa11")] = json.dumps(["intentlearn:t:sisa"])
@@ -299,6 +318,39 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             ops = await web_adapter.run_action(self.user, "aa11", "intentlearn:t:sisa")
         self.assertEqual([o["type"] for o in ops], ["edit", "message"])
         self.assertEqual(ops[1]["format"], "plain")
+
+
+# ── Endpoint foto ────────────────────────────────────────────────────────────
+
+class PhotoEndpointTests(unittest.TestCase):
+    def client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.routes import bot_chat
+        from app.core.deps import get_current_user
+
+        app = FastAPI()
+        app.state.limiter = bot_chat.limiter
+        app.include_router(bot_chat.router, prefix="/bot/chat")
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4(), name="Sari")
+        return TestClient(app)
+
+    def test_photo_is_validated_like_receipt_button_and_forwarded(self):
+        run = AsyncMock(return_value=[{"type": "toast", "text": "ok"}])
+        with patch("app.api.routes.bot_chat.run_photo", new=run):
+            c = self.client()
+            res = c.post("/bot/chat/photo", files={"image": ("s.jpg", b"\xff\xd8x", "image/jpeg")},
+                         data={"client_id": "u1abc"}, headers={"Authorization": "Bearer t"})
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json(), {"ops": [{"type": "toast", "text": "ok"}]})
+            self.assertEqual(run.call_args.args[1:], (b"\xff\xd8x", "image/jpeg", "u1abc"))
+            bad = c.post("/bot/chat/photo", files={"image": ("a.pdf", b"%PDF", "application/pdf")},
+                         headers={"Authorization": "Bearer t"})
+            self.assertEqual(bad.status_code, 415)
+            bad_id = c.post("/bot/chat/photo", files={"image": ("s.jpg", b"x", "image/jpeg")},
+                            data={"client_id": "../etc"}, headers={"Authorization": "Bearer t"})
+            self.assertEqual(bad_id.status_code, 422)
+        self.assertEqual(run.await_count, 1)
 
 
 # ── Teks khusus kanal ────────────────────────────────────────────────────────
@@ -396,6 +448,7 @@ class WebChatIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(handlers, "AsyncSessionLocal", new=self.Session),
             patch.object(recurring_cmd, "AsyncSessionLocal", new=self.Session),
             patch.object(behavior_cmd, "AsyncSessionLocal", new=self.Session),
+            patch.object(receipt_cmd, "AsyncSessionLocal", new=self.Session),
         ]
         if not real_find:
             ps.append(patch.object(handlers, "find_best_envelope", new=find))
@@ -537,6 +590,62 @@ class WebChatIntegrationTests(unittest.IsolatedAsyncioTestCase):
         # id lain = pesan baru
         await self.go(lambda: web_adapter.run_message(self.user, "kopi 25k", client_id="u2abc"), match="Makan")
         self.assertEqual(len(await self.txns()), 2)
+
+    # ── Foto struk dari chat web → alur foto bot Telegram ──────────────────
+    def fake_scan(self, **over):
+        result = {
+            "total": 45500, "merchant": "Indomaret", "date": "2026-10-12",
+            "quota": {"remaining": 14, "limit": 15}, "confidence": "tinggi",
+            "scan_id": str(uuid.uuid4()), "items": [], "reconciliation": None, "adjustments": [],
+        }
+        result.update(over)
+        return AsyncMock(return_value=result)
+
+    async def test_receipt_photo_then_pick_envelope(self):
+        scan = self.fake_scan()
+        with patch.object(receipt_scan, "scan_receipt", new=scan):
+            ops = await self.go(lambda: web_adapter.run_photo(self.user, b"\xff\xd8jpeg", "image/jpeg"), match=None)
+        self.assertEqual(scan.call_args.args[1:3], (b"\xff\xd8jpeg", "image/jpeg"))
+        self.assertEqual([o["type"] for o in ops], ["message", "edit"])
+        final = ops[-1]
+        self.assertEqual(final["id"], ops[0]["id"])  # "Membaca struk..." diganti hasilnya
+        self.assertIn("Struk Indomaret · 12 Okt 2026", final["text"])
+        self.assertIn("Rp 45.500", final["text"])
+        self.assertIn("Sisa scan bulan ini: 14/15", final["text"])
+        datas = [b["data"] for row in final["buttons"] for b in row]
+        self.assertTrue(any(d.startswith("t_") for d in datas))
+        self.assertTrue(any(d.startswith("struk_fix_") for d in datas))
+
+        makan = next(b["data"] for row in final["buttons"] for b in row if "Makan" in b["text"])
+        ops = await self.go(lambda: web_adapter.run_action(self.user, final["id"], makan))
+        self.assertIn("Masuk ke 📁 Makan", ops[0]["text"])
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.transaction_date, txn.source),
+                         (D("45500"), date(2026, 10, 12), TransactionSource.webapp))
+
+    async def test_non_jpeg_goes_through_document_path(self):
+        scan = self.fake_scan()
+        with patch.object(receipt_scan, "scan_receipt", new=scan):
+            await self.go(lambda: web_adapter.run_photo(self.user, b"png", "image/png"))
+        self.assertEqual(scan.call_args.args[2], "image/png")
+
+    async def test_receipt_photo_resend_is_scanned_once(self):
+        scan = self.fake_scan()
+        with patch.object(receipt_scan, "scan_receipt", new=scan):
+            first = await self.go(lambda: web_adapter.run_photo(self.user, b"x", "image/jpeg", client_id="ph1"))
+            again = await self.go(lambda: web_adapter.run_photo(self.user, b"x", "image/jpeg", client_id="ph1"))
+        self.assertEqual(first, again)
+        self.assertEqual(scan.await_count, 1)  # kuota scan tidak terpakai dua kali
+
+    async def test_unreadable_total_and_quota_messages(self):
+        with patch.object(receipt_scan, "scan_receipt", new=self.fake_scan(total=None)):
+            ops = await self.go(lambda: web_adapter.run_photo(self.user, b"x", "image/jpeg"))
+        self.assertIn("Total struk tidak terbaca", ops[-1]["text"])
+        self.assertEqual(ops[-1]["buttons"], [])
+        quota = AsyncMock(side_effect=receipt_scan.ScanQuotaExceeded(15))
+        with patch.object(receipt_scan, "scan_receipt", new=quota):
+            ops = await self.go(lambda: web_adapter.run_photo(self.user, b"x", "image/jpeg"))
+        self.assertIn("Kuota scan struk bulan ini (15x) sudah habis", ops[-1]["text"])
 
     async def test_status_command_runs_on_web(self):
         ops = await self.go(lambda: web_adapter.run_message(self.user, "/status"))
