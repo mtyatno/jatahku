@@ -2,7 +2,7 @@
 title: "Bot WhatsApp Jatahku Dihentikan: Catat Lewat Telegram atau Webapp"
 description: "Bot WhatsApp Jatahku sudah dihentikan karena koneksinya tidak stabil. Mencatat secepat chat tetap bisa lewat bot Telegram @JatahkuBot atau langsung di webapp."
 pubDate: 2026-04-18
-updatedDate: 2026-10-02
+updatedDate: 2026-10-15
 category: update-fitur
 author: Tim Jatahku
 cover: /covers/cara-pakai-bot-telegram.svg
@@ -17,6 +17,7 @@ Koneksi bot WhatsApp kami bergantung pada sesi WhatsApp Web yang otomatis terput
 
 - **Telegram:** kirim `kopi 35k` ke [@JatahkuBot](https://t.me/JatahkuBot). Belum punya akun? Ketik `/start`, lalu ketuk link yang dikirim bot untuk menyiapkan budget, tanpa perlu daftar dulu.
 - **Webapp:** catat langsung di [jatahku.com](https://jatahku.com) lewat tombol +, termasuk banyak transaksi sekaligus.
+- **Chat di webapp:** sejak 15 Oktober 2026, bot yang sama juga ada di dalam webapp. Di HP, ketuk tombol gelembung chat di samping tombol +, lalu ketik `kopi 35k` seperti chat biasa. Tidak perlu akun Telegram. Baca [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-webapp/).
 
 Transaksi yang pernah kamu catat lewat WhatsApp tetap aman di akunmu.
 

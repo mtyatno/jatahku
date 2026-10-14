@@ -1,12 +1,15 @@
 ---
 title: "Cara Menggunakan Bot Telegram Jatahku: Catat Pengeluaran Semudah Kirim Chat"
-description: "Panduan lengkap pakai @JatahkuBot untuk mencatat pengeluaran tanpa buka aplikasi. Format NLP, cara koreksi, cek saldo amplop — semua bisa lewat chat."
+description: "Panduan lengkap pakai @JatahkuBot untuk mencatat pengeluaran tanpa buka aplikasi. Format NLP, foto struk, cara koreksi, cek saldo amplop — semua lewat chat."
 pubDate: 2026-03-30
+updatedDate: 2026-10-15
 category: tutorial
 author: Tim Jatahku
 cover: /covers/cara-pakai-bot-telegram.svg
 featured: true
 ---
+
+**Diperbarui 15 Oktober 2026:** bot sekarang bisa membaca foto struk, mengisi dana amplop yang kurang, dan mencatat beberapa pengeluaran tanpa koma. Tidak memakai Telegram? Bot yang sama kini ada di dalam webapp. Baca [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-webapp/).
 
 Salah satu keluhan terbesar soal aplikasi keuangan adalah ini: **terlalu ribet untuk dipakai setiap hari**.
 
@@ -40,17 +43,9 @@ bensin 100ribu
 bayar listrik 285.000
 ```
 
-Bot akan otomatis baca nominal dan tanya amplop mana. Ketuk pilihan amplop, transaksi langsung tercatat.
+Bot membaca nominalnya, lalu memilih amplop yang cocok. Kalau belum yakin, bot menampilkan tombol pilihan amplop. Ketuk salah satunya, dan transaksi langsung tercatat.
 
-**Mau langsung tentukan amplopnya?** Tambahkan di akhir kalimat:
-
-```
-kopi 15k ngopi
-makan siang 52rb makan
-bensin 100k transport
-```
-
-Kalau nama amplop cocok, bot langsung catat tanpa tanya lagi.
+**Bagaimana bot memilih amplop?** Pertama dari kebiasaanmu: kata yang pernah kamu catat ke suatu amplop akan diingat, jadi lain kali tidak ditanyakan lagi. Lalu dari kata kunci umum, misalnya kopi dan nasi ke amplop bernama Makan, atau gojek dan parkir ke amplop bernama Transport. Kalau kata kuncinya belum dikenali, nama amplop yang kamu tulis di pesan juga dipakai.
 
 **Format nominal yang didukung:**
 
@@ -64,29 +59,69 @@ Kalau nama amplop cocok, bot langsung catat tanpa tanya lagi.
 
 ---
 
+## Beberapa Pengeluaran Sekaligus
+
+Habis jalan seharian? Kirim semuanya dalam satu pesan. Pisahkan dengan koma, baris baru, atau kata "dan":
+
+```
+makan 30k, parkir 5k, kopi 20k
+```
+
+Koma juga boleh dilewati, selama tiap nominal punya satuan atau format ribuan:
+
+```
+kopi 35 ribu gojek 20 ribu
+35k kopi 20k parkir
+```
+
+Angka tanpa satuan tidak memecah pengeluaran. Jadi `beli 2 kopi 25 ribu` tetap terbaca sebagai satu pengeluaran sebesar Rp 25.000, dan angka 2 dianggap jumlah barang.
+
+Setiap item dicek seperti kalau dicatat satu per satu. Item yang amplopnya langsung dikenali dan dananya cukup langsung tercatat. Item yang perlu pilihan amplop atau tambahan dana ditanyakan satu per satu di pesan yang sama.
+
+---
+
+## Catat dari Foto Struk
+
+Kirim foto struk ke bot. Bot membaca nama toko, tanggal, total, dan rincian barangnya, lalu menanyakan amplopnya. Amplop yang disarankan muncul paling atas dengan tanda ⭐.
+
+Struk dicatat sebagai satu transaksi dengan tanggal yang tertulis di struk. Kalau totalnya salah terbaca, ketuk **✏️ Nominal salah**, lalu ketik nominal yang benar seperti biasa. Catatan yang diketik ulang ini memakai tanggal hari ini.
+
+Mau memecah struk per barang ke amplop yang berbeda? Pakai tombol **Struk** di webapp. Panduannya ada di artikel [Catat Belanja dari Foto Struk](/insight/catat-belanja-dari-foto-struk/).
+
+---
+
+## Kalau Dana Amplop Kurang
+
+Kalau sisa amplop tidak cukup untuk pengeluaran yang kamu kirim, bot menampilkan **💸 Dana amplop kurang** beserta kekurangannya, lalu menawarkan dua cara menutupnya:
+
+- **Geser dari amplop lain.** Setiap amplop yang sisanya cukup muncul sebagai tombol 🔁 tersendiri, maksimal empat, mulai dari yang sisanya paling besar.
+- **Top-up pemasukan.** Tombol **💰 Top-up pemasukan** mencatat pemasukan sebesar kekurangannya ke amplop itu.
+
+Setelah kamu memilih, transaksinya langsung tercatat. Kalau tidak jadi, ketuk **❌ Batalkan** dan tidak ada dana yang berubah.
+
+---
+
+## Kalau Melewati Limit Harian
+
+Kalau amplop punya limit harian dan pengeluaranmu melewatinya, bot menampilkan rinciannya dan menawarkan **✅ Catat, naikkan limit hari ini**. Limit amplop itu dinaikkan sampai tengah malam, lalu besok kembali normal.
+
+---
+
 ## Cara Koreksi Kalau Salah Ketik
 
-Salah nominal atau salah amplop? Tenang, ada dua cara memperbaikinya.
+Salah nominal atau salah catat? Ada dua cara memperbaikinya.
 
-**Cara 1 — Batalkan transaksi terakhir:**
-
-Setelah bot konfirmasi transaksi, langsung ketik:
+**Salah nominal:** kirim misalnya
 
 ```
-batal
+harusnya 25k
 ```
 
-Bot akan hapus transaksi yang baru saja dicatat.
+Bot mengganti nominal transaksi terakhir yang kamu catat.
 
-**Cara 2 — Hapus dari riwayat:**
+**Salah catat:** kirim `/batal`, atau tulis `batalin yang tadi`. Bot menghapus transaksi terakhir yang kamu catat.
 
-Kirim perintah:
-
-```
-/riwayat
-```
-
-Bot akan tampilkan 5 transaksi terakhir lengkap dengan tombol **Hapus** di setiap transaksinya.
+Untuk transaksi yang lebih lama, buka halaman **Transaksi** di webapp, lalu hapus lewat menu di baris transaksinya.
 
 ---
 
@@ -104,13 +139,15 @@ atau
 saldo
 ```
 
-Bot akan tampilkan semua amplop beserta sisa dana masing-masing, terurut dari yang paling menipis.
+Bot menampilkan sisa dana tiap amplop, persentase yang sudah terpakai, dan berapa hari lagi sampai periode gajianmu berakhir.
+
+Mau beli sesuatu tapi ragu? Tanya dulu, misalnya `aman gak beli sepatu 450rb?`. Bot menjawab ✅ Aman, ⚠️ Pas-pasan, atau ❌ Tidak cukup, tanpa mencatat apa pun. Kalau amplopnya belum jelas, bot menampilkan semua amplop dengan tanda yang sama.
 
 ---
 
 ## Transaksi Langganan (Bulanan/Tahunan)
 
-Punya pengeluaran yang rutin tiap bulan? Catat sekali, otomatis jalan terus:
+Punya pengeluaran yang rutin tiap bulan? Daftarkan sekali, berikutnya tinggal konfirmasi:
 
 ```
 sewa server 250k tiap bulan
@@ -118,7 +155,7 @@ Netflix 75rb setiap bulan
 asuransi jiwa 350rb per bulan
 ```
 
-Bot akan buat transaksi berulang dan otomatis mencatat di tanggal yang sama setiap bulannya.
+Bot mencatat pembayaran pertama dan menyimpan langganannya. Setiap jatuh tempo, bot mengirim pengingat dengan tombol **✅ Bayar & catat**, **⏭️ Skip bulan ini**, atau **❌ Berhenti langganan**. Pembayaran baru tercatat setelah kamu mengetuk Bayar & catat.
 
 ---
 
@@ -127,8 +164,10 @@ Bot akan buat transaksi berulang dan otomatis mencatat di tanggal yang sama seti
 | Perintah | Fungsi |
 |---|---|
 | `/start` | Mulai / cek status akun |
-| `/sisa` | Lihat saldo semua amplop |
-| `/riwayat` | 5 transaksi terakhir |
+| `/status` | Ringkasan budget bulan ini |
+| `/amplop` | Daftar amplop dan sisa dananya |
+| `/batal` | Batalkan transaksi terakhir |
+| `/langganan` | Daftar langganan aktif |
 | `/help` | Daftar semua perintah |
 | `/webapp` | Buka Jatahku langsung dari Telegram |
 
@@ -140,7 +179,7 @@ Bot akan buat transaksi berulang dan otomatis mencatat di tanggal yang sama seti
 
 **Pin chat @JatahkuBot** di Telegram kamu supaya selalu ada di bagian atas dan mudah dijangkau.
 
-**Aktifkan notifikasi bot** supaya kamu tahu kalau ada pengingat dari Jatahku — misalnya kalau saldo amplop mulai menipis.
+**Aktifkan notifikasi bot** supaya kamu tahu kalau ada pesan dari Jatahku — misalnya ringkasan harian, pengingat tagihan langganan, atau pengingat untuk mencatat.
 
 ---
 

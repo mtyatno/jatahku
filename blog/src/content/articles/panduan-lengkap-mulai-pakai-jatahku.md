@@ -2,7 +2,7 @@
 title: "Panduan Lengkap Mulai Pakai Jatahku: Dari Daftar sampai Catat Pengeluaran Pertama"
 description: "Panduan step-by-step menggunakan Jatahku dari awal — daftar akun, onboarding wizard, install ke HP sebagai app, catat pengeluaran kilat lewat tombol +, sampai baca laporan bulanan."
 pubDate: 2026-04-02
-updatedDate: 2026-10-02
+updatedDate: 2026-10-15
 category: tutorial
 author: Tim Jatahku
 cover: /covers/panduan-lengkap.svg
@@ -19,7 +19,7 @@ Jatahku adalah aplikasi *envelope budgeting* berbasis web. Idenya sederhana: **s
 
 Bedanya dengan aplikasi keuangan lain ada di kecepatan mencatat. Jatahku bisa di-install ke HP seperti aplikasi biasa (tanpa lewat Play Store atau App Store), dan pencatatan pengeluaran cukup lewat **satu tombol +** — ketik natural seperti `kopi 18k`, amplopnya terdeteksi otomatis. Bahkan tetap bisa mencatat saat tidak ada sinyal.
 
-Kalau kamu lebih suka mencatat lewat chat, Jatahku juga punya bot Telegram sebagai kanal tambahan — kita bahas di bagian akhir.
+Kalau kamu lebih suka mencatat lewat chat, Jatahku punya chat bot di dalam webapp dan di Telegram — kita bahas di bagian akhir.
 
 ---
 
@@ -91,14 +91,15 @@ Ikon Jatahku langsung muncul di home screen. Update selalu otomatis — tidak ad
 
 Ini fitur utama Jatahku. Di pojok kanan bawah layar — di **halaman manapun** — ada tombol **+** melayang (*Floating Action Button*). Semua input penting berangkat dari satu tombol ini.
 
-Ketuk **+** dan empat aksi cepat muncul:
+Ketuk **+** dan lima aksi cepat muncul:
 
 | Aksi | Fungsi |
 |------|--------|
-| 💰 Pengeluaran | Catat pengeluaran, bisa banyak sekaligus |
+| 💰 Pengeluaran | Catat pengeluaran, bisa banyak sekaligus atau dari foto struk |
 | ✉️ Amplop | Buat amplop baru |
 | 💵 Income | Tambah income + alokasi ke amplop |
-| 🔄 Langganan | Tambah langganan/tagihan rutin |
+| 🔄 Langganan | Tambah langganan/tagihan rutin, atau bayar tagihannya |
+| ⚖️ Cocokkan saldo | Samakan catatan dengan uang yang benar-benar kamu pegang |
 
 Semuanya muncul sebagai modal **di halaman yang sama** — tidak perlu pindah-pindah halaman.
 
@@ -113,6 +114,12 @@ air mineral Rp5.000, gojek 12rb
 ```
 
 Jatahku langsung mengurai setiap baris menjadi item terpisah, lengkap dengan nominalnya — dan **menyarankan amplop yang tepat secara otomatis** berdasarkan kebiasaanmu (ditandai label "disarankan"). Kalau sarannya kurang pas, tinggal ganti dari dropdown. Klik **Simpan Semua**, selesai.
+
+### Catat dari Foto Struk
+
+Habis belanja di minimarket? Di form yang sama, ketuk **Struk** (ikon kamera) lalu foto strukmu. Jatahku membaca rincian barangnya, mencocokkannya dengan total, dan mencatat tiap barang ke amplopnya sendiri dengan tanggal yang tertulis di struk.
+
+> Panduan lengkap: [Catat Belanja dari Foto Struk](/insight/catat-belanja-dari-foto-struk/).
 
 ### Format Angka yang Didukung
 
@@ -133,7 +140,7 @@ Semua format angka Indonesia dimengerti:
 
 Sinyal lemah atau tidak ada internet sama sekali? Catat saja seperti biasa. Transaksi masuk antrean di HP kamu dan **otomatis terkirim ke server** begitu koneksi kembali — tanpa perlu sinkron manual.
 
-> Detail keempat aksi cepat ini ada di artikel [FAB Speed Dial — 4 Inputan Cepat dalam Satu Tombol](/insight/fab-speed-dial-4-inputan/).
+> Detail kelima aksi cepat ini ada di artikel [Tombol + Kini Punya 5 Aksi Cepat](/insight/fab-speed-dial-5-aksi/).
 
 ---
 
@@ -164,11 +171,19 @@ Butuh data mentahnya? Tombol **Download CSV** ada tepat di sebelahnya.
 
 ---
 
-## Opsional: Hubungkan Telegram
+## Catat Lewat Chat
 
-Suka mencatat lewat chat? Jatahku punya bot Telegram — pelengkap yang praktis saat kamu sedang di aplikasi chat dan tidak ingin berpindah app.
+Suka mencatat lewat chat? Ada dua pilihan, dan keduanya memakai bot yang sama.
 
-### Cara Hubungkan Telegram
+### Chat di Webapp
+
+Di HP, ketuk tombol gelembung chat di samping tombol **+**. Di laptop, ketuk ikon chat di bagian atas halaman. Ketik `kopi 18k`, `sisa`, atau `/status`, atau kirim foto struk, sama seperti chat dengan bot. Tidak perlu akun Telegram.
+
+> Selengkapnya: [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-webapp/).
+
+### Opsional: Hubungkan Telegram
+
+Lebih sering membuka Telegram? Hubungkan akunmu ke bot Telegram — pelengkap yang praktis saat kamu sedang di aplikasi chat dan tidak ingin berpindah app. Caranya:
 
 1. Buka **Settings** di webapp
 2. Klik **Generate Link Telegram**
@@ -189,9 +204,11 @@ Perintah berguna:
 
 | Perintah | Fungsi |
 |----------|--------|
-| `/status` | Cek saldo semua amplop |
-| `/sisa` | Ringkasan sisa budget |
+| `/status` | Ringkasan budget bulan ini |
+| `/amplop` | Daftar amplop dan sisa dananya |
 | `/help` | Daftar semua perintah |
+
+Kamu juga bisa mengirim foto struk ke bot untuk mencatatnya.
 
 Semua data sinkron: transaksi yang dicatat lewat bot langsung muncul di webapp, dan sebaliknya.
 

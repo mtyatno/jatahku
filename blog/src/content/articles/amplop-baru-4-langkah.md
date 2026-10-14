@@ -2,6 +2,7 @@
 title: "Bikin Amplop Baru Sekarang Lewat 4 Langkah Singkat"
 description: "Form Amplop baru dibagi menjadi empat langkah: nama, jenis, kategori atau target, lalu pengaturan dan sumber dana. Satu langkah, satu keputusan."
 pubDate: 2026-10-05
+updatedDate: 2026-10-15
 category: tutorial
 author: Tim Jatahku
 cover: /covers/amplop-baru-4-langkah.svg
@@ -53,7 +54,7 @@ Jatahku juga menyarankan kategorinya dari nama amplop. Nama seperti "Makan" atau
 - **Grup**: masukkan amplop ke grup yang sudah ada, atau buat grup baru
 - **Rollover sisa ke bulan depan**: aktif dari awal
 - **Personal (hanya kamu)**: amplop tidak dibagikan ke anggota rumah tangga lain
-- **🎯 Behavior controls**: **🔒 Kunci amplop**, **📊 Daily limit (Rp/hari)**, dan **⏳ Cooling threshold (Rp)**. Cara kerja cooling period dibahas di [artikel ini](/insight/fitur-cooling-period-anti-belanja-impulsif/).
+- **🎯 Behavior controls**: **🔒 Kunci amplop**, **📊 Daily limit (Rp/hari)**, dan **⏳ Cooling threshold (Rp)**. Pengeluaran di atas cooling threshold tetap langsung tercatat. Batas ini akan dipakai fitur refleksi "Sepadan?" yang segera hadir. Alasannya dibahas di [artikel ini](/insight/fitur-cooling-period-anti-belanja-impulsif/).
 
 Di bagian **Sumber dana**, pilih dari mana amplop baru ini diisi:
 

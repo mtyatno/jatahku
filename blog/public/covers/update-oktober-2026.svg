@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0A4F3E"/><stop offset="100%" stop-color="#116653"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="980" cy="100" r="260" fill="rgba(255,255,255,0.04)"/>
+<circle cx="150" cy="530" r="180" fill="rgba(255,255,255,0.03)"/>
+<rect x="580" y="80" width="560" height="470" rx="36" fill="rgba(255,255,255,0.09)"/>
+
+<!-- Daftar pembaruan -->
+<rect x="650" y="132" width="420" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="860" y="165" text-anchor="middle" font-family="system-ui,sans-serif" font-size="19" font-weight="700" fill="#0F6E56">Foto struk, tercatat per barang</text>
+<rect x="650" y="200" width="420" height="52" rx="26" fill="rgba(255,255,255,0.92)"/>
+<text x="860" y="233" text-anchor="middle" font-family="system-ui,sans-serif" font-size="19" font-weight="700" fill="#0F6E56">Chat Jatahku di webapp</text>
+<rect x="650" y="268" width="420" height="52" rx="26" fill="rgba(255,255,255,0.18)"/>
+<text x="860" y="301" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="white">Transaksi tidak lagi ditahan</text>
+<rect x="650" y="336" width="420" height="52" rx="26" fill="rgba(255,255,255,0.14)"/>
+<text x="860" y="369" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="rgba(255,255,255,0.9)">Isi dana amplop dari Telegram</text>
+<rect x="650" y="404" width="420" height="52" rx="26" fill="rgba(255,255,255,0.11)"/>
+<text x="860" y="437" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="rgba(255,255,255,0.8)">Naikkan limit harian dari webapp</text>
+<rect x="650" y="472" width="420" height="52" rx="26" fill="rgba(255,255,255,0.08)"/>
+<text x="860" y="505" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="600" fill="rgba(255,255,255,0.7)">Multi-item tanpa koma di bot</text>
+
+<!-- Teks kiri -->
+<rect x="60" y="60" width="192" height="38" rx="19" fill="rgba(255,255,255,0.15)"/>
+<text x="156" y="84" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="700" fill="white" letter-spacing="1.5">UPDATE FITUR</text>
+<text x="60" y="195" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Update</text>
+<text x="60" y="260" font-family="Georgia,serif" font-size="52" font-weight="700" fill="white">Jatahku</text>
+<text x="60" y="320" font-family="Georgia,serif" font-size="42" font-weight="700" fill="rgba(255,255,255,0.75)">Oktober 2026</text>
+<text x="60" y="385" font-family="system-ui,sans-serif" font-size="20" fill="rgba(255,255,255,0.55)">2 fitur baru + banyak perbaikan</text>
+<text x="60" y="580" font-family="Georgia,serif" font-size="26" font-weight="700" fill="rgba(255,255,255,0.85)">Jatahku</text>
+<text x="170" y="580" font-family="system-ui,sans-serif" font-size="17" fill="rgba(255,255,255,0.45)">jatahku.com</text>
+</svg>
