@@ -8,6 +8,7 @@ Teks OCR disimpan sementara hanya untuk proses belajar ini, lalu dihapus.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -178,15 +179,24 @@ def find_label_for_amount(lines: list[str], amount: int) -> str | None:
 async def apply_feedback(
     user: User, scan_id, db: AsyncSession, *,
     saved: bool, total: int | None = None, txn_date: date | None = None, merchant: str | None = None,
+    wrong: bool = False,
 ) -> ReceiptScan | None:
-    """Catat nilai akhir yang disimpan user, lalu belajar dari selisihnya."""
+    """Catat nilai akhir yang disimpan user, lalu belajar dari selisihnya.
+
+    saved=False + wrong=True: user bilang hasilnya salah tapi tidak memberi nilai
+    benar (mis. tombol "Nominal salah" di bot) → dihitung sebagai koreksi.
+    """
+    try:
+        scan_id = uuid.UUID(str(scan_id))
+    except ValueError:
+        return None
     scan = await db.get(ReceiptScan, scan_id)
     if not scan or scan.user_id != user.id or scan.outcome is not None:
         return None
 
     scan.feedback_at = datetime.now(timezone.utc)
     if not saved:
-        scan.outcome = "discarded"
+        scan.outcome = "corrected" if wrong else "discarded"
         scan.ocr_lines = None
         await db.commit()
         return scan

@@ -314,3 +314,45 @@ class TestUploadValidation(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
+    async def test_photo_flow_offers_suggested_envelope_first_and_keeps_date(self):
+        from app.bot import receipt_cmd
+
+        env_a = SimpleNamespace(id=uuid4(), name="Makan", emoji="🍜", purpose="expense")
+        env_b = SimpleNamespace(id=uuid4(), name="Belanja Harian", emoji="🛒", purpose="expense")
+        env_save = SimpleNamespace(id=uuid4(), name="Tabungan", emoji="🐷", purpose="saving")
+        status_msg = MagicMock(edit_text=AsyncMock(), delete=AsyncMock())
+        tg_file = MagicMock(download_as_bytearray=AsyncMock(return_value=bytearray(b"jpg")))
+        photo = MagicMock(get_file=AsyncMock(return_value=tg_file))
+        message = MagicMock(photo=[photo], document=None, reply_text=AsyncMock(return_value=status_msg))
+        update = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=42, first_name="A"))
+        scan = {"scan_id": "abc", "merchant": "Indomaret", "date": "2026-10-14", "total": 51000,
+                "confidence": "tinggi", "quota": {"limit": 15, "used": 2, "remaining": 13}}
+        redis = MagicMock(set=AsyncMock(), aclose=AsyncMock())
+
+        session = MagicMock()
+        session.__aenter__ = AsyncMock(return_value=MagicMock())
+        session.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(receipt_cmd, "_rate_limited", AsyncMock(return_value=False)), \
+             patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
+             patch("app.bot.handlers.get_or_create_user", AsyncMock(return_value=_user())), \
+             patch("app.bot.handlers._is_setup_complete", AsyncMock(return_value=(True, ""))), \
+             patch("app.bot.handlers.get_household_id", AsyncMock(return_value=uuid4())), \
+             patch("app.bot.handlers.get_envelopes_with_spent", AsyncMock(return_value=[
+                 {"envelope": env_a}, {"envelope": env_save}, {"envelope": env_b}])), \
+             patch("app.services.receipt_scan.scan_receipt", AsyncMock(return_value=scan)), \
+             patch("app.services.txn_nlp.find_best_envelope", AsyncMock(return_value=(env_b, True))), \
+             patch("redis.asyncio.from_url", return_value=redis):
+            await receipt_cmd.handle_receipt_photo(update, None)
+
+        text = status_msg.edit_text.call_args[0][0]
+        self.assertIn("Indomaret", text)
+        self.assertIn("Rp 51.000", text)
+        self.assertIn("13/15", text)
+        rows = status_msg.edit_text.call_args[1]["reply_markup"].inline_keyboard
+        self.assertTrue(rows[0][0].text.startswith("⭐"))       # saran amplop di atas
+        self.assertNotIn("Tabungan", " ".join(r[0].text for r in rows))  # amplop tabungan disembunyikan
+        stored = json.loads(redis.set.call_args[0][1])
+        self.assertEqual((stored["date"], stored["scan_id"], stored["amount"]), ("2026-10-14", "abc", 51000))

@@ -1240,6 +1240,14 @@ async def handle_txn_callback(update, context):
     amount = Decimal(str(data["amount"]))
     description = data["desc"]
     envelope_id = data["envs"].get(env_idx)
+    # Dari scan struk: tanggal struk + scan_id untuk feedback belajar (opsional).
+    txn_date = date.today()
+    if data.get("date"):
+        try:
+            txn_date = date.fromisoformat(data["date"])
+        except ValueError:
+            pass
+    scan_id = data.get("scan_id")
     if not envelope_id:
         await query.edit_message_text("Error: amplop tidak valid.")
         return
@@ -1289,10 +1297,20 @@ async def handle_txn_callback(update, context):
                 return
 
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
-            description=description, source=TransactionSource.telegram, transaction_date=date.today())
+            description=description, source=TransactionSource.telegram, transaction_date=txn_date)
         db.add(txn)
         await db.commit()
         streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
+        if scan_id:
+            try:
+                from app.services.receipt_scan import apply_feedback
+                await apply_feedback(user, scan_id, db, saved=True, total=int(amount),
+                                     txn_date=txn_date, merchant=description)
+            except Exception as exc:  # feedback best-effort, jangan ganggu transaksi
+                logger.warning("feedback struk gagal: %s", exc)
+            r = aioredis.from_url(get_settings().REDIS_URL)
+            await r.delete(f"txn:{txn_key}")  # cegah tersimpan dua kali dari tombol yang sama
+            await r.aclose()
         envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
         remaining = env_data["remaining"] if env_data else Decimal("0")
@@ -1472,12 +1490,10 @@ async def handle_addsub_callback(update, context):
 
 async def handle_non_text(update, context):
     """Handle photos, stickers, voice, etc."""
-    if update.message.photo:
-        await update.message.reply_text(
-            "📸 Fitur scan struk belum tersedia.\n"
-            "Untuk catat pengeluaran, kirim seperti:\n"
-            "• `35k starbucks`\n• `kopi 35rb`",
-            parse_mode="Markdown")
+    doc = update.message.document
+    if update.message.photo or (doc and (doc.mime_type or "").startswith("image/")):
+        from app.bot.receipt_cmd import handle_receipt_photo
+        await handle_receipt_photo(update, context)
     elif update.message.sticker:
         await update.message.reply_text("😄 Stiker lucu! Tapi saya cuma bisa bantu catat pengeluaran.\nKirim: `35k kopi`", parse_mode="Markdown")
     elif update.message.voice or update.message.audio:
@@ -1548,6 +1564,8 @@ def create_bot_app():
     from app.bot.batch_cmd import handle_batch_callback, handle_batch_shift_callback
     app.add_handler(CallbackQueryHandler(handle_batch_callback, pattern=r"^batch_"))
     app.add_handler(CallbackQueryHandler(handle_batch_shift_callback, pattern=r"^bshift_"))
+    from app.bot.receipt_cmd import handle_struk_callback
+    app.add_handler(CallbackQueryHandler(handle_struk_callback, pattern=r"^struk_"))
     async def _handle_intent_learn(update, context):
         from app.bot.intent_learning import handle_intent_learn_callback
         await handle_intent_learn_callback(update.callback_query, context, settings)
