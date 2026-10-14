@@ -5,6 +5,14 @@ User webapp bisa memakai @JatahkuBot tanpa Telegram: panel chat di PWA
 PWA "Chat bot"). Otaknya **handler bot Telegram yang sama** — tidak ada logika
 kedua yang harus dirawat.
 
+**Mobile = bottom sheet yang bisa dibuka-tutup dengan jempol:**
+- buka: tombol chat di samping FAB (sekali ketuk);
+- tutup: tombol ⌄ di kiri kotak ketik, tarik header ke bawah, ketuk latar
+  redup di atas sheet, atau tombol/gestur Back Android (membuka chat menambah
+  satu entri riwayat; menutup lewat tombol mengambilnya kembali).
+
+Desktop: panel samping di bawah header, ditutup dengan X.
+
 ## Alur
 
 ```
