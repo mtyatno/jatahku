@@ -334,6 +334,89 @@ async def transcribe_endpoint(
     return {"text": await _transcribe_request(audio)}
 
 
+# ── Scan struk (OCR RapidOCR, tanpa LLM; fallback LLM opsional ber-plafon) ──
+
+# Client mengompres foto (sisi panjang ≤1600px, JPEG) jadi ±300 KB; batas ini
+# menampung foto mentah dari klien lama / bot.
+MAX_RECEIPT_BYTES = 8 * 1024 * 1024
+RECEIPT_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+
+
+async def _read_receipt_upload(image: UploadFile) -> tuple[bytes, str]:
+    """Validasi upload foto struk. Tanpa deps framework supaya mudah di-test."""
+    content_type = (image.content_type or "").split(";")[0].strip().lower()
+    if content_type not in RECEIPT_MIME:
+        raise HTTPException(status_code=415, detail="Format foto tidak didukung. Pakai JPG, PNG, atau WebP.")
+    data = await image.read(MAX_RECEIPT_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=422, detail="Foto kosong, coba lagi")
+    if len(data) > MAX_RECEIPT_BYTES:
+        raise HTTPException(status_code=413, detail="Foto terlalu besar (maks 8 MB)")
+    return data, content_type
+
+
+async def run_receipt_scan(user: User, data: bytes, content_type: str, db: AsyncSession) -> dict:
+    """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web."""
+    from app.services.receipt_ocr import OcrFailed, OcrUnavailable
+    from app.services.receipt_scan import ScanQuotaExceeded, scan_receipt
+
+    try:
+        return await scan_receipt(user, data, content_type, db)
+    except ScanQuotaExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Kuota scan struk bulan ini ({exc.limit}x) sudah habis. Upgrade ke Pro untuk scan tanpa batas, atau catat manual.",
+        )
+    except OcrUnavailable:
+        raise HTTPException(status_code=503, detail="Scan struk sedang tidak tersedia. Catat manual dulu ya.")
+    except OcrFailed:
+        raise HTTPException(status_code=422, detail="Foto tidak bisa dibuka. Coba foto ulang.")
+
+
+class ReceiptFeedback(BaseModel):
+    saved: bool
+    total: Decimal | None = None
+    transaction_date: date | None = None
+    merchant: str | None = None
+
+
+@router.get("/scan-receipt/quota")
+async def receipt_scan_quota(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.receipt_scan import get_quota
+    return (await get_quota(user, db)).as_dict()
+
+
+@router.post("/scan-receipt")
+@limiter.limit("30/hour", key_func=transcribe_key_func)
+async def scan_receipt_endpoint(
+    request: Request,
+    image: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    data, content_type = await _read_receipt_upload(image)
+    return await run_receipt_scan(user, data, content_type, db)
+
+
+@router.post("/scan-receipt/{scan_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
+async def receipt_scan_feedback(
+    scan_id: UUID,
+    req: ReceiptFeedback,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Nilai akhir yang disimpan user → bahan belajar parser. Best-effort."""
+    from app.services.receipt_scan import apply_feedback
+    await apply_feedback(
+        user, scan_id, db, saved=req.saved,
+        total=int(req.total) if req.total is not None else None,
+        txn_date=req.transaction_date, merchant=req.merchant,
+    )
+
+
 @router.get("/", response_model=list[TransactionResponse])
 async def list_transactions(
     envelope_id: UUID | None = Query(None),

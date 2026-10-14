@@ -1,0 +1,141 @@
+{
+ "_note": "Baris hasil RapidOCR dari 4 foto struk Indomaret asli (nomor kartu/member disamarkan). Dipakai test parser.",
+ "receipts": [
+  {
+   "id": "s1",
+   "expect": {
+    "merchant": "Indomaret",
+    "date": "2025-05-24",
+    "total": 140500
+   },
+   "lines": [
+    "PT INDOMARCO PRISMATAMA",
+    "GEDUNG MENARA INDOMARET  Indomaret",
+    "BOULEVARD PANTAI INDAH KAPUK",
+    "JAKARTA UTARA",
+    "NPWVP 001 337 994 6-092.000",
+    "LODAYA",
+    "JL. KERAMIK KP. TANAH BARU KEL.KARANG BARU",
+    "KEC. CIKARANG UTARA, KAB. BEKASI, 17534",
+    "24.05.25-09:11/3.0.27/THTV-363626/NUR A/01",
+    "IDM KTG PLSTK 1W BSR  1  300  300",
+    "NBATI SIIP COKLAT 57  1  6700  6,700",
+    "NBATI SIIP JG.BKR 62  1  6700  6,700",
+    "SCORA GENTLE CLEAN75  1  37900  37,900",
+    "SOKLN SOFTR ROSY 720  1 18900  18,900",
+    "VOUCHER :  (3,000)",
+    "CHOCOLITO RC.CHO 38G  16000  6,000",
+    "VOUCHER :  (1,000)",
+    "HOLISTICARE VIT.C 30  1 60000  60,000",
+    "YC SS BKR SAPI KEJU  1 13000  13,000",
+    "VOUCHER :  (5,000)",
+    "TOTAL BELANJA :  140,500",
+    "TUNAI  150,000",
+    "KEMBALI  9,500",
+    "ANDA HEMAT  9,000",
+    "P= 123,461 PPN= 14,815",
+    "NKONSUMEN",
+    "500.280TELP 1500280",
+    "DINDOMARET.CO.ID",
+    "LEBIH MUDAH DI",
+    "LIKINDOMARET",
+    "IGKIR 1 JAM SAMPAI",
+    "2025.05.2410:06"
+   ]
+  },
+  {
+   "id": "s2",
+   "expect": {
+    "merchant": "Indomaret",
+    "date": "2023-12-06",
+    "total": 51000
+   },
+   "lines": [
+    "Indomaret",
+    "WP01337.9946-092000",
+    "KEBANTENAN RAYA 85",
+    "JL.KEBANTENAN RAYA 1 NO.85A RT.03/08",
+    "KEC CILINCING,KOTA JAKARTA UTARA, 14130",
+    "06.12.23-13:48/3.0.11/T4X9  15345/LINDA/01",
+    "INDOMI KARI AYAM 72G  3100  3,100",
+    "KOBE TB SRBG PRM 130  9500  9,500",
+    "VC KOBE BOGA  UTA :  (4,800)",
+    "TST BA B B S.5K  5500  5,500",
+    "CAMEL ACT.P MINT 20S  29300  29.300",
+    "CTRA SBN CRH PEARL70  2  4200  8,400",
+    "HARGA JUAL :  51,000",
+    "TOTAL :  51,000",
+    "TUNAI :  51,000",
+    "ANDA HEMAT :  4,800",
+    "PPN  : DPP= 23,874 PPN= 2,626",
+    "CUKAI  : DPP= 29,300",
+    "CUST.CARE SMS 08111500280-WA 081295158435",
+    "CALL 1500 280 - KONTAK@INDOMARET.CO.ID",
+    "BELANJA LEBIH MUDAH DI WWW.KLIKINDOMARET.C",
+    "OM  1 JAM PASTI SAMPAI"
+   ]
+  },
+  {
+   "id": "s3",
+   "expect": {
+    "merchant": "Indomaret",
+    "date": "2022-09-24",
+    "total": 70600
+   },
+   "lines": [
+    "PT.INDOMARCO PRISMATAMA",
+    "GEDUNG MENARA INDOMARET  Indoma et",
+    "BOULEVARD PANTAIINDAH KAPUK",
+    "JAKARTA UTARA",
+    "NPWP:01337.994.6-092.000",
+    "BRONGGALAN 081131187936",
+    "JL. BRONGGALAN NO. 4, KEL. PACAR KEMBANG",
+    "KEC. TAMBAKSARI, KOTA SURABAYA, 60132",
+    "24.09.22-06:53/2.2.17/TVK7  36314/RINDI/01",
+    "IDM F.TIS NP SP 900G  37800  37,800",
+    "S/M TLK.ANGN FLU 5'S  1  21700  21,700",
+    "PLOSSA  P&S CITRUS  10  1  17000  17,000",
+    "IDM DSINFCT AQUA 225  1  22900  22,900",
+    "HARGA JUAL :  99,400",
+    "VC PL :  (5,900)",
+    "VC INDOMARCO PRI  (22,900)",
+    "TOTAL :  70,600",
+    "NON TUNAI :  70,600",
+    "ANDA HEMAT :  28,800",
+    ": DPP= 89,550 PPN= 9,850",
+    "PPN  MANDIRI DEBIT GOLD-TRXID:515209",
+    "NO:**********0000,PURCHASE:70,600",
+    "ID POINKU : XXX0000/YUX GXX XXX",
+    "CEK PEROLEHAN POIN/STAMP/LUCKY DI APPS POINKU",
+    "LAYANAN KONSUMEN SMS 0811 1500 280",
+    "CALL 1500 280 - KONTAK@INDOMARET.CO.ID"
+   ]
+  },
+  {
+   "id": "s4",
+   "expect": {
+    "merchant": "Indomaret",
+    "date": "2019-04-15",
+    "total": 9200
+   },
+   "lines": [
+    "PIICLNAICO PRMATAMA",
+    "ALANCCLPBHICAACOE  Indomaret",
+    "BARATA JAYA B2 SURABAYA 08880151057",
+    "JL BARATA JAYA XIX NO B2 SURABAYA. SURABAY",
+    "A. 60284",
+    "15.04.19-07:32  2:1.42  349/MOCH HAN/02",
+    "ULTRA KCNG HI JAU 250  4700  4.700",
+    "S/ROTI KR1M KEJU 720  4500  40",
+    "HARGA JUAL  9,200",
+    "TOTAL:  9,200",
+    "TUNAL  50.000",
+    "KEHBALI  40.800",
+    ": DPP= 8.364 PPN= 836",
+    "LAYANAN KONSLIMEN SMS 0811 1500 280",
+    "PPN  CALL 1500 280- KONTAKBINDOMARET.CO.ID",
+    "INE LO LN    DLINE"
+   ]
+  }
+ ]
+}

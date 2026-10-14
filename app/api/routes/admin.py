@@ -962,3 +962,19 @@ async def broadcast_article(
                 failed += 1
 
     return {"status": "ok", "sent": sent, "failed": failed, "total": len(users)}
+
+
+@router.get("/receipt-scans/stats")
+async def receipt_scan_stats(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Akurasi scan struk bulan ini + pemakaian fallback LLM vs plafon."""
+    from app.services.receipt_scan import accuracy_stats
+    from app.services.receipt_llm import budget_status
+    stats = await accuracy_stats(db)
+    try:
+        stats["llm_budget"] = await budget_status()
+    except Exception:  # Redis mati → tetap tampilkan statistik OCR
+        stats["llm_budget"] = None
+    return stats
