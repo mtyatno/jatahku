@@ -373,7 +373,7 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return { ok: res.ok, data: await res.json() };
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
   }
 
   async suggestEnvelope(description) {

@@ -8,6 +8,7 @@ import ReceiptInput from './ReceiptInput';
 import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
 import { buildPlan } from '../lib/receiptSplit';
+import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
 
@@ -51,14 +52,6 @@ function isReady(item) {
   return !!item.envelopeId;
 }
 
-// Kunci idempotensi per transaksi: kirim ulang (respons hilang) tidak tercatat dua kali.
-function newRef() {
-  try {
-    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  } catch {}
-  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-}
-
 const patchPlanGroup = (item, gid, patch) => ({
   ...item,
   plan: (item.plan || []).map(g => (g.id === gid ? { ...g, ...patch } : g)),
@@ -70,12 +63,19 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
   const isReceipt = item.origin === 'receipt';
   const doubtful = isReceipt && item.confidence !== 'tinggi';
 
+  // Hasil simpan belum pasti: isian dikunci supaya kirim ulang (kunci yang sama)
+  // tidak membawa nilai berbeda dari yang mungkin sudah tercatat.
   return (
-    <div className={`
+    <fieldset disabled={!!item.uncertain} className={`
       group flex flex-col md:grid md:grid-cols-12 gap-2 md:gap-3 items-start md:items-center
       py-2 md:py-1.5 border-b border-gray-100 last:border-0
       ${!item.envelopeId ? 'bg-amber-50/50 -mx-2 px-2 rounded' : ''}
     `}>
+      {item.uncertain && (
+        <span className="md:col-span-12 text-xs text-amber-700">
+          Hasil simpan belum pasti — tekan Simpan Semua lagi (tidak akan tercatat dua kali).
+        </span>
+      )}
       <div className="flex items-center gap-2 md:col-span-5 min-w-0">
         <button
           type="button"
@@ -167,7 +167,7 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
         )}
         {item.saving && <span className="text-xs text-gray-400">...</span>}
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -184,6 +184,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   const lastParsedRef = useRef('');
   const keySeq = useRef(0);
   const nextKey = () => `i${++keySeq.current}`;
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   const loadEnvelopes = useCallback(async () => {
     try {
@@ -435,9 +437,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       return;
     }
     // Setiap transaksi diberi kunci idempotensi sekali, lalu dipakai ulang di
-    // percobaan berikutnya; rencana struk dibekukan dengan kuncinya.
+    // percobaan berikutnya; rencana struk dibekukan bersama kuncinya.
     const plans = {};
-    const withRefs = items.map(item => {
+    const snapshot = items.map(item => {
       if (!isReady(item)) return item;
       if (hasReceiptItems(item)) {
         plans[item.key] = receiptPlan(item).map(g => (g.ref ? g : { ...g, ref: newRef() }));
@@ -445,11 +447,32 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
       return item.ref ? item : { ...item, ref: newRef() };
     });
-    const pending = withRefs.filter(isReady);
+    const snapshotKeys = new Set(snapshot.map(i => i.key));
+    const pending = snapshot.filter(isReady);
     const parts = pending.flatMap(item => toParts(item, plans[item.key]));
 
     setSaving(true);
     setResultMsg(null);
+
+    // Terapkan hasil ke daftar TERBARU: entri yang masuk selama menyimpan (mis.
+    // scan struk yang baru selesai) tetap ada. Baris teks yang tersisa jadi baris
+    // "tertahan" dan kotak teks dikosongkan, supaya mengetik ulang tidak mem-parse
+    // ulang baris yang mungkin sudah tercatat.
+    // holdText=false: tidak ada yang tercatat & tidak ada yang belum pasti → baris
+    // teks tetap bisa diedit lewat kotak teks seperti biasa.
+    const applyResult = (updatedByKey, removeKeys, holdText = true) => {
+      const hold = i => (holdText && i.origin === 'text' ? { ...i, origin: 'held' } : i);
+      setItems(prev => prev
+        .filter(i => !removeKeys.has(i.key))
+        .map(i => (updatedByKey[i.key] ? hold(updatedByKey[i.key]) : (snapshotKeys.has(i.key) ? hold(i) : i))));
+      if (holdText) {
+        setRawText('');
+        lastParsedRef.current = '';
+      }
+      const arrivals = itemsRef.current.filter(i => !snapshotKeys.has(i.key));
+      const leftover = snapshot.filter(i => !removeKeys.has(i.key));
+      return leftover.length === 0 && arrivals.length === 0;
+    };
 
     if (!navigator.onLine) {
       for (const part of parts) {
@@ -457,9 +480,8 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
       setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      const left = withRefs.filter(i => !isReady(i));
-      finishWith(left);
-      if (left.length === 0) onSaved?.();
+      const done = applyResult({}, new Set(pending.map(i => i.key)));
+      if (done) onSaved?.();
       return;
     }
 
@@ -467,11 +489,20 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     setSaving(false);
 
     if (!result.ok) {
-      // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Rencana &
-      // kunci idempotensi dipertahankan, jadi percobaan ulang tidak mencatat dua kali;
-      // struk ditandai "belum pasti" sehingga rinciannya tidak bisa diubah dulu.
-      setItems(withRefs.map(item => (plans[item.key] ? { ...item, uncertain: true } : item)));
-      setResultMsg({ type: 'error', text: 'Gagal menyimpan. Coba lagi.' });
+      // Respons gagal/hilang: sebagian mungkin sudah tercatat di server. Baris yang
+      // dikirim ditandai "belum pasti" & dikunci; kunci idempotensinya dipertahankan,
+      // jadi Simpan Semua lagi tidak mencatat dua kali.
+      const updated = {};
+      pending.forEach(item => {
+        updated[item.key] = {
+          ...item,
+          uncertain: true,
+          error: null,
+          ...(plans[item.key] ? { plan: plans[item.key].map(g => ({ ...g, error: null })) } : {}),
+        };
+      });
+      applyResult(updated, new Set());
+      setResultMsg({ type: 'error', text: 'Koneksi terputus saat menyimpan. Tekan Simpan Semua lagi — tidak akan tercatat dua kali.' });
       return;
     }
 
@@ -479,14 +510,18 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     const data = result.data || [];
     const okKeys = new Set();
     const errByKey = {};
-    const groupResult = {}; // key → gid → { ok, error }
+    const pendingKeys = new Set();
+    const groupResult = {}; // key → gid → { ok, error, pending }
     let successCount = 0;
     data.forEach(r => {
       const part = parts[r.index];
       if (!part) return;
       if (r.ok) successCount++;
+      if (r.pending) pendingKeys.add(part.key);
       if (part.gid) {
-        (groupResult[part.key] = groupResult[part.key] || {})[part.gid] = { ok: r.ok, error: r.ok ? null : (r.error || 'Gagal') };
+        (groupResult[part.key] = groupResult[part.key] || {})[part.gid] = {
+          ok: r.ok, pending: !!r.pending, error: r.ok ? null : (r.error || 'Gagal'),
+        };
       } else if (r.ok) okKeys.add(part.key);
       else errByKey[part.key] = r.error || 'Gagal';
     });
@@ -507,20 +542,24 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
       }
     });
 
-    const nextItems = withRefs
-      .filter(item => !okKeys.has(item.key))
-      .map(item => {
-        if (nextPlans[item.key]) {
-          const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
-          return { ...item, plan: nextPlans[item.key], uncertain: false, error: firstErr };
-        }
-        return errByKey[item.key] ? { ...item, error: errByKey[item.key] } : { ...item, error: null };
-      });
+    const updated = {};
+    pending.forEach(item => {
+      if (okKeys.has(item.key)) return;
+      // "Sedang diproses" = kiriman lain dengan kunci yang sama belum selesai:
+      // belum pasti, bukan gagal permanen.
+      const uncertain = pendingKeys.has(item.key);
+      if (nextPlans[item.key]) {
+        const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
+        updated[item.key] = { ...item, plan: nextPlans[item.key], uncertain, error: firstErr };
+      } else {
+        updated[item.key] = { ...item, uncertain, error: errByKey[item.key] || null };
+      }
+    });
 
     if (successCount > 0) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-      finishWith(nextItems);
-      if (nextItems.length === 0) {
+      const done = applyResult(updated, okKeys);
+      if (done) {
         setResultMsg({ type: 'success', text: `${successCount} transaksi berhasil disimpan` });
         onSaved?.();
       } else {
@@ -530,21 +569,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
         });
       }
     } else {
-      setItems(nextItems);
+      applyResult(updated, new Set(), pendingKeys.size > 0);
       const firstErr = (result.data || []).find(d => d.error)?.error || 'Gagal menyimpan';
       setResultMsg({ type: 'error', text: firstErr });
     }
-  };
-
-  // Sesudah ada yang tersimpan: kotak teks dikosongkan dan baris teks yang
-  // tersisa tetap di daftar sebagai baris "tertahan" (tidak di-parse ulang).
-  // Kalau teks lama dibiarkan, mengetik ulang akan mem-parse ulang baris yang
-  // sudah tercatat → tercatat dua kali; kalau teks ditulis ulang, nominal bisa
-  // terbaca lain ("beli 3 roti 15000" → Rp3).
-  const finishWith = (left) => {
-    setItems(left.map(i => (i.origin === 'text' ? { ...i, origin: 'held' } : i)));
-    setRawText('');
-    lastParsedRef.current = '';
   };
 
   const hasItems = items.length > 0;

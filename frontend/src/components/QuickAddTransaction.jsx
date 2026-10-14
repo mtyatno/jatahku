@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
 import { enqueueTransaction } from '../lib/offlineQueue';
+import { newRef } from '../lib/ref';
 import { shouldShowPrivateToggle } from '../lib/privateToggle';
 import { parseAmount } from '../lib/parseAmount';
 import { Icon } from './Icon';
@@ -86,7 +87,12 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     }
   };
 
+  // Kunci idempotensi transaksi yang sedang diisi; dipakai ulang saat kirim
+  // ulang (respons hilang) dan diganti baru setelah berhasil.
+  const clientRefRef = useRef(null);
+
   const reset = () => {
+    clientRefRef.current = null;
     setAmount(''); setDescription(''); setEnvelopeId('');
     setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false);
   };
@@ -97,7 +103,8 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const submit = async (extra = {}) => {
     if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
     setSaving(true); setError('');
-    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, ...extra };
+    clientRefRef.current = clientRefRef.current || newRef();
+    const payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, client_ref: clientRefRef.current, ...extra };
 
     if (!navigator.onLine) {
       await enqueueTransaction(payload);
@@ -108,13 +115,22 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
       return;
     }
 
-    const result = await api.createTransaction(payload);
+    let result;
+    try {
+      result = await api.createTransaction(payload);
+    } catch {
+      setSaving(false);
+      setError('Koneksi terputus. Coba simpan lagi — tidak akan tercatat dua kali.');
+      return;
+    }
     setSaving(false);
     if (result.ok) {
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       reset();
       onSaved?.();
     } else {
+      // Ditolak pasti (bukan 409 "masih diproses") → tidak tercatat; kunci baru.
+      if (result.status !== 409) clientRefRef.current = null;
       setError(result.data?.detail || 'Gagal menyimpan transaksi');
     }
   };

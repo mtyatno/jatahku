@@ -88,3 +88,17 @@ async def release(user_id, ref: str | None) -> None:
             await r.aclose()
     except Exception as exc:
         logger.warning("idempotency release gagal: %s", exc)
+
+
+async def forget(user_id, ref: str | None) -> None:
+    """Hapus kunci yang menunjuk transaksi yang sudah tidak ada (dihapus/digabung)."""
+    if not ref:
+        return
+    try:
+        r = _redis()
+        try:
+            await r.delete(_key(user_id, ref))
+        finally:
+            await r.aclose()
+    except Exception as exc:
+        logger.warning("idempotency forget gagal: %s", exc)

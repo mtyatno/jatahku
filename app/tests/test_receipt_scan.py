@@ -361,6 +361,29 @@ class TestReceiptItemsSecondReview(unittest.TestCase):
         self.assertEqual([i.name for i in p.items], ["PAKET PROMO"])
 
 
+class TestReceiptItemsThirdReview(unittest.TestCase):
+    TODAY = date(2026, 10, 14)
+
+    def parse(self, text):
+        return parse_receipt(text.strip().splitlines(), today=self.TODAY)
+
+    def test_payment_words_inside_item_names_without_total(self):
+        p = self.parse("KONTER PULSA\n14/10/2026\nTOP UP GOPAY 50.000\nPULSA 25.000\nVOUCHER GAME 20.000\n"
+                       "KARTU PERDANA 15.000\nSTIKER 5.000\nBATERAI 10.000")
+        self.assertEqual(len(p.items), 6)
+        self.assertEqual((p.total, p.confidence_source), (125000, "items_sum"))
+
+    def test_positive_voucher_line_becomes_item_when_that_reconciles(self):
+        p = self.parse("KONTER PULSA\n14/10/2026\nTOP UP GOPAY 50.000\nVOUCHER GAME 20.000\n"
+                       "KARTU PERDANA 15.000\nTOTAL 85.000\nTUNAI 100.000\nKEMBALI 15.000")
+        self.assertEqual(p.reconciliation.status, "cocok")
+        self.assertIn("VOUCHER GAME", [i.name for i in p.items])
+
+    def test_bank_prefixed_card_line_still_a_payment(self):
+        p = self.parse("TOKO\n14/10/2026\nGULA 1 20.000 20.000\nMINYAK 1 49.300 49.300\nBCA DEBIT 69.300")
+        self.assertEqual((p.total, p.confidence), (69300, "tinggi"))
+
+
 class TestBuildLines(unittest.TestCase):
     @staticmethod
     def box(x0, y0, x1, y1):
@@ -710,6 +733,15 @@ class TestIdempotency(unittest.IsolatedAsyncioTestCase):
             await idempotency.reserve("u1", "ref-b")
             await idempotency.release("u1", "ref-b")
             self.assertTrue(await idempotency.reserve("u1", "ref-b"))
+
+    async def test_forget_removes_stale_key(self):
+        from app.services import idempotency
+        r = FakeRedisKV()
+        with patch.object(idempotency, "_redis", return_value=r):
+            await idempotency.store("u1", "ref-d", "txn-hilang")
+            await idempotency.forget("u1", "ref-d")
+            self.assertIsNone(await idempotency.lookup("u1", "ref-d"))
+            self.assertTrue(await idempotency.reserve("u1", "ref-d"))
 
     async def test_no_ref_or_redis_down_fails_open(self):
         from app.services import idempotency

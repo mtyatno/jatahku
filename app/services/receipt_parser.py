@@ -349,6 +349,27 @@ def _skip_line(up: str) -> bool:
     return bool(NOISE_LINE.search(up) or MASKED.search(up))
 
 
+PAYMENT_TAIL_LINES = 4
+# Label pembayaran di awal baris (boleh diawali nama bank): "BCA DEBIT 69.300".
+PAYMENT_START = re.compile(
+    r"^[^A-Z0-9]*(?:(?:BCA|BNI|BRI|MANDIRI|CIMB|BSI|PERMATA|DANAMON|BTN|OCBC|MAYBANK|JENIUS|MEGA|PANIN)\s+)?"
+    r"(TUNAI|CASH|KEMBALI(AN)?|CHANGE|NON\s*TUNAI|DEBIT|KREDIT|CREDIT|QRIS|GOPAY|OVO|DANA|SHOPEEPAY|LINKAJA"
+    r"|FLAZZ|E-?MONEY|BRIZZI|EDC|KARTU\s+(DEBIT|KREDIT)|BAYAR|PEMBAYARAN|UANG\s*DITERIMA)\b"
+)
+
+
+def _payment_start(lines: list[str]) -> tuple[int, bool]:
+    """(baris pertama yang boleh berisi pembayaran, wajib berlabel?).
+
+    Ada baris ringkasan → mulai dari situ. Tidak ada → hanya beberapa baris
+    terakhir, dan barisnya harus diawali label pembayaran (nama barang seperti
+    "TOP UP GOPAY" atau "KARTU PERDANA" bukan pembayaran)."""
+    first = next((i for i, l in enumerate(lines) if _is_summary(l.upper())), None)
+    if first is not None:
+        return first, False
+    return max(0, len(lines) - PAYMENT_TAIL_LINES), True
+
+
 def _payments(lines: list[str]):
     """(tunai, kembali, [non-tunai]) — masing-masing (nilai, baris) atau None.
 
@@ -357,11 +378,13 @@ def _payments(lines: list[str]):
     """
     cash = change = None
     cards: list[tuple[int, str]] = []
-    first = next((i for i, l in enumerate(lines) if _is_summary(l.upper())), 0)
+    first, need_label = _payment_start(lines)
     for i, line in enumerate(lines):
         if i < first:
             continue
         up = line.upper()
+        if need_label and not PAYMENT_START.search(up):
+            continue
         if _skip_line(up) or "TOTAL" in up:
             continue
         if CHANGE_KEYS.search(up):
@@ -382,11 +405,13 @@ def _payments(lines: list[str]):
 def payment_line_indices(lines: list[str]) -> list[int]:
     """Indeks baris tunai/kembali/non-tunai yang dipakai _payments (urut naik)."""
     out = []
-    first = next((i for i, l in enumerate(lines) if _is_summary(l.upper())), 0)
+    first, need_label = _payment_start(lines)
     for i, line in enumerate(lines):
         if i < first:
             continue
         up = line.upper()
+        if need_label and not PAYMENT_START.search(up):
+            continue
         if _skip_line(up) or "TOTAL" in up:
             continue
         if (CHANGE_KEYS.search(up) or CARD_KEYS.search(up) or CASH_KEYS.search(up)) and _amount_for(lines, i):
@@ -614,7 +639,9 @@ def _parse_line(line: str):
 
     if tneg or (DISCOUNT_LABEL.search(name.upper()) and unit is None and qty is None):
         if tval >= MIN_AMOUNT // 2 and not tdec:
-            return ("discount", name or "Diskon", tval)
+            # Nominal positif dengan kata diskon ("VOUCHER GAME 20.000") bisa juga
+            # barang → ditandai ambigu, diputuskan saat dicocokkan dengan total.
+            return ("discount", name or "Diskon", tval, not tneg)
         return None
     if letters < 2:
         return None
@@ -856,6 +883,7 @@ def extract_items(lines: list[str], total: int | None, total_idx: int | None, *,
 
     items: list[ReceiptItem] = []
     adjustments: list[ReceiptAdjustment] = []
+    ambiguous: list = []  # (pemilik diskon, label, nilai, baris awal, baris akhir)
     last_item_end = None
     for i, j, line in _merge_two_line_items(lines, start, end):
         up = line.upper()
@@ -870,12 +898,16 @@ def extract_items(lines: list[str], total: int | None, total_idx: int | None, *,
         if not parsed:
             continue
         if parsed[0] == "discount":
-            _, label, value = parsed
+            _, label, value, is_ambiguous = parsed
             if items and last_item_end == i - 1:  # voucher tepat di bawah barangnya
                 items[-1].discount += value
                 last_item_end = j  # voucher berikutnya tetap ke barang yang sama
+                owner = items[-1]
             else:
-                adjustments.append(ReceiptAdjustment(label=label, amount=value, kind="discount"))
+                owner = ReceiptAdjustment(label=label, amount=value, kind="discount")
+                adjustments.append(owner)
+            if is_ambiguous:
+                ambiguous.append((owner, label, value, i, j))
             continue
         item = parsed[1]
         item.line, item.line_end = i, j
@@ -898,12 +930,40 @@ def extract_items(lines: list[str], total: int | None, total_idx: int | None, *,
                 continue  # ringkasan dari diskon yang sudah dihitung
         adjustments.append(adj)
 
+    _resolve_ambiguous(items, adjustments, ambiguous, total if annotate else None)
     if annotate:
         rec = _annotate(items, adjustments, total)
     else:
         _flag_mismatches(items)
         rec = reconcile(items, adjustments, total)
     return items, adjustments, rec
+
+
+def _resolve_ambiguous(items, adjustments, ambiguous, total) -> None:
+    """Baris "diskon" bernominal positif: jadikan barang kalau itu yang membuat
+    rincian cocok dengan total; tanpa total yang bisa dipercaya → barang."""
+    if not ambiguous:
+        return
+    if total is not None:
+        diff = reconcile(items, adjustments, total).diff
+        # Diskon → barang menaikkan perkiraan 2 × nilai.
+        pick = [a for a in ambiguous if diff == 2 * a[2]]
+        if not pick:
+            return
+        flip = pick[:1]
+        note = "Dibaca sebagai barang (bukan diskon) agar cocok dengan total"
+    else:
+        flip = ambiguous
+        note = None
+    for owner, label, value, i, j in flip:
+        if isinstance(owner, ReceiptItem):
+            owner.discount -= value
+        elif owner in adjustments:
+            adjustments.remove(owner)
+        item = ReceiptItem(name=label, amount=value, read_amount=value, line=i, line_end=j,
+                           flag="auto" if note else "ok", note=note)
+        items.append(item)
+    items.sort(key=lambda it: it.line)
 
 
 # ── Entry point ─────────────────────────────────────────────────────────────

@@ -241,7 +241,7 @@ export default function ReceiptCard({
           </div>
           {plan.map(g => (
             <div key={g.id} className="flex items-center gap-2 flex-wrap">
-              {frozen && !g.saved && g.error ? (
+              {frozen && !g.saved && g.error && !entry.uncertain ? (
                 <select
                   className="flex-1 min-w-0 text-xs bg-transparent border border-gray-200 rounded px-1 py-0.5"
                   value={g.envelopeId}
@@ -264,10 +264,10 @@ export default function ReceiptCard({
               {g.error && !g.saved && (
                 <span className="w-full flex items-center gap-2 flex-wrap text-red-500">
                   <span title={g.error}>Gagal: {g.error}</span>
-                  {isInsufficient(g.error) && (
+                  {isInsufficient(g.error) && !entry.uncertain && (
                     <button type="button" disabled={saving} onClick={() => onFundGroup(entry.key, g.envelopeId, g.amount, g.id)} className="text-brand-600 underline font-medium">Geser</button>
                   )}
-                  {isDailyLimit(g.error) && (
+                  {isDailyLimit(g.error) && !entry.uncertain && (
                     <button type="button" disabled={saving} onClick={() => onRaiseLimitGroup(entry.key, g.id)} className="text-brand-600 underline font-medium">Naikkan limit</button>
                   )}
                 </span>

@@ -114,6 +114,9 @@ class BatchTransactionResult(BaseModel):
     id: UUID | None = None
     description: str
     error: str | None = None
+    # True = kiriman lain dengan client_ref yang sama masih diproses; hasil
+    # belum pasti (klien jangan menganggapnya gagal permanen).
+    pending: bool = False
 
 
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
@@ -130,6 +133,7 @@ async def create_transaction(
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
             return existing  # sudah tercatat sebelumnya (kirim ulang)
+        await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     # Verify envelope belongs to user's household
     result = await db.execute(
         select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
@@ -191,8 +195,9 @@ async def create_transaction(
     except Exception:
         await idempotency.release(user.id, req.client_ref)
         raise
-    await db.refresh(txn)
+    # Catat kunci segera setelah commit (id sudah ada), sebelum langkah lain.
     await idempotency.store(user.id, req.client_ref, txn.id)
+    await db.refresh(txn)
 
     # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot.
     await after_expense_recorded(db, user, req.envelope_id, req.description)
@@ -262,7 +267,7 @@ async def batch_create_transactions(
     for i, item in enumerate(req.items):
         existing_ref = await idempotency.lookup(user.id, item.client_ref)
         if existing_ref == idempotency.PENDING:
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+            results.append(BatchTransactionResult(index=i, ok=False, pending=True, description=item.description,
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
         if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
@@ -315,7 +320,7 @@ async def batch_create_transactions(
             continue
 
         if not await idempotency.reserve(user.id, item.client_ref):
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+            results.append(BatchTransactionResult(index=i, ok=False, pending=True, description=item.description,
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
         txn = Transaction(
@@ -333,8 +338,8 @@ async def batch_create_transactions(
         except Exception:
             await idempotency.release(user.id, item.client_ref)
             raise
-        await db.refresh(txn)
         await idempotency.store(user.id, item.client_ref, txn.id)
+        await db.refresh(txn)
 
         await after_expense_recorded(db, user, item.envelope_id, item.description)
 
