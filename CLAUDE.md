@@ -43,6 +43,7 @@
 
 ## Deploy
 - Push to main → GitHub Actions → SSH deploy → /opt/jatahku/deploy.sh
+- Deploys are queued (`concurrency` in `.github/workflows/deploy.yml`): a push during a running deploy waits for it, so several sessions can merge safely. Manual `deploy.sh` runs are not queued — don't start one while an Actions deploy is running.
 - Manual: `sudo /opt/jatahku/deploy.sh`
 - Frontend builds to `/home/jatahku/web/jatahku.com/public_html/`
 - Nginx: landing.html at /, app.html for React SPA routes

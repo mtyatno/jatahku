@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
 
+# Antrean deploy: satu deploy dalam satu waktu. Dua push ke main yang berdekatan
+# (mis. dua session merge bersamaan) tidak menjalankan deploy.sh bersamaan di VPS
+# — git pull & npm run build yang tumpang tindih bisa merusak build frontend.
+# Run baru MENUNGGU yang sedang berjalan (tidak membatalkannya). GitHub hanya
+# menyimpan satu run yang menunggu per grup: run menunggu yang lebih lama
+# dibatalkan oleh yang lebih baru — aman, karena deploy.sh selalu menarik main
+# terbaru (isinya sudah mencakup commit sebelumnya).
+concurrency:
+  group: deploy-jatahku-production
+  cancel-in-progress: false
+
 jobs:
   deploy-blog:
     runs-on: ubuntu-latest
@@ -93,7 +104,12 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Lewat env, bukan disisipkan ke skrip: pesan commit berisi tanda kutip
+          # dulu merusak JSON (notifikasi gagal terkirim) dan bisa menyisipkan perintah.
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{\"chat_id\": \"${CHAT_ID}\", \"text\": \"❌ Deploy Jatahku GAGAL\n\nCommit: ${{ github.sha }}\nPesan: ${{ github.event.head_commit.message }}\n\nDetail: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
+          TEXT=$(printf '❌ Deploy Jatahku GAGAL\n\nCommit: %s\nPesan: %s\n\nDetail: %s' "$GITHUB_SHA" "$COMMIT_MSG" "$RUN_URL")
+          jq -n --arg chat_id "$CHAT_ID" --arg text "$TEXT" '{chat_id: $chat_id, text: $text}' \
+            | curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+                -H "Content-Type: application/json" -d @-
