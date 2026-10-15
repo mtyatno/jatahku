@@ -57,7 +57,8 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
   const [envelopes, setEnvelopes] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');      // envelope id or 'all'
+  // envelope id or 'all'; ?envelope=<id> (mis. tombol Riwayat di Dashboard) membuka langsung terfilter
+  const [filter, setFilter] = useState(() => new URLSearchParams(window.location.search).get('envelope') || 'all');
   const [source, setSource] = useState('all');       // 'all' | 'telegram' | 'webapp'
   const [search, setSearch] = useState('');
   const [timeTab, setTimeTab] = useState('all');
