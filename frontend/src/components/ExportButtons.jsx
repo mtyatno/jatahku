@@ -8,7 +8,16 @@ import {
   resolveActivePeriod,
 } from '../lib/exportPeriod';
 
-export default function ExportButtons({ periodStart, periodEnd, periodLabel }) {
+// compact: satu tombol "Laporan" berisi menu (dipakai di top bar layar lebar).
+export default function ExportButtons({ periodStart, periodEnd, periodLabel, compact = false }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!compact) return undefined;
+    const onDown = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [compact]);
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
@@ -121,8 +130,38 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel }) {
     setModalPeriodIdx(null);
   };
 
+  const fileIcon = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  );
+
   return (
     <>
+      {compact ? (
+        <div className="relative" ref={menuRef}>
+          <button type="button" onClick={() => setMenuOpen(o => !o)} disabled={!!loading}
+            aria-haspopup="menu" aria-expanded={menuOpen}
+            className="h-12 px-4 rounded-xl inline-flex items-center gap-2 text-[15px] font-semibold transition-colors disabled:opacity-60"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+            {fileIcon} {loading ? 'Menyiapkan…' : 'Laporan'}
+          </button>
+          {menuOpen && (
+            <div role="menu" className="absolute right-0 top-14 w-64 rounded-xl py-2 shadow-lg z-50"
+              style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); openReportForPeriod(activePeriod); }}
+                className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5" style={{ color: 'var(--text)' }}>
+                {buttonLabel}
+              </button>
+              <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); handleCSV(); }}
+                className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5" style={{ color: 'var(--text)' }}>
+                Download CSV
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="flex items-center gap-3">
         <button
           onClick={handleCSV}
@@ -150,6 +189,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel }) {
           {loading === 'pdf' ? '...' : buttonLabel}
         </button>
       </div>
+      )}
 
       {/* Report Modal */}
       {pdfUrl && (

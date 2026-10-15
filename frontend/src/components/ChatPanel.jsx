@@ -577,7 +577,7 @@ export default function ChatPanel({ open, onClose }) {
     <div
       ref={sheetRef}
       className={`fixed inset-x-0 bottom-0 z-[70] rounded-t-3xl overflow-hidden shadow-2xl
-        md:left-auto md:top-14 md:w-[420px] md:rounded-none md:border-l md:border-gray-100
+        md:left-auto md:top-14 lg:top-[88px] md:w-[420px] md:rounded-none md:border-l md:border-gray-100
         bg-page flex flex-col transition-[transform,height] duration-300 ease-[cubic-bezier(.32,.72,0,1)] motion-reduce:transition-none
         ${shown ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full'}`}
       role="dialog"

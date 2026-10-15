@@ -9,6 +9,7 @@ import MultiAddTransaction from './MultiAddTransaction';
 import PaySubscriptions from './PaySubscriptions';
 import BalanceCheck from './BalanceCheck';
 import ChatPanel from './ChatPanel';
+import Sidebar, { SIDEBAR_WIDTH } from './Sidebar';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
@@ -268,21 +269,27 @@ const FAB_OPTIONS = [
 ];
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: 'dashboard' },
+  { to: '/', label: 'Beranda', icon: 'dashboard' },
   { to: '/envelopes', label: 'Amplop', icon: 'envelope' },
   { to: '/transactions', label: 'Transaksi', icon: 'transaksi' },
   { to: '/allocate', label: 'Alokasi', icon: 'alokasi' },
   { to: '/langganan', label: 'Langganan', icon: 'langganan' },
 ];
 
-// Hanya tampil di nav desktop — bottom nav mobile sudah penuh (5 item).
-const desktopOnlyItems = [
-  { to: '/analytics', label: 'Analytics', icon: 'chartpie' },
+// Menu kiri (lg+): bottom nav HP sudah penuh 5 item, Analitik hanya di sidebar.
+// Ikon garis sesuai desain sidebar.
+const SIDEBAR_ICONS = { '/': 'grid', '/transactions': 'listbullets', '/allocate': 'transfer' };
+const sidebarItems = [
+  ...navItems.map(item => ({ ...item, icon: SIDEBAR_ICONS[item.to] || item.icon })),
+  { to: '/analytics', label: 'Analitik', icon: 'chartpie' },
 ];
 
-const menuItems = [
-  { to: '/settings', label: 'Settings', icon: 'settings' },
-];
+// Aksi lain di samping tombol "Catat" (top bar desktop); di HP lewat FAB.
+const MORE_ACTIONS = FAB_OPTIONS.filter(o => o.key !== 'expense');
+
+const TOPBAR_HEIGHT = 88;
+
+const todayLabel = () => new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
 
 export default function Layout() {
   const { user, loading, logout } = useAuth();
@@ -294,8 +301,14 @@ export default function Layout() {
   // supaya balasan yang sedang ditunggu tidak hilang saat panel ditutup.
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMounted, setChatMounted] = useState(false);
+  // Layar lebar: isi sidebar (badge Langganan, Papan disiplin) dan slot top bar untuk halaman.
+  const [langgananBadge, setLanggananBadge] = useState(0);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [topbarSlot, setTopbarSlot] = useState(null);
+  const [catatMenu, setCatatMenu] = useState(false);
   const menuRef = useRef(null);
   const fabRef = useRef(null);
+  const catatRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -305,6 +318,7 @@ export default function Layout() {
   useEffect(() => {
     const handleClick = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+      if (catatRef.current && !catatRef.current.contains(e.target)) setCatatMenu(false);
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
@@ -319,6 +333,23 @@ export default function Layout() {
     window.addEventListener('jatahku:open-action', onOpen);
     return () => window.removeEventListener('jatahku:open-action', onOpen);
   }, []);
+
+  // Badge Langganan (telat + belum bayar periode ini) dan Papan disiplin untuk sidebar.
+  useEffect(() => {
+    if (!user) return undefined;
+    const load = () => {
+      api.getRecurring().then(items => setLanggananBadge(
+        (items || []).filter(i => i.is_active !== false && (i.status === 'overdue' || i.status === 'due')).length,
+      ));
+      api.request('/household/leaderboard')
+        .then(r => (r.ok ? r.json() : []))
+        .then(d => setLeaderboard(Array.isArray(d) ? d : []))
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener('jatahku:txn-added', load);
+    return () => window.removeEventListener('jatahku:txn-added', load);
+  }, [user]);
 
   // Pintasan PWA / tautan: ?chat=1 membuka chat bot.
   useEffect(() => {
@@ -341,26 +372,69 @@ export default function Layout() {
   if (!user) return <Navigate to="/login" />;
 
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
+  const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
+  const openAction = (key) => { setCatatMenu(false); setFabMenu(false); setFabAction(key); };
+  const squareBtn = 'w-12 h-12 shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
+  const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
 
   return (
     <div className="min-h-screen bg-page">
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+      <Sidebar items={sidebarItems} langgananBadge={langgananBadge} leaderboard={leaderboard}
+        isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode} />
+
+      <div className="lg:pl-[var(--sidebar-w)]" style={{ '--sidebar-w': `${SIDEBAR_WIDTH}px` }}>
+      {/* Top bar layar lebar: sapaan + slot halaman (mis. periode & Laporan di Beranda) + chat, notifikasi, Catat.
+          Tanpa backdrop-filter: modal laporan yang dirender di slot ini memakai position: fixed. */}
+      <div className="hidden lg:flex sticky top-0 z-40 items-center justify-between gap-6 px-8"
+        style={{ height: TOPBAR_HEIGHT, background: 'var(--page)', borderBottom: '1px solid var(--border)' }}>
+        <div className="min-w-0">
+          <p className="text-[26px] font-bold leading-tight truncate" style={{ color: 'var(--text)' }}>Halo, {firstName}</p>
+          <p className="text-[15px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{todayLabel()}</p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <div ref={setTopbarSlot} className="flex items-center gap-3" />
+          <button type="button" onClick={openChat} className={squareBtn}
+            style={chatOpen ? { ...squareStyle, color: 'var(--brand-600)' } : squareStyle}
+            title="Chat bot" aria-label="Buka chat bot">
+            <Icon name="chat" size={21} weight="regular" />
+          </button>
+          <div className={`${squareBtn} [&>div>button]:p-2`} style={squareStyle}>
+            <NotificationBell />
+          </div>
+          <div className="relative flex" ref={catatRef}>
+            <button type="button" onClick={() => openAction('expense')}
+              className="h-12 pl-4 pr-4 rounded-l-xl inline-flex items-center gap-2 text-[15px] font-bold transition-opacity hover:opacity-90"
+              style={{ background: 'var(--brand-400)', color: '#0f172a' }}>
+              <Icon name="plus" size={18} weight="bold" /> Catat
+            </button>
+            <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
+              aria-label="Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo"
+              className="h-12 w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
+              style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
+              <Icon name="chevron" size={14} weight="bold" />
+            </button>
+            {catatMenu && (
+              <div role="menu" className="absolute right-0 top-14 w-60 rounded-xl py-2 shadow-lg z-50"
+                style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
+                {MORE_ACTIONS.map(opt => (
+                  <button key={opt.key} type="button" role="menuitem" onClick={() => openAction(opt.key)}
+                    className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 hover:bg-black/5"
+                    style={{ color: 'var(--text)' }}>
+                    <Icon name={opt.icon} size={18} /> {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <header className="lg:hidden bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <NavLink to="/" className="font-display text-xl font-bold text-brand-600">
               Jatah<span className="text-brand-400">ku</span>
             </NavLink>
-            <nav className="hidden md:flex items-center gap-1">
-              {[...navItems, ...desktopOnlyItems, ...menuItems].map(item => (
-                <NavLink key={item.to} to={item.to} end={item.to === '/'}
-                  className={({ isActive }) =>
-                    `px-3 py-1.5 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
-                      isActive ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-                    }`}>
-                  <Icon name={item.icon} size={17} />{item.label}
-                </NavLink>
-              ))}
-            </nav>
           </div>
 
           {/* Notifications + Profile */}
@@ -421,8 +495,8 @@ export default function Layout() {
         </div>
       </header>
 
-      {/* Mobile bottom nav — 5 items only, no Settings */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-50">
+      {/* Bottom nav HP & tablet — 5 item; layar lebar memakai sidebar */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-50">
         <div className="flex justify-around py-2">
           {navItems.map(item => (
             <NavLink key={item.to} to={item.to} end={item.to === '/'}
@@ -438,12 +512,13 @@ export default function Layout() {
 
       <TelegramPrompt />
       <OfflineQueueCenter />
-      <main className="max-w-6xl mx-auto px-4 py-6 pb-24 md:pb-6"><Outlet /></main>
+      <main className="max-w-6xl lg:max-w-[1520px] mx-auto lg:mx-0 px-4 lg:px-8 py-6 lg:py-8 pb-24 lg:pb-10"><Outlet context={{ topbarSlot }} /></main>
+      </div>
       {/* Global FAB — speed dial */}
       {fabMenu && (
         <div className="fixed inset-0 z-50" onClick={() => setFabMenu(false)} />
       )}
-      <div className="fixed bottom-24 md:bottom-6 inset-x-0 pointer-events-none z-50">
+      <div className="lg:hidden fixed bottom-24 inset-x-0 pointer-events-none z-50">
         <div className="max-w-6xl mx-auto px-4 flex justify-end items-center gap-3">
           {/* Mobile: chat sekali ketuk, di jangkauan jempol di samping FAB */}
           {!fabMenu && (

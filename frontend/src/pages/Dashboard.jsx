@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
@@ -289,6 +290,8 @@ export default function Dashboard() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  // Layar lebar: periode & Laporan tampil di top bar Layout (lihat Layout.jsx).
+  const { topbarSlot } = useOutletContext() || {};
   const [balanceStatus, setBalanceStatus] = useState(null);
   const [subscriptions, setSubscriptions] = useState([]);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
@@ -426,7 +429,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       {celebrate && (
         <div
-          className="rounded-xl p-4 flex items-center justify-between gap-3 animate-pulse"
+          className="rounded-xl p-4 flex items-center justify-between gap-3 animate-pulse lg:mb-6"
           style={{ background: 'linear-gradient(90deg,#FEF3C7,#FDE68A)', border: '1px solid #FCD34D' }}
         >
           <div>
@@ -440,7 +443,7 @@ export default function Dashboard() {
         </div>
       )}
       {showOnboardingGuide && (
-        <div className="card border-brand-200 bg-brand-50/40 p-4 flex items-start justify-between gap-3">
+        <div className="card border-brand-200 bg-brand-50/40 p-4 flex items-start justify-between gap-3 lg:mb-6">
           <div className="flex gap-3">
             <span className="text-2xl">🎉</span>
             <div>
@@ -461,7 +464,35 @@ export default function Dashboard() {
           </button>
         </div>
       )}
-      <div>
+      {topbarSlot && createPortal(
+        <>
+          <div className="h-12 rounded-xl inline-flex items-center gap-1 px-1.5"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
+            <button type="button" onClick={() => setPeriodIdx(i => i - 1)} disabled={periodIdx === 0}
+              className="w-9 h-9 rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
+              style={{ color: 'var(--text-muted)' }} aria-label="Periode sebelumnya">
+              <Icon name="chevron" size={14} weight="bold" style={{ transform: 'rotate(90deg)' }} />
+            </button>
+            <span className="px-1.5 text-[15px] font-semibold whitespace-nowrap" style={{ color: 'var(--text)' }}>
+              {periodLabel}
+              {isCurrentPeriod && daysLeft > 0 && <span className="font-normal" style={{ color: 'var(--text-muted)' }}> · {daysLeft} hari lagi</span>}
+              {periodLoading && <span className="font-normal" style={{ color: 'var(--text-muted)' }}> …</span>}
+            </span>
+            <button type="button" onClick={() => setPeriodIdx(i => i + 1)} disabled={isCurrentPeriod}
+              className="w-9 h-9 rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
+              style={{ color: 'var(--text-muted)' }} aria-label="Periode berikutnya">
+              <Icon name="chevron" size={14} weight="bold" style={{ transform: 'rotate(-90deg)' }} />
+            </button>
+          </div>
+          <ExportButtons compact
+            periodStart={selectedPeriod?.period_start}
+            periodEnd={selectedPeriod?.period_end}
+            periodLabel={selectedPeriod?.label}
+          />
+        </>,
+        topbarSlot,
+      )}
+      <div className="lg:hidden">
         <div className="flex items-center justify-between gap-2">
           <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
           {streak && streak.current_streak >= 1 && (
@@ -496,7 +527,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="lg:hidden flex items-center justify-between gap-4 flex-wrap">
         <ExportButtons
           periodStart={selectedPeriod?.period_start}
           periodEnd={selectedPeriod?.period_end}
@@ -524,8 +555,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      {/* KPI Cards — lg:!mt-0: blok sapaan/periode di atasnya tersembunyi di layar lebar (pindah ke top bar) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 lg:!mt-0">
         <KpiTile
           isDark={isDark} label="Jatah hari ini"
           info="Belanja hari ini dibanding batas aman per hari. Garis putih: batas aman."
