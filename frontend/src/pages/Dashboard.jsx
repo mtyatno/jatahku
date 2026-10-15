@@ -466,10 +466,10 @@ export default function Dashboard() {
       )}
       {topbarSlot && createPortal(
         <>
-          <div className="h-12 rounded-xl inline-flex items-center gap-1 px-1.5"
+          <div className="h-[var(--nav-h)] rounded-xl inline-flex items-center gap-1 px-1"
             style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
             <button type="button" onClick={() => setPeriodIdx(i => i - 1)} disabled={periodIdx === 0}
-              className="w-9 h-9 rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
+              className="w-8 h-[calc(var(--nav-h)-8px)] rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
               style={{ color: 'var(--text-muted)' }} aria-label="Periode sebelumnya">
               <Icon name="chevron" size={14} weight="bold" style={{ transform: 'rotate(90deg)' }} />
             </button>
@@ -479,7 +479,7 @@ export default function Dashboard() {
               {periodLoading && <span className="font-normal" style={{ color: 'var(--text-muted)' }}> …</span>}
             </span>
             <button type="button" onClick={() => setPeriodIdx(i => i + 1)} disabled={isCurrentPeriod}
-              className="w-9 h-9 rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
+              className="w-8 h-[calc(var(--nav-h)-8px)] rounded-lg inline-flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-black/5"
               style={{ color: 'var(--text-muted)' }} aria-label="Periode berikutnya">
               <Icon name="chevron" size={14} weight="bold" style={{ transform: 'rotate(-90deg)' }} />
             </button>

@@ -8,8 +8,9 @@ import { Icon } from './Icon';
 
 export const SIDEBAR_WIDTH = 264;
 
-// Tinggi pill menu: 48px di layar tinggi, turun sampai 34px di layar pendek / zoom besar.
-const ITEM_HEIGHT = 'clamp(34px, 5.2vh, 48px)';
+// Tinggi pill menu = --nav-h (index.css): 48px di layar tinggi, turun sampai 34px di layar pendek / zoom besar.
+// Tombol di top bar memakai variabel yang sama supaya tingginya selalu sama.
+const ITEM_HEIGHT = 'var(--nav-h)';
 
 const AVATAR_COLORS = ['var(--brand-400)', '#A5A8F7', '#F5B84A', '#F59AAE', '#7DD3FC'];
 

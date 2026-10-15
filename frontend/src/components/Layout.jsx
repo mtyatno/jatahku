@@ -374,7 +374,7 @@ export default function Layout() {
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
   const openAction = (key) => { setCatatMenu(false); setFabMenu(false); setFabAction(key); };
-  const squareBtn = 'w-12 h-12 shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
+  const squareBtn = 'w-[var(--nav-h)] h-[var(--nav-h)] shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
 
   return (
@@ -403,18 +403,18 @@ export default function Layout() {
           </div>
           <div className="relative flex" ref={catatRef}>
             <button type="button" onClick={() => openAction('expense')}
-              className="h-12 pl-4 pr-4 rounded-l-xl inline-flex items-center gap-2 text-[15px] font-bold transition-opacity hover:opacity-90"
+              className="h-[var(--nav-h)] px-4 rounded-l-xl inline-flex items-center gap-2 text-[15px] font-bold transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a' }}>
               <Icon name="plus" size={18} weight="bold" /> Catat
             </button>
             <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
               aria-label="Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo"
-              className="h-12 w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
+              className="h-[var(--nav-h)] w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
               <Icon name="chevron" size={14} weight="bold" />
             </button>
             {catatMenu && (
-              <div role="menu" className="absolute right-0 top-14 w-60 rounded-xl py-2 shadow-lg z-50"
+              <div role="menu" className="absolute right-0 top-[calc(var(--nav-h)+8px)] w-60 rounded-xl py-2 shadow-lg z-50"
                 style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
                 {MORE_ACTIONS.map(opt => (
                   <button key={opt.key} type="button" role="menuitem" onClick={() => openAction(opt.key)}
