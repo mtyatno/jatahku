@@ -37,9 +37,15 @@ export function kpiPalette(isDark) {
   };
 }
 
-export function KpiCard({ label, info, value, valueClassName = '', sub, icon, color, isDark, children }) {
+export function KpiCard({ label, info, value, valueClassName = '', sub, icon, color, isDark, badge, children }) {
   return (
-    <div className="card flex flex-col gap-3 min-w-0">
+    <div className="card flex flex-col gap-3 min-w-0 relative">
+      {/* Top-right badge */}
+      {badge && (
+        <div className="absolute top-0 right-0 -mr-2 -mt-2">
+          {badge}
+        </div>
+      )}
       {/* Floated icon: on phones the subtitle runs under it instead of wrapping beside it. */}
       <div className="flow-root">
         <span

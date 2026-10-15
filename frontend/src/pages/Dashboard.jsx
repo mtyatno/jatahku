@@ -406,6 +406,7 @@ export default function Dashboard() {
   const chartData = buildDailyData(daily, prediction, selectedPeriod);
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
+  const todayCount = daily.find(d => d.date === todayStr)?.count || 0;
 
   const isDark = mode === 'dark';
   const kc = kpiPalette(isDark);
@@ -537,7 +538,13 @@ export default function Dashboard() {
           label="Jatah hari ini" icon="coins" color={kc.amber} isDark={isDark}
           info="Anggaran belanja hari ini vs yang sudah dipakai. Merah: yang sudah dipakai, putih: batas aman. Naik/turun ke update sekarang."
           value={formatShort(todaySpent)}
-          sub={safeDaily > 0 ? `Batas aman ${shortRp100(safeDaily)}` : 'Hari ini'}
+          sub={safeDaily > 0 ? `/ ${shortRp100(safeDaily)}` : 'Hari ini'}
+          badge={todaySpent > safeDaily && safeDaily > 0 ? (
+            <span className="inline-block text-[11px] px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap"
+              style={{ background: 'rgba(226,75,74,0.2)', color: '#E24B4A' }}>
+              Lewat {formatShort(floorRp100(todaySpent - safeDaily))}
+            </span>
+          ) : null}
         >
           {safeDaily > 0 ? (
             <div className="space-y-2">
@@ -546,8 +553,8 @@ export default function Dashboard() {
                 label={`${Math.round((todaySpent / safeDaily) * 100)}%`}
                 ariaLabel={`Terpakai ${formatShort(todaySpent)}, batas aman ${shortRp100(safeDaily)}`}
               />
-              {todaySpent > safeDaily && (
-                <p className="text-xs text-danger-400 font-semibold">Lewat {formatShort(floorRp100(todaySpent - safeDaily))}</p>
+              {todayCount > 0 && (
+                <p className="text-xs text-gray-400">{todayCount} transaksi hari ini</p>
               )}
             </div>
           ) : (
