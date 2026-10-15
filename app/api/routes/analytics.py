@@ -383,6 +383,32 @@ async def spending_prediction(
 
     on_track = predicted_total <= total_available
 
+    # Income this period
+    total_income, _, _ = await _income_totals(hid, user, period_start, period_end, db)
+
+    # Saving rate: allocation to saving + sinking_fund envelopes / income
+    saving_alloc = Decimal("0")
+    if total_income > 0:
+        saving_r = await db.execute(
+            select(func.coalesce(func.sum(Allocation.amount), 0))
+            .join(Income, Allocation.income_id == Income.id)
+            .join(Envelope, Allocation.envelope_id == Envelope.id)
+            .where(
+                Envelope.household_id == hid,
+                Income.user_id == user.id,
+                Income.income_date >= period_start,
+                Income.income_date <= period_end,
+                or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+                Envelope.purpose.in_(["saving", "sinking_fund"]),
+            )
+        )
+        saving_alloc = Decimal(str(saving_r.scalar() or 0))
+    saving_rate = float(saving_alloc / total_income * 100) if total_income > 0 else 0.0
+
+    # Predicted cash flow at end of period: remaining - (daily_avg × days_left)
+    projected_remaining_spend = daily_avg * days_left
+    predicted_cash_flow = remaining - projected_remaining_spend
+
     return {
         "total_allocated": total_allocated,
         "total_rollover": total_rollover,
@@ -401,4 +427,7 @@ async def spending_prediction(
         "days_left": days_left,
         "period_start": str(period_start),
         "period_end": str(period_end),
+        "total_income": float(total_income),
+        "saving_rate": round(saving_rate),
+        "predicted_cash_flow": round(predicted_cash_flow),
     }

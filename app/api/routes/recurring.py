@@ -1,9 +1,9 @@
 from uuid import UUID
 from decimal import Decimal
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -225,6 +225,88 @@ async def skip_recurring(
     rec.next_run = _next_date(rec.next_run, rec.frequency)
     await db.commit()
     return {"next_run": rec.next_run}
+
+
+@router.get("/summary/period")
+async def recurring_period_summary(
+    period_start: date | None = Query(None),
+    period_end: date | None = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bill summary for current or specified period — for KPI card.
+    Returns: amount_due (unpaid reserve), count_due / count_total (monthly bills),
+    amount_paid (paid this period), has_overdue.
+    """
+    hid = await _get_hid(user, db)
+    if not hid:
+        return {
+            "amount_due": 0, "count_due": 0, "count_total": 0,
+            "amount_paid": 0, "has_overdue": False,
+        }
+
+    today = date.today()
+    payday = getattr(user, "payday_day", None) or 1
+    if not period_start or not period_end:
+        period_start, period_end = get_budget_period(payday, today)
+
+    # Get all monthly recurring for this household
+    result = await db.execute(
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(
+            Envelope.household_id == hid,
+            RecurringTransaction.is_active == True,
+            RecurringTransaction.frequency == RecurringFrequency.monthly,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )
+    monthly_bills = result.scalars().all()
+
+    # Count bills due in period
+    count_total = sum(1 for rec in monthly_bills if period_start <= rec.next_run <= period_end)
+
+    # Calculate amount due (unpaid), count unpaid, check for overdue, sum paid
+    amount_due = Decimal("0")
+    count_due = 0
+    has_overdue = False
+    amount_paid_total = Decimal("0")
+
+    for rec in monthly_bills:
+        if not (period_start <= rec.next_run <= period_end):
+            continue
+
+        # Get all transactions in this period for this bill's envelope
+        paid_amounts = (await db.execute(
+            select(Transaction.amount)
+            .where(
+                Transaction.envelope_id == rec.envelope_id,
+                Transaction.is_deleted == False,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
+            )
+        )).scalars().all()
+
+        paid_amounts_decimal = [Decimal(str(a)) for a in paid_amounts]
+        amount_paid_total += sum(paid_amounts_decimal, Decimal("0"))
+
+        # Check if this bill is paid (matching amount found)
+        is_paid = rec.amount in paid_amounts_decimal
+        if not is_paid:
+            amount_due += rec.amount
+            count_due += 1
+
+        # Check if overdue
+        if rec.next_run < today:
+            has_overdue = True
+
+    return {
+        "amount_due": float(amount_due),
+        "count_due": count_due,
+        "count_total": count_total,
+        "amount_paid": float(amount_paid_total),
+        "has_overdue": has_overdue,
+    }
 
 
 @router.delete("/{rec_id}", status_code=status.HTTP_204_NO_CONTENT)
