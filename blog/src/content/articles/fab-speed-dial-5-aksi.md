@@ -2,6 +2,7 @@
 title: "Tombol + Kini Punya 5 Aksi Cepat, Termasuk Cocokkan Saldo"
 description: "Tombol + di Jatahku sekarang berisi lima aksi: Pengeluaran, Amplop, Income, Langganan, dan Cocokkan saldo. Langganan juga punya dua tab, untuk menambah dan membayar."
 pubDate: 2026-10-05
+updatedDate: 2026-10-15
 category: update-fitur
 author: Tim Jatahku
 cover: /covers/fab-5-aksi.svg
@@ -12,6 +13,8 @@ Tombol **+** hijau di pojok kanan bawah Jatahku adalah menu cepat yang ada di se
 
 Ketuk **+**, dan lima pilihan muncul di atasnya. Setiap pilihan membuka jendela di halaman yang sedang kamu buka, jadi kamu tidak perlu pindah halaman. Ketuk **×** untuk menutup menunya.
 
+Di HP, di samping tombol **+** sekarang juga ada tombol gelembung chat untuk membuka Chat Jatahku. Baca [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-webapp/).
+
 ## 1. Pengeluaran
 
 Membuka **Catat pengeluaran**. Kamu bisa mengetik beberapa pengeluaran sekaligus, dipisah dengan koma, baris baru, atau kata "dan". Contohnya:
@@ -21,6 +24,8 @@ kopi 18k, bensin 20k dan parkir 2rb
 ```
 
 Teks itu terbaca sebagai tiga pengeluaran: kopi Rp18.000, bensin Rp20.000, dan parkir Rp2.000. Jatahku menyarankan amplop untuk setiap baris. Pastikan setiap baris sudah punya amplop, karena baris tanpa amplop tidak ikut disimpan. Lalu ketuk **Simpan Semua**.
+
+Di form ini juga ada tombol **Struk** untuk mencatat dari foto struk belanja. Tiap barang di struk dicatat ke amplopnya sendiri. Panduannya ada di artikel [Catat Belanja dari Foto Struk](/insight/catat-belanja-dari-foto-struk/).
 
 ## 2. Amplop
 

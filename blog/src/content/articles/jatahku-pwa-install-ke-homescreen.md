@@ -2,6 +2,7 @@
 title: "Jatahku Kini Bisa Diinstall di HP: Catat Pengeluaran Tanpa Buka Browser"
 description: "Jatahku sekarang hadir sebagai Progressive Web App (PWA) — bisa diinstall ke home screen HP, buka secepat app biasa, dan tetap bisa diakses walau tanpa internet."
 pubDate: 2026-03-30
+updatedDate: 2026-10-15
 category: update-fitur
 author: Tim Jatahku
 cover: /covers/jatahku-pwa.svg
@@ -68,6 +69,8 @@ Bayangkan kamu baru selesai makan di warung, sinyal lemah atau bahkan tidak ada 
 
 Tidak ada yang hilang, tidak perlu ingat untuk sinkron manual.
 
+Kadang transaksi offline ditolak saat dikirim, misalnya karena dana amplopnya kurang atau amplopnya dikunci. Transaksi seperti itu tetap tersimpan di HP, dan Jatahku menampilkan pemberitahuan "⚠️ … transaksi yang dicatat saat offline gagal tersimpan". Ketuk **Tinjau** untuk melihat alasannya, lalu ganti amplop, coba lagi, atau hapus transaksinya.
+
 ---
 
 ## Tetap Sinkron dengan Bot Telegram
@@ -92,7 +95,7 @@ Setiap kali kami merilis fitur baru atau perbaikan, PWA kamu akan otomatis mempe
 
 ## Apakah Data Saya Aman?
 
-Iya. PWA Jatahku menggunakan koneksi **HTTPS terenkripsi** untuk semua komunikasi ke server. Data yang disimpan sementara di HP kamu (untuk mode offline) hanya berisi transaksi yang belum sempat tersinkron — dan akan terhapus otomatis begitu berhasil dikirim ke server.
+Iya. PWA Jatahku menggunakan koneksi **HTTPS terenkripsi** untuk semua komunikasi ke server. Data yang disimpan sementara di HP kamu (untuk mode offline) hanya berisi transaksi yang belum sempat tersinkron — dan akan terhapus otomatis begitu berhasil dikirim ke server. Transaksi yang ditolak saat dikirim tetap tersimpan di HP sampai kamu mengirim ulang atau menghapusnya.
 
 ---
 

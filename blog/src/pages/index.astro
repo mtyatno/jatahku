@@ -4,8 +4,10 @@ import Base from '../layouts/Base.astro';
 
 const all = await getCollection('articles');
 const articles = all.sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf());
-const featured = articles.filter(a => a.data.featured);
-const rest = articles.filter(a => !a.data.featured);
+// Pilihan Editor = 2 artikel featured terbaru. Featured lainnya tetap tampil di
+// Artikel Terbaru supaya tidak hilang dari halaman ini.
+const featured = articles.filter(a => a.data.featured).slice(0, 2);
+const rest = articles.filter(a => !featured.includes(a));
 
 const categoryLabel: Record<string, string> = {
   'tutorial': 'Tutorial',
