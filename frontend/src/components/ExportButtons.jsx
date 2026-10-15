@@ -143,12 +143,12 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
         <div className="relative" ref={menuRef}>
           <button type="button" onClick={() => setMenuOpen(o => !o)} disabled={!!loading}
             aria-haspopup="menu" aria-expanded={menuOpen}
-            className="h-12 px-4 rounded-xl inline-flex items-center gap-2 text-[15px] font-semibold transition-colors disabled:opacity-60"
+            className="h-[var(--nav-h)] px-4 rounded-xl inline-flex items-center gap-2 text-[15px] font-semibold transition-colors disabled:opacity-60"
             style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
             {fileIcon} {loading ? 'Menyiapkan…' : 'Laporan'}
           </button>
           {menuOpen && (
-            <div role="menu" className="absolute right-0 top-14 w-64 rounded-xl py-2 shadow-lg z-50"
+            <div role="menu" className="absolute right-0 top-[calc(var(--nav-h)+8px)] w-64 rounded-xl py-2 shadow-lg z-50"
               style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
               <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); openReportForPeriod(activePeriod); }}
                 className="w-full text-left px-4 py-2.5 text-sm hover:bg-black/5" style={{ color: 'var(--text)' }}>

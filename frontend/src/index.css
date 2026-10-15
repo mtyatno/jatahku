@@ -6,6 +6,8 @@
   --surface: #1e293b; --page: #0f172a;
   --card-bg: #1e293b; --border: #334155;
   --text: #e2e8f0; --text-muted: #94a3b8;
+  /* Tinggi pill menu sidebar & tombol top bar (layar lebar): 48px, mengecil di layar pendek. */
+  --nav-h: clamp(34px, 5.2vh, 48px);
 }
 
 /* ── TEMA: Hijau ── */
