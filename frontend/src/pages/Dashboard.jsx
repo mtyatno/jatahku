@@ -408,6 +408,12 @@ export default function Dashboard() {
   const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
   const todayCount = daily.find(d => d.date === todayStr)?.count || 0;
 
+  // Calculate current day number in period
+  const periodStart = new Date(prediction?.period_start || selectedPeriod?.period_start || '');
+  const today = new Date(todayStr + 'T00:00:00');
+  const dayNumber = !isNaN(periodStart) ? Math.floor((today - periodStart) / (1000 * 60 * 60 * 24)) + 1 : 0;
+  const totalDaysInPeriod = prediction?.days_passed + prediction?.days_left || 0;
+
   const isDark = mode === 'dark';
   const kc = kpiPalette(isDark);
   const fundsTotal = totalAllocated + totalRollover;
@@ -581,13 +587,21 @@ export default function Dashboard() {
           info="Saldo total dikurangi tabungan dan tagihan. Batas aman per hari untuk sisa periode ini."
           value={formatShort(sisaBebas)}
           valueClassName={sisaBebas < 0 ? 'text-danger-400' : ''}
-          sub={isCurrentPeriod && safeDaily > 0 ? `untuk ${daysLeft} hari @ ${shortRp100(safeDaily)}/hari` : daysLeft > 0 ? `${daysLeft} hari lagi` : 'Periode selesai'}
+          sub={dayNumber > 0 && totalDaysInPeriod > 0 ? `Hari ke-${dayNumber} dari ${totalDaysInPeriod}` : 'Periode selesai'}
         >
-          <Meter
-            value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
-            label={freePart != null ? pct(freePart) : null}
-            ariaLabel={freePart != null ? `${pct(freePart)} dana belanja masih bebas` : 'Belum ada dana belanja'}
-          />
+          <div className="space-y-2">
+            <Meter
+              value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
+              label={freePart != null ? pct(freePart) : null}
+              ariaLabel={freePart != null ? `${pct(freePart)} dana belanja masih bebas` : 'Belum ada dana belanja'}
+            />
+            {isCurrentPeriod && safeDaily > 0 && prediction && (
+              <div className="text-xs text-gray-400 space-y-1">
+                <p>untuk {prediction.safe_days} hari @ {shortRp100(safeDaily)}/hari</p>
+                <p>aman {shortRp100(safeDaily)}/hari</p>
+              </div>
+            )}
+          </div>
         </KpiCard>
 
         {/* Terpakai periode ini */}
@@ -644,24 +658,31 @@ export default function Dashboard() {
           label="Tagihan belum dibayar" icon="calendar-check" color={isDark ? '#34D399' : '#10B981'} isDark={isDark}
           info="Tagihan rutin yang belum dibayar periode ini. Badge: status keterlambatan."
           value={recurringStats ? formatShort(recurringStats.amount_due || 0) : formatShort(0)}
-          sub={recurringStats ? `${recurringStats.count_due || 0} dari ${recurringStats.count_total || 0} tagihan` : 'Tidak ada data'}
+          sub={recurringStats && recurringStats.count_total > 0 ? `${recurringStats.count_due || 0} dari ${recurringStats.count_total} tagihan` : 'Tidak ada tagihan'}
+          badge={recurringStats && recurringStats.has_overdue ? (
+            <div className="absolute top-0 right-0 -mr-2 -mt-2 inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: 'rgba(226,75,74,0.14)', color: '#E24B4A' }}>
+              Telat
+            </div>
+          ) : recurringStats && recurringStats.count_total > 0 ? (
+            <div className="absolute top-0 right-0 -mr-2 -mt-2 inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)', color: isDark ? '#34D399' : '#10B981' }}>
+              Aman
+            </div>
+          ) : null}
         >
           <div className="space-y-2">
-            <Meter
-              value={recurringStats && recurringStats.count_total > 0 ? 1 - (recurringStats.count_due / recurringStats.count_total) : 0}
-              color={isDark ? '#34D399' : '#10B981'} track={isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)'}
-              label={recurringStats && recurringStats.count_total > 0 ? `${recurringStats.count_total - recurringStats.count_due}/${recurringStats.count_total}` : null}
-              ariaLabel={recurringStats ? `${recurringStats.count_total - recurringStats.count_due} dari ${recurringStats.count_total} sudah dibayar` : 'Tidak ada tagihan'}
-            />
-            {recurringStats && recurringStats.has_overdue && (
-              <span className="inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: 'rgba(226,75,74,0.14)', color: '#E24B4A' }}>
-                Telat
-              </span>
+            {recurringStats && recurringStats.count_total > 0 && (
+              <>
+                <Meter
+                  value={recurringStats.amount_paid + recurringStats.amount_due > 0 ? recurringStats.amount_paid / (recurringStats.amount_paid + recurringStats.amount_due) : 0}
+                  color={isDark ? '#34D399' : '#10B981'} track={isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)'}
+                  label={`${formatShort(recurringStats.amount_paid)} / ${formatShort(recurringStats.amount_paid + recurringStats.amount_due)}`}
+                  ariaLabel={`Lunas ${formatShort(recurringStats.amount_paid)} dari ${formatShort(recurringStats.amount_paid + recurringStats.amount_due)} bulan ini`}
+                />
+                <p className="text-xs text-gray-500">Lunas {formatShort(recurringStats.amount_paid)} dari {formatShort(recurringStats.amount_paid + recurringStats.amount_due)} bulan ini</p>
+              </>
             )}
-            {recurringStats && !recurringStats.has_overdue && (
-              <span className="inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)', color: isDark ? '#34D399' : '#10B981' }}>
-                Aman
-              </span>
+            {recurringStats && recurringStats.count_total === 0 && (
+              <p className="text-xs text-gray-500">Tidak ada tagihan bulan ini</p>
             )}
           </div>
         </KpiCard>
