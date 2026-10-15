@@ -12,8 +12,9 @@ import SubscriptionsCard from '../components/SubscriptionsCard';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
-import { KpiCard, Meter, FundsBar, EnvelopeStrip, SpendSparkline, kpiPalette } from '../components/KpiCard';
-import { envelopeStrip, fundsBreakdown, freeShare, savingsProgress, dailySeries, localDateStr } from '../lib/kpiVisuals';
+import { KpiTile, tileTones, kpiPalette } from '../components/KpiCard';
+import { rpFull, rpCompact, dailyMeter, predictionOver, daysLabel, periodDayLabel, periodProgress, savingRateLabel, cashFlowLabel, billsProgress } from '../lib/kpiCards';
+import { savingsProgress, localDateStr } from '../lib/kpiVisuals';
 import { todayAdvice } from '../lib/advisorToday';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
@@ -390,8 +391,6 @@ export default function Dashboard() {
   const totalSaving = savingEnvelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const sharedSaving = savingEnvelopes.filter(e => !e.is_personal).reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const personalSaving = totalSaving - sharedSaving;
-  const sharedSavingGoals = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id && !e.is_personal)).length;
-  const personalSavingGoals = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id && e.is_personal)).length;
   const sisaBebas = totalRemaining - totalSaving;
 
   const periodLabel = selectedPeriod?.label
@@ -404,30 +403,18 @@ export default function Dashboard() {
   const safeDaily = floorRp100(prediction?.safe_daily);
 
   const chartData = buildDailyData(daily, prediction, selectedPeriod);
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todaySpent = daily.find(d => d.date === todayStr)?.total || 0;
-  const todayCount = daily.find(d => d.date === todayStr)?.count || 0;
-
-  // Calculate current day number in period
-  const periodStart = new Date(prediction?.period_start || selectedPeriod?.period_start || '');
-  const today = new Date(todayStr + 'T00:00:00');
-  const dayNumber = !isNaN(periodStart) ? Math.floor((today - periodStart) / (1000 * 60 * 60 * 24)) + 1 : 0;
-  const totalDaysInPeriod = prediction?.days_passed + prediction?.days_left || 0;
+  const todayRow = daily.find(d => d.date === localDateStr());
+  const todaySpent = todayRow?.total || 0;
+  const todayCount = todayRow?.count || 0;
 
   const isDark = mode === 'dark';
   const kc = kpiPalette(isDark);
   const fundsTotal = totalAllocated + totalRollover;
-  const spendSeries = dailySeries(
-    daily,
-    prediction?.period_start || selectedPeriod?.period_start,
-    prediction?.period_end || selectedPeriod?.period_end,
-    localDateStr(),
-  );
-  const funds = fundsBreakdown(envelopes);
-  const freePart = freeShare(envelopes);
-  const sharedProgress = savingsProgress(goals, envelopes, false);
-  const personalProgress = savingsProgress(goals, envelopes, true);
-  const pct = (v) => (v > 0 && v < 0.005 ? '<1%' : `${Math.round(v * 100)}%`);
+  const tt = tileTones(isDark);
+  const meter = dailyMeter(todaySpent, safeDaily);
+  const income = Number(prediction?.total_income) || 0;
+  const bills = billsProgress(recurringStats);
+  const savingGoalCount = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id)).length;
 
   const milestoneLabel = (n) => ({
     3: 'Kebiasaan baik dimulai 🌱', 7: 'Seminggu penuh disiplin!', 14: '2 minggu konsisten 💪',
@@ -537,185 +524,74 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* KPI Cards — New Design */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Jatah hari ini */}
-        <KpiCard
-          label="Jatah hari ini" icon="coins" color={kc.amber} isDark={isDark}
-          info="Anggaran belanja hari ini vs yang sudah dipakai. Merah: yang sudah dipakai, putih: batas aman. Naik/turun ke update sekarang."
-          value={formatShort(todaySpent)}
-          sub={safeDaily > 0 ? `/ ${shortRp100(safeDaily)}` : 'Hari ini'}
-          badge={todaySpent > safeDaily && safeDaily > 0 ? (
-            <span className="inline-block text-[11px] px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap"
-              style={{ background: 'rgba(226,75,74,0.2)', color: '#E24B4A' }}>
-              Lewat {formatShort(floorRp100(todaySpent - safeDaily))}
-            </span>
-          ) : null}
-        >
-          {safeDaily > 0 ? (
-            <div className="space-y-2">
-              <div className="relative">
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: kc.amberFill }}>
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${Math.min((todaySpent / safeDaily) * 100, 100)}%`,
-                      background: todaySpent > safeDaily ? '#E24B4A' : kc.amber
-                    }}
-                  />
-                </div>
-                {todaySpent <= safeDaily && (
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white -mt-1 pointer-events-none"
-                    style={{ left: '100%', marginLeft: '-1px' }}
-                  />
-                )}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">{todayCount > 0 ? `${todayCount} transaksi hari ini` : ''}</span>
-                <span className="text-[11px] text-gray-500 font-medium">{Math.round((todaySpent / safeDaily) * 100)}%</span>
-              </div>
-            </div>
-          ) : (
-            <Meter value={0} color={kc.amber} track={kc.amberFill} ariaLabel="Belum ada batas aman" />
-          )}
-        </KpiCard>
-
-        {/* Sisa bebas */}
-        <KpiCard
-          label="Sisa bebas" icon="piggy" color={kc.brand} isDark={isDark}
-          info="Saldo total dikurangi tabungan dan tagihan. Batas aman per hari untuk sisa periode ini."
-          value={formatShort(sisaBebas)}
-          valueClassName={sisaBebas < 0 ? 'text-danger-400' : ''}
-          sub={dayNumber > 0 && totalDaysInPeriod > 0 ? `Hari ke-${dayNumber} dari ${totalDaysInPeriod}` : 'Periode selesai'}
-        >
-          <div className="space-y-2">
-            <Meter
-              value={freePart} color={kc.brandMeter} track={sisaBebas < 0 ? kc.dangerTrack : kc.brandTrack}
-              label={freePart != null ? pct(freePart) : null}
-              ariaLabel={freePart != null ? `${pct(freePart)} dana belanja masih bebas` : 'Belum ada dana belanja'}
-            />
-            {isCurrentPeriod && safeDaily > 0 && prediction && (
-              <div className="text-xs text-gray-400 space-y-1">
-                <p>untuk {prediction.safe_days} hari @ {shortRp100(safeDaily)}/hari</p>
-                <p>aman {shortRp100(safeDaily)}/hari</p>
-              </div>
-            )}
-          </div>
-        </KpiCard>
-
-        {/* Terpakai periode ini */}
-        <KpiCard
-          label="Terpakai periode ini" icon="expense" color={kc.amber} isDark={isDark}
-          info="Pengeluaran periode ini. Badge: prediksi apakah akan lewat dari alokasi."
-          value={formatShort(totalSpent)}
-          sub={fundsTotal > 0 ? `${Math.round(totalSpent / fundsTotal * 100)}% dari dana` : 'Belum ada dana'}
-        >
-          <div className="space-y-2">
-            <Meter
-              value={totalSpent / fundsTotal} color={kc.amber} track={kc.amberFill}
-              label={fundsTotal > 0 ? `${Math.round(totalSpent / fundsTotal * 100)}%` : null}
-              ariaLabel={`Terpakai ${formatShort(totalSpent)} dari ${formatShort(fundsTotal)}`}
-            />
-            {prediction && prediction.predicted_total > (prediction.total_available || totalAllocated) && (
-              <span className="inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: kc.amberFill, color: kc.amber }}>
-                Prediksi lewat
-              </span>
-            )}
-            {prediction && (
-              <p className="text-xs text-gray-400">
-                Arus kas diprediksi {prediction.predicted_cash_flow >= 0 ? '+' : ''}{formatShort(prediction.predicted_cash_flow)} di akhir periode
-              </p>
-            )}
-          </div>
-        </KpiCard>
-
-        {/* Income periode ini */}
-        <KpiCard
-          label="Income periode ini" icon="trending-up" color={isDark ? '#4ADE80' : '#22C55E'} isDark={isDark}
-          info="Total pendapatan periode ini. Saving rate: alokasi untuk tabungan dibagi income."
-          value={prediction ? formatShort(prediction.total_income || 0) : formatShort(0)}
-          sub={`saving rate ${Math.round(prediction?.saving_rate || 0)}%`}
-          badge={(prediction?.total_income || 0) === 0 ? (
-            <span className="inline-block text-[11px] px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap"
-              style={{ background: isDark ? 'rgba(51,65,85,0.5)' : 'rgba(226,232,240,0.5)', color: isDark ? '#CBD5E1' : '#64748B' }}>
-              Belum dicatat
-            </span>
-          ) : null}
-        >
-          <div className="space-y-2">
-            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: kc.track }}>
-              <div
-                className="h-full rounded-full transition-all"
-                style={{ width: `${Math.min(Math.round(prediction?.saving_rate || 0), 100)}%`, background: isDark ? '#4ADE80' : '#22C55E' }}
-              />
-            </div>
-          </div>
-        </KpiCard>
-
-        {/* Tagihan belum dibayar */}
-        <KpiCard
-          label="Tagihan belum dibayar" icon="calendar-check" color={isDark ? '#34D399' : '#10B981'} isDark={isDark}
-          info="Tagihan rutin yang belum dibayar periode ini. Badge: status keterlambatan."
-          value={recurringStats ? formatShort(recurringStats.amount_due || 0) : formatShort(0)}
-          sub={recurringStats && recurringStats.count_total > 0 ? `${recurringStats.count_due || 0} dari ${recurringStats.count_total} tagihan` : 'Tidak ada tagihan'}
-          badge={recurringStats && recurringStats.has_overdue ? (
-            <div className="absolute top-0 right-0 -mr-2 -mt-2 inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: 'rgba(226,75,74,0.14)', color: '#E24B4A' }}>
-              Telat
-            </div>
-          ) : recurringStats && recurringStats.count_total > 0 ? (
-            <div className="absolute top-0 right-0 -mr-2 -mt-2 inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)', color: isDark ? '#34D399' : '#10B981' }}>
-              Aman
-            </div>
-          ) : null}
-        >
-          <div className="space-y-2">
-            {recurringStats && recurringStats.count_total > 0 && (
-              <>
-                <Meter
-                  value={recurringStats.amount_paid + recurringStats.amount_due > 0 ? recurringStats.amount_paid / (recurringStats.amount_paid + recurringStats.amount_due) : 0}
-                  color={isDark ? '#34D399' : '#10B981'} track={isDark ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.16)'}
-                  label={`${formatShort(recurringStats.amount_paid)} / ${formatShort(recurringStats.amount_paid + recurringStats.amount_due)}`}
-                  ariaLabel={`Lunas ${formatShort(recurringStats.amount_paid)} dari ${formatShort(recurringStats.amount_paid + recurringStats.amount_due)} bulan ini`}
-                />
-                <p className="text-xs text-gray-500">Lunas {formatShort(recurringStats.amount_paid)} dari {formatShort(recurringStats.amount_paid + recurringStats.amount_due)} bulan ini</p>
-              </>
-            )}
-            {recurringStats && recurringStats.count_total === 0 && (
-              <p className="text-xs text-gray-500">Tidak ada tagihan bulan ini</p>
-            )}
-          </div>
-        </KpiCard>
-
-        {/* Tabungan */}
-        <KpiCard
-          label="Tabungan" icon="piggy" color={kc.indigo} isDark={isDark}
-          info="Total saldo amplop tabungan. Split: yang dibagi dengan keluarga vs pribadi."
-          value={formatShort(totalSaving)}
-          sub={goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id)).length > 0
-            ? `${goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id)).length} target`
-            : 'Tanpa target'}
-        >
-          <div className="space-y-2">
-            {totalSaving > 0 ? (
-              <>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span>Bersama {formatShort(sharedSaving)} · Pribadi {formatShort(personalSaving)}</span>
-                </div>
-                <div className="flex h-1.5 gap-0.5 rounded-full overflow-hidden" style={{ background: kc.track }}>
-                  {sharedSaving > 0 && (
-                    <div style={{ width: `${(sharedSaving / totalSaving) * 100}%`, background: kc.indigo }} />
-                  )}
-                  {personalSaving > 0 && (
-                    <div style={{ width: `${(personalSaving / totalSaving) * 100}%`, background: isDark ? '#A78BFA' : '#A78BFA' }} />
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="h-1.5 rounded-full" style={{ background: kc.track }} />
-            )}
-          </div>
-        </KpiCard>
+        <KpiTile
+          isDark={isDark} label="Jatah hari ini"
+          info="Belanja hari ini dibanding batas aman per hari. Garis putih: batas aman."
+          value={rpFull(todaySpent)}
+          suffix={safeDaily > 0 ? `/ ${rpFull(safeDaily)}` : null}
+          badge={meter.over ? { tone: 'danger', text: `Lewat ${rpFull(meter.overBy)}` } : null}
+          alert={meter.over}
+          bar={{
+            fill: meter.fill, marker: meter.marker,
+            color: meter.over ? tt.danger.bar : tt.bars.green,
+            ariaLabel: `Belanja hari ini ${rpFull(todaySpent)} dari batas aman ${rpFull(safeDaily)}`,
+          }}
+          footer={todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini'}
+        />
+        <KpiTile
+          isDark={isDark} label="Sisa bebas"
+          info="Saldo amplop belanja dikurangi tabungan dan tagihan yang belum dibayar. Batang: hari yang sudah lewat di periode ini."
+          value={rpCompact(sisaBebas)}
+          valueColor={sisaBebas < 0 ? tt.danger.text : null}
+          suffix={isCurrentPeriod ? daysLabel(prediction) : null}
+          bar={{ fill: isCurrentPeriod ? periodProgress(prediction) : 1, color: tt.bars.slate, ariaLabel: isCurrentPeriod ? periodDayLabel(prediction) : 'Periode selesai' }}
+          footer={isCurrentPeriod && prediction
+            ? `${periodDayLabel(prediction)} · aman ${rpCompact(safeDaily)}/hari`
+            : null}
+        />
+        <KpiTile
+          isDark={isDark} label="Terpakai periode ini"
+          info="Belanja periode ini dari dana amplop (alokasi + rollover). Prediksi lewat: perkiraan akhir periode di atas dana itu."
+          value={rpCompact(totalSpent)}
+          suffix="dari dana amplop"
+          badge={predictionOver(prediction) ? { tone: 'warn', text: 'Prediksi lewat' } : null}
+          bar={{ fill: fundsTotal > 0 ? totalSpent / fundsTotal : 0, color: tt.bars.green, ariaLabel: `Terpakai ${rpCompact(totalSpent)} dari ${rpCompact(fundsTotal)}` }}
+          footer={[
+            fundsTotal > 0 ? `${Math.round((totalSpent / fundsTotal) * 100)}%` : null,
+            prediction ? `prediksi akhir periode ${rpCompact(prediction.predicted_total)}` : null,
+          ].filter(Boolean).join(' · ')}
+        />
+        <KpiTile
+          isDark={isDark} label="Income periode ini"
+          info="Pemasukan periode ini. Saving rate: uang yang masuk ke amplop tabungan dan sinking fund dibagi pemasukan."
+          value={rpCompact(income)}
+          valueColor={prediction && income === 0 ? tt.warn.text : null}
+          suffix={prediction ? savingRateLabel(prediction) : null}
+          badge={prediction && income === 0 ? { tone: 'warn', text: 'Belum dicatat' } : null}
+          bar={{ fill: (Number(prediction?.saving_rate) || 0) / 100, color: tt.bars.green, ariaLabel: savingRateLabel(prediction) }}
+          footer={cashFlowLabel(prediction)}
+        />
+        <KpiTile
+          isDark={isDark} label="Tagihan belum dibayar"
+          info="Tagihan bulanan yang jatuh tempo periode ini dan belum dibayar. Telat: ada yang lewat tanggal jatuh tempo."
+          value={rpCompact(bills.due)}
+          valueColor={recurringStats?.has_overdue ? tt.danger.text : null}
+          suffix={recurringStats?.count_total ? `${recurringStats.count_due} dari ${recurringStats.count_total} tagihan` : 'tidak ada tagihan'}
+          badge={recurringStats?.has_overdue ? { tone: 'danger', text: 'Telat' } : null}
+          alert={!!recurringStats?.has_overdue}
+          bar={{ fill: bills.fill, color: tt.bars.green, ariaLabel: `Lunas ${rpCompact(bills.paid)} dari ${rpCompact(bills.total)}` }}
+          footer={bills.total > 0 ? `Lunas ${rpCompact(bills.paid)} dari ${rpCompact(bills.total)} bulan ini` : null}
+        />
+        <KpiTile
+          isDark={isDark} label="Tabungan"
+          info="Saldo amplop tabungan dan sinking fund. Batang: kemajuan semua target tabungan."
+          value={rpCompact(totalSaving)}
+          suffix={savingGoalCount > 0 ? `${savingGoalCount} target` : 'tanpa target'}
+          bar={{ fill: savingsProgress(goals, envelopes, null) || 0, color: tt.bars.purple, ariaLabel: 'Kemajuan target tabungan' }}
+          footer={`Bersama ${rpCompact(sharedSaving)} · Pribadi ${rpCompact(personalSaving)}`}
+        />
       </div>
 
       {isCurrentPeriod && (

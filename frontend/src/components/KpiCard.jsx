@@ -37,15 +37,9 @@ export function kpiPalette(isDark) {
   };
 }
 
-export function KpiCard({ label, info, value, valueClassName = '', sub, icon, color, isDark, badge, children }) {
+export function KpiCard({ label, info, value, valueClassName = '', sub, icon, color, isDark, children }) {
   return (
-    <div className="card flex flex-col gap-3 min-w-0 relative">
-      {/* Top-right badge */}
-      {badge && (
-        <div className="absolute top-0 right-0 -mr-2 -mt-2">
-          {badge}
-        </div>
-      )}
+    <div className="card flex flex-col gap-3 min-w-0">
       {/* Floated icon: on phones the subtitle runs under it instead of wrapping beside it. */}
       <div className="flow-root">
         <span
@@ -242,6 +236,63 @@ export function SpendSparkline({ series, color, fill, track, ring }) {
       {active != null && (
         <Readout x={xPct(active)}>{dayLabel(shown[active].date)} · {formatShort(shown[active].total)}</Readout>
       )}
+    </div>
+  );
+}
+
+const TONES = {
+  light: {
+    danger: { text: '#DC2626', bg: 'rgba(220,38,38,0.10)', bar: '#EF4444', border: 'rgba(220,38,38,0.28)' },
+    warn: { text: '#B45309', bg: 'rgba(217,119,6,0.12)' },
+    bars: { slate: '#94A3B8', green: '#22C55E', purple: '#8B5CF6' },
+  },
+  dark: {
+    danger: { text: '#F87171', bg: 'rgba(248,113,113,0.16)', bar: '#F87171', border: 'rgba(248,113,113,0.30)' },
+    warn: { text: '#FBBF24', bg: 'rgba(251,191,36,0.14)' },
+    bars: { slate: '#5B6480', green: '#4ADE80', purple: '#A78BFA' },
+  },
+};
+
+export function tileTones(isDark) {
+  return TONES[isDark ? 'dark' : 'light'];
+}
+
+// Kartu ringkas: label + badge, angka + keterangan sebaris, satu batang, satu baris bawah.
+export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, footer, alert, isDark }) {
+  const t = tileTones(isDark);
+  const fill = Math.min(Math.max(bar?.fill || 0, 0), 1) * 100;
+  return (
+    <div className="card !p-4 sm:!p-5 min-w-0" style={alert ? { boxShadow: `inset 0 0 0 1px ${t.danger.border}` } : undefined}>
+      <div className="flex items-center justify-between gap-2 min-h-[24px]">
+        <div className="flex items-center gap-1 min-w-0">
+          <p className="text-sm text-gray-400 truncate">{label}</p>
+          {info && <InfoTooltip text={info} position="bottom" />}
+        </div>
+        {badge && (
+          <span
+            className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+            style={{ color: t[badge.tone].text, background: t[badge.tone].bg }}
+          >{badge.text}</span>
+        )}
+      </div>
+      <p className="mt-2 flex items-baseline flex-wrap gap-x-1.5 leading-tight">
+        <span className="font-display text-2xl font-bold" style={valueColor ? { color: valueColor } : undefined}>{value}</span>
+        {suffix && <span className="text-sm text-gray-400">{suffix}</span>}
+      </p>
+      <div
+        className="relative mt-3 h-1.5 rounded-full"
+        style={{ background: isDark ? '#2A3245' : '#E8EBEF' }}
+        role="img" aria-label={bar?.ariaLabel}
+      >
+        {fill > 0 && <div className="h-full rounded-full" style={{ width: `${Math.max(fill, 3)}%`, background: bar.color }} />}
+        {bar?.marker != null && (
+          <span
+            className="absolute top-1/2 w-0.5 h-3 rounded-full bg-white"
+            style={{ left: `${bar.marker * 100}%`, transform: 'translate(-50%, -50%)' }}
+          />
+        )}
+      </div>
+      {footer && <p className="mt-2.5 text-xs text-gray-400">{footer}</p>}
     </div>
   );
 }
