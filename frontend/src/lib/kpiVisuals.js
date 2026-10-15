@@ -44,9 +44,9 @@ export function freeShare(envelopes) {
   return Math.min(Math.max(free / total, 0), 1);
 }
 
-// Target yang sudah tercapai tidak menutupi kekurangan target lain.
+// Target yang sudah tercapai tidak menutupi kekurangan target lain. personal null = semua.
 export function savingsProgress(goals, envelopes, personal) {
-  const ids = new Set(envelopes.filter((e) => isSaving(e) && !!e.is_personal === personal).map((e) => e.id));
+  const ids = new Set(envelopes.filter((e) => isSaving(e) && (personal == null || !!e.is_personal === personal)).map((e) => e.id));
   const mine = goals.filter((g) => ids.has(g.envelope_id));
   const target = mine.reduce((s, g) => s + Number(g.target_amount || 0), 0);
   if (target <= 0) return null;

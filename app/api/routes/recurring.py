@@ -15,6 +15,7 @@ from app.models.models import (
 )
 from app.services.recurring_processor import _next_date
 from app.services.recurring_status import compute_recurring_status
+from app.services.bills_summary import summarize_bills
 
 router = APIRouter()
 
@@ -225,6 +226,47 @@ async def skip_recurring(
     rec.next_run = _next_date(rec.next_run, rec.frequency)
     await db.commit()
     return {"next_run": rec.next_run}
+
+
+@router.get("/summary/period")
+async def recurring_period_summary(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ringkasan tagihan bulanan periode berjalan untuk kartu KPI Dashboard."""
+    hid = await _get_hid(user, db)
+    if not hid:
+        return {"amount_due": 0, "count_due": 0, "count_total": 0, "amount_paid": 0, "has_overdue": False}
+
+    today = date.today()
+    period_start, period_end = get_budget_period(getattr(user, "payday_day", None) or 1, today)
+
+    recs = (await db.execute(
+        select(RecurringTransaction)
+        .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
+        .where(
+            Envelope.household_id == hid,
+            RecurringTransaction.is_active == True,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
+        )
+    )).scalars().all()
+
+    env_ids = {r.envelope_id for r in recs}
+    txns_by_env = {}
+    if env_ids:
+        rows = (await db.execute(
+            select(Transaction.envelope_id, Transaction.amount, Transaction.description)
+            .where(
+                Transaction.envelope_id.in_(env_ids),
+                Transaction.is_deleted == False,
+                Transaction.transaction_date >= period_start,
+                Transaction.transaction_date <= period_end,
+            )
+        )).all()
+        for env_id, amount, desc in rows:
+            txns_by_env.setdefault(env_id, []).append((amount, desc))
+
+    return summarize_bills(recs, txns_by_env, period_start, period_end, today)
 
 
 @router.delete("/{rec_id}", status_code=status.HTTP_204_NO_CONTENT)
