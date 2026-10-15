@@ -7,6 +7,8 @@ import { formatShort, formatShortSigned, formatCurrency, titleCase } from '../li
 import ExportButtons from '../components/ExportButtons';
 import SpendingEnvelopes from '../components/SpendingEnvelopes';
 import SavingsTargets from '../components/SavingsTargets';
+import RecentTransactions from '../components/RecentTransactions';
+import SubscriptionsCard from '../components/SubscriptionsCard';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
@@ -287,6 +289,7 @@ export default function Dashboard() {
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [balanceStatus, setBalanceStatus] = useState(null);
+  const [subscriptions, setSubscriptions] = useState([]);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
 
   useEffect(() => {
@@ -304,6 +307,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     api.getBalanceCheckStatus().then(setBalanceStatus);
+    api.getRecurring().then(r => setSubscriptions(Array.isArray(r) ? r : []));
   }, [refreshTick]);
 
   useEffect(() => {
@@ -733,39 +737,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Transactions for selected period */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-display font-bold text-lg">Transaksi{isCurrentPeriod ? ' terbaru' : ''}</h2>
-          <Link to="/transactions" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
-        </div>
-        {transactions.length === 0 ? (
-          <div className="card text-center py-8"><p className="text-gray-400">Belum ada transaksi</p></div>
-        ) : (
-          <div className="card divide-y divide-gray-50">
-            {transactions.slice(0, 8).map(txn => {
-              const env = envelopes.find(e => e.id === txn.envelope_id);
-              return (
-                <div key={txn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                  <div className="flex items-center gap-3">
-                    <EnvelopeIcon value={env?.emoji} size={22} />
-                    <div>
-                      <p className="text-sm font-medium">{txn.description}</p>
-                      <p className="text-xs text-gray-400">{env?.name} · {txn.source === 'telegram' ? '📱' : '🌐'}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-display font-bold text-sm text-gray-900">-{formatShort(txn.amount)}</p>
-                    <p className="text-xs text-gray-400">
-                      {new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                      {txn.created_at && <> · {new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</>}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Transaksi terbaru + Langganan berdampingan di layar lebar */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] gap-4 items-start">
+        <RecentTransactions transactions={transactions} envelopes={envelopes} isCurrentPeriod={isCurrentPeriod} />
+        <SubscriptionsCard items={subscriptions} />
       </div>
     </div>
   );
