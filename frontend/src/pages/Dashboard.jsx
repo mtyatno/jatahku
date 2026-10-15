@@ -6,6 +6,9 @@ import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatShortSigned, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
 import SpendingEnvelopes from '../components/SpendingEnvelopes';
+import SavingsTargets from '../components/SavingsTargets';
+import RecentTransactions from '../components/RecentTransactions';
+import SubscriptionsCard from '../components/SubscriptionsCard';
 import Onboarding from '../components/Onboarding';
 import { Icon, EnvelopeIcon, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
@@ -255,75 +258,6 @@ function HeroAdvisor({ cards, advisorError, prediction, safeDaily, todaySpent, g
 
 // Savings accent — distinct from spending-risk colors (green/amber/red)
 const SAVING_ACCENT = '#6366F1';
-const SAVING_TRACK = 'rgba(99,102,241,0.16)';
-
-function EnvelopeRow({ env, goal }) {
-  const free = Number(env.free || env.remaining);
-  const isSaving = env.purpose === 'saving' || env.purpose === 'sinking_fund';
-
-  // ── Saving / sinking fund: balance-vs-target, NOT spent-vs-budget ──
-  if (isSaving) {
-    const balance = goal ? Number(goal.current_balance) : free;
-    if (goal) {
-      const pct = Math.round(goal.progress_pct);
-      const target = Number(goal.target_amount);
-      const achieved = goal.is_achieved;
-      const toTarget = Math.max(target - Number(goal.current_balance), 0);
-      const accent = achieved ? '#059669' : SAVING_ACCENT;
-      return (
-        <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
-          <div className="flex items-start justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <EnvelopeIcon value={env.emoji} size={22} color={achieved ? '#059669' : SAVING_ACCENT} />
-              <span className="font-semibold text-sm">{titleCase(env.name)}</span>
-              {achieved && (
-                <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: '#ECFDF5', color: '#059669' }}>🎉 Tercapai</span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="font-display font-bold text-sm" style={{ color: accent }}>{formatShort(balance)}</span>
-              <InfoTooltip text="Saldo saat ini untuk envelope tabungan" position="left" />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="h-2 rounded-full overflow-hidden flex-1" style={{ background: SAVING_TRACK }}>
-              <div className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(Math.max(pct, 2), 100)}%`, background: accent }} />
-            </div>
-            <span className="text-xs font-semibold w-12 text-right" style={{ color: accent }}>{pct}% target</span>
-          </div>
-          <div className="flex justify-between mt-1 text-xs text-gray-400">
-            <span>Target {formatShort(target)}</span>
-            <span>{achieved ? 'Lengkap 🎯' : `Kurang ${formatShort(toTarget)}`}</span>
-          </div>
-          {goal.monthly_needed != null && !achieved && (
-            <p className="text-xs mt-0.5" style={{ color: SAVING_ACCENT }}>
-              ≈ {formatShort(goal.monthly_needed)}/bln biar tepat waktu
-            </p>
-          )}
-        </div>
-      );
-    }
-    // Saving envelope without a target yet
-    return (
-      <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <EnvelopeIcon value={env.emoji} size={22} color={SAVING_ACCENT} />
-            <span className="font-semibold text-sm">{titleCase(env.name)}</span>
-            <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ background: SAVING_TRACK, color: SAVING_ACCENT }}>Menabung</span>
-          </div>
-          <span className="font-display font-bold text-sm" style={{ color: SAVING_ACCENT }}>{formatShort(balance)}</span>
-        </div>
-        <p className="text-xs text-gray-400 mb-1">Saldo tabungan · belum ada target</p>
-        <Link to="/envelopes" className="text-xs font-medium text-brand-600 hover:underline">+ Tambah target</Link>
-      </div>
-    );
-  }
-
-  // Amplop pengeluaran tampil di SpendingEnvelopes; kartu ini hanya untuk tabungan.
-  return null;
-}
 
 function sortEnvelopes(envs) {
   return [...envs].sort((a, b) => {
@@ -355,6 +289,7 @@ export default function Dashboard() {
   const [celebrate, setCelebrate] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [balanceStatus, setBalanceStatus] = useState(null);
+  const [subscriptions, setSubscriptions] = useState([]);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
 
   useEffect(() => {
@@ -372,6 +307,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     api.getBalanceCheckStatus().then(setBalanceStatus);
+    api.getRecurring().then(r => setSubscriptions(Array.isArray(r) ? r : []));
   }, [refreshTick]);
 
   useEffect(() => {
@@ -439,9 +375,6 @@ export default function Dashboard() {
 
   const shared = sortEnvelopes(envelopes.filter(e => !e.is_personal));
   const personal = sortEnvelopes(envelopes.filter(e => e.is_personal));
-
-  const goalByEnv = {};
-  goals.forEach(g => { goalByEnv[g.envelope_id] = g; });
 
   const totalAllocated = envelopes.reduce((s, e) => s + Number(e.allocated), 0);
   const totalRollover = envelopes.reduce((s, e) => s + Number(e.rollover || 0), 0);
@@ -778,65 +711,36 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Amplop pengeluaran — satu card bertab Semua · Bersama · Pribadi, urut paling kritis */}
-      {spending.length > 0 && (
-        <SpendingEnvelopes
-          envelopes={spending}
-          allEnvelopes={envelopes}
-          isDark={isDark}
-          track={kc.track}
-          actionable={isCurrentPeriod}
-          onChanged={() => setRefreshTick(t => t + 1)}
-        />
-      )}
-
-      {/* Amplop tabungan — saldo vs target, tetap sebagai kartu */}
-      {savingEnvelopes.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="piggy" size={20} color={SAVING_ACCENT} /> Tabungan</h2>
-            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Kelola →</Link>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[...savingEnvelopes].sort((a, b) => Number(a.is_personal) - Number(b.is_personal))
-              .map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
-          </div>
+      {/* Amplop pengeluaran (bertab) + Target tabungan berdampingan di layar lebar */}
+      {(spending.length > 0 || savingEnvelopes.length > 0) && (
+        <div className={`grid grid-cols-1 gap-4 items-start ${spending.length > 0 && savingEnvelopes.length > 0 ? 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
+          {spending.length > 0 && (
+            <SpendingEnvelopes
+              envelopes={spending}
+              allEnvelopes={envelopes}
+              isDark={isDark}
+              track={kc.track}
+              actionable={isCurrentPeriod}
+              onChanged={() => setRefreshTick(t => t + 1)}
+            />
+          )}
+          {savingEnvelopes.length > 0 && (
+            <SavingsTargets
+              envelopes={savingEnvelopes}
+              goals={goals}
+              isDark={isDark}
+              accent={kc.indigo}
+              done="var(--brand-600)"
+              track={kc.track}
+            />
+          )}
         </div>
       )}
 
-      {/* Transactions for selected period */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-display font-bold text-lg">Transaksi{isCurrentPeriod ? ' terbaru' : ''}</h2>
-          <Link to="/transactions" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua →</Link>
-        </div>
-        {transactions.length === 0 ? (
-          <div className="card text-center py-8"><p className="text-gray-400">Belum ada transaksi</p></div>
-        ) : (
-          <div className="card divide-y divide-gray-50">
-            {transactions.slice(0, 8).map(txn => {
-              const env = envelopes.find(e => e.id === txn.envelope_id);
-              return (
-                <div key={txn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                  <div className="flex items-center gap-3">
-                    <EnvelopeIcon value={env?.emoji} size={22} />
-                    <div>
-                      <p className="text-sm font-medium">{txn.description}</p>
-                      <p className="text-xs text-gray-400">{env?.name} · {txn.source === 'telegram' ? '📱' : '🌐'}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-display font-bold text-sm text-gray-900">-{formatShort(txn.amount)}</p>
-                    <p className="text-xs text-gray-400">
-                      {new Date(txn.transaction_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                      {txn.created_at && <> · {new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</>}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Transaksi terbaru + Langganan berdampingan di layar lebar */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] gap-4 items-start">
+        <RecentTransactions transactions={transactions} envelopes={envelopes} isCurrentPeriod={isCurrentPeriod} />
+        <SubscriptionsCard items={subscriptions} />
       </div>
     </div>
   );
