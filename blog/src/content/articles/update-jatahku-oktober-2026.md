@@ -28,17 +28,19 @@ Baca selengkapnya di [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-
 
 ## 3. Cooling Period Tidak Lagi Menahan Transaksi
 
-Dulu, pengeluaran di atas batas cooling ditahan 24 jam sebelum tercatat. Dari webapp, pengeluaran seperti itu malah tidak bisa dicatat sama sekali.
+Pengeluaran di atas batas cooling sekarang langsung tercatat, di webapp maupun Telegram, tanpa ditahan 24 jam.
 
-Masalahnya, kebanyakan dari kita mencatat **setelah** membayar. Menahan catatan tidak membatalkan pembelian. Yang hilang hanya catatannya, dan sisa amplop jadi tidak sesuai dengan uang yang sebenarnya.
+Alasannya, kebanyakan dari kita mencatat **setelah** membayar. Menahan catatan tidak membatalkan pembelian. Yang tertahan hanya catatannya, sehingga sisa amplop tidak sesuai dengan uang yang sebenarnya.
 
-Sekarang pengeluaran di atas batas cooling langsung tercatat, di webapp maupun Telegram. Batas cooling tetap tersimpan dan akan dipakai fitur refleksi "Sepadan?" yang segera hadir. Transaksi yang masih tertahan bisa kamu konfirmasi atau batalkan lewat `/pending` selama belum kedaluwarsa, yaitu 48 jam setelah dicatat.
+Batas cooling tetap tersimpan dan akan dipakai fitur refleksi "Sepadan?" yang segera hadir. Transaksi yang masih tertahan bisa kamu konfirmasi atau batalkan lewat `/pending` selama belum kedaluwarsa, yaitu 48 jam setelah dicatat.
+
+Mau memberi jeda sebelum membeli? Tanya dulu ke Jatahku sebelum checkout, misalnya `aman gak beli sepatu 450rb?`.
 
 Alasan lengkapnya ada di artikel [Kenapa Jatahku Tidak Lagi Menahan Transaksi 24 Jam](/insight/fitur-cooling-period-anti-belanja-impulsif/).
 
 ## 4. Kontrol Amplop untuk Semua Paket
 
-Kunci amplop, limit harian, dan batas cooling tersedia di semua paket, termasuk Basic. Halaman Upgrade tidak lagi mencantumkannya sebagai fitur khusus Pro.
+Kunci amplop, limit harian, dan batas cooling tersedia di semua paket, termasuk Basic.
 
 ## 5. Webapp dan Telegram Kini Mengikuti Aturan yang Sama
 
@@ -59,11 +61,10 @@ Angka tanpa satuan tidak memecah pengeluaran, jadi `beli 2 kopi 25 ribu` tetap t
 
 ## 6. Perbaikan Lainnya
 
-- **Notifikasi "🎯 Goal tercapai!"** sekarang terkirim saat saldo amplop melewati targetnya, misalnya setelah income dibagi atau dana dipindahkan ke amplop itu. Sebelumnya notifikasi ini tidak pernah terkirim.
+- **Notifikasi "🎯 Goal tercapai!"** dikirim saat saldo amplop melewati targetnya, misalnya setelah income dibagi atau dana dipindahkan ke amplop itu.
 - **Simpan ulang tanpa dobel.** Kalau koneksi putus saat kamu menyimpan dari form Catat pengeluaran, baris yang hasilnya belum pasti ditandai dan dikunci. Tekan Simpan lagi, dan transaksi yang sudah tercatat tidak akan tercatat dua kali. Perlindungan yang sama berlaku untuk transaksi dari antrean offline.
-- **Transaksi offline yang ditolak tidak hilang lagi.** Dulu, transaksi yang dicatat saat offline lalu ditolak waktu dikirim, misalnya karena dana amplop kurang atau amplop dikunci, bisa hilang tanpa pemberitahuan. Sekarang muncul pemberitahuan "⚠️ … transaksi yang dicatat saat offline gagal tersimpan". Ketuk **Tinjau** untuk melihat alasannya, mengganti amplop, mencoba lagi, atau menghapusnya.
-- **Kuota Basic tidak memutus pencatatan di tengah jalan.** Kalau kuota 50 transaksi per bulan habis di tengah satu kali mencatat, misalnya saat menyimpan beberapa pengeluaran sekaligus, pencatatan itu tetap diselesaikan utuh. Sesudahnya Jatahku memberi tahu bahwa kuota sudah habis dan tanggal berapa bisa mencatat lagi.
-- **Keterangan panjang tidak lagi gagal disimpan.** Keterangan lebih dari 500 karakter sekarang dipotong otomatis.
+- **Transaksi offline yang ditolak bisa ditinjau.** Kalau transaksi yang dicatat saat offline ditolak waktu dikirim, misalnya karena dana amplop kurang atau amplop dikunci, Jatahku menampilkan pemberitahuan "⚠️ … transaksi yang dicatat saat offline gagal tersimpan". Ketuk **Tinjau** untuk melihat alasannya, mengganti amplop, mencoba lagi, atau menghapusnya.
+- **Kuota Basic dihitung per catatan dan tidak memutus pencatatan di tengah jalan.** Di paket Basic, tiap barang dari struk yang dicatat per barang dihitung sebagai satu transaksi dalam kuota 50 transaksi per bulan. Kalau kuota habis di tengah satu kali mencatat, misalnya saat menyimpan struk per barang atau beberapa pengeluaran sekaligus, pencatatan itu tetap diselesaikan utuh. Sesudahnya Jatahku memberi tahu bahwa kuota sudah habis dan pencatatan berikutnya bisa lagi mulai tanggal 1 bulan depan.
 - **Versi aplikasi di Settings.** Di bagian paling bawah Settings sekarang tertulis versi aplikasi, misalnya "Versi 1a2b3c4". Kalau melaporkan masalah, sertakan versi ini.
 
 ---

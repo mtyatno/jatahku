@@ -102,10 +102,14 @@ Kalau total yang terbaca salah, ketuk **✏️ Nominal salah**, lalu ketik penge
 
 Kalau totalnya tidak terbaca sama sekali, Jatahku memberi tahu dan kamu bisa mengisi nominalnya sendiri. Scan yang gagal seperti ini tidak dihitung dalam kuota.
 
-## Kuota Scan
+## Kuota
 
-- **Pro**: tanpa batas.
-- **Basic**: 15 scan per bulan, dihitung bersama untuk form Pengeluaran, Chat Jatahku, dan Telegram. Sisa kuota bulan ini ditampilkan setiap selesai scan.
+- **Pro**: scan struk dan transaksi tanpa batas.
+- **Basic**: 15 scan per bulan, dihitung bersama untuk form Pengeluaran, Chat Jatahku, dan Telegram. Sisa kuota scan bulan ini ditampilkan setiap selesai scan.
+
+Di paket Basic, struk yang dicatat per barang juga memakai kuota 50 transaksi per bulan: **tiap barang dihitung sebagai satu transaksi**, bukan satu struk. Struk berisi 8 barang memakai 8 transaksi. Struk yang dicatat lewat chat atau Telegram dihitung satu transaksi, karena memang dicatat sebagai satu transaksi.
+
+Kuota dicek sekali saat struk mulai disimpan. Kalau kuota masih ada, struk itu selalu disimpan utuh walaupun jumlah transaksinya melewati 50, termasuk saat kamu menyimpan ulang barang yang sempat gagal. Sesudahnya Jatahku memberi tahu bahwa kuota sudah habis dan pencatatan berikutnya bisa lagi mulai tanggal 1 bulan depan.
 
 ## Tanya Jawab
 

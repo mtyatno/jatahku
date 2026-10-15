@@ -33,17 +33,11 @@ Hasilnya, keputusan keuangan yang kamu sesali keesokan paginya.
 
 ---
 
-## Cooling Period yang Lama: Catatan Ditahan 24 Jam
+## Kenapa Cooling Period Tidak Lagi Menahan Transaksi
 
-Dulu, Jatahku mencoba memberi jeda dengan menahan catatan. Pengeluaran di atas batas tertentu tidak langsung tercatat, melainkan ditahan selama 24 jam. Setelah itu kamu ditanya lagi apakah masih ingin mencatatnya.
+Dulu, cooling period memberi jeda dengan menahan catatan: pengeluaran di atas batas tertentu baru tercatat setelah 24 jam.
 
-Idenya masuk akal kalau kamu mencatat **sebelum** membeli. Kenyataannya, kebanyakan dari kita mencatat **setelah** membayar. Kopinya sudah diminum, sepatunya sudah dalam perjalanan.
-
-Pada titik itu, menahan catatan tidak mencegah apa pun karena uangnya sudah keluar. Yang tertahan hanya catatannya, dan akibatnya justru merugikan:
-
-- Sisa amplop terlihat lebih besar dari uang yang sebenarnya ada.
-- Catatan yang tertahan lalu tidak dikonfirmasi hilang begitu saja.
-- Dari webapp, pengeluaran di atas batas bahkan tidak bisa dicatat sama sekali.
+Idenya masuk akal kalau kamu mencatat **sebelum** membeli. Kenyataannya, kebanyakan dari kita mencatat **setelah** membayar. Kopinya sudah diminum, sepatunya sudah dalam perjalanan. Pada titik itu, menahan catatan tidak mencegah apa pun karena uangnya sudah keluar. Yang tertahan hanya catatannya, sehingga sisa amplop terlihat lebih besar dari uang yang sebenarnya ada.
 
 Padahal amplop hanya berguna kalau angkanya jujur. Karena itu kami memegang prinsip baru: **Jatahku adalah cermin, bukan penjaga gerbang.** Tugasnya menunjukkan kondisi uangmu apa adanya, bukan menolak mencatat pembelian yang sudah terjadi. Perubahan cooling period ini adalah langkah pertamanya.
 
@@ -56,7 +50,7 @@ Padahal amplop hanya berguna kalau angkanya jujur. Karena itu kami memegang prin
 - **Batas cooling tetap bisa diatur.** Default untuk amplop baru ada di **Settings → 🛡️ Default Behavior Controls → Cooling threshold (Rp)**. Batas per amplop ada di form amplop, bagian **Pengaturan lainnya**. Di bot, pakai `/setcooling [nama amplop] [jumlah]`.
 - **Saat ini batas itu tidak menahan atau mengubah apa pun.** Batasnya akan dipakai fitur refleksi **"Sepadan?"** yang segera hadir.
 - **Transaksi yang masih tertahan** dari sebelum perubahan ini bisa dikonfirmasi atau dibatalkan lewat perintah `/pending`, di bot Telegram maupun di chat Jatahku di webapp, selama belum kedaluwarsa (48 jam setelah dicatat).
-- **Ada pembelian yang dulu tertahan lalu tidak pernah tercatat?** Sisa amplopmu mungkin lebih besar dari uang yang sebenarnya. Ketuk tombol **+**, pilih **Cocokkan saldo**, lalu masukkan total uangmu sekarang. Jatahku membantu membagi selisihnya ke amplop.
+- **Sisa amplop terasa tidak sesuai kenyataan?** Ketuk tombol **+**, pilih **Cocokkan saldo**, lalu masukkan total uangmu sekarang. Jatahku membantu membagi selisihnya ke amplop.
 
 ---
 

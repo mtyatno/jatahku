@@ -69,7 +69,7 @@ Bayangkan kamu baru selesai makan di warung, sinyal lemah atau bahkan tidak ada 
 
 Tidak ada yang hilang, tidak perlu ingat untuk sinkron manual.
 
-Kadang transaksi offline ditolak saat dikirim, misalnya karena dana amplopnya kurang atau amplopnya dikunci. Transaksi seperti itu tidak dibuang. Jatahku menampilkan pemberitahuan "⚠️ … transaksi yang dicatat saat offline gagal tersimpan". Ketuk **Tinjau** untuk melihat alasannya, lalu ganti amplop, coba lagi, atau hapus transaksinya.
+Kadang transaksi offline ditolak saat dikirim, misalnya karena dana amplopnya kurang atau amplopnya dikunci. Transaksi seperti itu tetap tersimpan di HP, dan Jatahku menampilkan pemberitahuan "⚠️ … transaksi yang dicatat saat offline gagal tersimpan". Ketuk **Tinjau** untuk melihat alasannya, lalu ganti amplop, coba lagi, atau hapus transaksinya.
 
 ---
 

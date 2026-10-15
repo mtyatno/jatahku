@@ -280,10 +280,10 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
       <p>Catat setiap hari &mdash; atau tandai &ldquo;hari tanpa belanja&rdquo; &mdash; untuk menjaga streak. Satu papan disiplin untuk seisi rumah, saling jaga konsistensi.</p>
     </div>
     <div class="f-card">
-      <div class="f-icon r">&#9203;</div>
+      <div class="f-icon r">&#129300;</div>
       <div class="f-tag">Behavior Control</div>
-      <h3>Cooling Period, Lock &amp; Daily Limit</h3>
-      <p>Pembelian besar di-hold 24 jam supaya otak rasional sempat bekerja. Amplop bisa dikunci, limit harian bisa dipasang. Kamu yang buat rules-nya, sistem yang menjaganya.</p>
+      <h3>Cek Sebelum Beli, Lock &amp; Daily Limit</h3>
+      <p>Tanya &ldquo;aman gak beli sepatu 450rb?&rdquo; sebelum checkout &mdash; Jatahku menghitung sisa amplopmu kalau jadi beli, tanpa mencatat apa pun. Amplop bisa dikunci, limit harian bisa dipasang. Kamu yang buat rules-nya.</p>
     </div>
     <div class="f-card">
       <div class="f-icon a">&#128260;</div>
@@ -643,11 +643,12 @@ parkir 5000</div>
     </div>
     <div class="step">
       <div class="step-n">4</div>
-      <h3>Kontrol otomatis</h3>
-      <p>Cooling period, lock, daily limit aktif otomatis sesuai rules kamu.</p>
-      <div class="step-card" style="background:#FDEAEA">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span>&#9203;</span><b style="font-size:12px;color:#993C1D">Cooling period aktif</b></div>
-        <div style="font-size:11px;color:var(--text-s)">Rp600rb &mdash; headphone<br>Konfirmasi setelah 24 jam</div>
+      <h3>Cek sebelum beli</h3>
+      <p>Tanya dulu sebelum checkout. Lock dan daily limit bekerja sesuai rules kamu.</p>
+      <div class="step-card" style="background:var(--yellow-light)">
+        <div style="font-size:11px;color:var(--text-s);margin-bottom:4px">aman gak beli headphone 600rb?</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span>&#9888;&#65039;</span><b style="font-size:12px;color:#92400E">Pas-pasan, tapi masih cukup</b></div>
+        <div style="font-size:11px;color:var(--text-s)">Sisa setelah beli: Rp150rb</div>
       </div>
     </div>
   </div>
@@ -681,10 +682,10 @@ parkir 5000</div>
       <span class="uc-emoji">&#128188;</span>
       <h3>Karyawan</h3>
       <div class="pain">&ldquo;Gaji sudah masuk tapi akhir bulan selalu pas-pasan&rdquo;</div>
-      <p>Budget otomatis dari gaji. Cooling period untuk belanja online impulsif. Daily limit untuk jajan kantor. Sinking fund untuk cicilan.</p>
+      <p>Budget otomatis dari gaji. Cek &ldquo;aman gak beli?&rdquo; sebelum belanja online. Daily limit untuk jajan kantor. Sinking fund untuk cicilan.</p>
       <ul>
         <li>Auto-alokasi dari gaji</li>
-        <li>Cooling period belanja online</li>
+        <li>Cek sebelum belanja online</li>
         <li>Daily limit jajan</li>
         <li>Laporan bulanan otomatis</li>
       </ul>
@@ -760,7 +761,7 @@ parkir 5000</div>
 <section class="section diff"><div class="section-in">
   <div class="sl">Kenapa Jatahku?</div>
   <div class="st">Bukan expense tracker <em>biasa.</em></div>
-  <div class="sd">Yang lain mencatat pengeluaran. Jatahku mencegah boros sebelum terjadi &mdash; dengan behavior controls yang hanya ada di sini.</div>
+  <div class="sd">Yang lain sekadar mencatat pengeluaran. Jatahku membantumu mengerem sebelum boros &mdash; lewat AI Advisor, cek sebelum beli, dan kontrol amplop yang kamu atur sendiri.</div>
   <div class="diff-grid">
     <div class="diff-item">
       <div class="diff-badge badge-u">Hanya di Jatahku</div>
@@ -768,9 +769,9 @@ parkir 5000</div>
       <p>Bukan chatbot. Advisor membaca angka budget-mu setiap hari dan bilang persis kapan harus rem &mdash; sebelum jebol, bukan sesudahnya.</p>
     </div>
     <div class="diff-item">
-      <div class="diff-badge badge-u">Hanya di Jatahku</div>
-      <h3>&#9203; Cooling Period</h3>
-      <p>Pembelian besar otomatis di-hold 24 jam. Beri waktu otak rasional bekerja sebelum dompet terbuka.</p>
+      <div class="diff-badge badge-b">Fitur Inti</div>
+      <h3>&#129300; Cek Sebelum Beli</h3>
+      <p>&ldquo;Aman gak beli sepatu 450rb?&rdquo; &mdash; Jatahku menghitung sisa amplopmu kalau jadi beli. Beri waktu otak rasional bekerja sebelum dompet terbuka.</p>
     </div>
     <div class="diff-item">
       <div class="diff-badge badge-u">Hanya di Jatahku</div>
@@ -810,14 +811,6 @@ parkir 5000</div>
   <div class="sl">Testimoni</div>
   <div class="st">Apa kata pengguna Jatahku</div>
   <div class="testi-grid">
-    <div class="testi-card">
-      <div class="stars">&#11088;&#11088;&#11088;&#11088;&#11088;</div>
-      <div class="quote">&ldquo;Akhirnya bisa kontrol belanja online. Cooling period bener-bener nahan impulse beli barang yang nggak perlu. Udah hemat jutaan sejak pakai ini.&rdquo;</div>
-      <div class="author">
-        <div class="avatar" style="background:var(--primary)">A</div>
-        <div class="author-info"><div class="name">Andi S.</div><div class="role">Karyawan Swasta, Jakarta</div></div>
-      </div>
-    </div>
     <div class="testi-card">
       <div class="stars">&#11088;&#11088;&#11088;&#11088;&#11088;</div>
       <div class="quote">&ldquo;Income freelance nggak tetap, tapi sekarang tiap bayaran masuk langsung auto-alokasi. Bot Telegram-nya gampang banget, ketik biasa langsung tercatat.&rdquo;</div>
@@ -872,7 +865,7 @@ parkir 5000</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Apa bedanya Jatahku dengan app keuangan lain?</div>
-      <div class="faq-a">App lain mencatat pengeluaran (expense tracker). Jatahku mengontrol pengeluaran sebelum terjadi (behavior control). Fitur seperti cooling period, envelope lock, daily limit, sinking fund otomatis, dan NLP Bot bahasa gaul hanya ada di Jatahku.</div>
+      <div class="faq-a">App lain sekadar mencatat pengeluaran (expense tracker). Jatahku membantumu mengendalikannya: tiap rupiah punya jatah di amplopnya, AI Advisor memperingatkan sebelum budget jebol, dan kamu bisa tanya &ldquo;aman gak beli?&rdquo; sebelum checkout. Ada juga envelope lock, daily limit, sinking fund otomatis, dan bot yang paham bahasa sehari-hari.</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Berapa harga Pro?</div>
@@ -906,7 +899,7 @@ parkir 5000</div>
         <li>Target menabung &amp; papan disiplin</li>
         <li>WebApp akses penuh</li>
         <li>Household (bisa bergabung)</li>
-        <li class="no">Behavior controls (cooling, lock, limit)</li>
+        <li>Kunci amplop &amp; limit harian</li>
         <li class="no">Export CSV &amp; laporan PDF</li>
         <li class="no">Analytics &amp; proyeksi</li>
         <li class="no">Unlimited amplop &amp; transaksi</li>
@@ -928,7 +921,7 @@ parkir 5000</div>
         <li>Target menabung &amp; papan disiplin</li>
         <li>WebApp akses penuh</li>
         <li>Household bersama (invite anggota)</li>
-        <li>Behavior controls (cooling period, lock, daily limit)</li>
+        <li>Kunci amplop &amp; limit harian</li>
         <li>Export CSV &amp; laporan PDF</li>
         <li>Analytics &amp; proyeksi budget</li>
         <li>Semua fitur masa depan</li>
@@ -1338,7 +1331,7 @@ window.addEventListener('scroll', function(){
 .badge-u{background:rgba(186,117,23,.35);color:#FAEEDA}
 .badge-b{background:rgba(255,255,255,.1);color:rgba(255,255,255,.5)}
 /* Testimonials */
-.testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:48px}
+.testi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-top:48px}
 .testi-card{background:var(--white);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px}
 .testi-card .stars{color:var(--accent);font-size:13px;letter-spacing:2px;margin-bottom:12px}
 .testi-card .quote{font-size:14px;color:var(--text);line-height:1.65;margin-bottom:16px;font-style:italic}
