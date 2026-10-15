@@ -548,14 +548,27 @@ export default function Dashboard() {
         >
           {safeDaily > 0 ? (
             <div className="space-y-2">
-              <Meter
-                value={todaySpent / safeDaily} color={kc.amber} track={kc.amberFill}
-                label={`${Math.round((todaySpent / safeDaily) * 100)}%`}
-                ariaLabel={`Terpakai ${formatShort(todaySpent)}, batas aman ${shortRp100(safeDaily)}`}
-              />
-              {todayCount > 0 && (
-                <p className="text-xs text-gray-400">{todayCount} transaksi hari ini</p>
-              )}
+              <div className="relative">
+                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: kc.amberFill }}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min((todaySpent / safeDaily) * 100, 100)}%`,
+                      background: todaySpent > safeDaily ? '#E24B4A' : kc.amber
+                    }}
+                  />
+                </div>
+                {todaySpent <= safeDaily && (
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-white -mt-1 pointer-events-none"
+                    style={{ left: '100%', marginLeft: '-1px' }}
+                  />
+                )}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">{todayCount > 0 ? `${todayCount} transaksi hari ini` : ''}</span>
+                <span className="text-[11px] text-gray-500 font-medium">{Math.round((todaySpent / safeDaily) * 100)}%</span>
+              </div>
             </div>
           ) : (
             <Meter value={0} color={kc.amber} track={kc.amberFill} ariaLabel="Belum ada batas aman" />
@@ -590,10 +603,15 @@ export default function Dashboard() {
               label={fundsTotal > 0 ? `${Math.round(totalSpent / fundsTotal * 100)}%` : null}
               ariaLabel={`Terpakai ${formatShort(totalSpent)} dari ${formatShort(fundsTotal)}`}
             />
-            {prediction && prediction.predicted_total > totalAllocated && (
+            {prediction && prediction.predicted_total > (prediction.total_available || totalAllocated) && (
               <span className="inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: kc.amberFill, color: kc.amber }}>
                 Prediksi lewat
               </span>
+            )}
+            {prediction && (
+              <p className="text-xs text-gray-400">
+                Arus kas diprediksi {prediction.predicted_cash_flow >= 0 ? '+' : ''}{formatShort(prediction.predicted_cash_flow)} di akhir periode
+              </p>
             )}
           </div>
         </KpiCard>
@@ -603,17 +621,21 @@ export default function Dashboard() {
           label="Income periode ini" icon="trending-up" color={isDark ? '#4ADE80' : '#22C55E'} isDark={isDark}
           info="Total pendapatan periode ini. Saving rate: alokasi untuk tabungan dibagi income."
           value={prediction ? formatShort(prediction.total_income || 0) : formatShort(0)}
-          sub={prediction && prediction.total_income > 0 ? `saving rate ${Math.round(prediction.saving_rate || 0)}%` : 'Belum dicatat'}
+          sub={`saving rate ${Math.round(prediction?.saving_rate || 0)}%`}
+          badge={(prediction?.total_income || 0) === 0 ? (
+            <span className="inline-block text-[11px] px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap"
+              style={{ background: isDark ? 'rgba(51,65,85,0.5)' : 'rgba(226,232,240,0.5)', color: isDark ? '#CBD5E1' : '#64748B' }}>
+              Belum dicatat
+            </span>
+          ) : null}
         >
           <div className="space-y-2">
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: kc.track }}>
-              <div className="h-full rounded-full" style={{ width: '100%', background: isDark ? '#4ADE80' : '#22C55E' }} />
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${Math.min(Math.round(prediction?.saving_rate || 0), 100)}%`, background: isDark ? '#4ADE80' : '#22C55E' }}
+              />
             </div>
-            {(prediction?.total_income || 0) === 0 && (
-              <span className="inline-block text-[11px] px-2 py-1 rounded-full" style={{ background: isDark ? '#334155' : '#E2E8F0', color: isDark ? '#CBD5E1' : '#64748B' }}>
-                Belum dicatat
-              </span>
-            )}
           </div>
         </KpiCard>
 
