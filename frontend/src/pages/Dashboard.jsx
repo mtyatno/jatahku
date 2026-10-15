@@ -5,13 +5,13 @@ import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { formatShort, formatShortSigned, formatCurrency, titleCase } from '../lib/utils';
 import ExportButtons from '../components/ExportButtons';
+import SpendingEnvelopes from '../components/SpendingEnvelopes';
 import Onboarding from '../components/Onboarding';
-import { Icon, EnvelopeIcon, BRAND, renderWithIcons } from '../components/Icon';
+import { Icon, EnvelopeIcon, renderWithIcons } from '../components/Icon';
 import { InfoTooltip } from '../components/InfoTooltip';
 import { KpiCard, Meter, FundsBar, EnvelopeStrip, SpendSparkline, kpiPalette } from '../components/KpiCard';
 import { envelopeStrip, fundsBreakdown, freeShare, savingsProgress, dailySeries, localDateStr } from '../lib/kpiVisuals';
 import { todayAdvice } from '../lib/advisorToday';
-import { fundingState } from '../lib/envelopeFunding';
 import { formatLastChecked } from '../lib/balanceCheck';
 import {
   ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -258,10 +258,6 @@ const SAVING_ACCENT = '#6366F1';
 const SAVING_TRACK = 'rgba(99,102,241,0.16)';
 
 function EnvelopeRow({ env, goal }) {
-  const allocated = Number(env.allocated);
-  const rollover = Number(env.rollover || 0);
-  const spent = Number(env.spent);
-  const reserved = Number(env.reserved || 0);
   const free = Number(env.free || env.remaining);
   const isSaving = env.purpose === 'saving' || env.purpose === 'sinking_fund';
 
@@ -325,88 +321,8 @@ function EnvelopeRow({ env, goal }) {
     );
   }
 
-  // ── Expense: spent-vs-budget (risk colors) ──
-  const ratio = env.spent_ratio;
-  const isUnfunded = allocated <= 0 && rollover === 0;
-  const remaining = allocated + rollover - spent;
-  const fstate = fundingState(env);
-
-  const barColor = fstate === 'overspent' ? 'bg-danger-400' : fstate === 'reserve_short' ? 'bg-amber-400' : ratio >= 0.7 ? 'bg-amber-400' : 'bg-brand-400';
-  const freeColor = fstate === 'overspent' ? 'text-danger-400' : fstate === 'reserve_short' ? 'text-amber-500' : ratio >= 0.7 ? 'text-amber-400' : 'text-brand-600';
-
-  const badge = fstate === 'overspent'
-    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-100 text-danger-400 font-semibold">Habis</span>
-    : fstate === 'reserve_short'
-    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 font-medium">⚠️ kurang tagihan</span>
-    : ratio >= 0.9
-    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-red-50 text-danger-400 font-medium">🔴 {Math.round(ratio * 100)}%</span>
-    : ratio >= 0.7
-    ? <span className="text-xs px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 font-medium">🟡 {Math.round(ratio * 100)}%</span>
-    : null;
-
-  return (
-    <div className={`card hover:border-brand-200 transition-colors ${env.is_locked ? 'opacity-60' : ''}`}>
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <EnvelopeIcon value={env.emoji} size={22} />
-          <span className="font-semibold text-sm">{titleCase(env.name)}</span>
-          {badge}
-        </div>
-        <div className="flex items-center gap-1">
-          <span className={`font-display font-bold text-sm ${freeColor}`}>{formatShort(free)}</span>
-          <InfoTooltip text="Dana yang tersisa untuk dibelanjakan (alokasi - pengeluaran - reserve)" position="left" />
-        </div>
-      </div>
-      {isUnfunded ? (
-        <div className="bg-gray-50 text-gray-400 text-xs px-3 py-2 rounded-lg">Belum ada dana.</div>
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex-1">
-              <div className={`h-full rounded-full transition-all duration-500 ${env.is_locked ? 'bg-gray-300' : barColor}`}
-                style={{ width: `${Math.min(Math.max(ratio * 100, 1), 100)}%` }} />
-            </div>
-            <span className={`text-xs font-semibold w-10 text-right ${freeColor}`}>
-              {free <= 0 ? '0%' : `Sisa ${Math.round((1 - ratio) * 100)}%`}
-            </span>
-          </div>
-          <div className="flex justify-between mt-1 text-xs text-gray-400">
-            <span className="flex items-center gap-1">
-              Terpakai {formatShort(spent)}
-              <InfoTooltip text="Pengeluaran di periode ini" position="top" />
-            </span>
-            {reserved > 0 && <span className="flex items-center gap-1">
-              ⏳ {formatShort(reserved)}
-              <InfoTooltip text="Tagihan yang sudah disimpan untuk periode depan" position="top" />
-            </span>}
-            <span className="flex items-center gap-1">
-              Dana {formatShort(allocated)}
-              <InfoTooltip text="Alokasi periode ini untuk envelope" position="top" />
-            </span>
-          </div>
-          {rollover !== 0 && (
-            <p className={`text-xs mt-0.5 ${rollover > 0 ? 'text-brand-500' : 'text-danger-400'}`}>
-              <span className="flex items-center gap-1">
-                {rollover > 0
-                  ? `🔄 +${formatShort(rollover)} rollover`
-                  : `🔄 ${formatShort(Math.abs(rollover))} minus dari periode lalu`}
-                <InfoTooltip text={rollover > 0 ? "Sisa periode lalu yang terbawa ke periode ini" : "Kekurangan dari periode lalu yang dikurangi dari periode ini"} position="top" />
-              </span>
-            </p>
-          )}
-          {fstate === 'reserve_short' && (
-            <p className="text-xs text-amber-500 mt-0.5 flex items-center gap-1">
-              <span>
-                ⚠️ Reserve tagihan {formatShort(reserved)} &gt; sisa {formatShort(remaining)} — kurang {formatShort(reserved - remaining)}
-              </span>
-              <InfoTooltip text="Uang yang disimpan untuk tagihan lebih besar dari dana tersisa. Alokasikan lagi untuk menghindari keterlambatan pembayaran" position="top" />
-              {' '}<Link to="/allocate" className="font-medium hover:underline">Alokasikan lagi →</Link>
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
+  // Amplop pengeluaran tampil di SpendingEnvelopes; kartu ini hanya untuk tabungan.
+  return null;
 }
 
 function sortEnvelopes(envs) {
@@ -532,6 +448,7 @@ export default function Dashboard() {
   const totalSpent = envelopes.reduce((s, e) => s + Number(e.spent), 0);
   const totalRemaining = envelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const savingEnvelopes = envelopes.filter(e => e.purpose === 'saving' || e.purpose === 'sinking_fund');
+  const spending = sortEnvelopes(envelopes.filter(e => !savingEnvelopes.includes(e)));
   const totalSaving = savingEnvelopes.reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const sharedSaving = savingEnvelopes.filter(e => !e.is_personal).reduce((s, e) => s + Number(e.free ?? e.remaining), 0);
   const personalSaving = totalSaving - sharedSaving;
@@ -861,26 +778,28 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Envelopes — sorted by urgency, max 6 */}
-      {shared.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="users" size={20} color={BRAND} /> Shared</h2>
-            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({shared.length}) →</Link>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[...shared].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
-          </div>
-        </div>
+      {/* Amplop pengeluaran — satu card bertab Semua · Bersama · Pribadi, urut paling kritis */}
+      {spending.length > 0 && (
+        <SpendingEnvelopes
+          envelopes={spending}
+          allEnvelopes={envelopes}
+          isDark={isDark}
+          track={kc.track}
+          actionable={isCurrentPeriod}
+          onChanged={() => setRefreshTick(t => t + 1)}
+        />
       )}
-      {personal.length > 0 && (
+
+      {/* Amplop tabungan — saldo vs target, tetap sebagai kartu */}
+      {savingEnvelopes.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="lock" size={20} color={BRAND} /> Personal</h2>
-            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Lihat semua ({personal.length}) →</Link>
+            <h2 className="font-display font-bold text-lg flex items-center gap-2"><Icon name="piggy" size={20} color={SAVING_ACCENT} /> Tabungan</h2>
+            <Link to="/envelopes" className="text-sm text-brand-600 font-medium hover:underline">Kelola →</Link>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[...personal].sort((a,b) => (b.spent_ratio||0) - (a.spent_ratio||0)).slice(0, 6).map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
+            {[...savingEnvelopes].sort((a, b) => Number(a.is_personal) - Number(b.is_personal))
+              .map(env => <EnvelopeRow key={env.id} env={env} goal={goalByEnv[env.id]} />)}
           </div>
         </div>
       )}
