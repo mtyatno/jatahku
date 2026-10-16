@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 from app.services.advisor.formatting import _median_decimal, _to_decimal
 from app.services.advisor.snapshot import Snapshot
@@ -860,3 +860,55 @@ def ringkasan_periode_lalu(m: Metrics) -> dict | None:
             "terbesar_id": terbesar[0] if terbesar else None,
             "terbesar": terbesar[1] if terbesar else ZERO,
             "mulai": m.periode[-2][0], "akhir": m.periode[-2][1]}
+
+
+# ── tambahan S4: angka turunan untuk aturan AMP-*/TAG-*/INC-*/TAB-*/DAT-* (02-aturan.md §6C–G) ──
+def ceil10rb(value) -> Decimal:
+    """Dibulatkan ke atas ke Rp10.000 (saran jatah AMP-04/05/06)."""
+    v = _to_decimal(value)
+    return (v / 10_000).to_integral_value(rounding=ROUND_CEILING) * 10_000
+
+
+def jumlah_transaksi_laju_amplop(snap: Snapshot, m: Metrics, eid: str, k: Konstanta = DEFAULT) -> int:
+    """Transaksi variabel satu amplop di jendela laju M8 (dasar keyakinan proyeksi AMP-02/03)."""
+    mulai = m.today - timedelta(days=k.jendela_laju - 1) if m.hari_ke >= k.jendela_laju else m.period_start
+    return sum(
+        1 for x in snap.transactions
+        if x.envelope_id == eid and mulai <= x.transaction_date <= m.today
+        and m.jenis_transaksi.get(x.id) == "variabel"
+    )
+
+
+def variabel_harian_amplop(snap: Snapshot, m: Metrics, eid: str, hari: int = 7) -> list[tuple[date, Decimal]]:
+    """Belanja variabel amplop per hari, `hari` hari terakhir s/d t (dalam periode berjalan). AMP-10."""
+    mulai = max(m.today - timedelta(days=hari - 1), m.period_start)
+    per = defaultdict(lambda: ZERO)
+    for x in snap.transactions:
+        if x.envelope_id == eid and mulai <= x.transaction_date <= m.today \
+                and m.jenis_transaksi.get(x.id) == "variabel":
+            per[x.transaction_date] += x.amount
+    out, day = [], mulai
+    while day <= m.today:
+        out.append((day, per.get(day, ZERO)))
+        day += timedelta(days=1)
+    return out
+
+
+def saving_rate_riwayat(snap: Snapshot, m: Metrics, k: Konstanta = DEFAULT) -> list[Decimal]:
+    """P6 per periode lalu (≤ 3 terakhir yang punya pemasukan viewer), rumus sama dengan P6. INC-05."""
+    tabungan = {e.id for e in snap.envelopes if e.purpose in SAVING_PURPOSES}
+    past = m.periode[:-1]
+    p1 = [ZERO] * len(past)
+    ke_tabungan = [ZERO] * len(past)
+    idx_income = {}
+    for i in snap.incomes:
+        if i.amount > 0 and not i.is_adjustment and i.user_id == snap.viewer_id:
+            idx = _period_index(i.income_date, past)
+            if idx is not None:
+                p1[idx] += i.amount
+                idx_income[i.id] = idx
+    for a in snap.allocations:
+        idx = idx_income.get(a.income_id)
+        if idx is not None and a.envelope_id in tabungan:
+            ke_tabungan[idx] += a.amount
+    return [ke_tabungan[i] / p1[i] for i in range(len(past)) if p1[i] > 0][-k.periode_riwayat:]
