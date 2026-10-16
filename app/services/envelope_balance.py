@@ -133,6 +133,7 @@ async def compute_envelope_summaries(
             "group_name": group_names.get(env.group_id),
             "purpose": env.purpose,
             "classification": env.classification,
+            "is_emergency": bool(getattr(env, "is_emergency", False)),
         })
 
     return summaries

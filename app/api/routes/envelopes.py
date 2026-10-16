@@ -16,6 +16,7 @@ from app.models.models import (
 )
 from app.services.reserved import recurring_monthly_reserve
 from app.services.envelope_balance import compute_envelope_summaries
+from app.services.advisor.metrics import SAVING_PURPOSES, is_emergency_name
 
 router = APIRouter()
 
@@ -32,6 +33,8 @@ class EnvelopeCreate(BaseModel):
     cooling_threshold: Decimal | None = None
     purpose: str = "expense"
     classification: str | None = None  # "needs" | "wants" — hanya untuk expense/debt
+    # Dana darurat, hanya untuk tabungan. None = buat: tebak dari nama; ubah: biarkan nilai lama.
+    is_emergency: bool | None = None
 
 
 class EnvelopeResponse(BaseModel):
@@ -47,6 +50,7 @@ class EnvelopeResponse(BaseModel):
     is_personal: bool = False
     purpose: str | None = None
     classification: str | None = None
+    is_emergency: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -72,6 +76,7 @@ class EnvelopeSummary(BaseModel):
     group_name: str | None = None
     purpose: str | None = None
     classification: str | None = None
+    is_emergency: bool = False
 
 
 class EnvelopeGroupCreate(BaseModel):
@@ -83,6 +88,20 @@ class EnvelopeGroupResponse(BaseModel):
     name: str
     sort_order: int
     model_config = {"from_attributes": True}
+
+
+def _resolve_is_emergency(requested: bool | None, purpose: str, name: str, current: bool | None) -> bool:
+    """Nilai is_emergency setelah buat/ubah. Hanya amplop tabungan yang bisa jadi dana darurat;
+    ganti purpose ke non-tabungan otomatis melepasnya."""
+    if purpose not in SAVING_PURPOSES:
+        if requested:
+            raise HTTPException(status_code=400, detail="Dana darurat hanya untuk amplop tabungan")
+        return False
+    if requested is not None:
+        return requested
+    if current is None:  # amplop baru
+        return is_emergency_name(name)
+    return current
 
 
 async def _get_hid(user: User, db: AsyncSession):
@@ -260,6 +279,7 @@ async def create_envelope(
         cooling_threshold=req.cooling_threshold,
         purpose=req.purpose,
         classification=req.classification,
+        is_emergency=_resolve_is_emergency(req.is_emergency, req.purpose, req.name, None),
     )
     db.add(envelope)
     await db.commit()
@@ -293,6 +313,9 @@ async def update_envelope(
         raise HTTPException(status_code=400, detail="classification hanya untuk amplop expense atau cicilan")
     if req.purpose == "debt" and req.budget_amount <= 0:
         raise HTTPException(status_code=400, detail="Amplop cicilan harus memiliki budget")
+    is_emergency = _resolve_is_emergency(
+        req.is_emergency, req.purpose, req.name, bool(getattr(envelope, "is_emergency", False)),
+    )
 
     # Prevent changing ownership of personal envelopes
     if req.group_id is not None:
@@ -315,6 +338,7 @@ async def update_envelope(
     envelope.cooling_threshold = req.cooling_threshold
     envelope.purpose = req.purpose
     envelope.classification = req.classification
+    envelope.is_emergency = is_emergency
     await db.commit()
     await db.refresh(envelope)
     return envelope
