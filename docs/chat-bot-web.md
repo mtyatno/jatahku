@@ -42,6 +42,11 @@ ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapte
 - `bot_commands()` / `bot_callbacks()` di `handlers.py` — daftar perintah &
   tombol bersama Telegram dan web. **Perintah/tombol baru cukup didaftarkan di
   sana** dan otomatis tersedia di kedua kanal.
+- Jawaban angka ("sisa", `/status`, limit harian, kapan habis, pengeluaran hari
+  ini, "kenapa …", "aman beli …") dan ringkasan harian/mingguan untuk user di
+  flag `advisor_v2_users` disusun `app/bot/advisor_cmd.py` →
+  `app/services/advisor/chat.py` (metrics + render AI Advisor, angka sama dengan
+  Beranda); user lain masih mendapat jawaban lama sampai flag `*` (S10).
 - Perintah akun khusus Telegram (`/link`, `/unlink`, `/webapp`, tombol
   `merge_`/`unlink_`) tidak dijalankan di web; `/start` mengabaikan deep link.
 - Teks yang berbeda per kanal memakai `is_web()` (mis. `/help`, ajakan setup,

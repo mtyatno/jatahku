@@ -912,3 +912,23 @@ def saving_rate_riwayat(snap: Snapshot, m: Metrics, k: Konstanta = DEFAULT) -> l
         if idx is not None and a.envelope_id in tabungan:
             ke_tabungan[idx] += a.amount
     return [ke_tabungan[i] / p1[i] for i in range(len(past)) if p1[i] > 0][-k.periode_riwayat:]
+
+
+# ── tambahan S9: simulasi "aman beli?" (02-aturan.md §6H SIM-01) ──
+SIMULASI_TXN_ID = "sim:aman-beli"
+
+
+def simulasi_belanja(snap: Snapshot, eid: str, jumlah, k: Konstanta = DEFAULT) -> Metrics:
+    """Metrik seolah `jumlah` dicatat hari ini di amplop `eid` — rumus sama persis dengan
+    `compute_metrics` (T3, J1, T10 dihitung ulang, bukan dikurangi dengan tangan).
+    Snapshot asli tidak diubah.
+
+    Catatan: bila nominal sama persis dengan tagihan amplop itu yang belum dibayar, transaksi
+    simulasi dianggap melunasi tagihan (aturan nominal persis M4) dan T3 tidak turun — sama
+    dengan yang terjadi bila belanja itu sungguh dicatat."""
+    from dataclasses import replace
+    from app.services.advisor.snapshot import TransactionSnap
+    txn = TransactionSnap(id=SIMULASI_TXN_ID, envelope_id=eid, user_id=snap.viewer_id,
+                          amount=_to_decimal(jumlah), transaction_date=snap.today,
+                          description="simulasi", created_at=snap.now)
+    return compute_metrics(replace(snap, transactions=[*snap.transactions, txn]), k)
