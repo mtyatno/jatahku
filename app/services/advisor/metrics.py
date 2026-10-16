@@ -7,7 +7,8 @@ bot, scheduler, dan frontend membaca hasilnya; dilarang menulis rumus pembagi
 hari sendiri.
 
 Kode metrik mengikuti spesifikasi: M1–M13 per amplop, T1–T11 total belanja,
-P1–P6 pemasukan, G1–G8 tabungan & target, K1–K4 lain-lain. S2–S5 boleh MENAMBAH
+P1–P6 pemasukan, G1–G8 tabungan & target, K1–K4 lain-lain, plus `riwayat`
+per amplop per periode (ditambah S2 untuk sinyal lintas periode). S2–S5 boleh MENAMBAH
 fungsi di sini, tidak mengubah rumus yang ada (03-workflow.md §7 kepemilikan file).
 
 Keputusan kecil S1 (dicatat juga di SESI-LOG.md):
@@ -117,6 +118,22 @@ class EnvelopeMetrics:
 
 
 @dataclass
+class RiwayatAmplop:
+    """Angka per periode satu amplop, terlama dulu; indeks terakhir = periode berjalan (S2).
+
+    Dipakai sinyal lintas periode (S5 lonjakan, S8/S9 kronis, S17 tren) supaya
+    `signals.py` tidak menghitung ulang dana/terpakai sendiri.
+    """
+    dana: list[Decimal]            # M1 per periode
+    terpakai: list[Decimal]        # M2 per periode
+    variabel: list[Decimal]        # M7 per periode (seluruh periode)
+    alokasi_utama: list[Decimal]   # alokasi positif dari pemasukan sungguhan (bukan transfer/penyesuaian)
+    tambalan_n: list[int]          # M11 per periode
+    terpakai_sd_hari_ini: Decimal  # M2 periode berjalan s/d t
+    terpakai_lalu_sd_hari_ke: Decimal | None  # M2 periode lalu s/d hari ke-d yang sama
+
+
+@dataclass
 class Metrics:
     today: date
     period_start: date
@@ -172,6 +189,9 @@ class Metrics:
     selisih_terakhir: Decimal | None
     hari_tanpa_catatan: int | None
     beban_tagihan: Decimal | None
+    # Riwayat lintas periode (S2)
+    periode: list[tuple[date, date]] = field(default_factory=list)
+    riwayat: dict[str, RiwayatAmplop] = field(default_factory=dict)
 
     def to_api(self) -> dict:
         """Bentuk `metrics` di GET /advisor/dashboard (04-kontrak-api.md)."""
@@ -437,6 +457,44 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
                 for s in sources:  # bagi proporsional bila satu transfer punya beberapa sumber
                     tb["sumber"][s.envelope_id] += a.amount * -s.amount / keluar
 
+    # Riwayat per periode (S2: S5, S8, S9, S17). Rumus sama dengan M1/M2/M7/M11 di atas.
+    var_per = defaultdict(lambda: [ZERO] * n_periods)
+    for x in txns:
+        i = _period_index(x.transaction_date, periods)
+        if i is not None and jenis[x.id] == "variabel":
+            var_per[x.envelope_id][i] += x.amount
+    utama_per = defaultdict(lambda: [ZERO] * n_periods)
+    tambal_n_per = defaultdict(lambda: [0] * n_periods)
+    for inc_id, allocs in allocs_by_income.items():
+        inc = incomes.get(inc_id)
+        if inc is None or inc.is_adjustment:
+            continue
+        i = _period_index(inc.income_date, periods)
+        if i is None:
+            continue
+        for a in allocs:
+            if a.amount > 0 and a.envelope_id in envs:
+                if inc.amount > 0:
+                    utama_per[a.envelope_id][i] += a.amount
+                elif inc.amount == 0:
+                    tambal_n_per[a.envelope_id][i] += 1
+    prev_cut = None
+    if n_periods >= 2:
+        prev_ps, prev_pe = periods[-2]
+        prev_cut = (prev_ps, min(prev_ps + timedelta(days=d - 1), prev_pe))
+    riwayat: dict[str, RiwayatAmplop] = {}
+    for eid in envs:
+        sd_ini = sum((x.amount for x in cur_txns_by_env.get(eid, []) if x.transaction_date <= t), ZERO)
+        lalu = None
+        if prev_cut is not None:
+            lalu = sum((x.amount for x in txns
+                        if x.envelope_id == eid and prev_cut[0] <= x.transaction_date <= prev_cut[1]), ZERO)
+        riwayat[eid] = RiwayatAmplop(
+            dana=list(dana_per[eid]), terpakai=list(spent_per[eid]), variabel=list(var_per[eid]),
+            alokasi_utama=list(utama_per[eid]), tambalan_n=list(tambal_n_per[eid]),
+            terpakai_sd_hari_ini=sd_ini, terpakai_lalu_sd_hari_ke=lalu,
+        )
+
     # Per amplop
     amplop: dict[str, EnvelopeMetrics] = {}
     porsi_total = ZERO
@@ -658,6 +716,7 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         saldo_tabungan=saldo_tabungan, setoran=setoran, setoran_biasa=setoran_biasa, target=target,
         belanja_bulanan=G7, amplop_darurat=darurat, cakupan_darurat=G8,
         hari_sejak_cocokkan=K1, selisih_terakhir=K2, hari_tanpa_catatan=K3, beban_tagihan=K4,
+        periode=list(periods), riwayat=riwayat,
     )
 
 

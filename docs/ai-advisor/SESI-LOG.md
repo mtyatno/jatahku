@@ -41,6 +41,37 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S2 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/signals.py`: `compute_signals(snapshot, metrics) -> Signals`, fungsi murni. S1–S19 + S4b, masing-masing field list/dict di `Signals` (kosong/None = tidak menyala); `Signals.aktif()` → kode yang menyala. Konstanta §11 di `KonstantaSinyal`.
+- Memakai yang sudah ada, tidak menghitung ulang: outlier dari `metrics.jenis_transaksi` (rumus `projection.py`), S6 dari `metrics.harian[].lewat`, S19 dari M13 (`amplop[e].dibayar_manual`, aturan nominal persis `reserved.py`), S3 dari `sinking.detect_interval` + `_amount_stability` + `_token_overlap`/`normalize_description`.
+- `metrics.py` (hanya menambah): `Metrics.periode` dan `Metrics.riwayat[eid]` = `RiwayatAmplop` (dana, terpakai, variabel, alokasi_utama, tambalan_n per periode; terpakai s/d hari ini; terpakai periode lalu s/d hari ke-d). Dipakai S5, S8, S9, S17.
+- `snapshot.py`: field `Snapshot.now` (UTC saat muat) untuk S14 "lebih dari 24 jam" tanpa jam sistem di signals.
+- Tes `test_advisor_signals.py` (46): struk-rantai, dobel vs kembar (skenario 9 & 15), S4b, lonjakan, menganggur, pemasukan terlambat/lebih kecil (+ skenario 5), kronis, tren, tagihan berubah/ganda/manual, pola rutin, belum dijatah, lupa catat, non-rollover, gajian bergeser (termasuk masuk lebih awal), contoh §12 hanya S6.
+
+**Digantung (sengaja, sesi lain)**
+- Belum ada pemakai: aturan (S3/S4) yang membaca `Signals`. Teks penanda ("Struk {toko} sepertinya tercatat dua kali…") di `render.py` (S3/S13).
+- `KonstantaSinyal` dari AppSetting — bersama `Konstanta` (S3).
+
+**Keputusan kecil (tertulis juga di docstring signals.py)**
+- S1/S4/S4b hanya periode berjalan. S1 hanya transaksi viewer. S4 hanya pasangan dari pencatat yang sama dan deskripsinya terlihat (dua "Transaksi privat" anggota lain tidak dibandingkan). S4 dikelompokkan: satu grup per transaksi asli, `hapus_saran` = kiriman berikutnya.
+- S4b butuh rantai ≥ 2 barang; struk 1 barang terkirim dua kali → S4. Pasangan yang sudah tercakup S4b tidak dilaporkan lagi sebagai S4. Jendela 30 menit diukur dari akhir rantai pertama ke awal rantai kedua; porsi = pasangan identik ÷ jumlah barang rantai terbesar.
+- S3: ≥ 2 tanggal, keyakinan interval ≥ medium, nominal exact/stable_range, kemunculan terakhir ≤ 2× interval yang lalu; cocok langganan aktif bila token ≥ 0,5 dan nominal ±15%.
+- S5: median variabel per 7 hari = median (variabel periode × 7 ÷ D) dari ≤ 3 periode lalu yang punya dana/terpakai; butuh ≥ 2 periode. Nilai 7 hari ini = M12.
+- S8/S9 butuh 3 periode lalu beraktivitas. "Median alokasi" = alokasi positif dari pemasukan sungguhan (tanpa transfer/penyesuaian). S9 juga batal bila periode ini sudah ditambal.
+- S12/S13/S18 hanya Jenis Pendapatan bulanan. S15 harfiah: hari mencatat dalam t−13..t. S17 tidak membandingkan bila periode lalu terpakai 0. S18 memakai selisih ke awal periode terdekat (gaji masuk lebih awal = selisih negatif).
+
+**Jebakan**
+- `riwayat[].variabel` periode lalu memakai `jenis_transaksi`, yang outlier-nya diukur dengan median 90 hari s/d **hari ini** (bukan s/d periode itu). Untuk S5 cukup; jangan dipakai untuk menampilkan "variabel periode lalu" ke user tanpa catatan.
+- `harian[].lewat` di contoh §12 menyala untuk beberapa hari, bukan hanya hari ini — benar, karena J0 per hari dihitung dari saldo awal hari itu.
+
+**Baseline tes:** backend 689 OK · frontend 250 OK · build OK.
+
+**Lanjut ke S3:** prompt pembuka §3 dengan SN = S3 (#58). Aturan HAR-*/PER-* membaca `Metrics` + `Signals` (`compute_signals(snap, compute_metrics(snap))`); HAR-03 dari `signals.outlier` (`hari_ini`), DAT-03 dari `dobel`/`struk_dobel`.
+
+---
+
 ## S8 · 2026-10-16 · Claude
 
 **Selesai**
