@@ -11,6 +11,7 @@ import RecentTransactions from '../components/RecentTransactions';
 import SubscriptionsCard from '../components/SubscriptionsCard';
 import DailySpendingChart from '../components/DailySpendingChart';
 import AttentionCard from '../components/AttentionCard';
+import AdvisorCard from '../components/AdvisorCard';
 import SpendBreakdown from '../components/SpendBreakdown';
 import { attentionItems, transfersInto } from '../lib/dashboardInsights';
 import Onboarding from '../components/Onboarding';
@@ -497,7 +498,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Pengeluaran harian + Perlu perhatian (pengganti AI Advisor) berdampingan di layar lebar */}
+      {/* Pengeluaran harian + kartu AI Advisor (flag) / Perlu perhatian (UI lama) berdampingan di layar lebar */}
       <div className={`grid grid-cols-1 gap-4 ${isCurrentPeriod ? 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
         <DailySpendingChart
           daily={daily}
@@ -512,7 +513,8 @@ export default function Dashboard() {
             grafik: advisorDash.grafik,
           } : null}
         />
-        {isCurrentPeriod && (
+        {adv && <AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />}
+        {isCurrentPeriod && !adv && (
           <AttentionCard
             isDark={isDark}
             error={!!advisorInsights?._error}
