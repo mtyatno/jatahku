@@ -9,11 +9,13 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 **Selesai**
 - `lib/advisorCard.js` (+ tes, 6): `dismissOptions` (label §9 dari `dismiss.pilihan`), `visibleItems`/`badgeCount` (sembunyikan seketika sebelum muatan ulang), `overflowLabel` ("+N saran lain: {judul pendek}", maks 2 judul), `primaryAction`, `askChips` (3–4 pertanyaan dari payload aksi `chat` insight yang menyala — daftar dulu, lalu chip KPI — dilengkapi intent tetap bot: kapan habis, limit harian, sisa, pengeluaran hari ini), `askAction`. Tidak ada teks insight atau angka di frontend; semua dari `render.py`.
 - `components/AdvisorCard.jsx` (baru): judul "AI Advisor" + badge (`advisor.total`) + cap waktu (`updatedLabel`); maks 3 item dari `advisor.items` (urutan server); tiap item: titik tone, judul, isi, CTA utama (`aksi[0]` via `openAction`), **Rincian** (fakta, insight yang diserap, CTA lain, dasar + keyakinan + cap waktu, **Sembunyikan periode ini** / **Tidak relevan**), **Nanti**. "+N saran lain". Kosong → "Semua aman" + `advisor.aman`. Kotak **Tanya AI Advisor**: chip cepat → chat terkirim langsung (chip lain tetap di chat), "Ketik sendiri…" → chat terbuka dengan chip.
-- `Dashboard.jsx`: flag aktif + periode berjalan → `AdvisorCard` di samping grafik; selain itu `AttentionCard` lama tidak berubah.
+- `Dashboard.jsx` (milik S6) **tidak** diubah: pemasangan kartu sempat dibuat lalu di-revert atas permintaan pemilik produk. Kartu belum tampil di Beranda sampai dipasang (lihat Digantung).
 
 **Digantung / untuk sesi lain**
 - S4 (#81) dan S6 (#82) sudah di `main`; branch ini sudah di-merge dengan `main`, jadi kartu langsung berisi semua aturan (TAG/AMP/INC/TAB/DAT).
-- Sesi ini dikerjakan tanpa ritual pembuka (rangkuman + "lanjut") dan di branch `claude/festive-bell-3hg12l`, bukan `ai-advisor/s7-*`. `Dashboard.jsx` (milik S6) diubah 4 baris untuk memasang kartu — reviewer mohon cek.
+- **Pemasangan kartu di Beranda** (`Dashboard.jsx`, milik S6): flag aktif + periode berjalan → `<AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />` di samping grafik, `AttentionCard` hanya bila `!adv`. Menunggu keputusan siapa yang memasang.
+- Sesi ini dikerjakan tanpa ritual pembuka (rangkuman + "lanjut") dan di branch `claude/festive-bell-3hg12l`. Pekerjaan berikutnya memakai `ai-advisor/sN-*`.
+- INC-01 membawa aksi "Ingatkan besok" (dismiss `nanti`) sehingga di kartu tampil dobel dengan tombol **Nanti**. Belum diubah.
 - "Lihat semua" untuk `advisor.sisa` belum ada: server hanya mengirim `{id, judul_pendek}`. Kalau mau dibuka, kontrak perlu insight utuh di `sisa` (atau endpoint terpisah).
 - `AttentionCard.jsx` + `attentionItems` (`dashboardInsights.js`) + `api.getAdvisorInsights` masih dipakai UI lama; hapus setelah flag `*` (S10).
 - Ringkasan "Rencana dana dihitung bersama" tidak ditampilkan khusus: CTA `plan` di item membuka `PlanSheet` (S8) dengan payload dari server (sudah satu rencana bersama, S3).
