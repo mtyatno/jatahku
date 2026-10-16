@@ -52,9 +52,15 @@ class TakePaidInPeriodTests(unittest.TestCase):
         paid = take_paid_in_period([_rec(1, date(2026, 8, 5))], {}, PERIOD_START, PERIOD_END)
         self.assertEqual(paid, {})
 
-    def test_first_due_two_periods_ahead_not_paid(self):
-        pools = {"e1": [(54000, "🔄 Netflix")]}
-        paid = take_paid_in_period([_rec(1, date(2026, 9, 5))], pools, PERIOD_START, PERIOD_END)
+    def test_paid_early_for_next_period_bill(self):
+        # Jatuh tempo 5 Agt (periode depan) dibayar lebih awal di Juli → next_run maju ke 5 Sep.
+        pools = {"e1": [(295000, "🔄 VPS")]}
+        paid = take_paid_in_period([_rec(1, date(2026, 9, 5), desc="VPS")], pools, PERIOD_START, PERIOD_END)
+        self.assertEqual(paid, {1: 295000})
+
+    def test_new_next_period_with_other_payment_not_paid(self):
+        pools = {"e1": [(54000, "🔄 Spotify")]}
+        paid = take_paid_in_period([_rec(1, date(2026, 8, 5))], pools, PERIOD_START, PERIOD_END)
         self.assertEqual(paid, {})
 
     def test_one_payment_marks_one_subscription(self):
