@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { api } from '../lib/api';
@@ -19,6 +19,8 @@ import { KpiTile, tileTones, kpiPalette } from '../components/KpiCard';
 import { rpFull, rpCompact, dailyMeter, predictionOver, daysLabel, periodDayLabel, periodProgress, savingRateLabel, cashFlowLabel, billsProgress } from '../lib/kpiCards';
 import { savingsProgress, localDateStr } from '../lib/kpiVisuals';
 import { formatLastChecked } from '../lib/balanceCheck';
+import { advisorEnabled, advisorKpi, advisorDailySeries, chipLook, updatedLabel } from '../lib/advisorDashboard';
+import { useIsPhone } from '../components/AdvisorChip';
 
 // Uang pecahan terkecil Rp100: jatah harian dan selisihnya dibulatkan ke bawah ke kelipatan Rp100.
 const floorRp100 = (v) => Math.floor((Number(v) || 0) / 100) * 100;
@@ -59,6 +61,12 @@ export default function Dashboard() {
   const [incomes, setIncomes] = useState([]);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
   const [recurringStats, setRecurringStats] = useState(null);
+  // Beranda AI Advisor (S6): GET /advisor/dashboard; {"enabled": false} atau gagal → UI lama.
+  const [advisorDash, setAdvisorDash] = useState(null);
+  const [advisorTick, setAdvisorTick] = useState(0);
+  const [openKpi, setOpenKpi] = useState(null);
+  const phone = useIsPhone();
+  const closeKpi = useCallback(() => setOpenKpi(null), []);
 
   useEffect(() => {
     const mode = sessionStorage.getItem('onboarded_income_mode');
@@ -72,6 +80,22 @@ export default function Dashboard() {
     window.addEventListener('jatahku:txn-added', onAdded);
     return () => window.removeEventListener('jatahku:txn-added', onAdded);
   }, []);
+
+  useEffect(() => {
+    const onChanged = () => setAdvisorTick(t => t + 1);
+    window.addEventListener('jatahku:advisor-dismissed', onChanged);
+    window.addEventListener('jatahku:envelope-updated', onChanged);
+    return () => {
+      window.removeEventListener('jatahku:advisor-dismissed', onChanged);
+      window.removeEventListener('jatahku:envelope-updated', onChanged);
+    };
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    api.getAdvisorDashboard().then(d => { if (live) setAdvisorDash(d); });
+    return () => { live = false; };
+  }, [refreshTick, advisorTick]);
 
   useEffect(() => {
     api.getBalanceCheckStatus().then(setBalanceStatus);
@@ -181,6 +205,25 @@ export default function Dashboard() {
   const income = Number(prediction?.total_income) || 0;
   const bills = billsProgress(recurringStats);
   const savingGoalCount = goals.filter(g => savingEnvelopes.some(e => e.id === g.envelope_id)).length;
+
+  // Angka kartu & grafik dari metrics endpoint; hanya periode berjalan (endpoint tidak punya periode lalu).
+  const adv = isCurrentPeriod && advisorEnabled(advisorDash);
+  const k = adv ? advisorKpi(advisorDash.metrics) : null;
+  const advMeter = adv ? dailyMeter(k.jatah.spent, k.jatah.j0) : null;
+  const stamp = adv ? updatedLabel(advisorDash.generated_at) : '';
+  const chipFor = (kartu) => {
+    const insight = adv ? advisorDash.kpi?.[kartu] : null;
+    if (!insight) return undefined;
+    return {
+      look: chipLook(insight, advisorDash.redam_chip),
+      insight, stamp, phone,
+      open: openKpi === kartu,
+      onToggle: () => setOpenKpi(o => (o === kartu ? null : kartu)),
+      onClose: closeKpi,
+    };
+  };
+  // Hari ini menurut zona waktu user (generated_at), bukan jam browser.
+  const advToday = (adv && (advisorDash.generated_at || '').slice(0, 10)) || localDateStr();
 
   const milestoneLabel = (n) => ({
     3: 'Kebiasaan baik dimulai 🌱', 7: 'Seminggu penuh disiplin!', 14: '2 minggu konsisten 💪',
@@ -320,55 +363,110 @@ export default function Dashboard() {
 
       {/* KPI Cards — lg:!mt-0: blok sapaan/periode di atasnya tersembunyi di layar lebar (pindah ke top bar) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 lg:!mt-0">
+        {adv ? (
+          <>
+            <KpiTile
+              isDark={isDark} label="Jatah hari ini" advisor={chipFor('jatah')}
+              info="Belanja hari ini dibanding jatah sejak pagi (sisa bebas awal hari dibagi sisa hari). Garis putih: jatah."
+              value={rpFull(k.jatah.spent)}
+              suffix={k.jatah.j0 > 0 ? `/ ${rpFull(k.jatah.j0)}` : null}
+              alert={advMeter.over}
+              bar={{
+                fill: advMeter.fill, marker: advMeter.marker,
+                color: advMeter.over ? tt.danger.bar : tt.bars.green,
+                ariaLabel: `Belanja hari ini ${rpFull(k.jatah.spent)} dari jatah ${rpFull(k.jatah.j0)}`,
+              }}
+              footer={todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini'}
+            />
+            <KpiTile
+              isDark={isDark} label="Sisa bebas" advisor={chipFor('sisa_bebas')}
+              info="Dana amplop belanja dikurangi yang sudah terpakai dan tagihan yang belum dibayar. Batang: hari yang sudah lewat di periode ini."
+              value={rpCompact(k.sisa.value)}
+              valueColor={k.sisa.value < 0 ? tt.danger.text : null}
+              suffix={k.sisa.sisaHari > 0 ? `untuk ${k.sisa.sisaHari} hari` : null}
+              bar={{ fill: k.sisa.progress, color: tt.bars.slate, ariaLabel: k.sisa.dayLabel }}
+              footer={[k.sisa.dayLabel, k.sisa.j1 != null ? `aman ${rpCompact(k.sisa.j1)}/hari` : null].filter(Boolean).join(' · ')}
+            />
+            <KpiTile
+              isDark={isDark} label="Terpakai periode ini" advisor={chipFor('terpakai')}
+              info="Belanja periode ini dari dana amplop belanja (tanpa tabungan). Garis tegak: hari yang sudah lewat; batang kuning = terpakai lebih cepat dari waktu."
+              value={rpCompact(k.terpakai.value)}
+              suffix="dari dana belanja"
+              bar={{
+                fill: k.terpakai.fill, split: k.terpakai.waktu, color: tt.bars.green, lateColor: tt.bars.amber,
+                ariaLabel: `Terpakai ${rpCompact(k.terpakai.value)} dari ${rpCompact(k.terpakai.dana)}, waktu ${Math.round(k.terpakai.waktu * 100)}%`,
+              }}
+              footer={[
+                k.terpakai.persen != null ? `${k.terpakai.persen}% · waktu ${Math.round(k.terpakai.waktu * 100)}%` : null,
+                k.terpakai.proyeksi != null ? `perkiraan akhir ±${rpCompact(k.terpakai.proyeksi)}` : null,
+              ].filter(Boolean).join(' · ')}
+            />
+            <KpiTile
+              isDark={isDark} label="Income periode ini" advisor={chipFor('income')}
+              info="Pemasukan rumah tangga periode ini (termasuk yang dicatat anggota lain). Batang: bagian yang kamu catat."
+              value={rpCompact(k.income.value)}
+              valueColor={k.income.value === 0 ? tt.warn.text : null}
+              suffix={k.income.saya !== k.income.value ? `kamu ${rpCompact(k.income.saya)}` : null}
+              badge={k.income.value === 0 ? { tone: 'warn', text: 'Belum dicatat' } : null}
+              bar={{ fill: k.income.share, color: tt.bars.green, ariaLabel: `Pemasukanmu ${rpCompact(k.income.saya)} dari ${rpCompact(k.income.value)}` }}
+              footer={k.income.kekurangan == null ? null
+                : k.income.kekurangan > 0 ? `Arus kas kurang ±${rpCompact(k.income.kekurangan)} di akhir periode`
+                  : 'Arus kas cukup sampai akhir periode'}
+            />
+          </>
+        ) : (
+          <>
+            <KpiTile
+              isDark={isDark} label="Jatah hari ini"
+              info="Belanja hari ini dibanding batas aman per hari. Garis putih: batas aman."
+              value={rpFull(todaySpent)}
+              suffix={safeDaily > 0 ? `/ ${rpFull(safeDaily)}` : null}
+              badge={meter.over ? { tone: 'danger', text: `Lewat ${rpFull(meter.overBy)}` } : null}
+              alert={meter.over}
+              bar={{
+                fill: meter.fill, marker: meter.marker,
+                color: meter.over ? tt.danger.bar : tt.bars.green,
+                ariaLabel: `Belanja hari ini ${rpFull(todaySpent)} dari batas aman ${rpFull(safeDaily)}`,
+              }}
+              footer={todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini'}
+            />
+            <KpiTile
+              isDark={isDark} label="Sisa bebas"
+              info="Saldo amplop belanja dikurangi tabungan dan tagihan yang belum dibayar. Batang: hari yang sudah lewat di periode ini."
+              value={rpCompact(sisaBebas)}
+              valueColor={sisaBebas < 0 ? tt.danger.text : null}
+              suffix={isCurrentPeriod ? daysLabel(prediction) : null}
+              bar={{ fill: isCurrentPeriod ? periodProgress(prediction) : 1, color: tt.bars.slate, ariaLabel: isCurrentPeriod ? periodDayLabel(prediction) : 'Periode selesai' }}
+              footer={isCurrentPeriod && prediction
+                ? `${periodDayLabel(prediction)} · aman ${rpCompact(safeDaily)}/hari`
+                : null}
+            />
+            <KpiTile
+              isDark={isDark} label="Terpakai periode ini"
+              info="Belanja periode ini dari dana amplop (alokasi + rollover). Prediksi lewat: perkiraan akhir periode di atas dana itu."
+              value={rpCompact(totalSpent)}
+              suffix="dari dana amplop"
+              badge={predictionOver(prediction) ? { tone: 'warn', text: 'Prediksi lewat' } : null}
+              bar={{ fill: fundsTotal > 0 ? totalSpent / fundsTotal : 0, color: tt.bars.green, ariaLabel: `Terpakai ${rpCompact(totalSpent)} dari ${rpCompact(fundsTotal)}` }}
+              footer={[
+                fundsTotal > 0 ? `${Math.round((totalSpent / fundsTotal) * 100)}%` : null,
+                prediction ? `prediksi akhir periode ${rpCompact(prediction.predicted_total)}` : null,
+              ].filter(Boolean).join(' · ')}
+            />
+            <KpiTile
+              isDark={isDark} label="Income periode ini"
+              info="Pemasukan periode ini. Saving rate: uang yang masuk ke amplop tabungan dan sinking fund dibagi pemasukan."
+              value={rpCompact(income)}
+              valueColor={prediction && income === 0 ? tt.warn.text : null}
+              suffix={prediction ? savingRateLabel(prediction) : null}
+              badge={prediction && income === 0 ? { tone: 'warn', text: 'Belum dicatat' } : null}
+              bar={{ fill: (Number(prediction?.saving_rate) || 0) / 100, color: tt.bars.green, ariaLabel: savingRateLabel(prediction) }}
+              footer={cashFlowLabel(prediction)}
+            />
+          </>
+        )}
         <KpiTile
-          isDark={isDark} label="Jatah hari ini"
-          info="Belanja hari ini dibanding batas aman per hari. Garis putih: batas aman."
-          value={rpFull(todaySpent)}
-          suffix={safeDaily > 0 ? `/ ${rpFull(safeDaily)}` : null}
-          badge={meter.over ? { tone: 'danger', text: `Lewat ${rpFull(meter.overBy)}` } : null}
-          alert={meter.over}
-          bar={{
-            fill: meter.fill, marker: meter.marker,
-            color: meter.over ? tt.danger.bar : tt.bars.green,
-            ariaLabel: `Belanja hari ini ${rpFull(todaySpent)} dari batas aman ${rpFull(safeDaily)}`,
-          }}
-          footer={todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini'}
-        />
-        <KpiTile
-          isDark={isDark} label="Sisa bebas"
-          info="Saldo amplop belanja dikurangi tabungan dan tagihan yang belum dibayar. Batang: hari yang sudah lewat di periode ini."
-          value={rpCompact(sisaBebas)}
-          valueColor={sisaBebas < 0 ? tt.danger.text : null}
-          suffix={isCurrentPeriod ? daysLabel(prediction) : null}
-          bar={{ fill: isCurrentPeriod ? periodProgress(prediction) : 1, color: tt.bars.slate, ariaLabel: isCurrentPeriod ? periodDayLabel(prediction) : 'Periode selesai' }}
-          footer={isCurrentPeriod && prediction
-            ? `${periodDayLabel(prediction)} · aman ${rpCompact(safeDaily)}/hari`
-            : null}
-        />
-        <KpiTile
-          isDark={isDark} label="Terpakai periode ini"
-          info="Belanja periode ini dari dana amplop (alokasi + rollover). Prediksi lewat: perkiraan akhir periode di atas dana itu."
-          value={rpCompact(totalSpent)}
-          suffix="dari dana amplop"
-          badge={predictionOver(prediction) ? { tone: 'warn', text: 'Prediksi lewat' } : null}
-          bar={{ fill: fundsTotal > 0 ? totalSpent / fundsTotal : 0, color: tt.bars.green, ariaLabel: `Terpakai ${rpCompact(totalSpent)} dari ${rpCompact(fundsTotal)}` }}
-          footer={[
-            fundsTotal > 0 ? `${Math.round((totalSpent / fundsTotal) * 100)}%` : null,
-            prediction ? `prediksi akhir periode ${rpCompact(prediction.predicted_total)}` : null,
-          ].filter(Boolean).join(' · ')}
-        />
-        <KpiTile
-          isDark={isDark} label="Income periode ini"
-          info="Pemasukan periode ini. Saving rate: uang yang masuk ke amplop tabungan dan sinking fund dibagi pemasukan."
-          value={rpCompact(income)}
-          valueColor={prediction && income === 0 ? tt.warn.text : null}
-          suffix={prediction ? savingRateLabel(prediction) : null}
-          badge={prediction && income === 0 ? { tone: 'warn', text: 'Belum dicatat' } : null}
-          bar={{ fill: (Number(prediction?.saving_rate) || 0) / 100, color: tt.bars.green, ariaLabel: savingRateLabel(prediction) }}
-          footer={cashFlowLabel(prediction)}
-        />
-        <KpiTile
-          isDark={isDark} label="Tagihan belum dibayar"
+          isDark={isDark} label="Tagihan belum dibayar" advisor={chipFor('tagihan')}
           info="Tagihan bulanan yang jatuh tempo periode ini dan belum dibayar. Telat: ada yang lewat tanggal jatuh tempo."
           value={rpCompact(bills.due)}
           valueColor={recurringStats?.has_overdue ? tt.danger.text : null}
@@ -379,7 +477,7 @@ export default function Dashboard() {
           footer={bills.total > 0 ? `Lunas ${rpCompact(bills.paid)} dari ${rpCompact(bills.total)} bulan ini` : null}
         />
         <KpiTile
-          isDark={isDark} label="Tabungan"
+          isDark={isDark} label="Tabungan" advisor={chipFor('tabungan')}
           info="Saldo amplop tabungan dan sinking fund. Batang: kemajuan semua target tabungan."
           value={rpCompact(totalSaving)}
           suffix={savingGoalCount > 0 ? `${savingGoalCount} target` : 'tanpa target'}
@@ -405,9 +503,14 @@ export default function Dashboard() {
           daily={daily}
           periodStart={prediction?.period_start || selectedPeriod?.period_start}
           periodEnd={prediction?.period_end || selectedPeriod?.period_end}
-          today={localDateStr()}
+          today={advToday}
           safeDaily={isCurrentPeriod ? safeDaily : 0}
           isDark={isDark}
+          advisor={adv ? {
+            series: advisorDailySeries(advisorDash.metrics, prediction?.period_start || selectedPeriod?.period_start,
+              prediction?.period_end || selectedPeriod?.period_end, advToday),
+            grafik: advisorDash.grafik,
+          } : null}
         />
         {isCurrentPeriod && (
           <AttentionCard

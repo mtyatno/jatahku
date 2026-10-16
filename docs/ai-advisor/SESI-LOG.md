@@ -4,6 +4,38 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S6 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `lib/advisorDashboard.js` (+ tes, 8): `advisorEnabled`, `updatedLabel` (cap waktu §7: "baru saja" < 5 menit, selain itu jam dari `generated_at` = zona waktu user), `chipLook` (peredaman: info/ok redam bila `redam_chip`), `popoverActions` (maks 2 CTA), `basisLabel`, `advisorDailySeries` (deret grafik dari `metrics.harian`), `advisorKpi` (nilai kartu dari `metrics`). Tidak ada rumus angka periode — hanya rasio tampilan (lebar batang, persen bulat).
+- `api.getAdvisorDashboard()`: null bila gagal; `{"enabled": false}` dan null → Beranda memakai UI lama.
+- `components/AdvisorChip.jsx` (baru): `AdvisorChip` (✦ + latar tone; redam = teks + garis tepi tipis tanpa ✦), `InsightPopover` (layar ≥ 768px: popover di bawah kartu, selebar kartu; HP: bottom sheet lewat portal). Isi: judul, isi, fakta, rincian, maks 2 CTA (`openAction`), dasar + keyakinan + cap waktu, **Sembunyikan** (= aksi `dismiss` `nanti` lewat Layout). Escape / klik di luar menutup.
+- `KpiTile`: prop `advisor` (chip menggantikan badge, kartu aktif bergaris tepi brand) dan `bar.split`/`bar.lateColor` (Terpakai: hijau sampai penanda waktu, kuning sesudahnya).
+- `Dashboard.jsx`: periode berjalan + flag aktif → kartu Jatah hari ini (belanja hari ini / **J0**), Sisa bebas (T3, "aman J1/hari"), Terpakai (dari dana belanja, waktu %, perkiraan akhir ±T8), Income (pemasukan **rumah tangga**, "kamu Rp…", arus kas dari T9) membaca `metrics`. Chip di keenam kartu bila `kpi.<kartu>` ada. Muat ulang saat `txn-added`, `envelope-updated`, `advisor-dismissed`. Periode lalu / flag mati → UI lama tanpa perubahan.
+- `DailySpendingChart` prop `advisor`: batang = variabel (warna dari `lewat`), segmen redup "Tagihan & lainnya" (tagihan + penyesuaian + outlier), garis tangga jatah J0 per hari, baris analisa `grafik.teks` + aksi (Lihat {tgl}). Tooltip: lewat/dalam jatah hari itu + rincian segmen redup.
+- Dihapus: `lib/advisorToday.js` (+ tes) — sudah tidak dipakai.
+
+**Digantung / untuk sesi lain**
+- **S4 (sudah di `main`):** chip Income/Tagihan/Tabungan tampil karena `kpi.income|tagihan|tabungan` kini terisi. Nilai kartu Tagihan & Tabungan masih angka lama (`/recurring/summary/period`, `getGoals`) (badge lama tergantikan chip). Angka Tagihan (M4) dan batang lunas/telat per tagihan belum ada di `metrics.to_api()` — kalau mau satu sumber, tambahkan field (mis. `tagihan_lunas`, `tagihan_telat`) di kontrak lalu baca di kartu.
+- **S7:** kartu "Perlu perhatian" masih `AttentionCard` lama di samping grafik; ganti dengan `advisor.items`. Cap waktu kartu bisa memakai `updatedLabel`.
+- Saving rate tidak ada di `metrics` API; kartu Income versi baru memakai batang "bagian yang kamu catat". Bila saving rate mau kembali, tambahkan `saving_rate_rumah_tangga` ke `to_api()`.
+- `/analytics/prediction` masih dimuat untuk label periode & "N hari lagi" di header (dan UI lama). Hapus pemanggilannya setelah flag `*` (S10) bila label diambil dari `metrics`.
+
+**Keputusan kecil**
+- Outlier masuk segmen redup (bukan batang) supaya rata-rata 7 batang terakhir = `laju7` persis (§12).
+- "Hari ini" grafik advisor = tanggal di `generated_at` (zona waktu user), bukan jam browser.
+- Jatah hari ini tetap memakai `dailyMeter` (rasio tampilan) dengan J0; badge "Lewat" diganti chip.
+
+**Jebakan**
+- Popover desktop absolut di dalam kartu: kartu aktif diberi `z-30` supaya tidak tertutup kartu/section di bawahnya. Klik di luar ditangani di `KpiTile` (bukan untuk bottom sheet, yang punya latar sendiri).
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit (sama dengan S1).
+
+**Tes:** backend 761 OK · frontend 252 OK (8 baru, 7 dihapus bersama `advisorToday`) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())`): kartu, chip, redam, popover desktop, bottom sheet HP, flag mati → UI lama (skrip tidak di-commit).
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, buka Beranda, klik chip di kartu KPI.
+
+---
+
 ## S4 · 2026-10-16 · pemilik produk + Claude
 
 **Selesai**
