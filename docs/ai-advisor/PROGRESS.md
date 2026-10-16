@@ -13,7 +13,7 @@ Diubah di PR sesi itu sendiri (lihat `03-workflow.md` §9). Status: belum · ber
 | S6 | #61 | Frontend Beranda A: KPI & grafik | 1 | 3 | review | Pemilik produk + Claude | #82 | 2026-10-16 | |
 | S7 | #62 | Frontend Beranda B: kartu AI Advisor | 1 | 2,5 | review | Claude | #83 | 2026-10-16 | |
 | S8 | #63 | Pipa CTA (frontend) | 1 | 3 | selesai | Claude | #76 | 2026-10-16 | 2026-10-16 |
-| S9 | #64 | Paritas bot & ringkasan | 1 | 3 | belum | | | | |
+| S9 | #64 | Paritas bot & ringkasan | 1 | 3 | review | Pemilik produk + Claude | #85 | 2026-10-16 | |
 | S10 | #65 | Verifikasi & rilis Fase 1 | 1 | 2 | belum | | | | |
 | S11 | #66 | Halaman Amplop | 2 | 3 | belum | | | | |
 | S12 | #67 | Halaman Langganan | 2 | 2,5 | belum | | | | |

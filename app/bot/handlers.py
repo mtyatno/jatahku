@@ -819,6 +819,11 @@ async def cmd_status(update, context):
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
 
+    from app.bot import advisor_cmd
+    streak = await _status_streak_lines(user)
+    if await advisor_cmd.jawab(update, user, "status", tambahan=streak):
+        return
+
     from app.core.period import get_period_info
     from decimal import Decimal as _D
     info = get_period_info(payday_day)
@@ -877,18 +882,23 @@ async def cmd_status(update, context):
         lines.append(f"⚠️ Hati-hati · prediksi overspend <b>{format_currency(over)}</b>")
         lines.append(f"💡 Max <b>{format_currency(safe)}</b>/hari biar aman")
 
+    lines += streak
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def _status_streak_lines(user) -> list[str]:
+    """Baris streak di bawah /status (jawaban lama dan v2)."""
     try:
         from app.services.streak import get_streak
         async with AsyncSessionLocal() as sdb:
             s = await get_streak(sdb, user.id, getattr(user, "timezone", None))
         if s.current_streak >= 2:
-            lines.append(f"🔥 Streak <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari")
-        elif s.longest_streak >= 2:
-            lines.append(f"💤 Streak putus · rekormu {s.longest_streak} hari. Yuk mulai lagi!")
+            return [f"🔥 Streak <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari"]
+        if s.longest_streak >= 2:
+            return [f"💤 Streak putus · rekormu {s.longest_streak} hari. Yuk mulai lagi!"]
     except Exception:
         pass
-
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    return []
 
 async def cmd_amplop(update, context):
     tg_user = update.effective_user
@@ -1070,13 +1080,14 @@ async def handle_message(update, context):
     # Natural language query handlers (no amount = pure query intent)
     from app.bot.nlp_cmd import (
         is_sisa, is_harian, is_proyeksi, is_comparison,
-        is_santai, is_emosi, is_koreksi, is_nabung, parse_multi_expense,
+        is_santai, is_emosi, is_kenapa, is_koreksi, is_nabung, parse_multi_expense,
         is_pengeluaran_hari_ini, is_pengeluaran_hari_lalu, strip_date_numbers,
         handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
         handle_santai, handle_emosi, handle_koreksi, handle_nabung,
         handle_pengeluaran_hari_ini, handle_pengeluaran_hari_lalu,
     )
-    if is_emosi(text) and not parse_amount(text):
+    # "kenapa boros?" / "kenapa {amplop} habis?": v2 menjawab dari insight, lama → insight emosi
+    if (is_emosi(text) or is_kenapa(text)) and not parse_amount(text):
         await handle_emosi(update, context)
         return
     if is_koreksi(text):

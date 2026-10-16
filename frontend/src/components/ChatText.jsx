@@ -23,6 +23,7 @@ const DOT = {
   ok: 'bg-[#1D9E75]',
   warn: 'bg-[#EF9F27]',
   bad: 'bg-[#E24B4A]',
+  info: 'bg-[#2563EB]',
   none: 'border-[1.5px] border-gray-300',
 };
 const BAR = { ok: 'bg-brand-400', warn: 'bg-[#EF9F27]', bad: 'bg-[#E24B4A]' };

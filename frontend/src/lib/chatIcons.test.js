@@ -10,6 +10,10 @@ test('baris /status: titik status, ikon amplop, bar, persen', () => {
   assert.deepEqual(kinds('⚪ 📁 Tabungan · Rp1.5jt'), ['[dot:none]', ' ', '[emoji]', ' Tabungan · Rp1.5jt']);
 });
 
+test('tone insight AI Advisor: 🔵 info jadi titik', () => {
+  assert.deepEqual(kinds('🔵 Klasifikasikan 1 amplop'), ['[dot:info]', ' Klasifikasikan 1 amplop']);
+});
+
 test('emoji dekoratif jadi ikon aplikasi, dengan atau tanpa variation selector', () => {
   assert.deepEqual(kinds('📊 Budget'), ['[icon:dashboard]', ' Budget']);
   assert.deepEqual(kinds('⚠️ Hati-hati'), ['[icon:warning]', ' Hati-hati']);

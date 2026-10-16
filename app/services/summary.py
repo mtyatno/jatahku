@@ -134,19 +134,80 @@ def _env_lookup(rows) -> dict:
     }
 
 
-def _top_parts(by_env: dict, envs: dict, total) -> list[str]:
+def _top_parts(by_env: dict, envs: dict, total, fmt=format_currency) -> list[str]:
     """Top-2 amplop inline + "+X lain Rpyyy"; emoji/nama ter-escape untuk HTML."""
     sorted_envs = sorted(by_env.items(), key=lambda x: x[1], reverse=True)
     parts = []
     shown = Decimal("0")
     for eid, amt in sorted_envs[:2]:
         em, nm = _env_label(envs.get(eid))
-        parts.append(f"{_esc(em)} {_esc(nm)} {format_currency(amt)}")
+        parts.append(f"{_esc(em)} {_esc(nm)} {fmt(amt)}")
         shown += amt
     rest = total - shown
     if len(sorted_envs) > 2 and rest > 0:
-        parts.append(f"+{len(sorted_envs) - 2} lain {format_currency(rest)}")
+        parts.append(f"+{len(sorted_envs) - 2} lain {fmt(rest)}")
     return parts
+
+
+# Mesin advisor memakai sesi DB sendiri: kalau gagal, sesi loop pengiriman tidak ikut rusak
+# (rollback di sesi loop akan meng-expire objek user yang masih dipakai).
+async def _pengaturan_advisor() -> dict:
+    """AppSetting AI Advisor (flag `advisor_v2_users`, konstanta), dibaca sekali per kiriman."""
+    from app.services.advisor.dashboard import muat_pengaturan
+    try:
+        async with AsyncSessionLocal() as adb:
+            return await muat_pengaturan(adb)
+    except Exception as e:
+        logger.warning(f"Advisor settings unavailable: {e}")
+        return {}
+
+
+async def _analisa_v2(user, pengaturan: dict):
+    """Analisa AI Advisor v2 (metrics + render, angka sama dengan Beranda) untuk user di flag
+    `advisor_v2_users`; None → ringkasan lama. Gagal → None (ringkasan lama tetap terkirim)."""
+    from app.services.advisor import chat
+    from app.services.advisor.dashboard import FLAG_KEY, flag_aktif
+    if not flag_aktif(pengaturan.get(FLAG_KEY), user.id):
+        return None
+    try:
+        async with AsyncSessionLocal() as adb:
+            return await chat.muat(user, adb, pengaturan=pengaturan)
+    except Exception as e:
+        logger.error(f"Advisor summary failed for user {user.id}: {e}")
+        return None
+
+
+def _consistency_lines(week_txns) -> list[str]:
+    """Kedisiplinan mencatat 7 hari terakhir (ringkasan mingguan lama & v2)."""
+    logged_days = len({t.transaction_date for t in week_txns})
+    if logged_days >= 6:
+        consistency = "🔥 Konsisten banget!"
+    elif logged_days >= 4:
+        consistency = "👍 Lumayan rajin."
+    elif logged_days >= 1:
+        consistency = "💪 Yuk lebih sering nyatat."
+    else:
+        consistency = "😴 Minggu ini sepi catatan."
+    return ["─────────────────", f"🗓️ Kamu mencatat <b>{logged_days}/7 hari</b> minggu ini. {consistency}"]
+
+
+async def _send(bot, user, text: str, label: str) -> None:
+    if user.telegram_id and bot:
+        await bot.send_message(chat_id=int(user.telegram_id), text=text, parse_mode="HTML")
+        logger.info(f"{label} summary sent to TG {user.telegram_id}")
+
+
+async def _streak_lines(db, user) -> list[str]:
+    try:
+        from app.services.streak import get_streak
+        s = await get_streak(db, user.id, getattr(user, "timezone", None))
+        if s.current_streak >= 2:
+            return [f"🔥 Streak aktif <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari"]
+        if s.longest_streak >= 2:
+            return [f"💤 Streak putus · rekormu {s.longest_streak} hari. Mulai lagi yuk!"]
+    except Exception:
+        pass
+    return []
 
 
 async def send_daily_summary(user_id=None):
@@ -160,6 +221,7 @@ async def send_daily_summary(user_id=None):
             query = query.where(User.id == user_id)
         result = await db.execute(query)
         users = result.scalars().all()
+        pengaturan = await _pengaturan_advisor() if users else {}
 
         for user in users:
             try:
@@ -168,6 +230,13 @@ async def send_daily_summary(user_id=None):
                 )
                 hid = hid_result.scalar_one_or_none()
                 if not hid:
+                    continue
+
+                # AI Advisor v2: chip Jatah hari ini + item #1 daftar (02-aturan.md §7)
+                analisa = await _analisa_v2(user, pengaturan)
+                if analisa is not None:
+                    from app.services.advisor import chat
+                    await _send(bot, user, chat.ringkasan_harian(analisa), "Daily")
                     continue
 
                 # Today's transactions
@@ -229,13 +298,7 @@ async def send_daily_summary(user_id=None):
                 lines.append(f"─────────────────")
                 lines.append(status_line)
 
-                if user.telegram_id and bot:
-                    await bot.send_message(
-                        chat_id=int(user.telegram_id),
-                        text="\n".join(lines),
-                        parse_mode="HTML",
-                    )
-                    logger.info(f"Daily summary sent to TG {user.telegram_id}")
+                await _send(bot, user, "\n".join(lines), "Daily")
 
             except Exception as e:
                 logger.error(f"Failed daily summary for user {user.id}: {e}")
@@ -253,6 +316,7 @@ async def send_weekly_summary(user_id=None):
             query = query.where(User.id == user_id)
         result = await db.execute(query)
         users = result.scalars().all()
+        pengaturan = await _pengaturan_advisor() if users else {}
 
         for user in users:
             try:
@@ -267,6 +331,26 @@ async def send_weekly_summary(user_id=None):
                 txn_result = await db.execute(_week_txns_query(hid, user.id, week_start, today))
                 week_txns = txn_result.scalars().all()
                 week_total = sum(t.amount for t in week_txns)
+
+                # AI Advisor v2: rekap minggu + angka periode + 1 aturan struktural (§7)
+                analisa = await _analisa_v2(user, pengaturan)
+                if analisa is not None:
+                    from app.services.advisor import chat, render
+                    by_env: dict = defaultdict(Decimal)
+                    for t in week_txns:
+                        by_env[t.envelope_id] += t.amount
+                    envs = {e.id: SimpleNamespace(id=e.id, name=e.name, emoji=e.emoji or "📁")
+                            for e in analisa.ctx.snap.envelopes}
+                    minggu = {
+                        "label": f"{week_start.day}–{render.tgl(today)}",
+                        "total": week_total, "n": len(week_txns),
+                        "bagian": _top_parts({str(k): v for k, v in by_env.items()}, envs, week_total,
+                                             fmt=render.rp_ringkas),
+                    }
+                    text = "\n".join([chat.ringkasan_mingguan(analisa, minggu), *_consistency_lines(week_txns),
+                                      *await _streak_lines(db, user)])
+                    await _send(bot, user, text, "Weekly")
+                    continue
 
                 # Period totals — sumber & definisi sama dengan dashboard
                 # (dana termasuk rollover; Sisa = KPI "Sisa bebas").
@@ -337,34 +421,10 @@ async def send_weekly_summary(user_id=None):
                     lines.append(f"💡 Max <b>{format_currency(safe_daily)}</b>/hari biar aman")
 
                 # ── Discipline: consistency of logging ─────────────────────
-                logged_days = len({t.transaction_date for t in week_txns})
-                if logged_days >= 6:
-                    consistency = "🔥 Konsisten banget!"
-                elif logged_days >= 4:
-                    consistency = "👍 Lumayan rajin."
-                elif logged_days >= 1:
-                    consistency = "💪 Yuk lebih sering nyatat."
-                else:
-                    consistency = "😴 Minggu ini sepi catatan."
-                lines.append(f"─────────────────")
-                lines.append(f"🗓️ Kamu mencatat <b>{logged_days}/7 hari</b> minggu ini. {consistency}")
-                try:
-                    from app.services.streak import get_streak
-                    s = await get_streak(db, user.id, getattr(user, "timezone", None))
-                    if s.current_streak >= 2:
-                        lines.append(f"🔥 Streak aktif <b>{s.current_streak} hari</b> · rekor {s.longest_streak} hari")
-                    elif s.longest_streak >= 2:
-                        lines.append(f"💤 Streak putus · rekormu {s.longest_streak} hari. Mulai lagi yuk!")
-                except Exception:
-                    pass
+                lines += _consistency_lines(week_txns)
+                lines += await _streak_lines(db, user)
 
-                if user.telegram_id and bot:
-                    await bot.send_message(
-                        chat_id=int(user.telegram_id),
-                        text="\n".join(lines),
-                        parse_mode="HTML",
-                    )
-                    logger.info(f"Weekly summary sent to TG {user.telegram_id}")
+                await _send(bot, user, "\n".join(lines), "Weekly")
 
             except Exception as e:
                 logger.error(f"Failed weekly summary for user {user.id}: {e}")

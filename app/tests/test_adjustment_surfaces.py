@@ -53,7 +53,8 @@ class BotTodayTests(unittest.IsolatedAsyncioTestCase):
         # 1) per-envelope totals: fungsi mengiterasi hasil langsung; 2) recent: .scalars().all()
         db.execute = AsyncMock(side_effect=[[], FakeResult(rows=[])])
         with patch("app.core.database.AsyncSessionLocal", new=lambda: FakeSession(db)), \
-             patch.object(nlp_cmd, "_get_user_envelopes", new=AsyncMock(return_value=(USER, uuid.uuid4(), []))):
+             patch.object(nlp_cmd, "_get_user_envelopes", new=AsyncMock(return_value=(USER, uuid.uuid4(), []))), \
+             patch.object(nlp_cmd.advisor_cmd, "analisa", new=AsyncMock(return_value=None)):  # jawaban lama
             await nlp_cmd.handle_pengeluaran_hari_ini(fake_update("pengeluaran hari ini"), None)
         stmts = executed_sql(db)
         self.assertEqual(len(stmts), 2)

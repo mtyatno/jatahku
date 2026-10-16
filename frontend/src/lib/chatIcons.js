@@ -5,7 +5,8 @@
 // garis pemisah — sama dengan bahasa visual halaman lain. Fungsi murni (diuji).
 
 // Titik status amplop: 🟢 aman, 🟡/🟠 menipis, 🔴 habis/minus, ⚪ belum didanai.
-export const DOT_EMOJI = { '🟢': 'ok', '🟡': 'warn', '🟠': 'warn', '🔴': 'bad', '⚪': 'none', '⚫': 'none' };
+// Tone insight AI Advisor di jawaban bot: 🔴 danger, 🟡 warn, 🔵 info, 🟢 ok.
+export const DOT_EMOJI = { '🟢': 'ok', '🟡': 'warn', '🟠': 'warn', '🔴': 'bad', '🔵': 'info', '⚪': 'none', '⚫': 'none' };
 
 // Emoji dekoratif → [nama ikon di Icon.jsx, nada warna].
 // Emoji lain (kategori amplop: 🍜 🏠 🚗 📁 💰 …) diserahkan ke EnvelopeIcon,

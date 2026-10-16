@@ -13,12 +13,52 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 **Digantung**
 - Di layar lebar, kartu AI Advisor lebih tinggi dari kartu lama, jadi kartu grafik ikut memanjang dengan ruang kosong di bawahnya (grid `stretch`). Belum diubah.
 
-**Tes:** backend 809 OK · frontend 258 OK · build OK · Playwright (API di-mock): flag aktif → kartu AI Advisor, `{"enabled": false}` → "Perlu perhatian".
+**Tes (sesudah merge S9):** backend 846 OK · frontend 260 OK · build OK · Playwright (API di-mock): flag aktif → kartu AI Advisor, `{"enabled": false}` → "Perlu perhatian".
 
 **Lanjut:** perbaikan tombol dobel INC-01 di PR #83 (S7).
 
 ---
 
+## S9 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `services/advisor/chat.py` (baru): pilih jawaban per intent dari `dashboard.analisa` (Konteks + Seleksi) — tanpa rumus (metrics.py) dan tanpa kalimat (render.py). `muat(user, db)` = flag `advisor_v2_users` → snapshot → dismiss → analisa; None di luar flag / tanpa amplop. Jawaban: `jawab_status`, `jawab_sisa`, `jawab_limit_harian`, `jawab_proyeksi`, `jawab_hari_ini`, `jawab_kenapa` (boros / {amplop} / hari ini), `jawab_aman_beli` (SIM-01), `ringkasan_harian`, `ringkasan_mingguan`.
+- `render.py` (tambahan, bagian "Chat web & Telegram"): `blok_angka` (dana belanja, terpakai, disisihkan tagihan, sisa bebas T3, aman J1/hari, jatah J0 · belanja T5 — dipakai "sisa", /status, ringkasan harian & mingguan → paritas §13), `baris_amplop` (M6; tabungan G1), `teks_insight_html` (+fakta & rincian), `teks_chip_html`, `chat_*`, `ringkasan_*`. HTML Telegram, nama/teks user di-escape.
+- `metrics.simulasi_belanja(snap, eid, jumlah)`: `compute_metrics` dengan satu transaksi simulasi hari ini (SIM-01: T3, J1, T10 dihitung ulang, bukan dikurangi tangan).
+- `bot/advisor_cmd.py` (baru): `jawab(update, user, intent)` → True bila v2 membalas; False (di luar flag / gagal, dengan log) → handler memakai jawaban lama. Dipanggil sesudah cek setup di `nlp_cmd` (sisa, limit harian, kapan habis, "boncos ga" → proyeksi, emosi → kenapa, pengeluaran hari ini), `handlers.cmd_status` (+ baris streak), `checkin_cmd.handle_whatif` (SIM-01).
+- Intent baru `KENAPA_RE` ("kenapa/kok … boros/habis/lewat/kurang/minus …") dirutekan bersama `EMOSI_RE` ke `handle_emosi`; chip Tanya web ("Kenapa dana belanja kurang?", "Kenapa belanja hari ini lewat jatah?") ikut terjawab.
+- `summary.py`: harian v2 = chip Jatah hari ini + item #1 daftar + `blok_angka`; mingguan v2 = rekap 7 hari (transaksi, seperti dulu) + T4 + angka periode + chip Sisa bebas + 1 aturan struktural (AMP-04/05/06/TAB-02, tidak di-dismiss) + konsistensi mencatat + streak. Mesin advisor memakai sesi DB sendiri (gagal → ringkasan lama tetap terkirim).
+- **Crash hari terakhir:** jawaban lama `limit harian`/`kapan habis` membagi `days_remaining` = 0 di hari terakhir periode (ZeroDivisionError). `_period_days` kini minimal 1. Jalur v2 memakai `metrics` (H = 0 → J0 = sisa, J1 None, "Hari terakhir periode: sisa bebas = jatah hari ini").
+- **Aman beli (periode gajian):** `handle_whatif` dulu memanggil `get_envelopes_with_spent` tanpa `payday_day` (bulan kalender); sekarang periode gajian user.
+- Chat web: 🔵 (tone info) jadi titik biru di `ChatText` (`DOT_EMOJI`).
+- Tes: `test_advisor_chat.py` (37): paritas §13 dari fixture §12 dan end-to-end SQLite (`GET /advisor/dashboard` vs "sisa"/status/ringkasan, amplop pribadi anggota lain tidak muncul), hari terakhir (v2 + jawaban lama), d < 3, kenapa boros/amplop/hari ini, `cari_amplop`, SIM-01 aman/turun/kurang/ditebak, bot (flag, fallback gagal, /status + streak, whatif payday, rute kenapa), ringkasan v2 harian/mingguan, flag mati tanpa query. Dua tes lama diberi patch flag mati (jalur lama).
+
+**Digantung / untuk sesi lain**
+- **S10:** jawaban lama di `nlp_cmd`/`cmd_status`/`checkin_cmd`/`summary.py` masih ada untuk user di luar flag. Setelah flag `*`, hapus jalur lama (rumus `total_free / days_left`, `daily_avg × hari`, `free ≥ 2× harga`) dan `advisor_cmd` boleh dipanggil tanpa fallback.
+- **S17:** "aman beli" dengan tombol ganti amplop (sekarang: amplop ditebak dari M12 + teks "sebut nama amplopnya"); intent "tagihan bulan ini", "target {nama}"; chip pertanyaan cepat; `help_cmd.py`.
+- **S16:** notifikasi proaktif bisa memakai `chat.ringkasan_harian`/`utama` (item #1) dan `teks_insight_html`.
+- `handle_comparison` (bulan ini vs lalu) dan `pengeluaran hari lalu` belum lewat v2 — bukan angka periode berjalan; ikut S17 bila perlu.
+- Bot geser dana (`fund_shift`) belum memakai kunci household (catatan S5) — tidak disentuh di S9.
+
+**Keputusan kecil (juga di docstring chat.py)**
+- Bot ikut flag `advisor_v2_users` (03-workflow §5: UI baru Fase 1 hanya untuk user di daftar) supaya angka bot tetap sama dengan layar yang user lihat: flag aktif = Beranda baru + bot v2; flag mati = keduanya lama.
+- "kenapa boros?" = PER-01 › PER-02 › HAR-01 › PER-03 › PER-04 › PER-05 › PER-07 (walau di-dismiss: user bertanya langsung) + 2 item daftar lain. "kenapa {amplop} habis?" = AMP-01/02/03, TAG-01/02, AMP-04/08/10/05 amplop itu (termasuk yang diserap PER-01); tidak ada → "{amplop} masih aman" + angkanya. "kenapa … hari ini …" = HAR-01 › 03 › 02 › 04 › 05.
+- Nama amplop di teks: nama utuh dulu, lalu kata ≥ 4 huruf yang bukan kata umum; frasa "dana belanja" / "belanja hari ini" dibuang dulu (amplop bernama "Belanja" tidak tertangkap chip Tanya).
+- SIM-01 ✅ bila J1 baru ≥ 90% J1 dan amplop & T3 cukup; ⚠️ bila cukup tapi J1 turun > 10%; ❌ bila bebas amplop atau T3 < 0. Hari terakhir (J1 None): pembanding = sisa bebas total.
+- "boncos ga?" (SANTAI) dijawab proyeksi; emosi ("duit lari kemana") dijawab "kenapa boros".
+- `blok_angka` menampilkan "Disisihkan tagihan" (M4 + M5) supaya dana − terpakai − disisihkan = sisa bebas (§2 "total = jumlah bagian").
+- "Pengeluaran hari ini" v2 = T5 (variabel, seluruh amplop belanja terlihat, sama dengan KPI Jatah hari ini) + "Tagihan & lainnya" terpisah; 5 transaksi terakhir dari snapshot (deskripsi anggota lain sudah disamarkan). Jawaban lama hanya transaksi viewer.
+
+**Jebakan**
+- Tes handler lama yang memalsukan `AsyncSessionLocal` dengan urutan hasil `db.execute` akan kehabisan hasil bila jalur v2 ikut membaca AppSetting. Patch `advisor_cmd.analisa` → None (bot) atau `summary._pengaturan_advisor` → {} (ringkasan).
+- Jangan `rollback()` sesi loop ringkasan: objek `user` ter-expire dan akses atribut async gagal. Karena itu `_analisa_v2` membuka sesi sendiri.
+- `simulasi_belanja` dengan nominal sama persis dengan tagihan amplop itu yang belum dibayar → dianggap melunasi (M4), T3 tidak turun — sama dengan bila dicatat sungguhan.
+
+**Tes:** backend 846 OK (37 baru) · frontend 253 OK (1 baru) · build OK.
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, lalu di Telegram/chat web: `/status`, "sisa", "limit harian", "kapan habis", "pengeluaran hari ini", "kenapa boros?", "kenapa makan habis?", "aman gak beli sepatu 300k". Ringkasan untuk satu user saja: di VPS, `python -c "import asyncio; from app.services.summary import send_daily_summary as f; asyncio.run(f(user_id='<id>'))"` (endpoint `/daily-summary` admin mengirim ke **semua** user).
+
+**Lanjut:** S7 (#62, kartu AI Advisor) bila belum; lalu S10 (#65) dengan prompt pembuka §3. Di S10, bandingkan Beranda vs `/status` vs "sisa" di chat web untuk akun tim (angka harus identik, lihat `test_advisor_chat.ParitasDatabaseTests`), nyalakan flag `*`, lalu hapus jawaban lama di `nlp_cmd`/`cmd_status`/`checkin_cmd`/`summary.py` (cari pemanggil `advisor_cmd.jawab` dan `_analisa_v2`).
 ## S7 · 2026-10-16 · Claude
 
 **Selesai**

@@ -144,6 +144,7 @@ class SenderIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(summary, "compute_envelope_summaries", new=compute), \
                 patch.object(summary, "Bot", new=bot_cls), \
                 patch.object(summary.settings, "TELEGRAM_BOT_TOKEN", "token"), \
+                patch.object(summary, "_pengaturan_advisor", new=AsyncMock(return_value={})), \
                 patch.object(summary.logger, "error") as log_error:
             await sender(user_id=self.user.id)
         log_error.assert_not_called()
