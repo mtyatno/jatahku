@@ -7,6 +7,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.models import Envelope, RecurringTransaction, RecurringFrequency
 from app.bot.handlers import get_or_create_user, get_household_id, format_currency, parse_amount
 from app.bot.channel import txn_source
+from app.services.recurring_status import payment_window_error
 
 
 def _visible_to(user_id):
@@ -234,6 +235,11 @@ async def handle_recpay_callback(update, context):
         if not rec:
             await query.edit_message_text("Langganan tidak ditemukan.")
             return
+        # Aturan sama dengan web: hanya jatuh tempo di periode aktif (juga mencegah tombol lama ditekan dua kali).
+        err = payment_window_error(rec.next_run, user.payday_day, date.today())
+        if err:
+            await query.edit_message_text(f"⏳ {rec.description}: {err}")
+            return
 
         env_result = await db.execute(
             select(Envelope).where(Envelope.id == rec.envelope_id)
@@ -271,9 +277,13 @@ async def handle_recskip_callback(update, context):
     await query.answer()
 
     async with AsyncSessionLocal() as db:
-        _, rec = await _visible_rec(query, db)
+        user, rec = await _visible_rec(query, db)
         if not rec:
             await query.edit_message_text("Langganan tidak ditemukan.")
+            return
+        err = payment_window_error(rec.next_run, user.payday_day, date.today())
+        if err:
+            await query.edit_message_text(f"⏳ {rec.description}: {err}")
             return
 
         from app.services.recurring_processor import _next_date

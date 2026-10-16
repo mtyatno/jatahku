@@ -5,7 +5,7 @@ import { EnvelopeIcon, Icon } from '../components/Icon';
 import StatCard from '../components/StatCard';
 import {
   statusMeta, unpaidMonthlyTotal,
-  monthlyEquivalentTotal, paidMonthlyTotal, nearestDue, isUnpaid,
+  monthlyEquivalentTotal, paidMonthlyTotal, nearestDue, isUnpaid, canPay, payableFromLabel,
   searchSubscriptions, sortSubscriptions,
 } from '../lib/subscriptionStatus';
 
@@ -141,14 +141,16 @@ export default function Langganan() {
     setBusy(item.id);
     const r = await api.payRecurring(item.id);
     setBusy(null);
-    if (r.ok) load();
+    if (!r.ok && r.data?.detail) alert(r.data.detail);
+    load();
   };
   const handleSkip = async (item) => {
     if (busy) return;
     setBusy(item.id);
     const r = await api.skipRecurring(item.id);
     setBusy(null);
-    if (r.ok) load();
+    if (!r.ok && r.data?.detail) alert(r.data.detail);
+    load();
   };
 
   const freqLabel = (f) => {
@@ -250,6 +252,8 @@ export default function Langganan() {
               <div className="flex items-center justify-end gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 {isPaid ? (
                   <span className="text-xs text-brand-600 flex items-center gap-1"><Icon name="check" size={14} weight="fill" /> Sudah bayar</span>
+                ) : !canPay(item) ? (
+                  <span className="text-xs text-gray-400">{payableFromLabel(item)}</span>
                 ) : (
                   <>
                     <button disabled={busy === item.id} onClick={() => handleSkip(item)}
