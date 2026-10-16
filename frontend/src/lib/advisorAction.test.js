@@ -92,6 +92,15 @@ test('lembar rencana: total, lepas centang, body execute', () => {
   assert.deepEqual(body.bayar, [{ recurring_id: 'r', jumlah: 1 }]);
   assert.equal(body.saldo_versi, 'h');
   assert.equal(body.client_ref, 'ref1');
+  assert.equal(body.kebutuhan, undefined);
+});
+
+test('executeBody mengirim balik kebutuhan & kecuali untuk rencana_baru', () => {
+  const kebutuhan = [{ tujuan_id: 't', jumlah: 5 }];
+  const body = executeBody({ rencana: [], bayar: [], saldo_versi: 'h', kebutuhan, kecuali: ['x'], sertakan: [] }, 'r');
+  assert.deepEqual(body.kebutuhan, kebutuhan);
+  assert.deepEqual(body.kecuali, ['x']);
+  assert.equal(body.sertakan, undefined);
 });
 
 test('newClientRef unik', () => {

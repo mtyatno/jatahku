@@ -434,9 +434,14 @@ async def transfer_between_envelopes(
     Aturan (amplop aktif yang boleh diakses, jumlah ≤ sisa sumber) dan bentuk
     datanya dari app/services/fund_shift.py — sama dengan geser dana di bot."""
     from app.services.envelope_balance import compute_envelope_summaries
+    from app.services.advisor.execute import lock_household
     from app.services.fund_shift import record_transfer, transfer_error
 
     hid = await _get_hid(user, db)
+    # Kunci household yang sama dengan POST /advisor/execute (02-aturan.md §14): dua transfer
+    # bersamaan tidak boleh sama-sama lolos cek sisa sumber lalu sama-sama commit.
+    if hid:
+        await lock_household(db, hid)
     rows = {str(r["id"]): r for r in await compute_envelope_summaries(user, db)}
     source_row, target_row = rows.get(str(from_id)), rows.get(str(to_id))
     error = transfer_error(source_row, target_row, amount)

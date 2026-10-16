@@ -34,10 +34,26 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
 //                      | route | chat | dismiss | delete_txn | not_duplicate
 
-// POST /advisor/plan  { "kebutuhan": [...], "kecuali": ["<dari_id>"]? }  → { "rencana": [{"dari_id","dari_nama","jumlah","alasan","tingkat":"a|b|c","tercentang":true}],
-//                                               "kurang": 0, "bayar": [{"recurring_id","jumlah"}], "saldo_versi": "<hash>" }
-// POST /advisor/execute { "rencana": [...], "bayar": [...], "saldo_versi": "<hash>", "client_ref": "<uuid>" }
-//                      → 200 {"status":"ok","transfer":[…],"dibayar":[…]} | 409 {"detail":"Saldo berubah","rencana_baru":{…}}
+// POST /advisor/plan  { "kebutuhan": [{"tujuan_id","jumlah","bayar_recurring_id"?}],   (1–10 item)
+//                      "kecuali": ["<dari_id>"]?,      // sumber yang dilepas user → dihitung ulang tanpa itu
+//                      "sertakan": ["<amplop_id>"]? }  // tabungan (d) / dana darurat (e) yang DIPILIH user
+//   → { "rencana": [{"dari_id","dari_nama","jumlah","alasan","tingkat":"a|b|c|d|e","tercentang":true,
+//                    "ke": [{"tujuan_id","tujuan_nama","jumlah"}]}],   // satu baris per sumber (dari_id unik)
+//       "kurang": 0,                       // Σ kebutuhan − Σ baris tercentang
+//       "bayar": [{"recurring_id","jumlah"}],  // hanya bila kebutuhannya tertutup penuh oleh baris tercentang
+//       "saldo_versi": "<hash>",
+//       "kebutuhan": [...], "kecuali": [...], "sertakan": [...],   // gaung permintaan (dinormalisasi, urut prioritas)
+//       "opsi_tabungan": [{"amplop_id","nama","saldo","darurat"}] }  // CTA "Pakai tabungan" bila kurang > 0
+//   400 {"detail"} bila tujuan tak terlihat / jumlah ≤ 0 / langganan bukan di amplop tujuan.
+//   Tingkat c ("Cek dulu") tercentang hanya untuk kebutuhan danger; d/e tidak pernah otomatis (§8).
+// POST /advisor/execute { "rencana": [...baris tercentang, dengan "ke"], "bayar": [...], "saldo_versi": "<hash>",
+//                         "client_ref": "<uuid>", "kebutuhan"?, "kecuali"?, "sertakan"? }   // 3 terakhir: untuk rencana_baru
+//   → 200 {"status":"ok","transfer":[{"dari_id","dari_nama","ke_id","ke_nama","jumlah","income_id"}],
+//          "dibayar":[{"recurring_id","deskripsi","jumlah","txn_id","next_run"}]}
+//   | 409 {"detail":"Saldo berubah","rencana_baru":{…bentuk /plan…}}   // saldo_versi beda; tidak ada yang ditulis
+//   | 409 {"detail":"Rencana ini sedang diproses"}  (client_ref yang sama sedang berjalan) | 409 {"detail":"<jendela bayar>"}
+//   | 400 {"detail"} bila baris tidak sah (sumber terkunci/tak terlihat/melebihi sisa, sumber = tujuan, kosong).
+//   client_ref sama dikirim ulang sesudah sukses → hasil pertama dikembalikan, tidak ada transfer baru.
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 ```
 

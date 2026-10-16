@@ -123,13 +123,19 @@ export function toggleRow(rencana, dariId) {
   return (rencana || []).map(r => (r.dari_id === dariId ? { ...r, tercentang: !r.tercentang } : r));
 }
 
+// kebutuhan/kecuali/sertakan digaungkan server di respons plan; dikirim balik supaya
+// 409 "Saldo berubah" bisa langsung menyertakan rencana_baru untuk permintaan yang sama.
 export function executeBody(plan, clientRef) {
-  return {
+  const body = {
     rencana: (plan?.rencana || []).filter(r => r.tercentang),
     bayar: plan?.bayar || [],
     saldo_versi: plan?.saldo_versi,
     client_ref: clientRef,
   };
+  if (plan?.kebutuhan) body.kebutuhan = plan.kebutuhan;
+  if (plan?.kecuali?.length) body.kecuali = plan.kecuali;
+  if (plan?.sertakan?.length) body.sertakan = plan.sertakan;
+  return body;
 }
 
 export function newClientRef() {
