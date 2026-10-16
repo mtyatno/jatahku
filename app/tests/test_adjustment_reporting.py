@@ -71,6 +71,13 @@ class AnalyticsTests(unittest.IsolatedAsyncioTestCase):
         await _net_alloc_by_category(HID, USER, PS, PE, db)
         self.assertIn(NOT_ADJ_INC, sql(db.execute.call_args.args[0]))
 
+    async def test_net_alloc_excludes_internal_transfers(self):
+        # Transfer internal = Income bernilai 0; bukan distribusi income.
+        from app.api.routes.analytics import _net_alloc_by_category
+        db = db_with(FakeResult(rows=[]))
+        await _net_alloc_by_category(HID, USER, PS, PE, db)
+        self.assertIn("incomes.amount > %(amount_1)s", sql(db.execute.call_args.args[0]))
+
     async def test_monthly_trend_allocations(self):
         from app.api.routes.analytics import monthly_trend
         db = db_first_then(FakeResult(HID), lambda: FakeResult(0, rows=[]))
