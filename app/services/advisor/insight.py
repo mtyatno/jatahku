@@ -9,7 +9,8 @@ penekanan, dan memilih isi tiap slot; `render.py` merakit kalimat (AGENTS.md
 Slot:
 - `daftar` — kartu AI Advisor di Beranda (§7 "Kartu AI Advisor");
 - `kpi:jatah`, `kpi:sisa_bebas`, `kpi:terpakai`, `kpi:income`, `kpi:tagihan`, `kpi:tabungan` — chip KPI;
-- `transaksi` — penanda baris / banner di halaman Transaksi (S13).
+- `transaksi` — penanda baris / banner di halaman Transaksi (S13);
+- `amplop`, `langganan`, `alokasi`, `analitik` — halaman lain (S11–S15), diisi aturan S4.
 """
 from __future__ import annotations
 
@@ -55,6 +56,27 @@ class KonstantaAturan:
     # §2: CTA "Batas harian" baru dirilis setelah Pikir-Pikir Fase 1 menjadikan limit harian
     # peringatan. Sampai itu angka "maksimal/hari" tetap tampil sebagai fakta, tanpa tombol.
     cta_batas_harian: bool = False
+    # S4 — aturan Amplop, Tagihan, Pemasukan, Tabungan, Data (§6C–G, §11)
+    ditambal_berulang: int = 3                        # AMP-04
+    hari_min_belum_didanai: int = 2                   # AMP-09
+    batas_terlewat_n: int = 3                         # AMP-10 (dari 7 hari)
+    jatuh_tempo_dekat: int = 3                        # TAG-02/03
+    tahunan_dilihat_hari: int = 60                    # TAG-04
+    beban_tagihan_tinggi: Decimal = Decimal("0.4")    # TAG-05
+    saving_rate_ok: Decimal = Decimal("0.1")          # INC-05
+    saving_rate_turun: Decimal = Decimal("0.05")      # INC-05
+    darurat_tipis_bulan: Decimal = Decimal("1")       # TAB-01
+    darurat_cukup_bulan: Decimal = Decimal("3")       # TAB-01 (juga target bila tanpa target)
+    target_tertinggal: Decimal = Decimal("1.1")       # TAB-02
+    tenggat_dekat_bulan: int = 3                      # TAB-02 warn
+    tenggat_nyata_bulan: int = 1                      # penekanan 7: TAB-02 ≤ 1 bulan tetap setor
+    hampir_tercapai: Decimal = Decimal("0.9")         # TAB-04
+    target_paralel_n: int = 5                         # TAB-06
+    target_paralel_progres: Decimal = Decimal("0.15")  # TAB-06
+    cocokkan_lama_hari: int = 14                      # DAT-01
+    cocokkan_lama_txn: int = 20                       # DAT-01
+    selisih_besar: Decimal = Decimal("0.05")          # DAT-02
+    dobel_daftar_min: Decimal = Decimal("100000")     # DAT-03 masuk daftar
 
 
 DEFAULT = KonstantaAturan()

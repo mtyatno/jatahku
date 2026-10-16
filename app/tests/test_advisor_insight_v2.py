@@ -99,7 +99,8 @@ class Contoh15OktTests(unittest.TestCase):
         self.assertTrue(per["isi"].startswith("Hari ini 1,8× jatah; 4 dari 7 hari terakhir lewat jatah."))
         self.assertIn("±Rp525 rb", per["isi"])
         self.assertEqual(per["judul"], "Rem belanja harian ke Rp153 rb")
-        self.assertEqual([r["aturan"] for r in per["rincian"]], ["HAR-01"])
+        # S4: AMP-03 Makan & Jajan ikut masuk Rincian PER-01 (penekanan 2, contoh §12)
+        self.assertEqual([r["aturan"] for r in per["rincian"]], ["HAR-01", "AMP-03"])
 
     def test_cta_batas_harian_dari_rencana(self):
         batas = next(a for a in self.by["PER-01"].aksi if a["kind"] == "daily_limit")
@@ -231,7 +232,7 @@ class SeleksiTests(unittest.TestCase):
         self.assertNotIn("AMP-02", ids(sel.daftar))
         self.assertNotIn("AMP-03", ids(sel.daftar))
         per = next(i for i in sel.semua if i.aturan == "PER-01")
-        self.assertEqual(ids(per.rincian), ["HAR-01", "AMP-02", "AMP-03"])
+        self.assertEqual(ids(per.rincian), ["HAR-01", "AMP-03", "AMP-02", "AMP-03"])  # + AMP-03 asli (S4)
         self.assertEqual(per.tone, "warn")    # penyerapan kekurangan tidak menaikkan tone
 
     def test_tagihan_menyerap_amp01(self):

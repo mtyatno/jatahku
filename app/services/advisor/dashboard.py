@@ -1,7 +1,7 @@
 """`GET /advisor/dashboard` dan `POST /advisor/dismiss` (02-aturan.md §1, §7, §9; 04-kontrak-api.md).
 
 Alur: flag `advisor_v2_users` → cache Redis → snapshot (satu kali muat) → metrik → sinyal →
-aturan HAR-*/PER-* (+ aturan S4 kelak) → seleksi (rencana bersama, skor, penekanan,
+aturan HAR/PER/AMP/TAG/INC/TAB/DAT → seleksi (rencana bersama, skor, penekanan,
 dismiss) → render. `susun_dashboard` murni (dites dengan fixture); `get_dashboard`
 mengurus DB, Redis, dan jam.
 
@@ -23,7 +23,7 @@ from app.services.advisor import advisor_cache
 from app.services.advisor.insight import DEFAULT as KA_DEFAULT, KonstantaAturan, Konteks
 from app.services.advisor.metrics import DEFAULT as KM_DEFAULT, Konstanta, compute_metrics
 from app.services.advisor.render import judul_pendek, render_insight, teks_grafik
-from app.services.advisor.rules import hari, periode
+from app.services.advisor.rules import amplop, data, hari, pemasukan, periode, tabungan, tagihan
 from app.services.advisor.select import pilih
 from app.services.advisor.signals import DEFAULT as KS_DEFAULT, KonstantaSinyal, compute_signals
 
@@ -32,8 +32,9 @@ logger = logging.getLogger("jatahku.advisor.dashboard")
 FLAG_KEY = "advisor_v2_users"
 KONSTANTA_KEY = "advisor_konstanta"
 
-# Aturan per modul; S4 menambah rules/{amplop,tagihan,pemasukan,tabungan,data}.py di sini.
-EVALUATOR = (hari.evaluasi, periode.evaluasi)
+# Aturan per modul (02-aturan.md §6A–G).
+EVALUATOR = (hari.evaluasi, periode.evaluasi, amplop.evaluasi, tagihan.evaluasi, pemasukan.evaluasi,
+             tabungan.evaluasi, data.evaluasi)
 
 
 # ── pengaturan ──────────────────────────────────────────────────────────

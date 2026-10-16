@@ -451,12 +451,18 @@ export default function Layout() {
           return;
         }
         case 'delete_txn': {
-          const id = payload.txn_id ?? payload.transaction_id;
-          if (!id || !window.confirm(payload.konfirmasi || 'Hapus transaksi ini?')) return;
-          const ok = await api.deleteTransaction(id);
-          if (!ok) { showNotice('Gagal menghapus transaksi'); return; }
-          window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-          showNotice('Transaksi dihapus');
+          // txn_ids: struk terkirim dua kali (DAT-03 S4b) → hapus seluruh rantai kedua sekaligus.
+          const ids = Array.isArray(payload.txn_ids) && payload.txn_ids.length
+            ? payload.txn_ids : [payload.txn_id ?? payload.transaction_id].filter(Boolean);
+          const tanya = ids.length > 1 ? `Hapus ${ids.length} transaksi duplikat?` : 'Hapus transaksi ini?';
+          if (!ids.length || !window.confirm(payload.konfirmasi || tanya)) return;
+          let gagal = 0;
+          for (const id of ids) {
+            if (!(await api.deleteTransaction(id))) gagal += 1;
+          }
+          if (gagal < ids.length) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+          if (gagal) { showNotice(gagal === ids.length ? 'Gagal menghapus transaksi' : `${gagal} transaksi gagal dihapus`); return; }
+          showNotice(ids.length > 1 ? `${ids.length} transaksi dihapus` : 'Transaksi dihapus');
           return;
         }
         default:
