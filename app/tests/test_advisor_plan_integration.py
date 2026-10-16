@@ -15,7 +15,6 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import importlib.util
 import json
 import unittest
-from datetime import date
 from decimal import Decimal as D
 from unittest.mock import patch
 
@@ -30,6 +29,7 @@ from app.models.models import (
     RecurringTransaction, Transaction, User,
 )
 from app.services.advisor.execute import PlanError, build_plan, execute_plan
+from app.services.advisor.snapshot import user_today
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 
@@ -69,7 +69,9 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
         p.start()
         self.addCleanup(p.stop)
 
-        today = date.today()
+        # Tanggal lokal user (Asia/Jakarta), sama dengan snapshot — bukan date.today() UTC,
+        # supaya tagihan jatuh tempo hari ini tidak terbaca telat sesudah 17.00 UTC.
+        today = self.today = user_today(None)
         async with self.Session() as db:
             me = User(name="Saya", payday_day=1, plan="pro")
             rina = User(name="Rina", payday_day=1)
@@ -177,7 +179,7 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
         plan = await self.plan()
         async with self.Session() as db:  # Rina belanja dari Hobi sesudah rencana dibuat
             db.add(Transaction(envelope_id=_uuid(self.ids["Hobi"]), user_id=self.rina.id, amount=D("450000"), description="sepatu",
-                               transaction_date=date.today()))
+                               transaction_date=self.today))
             await db.commit()
         req = advisor_routes.ExecuteRequest(
             rencana=plan["rencana"], bayar=plan["bayar"], saldo_versi=plan["saldo_versi"],

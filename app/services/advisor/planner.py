@@ -31,7 +31,7 @@ Keputusan kecil S5 (dicatat juga di SESI-LOG.md):
 - Baris (c) yang dipakai kebutuhan danger dan non-danger sekaligus: tercentang.
 - `bayar` hanya diisi bila kebutuhan pemiliknya tertutup penuh oleh baris
   tercentang; selain itu user diarahkan ke Catat pemasukan / Bayar saja.
-- Teks `alasan` sementara dirakit di sini (`ALASAN`); pindahkan ke render.py saat S3 ada.
+- Teks `alasan` dirakit di render.py (`alasan_rencana`, dipindah di S3).
 """
 from __future__ import annotations
 
@@ -41,11 +41,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
-from app.services.advisor.formatting import _fmt_rp, _to_decimal
+from app.services.advisor.formatting import _to_decimal
 from app.services.advisor.metrics import (
     BELANJA_PURPOSES, SAVING_PURPOSES, Metrics, batas_harian, belanja_sisa_riwayat, rupiah,
     surplus_rencana,
 )
+from app.services.advisor.render import alasan_rencana
 from app.services.advisor.snapshot import Snapshot
 
 ZERO = Decimal("0")
@@ -53,15 +54,6 @@ SERIBU = Decimal("1000")
 MAX_KEBUTUHAN = 10
 
 URUTAN_TINGKAT = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4}
-
-# TODO(S3): pindahkan ke render.py (aturan kerja #2).
-ALASAN = {
-    "a": "Amplop keinginan, masih lebih Rp{surplus} sampai akhir periode",
-    "b": "Kebutuhan, masih lebih Rp{surplus} menurut belanja periode lalu",
-    "c": "Cek dulu: belum ada riwayat belanja, perkiraan lebih Rp{surplus}",
-    "d": "Tabungan, dipakai karena kamu memilihnya",
-    "e": "Dana darurat, dipakai karena kamu memilihnya",
-}
 
 
 class PlanInputError(ValueError):
@@ -136,7 +128,7 @@ class Rencana:
             "rencana": [
                 {
                     "dari_id": b.dari_id, "dari_nama": b.dari_nama, "jumlah": rupiah(b.jumlah),
-                    "alasan": ALASAN[b.tingkat].format(surplus=_fmt_rp(b.surplus)),
+                    "alasan": alasan_rencana(b.tingkat, b.surplus),
                     "tingkat": b.tingkat, "tercentang": b.tercentang,
                     "ke": [{"tujuan_id": t, "tujuan_nama": self.nama.get(t, ""), "jumlah": rupiah(j)}
                            for t, j in b.ke.items()],
