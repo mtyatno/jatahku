@@ -8,14 +8,14 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 **Selesai**
 - `Dashboard.jsx`: flag aktif + periode berjalan → `<AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />` di samping grafik; selain itu `AttentionCard` lama tidak berubah. Dirujuk ke #62 (S7), bukan issue baru.
-- PR bertumpuk di atas #83 (S7) karena `AdvisorCard.jsx` baru ada di sana: merge #83 dulu, lalu PR ini (base pindah ke `main`).
+- Dibuat bertumpuk di atas #83 (S7) karena `AdvisorCard.jsx` baru ada di sana; #83 sudah di-merge, base PR ini sudah `main`.
 
 **Digantung**
 - Di layar lebar, kartu AI Advisor lebih tinggi dari kartu lama, jadi kartu grafik ikut memanjang dengan ruang kosong di bawahnya (grid `stretch`). Belum diubah.
 
 **Tes (sesudah merge S9):** backend 846 OK · frontend 260 OK · build OK · Playwright (API di-mock): flag aktif → kartu AI Advisor, `{"enabled": false}` → "Perlu perhatian".
 
-**Lanjut:** perbaikan tombol dobel INC-01 di PR #83 (S7).
+**Lanjut:** S10 (#65) — prompt pembuka §3 dengan SN = S10.
 
 ---
 
