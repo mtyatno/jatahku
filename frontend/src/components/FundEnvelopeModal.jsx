@@ -1,8 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { Icon, EnvelopeIcon } from './Icon';
+import { PlanReview } from './PlanSheet';
 
+// advisor: dibuka lewat `jatahku:open-action` {kind:'fund'} (CTA AI Advisor).
+// Tab Geser memakai rencana multi-sumber dari /advisor/plan → /advisor/execute;
+// tanpa advisor tetap transfer satu sumber seperti sebelumnya.
 export default function FundEnvelopeModal({
   isOpen,
   onClose,
@@ -10,6 +14,7 @@ export default function FundEnvelopeModal({
   neededAmount = 0,
   envelopes = [],
   onSuccess,
+  advisor = false,
 }) {
   const [tab, setTab] = useState('transfer'); // 'transfer' | 'income'
   const [transferFrom, setTransferFrom] = useState('');
@@ -18,6 +23,7 @@ export default function FundEnvelopeModal({
   const [incomeAmount, setIncomeAmount] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [planAmount, setPlanAmount] = useState(0); // advisor: jumlah yang sedang direncanakan
 
   // Settle initial amounts whenever modal opens or target changes
   useEffect(() => {
@@ -29,6 +35,8 @@ export default function FundEnvelopeModal({
     setTransferAmount(initialAmt);
     setIncomeAmount(initialAmt);
     setIncomeDesc(`Top-up ${targetEnvelope.name}`);
+    setPlanAmount(neededAmount > 0 ? Math.round(neededAmount) : 0);
+    if (advisor) { setTab('transfer'); return; } // sumber dipilih perencana di server
 
     // Preselect the first available envelope with highest remaining balance
     const available = (envelopes || []).filter(
@@ -43,7 +51,12 @@ export default function FundEnvelopeModal({
       // If no envelope has remaining funds, switch directly to income tab
       setTab('income');
     }
-  }, [isOpen, targetEnvelope, neededAmount, envelopes]);
+  }, [isOpen, targetEnvelope, neededAmount, envelopes, advisor]);
+
+  const kebutuhan = useMemo(
+    () => (targetEnvelope && planAmount > 0 ? [{ tujuan_id: targetEnvelope.id, jumlah: planAmount }] : []),
+    [targetEnvelope, planAmount],
+  );
 
   if (!isOpen || !targetEnvelope) return null;
 
@@ -113,6 +126,7 @@ export default function FundEnvelopeModal({
 
     if (res.ok) {
       window.dispatchEvent(new CustomEvent('jatahku:envelope-updated'));
+      if (advisor) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       onSuccess?.({
         type: 'income',
         amount: amt,
@@ -206,8 +220,43 @@ export default function FundEnvelopeModal({
           </div>
         )}
 
+        {/* Tab 1 (advisor): rencana multi-sumber */}
+        {tab === 'transfer' && advisor && (
+          planAmount > 0 ? (
+            <PlanReview
+              kebutuhan={kebutuhan}
+              onCancel={onClose}
+              onIncome={amt => { setIncomeAmount(String(Math.round(amt))); setTab('income'); setError(''); }}
+              onDone={() => {
+                onSuccess?.({ type: 'transfer', amount: planAmount, fromName: 'beberapa amplop', targetEnvelope });
+                onClose();
+              }}
+            />
+          ) : (
+            <form className="space-y-3.5" onSubmit={e => {
+              e.preventDefault();
+              const amt = Math.round(Number(transferAmount));
+              if (!amt || amt <= 0) { setError('Jumlah harus lebih dari 0'); return; }
+              setError('');
+              setPlanAmount(amt);
+            }}>
+              <div>
+                <label className="label text-xs mb-1">Jumlah yang dibutuhkan (Rp):</label>
+                <input type="number" className="input font-mono text-sm py-2 w-full" placeholder="Contoh: 50000"
+                  value={transferAmount} onChange={e => setTransferAmount(e.target.value)} min="1" required />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                <button type="button" onClick={onClose} className="btn-outline text-xs py-2 px-3">Batal</button>
+                <button type="submit" disabled={!Number(transferAmount)} className="btn-primary text-xs py-2 px-4 disabled:opacity-50">
+                  Susun rencana
+                </button>
+              </div>
+            </form>
+          )
+        )}
+
         {/* Tab 1: Transfer from another envelope */}
-        {tab === 'transfer' && (
+        {tab === 'transfer' && !advisor && (
           <form onSubmit={handleTransfer} className="space-y-3.5">
             {fundableEnvelopes.length === 0 ? (
               <div className="text-center py-4 px-2 space-y-2">

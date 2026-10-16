@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
+import { parseAllocateQuery } from '../lib/advisorAction';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 import StatCard from '../components/StatCard';
@@ -58,9 +60,24 @@ export default function Allocate() {
     api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length > 0 ? p.length - 1 : -1); });
   }, []);
 
+  // ?new=1[&amount=…&source=…] (CTA "Atur alokasi") membuka form terisi, juga saat
+  // halaman ini sudah terbuka; form digulir ke layar setelah data termuat.
+  const location = useLocation();
+  const formRef = useRef(null);
+  const [scrollToForm, setScrollToForm] = useState(false);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('new') === '1') setShowForm(true);
-  }, []);
+    const q = parseAllocateQuery(location.search);
+    if (!q.open) return;
+    setShowForm(true);
+    if (q.amount) setIncomeAmount(String(q.amount));
+    if (q.source) setIncomeDesc(q.source);
+    setScrollToForm(true);
+  }, [location.search]);
+  useEffect(() => {
+    if (!scrollToForm || loading || !formRef.current) return;
+    formRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    setScrollToForm(false);
+  }, [scrollToForm, loading, showForm]);
 
   const incomeNum = Number(incomeAmount) || 0;
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -260,7 +277,7 @@ export default function Allocate() {
       )}
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="card border-brand-200 space-y-4">
+        <form ref={formRef} onSubmit={handleSubmit} className="card border-brand-200 space-y-4 scroll-mt-24">
           <h3 className="font-semibold">💰 Catat income & alokasi</h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

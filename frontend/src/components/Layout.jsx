@@ -9,10 +9,14 @@ import MultiAddTransaction from './MultiAddTransaction';
 import PaySubscriptions from './PaySubscriptions';
 import BalanceCheck from './BalanceCheck';
 import ChatPanel from './ChatPanel';
+import FundEnvelopeModal from './FundEnvelopeModal';
+import PlanSheet from './PlanSheet';
 import Sidebar, { SIDEBAR_WIDTH } from './Sidebar';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
+import { formatCurrency } from '../lib/utils';
+import { chatDraft, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
 import { Icon, EnvelopeIcon } from './Icon';
 
 function QuickAddEnvelope({ onClose }) {
@@ -33,13 +37,20 @@ function QuickAddEnvelope({ onClose }) {
 const RUPIAH_STEP = 100;
 const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
 
-function QuickAddIncome({ onClose }) {
+// prefill: { amount, source, envelopeId } dari CTA "Catat pemasukan" (incomePrefill()).
+function QuickAddIncome({ onClose, prefill = null }) {
   const [envelopes, setEnvelopes] = useState([]);
-  const [incomeAmount, setIncomeAmount] = useState('');
-  const [incomeDesc, setIncomeDesc] = useState('Gaji');
-  const [allocations, setAllocations] = useState({});
-  const [percentages, setPercentages] = useState({});
-  const [typedAmounts, setTypedAmounts] = useState({});
+  const [incomeAmount, setIncomeAmount] = useState(prefill?.amount || '');
+  const [incomeDesc, setIncomeDesc] = useState(prefill?.source || 'Gaji');
+  const [allocations, setAllocations] = useState(() => (
+    prefill?.envelopeId && Number(prefill.amount) > 0 ? { [prefill.envelopeId]: Number(prefill.amount) } : {}
+  ));
+  const [percentages, setPercentages] = useState(() => (
+    prefill?.envelopeId && Number(prefill.amount) > 0 ? { [prefill.envelopeId]: 100 } : {}
+  ));
+  const [typedAmounts, setTypedAmounts] = useState(() => (
+    prefill?.envelopeId && Number(prefill.amount) > 0 ? { [prefill.envelopeId]: true } : {}
+  ));
   const [saving, setSaving] = useState(false);
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [error, setError] = useState('');
@@ -151,7 +162,10 @@ function QuickAddIncome({ onClose }) {
     const items = Object.entries(allocations).filter(([, amt]) => Number(amt) > 0).map(([envId, amt]) => ({ envelope_id: envId, amount: Number(amt) }));
     const res = await api.request('/incomes/', { method: 'POST', body: JSON.stringify({ amount: incomeNum, source: incomeDesc, allocations: items }) });
     setSaving(false);
-    if (res.ok) { onClose(); } else { const d = await res.json(); setError(d.detail || 'Gagal'); }
+    if (res.ok) {
+      window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+      onClose();
+    } else { const d = await res.json(); setError(d.detail || 'Gagal'); }
   };
 
   if (!ready) return <div className="text-center py-8 text-gray-400">Loading...</div>;
@@ -210,8 +224,10 @@ function QuickAddIncome({ onClose }) {
 }
 
 // Selalu dibuka di daftar langganan; "Tambah" ada di tab sendiri dan kembali ke daftar setelah disimpan/batal.
-function CombinedLanggananModal({ onClose }) {
-  const [tab, setTab] = useState('list');
+// CTA AI Advisor: focusId + mode ('pay' | 'mark_paid') membuka satu langganan;
+// prefill membuka tab Tambah terisi ("Jadikan langganan").
+function CombinedLanggananModal({ onClose, focusId = null, mode = 'pay', prefill = null }) {
+  const [tab, setTab] = useState(prefill ? 'add' : 'list');
   const [reloadKey, setReloadKey] = useState(0);
   const tabCls = active => `px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
     active ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -225,14 +241,76 @@ function CombinedLanggananModal({ onClose }) {
       </div>
 
       <div>
-        {tab === 'list' && <PaySubscriptions onClose={onClose} reloadKey={reloadKey} />}
+        {tab === 'list' && <PaySubscriptions onClose={onClose} reloadKey={reloadKey} focusId={focusId} mode={mode} />}
         {tab === 'add' && (
-          <RecurringModal inline
+          <RecurringModal inline prefill={prefill}
             onClose={() => setTab('list')}
             onSaved={() => { setReloadKey(k => k + 1); window.dispatchEvent(new CustomEvent('jatahku:txn-added')); }} />
         )}
       </div>
     </div>
+  );
+}
+
+// CTA "Naikkan jatah" (budget_amount, berlaku untuk alokasi berikutnya) dan
+// "Pasang limit harian" (daily_limit, peringatan). Konfirmasi dulu, lalu PUT amplop.
+const ENVELOPE_FIELD = {
+  raise_budget: { field: 'budget_amount', title: 'Naikkan jatah', verb: 'Jatah', note: 'Berlaku untuk alokasi berikutnya; dana periode ini tidak berubah.' },
+  daily_limit: { field: 'daily_limit', title: 'Pasang limit harian', verb: 'Limit harian', note: 'Kamu diberi peringatan saat belanja amplop ini lewat batas per hari.' },
+};
+
+function EnvelopeFieldConfirm({ kind, payload, onClose }) {
+  const cfg = ENVELOPE_FIELD[kind];
+  const envId = payload.amplop_id ?? payload.envelope_id;
+  const [env, setEnv] = useState(null);
+  const [value, setValue] = useState(() => {
+    const n = Math.round(Number(payload.jumlah ?? payload.amount));
+    return n > 0 ? String(n) : '';
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.getEnvelopeSummary().then(envs => {
+      const found = (envs || []).find(e => e.id === envId);
+      if (found) setEnv(found); else setError('Amplop tidak ditemukan.');
+    });
+  }, [envId]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const n = Math.round(Number(value));
+    if (!n || n <= 0) { setError('Jumlah harus lebih dari 0'); return; }
+    setSaving(true); setError('');
+    const res = await api.updateEnvelopeFields(env, { [cfg.field]: n });
+    setSaving(false);
+    if (!res.ok) { setError(res.data?.detail || 'Gagal menyimpan'); return; }
+    window.dispatchEvent(new CustomEvent('jatahku:envelope-updated'));
+    window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+    onClose();
+  };
+
+  if (!env) return error
+    ? <p className="text-sm text-red-500">{error}</p>
+    : <div className="text-center py-8 text-gray-400">Loading...</div>;
+  const current = Number(env[cfg.field]) || 0;
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div className="flex items-center gap-2">
+        <EnvelopeIcon value={env.emoji} size={22} />
+        <span className="font-medium">{env.name}</span>
+      </div>
+      <div className="text-sm text-gray-500">{cfg.verb} sekarang: <b className="font-mono text-gray-700">{current ? formatCurrency(current) : '—'}</b></div>
+      <div>
+        <label className="label">{cfg.verb} baru (Rp)</label>
+        <input type="number" className="input font-mono" value={value} onChange={e => setValue(e.target.value)} min="1" required />
+        <p className="text-xs text-gray-400 mt-1">{cfg.note}</p>
+      </div>
+      {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{ color: '#E24B4A' }}>{error}</div>}
+      <div className="flex gap-2">
+        <button type="button" onClick={onClose} className="btn-outline flex-1">Batal</button>
+        <button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">{saving ? '...' : 'Simpan'}</button>
+      </div>
+    </form>
   );
 }
 
@@ -273,6 +351,12 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [fabMenu, setFabMenu] = useState(false);
   const [fabAction, setFabAction] = useState(null);
+  const [actionPayload, setActionPayload] = useState(null); // isian awal modal dari CTA AI Advisor
+  const [actionSeq, setActionSeq] = useState(0);             // CTA baru → isi modal dipasang ulang
+  const [planAction, setPlanAction] = useState(null);       // { kebutuhan, title } → PlanSheet
+  const [fundAction, setFundAction] = useState(null);       // { target, amount, envelopes } → FundEnvelopeModal
+  const [chatDraftState, setChatDraftState] = useState(null);
+  const [notice, setNotice] = useState(null);
   // Chat bot: dipasang sekali saat pertama dibuka, lalu hanya disembunyikan,
   // supaya balasan yang sedang ditunggu tidak hilang saat panel ditutup.
   const [chatOpen, setChatOpen] = useState(false);
@@ -300,15 +384,88 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // Pintu masuk lain (mis. link di Dashboard) membuka modal aksi FAB lewat event.
+  const showNotice = useCallback((text) => {
+    setNotice(text);
+    setTimeout(() => setNotice(n => (n === text ? null : n)), 3500);
+  }, []);
+
+  // Pintu masuk lain membuka aksi lewat event `jatahku:open-action`:
+  // string lama ('expense', 'income', 'chat', …) atau CTA AI Advisor {kind, payload}
+  // (docs/ai-advisor/04-kontrak-api.md). Lihat lib/advisorAction.js.
   useEffect(() => {
-    const onOpen = (e) => {
+    const openModal = (key, payload = null) => { setActionPayload(payload); setActionSeq(n => n + 1); setFabAction(key); };
+    const onOpen = async (e) => {
+      const action = normalizeAction(e.detail);
+      if (!action) return;
+      const { kind, payload, label } = action;
       setFabMenu(false);
-      if (e.detail === 'chat') { setChatMounted(true); setChatOpen(true); } else setFabAction(e.detail);
+      setCatatMenu(false);
+      switch (kind) {
+        case 'chat': {
+          const d = chatDraft(payload);
+          if (d.text || d.chips.length) setChatDraftState({ ...d, nonce: Date.now() });
+          setChatMounted(true);
+          setChatOpen(true);
+          return;
+        }
+        case 'income':
+          openModal('income', Object.keys(payload).length ? incomePrefill(payload) : null);
+          return;
+        case 'pay':
+        case 'mark_paid':
+          openModal('langganan', payload.recurring_id ? { focusId: payload.recurring_id, mode: kind } : null);
+          return;
+        case 'make_recurring':
+          openModal('langganan', { prefill: recurringPrefill(payload) });
+          return;
+        case 'raise_budget':
+        case 'daily_limit':
+          if (payload.amplop_id ?? payload.envelope_id) openModal(kind, payload);
+          return;
+        case 'plan':
+          if (Array.isArray(payload.kebutuhan) && payload.kebutuhan.length) {
+            setPlanAction({ kebutuhan: payload.kebutuhan, title: label || 'Rencana dana' });
+          }
+          return;
+        case 'fund': {
+          const envId = payload.amplop_id ?? payload.envelope_id ?? payload.tujuan_id;
+          const envs = await api.getEnvelopeSummary();
+          const target = (envs || []).find(x => x.id === envId);
+          if (!target) { showNotice('Amplop tidak ditemukan'); return; }
+          setFundAction({ target, envelopes: envs, amount: Math.max(0, Math.round(Number(payload.jumlah ?? payload.amount) || 0)) });
+          return;
+        }
+        case 'route': {
+          const path = safeRoute(payload.path ?? payload.url);
+          if (path) navigate(path);
+          return;
+        }
+        case 'dismiss':
+        case 'not_duplicate': {
+          if (!payload.kunci) return;
+          const pilihan = payload.pilihan || (kind === 'not_duplicate' ? 'tidak_relevan' : 'nanti');
+          const res = await api.advisorDismiss(payload.kunci, pilihan);
+          if (!res.ok) { showNotice(res.status === 404 ? 'Belum tersedia, coba lagi nanti' : 'Gagal menyimpan'); return; }
+          window.dispatchEvent(new CustomEvent('jatahku:advisor-dismissed', { detail: { kunci: payload.kunci, pilihan } }));
+          if (kind === 'not_duplicate') showNotice('Ditandai bukan dobel');
+          return;
+        }
+        case 'delete_txn': {
+          const id = payload.txn_id ?? payload.transaction_id;
+          if (!id || !window.confirm(payload.konfirmasi || 'Hapus transaksi ini?')) return;
+          const ok = await api.deleteTransaction(id);
+          if (!ok) { showNotice('Gagal menghapus transaksi'); return; }
+          window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+          showNotice('Transaksi dihapus');
+          return;
+        }
+        default:
+          openModal(kind); // expense, envelope, langganan, balance
+      }
     };
     window.addEventListener('jatahku:open-action', onOpen);
     return () => window.removeEventListener('jatahku:open-action', onOpen);
-  }, []);
+  }, [navigate, showNotice]);
 
   // Badge Langganan (telat + belum bayar periode ini) dan Papan disiplin untuk sidebar.
   useEffect(() => {
@@ -349,7 +506,8 @@ export default function Layout() {
 
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
-  const openAction = (key) => { setCatatMenu(false); setFabMenu(false); setFabAction(key); };
+  const openAction = (key) => { setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key); };
+  const closeAction = () => { setFabAction(null); setActionPayload(null); };
   const squareBtn = 'w-[var(--nav-h)] h-[var(--nav-h)] shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
 
@@ -513,10 +671,7 @@ export default function Layout() {
                 {FAB_OPTIONS.map((opt, i) => (
                   <button
                     key={opt.key}
-                    onClick={() => {
-                      setFabMenu(false);
-                      setFabAction(opt.key);
-                    }}
+                    onClick={() => openAction(opt.key)}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-white border border-gray-200 shadow-lg text-sm font-medium text-gray-600 hover:border-brand-400 hover:text-brand-600 transition-all whitespace-nowrap"
                     style={{ animation: `fadeIn 0.15s ease-out ${i * 0.05}s both` }}
                   >
@@ -538,23 +693,41 @@ export default function Layout() {
           </div>
         </div>
       </div>
-      {chatMounted && <ChatPanel open={chatOpen} onClose={closeChat} />}
+      {chatMounted && <ChatPanel open={chatOpen} onClose={closeChat} draft={chatDraftState} />}
+      {planAction && (
+        <PlanSheet kebutuhan={planAction.kebutuhan} title={planAction.title} onClose={() => setPlanAction(null)}
+          onIncome={amt => { setPlanAction(null); setActionPayload(incomePrefill({ jumlah: amt })); setActionSeq(n => n + 1); setFabAction('income'); }} />
+      )}
+      {fundAction && (
+        <FundEnvelopeModal isOpen advisor targetEnvelope={fundAction.target} neededAmount={fundAction.amount}
+          envelopes={fundAction.envelopes} onClose={() => setFundAction(null)} />
+      )}
+      {notice && (
+        <div role="status" className="fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-2 bg-gray-900 text-white text-sm shadow-lg">
+          {notice}
+        </div>
+      )}
       {/* Modals for speed dial actions */}
       {fabAction && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setFabAction(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={closeAction}>
+          <div key={actionSeq} className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-display font-bold text-lg mb-4 flex items-center gap-2">
               {fabAction === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
               {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
               {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
               {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
               {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
+              {ENVELOPE_FIELD[fabAction] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[fabAction].title}</>}
             </h3>
-            {fabAction === 'expense' && <MultiAddTransaction onSaved={() => setFabAction(null)} onCancel={() => setFabAction(null)} />}
-            {fabAction === 'envelope' && <QuickAddEnvelope onClose={() => setFabAction(null)} />}
-            {fabAction === 'income' && <QuickAddIncome onClose={() => setFabAction(null)} />}
-            {fabAction === 'langganan' && <CombinedLanggananModal onClose={() => setFabAction(null)} />}
-            {fabAction === 'balance' && <BalanceCheck onClose={() => setFabAction(null)} />}
+            {fabAction === 'expense' && <MultiAddTransaction onSaved={closeAction} onCancel={closeAction} />}
+            {fabAction === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
+            {fabAction === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
+            {fabAction === 'langganan' && (
+              <CombinedLanggananModal onClose={closeAction} focusId={actionPayload?.focusId} mode={actionPayload?.mode}
+                prefill={actionPayload?.prefill} />
+            )}
+            {fabAction === 'balance' && <BalanceCheck onClose={closeAction} />}
+            {ENVELOPE_FIELD[fabAction] && <EnvelopeFieldConfirm kind={fabAction} payload={actionPayload || {}} onClose={closeAction} />}
           </div>
         </div>
       )}

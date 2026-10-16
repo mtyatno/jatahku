@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
+import { parseTransactionsQuery, periodIndexFor } from '../lib/advisorAction';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { getPendingCount } from '../lib/offlineQueue';
 import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
@@ -57,8 +59,11 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
   const [envelopes, setEnvelopes] = useState([]);
   const [loading, setLoading] = useState(true);
-  // envelope id or 'all'; ?envelope=<id> (mis. tombol Riwayat di Dashboard) membuka langsung terfilter
-  const [filter, setFilter] = useState(() => new URLSearchParams(window.location.search).get('envelope') || 'all');
+  const location = useLocation();
+  // envelope id or 'all'. Query ?envelope=<id>&date=YYYY-MM-DD (tombol Riwayat, CTA "Lihat transaksi")
+  // dibaca setiap kali URL berubah, juga saat halaman ini sudah terbuka.
+  const [filter, setFilter] = useState(() => parseTransactionsQuery(window.location.search).envelope || 'all');
+  const [dateFilter, setDateFilter] = useState(() => parseTransactionsQuery(window.location.search).date);
   const [source, setSource] = useState('all');       // 'all' | 'telegram' | 'webapp'
   const [search, setSearch] = useState('');
   const [timeTab, setTimeTab] = useState('all');
@@ -86,6 +91,19 @@ export default function Transactions() {
     return () => window.removeEventListener('jatahku:txn-added', onAdded);
   }, []);
 
+  useEffect(() => {
+    const q = parseTransactionsQuery(location.search);
+    setFilter(q.envelope || 'all');
+    setDateFilter(q.date);
+    if (q.date) setTimeTab('all');
+  }, [location.search]);
+
+  // Tanggal dari query → buka periode yang memuatnya.
+  useEffect(() => {
+    const idx = periodIndexFor(periods, dateFilter);
+    if (idx !== null) setPeriodIdx(idx);
+  }, [dateFilter, periods]);
+
   const selectedPeriod = periodIdx !== null ? periods[periodIdx] : null;
   const isCurrentPeriod = periodIdx === periods.length - 1;
 
@@ -111,7 +129,7 @@ export default function Transactions() {
   const displayed = transactions
     .filter(t => filter === 'all' || t.envelope_id === filter)
     .filter(t => source === 'all' || t.source === source)
-    .filter(t => inTimeTab(t.transaction_date, timeTab))
+    .filter(t => (dateFilter ? t.transaction_date === dateFilter : inTimeTab(t.transaction_date, timeTab)))
     .filter(t => {
       if (!search.trim()) return true;
       const q = search.toLowerCase();
@@ -263,9 +281,16 @@ export default function Transactions() {
       <div className="flex items-center justify-between gap-2 flex-wrap border-b border-gray-100 pb-2">
         <div className="flex items-center gap-1 flex-wrap">
           {TIME_TABS.map(t => (
-            <button key={t.key} onClick={() => setTimeTab(t.key)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${timeTab === t.key ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:bg-gray-50'}`}>{t.label}</button>
+            <button key={t.key} onClick={() => { setTimeTab(t.key); setDateFilter(null); }}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${!dateFilter && timeTab === t.key ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:bg-gray-50'}`}>{t.label}</button>
           ))}
+          {dateFilter && (
+            <button onClick={() => setDateFilter(null)} aria-label="Hapus filter tanggal"
+              className="px-3 py-1.5 rounded-lg text-sm font-medium bg-brand-50 text-brand-600 inline-flex items-center gap-1.5">
+              {new Date(`${dateFilter}T00:00:00`).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}
+              <Icon name="close" size={13} />
+            </button>
+          )}
         </div>
         <span className="text-sm text-gray-400 inline-flex items-center gap-1.5"><Icon name="calendar" size={15} /> {selectedPeriod?.label}</span>
       </div>

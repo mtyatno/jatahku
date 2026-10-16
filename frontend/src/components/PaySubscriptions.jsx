@@ -9,12 +9,17 @@ const TONE_CLS = {
   safe: 'bg-brand-50 text-brand-600', neutral: 'bg-gray-100 text-gray-500',
 };
 
-export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
+// focusId: CTA AI Advisor (`pay` / `mark_paid`) membuka satu langganan saja;
+// "Lihat semua" kembali ke daftar penuh. mode 'mark_paid' menampilkan Tandai lunas
+// (memajukan jatuh tempo tanpa transaksi baru, untuk tagihan yang sudah dibayar di luar app).
+export default function PaySubscriptions({ onClose, reloadKey = 0, focusId = null, mode = 'pay' }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState({});          // id -> nominal string (editable)
   const [busy, setBusy] = useState(null);        // id sedang diproses
   const [toast, setToast] = useState(null);      // { text, undo }
+  const [focus, setFocus] = useState(focusId);
+  useEffect(() => { setFocus(focusId); }, [focusId]);
 
   const load = () => api.getRecurring().then(d => { setItems(d || []); setLoading(false); });
   useEffect(() => { load(); }, [reloadKey]);
@@ -58,7 +63,21 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
     load();
   };
 
-  const sorted = sortForPayment(items);
+  const markPaid = async (item) => {
+    setBusy(item.id);
+    const res = await api.markRecurringPaid(item.id);
+    setBusy(null);
+    if (!res.ok) {
+      setToast({ text: res.status === 404 ? 'Tandai lunas belum tersedia. Coba lagi nanti.' : (res.data?.detail || 'Gagal menandai lunas') });
+      return;
+    }
+    flip(item.id, 'paid');
+    window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+    setToast({ text: `Ditandai lunas: ${item.description}` });
+  };
+
+  const focused = focus ? items.find(i => i.id === focus) : null;
+  const sorted = focused ? [focused] : sortForPayment(items);
   const sisa = unpaidMonthlyTotal(items);
 
   return (
@@ -86,6 +105,12 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
                 </div>
                 {isPaid ? (
                   <Icon name="check" size={20} weight="fill" color={BRAND} />
+                ) : focused && mode === 'mark_paid' ? (
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[11px] text-gray-400 text-right max-w-[9rem]">Sudah dibayar di luar Jatahku?</span>
+                    <button disabled={busy === item.id} onClick={() => markPaid(item)}
+                      className="text-xs font-medium px-3 py-1 rounded-lg bg-brand-600 text-white disabled:opacity-50">Tandai lunas</button>
+                  </div>
                 ) : !canPay(item) ? (
                   <span className="text-xs text-gray-400 text-right shrink-0 max-w-[8rem]">{payableFromLabel(item)}</span>
                 ) : (
@@ -105,6 +130,11 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
             );
           })}
         </div>
+      )}
+      {focused && (
+        <button type="button" onClick={() => setFocus(null)} className="mt-3 text-xs text-brand-600 hover:underline">
+          Lihat semua langganan
+        </button>
       )}
       {toast && (
         <div className="mt-3 flex items-center justify-between gap-2 rounded-xl px-3 py-2 bg-gray-900 text-white text-sm">

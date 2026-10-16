@@ -195,7 +195,10 @@ function Welcome({ name, onExample }) {
   );
 }
 
-export default function ChatPanel({ open, onClose }) {
+// draft: { text, chips, send, nonce } dari CTA "Tanya di chat" (open-action kind `chat`).
+// Teks diisikan ke kotak ketik (atau langsung dikirim bila send), chip tampil
+// paling depan di baris pertanyaan cepat.
+export default function ChatPanel({ open, onClose, draft = null }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const uid = user?.id;
@@ -217,6 +220,8 @@ export default function ChatPanel({ open, onClose }) {
   const photoFiles = useRef(new Map()); // id pesan foto → blob (untuk kirim ulang di sesi ini)
   const fileRef = useRef(null);
   const [mode, setMode] = useState('half'); // tinggi sheet mobile: 'half' | 'full'
+  const [draftChips, setDraftChips] = useState([]);
+  const draftSeen = useRef(null);
 
   // Fase animasi: closed → opening → open → closing → closed.
   const [phase, setPhase] = useState('closed');
@@ -499,6 +504,18 @@ export default function ChatPanel({ open, onClose }) {
     deliver(msg);
   }, [pending, deliver]);
 
+  // Draf baru dari CTA: pasang sekali per nonce. Kalau bot masih menjawab, teks
+  // hanya diisikan ke kotak ketik supaya tidak hilang.
+  useEffect(() => {
+    if (!draft || draftSeen.current === draft.nonce) return;
+    draftSeen.current = draft.nonce;
+    setDraftChips(draft.chips || []);
+    if (!draft.text) return;
+    if (draft.send && !pending) { send(draft.text); return; }
+    setInput(draft.text);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [draft, pending, send]);
+
   const press = async (msg, btn) => {
     if (btn.url) {
       const href = safeHref(btn.url);
@@ -716,7 +733,13 @@ export default function ChatPanel({ open, onClose }) {
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto}
             aria-hidden="true" tabIndex={-1} />
           <span className="w-px h-4 bg-gray-200 shrink-0" />
-          {QUICK.map(q => (
+          {draftChips.map(q => (
+            <button key={`d-${q.text}`} type="button" onClick={() => send(q.text)} disabled={!!pending}
+              className="shrink-0 px-2.5 py-1 rounded-full border border-brand-200 bg-brand-50 text-xs text-brand-700 hover:border-brand-400 disabled:opacity-50 whitespace-nowrap">
+              {q.label}
+            </button>
+          ))}
+          {QUICK.filter(q => !draftChips.some(d => d.text === q.text)).map(q => (
             <button key={q.text} type="button" onClick={() => send(q.text)} disabled={!!pending}
               className="shrink-0 px-2.5 py-1 rounded-full border border-gray-200 text-xs text-gray-600 hover:border-brand-400 hover:text-brand-600 disabled:opacity-50 whitespace-nowrap">
               {q.label}
