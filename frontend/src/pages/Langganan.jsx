@@ -5,7 +5,7 @@ import { EnvelopeIcon, Icon } from '../components/Icon';
 import StatCard from '../components/StatCard';
 import {
   statusMeta, unpaidMonthlyTotal,
-  monthlyEquivalentTotal, paidMonthlyTotal, nearestDue,
+  monthlyEquivalentTotal, paidMonthlyTotal, nearestDue, isUnpaid,
   searchSubscriptions, sortSubscriptions,
 } from '../lib/subscriptionStatus';
 
@@ -14,7 +14,8 @@ const TONE_CLS = {
   safe: 'bg-brand-50 text-brand-600', neutral: 'bg-gray-100 text-gray-500',
 };
 
-export function RecurringModal({ onClose, onSaved, item }) {
+// inline: tampil sebagai isi (mis. tab di modal Langganan top bar), tanpa overlay sendiri.
+export function RecurringModal({ onClose, onSaved, item, inline = false }) {
   const isEdit = !!item;
   const [envelopes, setEnvelopes] = useState([]);
   const [desc, setDesc] = useState(item?.description || '');
@@ -55,10 +56,8 @@ export function RecurringModal({ onClose, onSaved, item }) {
     else { const d = await res.json(); setError(d.detail || 'Gagal menyimpan'); }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-        <h3 className="font-display font-bold text-lg mb-4">{isEdit ? 'Edit Langganan' : 'Tambah Langganan'}</h3>
+  const form = (
+    <>
         <div className="space-y-3">
           <div>
             <label className="label">Nama langganan</label>
@@ -94,6 +93,15 @@ export function RecurringModal({ onClose, onSaved, item }) {
             {saving ? '...' : 'Simpan'}
           </button>
         </div>
+    </>
+  );
+
+  if (inline) return form;
+  return (
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h3 className="font-display font-bold text-lg mb-4">{isEdit ? 'Edit Langganan' : 'Tambah Langganan'}</h3>
+        {form}
       </div>
     </div>
   );
@@ -112,6 +120,11 @@ export default function Langganan() {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
   };
   useEffect(load, []);
+  // Tambah/bayar lewat top bar atau FAB juga menyegarkan halaman ini.
+  useEffect(() => {
+    window.addEventListener('jatahku:txn-added', load);
+    return () => window.removeEventListener('jatahku:txn-added', load);
+  }, []);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('new') === '1') setShowAdd(true);
@@ -149,6 +162,7 @@ export default function Langganan() {
   const unpaidTotal = unpaidMonthlyTotal(items);
   const monthlyCount = items.filter(i => i.frequency === 'monthly').length;
   const paidCount = items.filter(i => i.frequency === 'monthly' && i.status === 'paid').length;
+  const unpaidCount = items.filter(i => i.frequency === 'monthly' && isUnpaid(i)).length;
   const overdueCount = items.filter(i => i.status === 'overdue').length;
   const nearest = nearestDue(items);
   const nearestIsLate = nearest?.status === 'overdue';
@@ -174,7 +188,7 @@ export default function Langganan() {
             value={formatShort(paidTotal)} sub={`${paidCount} dari ${monthlyCount} bulanan`} />
           <StatCard icon="warning" tone={overdueCount > 0 ? 'red' : 'orange'} label="Belum Dibayar"
             value={formatShort(unpaidTotal)}
-            sub={overdueCount > 0 ? `${overdueCount} terlambat!` : `${monthlyCount - paidCount} tagihan menunggu`} />
+            sub={overdueCount > 0 ? `${overdueCount} terlambat!` : `${unpaidCount} tagihan menunggu`} />
           <StatCard icon="calendar" tone={nearestIsLate ? 'red' : 'purple'} label="Jatuh Tempo Terdekat"
             value={nearest ? fmtDate(nearest.next_run) : '—'}
             sub={nearest ? `${nearestIsLate ? 'Terlambat · ' : ''}${nearest.description}` : 'Semua terbayar'} />

@@ -209,51 +209,27 @@ function QuickAddIncome({ onClose }) {
   );
 }
 
+// Selalu dibuka di daftar langganan; "Tambah" ada di tab sendiri dan kembali ke daftar setelah disimpan/batal.
 function CombinedLanggananModal({ onClose }) {
-  const [tab, setTab] = useState('add');
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    api.getRecurring().then(d => {
-      setItems(d || []);
-      const unpaid = d?.some(i => i.status !== 'paid');
-      if (unpaid) setTab('pay');
-      setLoading(false);
-    });
-  }, []);
+  const [tab, setTab] = useState('list');
+  const [reloadKey, setReloadKey] = useState(0);
+  const tabCls = active => `px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
+    active ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+  }`;
 
   return (
     <div className="space-y-4">
       <div className="flex gap-2 border-b border-gray-200">
-        <button
-          onClick={() => setTab('add')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            tab === 'add'
-              ? 'border-brand-600 text-brand-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Tambah Langganan
-        </button>
-        <button
-          onClick={() => setTab('pay')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            tab === 'pay'
-              ? 'border-brand-600 text-brand-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Bayar Langganan
-        </button>
+        <button onClick={() => setTab('list')} className={tabCls(tab === 'list')}>Daftar Langganan</button>
+        <button onClick={() => setTab('add')} className={tabCls(tab === 'add')}>Tambah Langganan</button>
       </div>
 
       <div>
-        {tab === 'add' && <RecurringModal onClose={onClose} onSaved={() => { api.getRecurring().then(d => setItems(d || [])); }} />}
-        {tab === 'pay' && loading ? (
-          <div className="text-center py-8 text-gray-400">Loading...</div>
-        ) : (
-          <PaySubscriptions onClose={onClose} />
+        {tab === 'list' && <PaySubscriptions onClose={onClose} reloadKey={reloadKey} />}
+        {tab === 'add' && (
+          <RecurringModal inline
+            onClose={() => setTab('list')}
+            onSaved={() => { setReloadKey(k => k + 1); window.dispatchEvent(new CustomEvent('jatahku:txn-added')); }} />
         )}
       </div>
     </div>

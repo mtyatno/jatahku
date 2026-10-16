@@ -14,6 +14,7 @@ test('unpaidMonthlyTotal sums monthly non-paid only', () => {
     it({ id: 'b', amount: 110000, status: 'due' }),
     it({ id: 'c', amount: 380000, status: 'paid' }),           // excluded (paid)
     it({ id: 'd', amount: 500000, frequency: 'yearly', status: 'upcoming' }), // excluded (not monthly)
+    it({ id: 'n', amount: 54000, status: 'upcoming' }),        // excluded (baru, jatuh tempo periode depan)
   ];
   assert.equal(unpaidMonthlyTotal(items), 1710000);
 });

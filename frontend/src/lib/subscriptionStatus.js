@@ -7,9 +7,15 @@ const META = {
   upcoming: { label: 'Belum jatuh tempo', tone: 'neutral' },
 };
 
+// Tagihan periode ini yang belum dibayar: telat atau jatuh tempo periode ini.
+// "upcoming" (mis. langganan baru yang jatuh tempo pertamanya periode depan) bukan tagihan periode ini.
+export function isUnpaid(item) {
+  return item?.status === 'overdue' || item?.status === 'due';
+}
+
 export function unpaidMonthlyTotal(items) {
   return (items || []).reduce(
-    (s, i) => (i.frequency === 'monthly' && i.status !== 'paid' ? s + Number(i.amount || 0) : s),
+    (s, i) => (i.frequency === 'monthly' && isUnpaid(i) ? s + Number(i.amount || 0) : s),
     0,
   );
 }

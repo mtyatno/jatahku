@@ -1,10 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-
-def _prev_month(d: date) -> date:
-    year, month = (d.year, d.month - 1) if d.month > 1 else (d.year - 1, 12)
-    return date(year, month, min(d.day, 28))
+from app.services.recurring_status import take_paid_in_period
 
 
 def summarize_bills(recs, txns_by_env, period_start: date, period_end: date, today: date) -> dict:
@@ -29,17 +26,9 @@ def summarize_bills(recs, txns_by_env, period_start: date, period_end: date, tod
     monthly = [r for r in recs if r.frequency.value == "monthly"]
 
     # Bayar dulu: transaksinya tidak boleh dipakai lagi untuk mencocokkan tagihan lain.
-    for rec in monthly:
-        if rec.next_run <= period_end:
-            continue
-        if not (period_start <= _prev_month(rec.next_run) <= period_end):
-            continue
-        pool = pools.get(rec.envelope_id, [])
-        hit = next((t for t in pool if t[1] == f"🔄 {rec.description}"), None)
-        if hit:
-            pool.remove(hit)
-            amount_paid += Decimal(str(hit[0]))
-            count_paid += 1
+    for amount in take_paid_in_period(monthly, pools, period_start, period_end).values():
+        amount_paid += Decimal(str(amount))
+        count_paid += 1
 
     for rec in monthly:
         if rec.next_run > period_end:
