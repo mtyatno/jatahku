@@ -139,6 +139,11 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
             Income.income_date >= period_start,
             Income.income_date <= period_end,
             Income.balance_check_id.is_(None),
+            # Hanya pemasukan nyata. Transfer internal (Income bernilai 0 +
+            # alokasi −X/+X) bukan distribusi income: kalau sumbernya dana
+            # periode lalu, sisi minusnya dibuang dan sisi plusnya terhitung,
+            # sehingga persentase bisa melewati 100% (mis. 2108%).
+            Income.amount > 0,
         )
         .group_by(Envelope.id, Envelope.purpose, Envelope.name, Envelope.emoji, EnvelopeGroup.name)
     )
