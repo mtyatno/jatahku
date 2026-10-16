@@ -1,0 +1,7 @@
+# Dependensi tambahan untuk menjalankan tes (CI dan lokal), di atas requirements.txt.
+# slowapi & email-validator dipakai app (main.py, schema EmailStr) tetapi belum
+# tercantum di requirements.txt; aiosqlite untuk tes integrasi SQLite.
+-r requirements.txt
+slowapi==0.1.10
+email-validator==2.3.0
+aiosqlite==0.22.1

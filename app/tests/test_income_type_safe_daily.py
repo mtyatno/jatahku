@@ -44,6 +44,7 @@ class IncomeTypeSafeDailyTests(unittest.IsolatedAsyncioTestCase):
             FakeResult(D("0")),                 # total_rollover
             FakeResult([uuid.uuid4()]),         # env_ids
             FakeResult([]),                     # reserved (no bills)
+            FakeResult(rows=[]),                # pemasukan periode ini (_income_totals)
         )
         return await spending_prediction(period_start=period[0], period_end=period[1], user=user, db=db)
 
