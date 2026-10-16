@@ -44,6 +44,37 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 **Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, lalu di Telegram/chat web: `/status`, "sisa", "limit harian", "kapan habis", "pengeluaran hari ini", "kenapa boros?", "kenapa makan habis?", "aman gak beli sepatu 300k". Ringkasan untuk satu user saja: di VPS, `python -c "import asyncio; from app.services.summary import send_daily_summary as f; asyncio.run(f(user_id='<id>'))"` (endpoint `/daily-summary` admin mengirim ke **semua** user).
 
 **Lanjut:** S7 (#62, kartu AI Advisor) bila belum; lalu S10 (#65) dengan prompt pembuka §3. Di S10, bandingkan Beranda vs `/status` vs "sisa" di chat web untuk akun tim (angka harus identik, lihat `test_advisor_chat.ParitasDatabaseTests`), nyalakan flag `*`, lalu hapus jawaban lama di `nlp_cmd`/`cmd_status`/`checkin_cmd`/`summary.py` (cari pemanggil `advisor_cmd.jawab` dan `_analisa_v2`).
+## S7 · 2026-10-16 · Claude
+
+**Selesai**
+- `lib/advisorCard.js` (+ tes, 6): `dismissOptions` (label §9 dari `dismiss.pilihan`), `visibleItems`/`badgeCount` (sembunyikan seketika sebelum muatan ulang), `overflowLabel` ("+N saran lain: {judul pendek}", maks 2 judul), `primaryAction`, `askChips` (3–4 pertanyaan dari payload aksi `chat` insight yang menyala — daftar dulu, lalu chip KPI — dilengkapi intent tetap bot: kapan habis, limit harian, sisa, pengeluaran hari ini), `askAction`. Tidak ada teks insight atau angka di frontend; semua dari `render.py`.
+- `components/AdvisorCard.jsx` (baru): judul "AI Advisor" + badge (`advisor.total`) + cap waktu (`updatedLabel`); maks 3 item dari `advisor.items` (urutan server); tiap item: titik tone, judul, isi, CTA utama (`aksi[0]` via `openAction`), **Rincian** (fakta, insight yang diserap, CTA lain, dasar + keyakinan + cap waktu, **Sembunyikan periode ini** / **Tidak relevan**), **Nanti**. "+N saran lain". Kosong → "Semua aman" + `advisor.aman`. Kotak **Tanya AI Advisor**: chip cepat → chat terkirim langsung (chip lain tetap di chat), "Ketik sendiri…" → chat terbuka dengan chip.
+- `Dashboard.jsx` (milik S6) **tidak** diubah: pemasangan kartu sempat dibuat lalu di-revert atas permintaan pemilik produk. Kartu belum tampil di Beranda sampai dipasang (lihat Digantung).
+
+**Digantung / untuk sesi lain**
+- S4 (#81) dan S6 (#82) sudah di `main`; branch ini sudah di-merge dengan `main`, jadi kartu langsung berisi semua aturan (TAG/AMP/INC/TAB/DAT).
+- **Pemasangan kartu di Beranda** (`Dashboard.jsx`, milik S6): flag aktif + periode berjalan → `<AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />` di samping grafik, `AttentionCard` hanya bila `!adv`. Menunggu keputusan siapa yang memasang.
+- Sesi ini dikerjakan tanpa ritual pembuka (rangkuman + "lanjut") dan di branch `claude/festive-bell-3hg12l`. Pekerjaan berikutnya memakai `ai-advisor/sN-*`.
+- "Lihat semua" untuk `advisor.sisa` belum ada: server hanya mengirim `{id, judul_pendek}`. Kalau mau dibuka, kontrak perlu insight utuh di `sisa` (atau endpoint terpisah).
+- `AttentionCard.jsx` + `attentionItems` (`dashboardInsights.js`) + `api.getAdvisorInsights` masih dipakai UI lama; hapus setelah flag `*` (S10).
+- Ringkasan "Rencana dana dihitung bersama" tidak ditampilkan khusus: CTA `plan` di item membuka `PlanSheet` (S8) dengan payload dari server (sudah satu rencana bersama, S3).
+
+**Keputusan kecil**
+- Tombol utama gelap hanya untuk item pertama bertone danger; lainnya outline, supaya mata ke satu aksi.
+- "Nanti" hanya tampil bila `nanti` ada di `dismiss.pilihan`; dua pilihan lain di Rincian.
+- Chip Tanya memakai teks pertanyaan dari `aksi[].payload.teks` sebagai label (label aksi "Tanya di chat" tidak informatif sebagai chip).
+- Sembunyi lokal direset setiap payload dashboard baru (server sudah menyaring yang di-dismiss).
+- Pilihan dismiss yang sudah jadi CTA insight (INC-01 "Ingatkan besok" = `nanti`, AMP-10 "Biarkan" = `periode`) tidak diulang sebagai tombol kartu (**Nanti** / pilihan Rincian).
+
+**Jebakan**
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- Uji Playwright perlu `serviceWorkers: 'block'` dan user dengan `telegram_id`.
+
+**Tes (sesudah merge `main` dengan S4 & S6):** backend 809 OK · frontend 259 OK (7 baru) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())` dari branch S4): 3 item + "+1 saran lain", Rincian PER-01, Nanti → `POST /advisor/dismiss {"kunci":"TAG-01:kpr","pilihan":"nanti"}`, chip Tanya → chat terkirim, "Semua aman", desktop & HP (skrip tidak di-commit).
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, buka Beranda; kartu AI Advisor menggantikan "Perlu perhatian".
+
+**Lanjut:** S7 selesai setelah PR di-merge. Sesi berikutnya: S9 (#64) — prompt pembuka §3 dengan SN = S9. S10 memeriksa kartu ini di produksi bersama chip KPI.
 
 ---
 
