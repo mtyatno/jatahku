@@ -12,7 +12,11 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
                "belanja_hari_ini": 297100, "proyeksi_akhir": 11811157, "kekurangan": 525957,
                "tanggal_habis": "2026-10-24", "hari_ke": 19, "hari_total": 30, "sisa_hari": 11,
                "pemasukan_saya": 0, "pemasukan_rumah_tangga": 7500000,
-               "harian": [{"tanggal": "2026-09-27", "variabel": 0, "tagihan": 0, "penyesuaian": 0, "lewat": false}] },
+               "harian": [{"tanggal": "2026-09-27", "variabel": 0, "tagihan": 0, "penyesuaian": 0,
+                           "outlier": 0, "jatah": 376100, "lewat": false}] },
+  // metrics = Metrics.to_api() dari app/services/advisor/metrics.py (S1). harian: satu baris per hari ps..hari ini,
+  // hanya amplop belanja; "jatah" = J0 hari itu, "lewat" = variabel > jatah (S6). outlier & jatah ditambah di S1.
+  // Angka null bila belum bisa dihitung: j1 di hari terakhir; proyeksi_akhir/kekurangan/tanggal_habis bila hari_ke < 3.
   "kpi": { "jatah": {/* insight */}, "sisa_bebas": {}, "terpakai": {}, "income": {}, "tagihan": {}, "tabungan": {} },
   "grafik": { "teks": "4 dari 7 hari terakhir lewat jatah…", "aksi": {/* CTA */} },
   "advisor": { "items": [/* insight, maks 3 */], "sisa": [{"id": "TAB-01:…", "judul_pendek": "Dana Darurat baru 3%"}], "total": 4 },

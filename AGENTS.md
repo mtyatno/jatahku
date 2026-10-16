@@ -118,3 +118,14 @@ Migrasi ini menambah `envelopes.classification`, `transactions.is_private`
 3. `alembic upgrade head` (jika tabel owned by `postgres`, jalankan sebagai postgres)
 4. Verifikasi: `\d envelopes | grep classification`, `\d transactions | grep is_private`
 5. `sudo systemctl restart jatahku`
+
+## Deploy Checklist — AI Advisor S1: `envelopes.is_emergency` (c5e9a2d7f4b1)
+Menambah `envelopes.is_emergency` (boolean, default false) dan mengisinya `true` untuk amplop
+`saving`/`sinking_fund` yang namanya mengandung "darurat"/"emergency". Model sudah memetakan
+kolom ini, jadi **API amplop 500 sampai migrasi dijalankan** — jalankan di jam yang sama dengan merge:
+1. Cek ownership tabel: `sudo -u postgres psql jatahku -c "\dt envelopes"`
+2. Cek head: `alembic current` → harus `a9c3e7d1f5b2` sebelum upgrade
+3. `alembic upgrade head` (jika tabel owned by `postgres`, jalankan sebagai postgres)
+4. Verifikasi: `\d envelopes | grep is_emergency` dan
+   `SELECT name, purpose FROM envelopes WHERE is_emergency;` (hanya amplop tabungan)
+5. `sudo systemctl restart jatahku`

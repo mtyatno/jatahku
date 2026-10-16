@@ -167,6 +167,10 @@ class Envelope(TimestampMixin, Base):
     classification: Mapped[str | None] = mapped_column(
         String(20), nullable=True, default=None
     )
+    # Dana darurat (AI Advisor G8/TAB-01). Backfill dari nama saat migrasi, lalu diatur user.
+    is_emergency: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelopes")
