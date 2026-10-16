@@ -250,7 +250,11 @@ class ApiClient {
   }
 
   async updateEnvelopeClassification(env, classification) {
-    // Rebuild the full EnvelopeCreate body from a summary row (PUT replaces all fields).
+    return this.updateEnvelopeFields(env, { classification });
+  }
+
+  // Ubah sebagian field amplop: PUT butuh body EnvelopeCreate penuh, jadi dibangun dari baris summary.
+  async updateEnvelopeFields(env, fields) {
     return this.updateEnvelope(env.id, {
       name: env.name,
       emoji: env.emoji,
@@ -262,7 +266,8 @@ class ApiClient {
       daily_limit: env.daily_limit ?? null,
       cooling_threshold: env.cooling_threshold ?? null,
       purpose: env.purpose,
-      classification,
+      classification: env.classification,
+      ...fields,
     });
   }
 
@@ -526,6 +531,29 @@ class ApiClient {
     return { ok: res.ok, data: await res.json() };
   }
 
+  // AI Advisor v2 — pipa CTA (S8). Kontrak: docs/ai-advisor/04-kontrak-api.md.
+  async _advisorPost(path, body) {
+    try {
+      const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
+      const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  advisorPlan(kebutuhan, kecuali = []) {
+    return this._advisorPost('/advisor/plan', kecuali.length ? { kebutuhan, kecuali } : { kebutuhan });
+  }
+
+  advisorExecute(body) {
+    return this._advisorPost('/advisor/execute', body);
+  }
+
+  advisorDismiss(kunci, pilihan = 'nanti') {
+    return this._advisorPost('/advisor/dismiss', { kunci, pilihan });
+  }
+
   async resetData(email = null) {
     const body = email ? { email } : {};
     return this.request('/user/reset', {
@@ -579,6 +607,16 @@ class ApiClient {
   async skipRecurring(id) {
     const res = await this.request(`/recurring/${id}/skip`, { method: 'POST' });
     return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  }
+
+  // Tandai lunas: majukan next_run tanpa transaksi baru (endpoint dari S4).
+  async markRecurringPaid(id) {
+    try {
+      const res = await this.request(`/recurring/${id}/mark-paid`, { method: 'POST' });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
   }
 
   // Undo: kembalikan next_run sebuah langganan ke nilai sebelumnya (PUT butuh body penuh)

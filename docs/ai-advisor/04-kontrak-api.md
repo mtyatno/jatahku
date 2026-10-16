@@ -27,12 +27,35 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   "dasar": {"teks": "Dari 19 hari data", "keyakinan": "tinggi"},
   "dismiss": {"kunci": "TAG-01:<id>", "pilihan": ["nanti", "periode", "tidak_relevan"]} }
 
-// kind yang dikenal S8: plan | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
+// kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
 //                      | route | chat | dismiss | delete_txn | not_duplicate
 
-// POST /advisor/plan  { "kebutuhan": [...] }  → { "rencana": [{"dari_id","dari_nama","jumlah","alasan","tingkat":"a|b|c","tercentang":true}],
+// POST /advisor/plan  { "kebutuhan": [...], "kecuali": ["<dari_id>"]? }  → { "rencana": [{"dari_id","dari_nama","jumlah","alasan","tingkat":"a|b|c","tercentang":true}],
 //                                               "kurang": 0, "bayar": [{"recurring_id","jumlah"}], "saldo_versi": "<hash>" }
 // POST /advisor/execute { "rencana": [...], "bayar": [...], "saldo_versi": "<hash>", "client_ref": "<uuid>" }
 //                      → 200 {"status":"ok","transfer":[…],"dibayar":[…]} | 409 {"detail":"Saldo berubah","rencana_baru":{…}}
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 ```
+
+## Aksi CTA di frontend (S8)
+
+Aksi dijalankan lewat `window.dispatchEvent(new CustomEvent('jatahku:open-action', { detail: aksi }))` (helper `openAction()` di `frontend/src/lib/advisorAction.js`). `detail` boleh string lama (`expense`, `envelope`, `income`, `langganan`, `balance`, `chat`) atau objek `{kind, label?, payload}` dari `insight.aksi[]`. `Layout.jsx` adalah satu-satunya penerima.
+
+| kind | payload | Yang terjadi |
+|---|---|---|
+| `plan` | `{kebutuhan: [{tujuan_id, jumlah, bayar_recurring_id?}]}` | `PlanSheet`: `POST /advisor/plan` → lembar konfirmasi → `POST /advisor/execute` (`client_ref` baru per rencana). Melepas centang sumber → plan diminta ulang dengan `kecuali`. 409 → `rencana_baru` ditampilkan. "Masih kurang" → Catat pemasukan |
+| `fund` | `{amplop_id, jumlah?}` | `FundEnvelopeModal` mode advisor: tab Geser = rencana multi-sumber (plan/execute), tab Top-up = pemasukan langsung ke amplop |
+| `pay` | `{recurring_id}` | Modal Langganan, `PaySubscriptions` fokus satu langganan (Bayar/Lewati) |
+| `mark_paid` | `{recurring_id}` | Sama, tombol **Tandai lunas** → `POST /recurring/{id}/mark-paid` (S4) |
+| `income` | `{jumlah?, sumber?, amplop_id?}` | `QuickAddIncome` terisi; `amplop_id` → 100% ke amplop itu. Simpan → `jatahku:txn-added` |
+| `daily_limit` | `{amplop_id, jumlah}` | Konfirmasi lalu `PUT /envelopes/{id}` `daily_limit` |
+| `raise_budget` | `{amplop_id, jumlah}` | Konfirmasi lalu `PUT /envelopes/{id}` `budget_amount` (berlaku untuk alokasi berikutnya) |
+| `make_recurring` | `{deskripsi, jumlah, frekuensi?, amplop_id?, next_run?}` | Modal Langganan tab Tambah, `RecurringModal` terisi |
+| `route` | `{path}` | Navigasi SPA; hanya path relatif di daftar halaman app (`safeRoute`). Halaman reaktif: `/transactions?date=YYYY-MM-DD&envelope=<id>`, `/allocate?new=1&amount=&source=` |
+| `chat` | `{teks?, chip?: [string \| {label, text}], kirim?}` | Chat terbuka, teks diisikan (atau dikirim bila `kirim`), chip tampil paling depan |
+| `dismiss` | `{kunci, pilihan?}` | `POST /advisor/dismiss` (default `nanti`) → event `jatahku:advisor-dismissed` `{kunci, pilihan}` |
+| `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan` |
+| `delete_txn` | `{txn_id, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` → `jatahku:txn-added` |
+
+Setelah data berubah, penerima menembakkan `jatahku:txn-added` (dan `jatahku:envelope-updated` untuk transfer/amplop) supaya Beranda dan halaman lain memuat ulang (dan cache advisor server dihapus oleh route terkait, S3).
+

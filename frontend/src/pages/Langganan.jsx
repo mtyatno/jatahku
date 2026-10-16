@@ -15,14 +15,16 @@ const TONE_CLS = {
 };
 
 // inline: tampil sebagai isi (mis. tab di modal Langganan top bar), tanpa overlay sendiri.
-export function RecurringModal({ onClose, onSaved, item, inline = false }) {
+// prefill (mode buat): isian awal dari CTA "Jadikan langganan" — lihat recurringPrefill().
+export function RecurringModal({ onClose, onSaved, item, inline = false, prefill = null }) {
   const isEdit = !!item;
+  const pre = !isEdit && prefill ? prefill : {};
   const [envelopes, setEnvelopes] = useState([]);
-  const [desc, setDesc] = useState(item?.description || '');
-  const [amount, setAmount] = useState(item?.amount ? String(item.amount) : '');
-  const [frequency, setFrequency] = useState(item?.frequency || 'monthly');
-  const [envelopeId, setEnvelopeId] = useState(item?.envelope_id || '');
-  const [nextRun, setNextRun] = useState(item?.next_run || (() => {
+  const [desc, setDesc] = useState(item?.description || pre.description || '');
+  const [amount, setAmount] = useState(item?.amount ? String(item.amount) : (pre.amount || ''));
+  const [frequency, setFrequency] = useState(item?.frequency || pre.frequency || 'monthly');
+  const [envelopeId, setEnvelopeId] = useState(item?.envelope_id || pre.envelopeId || '');
+  const [nextRun, setNextRun] = useState(item?.next_run || pre.nextRun || (() => {
     const d = new Date();
     d.setMonth(d.getMonth() + 1);
     return d.toISOString().split('T')[0];
@@ -33,7 +35,9 @@ export function RecurringModal({ onClose, onSaved, item, inline = false }) {
   useEffect(() => {
     api.getEnvelopeSummary().then(envs => {
       setEnvelopes(envs || []);
-      if (!isEdit && envs?.length) setEnvelopeId(envs[0].id);
+      if (!isEdit && envs?.length) {
+        setEnvelopeId(cur => (envs.some(e => e.id === cur) ? cur : envs[0].id));
+      }
     });
   }, []);
 
