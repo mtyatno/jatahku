@@ -787,3 +787,76 @@ def batas_harian(bebas: Decimal, m: Metrics) -> Decimal:
     if m.horizon <= 0:
         return floor100(bebas)
     return floor100(bebas / m.horizon)
+
+
+# ── tambahan S3: angka turunan untuk aturan HAR-*/PER-* (02-aturan.md §5, §6A–B) ──
+def variabel_hari_ini_per_amplop(snap: Snapshot, m: Metrics) -> dict[str, Decimal]:
+    """Belanja variabel hari ini per amplop belanja (Σ = T5). Penyumbang HAR-01."""
+    belanja = {eid for eid, a in m.amplop.items() if a.kelompok == "belanja"}
+    out: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    for x in snap.transactions:
+        if x.envelope_id in belanja and x.transaction_date == m.today \
+                and m.jenis_transaksi.get(x.id) == "variabel":
+            out[x.envelope_id] += x.amount
+    return dict(out)
+
+
+def laju_periode(m: Metrics) -> Decimal:
+    """Rata-rata belanja variabel per hari sejak awal periode (Σ grafik ÷ d). PER-04."""
+    total = sum((h["variabel"] for h in m.harian), ZERO)
+    return total / m.hari_ke if m.hari_ke > 0 else ZERO
+
+
+def laju_7_hari(m: Metrics, k: Konstanta = DEFAULT) -> Decimal | None:
+    """Σ 7 batang terakhir grafik ÷ 7; None bila periode belum 7 hari. PER-04."""
+    if m.hari_ke < k.jendela_laju:
+        return None
+    return sum((h["variabel"] for h in m.harian[-k.jendela_laju:]), ZERO) / k.jendela_laju
+
+
+def persen_variabel(m: Metrics) -> Decimal | None:
+    """Belanja variabel periode ini ÷ dana belanja (PER-03; tanpa tagihan, outlier, penyesuaian)."""
+    if m.dana_belanja <= 0:
+        return None
+    total = sum((a.variabel_periode for a in m.amplop.values() if a.kelompok == "belanja"), ZERO)
+    return total / m.dana_belanja
+
+
+def perkiraan_sisa(m: Metrics) -> Decimal | None:
+    """Perkiraan sisa bebas di akhir periode: T3 − T4 × r (PER-04/05/06). None bila d < 3."""
+    if not m.proyeksi_valid:
+        return None
+    return m.sisa_bebas - m.laju_total * m.sisa_hari
+
+
+def jumlah_transaksi_laju(snap: Snapshot, m: Metrics, k: Konstanta = DEFAULT) -> int:
+    """Jumlah transaksi variabel amplop belanja di jendela laju T4 (dasar keyakinan proyeksi §5)."""
+    belanja = {eid for eid, a in m.amplop.items() if a.kelompok == "belanja"}
+    mulai = m.today - timedelta(days=k.jendela_laju - 1) if m.hari_ke >= k.jendela_laju else m.period_start
+    return sum(
+        1 for x in snap.transactions
+        if x.envelope_id in belanja and mulai <= x.transaction_date <= m.today
+        and m.jenis_transaksi.get(x.id) == "variabel"
+    )
+
+
+def ringkasan_periode_lalu(m: Metrics) -> dict | None:
+    """PER-07: amplop belanja minus, jumlah tambalan, dan amplop terpakai terbesar di periode lalu."""
+    if len(m.periode) < 2:
+        return None
+    minus, tambalan, terbesar = 0, 0, None
+    for eid, a in m.amplop.items():
+        rw = m.riwayat.get(eid)
+        if a.kelompok != "belanja" or rw is None:
+            continue
+        if rw.dana[-2] - rw.terpakai[-2] < 0:
+            minus += 1
+        tambalan += rw.tambalan_n[-2]
+        if rw.terpakai[-2] > 0 and (terbesar is None or rw.terpakai[-2] > terbesar[1]):
+            terbesar = (eid, rw.terpakai[-2])
+    if terbesar is None and minus == 0 and tambalan == 0:
+        return None
+    return {"minus": minus, "tambalan": tambalan,
+            "terbesar_id": terbesar[0] if terbesar else None,
+            "terbesar": terbesar[1] if terbesar else ZERO,
+            "mulai": m.periode[-2][0], "akhir": m.periode[-2][1]}

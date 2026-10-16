@@ -4,6 +4,49 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S3 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `insight.py` (baru): skema `Insight` (data saja: aturan, entitas, tone, slot, `data`, aksi tanpa label, rupiah terdampak, U, keyakinan), `KonstantaAturan` (§11 bagian aturan/seleksi), skor §5 (`hitung_skor`, `kunci_urut` = kelompok tone dulu), efek keyakinan rendah, `Konteks` untuk aturan.
+- `rules/hari.py` HAR-01..05, `rules/periode.py` PER-01..07 — fungsi murni `(Konteks) → [Insight]`, angka dari metrics/sinyal.
+- `select.py`: satu rencana dana bersama dari semua CTA `plan` (§8.4) → batas harian & "maksimal/hari" dari `batas_harian_setelah_rencana` (penekanan 8); penekanan 2 (PER-01 menyerap AMP-02/03), 3 (TAG-01/02 menyerap AMP-01, tone/skor tertinggi), 5, 6 (HAR-01 menyatu ke PER-01, tanpa menaikkan tone PER-01); chip per kartu (urutan §7); daftar maks 3 / 1 per amplop kecuali danger / 2 per domain; "+N saran lain"; "Semua aman" (`advisor.aman`); peredaman chip; dismiss §9 (muncul lagi bila tone naik / rupiah +50%).
+- `render.py`: semua teks HAR/PER, label aksi, dasar, "Kemungkinan:" untuk keyakinan rendah, baris grafik, `teks_telegram` (untuk S9), format `rp_ringkas`/`rp_penuh`/`tgl`/`hari_tgl`/`rasio`. Teks `ALASAN` perencana dipindah ke sini (`alasan_rencana`).
+- `dashboard.py`: `analisa`/`susun_dashboard` (murni) + `get_dashboard` (flag `advisor_v2_users`, cache, dismiss, zona waktu user) + `dismiss`. AppSetting `advisor_konstanta` (JSON) menimpa `Konstanta`, `KonstantaSinyal`, `KonstantaAturan` tanpa deploy.
+- `advisor_cache.py`: cache `advisor:{hid}:{viewer}` 90 detik, `invalidate(hid)`, dismiss `advisor:dismiss:{viewer}:{kunci}` dengan TTL §9, dan **hook sesi SQLAlchemy** (`install()` di `main.py` lifespan): `after_flush` mengumpulkan household dari Transaction/Income/Allocation/Envelope/RecurringTransaction/Goal/MonthlySnapshot/BalanceCheck yang ditulis, `after_commit` menjadwalkan `invalidate` (rollback → dibuang).
+- Route `GET /advisor/dashboard`, `POST /advisor/dismiss` (204).
+- `metrics.py` (hanya tambahan): `variabel_hari_ini_per_amplop`, `laju_periode`, `laju_7_hari`, `persen_variabel`, `perkiraan_sisa`, `jumlah_transaksi_laju`, `ringkasan_periode_lalu`. `signals.py`: `hari_mencatat`/`biasa_mencatat` (dipakai S15 dan HAR-05, perilaku S15 sama).
+- Tes: `test_advisor_insight_v2.py` (39: §12 chip & skor 69,1/54,3, skenario 1, 2, 3, 6, 11, 13, 16, 17, tiap aturan, seleksi, dismiss, rencana bersama, render, konstanta) dan `test_advisor_dashboard_integration.py` (9, SQLite: flag, cache, hook commit/rollback, dismiss).
+- Kontrak `04-kontrak-api.md`: `advisor.aman`, `rincian`, `skor`, `{"enabled": false}`, kpi null, aturan dismiss.
+
+**Digantung / untuk sesi lain**
+- **S4:** tambahkan `rules/{amplop,tagihan,pemasukan,tabungan,data}.py` ke `EVALUATOR` di `dashboard.py` dan template-nya di `render.TEMPLATE`. Chip income/tagihan/tabungan masih null. Penekanan 2/3 sudah jalan begitu AMP-01/02/03 dan TAG-01/02 ada (isi `amplop_id`). Penekanan 7 (tidak menyarankan setor saat defisit): aturan TAB cukup cek apakah PER-01/PER-02 menyala di daftar insight (atau `m.kekurangan > 0 or m.sisa_bebas < 0`).
+- **CTA "Batas harian"** dimatikan default (`KonstantaAturan.cta_batas_harian = False`, §2: rilis setelah Pikir-Pikir Fase 1 menjadikan limit harian peringatan). Angka "Batas aman {amplop}" tetap tampil sebagai fakta. Nyalakan tanpa deploy: AppSetting `advisor_konstanta` = `{"cta_batas_harian": true}`.
+- **S6:** baca `kpi.<kartu>.chip/tone`, `redam_chip`, `grafik`, `generated_at` (cap waktu). `{"enabled": false}` → UI lama.
+- **S7:** `advisor.items/sisa/total/aman`; dismiss sudah live (`POST /advisor/dismiss`), item hilang di muatan berikutnya (cache viewer dihapus).
+- **S9:** `teks_telegram(render_insight(...))`; `analisa(snap, now_local=…)` memberi `Konteks` + `Seleksi` tanpa HTTP.
+- HAR-05 "Hari ini tidak belanja" belum ada (check-in hanya di bot); CTA yang ada: Catat.
+- Admin UI untuk `advisor_v2_users` belum ada; pakai `PUT /admin/settings/advisor_v2_users?value=<id,id|*>`.
+
+**Keputusan kecil (juga di docstring)**
+- Chip mengikuti urutan prioritas kartu; di dalam satu aturan, skor tertinggi. Fallback tambahan: PER-07 untuk Sisa bebas & Terpakai di hari 1–2 (belum ada proyeksi). HAR-04 juga fallback bila J0 = 0 (chip "Jatah Rp0", info).
+- PER-01 tidak menyala di hari terakhir (r = 0); minus ditangani PER-02. PER-02 "Tutup minus" = rencana untuk amplop belanja yang minus.
+- CTA batas harian PER-01: amplop keinginan pertama di 3 penyumbang terbesar, selain itu penyumbang terbesar.
+- PER-06 tujuan: tabungan pertama yang boleh diubah viewer, tabungan umum dulu, dana darurat terakhir; jumlah = Σ bebas non-rollover (S16), selain itu perkiraan sisa.
+- A (§5): 1,0 untuk plan/fund/pay/mark_paid/daily_limit/raise_budget/delete_txn/not_duplicate; 0,7 untuk income/route/chat/make_recurring/catat.
+- Dismiss juga menyembunyikan chip; kartu bisa tanpa chip bila satu-satunya insight-nya disembunyikan.
+- Cache dashboard dibuang bila tanggal `generated_at` ≠ hari ini (ganti hari tanpa menunggu TTL).
+
+**Jebakan**
+- `test_advisor_plan_integration` merah di `main` sesudah 17.00 UTC: tes memakai `date.today()` (UTC), snapshot memakai tanggal Asia/Jakarta → tagihan jatuh tempo "hari ini" terbaca telat 1 hari. Diperbaiki di tes (`user_today`). Tes baru memakai `datetime.now(Asia/Jakarta)`.
+- Hook cache hanya terpasang lewat `main.py` lifespan; tes yang ingin mengujinya memanggil `advisor_cache.install()` dan `uninstall()`.
+- Hook menjalankan satu `SELECT household_id` di `after_flush` bila flush menyentuh transaksi/langganan/alokasi; gagal → hanya log, tulis data tetap jalan.
+
+**Baseline tes:** backend 761 OK · frontend 251 OK · build OK.
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>` lalu `GET /advisor/dashboard`. Dismiss: `POST /advisor/dismiss {"kunci": "<id item>", "pilihan": "nanti"}`.
+
+---
+
 ## S5 · 2026-10-16 · pemilik produk + Claude
 
 **Selesai**

@@ -71,6 +71,9 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS income_type VARCHAR(20) DEFAULT 'monthly'"
             ))
     print(f"🚀 {settings.APP_NAME} starting...")
+    # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
+    from app.services.advisor import advisor_cache
+    advisor_cache.install()
     start_scheduler()
     yield
     # Shutdown

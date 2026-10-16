@@ -1,8 +1,9 @@
 from datetime import date
+from typing import Literal
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,3 +125,29 @@ async def advisor_execute(
         return await execute_plan(user, db, req.model_dump(mode="json"))
     except PlanError as exc:
         return _plan_error(exc)
+
+
+# ── AI Advisor v2: dashboard & dismiss (S3, 02-aturan.md §7, §9, 04-kontrak-api.md) ──
+@router.get("/dashboard")
+async def advisor_dashboard(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.advisor.dashboard import get_dashboard
+    return await get_dashboard(user, db)
+
+
+class DismissRequest(BaseModel):
+    kunci: str = Field(min_length=3, max_length=200)
+    pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
+
+
+@router.post("/dismiss", status_code=204)
+async def advisor_dismiss(
+    req: DismissRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.advisor.dashboard import dismiss
+    await dismiss(user, db, req.kunci, req.pilihan)
+    return Response(status_code=204)

@@ -383,11 +383,9 @@ def compute_signals(snap: Snapshot, m: Metrics, k: KonstantaSinyal = DEFAULT) ->
 
     # S15 lupa catat
     if m.hari_tanpa_catatan is not None and m.hari_tanpa_catatan >= k.lupa_catat_hari:
-        mulai = t - timedelta(days=k.lupa_catat_jendela - 1)
-        hari = {x.transaction_date for x in snap.transactions
-                if x.user_id == viewer and not x.is_adjustment and mulai <= x.transaction_date <= t}
-        if len(hari) >= k.lupa_catat_aktif:
-            s.lupa_catat = {"hari_tanpa_catatan": m.hari_tanpa_catatan, "hari_mencatat": len(hari)}
+        n = hari_mencatat(snap, k)
+        if n >= k.lupa_catat_aktif:
+            s.lupa_catat = {"hari_tanpa_catatan": m.hari_tanpa_catatan, "hari_mencatat": n}
 
     # S16 sisa amplop non-rollover
     if m.sisa_hari <= k.non_rollover_hari:
@@ -402,6 +400,18 @@ def compute_signals(snap: Snapshot, m: Metrics, k: KonstantaSinyal = DEFAULT) ->
             s.dibayar_manual.append({"envelope_id": e.id, **row})
 
     return s
+
+
+def hari_mencatat(snap: Snapshot, k: KonstantaSinyal = DEFAULT) -> int:
+    """Jumlah hari viewer mencatat dalam t−13..t (dasar S15; juga HAR-05 "biasa mencatat")."""
+    t = snap.today
+    mulai = t - timedelta(days=k.lupa_catat_jendela - 1)
+    return len({x.transaction_date for x in snap.transactions
+                if x.user_id == snap.viewer_id and not x.is_adjustment and mulai <= x.transaction_date <= t})
+
+
+def biasa_mencatat(snap: Snapshot, k: KonstantaSinyal = DEFAULT) -> bool:
+    return hari_mencatat(snap, k) >= k.lupa_catat_aktif
 
 
 def _pola_rutin(snap: Snapshot, envs, t: date, k: KonstantaSinyal) -> list[dict]:

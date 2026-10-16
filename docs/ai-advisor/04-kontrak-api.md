@@ -18,10 +18,16 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // hanya amplop belanja; "jatah" = J0 hari itu, "lewat" = variabel > jatah (S6). outlier & jatah ditambah di S1.
   // Angka null bila belum bisa dihitung: j1 di hari terakhir; proyeksi_akhir/kekurangan/tanggal_habis bila hari_ke < 3.
   "kpi": { "jatah": {/* insight */}, "sisa_bebas": {}, "terpakai": {}, "income": {}, "tagihan": {}, "tabungan": {} },
-  "grafik": { "teks": "4 dari 7 hari terakhir lewat jatah…", "aksi": {/* CTA */} },
-  "advisor": { "items": [/* insight, maks 3 */], "sisa": [{"id": "TAB-01:…", "judul_pendek": "Dana Darurat baru 3%"}], "total": 4 },
+  // kpi.<kartu> = insight terpilih untuk kartu itu (chip sudah sesuai kartu: PER-01 di Terpakai = "Lewat ±Rp525 rb",
+  // di Sisa bebas = "Habis ±24 Okt"), atau null. S3 mengisi jatah/sisa_bebas/terpakai; income/tagihan/tabungan null
+  // sampai S4. Bisa juga null bila satu-satunya insight kartu itu sedang di-dismiss.
+  "grafik": { "teks": "4 dari 7 hari terakhir lewat jatah, tertinggi Senin 12 Okt Rp400 rb", "aksi": {/* CTA route */} | null },
+  "advisor": { "items": [/* insight, maks 3 */], "sisa": [{"id": "TAB-01:…", "judul_pendek": "Dana Darurat baru 3%"}], "total": 4,
+               "aman": null },  // aman = satu insight ok terbaik bila items kosong ("Semua aman"), selain itu null
   "redam_chip": true
 }
+// User di luar flag advisor_v2_users → { "enabled": false } saja (tanpa field lain).
+// Cache server 90 detik per (household, viewer); dihapus otomatis setiap commit yang mengubah data household.
 
 // insight
 { "id": "TAG-01:<recurring_id>", "aturan": "TAG-01", "tone": "danger", "chip": "KPR telat 9 hari",
@@ -29,7 +35,10 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   "aksi": [{"kind": "plan", "label": "Geser & bayar KPR", "payload": {"kebutuhan": [{"tujuan_id": "…", "jumlah": 2008174, "bayar_recurring_id": "…"}]}},
            {"kind": "pay", "label": "Bayar saja", "payload": {"recurring_id": "…"}}],
   "dasar": {"teks": "Dari 19 hari data", "keyakinan": "tinggi"},
-  "dismiss": {"kunci": "TAG-01:<id>", "pilihan": ["nanti", "periode", "tidak_relevan"]} }
+  "dismiss": {"kunci": "TAG-01:<id>", "pilihan": ["nanti", "periode", "tidak_relevan"]},
+  "skor": 100.0,                                            // §5, untuk debug/urutan; frontend tidak menghitung
+  "rincian": [{"id": "HAR-01:2026-10-15", "aturan": "HAR-01", "judul": "…", "isi": "…"}] }  // opsional: insight yang
+  // diserap (penekanan 2/3/6), mis. HAR-01 & AMP-02/03 di Rincian PER-01. aksi[].payload sudah lengkap (chat: {teks}).
 
 // kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
 //                      | route | chat | dismiss | delete_txn | not_duplicate
@@ -55,6 +64,8 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 //   | 400 {"detail"} bila baris tidak sah (sumber terkunci/tak terlihat/melebihi sisa, sumber = tujuan, kosong).
 //   client_ref sama dikirim ulang sesudah sukses → hasil pertama dikembalikan, tidak ada transfer baru.
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
+//   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
+//   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
 ```
 
 ## Aksi CTA di frontend (S8)
