@@ -11,7 +11,7 @@ Diubah di PR sesi itu sendiri (lihat `03-workflow.md` §9). Status: belum · ber
 | S4 | #59 | Aturan Amplop, Tagihan, Pemasukan, Tabungan, Data | 1 | 3,5 | belum | | | | |
 | S5 | #60 | Perencana dana & eksekusi | 1 | 3 | review | Pemilik produk + Claude | #79 | 2026-10-16 | |
 | S6 | #61 | Frontend Beranda A: KPI & grafik | 1 | 3 | review | Pemilik produk + Claude | #82 | 2026-10-16 | |
-| S7 | #62 | Frontend Beranda B: kartu AI Advisor | 1 | 2,5 | belum | | | | |
+| S7 | #62 | Frontend Beranda B: kartu AI Advisor | 1 | 2,5 | review | Claude | (PR ini, di atas #82) | 2026-10-16 | |
 | S8 | #63 | Pipa CTA (frontend) | 1 | 3 | selesai | Claude | #76 | 2026-10-16 | 2026-10-16 |
 | S9 | #64 | Paritas bot & ringkasan | 1 | 3 | belum | | | | |
 | S10 | #65 | Verifikasi & rilis Fase 1 | 1 | 2 | belum | | | | |

@@ -4,6 +4,35 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S7 · 2026-10-16 · Claude
+
+**Selesai**
+- `lib/advisorCard.js` (+ tes, 6): `dismissOptions` (label §9 dari `dismiss.pilihan`), `visibleItems`/`badgeCount` (sembunyikan seketika sebelum muatan ulang), `overflowLabel` ("+N saran lain: {judul pendek}", maks 2 judul), `primaryAction`, `askChips` (3–4 pertanyaan dari payload aksi `chat` insight yang menyala — daftar dulu, lalu chip KPI — dilengkapi intent tetap bot: kapan habis, limit harian, sisa, pengeluaran hari ini), `askAction`. Tidak ada teks insight atau angka di frontend; semua dari `render.py`.
+- `components/AdvisorCard.jsx` (baru): judul "AI Advisor" + badge (`advisor.total`) + cap waktu (`updatedLabel`); maks 3 item dari `advisor.items` (urutan server); tiap item: titik tone, judul, isi, CTA utama (`aksi[0]` via `openAction`), **Rincian** (fakta, insight yang diserap, CTA lain, dasar + keyakinan + cap waktu, **Sembunyikan periode ini** / **Tidak relevan**), **Nanti**. "+N saran lain". Kosong → "Semua aman" + `advisor.aman`. Kotak **Tanya AI Advisor**: chip cepat → chat terkirim langsung (chip lain tetap di chat), "Ketik sendiri…" → chat terbuka dengan chip.
+- `Dashboard.jsx`: flag aktif + periode berjalan → `AdvisorCard` di samping grafik; selain itu `AttentionCard` lama tidak berubah.
+
+**Digantung / untuk sesi lain**
+- Branch ini di atas S6 (#82): merge #82 dulu. Isi kartu lengkap (TAG/AMP/INC/TAB/DAT) muncul begitu S4 (#81) live; tanpa S4 kartu hanya berisi HAR/PER.
+- "Lihat semua" untuk `advisor.sisa` belum ada: server hanya mengirim `{id, judul_pendek}`. Kalau mau dibuka, kontrak perlu insight utuh di `sisa` (atau endpoint terpisah).
+- `AttentionCard.jsx` + `attentionItems` (`dashboardInsights.js`) + `api.getAdvisorInsights` masih dipakai UI lama; hapus setelah flag `*` (S10).
+- Ringkasan "Rencana dana dihitung bersama" tidak ditampilkan khusus: CTA `plan` di item membuka `PlanSheet` (S8) dengan payload dari server (sudah satu rencana bersama, S3).
+
+**Keputusan kecil**
+- Tombol utama gelap hanya untuk item pertama bertone danger; lainnya outline, supaya mata ke satu aksi.
+- "Nanti" hanya tampil bila `nanti` ada di `dismiss.pilihan`; dua pilihan lain di Rincian.
+- Chip Tanya memakai teks pertanyaan dari `aksi[].payload.teks` sebagai label (label aksi "Tanya di chat" tidak informatif sebagai chip).
+- Sembunyi lokal direset setiap payload dashboard baru (server sudah menyaring yang di-dismiss).
+
+**Jebakan**
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- Uji Playwright perlu `serviceWorkers: 'block'` dan user dengan `telegram_id`.
+
+**Tes:** backend 761 OK · frontend 258 OK (6 baru) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())` dari branch S4): 3 item + "+1 saran lain", Rincian PER-01, Nanti → `POST /advisor/dismiss {"kunci":"TAG-01:kpr","pilihan":"nanti"}`, chip Tanya → chat terkirim, "Semua aman", desktop & HP (skrip tidak di-commit).
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, buka Beranda; kartu AI Advisor menggantikan "Perlu perhatian".
+
+---
+
 ## S6 · 2026-10-16 · pemilik produk + Claude
 
 **Selesai**
