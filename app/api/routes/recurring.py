@@ -272,6 +272,22 @@ async def skip_recurring(
     return {"next_run": rec.next_run}
 
 
+@router.post("/{rec_id}/mark-paid")
+async def mark_recurring_paid(
+    rec_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tandai lunas (AI Advisor DAT-06): tagihan sudah dibayar lewat catat biasa, jadi
+    `next_run` dimajukan tanpa transaksi baru. Jendela bayar sama dengan Bayar/Lewati."""
+    rec = await _resolve_rec(rec_id, user, db)
+    _ensure_payable(rec, user)
+    prev = rec.next_run
+    rec.next_run = _next_date(rec.next_run, rec.frequency)
+    await db.commit()
+    return {"prev_next_run": prev, "next_run": rec.next_run}
+
+
 @router.get("/summary/period")
 async def recurring_period_summary(
     user: User = Depends(get_current_user),
