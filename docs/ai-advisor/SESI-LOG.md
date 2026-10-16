@@ -4,6 +4,21 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S6 lanjutan · 2026-10-16 · Claude
+
+**Selesai**
+- `Dashboard.jsx`: flag aktif + periode berjalan → `<AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />` di samping grafik; selain itu `AttentionCard` lama tidak berubah. Dirujuk ke #62 (S7), bukan issue baru.
+- PR bertumpuk di atas #83 (S7) karena `AdvisorCard.jsx` baru ada di sana: merge #83 dulu, lalu PR ini (base pindah ke `main`).
+
+**Digantung**
+- Di layar lebar, kartu AI Advisor lebih tinggi dari kartu lama, jadi kartu grafik ikut memanjang dengan ruang kosong di bawahnya (grid `stretch`). Belum diubah.
+
+**Tes:** backend 809 OK · frontend 258 OK · build OK · Playwright (API di-mock): flag aktif → kartu AI Advisor, `{"enabled": false}` → "Perlu perhatian".
+
+**Lanjut:** perbaikan tombol dobel INC-01 di PR #83 (S7).
+
+---
+
 ## S7 · 2026-10-16 · Claude
 
 **Selesai**
@@ -13,7 +28,7 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 **Digantung / untuk sesi lain**
 - S4 (#81) dan S6 (#82) sudah di `main`; branch ini sudah di-merge dengan `main`, jadi kartu langsung berisi semua aturan (TAG/AMP/INC/TAB/DAT).
-- **Pemasangan kartu di Beranda** (`Dashboard.jsx`, milik S6): flag aktif + periode berjalan → `<AdvisorCard dash={advisorDash} stamp={stamp} isDark={isDark} />` di samping grafik, `AttentionCard` hanya bila `!adv`. Menunggu keputusan siapa yang memasang.
+- **Pemasangan kartu di Beranda** (`Dashboard.jsx`, milik S6): dikerjakan di PR lanjutan S6 (lihat entri "S6 lanjutan").
 - Sesi ini dikerjakan tanpa ritual pembuka (rangkuman + "lanjut") dan di branch `claude/festive-bell-3hg12l`. Pekerjaan berikutnya memakai `ai-advisor/sN-*`.
 - INC-01 membawa aksi "Ingatkan besok" (dismiss `nanti`) sehingga di kartu tampil dobel dengan tombol **Nanti**. Belum diubah.
 - "Lihat semua" untuk `advisor.sisa` belum ada: server hanya mengirim `{id, judul_pendek}`. Kalau mau dibuka, kontrak perlu insight utuh di `sisa` (atau endpoint terpisah).
