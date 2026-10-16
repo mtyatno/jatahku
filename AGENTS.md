@@ -77,12 +77,21 @@
 - Always convert with `str(value)` before comparison: `str(getattr(obj, "field", "default"))`
 - This applies to all SAEnum/String columns
 
-## Advisor Insights Engine
-- Located at `app/services/advisor.py` — `build_advisor_insights()`
-- Card types: `env_depletion` (expense), `saving_progress` (saving), `sinking_fund_deadline` (sinking_fund)
-- Do NOT wrap advisor route in silent try/except — hides real errors
-- Advisor needs `load_advisor_context` to load envelope stats
+## Advisor Insights Engine (v1, sedang diganti v2)
+- Paket `app/services/advisor/` — `build_advisor_insights()` di `rules/__init__.py`, aturan per file di `rules/` (depletion, subscription, drift, goals, overspend), `context.py` (`load_advisor_context`), `allocation.py`, `sinking.py`, `projection.py`, `confidence.py`
+- Card types: `env_depletion`, `subscription_pressure`, `allocation_drift`, `goal_progress`, `budget_overspend`
+- Do NOT wrap advisor route in silent try/except — hides real errors (per-rule isolation sudah ada di `rules/__init__.py`)
 - New envelopes without spending history still get stats (all zeros) — they won't generate cards but won't crash either
+
+## AI Advisor v2 (WAJIB untuk semua sesi AI Advisor)
+Dokumen: `docs/ai-advisor/` (mulai dari `00-indeks.md`). Satu sesi = satu PR; status di `docs/ai-advisor/PROGRESS.md`, serah-terima di `SESI-LOG.md`.
+1. **Satu sumber angka.** Semua angka periode (dana belanja, terpakai, sisa bebas, J0, J1, laju, proyeksi) hanya dihitung di `app/services/advisor/metrics.py`. Dilarang menulis rumus pembagi hari di route, bot, scheduler, atau frontend.
+2. **Teks insight hanya di `app/services/advisor/render.py`.** Aturan mengembalikan data; kalimat dirakit dari template, sama untuk web, chat web, Telegram.
+3. **Aturan adalah fungsi murni** `(metrik, sinyal) → insight[]`, tanpa DB, diuji dengan fixture. Loader DB hanya di `snapshot.py`.
+4. **Frontend tidak menghitung ulang.** KPI, chip, grafik, dan kartu membaca `GET /advisor/dashboard`; frontend hanya memformat (`rpCompact`, `rpFull`).
+5. **CTA pemindah dana lewat `/advisor/plan` → `/advisor/execute`**, dengan `client_ref`. Tidak ada transfer dari frontend tanpa rencana.
+6. **Privasi household** tetap lewat `visibility.py`; perencana tidak pernah memakai amplop pribadi anggota lain; cache advisor dihapus per household.
+- Tes: `pip install -r requirements-test.txt`, lalu `python -m unittest discover -s app/tests -t .`; frontend `cd frontend && node --test src/lib/*.test.js && npm run build`. CI (`.github/workflows/test.yml`) menjalankan yang sama di setiap PR.
 
 ## Household Visibility Contract (WAJIB)
 - Semua kode yang menampilkan **deskripsi transaksi** ke user HARUS lewat
