@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import select, func
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from app.bot import advisor_cmd
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
@@ -168,6 +169,14 @@ EMOSI_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "kenapa boros?", "kenapa {amplop} habis?", chip Tanya web ("Kenapa dana belanja kurang?",
+# "Kenapa belanja hari ini lewat jatah?") — dijawab dari insight AI Advisor (02-aturan.md §6H).
+KENAPA_RE = re.compile(
+    r"\b(kenapa|kok|mengapa|knp)\b.{0,40}\b(boros|habis|abis|ludes|lewat|kurang|minus|jebol|tekor|tipis|"
+    r"over|overbudget|cepet|cepat)\b",
+    re.IGNORECASE,
+)
+
 KOREKSI_RE = re.compile(
     # Edit amount
     r"\b(tadi|barusan)\s*(salah|keliru|typo|ngaco|salah\s+ketik)\b|"
@@ -281,6 +290,7 @@ def is_proyeksi(text): return bool(PROYEKSI_RE.search(text))
 def is_comparison(text): return bool(COMPARISON_RE.search(text))
 def is_santai(text): return bool(SANTAI_RE.search(text))
 def is_emosi(text): return bool(EMOSI_RE.search(text))
+def is_kenapa(text): return bool(KENAPA_RE.search(text))
 def is_koreksi(text): return bool(KOREKSI_RE.search(text))
 def is_pengeluaran_hari_lalu(text): return bool(PENGELUARAN_HARI_LALU_RE.search(text))
 
@@ -380,11 +390,15 @@ def _days_left_in_month():
 
 
 def _period_days(user):
-    """Return (days_remaining, days_used) based on user's payday_day setting."""
+    """Return (days_remaining, days_used) based on user's payday_day setting.
+
+    days_remaining minimal 1: di hari terakhir periode `get_period_info` memberi 0, dan
+    pembagi "per hari" jawaban lama dulu crash (ZeroDivisionError). Hari terakhir = hari ini
+    saja, jadi sisa dibagi 1 (sama dengan J0 = sisa di mesin v2)."""
     from app.core.period import get_period_info
     payday_day = getattr(user, 'payday_day', 1) or 1
     info = get_period_info(payday_day)
-    return info["days_remaining"], info.get("days_used", 1) or 1
+    return max(info["days_remaining"], 1), info.get("days_used", 1) or 1
 
 
 def _fmt_date(d):
@@ -470,6 +484,8 @@ async def handle_sisa(update, context):
     if envelopes is None:
         await reply_setup_needed(update, user)
         return
+    if await advisor_cmd.jawab(update, user, "sisa"):
+        return
     if not envelopes:
         await update.message.reply_text("Belum ada amplop. Ketik /template untuk buat.")
         return
@@ -535,6 +551,8 @@ async def handle_limit_harian(update, context):
     if envelopes is None:
         await reply_setup_needed(update, user)
         return
+    if await advisor_cmd.jawab(update, user, "limit_harian"):
+        return
 
     total_free = sum(e["free"] for e in envelopes)
     days_left, _ = _period_days(user)
@@ -575,6 +593,8 @@ async def handle_proyeksi(update, context):
         user, hid, envelopes = await _get_user_envelopes(tg_user, db)
         if envelopes is None:
             await reply_setup_needed(update, user)
+            return
+        if await advisor_cmd.jawab(update, user, "proyeksi"):
             return
 
         payday_day = getattr(user, 'payday_day', 1) or 1
@@ -717,6 +737,9 @@ async def handle_santai(update, context):
     if envelopes is None:
         await reply_setup_needed(update, user)
         return
+    # "boncos ga?" = cukup sampai akhir periode? → proyeksi T9/T10 (v2)
+    if await advisor_cmd.jawab(update, user, "proyeksi"):
+        return
 
     total_free = sum(e["free"] for e in envelopes)
     total_allocated = sum(e["allocated"] for e in envelopes)
@@ -765,6 +788,8 @@ async def handle_emosi(update, context):
 
     if envelopes is None:
         await reply_setup_needed(update, user)
+        return
+    if await advisor_cmd.jawab(update, user, "kenapa", teks=update.message.text or ""):
         return
 
     total_spent = sum(e["spent"] for e in envelopes)
@@ -905,6 +930,10 @@ async def handle_pengeluaran_hari_ini(update, context):
             await reply_setup_needed(update, user)
             return
 
+    if await advisor_cmd.jawab(update, user, "hari_ini"):
+        return
+
+    async with AsyncSessionLocal() as db:
         today = date.today()
 
         # Query today's transactions grouped by envelope
