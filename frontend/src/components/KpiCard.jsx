@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import { InfoTooltip } from './InfoTooltip';
 import { formatShort, titleCase } from '../lib/utils';
 import { monotonePath, STATUS_ORDER } from '../lib/kpiVisuals';
+import { AdvisorChip, InsightPopover } from './AdvisorChip';
 
 const tint = (c, pct) => `color-mix(in srgb, ${c} ${pct}%, transparent)`;
 
@@ -244,12 +245,12 @@ const TONES = {
   light: {
     danger: { text: '#DC2626', bg: 'rgba(220,38,38,0.10)', bar: '#EF4444', border: 'rgba(220,38,38,0.28)' },
     warn: { text: '#B45309', bg: 'rgba(217,119,6,0.12)' },
-    bars: { slate: '#94A3B8', green: '#22C55E', purple: '#8B5CF6' },
+    bars: { slate: '#94A3B8', green: '#22C55E', purple: '#8B5CF6', amber: '#F59E0B' },
   },
   dark: {
     danger: { text: '#F87171', bg: 'rgba(248,113,113,0.16)', bar: '#F87171', border: 'rgba(248,113,113,0.30)' },
     warn: { text: '#FBBF24', bg: 'rgba(251,191,36,0.14)' },
-    bars: { slate: '#5B6480', green: '#4ADE80', purple: '#A78BFA' },
+    bars: { slate: '#5B6480', green: '#4ADE80', purple: '#A78BFA', amber: '#FBBF24' },
   },
 };
 
@@ -258,17 +259,34 @@ export function tileTones(isDark) {
 }
 
 // Kartu ringkas: label + badge, angka + keterangan sebaris, satu batang, satu baris bawah.
-export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, footer, alert, isDark }) {
+// `advisor` (Beranda AI Advisor, S6): chip AI menggantikan badge; popover di bawah kartu.
+// `bar.split`: penanda waktu — batang hijau sampai penanda, `bar.lateColor` sesudahnya.
+export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, footer, alert, isDark, advisor }) {
   const t = tileTones(isDark);
+  const ref = useRef(null);
   const fill = Math.min(Math.max(bar?.fill || 0, 0), 1) * 100;
+  const split = bar?.split != null ? Math.min(Math.max(bar.split, 0), 1) * 100 : null;
+  const open = !!advisor?.open;
+  const closeTile = advisor?.onClose;
+  useEffect(() => {
+    if (!open || advisor?.phone) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) closeTile?.(); };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [open, advisor?.phone, closeTile]);
+  const ring = open
+    ? 'inset 0 0 0 1.5px var(--brand-400)'
+    : alert ? `inset 0 0 0 1px ${t.danger.border}` : null;
   return (
-    <div className="card !p-4 sm:!p-5 min-w-0" style={alert ? { boxShadow: `inset 0 0 0 1px ${t.danger.border}` } : undefined}>
+    <div ref={ref} className={`card !p-4 sm:!p-5 min-w-0 relative ${open ? 'z-30' : ''}`} style={ring ? { boxShadow: ring } : undefined}>
       <div className="flex items-center justify-between gap-2 min-h-[24px]">
         <div className="flex items-center gap-1 min-w-0">
           <p className="text-sm text-gray-400 truncate">{label}</p>
           {info && <InfoTooltip text={info} position="bottom" />}
         </div>
-        {badge && (
+        {advisor?.look ? (
+          <AdvisorChip look={advisor.look} open={open} isDark={isDark} onClick={advisor.onToggle} />
+        ) : badge && (
           <span
             className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
             style={{ color: t[badge.tone].text, background: t[badge.tone].bg }}
@@ -284,7 +302,15 @@ export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, fo
         style={{ background: isDark ? '#2A3245' : '#E8EBEF' }}
         role="img" aria-label={bar?.ariaLabel}
       >
-        {fill > 0 && <div className="h-full rounded-full" style={{ width: `${Math.max(fill, 3)}%`, background: bar.color }} />}
+        {fill > 0 && split != null && fill > split ? (
+          <div className="h-full flex">
+            <div className="h-full rounded-l-full" style={{ width: `${split}%`, background: bar.color }} />
+            <div className="h-full rounded-r-full" style={{ width: `${fill - split}%`, background: bar.lateColor }} />
+          </div>
+        ) : fill > 0 && <div className="h-full rounded-full" style={{ width: `${Math.max(fill, 3)}%`, background: bar.color }} />}
+        {split != null && (
+          <span className="absolute top-0 h-full w-0.5" style={{ left: `${split}%`, transform: 'translateX(-50%)', background: 'var(--text-muted)' }} />
+        )}
         {bar?.marker != null && (
           <span
             className="absolute top-1/2 w-0.5 h-3 rounded-full bg-white"
@@ -293,6 +319,9 @@ export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, fo
         )}
       </div>
       {footer && <p className="mt-2.5 text-xs text-gray-400">{footer}</p>}
+      {open && advisor.insight && (
+        <InsightPopover insight={advisor.insight} stamp={advisor.stamp} isDark={isDark} phone={advisor.phone} onClose={advisor.onClose} />
+      )}
     </div>
   );
 }

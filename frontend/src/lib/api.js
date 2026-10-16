@@ -532,6 +532,19 @@ class ApiClient {
   }
 
   // AI Advisor v2 — pipa CTA (S8). Kontrak: docs/ai-advisor/04-kontrak-api.md.
+  // GET /advisor/dashboard (S3). {"enabled": false} → user di luar flag; null bila gagal.
+  // Keduanya membuat Beranda memakai UI lama.
+  async getAdvisorDashboard() {
+    try {
+      const res = await this.request('/advisor/dashboard');
+      if (res.ok) return await res.json();
+      console.error('[advisor] dashboard request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] dashboard request error:', e);
+    }
+    return null;
+  }
+
   async _advisorPost(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
