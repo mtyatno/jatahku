@@ -1,5 +1,6 @@
 import re
 from decimal import Decimal
+from app.bot import advisor_cmd
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
@@ -58,7 +59,14 @@ async def handle_whatif(update, context):
 
         hid = await get_household_id(user, db)
         envelope, confident = await find_best_envelope(item_text or description, hid, db, user.id)
-        all_envs = await get_envelopes_with_spent(hid, db, user.id)
+        # Periode gajian user (dulu bulan kalender: payday_day tidak dikirim).
+        payday_day = getattr(user, "payday_day", 1) or 1
+        all_envs = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+
+    # SIM-01 (v2): T3, J1, T10 dihitung ulang seolah dicatat; tidak yakin → amplop tebakan.
+    amplop_id = str(envelope.id) if envelope and confident else None
+    if await advisor_cmd.jawab(update, user, "aman_beli", amplop_id=amplop_id, jumlah=amount):
+        return
 
     if envelope and confident:
         # Find this envelope's data

@@ -809,3 +809,308 @@ def alasan_rencana(tingkat: str, surplus) -> str:
 def teks_telegram(item: dict) -> str:
     """Insight yang sudah dirender → teks Telegram: 🔴 judul, lalu isi."""
     return f"{TONE_EMOJI.get(item['tone'], '')} {item['judul']}\n{item['isi']}".strip()
+
+
+# ── Chat web & Telegram (S9) ────────────────────────────────────────────
+# Balasan bot (`/status`, "sisa", "limit harian", "kapan habis", "pengeluaran hari ini",
+# "kenapa …", "aman beli …") dan ringkasan harian/mingguan. Format HTML Telegram (sama di
+# chat web, `format: html`); semua teks dari user (nama amplop, deskripsi) di-escape.
+# Angka dari `Metrics` saja (paritas §13): KPI web, chat "sisa", /status, dan ringkasan
+# harian memakai `blok_angka` yang sama.
+GARIS = "─────────────────"
+
+
+def _e(v) -> str:
+    import html
+    return html.escape("" if v is None else str(v), quote=False)
+
+
+def _bar(bagian, total, lebar: int = 6) -> str:
+    """▰▰▰▱▱▱ — rasio tampilan saja (bukan angka periode)."""
+    total = _d(total)
+    if total <= 0:
+        return ""
+    isi = round(min(max(float(_d(bagian) / total), 0.0), 1.0) * lebar)
+    return "▰" * isi + "▱" * (lebar - isi)
+
+
+def _emoji(ctx: Konteks, eid) -> str:
+    env = next((e for e in ctx.snap.envelopes if e.id == eid), None)
+    return (env.emoji if env and env.emoji else "📁")
+
+
+def _amplop_label(ctx: Konteks, eid) -> str:
+    return f"{_e(_emoji(ctx, eid))} {_e(ctx.nama.get(eid, '—'))}"
+
+
+def periode_label(m) -> str:
+    return f"{tgl(m.period_start)} – {tgl(m.period_end)}"
+
+
+def teks_insight_html(item: dict, fakta: bool = False, rincian: bool = False) -> str:
+    """Insight yang sudah dirender (`render_insight`) → HTML Telegram: 🔴 judul, isi,
+    lalu (opsional) fakta = cara hitung, dan rincian = insight yang diserap."""
+    baris = [f"{TONE_EMOJI.get(item['tone'], '')} <b>{_e(item['judul'])}</b>".strip()]
+    if item.get("isi"):
+        baris.append(_e(item["isi"]))
+    if fakta and item.get("fakta"):
+        baris.append("")
+        baris += [f"• {_e(f['label'])}: <b>{_e(f['nilai'])}</b>" for f in item["fakta"]]
+    if rincian and item.get("rincian"):
+        baris.append("")
+        baris.append("Rincian:")
+        baris += [f"• {_e(r['judul'])} — {_e(r['isi'])}" for r in item["rincian"]]
+    return "\n".join(baris)
+
+
+def teks_chip_html(item: dict) -> str:
+    """Satu baris chip KPI: 🟢 chip · judul."""
+    return f"{TONE_EMOJI.get(item['tone'], '')} <b>{_e(item['chip'])}</b> · {_e(item['judul'])}".strip()
+
+
+def blok_angka(ctx: Konteks) -> list[str]:
+    """Angka KPI Beranda (paritas §13): dana belanja, terpakai, disisihkan tagihan,
+    sisa bebas (T3), aman/hari (J1), jatah hari ini (J0) & belanja hari ini (T5).
+    Dana − terpakai − disisihkan = sisa bebas."""
+    m = ctx.m
+    persen_ = f" {persen(m.terpakai_belanja / m.dana_belanja)}" if m.dana_belanja > 0 else ""
+    baris = [
+        f"Dana belanja  <b>{rp_penuh(m.dana_belanja)}</b>",
+        f"Terpakai  <b>{rp_penuh(m.terpakai_belanja)}</b>  {_bar(m.terpakai_belanja, m.dana_belanja)}{persen_}".rstrip(),
+    ]
+    disisihkan = m.tagihan_sisa + m.sisihan
+    if disisihkan > 0:
+        baris.append(f"Disisihkan tagihan  <b>{rp_penuh(disisihkan)}</b>")
+    baris.append(f"Sisa bebas  <b>{rp_penuh(m.sisa_bebas)}</b>")
+    if m.j1 is not None:
+        baris.append(f"Aman {m.sisa_hari} hari ke depan  <b>{rp_penuh(m.j1)}/hari</b>")
+    else:
+        baris.append("Hari terakhir periode: sisa bebas = jatah hari ini")
+    baris.append(f"Jatah hari ini  <b>{rp_penuh(m.j0)}</b> · belanja <b>{rp_penuh(m.belanja_hari_ini)}</b>")
+    return baris
+
+
+def baris_amplop(ctx: Konteks) -> list[str]:
+    """Daftar amplop terlihat viewer: belanja = sisa bebas (M6), tabungan = saldo (G1)."""
+    m = ctx.m
+    baris = []
+    for eid, a in m.amplop.items():
+        if a.kelompok != "belanja":
+            continue
+        label = _amplop_label(ctx, eid)
+        if a.bebas < 0:
+            baris.append(f"🔴 {label} · <b>minus {rp_penuh(-a.bebas)}</b>")
+        elif a.bebas == 0 and a.tagihan_sisa + a.sisihan > 0:
+            baris.append(f"⚪ {label} · <b>Rp0</b> bebas, disisihkan tagihan {rp_penuh(a.tagihan_sisa + a.sisihan)}")
+        elif a.bebas == 0:
+            baris.append(f"⚪ {label} · <b>habis</b>")
+        elif a.dana > 0 and a.terpakai > 0:
+            r = a.terpakai / a.dana
+            tanda = "🔴" if r >= Decimal("0.9") else ("🟡" if r >= Decimal("0.7") else "🟢")
+            baris.append(f"{tanda} {label} · <b>{rp_penuh(a.bebas)}</b>  {_bar(a.terpakai, a.dana)} {persen(r)}")
+        else:
+            baris.append(f"🟢 {label} · <b>{rp_penuh(a.bebas)}</b>")
+    tabungan = [(eid, a) for eid, a in m.amplop.items() if a.kelompok == "tabungan"]
+    if tabungan:
+        baris.append("")
+        for eid, a in tabungan:
+            baris.append(f"💰 {_amplop_label(ctx, eid)} · <b>{rp_penuh(m.saldo_tabungan.get(eid, a.sisa))}</b>")
+    return baris
+
+
+def chat_status(ctx: Konteks, judul: str, chip: dict | None, utama: dict | None) -> str:
+    """`/status` dan "sisa": angka KPI + daftar amplop + chip kartu + item #1 daftar."""
+    baris = [f"<b>{_e(judul)} · {_e(periode_label(ctx.m))}</b>", "", *blok_angka(ctx), GARIS, *baris_amplop(ctx)]
+    if chip or utama:
+        baris.append(GARIS)
+    if chip:
+        baris.append(teks_chip_html(chip))
+    if utama:
+        if chip:
+            baris.append("")
+        baris.append(teks_insight_html(utama))
+    return "\n".join(baris)
+
+
+def chat_limit_harian(ctx: Konteks, chip: dict | None) -> str:
+    """"Limit harian": J0, belanja hari ini, J1, dan maksimal/hari per amplop
+    (bebas_setelah_rencana, penekanan 8)."""
+    m = ctx.m
+    if m.j1 is not None:
+        kepala = f"📅 <b>Jatah harian · {m.sisa_hari} hari lagi</b>"
+    else:
+        kepala = "📅 <b>Jatah harian · hari terakhir periode</b>"
+    baris = [kepala, "", f"Jatah hari ini sejak pagi  <b>{rp_penuh(m.j0)}</b>",
+             f"Belanja hari ini  <b>{rp_penuh(m.belanja_hari_ini)}</b>"]
+    if m.belanja_hari_ini > m.j0:
+        baris.append(f"Lewat jatah  <b>{rp_penuh(m.belanja_hari_ini - m.j0)}</b>")
+    else:
+        baris.append(f"Sisa hari ini  <b>{rp_penuh(m.j0 - m.belanja_hari_ini)}</b>")
+    if m.j1 is not None:
+        baris.append(f"Aman {m.sisa_hari} hari ke depan  <b>{rp_penuh(m.j1)}/hari</b>")
+    per_amplop = [(eid, v) for eid, v in ctx.batas.items()
+                  if eid in m.amplop and m.amplop[eid].kelompok == "belanja" and v > 0]
+    if per_amplop:
+        baris += ["", "Maksimal per hari:" if m.j1 is not None else "Sisa bebas hari ini:"]
+        baris += [f"{_amplop_label(ctx, eid)} · <b>{rp_penuh(v)}</b>" for eid, v in per_amplop]
+    if chip:
+        baris += [GARIS, teks_chip_html(chip)]
+    return "\n".join(baris)
+
+
+def chat_proyeksi(ctx: Konteks, sisa_bebas: dict | None) -> str:
+    """"Kapan habis": T10, T9, T4, T8 — atau penjelasan bila d < 3."""
+    from app.services.advisor.metrics import perkiraan_sisa
+    m = ctx.m
+    if not m.proyeksi_valid:
+        baris = [f"⏳ <b>Belum ada proyeksi</b>",
+                 f"Periode {_e(periode_label(m))} baru berjalan {m.hari_ke} hari. Proyeksi muncul mulai hari ke-3.",
+                 "", f"Sisa bebas  <b>{rp_penuh(m.sisa_bebas)}</b>"]
+        if m.j1 is not None:
+            baris.append(f"Aman {m.sisa_hari} hari ke depan  <b>{rp_penuh(m.j1)}/hari</b>")
+        return "\n".join(baris)
+    if m.kekurangan and m.kekurangan > 0:
+        kepala = (f"🟡 <b>Perkiraan habis ±{tgl(m.tanggal_habis)}</b>" if m.tanggal_habis
+                  else "🔴 <b>Sisa bebas sudah habis</b>")
+        ket = f"Kalau tetap {rp_ringkas(m.laju_total)}/hari, dana belanja kurang ±{rp_ringkas(m.kekurangan)} " \
+              f"sebelum {tgl(m.period_end)}."
+    else:
+        kepala = f"🟢 <b>Cukup sampai {tgl(m.period_end)}</b>"
+        ket = f"Perkiraan sisa ±{rp_ringkas(perkiraan_sisa(m) or 0)} di akhir periode."
+    baris = [kepala, _e(ket), "",
+             f"Rata-rata 7 hari terakhir  <b>{rp_penuh(m.laju_total)}/hari</b>",
+             f"Sisa bebas  <b>{rp_penuh(m.sisa_bebas)}</b> · {m.sisa_hari} hari lagi"]
+    if m.j1 is not None:
+        baris.append(f"Aman {m.sisa_hari} hari ke depan  <b>{rp_penuh(m.j1)}/hari</b>")
+    if m.proyeksi_akhir is not None:
+        baris.append(f"Perkiraan terpakai akhir periode  <b>±{rp_penuh(m.proyeksi_akhir)}</b> "
+                     f"dari {rp_penuh(m.dana_belanja)}")
+    if sisa_bebas:
+        baris += [GARIS, teks_chip_html(sisa_bebas)]
+    return "\n".join(baris)
+
+
+def chat_hari_ini(ctx: Konteks, per_amplop: dict, transaksi: list, chip: dict | None) -> str:
+    """"Pengeluaran hari ini": T5 (variabel) dibanding J0, per amplop, lalu tagihan &
+    lainnya, dan 5 transaksi terakhir (deskripsi sudah disamarkan snapshot)."""
+    m = ctx.m
+    baris = [f"🧾 <b>Pengeluaran · {hari_tgl(m.today)}</b>"]
+    lain = m.harian[-1]["tagihan"] + m.harian[-1]["outlier"] + m.harian[-1]["penyesuaian"] if m.harian else ZERO
+    if m.belanja_hari_ini <= 0 and lain <= 0:
+        baris += ["", "🌱 Belum ada pengeluaran hari ini.", f"Jatah hari ini  <b>{rp_penuh(m.j0)}</b>"]
+        return "\n".join(baris)
+    baris += ["", f"💸 Belanja harian  <b>{rp_penuh(m.belanja_hari_ini)}</b> dari jatah <b>{rp_penuh(m.j0)}</b>"]
+    if m.belanja_hari_ini > m.j0:
+        baris.append(f"⚠️ Lewat jatah <b>{rp_penuh(m.belanja_hari_ini - m.j0)}</b>")
+    else:
+        baris.append(f"✅ Sisa jatah hari ini <b>{rp_penuh(m.j0 - m.belanja_hari_ini)}</b>")
+    if lain > 0:
+        baris.append(f"Tagihan & lainnya  <b>{rp_penuh(lain)}</b> (tidak dihitung ke jatah harian)")
+    if per_amplop:
+        baris.append(GARIS)
+        for eid, jumlah in sorted(per_amplop.items(), key=lambda x: (-x[1], x[0])):
+            baris.append(f"{_amplop_label(ctx, eid)}  {_bar(jumlah, m.belanja_hari_ini)} <b>{rp_penuh(jumlah)}</b> "
+                         f"({persen(jumlah / m.belanja_hari_ini)})")
+    if transaksi:
+        baris += [GARIS, f"{len(transaksi)} terakhir:"]
+        baris += [f"{_e(_emoji(ctx, x.envelope_id))} {_e(x.description or '—')} — <b>{rp_penuh(x.amount)}</b>"
+                  for x in transaksi]
+    if chip:
+        baris += [GARIS, teks_chip_html(chip)]
+    return "\n".join(baris)
+
+
+def chat_kenapa(item: dict | None, tambahan: list[dict] | None = None) -> str:
+    """"Kenapa boros?" / "kenapa {amplop} habis?": insight lengkap dengan fakta (cara
+    hitung) dan rincian, lalu judul insight lain yang terkait."""
+    if item is None:
+        return "🟢 <b>Belum ada yang perlu dijelaskan</b>\nAngka periode ini belum menunjukkan masalah."
+    baris = [teks_insight_html(item, fakta=True, rincian=True)]
+    if item.get("dasar"):
+        baris.append(f"\n<i>{_e(item['dasar']['teks'])} · keyakinan {_e(item['dasar']['keyakinan'])}</i>")
+    for t in tambahan or []:
+        baris.append(f"\n{TONE_EMOJI.get(t['tone'], '')} {_e(t['judul'])}")
+    return "\n".join(baris)
+
+
+def chat_amplop_aman(ctx: Konteks, eid: str) -> str:
+    """"Kenapa {amplop} habis?" padahal tidak ada AMP-01/02/03 untuk amplop itu."""
+    a = ctx.m.amplop[eid]
+    baris = [f"🟢 <b>{_e(a.nama)} masih aman</b>",
+             f"Sisa bebas {rp_penuh(a.bebas)} dari dana {rp_penuh(a.dana)}.", "",
+             f"• Terpakai: <b>{rp_penuh(a.terpakai)}</b>"]
+    if a.tagihan_sisa + a.sisihan > 0:
+        baris.append(f"• Disisihkan tagihan: <b>{rp_penuh(a.tagihan_sisa + a.sisihan)}</b>")
+    if a.laju is not None:
+        baris.append(f"• Rata-rata belanja: <b>{rp_penuh(a.laju)}/hari</b>")
+    batas = ctx.batas.get(eid)
+    if batas and batas > 0 and ctx.m.j1 is not None:
+        baris.append(f"• Maksimal per hari: <b>{rp_penuh(batas)}/hari</b>")
+    return "\n".join(baris)
+
+
+def chat_aman_beli(ctx: Konteks, sim: dict) -> str:
+    """SIM-01: ✅ / ⚠️ / ❌ dengan angka sebelum → sesudah (dari `simulasi_belanja`)."""
+    tanda = {"aman": "✅", "turun": "⚠️", "kurang": "❌"}[sim["hasil"]]
+    kata = {"aman": "Aman", "turun": "Bisa, tapi jatah harian turun", "kurang": "Belum cukup"}[sim["hasil"]]
+    nama = _amplop_label(ctx, sim["amplop_id"])
+    baris = [f"{tanda} <b>{kata}</b> · beli {rp_penuh(sim['jumlah'])} dari {nama}", "",
+             f"Sisa bebas {_e(ctx.nama.get(sim['amplop_id'], ''))}  {rp_penuh(sim['bebas'])} → "
+             f"<b>{rp_penuh(sim['bebas_baru'])}</b>",
+             f"Sisa bebas total  {rp_penuh(sim['t3'])} → <b>{rp_penuh(sim['t3_baru'])}</b>"]
+    if sim["j1"] is not None and sim["j1_baru"] is not None:
+        baris.append(f"Aman {ctx.m.sisa_hari} hari ke depan  {rp_penuh(sim['j1'])} → "
+                     f"<b>{rp_penuh(sim['j1_baru'])}/hari</b>")
+    if sim.get("habis") or sim.get("habis_baru") or sim.get("habis_sekarang"):
+        sebelum = f"±{tgl(sim['habis'])}" if sim.get("habis") else "cukup"
+        sesudah = "habis sekarang" if sim.get("habis_sekarang") else \
+            (f"±{tgl(sim['habis_baru'])}" if sim.get("habis_baru") else "cukup")
+        baris.append(f"Perkiraan habis  {sebelum} → <b>{sesudah}</b>")
+    if sim.get("ditebak"):
+        baris += ["", "<i>Amplop ditebak dari belanja 7 hari terbesar. Sebut nama amplopnya untuk cek amplop lain.</i>"]
+    return "\n".join(baris)
+
+
+def ringkasan_harian(ctx: Konteks, per_amplop: dict, chip: dict | None, utama: dict | None) -> str:
+    """Ringkasan harian (§7 "Chat web & Telegram") = chip Jatah hari ini + item #1 daftar,
+    dengan angka KPI yang sama dengan Beranda."""
+    m = ctx.m
+    baris = [f"📋 <b>Ringkasan · {hari_tgl(m.today)}</b>", ""]
+    if m.belanja_hari_ini > 0:
+        teratas = sorted(per_amplop.items(), key=lambda x: (-x[1], x[0]))
+        bagian = [f"{_amplop_label(ctx, eid)} {rp_ringkas(v)}" for eid, v in teratas[:2]]
+        sisa = m.belanja_hari_ini - sum((v for _, v in teratas[:2]), ZERO)
+        if len(teratas) > 2 and sisa > 0:
+            bagian.append(f"+{len(teratas) - 2} lain {rp_ringkas(sisa)}")
+        baris.append(f"💸 Belanja harian <b>{rp_penuh(m.belanja_hari_ini)}</b> dari jatah {rp_penuh(m.j0)}")
+        baris.append("  " + " · ".join(bagian))
+    else:
+        baris.append("✨ Belum ada belanja harian hari ini.")
+    if chip:
+        baris.append(teks_chip_html(chip))
+    baris += [GARIS, f"📦 <b>Periode {_e(periode_label(m))}</b> · {m.sisa_hari} hari lagi", *blok_angka(ctx)]
+    baris.append(GARIS)
+    baris.append(teks_insight_html(utama) if utama else "🟢 <b>Semua aman</b>")
+    return "\n".join(baris)
+
+
+def ringkasan_mingguan(ctx: Konteks, minggu: dict, status: dict | None, struktural: dict | None) -> str:
+    """Ringkasan mingguan (§7) = rekap minggu + angka periode + 1 aturan struktural
+    (AMP-04/05/06 atau TAB-02). `minggu` = {"label", "total", "n", "bagian", "hari_catat"}
+    disusun pemanggil dari transaksi 7 hari (bukan rumus periode)."""
+    m = ctx.m
+    baris = [f"📊 <b>Minggu ini · {_e(minggu['label'])}</b>", ""]
+    if minggu["n"]:
+        baris.append(f"💸 Total keluar <b>{rp_penuh(minggu['total'])}</b> ({minggu['n']} transaksi)")
+        if minggu.get("bagian"):
+            baris.append("  " + " · ".join(minggu["bagian"]))
+    else:
+        baris.append("✨ Tidak ada pengeluaran minggu ini.")
+    baris.append(f"Rata-rata belanja harian 7 hari  <b>{rp_penuh(m.laju_total)}/hari</b>")
+    baris += [GARIS, f"📅 <b>Periode {_e(periode_label(m))}</b> · hari ke-{m.hari_ke} dari {m.hari_total}",
+              *blok_angka(ctx)]
+    if status:
+        baris.append(teks_chip_html(status))
+    if struktural:
+        baris += [GARIS, teks_insight_html(struktural)]
+    return "\n".join(baris)
