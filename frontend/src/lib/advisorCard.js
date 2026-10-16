@@ -12,11 +12,18 @@ export const DISMISS_LABEL = {
 
 export const dismissKey = (insight) => insight?.dismiss?.kunci || null;
 
-// Pilihan yang ditawarkan server untuk insight ini (default: ketiganya).
+// Pilihan dismiss yang sudah jadi CTA insight itu sendiri (mis. INC-01 "Ingatkan besok" = nanti).
+const dismissInActions = (insight) => new Set((insight?.aksi || [])
+  .filter(a => a && a.kind === 'dismiss')
+  .map(a => a.payload?.pilihan || 'nanti'));
+
+// Pilihan yang ditawarkan server untuk insight ini (default: ketiganya), tanpa yang sudah
+// tampil sebagai CTA supaya tidak ada dua tombol dengan efek sama.
 export function dismissOptions(insight) {
   if (!dismissKey(insight)) return [];
   const raw = Array.isArray(insight.dismiss.pilihan) ? insight.dismiss.pilihan : Object.keys(DISMISS_LABEL);
-  return raw.filter(p => DISMISS_LABEL[p]).map(p => ({ pilihan: p, label: DISMISS_LABEL[p] }));
+  const taken = dismissInActions(insight);
+  return raw.filter(p => DISMISS_LABEL[p] && !taken.has(p)).map(p => ({ pilihan: p, label: DISMISS_LABEL[p] }));
 }
 
 // Item yang tampil, tanpa yang baru saja disembunyikan (sebelum muatan ulang tiba).
