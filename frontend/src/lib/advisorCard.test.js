@@ -35,6 +35,24 @@ test('dismiss options follow the server list, labels from §9', () => {
   assert.deepEqual(dismissOptions({ id: 'x' }), []);
 });
 
+test('a dismiss already offered as a CTA is not repeated as a card button', () => {
+  // INC-01: "Ingatkan besok" = dismiss nanti → tombol Nanti kartu tidak tampil.
+  const inc01 = {
+    id: 'INC-01:2026-09-27', aturan: 'INC-01', tone: 'warn',
+    aksi: [
+      { kind: 'income', label: 'Catat pemasukan', payload: {} },
+      { kind: 'dismiss', label: 'Ingatkan besok', payload: { kunci: 'INC-01:2026-09-27', pilihan: 'nanti' } },
+    ],
+    dismiss: { kunci: 'INC-01:2026-09-27', pilihan: ['nanti', 'periode', 'tidak_relevan'] },
+  };
+  assert.deepEqual(dismissOptions(inc01).map(o => o.pilihan), ['periode', 'tidak_relevan']);
+  // AMP-10 "Biarkan" = dismiss periode; tanpa pilihan di payload = nanti (default Layout).
+  const biarkan = { ...inc01, aksi: [{ kind: 'dismiss', payload: { kunci: 'k', pilihan: 'periode' } }] };
+  assert.deepEqual(dismissOptions(biarkan).map(o => o.pilihan), ['nanti', 'tidak_relevan']);
+  const tanpaPilihan = { ...inc01, aksi: [{ kind: 'dismiss', payload: { kunci: 'k' } }] };
+  assert.deepEqual(dismissOptions(tanpaPilihan).map(o => o.pilihan), ['periode', 'tidak_relevan']);
+});
+
 test('hidden items drop out of the list and the badge until the reload arrives', () => {
   assert.equal(visibleItems(ADVISOR).length, 3);
   assert.equal(badgeCount(ADVISOR), 4);

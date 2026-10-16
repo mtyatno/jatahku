@@ -30,7 +30,6 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 - S4 (#81) dan S6 (#82) sudah di `main`; branch ini sudah di-merge dengan `main`, jadi kartu langsung berisi semua aturan (TAG/AMP/INC/TAB/DAT).
 - **Pemasangan kartu di Beranda** (`Dashboard.jsx`, milik S6): dikerjakan di PR lanjutan S6 (lihat entri "S6 lanjutan").
 - Sesi ini dikerjakan tanpa ritual pembuka (rangkuman + "lanjut") dan di branch `claude/festive-bell-3hg12l`. Pekerjaan berikutnya memakai `ai-advisor/sN-*`.
-- INC-01 membawa aksi "Ingatkan besok" (dismiss `nanti`) sehingga di kartu tampil dobel dengan tombol **Nanti**. Belum diubah.
 - "Lihat semua" untuk `advisor.sisa` belum ada: server hanya mengirim `{id, judul_pendek}`. Kalau mau dibuka, kontrak perlu insight utuh di `sisa` (atau endpoint terpisah).
 - `AttentionCard.jsx` + `attentionItems` (`dashboardInsights.js`) + `api.getAdvisorInsights` masih dipakai UI lama; hapus setelah flag `*` (S10).
 - Ringkasan "Rencana dana dihitung bersama" tidak ditampilkan khusus: CTA `plan` di item membuka `PlanSheet` (S8) dengan payload dari server (sudah satu rencana bersama, S3).
@@ -40,12 +39,13 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 - "Nanti" hanya tampil bila `nanti` ada di `dismiss.pilihan`; dua pilihan lain di Rincian.
 - Chip Tanya memakai teks pertanyaan dari `aksi[].payload.teks` sebagai label (label aksi "Tanya di chat" tidak informatif sebagai chip).
 - Sembunyi lokal direset setiap payload dashboard baru (server sudah menyaring yang di-dismiss).
+- Pilihan dismiss yang sudah jadi CTA insight (INC-01 "Ingatkan besok" = `nanti`, AMP-10 "Biarkan" = `periode`) tidak diulang sebagai tombol kartu (**Nanti** / pilihan Rincian).
 
 **Jebakan**
 - `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
 - Uji Playwright perlu `serviceWorkers: 'block'` dan user dengan `telegram_id`.
 
-**Tes (sesudah merge `main` dengan S4 & S6):** backend 809 OK · frontend 258 OK (6 baru) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())` dari branch S4): 3 item + "+1 saran lain", Rincian PER-01, Nanti → `POST /advisor/dismiss {"kunci":"TAG-01:kpr","pilihan":"nanti"}`, chip Tanya → chat terkirim, "Semua aman", desktop & HP (skrip tidak di-commit).
+**Tes (sesudah merge `main` dengan S4 & S6):** backend 809 OK · frontend 259 OK (7 baru) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())` dari branch S4): 3 item + "+1 saran lain", Rincian PER-01, Nanti → `POST /advisor/dismiss {"kunci":"TAG-01:kpr","pilihan":"nanti"}`, chip Tanya → chat terkirim, "Semua aman", desktop & HP (skrip tidak di-commit).
 
 **Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, buka Beranda; kartu AI Advisor menggantikan "Perlu perhatian".
 
