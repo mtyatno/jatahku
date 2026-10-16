@@ -659,3 +659,72 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         belanja_bulanan=G7, amplop_darurat=darurat, cakupan_darurat=G8,
         hari_sejak_cocokkan=K1, selisih_terakhir=K2, hari_tanpa_catatan=K3, beban_tagihan=K4,
     )
+
+
+# ── tambahan S5: perkiraan belanja sisa periode untuk perencana dana (§8) ──
+def belanja_sisa_riwayat(snap: Snapshot, m: Metrics, eid: str, k: Konstanta = DEFAULT) -> Decimal | None:
+    """Median belanja variabel amplop `eid` dari hari ke-d sampai akhir periode, di
+    (maks.) 3 periode lalu yang punya transaksi di amplop itu (§8.3b). None = tanpa riwayat.
+
+    Hari ke-d periode lalu = awal periode itu + (d − 1); bila periodenya lebih pendek, 0.
+    """
+    past = snap.periods[:-1]
+    if not past:
+        return None
+    sums = [ZERO] * len(past)
+    ada = [False] * len(past)
+    for x in snap.transactions:
+        if x.envelope_id != eid:
+            continue
+        i = _period_index(x.transaction_date, past)
+        if i is None:
+            continue
+        ada[i] = True
+        if m.jenis_transaksi.get(x.id) == "variabel" and \
+                x.transaction_date >= past[i][0] + timedelta(days=m.hari_ke - 1):
+            sums[i] += x.amount
+    pilih = [sums[i] for i in range(len(past)) if ada[i]][-k.periode_riwayat:]
+    return _median_decimal(pilih) if pilih else None
+
+
+def perkiraan_belanja_sisa(snap: Snapshot, m: Metrics, eid: str, pakai_riwayat: bool,
+                           k: Konstanta = DEFAULT) -> Decimal:
+    """Belanja amplop yang diperkirakan masih terjadi s/d akhir periode (dasar surplus §8).
+
+    - laju(e) × r (M8), dinaikkan ke median riwayat bila `pakai_riwayat` dan riwayat lebih besar (§8.3b);
+    - bila laju belum bisa dihitung (d < 3): median riwayat, atau jatah × r ÷ D (belanja
+      sesuai jatah) bila tanpa riwayat. Jatah = `budget_amount` bila diisi dan lebih kecil
+      dari dana(e) (kelebihan dana bisa digeser), selain itu dana(e).
+    """
+    e = m.amplop[eid]
+    r = m.sisa_hari
+    hist = belanja_sisa_riwayat(snap, m, eid, k) if (pakai_riwayat or e.laju is None) else None
+    if e.laju is not None:
+        base = e.laju * r
+        if pakai_riwayat and hist is not None and hist > base:
+            base = hist
+        return base
+    if hist is not None:
+        return hist
+    dana = max(e.dana, ZERO)
+    budget = next((x.budget_amount for x in snap.envelopes if x.id == eid), ZERO) or ZERO
+    jatah = budget if 0 < budget < dana else dana
+    return jatah * r / m.hari_total if m.hari_total > 0 else ZERO
+
+
+def surplus_rencana(snap: Snapshot, m: Metrics, eid: str, pakai_riwayat: bool,
+                    k: Konstanta = DEFAULT) -> Decimal:
+    """surplus(e) untuk perencana: bebas(e) − perkiraan belanja sisa × (1 + cadangan 10%).
+    Sama dengan M10 bila laju ada dan riwayat tidak lebih besar."""
+    e = m.amplop[eid]
+    return e.bebas - perkiraan_belanja_sisa(snap, m, eid, pakai_riwayat, k) * (1 + k.cadangan_surplus)
+
+
+def batas_harian(bebas: Decimal, m: Metrics) -> Decimal:
+    """Batas "maksimal/hari" dari sisa bebas amplop: floor100(max(bebas, 0) ÷ H).
+    Hari terakhir (H = 0): seluruh sisa bebas. Untuk CTA batas harian, pakai
+    bebas_setelah_rencana(e) (penekanan 8, planner.py) sebagai `bebas`."""
+    bebas = max(_to_decimal(bebas), ZERO)
+    if m.horizon <= 0:
+        return floor100(bebas)
+    return floor100(bebas / m.horizon)

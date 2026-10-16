@@ -4,6 +4,43 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S5 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/planner.py` (murni): `susun_rencana(snap, metrics, kebutuhan, kecuali, sertakan) -> Rencana` mengikuti §8 — urutan kebutuhan (telat/jatuh tempo → minus → habis+tagihan → lain), sumber sah (belanja, boleh diubah viewer, tidak terkunci, bukan tujuan, M4 = 0, surplus > 0), tingkat a/b/c, alokasi global, pembulatan Rp1.000 + penutup persis, centang default, `opsi_tabungan`. `saldo_versi`, `bebas_setelah_rencana`, `batas_harian_setelah_rencana`. Angka §12 "Rencana dana KPR" keluar persis (453.000 / 1.410.000 / 145.174).
+- `metrics.py` (hanya tambahan): `belanja_sisa_riwayat` (median belanja variabel hari d s/d akhir, 3 periode lalu), `perkiraan_belanja_sisa`, `surplus_rencana`, `batas_harian`.
+- `app/services/advisor/execute.py`: `build_plan`, `execute_plan` — `client_ref` (Redis `txnref:*`, hasil JSON disimpan), kunci household `FOR NO KEY UPDATE`, snapshot dihitung ulang di dalam kunci, 409 + `rencana_baru`, validasi ulang baris (terkunci / tak terlihat / > sisa / sumber = tujuan), transfer (`fund_shift.record_transfer`) + bayar tagihan (🔄, `next_run` maju, jendela bayar) dalam satu commit; notifikasi target sesudah commit.
+- Route `POST /advisor/plan`, `POST /advisor/execute` (`routes/advisor.py`). `POST /envelopes/transfer` memakai kunci household yang sama (`lock_household`).
+- Frontend kecil: `executeBody` mengirim balik `kebutuhan`/`kecuali`/`sertakan` dari respons plan (untuk `rencana_baru`). Server tetap bisa menurunkan kebutuhan dari `ke` bila tidak dikirim.
+- Kontrak `04-kontrak-api.md`: bentuk lengkap plan/execute (field baru `ke`, `sertakan`, `opsi_tabungan`, gaung permintaan, tingkat d/e, semua respons error).
+- Tes: `test_advisor_planner.py` (16: §12, skenario 10 & 18, kecuali, sertakan, c non-danger, alokasi global, tingkat b, d < 3, saldo_versi) dan `test_advisor_plan_integration.py` (8, SQLite: plan → execute satu commit, client_ref sekali, 409 tanpa tulis, baris diubah klien ditolak, tabungan bila dipilih, transfer manual dengan kunci).
+
+**Digantung / untuk sesi lain**
+- **S3:** `advisor_cache.invalidate(hid)` belum ada → panggil dari `execute_plan` (sesudah commit) dan `transfer_between_envelopes` saat S3 membuatnya. Teks `ALASAN` di `planner.py` dipindah ke `render.py` (aturan #2).
+- **S3/S4:** aturan yang punya CTA batas harian memakai `batas_harian_setelah_rencana(m, rencana)` (penekanan 8) — rencana dihitung sekali per dashboard dari kebutuhan semua insight (§8.4 "satu sumber tidak dipakai dua kali").
+- **S8/S11:** UI "Pakai tabungan" (`opsi_tabungan` → plan ulang dengan `sertakan`) belum ada; `PlanReview` baru menampilkan "Catat pemasukan".
+- **Bot:** geser dana di bot (`fund_shift`) belum memakai kunci household; kalau perlu, ikut di S9.
+
+**Keputusan kecil (juga di docstring planner.py / metrics.py)**
+- Satu baris rencana per sumber (frontend mencentang per `dari_id`); rincian tujuan di `ke`.
+- Sumber (c) tetap memakan surplus walau tidak tercentang (supaya sah bila dicentang); `kurang` hanya dari baris tercentang. Baris (c) yang dipakai kebutuhan danger dan non-danger: tercentang.
+- `bayar` hanya diisi bila kebutuhannya tertutup penuh oleh baris tercentang.
+- Tingkat (b) = kebutuhan dengan ≥ 1 dari 3 periode lalu punya transaksi di amplop itu; surplus memakai max(laju × r, median riwayat) × 1,1.
+- d < 3 (laju belum ada): perkiraan belanja = median riwayat, atau jatah × r ÷ D dengan jatah = `budget_amount` bila diisi dan < dana (selain itu dana). Akibatnya amplop yang didanai pas jatah tidak jadi sumber di hari 1–2 — sengaja konservatif.
+- Kapasitas tabungan (d/e) = sisa periode amplop (M3), sama dengan batas transfer manual, bukan saldo sepanjang waktu (G1).
+- `saldo_versi` = sha256 dari hari ini + (sisa, bebas, M4, terkunci) tiap amplop terlihat + (jatuh tempo, sisa) tiap tagihan. Ganti hari = rencana basi (r berubah).
+- Execute memvalidasi baris tercentang terhadap aturan transfer (bukan menuntut sama persis dengan rencana server), plus: tidak terkunci, sumber bukan tujuan.
+
+**Jebakan**
+- `with_for_update` di SQLite tidak menghasilkan SQL (tes integrasi tetap jalan); kunci sungguhan hanya teruji di Postgres produksi.
+- Execute memakai `snap.today` (zona waktu user) untuk tanggal transaksi bayar, sedangkan `POST /recurring/{id}/pay` memakai `date.today()` server — sama kecuali sekitar tengah malam.
+
+**Baseline tes:** backend 667 OK · frontend 251 OK · build OK.
+
+**Cara mencoba:** login, lalu di konsol `window.dispatchEvent(new CustomEvent('jatahku:open-action', {detail: {kind: 'plan', payload: {kebutuhan: [{tujuan_id: '<amplop>', jumlah: 50000}]}}}))`.
+
+---
+
 ## S8 · 2026-10-16 · Claude
 
 **Selesai**
