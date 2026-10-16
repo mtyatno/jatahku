@@ -15,6 +15,18 @@ Keputusan kecil S3 (juga di SESI-LOG.md):
   danger); penggabungan entitas yang sama (penekanan 1/3, TAG menyerap AMP-01) mengikuti
   tone & skor tertinggi.
 - Insight yang di-dismiss juga tidak dipakai chip; chip jatuh ke aturan berikutnya.
+
+Keputusan kecil S4:
+- DAT-06 (warn) ikut urutan chip Tagihan sesudah TAG-04 (spesifikasi memberi DAT-06 slot
+  KPI Tagihan tanpa menyebut urutannya).
+- Rencana bersama tidak memakai kebutuhan insight yang akan diserap (AMP-02/03 oleh PER-01,
+  AMP-01 oleh TAG-01/02 amplop yang sama), supaya satu kekurangan tidak direncanakan dua
+  kali (kebutuhan TAG sudah memuat minus amplopnya).
+- PER-02 menyerap AMP-01 amplop belanja yang minus (bukan amplop tagihan yang sudah diserap
+  TAG-01/02): minus total dan minus amplop itu satu masalah, dan "Tutup minus" PER-02 sudah
+  merencanakan semua amplop minus.
+- Penekanan 4: bila INC-01 menyala, CTA "Catat pemasukan" (jumlah P4) diletakkan pertama di
+  insight kekurangan (PER-01/02, AMP-01/02/03, TAG-01/02).
 """
 from __future__ import annotations
 
@@ -33,12 +45,13 @@ URUTAN_KPI: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "sisa_bebas": (("PER-02", "PER-01", "PER-06"), ("PER-04", "PER-05", "PER-07")),
     "terpakai": (("PER-01", "PER-03", "AMP-08"), ("PER-05", "PER-07")),
     "income": (("INC-01", "INC-04", "INC-03", "INC-06", "INC-02"), ("INC-05",)),
-    "tagihan": (("TAG-01", "TAG-02", "TAG-04", "TAG-03"), ("TAG-09",)),
+    "tagihan": (("TAG-01", "TAG-02", "TAG-04", "DAT-06", "TAG-03"), ("TAG-09",)),
     "tabungan": (("TAB-02", "TAB-01", "TAB-03", "TAB-06", "TAB-04", "TAB-05"), ("TAB-07",)),
 }
 
 DISERAP_KEKURANGAN = {"AMP-02", "AMP-03"}   # penekanan 2
 TAGIHAN_PENYERAP = {"TAG-01", "TAG-02"}      # penekanan 3
+KEKURANGAN = {"PER-01", "PER-02", "AMP-01", "AMP-02", "AMP-03", "TAG-01", "TAG-02"}  # penekanan 4
 
 
 @dataclass
@@ -72,7 +85,8 @@ def tersembunyi(ins: Insight, dismiss: dict) -> bool:
 
 # ── rencana dana bersama (§8.4, penekanan 8) ─────────────────────────────
 def kebutuhan_bersama(insights: list[Insight]) -> list[dict]:
-    """Kebutuhan semua CTA `plan`, urut tone/skor insight, digabung per (tujuan, tagihan); maks 10."""
+    """Kebutuhan semua CTA `plan`, urut tone/skor insight, digabung per (tujuan, tagihan); maks 10.
+    Kebutuhan tanpa tagihan ke amplop yang juga punya "geser & bayar" dikurangi jumlah itu (S4)."""
     gabung: dict[tuple, dict] = {}
     for ins in sorted(insights, key=kunci_urut):
         for a in ins.aksi:
@@ -84,12 +98,41 @@ def kebutuhan_bersama(insights: list[Insight]) -> list[dict]:
                     gabung[key]["jumlah"] = max(gabung[key]["jumlah"], kb["jumlah"])
                 else:
                     gabung[key] = dict(kb)
-    return list(gabung.values())[:10]
+    # Kebutuhan "geser & bayar" sudah memuat minus amplopnya (TAG perlu = tagihan − sisa amplop),
+    # jadi kebutuhan tanpa tagihan ke amplop yang sama hanya menambah kelebihannya.
+    bayar_per_tujuan: dict[str, int] = {}
+    for (tid, rid), kb in gabung.items():
+        if rid:
+            bayar_per_tujuan[tid] = bayar_per_tujuan.get(tid, 0) + kb["jumlah"]
+    out = []
+    for (tid, rid), kb in gabung.items():
+        if not rid and tid in bayar_per_tujuan:
+            sisa = kb["jumlah"] - bayar_per_tujuan[tid]
+            if sisa <= 0:
+                continue
+            kb = {**kb, "jumlah": sisa}
+        out.append(kb)
+    return out[:10]
+
+
+def akan_diserap(insights: list[Insight]) -> set[str]:
+    """Id insight yang diserap penekanan (2, 3, PER-02 ← AMP-01) — kebutuhannya sudah diwakili penyerapnya."""
+    out: set[str] = set()
+    if any(i.aturan == "PER-01" for i in insights):
+        out |= {i.id for i in insights if i.aturan in DISERAP_KEKURANGAN}
+    tag_amplop = {i.amplop_id for i in insights if i.aturan in TAGIHAN_PENYERAP and i.amplop_id}
+    out |= {i.id for i in insights if i.aturan == "AMP-01" and i.amplop_id in tag_amplop}
+    per02 = next((i for i in insights if i.aturan == "PER-02"), None)
+    if per02 is not None:
+        minus = {a["amplop_id"] for a in per02.data.get("amplop_minus", [])}
+        out |= {i.id for i in insights if i.aturan == "AMP-01" and i.amplop_id in minus}
+    return out
 
 
 def _rencana(ctx: Konteks, insights: list[Insight]):
     from app.services.advisor.planner import PlanInputError, batas_harian_setelah_rencana, susun_rencana
-    keb = kebutuhan_bersama(insights)
+    diserap = akan_diserap(insights)
+    keb = kebutuhan_bersama([i for i in insights if i.id not in diserap])
     rencana = None
     if keb:
         try:
@@ -125,7 +168,7 @@ def _serap(induk: Insight, anak: Insight, naikkan: bool) -> None:
 
 
 def penekanan(insights: list[Insight]) -> set[str]:
-    """Jalankan penekanan 2, 3, 6. Kembalikan id insight yang keluar dari daftar
+    """Jalankan penekanan 2, 3, 4, 6. Kembalikan id insight yang keluar dari daftar
     (tetap boleh tampil di slot lain, mis. HAR-01 di chip Jatah hari ini)."""
     keluar: set[str] = set()
     per01 = next((i for i in insights if i.aturan == "PER-01"), None)
@@ -138,10 +181,24 @@ def penekanan(insights: list[Insight]) -> set[str]:
             elif ins.aturan in DISERAP_KEKURANGAN:           # penekanan 2
                 _serap(per01, ins, naikkan=False)
                 keluar.add(ins.id)
+    inc01 = next((i for i in insights if i.aturan == "INC-01"), None)
+    if inc01 is not None:                                    # penekanan 4
+        catat = next((a for a in inc01.aksi if a["kind"] == "income"), None)
+        for ins in insights:
+            if ins.aturan in KEKURANGAN and catat is not None:
+                lain = [a for a in ins.aksi if a["kind"] != "income"]
+                ins.aksi = [dict(catat)] + lain
     for tag in [i for i in insights if i.aturan in TAGIHAN_PENYERAP and i.amplop_id]:
         for ins in insights:                                 # penekanan 3
             if ins.aturan == "AMP-01" and ins.amplop_id == tag.amplop_id and ins.id not in keluar:
                 _serap(tag, ins, naikkan=True)
+                keluar.add(ins.id)
+    per02 = next((i for i in insights if i.aturan == "PER-02"), None)
+    if per02 is not None:                                    # penekanan 1/2: minus total menyerap minus amplop
+        minus = {a["amplop_id"] for a in per02.data.get("amplop_minus", [])}
+        for ins in insights:
+            if ins.aturan == "AMP-01" and ins.amplop_id in minus and ins.id not in keluar:
+                _serap(per02, ins, naikkan=False)
                 keluar.add(ins.id)
     return keluar
 

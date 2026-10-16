@@ -16,7 +16,7 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 - Dihapus: `lib/advisorToday.js` (+ tes) — sudah tidak dipakai.
 
 **Digantung / untuk sesi lain**
-- **S4:** chip Income/Tagihan/Tabungan otomatis tampil begitu `kpi.income|tagihan|tabungan` terisi. Sampai itu kartu Tagihan & Tabungan masih angka lama (`/recurring/summary/period`, `getGoals`) dan badge lama ("Telat", "Belum dicatat"); badge itu hilang otomatis saat chip ada. Angka Tagihan (M4) dan batang lunas/telat per tagihan belum ada di `metrics.to_api()` — kalau mau satu sumber, tambahkan field (mis. `tagihan_lunas`, `tagihan_telat`) di kontrak lalu baca di kartu.
+- **S4 (sudah di `main`):** chip Income/Tagihan/Tabungan tampil karena `kpi.income|tagihan|tabungan` kini terisi. Nilai kartu Tagihan & Tabungan masih angka lama (`/recurring/summary/period`, `getGoals`) (badge lama tergantikan chip). Angka Tagihan (M4) dan batang lunas/telat per tagihan belum ada di `metrics.to_api()` — kalau mau satu sumber, tambahkan field (mis. `tagihan_lunas`, `tagihan_telat`) di kontrak lalu baca di kartu.
 - **S7:** kartu "Perlu perhatian" masih `AttentionCard` lama di samping grafik; ganti dengan `advisor.items`. Cap waktu kartu bisa memakai `updatedLabel`.
 - Saving rate tidak ada di `metrics` API; kartu Income versi baru memakai batang "bagian yang kamu catat". Bila saving rate mau kembali, tambahkan `saving_rate_rumah_tangga` ke `to_api()`.
 - `/analytics/prediction` masih dimuat untuk label periode & "N hari lagi" di header (dan UI lama). Hapus pemanggilannya setelah flag `*` (S10) bila label diambil dari `metrics`.
@@ -33,6 +33,48 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 **Tes:** backend 761 OK · frontend 252 OK (8 baru, 7 dihapus bersama `advisorToday`) · build OK · Playwright dengan API di-mock (payload asli `susun_dashboard(contoh_15_okt())`): kartu, chip, redam, popover desktop, bottom sheet HP, flag mati → UI lama (skrip tidak di-commit).
 
 **Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, buka Beranda, klik chip di kartu KPI.
+
+---
+
+## S4 · 2026-10-16 · pemilik produk + Claude
+
+**Selesai**
+- `rules/amplop.py` AMP-01..11, `rules/tagihan.py` TAG-01..09, `rules/pemasukan.py` INC-01..06, `rules/tabungan.py` TAB-01..07, `rules/data.py` DAT-01..06 (DAT-03 untuk S4 dan S4b) — fungsi murni `(Konteks) → [Insight]`, didaftarkan di `dashboard.EVALUATOR`. Template semua aturan + label aksi di `render.py`.
+- Keenam chip KPI terisi: Income (INC-01 › 04 › 03 › 06 › 02, cadangan INC-05), Tagihan (TAG-01 › 02 › 04 › DAT-06 › TAG-03, cadangan TAG-09), Tabungan (TAB-02 › 01 › 03 › 06 › 04 › 05, cadangan TAB-07).
+- `select.py`: rencana bersama tidak memakai kebutuhan insight yang diserap (AMP-02/03 oleh PER-01, AMP-01 oleh TAG-01/02 atau PER-02); kebutuhan tanpa tagihan ke amplop yang juga "geser & bayar" hanya menambah kelebihannya (minus amplop tagihan tidak direncanakan dua kali). PER-02 menyerap AMP-01 amplop belanja minus. Penekanan 4 (INC-01 → "Catat pemasukan" pertama di insight kekurangan). Penekanan 7 di `rules/tabungan.py`.
+- `POST /recurring/{id}/mark-paid` (Tandai lunas: `next_run` maju tanpa transaksi, jendela bayar sama dengan /pay).
+- `metrics.py` (hanya tambahan): `ceil10rb`, `jumlah_transaksi_laju_amplop`, `variabel_harian_amplop`, `saving_rate_riwayat`. `KonstantaAturan` + konstanta §11 untuk aturan S4.
+- Frontend kecil: `delete_txn` menghapus semua `txn_ids` (Hapus duplikat struk, S4b).
+- Tes: `test_advisor_aturan_s4.py` (46: §12 chip Tagihan/Tabungan/Income + skor TAG-01 100 & TAB-01 23, skenario 4, 5, 14, 15, 19, tiap aturan, penekanan 3/4/7, render semua) + 2 tes mark-paid di `test_recurring_pay.py`. Dua tes S3 diperbarui: Rincian PER-01 §12 kini juga memuat AMP-03 Makan & Jajan (sesuai §12).
+
+**Digantung / untuk sesi lain**
+- **DAT-06 "Bukan pembayaran tagihan"** sekarang hanya dismiss `tidak_relevan`; M4 masih menganggap tagihan lunas. Supaya M4 berhenti menganggapnya lunas, snapshot perlu membaca status itu (Redis) dan `compute_bills` melewati transaksi itu — S12/S13.
+- **"Hari ini tidak belanja"** (HAR-05/DAT-04) belum ada di web; CTA yang ada: Catat.
+- **TAG-06 Perbarui nominal / TAG-08 Lihat keduanya** membuka `/langganan`; belum ada kind untuk mengubah langganan langsung (S12).
+- **Alternatif "tunggu pemasukan"** (penekanan 4) belum ada; yang ada: Catat pemasukan diletakkan pertama.
+- **S6/S7:** `kpi.income/tagihan/tabungan` sudah terisi; slot halaman (`amplop`, `langganan`, `alokasi`, `analitik`, `transaksi`) sudah diisi aturan, menunggu `GET /advisor/page/*` (S11–S15).
+- **S9:** chat "kenapa {amplop} habis?" = fakta AMP-02/03 amplop itu (`render_insight` dari `sel.semua`, termasuk yang diserap PER-01).
+
+**Keputusan kecil (juga di docstring tiap modul)**
+- AMP-02 "habis" = bebas ≤ 0 dan sisa ≥ 0; kebutuhan geser = laju × r − bebas. Amplop minus dihitung "habis sekarang" untuk AMP-04 (U 0,4; §12 Transport skor ±58).
+- TAG-01/02 "perlu" = Σ nominal tagihan belum dibayar s/d tagihan ini − sisa(e) amplop tagihan (§12: Rp2.008.174). rupiah = nominal + minus amplop. Tagihan mingguan dinilai per kemunculan berikutnya.
+- TAG-04 terkumpul = sisa(e) amplop tagihan tahunan (0..nominal).
+- INC-02 menyebut anggota yang paling banyak mengisi amplop bersama, dengan jumlah ke amplop bersama saja.
+- INC-05 selalu ada (cadangan chip): ok ≥ 10%, info bila < 10% atau turun ≥ 5 poin dari median; tanpa pemasukan → "Belum ada pemasukan".
+- TAB-01 target = goal di amplop darurat, tanpa goal = 3 × G7; U 0,2 (skor 23 di §12). TAB-02 bertenggat > 1 bulan juga ditunda saat defisit.
+- TAB-03 butuh setoran sebelumnya atau saldo > 0 (target baru tidak langsung ditegur).
+- DAT-01 tidak menyala bila belum pernah cocokkan saldo. DAT-02 tanpa CTA → hanya slot `analitik`.
+- DAT-03 masuk daftar bila total diduga dobel ≥ Rp100 rb; "Bukan dobel" = dismiss `tidak_relevan` (90 hari).
+- DAT-06 ikut urutan chip Tagihan sesudah TAG-04.
+- AMP-06 memakai kind `raise_budget` untuk menurunkan jatah juga (payload jumlah baru, label "Turunkan jatah…").
+
+**Jebakan**
+- `sinking._next_expected_date` mengembalikan string, bukan `date` (TAG-07 mengubahnya).
+- `test_recurring_pay.py` sebelumnya gagal bila dijalankan sendiri (env `DATABASE_URL`/`JWT_SECRET`); sudah diberi default.
+
+**Baseline tes:** backend 809 OK · frontend 251 OK · build OK.
+
+**Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>` lalu `GET /advisor/dashboard` — `kpi.income/tagihan/tabungan` terisi. Tandai lunas: `POST /recurring/<id>/mark-paid`.
 
 ---
 

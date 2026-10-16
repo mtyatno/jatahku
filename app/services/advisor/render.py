@@ -249,10 +249,413 @@ def _per07(ins, ctx, kpi):
             "fakta": fakta}
 
 
+# ── C. Amplop ───────────────────────────────────────────────────────────
+def _amp01(ins, ctx, kpi):
+    d = ins.data
+    tambal = f", sudah ditambal {d['tambalan_n']}×" if d["tambalan_n"] else ""
+    return {"chip": f"Minus {rp_ringkas(d['minus'])}", "judul": f"Tutup minus {d['nama']} {rp_ringkas(d['minus'])}",
+            "isi": f"Lewat {rp_penuh(d['minus'])} dari dananya{tambal}.",
+            "fakta": [{"label": "Dana periode ini", "nilai": rp_penuh(d["dana"])},
+                      {"label": "Terpakai", "nilai": rp_penuh(d["terpakai"])}]}
+
+
+def _amp_fakta(d, ctx) -> list:
+    fakta = [{"label": "Sisa bebas", "nilai": rp_penuh(d["bebas"])},
+             {"label": "Rata-rata belanja", "nilai": f"{rp_penuh(d['laju'])}/hari"},
+             {"label": f"Perlu sampai {tgl(d['pe'])}", "nilai": f"±{rp_penuh(d['perlu'])}"}]
+    if d.get("batas") is not None and d["bebas"] > 0:
+        fakta.append({"label": "Maksimal per hari", "nilai": f"{rp_penuh(d['batas'])}/hari"})
+    return fakta
+
+
+def _amp02(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Habis", "judul": f"Geser ±{rp_ringkas(d['kurang'])} ke {d['nama']}",
+            "isi": f"{d['nama']} sudah habis. Perlu ±{rp_penuh(d['perlu'])} sampai {tgl(d['pe'])}.",
+            "fakta": _amp_fakta(d, ctx)}
+
+
+def _amp03(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"Habis ±{tgl(d['habis'])}",
+            "judul": f"{d['nama']}: maksimal {rp_ringkas(d.get('batas') or 0)}/hari",
+            "isi": f"Kalau tetap {rp_ringkas(d['laju'])}/hari, {d['nama']} habis ±{tgl(d['habis'])} "
+                   f"dan kurang ±{rp_ringkas(d['kurang'])} sebelum {tgl(d['pe'])}.",
+            "fakta": _amp_fakta(d, ctx)}
+
+
+def _amp04(ins, ctx, kpi):
+    d = ins.data
+    sumber = d["sumber"]
+    kalimat = [f"Jatah awal {rp_penuh(d['jatah_awal'])}"]
+    if d.get("kebutuhan"):
+        kalimat[0] += f", kebutuhannya ±{rp_penuh(d['kebutuhan'])} per periode."
+    else:
+        kalimat[0] += "."
+    if sumber:
+        nama = sumber[0]["nama"] or "amplop lain"
+        kata = "semuanya dari" if len(sumber) == 1 else "terbesar dari"
+        menipis = ", yang juga menipis" if sumber[0]["menipis"] else ""
+        kalimat.append(f"Total tambalan {rp_penuh(d['total'])} ({d['n']}×), {kata} {nama}{menipis}.")
+    else:
+        kalimat.append(f"Total tambalan {rp_penuh(d['total'])} ({d['n']}×).")
+    fakta = [{"label": f"Tambalan dari {x['nama'] or 'amplop lain'}", "nilai": rp_penuh(x["jumlah"])} for x in sumber]
+    if d.get("saran"):
+        fakta.append({"label": f"Saran jatah mulai {tgl(d['mulai'])}", "nilai": rp_penuh(d["saran"])})
+    return {"chip": f"Ditambal {d['n']}×", "judul": f"{d['nama']} ditambal {d['n']}× — jatahnya kekecilan",
+            "isi": _kalimat(*kalimat), "fakta": fakta}
+
+
+def _amp05(ins, ctx, kpi):
+    d = ins.data
+    if d["alasan"] == "tambalan":
+        isi = f"{d['periode_ditambal']} dari 3 periode terakhir ditambal berulang; terpakai rata-rata {rp_penuh(d['median'])}."
+    else:
+        isi = f"3 periode terakhir terpakai rata-rata {rp_penuh(d['median'])}, jatahnya {rp_penuh(d['jatah'])}."
+    return {"chip": "Jatah kekecilan", "judul": f"Naikkan jatah {d['nama']} ke {rp_ringkas(d['saran'])}",
+            "isi": isi, "fakta": [{"label": "Terpakai rata-rata (median 3 periode)", "nilai": rp_penuh(d["median"])},
+                                  {"label": "Jatah", "nilai": rp_penuh(d["jatah"])}]}
+
+
+def _amp06(ins, ctx, kpi):
+    d = ins.data
+    sisa = f", sisanya ke {d['tabungan']}" if d.get("tabungan") else ""
+    return {"chip": "Jatah kebesaran", "judul": f"Turunkan jatah {d['nama']} ke {rp_ringkas(d['saran'])}{sisa}",
+            "isi": f"3 periode terakhir hanya terpakai rata-rata {persen(d['porsi'])} dari jatah.",
+            "fakta": [{"label": "Terpakai rata-rata (median 3 periode)", "nilai": rp_penuh(d["median"])},
+                      {"label": "Jatah", "nilai": rp_penuh(d["jatah"])}]}
+
+
+def _amp07(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Jarang terpakai", "judul": f"{d['nama']} jarang terpakai periode ini",
+            "isi": f"Baru terpakai {rp_penuh(d['terpakai'])} dari {rp_penuh(d['dana'])}.",
+            "fakta": [{"label": "Sisa bebas", "nilai": rp_penuh(d["bebas"])}]}
+
+
+def _amp08(ins, ctx, kpi):
+    d = ins.data
+    chip = f"{rasio(d['kali'])} biasanya" if d.get("kali") else "Lonjakan"
+    return {"chip": chip, "judul": f"{d['nama']} melonjak {rasio(d['kali']) if d.get('kali') else ''}".strip(),
+            "isi": f"{d['nama']} 7 hari terakhir {rp_penuh(d['v7'])}, biasanya {rp_penuh(d['median'])}.",
+            "fakta": [{"label": "7 hari terakhir", "nilai": rp_penuh(d["v7"])},
+                      {"label": "Biasanya per 7 hari", "nilai": rp_penuh(d["median"])}]}
+
+
+def _amp09(ins, ctx, kpi):
+    d = ins.data
+    isi = f"Jatahnya {rp_penuh(d['jatah'])}, tapi belum ada dana periode ini."
+    if d["tagihan"]:
+        isi += " Ada tagihan di amplop ini."
+    return {"chip": "Belum didanai", "judul": f"Alokasikan {rp_ringkas(d['jatah'])} ke {d['nama']}", "isi": isi,
+            "fakta": []}
+
+
+def _amp10(ins, ctx, kpi):
+    d = ins.data
+    fakta = [{"label": "Batas sekarang", "nilai": f"{rp_penuh(d['batas_lama'])}/hari"}]
+    _fakta_batas(fakta, d, ctx)
+    return {"chip": f"Batas lewat {d['n']}×", "judul": f"Batas harian {d['nama']} sering terlewat",
+            "isi": f"Batas {rp_penuh(d['batas_lama'])}/hari terlewat {d['n']} dari {d['hari']} hari; "
+                   f"rata-rata belanjanya {rp_penuh(d['rata'])}.", "fakta": fakta}
+
+
+def _amp11(ins, ctx, kpi):
+    d = ins.data
+    tanda = "+" if d["arah"] == "naik" else MINUS
+    x = persen(abs(d["persen"]))
+    return {"chip": f"{tanda}{x} vs lalu", "judul": f"{d['nama']} {tanda}{x} dibanding periode lalu",
+            "isi": f"{tanda}{x} dibanding periode lalu di hari yang sama.",
+            "fakta": [{"label": "Periode ini", "nilai": rp_penuh(d["terpakai"])},
+                      {"label": "Periode lalu, hari yang sama", "nilai": rp_penuh(d["lalu"])}]}
+
+
+# ── D. Tagihan ──────────────────────────────────────────────────────────
+def _tag_fakta(d) -> list:
+    fakta = [{"label": "Nominal", "nilai": rp_penuh(d["nominal"])},
+             {"label": "Jatuh tempo", "nilai": tgl(d["jatuh_tempo"])},
+             {"label": f"Sisa amplop {d['amplop']}", "nilai": rp_penuh(d["sisa_amplop"])}]
+    if d["perlu"] > 0:
+        fakta.append({"label": "Perlu digeser", "nilai": rp_penuh(d["perlu"])})
+    return fakta
+
+
+def _tag_kurang(d) -> str:
+    if d["perlu"] <= 0:
+        return ""
+    kata = "minus" if d["sisa_amplop"] < 0 else "sisa"
+    return f"Amplop {d['amplop']} {kata} {rp_penuh(abs(d['sisa_amplop']))}, jadi perlu {rp_penuh(d['perlu'])}."
+
+
+def _tag01(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{d['nama']} telat {d['telat']} hari", "judul": f"Lunasi {d['nama']} — telat {d['telat']} hari",
+            "isi": _kalimat(f"{rp_penuh(d['nominal'])}, jatuh tempo {tgl(d['jatuh_tempo'])}.", _tag_kurang(d)),
+            "fakta": _tag_fakta(d)}
+
+
+def _tag02(ins, ctx, kpi):
+    d = ins.data
+    kapan = "hari ini" if d["lagi"] == 0 else f"{d['lagi']} hari lagi"
+    return {"chip": f"{d['nama']} {kapan}", "judul": f"Siapkan {d['nama']} — jatuh tempo {kapan}",
+            "isi": _kalimat(f"{rp_penuh(d['nominal'])}, jatuh tempo {tgl(d['jatuh_tempo'])}.", _tag_kurang(d)),
+            "fakta": _tag_fakta(d)}
+
+
+def _tag03(ins, ctx, kpi):
+    d = ins.data
+    kapan = "hari ini" if d["lagi"] == 0 else f"{d['lagi']} hari lagi"
+    return {"chip": f"{d['nama']} {kapan}", "judul": f"Bayar {d['nama']} — jatuh tempo {kapan}",
+            "isi": f"{rp_penuh(d['nominal'])}, dana di {d['amplop']} cukup.", "fakta": _tag_fakta(d)}
+
+
+def _tag04(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{d['nama']} {tgl(d['jatuh_tempo'])}", "judul": f"Siapkan {d['nama']} tahunan",
+            "isi": f"Butuh {rp_penuh(d['nominal'])} pada {tgl(d['jatuh_tempo'])}; terkumpul {rp_penuh(d['terkumpul'])}. "
+                   f"Sisihkan {rp_penuh(d['per_bulan'])}/bulan.",
+            "fakta": [{"label": "Kurang", "nilai": rp_penuh(d["kurang"])}]}
+
+
+def _tag05(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"Tagihan {persen(d['beban'])}", "judul": "Tinjau langganan — beban tagihan tinggi",
+            "isi": f"Tagihan rutin {rp_penuh(d['per_bulan'])}/bulan, {persen(d['beban'])} dari dana belanja.",
+            "fakta": [{"label": "Dana belanja", "nilai": rp_penuh(d["dana"])}]}
+
+
+def _tag06(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Nominal berubah", "judul": f"Perbarui nominal {d['nama']} jadi {rp_ringkas(d['dibayar'])}",
+            "isi": f"Pembayaran terakhir {rp_penuh(d['dibayar'])}, tercatat {rp_penuh(d['nominal'])}.",
+            "fakta": [{"label": "Selisih", "nilai": rp_penuh(d["selisih"])}]}
+
+
+FREKUENSI = {"weekly": "mingguan", "monthly": "bulanan", "yearly": "tahunan", "biweekly": "dua mingguan",
+             "quarterly": "tiga bulanan"}
+
+
+def _tag07(ins, ctx, kpi):
+    d = ins.data
+    frek = FREKUENSI.get(d["frekuensi"], d["frekuensi"])
+    return {"chip": "Pola rutin", "judul": f"Jadikan {d['deskripsi']} langganan {frek}",
+            "isi": f"{d['deskripsi']} {rp_penuh(d['nominal'])} tercatat {d['kemunculan']}× dengan pola {frek}.",
+            "fakta": ([{"label": "Perkiraan berikutnya", "nilai": tgl(d["berikutnya"])}] if d.get("berikutnya") else [])}
+
+
+def _tag08(ins, ctx, kpi):
+    d = ins.data
+    nama = " dan ".join(d["nama"])
+    return {"chip": "Langganan ganda", "judul": f"Cek langganan ganda: {nama}",
+            "isi": "Dua langganan aktif mirip nama dan nominalnya.",
+            "fakta": [{"label": n, "nilai": rp_penuh(j)} for n, j in zip(d["nama"], d["jumlah"])]}
+
+
+def _tag09(ins, ctx, kpi):
+    d = ins.data
+    if not d["ada"]:
+        return {"chip": "Tidak ada tagihan", "judul": "Belum ada tagihan rutin",
+                "isi": "Belum ada langganan aktif.", "fakta": []}
+    b = d.get("berikut")
+    if b:
+        return {"chip": f"Berikutnya {b['nama']} {tgl(b['tanggal'])}", "judul": "Tagihan aman",
+                "isi": f"Berikutnya {b['nama']} {rp_penuh(b['nominal'])} pada {tgl(b['tanggal'])}.",
+                "fakta": [{"label": "Belum dibayar periode ini", "nilai": rp_penuh(d["sisa"])}]}
+    return {"chip": "Lunas semua", "judul": "Semua tagihan periode ini lunas",
+            "isi": f"Tidak ada tagihan tersisa sampai {tgl(d['pe'])}.", "fakta": []}
+
+
+# ── E. Pemasukan ────────────────────────────────────────────────────────
+def _inc01(ins, ctx, kpi):
+    d = ins.data
+    isi = f"Biasanya masuk sekitar tgl {d['hari_biasa'].day}"
+    isi += f", ±{rp_ringkas(d['biasa'])}." if d.get("biasa") else "."
+    return {"chip": "Belum masuk", "judul": "Catat pemasukan periode ini", "isi": isi,
+            "fakta": [{"label": "Lewat dari biasanya", "nilai": f"{d['telat']} hari"}]}
+
+
+def _inc02(ins, ctx, kpi):
+    d = ins.data
+    fakta = [{"label": f"Masuk ke amplop bersama dari {d['nama']}", "nilai": rp_penuh(d["jumlah"])}] \
+        if d.get("jumlah") else []
+    return {"chip": f"Terisi dari {d['nama']}", "judul": f"Amplop bersama terisi dari {d['nama']}",
+            "isi": f"Belum ada pemasukan atas namamu, tapi amplop bersama sudah terisi dari pemasukan {d['nama']}. "
+                   "Tidak perlu dicatat ulang.", "fakta": fakta}
+
+
+def _inc03(ins, ctx, kpi):
+    d = ins.data
+    kurang = f" ({MINUS}{persen(d['persen'])})" if d.get("persen") is not None else ""
+    return {"chip": f"{MINUS}{persen(d['persen'])} dari biasa" if d.get("persen") is not None else "Lebih kecil",
+            "judul": "Sesuaikan alokasi dengan pemasukan baru",
+            "isi": f"Pemasukan periode ini {rp_penuh(d['pemasukan'])}, biasanya {rp_penuh(d['biasa'])}{kurang}.",
+            "fakta": [{"label": "Kurang dari biasa", "nilai": rp_penuh(d["kurang"])}]}
+
+
+def _inc04(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{rp_ringkas(d['jumlah'])} belum dibagi", "judul": f"Bagi {rp_ringkas(d['jumlah'])} ke amplop",
+            "isi": f"{rp_penuh(d['jumlah'])} dari pemasukanmu belum dibagi ke amplop.", "fakta": []}
+
+
+def _inc05(ins, ctx, kpi):
+    d = ins.data
+    if d["rate"] is None:
+        if d["kosong"]:
+            return {"chip": "Belum ada pemasukan", "judul": "Belum ada pemasukan periode ini",
+                    "isi": "Catat pemasukan supaya bisa dibagi ke amplop.", "fakta": []}
+        return {"chip": "Belum ada atas namamu", "judul": "Belum ada pemasukan atas namamu",
+                "isi": "Pemasukan rumah tangga sudah tercatat.", "fakta": []}
+    fakta = [{"label": "Pemasukanmu periode ini", "nilai": rp_penuh(d["pemasukan"])}]
+    if d.get("median") is not None:
+        fakta.append({"label": "Saving rate biasanya", "nilai": persen(d["median"])})
+    isi = f"{persen(d['rate'])} pemasukanmu masuk ke tabungan."
+    if d["turun"]:
+        isi += f" Biasanya {persen(d['median'])}."
+    return {"chip": f"Saving rate {persen(d['rate'])}", "judul": "Saving rate periode ini", "isi": isi, "fakta": fakta}
+
+
+def _inc06(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Gajian bergeser", "judul": f"Ubah Tanggal Gajian ke tgl {d['tanggal']}?",
+            "isi": f"2 dari 3 periode terakhir pemasukan masuk sekitar tgl {d['tanggal']}, "
+                   f"sedangkan pengaturan tgl {d['payday_day']}.", "fakta": []}
+
+
+# ── F. Tabungan ─────────────────────────────────────────────────────────
+TUNDA = "Sisa bebas periode ini sedang kurang, jadi setoran dijadwalkan periode depan."
+
+
+def bulan(v) -> str:
+    return f"{_d(v).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)}".replace(".", ",") + " bln"
+
+
+def _tab01(ins, ctx, kpi):
+    d = ins.data
+    if d["ada_target"] and d.get("progres") is not None:
+        chip = f"Darurat {persen(d['progres'])}"
+        isi = f"{rp_penuh(d['saldo'])} dari {rp_penuh(d['target'])}; setara {bulan(d['cakupan'])} belanja."
+    else:
+        chip = f"Darurat {bulan(d['cakupan'])}"
+        isi = f"{rp_penuh(d['saldo'])}, setara {bulan(d['cakupan'])} belanja."
+    if ins.tone == "ok":
+        judul = f"{d['nama']} cukup {bulan(d['cakupan'])}"
+    elif d.get("progres") is not None:
+        judul = f"{d['nama']} baru {persen(d['progres'])}"
+    else:
+        judul = f"{d['nama']} baru {bulan(d['cakupan'])}"
+    if d["tunda"] and ins.tone != "ok":
+        isi = _kalimat(isi, TUNDA)
+    fakta = [{"label": "Saldo", "nilai": rp_penuh(d["saldo"])}, {"label": "Target", "nilai": rp_penuh(d["target"])}]
+    if d["saran"] > 0:
+        fakta.append({"label": "Setoran saran per bulan", "nilai": rp_penuh(d["saran"])})
+    return {"chip": chip, "judul": judul, "isi": isi, "fakta": fakta}
+
+
+def _tab02(ins, ctx, kpi):
+    d = ins.data
+    isi = f"Perlu {rp_penuh(d['butuh'])}/bulan sampai {tgl(d['tenggat'])}, biasanya {rp_penuh(d['biasa'])}."
+    if d["tunda"]:
+        isi = _kalimat(isi, TUNDA)
+    return {"chip": f"{d['nama']} tertinggal", "judul": f"Kejar target {d['nama']}", "isi": isi,
+            "fakta": [{"label": "Kurang periode ini", "nilai": rp_penuh(d["kurang"])}]}
+
+
+def _tab03(ins, ctx, kpi):
+    d = ins.data
+    isi = f"Dua periode terakhir belum ada setoran ke {d['nama']}."
+    if d["tunda"]:
+        isi = _kalimat(isi, TUNDA)
+    return {"chip": "Belum disetor", "judul": f"Setor ke {d['nama']}", "isi": isi,
+            "fakta": [{"label": "Saldo", "nilai": f"{rp_penuh(d['saldo'])} dari {rp_penuh(d['target'])}"},
+                      {"label": "Setoran saran per bulan", "nilai": rp_penuh(d["saran"])}]}
+
+
+def _tab04(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"Kurang {rp_ringkas(d['kurang'])}", "judul": f"{d['nama']} hampir tercapai",
+            "isi": f"Sudah {persen(d['progres'])}: {rp_penuh(d['saldo'])} dari {rp_penuh(d['target'])}.", "fakta": []}
+
+
+def _tab05(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{d['nama']} tercapai", "judul": f"Target {d['nama']} tercapai",
+            "isi": f"{rp_penuh(d['saldo'])} dari target {rp_penuh(d['target'])}.", "fakta": []}
+
+
+def _tab06(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{d['n']} target paralel", "judul": "Atur prioritas target",
+            "isi": f"Setoran tersebar ke {d['n']} target, jadi yang terpenting naik pelan.",
+            "fakta": [{"label": "Progres tengah", "nilai": persen(d["median"])}]}
+
+
+def _tab07(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"+{rp_ringkas(d['setoran'])} periode ini", "judul": "Setoran tabungan periode ini",
+            "isi": f"Setoran periode ini {rp_penuh(d['setoran'])}; total tabungan {rp_penuh(d['saldo'])}.",
+            "fakta": []}
+
+
+# ── G. Kebersihan data ──────────────────────────────────────────────────
+def _dat01(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Cocokkan saldo", "judul": "Cocokkan saldo",
+            "isi": f"Terakhir {d['hari']} hari lalu, sudah {d['n']} transaksi sejak itu.", "fakta": []}
+
+
+def _dat02(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Selisih besar", "judul": "Cocokkan saldo lebih sering",
+            "isi": f"Cocokkan terakhir selisih {rp_penuh(d['selisih'])}. Cocokkan lebih sering supaya analisa tetap akurat.",
+            "fakta": [{"label": "Tanggal", "nilai": tgl(d["tanggal"])}]}
+
+
+def _dat03(ins, ctx, kpi):
+    d = ins.data
+    if d["jenis"] == "struk":
+        return {"chip": "Struk dobel?", "judul": f"Struk {d['toko']} sepertinya tercatat dua kali ({d['n']} barang)",
+                "isi": f"Dua struk {d['toko']} yang sama tercatat berdekatan, total {rp_penuh(d['total'])}.",
+                "fakta": [{"label": "Diduga dobel", "nilai": rp_penuh(d["total"])}]}
+    return {"chip": "Dobel?", "judul": f"{d['deskripsi']} {rp_ringkas(d['jumlah'])} tercatat {d['n']}×",
+            "isi": f"{d['n']} transaksi {d['deskripsi']} {rp_penuh(d['jumlah'])} di {d['amplop']} tercatat berdekatan.",
+            "fakta": [{"label": "Diduga dobel", "nilai": rp_penuh(d["total"])}]}
+
+
+def _dat04(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Lupa catat?", "judul": "Catat belanja yang terlewat",
+            "isi": f"Sudah {d['hari']} hari tanpa catatan, padahal biasanya kamu mencatat hampir setiap hari.",
+            "fakta": []}
+
+
+def _dat05(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Belum diklasifikasi", "judul": f"Klasifikasikan {d['n']} amplop",
+            "isi": "Klasifikasi membantu AI memilih sumber dana yang aman.",
+            "fakta": [{"label": "Amplop", "nilai": ", ".join(d["nama"])}]}
+
+
+def _dat06(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": f"{d['nama']} sudah dibayar?", "judul": f"Tandai {d['nama']} lunas",
+            "isi": f"Transaksi {d['deskripsi']} {rp_penuh(d['jumlah'])} nominalnya sama dengan tagihan {d['nama']}. "
+                   "Sisa bebas sudah menghitungnya lunas, tapi tagihannya masih tercatat belum dibayar.",
+            "fakta": []}
+
+
 TEMPLATE = {
     "HAR-01": _har01, "HAR-02": _har02, "HAR-03": _har03, "HAR-04": _har04, "HAR-05": _har05,
     "PER-01": _per01, "PER-02": _per02, "PER-03": _per03, "PER-04": _per04, "PER-05": _per05,
     "PER-06": _per06, "PER-07": _per07,
+    "AMP-01": _amp01, "AMP-02": _amp02, "AMP-03": _amp03, "AMP-04": _amp04, "AMP-05": _amp05, "AMP-06": _amp06,
+    "AMP-07": _amp07, "AMP-08": _amp08, "AMP-09": _amp09, "AMP-10": _amp10, "AMP-11": _amp11,
+    "TAG-01": _tag01, "TAG-02": _tag02, "TAG-03": _tag03, "TAG-04": _tag04, "TAG-05": _tag05, "TAG-06": _tag06,
+    "TAG-07": _tag07, "TAG-08": _tag08, "TAG-09": _tag09,
+    "INC-01": _inc01, "INC-02": _inc02, "INC-03": _inc03, "INC-04": _inc04, "INC-05": _inc05, "INC-06": _inc06,
+    "TAB-01": _tab01, "TAB-02": _tab02, "TAB-03": _tab03, "TAB-04": _tab04, "TAB-05": _tab05, "TAB-06": _tab06,
+    "TAB-07": _tab07,
+    "DAT-01": _dat01, "DAT-02": _dat02, "DAT-03": _dat03, "DAT-04": _dat04, "DAT-05": _dat05, "DAT-06": _dat06,
 }
 
 
@@ -263,10 +666,29 @@ def _label_aksi(a: dict, ins: Insight, ctx: Konteks) -> tuple[str, dict]:
         return f"Batas harian {ctx.nama.get(p.get('amplop_id'), '')} {rp_ringkas(p.get('jumlah', 0))}", p
     if kode == "pindah_tabungan":
         return f"Pindahkan ke {ins.data.get('tujuan', 'tabungan')}", p
+    if kode in ("setor", "setor_darurat", "setor_sisanya"):
+        jumlah = (p.get("kebutuhan") or [{}])[0].get("jumlah", 0)
+        nama = ins.data.get("nama", "")
+        teks_ = {"setor": f"Setor {rp_ringkas(jumlah)}", "setor_darurat": f"Setor {rp_ringkas(jumlah)} ke {nama}",
+                 "setor_sisanya": f"Setor sisanya {rp_ringkas(jumlah)}"}[kode]
+        return teks_, p
+    if kode in ("geser_amplop", "geser_sisa_periode", "geser_sekarang"):
+        jumlah = (p.get("kebutuhan") or [{}])[0].get("jumlah", 0)
+        return f"Geser {rp_ringkas(jumlah)}", p
+    if kode == "geser_bayar":
+        return f"Geser & bayar {ins.data.get('nama', '')}", p
+    if kode in ("naikkan_jatah", "turunkan_jatah"):
+        kata = "Naikkan" if kode == "naikkan_jatah" else "Turunkan"
+        mulai = f" mulai {tgl(ins.data['mulai'])}" if ins.data.get("mulai") else ""
+        return f"{kata} jatah jadi {rp_ringkas(p.get('jumlah', 0))}{mulai}", p
+    if kode == "sesuaikan_batas":
+        return f"Sesuaikan batas jadi {rp_ringkas(p.get('jumlah', 0))}", p
     if kode == "tanya_hari_ini":
         return "Tanya di chat", {"teks": "Kenapa belanja hari ini lewat jatah?", **p}
     if kode == "tanya_kekurangan":
         return "Tanya di chat", {"teks": "Kenapa dana belanja kurang?", **p}
+    if kode == "hapus_duplikat":
+        return f"Hapus duplikat ({len(p.get('txn_ids') or [])} barang)", p
     return LABEL.get(kode, kode or a["kind"]), p
 
 
@@ -277,6 +699,32 @@ LABEL = {
     "bagi_pemasukan": "Bagi pemasukan",
     "lihat_periode_lalu": "Lihat periode lalu",
     "catat": "Catat",
+    "tutup_minus_amplop": "Tutup minus",
+    "lihat_transaksi_amplop": "Lihat transaksi",
+    "alokasikan": "Alokasikan",
+    "biarkan": "Biarkan",
+    "bayar": "Bayar sekarang",
+    "bayar_saja": "Bayar saja",
+    "atur_sisihan": "Atur sisihan",
+    "tinjau_langganan": "Tinjau langganan",
+    "perbarui_nominal": "Perbarui nominal",
+    "jadikan_langganan": "Jadikan langganan",
+    "lihat_keduanya": "Lihat keduanya",
+    "ingatkan_besok": "Ingatkan besok",
+    "catat_pemasukanku": "Catat pemasukanku",
+    "sesuaikan_alokasi": "Sesuaikan alokasi",
+    "bagi_sekarang": "Bagi sekarang",
+    "ubah_tanggal_gajian": "Ubah Tanggal Gajian",
+    "rencanakan_alokasi": "Rencanakan di alokasi berikutnya",
+    "lihat_target": "Lihat target",
+    "mundurkan_tenggat": "Mundurkan tenggat",
+    "atur_prioritas": "Atur prioritas",
+    "cocokkan_saldo": "Cocokkan saldo",
+    "hapus_salah_satu": "Hapus salah satu",
+    "bukan_dobel": "Bukan dobel",
+    "klasifikasikan": "Klasifikasikan",
+    "tandai_lunas": "Tandai lunas",
+    "bukan_tagihan": "Bukan pembayaran tagihan",
 }
 
 

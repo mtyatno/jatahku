@@ -19,8 +19,9 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // Angka null bila belum bisa dihitung: j1 di hari terakhir; proyeksi_akhir/kekurangan/tanggal_habis bila hari_ke < 3.
   "kpi": { "jatah": {/* insight */}, "sisa_bebas": {}, "terpakai": {}, "income": {}, "tagihan": {}, "tabungan": {} },
   // kpi.<kartu> = insight terpilih untuk kartu itu (chip sudah sesuai kartu: PER-01 di Terpakai = "Lewat ±Rp525 rb",
-  // di Sisa bebas = "Habis ±24 Okt"), atau null. S3 mengisi jatah/sisa_bebas/terpakai; income/tagihan/tabungan null
-  // sampai S4. Bisa juga null bila satu-satunya insight kartu itu sedang di-dismiss.
+  // di Sisa bebas = "Habis ±24 Okt"), atau null. Sejak S4 keenam kartu terisi (income: INC-*, cadangan INC-05;
+  // tagihan: TAG-01/02/04, DAT-06, TAG-03, cadangan TAG-09; tabungan: TAB-*, cadangan TAB-07 — null hanya bila
+  // household tanpa amplop tabungan). Bisa juga null bila satu-satunya insight kartu itu sedang di-dismiss.
   "grafik": { "teks": "4 dari 7 hari terakhir lewat jatah, tertinggi Senin 12 Okt Rp400 rb", "aksi": {/* CTA route */} | null },
   "advisor": { "items": [/* insight, maks 3 */], "sisa": [{"id": "TAB-01:…", "judul_pendek": "Dana Darurat baru 3%"}], "total": 4,
                "aman": null },  // aman = satu insight ok terbaik bila items kosong ("Semua aman"), selain itu null
@@ -63,6 +64,9 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 //   | 409 {"detail":"Rencana ini sedang diproses"}  (client_ref yang sama sedang berjalan) | 409 {"detail":"<jendela bayar>"}
 //   | 400 {"detail"} bila baris tidak sah (sumber terkunci/tak terlihat/melebihi sisa, sumber = tujuan, kosong).
 //   client_ref sama dikirim ulang sesudah sukses → hasil pertama dikembalikan, tidak ada transfer baru.
+// POST /recurring/{id}/mark-paid  (S4, DAT-06 "Tandai lunas") → 200 {"prev_next_run","next_run"}
+//   next_run maju satu frekuensi, TANPA transaksi baru. 404 langganan tak terlihat; 409 {"detail"} bila jatuh
+//   tempo di periode depan (jendela bayar sama dengan /pay dan /skip).
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 //   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
 //   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
@@ -86,7 +90,7 @@ Aksi dijalankan lewat `window.dispatchEvent(new CustomEvent('jatahku:open-action
 | `chat` | `{teks?, chip?: [string \| {label, text}], kirim?}` | Chat terbuka, teks diisikan (atau dikirim bila `kirim`), chip tampil paling depan |
 | `dismiss` | `{kunci, pilihan?}` | `POST /advisor/dismiss` (default `nanti`) → event `jatahku:advisor-dismissed` `{kunci, pilihan}` |
 | `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan` |
-| `delete_txn` | `{txn_id, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` → `jatahku:txn-added` |
+| `delete_txn` | `{txn_id, txn_ids?, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` untuk tiap id (`txn_ids` bila ada: struk terkirim dua kali, DAT-03 S4b) → `jatahku:txn-added` |
 
 Setelah data berubah, penerima menembakkan `jatahku:txn-added` (dan `jatahku:envelope-updated` untuk transfer/amplop) supaya Beranda dan halaman lain memuat ulang (dan cache advisor server dihapus oleh route terkait, S3).
 
