@@ -2,7 +2,7 @@
 
 Mesin aturan deterministik (tanpa LLM) yang memberi analisa + tombol aksi di setiap bagian Jatahku: chip AI di 6 KPI Beranda, kartu AI Advisor, halaman Amplop/Transaksi/Alokasi/Langganan/Analitik, chat web, dan Telegram — semuanya dari satu sumber angka (`app/services/advisor/metrics.py`).
 
-**Fase sekarang:** Fase 1 — Fondasi + Beranda. S1 (snapshot & metrik) di review; berikutnya S2 (sinyal), S5 dan S8 boleh paralel. Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 — Fondasi + Beranda. S1 (snapshot & metrik), S2 (sinyal), S8 (pipa CTA) di review/selesai; berikutnya S3 (insight inti), S5 boleh paralel. Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 | File | Isi | Kapan dibaca |

@@ -18,7 +18,7 @@ dismiss (Redis) — S3/S16.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -119,6 +119,7 @@ class Snapshot:
     last_balance_check: BalanceCheckSnap | None = None
     last_viewer_txn_date: date | None = None
     member_names: dict[str, str] = field(default_factory=dict)
+    now: datetime | None = None    # waktu muat (UTC); S14 "lebih dari 24 jam" — tanpa jam sistem di signals.py
 
     @property
     def current_period(self) -> tuple[date, date]:
@@ -181,7 +182,8 @@ async def load_snapshot(user, db, today: date | None = None,
         income_type = "monthly"
     periods = get_last_n_periods(payday_day, periods_count, today)
     snap = Snapshot(viewer_id=viewer_id, household_id=None, today=today,
-                    payday_day=payday_day, income_type=income_type, periods=periods)
+                    payday_day=payday_day, income_type=income_type, periods=periods,
+                    now=datetime.now(timezone.utc))
 
     # 1. household
     hid = (await db.execute(
