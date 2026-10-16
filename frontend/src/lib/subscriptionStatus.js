@@ -70,3 +70,17 @@ export function sortSubscriptions(items, mode) {
   if (mode === 'name') return arr.sort((a, b) => (a.description || '').localeCompare(b.description || '', 'id'));
   return sortForPayment(arr); // 'priority' (default)
 }
+
+// Bayar/Lewati hanya untuk jatuh tempo di periode aktif (server: `payable`). Bayar lebih awal boleh
+// selama masih di periode ini; jatuh tempo di periode depan menunggu periodenya dimulai.
+export function canPay(item) {
+  return item?.payable !== false;
+}
+
+const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+export function payableFromLabel(item) {
+  if (!item?.payable_from) return 'Bisa dibayar di periode jatuh temponya';
+  const [, m, d] = item.payable_from.split('-').map(Number);
+  return `Bisa dibayar mulai ${d} ${MONTHS_ID[m - 1]}`;
+}

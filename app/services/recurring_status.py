@@ -36,3 +36,28 @@ def compute_recurring_status(next_run: date, frequency_value: str, today: date, 
             return "due"
         return "paid" if paid_in_period else "upcoming"
     return "upcoming"
+_MONTHS_ID = ["", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
+
+def _fmt(d: date) -> str:
+    return f"{d.day} {_MONTHS_ID[d.month]}"
+
+
+def payable_from(next_run: date, payday_day: int) -> date:
+    """Awal periode budget tempat jatuh tempo berikutnya berada: sejak tanggal ini tagihan bisa dibayar."""
+    from app.core.period import get_budget_period
+    return get_budget_period(payday_day or 1, next_run)[0]
+
+
+def payment_window_error(next_run: date, payday_day: int, today: date) -> str | None:
+    """Tagihan hanya bisa dibayar/dilewati kalau jatuh temponya ada di periode budget aktif
+    (bayar lebih awal boleh selama masih di periode ini). Jatuh tempo di periode depan ditolak,
+    karena alokasi periode itu belum ada. Keputusan pemilik produk, 16 Okt 2026.
+    None = boleh; selain itu pesan penolakan."""
+    from app.core.period import get_budget_period
+    _ps, period_end = get_budget_period(payday_day or 1, today)
+    if next_run <= period_end:
+        return None
+    start = payable_from(next_run, payday_day)
+    return (f"Jatuh tempo {_fmt(next_run)} masuk periode berikutnya, jadi belum bisa dibayar. "
+            f"Bisa dibayar mulai {_fmt(start)}.")

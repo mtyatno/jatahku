@@ -14,7 +14,9 @@ from app.models.models import (
     Transaction, TransactionSource,
 )
 from app.services.recurring_processor import _next_date
-from app.services.recurring_status import compute_recurring_status, take_paid_in_period
+from app.services.recurring_status import (
+    compute_recurring_status, take_paid_in_period, payable_from, payment_window_error,
+)
 from app.services.bills_summary import summarize_bills
 
 router = APIRouter()
@@ -39,6 +41,9 @@ class RecurringResponse(BaseModel):
     next_run: date
     is_active: bool
     status: str = "due"
+    # Bayar/Lewati hanya untuk jatuh tempo di periode aktif; payable_from = awal periode jatuh tempo.
+    payable: bool = True
+    payable_from: date | None = None
     model_config = {"from_attributes": True}
 
 
@@ -105,6 +110,8 @@ async def list_recurring(
             is_active=r.is_active,
             status=compute_recurring_status(r.next_run, r.frequency.value, today, period_end,
                                             paid_in_period=r.id in paid),
+            payable=r.next_run <= period_end,
+            payable_from=payable_from(r.next_run, payday),
         )
         for r, name, emoji in rows
     ]
@@ -149,6 +156,8 @@ async def create_recurring(
         is_active=rec.is_active,
         # Baru dibuat di web: belum ada pembayaran, jadi tidak pernah "paid".
         status=compute_recurring_status(rec.next_run, rec.frequency.value, today, period_end),
+        payable=rec.next_run <= period_end,
+        payable_from=payable_from(rec.next_run, getattr(user, "payday_day", None) or 1),
     )
 
 
@@ -221,6 +230,12 @@ async def _resolve_rec(rec_id, user, db):
     return rec
 
 
+def _ensure_payable(rec, user):
+    err = payment_window_error(rec.next_run, getattr(user, "payday_day", None) or 1, date.today())
+    if err:
+        raise HTTPException(status_code=409, detail=err)
+
+
 @router.post("/{rec_id}/pay")
 async def pay_recurring(
     rec_id: UUID,
@@ -229,6 +244,7 @@ async def pay_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     rec = await _resolve_rec(rec_id, user, db)
+    _ensure_payable(rec, user)
     prev = rec.next_run
     amount = req.amount if req.amount is not None else rec.amount
     txn = Transaction(
@@ -250,6 +266,7 @@ async def skip_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     rec = await _resolve_rec(rec_id, user, db)
+    _ensure_payable(rec, user)
     rec.next_run = _next_date(rec.next_run, rec.frequency)
     await db.commit()
     return {"next_run": rec.next_run}

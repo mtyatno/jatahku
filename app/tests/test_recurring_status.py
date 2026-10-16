@@ -1,7 +1,9 @@
 import unittest
 from datetime import date
 from types import SimpleNamespace
-from app.services.recurring_status import compute_recurring_status, take_paid_in_period
+from app.services.recurring_status import (
+    compute_recurring_status, take_paid_in_period, payment_window_error, payable_from,
+)
 
 TODAY = date(2026, 7, 8)
 PERIOD_END = date(2026, 7, 31)
@@ -68,6 +70,27 @@ class TakePaidInPeriodTests(unittest.TestCase):
         recs = [_rec(1, date(2026, 8, 5)), _rec(2, date(2026, 8, 9))]
         paid = take_paid_in_period(recs, pools, PERIOD_START, PERIOD_END)
         self.assertEqual(list(paid), [1])
+
+
+
+class PaymentWindowTests(unittest.TestCase):
+    # Gajian tgl 27 → periode aktif 27 Sep – 26 Okt 2026, hari ini 16 Okt.
+    T = date(2026, 10, 16)
+
+    def test_due_in_active_period_payable_even_early(self):
+        self.assertIsNone(payment_window_error(date(2026, 10, 25), 27, self.T))
+
+    def test_overdue_payable(self):
+        self.assertIsNone(payment_window_error(date(2026, 10, 3), 27, self.T))
+
+    def test_due_next_period_refused(self):
+        err = payment_window_error(date(2026, 11, 15), 27, self.T)
+        self.assertIn("27 Okt", err)
+        self.assertIn("15 Nov", err)
+
+    def test_payable_from_is_start_of_due_period(self):
+        self.assertEqual(payable_from(date(2026, 11, 15), 27), date(2026, 10, 27))
+        self.assertEqual(payable_from(date(2026, 11, 15), 1), date(2026, 11, 1))
 
 
 if __name__ == "__main__":

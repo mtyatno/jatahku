@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND } from './Icon';
-import { unpaidMonthlyTotal, sortForPayment, statusMeta } from '../lib/subscriptionStatus';
+import { unpaidMonthlyTotal, sortForPayment, statusMeta, canPay, payableFromLabel } from '../lib/subscriptionStatus';
 
 const TONE_CLS = {
   danger: 'bg-red-50 text-danger-400', warning: 'bg-amber-50 text-amber-600',
@@ -26,7 +26,7 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
     const amt = edit[item.id] != null && edit[item.id] !== '' ? edit[item.id] : null;
     const res = await api.payRecurring(item.id, amt);
     setBusy(null);
-    if (!res.ok) { setToast({ text: 'Gagal mencatat pembayaran' }); return; }
+    if (!res.ok) { setToast({ text: res.data?.detail || 'Gagal mencatat pembayaran' }); load(); return; }
     flip(item.id, 'paid');
     window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
     setToast({
@@ -54,7 +54,8 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
     const res = await api.skipRecurring(item.id);
     setBusy(null);
     // Dilewati bukan dibayar: status dibaca ulang dari server (bukan ditandai "Sudah bayar").
-    if (res.ok) { load(); }
+    if (!res.ok && res.data?.detail) setToast({ text: res.data.detail });
+    load();
   };
 
   const sorted = sortForPayment(items);
@@ -85,6 +86,8 @@ export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
                 </div>
                 {isPaid ? (
                   <Icon name="check" size={20} weight="fill" color={BRAND} />
+                ) : !canPay(item) ? (
+                  <span className="text-xs text-gray-400 text-right shrink-0 max-w-[8rem]">{payableFromLabel(item)}</span>
                 ) : (
                   <div className="flex flex-col items-end gap-1">
                     <input type="number" className="input font-mono text-right text-sm !py-1 w-28"
