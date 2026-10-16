@@ -43,6 +43,8 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 **Cara mencoba:** `PUT /admin/settings/advisor_v2_users?value=<user_id>`, lalu di Telegram/chat web: `/status`, "sisa", "limit harian", "kapan habis", "pengeluaran hari ini", "kenapa boros?", "kenapa makan habis?", "aman gak beli sepatu 300k". Ringkasan untuk satu user saja: di VPS, `python -c "import asyncio; from app.services.summary import send_daily_summary as f; asyncio.run(f(user_id='<id>'))"` (endpoint `/daily-summary` admin mengirim ke **semua** user).
 
+**Lanjut:** S7 (#62, kartu AI Advisor) bila belum; lalu S10 (#65) dengan prompt pembuka §3. Di S10, bandingkan Beranda vs `/status` vs "sisa" di chat web untuk akun tim (angka harus identik, lihat `test_advisor_chat.ParitasDatabaseTests`), nyalakan flag `*`, lalu hapus jawaban lama di `nlp_cmd`/`cmd_status`/`checkin_cmd`/`summary.py` (cari pemanggil `advisor_cmd.jawab` dan `_analisa_v2`).
+
 ---
 
 ## S6 · 2026-10-16 · pemilik produk + Claude
