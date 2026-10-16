@@ -14,7 +14,7 @@ from app.models.models import (
     Transaction, TransactionSource,
 )
 from app.services.recurring_processor import _next_date
-from app.services.recurring_status import compute_recurring_status
+from app.services.recurring_status import compute_recurring_status, take_paid_in_period
 from app.services.bills_summary import summarize_bills
 
 router = APIRouter()
@@ -49,6 +49,27 @@ async def _get_hid(user: User, db: AsyncSession):
     return result.scalar_one_or_none()
 
 
+async def _paid_in_period(db: AsyncSession, recs, period_start: date, period_end: date) -> dict:
+    """{rec.id: nominal} langganan bulanan yang dibayar di periode ini (lihat take_paid_in_period)."""
+    env_ids = {r.envelope_id for r in recs}
+    if not env_ids:
+        return {}
+    rows = (await db.execute(
+        select(Transaction.envelope_id, Transaction.amount, Transaction.description)
+        .where(
+            Transaction.envelope_id.in_(env_ids),
+            Transaction.is_deleted == False,
+            Transaction.transaction_date >= period_start,
+            Transaction.transaction_date <= period_end,
+            Transaction.description.like("🔄 %"),
+        )
+    )).all()
+    pools = {}
+    for env_id, amount, desc in rows:
+        pools.setdefault(env_id, []).append((amount, desc))
+    return take_paid_in_period(recs, pools, period_start, period_end)
+
+
 @router.get("/", response_model=list[RecurringResponse])
 async def list_recurring(
     user: User = Depends(get_current_user),
@@ -72,7 +93,8 @@ async def list_recurring(
 
     today = date.today()
     payday = getattr(user, "payday_day", None) or 1
-    _ps, period_end = get_budget_period(payday, today)
+    period_start, period_end = get_budget_period(payday, today)
+    paid = await _paid_in_period(db, [r for r, _n, _e in rows], period_start, period_end)
 
     return [
         RecurringResponse(
@@ -81,7 +103,8 @@ async def list_recurring(
             amount=r.amount, description=r.description,
             frequency=r.frequency.value, next_run=r.next_run,
             is_active=r.is_active,
-            status=compute_recurring_status(r.next_run, r.frequency.value, today, period_end),
+            status=compute_recurring_status(r.next_run, r.frequency.value, today, period_end,
+                                            paid_in_period=r.id in paid),
         )
         for r, name, emoji in rows
     ]
@@ -116,12 +139,16 @@ async def create_recurring(
     db.add(rec)
     await db.commit()
     await db.refresh(rec)
+    today = date.today()
+    _ps, period_end = get_budget_period(getattr(user, "payday_day", None) or 1, today)
     return RecurringResponse(
         id=rec.id, envelope_id=rec.envelope_id,
         envelope_name=envelope.name, envelope_emoji=envelope.emoji,
         amount=rec.amount, description=rec.description,
         frequency=rec.frequency.value, next_run=rec.next_run,
         is_active=rec.is_active,
+        # Baru dibuat di web: belum ada pembayaran, jadi tidak pernah "paid".
+        status=compute_recurring_status(rec.next_run, rec.frequency.value, today, period_end),
     )
 
 

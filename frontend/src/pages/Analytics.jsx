@@ -173,7 +173,7 @@ export default function Analytics() {
   const perhatian = envelopes.filter(e => (e.purpose || 'expense') === 'expense' && fundingState(e) !== 'ok').length;
   const subsTotal = monthlyEquivalentTotal(recurring);
   const subsUnpaid = unpaidMonthlyTotal(recurring);
-  const unpaidCount = recurring.filter(i => i.frequency === 'monthly' && i.status !== 'paid').length;
+  const unpaidCount = recurring.filter(i => i.frequency === 'monthly' && (i.status === 'overdue' || i.status === 'due')).length;
   const sinkCount = sinking?.recommendations?.length || 0;
   const savingDelta = alloc?.saving_pct_prev != null ? alloc.saving_pct - alloc.saving_pct_prev : null;
   const HEAT_COLORS = isDark

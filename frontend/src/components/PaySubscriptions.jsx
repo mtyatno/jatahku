@@ -9,7 +9,7 @@ const TONE_CLS = {
   safe: 'bg-brand-50 text-brand-600', neutral: 'bg-gray-100 text-gray-500',
 };
 
-export default function PaySubscriptions({ onClose }) {
+export default function PaySubscriptions({ onClose, reloadKey = 0 }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState({});          // id -> nominal string (editable)
@@ -17,7 +17,7 @@ export default function PaySubscriptions({ onClose }) {
   const [toast, setToast] = useState(null);      // { text, undo }
 
   const load = () => api.getRecurring().then(d => { setItems(d || []); setLoading(false); });
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [reloadKey]);
 
   const flip = (id, status) => setItems(prev => prev.map(i => i.id === id ? { ...i, status } : i));
 
@@ -53,7 +53,8 @@ export default function PaySubscriptions({ onClose }) {
     setBusy(item.id);
     const res = await api.skipRecurring(item.id);
     setBusy(null);
-    if (res.ok) { flip(item.id, 'paid'); }
+    // Dilewati bukan dibayar: status dibaca ulang dari server (bukan ditandai "Sudah bayar").
+    if (res.ok) { load(); }
   };
 
   const sorted = sortForPayment(items);
