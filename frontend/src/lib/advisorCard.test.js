@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  dismissOptions, visibleItems, badgeCount, overflowLabel, primaryAction, askChips, askAction,
+  dismissOptions, visibleItems, badgeCount, overflowLabel, primaryAction, askChips, askAction, hiddenList,
 } from './advisorCard.js';
 
 // Bentuk `advisor` dari susun_dashboard(contoh_15_okt()) dengan aturan S4 (02-aturan.md §12).
@@ -101,4 +101,23 @@ test('ask action sends the tapped chip and keeps the rest in the chat', () => {
   assert.equal(a.payload.kirim, true);
   assert.equal(a.payload.chip.length, chips.length - 1);
   assert.deepEqual(askAction(chips, null), { kind: 'chat', payload: { chip: chips } });
+});
+
+test('hiddenList: yang disembunyikan, tanpa yang baru dimunculkan lagi (#91)', () => {
+  const adv = {
+    disembunyikan: [
+      { kunci: 'HAR-01:2026-10-17', judul_pendek: 'Belanja hari ini 1,8× jatah', pilihan: 'nanti' },
+      { kunci: 'TAB-01:darurat', judul_pendek: 'Dana Darurat baru 4%', pilihan: 'periode' },
+      { kunci: 'DAT-05:x', judul_pendek: '', pilihan: 'tidak_relevan' },
+      null,
+    ],
+  };
+  assert.deepEqual(hiddenList(adv), [
+    { kunci: 'HAR-01:2026-10-17', judul: 'Belanja hari ini 1,8× jatah', sampai: 'sampai besok' },
+    { kunci: 'TAB-01:darurat', judul: 'Dana Darurat baru 4%', sampai: 'sampai akhir periode' },
+    { kunci: 'DAT-05:x', judul: 'DAT-05:x', sampai: 'tidak relevan' },
+  ]);
+  assert.deepEqual(hiddenList(adv, ['TAB-01:darurat', 'DAT-05:x']).map(d => d.kunci), ['HAR-01:2026-10-17']);
+  assert.deepEqual(hiddenList({}), []);
+  assert.deepEqual(hiddenList(ADVISOR), []);
 });

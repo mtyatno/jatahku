@@ -24,7 +24,10 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // household tanpa amplop tabungan). Bisa juga null bila satu-satunya insight kartu itu sedang di-dismiss.
   "grafik": { "teks": "4 dari 7 hari terakhir lewat jatah, tertinggi Senin 12 Okt Rp400 rb", "aksi": {/* CTA route */} | null },
   "advisor": { "items": [/* insight, maks 3 */], "sisa": [{"id": "TAB-01:…", "judul_pendek": "Dana Darurat baru 3%"}], "total": 4,
-               "aman": null },  // aman = satu insight ok terbaik bila items kosong ("Semua aman"), selain itu null
+               "aman": null,  // aman = satu insight ok terbaik bila items kosong ("Semua aman"), selain itu null
+               "disembunyikan": [{"kunci": "HAR-01:2026-10-17", "judul_pendek": "…", "pilihan": "nanti"}] },
+  // disembunyikan (#91) = insight yang sedang menyala tapi di-dismiss viewer (daftar maupun chip KPI), urut tone/skor.
+  // Kartu AI Advisor menampilkannya sebagai "N disembunyikan · Tampilkan" + Munculkan lagi. [] bila tidak ada.
   "redam_chip": true
 }
 // User di luar flag advisor_v2_users → { "enabled": false } saja (tanpa field lain).
@@ -42,7 +45,7 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // diserap (penekanan 2/3/6), mis. HAR-01 & AMP-02/03 di Rincian PER-01. aksi[].payload sudah lengkap (chat: {teks}).
 
 // kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
-//                      | route | chat | dismiss | delete_txn | not_duplicate
+//                      | route | chat | dismiss | undismiss | delete_txn | not_duplicate   (undismiss: #91, hanya frontend)
 
 // POST /advisor/plan  { "kebutuhan": [{"tujuan_id","jumlah","bayar_recurring_id"?}],   (1–10 item)
 //                      "kecuali": ["<dari_id>"]?,      // sumber yang dilepas user → dihitung ulang tanpa itu
@@ -70,6 +73,9 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 //   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
 //   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
+// DELETE /advisor/dismiss?kunci=…  (#91, Urungkan / Munculkan lagi) → 204
+//   Menghapus dismiss milik viewer sendiri untuk kunci itu + cache dashboard viewer; insight tampil lagi di muatan
+//   berikutnya. Idempoten: 204 juga bila kunci tidak sedang disembunyikan. Dismiss viewer lain tidak tersentuh.
 ```
 
 ## Aksi CTA di frontend (S8)
@@ -88,8 +94,9 @@ Aksi dijalankan lewat `window.dispatchEvent(new CustomEvent('jatahku:open-action
 | `make_recurring` | `{deskripsi, jumlah, frekuensi?, amplop_id?, next_run?}` | Modal Langganan tab Tambah, `RecurringModal` terisi |
 | `route` | `{path}` | Navigasi SPA; hanya path relatif di daftar halaman app (`safeRoute`). Halaman reaktif: `/transactions?date=YYYY-MM-DD&envelope=<id>`, `/allocate?new=1&amount=&source=` |
 | `chat` | `{teks?, chip?: [string \| {label, text}], kirim?}` | Chat terbuka, teks diisikan (atau dikirim bila `kirim`), chip tampil paling depan |
-| `dismiss` | `{kunci, pilihan?}` | `POST /advisor/dismiss` (default `nanti`) → event `jatahku:advisor-dismissed` `{kunci, pilihan}` |
-| `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan` |
+| `dismiss` | `{kunci, pilihan?}` | `POST /advisor/dismiss` (default `nanti`) → event `jatahku:advisor-dismissed` `{kunci, pilihan}` → toast "Disembunyikan sampai …" dengan tombol **Urungkan** (= `undismiss`, #91) |
+| `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan`; toast "Ditandai bukan dobel" + **Urungkan** |
+| `undismiss` | `{kunci}` | `DELETE /advisor/dismiss?kunci=` → event `jatahku:advisor-undismissed` `{kunci}` (Beranda memuat ulang) → toast "Ditampilkan lagi". Dipakai tombol Urungkan dan **Munculkan lagi** di kartu (#91) |
 | `delete_txn` | `{txn_id, txn_ids?, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` untuk tiap id (`txn_ids` bila ada: struk terkirim dua kali, DAT-03 S4b) → `jatahku:txn-added` |
 
 Setelah data berubah, penerima menembakkan `jatahku:txn-added` (dan `jatahku:envelope-updated` untuk transfer/amplop) supaya Beranda dan halaman lain memuat ulang (dan cache advisor server dihapus oleh route terkait, S3).

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   normalizeAction, safeRoute, parseTransactionsQuery, periodIndexFor, parseAllocateQuery,
   incomePrefill, recurringPrefill, chatDraft, kebutuhanTotal, rencanaTotal, excludedSources,
-  toggleRow, executeBody, newClientRef, isIsoDate,
+  toggleRow, executeBody, newClientRef, isIsoDate, dismissNotice,
 } from './advisorAction.js';
 
 test('normalizeAction: string lama tetap jalan', () => {
@@ -105,4 +105,14 @@ test('executeBody mengirim balik kebutuhan & kecuali untuk rencana_baru', () => 
 
 test('newClientRef unik', () => {
   assert.notEqual(newClientRef(), newClientRef());
+});
+
+test('undismiss & teks toast dismiss (#91)', () => {
+  assert.deepEqual(normalizeAction({ kind: 'undismiss', payload: { kunci: 'HAR-01:2026-10-17' } }),
+    { kind: 'undismiss', payload: { kunci: 'HAR-01:2026-10-17' } });
+  assert.equal(dismissNotice('dismiss', 'nanti'), 'Disembunyikan sampai besok 05.00');
+  assert.equal(dismissNotice('dismiss', 'periode'), 'Disembunyikan sampai akhir periode');
+  assert.equal(dismissNotice('dismiss', 'tidak_relevan'), 'Ditandai tidak relevan');
+  assert.equal(dismissNotice('dismiss', undefined), 'Disembunyikan sampai besok 05.00');
+  assert.equal(dismissNotice('not_duplicate', 'tidak_relevan'), 'Ditandai bukan dobel');
 });

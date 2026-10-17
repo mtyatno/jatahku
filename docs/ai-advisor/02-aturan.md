@@ -615,6 +615,11 @@ Dipakai oleh semua CTA "Geser", "Geser & bayar", "Tutup minus", dan "Pindahkan k
 - **Sembunyikan periode ini:** sampai pe.
 - **Tidak relevan** (di Rincian): aturan itu dimatikan untuk entitas itu selama 90 hari, dan dicatat untuk evaluasi aturan.
 - **Muncul lagi lebih awal** hanya bila tone naik (info → warn → danger) atau rupiah terdampak naik ≥ 50% sejak disembunyikan.
+- **Urungkan / Munculkan lagi** (revisi 17 Okt 2026, #91): user bisa membatalkan dismiss kapan saja.
+  - Setelah menyembunyikan, toast "Disembunyikan sampai …" memberi tombol **Urungkan** (±6 detik).
+  - Kartu AI Advisor menampilkan "N disembunyikan · Tampilkan": judul pendek, sampai kapan, dan **Munculkan lagi**.
+  - Membatalkan menghapus status dismiss (bukan menyembunyikan ulang), berlaku seketika, hanya untuk dismiss milik viewer sendiri (`DELETE /advisor/dismiss`).
+  - Permukaan lain yang membaca status dismiss (notifikasi proaktif S16, chat S17) memakai status terbaru: yang sudah dimunculkan lagi boleh dikirim/dijawab lagi.
 - **Notifikasi proaktif** (Telegram, lonceng web, chat web):
   - maksimal 1 per hari dari advisor, isinya item #1 daftar;
   - jam tenang 21.00–07.00, kecuali tagihan yang jatuh tempo hari itu (dikirim pagi);

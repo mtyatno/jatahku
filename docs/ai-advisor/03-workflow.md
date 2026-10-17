@@ -127,8 +127,8 @@ Estimasi dalam jam Claude Code aktif. "Paralel" = boleh dikerjakan bersamaan ole
 ### Fase 4 — Proaktif, chat, copy
 | Sesi | Nama | Jam | Dependensi | Hasil & file |
 |---|---|---|---|---|
-| **S16** | Notifikasi proaktif | 3 | S9 | ringkasan harian/mingguan dari insight; pengingat tagihan patuh preferensi dan tidak berulang; jam tenang; 1/hari; lonceng web + Telegram + chat web; `send_budget_warning` dari insight danger |
-| **S17** | Chat lengkap | 2 | S9 | semua intent §6H, chip cepat per halaman, `help_cmd.py`, daftar `BotCommand`, "aman beli" dengan pilihan ganti amplop |
+| **S16** | Notifikasi proaktif | 3 | S9 | ringkasan harian/mingguan dari insight; pengingat tagihan patuh preferensi dan tidak berulang; jam tenang; 1/hari; lonceng web + Telegram + chat web; `send_budget_warning` dari insight danger; **cek #91**: notifikasi menghormati dismiss terbaru (termasuk yang di-Urungkan) dan tidak membuat jalur dismiss sendiri |
+| **S17** | Chat lengkap | 2 | S9 | semua intent §6H, chip cepat per halaman, `help_cmd.py`, daftar `BotCommand`, "aman beli" dengan pilihan ganti amplop; **cek #91**: bila chat menawarkan sembunyikan/munculkan lagi, pakai `POST`/`DELETE /advisor/dismiss` yang sama |
 | **S18** | Copy, landing, blog, dokumen | 2 | S10 | `landing.html` (±10 tempat), 6 artikel blog + 1 artikel baru, `README.md`, `og-image.svg`, hapus kode basi |
 | **S19** | Pikir-Pikir masuk AI Advisor | 2 | Pikir-Pikir Fase 2/3 | PP-01..03 — menunggu |
 

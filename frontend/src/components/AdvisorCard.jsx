@@ -4,7 +4,7 @@ import { chipTones } from './AdvisorChip';
 import { openAction } from '../lib/advisorAction';
 import { basisLabel } from '../lib/advisorDashboard';
 import {
-  askAction, askChips, badgeCount, dismissKey, dismissOptions, overflowLabel, primaryAction, visibleItems,
+  askAction, askChips, badgeCount, dismissKey, dismissOptions, hiddenList, overflowLabel, primaryAction, visibleItems,
 } from '../lib/advisorCard';
 
 // Kartu AI Advisor Beranda (01-desain.md "Kartu AI Advisor", 02-aturan.md §7 & §9), pengganti
@@ -72,22 +72,30 @@ function ItemDetail({ insight, stamp }) {
 export default function AdvisorCard({ dash, stamp, isDark }) {
   const advisor = dash?.advisor || {};
   const [hidden, setHidden] = useState([]);
+  const [restored, setRestored] = useState([]);
   const [openId, setOpenId] = useState(null);
+  const [showHidden, setShowHidden] = useState(false);
   const tones = chipTones(isDark);
 
-  // Disembunyikan → hilang seketika; muatan ulang Beranda (advisor-dismissed) membawa daftar baru.
+  // Disembunyikan / dimunculkan lagi → berubah seketika; muatan ulang Beranda membawa daftar baru.
   useEffect(() => {
     const on = (e) => { const k = e.detail?.kunci; if (k) setHidden(h => [...h, k]); };
+    const back = (e) => { const k = e.detail?.kunci; if (k) setRestored(r => [...r, k]); };
     window.addEventListener('jatahku:advisor-dismissed', on);
-    return () => window.removeEventListener('jatahku:advisor-dismissed', on);
+    window.addEventListener('jatahku:advisor-undismissed', back);
+    return () => {
+      window.removeEventListener('jatahku:advisor-dismissed', on);
+      window.removeEventListener('jatahku:advisor-undismissed', back);
+    };
   }, []);
-  useEffect(() => { setHidden([]); }, [dash]);
+  useEffect(() => { setHidden([]); setRestored([]); }, [dash]);
 
   const items = visibleItems(advisor, hidden);
   const count = badgeCount(advisor, hidden);
   const overflow = overflowLabel(advisor.sisa);
   const aman = items.length === 0 && advisor.aman && !hidden.includes(dismissKey(advisor.aman)) ? advisor.aman : null;
   const chips = askChips(dash);
+  const tersembunyi = hiddenList(advisor, restored);
 
   return (
     <section aria-labelledby="ai-advisor-title" className="card !px-4 md:!px-6 !pt-5 md:!pt-6 !pb-4 min-w-0 flex flex-col">
@@ -174,6 +182,32 @@ export default function AdvisorCard({ dash, stamp, isDark }) {
 
       {overflow && (
         <p className="px-1 py-3 text-[13px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>{overflow}</p>
+      )}
+
+      {tersembunyi.length > 0 && (
+        <div className="px-1 py-2.5 text-[13px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border)' }}>
+          <button type="button" onClick={() => setShowHidden(v => !v)} aria-expanded={showHidden}
+            className="inline-flex items-center gap-1 hover:underline">
+            {tersembunyi.length} disembunyikan · {showHidden ? 'Tutup' : 'Tampilkan'}
+            <Icon name="chevron" size={12} weight="bold" style={{ transform: showHidden ? 'rotate(180deg)' : 'none' }} />
+          </button>
+          {showHidden && (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {tersembunyi.map(d => (
+                <li key={d.kunci} className="flex items-center justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="font-medium" style={{ color: 'var(--text)' }}>{d.judul}</span>
+                    <span> · {d.sampai}</span>
+                  </span>
+                  <button type="button" onClick={() => openAction({ kind: 'undismiss', payload: { kunci: d.kunci } })}
+                    className="font-medium shrink-0 hover:underline" style={{ color: 'var(--brand-600)' }}>
+                    Munculkan lagi
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <div className="mt-auto pt-3 px-1" style={{ borderTop: '1px solid var(--border)' }}>

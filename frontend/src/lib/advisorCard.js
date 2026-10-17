@@ -26,6 +26,16 @@ export function dismissOptions(insight) {
   return raw.filter(p => DISMISS_LABEL[p] && !taken.has(p)).map(p => ({ pilihan: p, label: DISMISS_LABEL[p] }));
 }
 
+// "N disembunyikan" di kartu: `advisor.disembunyikan` dari server, tanpa yang baru saja
+// dimunculkan lagi (sebelum muatan ulang tiba).
+const HIDDEN_UNTIL = { nanti: 'sampai besok', periode: 'sampai akhir periode', tidak_relevan: 'tidak relevan' };
+export function hiddenList(advisor, restored = []) {
+  const back = new Set(restored);
+  return (Array.isArray(advisor?.disembunyikan) ? advisor.disembunyikan : [])
+    .filter(d => d && d.kunci && !back.has(d.kunci))
+    .map(d => ({ kunci: d.kunci, judul: d.judul_pendek || d.kunci, sampai: HIDDEN_UNTIL[d.pilihan] || HIDDEN_UNTIL.nanti }));
+}
+
 // Item yang tampil, tanpa yang baru saja disembunyikan (sebelum muatan ulang tiba).
 export function visibleItems(advisor, hidden = []) {
   const items = Array.isArray(advisor?.items) ? advisor.items : [];

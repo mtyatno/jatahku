@@ -567,6 +567,16 @@ class ApiClient {
     return this._advisorPost('/advisor/dismiss', { kunci, pilihan });
   }
 
+  // Urungkan / Munculkan lagi (#91). 204 juga bila tidak ada yang disembunyikan.
+  async advisorUndismiss(kunci) {
+    try {
+      const res = await this.request(`/advisor/dismiss?kunci=${encodeURIComponent(kunci)}`, { method: 'DELETE' });
+      return { ok: res.ok, status: res.status };
+    } catch {
+      return { ok: false, status: 0 };
+    }
+  }
+
   async resetData(email = null) {
     const body = email ? { email } : {};
     return this.request('/user/reset', {

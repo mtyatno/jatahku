@@ -13,7 +13,8 @@ jalur baru otomatis ikut. Pemanggilan langsung tetap boleh (mis. dari skrip).
 
 Dismiss: `advisor:dismiss:{viewer}:{kunci}` → JSON {"pilihan", "tone", "rupiah"} dengan
 TTL sesuai pilihan (Nanti s/d besok 05.00 waktu user, Periode s/d akhir periode,
-Tidak relevan 90 hari). Redis mati → fail open (tanpa cache, tanpa dismiss).
+Tidak relevan 90 hari). User bisa membatalkannya kapan saja (`hapus_dismiss`, #91).
+Redis mati → fail open (tanpa cache, tanpa dismiss).
 """
 from __future__ import annotations
 
@@ -127,6 +128,19 @@ async def simpan_dismiss(viewer, kunci: str, pilihan: str, tone: str | None, rup
             await r.aclose()
     except Exception as exc:
         logger.warning("advisor dismiss set gagal: %s", exc)
+
+
+async def hapus_dismiss(viewer, kunci: str) -> bool:
+    """Batalkan dismiss milik viewer (Urungkan / Munculkan lagi). True bila ada yang dihapus."""
+    try:
+        r = _redis()
+        try:
+            return bool(await r.delete(kunci_dismiss(viewer, kunci)))
+        finally:
+            await r.aclose()
+    except Exception as exc:
+        logger.warning("advisor dismiss hapus gagal: %s", exc)
+        return False
 
 
 async def muat_dismiss(viewer) -> dict:
