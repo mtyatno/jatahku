@@ -4,6 +4,39 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## B07 · 1.10 Pemeriksaan tablet di web · 2026-10-17 · pemilik produk + Claude
+
+**Selesai** (sesi 1 dari 4; status jeda, PR draft WIP)
+- Diperiksa di Chromium (Playwright, API tiruan, tema gelap dan terang) pada HP 390×844, iPad 768↔1024, iPad Air 820↔1180, tablet Android 800↔1280, tablet kecil 600↔960, desktop 1440×900: Beranda (UI lama, tanpa AI Advisor), panel chat, dialog Catat/Income/Langganan, rotasi. Tidak ada scroll horizontal di ukuran mana pun.
+- `Dashboard.jsx`: tiga baris kartu berdampingan (grafik + Perlu perhatian/AI Advisor, Amplop pengeluaran + Target tabungan, Transaksi terbaru + Langganan) dipisah dua kolom di `xl` (≥1280), bukan `lg`. Di 1024–1279 (iPad lanskap) kolom kiri ±430 px, padahal tabel di dalam kartu memakai breakpoint viewport `md:` dan mengira kartu selebar layar: nama amplop terpotong ("Bela…"), batang Terpakai hilang, kolom Transaksi/Langganan terpotong. Sekarang kartu bertumpuk selebar penuh di rentang itu.
+- `ChatPanel.jsx`: panel samping (≥768, termasuk tablet) naik di atas keyboard layar (`bottom = vp.inset` saat `vp.keyboard`). Sebelumnya hanya sheet HP yang menyesuaikan, jadi di iPad/Chrome Android kotak ketik tertutup keyboard. Diuji dengan `visualViewport.height` tiruan: bawah panel 1024 → 704.
+- `ChatPanel.jsx`: kunci gulir `body` mengikuti `vp.desktop`, jadi dilepas saat layar diputar dari sheet (<768) ke panel samping dan dipasang lagi saat kembali. Sebelumnya terkunci terus sampai chat ditutup.
+- Tidak berubah (diperiksa): KPI 2 kolom di `md`, 3 di `lg`; bottom nav + FAB di potret; sidebar + top bar di lanskap; dialog `max-w-2xl` di kedua orientasi; desktop 1440 dan HP 390 (tinggi halaman identik sebelum/sesudah).
+- `PROGRESS.md`: 1.2 (#119) dan 1.5 (#120) selesai, deploy terverifikasi lewat `deploy.yml` (run 388, 389).
+
+**Digantung**
+- Sesi berikut (B08–B10): halaman Amplop, Transaksi, Alokasi, Langganan, Analitik, Pengaturan di ukuran tablet; Beranda dengan AI Advisor aktif (`/advisor/dashboard` enabled, butuh mock `metrics`/`kpi`/`grafik`); dialog lain (FundEnvelopeModal, PlanSheet, NotificationBell).
+- Kriteria paket: tangkapan layar dari iPad dan tablet Android **sungguhan**, potret dan lanskap — butuh orang dengan perangkat. Simulasi keyboard di Chromium tidak membuktikan perilaku Safari iPad.
+- Temuan di luar scope: dialog aksi di `Layout.jsx` memakai `max-h-[90vh]`; di iPad dengan keyboard terbuka bagian bawah dialog bisa tertutup (`dvh` / visualViewport lebih tepat). Perlu dicek di perangkat dulu.
+- Komponen tabel Beranda (`SpendingEnvelopes`, `RecentTransactions`) memilih tata letak dari lebar viewport, bukan lebar kartu. Aman selama kartu selebar penuh di bawah `xl`; container query akan lebih kokoh bila tata letak berubah lagi.
+
+**Jebakan**
+- `pkill -f vite` di perintah Bash yang sama ikut membunuh shell (exit 144) — commit di perintah itu tidak jalan. Jalankan vite dengan `setsid … & echo $! > pid`, matikan dengan `kill -- -$(cat pid)`.
+- Tema bawaan gelap (`lib/theme.js`); untuk terang set `localStorage.jatahku_theme = {"color":"hijau","mode":"light"}` di init script.
+- Mock Beranda butuh `days_passed`, `safe_days`, `total_available`, `predicted_cash_flow` di `/analytics/prediction`; tanpa itu muncul "undefined hari"/NaN (artefak mock, bukan bug).
+- Screenshot `fullPage` menaruh elemen `fixed` (bottom nav, FAB) di tengah gambar; nilai tata letak elemen fixed dari screenshot viewport.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan dengan `git checkout -- dist`.
+
+**Keputusan kecil**
+- Ambang dua kolom Beranda dinaikkan ke 1280 alih-alih mengubah komponen kartu: diff 3 baris, desktop ≥1280 identik.
+- Tidak ada cek platform di komponen (ADR-M6): semua perbaikan memakai lebar layar dan Visual Viewport API yang sudah dipakai sheet HP.
+
+**Cara melanjutkan**
+- `git fetch origin && git checkout mobile/1.10-tablet && git merge origin/main`, lalu `/sesi B08`. Skrip Playwright dan mock tidak di-commit; pola: `page.route('**/api/**')`, `localStorage.jatahku_token`, Playwright di `/opt/node-tools/node_modules/playwright`.
+- Pemilik produk: perubahan sesi ini kecil dan aman untuk web, jadi PR boleh di-merge sebelum paket selesai (sesi berikut memakai branch baru dari `main`). Setelah tayang, buka produksi di iPad dan tablet Android, potret dan lanskap, termasuk chat dengan keyboard terbuka; simpan tangkapan layar untuk kriteria paket.
+
+---
+
 ## B01–B06 · 1.5 Lapisan src/native/ versi web · 2026-10-17 · pemilik produk + Claude
 
 **Selesai** (paket selesai dalam satu sesi; status review, PR #120)
