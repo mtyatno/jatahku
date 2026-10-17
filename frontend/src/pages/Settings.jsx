@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
 import GoogleButton from '../components/GoogleButton';
 import { useTheme } from '../hooks/useTheme';
@@ -471,12 +472,7 @@ export default function Settings() {
     if (!file) return;
     const form = new FormData();
     form.append('file', file);
-    const baseUrl = api.baseUrl || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://api.jatahku.com');
-    const res = await fetch(baseUrl + '/user/profile-pic', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + api.token },
-      body: form,
-    });
+    const res = await api.request('/user/profile-pic', { method: 'POST', body: form });
     if (res.ok) { flash('Foto diperbarui'); load(); }
     else flashErr('Gagal upload. Max 2MB.');
   };
@@ -518,14 +514,7 @@ export default function Settings() {
       if (res.ok) {
         const data = await res.json();
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'jatahku-data-' + (profile?.name || 'user') + '.json';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await native.files.save(blob, 'jatahku-data-' + (profile?.name || 'user') + '.json');
         flash('Data berhasil didownload', 'data');
       }
     } catch (e) {
@@ -693,15 +682,9 @@ export default function Settings() {
             <div className="space-y-4">
               <div className="bg-brand-50 rounded-xl p-4">
                 <p className="text-sm font-semibold text-brand-700 mb-2">Langkah 1: Buka bot di Telegram</p>
-                <a href={`https://t.me/JatahkuBot?start=link_${linkCode}`} target="_blank" rel="noreferrer"
-                  onClick={() => {
-                    // Also try tg:// to open app directly (hidden anchor, won't navigate page)
-                    const a = document.createElement('a');
-                    a.href = `tg://resolve?domain=JatahkuBot&start=link_${linkCode}`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                  }}
+                <a {...native.externalLinkProps(`https://t.me/JatahkuBot?start=link_${linkCode}`, null,
+                    // Coba juga buka aplikasi Telegram langsung lewat tg://
+                    { appUrl: `tg://resolve?domain=JatahkuBot&start=link_${linkCode}` })}
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition-colors">
                   📱 Buka @JatahkuBot
                 </a>
@@ -769,7 +752,7 @@ export default function Settings() {
               Bagikan kode ini ke anggota. Mereka bisa join via:
             </p>
             <ul className="text-xs text-gray-400 space-y-0.5 ml-4" style={{ listStyle: 'disc' }}>
-              <li>Telegram: kirim <code className="text-brand-600">/join {inviteCode}</code> ke <a href="https://t.me/JatahkuBot" target="_blank" className="text-brand-600 underline">@JatahkuBot</a></li>
+              <li>Telegram: kirim <code className="text-brand-600">/join {inviteCode}</code> ke <a {...native.externalLinkProps('https://t.me/JatahkuBot')} className="text-brand-600 underline">@JatahkuBot</a></li>
               <li>PWA: masukkan kode di form <b>Gabung Household</b> di bawah ini</li>
             </ul>
           </div>
