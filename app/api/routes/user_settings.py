@@ -4,16 +4,21 @@ import hashlib
 from uuid import UUID
 from datetime import datetime, timezone
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete, or_, exists
 from pydantic import BaseModel
 
+from app.api.routes.auth import limiter
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.deps import get_current_session_id, get_current_user
 from app.core.security import hash_password, verify_password
-from app.services import auth_sessions
-from app.services.email_service import send_password_changed_email
+from app.services import account_deletion, auth_sessions
+from app.services.email_service import (
+    send_account_deleted_email, send_account_deletion_email, send_password_changed_email,
+)
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
@@ -308,36 +313,82 @@ async def export_data(
 
 @router.delete("/account")
 async def delete_account(
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft delete: anonymize user data."""
-    user.email = f"deleted_{user.id}@jatahku.com"
-    user.name = "Deleted User"
-    user.password_hash = "DELETED"
-    user.telegram_id = None
-    user.google_id = None
-    user.profile_pic = None
+    """Hapus akun permanen + cabut semua sesi (app/services/account_deletion.py)."""
+    await _delete_and_notify(db, user, background_tasks)
+    return {"status": "deleted"}
 
-    # Soft delete transactions
-    await db.execute(
-        update(Transaction).where(Transaction.user_id == user.id).values(is_deleted=True)
-    )
 
-    # Deactivate envelopes
-    hid_result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_result.scalar_one_or_none()
-    if hid:
-        await db.execute(
-            update(Envelope).where(
-                Envelope.household_id == hid,
-                Envelope.owner_id == user.id,
-            ).values(is_active=False)
-        )
+GENERIC_DELETION_MESSAGE = "Kalau email terdaftar, link konfirmasi hapus akun sudah dikirim."
 
-    await db.commit()
+
+class DeletionRequest(BaseModel):
+    email: str
+
+
+class DeletionConfirm(BaseModel):
+    token: str
+
+
+async def _delete_and_notify(db: AsyncSession, user: User, background_tasks: BackgroundTasks) -> None:
+    email, name = user.email, user.name
+    files = await account_deletion.delete_account(db, user)
+    background_tasks.add_task(account_deletion.remove_files, files)
+    if email and not email.startswith(("deleted_", "banned_")):
+        background_tasks.add_task(send_account_deleted_email, email, name)
+
+
+@router.post("/account/deletion-request")
+@limiter.limit("3/minute")
+async def request_account_deletion(
+    request: Request,
+    req: DeletionRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Halaman /hapus-akun tanpa login: kirim link konfirmasi ke email akun.
+    Jawaban selalu sama supaya tidak membocorkan email mana yang terdaftar."""
+    email = req.email.strip().lower()
+    user = None
+    if email and not email.startswith(("deleted_", "banned_")):
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user and user.id != account_deletion.FORMER_MEMBER_ID:
+        r = aioredis.from_url(get_settings().REDIS_URL)
+        try:
+            token = await account_deletion.create_deletion_token(r, str(user.id))
+        finally:
+            await r.close()
+        url = f"https://jatahku.com/hapus-akun?token={token}"
+        background_tasks.add_task(send_account_deletion_email, user.email, user.name, url)
+    return {"message": GENERIC_DELETION_MESSAGE}
+
+
+@router.post("/account/deletion-confirm")
+@limiter.limit("5/minute")
+async def confirm_account_deletion(
+    request: Request,
+    req: DeletionConfirm,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Link dari email permintaan hapus: token sekali pakai → akun dihapus."""
+    r = aioredis.from_url(get_settings().REDIS_URL)
+    try:
+        user_id = await account_deletion.redeem_deletion_token(r, req.token)
+    finally:
+        await r.close()
+    user = None
+    try:
+        if user_id:
+            user = (await db.execute(select(User).where(User.id == UUID(user_id)))).scalar_one_or_none()
+    except ValueError:
+        pass
+    if not user or user.id == account_deletion.FORMER_MEMBER_ID:
+        raise HTTPException(400, "Link tidak valid atau sudah kadaluarsa")
+    await _delete_and_notify(db, user, background_tasks)
     return {"status": "deleted"}
 
 
