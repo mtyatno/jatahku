@@ -125,7 +125,7 @@ Grafik Pengeluaran harian membaca deret harian dari metrik yang sama (belanja va
 12. Kartu Jatah hari ini membandingkan dengan J1 (ikut turun saat belanja), seharusnya J0.
 13. Kelompok amplop belum seragam (`debt` di Sisa bebas vs tidak di prediction). Disatukan: belanja = `expense` + `debt`.
 14. Pembayaran tagihan manual: `reserved.py` vs `recurring_status.py` saling bertentangan → DAT-06 "Tandai lunas".
-15. `transfer_between_envelopes` tanpa kunci → dikunci di S5.
+15. `transfer_between_envelopes` tanpa kunci → dikunci di S5; geser dana di bot (satu item & multi-item) dan hapus amplop menyusul di #105.
 
 ## Metrik keberhasilan
 - Klik CTA per tipe insight, rasio "Nanti"/sembunyikan, laporan "tidak relevan".

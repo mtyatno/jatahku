@@ -31,6 +31,7 @@ def make_db(active_subs=0):
         FakeResult(HID),          # household id
         FakeResult(env),          # amplop yang dihapus
         FakeResult(active_subs),  # jumlah langganan aktif
+        FakeResult(HID),          # kunci baris household (FOR NO KEY UPDATE)
         FakeResult(tab),          # Tabungan
         FakeResult(),             # cadangan bila ada statement lain
     ])
@@ -90,6 +91,22 @@ class DeleteEnvelopeTests(unittest.IsolatedAsyncioTestCase):
         db = make_db()
         await self.run_delete(db, "900000")
         self.assertFalse(any(s.startswith("UPDATE transactions") for s in executed_sql(db)))
+
+    async def test_household_locked_before_remaining_is_computed(self):
+        # Sisa → Tabungan adalah geser dana: kunci household yang sama dengan transfer & bot,
+        # diambil sebelum sisa dihitung supaya geser dana bersamaan tidak membuatnya basi.
+        db = make_db()
+        at_summary = []
+
+        async def summaries(user, session):
+            at_summary.extend(executed_sql(session))
+            return summary_rows("900000")
+
+        with patch.object(route, "compute_envelope_summaries", new=summaries):
+            await route.delete_envelope(ENV_ID, user=USER, db=db)
+        locks = [s for s in at_summary if "FOR NO KEY UPDATE" in s]
+        self.assertEqual(len(locks), 1)
+        self.assertIn("FROM households", locks[0])
 
     async def test_active_subscriptions_block_delete(self):
         db = make_db(active_subs=2)
