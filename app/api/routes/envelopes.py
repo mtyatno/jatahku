@@ -40,7 +40,6 @@ class EnvelopeCreate(BaseModel):
 class EnvelopeResponse(BaseModel):
     id: UUID
     name: str
-    emoji: str
     budget_amount: Decimal
     is_rollover: bool
     is_active: bool
