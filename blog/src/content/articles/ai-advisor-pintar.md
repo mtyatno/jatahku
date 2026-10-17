@@ -2,11 +2,14 @@
 title: "AI Advisor Jatahku — Asisten Keuangan Pintar di Dashboard Kamu"
 description: "AI Advisor menganalisis pola belanja, progres tabungan, dan deadline sinking fund untuk memberikan insight personal. Bukan chatbot — insight muncul sebagai kartu pintar."
 pubDate: 2026-06-29
+updatedDate: 2026-10-17
 category: update-fitur
 author: "Tim Jatahku"
 cover: /covers/fitur-baru-april-2026.svg
 featured: true
 ---
+
+**Diperbarui 17 Oktober 2026:** AI Advisor sudah berganti ke versi baru. Analisanya kini ada di setiap halaman, bukan hanya satu kartu di Dashboard, dan tiap analisa punya tombol aksi (geser dana, bayar tagihan, naikkan jatah). Baca [AI Advisor Baru: Analisa dan Tombol Aksi di Setiap Halaman](/insight/ai-advisor-di-setiap-halaman/). Artikel di bawah ini menjelaskan versi pertama (Juni 2026).
 
 Jatahku sekarang punya **AI Advisor** — asisten pintar yang bekerja di balik layar menganalisis data keuangan kamu dan memberikan insight langsung di dashboard. Bukan chatbot. Bukan yang perlu kamu tanya dulu. Insight muncul otomatis sebagai kartu yang mudah dipindai.
 
@@ -48,12 +51,19 @@ AI Advisor juga melihat gambaran besar: apakah total pengeluaran diproyeksikan m
 
 ## Di Mana AI Advisor Bekerja?
 
-Semua insight muncul di **satu kartu utama** di dashboard — Hero AI Advisor. Kartu ini berada tepat di bawah KPI cards, sebelum daftar amplop.
+Di versi pertama, semua insight muncul di **satu kartu utama** di dashboard, tepat di bawah KPI cards.
 
-Kartu AI Advisor berisi:
-- **📊 Hari ini** — status pengeluaran harian vs batas aman, plus amplop yang mulai menipis
-- **Strategic cards** — insight proyeksi dan target dari analisis data
-- **🎯 Target Menabung** — ringkasan progres semua goal dengan mini progress bar
+Sejak Oktober 2026 AI Advisor hadir di lebih banyak tempat:
+
+- **Chip ✦ di enam kartu KPI**
+- **Kartu AI Advisor** dengan tiga langkah paling berdampak
+- **Strip per amplop**
+- **Penanda di Transaksi**
+- **Alasan di rekomendasi Alokasi**
+- **Langganan**
+- **Chat web dan Telegram**
+
+Detailnya ada di [AI Advisor Baru: Analisa dan Tombol Aksi di Setiap Halaman](/insight/ai-advisor-di-setiap-halaman/).
 
 ## Beda dengan Sebelumnya
 
