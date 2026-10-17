@@ -57,7 +57,11 @@ async def daily_spending(
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """Daily spending for a budget period — for bar/line chart."""
+    """Daily spending for a budget period — for bar/line chart.
+
+    Hanya amplop yang terlihat viewer (bersama + pribadi miliknya), seperti snapshot advisor;
+    amplop pribadi anggota lain tidak ikut terhitung (S15). Periode berjalan untuk user di flag
+    `advisor_v2_users` memakai deret metrik dari `GET /advisor/page/analitik`."""
     hid = await _get_hid(user, db)
     if not hid:
         return []
@@ -73,6 +77,7 @@ async def daily_spending(
         .join(Envelope, Transaction.envelope_id == Envelope.id)
         .where(
             Envelope.household_id == hid,
+            or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
             Transaction.is_deleted == False,
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,

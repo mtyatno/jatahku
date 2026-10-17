@@ -148,6 +148,7 @@ Estimasi dalam jam Claude Code aktif. "Paralel" = boleh dikerjakan bersamaan ole
 | `app/bot/*`, `app/services/summary.py` | S9 | |
 | `advisor/chat.py` + `render.py` (bagian "Chat web & Telegram": tambah fungsi), `app/bot/{advisor_cmd,nlp_cmd,help_cmd,intent_learning,handlers}.py` (intent & daftar perintah), `routes/webhook.py` (BotCommand), `components/ChatPanel.jsx` (chip), `lib/chatChips.js` | S17 | Daftar perintah Telegram satu sumber: `help_cmd.BOT_COMMANDS`; intent tombol satu sumber: `intent_learning.intent_handlers()` |
 | `app/services/advisor/halaman.py` (bagian Amplop), `routes/advisor.py` (`/page/amplop`), `pages/Envelopes.jsx`, `lib/envelopeStrip.js` | S11 | `halaman.py` dipakai bersama: S12 menambah bagian Langganan; halaman lain boleh modul sendiri (S13 `page_transaksi.py`) |
+| `app/services/advisor/page_analitik.py`, `routes/advisor.py` (`/page/analitik`), `routes/analytics.py` (`/daily-spending`), `sinking.py` (`actions[]`), `pages/Analytics.jsx`, `lib/analyticsAdvice.js` | S15 | Slot `analitik` ditambahkan ke PER-03/04 (`rules/periode.py`) dan TAB-06 (`rules/tabungan.py`) atas izin pemilik produk |
 
 ## 8. Jadwal usulan
 
