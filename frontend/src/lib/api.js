@@ -554,6 +554,18 @@ class ApiClient {
     return null;
   }
 
+  // GET /advisor/page/langganan (S12). Sama: {"enabled": false} atau null → halaman tanpa AI.
+  async getAdvisorLangganan() {
+    try {
+      const res = await this.request('/advisor/page/langganan');
+      if (res.ok) return await res.json();
+      console.error('[advisor] langganan request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] langganan request error:', e);
+    }
+    return null;
+  }
+
   async _advisorPost(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });

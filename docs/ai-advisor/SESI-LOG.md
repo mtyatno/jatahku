@@ -49,6 +49,41 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S12 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `GET /advisor/page/langganan` (`app/services/advisor/halaman.py`, route di `routes/advisor.py`): satu analisa yang sama dengan Beranda (`dashboard.analisa`), lalu dipilah:
+  - `per_langganan` = satu insight terbaik per baris (TAG-01/02/03/04/06, DAT-06);
+  - `ringkasan` = K4 (`beban_bulanan`, `beban_persen`, `dana_belanja`, `tagihan_sisa`, belum/lunas) + insight TAG-05 (bila menyala) atau TAG-09;
+  - `pola` = TAG-07 (Jadikan langganan), `lain` = TAG-08 dengan `recurring_ids`, `disembunyikan`.
+- `metrics.py`: field baru `beban_tagihan_bulanan` (pembilang K4 yang sudah dihitung; rumus tidak berubah).
+- Frontend: `api.getAdvisorLangganan`, `lib/advisorLangganan.js` (+ tes), `components/AdvisorRowStrip.jsx` (strip AI per baris: judul, Rincian, CTA, pilihan sembunyikan), `pages/Langganan.jsx`: kartu AI Advisor di atas daftar + strip per baris. Tandai lunas (`mark_paid`), Geser & bayar (`plan`), Bayar (`pay`), Jadikan langganan (`make_recurring`) lewat pipa CTA S8. Tanpa flag → halaman lama persis.
+- `04-kontrak-api.md`: bentuk `/advisor/page/langganan`.
+
+**Digantung**
+- Belum dicoba di browser dengan data produksi (lingkungan sesi tanpa Postgres). Coba dengan akun tim setelah deploy.
+- TAG-06 "Perbarui nominal" membuka form edit tanpa nominal baru terisi (payload `route` tidak membawa jumlah). Kalau perlu: kind `edit_recurring` dengan `{recurring_id, jumlah}` — menyentuh `rules/tagihan.py` (S4) dan pipa S8.
+- S11 (`/advisor/page/amplop`) bisa memakai `halaman.py` + `AdvisorRowStrip` yang sama.
+
+**Jebakan**
+- `frontend/dist/index.html` ter-track dan berubah tiap `npm run build` — jangan ikut di-commit.
+- `RecurringTransaction` tidak punya `user_id` (fixture integrasi).
+- Lingkungan cloud baru: `pip install -r requirements-test.txt` dan `npm ci` dulu sebelum tes.
+
+**Keputusan kecil**
+- Tanpa cache Redis untuk halaman ini (jarang dibuka; entri cache Beranda per viewer tidak boleh tertimpa). Dismiss dari halaman ini tetap memakai `POST /advisor/dismiss` yang sama (meta dihitung ulang bila cache Beranda kosong).
+- CTA `route` ke `/langganan` di halaman ini dipetakan lokal: baris → form edit (TAG-04 Atur sisihan, TAG-06), TAG-08 → saring ke dua langganan + "Tampilkan semua", TAG-05 → urut termahal.
+- Baris ringkasan "Tagihan rutin {rp}/bulan · {x}% dari dana belanja" adalah label angka di frontend (angka dari server), bukan teks insight; insight-nya tetap TAG-05/TAG-09 dari `render.py`.
+- Menyentuh file milik sesi lain dengan izin pemilik produk: `Langganan.jsx` (S8), `routes/advisor.py` (S3), `metrics.py` (S1, hanya field baru).
+
+**Tes:** backend 866 OK (11 baru) · frontend 267 OK (5 baru) · build OK.
+
+**Cara mencoba:** user di flag → `/langganan`. Tagihan telat/jatuh tempo ≤ 3 hari → strip di barisnya dengan Geser & bayar / Bayar; transaksi manual senilai tagihan → Tandai lunas; pola rutin 3+ periode → "Jadikan langganan" di kartu AI Advisor atas. API: `GET /advisor/page/langganan`.
+
+**Lanjut:** `git fetch && git checkout ai-advisor/s12-langganan` · `python -m unittest app.tests.test_advisor_halaman_langganan -v`
+
+---
+
 ## #91 Urungkan sembunyikan + S10 lanjutan · 2026-10-17 · pemilik produk + Claude
 
 **Selesai (#91)**

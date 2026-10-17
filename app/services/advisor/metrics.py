@@ -192,6 +192,8 @@ class Metrics:
     # Riwayat lintas periode (S2)
     periode: list[tuple[date, date]] = field(default_factory=list)
     riwayat: dict[str, RiwayatAmplop] = field(default_factory=dict)
+    # Pembilang K4: setara bulanan langganan di amplop belanja (S12, ringkasan halaman Langganan)
+    beban_tagihan_bulanan: Decimal = ZERO
 
     def to_api(self) -> dict:
         """Bentuk `metrics` di GET /advisor/dashboard (04-kontrak-api.md)."""
@@ -716,7 +718,7 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         saldo_tabungan=saldo_tabungan, setoran=setoran, setoran_biasa=setoran_biasa, target=target,
         belanja_bulanan=G7, amplop_darurat=darurat, cakupan_darurat=G8,
         hari_sejak_cocokkan=K1, selisih_terakhir=K2, hari_tanpa_catatan=K3, beban_tagihan=K4,
-        periode=list(periods), riwayat=riwayat,
+        periode=list(periods), riwayat=riwayat, beban_tagihan_bulanan=beban,
     )
 
 
