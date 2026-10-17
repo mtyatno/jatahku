@@ -545,6 +545,22 @@ class ApiClient {
     return null;
   }
 
+  // GET /advisor/page/transaksi (S13): banner sesuai filter + penanda baris. null bila gagal.
+  async getAdvisorTransaksi({ tanggal = null, amplop = null } = {}) {
+    const q = new URLSearchParams();
+    if (tanggal) q.set('tanggal', tanggal);
+    if (amplop) q.set('amplop', amplop);
+    const qs = q.toString();
+    try {
+      const res = await this.request(`/advisor/page/transaksi${qs ? `?${qs}` : ''}`);
+      if (res.ok) return await res.json();
+      console.error('[advisor] transaksi request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] transaksi request error:', e);
+    }
+    return null;
+  }
+
   async _advisorPost(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });

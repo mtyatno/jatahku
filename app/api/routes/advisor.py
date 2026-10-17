@@ -137,6 +137,18 @@ async def advisor_dashboard(
     return await get_dashboard(user, db)
 
 
+@router.get("/page/transaksi")
+async def advisor_page_transaksi(
+    tanggal: date | None = None,
+    amplop: UUID | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Banner & penanda baris halaman Transaksi (S13, 02-aturan.md §7)."""
+    from app.services.advisor.page_transaksi import get_halaman_transaksi
+    return await get_halaman_transaksi(user, db, tanggal=tanggal, amplop=str(amplop) if amplop else None)
+
+
 class DismissRequest(BaseModel):
     kunci: str = Field(min_length=3, max_length=200)
     pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
