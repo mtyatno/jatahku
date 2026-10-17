@@ -1,6 +1,6 @@
 import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -9,8 +9,9 @@ import redis.asyncio as aioredis
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
-from app.core.security import hash_password, create_access_token, create_refresh_token
+from app.core.security import hash_password
 from app.models.models import User, HouseholdMember
+from app.services import auth_sessions
 from app.services.merge import get_merge_preview, merge_users, is_empty_bot_account
 
 settings = get_settings()
@@ -206,6 +207,7 @@ class ClaimTelegramResponse(BaseModel):
 
 @router.post("/link/claim-telegram", response_model=ClaimTelegramResponse)
 async def claim_telegram_account(
+    request: Request,
     req: ClaimTelegramRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -236,10 +238,8 @@ async def claim_telegram_account(
     await r.delete(f"link:telegram:{req.code}")
     await r.close()
 
-    return ClaimTelegramResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    pair = await auth_sessions.start_session(db, user, request)
+    return ClaimTelegramResponse(access_token=pair.access_token, refresh_token=pair.refresh_token)
 
 
 # ── Unlink ──

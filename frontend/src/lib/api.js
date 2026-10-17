@@ -1,5 +1,6 @@
 import { saveCache, loadCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
+import { revokeSession } from './authLogout';
 
 const API_URL = import.meta.env.PROD
   ? 'https://api.jatahku.com'
@@ -67,11 +68,12 @@ class ApiClient {
         return true;
       }
     } catch {}
-    this.logout();
+    this.logout({ revoke: false }); // refresh ditolak: sesinya sudah mati di server
     return false;
   }
 
-  logout() {
+  logout({ revoke = true } = {}) {
+    if (revoke) revokeSession(API_URL, this.getRefreshToken());
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal

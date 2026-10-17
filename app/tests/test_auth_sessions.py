@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from sqlalchemy import select, update
 from sqlalchemy.orm import configure_mappers
 
-from app.api.routes import auth as auth_route, user_settings
+from app.api.routes import auth as auth_route, link as link_route, user_settings
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.models.models import AuthSession, User
@@ -51,6 +51,7 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine(
             "sqlite+aiosqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False},
         )
+        self.addAsyncCleanup(self.engine.dispose)  # juga bila setUp gagal (aiosqlite menggantung)
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
@@ -65,14 +66,17 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
         app.state.limiter = auth_route.limiter
         app.include_router(auth_route.router, prefix="/auth")
         app.include_router(user_settings.router, prefix="/user")
+        app.include_router(link_route.router, prefix="/auth")
 
         async def _db():
             async with self.Session() as db:
                 yield db
         app.dependency_overrides[get_db] = _db
         auth_route.limiter.enabled = False
-        for mod in (auth_route, user_settings):
+        for mod in (auth_route, user_settings, link_route):
             for name, fake in (("verify_password", _fake_verify), ("hash_password", _fake_hash)):
+                if not hasattr(mod, name):
+                    continue
                 p = patch.object(mod, name, fake)
                 p.start()
                 self.addCleanup(p.stop)
@@ -81,7 +85,6 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         auth_route.limiter.enabled = True
         await self.client.aclose()
-        await self.engine.dispose()
 
     # ── helper ────────────────────────────────────────────────────────────
     async def login(self, email="sari@example.com", client=None):
@@ -276,6 +279,24 @@ class AuthSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(await self.me(hp["access_token"]), 401)
         self.assertEqual(await self.me(r.json()["access_token"]), 200)
+
+
+    # ── klaim akun Telegram ───────────────────────────────────────────────
+    async def test_claim_telegram_starts_device_session(self):
+        async with self.Session() as db:
+            bot_user = User(name="Tg", telegram_id="777")
+            db.add(bot_user)
+            await db.commit()
+        redis = MagicMock(get=AsyncMock(return_value=b"777"), delete=AsyncMock(), close=AsyncMock())
+        with patch.object(link_route, "_redis", AsyncMock(return_value=redis)):
+            r = await self.client.post("/auth/link/claim-telegram", json={
+                "code": "ABC123", "email": "tg@example.com", "password": PASSWORD,
+            })
+        self.assertEqual(r.status_code, 200, r.text)
+        t = r.json()
+        [sess] = await self.sessions(bot_user.id)
+        self.assertEqual(decode_token(t["access_token"])["sid"], str(sess.id))
+        self.assertEqual(await self.me(t["access_token"]), 200)
 
 
 class GraceWindowTests(unittest.TestCase):
