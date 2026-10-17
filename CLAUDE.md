@@ -25,6 +25,9 @@
 
 **Static pages:** landing.html, privacy.html, terms.html, og-image.png
 
+## Aplikasi mobile (Android & iOS)
+- Rencana, ADR, workflow, progres: `docs/mobile/` (mulai `00-indeks.md`). Aturan wajib: `AGENTS.md` bagian "Aplikasi mobile". Buka sesi `/sesi <kode>`, tutup `/tutup-sesi`.
+
 ## Key Decisions
 - Zero-based budgeting: remaining = allocated - spent (not budget - spent)
 - Sinking fund: subscriptions auto-reserve monthly equivalent in envelope
