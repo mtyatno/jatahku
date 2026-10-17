@@ -28,6 +28,7 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
                "disembunyikan": [{"kunci": "HAR-01:2026-10-17", "judul_pendek": "…", "pilihan": "nanti"}] },
   // disembunyikan (#91) = insight yang sedang menyala tapi di-dismiss viewer (daftar maupun chip KPI), urut tone/skor.
   // Kartu AI Advisor menampilkannya sebagai "N disembunyikan · Tampilkan" + Munculkan lagi. [] bila tidak ada.
+  // pilihan = salah satu pilihan POST /advisor/dismiss, termasuk bukan_dobel / bukan_tagihan (#93).
   "redam_chip": true
 }
 // User di luar flag advisor_v2_users → { "enabled": false } saja (tanpa field lain).
@@ -97,8 +98,11 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 //   Baris tanpa insight tidak muncul di per_langganan. User di luar flag → { "enabled": false }.
 //   CTA `route` ke /langganan di halaman ini dipetakan frontend: baris → form edit langganan itu,
 //   TAG-08 → saring ke recurring_ids, ringkasan → urut termahal (`lib/advisorLangganan.js`).
-// POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
+// POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan|bukan_dobel|bukan_tagihan" } → 204
 //   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
+//   Pilihan khusus CTA (#93), dikirim di payload aksi `not_duplicate`: bukan_dobel = permanen (tanpa TTL),
+//   hanya kunci "DAT-03:…"; bukan_tagihan = sampai akhir periode, hanya kunci "DAT-06:…". Kunci lain → 422.
+//   Semua pilihan bisa dibatalkan dengan DELETE /advisor/dismiss.
 //   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
 // GET /advisor/page/transaksi?tanggal=YYYY-MM-DD&amplop=<uuid>   (S13, halaman Transaksi; keduanya opsional)
 //   → { "enabled": true, "generated_at": "…", "hari_ini": "2026-10-15",
@@ -168,7 +172,7 @@ Aksi dijalankan lewat `window.dispatchEvent(new CustomEvent('jatahku:open-action
 | `route` | `{path}` | Navigasi SPA; hanya path relatif di daftar halaman app (`safeRoute`). Halaman reaktif: `/transactions?date=YYYY-MM-DD&envelope=<id>`, `/allocate?new=1&amount=&source=` |
 | `chat` | `{teks?, chip?: [string \| {label, text}], kirim?}` | Chat terbuka, teks diisikan (atau dikirim bila `kirim`), chip tampil paling depan |
 | `dismiss` | `{kunci, pilihan?}` | `POST /advisor/dismiss` (default `nanti`) → event `jatahku:advisor-dismissed` `{kunci, pilihan}` → toast "Disembunyikan sampai …" dengan tombol **Urungkan** (= `undismiss`, #91) |
-| `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan`; toast "Ditandai bukan dobel" + **Urungkan** |
+| `not_duplicate` | `{kunci, pilihan}` | Sama dengan `dismiss`. Server mengirim `pilihan`: `bukan_dobel` (DAT-03, permanen) → toast "Ditandai bukan dobel", `bukan_tagihan` (DAT-06, sampai akhir periode) → "Ditandai bukan pembayaran tagihan"; + **Urungkan**. Payload lama tanpa `pilihan` → `tidak_relevan` (#93) |
 | `undismiss` | `{kunci}` | `DELETE /advisor/dismiss?kunci=` → event `jatahku:advisor-undismissed` `{kunci}` (Beranda memuat ulang) → toast "Ditampilkan lagi". Dipakai tombol Urungkan dan **Munculkan lagi** di kartu (#91) |
 | `delete_txn` | `{txn_id, txn_ids?, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` untuk tiap id (`txn_ids` bila ada: struk terkirim dua kali, DAT-03 S4b) → `jatahku:txn-added` |
 | `pikir` *(dicadangkan, S19)* | `{refleksi_id}` (Jawab, PP-01) · `{incaran_id}` (Nggak jadi / Tunda, PP-02) · `{amplop_id}` (Pakai Incaran, PP-03) | Belum ada penerima; `rules/pikir.py` belum didaftarkan di dashboard. Dibuat bersama Pikir-Pikir Fase 2/3. "Beli → catat" PP-02 memakai `expense` `{deskripsi, jumlah, amplop_id, incaran_id}` |
