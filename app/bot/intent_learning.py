@@ -34,10 +34,34 @@ INTENTS = {
     "proyeksi":             "🔮 Kapan budget habis?",
     "comparison":           "📊 Bandingkan bulan ini vs lalu",
     "santai":               "😬 Status budget (aman/boncos?)",
+    "kenapa_boros":         "🤔 Kenapa boros?",
+    "tagihan":              "📆 Tagihan bulan ini",
+    "target":               "🎯 Target tabungan",
 }
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
+def intent_handlers() -> dict:
+    """Intent → handler nlp_cmd. Satu daftar untuk frasa yang dipelajari, tombol saran,
+    dan /tanya (help_cmd)."""
+    from app.bot.nlp_cmd import (
+        handle_pengeluaran_hari_ini, handle_sisa, handle_limit_harian,
+        handle_proyeksi, handle_comparison, handle_santai,
+        handle_kenapa_boros, handle_tagihan, handle_target,
+    )
+    return {
+        "pengeluaran_hari_ini": handle_pengeluaran_hari_ini,
+        "sisa":                 handle_sisa,
+        "harian":               handle_limit_harian,
+        "proyeksi":             handle_proyeksi,
+        "comparison":           handle_comparison,
+        "santai":               handle_santai,
+        "kenapa_boros":         handle_kenapa_boros,
+        "tagihan":              handle_tagihan,
+        "target":               handle_target,
+    }
+
 
 async def lookup_intent(text: str, db) -> str | None:
     """Return learned intent for this phrase, or None."""
@@ -110,10 +134,6 @@ async def show_intent_suggestions(update, text: str, settings):
 async def handle_intent_learn_callback(query, context, settings):
     """Handle user's intent confirmation button press."""
     from app.core.database import AsyncSessionLocal
-    from app.bot.nlp_cmd import (
-        handle_pengeluaran_hari_ini, handle_sisa, handle_limit_harian,
-        handle_proyeksi, handle_comparison, handle_santai,
-    )
 
     parts = query.data.split(":", 2)  # intentlearn:{token}:{intent}
     if len(parts) != 3:
@@ -142,15 +162,7 @@ async def handle_intent_learn_callback(query, context, settings):
     await query.answer("✅ Dipelajari! Lain kali langsung dimengerti.")
 
     # Execute the confirmed intent immediately
-    handlers = {
-        "pengeluaran_hari_ini": handle_pengeluaran_hari_ini,
-        "sisa":                 handle_sisa,
-        "harian":               handle_limit_harian,
-        "proyeksi":             handle_proyeksi,
-        "comparison":           handle_comparison,
-        "santai":               handle_santai,
-    }
-    handler = handlers.get(intent_key)
+    handler = intent_handlers().get(intent_key)
     if handler:
         await query.edit_message_text("⏳")
         # Wrap query as update-like object so nlp handlers can use update.message

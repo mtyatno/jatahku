@@ -23,6 +23,17 @@ Keputusan kecil S9:
 - SIM-01: amplop dari `find_best_envelope` (pemanggil); tidak yakin → amplop belanja dengan
   porsi 7 hari (M12) terbesar, ditandai "ditebak". Pilihan ganti amplop lewat tombol: S17.
   Di hari terakhir (J1 tidak ada) pembanding "aman/hari" memakai sisa bebas total.
+
+Keputusan kecil S17 (§6H, intent lengkap):
+- "tagihan bulan ini" = tagihan periode berjalan dari `m.tagihan` (jatuh tempo di periode,
+  telat, atau sudah lunas) + M4/M5/K4 + chip Tagihan + insight TAG pertama yang menyala
+  (TAG-01 › TAG-02 › TAG-04 › TAG-03, walau di-dismiss: user bertanya langsung).
+- "target {nama}" = satu target (nama target, lalu nama amplop tabungannya) dengan G4/G5/G6
+  + insight TAB target itu; tanpa nama → semua target (maks `TARGET_MAKS`) + chip Tabungan.
+- SIM-01 "ganti amplop": `pilihan_amplop` = amplop belanja terlihat (urut porsi 7 hari), tombol
+  dipasang bot (`advisor_cmd`); pilihan memanggil `jawab_aman_beli` dengan amplop itu.
+- Chat tidak menawarkan tombol sembunyikan/munculkan lagi (cek #91): dismiss tetap hanya
+  lewat `POST`/`DELETE /advisor/dismiss` di web; `muat` membaca dismiss viewer terbaru.
 """
 from __future__ import annotations
 
@@ -46,6 +57,9 @@ KENAPA_AMPLOP = {"AMP-01", "AMP-02", "AMP-03", "TAG-01", "TAG-02", "AMP-04", "AM
 STRUKTURAL = {"AMP-04", "AMP-05", "AMP-06", "TAB-02"}   # ringkasan mingguan (§7)
 SIM_AMAN_RASIO = Decimal("0.9")                          # SIM-01: J1 baru ≥ 90% J1
 TRANSAKSI_TERAKHIR = 5
+TAGIHAN_UTAMA = ("TAG-01", "TAG-02", "TAG-04", "TAG-03")
+TARGET_MAKS = 5
+PILIHAN_AMPLOP_MAKS = 6
 
 _HARI_INI_RE = re.compile(r"\bhari\s+ini\b", re.IGNORECASE)
 _KATA_RE = re.compile(r"[a-z0-9]+")
@@ -211,13 +225,75 @@ def simulasi(a: Analisa, eid: str, jumlah, ditebak: bool = False) -> dict:
     }
 
 
+def amplop_simulasi(a: Analisa, eid: str | None, ditebak: bool = False) -> tuple[str | None, bool]:
+    """Amplop yang disimulasikan: `eid` bila terlihat, selain itu tebakan (M12) → ditebak."""
+    if eid is None or eid not in a.ctx.m.amplop:
+        return amplop_tebakan(a), True
+    return eid, ditebak
+
+
 def jawab_aman_beli(a: Analisa, eid: str | None, jumlah, ditebak: bool = False) -> str | None:
     """None bila tidak ada amplop belanja yang bisa disimulasikan."""
-    if eid is None or eid not in a.ctx.m.amplop:
-        eid, ditebak = amplop_tebakan(a), True
+    eid, ditebak = amplop_simulasi(a, eid, ditebak)
     if eid is None:
         return None
     return render.chat_aman_beli(a.ctx, simulasi(a, eid, jumlah, ditebak))
+
+
+def pilihan_amplop(a: Analisa, kecuali: str | None = None, n: int = PILIHAN_AMPLOP_MAKS) -> list[tuple[str, str]]:
+    """Amplop belanja terlihat untuk tombol "ganti amplop" SIM-01: (id, nama), porsi 7 hari
+    terbesar dulu (urutan yang sama dengan `amplop_tebakan`)."""
+    belanja = sorted(((x.porsi_7h, x.variabel_periode, x.bebas, eid) for eid, x in a.ctx.m.amplop.items()
+                      if x.kelompok == "belanja" and eid != kecuali), reverse=True)
+    return [(eid, a.ctx.nama.get(eid, "")) for *_, eid in belanja[:n]]
+
+
+# ── "tagihan bulan ini" ─────────────────────────────────────────────────
+def tagihan_periode(a: Analisa) -> list:
+    """Tagihan periode berjalan: jatuh tempo di periode, telat, atau sudah dilunasi."""
+    m = a.ctx.m
+    rows = [b for b in m.tagihan
+            if b.lunas_oleh or b.telat_hari > 0 or m.period_start <= b.jatuh_tempo <= m.period_end]
+    return sorted(rows, key=lambda b: (b.jatuh_tempo, b.recurring_id))
+
+
+def jawab_tagihan(a: Analisa) -> str:
+    return render.chat_tagihan(a.ctx, tagihan_periode(a), kpi(a, "tagihan"), _r(a, _pertama(a, TAGIHAN_UTAMA)))
+
+
+# ── "target {nama}" ─────────────────────────────────────────────────────
+def cari_target(teks: str, ctx: Konteks) -> dict | None:
+    """Target (G*) yang disebut di teks: nama target, lalu nama amplop tabungannya."""
+    kata = _kata(teks)
+    gabung = " " + " ".join(kata) + " "
+    calon = []
+    for g in ctx.m.target:
+        for nama in (g["nama"], ctx.nama.get(g["envelope_id"], "")):
+            nk = _kata(nama)
+            if not nk:
+                continue
+            if " " + " ".join(nk) + " " in gabung:
+                calon.append((2, len(" ".join(nk)), g["goal_id"], g))
+            else:
+                cocok = [w for w in nk if len(w) >= 4 and w not in _KATA_UMUM | {"target", "tabungan"} and w in kata]
+                if cocok:
+                    calon.append((1, max(len(w) for w in cocok), g["goal_id"], g))
+    return max(calon, key=lambda x: x[:3])[3] if calon else None
+
+
+def insight_target(a: Analisa, g: dict) -> dict | None:
+    """Insight TAB-* untuk satu target (entitas = goal_id; TAB-01 = amplop daruratnya)."""
+    calon = [i for i in a.sel.semua if i.aturan.startswith("TAB-")
+             and (i.entitas == g["goal_id"] or (i.aturan == "TAB-01" and i.entitas == g["envelope_id"]))]
+    return _r(a, min(calon, key=kunci_urut)) if calon else None
+
+
+def jawab_target(a: Analisa, teks: str = "") -> str:
+    g = cari_target(teks, a.ctx)
+    if g is not None:
+        return render.chat_target(a.ctx, [g], insight_target(a, g), None)
+    return render.chat_target(a.ctx, a.ctx.m.target[:TARGET_MAKS], None, kpi(a, "tabungan"),
+                              lebih=max(len(a.ctx.m.target) - TARGET_MAKS, 0))
 
 
 # ── ringkasan ───────────────────────────────────────────────────────────
