@@ -142,10 +142,10 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
       {compact ? (
         <div className="relative" ref={menuRef}>
           <button type="button" onClick={() => setMenuOpen(o => !o)} disabled={!!loading}
-            aria-haspopup="menu" aria-expanded={menuOpen}
-            className="h-[var(--nav-h)] px-4 rounded-xl inline-flex items-center gap-2 text-[15px] font-semibold transition-colors disabled:opacity-60"
+            aria-haspopup="menu" aria-expanded={menuOpen} aria-label="Laporan" title="Laporan"
+            className="h-[var(--nav-h)] min-w-[var(--nav-h)] px-3 xl:px-4 rounded-xl inline-flex items-center justify-center gap-2 text-[15px] font-semibold transition-colors disabled:opacity-60"
             style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-            {fileIcon} {loading ? 'Menyiapkan…' : 'Laporan'}
+            {fileIcon}<span className="hidden xl:inline">{loading ? 'Menyiapkan…' : 'Laporan'}</span>
           </button>
           {menuOpen && (
             <div role="menu" className="absolute right-0 top-[calc(var(--nav-h)+8px)] w-64 rounded-xl py-2 shadow-lg z-50"

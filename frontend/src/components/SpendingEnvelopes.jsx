@@ -206,9 +206,9 @@ export default function SpendingEnvelopes({ envelopes, allEnvelopes, isDark, tra
 
   return (
     <section aria-labelledby="amplop-pengeluaran-title" className="card !px-3.5 md:!px-7 !pt-5 md:!pt-6 !pb-4">
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3.5 md:gap-4 md:pb-4 px-1 md:px-0">
+      <div className="flex flex-col md:flex-row md:flex-wrap md:items-start md:justify-between gap-3.5 md:gap-4 md:pb-4 px-1 md:px-0">
         <div className="flex items-baseline md:flex-col md:items-start justify-between gap-1.5">
-          <h2 id="amplop-pengeluaran-title" className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>Amplop pengeluaran</h2>
+          <h2 id="amplop-pengeluaran-title" className="font-display font-bold text-lg whitespace-nowrap" style={{ color: 'var(--text)' }}>Amplop pengeluaran</h2>
           <p className="hidden md:block text-[13px]" style={{ color: 'var(--text-muted)' }}>
             Sisa <b className="font-semibold" style={{ color: 'var(--text)' }}>{formatShortSigned(totalSisa)}</b>
             {habis > 0 && <> · <span className="font-semibold" style={{ color: RED }}>{habis} amplop habis</span></>}
