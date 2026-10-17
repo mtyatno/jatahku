@@ -74,6 +74,9 @@ class User(TimestampMixin, Base):
     income_type: Mapped[str] = mapped_column(String(20), default="monthly")
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Diisi saat logout-all. Token lama tanpa `sid` (sebelum auth_sessions) tidak
+    # punya iat, jadi semuanya ditolak bila kolom ini terisi.
+    tokens_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     household_memberships: Mapped[list["HouseholdMember"]] = relationship(
@@ -81,6 +84,31 @@ class User(TimestampMixin, Base):
     )
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
     incomes: Mapped[list["Income"]] = relationship(back_populates="user")
+
+
+class AuthSession(TimestampMixin, Base):
+    """Satu sesi login per perangkat (ADR-M7). Refresh token membawa `sid` + `jti`;
+    hanya `refresh_jti` yang berlaku, `prev_refresh_jti` diterima sebentar setelah
+    rotasi (masa tenggang). Lihat app/services/auth_sessions.py."""
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    refresh_jti: Mapped[str] = mapped_column(String(64))
+    prev_refresh_jti: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # sha256 refresh token lama (tanpa sid) yang ditukar jadi sesi ini; mencegah
+    # token lama yang sama dipakai ulang membuka sesi kedua. Bisa dibuang setelah
+    # semua token lama kedaluwarsa (30 hari sejak deploy).
+    legacy_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client: Mapped[str | None] = mapped_column(String(100), nullable=True)  # X-Jatahku-Client
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class Household(TimestampMixin, Base):

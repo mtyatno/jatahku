@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
 from app.core.database import get_db
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
-from app.core.deps import get_current_user
-from app.models.models import User, Household, HouseholdMember, HouseholdRole, Envelope
+from app.core.security import hash_password, verify_password, decode_token
+from app.core.deps import get_current_session_id, get_current_user
+from app.services import auth_sessions
+from app.models.models import AuthSession, User, Household, HouseholdMember, HouseholdRole, Envelope
 from app.services.password_reset import create_reset_token, redeem_reset_token
 from app.services.email_service import send_password_reset_email, send_password_changed_email
 from app.services.google_auth import verify_google_credential
@@ -97,11 +98,11 @@ async def _notify_admin_new_user(user: User, via: str) -> None:
         pass  # Jangan block register jika notif gagal
 
 
-def _tokens(user: User) -> TokenResponse:
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+async def _tokens(db: AsyncSession, user: User, request: Request) -> TokenResponse:
+    """Login berhasil → sesi perangkat baru (app/services/auth_sessions.py).
+    Ikut meng-commit perubahan user yang belum di-commit (last_login, dst.)."""
+    pair = await auth_sessions.start_session(db, user, request)
+    return TokenResponse(access_token=pair.access_token, refresh_token=pair.refresh_token)
 
 
 async def _google_claims(credential: str) -> dict:
@@ -133,13 +134,9 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 
     user = await _create_user(db, email=req.email, name=req.name, password_hash=hash_password(req.password))
     user.last_login = datetime.now(timezone.utc)
-    await db.commit()
+    tokens = await _tokens(db, user, request)  # commit user + sesi
     await _notify_admin_new_user(user, via="email")
-
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    return tokens
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -155,12 +152,7 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user.last_login = datetime.now(timezone.utc)
-    await db.commit()
-
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    return await _tokens(db, user, request)
 
 
 GENERIC_FORGOT_MESSAGE = "Kalau email terdaftar, link reset sudah dikirim."
@@ -224,33 +216,85 @@ async def reset_password(
         raise HTTPException(status_code=400, detail="Link tidak valid atau sudah kadaluarsa")
 
     user.password_hash = hash_password(req.new_password)
-    await db.commit()
+    # Reset sandi = akun mungkin dibobol: putus semua perangkat, lalu login di sini.
+    await auth_sessions.revoke_all(db, user, "password_reset")
 
     if user.email:
         background_tasks.add_task(send_password_changed_email, user.email, user.name)
 
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    return await _tokens(db, user, request)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    payload = decode_token(req.refresh_token)
-    if payload is None or payload.get("type") != "refresh":
+async def refresh_token(request: Request, req: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Tukar refresh token dengan pasangan baru. Refresh token dirotasi: simpan
+    yang baru, yang lama tidak berlaku lagi (lihat app/services/auth_sessions.py)."""
+    try:
+        pair = await auth_sessions.rotate(db, req.refresh_token, request)
+    except auth_sessions.RefreshError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+    return TokenResponse(access_token=pair.access_token, refresh_token=pair.refresh_token)
 
-    user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
 
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+
+
+@router.post("/logout")
+async def logout(
+    req: LogoutRequest | None = None,
+    sid: UUID | None = Depends(get_current_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cabut sesi perangkat ini. Sesi dikenali dari refresh token di body atau,
+    bila tidak ada, dari access token. Idempoten: selalu 200."""
+    payload = decode_token(req.refresh_token) if req and req.refresh_token else None
+    if payload and payload.get("type") == "refresh" and payload.get("sid"):
+        try:
+            await auth_sessions.revoke_session(db, UUID(payload.get("sub") or ""), UUID(payload["sid"]))
+        except ValueError:
+            pass
+    elif sid is not None:
+        sess = (await db.execute(select(AuthSession).where(AuthSession.id == sid))).scalar_one_or_none()
+        if sess is not None:
+            await auth_sessions.revoke_session(db, sess.user_id, sid)
+    return {"status": "logged_out"}
+
+
+class SessionResponse(BaseModel):
+    id: UUID
+    client: str | None
+    user_agent: str | None
+    created_at: datetime
+    last_used_at: datetime | None
+    current: bool
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+async def list_sessions(
+    user: User = Depends(get_current_user),
+    sid: UUID | None = Depends(get_current_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Perangkat yang sedang login (ADR-M7)."""
+    return [
+        SessionResponse(
+            id=s.id, client=s.client, user_agent=s.user_agent, created_at=s.created_at,
+            last_used_at=s.last_used_at, current=(s.id == sid),
+        )
+        for s in await auth_sessions.list_active(db, user.id)
+    ]
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(
+    session_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await auth_sessions.revoke_session(db, user.id, session_id):
+        raise HTTPException(status_code=404, detail="Sesi tidak ditemukan")
+    return {"status": "revoked"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -272,21 +316,19 @@ async def google_login(request: Request, req: GoogleCredentialRequest, db: Async
     user = (await db.execute(select(User).where(User.google_id == claims["sub"]))).scalar_one_or_none()
     if user:
         user.last_login = datetime.now(timezone.utc)
-        await db.commit()
-        return _tokens(user)
+        return await _tokens(db, user, request)
 
     user = (await db.execute(select(User).where(User.email == claims["email"]))).scalar_one_or_none()
     if user:
         user.google_id = claims["sub"]
         user.last_login = datetime.now(timezone.utc)
-        await db.commit()
-        return _tokens(user)
+        return await _tokens(db, user, request)
 
     user = await _create_user(db, email=claims["email"], name=claims["name"], password_hash=None, google_id=claims["sub"])
     user.last_login = datetime.now(timezone.utc)
-    await db.commit()
+    tokens = await _tokens(db, user, request)  # commit user + sesi
     await _notify_admin_new_user(user, via="Google")
-    return _tokens(user)
+    return tokens
 
 
 @router.post("/google/link")
@@ -325,7 +367,7 @@ async def google_unlink(user: User = Depends(get_current_user), db: AsyncSession
 
 
 @router.get("/tg-login", response_model=TokenResponse)
-async def tg_login(token: str, db: AsyncSession = Depends(get_db)):
+async def tg_login(request: Request, token: str, db: AsyncSession = Depends(get_db)):
     settings = get_settings()
     r = aioredis.from_url(settings.REDIS_URL)
     user_id_bytes = await r.get(f"tglogin:{token}")
@@ -341,7 +383,4 @@ async def tg_login(token: str, db: AsyncSession = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User tidak ditemukan")
 
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    return await _tokens(db, user, request)

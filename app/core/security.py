@@ -15,19 +15,26 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, sid: str | None = None) -> str:
+    """`sid` = id baris auth_sessions. Token tanpa `sid` hanya dibuat oleh kode
+    lama; token baru selalu lewat app/services/auth_sessions.py."""
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     )
     payload = {"sub": user_id, "exp": expire, "type": "access"}
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, sid: str | None = None, jti: str | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
     )
     payload = {"sub": user_id, "exp": expire, "type": "refresh"}
+    if sid:
+        payload["sid"] = sid
+        payload["jti"] = jti
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 

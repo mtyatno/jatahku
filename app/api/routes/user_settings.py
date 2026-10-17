@@ -10,8 +10,9 @@ from sqlalchemy import select, func, update, delete, or_, exists
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_session_id, get_current_user
 from app.core.security import hash_password, verify_password
+from app.services import auth_sessions
 from app.services.email_service import send_password_changed_email
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
@@ -193,6 +194,7 @@ async def change_password(
     req: ChangePassword,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
+    sid: UUID | None = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     # User Telegram-only belum punya password — boleh set tanpa password lama.
@@ -203,6 +205,8 @@ async def change_password(
         raise HTTPException(400, "Password baru minimal 6 karakter")
     user.password_hash = hash_password(req.new_password)
     await db.commit()
+    # Perangkat lain keluar; perangkat yang mengganti sandi tetap login.
+    await auth_sessions.revoke_all(db, user, "password_change", except_sid=sid)
     if user.email:
         background_tasks.add_task(send_password_changed_email, user.email, user.name)
     return {"status": "updated"}
@@ -342,10 +346,9 @@ async def logout_all(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Invalidate all sessions by changing password hash salt."""
-    # Simple approach: bump updated_at which invalidates JWTs issued before
+    """Cabut semua sesi user, termasuk perangkat ini (app/services/auth_sessions.py)."""
     user.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    await auth_sessions.revoke_all(db, user, "logout_all")
     return {"status": "all_sessions_invalidated"}
 
 
