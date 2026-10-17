@@ -19,6 +19,14 @@
   `app.html`) without confirming first; deploy.sh must back up landing and
   clean `dist` before pull; after any frontend/landing deploy, verify
   `jatahku.com` is not blank and login works.
+- **Login 500 setelah merge berisi migrasi (2026-10-17, PR #116, ±4 menit).**
+  `alembic upgrade head` dijalankan **sebelum** merge, saat file migrasi
+  `d3b8f1a6c2e9` belum ada di server, jadi tidak ada yang dijalankan. Deploy
+  memasang model yang memetakan `users.tokens_revoked_at`, dan setiap query
+  `User` (login, lupa sandi, semua endpoint ber-auth) 500 sampai migrasi
+  dijalankan ulang setelah deploy. Insiden serupa: `c5e9a2d7f4b1`.
+- **Aturan:** migrasi dijalankan **setelah** deploy menarik kode (lihat
+  "Urutan merge PR bermigrasi" di bagian Deploy Script), bukan sebelum merge.
 
 ## Git & File Management
 - **NEVER use `git add -A`** — always stage specific files with `git add file1 file2 ...`
@@ -35,6 +43,19 @@
   hanya `rsync` ke `blog.jatahku.com/public_html/` (tidak `npm run build` blog di VPS).
 - Migrasi: deploy tidak menjalankan alembic, tapi mencetak peringatan dan berakhir exit 2
   bila `alembic current` ≠ `alembic heads` (notifikasi "Deploy GAGAL" terkirim).
+- **Urutan merge PR bermigrasi** (label `migrasi`). Model sudah memetakan kolom baru,
+  jadi API 500 sejak deploy sampai migrasi jalan; jendela ini harus sesempit mungkin:
+  1. Merge, lalu tunggu deploy sampai `git pull` selesai (run Actions "Deploy Jatahku"
+     berjalan; `api.jatahku.com/health` → `commit` baru). Run itu boleh berakhir
+     "Deploy GAGAL" karena migrasi tertinggal — itu memang tandanya.
+  2. Pastikan file migrasinya sudah ada:
+     `ls /opt/jatahku/app/alembic/versions/ | grep <revisi>`. Tidak ada = kode belum
+     ter-pull; `alembic upgrade head` sebelum ini **tidak menjalankan apa pun**.
+  3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`
+     (tabel milik `postgres` → jalankan sebagai postgres), lalu `alembic current` harus
+     sama dengan revisi baru.
+  4. `sudo systemctl restart jatahku`, lalu cek endpoint yang memakai tabel itu
+     (mis. `POST /auth/login` dengan email asal → 401, bukan 500).
 - **One deploy at a time.** `.github/workflows/deploy.yml` uses `concurrency`
   (`cancel-in-progress: false`): a newer push waits for the running deploy.
   Keep it — two `deploy.sh` runs overlapping (`git pull` + `npm run build` into
@@ -139,6 +160,12 @@ kolom ini, jadi **API amplop 500 sampai migrasi dijalankan** — jalankan di jam
 4. Verifikasi: `\d envelopes | grep is_emergency` dan
    `SELECT name, purpose FROM envelopes WHERE is_emergency;` (hanya amplop tabungan)
 5. `sudo systemctl restart jatahku`
+
+## Deploy Checklist — Mobile 1.1: `auth_sessions` (d3b8f1a6c2e9) — sudah jalan 2026-10-17
+Menambah tabel `auth_sessions` dan `users.tokens_revoked_at`. Model `User` memetakan kolom
+ini, jadi **semua query user 500 (termasuk login) sampai migrasi dijalankan**. Ikuti
+"Urutan merge PR bermigrasi" di atas; `alembic current` harus `c5e9a2d7f4b1` sebelum upgrade.
+Verifikasi: `\d auth_sessions`, `\d users | grep tokens_revoked_at`, login dengan email asal → 401.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
