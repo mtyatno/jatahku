@@ -28,7 +28,7 @@ export function dismissOptions(insight) {
 
 // "N disembunyikan" di kartu: `advisor.disembunyikan` dari server, tanpa yang baru saja
 // dimunculkan lagi (sebelum muatan ulang tiba).
-const HIDDEN_UNTIL = { nanti: 'sampai besok', periode: 'sampai akhir periode', tidak_relevan: 'tidak relevan' };
+const HIDDEN_UNTIL = { nanti: 'sampai pukul 05.00', periode: 'sampai akhir periode', tidak_relevan: 'tidak relevan' };
 export function hiddenList(advisor, restored = []) {
   const back = new Set(restored);
   return (Array.isArray(advisor?.disembunyikan) ? advisor.disembunyikan : [])
