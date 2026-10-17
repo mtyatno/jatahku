@@ -1,9 +1,17 @@
-from decimal import Decimal
+import logging
+from decimal import ROUND_FLOOR, Decimal
+from itertools import groupby
 
 from app.services.advisor.formatting import _to_decimal, _money, _fmt_rp, _median_decimal
 from app.services.advisor.context import load_advisor_context
 from app.services.advisor.sinking import normalize_description, _ESSENTIAL_KEYWORDS
 from app.services.advisor.confidence import assess_confidence
+from app.services.advisor.render import alasan_alokasi
+
+
+logger = logging.getLogger("jatahku.advisor.allocation")
+
+_STEP = Decimal("100")  # pecahan rupiah terkecil yang dipakai
 
 
 def _is_saving_sink(item) -> bool:
@@ -29,17 +37,32 @@ def allocate_income_to_targets(income_amount: Decimal, envelopes: list[dict]) ->
 
     allocatable_items = [item for item in items if not item.get("is_locked")]
     sorted_items = sorted(allocatable_items, key=lambda item: item.get("priority", 50))
-    total_minimum = sum((item["minimum"] for item in sorted_items), Decimal("0"))
+    total_minimum = sum((max(item["minimum"], Decimal("0")) for item in sorted_items), Decimal("0"))
 
-    for item in sorted_items:
-        minimum_amount = max(item["minimum"], Decimal("0"))
-        if minimum_amount <= 0 or remaining_income <= 0:
+    # Minimum per tingkat prioritas. Bila income tidak cukup untuk satu tingkat, income dibagi
+    # proporsional ke minimum tingkat itu (dibulatkan ke bawah Rp100, sisa pembulatan ke minimum
+    # terbesar) — income kecil/harian terbagi rata, tidak mengisi satu amplop dulu (S14).
+    short = False
+    for _, group in groupby(sorted_items, key=lambda item: item.get("priority", 50)):
+        group = [item for item in group if item["minimum"] > 0]
+        need = sum((item["minimum"] for item in group), Decimal("0"))
+        if not group or remaining_income <= 0:
             continue
-        amount = min(minimum_amount, remaining_income)
-        item["recommended_amount"] += amount
-        remaining_income -= amount
+        if need <= remaining_income:
+            for item in group:
+                item["recommended_amount"] += item["minimum"]
+            remaining_income -= need
+            continue
+        scale = remaining_income / need
+        for item in group:
+            item["recommended_amount"] += (item["minimum"] * scale / _STEP).to_integral_value(ROUND_FLOOR) * _STEP
+        given = sum((item["recommended_amount"] for item in group), Decimal("0"))
+        max(group, key=lambda item: item["minimum"])["recommended_amount"] += remaining_income - given
+        remaining_income = Decimal("0")
+        short = True
+        break
 
-    if income_amount < total_minimum:
+    if short or income_amount < total_minimum:
         warnings.append("Income tidak cukup untuk memenuhi semua minimum.")
 
     target_items = sorted(sorted_items, key=lambda item: (item["minimum"] > 0, item.get("priority", 50)))
@@ -129,6 +152,98 @@ def _allocation_priority(name: str, minimum: Decimal, essential: bool, purpose: 
     return 40
 
 
+
+# ── AI Advisor v2: alasan & penyesuaian dari aturan (02-aturan.md §7 "Alokasi", S14) ──
+# Angka rekomendasi tetap dari allocate_income_to_targets; aturan yang menyala hanya
+# menggeser minimum/target amplopnya. Kalimat alasan dari render.alasan_alokasi.
+ATURAN_ALOKASI = ("AMP-01", "AMP-04", "AMP-05", "AMP-06", "TAG-04", "TAB-02")
+BANNER_ALOKASI = ("INC-04", "INC-03")   # di atas form, urutan §7
+SISA_KE = "Tabungan"  # amplop penerima sisa income — sama dengan routes/incomes.py
+
+
+def sesuaikan_dengan_aturan(inputs: list[dict], insights) -> dict[str, list]:
+    """Murni. Ubah `minimum`/`target` allocation input sesuai aturan yang menyala:
+    - AMP-01 minus → minimum ≥ minus (ditutup dulu);
+    - AMP-04 / AMP-05 jatah kekecilan → target ≥ saran;
+    - AMP-06 jatah kebesaran → target turun ke saran (tidak di bawah minimum);
+    - TAG-04 tagihan tahunan → minimum ≥ sisihan per bulan;
+    - TAB-02 target tertinggal → minimum ≥ kurang periode ini, kecuali ditunda (penekanan 7).
+    Mengembalikan {envelope_id: [Insight]} untuk alasan per amplop."""
+    by_id = {item["id"]: item for item in inputs}
+    out: dict[str, list] = {}
+    for ins in sorted(insights, key=lambda i: (ATURAN_ALOKASI.index(i.aturan), i.id)):
+        eid = ins.amplop_id or ins.data.get("amplop_id")
+        item = by_id.get(eid)
+        if item is None:
+            continue
+        d = ins.data
+        if ins.aturan == "AMP-01":
+            item["minimum"] = max(item["minimum"], _to_decimal(d["minus"]).quantize(Decimal("1")))
+        elif ins.aturan in ("AMP-04", "AMP-05"):
+            if d.get("saran"):
+                item["target"] = max(item["target"], _to_decimal(d["saran"]))
+        elif ins.aturan == "AMP-06":
+            item["target"] = max(_to_decimal(d["saran"]), item["minimum"])
+        elif ins.aturan == "TAG-04":
+            item["minimum"] = max(item["minimum"], _to_decimal(d["per_bulan"]).quantize(Decimal("1")))
+        elif ins.aturan == "TAB-02" and not d.get("tunda"):
+            item["minimum"] = max(item["minimum"], _to_decimal(d["kurang"]).quantize(Decimal("1")))
+        item["target"] = max(item["target"], item["minimum"])
+        if item["minimum"] > 0 and item.get("purpose") != "saving":
+            item["priority"] = min(item.get("priority", 50), 10)  # sama dengan _allocation_priority
+        out.setdefault(eid, []).append(ins)
+    return out
+
+
+def sisa_ke(envelopes) -> dict:
+    """Amplop yang menerima sisa income saat disimpan (`POST /incomes/`). Frontend tidak
+    mencocokkan nama sendiri; envelope_id None = akan dibuat saat simpan."""
+    env = next((e for e in envelopes if getattr(e, "name", None) == SISA_KE), None)
+    return {"envelope_id": str(env.id) if env else None, "name": SISA_KE}
+
+
+async def analisa_alokasi(user, db):
+    """(Konteks, Seleksi) v2 untuk halaman Alokasi, atau None bila flag mati / gagal
+    (rekomendasi lama tetap jalan)."""
+    from datetime import datetime
+    from app.services.advisor import advisor_cache, dashboard
+    from app.services.advisor.snapshot import load_snapshot
+    try:
+        pengaturan = await dashboard.muat_pengaturan(db)
+        if not dashboard.flag_aktif(pengaturan.get(dashboard.FLAG_KEY), user.id):
+            return None
+        now_local = datetime.now(dashboard._tz(user))
+        snap = await load_snapshot(user, db, today=now_local.date())
+        km, ks, ka = dashboard.bangun_konstanta(pengaturan.get(dashboard.KONSTANTA_KEY))
+        dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
+        return dashboard.analisa(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
+    except Exception:
+        logger.exception("analisa alokasi v2 gagal user=%s", getattr(user, "id", None))
+        return None
+
+
+def _terlihat(sel, kode) -> list:
+    hidden = set(sel.disembunyikan)
+    return [i for i in sel.semua if i.aturan in kode and i.id not in hidden]
+
+
+def banner_alokasi(ctx, sel) -> list[dict]:
+    """INC-04 / INC-03 yang menyala dan tidak disembunyikan, sudah dirender."""
+    from app.services.advisor.render import render_insight
+    items = sorted(_terlihat(sel, BANNER_ALOKASI), key=lambda i: BANNER_ALOKASI.index(i.aturan))
+    return [render_insight(i, ctx) for i in items]
+
+
+async def build_alokasi_page(user, db) -> dict:
+    """`GET /advisor/page/alokasi`: banner di atas form + amplop penerima sisa."""
+    hasil = await analisa_alokasi(user, db)
+    if hasil is None:
+        context = await load_advisor_context(user, db)
+        return {"enabled": False, "banner": [], "sisa_ke": sisa_ke(context.get("envelopes", []))}
+    ctx, sel = hasil
+    return {"enabled": True, "banner": banner_alokasi(ctx, sel), "sisa_ke": sisa_ke(ctx.snap.envelopes)}
+
+
 async def build_allocation_recommendation(user, income_amount: Decimal, db) -> dict:
     context = await load_advisor_context(user, db)
     envelopes = context.get("envelopes", [])
@@ -144,6 +259,8 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "method": "no_envelopes",
             "items": [],
             "warnings": ["Belum ada amplop aktif untuk direkomendasikan."],
+            "sisa_ke": sisa_ke([]),
+            "banner": [],
         }
 
     allocation_inputs = []
@@ -207,7 +324,14 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "current_rollover": current_rollover,
             "risk_level": risk_level,
             "reasons": reasons[:3],
+            "keyakinan": assess_confidence(historical_spends)["level"],
         }
+
+    hasil = await analisa_alokasi(user, db)
+    alasan_v2: dict[str, list] = {}
+    if hasil is not None:
+        ctx, sel = hasil
+        alasan_v2 = sesuaikan_dengan_aturan(allocation_inputs, _terlihat(sel, ATURAN_ALOKASI))
 
     allocation = allocate_income_to_targets(income_amount, allocation_inputs)
     response_items = []
@@ -228,6 +352,9 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "current_rollover": _money(meta["current_rollover"]),
             "risk_level": meta["risk_level"],
             "reasons": meta["reasons"],
+            "alasan": [{"aturan": ins.aturan, "id": ins.id, "teks": alasan_alokasi(ins, ctx)}
+                       for ins in alasan_v2.get(item["id"], [])],
+            "keyakinan": meta["keyakinan"],
         })
 
     # Aggregate spend per historical period (all-but-last per envelope), aligned
@@ -248,4 +375,6 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
         "method": "obligations_then_historical_median",
         "items": response_items,
         "warnings": allocation["warnings"],
+        "sisa_ke": sisa_ke(envelopes),
+        "banner": banner_alokasi(ctx, sel) if hasil is not None else [],
     }

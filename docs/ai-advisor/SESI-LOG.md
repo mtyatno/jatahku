@@ -34,13 +34,58 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 - Tes lokal butuh `pip install -r requirements.txt -r requirements-test.txt` (container baru tidak punya `pydantic_settings`).
 - Uji browser: Playwright global di `/opt/node-tools/node_modules/playwright`, API di-mock lewat `page.route('**/api/**')`, `localStorage.jatahku_token` + `telegram_id` di `/auth/me`.
 
-**Merge dengan S12/S13 (#94, #95):** `halaman.py` dibuat dua sesi sekaligus → digabung: bagian Amplop (S11) di atas, Langganan (S12) di bawah, impor dashboard jadi di tingkat modul (isi `get_page_langganan` tidak berubah). Route `/page/amplop`, `/page/transaksi`, `/page/langganan` berdampingan.
+**Merge dengan S12/S13/S14 (#94, #95, #98):** `halaman.py` dibuat dua sesi sekaligus → digabung: bagian Amplop (S11) di atas, Langganan (S12) di bawah, impor dashboard jadi di tingkat modul (isi `get_page_langganan` tidak berubah). Route `/page/amplop`, `/page/transaksi`, `/page/langganan` berdampingan. S14 (Alokasi) tidak menyentuh berkas S11.
 
-**Tes (sesudah merge main #95):** backend 893 OK (12 baru, `test_advisor_page_amplop.py`) · frontend 279 OK (7 baru, `envelopeStrip.test.js`) · build OK · Playwright (API di-mock): strip warn/danger/ok dengan tombol aksi tampil di kartu; Beranda → kartu Amplop pengeluaran → Tutup minus membuka rencana `/advisor/plan` (Hobi → Makan).
+**Tes (sesudah merge main #98):** backend 906 OK (12 baru, `test_advisor_page_amplop.py`) · frontend 284 OK (7 baru, `envelopeStrip.test.js`) · build OK · Playwright (API di-mock): strip warn/danger/ok dengan tombol aksi tampil di kartu; Beranda → kartu Amplop pengeluaran → Tutup minus membuka rencana `/advisor/plan` (Hobi → Makan).
 
 **Cara mencoba:** user di flag → halaman Amplop → buka kartu: strip AI + tombol (Geser/Bayar/Setor). Server: `python -m unittest app.tests.test_advisor_page_amplop -v`.
 
-**Lanjut:** S14 Halaman Alokasi (#69) atau S15 Halaman Analitik (#70) — prompt pembuka §3. Halaman baru: tambah `susun_<halaman>` di `halaman.py` (pola S11/S12) atau modul sendiri (pola S13 `page_transaksi.py`).
+**Lanjut:** S15 Halaman Analitik (#70) — prompt pembuka §3. Halaman baru: tambah `susun_<halaman>` di `halaman.py` (pola S11/S12) atau modul sendiri (pola S13 `page_transaksi.py`).
+
+---
+
+## S14 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `allocation.py`: rekomendasi tetap dari `allocate_income_to_targets`, disesuaikan aturan v2 (`sesuaikan_dengan_aturan`, murni):
+  - AMP-01 → minimum ≥ minus;
+  - AMP-04/05 → target ≥ saran;
+  - AMP-06 → target turun ke saran (sisanya ke amplop penerima sisa);
+  - TAG-04 → minimum ≥ sisihan/bulan;
+  - TAB-02 → minimum ≥ kurang periode ini, kecuali `tunda` (penekanan 7).
+  - Amplop yang jadi punya minimum naik ke prioritas 10.
+- Respons `POST /advisor/allocation-recommendation` ditambah: `items[].alasan` (`render.alasan_alokasi`), `items[].keyakinan` (`confidence.py` per amplop), `sisa_ke`, `banner`. Field lama tetap.
+- `GET /advisor/page/alokasi` (baru): banner INC-04/INC-03 (yang disembunyikan tidak tampil) + `sisa_ke`.
+- Minimum satu tingkat prioritas yang tak tertutup income dibagi proporsional (bulat Rp100, sisa pembulatan ke minimum terbesar), lalu berhenti.
+- Frontend:
+  - `lib/allocationAdvice.js` (+ tes);
+  - `Allocate.jsx`: banner di atas form (CTA ke `/allocate` dibuka di tempat), alasan + keyakinan per amplop, `?new=1&amount=` langsung menghitung dan menerapkan rekomendasi;
+  - `QuickAddIncome` (Layout.jsx) "Bagi otomatis" = rekomendasi yang sama.
+  - Pencocokan nama "Tabungan" di `Layout.jsx`/`Allocate.jsx` diganti `sisa_ke.envelope_id`.
+- `04-kontrak-api.md`: endpoint & field baru.
+
+**Digantung**
+- `routes/incomes.py` masih mencari amplop sisa dengan nama "Tabungan" (`_get_or_create_tabungan`); `sisa_ke` meniru aturan itu di satu tempat (`allocation.SISA_KE`). Bila aturan sisa diubah (mis. ke `purpose='saving'` / `is_emergency`), ubah keduanya — perlu issue terpisah (di luar kepemilikan S14).
+- `categoryColor('Tabungan')` di Allocate.jsx mencocokkan label kategori distribusi dari backend, bukan nama amplop — dibiarkan.
+- "Bagi proporsional" (per `budget_amount`) di Allocate tetap ada sebagai pilihan manual.
+- Uji di produksi dengan akun tim belum dilakukan.
+
+**Keputusan kecil**
+- Alasan v2 hanya dari insight yang tidak disembunyikan viewer (sama dengan Beranda).
+- Analisa v2 di alokasi mengikuti flag `advisor_v2_users`. Bila gagal, dicatat di log lalu jatuh ke rekomendasi lama tanpa alasan.
+- "Bagi otomatis" sebelumnya membagi proporsional terhadap kebutuhan (target) di frontend. Sekarang mengikuti backend: minimum dulu (proporsional bila kurang), lalu target per prioritas. Income kecil/harian tetap terbagi ke amplop kebutuhan (minimum = 0,6 × median), bukan ke satu amplop.
+- Keyakinan per amplop memakai kosakata lama `high/medium/low` supaya `confidenceCopy.js` tetap dipakai.
+
+**Jebakan**
+- `analisa_alokasi` memuat snapshot penuh setiap kali rekomendasi diminta (tanpa cache); cukup cepat (target 150 ms), tapi jangan dipanggil per ketikan.
+- Tes yang memanggil `build_allocation_recommendation` dengan `db=None` tanpa mem-patch `analisa_alokasi` akan mencetak traceback log (lalu jatuh ke jalur lama) — patch `analisa_alokasi` seperti di `test_advisor_alokasi_v2.py`.
+- Sesi ini merge `origin/main` (#96) di tengah jalan; konflik hanya di `04-kontrak-api.md` (baris 503 #91 + blok S14).
+
+**Tes:** backend 870 OK (13 baru) · frontend 267 OK (5 baru) · build OK · uji Playwright halaman Alokasi dengan API tiruan (banner → form terisi → rekomendasi diterapkan → alasan + keyakinan; skrip tidak di-commit).
+
+**Cara mencoba:** Beranda (flag aktif) dengan pemasukan yang belum dibagi > 24 jam → buka Alokasi → banner "Bagi Rp… ke amplop" → **Bagi sekarang**. Atau FAB → Pemasukan → isi jumlah → **Bagi otomatis**.
+
+**Lanjut:** review PR, merge (tanpa migrasi), cek di produksi dengan akun tim; buka issue untuk aturan amplop sisa di `incomes.py`.
 
 ---
 
