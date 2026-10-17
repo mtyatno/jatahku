@@ -45,7 +45,95 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 **Cara mencoba:** buka `landing.html` langsung di browser (hero, FAQ, demo chat); blog: `cd blog && npm ci && npm run dev` → `/insight/ai-advisor-di-setiap-halaman/`.
 
-**Lanjut:** S16 (#71), S17 (#72), atau S10b (hapus jalur lama setelah flag `*`) — prompt pembuka §3.
+**Lanjut:** S10b (hapus jalur lama setelah flag `*`) — prompt pembuka §3.
+
+---
+
+## S17 Chat lengkap · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- Intent §6H yang tersisa, jawaban dari mesin yang sama (`chat.muat` → dismiss viewer terbaru):
+  - **"tagihan bulan ini"** (`TAGIHAN_RE`: "tagihan?", "cicilan apa aja", "kapan jatuh tempo", "cek tagihan"; juga `/tagihan`) → `chat.jawab_tagihan`: tagihan periode (jatuh tempo di periode, telat, atau lunas) dengan status per baris, belum dibayar (M4), sisihan tahunan (M5), beban tagihan (K4), chip Tagihan, insight TAG teratas + fakta. Di luar flag → `/langganan` lama.
+  - **"target {nama}"** (`TARGET_RE`: "target liburan", "progres tabungan", "tabungan rumah gimana"; juga `/target [nama]`) → `chat.jawab_target`: satu target (nama target, lalu nama amplop tabungannya) dengan G4/G5/G6 + insight TAB target itu; tanpa nama → semua target (maks 5) + chip Tabungan. Di luar flag → arahan ke halaman Amplop.
+- **SIM-01 "ganti amplop"**: saat amplop ditebak, balasan "aman beli" membawa tombol amplop belanja lain (`sim:{jumlah}:{amplop_id}`, urut porsi 7 hari); menekan tombol menyunting balasan dengan simulasi di amplop itu + tombol amplop lainnya. Tanpa Redis (≤ 64 byte); amplop yang bukan milik viewer jatuh ke tebakan (`chat.amplop_simulasi` hanya menerima amplop terlihat).
+- **`/tanya`**: tombol pertanyaan yang pasti terjawab (`help_cmd.PERTANYAAN`, callback `tanya:<intent>`). Saran untuk teks tak dikenal (intent-learning) ikut punya "Kenapa boros?", "Tagihan bulan ini", "Target tabungan".
+- **Satu daftar**: `intent_learning.intent_handlers()` dipakai frasa yang dipelajari, tombol saran, dan `/tanya`; `help_cmd.BOT_COMMANDS` dipakai `post_init` dan `GET /webhook/telegram/set-commands` (dulu dua daftar berbeda: 11 vs 19 perintah). `/help` punya bagian "Tanya AI Advisor".
+- **Chip cepat per halaman** (web): `lib/chatChips.js` — chip dari insight (draft CTA "Tanya di chat") dulu, lalu pertanyaan halaman aktif (Beranda, Amplop, Transaksi, Alokasi, Langganan, Analitik; lainnya bawaan), lalu /status /amplop Panduan. "Aman beli…?" hanya mengisi kotak ketik (butuh nominal). Menggantikan `QUICK` di `ChatPanel.jsx`.
+- Cek #91: chat **tidak** menawarkan tombol sembunyikan/munculkan lagi; jalur dismiss tetap satu (`POST`/`DELETE /advisor/dismiss` di web). Semua intent baru lewat `chat.muat`, jadi ikut status dismiss terbaru; "kenapa …", tagihan, dan target sengaja memakai insight walau di-dismiss (user bertanya langsung, sama dengan S9).
+
+**Digantung**
+- CTA "Catat" dari balasan SIM-01 (§6H) belum ada: user tetap mengetik ulang pengeluarannya. Butuh penyimpanan deskripsi (Redis seperti `txn:`) + alur cek `check_expense`; issue terpisah bila perlu.
+- Emoji 🎯 belum dipetakan ke ikon di `lib/chatIcons.js` (di luar kepemilikan S17) → di chat web tampil sebagai emoji.
+- `handle_comparison` dan "pengeluaran kemarin" tetap jalur lama (bukan angka periode berjalan).
+- Menu perintah Telegram baru berlaku setelah deploy (post_init) atau `GET /webhook/telegram/set-commands` (admin).
+
+**Keputusan kecil (juga di docstring chat.py / advisor_cmd.py)**
+- Tombol ganti amplop hanya saat amplop **ditebak**; amplop yang disebut user dianggap pilihan sadar.
+- Rute: tagihan/target dicek sesudah "kenapa …" dan sebelum "nabung"/"sisa"; target kalah dari kalkulator nabung ("harus nyisih berapa buat target laptop" tetap `handle_nabung`); pesan dengan nominal tidak pernah jadi intent tanya.
+- "Kenapa boros?" dari tombol memakai teks tetap, bukan teks pesan bot (`handle_kenapa_boros`).
+- Status tagihan: ✅ lunas › 🔴 telat N hari › 🟡 jatuh tempo hari ini › "belum · tgl".
+
+**Jebakan**
+- Pesan dengan "dalam N bulan" bisa terbaca `parse_subscription` dulu → alur langganan (perilaku lama, bukan dari S17); pakai contoh tanpa durasi di tes rute.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- Uji browser dev: API di `/api/**` (proxy Vite), mock dengan `page.route('**/api/**')`; halaman Amplop kosong dengan mock `[]` (bukan karena chip).
+
+**Tes:** backend 931 OK (25 baru, `test_advisor_chat_s17.py`) · frontend 289 OK (5 baru, `chatChips.test.js`) · build OK · Playwright (API di-mock): chip Beranda/Transaksi/Langganan/Alokasi sesuai halaman, "Aman beli…?" mengisi kotak ketik.
+
+**Cara mencoba:** user di flag → Telegram/chat web: "tagihan bulan ini", "target liburan", `/tanya`, "aman gak beli sepatu 300k" (tanpa nama amplop → tombol amplop lain). Web: buka chat di halaman Langganan → chip pertama "Tagihan bulan ini". Server: `python -m unittest app.tests.test_advisor_chat_s17 -v`.
+
+**Lanjut:** sesudah merge, panggil `GET /webhook/telegram/set-commands` (admin) bila menu Telegram belum berubah. Sesi berikutnya: S18 (#73) — prompt pembuka §3.
+
+---
+
+## S16 Notifikasi proaktif · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/proaktif.py` (baru): aturan §9 untuk semua permukaan proaktif (`telegram`, `web` = lonceng, `chat` = chat web).
+  - Buku kiriman Redis `advisor:proaktif:{viewer}:{tanggal lokal}` (hash, TTL 2 hari): hal → permukaan, `_advisor` = hal yang memakai kuota 1/hari.
+  - `hal()`: TAG-01/02/03 dan pengingat jatuh tempo untuk langganan yang sama = satu hal `TAG:{id}`.
+  - `Buku.permukaan_bebas`: maks 2 permukaan per hal, tidak dua kali ke permukaan yang sama. `jam_tenang`: 21.00–07.00 waktu user.
+  - `kirim_peringatan` (scheduler tiap jam): item #1 daftar bertone danger → `send_budget_warning`.
+  - `untuk_chat` (chat web): item hari ini, atau item #1 danger/warn.
+  - `catat_ringkasan`: ringkasan harian mencatat item #1.
+- **Cek #91:** dismiss dibaca ulang tiap kiriman (`chat.muat` → `advisor_cache.muat_dismiss`). Yang disembunyikan tidak dikirim, dan yang dimunculkan lagi boleh dikirim lagi (tes). Tidak ada tombol/jalur dismiss baru.
+- `notification_service.kirim` (baru): lonceng + Telegram HTML ke permukaan yang diminta, tanpa email, sesi DB sendiri; mengembalikan permukaan yang terkirim. `send_budget_warning` dirombak: teks dari insight (`render.notifikasi_insight`), patuh `budget_warning_tg/_web`, link `/`. Versi lama (persen amplop) tidak punya pemanggil.
+- **Pengingat tagihan** (`recurring_processor`), memperbaiki temuan 01-desain #10:
+  - jalan tiap jam, per user: tanggal & jam lokal, mulai 07.00 (jam tenang);
+  - patuh `subscription_due_tg` / `subscription_due_web` (lonceng baru, link `/langganan`);
+  - **sekali per (langganan, jatuh tempo, user)** (`advisor:tagihan:*`, NX, TTL 400 hari), jadi tagihan telat tidak diingatkan ulang tiap hari;
+  - user tanpa Telegram tetap dapat lonceng;
+  - tombol `recpay_/recskip_/recstop_` tetap.
+- **Ringkasan ke lonceng:** `send_daily_summary`/`send_weekly_summary(user_id, telegram, web)`. Scheduler mengirim bila `*_summary_tg` (dengan Telegram) atau `*_summary_web`. Teks lonceng dari `render.lonceng_ringkasan_*` lewat `chat.lonceng_harian/mingguan` (angka sama dengan Beranda). Lonceng hanya untuk jalur v2.
+- Scheduler: `run_user_summaries` kini memuat semua user aktif (bukan hanya yang tertaut Telegram; tanpa `deleted_`/`banned_`). Urutan: peringatan advisor → ringkasan harian/mingguan → payday → check-in. Job `recurring_transactions` tiap jam (menit 1).
+- Chat web: `POST /bot/chat/proaktif` → `{ops}` (format Outbox yang sama). `api.chatProaktif()`; `ChatPanel` memanggilnya setiap panel dibuka, dan server yang membatasi.
+- Dokumen: `04-kontrak-api.md` (endpoint), `03-workflow.md` §7 (baris kepemilikan S16), `AGENTS.md` peta v2, `00-indeks.md`.
+
+**Digantung**
+- Tombol "Sembunyikan" di pesan Telegram/chat proaktif: tidak dibuat. Kalau ditambah (S17), panggil `dashboard.dismiss` (fungsi yang sama dengan `POST /advisor/dismiss`) supaya Urungkan di web ikut berlaku.
+- `send_notification` (Markdown + email untuk `budget_warning`/`subscription_due`) masih dipakai `goal_notify`, tidak diubah. `send_subscription_due` lama tidak punya pemanggil (dibiarkan; hapus di S18 "kode basi").
+- Lonceng ringkasan untuk user di luar flag v2 (jalur lama) tidak dibuat. Flag sudah `*`, dan jalur lama dihapus di S10b.
+- Uji di produksi: cek log `advisor peringatan` dan `Recurring reminder` setelah deploy; pastikan pengingat tagihan pagi ini (07.00 WIB) hanya sekali.
+
+**Keputusan kecil (juga di docstring proaktif.py)**
+- Ringkasan harian/mingguan dijadwalkan user sendiri, jadi tidak diblokir jam tenang/kuota, tetapi ringkasan harian *mencatat* item #1 (memakai kuota bila belum).
+- Peringatan proaktif hanya item #1 bertone **danger**; chat web menampilkan danger/warn. Info/ok hanya lewat ringkasan.
+- Kiriman pertama hari itu (peringatan, ringkasan, atau chat web) memakai kuota. Permukaan lain hanya boleh mengirim hal yang sama sampai 2 permukaan.
+- Pengingat tagihan tidak memakai kuota advisor (preferensi sendiri) tetapi dicatat di buku. Akibatnya TAG-01/02 untuk langganan yang sudah diingatkan ke Telegram + lonceng tidak dikirim lagi sebagai peringatan/chat hari itu.
+- Redis gagal → peringatan & chat tidak mengirim (lebih baik terlewat daripada dobel). Klaim pengingat tagihan juga tidak mengirim. Ringkasan tetap terkirim.
+- Pengingat tagihan dengan semua preferensi mati tidak diklaim: bila user menyalakan lagi hari itu, masih diingatkan.
+
+**Jebakan**
+- `kirim` sengaja membuka sesi DB sendiri: commit lonceng yang gagal di sesi loop scheduler/ringkasan akan merusak sesi untuk user berikutnya (lihat jebakan S9 soal rollback).
+- Query tagihan memakai `next_run <= hari UTC + 1`, lalu disaring per user dengan tanggal lokal (zona user bisa sudah "besok").
+- Traceback `ConnectionRefusedError ... 5432` di output unittest sudah ada di `main` (dari `test_allocation_response`), bukan kegagalan.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 935 OK (29 baru, `test_advisor_proaktif.py`) · frontend 284 OK · build OK. Tidak diuji di browser (ChatPanel memakai `receive(ops)` yang sama dengan pesan biasa).
+
+**Cara mencoba:** `python -m unittest app.tests.test_advisor_proaktif -v`. Di produksi, setelah deploy: buka chat web (user di flag dengan item #1 danger/warn) → pesan advisor muncul sekali; buka lagi → tidak muncul lagi. Lonceng: Pengaturan → Notifikasi → "Ringkasan harian" kolom web (default mati). Pengingat tagihan: langganan jatuh tempo hari ini → satu pesan pukul 07.00 lokal, tidak berulang besok.
+
+**Lanjut:** S17 Chat lengkap (#72) — prompt pembuka §3. S17 yang menambah tombol sembunyikan di chat: pakai `dashboard.dismiss`/`batal_dismiss`.
 
 ---
 

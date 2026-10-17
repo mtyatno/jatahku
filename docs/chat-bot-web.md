@@ -47,6 +47,10 @@ ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapte
   flag `advisor_v2_users` disusun `app/bot/advisor_cmd.py` →
   `app/services/advisor/chat.py` (metrics + render AI Advisor, angka sama dengan
   Beranda); user lain masih mendapat jawaban lama sampai flag `*` (S10).
+- S17: "tagihan bulan ini", "target {nama}", `/tanya` (tombol `tanya:<intent>`),
+  `/tagihan`, `/target`, dan tombol "ganti amplop" untuk "aman beli" (`sim:{jumlah}:{amplop}`).
+  Menu perintah Telegram = `help_cmd.BOT_COMMANDS`. Chip di bawah chat web per halaman:
+  `lib/chatChips.js` (chip dari insight tetap didahulukan).
 - Perintah akun khusus Telegram (`/link`, `/unlink`, `/webapp`, tombol
   `merge_`/`unlink_`) tidak dijalankan di web; `/start` mengabaikan deep link.
 - Teks yang berbeda per kanal memakai `is_web()` (mis. `/help`, ajakan setup,
