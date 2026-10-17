@@ -80,4 +80,5 @@ Dicatat dari S6/S7/S9; dikerjakan setelah langkah 4–5:
 ## Catatan uji
 | Tanggal | Langkah | Akun / jumlah user | Hasil | Catatan |
 |---|---|---|---|---|
-| | | | | |
+| 2026-10-17 | 2 (cek paritas) | 95 user | crash 95 | Migrasi `a9c3e7d1f5b2` + `c5e9a2d7f4b1` belum jalan di produksi (`envelopes.is_emergency` tidak ada). `alembic upgrade head` + restart; 4 amplop ditandai dana darurat. `deploy.sh` kini memeriksa migrasi. |
+| 2026-10-17 | 2 (ulang) | 95 user | ok 54 · beda 0 · crash 0 · lewati 41 | 1 user > 150 ms. Lolos. |

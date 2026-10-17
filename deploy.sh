@@ -16,6 +16,28 @@ done
 # Pull latest
 sudo -u jatahku git pull origin main
 
+# Migrasi database: deploy TIDAK menjalankan alembic (lihat checklist di AGENTS.md),
+# tapi model yang memetakan kolom baru membuat API 500 sampai migrasinya jalan
+# (insiden 17 Okt 2026: c5e9a2d7f4b1 `envelopes.is_emergency` tertinggal).
+# Bandingkan revisi DB dengan head di repo; tertinggal → peringatan sekarang, dan
+# deploy diakhiri gagal setelah semua langkah lain selesai supaya notifikasi
+# "Deploy GAGAL" di Telegram terkirim.
+ALEMBIC="sudo -u jatahku /opt/jatahku/venv/bin/alembic"
+revisi() { $ALEMBIC "$1" 2>/dev/null | grep -oE '^[0-9a-f]+' | sort | xargs || true; }
+MIG_DB=$(revisi current)
+MIG_HEAD=$(revisi heads)
+MIG_PENDING=""
+if [ -z "$MIG_HEAD" ]; then
+    echo "⚠️  Cek migrasi dilewati — alembic heads tidak terbaca"
+elif [ "$MIG_DB" != "$MIG_HEAD" ]; then
+    MIG_PENDING=1
+    echo "⚠️  MIGRASI BELUM JALAN — database: ${MIG_DB:-kosong}, repo head: $MIG_HEAD"
+    $ALEMBIC history -r "${MIG_DB%% *}:heads" 2>/dev/null | grep -v " -> ${MIG_DB%% *}[ ,]" || true
+    echo "   Jalankan: cd /opt/jatahku/app && $ALEMBIC upgrade head && sudo systemctl restart jatahku"
+else
+    echo "✅ Migrasi database mutakhir ($MIG_HEAD)"
+fi
+
 # Backend
 sudo chown -R jatahku:jatahku /opt/jatahku/app/
 sudo systemctl restart jatahku
@@ -104,4 +126,10 @@ if [ "$STATUS" = "healthy" ]; then
     echo "✅ Deploy success — API healthy"
 else
     echo "⚠️ Deploy warning — API status: $STATUS"
+fi
+
+if [ -n "$MIG_PENDING" ]; then
+    echo "❌ Kode baru sudah terpasang, tapi migrasi database belum jalan (database: ${MIG_DB:-kosong}, head: $MIG_HEAD)."
+    echo "   Jalankan: cd /opt/jatahku/app && $ALEMBIC upgrade head && sudo systemctl restart jatahku"
+    exit 2
 fi
