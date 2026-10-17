@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import TgLogin from './pages/TgLogin';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import HapusAkun from './pages/HapusAkun';
 import Dashboard from './pages/Dashboard';
 import Envelopes from './pages/Envelopes';
 import Transactions from './pages/Transactions';
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/auth/tg" element={<TgLogin />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/hapus-akun" element={<HapusAkun />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/envelopes" element={<Envelopes />} />

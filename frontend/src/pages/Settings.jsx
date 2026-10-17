@@ -939,7 +939,7 @@ export default function Settings() {
             ) : (
               <div className="bg-red-50 rounded-xl p-4 space-y-3">
                 <p className="text-sm font-semibold text-red-600">⚠️ Hapus akun?</p>
-                <p className="text-xs text-red-500">Semua data kamu akan dihapus permanen. Data akan di-download otomatis sebelum dihapus.</p>
+                <p className="text-xs text-red-500">Akun dan semua data kamu dihapus permanen, dan semua perangkat keluar. Catatan kamu di amplop bersama household tetap ada tanpa nama ("Mantan anggota"). Data di-download otomatis sebelum dihapus.</p>
                 <input className="input text-sm border-red-200" placeholder='Ketik "HAPUS" untuk konfirmasi'
                   value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} />
                 <div className="flex gap-2">

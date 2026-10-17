@@ -135,6 +135,29 @@ class ApiClient {
     }
   }
 
+  // Halaman /hapus-akun (tanpa login): minta link konfirmasi, lalu konfirmasi dengan token.
+  async requestAccountDeletion(email) {
+    return this._publicPost('/user/account/deletion-request', { email });
+  }
+
+  async confirmAccountDeletion(token) {
+    return this._publicPost('/user/account/deletion-confirm', { token });
+  }
+
+  async _publicPost(path, body) {
+    try {
+      const res = await apiFetch(`${API_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
+
   async resetPassword(token, newPassword) {
     try {
       const res = await apiFetch(`${API_URL}/auth/reset-password`, {
