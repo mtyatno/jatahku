@@ -120,7 +120,7 @@ def per_03(ctx: Konteks) -> list[Insight]:
         return []
     return [Insight(
         aturan="PER-03", entitas=m.period_start.isoformat(),
-        tone="warn" if _kekurangan_menyala(m) else "info", slot=("kpi:terpakai",),
+        tone="warn" if _kekurangan_menyala(m) else "info", slot=("kpi:terpakai", "analitik"),
         data={"persen_dana": pv, "persen_waktu": m.persen_waktu, "hari_ke": m.hari_ke, "hari_total": m.hari_total},
         dasar_hari=m.hari_ke,
     )]
@@ -137,7 +137,7 @@ def per_04_05(ctx: Konteks) -> list[Insight]:
     l7, lp = laju_7_hari(m), laju_periode(m)
     if l7 is not None and lp > 0 and l7 <= lp * k.laju_membaik:
         out.append(Insight(
-            aturan="PER-04", entitas=m.period_start.isoformat(), tone="ok", slot=("kpi:sisa_bebas",),
+            aturan="PER-04", entitas=m.period_start.isoformat(), tone="ok", slot=("kpi:sisa_bebas", "analitik"),
             data={"laju7": l7, "laju_periode": lp, "turun": 1 - l7 / lp, "pe": m.period_end, "sisa": sisa},
             keyakinan=yakin, dasar_hari=m.hari_ke,
         ))

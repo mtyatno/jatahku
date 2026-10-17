@@ -123,6 +123,25 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 //   alasan dari AMP-01/04/05/06, TAG-04, TAB-02 yang menyala (tidak disembunyikan); aturan itu juga menggeser
 //   minimum/target amplopnya (§7 "Alokasi"). Minimum satu tingkat prioritas yang tak tertutup income dibagi
 //   proporsional. Dipakai halaman Alokasi ("Terapkan ke form", ?new=1) dan "Bagi otomatis" di FAB pemasukan.
+// GET /advisor/page/analitik  (S15, 02-aturan.md §7 "Halaman lain: Analitik")
+//   → { "enabled": true, "generated_at": "…", "period_start": "2026-10-01", "period_end": "2026-10-31",
+//       "hari_ini": "2026-10-17",
+//       "ringkasan": [{/* ≤ 3 poin, bentuk item daftar */}],
+//       "harian": [/* sama persis dengan metrics.harian /advisor/dashboard */],
+//       "grafik": {"teks", "aksi"} /* sama dengan /advisor/dashboard */ }
+//   ringkasan: satu terbaik per kelompok — periode (PER-03/04), amplop (AMP-08/11), hari terboros (S6),
+//   tabungan (TAB-06) — urut tone lalu kelompok; kurang dari 3 → AMP-08/11 amplop lain. Poin hari terboros
+//   bukan aturan: "id": null, "aturan": null, "dismiss": null, CTA `route` ke /transactions?date=.
+//   Insight yang di-dismiss viewer tidak muncul. Hanya periode berjalan (frontend memakai jalur lama untuk
+//   periode lain). Di luar flag → {"enabled": false}. Tanpa cache server.
+// GET /advisor/sinking-funds  (S15 mengganti actions[]; field lain tetap)
+//   recommendations[].actions = [aksi utama, {"kind": "dismiss", "label": "Abaikan",
+//                                             "payload": {"kunci": "SNK:<id>", "pilihan": "tidak_relevan"}}]
+//   aksi utama: create_recurring/annualize mingguan/bulanan/tahunan → `make_recurring`
+//   {deskripsi, jumlah, frekuensi, amplop_id, next_run?}; adjust_recurring → `route` /langganan;
+//   review & triwulanan/semesteran → `route` /transactions?envelope=<id>. Rekomendasi yang di-dismiss tidak muncul.
+// GET /analytics/daily-spending  (S15) — hanya amplop bersama + pribadi milik viewer (seperti endpoint
+//   analytics lain); amplop pribadi anggota lain tidak ikut.
 ```
 
 ## Aksi CTA di frontend (S8)

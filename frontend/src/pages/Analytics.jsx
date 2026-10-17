@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { Icon, EnvelopeIcon } from '../components/Icon';
@@ -7,6 +7,10 @@ import { useTheme } from '../hooks/useTheme';
 import { buildWeekHeatmap, categoryDelta, busiestWeekday } from '../lib/analyticsInsight';
 import { monthlyEquivalentTotal, unpaidMonthlyTotal } from '../lib/subscriptionStatus';
 import { fundingState } from '../lib/envelopeFunding';
+import { openAction } from '../lib/advisorAction';
+import { analitikAktif, ringkasanPoin, harianKeDaily, sinkingButtons } from '../lib/analyticsAdvice';
+import { advisorDailySeries } from '../lib/advisorDashboard';
+import DailySpendingChart from '../components/DailySpendingChart';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, ReferenceLine,
@@ -29,7 +33,51 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-function SinkingFundAdvisor({ data }) {
+// Ringkasan AI v2 (S15): gaya per tone server.
+const POIN_STYLE = {
+  danger: { box: 'bg-red-50', icon: 'warning', color: '#E24B4A' },
+  warn: { box: 'bg-amber-50', icon: 'warning', color: '#D97706' },
+  info: { box: 'bg-gray-50', icon: 'advisor', color: '#378ADD' },  // bg-blue-50 tidak punya padanan gelap
+  ok: { box: 'bg-brand-50', icon: 'advisor', color: '#0F6E56' },
+};
+
+function RingkasanAI({ poin }) {
+  if (poin.length === 0) return <p className="text-sm text-gray-400">Belum cukup data untuk ringkasan periode ini.</p>;
+  return (
+    <div className="space-y-2">
+      {poin.map(item => {
+        const t = POIN_STYLE[item.tone] || POIN_STYLE.info;
+        return (
+          <div key={item.key} className={`rounded-xl px-3 py-2 ${t.box}`}>
+            <div className="flex items-start gap-2">
+              <span className="mt-0.5 flex-shrink-0"><Icon name={t.icon} size={15} color={t.color} /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-gray-700">{item.judul}</p>
+                {item.isi && <p className="text-xs text-gray-600 mt-0.5">{item.isi}</p>}
+              </div>
+            </div>
+            {(item.actions.length > 0 || item.dismissKey) && (
+              <div className="flex flex-wrap items-center gap-2 mt-2 pl-6">
+                {item.actions.map((a, i) => (
+                  <button key={`${a.kind}-${i}`} type="button" onClick={() => openAction(a)}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50">
+                    {a.label}
+                  </button>
+                ))}
+                {item.dismissKey && (
+                  <button type="button" onClick={() => openAction({ kind: 'dismiss', payload: { kunci: item.dismissKey, pilihan: 'nanti' } })}
+                    className="ml-auto text-xs text-gray-400 hover:text-gray-600">Nanti</button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SinkingFundAdvisor({ data, withActions }) {
   const recommendations = data?.recommendations || [];
   if (recommendations.length === 0) return null;
   return (
@@ -63,6 +111,18 @@ function SinkingFundAdvisor({ data }) {
               <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
                 {item.evidence.map((evidence, idx) => (
                   <p key={idx} className="text-xs text-gray-500">{evidence}</p>
+                ))}
+              </div>
+            )}
+            {withActions && sinkingButtons(item).length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                {sinkingButtons(item).map((a, i) => (
+                  <button key={`${a.kind}-${i}`} type="button" onClick={() => openAction(a)}
+                    className={a.kind === 'dismiss'
+                      ? 'ml-auto text-xs text-gray-400 hover:text-gray-600'
+                      : 'px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'}>
+                    {a.label}
+                  </button>
                 ))}
               </div>
             )}
@@ -111,6 +171,16 @@ export default function Analytics() {
   const [periodIdx, setPeriodIdx] = useState(null);
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const loadedPeriod = useRef(null);
+
+  // Data berubah (transaksi, amplop, saran disembunyikan/dimunculkan) → muat ulang (S15).
+  useEffect(() => {
+    const onChanged = () => setRefreshTick(t => t + 1);
+    const EVENTS = ['jatahku:txn-added', 'jatahku:envelope-updated', 'jatahku:advisor-dismissed', 'jatahku:advisor-undismissed'];
+    EVENTS.forEach(e => window.addEventListener(e, onChanged));
+    return () => EVENTS.forEach(e => window.removeEventListener(e, onChanged));
+  }, []);
 
   useEffect(() => {
     api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length > 0 ? p.length - 1 : -1); });
@@ -121,8 +191,11 @@ export default function Analytics() {
     const cur = periods[periodIdx];
     const prev = periodIdx > 0 ? periods[periodIdx - 1] : null;
     const ps = cur.period_start, pe = cur.period_end;
+    const current = periodIdx >= periods.length - 1;
     const safeJson = (path) => api.request(path).then(r => (r.ok ? r.json() : null)).catch(() => null);
-    setLoading(true);
+    // Ganti periode → "Loading..."; muat ulang karena data berubah → data lama tetap tampil.
+    if (loadedPeriod.current !== ps) setLoading(true);
+    let stale = false;
     Promise.all([
       api.getDailySpending(ps, pe),
       api.getEnvelopeBreakdown(ps, pe),
@@ -134,7 +207,10 @@ export default function Analytics() {
       api.getRecurring(),
       api.getTransactions(null, 500, ps, pe),
       api.getEnvelopeSummary(),
-    ]).then(([daily, breakdown, prevBreakdown, trend, prediction, alloc, sinking, recurring, txns, envelopes]) => {
+      current ? api.getAdvisorAnalitik() : Promise.resolve(null),
+    ]).then(([daily, breakdown, prevBreakdown, trend, prediction, alloc, sinking, recurring, txns, envelopes, advisor]) => {
+      if (stale) return;
+      loadedPeriod.current = ps;
       setD({
         daily: Array.isArray(daily) ? daily : [],
         breakdown: (Array.isArray(breakdown) ? breakdown : []).filter(x => x.spent > 0),
@@ -145,16 +221,21 @@ export default function Analytics() {
         recurring: Array.isArray(recurring) ? recurring : [],
         txns: Array.isArray(txns) ? txns : [],
         envelopes: Array.isArray(envelopes) ? envelopes : [],
+        advisor,
       });
       setLoading(false);
     });
-  }, [periodIdx, periods]);
+    return () => { stale = true; };
+  }, [periodIdx, periods, refreshTick]);
 
   if (loading || !d) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
   const cur = periods[periodIdx] || {};
   const isCurrentPeriod = periodIdx >= periods.length - 1;
-  const { daily, breakdown, prevBreakdown, trend, prediction, alloc, sinking, recurring, txns, envelopes } = d;
+  const { breakdown, prevBreakdown, trend, prediction, alloc, sinking, recurring, txns, envelopes, advisor } = d;
+  // AI Advisor v2 (S15): periode berjalan + flag → ringkasan & deret grafik dari server (metrics.harian).
+  const v2 = isCurrentPeriod && analitikAktif(advisor, cur.period_start);
+  const daily = v2 ? harianKeDaily(advisor.harian) : d.daily;
 
   // Derived (client-side, pure helpers)
   const dailyChart = daily.map(x => ({ ...x, date: new Date(x.date).getDate() + '' }));
@@ -263,10 +344,12 @@ export default function Analytics() {
         <div className="card">
           <div className="flex items-center gap-2 mb-3">
             <Icon name="advisor" size={18} color="#0F6E56" />
-            <h3 className="font-semibold text-sm">Insight</h3>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-600">Beta</span>
+            <h3 className="font-semibold text-sm">{v2 ? 'Ringkasan AI' : 'Insight'}</h3>
+            {!v2 && <span className="text-xs px-2 py-0.5 rounded-full bg-brand-50 text-brand-600">Beta</span>}
           </div>
-          {insights.length === 0 ? (
+          {v2 ? (
+            <RingkasanAI poin={ringkasanPoin(advisor)} />
+          ) : insights.length === 0 ? (
             <p className="text-sm text-gray-400">Belum cukup data untuk insight periode ini.</p>
           ) : (
             <div className="space-y-2">
@@ -292,6 +375,20 @@ export default function Analytics() {
 
       {/* ── Spending Pattern ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {v2 ? (
+          <DailySpendingChart
+            daily={[]}
+            periodStart={cur.period_start}
+            periodEnd={cur.period_end}
+            today={advisor.hari_ini}
+            safeDaily={0}
+            isDark={isDark}
+            advisor={{
+              series: advisorDailySeries({ harian: advisor.harian }, cur.period_start, cur.period_end, advisor.hari_ini),
+              grafik: advisor.grafik,
+            }}
+          />
+        ) : (
         <div className="card">
           <h3 className="font-semibold text-sm mb-4">Pengeluaran harian</h3>
           {dailyChart.length === 0 ? (
@@ -314,6 +411,7 @@ export default function Analytics() {
             </>
           )}
         </div>
+        )}
         <div className="card">
           <h3 className="font-semibold text-sm mb-4">Heatmap mingguan</h3>
           {daily.length === 0 ? (
@@ -468,7 +566,7 @@ export default function Analytics() {
         </div>
       )}
 
-      <SinkingFundAdvisor data={sinking} />
+      <SinkingFundAdvisor data={sinking} withActions={v2} />
     </div>
   );
 }
