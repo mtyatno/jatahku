@@ -1,3 +1,4 @@
+import html
 import logging
 from uuid import UUID
 from sqlalchemy import select
@@ -93,23 +94,55 @@ async def send_notification(
             await db.close()
 
 
-async def send_budget_warning(user_id: UUID, envelope_name: str, emoji: str, spent_pct: int, remaining: str):
-    """Send budget warning when envelope reaches 80% or 90%."""
-    if spent_pct >= 90:
-        title = f"🔴 {emoji} {envelope_name} hampir habis!"
-        msg = f"Sudah terpakai {spent_pct}%. Sisa: {remaining}"
-    else:
-        title = f"🟡 {emoji} {envelope_name} mulai menipis"
-        msg = f"Sudah terpakai {spent_pct}%. Sisa: {remaining}"
+async def kirim(
+    user,
+    notif_type: NotificationType,
+    title: str,
+    message: str,
+    *,
+    link: str | None = None,
+    telegram_html: str | None = None,
+    reply_markup=None,
+    permukaan=("telegram", "web"),
+) -> set[str]:
+    """Kirim ke permukaan yang diminta (`telegram`, `web` = lonceng), tanpa email.
 
-    await send_notification(
-        user_id=user_id,
-        notif_type=NotificationType.budget_warning,
-        title=title,
-        message=msg,
-        link="/envelopes",
-        telegram_text=f"{title}\n{msg}",
-    )
+    Pemanggil yang sudah menyaring preferensi & aturan anti-ganggu (S16, 02-aturan.md §9).
+    Mengembalikan permukaan yang benar-benar terkirim, untuk buku kiriman `advisor.proaktif`.
+    Sesi DB sendiri: commit yang gagal tidak merusak sesi loop pemanggil (scheduler/ringkasan)."""
+    terkirim: set[str] = set()
+    if "web" in permukaan:
+        async with AsyncSessionLocal() as db:
+            db.add(Notification(user_id=user.id, type=notif_type, title=title, message=message, link=link))
+            await db.commit()
+        terkirim.add("web")
+    if "telegram" in permukaan and user.telegram_id and settings.TELEGRAM_BOT_TOKEN:
+        try:
+            bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            await bot.send_message(
+                chat_id=int(user.telegram_id),
+                text=telegram_html or f"<b>{html.escape(title, quote=False)}</b>\n{html.escape(message, quote=False)}",
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            terkirim.add("telegram")
+        except Exception as e:
+            logger.error(f"TG notification failed for {user.telegram_id}: {e}")
+    return terkirim
+
+
+async def send_budget_warning(user, item: dict, prefs, permukaan) -> set[str]:
+    """Peringatan dari insight danger AI Advisor (item #1 daftar, S16) — teks dari render.py,
+    sama dengan kartu AI Advisor. Patuh `budget_warning_tg` / `budget_warning_web`."""
+    from app.services.advisor.render import notifikasi_insight
+    boleh = {p for p in permukaan
+             if (p == "telegram" and getattr(prefs, "budget_warning_tg", True) and user.telegram_id)
+             or (p == "web" and getattr(prefs, "budget_warning_web", True))}
+    if not boleh:
+        return set()
+    title, msg, tg = notifikasi_insight(item)
+    return await kirim(user, NotificationType.budget_warning, title, msg, link="/",
+                       telegram_html=tg, permukaan=boleh)
 
 
 async def send_subscription_due(user_id: UUID, desc: str, amount: str, envelope_name: str, emoji: str):

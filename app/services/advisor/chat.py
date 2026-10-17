@@ -255,3 +255,13 @@ async def muat(user, db, now: datetime | None = None, pengaturan: dict | None = 
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))
     dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
     return analisa_snapshot(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
+
+
+# ── lonceng web (S16) ───────────────────────────────────────────────────
+def lonceng_harian(a: Analisa) -> tuple[str, str]:
+    """Ringkasan harian untuk lonceng web: isi sama dengan `ringkasan_harian` (chip Jatah + item #1)."""
+    return render.lonceng_ringkasan_harian(a.ctx.m, kpi(a, "jatah"), utama(a))
+
+
+def lonceng_mingguan(a: Analisa, minggu: dict) -> tuple[str, str]:
+    return render.lonceng_ringkasan_mingguan(a.ctx.m, minggu, struktural(a))

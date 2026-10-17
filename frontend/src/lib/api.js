@@ -744,6 +744,11 @@ class ApiClient {
     return this._chat('/bot/chat/action', { message_id: messageId, data });
   }
 
+  // Pesan proaktif AI Advisor saat panel chat dibuka (S16): maks sekali per hari, server yang membatasi.
+  async chatProaktif() {
+    return this._chat('/bot/chat/proaktif', {});
+  }
+
   // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Struk).
   async chatPhoto(blob, clientId) {
     try {
