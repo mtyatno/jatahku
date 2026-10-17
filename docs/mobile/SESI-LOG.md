@@ -32,7 +32,7 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 - Tidak ada cek platform di komponen (ADR-M6): semua perbaikan memakai lebar layar dan Visual Viewport API yang sudah dipakai sheet HP.
 
 **Cara melanjutkan**
-- `git fetch origin && git checkout mobile/1.10-tablet && git merge origin/main`, lalu `/sesi B08`. Skrip Playwright dan mock tidak di-commit; pola: `page.route('**/api/**')`, `localStorage.jatahku_token`, Playwright di `/opt/node-tools/node_modules/playwright`.
+- `/sesi B08`. PR ini masih terbuka → lanjutkan `mobile/1.10-tablet` (merge `origin/main` dulu). Sudah di-merge → buat ulang `mobile/1.10-tablet` dari `origin/main` dan buka PR baru untuk B08–B10. Skrip Playwright dan mock tidak di-commit; pola: `page.route('**/api/**')`, `localStorage.jatahku_token`, Playwright di `/opt/node-tools/node_modules/playwright`.
 - Pemilik produk: perubahan sesi ini kecil dan aman untuk web, jadi PR boleh di-merge sebelum paket selesai (sesi berikut memakai branch baru dari `main`). Setelah tayang, buka produksi di iPad dan tablet Android, potret dan lanskap, termasuk chat dengan keyboard terbuka; simpan tangkapan layar untuk kriteria paket.
 
 ---
