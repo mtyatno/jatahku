@@ -137,6 +137,16 @@ async def advisor_dashboard(
     return await get_dashboard(user, db)
 
 
+@router.get("/page/langganan")
+async def advisor_page_langganan(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Halaman Langganan (S12, 02-aturan.md §7): TAG-* per baris + ringkasan K4."""
+    from app.services.advisor.halaman import get_page_langganan
+    return await get_page_langganan(user, db)
+
+
 class DismissRequest(BaseModel):
     kunci: str = Field(min_length=3, max_length=200)
     pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
