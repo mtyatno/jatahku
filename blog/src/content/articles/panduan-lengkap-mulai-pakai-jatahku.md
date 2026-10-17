@@ -146,14 +146,14 @@ Sinyal lemah atau tidak ada internet sama sekali? Catat saja seperti biasa. Tran
 
 ## Pantau Budget di Dashboard
 
-Buka Dashboard dan hal pertama yang kamu lihat adalah **AI Advisor** — ringkasan kondisi keuanganmu hari ini: berapa yang sudah dipakai, amplop mana yang perlu diwaspadai, dan insight strategis dari pola pengeluaranmu.
+Buka Dashboard dan hal pertama yang kamu lihat adalah enam kartu ringkas: Jatah hari ini, Sisa bebas, Terpakai, Income, Tagihan, dan Tabungan. Setiap kartu punya chip **✦ AI Advisor** yang menjelaskan artinya. Di bawahnya ada kartu **AI Advisor** dengan tiga langkah paling berdampak untuk sisa periode ini, masing-masing dengan tombol aksi seperti **Geser & bayar** atau **Naikkan jatah**.
 
 Selain itu ada:
 
-- **Halaman Amplop** — progress bar visual tiap amplop
+- **Halaman Amplop** — progress bar tiap amplop, plus strip AI Advisor di setiap kartu
 - **Analytics** — grafik tren, heatmap pengeluaran, dan perbandingan antar periode
 
-> Selengkapnya: [AI Advisor Pintar](/insight/ai-advisor-pintar/) dan [Dashboard Analitik & Histori](/insight/dashboard-analitik-histori/).
+> Selengkapnya: [AI Advisor Baru: Analisa dan Tombol Aksi di Setiap Halaman](/insight/ai-advisor-di-setiap-halaman/), [Enam Kartu Ringkas di Dashboard](/insight/dashboard-kpi-cards/), dan [Dashboard Analitik & Histori](/insight/dashboard-analitik-histori/).
 
 ---
 
@@ -222,7 +222,7 @@ Semua data sinkron: transaksi yang dicatat lewat bot langsung muncul di webapp, 
 
 **Install ke home screen.** Satu ketukan dari home screen jauh lebih ringan daripada buka browser — makin kecil friksi, makin konsisten kebiasaanmu.
 
-**Cek Dashboard tiap hari.** AI Advisor membantu kamu sadar sebelum amplop kosong, bukan sesudah.
+**Cek Dashboard tiap hari.** AI Advisor membantu kamu sadar sebelum amplop kosong, bukan sesudah, dan langsung menyiapkan langkah untuk membereskannya.
 
 **Mulai sederhana.** Tidak perlu langsung sempurna. 4 amplop yang rutin dicatat lebih baik dari 15 amplop yang sering terlewat.
 

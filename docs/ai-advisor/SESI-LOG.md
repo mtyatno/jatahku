@@ -4,6 +4,51 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S18 Copy, landing, blog, dokumen · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `landing.html` (±25 tempat):
+  - meta/OG/JSON-LD, badge & paragraf hero, h-prop "Analisa + langkah nyata";
+  - **mockup hero** diganti ke Beranda v2 (angka contoh §12, periode 27 Sep – 26 Okt): 3 KPI dengan chip ✦ (1,8× jatah · Habis ±24 Okt · KPR telat 9 hari), kartu AI Advisor 3 item + tombol aksi + "Nanti" + "+1 saran lain", strip AI di 3 kartu amplop. CSS baru: `.mm-chip`, `.adv-sub/.adv-acts/.adv-cta/.adv-later/.adv-more`, `.mm-env-ai`; `.adv-risk`/`.adv-goals` tidak dipakai lagi di markup (CSS dibiarkan);
+  - kartu fitur, dual-feat WebApp, "Kenapa Jatahku", FAQ "Apa itu AI Advisor?" (tanpa LLM pihak ketiga, Nanti/Sembunyikan, konfirmasi), FAQ bot, harga "AI Advisor + tombol aksi" (Basic & Pro);
+  - demo chat: tab Proyeksi memakai format `render.chat_proyeksi` + "kenapa boros?"; langkah 4 "Bisa, tapi jatah harian turun" (kata SIM-01); demo interaktif "kapan habis?" bergaya v2.
+- `og-image.svg`: pill "✦ AI Advisor" (menggantikan Cooling Period yang sudah tidak menahan transaksi), subjudul v2. `og-image.png` dirender ulang dari SVG (Chromium). PNG lama rusak: emoji jadi kotak dan teks bertumpuk.
+- Blog — 1 artikel baru `ai-advisor-di-setiap-halaman.md` (featured, cover baru `covers/ai-advisor-setiap-halaman.svg`) + 6 artikel diperbarui (`updatedDate: 2026-10-17` + catatan "Diperbarui"):
+  - `ai-advisor-pintar` (catatan versi pertama + bagian "Di mana");
+  - `ai-advisor-daily-weekly-earners` (J0 vs J1, tabel H0/H, contoh §12);
+  - `dashboard-kpi-cards` (ditulis ulang: 6 kartu yang sekarang ada + chip, peredaman);
+  - `sisa-bebas-dengan-bill-reserve` (rumus T3: dana belanja expense+debt − terpakai − tagihan belum dibayar; mingguan = kemunculan tersisa; nominal persis = lunas + Tandai lunas; "satu catatan" selisih AI Advisor vs kartu dihapus);
+  - `panduan-lengkap-mulai-pakai-jatahku` (bagian Dashboard);
+  - `cara-pakai-bot-telegram-jatahku` (aman beli 3 hasil SIM-01, bagian baru "Tanya AI Advisor Lewat Chat", `/status`).
+- `README.md`: fitur AI Advisor + chat web, peta modul v2, bagian Tes, `.env.example` (tidak ada) → daftar variabel `app/core/config.py`.
+- Kode basi: `advisorToday.js` dan `docs/ai-advisor-review-2026-06-30.md` sudah dihapus sesi sebelumnya. Pemindaian modul frontend/backend yang tidak di-import: tidak ada.
+- `PROGRESS.md`: S10–S14 → selesai (sudah merge), S18 → review. `00-indeks.md` fase.
+
+**Digantung**
+- **Merge PR ini setelah flag `advisor_v2_users` = `*`.** Landing dan blog menggambarkan v2 untuk semua user, dan blog ikut ter-deploy saat merge (`deploy-blog.yml`). Status flag tidak bisa dicek dari sesi ini.
+- Jalur lama yang masih dipakai user di luar flag: `lib/envelopeInsight.js` (+ tes), bagian "Advisor Insights Engine v1" di `AGENTS.md`, cabang `adv ? … : …` di `Dashboard.jsx`. Hapus di S10b setelah flag `*` (pemilik file: S6/S11).
+- Landing/blog sengaja tidak menjanjikan "Pasang limit" (`cta_batas_harian` = false). Ringkasan AI di Analitik (S15, merge bersamaan dengan sesi ini) belum disebut di copy; tambahkan ke artikel baru / `dashboard-analitik-histori` bila diinginkan.
+- `temporary_file/` di root repo (PDF + screenshot dashboard Juni 2026, masuk lewat merge PR #27): repo publik, mungkin berisi data asli. Di luar kepemilikan S18 → menunggu keputusan pemilik produk.
+- Artikel lain yang masih menyebut "AI Advisor" secara umum (fab, amplop-baru, update-oktober, dll.) tidak diubah karena tidak salah. `dashboard-analitik-histori` belum diperbarui untuk S15.
+
+**Keputusan kecil**
+- Artikel lama tidak ditulis ulang total (kecuali `dashboard-kpi-cards`, yang isinya sudah tidak cocok dengan layar mana pun). Polanya: catatan "Diperbarui 17 Oktober 2026" + perbaiki kalimat yang salah, supaya riwayat fitur tetap terbaca.
+- Angka contoh landing & blog memakai §12 (15 Okt) supaya satu cerita: KPR Rp2.008.174, Rp153 rb/hari, Transport Rp720 rb.
+- Nama contoh "Rina" (fiktif, sama dengan spesifikasi).
+
+**Jebakan**
+- Rantai `s.count(old) == 1` di skrip edit: "AI Advisor harian" muncul 2× (Basic & Pro) → ganti semua.
+- Render PNG dari SVG: Chromium di container punya font emoji (Noto Color Emoji), jadi hasilnya benar; alat lain (rsvg) bisa menghasilkan kotak seperti PNG lama.
+- `npm run build` frontend mengubah `frontend/dist/`; kembalikan dengan `git checkout -- frontend/dist/`. Build blog (`cd blog && npm ci && npm run build`) menulis `blog/dist/` (tidak ter-track).
+
+**Tes:** backend 906 OK · frontend 284 OK · build frontend OK · build blog OK (34 halaman, anchor `#tanya-ai-advisor-lewat-chat` ada) · Playwright: hero desktop 1366 & HP 390 tanpa scroll horizontal, demo "kapan habis?" tanpa error JS.
+
+**Cara mencoba:** buka `landing.html` langsung di browser (hero, FAQ, demo chat); blog: `cd blog && npm ci && npm run dev` → `/insight/ai-advisor-di-setiap-halaman/`.
+
+**Lanjut:** S10b (hapus jalur lama setelah flag `*`) — prompt pembuka §3.
+
+---
+
 ## S17 Chat lengkap · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

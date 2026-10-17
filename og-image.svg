@@ -26,8 +26,8 @@
   <text x="100" y="400" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#FFFFFF">ada <tspan fill="#FAEEDA">jatahnya</tspan></text>
   
   <!-- Subtitle -->
-  <text x="100" y="460" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">Pengendali keuangan berbasis envelope budgeting</text>
-  <text x="100" y="495" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">WebApp + Telegram Bot</text>
+  <text x="100" y="460" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">Envelope budgeting + AI Advisor</text>
+  <text x="100" y="495" font-family="Arial, sans-serif" font-size="24" fill="#9FE1CB">Analisa + tombol aksi · WebApp &amp; Telegram</text>
   
   <!-- URL -->
   <text x="100" y="570" font-family="Arial, sans-serif" font-size="20" fill="#5DCAA5" opacity="0.7">jatahku.com</text>
@@ -37,8 +37,8 @@
     <rect x="0" y="0" width="200" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
     <text x="100" y="28" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">✉️ Envelope Budgeting</text>
     
-    <rect x="220" y="0" width="180" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
-    <text x="310" y="28" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">⏳ Cooling Period</text>
+    <rect x="220" y="0" width="180" height="44" rx="22" fill="#FAEEDA"/>
+    <text x="310" y="28" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#085041" text-anchor="middle">✦ AI Advisor</text>
     
     <rect x="0" y="60" width="170" height="44" rx="22" fill="rgba(255,255,255,0.12)"/>
     <text x="85" y="88" font-family="Arial, sans-serif" font-size="16" fill="#E1F5EE" text-anchor="middle">🔒 Envelope Lock</text>
