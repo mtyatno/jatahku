@@ -17,7 +17,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | O12–O13 | 4.3 | O | Internal test lalu closed test ≥12 penguji × 14 hari; pantau harian | 6 | belum |  |  |  | |
 | O14 | 4.4 | O | Ajukan produksi Play, rilis bertahap 20% → 100% | 10 | belum |  |  |  | |
 | O15–O17 | 5.7 | O | App Store Connect: label privasi, rating usia, screenshot iPhone dan iPad, catatan review; ajukan review | 11 | belum |  |  |  | |
-| A01–A03 | 1.3 | A | Header X-Jatahku-Client, GET /app/config, layar perlu update | 1 | review | Claude | #109 | 2026-10-17 | 2026-10-17 |
+| A01–A03 | 1.3 | A | Header X-Jatahku-Client, GET /app/config, layar perlu update | 1 | selesai | Claude | #109 | 2026-10-17 | 2026-10-17 |
 | A04–A06 | 1.4 | A | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 1 | belum |  |  |  | |
 | A07–A12 | 1.1 | A | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 2 | belum |  |  |  | |
 | A13–A17 | 1.2 | A | Hapus akun sungguhan + halaman permintaan hapus di web | 2 | belum |  |  |  | |
