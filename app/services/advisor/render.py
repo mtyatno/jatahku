@@ -821,6 +821,30 @@ def teks_grafik(m, s) -> dict:
     }
 
 
+def poin_hari_terboros(d: dict) -> dict:
+    """Poin "hari terboros (S6)" ringkasan Analitik (§7 "Halaman lain: Analitik"). `d` dari
+    `page_analitik.hari_terboros`: hari dengan belanja variabel tertinggi periode ini, jatah J0
+    hari itu, dan jumlah hari lewat jatah. Bentuk sama dengan `render_insight` tanpa dismiss
+    (bukan aturan, tidak bisa disembunyikan)."""
+    t = d["tanggal"]
+    aksi = [{"kind": "route", "label": f"Lihat {tgl(t)}",
+             "payload": {"path": f"/transactions?date={t.isoformat()}"}}]
+    fakta = [{"label": f"Belanja {hari_tgl(t)}", "nilai": rp_penuh(d["variabel"])},
+             {"label": "Jatah hari itu", "nilai": rp_penuh(d["jatah"])},
+             {"label": "Hari lewat jatah", "nilai": f"{d['n_lewat']} dari {d['hari_ke']} hari"}]
+    if d["lewat"]:
+        out = {"tone": "warn" if d["n_lewat"] >= 3 else "info", "chip": f"{d['n_lewat']} hari lewat jatah",
+               "judul": f"Hari terboros: {hari_tgl(t)} {rp_ringkas(d['variabel'])}",
+               "isi": _kalimat(f"Lewat jatah {rp_penuh(d['lebih'])}.",
+                               f"{d['n_lewat']} dari {d['hari_ke']} hari periode ini lewat jatah.")}
+    else:
+        out = {"tone": "ok", "chip": "Semua dalam jatah", "judul": "Semua hari dalam jatah periode ini",
+               "isi": f"Belanja tertinggi {hari_tgl(t)} {rp_penuh(d['variabel'])}, "
+                      f"jatah hari itu {rp_penuh(d['jatah'])}."}
+    return {"id": None, "aturan": None, **out, "fakta": fakta, "aksi": aksi,
+            "dasar": {"teks": f"Dari {d['hari_ke']} hari data", "keyakinan": "tinggi"}, "dismiss": None}
+
+
 # ── perencana dana (§8): alasan per sumber ──────────────────────────────
 ALASAN_RENCANA = {
     "a": "Amplop keinginan, masih lebih {surplus} sampai akhir periode",

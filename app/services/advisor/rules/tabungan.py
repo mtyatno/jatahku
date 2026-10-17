@@ -165,7 +165,7 @@ def tab_06(ctx: Konteks) -> list[Insight]:
     if median >= k.target_paralel_progres:
         return []
     return [Insight(
-        aturan="TAB-06", entitas=m.period_start.isoformat(), tone="info", slot=("daftar", "kpi:tabungan"),
+        aturan="TAB-06", entitas=m.period_start.isoformat(), tone="info", slot=("daftar", "kpi:tabungan", "analitik"),
         data={"n": len(aktif), "median": median},
         aksi=[{**LIHAT_TARGET, "kode": "atur_prioritas"}],
     )]

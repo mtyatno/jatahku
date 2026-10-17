@@ -2,7 +2,7 @@
 
 Mesin aturan deterministik (tanpa LLM) yang memberi analisa + tombol aksi di setiap bagian Jatahku: chip AI di 6 KPI Beranda, kartu AI Advisor, halaman Amplop/Transaksi/Alokasi/Langganan/Analitik, chat web, dan Telegram — semuanya dari satu sumber angka (`app/services/advisor/metrics.py`).
 
-**Fase sekarang:** Fase 1 — Fondasi + Beranda, tahap rilis. S1–S9 sudah di `main` (UI baru di balik flag `advisor_v2_users`). S10 (verifikasi & rilis) di review: skrip cek paritas `app/scripts/advisor_paritas.py` + daftar cek `05-verifikasi-rilis.md`; flag `*` dinyalakan pemilik produk setelah cek lolos, lalu jalur lama dihapus di PR lanjutan. S10–S14 sudah di `main` (halaman Amplop, Langganan, Transaksi, Alokasi). S18 (copy landing, blog, README, og-image) di review — merge setelah flag `*` menyala, karena teksnya menggambarkan v2 untuk semua user. Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 — Fondasi + Beranda, tahap rilis. S1–S9 sudah di `main` (UI baru di balik flag `advisor_v2_users`). S10 (verifikasi & rilis) di review: skrip cek paritas `app/scripts/advisor_paritas.py` + daftar cek `05-verifikasi-rilis.md`; flag `*` dinyalakan pemilik produk setelah cek lolos, lalu jalur lama dihapus di PR lanjutan. S10–S15 sudah di `main` (halaman Amplop, Langganan, Transaksi, Alokasi, Analitik — `GET /advisor/page/analitik`). S18 (copy landing, blog, README, og-image) di review — merge setelah flag `*` menyala, karena teksnya menggambarkan v2 untuk semua user. Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 | File | Isi | Kapan dibaca |
