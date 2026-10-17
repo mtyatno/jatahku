@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.models.models import User
+from app.models.models import AuthSession, User
+from app.services.auth_sessions import is_active
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -27,8 +28,12 @@ async def get_current_user(
             detail="Invalid or expired token",
         )
 
-    user_id = payload.get("sub")
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    try:
+        user_id = UUID(payload.get("sub") or "")
+        sid = UUID(payload["sid"]) if payload.get("sid") else None
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -36,7 +41,28 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+
+    # Sesi per perangkat (app/services/auth_sessions.py): token ber-sid harus
+    # menunjuk sesi yang belum dicabut; token lama tanpa sid mati oleh logout-all.
+    if sid is not None:
+        sess = (await db.execute(select(AuthSession).where(AuthSession.id == sid))).scalar_one_or_none()
+        if not is_active(sess, user.id):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+    elif user.tokens_revoked_at is not None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     return user
+
+
+def get_current_session_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> UUID | None:
+    """`sid` dari access token (None untuk token lama). Dipakai bersama
+    get_current_user, yang sudah memvalidasi tokennya."""
+    payload = decode_token(credentials.credentials) if credentials else None
+    try:
+        return UUID(payload["sid"]) if payload and payload.get("sid") else None
+    except ValueError:
+        return None
 
 
 async def require_admin(user: User = Depends(get_current_user)) -> User:

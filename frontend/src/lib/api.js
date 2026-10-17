@@ -1,5 +1,6 @@
 import { saveCache, loadCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
+import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
 
 const API_URL = import.meta.env.PROD
@@ -71,11 +72,12 @@ class ApiClient {
         return true;
       }
     } catch {}
-    this.logout();
+    this.logout({ revoke: false }); // refresh ditolak: sesinya sudah mati di server
     return false;
   }
 
-  logout() {
+  logout({ revoke = true } = {}) {
+    if (revoke) revokeSession(API_URL, this.getRefreshToken(), apiFetch);
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
