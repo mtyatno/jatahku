@@ -82,9 +82,33 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // POST /recurring/{id}/mark-paid  (S4, DAT-06 "Tandai lunas") → 200 {"prev_next_run","next_run"}
 //   next_run maju satu frekuensi, TANPA transaksi baru. 404 langganan tak terlihat; 409 {"detail"} bila jatuh
 //   tempo di periode depan (jendela bayar sama dengan /pay dan /skip).
+// GET /advisor/page/langganan  (S12, 02-aturan.md §7 "Langganan": TAG-* + ringkasan K4)
+//   → { "enabled": true, "generated_at": "…",
+//       "ringkasan": { "beban_bulanan": 2850000,   // pembilang K4: setara bulanan langganan di amplop belanja
+//                      "beban_persen": 25,          // K4 × 100, dibulatkan; null bila dana belanja 0
+//                      "dana_belanja": 11285200, "tagihan_sisa": 1600000, "belum": 1, "lunas": 3,
+//                      "insight": {/* TAG-05 bila menyala, selain itu TAG-09 */} | null },
+//       "per_langganan": { "<recurring_id>": {/* insight terbaik baris itu: TAG-01/02/03/04/06, DAT-06 */} },
+//       "pola": [{/* TAG-07, CTA make_recurring */}],
+//       "lain": [{/* TAG-08 */ "recurring_ids": ["…", "…"]}],
+//       "disembunyikan": [{"kunci", "judul_pendek", "pilihan"}] }   // insight halaman ini yang di-dismiss viewer
+//   Seleksi, rencana bersama, penekanan, dan dismiss sama dengan /advisor/dashboard (satu analisa). Tanpa cache.
+//   Baris tanpa insight tidak muncul di per_langganan. User di luar flag → { "enabled": false }.
+//   CTA `route` ke /langganan di halaman ini dipetakan frontend: baris → form edit langganan itu,
+//   TAG-08 → saring ke recurring_ids, ringkasan → urut termahal (`lib/advisorLangganan.js`).
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 //   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
 //   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
+// GET /advisor/page/transaksi?tanggal=YYYY-MM-DD&amplop=<uuid>   (S13, halaman Transaksi; keduanya opsional)
+//   → { "enabled": true, "generated_at": "…", "hari_ini": "2026-10-15",
+//       "banner": {/* insight */} | null,
+//       "penanda": { "<txn_id>": [{/* insight */}, …] } }
+//   banner: filter amplop → AMP-* amplop itu (tone dulu, lalu skor); kalau tidak, tanggal = hari ini → isi chip
+//   KPI Jatah (HAR-*), sama dengan Beranda; selain itu null. Amplop yang tidak terlihat viewer → null.
+//   penanda: insight ber-slot "transaksi" per id transaksi — HAR-03/DAT-06/TAG-06 → txn_id-nya; DAT-03 dobel →
+//   semua anggota pasangan; DAT-03 struk dua kali → barang struk kedua; TAG-07 → kemunculan terakhir pola.
+//   Insight yang di-dismiss viewer tidak muncul (sama dengan Beranda). Di luar flag → {"enabled": false}.
+//   Tanpa cache server: dihitung ulang tiap muat (filter berubah, txn-added, munculkan lagi).
 // DELETE /advisor/dismiss?kunci=…  (#91, Urungkan / Munculkan lagi) → 204
 //   Menghapus dismiss milik viewer sendiri untuk kunci itu + cache dashboard viewer; insight tampil lagi di muatan
 //   berikutnya. Idempoten: 204 juga bila kunci tidak sedang disembunyikan. Dismiss viewer lain tidak tersentuh.

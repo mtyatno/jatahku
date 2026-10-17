@@ -6,6 +6,11 @@ import { formatCurrency, formatShort } from '../lib/utils';
 import { getPendingCount } from '../lib/offlineQueue';
 import { Icon, EnvelopeIcon, BRAND } from '../components/Icon';
 import StatCard from '../components/StatCard';
+import { useTheme } from '../hooks/useTheme';
+import { useIsPhone } from '../components/AdvisorChip';
+import { TxnAdvisorBanner, TxnMarkers } from '../components/TxnAdvisor';
+import { advisorQuery, pageBanner, rowMarkers } from '../lib/transaksiAdvisor';
+import { localDateStr } from '../lib/kpiVisuals';
 
 const TIME_TABS = [
   { key: 'all', label: 'Semua Waktu' },
@@ -74,6 +79,13 @@ export default function Transactions() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [periods, setPeriods] = useState([]);
   const [periodIdx, setPeriodIdx] = useState(null);
+  // AI Advisor (S13): banner sesuai filter + penanda baris. null = di luar flag / gagal → tidak tampil.
+  const [advisorPage, setAdvisorPage] = useState(null);
+  const [advisorHidden, setAdvisorHidden] = useState([]);
+  const [advisorTick, setAdvisorTick] = useState(0);
+  const { mode } = useTheme();
+  const isDark = mode === 'dark';
+  const phone = useIsPhone();
 
   useEffect(() => {
     api.getPeriods(12).then(p => { setPeriods(p); setPeriodIdx(p.length - 1); });
@@ -97,6 +109,24 @@ export default function Transactions() {
     setDateFilter(q.date);
     if (q.date) setTimeTab('all');
   }, [location.search]);
+
+  useEffect(() => {
+    let batal = false;
+    api.getAdvisorTransaksi(advisorQuery({ envelope: filter, date: dateFilter, timeTab, today: localDateStr() }))
+      .then(p => { if (!batal) { setAdvisorPage(p); setAdvisorHidden([]); } });
+    return () => { batal = true; };
+  }, [filter, dateFilter, timeTab, refreshTick, advisorTick]);
+
+  useEffect(() => {
+    const onHidden = (e) => { const k = e.detail?.kunci; if (k) setAdvisorHidden(h => [...h, k]); };
+    const onShown = () => setAdvisorTick(t => t + 1);
+    window.addEventListener('jatahku:advisor-dismissed', onHidden);
+    window.addEventListener('jatahku:advisor-undismissed', onShown);
+    return () => {
+      window.removeEventListener('jatahku:advisor-dismissed', onHidden);
+      window.removeEventListener('jatahku:advisor-undismissed', onShown);
+    };
+  }, []);
 
   // Tanggal dari query → buka periode yang memuatnya.
   useEffect(() => {
@@ -125,6 +155,7 @@ export default function Transactions() {
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
   const envById = Object.fromEntries(envelopes.map(e => [e.id, e]));
+  const banner = pageBanner(advisorPage, advisorHidden);
 
   const displayed = transactions
     .filter(t => filter === 'all' || t.envelope_id === filter)
@@ -295,6 +326,8 @@ export default function Transactions() {
         <span className="text-sm text-gray-400 inline-flex items-center gap-1.5"><Icon name="calendar" size={15} /> {selectedPeriod?.label}</span>
       </div>
 
+      {banner && <TxnAdvisorBanner insight={banner} isDark={isDark} search={location.search} />}
+
       {/* List */}
       {displayed.length === 0 ? (
         <div className="card text-center py-12">
@@ -319,7 +352,7 @@ export default function Transactions() {
                   {txns.map(txn => {
                     const env = envById[txn.envelope_id];
                     return (
-                      <div key={txn.id} className="flex items-center justify-between py-2.5 group">
+                      <div key={txn.id} className="relative flex items-center justify-between py-2.5 group">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(15,110,86,0.07)' }}>
                             <EnvelopeIcon value={env?.emoji} size={20} color={BRAND} />
@@ -334,6 +367,8 @@ export default function Transactions() {
                               {txn.created_at && <><span>·</span><span>{new Date(txn.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span></>}
                               <span>·</span><SourceTag source={txn.source} />
                             </p>
+                            <TxnMarkers markers={rowMarkers(advisorPage, txn.id, advisorHidden)} isDark={isDark} phone={phone}
+                              search={location.search} />
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">

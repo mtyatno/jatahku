@@ -15,9 +15,9 @@ Diubah di PR sesi itu sendiri (lihat `03-workflow.md` §9). Status: belum · ber
 | S8 | #63 | Pipa CTA (frontend) | 1 | 3 | selesai | Claude | #76 | 2026-10-16 | 2026-10-16 |
 | S9 | #64 | Paritas bot & ringkasan | 1 | 3 | selesai | Pemilik produk + Claude | #85 | 2026-10-16 | 2026-10-16 |
 | S10 | #65 | Verifikasi & rilis Fase 1 | 1 | 2 | review | Pemilik produk + Claude | #86 | 2026-10-17 | |
-| S11 | #66 | Halaman Amplop | 2 | 3 | review | Pemilik produk + Claude | (PR ini) | 2026-10-17 | |
-| S12 | #67 | Halaman Langganan | 2 | 2,5 | belum | | | | |
-| S13 | #68 | Halaman Transaksi | 3 | 3 | belum | | | | |
+| S11 | #66 | Halaman Amplop | 2 | 3 | review | Pemilik produk + Claude | #97 | 2026-10-17 | |
+| S12 | #67 | Halaman Langganan | 2 | 2,5 | review | Pemilik produk + Claude | #94 | 2026-10-17 | |
+| S13 | #68 | Halaman Transaksi | 3 | 3 | review | Pemilik produk + Claude | #95 | 2026-10-17 | |
 | S14 | #69 | Halaman Alokasi | 3 | 3 | belum | | | | |
 | S15 | #70 | Halaman Analitik | 3 | 2,5 | belum | | | | |
 | S16 | #71 | Notifikasi proaktif | 4 | 3 | belum | | | | |

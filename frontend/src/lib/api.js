@@ -545,15 +545,43 @@ class ApiClient {
     return null;
   }
 
-  // GET /advisor/page/{halaman} (S11: 'amplop'). Sama dengan dashboard: {"enabled": false} atau
-  // null → halaman memakai tampilan lama.
-  async getAdvisorPage(halaman) {
+  // GET /advisor/page/amplop (S11): strip AI per kartu amplop. {"enabled": false} atau null →
+  // halaman Amplop memakai strip lama (envelopeInsight).
+  async getAdvisorAmplop() {
     try {
-      const res = await this.request(`/advisor/page/${halaman}`);
+      const res = await this.request('/advisor/page/amplop');
       if (res.ok) return await res.json();
-      console.error('[advisor] page request failed:', halaman, res.status);
+      console.error('[advisor] amplop request failed:', res.status);
     } catch (e) {
-      console.error('[advisor] page request error:', halaman, e);
+      console.error('[advisor] amplop request error:', e);
+    }
+    return null;
+  }
+
+  // GET /advisor/page/transaksi (S13): banner sesuai filter + penanda baris. null bila gagal.
+  async getAdvisorTransaksi({ tanggal = null, amplop = null } = {}) {
+    const q = new URLSearchParams();
+    if (tanggal) q.set('tanggal', tanggal);
+    if (amplop) q.set('amplop', amplop);
+    const qs = q.toString();
+    try {
+      const res = await this.request(`/advisor/page/transaksi${qs ? `?${qs}` : ''}`);
+      if (res.ok) return await res.json();
+      console.error('[advisor] transaksi request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] transaksi request error:', e);
+    }
+    return null;
+  }
+
+  // GET /advisor/page/langganan (S12). Sama: {"enabled": false} atau null → halaman tanpa AI.
+  async getAdvisorLangganan() {
+    try {
+      const res = await this.request('/advisor/page/langganan');
+      if (res.ok) return await res.json();
+      console.error('[advisor] langganan request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] langganan request error:', e);
     }
     return null;
   }

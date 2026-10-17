@@ -9,7 +9,7 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 **Selesai**
 - `app/services/advisor/halaman.py` (baru): `GET /advisor/page/amplop` → `{enabled, generated_at, amplop: {envelope_id: insight | baris dasar | null}}`. Mesin sama dengan Beranda (`dashboard.analisa`: rencana bersama, skor, keyakinan, dismiss viewer); modul ini hanya memilih per kartu. Calon = slot `amplop` + `amplop_id` itu, domain AMP/TAG, TAB hanya untuk amplop tabungan; urut `kunci_urut` (tone dulu, skor).
 - `render.baris_dasar_amplop`: kartu tanpa insight → belanja "Aman, ±{rp}/hari tersedia" (hari terakhir: "Aman, {rp} tersedia hari ini"), "Dana {amplop} sudah terpakai semua" + `fund` "Isi dana" (bebas ≤ 0 tanpa aturan, mis. d < 3), tabungan "{amplop}: saldo {rp}" + `fund` "Setor" ("Tambahkan target biar terarah." bila tanpa target).
-- Route `GET /advisor/page/amplop` di `routes/advisor.py`; `api.getAdvisorPage(halaman)`.
+- Route `GET /advisor/page/amplop` di `routes/advisor.py`; `api.getAdvisorAmplop()` (seragam dengan `getAdvisorLangganan`/`getAdvisorTransaksi` S12/S13).
 - `Envelopes.jsx`: strip v2 (`AdvisorStripV2`: judul, isi, maks 2 tombol open-action, "Nanti" bila bisa di-dismiss) menggantikan `envelopeInsight` untuk user di flag; halaman memuat ulang pada `txn-added`, `envelope-updated`, `advisor-dismissed`, `advisor-undismissed`. Pembantu murni `lib/envelopeStrip.js` (+ tes).
 - Toggle **Dana darurat** di form amplop (langkah target, hanya tabungan): nilai awal = `is_emergency` tersimpan; amplop baru = tebakan nama (sama dengan `metrics.is_emergency_name`), dikirim `null` supaya server yang menebak.
 - CTA: Naikkan/Turunkan jatah (AMP-04/05/06 `raise_budget`), Geser dana (AMP-02/03 `plan`), Setor (TAB-* `plan`, baris dasar `fund`), Atur target (tombol "Buat target" yang sudah ada + TAB-02 "Mundurkan tenggat"). Pasang limit (`daily_limit`) tetap ikut `cta_batas_harian` = false (§2) — belum tampil.
@@ -34,11 +34,90 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 - Tes lokal butuh `pip install -r requirements.txt -r requirements-test.txt` (container baru tidak punya `pydantic_settings`).
 - Uji browser: Playwright global di `/opt/node-tools/node_modules/playwright`, API di-mock lewat `page.route('**/api/**')`, `localStorage.jatahku_token` + `telegram_id` di `/auth/me`.
 
-**Tes (sesudah merge main #96):** backend 869 OK (12 baru, `test_advisor_page_amplop.py`) · frontend 269 OK (7 baru, `envelopeStrip.test.js`) · build OK · Playwright (API di-mock): strip warn/danger/ok dengan tombol aksi tampil di kartu; Beranda → kartu Amplop pengeluaran → Tutup minus membuka rencana `/advisor/plan` (Hobi → Makan).
+**Merge dengan S12/S13 (#94, #95):** `halaman.py` dibuat dua sesi sekaligus → digabung: bagian Amplop (S11) di atas, Langganan (S12) di bawah, impor dashboard jadi di tingkat modul (isi `get_page_langganan` tidak berubah). Route `/page/amplop`, `/page/transaksi`, `/page/langganan` berdampingan.
+
+**Tes (sesudah merge main #95):** backend 893 OK (12 baru, `test_advisor_page_amplop.py`) · frontend 279 OK (7 baru, `envelopeStrip.test.js`) · build OK · Playwright (API di-mock): strip warn/danger/ok dengan tombol aksi tampil di kartu; Beranda → kartu Amplop pengeluaran → Tutup minus membuka rencana `/advisor/plan` (Hobi → Makan).
 
 **Cara mencoba:** user di flag → halaman Amplop → buka kartu: strip AI + tombol (Geser/Bayar/Setor). Server: `python -m unittest app.tests.test_advisor_page_amplop -v`.
 
-**Lanjut:** S12 Halaman Langganan (#67) — prompt pembuka §3 dengan SN = S12; tambah `susun_langganan` di `halaman.py` (pola yang sama, slot `langganan`, ringkasan K4).
+**Lanjut:** S14 Halaman Alokasi (#69) atau S15 Halaman Analitik (#70) — prompt pembuka §3. Halaman baru: tambah `susun_<halaman>` di `halaman.py` (pola S11/S12) atau modul sendiri (pola S13 `page_transaksi.py`).
+
+---
+
+## S13 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai (PR ini)**
+- `GET /advisor/page/transaksi?tanggal=&amplop=` (`app/services/advisor/page_transaksi.py`, route di `routes/advisor.py`; kontrak di `04-kontrak-api.md`).
+  - **Banner** mengikuti filter aktif. Filter amplop → AMP-* amplop itu (tone dulu, lalu skor). Kalau tidak, tanggal = hari ini → isi chip KPI Jatah (HAR-*, sama dengan Beranda). Selain itu null.
+  - **Penanda baris** = insight ber-slot `transaksi`, dipetakan ke id transaksi:
+    - HAR-03 / DAT-06 / TAG-06 → `txn_id`;
+    - DAT-03 dobel → kedua anggota pasangan;
+    - DAT-03 struk dua kali → barang di struk kedua;
+    - TAG-07 → kemunculan terakhir.
+  - Dismiss viewer dihormati. Di luar flag → `{"enabled": false}`.
+- Frontend:
+  - `api.getAdvisorTransaksi`;
+  - `lib/transaksiAdvisor.js` (query dari filter, penyaringan yang baru disembunyikan, CTA maks 2 tanpa rute ke halaman yang sama);
+  - `components/TxnAdvisor.jsx` (banner + chip penanda memakai `AdvisorChip`/`InsightPopover` S6);
+  - `Transactions.jsx` memuat ulang saat filter berubah, `txn-added`, dan `advisor-undismissed`, serta langsung menyembunyikan pada `advisor-dismissed`.
+- Aksi Hapus salah satu / Hapus duplikat / Bukan dobel / Jadikan langganan / Tandai lunas memakai pipa CTA S8 yang sudah ada (tidak ada kind baru).
+
+**Digantung**
+- #93: "Bukan dobel" belum permanen (sekarang `tidak_relevan` = 90 hari). Spesifikasi §6G meminta permanen.
+- Belum dicoba di browser dengan data sungguhan. Hanya tes unit/integrasi + build. Cek visual di produksi dengan akun tim setelah merge (flag `*` sudah aktif).
+- Endpoint tanpa cache server: dihitung ulang tiap muat halaman/ganti filter. Bila lambat (> 150 ms) pertimbangkan cache per (household, viewer, filter) di `advisor_cache`.
+
+**Keputusan kecil**
+- Filter amplop menang atas filter hari ini bila keduanya aktif (lebih sempit). Tanggal selain hari ini → tanpa banner (HAR-* hanya untuk hari ini).
+- Tab "Hari Ini" dianggap sama dengan filter tanggal hari ini. Tanggal dari browser (`localDateStr`); bila beda dengan hari server di sekitar tengah malam, banner kosong (bukan salah angka).
+- TAG-06 (nominal tagihan berubah) ikut tampil sebagai penanda karena slotnya sudah `transaksi` sejak S4.
+- TAG-07 hanya menandai kemunculan terakhir supaya daftar tidak penuh chip "Pola rutin".
+- AMP-01 yang diserap PER-02 di Beranda tetap boleh jadi banner amplop (penyerapan hanya berlaku untuk daftar Beranda).
+
+**Jebakan**
+- Tes backend butuh `pip install -r requirements-test.txt` + env `DATABASE_URL`/`JWT_SECRET` (lihat `test.yml`). Tanpa itu, 53 modul gagal impor.
+- `npm run build` butuh `npm ci` dulu dan mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 868 OK (13 baru) · frontend 267 OK (5 baru) · build OK.
+
+**Cara mencoba:** Transaksi → tab **Hari Ini** (banner HAR-*) atau pilih satu amplop (banner AMP-*). Catat dua transaksi sama (mis. "belanja pasar 150k") berjarak < 10 menit → chip **Dobel?** di kedua baris → Hapus salah satu / Bukan dobel (toast + Urungkan). Lokal: `python -m unittest app.tests.test_advisor_page_transaksi -v`; `cd frontend && node --test src/lib/transaksiAdvisor.test.js`.
+
+**Lanjut:** review PR, merge, cek visual di produksi. Kerjakan #93 sebagai PR kecil terpisah. Sesi berikutnya yang bebas: S11, S14, S15 (prompt pembuka §3).
+
+---
+
+## S12 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `GET /advisor/page/langganan` (`app/services/advisor/halaman.py`, route di `routes/advisor.py`): satu analisa yang sama dengan Beranda (`dashboard.analisa`), lalu dipilah:
+  - `per_langganan` = satu insight terbaik per baris (TAG-01/02/03/04/06, DAT-06);
+  - `ringkasan` = K4 (`beban_bulanan`, `beban_persen`, `dana_belanja`, `tagihan_sisa`, belum/lunas) + insight TAG-05 (bila menyala) atau TAG-09;
+  - `pola` = TAG-07 (Jadikan langganan), `lain` = TAG-08 dengan `recurring_ids`, `disembunyikan`.
+- `metrics.py`: field baru `beban_tagihan_bulanan` (pembilang K4 yang sudah dihitung; rumus tidak berubah).
+- Frontend: `api.getAdvisorLangganan`, `lib/advisorLangganan.js` (+ tes), `components/AdvisorRowStrip.jsx` (strip AI per baris: judul, Rincian, CTA, pilihan sembunyikan), `pages/Langganan.jsx`: kartu AI Advisor di atas daftar + strip per baris. Tandai lunas (`mark_paid`), Geser & bayar (`plan`), Bayar (`pay`), Jadikan langganan (`make_recurring`) lewat pipa CTA S8. Tanpa flag → halaman lama persis.
+- `04-kontrak-api.md`: bentuk `/advisor/page/langganan`.
+
+**Digantung**
+- Belum dicoba di browser dengan data produksi (lingkungan sesi tanpa Postgres). Coba dengan akun tim setelah deploy.
+- TAG-06 "Perbarui nominal" membuka form edit tanpa nominal baru terisi (payload `route` tidak membawa jumlah). Kalau perlu: kind `edit_recurring` dengan `{recurring_id, jumlah}` — menyentuh `rules/tagihan.py` (S4) dan pipa S8.
+- S11 (`/advisor/page/amplop`) bisa memakai `halaman.py` + `AdvisorRowStrip` yang sama.
+
+**Jebakan**
+- `frontend/dist/index.html` ter-track dan berubah tiap `npm run build` — jangan ikut di-commit.
+- `RecurringTransaction` tidak punya `user_id` (fixture integrasi).
+- Lingkungan cloud baru: `pip install -r requirements-test.txt` dan `npm ci` dulu sebelum tes.
+
+**Keputusan kecil**
+- Tanpa cache Redis untuk halaman ini (jarang dibuka; entri cache Beranda per viewer tidak boleh tertimpa). Dismiss dari halaman ini tetap memakai `POST /advisor/dismiss` yang sama (meta dihitung ulang bila cache Beranda kosong).
+- CTA `route` ke `/langganan` di halaman ini dipetakan lokal: baris → form edit (TAG-04 Atur sisihan, TAG-06), TAG-08 → saring ke dua langganan + "Tampilkan semua", TAG-05 → urut termahal.
+- Baris ringkasan "Tagihan rutin {rp}/bulan · {x}% dari dana belanja" adalah label angka di frontend (angka dari server), bukan teks insight; insight-nya tetap TAG-05/TAG-09 dari `render.py`.
+- Menyentuh file milik sesi lain dengan izin pemilik produk: `Langganan.jsx` (S8), `routes/advisor.py` (S3), `metrics.py` (S1, hanya field baru).
+
+**Tes:** backend 866 OK (11 baru) · frontend 267 OK (5 baru) · build OK.
+
+**Cara mencoba:** user di flag → `/langganan`. Tagihan telat/jatuh tempo ≤ 3 hari → strip di barisnya dengan Geser & bayar / Bayar; transaksi manual senilai tagihan → Tandai lunas; pola rutin 3+ periode → "Jadikan langganan" di kartu AI Advisor atas. API: `GET /advisor/page/langganan`.
+
+**Lanjut:** `git fetch && git checkout ai-advisor/s12-langganan` · `python -m unittest app.tests.test_advisor_halaman_langganan -v`
 
 ---
 

@@ -999,7 +999,7 @@ export default function Envelopes() {
       setGoals(gls);
       setLoading(false);
     });
-    api.getAdvisorPage('amplop').then(setAdvice);
+    api.getAdvisorAmplop().then(setAdvice);
   };
 
   useEffect(() => {

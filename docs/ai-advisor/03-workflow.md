@@ -146,7 +146,7 @@ Estimasi dalam jam Claude Code aktif. "Paralel" = boleh dikerjakan bersamaan ole
 | `components/AttentionCard.jsx` → `AdvisorCard.jsx`, `lib/dashboardInsights.js` | S7 | |
 | `components/Layout.jsx`, `FundEnvelopeModal.jsx`, `PaySubscriptions.jsx`, `ChatPanel.jsx`, `pages/Langganan.jsx` (RecurringModal), `pages/Transactions.jsx` (query), `pages/Allocate.jsx` (`?new=1`), `components/PlanSheet.jsx` (baru) | S8 | S6/S7 memanggil lewat event, tidak mengubah file ini |
 | `app/bot/*`, `app/services/summary.py` | S9 | |
-| `app/services/advisor/halaman.py` (bagian Amplop), `routes/advisor.py` (`/page/amplop`), `pages/Envelopes.jsx`, `lib/envelopeStrip.js` | S11 | S12–S15 menambah fungsi halaman sendiri di `halaman.py` |
+| `app/services/advisor/halaman.py` (bagian Amplop), `routes/advisor.py` (`/page/amplop`), `pages/Envelopes.jsx`, `lib/envelopeStrip.js` | S11 | `halaman.py` dipakai bersama: S12 menambah bagian Langganan; halaman lain boleh modul sendiri (S13 `page_transaksi.py`) |
 
 ## 8. Jadwal usulan
 
