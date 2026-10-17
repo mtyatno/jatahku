@@ -26,8 +26,15 @@
 - `frontend/dist/` should not be committed to git
 
 ## Deploy Script (`deploy.sh`)
-- Located at `/opt/jatahku/app/deploy.sh` on server
+- Located at `/opt/jatahku/app/deploy.sh` on server. Actions menjalankan
+  `/opt/jatahku/deploy.sh`, yang **harus symlink** ke file repo
+  (`ls -l /opt/jatahku/deploy.sh` → `-> /opt/jatahku/app/deploy.sh`). Sampai 17 Okt 2026
+  itu salinan 4 Okt, jadi perubahan deploy.sh di repo tidak pernah jalan di produksi.
 - Runs on push to main via GitHub Actions
+- Blog dibangun di CI (job `deploy-blog`) dan di-SCP ke `/tmp/blog-dist-new/`; deploy.sh
+  hanya `rsync` ke `blog.jatahku.com/public_html/` (tidak `npm run build` blog di VPS).
+- Migrasi: deploy tidak menjalankan alembic, tapi mencetak peringatan dan berakhir exit 2
+  bila `alembic current` ≠ `alembic heads` (notifikasi "Deploy GAGAL" terkirim).
 - **One deploy at a time.** `.github/workflows/deploy.yml` uses `concurrency`
   (`cancel-in-progress: false`): a newer push waits for the running deploy.
   Keep it — two `deploy.sh` runs overlapping (`git pull` + `npm run build` into
@@ -39,7 +46,7 @@
   ```bash
   sudo -u jatahku git checkout -- frontend/dist/ 2>/dev/null || true
   ```
-- Landing page preservation: backup to `/opt/jatahku/backups/` each deploy
+- Landing/legal pages dipasang dari repo setiap deploy; `/opt/jatahku/backups/` hanya cadangan bila file repo hilang/kosong
 - Deploy fails silently when dist files conflict with repo
 - Run as `jatahku` user for git operations, `sudo` for file copies
 - **Cek versi yang tayang lewat commit, bukan tebakan.** `GET /health` mengembalikan
