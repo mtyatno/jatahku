@@ -33,7 +33,13 @@ Perintah di `.claude/commands/` (dipakai di Claude Code mana pun yang membuka re
 - `/sesi A01` — pembuka: cari paket untuk kode itu di `PROGRESS.md`, baca dokumen yang relevan dan entri terakhir `SESI-LOG.md`, buat atau lanjutkan branch, rangkum scope, lalu tunggu "lanjut".
 - `/tutup-sesi` — penutup: tes, `PROGRESS.md`, entri `SESI-LOG.md`, commit, push, PR, dan satu baris status untuk tracker.
 
-Setelah `/tutup-sesi`, ubah status paket di tracker claude.ai (satu menit).
+- `/cek-deploy <nomor PR>` — setelah PR di-merge: memastikan kodenya benar-benar tayang lewat hasil workflow `deploy.yml` di GitHub.
+
+Setelah `/tutup-sesi`, ubah status paket di tracker claude.ai (satu menit). Status **selesai** hanya setelah `/cek-deploy` melaporkan "terverifikasi tayang".
+
+### Verifikasi deploy tanpa akses ke produksi
+
+Sesi Claude Code di cloud tidak bisa membuka `api.jatahku.com`/`jatahku.com` (akses jaringan sesi dibatasi ke registry paket dan GitHub). Itu tidak menghalangi verifikasi: langkah "Verifikasi versi yang tayang" di `deploy.yml` sudah mengecek `/health` dan `/version.json` dari runner GitHub, dan `/cek-deploy` membaca hasilnya lewat GitHub API. Run yang `cancelled` karena push lain menyusul dianggap tayang bila run sukses yang lebih baru memuat commit itu. Yang tetap butuh akses produksi (orang atau Claude Code di laptop): migrasi manual, memeriksa data, dan uji di perangkat.
 
 ## 4. Template PR
 
