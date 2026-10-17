@@ -4,6 +4,8 @@ import { api } from '../lib/api';
 import { formatCurrency, formatShort, formatShortSigned, titleCase } from '../lib/utils';
 import { Icon, EnvelopeIcon, BRAND, SAVING } from '../components/Icon';
 import { envelopeInsight } from '../lib/envelopeInsight';
+import { advisorStrip, emergencyField, guessEmergency } from '../lib/envelopeStrip';
+import { openAction } from '../lib/advisorAction';
 import { fundingState } from '../lib/envelopeFunding';
 import { envelopeRow } from '../lib/envelopeRow';
 import { errorText } from '../lib/balanceCheck';
@@ -72,6 +74,8 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
   const [goalName, setGoalName] = useState(editingGoal?.name || '');
   const [goalAmount, setGoalAmount] = useState(editingGoal ? String(Math.round(Number(editingGoal.target_amount))) : '');
   const [goalDate, setGoalDate] = useState(editingGoal?.target_date || '');
+  // null = belum dipilih (amplop baru: server menebak dari nama, tampil sesuai tebakan yang sama)
+  const [emergency, setEmergency] = useState(editing ? !!editing.is_emergency : null);
 
   const guessPurpose = (name) => {
     const n = name.toLowerCase();
@@ -120,6 +124,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
         group_id: resolvedGroupId,
         purpose,
         classification: needsClassification(purpose) ? classification : null,
+        is_emergency: emergencyField(purpose, emergency),
       };
       if (isSavingLike) {
         data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
@@ -156,6 +161,7 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
       group_id: resolvedGroupId,
       purpose,
       classification: needsClassification(purpose) ? classification : null,
+      is_emergency: emergencyField(purpose, emergency),
     };
     if (isSavingLike) {
       data.budget_amount = purpose === 'saving' ? 0 : Number(budget || 0);
@@ -360,6 +366,14 @@ export function CreateModal({ onClose, onCreated, editing, envelopes: existingEn
                     <input type="date" className="input" value={goalDate} onChange={e => setGoalDate(e.target.value)} />
                     <p className="text-xs text-gray-400 mt-2">(opsional) Kapan ingin mencapai target ini?</p>
                   </div>
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" className="mt-1 w-4 h-4 accent-brand-600"
+                      checked={emergency ?? guessEmergency(name)} onChange={e => setEmergency(e.target.checked)} />
+                    <span>
+                      <span className="block text-sm font-medium text-gray-700">Dana darurat</span>
+                      <span className="block text-xs text-gray-400">AI Advisor menghitung cakupan dana darurat dari amplop ini.</span>
+                    </span>
+                  </label>
                 </>
               )}
             </div>
@@ -616,19 +630,50 @@ function ControlBadges({ env }) {
   return <div className="flex flex-wrap gap-1 mt-2">{badges.map((b, i) => <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-md ${b.color}`}>{b.icon} {b.label}</span>)}</div>;
 }
 
+const STRIP_STYLE = {
+  safe:    { box: 'bg-brand-50',  text: 'text-brand-600',  color: BRAND,     glyph: 'check' },
+  warning: { box: 'bg-amber-50',  text: 'text-amber-600',  color: '#D97706', glyph: 'warning' },
+  danger:  { box: 'bg-red-50',    text: 'text-danger-400', color: '#E24B4A', glyph: 'warning' },
+  info:    { box: 'bg-blue-50',   text: 'text-info-400',   color: '#378ADD', glyph: null },
+  neutral: { box: 'bg-gray-50',   text: 'text-gray-500',   color: '#9CA3AF', glyph: null },
+};
+
 function AdvisorStrip({ insight, leadingIcon }) {
-  const TONE = {
-    safe:    { box: 'bg-brand-50',  text: 'text-brand-600',  color: BRAND,     glyph: 'check' },
-    warning: { box: 'bg-amber-50',  text: 'text-amber-600',  color: '#D97706', glyph: 'warning' },
-    danger:  { box: 'bg-red-50',    text: 'text-danger-400', color: '#E24B4A', glyph: 'warning' },
-    neutral: { box: 'bg-gray-50',   text: 'text-gray-500',   color: '#9CA3AF', glyph: null },
-  };
-  const t = TONE[insight.tone] || TONE.neutral;
+  const t = STRIP_STYLE[insight.tone] || STRIP_STYLE.neutral;
   return (
     <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 ${t.box}`}>
       <Icon name={leadingIcon} size={16} color={t.color} />
       <span className={`text-xs font-medium flex-1 ${t.text}`}>{insight.text}</span>
       {t.glyph && <Icon name={t.glyph} size={15} color={t.color} weight="fill" />}
+    </div>
+  );
+}
+
+// AI Advisor v2 (S11): insight terpilih server untuk amplop ini + tombol aksi (open-action).
+function AdvisorStripV2({ strip, leadingIcon }) {
+  const t = STRIP_STYLE[strip.tone] || STRIP_STYLE.neutral;
+  return (
+    <div className={`mt-3 rounded-xl px-3 py-2 ${t.box}`}>
+      <div className="flex items-center gap-2">
+        <Icon name={leadingIcon} size={16} color={t.color} />
+        <span className={`text-xs font-semibold flex-1 ${t.text}`}>{strip.text}</span>
+        {t.glyph && <Icon name={t.glyph} size={15} color={t.color} weight="fill" />}
+      </div>
+      {strip.detail && <p className="text-xs text-gray-600 mt-1 pl-6">{strip.detail}</p>}
+      {(strip.actions.length > 0 || strip.dismissKey) && (
+        <div className="flex flex-wrap items-center gap-2 mt-2 pl-6">
+          {strip.actions.map((a, i) => (
+            <button key={`${a.kind}-${i}`} type="button" onClick={() => openAction(a)}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50">
+              {a.label}
+            </button>
+          ))}
+          {strip.dismissKey && (
+            <button type="button" onClick={() => openAction({ kind: 'dismiss', payload: { kunci: strip.dismissKey, pilihan: 'nanti' } })}
+              className="ml-auto text-xs text-gray-400 hover:text-gray-600">Nanti</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -657,7 +702,7 @@ function ActionButton({ icon, onClick, children }) {
   );
 }
 
-function CompactDetail({ env, goal, onEdit, onDelete, onTransfer, onGoal }) {
+function CompactDetail({ env, goal, advice, onEdit, onDelete, onTransfer, onGoal }) {
   const allocated = Number(env.allocated || 0);
   const rollover = Number(env.rollover || 0);
   const spent = Number(env.spent || 0);
@@ -669,6 +714,7 @@ function CompactDetail({ env, goal, onEdit, onDelete, onTransfer, onGoal }) {
   const fstate = isSavingLike ? null : fundingState(env);
   const status = spentRatio >= 0.9 ? 'danger' : spentRatio >= 0.7 ? 'warning' : 'safe';
   const barColor = fstate === 'reserve_short' ? 'bg-amber-400' : (fstate === 'overspent' || status === 'danger') ? 'bg-danger-400' : status === 'warning' ? 'bg-amber-400' : 'bg-brand-400';
+  const strip = advisorStrip(advice, env.id);
   const insight = fstate === 'reserve_short'
     ? { text: `Tagihan butuh ${formatShort(reserved)}, sisa ${formatShort(remaining)}`, tone: 'warning' }
     : envelopeInsight(env, goal);
@@ -730,8 +776,9 @@ function CompactDetail({ env, goal, onEdit, onDelete, onTransfer, onGoal }) {
       )}
 
       <ControlBadges env={env} />
-      {!isUnfunded && <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />}
-      {fstate === 'reserve_short' && (
+      {!isUnfunded && strip.mode === 'v2' && <AdvisorStripV2 strip={strip} leadingIcon={isSavingLike ? 'target' : 'advisor'} />}
+      {!isUnfunded && strip.mode === 'legacy' && <AdvisorStrip insight={insight} leadingIcon={isSavingLike ? 'target' : 'advisor'} />}
+      {strip.mode === 'legacy' && fstate === 'reserve_short' && (
         <Link to="/allocate" className="mt-1.5 inline-block text-xs font-medium text-amber-600 hover:underline">Alokasikan lagi →</Link>
       )}
 
@@ -942,6 +989,7 @@ export default function Envelopes() {
   const [filter, setFilter] = useState('semua');
   const [sortBy, setSortBy] = useState('grup');
   const [goalTarget, setGoalTarget] = useState(null);
+  const [advice, setAdvice] = useState(null);   // GET /advisor/page/amplop (S11)
 
 
   const load = () => {
@@ -951,12 +999,14 @@ export default function Envelopes() {
       setGoals(gls);
       setLoading(false);
     });
+    api.getAdvisorAmplop().then(setAdvice);
   };
 
   useEffect(() => {
     const onAdded = () => setRefreshTick(t => t + 1);
-    window.addEventListener('jatahku:txn-added', onAdded);
-    return () => window.removeEventListener('jatahku:txn-added', onAdded);
+    const EVENTS = ['jatahku:txn-added', 'jatahku:envelope-updated', 'jatahku:advisor-dismissed', 'jatahku:advisor-undismissed'];
+    EVENTS.forEach(e => window.addEventListener(e, onAdded));
+    return () => EVENTS.forEach(e => window.removeEventListener(e, onAdded));
   }, []);
 
   useEffect(load, [refreshTick]);
@@ -1088,7 +1138,7 @@ export default function Envelopes() {
                 ? grouped
                 : [{ id: null, name: null, envelopes: sortEnvelopes(filtered, sortBy) }];
               return (
-                <CompactEnvelopeList sections={sections} goals={goals}
+                <CompactEnvelopeList sections={sections} goals={goals} advice={advice}
                   onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGoal={setGoalTarget}
                   onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} />
               );

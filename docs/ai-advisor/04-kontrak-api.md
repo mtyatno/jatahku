@@ -47,6 +47,18 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
 //                      | route | chat | dismiss | undismiss | delete_txn | not_duplicate   (undismiss: #91, hanya frontend)
 
+// GET /advisor/page/amplop  (S11, 02-aturan.md §7 "Halaman lain: Amplop")
+{ "enabled": true, "generated_at": "2026-10-15T08:00:00+07:00",
+  "amplop": { "<envelope_id>": {/* insight, bentuk sama dengan item di atas */}
+                               | {/* baris dasar */ "id": null, "aturan": null, "tone": "ok|info", "chip", "judul",
+                                  "isi", "fakta", "aksi", "dasar", "dismiss": null}
+                               | null } }                   // null = semua saran amplop ini di-dismiss viewer
+// Kunci = semua amplop yang terlihat viewer (privasi household seperti dashboard). Per amplop: satu insight
+// terbaik dari AMP-*, TAG-* amplop itu, TAB-* untuk tabungan (tone dulu, skor). Baris dasar bila tidak ada:
+// belanja "Aman, ±Rp…/hari tersedia" (= batas chip, bebas_setelah_rencana) atau "Dana {amplop} sudah terpakai
+// semua" (+ fund "Isi dana"); tabungan "{amplop}: saldo Rp…" (+ fund "Setor", kecuali defisit).
+// {"enabled": false} di luar flag `advisor_v2_users` → frontend memakai envelopeInsight.js lama. Tanpa cache.
+
 // POST /advisor/plan  { "kebutuhan": [{"tujuan_id","jumlah","bayar_recurring_id"?}],   (1–10 item)
 //                      "kecuali": ["<dari_id>"]?,      // sumber yang dilepas user → dihitung ulang tanpa itu
 //                      "sertakan": ["<amplop_id>"]? }  // tabungan (d) / dana darurat (e) yang DIPILIH user

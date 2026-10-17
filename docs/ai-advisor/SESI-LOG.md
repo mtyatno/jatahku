@@ -4,6 +4,46 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S11 Halaman Amplop · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/halaman.py` (baru): `GET /advisor/page/amplop` → `{enabled, generated_at, amplop: {envelope_id: insight | baris dasar | null}}`. Mesin sama dengan Beranda (`dashboard.analisa`: rencana bersama, skor, keyakinan, dismiss viewer); modul ini hanya memilih per kartu. Calon = slot `amplop` + `amplop_id` itu, domain AMP/TAG, TAB hanya untuk amplop tabungan; urut `kunci_urut` (tone dulu, skor).
+- `render.baris_dasar_amplop`: kartu tanpa insight → belanja "Aman, ±{rp}/hari tersedia" (hari terakhir: "Aman, {rp} tersedia hari ini"), "Dana {amplop} sudah terpakai semua" + `fund` "Isi dana" (bebas ≤ 0 tanpa aturan, mis. d < 3), tabungan "{amplop}: saldo {rp}" + `fund` "Setor" ("Tambahkan target biar terarah." bila tanpa target).
+- Route `GET /advisor/page/amplop` di `routes/advisor.py`; `api.getAdvisorAmplop()` (seragam dengan `getAdvisorLangganan`/`getAdvisorTransaksi` S12/S13).
+- `Envelopes.jsx`: strip v2 (`AdvisorStripV2`: judul, isi, maks 2 tombol open-action, "Nanti" bila bisa di-dismiss) menggantikan `envelopeInsight` untuk user di flag; halaman memuat ulang pada `txn-added`, `envelope-updated`, `advisor-dismissed`, `advisor-undismissed`. Pembantu murni `lib/envelopeStrip.js` (+ tes).
+- Toggle **Dana darurat** di form amplop (langkah target, hanya tabungan): nilai awal = `is_emergency` tersimpan; amplop baru = tebakan nama (sama dengan `metrics.is_emergency_name`), dikirim `null` supaya server yang menebak.
+- CTA: Naikkan/Turunkan jatah (AMP-04/05/06 `raise_budget`), Geser dana (AMP-02/03 `plan`), Setor (TAB-* `plan`, baris dasar `fund`), Atur target (tombol "Buat target" yang sudah ada + TAB-02 "Mundurkan tenggat"). Pasang limit (`daily_limit`) tetap ikut `cta_batas_harian` = false (§2) — belum tampil.
+- Pemanggil lama `FundEnvelopeModal` (QuickAddTransaction, MultiAddTransaction, SpendingEnvelopes — file S8, disetujui pemilik produk) kini memakai mode `advisor`: tab Geser = rencana multi-sumber `/advisor/plan` → `/advisor/execute` (aturan kerja #5), tab Top-up tidak berubah. Bentuk `onSuccess` sama, jadi pemanggil hanya menambah prop.
+- Dokumen: `04-kontrak-api.md` (endpoint), `03-workflow.md` §7 (baris kepemilikan S11), `AGENTS.md` peta v2, `00-indeks.md`.
+
+**Digantung**
+- `envelopeInsight.js` + tesnya masih ada sebagai jalur flag-mati; hapus di S10b bersama jalur lama lain.
+- Tombol "Geser dana" bawaan kartu (TransferModal satu sumber) tetap ada; strip v2 memakai `plan`/`fund`.
+
+**Keputusan kecil (juga di docstring halaman.py)**
+- Insight yang diserap insight lain di amplop yang sama (AMP-01 oleh TAG-01/02) tidak dipilih; yang diserap insight tingkat periode (AMP-02/03 oleh PER-01, AMP-01 oleh PER-02) tetap tampil di kartunya — PER-* tidak punya slot amplop. Jadi Beranda bisa menampilkan PER-01 sementara kartu Makan menampilkan AMP-03 (contoh §12: "maksimal Rp153 rb/hari").
+- Semua calon kartu di-dismiss → `null` (tanpa strip), bukan "Aman": masalahnya masih ada.
+- "Maksimal/hari" baris aman = `ctx.batas` (bebas_setelah_rencana, penekanan 8), sama dengan chip; cadangan `batas_harian(bebas)`.
+- Tanpa cache Redis (13 query tetap per muat halaman); bila lambat, pakai kunci cache per halaman di `advisor_cache`.
+- Strip tetap disembunyikan untuk amplop belum didanai (kotak "Belum ada dana · Alokasikan" lama tetap).
+
+**Jebakan**
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- `pkill -f <pola>` ikut membunuh shell pemanggil bila pola itu ada di baris perintahnya (termasuk isi heredoc) → exit 144. Matikan server di perintah terpisah.
+- Mock Playwright Beranda: `/analytics/periods` harus array berisi `period_start`; endpoint lain yang di-`filter` harus array.
+- Tes lokal butuh `pip install -r requirements.txt -r requirements-test.txt` (container baru tidak punya `pydantic_settings`).
+- Uji browser: Playwright global di `/opt/node-tools/node_modules/playwright`, API di-mock lewat `page.route('**/api/**')`, `localStorage.jatahku_token` + `telegram_id` di `/auth/me`.
+
+**Merge dengan S12/S13/S14 (#94, #95, #98):** `halaman.py` dibuat dua sesi sekaligus → digabung: bagian Amplop (S11) di atas, Langganan (S12) di bawah, impor dashboard jadi di tingkat modul (isi `get_page_langganan` tidak berubah). Route `/page/amplop`, `/page/transaksi`, `/page/langganan` berdampingan. S14 (Alokasi) tidak menyentuh berkas S11.
+
+**Tes (sesudah merge main #98):** backend 906 OK (12 baru, `test_advisor_page_amplop.py`) · frontend 284 OK (7 baru, `envelopeStrip.test.js`) · build OK · Playwright (API di-mock): strip warn/danger/ok dengan tombol aksi tampil di kartu; Beranda → kartu Amplop pengeluaran → Tutup minus membuka rencana `/advisor/plan` (Hobi → Makan).
+
+**Cara mencoba:** user di flag → halaman Amplop → buka kartu: strip AI + tombol (Geser/Bayar/Setor). Server: `python -m unittest app.tests.test_advisor_page_amplop -v`.
+
+**Lanjut:** S15 Halaman Analitik (#70) — prompt pembuka §3. Halaman baru: tambah `susun_<halaman>` di `halaman.py` (pola S11/S12) atau modul sendiri (pola S13 `page_transaksi.py`).
+
+---
+
 ## S14 · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

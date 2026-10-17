@@ -817,6 +817,7 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
       {fundingTarget && (
         <FundEnvelopeModal
+          advisor
           isOpen={!!fundingTarget}
           onClose={() => setFundingTarget(null)}
           targetEnvelope={fundingTarget.envelope}

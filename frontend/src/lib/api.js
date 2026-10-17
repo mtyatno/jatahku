@@ -554,6 +554,19 @@ class ApiClient {
     return null;
   }
 
+  // GET /advisor/page/amplop (S11): strip AI per kartu amplop. {"enabled": false} atau null →
+  // halaman Amplop memakai strip lama (envelopeInsight).
+  async getAdvisorAmplop() {
+    try {
+      const res = await this.request('/advisor/page/amplop');
+      if (res.ok) return await res.json();
+      console.error('[advisor] amplop request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] amplop request error:', e);
+    }
+    return null;
+  }
+
   // GET /advisor/page/transaksi (S13): banner sesuai filter + penanda baris. null bila gagal.
   async getAdvisorTransaksi({ tanggal = null, amplop = null } = {}) {
     const q = new URLSearchParams();
