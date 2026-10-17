@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
+import { native } from '../native';
 import { telegramPromptMode, isLinkCodeUsable } from '../lib/telegramPrompt';
 import { Icon, BRAND } from './Icon';
 
@@ -138,7 +139,7 @@ export default function TelegramPrompt() {
             <p className="text-sm text-gray-500 leading-relaxed">
               Kembali ke Telegram dan catat pengeluaran pertamamu. Cukup kirim <span className="font-mono text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded">kopi 35k</span> ke @JatahkuBot.
             </p>
-            <a href="https://t.me/JatahkuBot" target="_blank" rel="noreferrer" onClick={() => setShow(false)}
+            <a {...native.externalLinkProps('https://t.me/JatahkuBot', () => setShow(false))}
               className="btn-primary w-full justify-center text-center py-3">
               Buka @JatahkuBot →
             </a>
@@ -193,7 +194,7 @@ export default function TelegramPrompt() {
               {phase === 'waiting' ? (
                 <div className="text-sm text-center text-gray-600 bg-brand-50 rounded-xl px-4 py-3 space-y-1">
                   <p>Tekan <b>START</b> di Telegram. Halaman ini akan memperbarui sendiri setelah terhubung.</p>
-                  <a href={`https://t.me/JatahkuBot?start=link_${code}`} target="_blank" rel="noreferrer"
+                  <a {...native.externalLinkProps(`https://t.me/JatahkuBot?start=link_${code}`)}
                     className="text-xs text-brand-600 hover:underline">
                     Telegram belum terbuka? Buka lagi
                   </a>
@@ -208,7 +209,7 @@ export default function TelegramPrompt() {
                   </button>
                 </>
               ) : code ? (
-                <a href={`https://t.me/JatahkuBot?start=link_${code}`} target="_blank" rel="noreferrer" onClick={openBot}
+                <a {...native.externalLinkProps(`https://t.me/JatahkuBot?start=link_${code}`, openBot)}
                   className="btn-primary w-full justify-center text-center py-3">
                   Hubungkan Telegram →
                 </a>

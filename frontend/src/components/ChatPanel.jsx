@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
 import { PREFILL_COMMANDS, formatBotText, inAppPath, safeHref } from '../lib/chatFormat';
 import {
@@ -129,8 +130,7 @@ function BotText({ text, format, onCommand, onLink }) {
     }
     if (n.t === 'link') {
       return (
-        <a key={i} href={n.href} target="_blank" rel="noopener noreferrer"
-          onClick={e => onLink(e, n.href)}
+        <a key={i} {...native.externalLinkProps(n.href, e => onLink(e, n.href))}
           className="text-brand-600 underline underline-offset-2 break-all">{n.v}</a>
       );
     }
@@ -552,7 +552,8 @@ export default function ChatPanel({ open, onClose, draft = null }) {
         navigate(path);
       }
     } else if (!e) {
-      window.open(href, '_blank', 'noopener,noreferrer');
+      // Klik link sudah ditangani externalLinkProps di BotText.
+      native.openExternal(href);
     }
   };
 

@@ -1,10 +1,13 @@
 // Antrean transaksi offline di sisi app. Logika sinkron dipakai bersama service
 // worker (lihat offlineSync.js). Event `jatahku:offline-queue` memberi tahu UI
 // setiap kali isi antrean berubah (masuk, tersinkron, dicoba lagi, dihapus).
-import { idbStore, syncQueue, isPending } from './offlineSync.js';
+// Tempat menyimpan antrean ditentukan lapisan native (web: IndexedDB bersama
+// service worker; aplikasi: penyimpanan native, ADR-M11).
+import { syncQueue, isPending } from './offlineSync.js';
 import { newRef } from './ref.js';
+import { native } from '../native/index.js';
 
-const store = idbStore();
+const store = native.queue.store();
 
 function notify(detail) {
   try {
@@ -15,20 +18,15 @@ function notify(detail) {
 }
 
 export async function enqueueTransaction(payload) {
-  const token = localStorage.getItem('jatahku_token');
-  await store.add({ ...payload, client_ref: payload.client_ref || newRef(), token, queuedAt: Date.now() });
+  await store.add(native.queue.withAuth({ ...payload, client_ref: payload.client_ref || newRef(), queuedAt: Date.now() }));
   notify({ type: 'enqueued' });
 
-  // Background sync: service worker bisa mengirim walau app sudah ditutup.
-  if ('serviceWorker' in navigator && 'SyncManager' in window) {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      await reg.sync.register('sync-transactions');
-    } catch {
-      // tidak didukung / ditolak — app yang menyinkronkan saat online lagi
-    }
-  }
+  // Kirim walau app sudah ditutup (web: background sync service worker).
+  await native.queue.requestBackgroundSync();
 }
+
+// Hasil sinkron yang dijalankan di latar (web: service worker). → fungsi pelepas.
+export const onBackgroundSynced = (cb) => native.queue.onBackgroundSynced(cb);
 
 // Menunggu dikirim (tidak termasuk yang ditolak).
 export async function getPendingCount() {

@@ -63,12 +63,7 @@ export default function Upgrade() {
     setUploading(true);
     const form = new FormData();
     form.append('file', file);
-    const baseUrl = api.baseUrl || 'https://api.jatahku.com';
-    const r = await fetch(`${baseUrl}/payment/upload-proof/${order.order_id}`, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + api.token },
-      body: form,
-    });
+    const r = await api.request(`/payment/upload-proof/${order.order_id}`, { method: 'POST', body: form });
     if (r.ok) {
       setStep(3);
       setMsg('Bukti transfer diterima! Admin akan memverifikasi dalam 1x24 jam.');
