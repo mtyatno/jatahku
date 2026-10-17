@@ -79,26 +79,7 @@ async def set_bot_commands(request: Request):
     bot_app = get_bot_app()
     if not bot_app.running:
         await bot_app.initialize()
-    commands = [
-        BotCommand("status", "Ringkasan budget bulan ini"),
-        BotCommand("amplop", "Daftar semua amplop"),
-        BotCommand("pending", "Transaksi menunggu konfirmasi"),
-        BotCommand("langganan", "Daftar langganan aktif"),
-        BotCommand("controls", "Status behavior controls"),
-        BotCommand("amplop_baru", "Buat amplop baru"),
-        BotCommand("template", "Buat amplop dari template"),
-        BotCommand("lock", "Kunci/buka amplop"),
-        BotCommand("setlimit", "Set limit harian amplop"),
-        BotCommand("setcooling", "Set cooling period"),
-        BotCommand("tambah_langganan", "Tambah langganan baru"),
-        BotCommand("hapus_langganan", "Hapus langganan"),
-        BotCommand("invite", "Undang anggota household"),
-        BotCommand("join", "Gabung ke household"),
-        BotCommand("webapp", "Login ke WebApp tanpa password"),
-        BotCommand("link", "Hubungkan ke WebApp"),
-        BotCommand("unlink", "Putuskan koneksi Telegram"),
-        BotCommand("batal", "Undo transaksi terakhir"),
-        BotCommand("help", "Panduan lengkap"),
-    ]
+    from app.bot.help_cmd import BOT_COMMANDS
+    commands = [BotCommand(nama, ket) for nama, ket in BOT_COMMANDS]
     await bot_app.bot.set_my_commands(commands)
     return {"status": "ok", "commands": len(commands)}

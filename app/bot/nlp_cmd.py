@@ -177,6 +177,24 @@ KENAPA_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "tagihan bulan ini", "tagihan apa aja", "kapan jatuh tempo" (02-aturan.md §6H, S17)
+TAGIHAN_RE = re.compile(
+    r"^(tagihan|tagihanku|cicilan|cicilanku)\s*\??$|"
+    r"\b(tagihan|cicilan|langganan)\b.{0,25}\b(bulan\s+ini|periode\s+ini|apa\s+(aja|saja)|kapan|"
+    r"berapa|belum|yang\s+mana|jatuh\s+tempo)\b|"
+    r"\b(cek|lihat|liat|daftar|info)\s+(tagihan|cicilan)\b|"
+    r"\bjatuh\s+tempo\b|\bkapan\s+(bayar|jatuh)\b",
+    re.IGNORECASE,
+)
+
+# "target liburan", "progres tabungan", "tabungan rumah gimana?" (§6H, S17)
+TARGET_RE = re.compile(
+    r"\btarget\b|"
+    r"\bprogres+\b.{0,20}\b(tabungan|target|nabung|celengan)\b|"
+    r"\b(tabungan|celengan)\b.{0,25}\b(gimana|bagaimana|berapa|udah|sudah|progres+|tercapai|kapan)\b",
+    re.IGNORECASE,
+)
+
 KOREKSI_RE = re.compile(
     # Edit amount
     r"\b(tadi|barusan)\s*(salah|keliru|typo|ngaco|salah\s+ketik)\b|"
@@ -292,6 +310,8 @@ def is_santai(text): return bool(SANTAI_RE.search(text))
 def is_emosi(text): return bool(EMOSI_RE.search(text))
 def is_kenapa(text): return bool(KENAPA_RE.search(text))
 def is_koreksi(text): return bool(KOREKSI_RE.search(text))
+def is_tagihan(text): return bool(TAGIHAN_RE.search(text))
+def is_target(text): return bool(TARGET_RE.search(text))
 def is_pengeluaran_hari_lalu(text): return bool(PENGELUARAN_HARI_LALU_RE.search(text))
 
 _DATE_NUM_RE = re.compile(
@@ -1151,3 +1171,50 @@ async def handle_pengeluaran_hari_lalu(update, context):
             lines.append(f"📅 Hari ini ({today_day_str}): <b>{format_currency(today_total)}</b> · sama persis")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+# ── AI Advisor v2: intent lengkap §6H (S17) ──────────────────────────────────
+
+async def _user_siap(update):
+    """User yang sudah setup, atau None (pesan setup sudah dikirim)."""
+    from app.core.database import AsyncSessionLocal
+    tg_user = update.effective_user
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        setup_ok, _ = await _is_setup_complete(user, db)
+    if not setup_ok:
+        await reply_setup_needed(update, user)
+        return None
+    return user
+
+
+async def handle_tagihan(update, context):
+    """"Tagihan bulan ini": v2 dari metrics + TAG-*; di luar flag → daftar /langganan."""
+    user = await _user_siap(update)
+    if user is None:
+        return
+    if await advisor_cmd.jawab(update, user, "tagihan"):
+        return
+    from app.bot.recurring_cmd import cmd_langganan
+    await cmd_langganan(update, context)
+
+
+async def handle_target(update, context):
+    """"Target {nama}": v2 dari G4–G6 + TAB-*; di luar flag → arahkan ke halaman Amplop."""
+    user = await _user_siap(update)
+    if user is None:
+        return
+    if await advisor_cmd.jawab(update, user, "target", teks=getattr(update.message, "text", "") or ""):
+        return
+    await update.message.reply_text(
+        "🎯 Progres target tabungan ada di halaman Amplop (amplop tabungan) di jatahku.com.")
+
+
+async def handle_kenapa_boros(update, context):
+    """"Kenapa boros?" dari tombol (/tanya, saran intent): teks tetap, bukan teks pesan bot."""
+    user = await _user_siap(update)
+    if user is None:
+        return
+    if await advisor_cmd.jawab(update, user, "kenapa", teks="kenapa boros"):
+        return
+    await handle_emosi(update, context)

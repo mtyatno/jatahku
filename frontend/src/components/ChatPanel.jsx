@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { PREFILL_COMMANDS, formatBotText, inAppPath, safeHref } from '../lib/chatFormat';
 import {
   applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage, userPhotoMessage,
 } from '../lib/chatHistory';
+import { quickChips } from '../lib/chatChips';
 import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
 import ChatText from './ChatText';
@@ -19,16 +20,6 @@ import VoiceInput from './VoiceInput';
 // jempol (tombol ⌄ di samping kotak ketik, tarik ke bawah, ketuk latar, atau
 // Back Android). Saat keyboard terbuka sheet otomatis penuh di atas keyboard.
 // Desktop: panel samping, halaman tetap terlihat.
-
-const QUICK = [
-  { label: 'Sisa jatah', text: 'sisa' },
-  { label: 'Hari ini', text: 'pengeluaran hari ini' },
-  { label: 'Limit harian', text: 'limit harian' },
-  { label: 'Kapan habis?', text: 'kapan habis' },
-  { label: '/status', text: '/status' },
-  { label: '/amplop', text: '/amplop' },
-  { label: 'Panduan', text: '/help' },
-];
 
 // Contoh di layar kosong. Contoh pengeluaran hanya mengisi kotak ketik —
 // jangan sampai mengetuk contoh langsung mencatat transaksi sungguhan.
@@ -201,6 +192,7 @@ function Welcome({ name, onExample }) {
 export default function ChatPanel({ open, onClose, draft = null }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const uid = user?.id;
   const firstName = (user?.name || '').trim().split(/\s+/)[0] || '';
 
@@ -743,15 +735,17 @@ export default function ChatPanel({ open, onClose, draft = null }) {
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto}
             aria-hidden="true" tabIndex={-1} />
           <span className="w-px h-4 bg-gray-200 shrink-0" />
-          {draftChips.map(q => (
-            <button key={`d-${q.text}`} type="button" onClick={() => send(q.text)} disabled={!!pending}
-              className="shrink-0 px-2.5 py-1 rounded-full border border-brand-200 bg-brand-50 text-xs text-brand-700 hover:border-brand-400 disabled:opacity-50 whitespace-nowrap">
-              {q.label}
-            </button>
-          ))}
-          {QUICK.filter(q => !draftChips.some(d => d.text === q.text)).map(q => (
-            <button key={q.text} type="button" onClick={() => send(q.text)} disabled={!!pending}
-              className="shrink-0 px-2.5 py-1 rounded-full border border-gray-200 text-xs text-gray-600 hover:border-brand-400 hover:text-brand-600 disabled:opacity-50 whitespace-nowrap">
+          {/* Chip cepat (§6H): dari insight dulu, lalu pertanyaan halaman ini (lib/chatChips) */}
+          {quickChips(pathname, draftChips).map(q => (
+            <button key={`${q.draft ? 'd' : 'q'}-${q.text}`} type="button" disabled={!!pending}
+              onClick={() => {
+                if (!q.fill) { send(q.text); return; }
+                setInput(q.text);
+                inputRef.current?.focus();
+              }}
+              className={q.draft
+                ? 'shrink-0 px-2.5 py-1 rounded-full border border-brand-200 bg-brand-50 text-xs text-brand-700 hover:border-brand-400 disabled:opacity-50 whitespace-nowrap'
+                : 'shrink-0 px-2.5 py-1 rounded-full border border-gray-200 text-xs text-gray-600 hover:border-brand-400 hover:text-brand-600 disabled:opacity-50 whitespace-nowrap'}>
               {q.label}
             </button>
           ))}

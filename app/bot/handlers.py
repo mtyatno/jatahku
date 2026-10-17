@@ -1085,10 +1085,18 @@ async def handle_message(update, context):
         handle_sisa, handle_limit_harian, handle_proyeksi, handle_comparison,
         handle_santai, handle_emosi, handle_koreksi, handle_nabung,
         handle_pengeluaran_hari_ini, handle_pengeluaran_hari_lalu,
+        is_tagihan, is_target, handle_tagihan, handle_target,
     )
     # "kenapa boros?" / "kenapa {amplop} habis?": v2 menjawab dari insight, lama → insight emosi
     if (is_emosi(text) or is_kenapa(text)) and not parse_amount(text):
         await handle_emosi(update, context)
+        return
+    # "tagihan bulan ini" / "target {nama}" (§6H, S17) — sebelum "sisa" & "nabung"
+    if is_tagihan(text) and not parse_amount(text):
+        await handle_tagihan(update, context)
+        return
+    if is_target(text) and not parse_amount(text) and not is_nabung(text):
+        await handle_target(update, context)
         return
     if is_koreksi(text):
         await handle_koreksi(update, context)
@@ -1192,19 +1200,8 @@ async def handle_message(update, context):
         async with _ASL() as _db:
             learned = await lookup_intent(text, _db)
         if learned:
-            from app.bot.nlp_cmd import (
-                handle_pengeluaran_hari_ini, handle_sisa, handle_limit_harian,
-                handle_proyeksi, handle_comparison, handle_santai,
-            )
-            _intent_handlers = {
-                "pengeluaran_hari_ini": handle_pengeluaran_hari_ini,
-                "sisa": handle_sisa,
-                "harian": handle_limit_harian,
-                "proyeksi": handle_proyeksi,
-                "comparison": handle_comparison,
-                "santai": handle_santai,
-            }
-            _h = _intent_handlers.get(learned)
+            from app.bot.intent_learning import intent_handlers
+            _h = intent_handlers().get(learned)
             if _h:
                 await _h(update, context)
                 return
@@ -1652,25 +1649,15 @@ async def handle_non_text(update, context):
 
 async def post_init(application):
     """Set bot commands menu."""
-    await application.bot.set_my_commands([
-        ("status", "Ringkasan budget bulan ini"),
-        ("amplop", "Daftar amplop & sisa dana"),
-        ("pending", "Transaksi cooling period"),
-        ("langganan", "Daftar langganan aktif"),
-        ("batal", "Undo transaksi terakhir"),
-        ("amplop_baru", "Buat amplop baru"),
-        ("template", "Pilih template amplop"),
-        ("lock", "Kunci/buka amplop"),
-        ("controls", "Status behavior controls"),
-        ("invite", "Buat kode invite household"),
-        ("help", "Panduan lengkap"),
-    ])
+    from app.bot.help_cmd import BOT_COMMANDS
+    await application.bot.set_my_commands(BOT_COMMANDS)
 
 
 def bot_commands() -> dict:
     """Perintah /nama → handler. Satu daftar untuk Telegram dan chat webapp
     (app/bot/web_adapter.py), supaya keduanya selalu punya perintah yang sama."""
-    from app.bot.help_cmd import cmd_help
+    from app.bot.help_cmd import cmd_help, cmd_tanya
+    from app.bot.nlp_cmd import handle_tagihan, handle_target
     from app.bot.link_cmd import cmd_link, cmd_unlink
     from app.bot.behavior_cmd import cmd_lock, cmd_setlimit, cmd_setcooling, cmd_controls
     from app.bot.recurring_cmd import cmd_langganan, cmd_tambah_langganan, cmd_hapus_langganan
@@ -1680,6 +1667,9 @@ def bot_commands() -> dict:
         "start": cmd_start,
         "help": cmd_help,
         "status": cmd_status,
+        "tanya": cmd_tanya,
+        "tagihan": handle_tagihan,
+        "target": handle_target,
         "amplop": cmd_amplop,
         "amplop_baru": cmd_amplop_baru,
         "template": cmd_template,
@@ -1718,6 +1708,8 @@ def bot_callbacks() -> list:
         handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
     )
     from app.bot.receipt_cmd import handle_struk_callback
+    from app.bot.advisor_cmd import handle_sim_callback
+    from app.bot.help_cmd import handle_tanya_callback
     return [
         (r"^lock_", handle_lock_callback),
         (r"^delrec_", handle_delrec_callback),
@@ -1738,6 +1730,8 @@ def bot_callbacks() -> list:
         (r"^intentlearn:", handle_intent_learn),
         (r"^dlimit:", handle_daily_limit_callback),
         (r"^fshift:", handle_fund_shift_callback),
+        (r"^sim:", handle_sim_callback),
+        (r"^tanya:", handle_tanya_callback),
     ]
 
 

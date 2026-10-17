@@ -4,6 +4,43 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S17 Chat lengkap · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- Intent §6H yang tersisa, jawaban dari mesin yang sama (`chat.muat` → dismiss viewer terbaru):
+  - **"tagihan bulan ini"** (`TAGIHAN_RE`: "tagihan?", "cicilan apa aja", "kapan jatuh tempo", "cek tagihan"; juga `/tagihan`) → `chat.jawab_tagihan`: tagihan periode (jatuh tempo di periode, telat, atau lunas) dengan status per baris, belum dibayar (M4), sisihan tahunan (M5), beban tagihan (K4), chip Tagihan, insight TAG teratas + fakta. Di luar flag → `/langganan` lama.
+  - **"target {nama}"** (`TARGET_RE`: "target liburan", "progres tabungan", "tabungan rumah gimana"; juga `/target [nama]`) → `chat.jawab_target`: satu target (nama target, lalu nama amplop tabungannya) dengan G4/G5/G6 + insight TAB target itu; tanpa nama → semua target (maks 5) + chip Tabungan. Di luar flag → arahan ke halaman Amplop.
+- **SIM-01 "ganti amplop"**: saat amplop ditebak, balasan "aman beli" membawa tombol amplop belanja lain (`sim:{jumlah}:{amplop_id}`, urut porsi 7 hari); menekan tombol menyunting balasan dengan simulasi di amplop itu + tombol amplop lainnya. Tanpa Redis (≤ 64 byte); amplop yang bukan milik viewer jatuh ke tebakan (`chat.amplop_simulasi` hanya menerima amplop terlihat).
+- **`/tanya`**: tombol pertanyaan yang pasti terjawab (`help_cmd.PERTANYAAN`, callback `tanya:<intent>`). Saran untuk teks tak dikenal (intent-learning) ikut punya "Kenapa boros?", "Tagihan bulan ini", "Target tabungan".
+- **Satu daftar**: `intent_learning.intent_handlers()` dipakai frasa yang dipelajari, tombol saran, dan `/tanya`; `help_cmd.BOT_COMMANDS` dipakai `post_init` dan `GET /webhook/telegram/set-commands` (dulu dua daftar berbeda: 11 vs 19 perintah). `/help` punya bagian "Tanya AI Advisor".
+- **Chip cepat per halaman** (web): `lib/chatChips.js` — chip dari insight (draft CTA "Tanya di chat") dulu, lalu pertanyaan halaman aktif (Beranda, Amplop, Transaksi, Alokasi, Langganan, Analitik; lainnya bawaan), lalu /status /amplop Panduan. "Aman beli…?" hanya mengisi kotak ketik (butuh nominal). Menggantikan `QUICK` di `ChatPanel.jsx`.
+- Cek #91: chat **tidak** menawarkan tombol sembunyikan/munculkan lagi; jalur dismiss tetap satu (`POST`/`DELETE /advisor/dismiss` di web). Semua intent baru lewat `chat.muat`, jadi ikut status dismiss terbaru; "kenapa …", tagihan, dan target sengaja memakai insight walau di-dismiss (user bertanya langsung, sama dengan S9).
+
+**Digantung**
+- CTA "Catat" dari balasan SIM-01 (§6H) belum ada: user tetap mengetik ulang pengeluarannya. Butuh penyimpanan deskripsi (Redis seperti `txn:`) + alur cek `check_expense`; issue terpisah bila perlu.
+- Emoji 🎯 belum dipetakan ke ikon di `lib/chatIcons.js` (di luar kepemilikan S17) → di chat web tampil sebagai emoji.
+- `handle_comparison` dan "pengeluaran kemarin" tetap jalur lama (bukan angka periode berjalan).
+- Menu perintah Telegram baru berlaku setelah deploy (post_init) atau `GET /webhook/telegram/set-commands` (admin).
+
+**Keputusan kecil (juga di docstring chat.py / advisor_cmd.py)**
+- Tombol ganti amplop hanya saat amplop **ditebak**; amplop yang disebut user dianggap pilihan sadar.
+- Rute: tagihan/target dicek sesudah "kenapa …" dan sebelum "nabung"/"sisa"; target kalah dari kalkulator nabung ("harus nyisih berapa buat target laptop" tetap `handle_nabung`); pesan dengan nominal tidak pernah jadi intent tanya.
+- "Kenapa boros?" dari tombol memakai teks tetap, bukan teks pesan bot (`handle_kenapa_boros`).
+- Status tagihan: ✅ lunas › 🔴 telat N hari › 🟡 jatuh tempo hari ini › "belum · tgl".
+
+**Jebakan**
+- Pesan dengan "dalam N bulan" bisa terbaca `parse_subscription` dulu → alur langganan (perilaku lama, bukan dari S17); pakai contoh tanpa durasi di tes rute.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- Uji browser dev: API di `/api/**` (proxy Vite), mock dengan `page.route('**/api/**')`; halaman Amplop kosong dengan mock `[]` (bukan karena chip).
+
+**Tes:** backend 931 OK (25 baru, `test_advisor_chat_s17.py`) · frontend 289 OK (5 baru, `chatChips.test.js`) · build OK · Playwright (API di-mock): chip Beranda/Transaksi/Langganan/Alokasi sesuai halaman, "Aman beli…?" mengisi kotak ketik.
+
+**Cara mencoba:** user di flag → Telegram/chat web: "tagihan bulan ini", "target liburan", `/tanya`, "aman gak beli sepatu 300k" (tanpa nama amplop → tombol amplop lain). Web: buka chat di halaman Langganan → chip pertama "Tagihan bulan ini". Server: `python -m unittest app.tests.test_advisor_chat_s17 -v`.
+
+**Lanjut:** sesudah merge, panggil `GET /webhook/telegram/set-commands` (admin) bila menu Telegram belum berubah. Sesi berikutnya: S18 (#73) — prompt pembuka §3.
+
+---
+
 ## S16 Notifikasi proaktif · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**
