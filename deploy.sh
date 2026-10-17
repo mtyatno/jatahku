@@ -72,18 +72,19 @@ if [ -d "frontend" ]; then
     sudo -u jatahku npm run build
     sudo cp -r dist/* /home/jatahku/web/jatahku.com/public_html/
     sudo cp /home/jatahku/web/jatahku.com/public_html/index.html /home/jatahku/web/jatahku.com/public_html/app.html
-    # Preserve landing + legal pages — use backup if available, fallback to repo
+    # Landing + legal pages: versi repo yang dipasang (perubahan landing harus tayang).
+    # Backup hanya cadangan bila file repo hilang/kosong, dan diperbarui setiap kali
+    # versi repo terpasang.
     restore_file() {
         local f="$1"
         local src="/opt/jatahku/app/$f"
         local backup="/opt/jatahku/backups/$f"
         local dest="/home/jatahku/web/jatahku.com/public_html/$f"
-        if [ -f "$backup" ] && [ -s "$backup" ]; then
-            sudo cp "$backup" "$dest"
-        elif [ -f "$src" ] && [ -s "$src" ]; then
+        if [ -f "$src" ] && [ -s "$src" ]; then
             sudo cp "$src" "$dest"
+        elif [ -f "$backup" ] && [ -s "$backup" ]; then
+            sudo cp "$backup" "$dest"
         fi
-        # Update backup from destination (only if successfully restored and non-empty)
         if [ -f "$dest" ] && [ -s "$dest" ]; then
             sudo mkdir -p /opt/jatahku/backups
             sudo cp "$dest" "$backup"
@@ -95,15 +96,17 @@ if [ -d "frontend" ]; then
     done
 fi
 
-# Blog
-if [ -d "blog" ]; then
-    cd /opt/jatahku/app/blog
-    sudo -u jatahku npm install --silent 2>/dev/null || true
-    sudo -u jatahku npm run build
-    sudo cp -r dist/* /home/jatahku/web/blog.jatahku.com/public_html/
+# Blog: dibangun di CI (job deploy-blog di deploy.yml) lalu di-SCP ke /tmp/blog-dist-new/.
+if [ -d "/tmp/blog-dist-new" ]; then
+    rsync -a --delete /tmp/blog-dist-new/ /home/jatahku/web/blog.jatahku.com/public_html/
+    rm -rf /tmp/blog-dist-new/
+    echo "✅ Blog terpasang"
+else
+    echo "⚠️  Blog dilewati — /tmp/blog-dist-new tidak ada"
 fi
 
 # Re-register Telegram webhook (sync secret token after restart)
+cd /opt/jatahku/app   # python -c mengimpor paket app dari sini
 sleep 3
 sudo -u jatahku bash -c 'source /opt/jatahku/venv/bin/activate && python3 -c "
 from app.core.config import get_settings
@@ -112,7 +115,10 @@ s = get_settings()
 if not s.TELEGRAM_BOT_TOKEN or not s.TELEGRAM_WEBHOOK_URL:
     print(\"⚠️  Telegram webhook skip — token/url not configured\")
     exit(0)
-data = urllib.parse.urlencode({\"url\": s.TELEGRAM_WEBHOOK_URL, \"secret_token\": s.TELEGRAM_WEBHOOK_SECRET}).encode()
+params = {\"url\": s.TELEGRAM_WEBHOOK_URL}
+if s.TELEGRAM_WEBHOOK_SECRET:
+    params[\"secret_token\"] = s.TELEGRAM_WEBHOOK_SECRET
+data = urllib.parse.urlencode(params).encode()
 req = urllib.request.Request(f\"https://api.telegram.org/bot{s.TELEGRAM_BOT_TOKEN}/setWebhook\", data=data)
 r = json.loads(urllib.request.urlopen(req).read())
 print(\"✅ Webhook registered\" if r.get(\"ok\") else f\"⚠️  Webhook error: {r}\")
