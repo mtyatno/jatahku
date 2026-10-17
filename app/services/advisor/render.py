@@ -644,6 +644,35 @@ def _dat06(ins, ctx, kpi):
             "fakta": []}
 
 
+
+# ── I. Pikir-Pikir ──────────────────────────────────────────────────────
+def _pp01(ins, ctx, kpi):
+    d = ins.data
+    lain = f" (+{d['n'] - 1} lainnya)" if d["n"] > 1 else ""
+    di = f" di {d['amplop']}" if d["amplop"] else ""
+    return {"chip": "Sepadan?", "judul": f"Sepadan? {d['deskripsi']} {rp_ringkas(d['jumlah'])}{lain}",
+            "isi": f"Kamu beli {d['deskripsi']} {rp_penuh(d['jumlah'])}{di} pada {tgl(d['tanggal'])}. "
+                   "Jawab singkat supaya polamu terbaca.",
+            "fakta": [{"label": "Menunggu jawaban", "nilai": str(d["n"])}] if d["n"] > 1 else []}
+
+
+def _pp02(ins, ctx, kpi):
+    d = ins.data
+    di = f" dari {d['amplop']}" if d["amplop"] else ""
+    return {"chip": "Incaran siap", "judul": f"Waktunya memutuskan {d['nama']}",
+            "isi": f"Masa pikir-pikir {d['nama']} {rp_penuh(d['jumlah'])} sudah selesai. "
+                   f"Jadi beli{di}, nggak jadi, atau tunda dulu?",
+            "fakta": []}
+
+
+def _pp03(ins, ctx, kpi):
+    d = ins.data
+    return {"chip": "Sering menyesal", "judul": f"{d['n']} belanja {d['amplop']} terasa menyesal",
+            "isi": f"Dalam 2 periode, {d['n']} belanja di {d['amplop']} ({rp_penuh(d['total'])}) kamu jawab "
+                   "\"Menyesal\". Coba simpan dulu di Incaran sebelum membeli.",
+            "fakta": [{"label": "Total", "nilai": rp_penuh(d["total"])}]}
+
+
 TEMPLATE = {
     "HAR-01": _har01, "HAR-02": _har02, "HAR-03": _har03, "HAR-04": _har04, "HAR-05": _har05,
     "PER-01": _per01, "PER-02": _per02, "PER-03": _per03, "PER-04": _per04, "PER-05": _per05,
@@ -656,6 +685,7 @@ TEMPLATE = {
     "TAB-01": _tab01, "TAB-02": _tab02, "TAB-03": _tab03, "TAB-04": _tab04, "TAB-05": _tab05, "TAB-06": _tab06,
     "TAB-07": _tab07,
     "DAT-01": _dat01, "DAT-02": _dat02, "DAT-03": _dat03, "DAT-04": _dat04, "DAT-05": _dat05, "DAT-06": _dat06,
+    "PP-01": _pp01, "PP-02": _pp02, "PP-03": _pp03,
 }
 
 
@@ -687,6 +717,8 @@ def _label_aksi(a: dict, ins: Insight, ctx: Konteks) -> tuple[str, dict]:
         return "Tanya di chat", {"teks": "Kenapa belanja hari ini lewat jatah?", **p}
     if kode == "tanya_kekurangan":
         return "Tanya di chat", {"teks": "Kenapa dana belanja kurang?", **p}
+    if kode == "pakai_incaran":
+        return f"Pakai Incaran untuk {ins.data.get('amplop', '')}", p
     if kode == "hapus_duplikat":
         return f"Hapus duplikat ({len(p.get('txn_ids') or [])} barang)", p
     return LABEL.get(kode, kode or a["kind"]), p
@@ -725,6 +757,10 @@ LABEL = {
     "klasifikasikan": "Klasifikasikan",
     "tandai_lunas": "Tandai lunas",
     "bukan_tagihan": "Bukan pembayaran tagihan",
+    "jawab_refleksi": "Jawab",
+    "beli_incaran": "Beli → catat",
+    "nggak_jadi": "Nggak jadi",
+    "tunda_incaran": "Tunda",
 }
 
 
