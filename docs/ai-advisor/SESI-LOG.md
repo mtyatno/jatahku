@@ -49,6 +49,48 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S13 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai (PR ini)**
+- `GET /advisor/page/transaksi?tanggal=&amplop=` (`app/services/advisor/page_transaksi.py`, route di `routes/advisor.py`; kontrak di `04-kontrak-api.md`).
+  - **Banner** mengikuti filter aktif. Filter amplop → AMP-* amplop itu (tone dulu, lalu skor). Kalau tidak, tanggal = hari ini → isi chip KPI Jatah (HAR-*, sama dengan Beranda). Selain itu null.
+  - **Penanda baris** = insight ber-slot `transaksi`, dipetakan ke id transaksi:
+    - HAR-03 / DAT-06 / TAG-06 → `txn_id`;
+    - DAT-03 dobel → kedua anggota pasangan;
+    - DAT-03 struk dua kali → barang di struk kedua;
+    - TAG-07 → kemunculan terakhir.
+  - Dismiss viewer dihormati. Di luar flag → `{"enabled": false}`.
+- Frontend:
+  - `api.getAdvisorTransaksi`;
+  - `lib/transaksiAdvisor.js` (query dari filter, penyaringan yang baru disembunyikan, CTA maks 2 tanpa rute ke halaman yang sama);
+  - `components/TxnAdvisor.jsx` (banner + chip penanda memakai `AdvisorChip`/`InsightPopover` S6);
+  - `Transactions.jsx` memuat ulang saat filter berubah, `txn-added`, dan `advisor-undismissed`, serta langsung menyembunyikan pada `advisor-dismissed`.
+- Aksi Hapus salah satu / Hapus duplikat / Bukan dobel / Jadikan langganan / Tandai lunas memakai pipa CTA S8 yang sudah ada (tidak ada kind baru).
+
+**Digantung**
+- #93: "Bukan dobel" belum permanen (sekarang `tidak_relevan` = 90 hari). Spesifikasi §6G meminta permanen.
+- Belum dicoba di browser dengan data sungguhan. Hanya tes unit/integrasi + build. Cek visual di produksi dengan akun tim setelah merge (flag `*` sudah aktif).
+- Endpoint tanpa cache server: dihitung ulang tiap muat halaman/ganti filter. Bila lambat (> 150 ms) pertimbangkan cache per (household, viewer, filter) di `advisor_cache`.
+
+**Keputusan kecil**
+- Filter amplop menang atas filter hari ini bila keduanya aktif (lebih sempit). Tanggal selain hari ini → tanpa banner (HAR-* hanya untuk hari ini).
+- Tab "Hari Ini" dianggap sama dengan filter tanggal hari ini. Tanggal dari browser (`localDateStr`); bila beda dengan hari server di sekitar tengah malam, banner kosong (bukan salah angka).
+- TAG-06 (nominal tagihan berubah) ikut tampil sebagai penanda karena slotnya sudah `transaksi` sejak S4.
+- TAG-07 hanya menandai kemunculan terakhir supaya daftar tidak penuh chip "Pola rutin".
+- AMP-01 yang diserap PER-02 di Beranda tetap boleh jadi banner amplop (penyerapan hanya berlaku untuk daftar Beranda).
+
+**Jebakan**
+- Tes backend butuh `pip install -r requirements-test.txt` + env `DATABASE_URL`/`JWT_SECRET` (lihat `test.yml`). Tanpa itu, 53 modul gagal impor.
+- `npm run build` butuh `npm ci` dulu dan mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 868 OK (13 baru) · frontend 267 OK (5 baru) · build OK.
+
+**Cara mencoba:** Transaksi → tab **Hari Ini** (banner HAR-*) atau pilih satu amplop (banner AMP-*). Catat dua transaksi sama (mis. "belanja pasar 150k") berjarak < 10 menit → chip **Dobel?** di kedua baris → Hapus salah satu / Bukan dobel (toast + Urungkan). Lokal: `python -m unittest app.tests.test_advisor_page_transaksi -v`; `cd frontend && node --test src/lib/transaksiAdvisor.test.js`.
+
+**Lanjut:** review PR, merge, cek visual di produksi. Kerjakan #93 sebagai PR kecil terpisah. Sesi berikutnya yang bebas: S11, S14, S15 (prompt pembuka §3).
+
+---
+
 ## S12 · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**
