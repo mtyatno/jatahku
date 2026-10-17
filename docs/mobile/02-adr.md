@@ -1,0 +1,26 @@
+# Mobile — keputusan arsitektur (ADR-M1 sampai M16)
+
+**Status:** disetujui pemilik produk, 16 Okt 2026. Setiap PR mobile merujuk ADR yang relevan. Mengubah ADR = PR yang mengubah file ini dan disetujui pemilik produk; ADR-M3, M4, M5 (identitas aplikasi, kunci, origin) praktis tidak bisa diubah setelah rilis toko pertama.
+
+Alasan lengkap dan perbandingan opsi ada di `01-kajian.md`.
+
+Enam belas keputusan di bawah adalah hal yang mahal diubah. Setelah disetujui, semuanya dicatat sebagai ADR di repo, dan setiap PR mobile wajib merujuknya.
+
+| ID | Keputusan | Alasan | Biaya kalau diubah nanti |
+| --- | --- | --- | --- |
+| ADR-M1 | Shell: Capacitor 8 untuk Android dan iOS; naik ke Capacitor 9 setelah versi stabilnya berjalan sekitar 1 bulan | Bagian opsi teknologi | Migrasi shell, seperti Alurik |
+| ADR-M2 | UI web dibundel di aplikasi dan diperbarui lewat OTA untuk perubahan HTML/JS/CSS; perubahan native hanya lewat toko | Ritme rilis Jatahku dan kebutuhan offline | Sedang |
+| ADR-M3 | ID aplikasi `com.jatahku.app` di Play dan App Store dengan nama "Jatahku"; tidak pernah diganti | ID adalah identitas permanen di toko | Aplikasi baru; user pindah manual |
+| ADR-M4 | Play App Signing sejak rilis pertama; kunci upload dicadangkan di 2 tempat; APK sideload hanya diunduh dari Play Console (ditandatangani kunci yang sama dengan Play) | Kunci hilang berarti tidak bisa update; registrasi verifikasi developer Android butuh kunci | User harus uninstall |
+| ADR-M5 | Origin bawaan Capacitor (`https://localhost` dan `capacitor://localhost`) dikunci di config dan tidak pernah diubah | Mengganti skema sama dengan pindah domain: data lokal dan login hilang | Data lokal hilang |
+| ADR-M6 | Satu lapisan `src/native/` (implementasi web dan Capacitor); komponen dilarang mengecek platform | Pelajaran Alurik #3 | Refactor tersebar di banyak file |
+| ADR-M7 | Sesi per perangkat di server: refresh token dirotasi, dicatat, dan bisa dicabut; token di Keychain/Keystore; widget dan Share Extension memakai token terbatas terpisah (baca-saja untuk widget, unggah-saja untuk share) | Aplikasi keuangan; banyak proses (app, widget, ekstensi) memakai sesi yang sama | Desain ulang auth |
+| ADR-M8 | Login Google native (Credential Manager di Android, Google Sign-In di iOS) dan Sign in with Apple di iOS; link login Telegram dan reset sandi lewat App Links/Universal Links | Google Identity Services tidak mendukung WebView; Guideline 4.8 | Sedang |
+| ADR-M9 | API hanya berubah secara aditif; setiap request membawa header `X-Jatahku-Client`; `/app/config` memegang versi minimum per platform; CI menolak perubahan API yang memutus | Aplikasi lama tetap berjalan berminggu-minggu | Aplikasi terpasang patah |
+| ADR-M10 | Hak Pro dicatat server dari semua sumber (transfer, promo, Play, App Store); mode jualan per platform diatur dari server | Aturan tiap toko berbeda dan berubah | Banyak layar dan pesan bot diubah |
+| ADR-M11 | Antrean offline di aplikasi disimpan di penyimpanan native, bukan IndexedDB; service worker hanya untuk web | iOS bisa menghapus storage WebView | Transaksi hilang |
+| ADR-M12 | Push lewat FCM (Android langsung, iOS lewat APNs) sebagai kanal baru di `notification_service` | Memakai satu titik notifikasi yang sudah ada | Sedang |
+| ADR-M13 | Versi aplikasi native memakai semver terpisah dari web; `versionCode` dan build number naik otomatis dari CI | Pelajaran Alurik #7 | Build tidak bisa diunggah |
+| ADR-M14 | Distribusi awal hanya untuk Indonesia | Menghindari kewajiban trader DSA di EU dan urusan pajak lintas negara | Rendah |
+| ADR-M15 | HP dan tablet didukung sejak rilis pertama: aplikasi iOS universal (iPhone + iPad), Android termasuk tablet dan layar lipat; tata letak responsif yang ada dipakai dan rotasi tidak dikunci di tablet | Android 16 mengabaikan kunci orientasi di layar ≥600dp; Apple 2.4.1; Jatahku sudah punya tata letak `md` (768 px) dan `lg` (1024 px) | Sedang: menambah iPad belakangan butuh screenshot 13 inci, uji ulang, dan rilis baru |
+| ADR-M16 | Semua struk dan bukti bayar dari share, unggah web, dan Telegram masuk ke satu Kotak Struk di server; diproses asinkron oleh worker dengan status di database; OCR dan parser tetap di server; tidak ada yang tercatat tanpa konfirmasi user | Satu metode untuk semua kanal (aturan paritas); satu share bisa berisi banyak file; Share Extension iOS tidak bisa membuka aplikasinya | Tinggi: pipeline kedua di HP akan menyimpang dari web dan bot |

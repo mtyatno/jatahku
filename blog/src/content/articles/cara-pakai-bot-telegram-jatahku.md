@@ -2,12 +2,14 @@
 title: "Cara Menggunakan Bot Telegram Jatahku: Catat Pengeluaran Semudah Kirim Chat"
 description: "Panduan lengkap pakai @JatahkuBot untuk mencatat pengeluaran tanpa buka aplikasi. Format NLP, foto struk, cara koreksi, cek saldo amplop — semua lewat chat."
 pubDate: 2026-03-30
-updatedDate: 2026-10-15
+updatedDate: 2026-10-17
 category: tutorial
 author: Tim Jatahku
 cover: /covers/cara-pakai-bot-telegram.svg
 featured: true
 ---
+
+**Diperbarui 17 Oktober 2026:** jawaban "sisa", "/status", "kapan habis?", dan "aman beli" kini memakai angka yang persis sama dengan Beranda. Bot juga bisa menjawab "kenapa boros?" (lihat [Tanya AI Advisor Lewat Chat](#tanya-ai-advisor-lewat-chat)).
 
 **Diperbarui 15 Oktober 2026:** bot sekarang bisa membaca foto struk, mengisi dana amplop yang kurang, dan mencatat beberapa pengeluaran tanpa koma. Tidak memakai Telegram? Bot yang sama kini ada di dalam webapp. Baca [Chat Jatahku Kini Ada di Webapp](/insight/chat-jatahku-di-webapp/).
 
@@ -139,9 +141,31 @@ atau
 saldo
 ```
 
-Bot menampilkan sisa dana tiap amplop, persentase yang sudah terpakai, dan berapa hari lagi sampai periode gajianmu berakhir.
+Bot menampilkan angka yang sama dengan kartu di Beranda (dana belanja, terpakai, sisa bebas), sisa tiap amplop, dan analisa Sisa bebas, misalnya "Habis ±24 Okt".
 
-Mau beli sesuatu tapi ragu? Tanya dulu, misalnya `aman gak beli sepatu 450rb?`. Bot menjawab ✅ Aman, ⚠️ Pas-pasan, atau ❌ Tidak cukup, tanpa mencatat apa pun. Kalau amplopnya belum jelas, bot menampilkan semua amplop dengan tanda yang sama.
+Mau beli sesuatu tapi ragu? Tanya dulu, misalnya `aman gak beli sepatu 450rb?`. Bot menjawab dengan salah satu dari tiga hasil, tanpa mencatat apa pun:
+
+- ✅ **Aman**
+- ⚠️ **Bisa, tapi jatah harian turun**
+- ❌ **Belum cukup**
+
+Bot juga menunjukkan angka sebelum → sesudah: sisa bebas amplop, sisa bebas total, dan aman per hari ke depan. Kalau amplopnya tidak kamu sebut, bot menebak dari belanja 7 hari terbesar. Sebut nama amplopnya untuk mengecek amplop lain, misalnya `aman beli sepatu 450rb dari pakaian?`.
+
+---
+
+## Tanya AI Advisor Lewat Chat
+
+Pertanyaan ini dijawab dengan angka dan analisa yang sama dengan AI Advisor di Beranda:
+
+| Ketik | Jawaban |
+|---|---|
+| `limit harian` | Jatah hari ini sejak pagi, belanja hari ini, aman per hari ke depan, dan maksimal per hari tiap amplop |
+| `kapan habis?` | Perkiraan tanggal sisa bebas habis, atau "Cukup sampai …", beserta rata-rata 7 hari terakhir |
+| `pengeluaran hari ini` | Belanja hari ini per amplop dibanding jatah |
+| `kenapa boros?` | Analisa utama beserta cara hitungnya |
+| `kenapa makan habis?` | Analisa untuk amplop yang kamu sebut |
+
+Di awal periode, proyeksi baru muncul mulai hari ke-3 karena datanya belum cukup.
 
 ---
 
@@ -164,7 +188,7 @@ Bot mencatat pembayaran pertama dan menyimpan langganannya. Setiap jatuh tempo, 
 | Perintah | Fungsi |
 |---|---|
 | `/start` | Mulai / cek status akun |
-| `/status` | Ringkasan budget bulan ini |
+| `/status` | Ringkasan budget periode ini + langkah AI Advisor teratas |
 | `/amplop` | Daftar amplop dan sisa dananya |
 | `/batal` | Batalkan transaksi terakhir |
 | `/langganan` | Daftar langganan aktif |

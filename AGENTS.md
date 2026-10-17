@@ -139,3 +139,17 @@ kolom ini, jadi **API amplop 500 sampai migrasi dijalankan** — jalankan di jam
 4. Verifikasi: `\d envelopes | grep is_emergency` dan
    `SELECT name, purpose FROM envelopes WHERE is_emergency;` (hanya amplop tabungan)
 5. `sudo systemctl restart jatahku`
+
+## Aplikasi mobile (WAJIB untuk semua sesi mobile)
+Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
+1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.
+2. **API hanya bertambah.** Field/endpoint lama tidak dihapus atau diubah artinya sebelum `min_supported_version` di `/app/config` dinaikkan dan user melihat banner pembaruan. Berlaku juga untuk sesi non-mobile begitu aplikasi pertama terpasang di HP user.
+3. **Aplikasi selalu menyebut dirinya** lewat header `X-Jatahku-Client: <platform>/<versi>/<build>`; server mengubah perilaku berdasarkan header ini, tidak pernah berdasarkan tebakan.
+4. **Jualan diatur server.** Tombol, tautan, dan teks ajakan beli (termasuk pesan kuota bot) datang dari satu helper yang membaca mode jualan per platform; teks "upgrade" tidak ditulis langsung di komponen atau handler.
+5. **Tidak ada transaksi yang hilang.** Di aplikasi, antrean offline disimpan di penyimpanan native; item yang ditolak tetap disimpan.
+6. **Rahasia hanya di Keychain/Keystore.** Di aplikasi, token tidak disimpan di `localStorage`, IndexedDB, item antrean, atau URL.
+7. **Proyek native di-commit dan di-review.** `mobile/android/` dan `mobile/ios/` tidak dibuat ulang saat build dan tidak ditambal skrip.
+8. **OTA hanya untuk web.** Bundle OTA hanya berisi build `frontend/` + versi native minimum; perubahan plugin, izin, atau kode native lewat rilis toko.
+9. **Identitas tidak pernah berubah.** ID aplikasi `com.jatahku.app`, origin/skema Capacitor, dan kunci penandatanganan (ADR-M3–M5) hanya berubah dengan keputusan tertulis pemilik produk.
+10. **Paritas diuji, bukan diasumsikan.** Daftar periksa paritas (`01-kajian.md`, lampiran WBS) dijalankan di perangkat nyata sebelum setiap rilis toko, termasuk satu Android kelas bawah.
+11. **Struk tidak pernah tercatat diam-diam atau dua kali.** Dokumen dari share, unggahan, atau Telegram selalu menunggu konfirmasi user; hash file, nomor referensi, dan `client_ref` mencegah pencatatan ganda; transfer gagal tidak bisa dicatat.

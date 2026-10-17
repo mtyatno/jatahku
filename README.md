@@ -7,10 +7,12 @@ Aplikasi pengendali keuangan berbasis **envelope budgeting** untuk Indonesia.
 
 ## Fitur
 
+- ✦ **AI Advisor** — Analisa + tombol aksi di Beranda (chip di tiap KPI + kartu advisor), Amplop, Transaksi, Alokasi, Langganan, chat web, dan Telegram. Mesin aturan deterministik di server (tanpa LLM pihak ketiga), satu sumber angka untuk semua permukaan. Pemindahan dana selalu lewat rencana + konfirmasi.
 - ✉️ **Envelope Budgeting** — Zero-based, setiap rupiah punya tujuan
 - ⏳ **Cooling Period** — 24 jam hold untuk belanja impulsif
 - 🔒 **Envelope Lock & Daily Limit** — Kontrol pengeluaran
-- 📱 **Telegram Bot NLP** — Catat via chat: "kopi 35k"
+- 📱 **Telegram Bot NLP** — Catat via chat: "kopi 35k"; tanya "kapan habis?", "kenapa boros?", "aman beli sepatu 450rb?"
+- 💬 **Chat di WebApp** — Handler bot yang sama, langsung dari web
 - 👨‍👩‍👧 **Household Sharing** — Budget bersama keluarga
 - 🔄 **Sinking Fund** — Auto-reserve untuk langganan
 - 📊 **Analytics & Prediksi** — Chart + spending prediction
@@ -37,6 +39,8 @@ api.jatahku.com ──────── FastAPI ──── PostgreSQL
                      (summaries, recurring)
 ```
 
+**AI Advisor v2** (`app/services/advisor/`): `snapshot.py` (loader DB) → `metrics.py` (satu-satunya rumus angka periode) → `signals.py` → `rules/*` → `select.py` → `render.py` (semua teks) → `dashboard.py` / `halaman.py` / `chat.py`. Perencana dana: `planner.py` + `execute.py`. Spesifikasi & alur kerja: [`docs/ai-advisor/`](docs/ai-advisor/00-indeks.md); aturan kerja di `AGENTS.md`.
+
 ## Setup
 ```bash
 # Clone
@@ -47,7 +51,7 @@ cd jatahku
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # Edit with your config
+# Buat .env berisi variabel di app/core/config.py (DATABASE_URL, REDIS_URL, JWT_SECRET, TELEGRAM_BOT_TOKEN, ...)
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # Frontend
@@ -55,6 +59,14 @@ cd frontend
 npm install
 npm run build
 ```
+
+## Tes
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+python -m unittest discover -s app/tests -t .
+cd frontend && node --test src/lib/*.test.js && npm run build
+```
+CI (`.github/workflows/test.yml`) menjalankan ketiganya di setiap PR.
 
 ## Deploy
 

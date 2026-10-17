@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Jatahku — Setiap Rupiah Ada Jatahnya | Envelope Budgeting Indonesia</title>
-<meta name="description" content="Jatahku adalah pengendali keuangan berbasis envelope budgeting dengan AI Advisor yang memperingatkan sebelum budget jebol. Catat secepat chat di web atau Telegram.">
+<meta name="description" content="Jatahku adalah pengendali keuangan berbasis envelope budgeting dengan AI Advisor: analisa di setiap halaman plus tombol aksi untuk membereskannya, sebelum budget jebol. Catat secepat chat di web atau Telegram.">
 <meta name="keywords" content="envelope budgeting, budgeting app, aplikasi keuangan, ai advisor keuangan, pengelola keuangan, budget planner, keuangan keluarga, telegram bot keuangan, aplikasi budget indonesia">
 <meta name="author" content="Jatahku">
 <meta name="robots" content="index, follow">
@@ -17,7 +17,7 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://jatahku.com">
 <meta property="og:title" content="Jatahku — Setiap Rupiah Ada Jatahnya">
-<meta property="og:description" content="Envelope budgeting + AI Advisor yang memperingatkan sebelum budget jebol. Catat secepat chat di web atau Telegram.">
+<meta property="og:description" content="Envelope budgeting + AI Advisor yang memberi tahu artinya apa dan lakukan apa, sebelum budget jebol. Catat secepat chat di web atau Telegram.">
 <meta property="og:image" content="https://jatahku.com/og-image.png">
 <meta property="og:locale" content="id_ID">
 <meta property="og:site_name" content="Jatahku">
@@ -26,7 +26,7 @@
 <meta name="twitter:description" content="Envelope budgeting + AI Advisor untuk Indonesia. Catat secepat chat di web atau Telegram.">
 <meta name="twitter:image" content="https://jatahku.com/og-image.png">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Jatahku","url":"https://jatahku.com","applicationCategory":"FinanceApplication","operatingSystem":"Web, Telegram","description":"Aplikasi pengendali keuangan berbasis envelope budgeting dengan AI Advisor untuk individu dan keluarga Indonesia. Catat lewat web atau Telegram.","offers":[{"@type":"Offer","price":"0","priceCurrency":"IDR","name":"Basic"},{"@type":"Offer","price":"79000","priceCurrency":"IDR","name":"Pro","description":"Sekali bayar selamanya"}],"author":{"@type":"Organization","name":"Jatahku"}}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Jatahku","url":"https://jatahku.com","applicationCategory":"FinanceApplication","operatingSystem":"Web, Telegram","description":"Aplikasi pengendali keuangan berbasis envelope budgeting dengan AI Advisor (analisa + tombol aksi di setiap halaman) untuk individu dan keluarga Indonesia. Catat lewat web atau Telegram.","offers":[{"@type":"Offer","price":"0","priceCurrency":"IDR","name":"Basic"},{"@type":"Offer","price":"79000","priceCurrency":"IDR","name":"Pro","description":"Sekali bayar selamanya"}],"author":{"@type":"Organization","name":"Jatahku"}}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -137,12 +137,12 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 <section class="hero">
   <div class="hero-in">
   <div class="hero-l">
-    <div class="h-badge">&#10022; Baru: AI Advisor &mdash; tahu sebelum jebol</div>
+    <div class="h-badge">&#10022; Baru: AI Advisor di setiap halaman &mdash; analisa + tombol aksi</div>
     <h1>Setiap rupiah<br>ada <em>jatahnya.</em></h1>
-    <p>Bukan sekadar pencatat pengeluaran. Jatahku menjaga disiplin keuanganmu: <strong>AI Advisor</strong> memperingatkan sebelum budget jebol, dan mencatat secepat chat &mdash; di web atau Telegram.</p>
+    <p>Bukan sekadar pencatat pengeluaran. Jatahku menjaga disiplin keuanganmu: <strong>AI Advisor</strong> memberi tahu artinya apa dan lakukan apa &mdash; lengkap dengan tombol untuk membereskannya &mdash; dan mencatat secepat chat di web atau Telegram.</p>
     <div class="h-props">
       <div class="h-prop"><b>&#128172; Mudah</b><span>Cukup ketik seperti chat</span></div>
-      <div class="h-prop"><b>&#10022; Cerdas</b><span>AI paham kebiasaanmu</span></div>
+      <div class="h-prop"><b>&#10022; Cerdas</b><span>Analisa + langkah nyata</span></div>
       <div class="h-prop"><b>&#128737; Terkontrol</b><span>Sesuai rencana kamu</span></div>
     </div>
     <div class="hero-cta">
@@ -181,50 +181,53 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
           <div class="mm-header">
             <div>
               <div class="mm-title">Hai, Andi</div>
-              <div class="mm-period">27 Jun &ndash; 26 Jul &middot; <b>periode gajian</b> &middot; 19 hari lagi</div>
+              <div class="mm-period">27 Sep &ndash; 26 Okt &middot; <b>periode gajian</b> &middot; 11 hari lagi</div>
             </div>
             <div class="mm-board">Papan disiplin &middot; Kamu <b>11h</b> &#9989; &middot; Pasangan <b>8h</b> &#9989;</div>
           </div>
           <div class="mm-cards">
             <div class="mm-card">
-              <div class="mm-card-label">Dana dialokasi</div>
-              <div class="mm-card-val green">Rp16,6jt</div>
+              <div class="mm-card-label">Jatah hari ini <span class="mm-chip red">&#10022; 1,8&times; jatah</span></div>
+              <div class="mm-card-val red">Rp297rb</div>
+              <div class="mm-sub">dari jatah Rp165rb sejak pagi</div>
             </div>
             <div class="mm-card">
-              <div class="mm-card-label">Terpakai <span class="mm-sub">48% dari alokasi</span></div>
-              <div class="mm-card-val amber">Rp8,03jt</div>
+              <div class="mm-card-label">Sisa bebas <span class="mm-chip amber">&#10022; Habis &plusmn;24 Okt</span></div>
+              <div class="mm-card-val green">Rp1,69jt</div>
+              <div class="mm-sub">aman Rp153rb/hari</div>
             </div>
             <div class="mm-card">
-              <div class="mm-card-label">Sisa bebas <span class="mm-sub">&asymp;Rp148rb/hari</span></div>
-              <div class="mm-card-val green">Rp2,82jt</div>
+              <div class="mm-card-label">Tagihan <span class="mm-chip red">&#10022; KPR telat 9 hari</span></div>
+              <div class="mm-card-val amber">Rp1,6jt</div>
+              <div class="mm-sub">belum dibayar</div>
             </div>
           </div>
           <div class="adv-panel">
-            <div class="adv-head"><span class="adv-spark">&#10022;</span> AI Advisor <span class="adv-beta">Beta</span><span class="adv-today">Hari ini</span></div>
-            <div class="adv-row"><span class="adv-dot red"></span><span>Overspend <b>2,0&times;</b> dari batas aman (Rp148rb/hari)</span></div>
-            <div class="adv-row"><span class="adv-dot amber"></span><span>&#128218; Pendidikan sudah terpakai <b>97%</b> &mdash; proyeksi habis 18 hari sebelum periode selesai</span></div>
-            <div class="adv-risk"><b>Budget periode ini berisiko jebol</b>Proyeksi overspend sekitar Rp5,8jt sampai gajian berikutnya.</div>
-            <div class="adv-goals">
-              <div class="adv-goals-label">Target menabung</div>
-              <div class="goal-row"><span>&#128736; Dana Darurat 5&times; gaji</span><div class="goal-bar"><i style="width:12%"></i></div><b>12%</b></div>
-              <div class="goal-row"><span>&#127891; Tabungan Sekolah Anak</span><div class="goal-bar"><i style="width:34%"></i></div><b>34%</b></div>
-            </div>
+            <div class="adv-head"><span class="adv-spark">&#10022;</span> AI Advisor <span class="adv-beta">4</span><span class="adv-today">Baru saja</span></div>
+            <div class="adv-sub">Tiga langkah paling berdampak untuk sisa periode ini</div>
+            <div class="adv-row"><span class="adv-dot red"></span><span><b>Lunasi KPR</b> &mdash; telat 9 hari, amplop Tagihan minus. Ambil dari Pakaian, Pendidikan, Kebutuhan Rumah.<span class="adv-acts"><span class="adv-cta">Geser &amp; bayar Rp2,01jt</span><span class="adv-later">Nanti</span></span></span></div>
+            <div class="adv-row"><span class="adv-dot amber"></span><span><b>Rem belanja harian ke Rp153rb</b> &mdash; hari ini 1,8&times; jatah; kalau tetap Rp201rb/hari, kurang &plusmn;Rp525rb sebelum 26 Okt.<span class="adv-acts"><span class="adv-cta">Lihat transaksi hari ini</span><span class="adv-later">Nanti</span></span></span></div>
+            <div class="adv-row"><span class="adv-dot blue"></span><span><b>Transport ditambal 7&times;</b> &mdash; jatahnya terlalu kecil untuk kebutuhan nyata.<span class="adv-acts"><span class="adv-cta">Naikkan jatah jadi Rp720rb</span><span class="adv-later">Nanti</span></span></span></div>
+            <div class="adv-more">+1 saran lain &middot; Lihat semua</div>
           </div>
           <div class="mm-envelopes">
             <div class="mm-env">
-              <div class="mm-env-top"><span class="mm-env-name">&#127836; Makan &amp; Jajan</span><span class="mm-env-pct">39%</span></div>
-              <div class="mm-env-val">Rp2,61jt sisa</div>
-              <div class="mm-bar"><div class="mm-bar-fill" style="width:39%;background:var(--primary)"></div></div>
+              <div class="mm-env-top"><span class="mm-env-name">&#127836; Makan &amp; Jajan</span><span class="mm-env-pct">78%</span></div>
+              <div class="mm-env-val">Rp322rb sisa</div>
+              <div class="mm-bar"><div class="mm-bar-fill" style="width:78%;background:var(--accent)"></div></div>
+              <div class="mm-env-ai">&#10022; Maksimal Rp133rb/hari</div>
             </div>
             <div class="mm-env">
-              <div class="mm-env-top"><span class="mm-env-name">&#128218; Pendidikan</span><span class="mm-env-pct" style="color:var(--red)">97% &#9888;</span></div>
-              <div class="mm-env-val" style="color:var(--red)">Rp113rb sisa</div>
-              <div class="mm-bar"><div class="mm-bar-fill" style="width:97%;background:var(--red)"></div></div>
+              <div class="mm-env-top"><span class="mm-env-name">&#127968; Tagihan &amp; Cicilan</span><span class="mm-env-pct" style="color:var(--red)">minus</span></div>
+              <div class="mm-env-val" style="color:var(--red)">&minus;Rp408rb</div>
+              <div class="mm-bar"><div class="mm-bar-fill" style="width:100%;background:var(--red)"></div></div>
+              <div class="mm-env-ai red">&#10022; KPR telat &middot; Geser &amp; bayar</div>
             </div>
             <div class="mm-env">
-              <div class="mm-env-top"><span class="mm-env-name">&#128663; Transport</span><span class="mm-env-pct">5%</span></div>
-              <div class="mm-env-val">Rp820rb sisa</div>
-              <div class="mm-bar"><div class="mm-bar-fill" style="width:5%;background:var(--primary)"></div></div>
+              <div class="mm-env-top"><span class="mm-env-name">&#128663; Transport</span><span class="mm-env-pct" style="color:var(--red)">100%</span></div>
+              <div class="mm-env-val" style="color:var(--red)">Rp0 sisa</div>
+              <div class="mm-bar"><div class="mm-bar-fill" style="width:100%;background:var(--red)"></div></div>
+              <div class="mm-env-ai">&#10022; Ditambal 7&times; &middot; Naikkan jatah</div>
             </div>
           </div>
         </div>
@@ -248,13 +251,13 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
 <section class="section" id="fitur"><div class="section-in">
   <div class="sl">Fitur Unggulan</div>
   <div class="st">Lebih dari sekadar catat pengeluaran</div>
-  <div class="sd">Jatahku menggunakan metode envelope budgeting &mdash; setiap rupiah punya tujuan. Dijaga AI Advisor yang membaca pola pengeluaranmu setiap hari.</div>
+  <div class="sd">Jatahku menggunakan metode envelope budgeting &mdash; setiap rupiah punya tujuan. Dijaga AI Advisor yang membaca angka budget-mu dan menyiapkan langkah untuk membereskannya.</div>
   <div class="f-grid">
     <div class="f-card">
       <div class="f-icon g">&#10022;</div>
       <div class="f-tag new">Baru</div>
       <h3>AI Advisor</h3>
-      <p>Membaca pola pengeluaranmu setiap hari: deteksi overspend dari batas aman, proyeksi budget jebol sebelum gajian berikutnya, dan amplop mana yang perlu direm &mdash; lengkap dengan angkanya.</p>
+      <p>Ada di setiap kartu KPI, kartu amplop, transaksi, alokasi, dan langganan. Tiap analisa menjawab artinya apa dan lakukan apa: geser dana, bayar tagihan, naikkan jatah &mdash; satu tap, dengan konfirmasi.</p>
     </div>
     <div class="f-card">
       <div class="f-icon g">&#9993;&#65039;</div>
@@ -542,13 +545,13 @@ if(localStorage.getItem('jatahku_token')||localStorage.getItem('access_token')){
           <div class="bubble user">kapan duit gue habis kalau gini terus?</div>
         </div>
         <div class="chat-bubble">
-          <div class="bubble bot">&#128200; <b>Proyeksi Budget:</b><br>Burn rate: Rp240rb/hari<br>Sisa budget: Rp2.313.000<br>&#128197; Cukup hingga <b>29 Maret</b> (3 hari)<br><span class="dim">Sesuai akhir bulan &#9989;</span></div>
+          <div class="bubble bot">&#128993; <b>Perkiraan habis &plusmn;24 Okt</b><br>Kalau tetap Rp201rb/hari, dana belanja kurang &plusmn;Rp525rb sebelum 26 Okt.<br><br>Rata-rata 7 hari terakhir <b>Rp201.014/hari</b><br>Sisa bebas <b>Rp1.685.200</b> &middot; 11 hari lagi<br><span class="dim">Aman 11 hari ke depan Rp153.200/hari</span></div>
         </div>
         <div class="chat-bubble right">
-          <div class="bubble user">aman sampai akhir bulan?</div>
+          <div class="bubble user">kenapa boros?</div>
         </div>
         <div class="chat-bubble">
-          <div class="bubble bot">&#9989; <b>Aman!</b> Budget cukup sampai 31 Maret.<br>Bahkan ada sisa estimasi <b>Rp87rb</b>.<br><span class="dim">Pertahankan pola spending saat ini.</span></div>
+          <div class="bubble bot">&#128993; <b>Rem belanja harian ke Rp153rb</b><br>Hari ini 1,8&times; jatah. Penyumbang terbesar: Makan &amp; Jajan Rp168rb.<br><span class="dim">Dari 19 hari data &middot; angka sama dengan Beranda</span></div>
         </div>
       </div>
       <!-- Multi -->
@@ -647,8 +650,8 @@ parkir 5000</div>
       <p>Tanya dulu sebelum checkout. Lock dan daily limit bekerja sesuai rules kamu.</p>
       <div class="step-card" style="background:var(--yellow-light)">
         <div style="font-size:11px;color:var(--text-s);margin-bottom:4px">aman gak beli headphone 600rb?</div>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span>&#9888;&#65039;</span><b style="font-size:12px;color:#92400E">Pas-pasan, tapi masih cukup</b></div>
-        <div style="font-size:11px;color:var(--text-s)">Sisa setelah beli: Rp150rb</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span>&#9888;&#65039;</span><b style="font-size:12px;color:#92400E">Bisa, tapi jatah harian turun</b></div>
+        <div style="font-size:11px;color:var(--text-s)">Aman per hari: Rp153rb &rarr; Rp98rb</div>
       </div>
     </div>
   </div>
@@ -726,9 +729,9 @@ parkir 5000</div>
     <div class="dual-card">
       <span style="font-size:40px">&#127760;</span>
       <h3>WebApp <span style="font-size:13px;font-weight:600;color:var(--primary);background:var(--primary-light);padding:2px 8px;border-radius:6px;margin-left:4px;vertical-align:middle">PWA</span></h3>
-      <p>Dashboard lengkap dengan AI Advisor, kelola amplop &amp; alokasi income, dan laporan bulanan. Bisa diinstall ke home screen seperti app native.</p>
+      <p>Dashboard lengkap dengan AI Advisor di setiap halaman, kelola amplop &amp; alokasi income, dan laporan bulanan. Bisa diinstall ke home screen seperti app native.</p>
       <div class="dual-features">
-        <div class="dual-feat">AI Advisor &mdash; insight harian di dashboard</div>
+        <div class="dual-feat">AI Advisor &mdash; analisa + tombol aksi di setiap halaman</div>
         <div class="dual-feat">Target menabung &amp; papan disiplin</div>
         <div class="dual-feat">Alokasi income &amp; transfer antar amplop</div>
         <div class="dual-feat">Catat cepat multi-baris dengan NLP</div>
@@ -765,8 +768,8 @@ parkir 5000</div>
   <div class="diff-grid">
     <div class="diff-item">
       <div class="diff-badge badge-u">Hanya di Jatahku</div>
-      <h3>&#10022; AI Advisor Harian</h3>
-      <p>Bukan chatbot. Advisor membaca angka budget-mu setiap hari dan bilang persis kapan harus rem &mdash; sebelum jebol, bukan sesudahnya.</p>
+      <h3>&#10022; AI Advisor + Tombol Aksi</h3>
+      <p>Bukan chatbot. Advisor membaca angka budget-mu dan bilang persis kapan harus rem &mdash; lalu menyiapkan langkahnya: dari mana dana digeser, tagihan mana dibayar. Uang tidak pindah tanpa konfirmasimu.</p>
     </div>
     <div class="diff-item">
       <div class="diff-badge badge-b">Fitur Inti</div>
@@ -841,11 +844,11 @@ parkir 5000</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Apa itu AI Advisor?</div>
-      <div class="faq-a">Penasihat bawaan di dashboard yang membaca pola pengeluaranmu setiap hari: mendeteksi overspend dari batas aman harian, memproyeksikan apakah budget bakal jebol sebelum gajian berikutnya, dan menunjukkan amplop mana yang perlu direm &mdash; lengkap dengan angkanya. Semua dihitung dari datamu sendiri di server Jatahku, tidak dikirim ke pihak ketiga.</div>
+      <div class="faq-a">Penasihat bawaan di setiap bagian Jatahku: chip di kartu KPI Beranda, kartu AI Advisor, strip di tiap amplop, penanda di transaksi, rekomendasi alokasi, langganan, chat web, dan Telegram &mdash; semuanya dengan angka yang sama. Tiap analisa menyebut dasarnya (&ldquo;dari 19 hari data&rdquo;) dan punya tombol aksi: geser dana, bayar tagihan, tandai lunas, naikkan jatah. Uang tidak pernah pindah tanpa konfirmasimu, dan saran bisa disembunyikan dengan &ldquo;Nanti&rdquo;. Dihitung dengan aturan tetap di server Jatahku &mdash; tanpa model bahasa pihak ketiga, datamu tidak dikirim ke mana pun.</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Bot-nya mengerti bahasa apa saja?</div>
-      <div class="faq-a">Bot Telegram mengerti bahasa Indonesia sehari-hari termasuk bahasa gaul. Kamu bisa ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget gue?&rdquo;, &ldquo;kapan bokek?&rdquo;, &ldquo;pengeluaran hari ini berapa?&rdquo;, &ldquo;bulan ini lebih boros nggak?&rdquo; &mdash; semuanya dipahami. Total 8 kategori intent dengan lebih dari 1000 variasi query. Kalau bot belum mengerti, sistem akan belajar dari konfirmasi kamu dan langsung berlaku untuk semua pengguna.</div>
+      <div class="faq-a">Bot Telegram mengerti bahasa Indonesia sehari-hari termasuk bahasa gaul. Kamu bisa ketik &ldquo;kopi 35k&rdquo;, &ldquo;sisa budget gue?&rdquo;, &ldquo;kapan bokek?&rdquo;, &ldquo;pengeluaran hari ini berapa?&rdquo;, &ldquo;bulan ini lebih boros nggak?&rdquo;, &ldquo;kenapa boros?&rdquo; &mdash; semuanya dipahami, dengan angka yang sama dengan AI Advisor di dashboard. Total 8 kategori intent dengan lebih dari 1000 variasi query. Kalau bot belum mengerti, sistem akan belajar dari konfirmasi kamu dan langsung berlaku untuk semua pengguna.</div>
     </div>
     <div class="faq-item" onclick="this.classList.toggle('open')">
       <div class="faq-q">Apakah harus punya rekening bank?</div>
@@ -894,7 +897,7 @@ parkir 5000</div>
         <li>6 amplop</li>
         <li>50 transaksi/bulan</li>
         <li>5 langganan/sinking fund</li>
-        <li>AI Advisor harian</li>
+        <li>AI Advisor + tombol aksi</li>
         <li>Bot Telegram</li>
         <li>Target menabung &amp; papan disiplin</li>
         <li>WebApp akses penuh</li>
@@ -916,7 +919,7 @@ parkir 5000</div>
         <li>Unlimited amplop</li>
         <li>Unlimited transaksi</li>
         <li>Unlimited langganan &amp; sinking fund</li>
-        <li>AI Advisor harian</li>
+        <li>AI Advisor + tombol aksi</li>
         <li>Bot Telegram</li>
         <li>Target menabung &amp; papan disiplin</li>
         <li>WebApp akses penuh</li>
@@ -1017,7 +1020,7 @@ function demoSend() {
     var totalSisa = DEMO_ENV.reduce(function(s,e){return s+(e.allocated-e.spent)},0);
     var burnRate = 240000;
     var days = Math.round(totalSisa/burnRate);
-    reply = '📅 <b>Proyeksi Budget:</b><br>Burn rate: '+fmtDemo(burnRate)+'/hari<br>Sisa budget: '+fmtDemo(totalSisa)+'<br>📆 Cukup hingga <b>'+(days>=3?'akhir bulan ✅':''+days+' hari lagi ⚠️')+'</b>';
+    reply = (days>=3 ? '🟢 <b>Cukup sampai akhir periode</b>' : '🟡 <b>Perkiraan habis ±'+days+' hari lagi</b>')+'<br><br>Rata-rata 7 hari terakhir <b>'+fmtDemo(burnRate)+'/hari</b><br>Sisa bebas <b>'+fmtDemo(totalSisa)+'</b>';
   }
   // Perbandingan
   else if (COMPARISON_RE.test(lower)) {
@@ -1158,7 +1161,16 @@ window.addEventListener('scroll', function(){
 .adv-row{display:flex;align-items:flex-start;gap:8px;font-size:11.5px;line-height:1.5;color:var(--text-s);padding:3px 0}
 .adv-row b{color:var(--text)}
 .adv-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.adv-dot.red{background:var(--red)}.adv-dot.amber{background:var(--yellow)}
+.adv-dot.red{background:var(--red)}.adv-dot.amber{background:var(--yellow)}.adv-dot.blue{background:#378ADD}
+.adv-sub{font-size:10.5px;color:var(--text-t);margin:-4px 0 6px}
+.adv-cta{display:inline-block;margin:5px 8px 2px 0;font-size:10.5px;font-weight:700;color:#fff;background:var(--primary);border-radius:7px;padding:3px 10px}
+.adv-acts{display:block}
+.adv-later{display:inline-block;font-size:10.5px;color:var(--text-t)}
+.adv-more{font-size:10.5px;font-weight:600;color:var(--primary);padding-top:6px}
+.mm-chip{float:right;font-size:9px;font-weight:700;border-radius:100px;padding:1px 7px}
+.mm-chip.red{background:var(--red-light);color:var(--red)}.mm-chip.amber{background:var(--accent-light);color:var(--accent)}
+.mm-env-ai{font-size:9.5px;font-weight:600;color:var(--accent);margin-top:6px}
+.mm-env-ai.red{color:var(--red)}
 .adv-risk{background:var(--red-light);border:1px solid rgba(226,75,74,.22);border-radius:9px;padding:8px 12px 9px;font-size:11px;line-height:1.5;color:var(--text-s);margin:7px 0 10px}
 .adv-risk b{display:block;color:var(--red);font-size:11.5px}
 .adv-goals{border-top:1px dashed var(--border);padding-top:9px}
@@ -1219,12 +1231,13 @@ window.addEventListener('scroll', function(){
 .alloc-row .mm-bar{flex:1}
 .alloc-row b{font-family:var(--font-d);font-size:10.5px;color:var(--text)}
 @keyframes advIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
-.adv-row,.adv-risk,.adv-goals{animation:advIn .55s cubic-bezier(.2,.7,.3,1) both}
+.adv-row,.adv-more{animation:advIn .55s cubic-bezier(.2,.7,.3,1) both}
 .adv-panel>*:nth-child(2){animation-delay:.25s}
 .adv-panel>*:nth-child(3){animation-delay:.55s}
 .adv-panel>*:nth-child(4){animation-delay:.85s}
 .adv-panel>*:nth-child(5){animation-delay:1.15s}
-@media(prefers-reduced-motion:reduce){.adv-row,.adv-risk,.adv-goals{animation:none}}
+.adv-panel>*:nth-child(6){animation-delay:1.45s}
+@media(prefers-reduced-motion:reduce){.adv-row,.adv-more{animation:none}}
 .mm-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
 .mm-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:14px}
 .mm-card-label{font-size:11px;color:var(--text-t);margin-bottom:4px}
