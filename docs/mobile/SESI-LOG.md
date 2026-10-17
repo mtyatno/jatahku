@@ -4,6 +4,21 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## A05 · 1.4 penutupan: bukti Cek API merah · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- PR uji #114 (draft, `JANGAN MERGE`) menghapus `emoji` dari `EnvelopeResponse`. Workflow **Cek API** merah di CI sungguhan: langkah "Bandingkan OpenAPI dengan base" exit 1, anotasi "PR ini memutus API untuk aplikasi lama" ([run](https://github.com/mtyatno/jatahku/actions/runs/39044816908/job/117431333178)). #114 ditutup tanpa merge. Kriteria selesai 1.4 terpenuhi.
+- Paket baru **1.4b** (A78–A83, minggu 3–4): `response_model` untuk endpoint yang dipakai aplikasi, karena 119 dari 145 respons 2xx belum punya skema sehingga Cek API tidak melihat field respons yang hilang. Kode A78–A83 dipilih supaya kode sesi A lain tidak bergeser.
+
+**Digantung**
+- Branch `mobile/1.4-uji-cek-api` belum terhapus di GitHub (proxy sesi menolak hapus ref). Hapus lewat tombol "Delete branch" di #114.
+- Menjadikan "Cek API" required check di `main`: pengaturan pemilik repo di GitHub (Settings → Branches/Rules). Beri tahu tim AI Advisor dulu; perubahan memutus yang disengaja lewat label `api-memutus`.
+
+**Cara melanjutkan**
+- A06 tidak perlu dipakai untuk 1.4; jalur A lanjut ke `/sesi A07` (1.1 sesi per perangkat) atau 1.4b (`/sesi A78`) sebelum G2.
+
+---
+
 ## A04 · 1.4 CI untuk PR (cek OpenAPI) · 2026-10-17 · Dev A + Claude
 
 **Selesai**
