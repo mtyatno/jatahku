@@ -72,7 +72,7 @@ AI Advisor v2 sedang dikembangkan paralel (lihat `docs/ai-advisor/PROGRESS.md`).
 
 ## 6. Daftar paket & jadwal sesi
 
-Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 185 sesi (O 17, A 77, B 91), termasuk 17 sesi fitur native v1.x. Dengan dua developer paralel, Android tayang sekitar minggu ke-10 dan iOS minggu ke-12 (satu pengembang penuh waktu: minggu ke-14 dan 17, lihat `01-kajian.md`). Minggu 1 dimulai pada tanggal yang diisi di tracker.
+Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 191 sesi (O 17, A 83, B 91; 1.4b ditambahkan 17 Okt 2026 dengan kode A78–A83 supaya kode sesi lain tidak bergeser), termasuk 17 sesi fitur native v1.x. Dengan dua developer paralel, Android tayang sekitar minggu ke-10 dan iOS minggu ke-12 (satu pengembang penuh waktu: minggu ke-14 dan 17, lihat `01-kajian.md`). Minggu 1 dimulai pada tanggal yang diisi di tracker.
 
 | Kode sesi | WBS | Paket | Sesi | Minggu | Butuh | Selesai bila | Koordinasi AI Advisor |
 |---|---|---|---|---|---|---|---|
@@ -91,6 +91,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | **Dev A · server & web** | | | | | | | |
 | A01–A03 | 1.3 | Header X-Jatahku-Client, GET /app/config, layar perlu update | 3 | 1 | 0.1 | Web mengirim header; config ter-cache |  |
 | A04–A06 | 1.4 | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 3 | 1 | 0.1 | PR yang menghapus field gagal di CI | `.github/workflows/test.yml` (sudah ada dari AI Advisor S0) |
+| A78–A83 | 1.4b | `response_model` untuk endpoint yang dipakai aplikasi: auth, amplop, transaksi, pemasukan, langganan, `/app/config`, notifikasi. Model menyalin bentuk keluaran sekarang; tiap endpoint diuji keluarannya tidak berubah (`response_model` menyaring field) | 6 | 3–4 | 1.4 | Endpoint daftar itu punya skema respons; Cek API menangkap field respons yang hilang; tes keluaran-sama hijau | Route yang sedang diubah sesi AI Advisor (mis. `routes/advisor.py`) dikerjakan terakhir |
 | A07–A12 | 1.1 | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 6 | 2 | 0.1 | Token lama ditolak; web tetap login |  |
 | A13–A17 | 1.2 | Hapus akun sungguhan + halaman permintaan hapus di web | 5 | 2 | 1.1 | Data terhapus; sesi tercabut |  |
 | A18–A20 | 1.6 | Satu helper jualan untuk semua ajakan upgrade (web + bot) | 3 | 3 | 1.3 | Mode none: tanpa teks beli | `bot/*` (AI Advisor S9/S17) |
