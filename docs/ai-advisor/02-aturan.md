@@ -672,6 +672,7 @@ Nilai default; bisa diatur lewat `AppSetting` tanpa deploy.
 | Item daftar AI Advisor | 3 (1 per amplop, 2 per domain) | §7 |
 | Notifikasi proaktif | 1/hari, jam tenang 21.00–07.00 | §9 |
 | Nanti / tidak relevan | sampai 05.00 besok / 90 hari | §9 |
+| Pola menyesal | ≥ 3 jawaban "Menyesal" per amplop dalam 2 periode (`pola_menyesal_n`) | PP-03 |
 
 ## 12. Contoh lengkap: Beranda 15 Okt 2026
 

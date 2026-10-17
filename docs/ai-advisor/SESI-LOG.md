@@ -4,6 +4,43 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S19 Pikir-Pikir masuk AI Advisor · 2026-10-17 · pemilik produk + Claude
+
+**Konteks:** Pikir-Pikir Fase 2/3 (refleksi "Sepadan?", Incaran) belum ada di `main`: tidak ada tabel, loader, `think_until`, atau endpoint. Pemilik produk memilih lanjut S19 dengan opsi B: aturan sebagai fungsi murni dengan bentuk masukan ditetapkan, diuji fixture, **belum disambung** ke data atau layar.
+
+**Selesai**
+- `app/services/advisor/rules/pikir.py` (baru): PP-01 (refleksi jatuh tempo belum dijawab → Jawab), PP-02 (Incaran `now ≥ think_until` → Beli → catat · Nggak jadi · Tunda), PP-03 (≥ 3 "menyesal" per amplop dalam 2 periode → Pakai Incaran untuk {amplop}). Bentuk masukan `RefleksiSnap`, `IncaranSnap`, dibaca dari `snap.refleksi` / `snap.incaran` lewat `getattr` → Snapshot hari ini tidak punya field itu, aturan diam.
+- `render.py`: template `_pp01/_pp02/_pp03` + label aksi (`jawab_refleksi`, `beli_incaran`, `nggak_jadi`, `tunda_incaran`, `pakai_incaran`).
+- `insight.KonstantaAturan.pola_menyesal_n = 3` (bisa ditimpa `advisor_konstanta`); baris baru di `02-aturan.md` §11.
+- `04-kontrak-api.md`: kind `pikir` dicadangkan (belum dikirim server, belum ada penerima).
+- `app/tests/test_advisor_pikir.py` (13 tes): tiap aturan, batas (belum jatuh tempo, sudah dijawab, status batal, tepat `think_until`, jendela 2 periode), render, konstanta, dan seleksi `pilih` (skor, 2 per domain, dismiss) bila didaftarkan.
+
+**Digantung (untuk sesi Pikir-Pikir Fase 2/3)**
+- Tambah field `refleksi: list[RefleksiSnap]` dan `incaran: list[IncaranSnap]` di `snapshot.Snapshot` + loader di `load_snapshot` (filter visibilitas household: hanya milik viewer). Bentuk dataclass boleh dipindah ke `snapshot.py`.
+- Daftarkan `pikir.evaluasi` di `dashboard.EVALUATOR`; ubah `TanpaData.test_belum_terdaftar_di_dashboard` jadi tes yang memastikan PP muncul.
+- Penerima aksi `pikir` di `Layout.jsx` (+ endpoint jawab/batal/tunda) dan prefill `expense` dari payload (`MultiAddTransaction` hari ini mengabaikan payload).
+- Cache: route Pikir-Pikir harus memanggil `advisor_cache.invalidate(hid)` sesudah menjawab/memutuskan.
+- Teks Settings/`behavior_cmd.py` "segera hadir" diganti saat Fase 2 rilis.
+
+**Keputusan kecil (juga di docstring pikir.py)**
+- PP-01 satu insight untuk semua refleksi jatuh tempo (entitas = tertua), supaya daftar tidak penuh refleksi; judul "(+N lainnya)".
+- PP-02 satu insight per Incaran; "Beli" = `expense` terisi, sisanya kind `pikir`.
+- PP-03 menghitung menurut tanggal transaksi, periode berjalan + sebelumnya; satu insight per amplop, slot `daftar` + `amplop`.
+- Semua PP tone info, tanpa CTA pemindah dana; urgensi PP-02 0,5 > PP-01 0,3 > PP-03 0,2.
+- `dashboard.py` dan `snapshot.py` sengaja tidak disentuh (milik S3/S1).
+
+**Jebakan**
+- `pikir-pikir-desain.md` hanya ada di project claude.ai; aturan ditulis dari §6I saja. Cocokkan istilah (jawaban, status Incaran) saat Fase 2/3 dirancang.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 990 OK (13 baru) · frontend 294 OK · build OK.
+
+**Cara mencoba:** `python -m unittest app.tests.test_advisor_pikir -v`. Belum ada perubahan di layar.
+
+**Lanjut:** sesi Pikir-Pikir Fase 2/3 (belum ada issue) mengerjakan daftar "Digantung" di atas; S18 (#73) bebas dikerjakan.
+
+---
+
 ## S17 Chat lengkap · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

@@ -77,6 +77,8 @@ class KonstantaAturan:
     cocokkan_lama_txn: int = 20                       # DAT-01
     selisih_besar: Decimal = Decimal("0.05")          # DAT-02
     dobel_daftar_min: Decimal = Decimal("100000")     # DAT-03 masuk daftar
+    # S19 — Pikir-Pikir (§6I)
+    pola_menyesal_n: int = 3                          # PP-03: jawaban "menyesal" per amplop dalam 2 periode
 
 
 DEFAULT = KonstantaAturan()

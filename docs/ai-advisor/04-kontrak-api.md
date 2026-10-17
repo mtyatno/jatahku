@@ -46,6 +46,7 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 
 // kind yang dikenal S8: plan | fund | pay | mark_paid | income | daily_limit | raise_budget | make_recurring
 //                      | route | chat | dismiss | undismiss | delete_txn | not_duplicate   (undismiss: #91, hanya frontend)
+// dicadangkan S19 (belum dikirim server): pikir — PP-01..03, penerima dibuat bersama Pikir-Pikir Fase 2/3
 
 // GET /advisor/page/amplop  (S11, 02-aturan.md §7 "Halaman lain: Amplop")
 { "enabled": true, "generated_at": "2026-10-15T08:00:00+07:00",
@@ -170,6 +171,7 @@ Aksi dijalankan lewat `window.dispatchEvent(new CustomEvent('jatahku:open-action
 | `not_duplicate` | `{kunci}` | Sama dengan `dismiss`, pilihan `tidak_relevan`; toast "Ditandai bukan dobel" + **Urungkan** |
 | `undismiss` | `{kunci}` | `DELETE /advisor/dismiss?kunci=` → event `jatahku:advisor-undismissed` `{kunci}` (Beranda memuat ulang) → toast "Ditampilkan lagi". Dipakai tombol Urungkan dan **Munculkan lagi** di kartu (#91) |
 | `delete_txn` | `{txn_id, txn_ids?, konfirmasi?}` | `confirm()` lalu `DELETE /transactions/{id}` untuk tiap id (`txn_ids` bila ada: struk terkirim dua kali, DAT-03 S4b) → `jatahku:txn-added` |
+| `pikir` *(dicadangkan, S19)* | `{refleksi_id}` (Jawab, PP-01) · `{incaran_id}` (Nggak jadi / Tunda, PP-02) · `{amplop_id}` (Pakai Incaran, PP-03) | Belum ada penerima; `rules/pikir.py` belum didaftarkan di dashboard. Dibuat bersama Pikir-Pikir Fase 2/3. "Beli → catat" PP-02 memakai `expense` `{deskripsi, jumlah, amplop_id, incaran_id}` |
 
 Setelah data berubah, penerima menembakkan `jatahku:txn-added` (dan `jatahku:envelope-updated` untuk transfer/amplop) supaya Beranda dan halaman lain memuat ulang (dan cache advisor server dihapus oleh route terkait, S3).
 
