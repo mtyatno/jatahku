@@ -1191,3 +1191,32 @@ def ringkasan_mingguan(ctx: Konteks, minggu: dict, status: dict | None, struktur
     if struktural:
         baris += [GARIS, teks_insight_html(struktural)]
     return "\n".join(baris)
+
+
+# ── Notifikasi proaktif (S16, §9) ───────────────────────────────────────
+def notifikasi_insight(item: dict) -> tuple[str, str, str]:
+    """Insight (item #1 daftar) → (judul lonceng, isi lonceng, HTML Telegram/chat web).
+    Teks sama dengan kartu AI Advisor; lonceng tanpa HTML."""
+    judul = f"{TONE_EMOJI.get(item['tone'], '')} {item['judul']}".strip()
+    return judul, item.get("isi") or "", teks_insight_html(item, fakta=True)
+
+
+def lonceng_ringkasan_harian(m, chip: dict | None, utama: dict | None) -> tuple[str, str]:
+    """Ringkasan harian versi lonceng web: chip Jatah hari ini + item #1 (teks polos)."""
+    bagian = []
+    if chip:
+        bagian.append(f"{chip['chip']} · {chip['judul']}.")
+    bagian.append(f"Sisa bebas {rp_penuh(m.sisa_bebas)}, {m.sisa_hari} hari lagi.")
+    if utama:
+        bagian.append(f"{TONE_EMOJI.get(utama['tone'], '')} {utama['judul']}".strip())
+    return f"📋 Ringkasan · {hari_tgl(m.today)}", " ".join(bagian)
+
+
+def lonceng_ringkasan_mingguan(m, minggu: dict, struktural: dict | None) -> tuple[str, str]:
+    """Ringkasan mingguan versi lonceng web: total minggu + sisa bebas + 1 aturan struktural."""
+    bagian = [f"Keluar {rp_penuh(minggu['total'])} ({minggu['n']} transaksi)." if minggu["n"]
+              else "Tidak ada pengeluaran minggu ini.",
+              f"Sisa bebas {rp_penuh(m.sisa_bebas)}, {m.sisa_hari} hari lagi."]
+    if struktural:
+        bagian.append(f"{TONE_EMOJI.get(struktural['tone'], '')} {struktural['judul']}".strip())
+    return f"📊 Minggu ini · {minggu['label']}", " ".join(bagian)

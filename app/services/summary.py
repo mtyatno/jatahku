@@ -191,10 +191,32 @@ def _consistency_lines(week_txns) -> list[str]:
     return ["─────────────────", f"🗓️ Kamu mencatat <b>{logged_days}/7 hari</b> minggu ini. {consistency}"]
 
 
-async def _send(bot, user, text: str, label: str) -> None:
+async def _send(bot, user, text: str, label: str) -> bool:
     if user.telegram_id and bot:
         await bot.send_message(chat_id=int(user.telegram_id), text=text, parse_mode="HTML")
         logger.info(f"{label} summary sent to TG {user.telegram_id}")
+        return True
+    return False
+
+
+async def _lonceng(user, notif_type, title: str, message: str) -> bool:
+    """Ringkasan ke lonceng web (preferensi `*_summary_web`, S16). Gagal → ringkasan TG tetap jalan."""
+    from app.services.notification_service import kirim
+    try:
+        return "web" in await kirim(user, notif_type, title, message, link="/", permukaan=("web",))
+    except Exception as e:
+        logger.error(f"Summary bell failed for user {user.id}: {e}")
+        return False
+
+
+def _users_query(user_id, web: bool):
+    """User penerima: tertaut Telegram, atau (lonceng web) user yang diminta scheduler."""
+    query = select(User)
+    if not (web and user_id):
+        query = query.where(User.telegram_id != None)
+    if user_id:
+        query = query.where(User.id == user_id)
+    return query
 
 
 async def _streak_lines(db, user) -> list[str]:
@@ -210,16 +232,16 @@ async def _streak_lines(db, user) -> list[str]:
     return []
 
 
-async def send_daily_summary(user_id=None):
-    """Send daily spending summary to all Telegram-linked users at 8 PM."""
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN else None
+async def send_daily_summary(user_id=None, telegram: bool = True, web: bool = False):
+    """Send daily spending summary to all Telegram-linked users at 8 PM.
+
+    `telegram`/`web` = preferensi `daily_summary_tg`/`_web` (scheduler). Lonceng web hanya
+    untuk AI Advisor v2. Item #1 dicatat di buku proaktif (S16, 1 kiriman advisor/hari)."""
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN and telegram else None
     today = date.today()
 
     async with AsyncSessionLocal() as db:
-        query = select(User).where(User.telegram_id != None)
-        if user_id:
-            query = query.where(User.id == user_id)
-        result = await db.execute(query)
+        result = await db.execute(_users_query(user_id, web))
         users = result.scalars().all()
         pengaturan = await _pengaturan_advisor() if users else {}
 
@@ -235,8 +257,17 @@ async def send_daily_summary(user_id=None):
                 # AI Advisor v2: chip Jatah hari ini + item #1 daftar (02-aturan.md §7)
                 analisa = await _analisa_v2(user, pengaturan)
                 if analisa is not None:
-                    from app.services.advisor import chat
-                    await _send(bot, user, chat.ringkasan_harian(analisa), "Daily")
+                    from app.models.models import NotificationType
+                    from app.services.advisor import chat, proaktif
+                    terkirim = set()
+                    if await _send(bot, user, chat.ringkasan_harian(analisa), "Daily"):
+                        terkirim.add("telegram")
+                    if web and await _lonceng(user, NotificationType.daily_summary,
+                                              *chat.lonceng_harian(analisa)):
+                        terkirim.add("web")
+                    await proaktif.catat_ringkasan(user, analisa, analisa.ctx.m.today, terkirim)
+                    continue
+                if bot is None or not user.telegram_id:
                     continue
 
                 # Today's transactions
@@ -304,17 +335,14 @@ async def send_daily_summary(user_id=None):
                 logger.error(f"Failed daily summary for user {user.id}: {e}")
 
 
-async def send_weekly_summary(user_id=None):
-    """Send weekly summary every Monday morning."""
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN else None
+async def send_weekly_summary(user_id=None, telegram: bool = True, web: bool = False):
+    """Send weekly summary every Monday morning. `telegram`/`web` seperti ringkasan harian."""
+    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN) if settings.TELEGRAM_BOT_TOKEN and telegram else None
     today = date.today()
     week_start, _ = _week_window(today)
 
     async with AsyncSessionLocal() as db:
-        query = select(User).where(User.telegram_id != None)
-        if user_id:
-            query = query.where(User.id == user_id)
-        result = await db.execute(query)
+        result = await db.execute(_users_query(user_id, web))
         users = result.scalars().all()
         pengaturan = await _pengaturan_advisor() if users else {}
 
@@ -347,9 +375,15 @@ async def send_weekly_summary(user_id=None):
                         "bagian": _top_parts({str(k): v for k, v in by_env.items()}, envs, week_total,
                                              fmt=render.rp_ringkas),
                     }
-                    text = "\n".join([chat.ringkasan_mingguan(analisa, minggu), *_consistency_lines(week_txns),
-                                      *await _streak_lines(db, user)])
-                    await _send(bot, user, text, "Weekly")
+                    if bot is not None:
+                        text = "\n".join([chat.ringkasan_mingguan(analisa, minggu), *_consistency_lines(week_txns),
+                                          *await _streak_lines(db, user)])
+                        await _send(bot, user, text, "Weekly")
+                    if web:
+                        from app.models.models import NotificationType
+                        await _lonceng(user, NotificationType.weekly_summary, *chat.lonceng_mingguan(analisa, minggu))
+                    continue
+                if bot is None or not user.telegram_id:
                     continue
 
                 # Period totals — sumber & definisi sama dengan dashboard

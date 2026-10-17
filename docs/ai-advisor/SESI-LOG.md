@@ -4,6 +4,57 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S16 Notifikasi proaktif · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/proaktif.py` (baru): aturan §9 untuk semua permukaan proaktif (`telegram`, `web` = lonceng, `chat` = chat web).
+  - Buku kiriman Redis `advisor:proaktif:{viewer}:{tanggal lokal}` (hash, TTL 2 hari): hal → permukaan, `_advisor` = hal yang memakai kuota 1/hari.
+  - `hal()`: TAG-01/02/03 dan pengingat jatuh tempo untuk langganan yang sama = satu hal `TAG:{id}`.
+  - `Buku.permukaan_bebas`: maks 2 permukaan per hal, tidak dua kali ke permukaan yang sama. `jam_tenang`: 21.00–07.00 waktu user.
+  - `kirim_peringatan` (scheduler tiap jam): item #1 daftar bertone danger → `send_budget_warning`.
+  - `untuk_chat` (chat web): item hari ini, atau item #1 danger/warn.
+  - `catat_ringkasan`: ringkasan harian mencatat item #1.
+- **Cek #91:** dismiss dibaca ulang tiap kiriman (`chat.muat` → `advisor_cache.muat_dismiss`). Yang disembunyikan tidak dikirim, dan yang dimunculkan lagi boleh dikirim lagi (tes). Tidak ada tombol/jalur dismiss baru.
+- `notification_service.kirim` (baru): lonceng + Telegram HTML ke permukaan yang diminta, tanpa email, sesi DB sendiri; mengembalikan permukaan yang terkirim. `send_budget_warning` dirombak: teks dari insight (`render.notifikasi_insight`), patuh `budget_warning_tg/_web`, link `/`. Versi lama (persen amplop) tidak punya pemanggil.
+- **Pengingat tagihan** (`recurring_processor`), memperbaiki temuan 01-desain #10:
+  - jalan tiap jam, per user: tanggal & jam lokal, mulai 07.00 (jam tenang);
+  - patuh `subscription_due_tg` / `subscription_due_web` (lonceng baru, link `/langganan`);
+  - **sekali per (langganan, jatuh tempo, user)** (`advisor:tagihan:*`, NX, TTL 400 hari), jadi tagihan telat tidak diingatkan ulang tiap hari;
+  - user tanpa Telegram tetap dapat lonceng;
+  - tombol `recpay_/recskip_/recstop_` tetap.
+- **Ringkasan ke lonceng:** `send_daily_summary`/`send_weekly_summary(user_id, telegram, web)`. Scheduler mengirim bila `*_summary_tg` (dengan Telegram) atau `*_summary_web`. Teks lonceng dari `render.lonceng_ringkasan_*` lewat `chat.lonceng_harian/mingguan` (angka sama dengan Beranda). Lonceng hanya untuk jalur v2.
+- Scheduler: `run_user_summaries` kini memuat semua user aktif (bukan hanya yang tertaut Telegram; tanpa `deleted_`/`banned_`). Urutan: peringatan advisor → ringkasan harian/mingguan → payday → check-in. Job `recurring_transactions` tiap jam (menit 1).
+- Chat web: `POST /bot/chat/proaktif` → `{ops}` (format Outbox yang sama). `api.chatProaktif()`; `ChatPanel` memanggilnya setiap panel dibuka, dan server yang membatasi.
+- Dokumen: `04-kontrak-api.md` (endpoint), `03-workflow.md` §7 (baris kepemilikan S16), `AGENTS.md` peta v2, `00-indeks.md`.
+
+**Digantung**
+- Tombol "Sembunyikan" di pesan Telegram/chat proaktif: tidak dibuat. Kalau ditambah (S17), panggil `dashboard.dismiss` (fungsi yang sama dengan `POST /advisor/dismiss`) supaya Urungkan di web ikut berlaku.
+- `send_notification` (Markdown + email untuk `budget_warning`/`subscription_due`) masih dipakai `goal_notify`, tidak diubah. `send_subscription_due` lama tidak punya pemanggil (dibiarkan; hapus di S18 "kode basi").
+- Lonceng ringkasan untuk user di luar flag v2 (jalur lama) tidak dibuat. Flag sudah `*`, dan jalur lama dihapus di S10b.
+- Uji di produksi: cek log `advisor peringatan` dan `Recurring reminder` setelah deploy; pastikan pengingat tagihan pagi ini (07.00 WIB) hanya sekali.
+
+**Keputusan kecil (juga di docstring proaktif.py)**
+- Ringkasan harian/mingguan dijadwalkan user sendiri, jadi tidak diblokir jam tenang/kuota, tetapi ringkasan harian *mencatat* item #1 (memakai kuota bila belum).
+- Peringatan proaktif hanya item #1 bertone **danger**; chat web menampilkan danger/warn. Info/ok hanya lewat ringkasan.
+- Kiriman pertama hari itu (peringatan, ringkasan, atau chat web) memakai kuota. Permukaan lain hanya boleh mengirim hal yang sama sampai 2 permukaan.
+- Pengingat tagihan tidak memakai kuota advisor (preferensi sendiri) tetapi dicatat di buku. Akibatnya TAG-01/02 untuk langganan yang sudah diingatkan ke Telegram + lonceng tidak dikirim lagi sebagai peringatan/chat hari itu.
+- Redis gagal → peringatan & chat tidak mengirim (lebih baik terlewat daripada dobel). Klaim pengingat tagihan juga tidak mengirim. Ringkasan tetap terkirim.
+- Pengingat tagihan dengan semua preferensi mati tidak diklaim: bila user menyalakan lagi hari itu, masih diingatkan.
+
+**Jebakan**
+- `kirim` sengaja membuka sesi DB sendiri: commit lonceng yang gagal di sesi loop scheduler/ringkasan akan merusak sesi untuk user berikutnya (lihat jebakan S9 soal rollback).
+- Query tagihan memakai `next_run <= hari UTC + 1`, lalu disaring per user dengan tanggal lokal (zona user bisa sudah "besok").
+- Traceback `ConnectionRefusedError ... 5432` di output unittest sudah ada di `main` (dari `test_allocation_response`), bukan kegagalan.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 935 OK (29 baru, `test_advisor_proaktif.py`) · frontend 284 OK · build OK. Tidak diuji di browser (ChatPanel memakai `receive(ops)` yang sama dengan pesan biasa).
+
+**Cara mencoba:** `python -m unittest app.tests.test_advisor_proaktif -v`. Di produksi, setelah deploy: buka chat web (user di flag dengan item #1 danger/warn) → pesan advisor muncul sekali; buka lagi → tidak muncul lagi. Lonceng: Pengaturan → Notifikasi → "Ringkasan harian" kolom web (default mati). Pengingat tagihan: langganan jatuh tempo hari ini → satu pesan pukul 07.00 lokal, tidak berulang besok.
+
+**Lanjut:** S17 Chat lengkap (#72) — prompt pembuka §3. S17 yang menambah tombol sembunyikan di chat: pakai `dashboard.dismiss`/`batal_dismiss`.
+
+---
+
 ## S15 Halaman Analitik · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

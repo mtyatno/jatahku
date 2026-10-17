@@ -146,6 +146,7 @@ Estimasi dalam jam Claude Code aktif. "Paralel" = boleh dikerjakan bersamaan ole
 | `components/AttentionCard.jsx` → `AdvisorCard.jsx`, `lib/dashboardInsights.js` | S7 | |
 | `components/Layout.jsx`, `FundEnvelopeModal.jsx`, `PaySubscriptions.jsx`, `ChatPanel.jsx`, `pages/Langganan.jsx` (RecurringModal), `pages/Transactions.jsx` (query), `pages/Allocate.jsx` (`?new=1`), `components/PlanSheet.jsx` (baru) | S8 | S6/S7 memanggil lewat event, tidak mengubah file ini |
 | `app/bot/*`, `app/services/summary.py` | S9 | |
+| `app/services/advisor/proaktif.py`, `services/notification_service.py` (`kirim`, `send_budget_warning`), `services/recurring_processor.py` (pengingat tagihan), `services/scheduler.py` (jadwal), `routes/bot_chat.py` (`/proaktif`) | S16 | S16 juga menambah bagian lonceng di `summary.py`/`chat.py`/`render.py` (milik S9/S3) dan pemanggil `chatProaktif` di `ChatPanel.jsx` (S8) |
 | `app/services/advisor/halaman.py` (bagian Amplop), `routes/advisor.py` (`/page/amplop`), `pages/Envelopes.jsx`, `lib/envelopeStrip.js` | S11 | `halaman.py` dipakai bersama: S12 menambah bagian Langganan; halaman lain boleh modul sendiri (S13 `page_transaksi.py`) |
 | `app/services/advisor/page_analitik.py`, `routes/advisor.py` (`/page/analitik`), `routes/analytics.py` (`/daily-spending`), `sinking.py` (`actions[]`), `pages/Analytics.jsx`, `lib/analyticsAdvice.js` | S15 | Slot `analitik` ditambahkan ke PER-03/04 (`rules/periode.py`) dan TAB-06 (`rules/tabungan.py`) atas izin pemilik produk |
 
