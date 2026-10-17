@@ -1,5 +1,7 @@
 # AI Advisor — Review & Findings (2026-06-30)
 
+> **Arsip (AI Advisor v2 S10, 2026-10-16).** Temuan di sini sudah dijawab oleh AI Advisor v2 — spesifikasi dan status ada di `docs/ai-advisor/` (mulai dari `00-indeks.md`). Path dan perilaku yang disebut di bawah adalah kondisi Juni 2026, bukan kode sekarang. Jangan dipakai sebagai acuan kerja.
+
 Study of the "AI Advisor" brain + workflow. **Analysis only — no fixes applied.**
 The actual rework is planned as a **dedicated session focused on household-share
 privacy**. This doc records logic anomalies, privacy concerns, and enhancement
