@@ -3,6 +3,9 @@ import { api } from '../lib/api';
 import { formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon } from '../components/Icon';
 import StatCard from '../components/StatCard';
+import AdvisorRowStrip from '../components/AdvisorRowStrip';
+import { useTheme } from '../hooks/useTheme';
+import { focusItems, localAction, pageEnabled, rowInsight, summaryLine } from '../lib/advisorLangganan';
 import {
   statusMeta, unpaidMonthlyTotal,
   monthlyEquivalentTotal, paidMonthlyTotal, nearestDue, isUnpaid, canPay, payableFromLabel,
@@ -119,16 +122,37 @@ export default function Langganan() {
   const [busy, setBusy] = useState(null); // id sedang diproses — cegah double-pay
   const [search, setSearch] = useState('');
   const [sortMode, setSortMode] = useState('priority');
+  // AI Advisor (S12): GET /advisor/page/langganan, hanya untuk user di flag advisor_v2_users.
+  const [advisor, setAdvisor] = useState(null);
+  const [hiddenKeys, setHiddenKeys] = useState([]);
+  const [focusIds, setFocusIds] = useState(null);
+  const { mode } = useTheme();
+  const isDark = mode === 'dark';
 
   const load = () => {
     api.request('/recurring/').then(r => r.ok ? r.json() : []).then(d => { setItems(d); setLoading(false); });
+    api.getAdvisorLangganan().then(p => { setAdvisor(pageEnabled(p) ? p : null); setHiddenKeys([]); });
   };
   useEffect(load, []);
-  // Tambah/bayar lewat top bar atau FAB juga menyegarkan halaman ini.
+  // Tambah/bayar/geser lewat top bar, FAB, atau CTA juga menyegarkan halaman ini.
   useEffect(() => {
-    window.addEventListener('jatahku:txn-added', load);
-    return () => window.removeEventListener('jatahku:txn-added', load);
+    const events = ['jatahku:txn-added', 'jatahku:envelope-updated', 'jatahku:advisor-undismissed'];
+    events.forEach(e => window.addEventListener(e, load));
+    return () => events.forEach(e => window.removeEventListener(e, load));
   }, []);
+
+  // CTA yang menuju halaman ini sendiri → aksi lokal (lihat localAction).
+  const onLocal = (ctx) => (aksi) => {
+    const act = localAction(aksi, ctx);
+    if (!act) return false;
+    if (act.type === 'edit') {
+      const it = items.find(i => String(i.id) === String(act.recurringId));
+      if (it) setEditItem(it);
+    } else if (act.type === 'focus') setFocusIds(act.recurringIds);
+    else if (act.type === 'sort') setSortMode(act.mode);
+    return true;
+  };
+  const hideKey = (kunci) => setHiddenKeys(k => [...k, kunci]);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('new') === '1') setShowAdd(true);
@@ -173,7 +197,10 @@ export default function Langganan() {
   const nearest = nearestDue(items);
   const nearestIsLate = nearest?.status === 'overdue';
   const fmtDate = (d) => new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
-  const shown = sortSubscriptions(searchSubscriptions(items, search), sortMode);
+  const shown = sortSubscriptions(searchSubscriptions(focusItems(items, focusIds), search), sortMode);
+  const ringkasan = advisor?.ringkasan;
+  const ringkasLine = summaryLine(ringkasan, formatShort);
+  const visible = (list) => (list || []).filter(i => !hiddenKeys.includes(i.dismiss?.kunci || i.id));
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
@@ -198,6 +225,35 @@ export default function Langganan() {
           <StatCard icon="calendar" tone={nearestIsLate ? 'red' : 'purple'} label="Jatuh Tempo Terdekat"
             value={nearest ? fmtDate(nearest.next_run) : '—'}
             sub={nearest ? `${nearestIsLate ? 'Terlambat · ' : ''}${nearest.description}` : 'Semua terbayar'} />
+        </div>
+      )}
+
+      {advisor && (ringkasLine || ringkasan?.insight || visible(advisor.lain).length > 0 || visible(advisor.pola).length > 0) && (
+        <div className="card space-y-2">
+          <div className="flex items-center gap-2">
+            <Icon name="advisor" size={16} weight="fill" className="text-brand-600" />
+            <h2 className="font-semibold text-sm">AI Advisor</h2>
+          </div>
+          {ringkasLine && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{ringkasLine}</p>}
+          {visible([ringkasan?.insight].filter(Boolean)).map(ins => (
+            <AdvisorRowStrip key={ins.id} insight={ins} isDark={isDark} onLocal={onLocal({})} onHide={hideKey} />
+          ))}
+          {visible(advisor.lain).map(ins => (
+            <AdvisorRowStrip key={ins.id} insight={ins} isDark={isDark}
+              onLocal={onLocal({ recurringIds: ins.recurring_ids })} onHide={hideKey} />
+          ))}
+          {visible(advisor.pola).map(ins => (
+            <AdvisorRowStrip key={ins.id} insight={ins} isDark={isDark} onLocal={onLocal({})} onHide={hideKey} />
+          ))}
+        </div>
+      )}
+
+      {focusIds && (
+        <div className="flex items-center justify-between text-sm px-1">
+          <span style={{ color: 'var(--text-muted)' }}>Menampilkan {focusIds.length} langganan yang mirip</span>
+          <button type="button" onClick={() => setFocusIds(null)} className="text-brand-600 font-medium hover:underline">
+            Tampilkan semua
+          </button>
         </div>
       )}
 
@@ -233,6 +289,7 @@ export default function Langganan() {
           {shown.map(item => {
             const meta = statusMeta(item.status);
             const isPaid = item.status === 'paid';
+            const ai = rowInsight(advisor, item.id, hiddenKeys);
             return (
             <div key={item.id} className="card group hover:border-brand-200 transition-all">
               <div className="flex items-start justify-between">
@@ -253,6 +310,10 @@ export default function Langganan() {
                   )}
                 </div>
               </div>
+              {ai && (
+                <AdvisorRowStrip insight={ai} isDark={isDark} className="mt-3"
+                  onLocal={onLocal({ recurringId: item.id })} onHide={hideKey} />
+              )}
               <div className="flex items-center justify-end gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 {isPaid ? (
                   <span className="text-xs text-brand-600 flex items-center gap-1"><Icon name="check" size={14} weight="fill" /> Sudah bayar</span>
