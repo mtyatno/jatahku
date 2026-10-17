@@ -130,8 +130,9 @@ async def simpan_dismiss(viewer, kunci: str, pilihan: str, tone: str | None, rup
         logger.warning("advisor dismiss set gagal: %s", exc)
 
 
-async def hapus_dismiss(viewer, kunci: str) -> bool:
-    """Batalkan dismiss milik viewer (Urungkan / Munculkan lagi). True bila ada yang dihapus."""
+async def hapus_dismiss(viewer, kunci: str) -> bool | None:
+    """Batalkan dismiss milik viewer (Urungkan / Munculkan lagi). True = dihapus, False = memang
+    tidak disembunyikan, None = Redis gagal (dismiss mungkin masih berlaku → jangan lapor sukses)."""
     try:
         r = _redis()
         try:
@@ -140,7 +141,7 @@ async def hapus_dismiss(viewer, kunci: str) -> bool:
             await r.aclose()
     except Exception as exc:
         logger.warning("advisor dismiss hapus gagal: %s", exc)
-        return False
+        return None
 
 
 async def muat_dismiss(viewer) -> dict:

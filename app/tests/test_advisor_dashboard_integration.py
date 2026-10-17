@@ -234,6 +234,28 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT))
             self.assertTrue(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x"))
 
+    async def test_batal_dismiss_redis_gagal_503(self):
+        from fastapi import HTTPException
+        async def rusak(*a, **k):
+            raise ConnectionError("redis putus")
+        with patch.object(self.redis, "delete", rusak):
+            async with self.Session() as db:
+                with self.assertRaises(HTTPException) as cm:
+                    await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db)
+        self.assertEqual(cm.exception.status_code, 503)
+
+    async def test_dismiss_berubah_saat_menghitung_tidak_disimpan_ke_cache(self):
+        asli = advisor_dashboard_svc._hitung
+        async def hitung_lalu_urungkan(*a, **k):
+            hasil = await asli(*a, **k)
+            self.redis.store[advisor_cache.kunci_dismiss(self.me.id, "PER-05:x")] = '{"pilihan": "nanti"}'
+            return hasil
+        with patch.object(advisor_dashboard_svc, "_hitung", hitung_lalu_urungkan):
+            await self.dashboard()
+        self.assertNotIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)
+        await self.dashboard()   # muatan berikutnya stabil → disimpan
+        self.assertIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)
+
     async def test_tanggal_berganti_cache_lama_diabaikan(self):
         await self.dashboard()
         key = advisor_cache.kunci_dashboard(self.hid, self.me.id)
