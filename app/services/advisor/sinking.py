@@ -158,6 +158,34 @@ def _sinking_group_id(envelope_id, normalized: str) -> str:
     return f"sfa:{envelope_id}:{digest}"
 
 
+# CTA sinking fund memakai kind pipa CTA (S8, 04-kontrak-api.md) supaya tombolnya bisa langsung
+# dibuka lewat `jatahku:open-action` (S15). RecurringModal hanya mengenal mingguan/bulanan/tahunan;
+# pola triwulanan/semesteran diarahkan ke daftar transaksi amplopnya untuk ditinjau.
+FREKUENSI_LANGGANAN = {"weekly", "monthly", "yearly"}
+
+
+def kunci_sinking(rec_id: str) -> str:
+    """Kunci dismiss rekomendasi sinking fund (POST /advisor/dismiss)."""
+    return f"SNK:{rec_id}"
+
+
+def sinking_actions(rec_id: str, rec_type: str, frequency: str, *, envelope_id: str, amount,
+                    description: str, next_run: str | None) -> list[dict]:
+    lihat = {"kind": "route", "label": "Lihat transaksi",
+             "payload": {"path": f"/transactions?envelope={envelope_id}"}}
+    if rec_type == "adjust_recurring":
+        utama = {"kind": "route", "label": "Sesuaikan langganan", "payload": {"path": "/langganan"}}
+    elif rec_type in ("create_recurring", "annualize") and frequency in FREKUENSI_LANGGANAN:
+        payload = {"deskripsi": description, "jumlah": amount, "frekuensi": frequency, "amplop_id": envelope_id}
+        if next_run:
+            payload["next_run"] = next_run
+        utama = {"kind": "make_recurring", "label": "Jadikan langganan", "payload": payload}
+    else:
+        utama = lihat
+    return [utama, {"kind": "dismiss", "label": "Abaikan",
+                    "payload": {"kunci": kunci_sinking(rec_id), "pilihan": "tidak_relevan"}}]
+
+
 async def build_sinking_fund_advice(user, db) -> dict:
     from sqlalchemy import select
     from app.models.models import Envelope, RecurringTransaction, Transaction
@@ -316,21 +344,19 @@ async def build_sinking_fund_advice(user, db) -> dict:
             "next_expected_date": _next_expected_date(group["dates"], {**interval, "frequency": frequency}),
             "evidence": evidence[:3],
             "impact": f"Sisihkan sekitar Rp{_fmt_rp(monthly_reserve)}/periode untuk menjaga amplop {envelope.name} tetap siap.",
-            "actions": [
-                {
-                    "kind": recommendation_type,
-                    "label": "Tinjau langganan",
-                    "payload": {
-                        "envelope_id": envelope_id,
-                        "amount": _money(suggested_amount),
-                        "description": group["samples"][0] if group["samples"] else f"Rutin {envelope.name}",
-                        "frequency": frequency,
-                        "next_run": _next_expected_date(group["dates"], {**interval, "frequency": frequency}),
-                    },
-                },
-                {"kind": "dismiss", "label": "Abaikan"},
-            ],
+            "actions": sinking_actions(
+                _sinking_group_id(envelope_id, group["normalized"]), recommendation_type, frequency,
+                envelope_id=envelope_id,
+                amount=_money(suggested_amount),
+                description=group["samples"][0] if group["samples"] else f"Rutin {envelope.name}",
+                next_run=_next_expected_date(group["dates"], {**interval, "frequency": frequency}),
+            ),
         })
+
+    # Rekomendasi yang di-"Abaikan" (dismiss SNK:<id>, §9) tidak tampil lagi.
+    from app.services.advisor import advisor_cache
+    disembunyikan = await advisor_cache.muat_dismiss(user.id)
+    recommendations = [item for item in recommendations if kunci_sinking(item["id"]) not in disembunyikan]
 
     recommendations = sorted(
         recommendations,

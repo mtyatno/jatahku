@@ -179,6 +179,16 @@ async def advisor_page_langganan(
     return await get_page_langganan(user, db)
 
 
+@router.get("/page/analitik")
+async def advisor_page_analitik(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Halaman Analitik (S15, 02-aturan.md §7): ringkasan 3 poin + deret grafik metrik."""
+    from app.services.advisor.page_analitik import get_halaman_analitik
+    return await get_halaman_analitik(user, db)
+
+
 class DismissRequest(BaseModel):
     kunci: str = Field(min_length=3, max_length=200)
     pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
