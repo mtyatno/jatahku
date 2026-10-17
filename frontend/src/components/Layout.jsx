@@ -17,6 +17,7 @@ import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
 import { chatDraft, dismissNotice, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
+import { formEnvelopes, percentagesFor, recommendationAllocations } from '../lib/allocationAdvice';
 import { Icon, EnvelopeIcon } from './Icon';
 
 function QuickAddEnvelope({ onClose }) {
@@ -33,7 +34,7 @@ function QuickAddEnvelope({ onClose }) {
     : <div className="text-center py-8 text-gray-400">Loading...</div>;
 }
 
-// Smallest rupiah denomination in use is Rp100, so allocations snap to it; the leftover goes to Tabungan.
+// Smallest rupiah denomination in use is Rp100, so allocations snap to it; the leftover goes to the sisa_ke envelope.
 const RUPIAH_STEP = 100;
 const floorRupiah = v => Math.floor(v / RUPIAH_STEP) * RUPIAH_STEP;
 
@@ -55,46 +56,31 @@ function QuickAddIncome({ onClose, prefill = null }) {
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
-  useEffect(() => { api.getEnvelopeSummary().then(e => { setEnvelopes(e); setReady(true); }); }, []);
+  const [sisaKe, setSisaKe] = useState(null);
+  useEffect(() => {
+    Promise.all([api.getEnvelopeSummary(), api.getAlokasiPage()])
+      .then(([e, page]) => { setEnvelopes(e); setSisaKe(page?.sisa_ke || null); setReady(true); });
+  }, []);
 
   const incomeNum = Number(incomeAmount) || 0;
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
+  // "Bagi otomatis" = rekomendasi yang sama dengan halaman Alokasi (S14).
   const handleAutoAllocate = async () => {
     if (incomeNum <= 0) { setError('Masukkan jumlah income terlebih dahulu'); return; }
     setLoadingAuto(true);
     setError('');
-    try {
-      const res = await api.request('/advisor/allocation-recommendation', { method: 'POST', body: JSON.stringify({ income_amount: incomeNum }) });
-      setLoadingAuto(false);
-      if (!res.ok) { setError('Gagal mendapatkan saran alokasi'); return; }
-      const data = await res.json();
-      const isSink = it => it.purpose === 'saving' || (it.name || '').toLowerCase() === 'tabungan';
-      const fundable = new Set(envelopes.filter(e => e.name !== 'Tabungan' && !e.is_locked).map(e => String(e.id)));
-      const needs = (data.items || [])
-        .filter(it => !isSink(it) && fundable.has(String(it.envelope_id)))
-        .map(it => ({ id: it.envelope_id, need: Math.max(Number(it.target_amount) || 0, Number(it.minimum_amount) || 0) }))
-        .filter(it => it.need > 0);
-      const totalNeed = needs.reduce((s, it) => s + it.need, 0);
-      if (totalNeed <= 0) { setError('Belum ada target atau riwayat belanja amplop untuk dijadikan acuan. Isi manual dulu, ya.'); return; }
-      // Split in proportion to each envelope's monthly need, so a small or daily income is shared instead of filling one envelope first.
-      const scale = Math.min(1, incomeNum / totalNeed);
-      const newAllocations = {}, newPercentages = {};
-      needs.forEach(({ id, need }) => {
-        const amt = floorRupiah(need * scale);
-        if (amt > 0) {
-          newAllocations[id] = amt;
-          newPercentages[id] = Math.round((amt / incomeNum) * 100);
-        }
-      });
-      setAllocations(newAllocations);
-      setPercentages(newPercentages);
-      setTypedAmounts({});
-    } catch (err) {
-      setLoadingAuto(false);
-      setError('Gagal mendapatkan saran alokasi');
-    }
+    const res = await api.getAllocationRecommendation(incomeNum).catch(() => null);
+    setLoadingAuto(false);
+    if (!res?.ok) { setError('Gagal mendapatkan saran alokasi'); return; }
+    setSisaKe(res.data.sisa_ke || null);
+    const fundable = new Set(formEnvelopes(envelopes, res.data.sisa_ke).filter(e => !e.is_locked).map(e => String(e.id)));
+    const newAllocations = recommendationAllocations(res.data, fundable);
+    if (Object.keys(newAllocations).length === 0) { setError('Belum ada target atau riwayat belanja amplop untuk dijadikan acuan. Isi manual dulu, ya.'); return; }
+    setAllocations(newAllocations);
+    setPercentages(percentagesFor(newAllocations, incomeNum));
+    setTypedAmounts({});
   };
 
   const handlePercentageChange = (envId, pct) => {
@@ -191,7 +177,7 @@ function QuickAddIncome({ onClose, prefill = null }) {
             {loadingAuto ? 'Memproses...' : 'Bagi otomatis'}
           </button>
           <div className="space-y-2 max-h-48 overflow-y-auto">
-            {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
+            {formEnvelopes(envelopes, sisaKe).map(env => {
               const val = allocations[env.id] || 0;
               const pct = percentages[env.id] || 0;
               return (
@@ -211,7 +197,7 @@ function QuickAddIncome({ onClose, prefill = null }) {
               );
             })}
           </div>
-          {remainder > 0 && <p className="text-xs text-brand-600">💰 {remainder.toLocaleString('id-ID')} → Tabungan</p>}
+          {remainder > 0 && <p className="text-xs text-brand-600">💰 {remainder.toLocaleString('id-ID')} → {sisaKe?.name || 'Tabungan'}</p>}
         </div>
       )}
       {error && <div className="bg-red-50 border border-red-200 text-sm px-4 py-3 rounded-xl" style={{ color: '#E24B4A' }}>{error}</div>}

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
-import { parseAllocateQuery } from '../lib/advisorAction';
+import { openAction, parseAllocateQuery } from '../lib/advisorAction';
+import { formEnvelopes, reasonsById, recommendationAllocations } from '../lib/allocationAdvice';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 import StatCard from '../components/StatCard';
@@ -45,6 +46,9 @@ export default function Allocate() {
   const [advisorRecommendation, setAdvisorRecommendation] = useState(null);
   const [advisorApplied, setAdvisorApplied] = useState(false);
   const [showConfReasons, setShowConfReasons] = useState(false);
+  // S14: banner INC-04/INC-03 + amplop penerima sisa income dari GET /advisor/page/alokasi.
+  const [page, setPage] = useState({ banner: [], sisa_ke: null });
+  const [autoRecommend, setAutoRecommend] = useState(false);
 
   const load = () => {
     if (periodIdx === null) return;
@@ -53,6 +57,7 @@ export default function Allocate() {
     const pe = isCurrent ? null : periods[periodIdx].period_end;
     Promise.all([api.getEnvelopeSummary(), api.getIncomes(ps, pe), api.getGoals(), api.getAllocationSummary(ps, pe)])
       .then(([env, inc, gls, sum]) => { setEnvelopes(env); setIncomes(inc); setGoals(gls); setSummary(sum); setLoading(false); });
+    api.getAlokasiPage().then(setPage);
   };
   useEffect(load, [periodIdx, periods]);
 
@@ -65,14 +70,31 @@ export default function Allocate() {
   const location = useLocation();
   const formRef = useRef(null);
   const [scrollToForm, setScrollToForm] = useState(false);
-  useEffect(() => {
-    const q = parseAllocateQuery(location.search);
+  // Dengan jumlah, rekomendasi langsung dihitung dan diterapkan ke form (S14).
+  const openFromQuery = (q) => {
     if (!q.open) return;
     setShowForm(true);
-    if (q.amount) setIncomeAmount(String(q.amount));
+    if (q.amount) {
+      setIncomeAmount(String(q.amount));
+      setAllocations({});
+      setAdvisorRecommendation(null);
+      setAutoRecommend(true);
+    }
     if (q.source) setIncomeDesc(q.source);
     setScrollToForm(true);
-  }, [location.search]);
+  };
+  useEffect(() => { openFromQuery(parseAllocateQuery(location.search)); }, [location.search]);
+  // CTA banner yang menuju halaman ini sendiri dibuka di tempat (URL yang sama tidak memicu efek di atas).
+  const runBannerAction = (a) => {
+    const path = a.kind === 'route' ? String(a.payload?.path || '') : '';
+    if (path.startsWith('/allocate')) {
+      const q = parseAllocateQuery(path.slice(path.indexOf('?') >= 0 ? path.indexOf('?') : path.length));
+      openFromQuery({ ...q, open: true });
+      if (!q.amount && Number(incomeAmount) > 0) setAutoRecommend(true);
+    } else {
+      openAction(a);
+    }
+  };
   useEffect(() => {
     if (!scrollToForm || loading || !formRef.current) return;
     formRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -83,7 +105,10 @@ export default function Allocate() {
   const totalAllocated = Object.values(allocations).reduce((s, v) => s + (Number(v) || 0), 0);
   const remainder = incomeNum - totalAllocated;
 
-  const tabunganEnv = envelopes.find(e => e.name === 'Tabungan');
+  const sisaKe = advisorRecommendation?.sisa_ke || page.sisa_ke;
+  const sisaNama = sisaKe?.name || 'Tabungan';
+  const tabunganEnv = sisaKe?.envelope_id ? envelopes.find(e => String(e.id) === String(sisaKe.envelope_id)) : null;
+  const reasons = reasonsById(advisorRecommendation);
   const tabunganGoal = goals?.find(g => g.envelope_id === tabunganEnv?.id);
 
   const distributeByBudget = () => {
@@ -122,7 +147,13 @@ export default function Allocate() {
     setAllocations(newAlloc);
   };
 
-  const requestAllocationRecommendation = async () => {
+  const applyAllocationRecommendation = (rec = advisorRecommendation) => {
+    if (!rec?.items) return;
+    setAllocations(recommendationAllocations(rec));
+    setAdvisorApplied(true);
+  };
+
+  const requestAllocationRecommendation = async ({ apply = false } = {}) => {
     if (incomeNum <= 0) return;
     setAdvisorLoading(true);
     setError('');
@@ -132,22 +163,17 @@ export default function Allocate() {
       setAdvisorRecommendation(res.data);
       setAdvisorApplied(false);
       setShowConfReasons(false);
+      if (apply) applyAllocationRecommendation(res.data);
     } else {
       setError(res.data?.detail || 'Gagal membuat rekomendasi alokasi');
     }
   };
-
-  const applyAllocationRecommendation = () => {
-    if (!advisorRecommendation?.items) return;
-    const nextAllocations = {};
-    advisorRecommendation.items.forEach(item => {
-      if (Number(item.recommended_amount) > 0 && item.name !== 'Tabungan') {
-        nextAllocations[item.envelope_id] = Number(item.recommended_amount);
-      }
-    });
-    setAllocations(nextAllocations);
-    setAdvisorApplied(true);
-  };
+  useEffect(() => {
+    if (!autoRecommend || incomeNum <= 0 || loading) return;
+    setAutoRecommend(false);
+    requestAllocationRecommendation({ apply: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRecommend, incomeNum, loading]);
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (totalAllocated > incomeNum) {
@@ -276,6 +302,24 @@ export default function Allocate() {
         </div>
       )}
 
+      {page.banner?.length > 0 && (
+        <div className="space-y-2">
+          {page.banner.map(item => (
+            <div key={item.id} className={`card !p-3 flex flex-col sm:flex-row sm:items-center gap-2 ${item.tone === 'danger' ? 'border-red-200 bg-red-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold">✦ {item.judul}</p>
+                <p className="text-xs text-gray-600">{item.isi}</p>
+              </div>
+              {item.aksi?.slice(0, 1).map((a, i) => (
+                <button key={i} type="button" onClick={() => runBannerAction(a)} className="btn-primary !py-1.5 !text-xs flex-shrink-0">
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       {showForm && (
         <form ref={formRef} onSubmit={handleSubmit} className="card border-brand-200 space-y-4 scroll-mt-24">
           <h3 className="font-semibold">💰 Catat income & alokasi</h3>
@@ -299,7 +343,7 @@ export default function Allocate() {
               <div className="flex gap-3">
                 <div className="card flex-1 !p-3"><p className="text-xs text-gray-400">Income</p><p className="font-display font-bold">{formatShort(incomeNum)}</p></div>
                 <div className="card flex-1 !p-3"><p className="text-xs text-gray-400">Dialokasikan</p><p className="font-display font-bold text-amber-500">{formatShort(totalAllocated)}</p></div>
-                <div className="card flex-1 !p-3"><p className="text-xs text-gray-400">→ Tabungan</p><p className={`font-display font-bold ${remainder >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(Math.abs(remainder))}</p></div>
+                <div className="card flex-1 !p-3"><p className="text-xs text-gray-400">→ {sisaNama}</p><p className={`font-display font-bold ${remainder >= 0 ? 'text-brand-600' : 'text-danger-400'}`}>{formatShort(Math.abs(remainder))}</p></div>
               </div>
 
               {tabunganGoal && (
@@ -315,7 +359,7 @@ export default function Allocate() {
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold">Distribusikan ke amplop:</p>
                 <div className="flex items-center gap-3">
-                  <button type="button" onClick={requestAllocationRecommendation} disabled={advisorLoading} className="text-xs text-brand-600 hover:underline disabled:opacity-50">
+                  <button type="button" onClick={() => requestAllocationRecommendation()} disabled={advisorLoading} className="text-xs text-brand-600 hover:underline disabled:opacity-50">
                     {advisorLoading ? 'Menghitung...' : '✨ Rekomendasikan alokasi'}
                   </button>
                   <button type="button" onClick={distributeByBudget} className="text-xs text-brand-600 hover:underline">Bagi proporsional</button>
@@ -348,14 +392,14 @@ export default function Allocate() {
                   </div>
                   <div className="flex gap-3 text-xs">
                     <span className="text-gray-500">Total rekomendasi: <b className="text-gray-700">{formatShort(advisorRecommendation.total_recommended)}</b></span>
-                    <span className="text-gray-500">→ Tabungan/sisa: <b className="text-brand-600">{formatShort(advisorRecommendation.unallocated)}</b></span>
+                    <span className="text-gray-500">→ {sisaNama}/sisa: <b className="text-brand-600">{formatShort(advisorRecommendation.unallocated)}</b></span>
                   </div>
                   {advisorRecommendation.warnings?.length > 0 && (
                     <ul className="text-xs text-amber-600 list-disc list-inside">
                       {advisorRecommendation.warnings.slice(0, 3).map((w, i) => <li key={i}>{w}</li>)}
                     </ul>
                   )}
-                  <button type="button" onClick={applyAllocationRecommendation} disabled={advisorApplied}
+                  <button type="button" onClick={() => applyAllocationRecommendation()} disabled={advisorApplied}
                     className="btn-primary !py-1.5 !text-xs w-full disabled:opacity-50">
                     {advisorApplied ? '✓ Diterapkan ke form' : 'Terapkan ke form'}
                   </button>
@@ -363,10 +407,11 @@ export default function Allocate() {
               )}
 
               <div className="space-y-2">
-                {envelopes.filter(e => e.name !== 'Tabungan').map(env => {
+                {formEnvelopes(envelopes, sisaKe).map(env => {
                   const val = allocations[env.id] || 0;
                   const pct = incomeNum > 0 ? Math.round(Number(val) / incomeNum * 100) : 0;
                   const envReserved = Number(env.reserved || 0);
+                  const why = reasons[String(env.id)];
                   return (
                     <div key={env.id} className="flex items-center gap-3">
                       <span className="w-8 flex justify-center"><EnvelopeIcon value={env.emoji} size={22} /></span>
@@ -376,6 +421,10 @@ export default function Allocate() {
                           <span className="text-xs text-gray-400">{pct}%</span>
                         </div>
                         {envReserved > 0 && <p className="text-xs text-amber-500">🔄 Min: {formatShort(envReserved)} (langganan)</p>}
+                        {why?.alasan.map((t, i) => <p key={i} className="text-xs text-gray-500">✦ {t}</p>)}
+                        {why?.keyakinan && (why.alasan.length > 0 || Number(val) > 0) && (
+                          <p className="text-[11px] text-gray-400">Keyakinan {confidenceLabel(why.keyakinan).toLowerCase()}</p>
+                        )}
                         <div className="h-1 bg-gray-100 rounded-full mt-1">
                           <div className="h-full bg-brand-400 rounded-full transition-all" style={{width: `${Math.min(pct, 100)}%`}} />
                         </div>
@@ -410,7 +459,7 @@ export default function Allocate() {
                 {remainder > 0 && (
                   <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
                     <span className="text-lg w-8">💰</span>
-                    <span className="text-sm font-medium flex-1">Tabungan <span className="text-xs text-gray-400">(otomatis)</span></span>
+                    <span className="text-sm font-medium flex-1">{sisaNama} <span className="text-xs text-gray-400">(otomatis)</span></span>
                     <span className="font-mono text-sm font-bold text-brand-600">{formatCurrency(remainder)}</span>
                   </div>
                 )}

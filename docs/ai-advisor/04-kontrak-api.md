@@ -76,6 +76,16 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // DELETE /advisor/dismiss?kunci=…  (#91, Urungkan / Munculkan lagi) → 204
 //   Menghapus dismiss milik viewer sendiri untuk kunci itu + cache dashboard viewer; insight tampil lagi di muatan
 //   berikutnya. Idempoten: 204 juga bila kunci tidak sedang disembunyikan. Dismiss viewer lain tidak tersentuh.
+// GET /advisor/page/alokasi  (S14) → {"enabled", "banner": [insight INC-04, INC-03 — bentuk item daftar],
+//                                      "sisa_ke": {"envelope_id"|null, "name"}}
+//   banner kosong bila flag mati atau insight disembunyikan. sisa_ke = amplop yang menerima sisa income saat
+//   POST /incomes/ (null = dibuat saat simpan); frontend menyembunyikan barisnya dari form, tanpa mencocokkan nama.
+// POST /advisor/allocation-recommendation { "income_amount" }  (S14 menambah field; field lama tetap)
+//   → {…, "items": [{…, "alasan": [{"aturan","id","teks"}], "keyakinan": "high|medium|low"}],
+//      "sisa_ke": {…seperti di atas}, "banner": [...]}
+//   alasan dari AMP-01/04/05/06, TAG-04, TAB-02 yang menyala (tidak disembunyikan); aturan itu juga menggeser
+//   minimum/target amplopnya (§7 "Alokasi"). Minimum satu tingkat prioritas yang tak tertutup income dibagi
+//   proporsional. Dipakai halaman Alokasi ("Terapkan ke form", ?new=1) dan "Bagi otomatis" di FAB pemasukan.
 ```
 
 ## Aksi CTA di frontend (S8)
