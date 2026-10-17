@@ -176,6 +176,7 @@ class SkenarioS4Tests(unittest.TestCase):
         r = render.render_insight(dat, ctx)
         self.assertIn("Transaksi bayar PLN Rp750.000 nominalnya sama dengan tagihan Listrik", r["isi"])
         self.assertEqual([a["label"] for a in r["aksi"]], ["Tandai lunas", "Bukan pembayaran tagihan"])
+        self.assertEqual(r["aksi"][1]["payload"], {"kunci": dat.id, "pilihan": "bukan_tagihan"})   # #93
 
     def test_15_struk_kembar_vs_struk_terkirim_dua_kali(self):
         b = normal()
@@ -197,7 +198,7 @@ class SkenarioS4Tests(unittest.TestCase):
         r = render.render_insight(dat, ctx)
         self.assertEqual(r["judul"], "Struk Indomaret sepertinya tercatat dua kali (3 barang)")
         self.assertEqual([a["label"] for a in r["aksi"]], ["Hapus duplikat (3 barang)", "Bukan dobel"])
-        self.assertEqual(r["aksi"][1]["payload"], {"kunci": dat.id})
+        self.assertEqual(r["aksi"][1]["payload"], {"kunci": dat.id, "pilihan": "bukan_dobel"})     # #93
 
     def test_19_setor_saat_tidak_defisit(self):
         b = normal()
@@ -547,6 +548,8 @@ class DataTests(unittest.TestCase):
         dat = satu(sel, "DAT-03")
         self.assertEqual(dat.entitas, first)
         self.assertEqual(dat.aksi[0]["payload"], {"txn_id": second, "txn_ids": [second]})
+        self.assertEqual(dat.aksi[1], {"kind": "not_duplicate", "kode": "bukan_dobel",
+                                       "payload": {"kunci": dat.id, "pilihan": "bukan_dobel"}})
         self.assertIn("daftar", dat.slot)
         self.assertIn(dat.id, [i.id for i in sel.daftar])
 

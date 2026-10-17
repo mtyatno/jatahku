@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -191,7 +191,17 @@ async def advisor_page_analitik(
 
 class DismissRequest(BaseModel):
     kunci: str = Field(min_length=3, max_length=200)
-    pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
+    pilihan: Literal["nanti", "periode", "tidak_relevan", "bukan_dobel", "bukan_tagihan"] = "nanti"
+
+    @model_validator(mode="after")
+    def _pilihan_cocok_kunci(self):
+        # bukan_dobel hanya untuk DAT-03, bukan_tagihan hanya untuk DAT-06 (#93) → selain itu 422.
+        from app.services.advisor.advisor_cache import PILIHAN_ATURAN, pilihan_sah
+        if not pilihan_sah(self.pilihan, self.kunci):
+            aturan = PILIHAN_ATURAN.get(self.pilihan)
+            raise ValueError(f"pilihan {self.pilihan} hanya untuk kunci {aturan}:…" if aturan
+                             else f"pilihan {self.pilihan} tidak dikenal")
+        return self
 
 
 @router.post("/dismiss", status_code=204)

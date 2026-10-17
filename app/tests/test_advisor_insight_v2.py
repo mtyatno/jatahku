@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from app.services.advisor import render
 from app.services.advisor.dashboard import analisa, bangun_konstanta, flag_aktif, susun_dashboard
-from app.services.advisor.advisor_cache import ttl_dismiss
+from app.services.advisor.advisor_cache import pilihan_sah, ttl_dismiss
 from app.services.advisor.insight import DEFAULT as KA, Insight, hitung_skor
 from app.services.advisor.metrics import floor100
 from app.services.advisor.select import kebutuhan_bersama, pilih, pilih_daftar, tersembunyi
@@ -438,6 +438,21 @@ class PengaturanTests(unittest.TestCase):
         self.assertEqual(ttl_dismiss("nanti", now, date(2026, 10, 26)), 7 * 3600)
         self.assertEqual(ttl_dismiss("periode", now, date(2026, 10, 26)), (11 * 24 + 2) * 3600)
         self.assertEqual(ttl_dismiss("tidak_relevan", now, date(2026, 10, 26)), 90 * 24 * 3600)
+        # #93: Bukan dobel permanen; Bukan pembayaran tagihan hanya periode ini (kunci per langganan).
+        self.assertIsNone(ttl_dismiss("bukan_dobel", now, date(2026, 10, 26)))
+        self.assertEqual(ttl_dismiss("bukan_tagihan", now, date(2026, 10, 26)), (11 * 24 + 2) * 3600)
+
+    def test_pilihan_khusus_hanya_untuk_aturannya(self):
+        self.assertTrue(pilihan_sah("bukan_dobel", "DAT-03:t1"))
+        self.assertTrue(pilihan_sah("bukan_dobel", "DAT-03:struk:t9"))
+        self.assertTrue(pilihan_sah("bukan_tagihan", "DAT-06:listrik"))
+        self.assertFalse(pilihan_sah("bukan_dobel", "DAT-06:listrik"))
+        self.assertFalse(pilihan_sah("bukan_tagihan", "DAT-03:t1"))
+        self.assertFalse(pilihan_sah("bukan_dobel", "TAG-01:kpr"))
+        self.assertFalse(pilihan_sah("bukan_dobel", "DAT-030:x"))
+        self.assertTrue(pilihan_sah("tidak_relevan", "DAT-03:t1"))
+        self.assertTrue(pilihan_sah("nanti", "DAT-06:listrik"))
+        self.assertFalse(pilihan_sah("selamanya", "DAT-03:t1"))
 
     def test_skor(self):
         i = _ins("X-1", "warn", aksi=False, rupiah=0)

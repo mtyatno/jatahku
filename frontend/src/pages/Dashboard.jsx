@@ -192,6 +192,13 @@ export default function Dashboard() {
       ? `${new Date(prediction.period_start).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} – ${new Date(prediction.period_end).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`
       : new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' }));
   const daysLeft = prediction?.days_left ?? 0;
+  // Label pil periode di top bar: bulan Indonesia ("26 Okt"), tahun hanya di layar lebar.
+  const periodStart = selectedPeriod?.period_start || prediction?.period_start;
+  const periodEnd = selectedPeriod?.period_end || prediction?.period_end;
+  const tglPendek = (iso, year) => new Date(`${String(iso).slice(0, 10)}T00:00:00`)
+    .toLocaleDateString('id-ID', year ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
+  const periodShort = periodStart && periodEnd ? `${tglPendek(periodStart)} – ${tglPendek(periodEnd)}` : periodLabel;
+  const periodFull = periodStart && periodEnd ? `${tglPendek(periodStart)} – ${tglPendek(periodEnd, true)}` : periodLabel;
   // Satu-satunya tempat jatah aman per hari dibulatkan (ke bawah, Rp100). Judul advisor,
   // rinciannya, baris Sisa bebas, dan garis Batas aman semua membaca angka ini.
   const safeDaily = floorRp100(prediction?.safe_daily);
@@ -282,9 +289,11 @@ export default function Dashboard() {
               style={{ color: 'var(--text-muted)' }} aria-label="Periode sebelumnya">
               <Icon name="chevron" size={14} weight="bold" style={{ transform: 'rotate(90deg)' }} />
             </button>
-            <span className="px-1.5 text-[15px] font-semibold whitespace-nowrap" style={{ color: 'var(--text)' }}>
-              {periodLabel}
-              {isCurrentPeriod && daysLeft > 0 && <span className="font-normal" style={{ color: 'var(--text-muted)' }}> · {daysLeft} hari lagi</span>}
+            <span className="px-1.5 text-[15px] font-semibold whitespace-nowrap" style={{ color: 'var(--text)' }}
+              title={isCurrentPeriod && daysLeft > 0 ? `${periodFull} · ${daysLeft} hari lagi` : periodFull}>
+              <span className="2xl:hidden">{periodShort}</span>
+              <span className="hidden 2xl:inline">{periodFull}</span>
+              {isCurrentPeriod && daysLeft > 0 && <span className="hidden xl:inline font-normal" style={{ color: 'var(--text-muted)' }}> · {daysLeft} hari lagi</span>}
               {periodLoading && <span className="font-normal" style={{ color: 'var(--text-muted)' }}> …</span>}
             </span>
             <button type="button" onClick={() => setPeriodIdx(i => i + 1)} disabled={isCurrentPeriod}
