@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { native } from '../native';
 
 // Offline banner shown when network is lost
 export function OfflineBanner() {
@@ -26,7 +27,7 @@ export function OfflineBanner() {
   );
 }
 
-// Install prompt shown on supporting browsers
+// Install prompt shown on supporting browsers (lapisan native: tidak pernah di aplikasi)
 export function InstallPrompt() {
   const [prompt, setPrompt] = useState(null);
   const [shown, setShown] = useState(false);
@@ -34,15 +35,10 @@ export function InstallPrompt() {
     () => localStorage.getItem('pwa-dismissed') === '1'
   );
 
-  useEffect(() => {
-    const handler = (e) => {
-      e.preventDefault();
-      setPrompt(e);
-      setShown(true);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
+  useEffect(() => native.onInstallPrompt((e) => {
+    setPrompt(e);
+    setShown(true);
+  }), []);
 
   if (!shown || dismissed || !prompt) return null;
 

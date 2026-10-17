@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../lib/api';
+import { native } from '../native';
 import {
   buildExportCsvUrl,
   buildExportPdfUrl,
@@ -23,6 +24,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
   const [pdfUrl, setPdfUrl] = useState(null);
   const [modalPeriodIdx, setModalPeriodIdx] = useState(null);
   const iframeRef = useRef(null);
+  const pdfBlobRef = useRef(null);
 
   useEffect(() => {
     api.getPeriods(12).then(p => {
@@ -46,12 +48,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
       const res = await api.request(url);
       if (res.ok) {
         const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = getExportFilename('csv', target);
-        a.click();
-        URL.revokeObjectURL(blobUrl);
+        await native.files.save(blob, getExportFilename('csv', target));
       }
     } catch (e) {
       console.error(e);
@@ -71,6 +68,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
         if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+        pdfBlobRef.current = blob;
         setPdfUrl(blobUrl);
         if (idx !== null) {
           setModalPeriodIdx(idx);
@@ -109,23 +107,18 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
   };
 
   const handleSavePDF = () => {
-    if (pdfUrl) {
-      const a = document.createElement('a');
-      a.href = pdfUrl;
-      a.download = getExportFilename('pdf', curModalPeriod);
-      a.click();
+    if (pdfBlobRef.current) {
+      native.files.save(pdfBlobRef.current, getExportFilename('pdf', curModalPeriod));
     }
   };
 
   const handlePrint = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow.focus();
-      iframeRef.current.contentWindow.print();
-    }
+    native.print.pdf({ frame: iframeRef.current, url: pdfUrl });
   };
 
   const handleClose = () => {
     if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    pdfBlobRef.current = null;
     setPdfUrl(null);
     setModalPeriodIdx(null);
   };

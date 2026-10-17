@@ -2,38 +2,29 @@ import { saveCache, loadCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
+import { native } from '../native';
 
-const API_URL = import.meta.env.PROD
-  ? 'https://api.jatahku.com'
-  : '/api';
+// Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
+const API_URL = native.platform.apiUrl;
 
 // Semua panggilan ke API membawa X-Jatahku-Client (ADR-M9).
 const apiFetch = (url, options = {}) => fetch(url, { ...options, headers: withClientHeader(options.headers) });
 
 class ApiClient {
-  constructor() {
-    this.token = localStorage.getItem('jatahku_token');
+  get token() {
+    return native.tokens.getAccess();
   }
 
   setToken(token) {
-    this.token = token;
-    if (token) {
-      localStorage.setItem('jatahku_token', token);
-    } else {
-      localStorage.removeItem('jatahku_token');
-    }
+    native.tokens.setAccess(token);
   }
 
   setRefreshToken(token) {
-    if (token) {
-      localStorage.setItem('jatahku_refresh', token);
-    } else {
-      localStorage.removeItem('jatahku_refresh');
-    }
+    native.tokens.setRefresh(token);
   }
 
   getRefreshToken() {
-    return localStorage.getItem('jatahku_refresh');
+    return native.tokens.getRefresh();
   }
 
   async request(path, options = {}) {

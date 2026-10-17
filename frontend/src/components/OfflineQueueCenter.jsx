@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
-import { getPendingCount, getRejected, syncNow, retryRejected, discardRejected } from '../lib/offlineQueue';
+import { getPendingCount, getRejected, syncNow, retryRejected, discardRejected, onBackgroundSynced } from '../lib/offlineQueue';
 
 function rupiah(n) {
   return 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -54,19 +54,17 @@ export default function OfflineQueueCenter() {
     refresh();
     sync();
     const onQueue = () => refresh();
-    const onWorker = (e) => {
-      if (e.data?.type !== 'jatahku:offline-synced') return;
+    const offSynced = onBackgroundSynced((summary) => {
       refresh();
-      if (e.data.summary?.notice) setNotice(e.data.summary.notice);
-      if (e.data.summary?.saved > 0) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
-    };
+      if (summary.notice) setNotice(summary.notice);
+      if (summary.saved > 0) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+    });
     window.addEventListener('online', sync);
     window.addEventListener('jatahku:offline-queue', onQueue);
-    navigator.serviceWorker?.addEventListener?.('message', onWorker);
     return () => {
       window.removeEventListener('online', sync);
       window.removeEventListener('jatahku:offline-queue', onQueue);
-      navigator.serviceWorker?.removeEventListener?.('message', onWorker);
+      offSynced();
     };
   }, [refresh, sync]);
 
