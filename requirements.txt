@@ -15,6 +15,9 @@ redis==5.2.1
 # Auth
 pyjwt==2.10.1
 passlib[bcrypt]==1.7.4
+# passlib 1.7.4 tidak kompatibel dengan bcrypt 5 (hash_password → ValueError "password
+# cannot be longer than 72 bytes"): kunci di 4.x. Hash 4.x dan 5.x sama-sama $2b$.
+bcrypt>=4.0,<5
 python-jose[cryptography]==3.4.0
 
 # Telegram Bot

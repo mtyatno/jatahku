@@ -210,3 +210,30 @@ def send_password_changed_email(to_email: str, name: str) -> bool:
         "https://jatahku.com",
     )
     return send_email(to_email, "Password kamu baru saja diubah", html)
+
+
+def send_account_deletion_email(to_email: str, name: str, confirm_url: str) -> bool:
+    html = email_template(
+        "Konfirmasi hapus akun Jatahku",
+        f'''<p>Hai {name},</p>
+        <p>Kami menerima permintaan untuk <strong>menghapus permanen</strong> akun Jatahku kamu
+        beserta semua datanya (amplop, transaksi, pemasukan, langganan).</p>
+        <p>Klik tombol di bawah untuk melanjutkan. Link ini berlaku <strong>1 jam</strong>
+        dan hanya bisa dipakai sekali. Penghapusan tidak bisa dibatalkan.</p>
+        <p>Kalau kamu tidak merasa meminta ini, abaikan email ini — akun kamu tetap aman.</p>''',
+        "Lanjutkan hapus akun",
+        confirm_url,
+    )
+    return send_email(to_email, "Konfirmasi hapus akun Jatahku", html)
+
+
+def send_account_deleted_email(to_email: str, name: str) -> bool:
+    html = email_template(
+        "Akun Jatahku kamu sudah dihapus",
+        f'''<p>Hai {name},</p>
+        <p>Akun Jatahku kamu dan semua datanya sudah dihapus permanen, dan semua perangkat
+        sudah keluar. Catatan kamu di amplop bersama household tetap ada tanpa nama
+        ("Mantan anggota") supaya saldo anggota lain tidak berubah.</p>
+        <p>Terima kasih sudah memakai Jatahku.</p>''',
+    )
+    return send_email(to_email, "Akun Jatahku kamu sudah dihapus", html)

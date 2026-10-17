@@ -36,6 +36,40 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## A13 · 1.2 Hapus akun sungguhan · 2026-10-17 · pemilik produk + Claude
+
+**Selesai** (kriteria paket terpenuhi dalam 1 dari 5 sesi; status review)
+- `app/services/account_deletion.py`: hapus permanen user, `auth_sessions` (semua perangkat keluar), notifikasi, preferensi, streak, kata kunci amplop, scan struk, suara belajar struk, order pembayaran, transaksi tertunda; file `/uploads/...` (foto profil, bukti bayar) dihapus di background setelah commit.
+- Household hanya berisi user → dihapus utuh (amplop, transaksi, pemasukan, alokasi, langganan, target, snapshot, cocokkan saldo, grup). Household bersama → amplop pribadi user dihapus; transaksi/cocokkan saldo di amplop bersama pindah ke user "Mantan anggota" (keterangan diganti, nominal tetap); pemasukan dipangkas ke jumlah yang masih teralokasi (0 → dihapus); owner pindah ke anggota tertua (`household_members.created_at`).
+- "Mantan anggota": satu baris `users` bersama, id tetap `00000000-0000-4000-8000-00000000d31e`, email `deleted_mantan-anggota@jatahku.com` (dilewati scheduler/admin lewat konvensi `deleted_`), tanpa sandi, bukan anggota household; tidak bisa dihapus.
+- `DELETE /user/account` memakai layanan ini (respons tetap `{"status": "deleted"}`) + email "akun sudah dihapus".
+- Endpoint publik baru (rate limit 3/5 per menit): `POST /user/account/deletion-request` (email → link `jatahku.com/hapus-akun?token=…`, jawaban seragam) dan `POST /user/account/deletion-confirm` (token Redis `acctdel:*` sekali pakai, 1 jam).
+- Web: halaman `/hapus-akun` tanpa login (`pages/HapusAkun.jsx`: form email → cek email → konfirmasi ketik "HAPUS" → selesai); teks di Pengaturan diperbarui. Nginx tidak perlu diubah (semua path sudah jatuh ke SPA, dicek dengan curl).
+- Tes: `app/tests/test_account_deletion.py` (12; SQLite dengan `PRAGMA foreign_keys=ON`, terbukti menangkap urutan hapus yang salah lewat mutasi). Dicoba di Chromium dengan API tiruan: keempat tampilan halaman.
+- `PROGRESS.md`: 1.1 selesai (#116).
+
+**Digantung**
+- Akun yang "dihapus" cara lama (email `deleted_<uuid>@jatahku.com`, data masih ada) belum dibersihkan: perlu skrip sekali jalan yang memanggil `account_deletion.delete_account` untuk tiap akun itu (di VPS, dengan cadangan DB dulu).
+- URL hapus akun (`https://jatahku.com/hapus-akun`) perlu dicantumkan di kebijakan privasi (0.4) dan formulir Play (4.2).
+- Pencabutan token Sign in with Apple saat hapus akun → paket 5.2 (panggil dari `account_deletion.delete_account`).
+- Sisa data di Redis (cache advisor, kunci per user) tidak dihapus; semuanya ber-TTL.
+
+**Jebakan**
+- SQLite tidak menegakkan FK secara bawaan; tanpa pragma, urutan hapus yang salah lolos di tes tapi gagal di Postgres. Banyak FK ke `users`/`envelopes` tanpa CASCADE, jadi tabel baru yang menunjuk ke `users` wajib ditambahkan ke `account_deletion.py`.
+- `npm run build` mengubah `frontend/dist/index.html` yang ter-track; kembalikan sebelum commit.
+
+**Keputusan kecil** (perlu dikonfirmasi pemilik produk saat review)
+- Order pembayaran ikut dihapus (beserta bukti transfer). Bila perlu disimpan untuk pembukuan, ganti jadi anonimisasi ke "Mantan anggota".
+- Admin akan melihat satu user tambahan "Mantan anggota" setelah anggota household bersama pertama menghapus akun.
+- Link email hanya membuka halaman; penghapusan butuh POST + ketik "HAPUS", jadi pemindai link email tidak bisa memicu hapus.
+- Tidak perlu migrasi.
+
+**Cara melanjutkan**
+- Review PR di sesi terpisah; setelah merge, `/cek-deploy <nomor PR>` lalu coba `/hapus-akun` di produksi dengan akun uji.
+- Paket berikut yang terbuka di jalur A: `/sesi A18` (1.6 helper jualan), `/sesi A23` (1.8), atau `/sesi A78` (1.4b). Jalur B: 5.2 kini tidak lagi menunggu 1.2.
+
+---
+
 ## A07 · 1.1 Sesi per perangkat · 2026-10-17 · pemilik produk + Claude
 
 **Selesai** (kriteria paket terpenuhi dalam 1 dari 6 sesi; status review)
