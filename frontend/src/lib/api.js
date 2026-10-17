@@ -595,6 +595,18 @@ class ApiClient {
     return null;
   }
 
+  // GET /advisor/page/analitik (S15). Sama: {"enabled": false} atau null → Analitik tanpa AI v2.
+  async getAdvisorAnalitik() {
+    try {
+      const res = await this.request('/advisor/page/analitik');
+      if (res.ok) return await res.json();
+      console.error('[advisor] analitik request failed:', res.status);
+    } catch (e) {
+      console.error('[advisor] analitik request error:', e);
+    }
+    return null;
+  }
+
   async _advisorPost(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });

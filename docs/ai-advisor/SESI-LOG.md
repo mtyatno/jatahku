@@ -51,7 +51,49 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 **Cara mencoba:** `python -m unittest app.tests.test_advisor_proaktif -v`. Di produksi, setelah deploy: buka chat web (user di flag dengan item #1 danger/warn) → pesan advisor muncul sekali; buka lagi → tidak muncul lagi. Lonceng: Pengaturan → Notifikasi → "Ringkasan harian" kolom web (default mati). Pengingat tagihan: langganan jatuh tempo hari ini → satu pesan pukul 07.00 lokal, tidak berulang besok.
 
-**Lanjut:** S17 Chat lengkap (#72) atau S15 (#70) — prompt pembuka §3. S17 yang menambah tombol sembunyikan di chat: pakai `dashboard.dismiss`/`batal_dismiss`.
+**Lanjut:** S17 Chat lengkap (#72) — prompt pembuka §3. S17 yang menambah tombol sembunyikan di chat: pakai `dashboard.dismiss`/`batal_dismiss`.
+
+---
+
+## S15 Halaman Analitik · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `app/services/advisor/page_analitik.py` (baru, pola S13): `GET /advisor/page/analitik` → `{enabled, generated_at, period_start, period_end, hari_ini, ringkasan, harian, grafik}`. Mesin sama dengan Beranda (`dashboard.analisa`).
+- Ringkasan ≤ 3 poin (§7 "Analitik"):
+  - satu terbaik per kelompok: periode (PER-03/04), amplop (AMP-08/11), hari terboros (S6), tabungan (TAB-06);
+  - urut tone lalu urutan kelompok; kurang dari 3 → AMP-08/11 amplop lain mengisi;
+  - insight yang di-dismiss tidak tampil.
+- Poin hari terboros (`render.poin_hari_terboros`, `page_analitik.hari_terboros`): belanja variabel tertinggi periode ini dari `metrics.harian` vs J0 hari itu + jumlah hari lewat jatah (`signals.lewat_jatah`). warn bila ≥ 3 hari lewat, info bila lewat, ok bila semua dalam jatah. CTA `route` ke `/transactions?date=`. Bukan aturan → `dismiss: null`.
+- Slot `analitik` ditambahkan ke PER-03, PER-04 (`rules/periode.py`) dan TAB-06 (`rules/tabungan.py`), atas izin pemilik produk. AMP-08/11 sudah punya slot ini.
+- `harian` + `grafik` = deret metrik + baris analisa Beranda (dites identik). Analytics.jsx periode berjalan (flag) memakai `DailySpendingChart` mode advisor (komponen S6, tidak diubah) dan heatmap dari belanja variabel yang sama.
+- `/analytics/daily-spending`: filter pemilik (bersama + pribadi milik viewer), sama dengan endpoint analytics lain. Berlaku untuk semua user (perbaikan privasi), dipakai jalur lama/periode lama.
+- `sinking.py`: `actions[]` memakai kind pipa CTA S8: `make_recurring` (mingguan/bulanan/tahunan), `route` /langganan (adjust), `route` /transactions?envelope= (review, triwulanan/semesteran) + `dismiss` `SNK:<id>` (tidak_relevan, 90 hari). Rekomendasi yang di-dismiss disaring di server. Frontend menampilkan tombolnya hanya untuk user di flag.
+- Frontend: `api.getAdvisorAnalitik()`, `lib/analyticsAdvice.js` (+ tes), kartu "Ringkasan AI" menggantikan kotak "Insight" (flag + periode berjalan). Halaman memuat ulang pada `txn-added`, `envelope-updated`, `advisor-dismissed`, `advisor-undismissed`.
+- Dokumen: `04-kontrak-api.md`, `03-workflow.md` §7 (baris kepemilikan S15), `AGENTS.md` peta v2, `00-indeks.md`.
+
+**Digantung**
+- `analyticsInsight.js` (`busiestWeekday`, `categoryDelta`, `buildWeekHeatmap`) tetap dipakai: jalur lama (flag mati / periode lama), heatmap dan kartu "Naik vs turun". Hapus `busiestWeekday` + kotak Insight lama di S10b.
+- Kartu "Prediksi akhir bulan", "Cash Flow", dan garis batas aman lama masih membaca `/analytics/prediction`; belum dipindah ke metrik (di luar scope issue; usul issue terpisah bila perlu).
+- Uji di produksi dengan akun tim belum dilakukan.
+- Temuan di luar scope: `STRIP_STYLE.info` di `Envelopes.jsx` memakai `bg-blue-50` yang tidak punya padanan mode gelap → teks strip info hampir tak terbaca di tema gelap. Perlu issue terpisah (file S11).
+
+**Keputusan kecil**
+- PER-01 tidak masuk ringkasan walau menyala: §7 menyebut sumber persis, dan PER-01 sudah di Beranda.
+- Ringkasan boleh kurang dari 3 poin (tidak diisi poin ok buatan); kosong → "Belum cukup data untuk ringkasan periode ini."
+- Ringkasan & grafik v2 hanya untuk periode berjalan (metrik hanya ada untuk periode berjalan); periode lama tetap jalur lama.
+- Tone info di kartu memakai `bg-gray-50` (ada padanan gelap), bukan `bg-blue-50`.
+- Analytics: muat ulang karena event tidak menampilkan "Loading..." (data lama tetap tampil); respons basi diabaikan.
+
+**Jebakan**
+- Build produksi memanggil `https://api.jatahku.com`, jadi `page.route('**/api/**')` hanya berfungsi di `npx vite` (dev), bukan `vite preview`.
+- Matikan server dengan `kill $(pgrep -f 'vite --port 417[9]')`: kurung siku mencegah pola cocok dengan shell pemanggil (jebakan `pkill` S11).
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 923 OK (17 baru, `test_advisor_page_analitik.py`) · frontend 289 OK (5 baru, `analyticsAdvice.test.js`) · build OK · Playwright (API di-mock, mode gelap): Ringkasan AI 3 poin dengan tombol + Nanti, grafik deret metrik, tombol "Jadikan langganan"/"Abaikan" di Sinking fund advisor.
+
+**Cara mencoba:** user di flag → Analitik (periode berjalan) → kartu "Ringkasan AI", grafik Pengeluaran harian sama dengan Beranda, Sinking fund advisor → **Jadikan langganan** membuka modal Langganan terisi. Server: `python -m unittest app.tests.test_advisor_page_analitik -v`.
+
+**Lanjut:** review PR (tanpa migrasi), merge, cek di produksi dengan akun tim; buka issue untuk `bg-blue-50` di strip Amplop. Sesi berikutnya: S16/S17 (prompt pembuka §3).
 
 ---
 
