@@ -39,11 +39,13 @@ JKT = ZoneInfo("Asia/Jakarta")
 class FakeRedis:
     def __init__(self):
         self.store = {}
+        self.ttl = {}       # kunci → `ex` terakhir (None = tanpa kedaluwarsa)
 
     async def set(self, k, v, nx=False, ex=None):
         if nx and k in self.store:
             return None
         self.store[k] = v
+        self.ttl[k] = ex
         return True
 
     async def get(self, k):
@@ -56,7 +58,9 @@ class FakeRedis:
     async def delete(self, *keys):
         n = 0
         for k in keys:
-            n += self.store.pop(k.decode() if isinstance(k, bytes) else k, None) is not None
+            k = k.decode() if isinstance(k, bytes) else k
+            self.ttl.pop(k, None)
+            n += self.store.pop(k, None) is not None
         return n
 
     async def scan_iter(self, match="*", count=None):
@@ -256,6 +260,47 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.dashboard()   # muatan berikutnya stabil → disimpan
         self.assertIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)
 
+    async def test_bukan_dobel_permanen_lalu_dimunculkan_lagi(self):
+        # #93: "Bukan dobel" (DAT-03) disimpan tanpa TTL, dan Munculkan lagi (#91) tetap menghapusnya.
+        async with self.Session() as db:
+            for _ in range(2):
+                db.add(Transaction(envelope_id=self.makan.id, user_id=self.me.id, amount=D("150000"),
+                                   description="belanja pasar", transaction_date=self.today))
+            await db.commit()
+
+        def ids(data):
+            adv = data["advisor"]
+            return [i["id"] for i in adv["items"]] + [x["id"] for x in adv["sisa"]]
+        kunci = next((k for k in ids(await self.dashboard()) if k.startswith("DAT-03:")), None)
+        self.assertIsNotNone(kunci)
+        async with self.Session() as db:
+            resp = await advisor_routes.advisor_dismiss(
+                advisor_routes.DismissRequest(kunci=kunci, pilihan="bukan_dobel"), user=self.me, db=db)
+        self.assertEqual(resp.status_code, 204)
+        key = advisor_cache.kunci_dismiss(self.me.id, kunci)
+        self.assertIsNone(self.redis.ttl[key])                                  # permanen
+        self.assertIn('"pilihan": "bukan_dobel"', self.redis.store[key])
+        data = await self.dashboard()
+        self.assertNotIn(kunci, ids(data))
+        self.assertIn((kunci, "bukan_dobel"), [(d["kunci"], d["pilihan"]) for d in data["advisor"]["disembunyikan"]])
+
+        async with self.Session() as db:
+            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db)
+        self.assertEqual(resp.status_code, 204)
+        self.assertNotIn(key, self.redis.store)
+        self.assertIn(kunci, ids(await self.dashboard()))
+
+    async def test_bukan_tagihan_sampai_akhir_periode(self):
+        # #93: DAT-06 dikunci per langganan → "Bukan pembayaran tagihan" hanya untuk periode ini.
+        from app.core.period import get_budget_period
+        now = datetime.now(JKT)
+        async with self.Session() as db:
+            await do_dismiss(self.me, db, "DAT-06:listrik", "bukan_tagihan", now=now)
+        key = advisor_cache.kunci_dismiss(self.me.id, "DAT-06:listrik")
+        pe = get_budget_period(self.me.payday_day, now.date())[1]
+        self.assertEqual(self.redis.ttl[key], advisor_cache.ttl_dismiss("periode", now, pe))
+        self.assertIn('"pilihan": "bukan_tagihan"', self.redis.store[key])
+
     async def test_tanggal_berganti_cache_lama_diabaikan(self):
         await self.dashboard()
         key = advisor_cache.kunci_dashboard(self.hid, self.me.id)
@@ -264,6 +309,50 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
             data = await get_dashboard(self.me, db, now=besok)
         self.assertTrue(data["generated_at"].startswith(besok.date().isoformat()))
         self.assertIn(key, self.redis.store)
+
+
+class DismissHttpTests(unittest.TestCase):
+    """#93: `bukan_dobel` hanya untuk kunci DAT-03 dan `bukan_tagihan` hanya untuk DAT-06 → 422
+    sebelum apa pun disimpan. Tidak butuh database (dismiss dipalsukan)."""
+
+    def setUp(self):
+        import uuid
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.core.database import get_db
+        from app.core.deps import get_current_user
+
+        async def tanpa_db():
+            yield None
+        app = FastAPI()
+        app.include_router(advisor_routes.router, prefix="/advisor")
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
+        app.dependency_overrides[get_db] = tanpa_db
+        self.dismiss = AsyncMock()
+        p = patch.object(advisor_dashboard_svc, "dismiss", self.dismiss)
+        p.start()
+        self.addCleanup(p.stop)
+        self.client = TestClient(app)
+
+    def post(self, kunci, pilihan):
+        return self.client.post("/advisor/dismiss", json={"kunci": kunci, "pilihan": pilihan})
+
+    def test_pilihan_khusus_untuk_kunci_aturannya(self):
+        self.assertEqual(self.post("DAT-03:t1", "bukan_dobel").status_code, 204)
+        self.assertEqual(self.post("DAT-06:listrik", "bukan_tagihan").status_code, 204)
+        self.assertEqual(self.post("DAT-03:t1", "tidak_relevan").status_code, 204)   # menu umum tetap boleh
+        self.assertEqual([c.args[2:] for c in self.dismiss.await_args_list],
+                         [("DAT-03:t1", "bukan_dobel"), ("DAT-06:listrik", "bukan_tagihan"),
+                          ("DAT-03:t1", "tidak_relevan")])
+
+    def test_pilihan_khusus_untuk_kunci_lain_ditolak(self):
+        for kunci, pilihan in [("TAG-01:kpr", "bukan_dobel"), ("DAT-06:listrik", "bukan_dobel"),
+                               ("DAT-03:t1", "bukan_tagihan"), ("DAT-03:t1", "selamanya")]:
+            with self.subTest(kunci=kunci, pilihan=pilihan):
+                self.assertEqual(self.post(kunci, pilihan).status_code, 422)
+        self.dismiss.assert_not_awaited()
 
 
 if __name__ == "__main__":

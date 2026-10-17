@@ -9,9 +9,10 @@ Keputusan kecil S4 (juga di SESI-LOG.md):
 - DAT-02 tanpa CTA (§6G), jadi hanya tampil di halaman Analitik.
 - DAT-03 S4: satu insight per grup, CTA hapus kiriman berikutnya (`hapus_saran`); S4b: satu
   insight per grup struk, CTA hapus seluruh rantai kedua (`txn_ids`). "Bukan dobel" = dismiss
-  `tidak_relevan` (90 hari) untuk kunci insight itu.
-- DAT-06 "Bukan pembayaran tagihan" juga dismiss `tidak_relevan`; M4 belum membaca pilihan ini
-  (perlu status di snapshot) — tercatat sebagai sisa pekerjaan.
+  `bukan_dobel` untuk kunci insight itu: permanen, tanpa TTL (#93).
+- DAT-06 "Bukan pembayaran tagihan" = dismiss `bukan_tagihan` sampai akhir periode (#93; kunci
+  per langganan, jadi tidak permanen). M4 belum membaca pilihan ini (perlu status di snapshot,
+  berlaku untuk household) — #107.
 """
 from __future__ import annotations
 
@@ -61,7 +62,8 @@ def dat_03(ctx: Konteks) -> list[Insight]:
         )
         ins.aksi = [{"kind": "delete_txn", "kode": "hapus_salah_satu",
                      "payload": {"txn_id": g["hapus_saran"][0], "txn_ids": list(g["hapus_saran"])}},
-                    {"kind": "not_duplicate", "kode": "bukan_dobel", "payload": {"kunci": ins.id}}]
+                    {"kind": "not_duplicate", "kode": "bukan_dobel",
+                     "payload": {"kunci": ins.id, "pilihan": "bukan_dobel"}}]
         out.append(ins)
     for g in s.struk_dobel:
         first = by_id.get(g["txn_ids"][0])
@@ -76,7 +78,8 @@ def dat_03(ctx: Konteks) -> list[Insight]:
         )
         ins.aksi = [{"kind": "delete_txn", "kode": "hapus_duplikat",
                      "payload": {"txn_id": g["txn_ids"][0], "txn_ids": list(g["txn_ids"])}},
-                    {"kind": "not_duplicate", "kode": "bukan_dobel", "payload": {"kunci": ins.id}}]
+                    {"kind": "not_duplicate", "kode": "bukan_dobel",
+                     "payload": {"kunci": ins.id, "pilihan": "bukan_dobel"}}]
         out.append(ins)
     return out
 
@@ -120,7 +123,8 @@ def dat_06(ctx: Konteks) -> list[Insight]:
             rupiah=x["jumlah"], urgensi=Decimal("0.8"), amplop_id=x["envelope_id"],
         )
         ins.aksi = [{"kind": "mark_paid", "kode": "tandai_lunas", "payload": {"recurring_id": x["recurring_id"]}},
-                    {"kind": "not_duplicate", "kode": "bukan_tagihan", "payload": {"kunci": ins.id}}]
+                    {"kind": "not_duplicate", "kode": "bukan_tagihan",
+                     "payload": {"kunci": ins.id, "pilihan": "bukan_tagihan"}}]
         out.append(ins)
     return out
 

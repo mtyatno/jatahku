@@ -121,3 +121,14 @@ test('hiddenList: yang disembunyikan, tanpa yang baru dimunculkan lagi (#91)', (
   assert.deepEqual(hiddenList({}), []);
   assert.deepEqual(hiddenList(ADVISOR), []);
 });
+
+test('hiddenList: label pilihan khusus Bukan dobel / Bukan pembayaran tagihan (#93)', () => {
+  const adv = {
+    disembunyikan: [
+      { kunci: 'DAT-03:t1', judul_pendek: 'Kemungkinan dobel', pilihan: 'bukan_dobel' },
+      { kunci: 'DAT-06:listrik', judul_pendek: 'Listrik sepertinya sudah dibayar', pilihan: 'bukan_tagihan' },
+    ],
+  };
+  assert.deepEqual(hiddenList(adv).map(d => d.sampai),
+    ['ditandai bukan dobel', 'bukan pembayaran tagihan, sampai akhir periode']);
+});

@@ -19,6 +19,9 @@ import { formatCurrency } from '../lib/utils';
 import { chatDraft, dismissNotice, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
 import { formEnvelopes, percentagesFor, recommendationAllocations } from '../lib/allocationAdvice';
 import { Icon, EnvelopeIcon } from './Icon';
+import UpdateRequired from './UpdateRequired';
+import { AppConfigProvider, useAppConfigLoader } from '../hooks/useAppConfig';
+import { isUpdateRequired } from '../lib/appConfig';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -357,6 +360,7 @@ export default function Layout() {
   const catatRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const appConfig = useAppConfigLoader();
 
   const openChat = () => { setFabMenu(false); setChatMounted(true); setChatOpen(true); };
   const closeChat = useCallback(() => setChatOpen(false), []);
@@ -438,6 +442,8 @@ export default function Layout() {
         case 'dismiss':
         case 'not_duplicate': {
           if (!payload.kunci) return;
+          // not_duplicate membawa pilihan bukan_dobel / bukan_tagihan dari server (#93); tidak_relevan
+          // hanya cadangan untuk payload lama yang belum membawanya.
           const pilihan = payload.pilihan || (kind === 'not_duplicate' ? 'tidak_relevan' : 'nanti');
           const res = await api.advisorDismiss(payload.kunci, pilihan);
           if (!res.ok) { showNotice(res.status === 404 ? 'Belum tersedia, coba lagi nanti' : 'Gagal menyimpan'); return; }
@@ -499,6 +505,7 @@ export default function Layout() {
     navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
 
+  if (isUpdateRequired(appConfig)) return <UpdateRequired config={appConfig} />;
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -516,6 +523,7 @@ export default function Layout() {
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
 
   return (
+    <AppConfigProvider value={appConfig}>
     <div className="min-h-screen bg-page">
       <Sidebar items={sidebarItems} langgananBadge={langgananBadge} leaderboard={leaderboard}
         isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode} />
@@ -525,9 +533,9 @@ export default function Layout() {
           Tanpa backdrop-filter: modal laporan yang dirender di slot ini memakai position: fixed. */}
       <div className="hidden lg:flex sticky top-0 z-40 items-center justify-between gap-6 px-8"
         style={{ height: TOPBAR_HEIGHT, background: 'var(--page)', borderBottom: '1px solid var(--border)' }}>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[26px] font-bold leading-tight truncate" style={{ color: 'var(--text)' }}>Halo, {firstName}</p>
-          <p className="text-[15px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{todayLabel()}</p>
+          <p className="text-[15px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{todayLabel()}</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div ref={setTopbarSlot} className="flex items-center gap-3" />
@@ -742,5 +750,6 @@ export default function Layout() {
         </div>
       )}
     </div>
+    </AppConfigProvider>
   );
 }

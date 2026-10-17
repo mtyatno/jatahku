@@ -4,6 +4,39 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## A01–A03 · 1.3 Header klien, /app/config, layar perlu update · 2026-10-17 · Claude
+
+**Selesai** (paket selesai dalam satu sesi; status review)
+- Server: `app/core/client.py` (parser `X-Jatahku-Client`; header kosong/rusak = `unknown`, diperlakukan seperti web), `app/services/app_config.py` (isi config + bawaan), `app/api/routes/app_config.py` (`GET /app/config`, `POST /app/errors`), router di `app/main.py`.
+- `/app/config`: `config_version`, `client`, `update` (status ok/recommended/required, versi minimum/terbaru, store_url), `versions` per platform, `sales_mode` (none/store/web), `features` (semua mati), `links`, `ota` (slot kosong), `error_reporting`. Bawaan ditimpa tanpa deploy lewat AppSetting `app_config` (JSON, lihat docstring service).
+- Web: `lib/clientInfo.js` (header dari konstanta build), `apiFetch` di `api.js` (semua 10 `fetch` membawa header), `lib/appConfig.js` (cache lokal, TTL 1 jam, tidak pernah memblokir), `lib/errorReporter.js` (maks 5 laporan/muat, dedupe), `hooks/useAppConfig.jsx` (loader + context `useAppConfig()`), `components/UpdateRequired.jsx`, gerbang di `Layout.jsx`. `vite.config.js` menanam `__APP_VERSION__` (package.json) dan `__APP_PLATFORM__` (env `JATAHKU_PLATFORM`, bawaan `web`).
+- Tes: `app/tests/test_app_config.py` (19), `appConfig/clientInfo/errorReporter.test.js`. Dicoba di Chromium dengan API tiruan: config ok → web normal; required → layar "Perlu pembaruan"; header `web/0.1.0/<commit7>` di setiap request.
+- `PROGRESS.md`: O01 ditandai selesai (#100 sudah merge).
+
+**Digantung (dicatat, di luar scope)**
+- CORS `allow_origins` belum memuat origin Capacitor (`https://localhost`, `capacitor://localhost`) — perlu sebelum 3.1.
+- `fetch` tanpa header: `sw.js` (background sync; terbaca `unknown` = web), `Upgrade.jsx` (bukti bayar), `Settings.jsx` (foto profil) — dipindah di 1.5.
+- Gerbang "perlu update" ada di `Layout`, jadi halaman login tidak tertutup; lebih tepat di `App.jsx` (1.5 atau 3.1).
+- Tombol toko di `UpdateRequired` memakai `<a target=_blank>`; diganti adapter tautan luar di 3.2.
+- `00-indeks.md` masih menyebut O01 "di review".
+
+**Jebakan**
+- Header kustom membuat request yang dulu "simple" (mis. `GET /auth/google/config`, `tg-login`) kini butuh preflight CORS. `allow_headers=["*"]` sudah menutupnya.
+- `pkill -f "vite preview"` di satu perintah Bash ikut membunuh shell itu sendiri; jalankan terpisah.
+- `npm run build` mengubah `frontend/dist/index.html` yang di-commit; kembalikan dengan `git checkout -- frontend/dist`.
+
+**Keputusan kecil**
+- Mode jualan bawaan: web `web`, android/ios `none`. Laporan error bawaan server `enabled: true, sample_rate: 1.0` (aktif untuk web begitu merge; matikan lewat AppSetting bila log terlalu ramai).
+- Cache config disimpan bersama nilai header klien; setelah aplikasi diperbarui, status "required" milik versi lama tidak terbawa.
+- Versi tak terbaca tidak pernah menghasilkan "required".
+- Isi `/app/config` = kontrak: field hanya boleh ditambah.
+
+**Cara melanjutkan**
+- Review PR `Mobile 1.3`, merge, lalu cek `curl -H "X-Jatahku-Client: android/1.0.0/1" https://api.jatahku.com/app/config`.
+- Paket berikutnya yang terbuka: B01–B06 (1.5, butuh 1.3) dan A18–A20 (1.6, membaca `sales_mode` lewat `useAppConfig()` di web dan `build_config(client_of(request))` di server).
+
+---
+
 ## O01 · 0.1 Bootstrap dokumen · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

@@ -6,7 +6,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 
 | Kode sesi | WBS | Jalur | Paket | Minggu | Status | Pemilik | PR | Mulai | Selesai |
 |---|---|---|---|---|---|---|---|---|---|
-| O01 | 0.1 | O | Setujui ADR-M1–M16; pindahkan kajian ke docs/mobile di repo; aturan mobile ke AGENTS.md | 1 | berjalan | Pemilik produk + Claude | (PR ini) | 2026-10-17 | |
+| O01 | 0.1 | O | Setujui ADR-M1–M16; pindahkan kajian ke docs/mobile di repo; aturan mobile ke AGENTS.md | 1 | selesai | Pemilik produk + Claude | #100 | 2026-10-17 | 2026-10-17 |
 | O02 | 0.2 | O | Daftar Google Play Console dan Apple Developer Program | 1 | belum |  |  |  | |
 | O03 | 0.3 | O | Daftar PSE: NIB perorangan dan TD PSE lewat OSS | 1 | belum |  |  |  | |
 | O04 | 0.5 | O | Rekrut 15–20 penguji closed test | 1 | belum |  |  |  | |
@@ -17,7 +17,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | O12–O13 | 4.3 | O | Internal test lalu closed test ≥12 penguji × 14 hari; pantau harian | 6 | belum |  |  |  | |
 | O14 | 4.4 | O | Ajukan produksi Play, rilis bertahap 20% → 100% | 10 | belum |  |  |  | |
 | O15–O17 | 5.7 | O | App Store Connect: label privasi, rating usia, screenshot iPhone dan iPad, catatan review; ajukan review | 11 | belum |  |  |  | |
-| A01–A03 | 1.3 | A | Header X-Jatahku-Client, GET /app/config, layar perlu update | 1 | belum |  |  |  | |
+| A01–A03 | 1.3 | A | Header X-Jatahku-Client, GET /app/config, layar perlu update | 1 | review | Claude | #109 | 2026-10-17 | 2026-10-17 |
 | A04–A06 | 1.4 | A | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 1 | belum |  |  |  | |
 | A07–A12 | 1.1 | A | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 2 | belum |  |  |  | |
 | A13–A17 | 1.2 | A | Hapus akun sungguhan + halaman permintaan hapus di web | 2 | belum |  |  |  | |

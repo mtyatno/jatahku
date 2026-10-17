@@ -46,10 +46,10 @@ export function AdvisorChip({ look, open, onClick, isDark }) {
     : { color: c.text, background: c.bg };
   return (
     <button type="button" onClick={onClick} aria-expanded={open} aria-haspopup="dialog"
-      className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap inline-flex items-center gap-1 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-      style={style}>
-      {!look.muted && <Icon name="advisor" size={12} weight="fill" />}
-      {look.text}
+      className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap inline-flex items-center gap-1 max-w-full min-w-0 hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+      style={style} title={look.text}>
+      {!look.muted && <Icon name="advisor" size={12} weight="fill" className="shrink-0" />}
+      <span className="truncate">{look.text}</span>
     </button>
   );
 }
