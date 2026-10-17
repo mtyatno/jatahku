@@ -21,7 +21,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | A04–A06 | 1.4 | A | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 1 | selesai | Dev A + Claude | #112 (uji merah: #114) | 2026-10-17 | 2026-10-17 |
 | A78–A83 | 1.4b | A | `response_model` untuk endpoint yang dipakai aplikasi (Cek API bisa melihat field respons) | 3–4 | belum |  |  |  | |
 | A07–A12 | 1.1 | A | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 2 | selesai | Pemilik produk + Claude | #116 | 2026-10-17 | 2026-10-17 |
-| A13–A17 | 1.2 | A | Hapus akun sungguhan + halaman permintaan hapus di web | 2 | review | Pemilik produk + Claude | (PR ini) | 2026-10-17 | |
+| A13–A17 | 1.2 | A | Hapus akun sungguhan + halaman permintaan hapus di web | 2 | selesai | Pemilik produk + Claude | #119 | 2026-10-17 | 2026-10-17 |
 | A18–A20 | 1.6 | A | Satu helper jualan untuk semua ajakan upgrade (web + bot) | 3 | belum |  |  |  | |
 | A21–A22 | 1.7 | A | Izin eksplisit sebelum audio/foto dikirim ke Groq | 3 | belum |  |  |  | |
 | A23–A24 | 1.8 | A | Amankan endpoint /auth/link/* | 3 | belum |  |  |  | |
@@ -42,8 +42,8 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | A69–A72 | 5.5a | A | Billing server: validasi Play dan App Store, hak per sumber, refund | 9 | belum |  |  |  | |
 | A73–A74 | 6.1 | A | Token widget baca-saja + /widget/summary | 10 | belum |  |  |  | |
 | A75–A77 | 6.4 | A | Tombol aksi "Catat ke amplop" di notifikasi struk | 10 | belum |  |  |  | |
-| B01–B06 | 1.5 | B | Lapisan src/native/ versi web; pindahkan semua pemanggil | 1 | review | Pemilik produk + Claude | #120 | 2026-10-17 | |
-| B07–B10 | 1.10 | B | Pemeriksaan tablet di web (md/lg, rotasi) | 1 | belum |  |  |  | |
+| B01–B06 | 1.5 | B | Lapisan src/native/ versi web; pindahkan semua pemanggil | 1 | selesai | Pemilik produk + Claude | #120 | 2026-10-17 | 2026-10-17 |
+| B07–B10 | 1.10 | B | Pemeriksaan tablet di web (md/lg, rotasi) | 1 | jeda | Pemilik produk + Claude | #121 | 2026-10-17 | |
 | B11–B16 | 2.1 | B | Spike Capacitor di Android, iPhone, tablet: semua butir tersulit | 2 | belum |  |  |  | |
 | B17–B19 | 3.1 | B | Scaffold mobile/: Capacitor 8, appId, android/ di-commit, safe area, tombol kembali | 3 | belum |  |  |  | |
 | B20–B22 | 3.2 | B | Adapter capacitor.js: Keystore, antrean native, file, cetak, tautan luar | 3 | belum |  |  |  | |
