@@ -87,6 +87,16 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // POST /advisor/dismiss { "kunci": "…", "pilihan": "nanti|periode|tidak_relevan" } → 204
 //   nanti = sampai besok 05.00 waktu user · periode = sampai akhir periode · tidak_relevan = 90 hari.
 //   Muncul lagi lebih awal bila tone naik atau rupiah terdampak naik ≥ 50% (§9). Dismiss juga berlaku untuk chip KPI.
+// GET /advisor/page/transaksi?tanggal=YYYY-MM-DD&amplop=<uuid>   (S13, halaman Transaksi; keduanya opsional)
+//   → { "enabled": true, "generated_at": "…", "hari_ini": "2026-10-15",
+//       "banner": {/* insight */} | null,
+//       "penanda": { "<txn_id>": [{/* insight */}, …] } }
+//   banner: filter amplop → AMP-* amplop itu (tone dulu, lalu skor); kalau tidak, tanggal = hari ini → isi chip
+//   KPI Jatah (HAR-*), sama dengan Beranda; selain itu null. Amplop yang tidak terlihat viewer → null.
+//   penanda: insight ber-slot "transaksi" per id transaksi — HAR-03/DAT-06/TAG-06 → txn_id-nya; DAT-03 dobel →
+//   semua anggota pasangan; DAT-03 struk dua kali → barang struk kedua; TAG-07 → kemunculan terakhir pola.
+//   Insight yang di-dismiss viewer tidak muncul (sama dengan Beranda). Di luar flag → {"enabled": false}.
+//   Tanpa cache server: dihitung ulang tiap muat (filter berubah, txn-added, munculkan lagi).
 // DELETE /advisor/dismiss?kunci=…  (#91, Urungkan / Munculkan lagi) → 204
 //   Menghapus dismiss milik viewer sendiri untuk kunci itu + cache dashboard viewer; insight tampil lagi di muatan
 //   berikutnya. Idempoten: 204 juga bila kunci tidak sedang disembunyikan. Dismiss viewer lain tidak tersentuh.
