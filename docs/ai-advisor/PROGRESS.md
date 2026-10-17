@@ -23,4 +23,4 @@ Diubah di PR sesi itu sendiri (lihat `03-workflow.md` §9). Status: belum · ber
 | S16 | #71 | Notifikasi proaktif | 4 | 3 | review | Pemilik produk + Claude | #102 | 2026-10-17 | |
 | S17 | #72 | Chat lengkap | 4 | 2 | selesai | Pemilik produk + Claude | #103 | 2026-10-17 | 2026-10-17 |
 | S18 | #73 | Copy, landing, blog, dokumen | 4 | 2 | belum | | | | |
-| S19 | #74 | Pikir-Pikir masuk AI Advisor (aturan siap; sambungan menunggu Pikir-Pikir Fase 2/3) | 4 | 2 | review | Pemilik produk + Claude | (PR ini) | 2026-10-17 | |
+| S19 | #74 | Pikir-Pikir masuk AI Advisor (aturan siap; sambungan menunggu Pikir-Pikir Fase 2/3) | 4 | 2 | review | Pemilik produk + Claude | #104 | 2026-10-17 | |
