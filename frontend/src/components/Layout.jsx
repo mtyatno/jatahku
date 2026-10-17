@@ -442,6 +442,8 @@ export default function Layout() {
         case 'dismiss':
         case 'not_duplicate': {
           if (!payload.kunci) return;
+          // not_duplicate membawa pilihan bukan_dobel / bukan_tagihan dari server (#93); tidak_relevan
+          // hanya cadangan untuk payload lama yang belum membawanya.
           const pilihan = payload.pilihan || (kind === 'not_duplicate' ? 'tidak_relevan' : 'nanti');
           const res = await api.advisorDismiss(payload.kunci, pilihan);
           if (!res.ok) { showNotice(res.status === 404 ? 'Belum tersedia, coba lagi nanti' : 'Gagal menyimpan'); return; }

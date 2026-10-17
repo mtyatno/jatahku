@@ -4,6 +4,37 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## #93 "Bukan dobel" permanen · 2026-10-17 · pemilik produk + Claude
+
+**Konteks:** Spesifikasi DAT-03 (§6G): "Bukan dobel" permanen. Kode memakai dismiss `tidak_relevan` (90 hari). Dalam praktik 90 hari sudah cukup karena S4/S4b hanya melihat periode berjalan (≤ 31 hari), tetapi jaminan itu bergantung diam-diam pada batas tersebut. DAT-06 "Bukan pembayaran tagihan" lewat jalur yang sama dan ikut tersembunyi 90 hari (±3 periode), padahal spesifikasinya "untuk periode ini".
+
+**Selesai**
+- `advisor_cache.py`: pilihan dismiss `bukan_dobel` (tanpa TTL) dan `bukan_tagihan` (sampai akhir periode); `PILIHAN_ATURAN` + `pilihan_sah()` (pilihan khusus hanya untuk kunci aturannya); `ttl_dismiss` → `int | None`; `simpan_dismiss` menerima `None` (SET tanpa EX, menimpa TTL lama).
+- `routes/advisor.py`: `DismissRequest.pilihan` menerima keduanya; validator → 422 bila kunci bukan `DAT-03:…` / `DAT-06:…`.
+- `rules/data.py`: payload `not_duplicate` membawa `pilihan` (DAT-03 → `bukan_dobel`, DAT-06 → `bukan_tagihan`).
+- `dashboard.dismiss`: dua pilihan baru ikut dicatat di log evaluasi (`advisor bukan_dobel …`); baris log `tidak_relevan` tidak berubah.
+- Frontend: toast DAT-06 jadi "Ditandai bukan pembayaran tagihan" (sebelumnya keliru "Ditandai bukan dobel"); label "N disembunyikan": "ditandai bukan dobel" / "bukan pembayaran tagihan, sampai akhir periode" (tanpa ini jatuh ke "sampai pukul 05.00"). Payload lama tanpa `pilihan` tetap `tidak_relevan`.
+- Dokumen: 02-aturan §6G (DAT-03, DAT-06), §9, §11; 04-kontrak-api (POST /advisor/dismiss, `disembunyikan`, tabel aksi `not_duplicate`).
+
+**Keputusan kecil**
+- DAT-06 **tidak** dibuat permanen walau issue mengusulkannya: kuncinya `DAT-06:{recurring_id}` (per langganan), jadi permanen = pembayaran manual sungguhan di periode berikutnya tidak pernah ditandai lagi. Ikut spesifikasi "untuk periode ini".
+- Pilihan sendiri, bukan `periode`, supaya M4 nanti (#107) bisa membedakan "bukan pembayaran" dari "Sembunyikan periode ini".
+- Aturan muncul-lagi §9 tetap berlaku untuk `bukan_dobel`: transaksi kembar baru masuk grup yang sama → rupiah naik ≥ 50% → tampil lagi.
+- Menu dismiss umum (Nanti · Sembunyikan periode ini · Tidak relevan) di DAT-03/DAT-06 tidak berubah.
+
+**Digantung**
+- #107: M4 dan `reserved.py` belum membaca "Bukan pembayaran tagihan" (status perlu masuk snapshot, berlaku untuk household).
+
+**Jebakan**
+- Kunci `bukan_dobel` tidak pernah kedaluwarsa (satu per klik, kecil). Ikut hilang bila Redis kehilangan data, sama dengan dismiss lain.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+
+**Tes:** backend 995 OK (5 baru: TTL & `pilihan_sah`, alur Bukan dobel permanen → Munculkan lagi, TTL Bukan pembayaran tagihan, HTTP 204/422) · frontend 296 OK (2 baru) · build OK. Uji mutasi: TTL dikembalikan ke 90 hari atau validator dilepas → tes gagal.
+
+**Cara mencoba:** catat dua transaksi sama dalam 10 menit → penanda "Kemungkinan dobel" → Bukan dobel → toast "Ditandai bukan dobel"; `redis-cli TTL advisor:dismiss:<user>:DAT-03:<txn>` = -1. Kartu AI Advisor → "N disembunyikan" → Munculkan lagi.
+
+---
+
 ## S19 Pikir-Pikir masuk AI Advisor · 2026-10-17 · pemilik produk + Claude
 
 **Konteks:** Pikir-Pikir Fase 2/3 (refleksi "Sepadan?", Incaran) belum ada di `main`: tidak ada tabel, loader, `think_until`, atau endpoint. Pemilik produk memilih lanjut S19 dengan opsi B: aturan sebagai fungsi murni dengan bentuk masukan ditetapkan, diuji fixture, **belum disambung** ke data atau layar.

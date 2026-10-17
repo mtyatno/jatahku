@@ -176,7 +176,9 @@ async def _household_id(user, db) -> str | None:
 
 async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = None) -> None:
     """Simpan dismiss (§9). Tone & rupiah saat disembunyikan diambil dari dashboard terakhir,
-    supaya insight bisa muncul lagi bila tone naik atau rupiah naik ≥ 50%."""
+    supaya insight bisa muncul lagi bila tone naik atau rupiah naik ≥ 50% (juga untuk
+    `bukan_dobel` yang permanen: transaksi kembar baru masuk grup yang sama). Kecocokan
+    pilihan khusus dengan kunci dicek di route (`advisor_cache.pilihan_sah`)."""
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
     hid = await _household_id(user, db)
     cached = await advisor_cache.ambil(hid, user.id) if hid else None
@@ -189,8 +191,9 @@ async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = Non
     info = meta.get(kunci) or {}
     ttl = advisor_cache.ttl_dismiss(pilihan, now_local, period_end)
     await advisor_cache.simpan_dismiss(user.id, kunci, pilihan, info.get("tone"), info.get("rupiah"), ttl)
-    if pilihan == "tidak_relevan":  # dicatat untuk evaluasi aturan (§9)
-        logger.info("advisor tidak_relevan user=%s kunci=%s tone=%s", user.id, kunci, info.get("tone"))
+    # Dicatat untuk evaluasi aturan (§9); bukan_dobel/bukan_tagihan = salah tanda S4/S4b/S19 (#93).
+    if pilihan in ("tidak_relevan", "bukan_dobel", "bukan_tagihan"):
+        logger.info("advisor %s user=%s kunci=%s tone=%s", pilihan, user.id, kunci, info.get("tone"))
     if hid:
         await advisor_cache.invalidate_viewer(hid, user.id)
 

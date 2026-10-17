@@ -490,12 +490,13 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 **DAT-03 · Kemungkinan dobel**
 - Pemicu: S4 atau S4b. Tone: warn. Slot: penanda baris Transaksi; daftar bila nominal ≥ Rp100 rb.
 - CTA: Hapus salah satu · Bukan dobel. Untuk S4b: Hapus duplikat ({n} barang) · Bukan dobel, satu konfirmasi untuk seluruh grup.
-- "Bukan dobel" mematikan penanda untuk pasangan itu secara permanen (Redis).
+- "Bukan dobel" mematikan penanda untuk pasangan itu secara permanen (Redis): dismiss `bukan_dobel` tanpa TTL (#93), tetap bisa Munculkan lagi. Muncul lagi lebih awal hanya lewat aturan umum §9, mis. transaksi kembar baru masuk grup yang sama (rupiah naik ≥ 50%).
 
 **DAT-06 · Tagihan sepertinya sudah dibayar**
 - Pemicu: S19. Tone: warn. Slot: KPI Tagihan, Langganan, penanda baris Transaksi, daftar.
 - Isi: "Transaksi {deskripsi} {rp} nominalnya sama dengan tagihan {nama}. Sisa bebas sudah menghitungnya lunas, tapi tagihannya masih tercatat belum dibayar."
 - CTA: Tandai lunas (memajukan `next_run`, tanpa transaksi baru) · Bukan pembayaran tagihan (M4 berhenti menganggapnya lunas untuk periode ini).
+- "Bukan pembayaran tagihan" = dismiss `bukan_tagihan` sampai akhir periode (#93), tidak permanen: kuncinya per langganan, jadi pembayaran manual periode berikutnya tetap ditandai. Bagian M4 belum dikerjakan (#107).
 - Catatan: ini menutup celah hitung ganda antara M2 dan M4 sekaligus menyamakan `reserved.py` (nominal persis) dengan `recurring_status.py` (deskripsi "🔄 …"), yang hari ini bisa saling bertentangan.
 
 **DAT-04 · Lupa catat?** — Pemicu: S15. Tone: info. CTA: Catat · Hari ini tidak belanja.
@@ -614,6 +615,7 @@ Dipakai oleh semua CTA "Geser", "Geser & bayar", "Tutup minus", dan "Pindahkan k
 - **Nanti:** disembunyikan sampai besok pukul 05.00 waktu user.
 - **Sembunyikan periode ini:** sampai pe.
 - **Tidak relevan** (di Rincian): aturan itu dimatikan untuk entitas itu selama 90 hari, dan dicatat untuk evaluasi aturan.
+- **Pilihan khusus CTA** (#93), hanya sah untuk kunci aturannya (selain itu 422): `bukan_dobel` (DAT-03) permanen, `bukan_tagihan` (DAT-06) sampai pe. Keduanya dicatat untuk evaluasi aturan, seperti Tidak relevan.
 - **Muncul lagi lebih awal** hanya bila tone naik (info → warn → danger) atau rupiah terdampak naik ≥ 50% sejak disembunyikan.
 - **Urungkan / Munculkan lagi** (revisi 17 Okt 2026, #91): user bisa membatalkan dismiss kapan saja.
   - Setelah menyembunyikan, toast "Disembunyikan sampai …" memberi tombol **Urungkan** (±6 detik).
@@ -672,6 +674,7 @@ Nilai default; bisa diatur lewat `AppSetting` tanpa deploy.
 | Item daftar AI Advisor | 3 (1 per amplop, 2 per domain) | §7 |
 | Notifikasi proaktif | 1/hari, jam tenang 21.00–07.00 | §9 |
 | Nanti / tidak relevan | sampai 05.00 besok / 90 hari | §9 |
+| Bukan dobel / bukan pembayaran tagihan | permanen / sampai pe | DAT-03, DAT-06 |
 | Pola menyesal | ≥ 3 jawaban "Menyesal" per amplop dalam 2 periode (`pola_menyesal_n`) | PP-03 |
 
 ## 12. Contoh lengkap: Beranda 15 Okt 2026
