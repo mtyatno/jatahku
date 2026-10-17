@@ -155,8 +155,11 @@ async def get_dashboard(user, db, now: datetime | None = None) -> dict:
         cached = await advisor_cache.ambil(hid, user.id)
         if cached and cached.get("payload", {}).get("generated_at", "")[:10] == now_local.date().isoformat():
             return cached["payload"]
+    sebelum = set(await advisor_cache.muat_dismiss(user.id)) if hid else set()
     payload, meta, snap = await _hitung(user, db, now_local, pengaturan)
-    if hid:
+    # Dismiss/Urungkan yang terjadi selama menghitung (#91): jangan simpan payload basi ke cache,
+    # nanti invalidate dari batal_dismiss terlewat dan insight tetap tersembunyi sampai 90 detik.
+    if hid and set(await advisor_cache.muat_dismiss(user.id)) == sebelum:
         await advisor_cache.simpan(hid, user.id, {"payload": payload, "meta": meta,
                                                   "period_end": snap.periods[-1][1].isoformat()})
     return payload
@@ -192,9 +195,10 @@ async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = Non
         await advisor_cache.invalidate_viewer(hid, user.id)
 
 
-async def batal_dismiss(user, db, kunci: str) -> bool:
+async def batal_dismiss(user, db, kunci: str) -> bool | None:
     """Munculkan lagi insight yang disembunyikan viewer (§9, #91): hapus status dismiss-nya
-    lalu cache dashboard viewer, supaya muatan berikutnya langsung menampilkannya."""
+    lalu cache dashboard viewer, supaya muatan berikutnya langsung menampilkannya.
+    None = Redis gagal (route membalas 503)."""
     ada = await advisor_cache.hapus_dismiss(user.id, kunci)
     logger.info("advisor batal_dismiss user=%s kunci=%s ada=%s", user.id, kunci, ada)
     hid = await _household_id(user, db)
