@@ -4,6 +4,40 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S10 · 2026-10-17 · pemilik produk + Claude
+
+**Selesai (PR ini)**
+- `app/scripts/advisor_paritas.py` (baru): cek read-only sebelum melebarkan flag. Untuk tiap user (flag diabaikan, tidak menulis DB/cache): Beranda (`dashboard._hitung`) vs chat "sisa", `/status`, ringkasan harian (`chat.muat`) — baris Dana belanja, Sisa bebas, Jatah hari ini · belanja harus sama; nama amplop pribadi anggota lain tidak boleh muncul di payload maupun teks (skenario 7); crash ditangkap per user; waktu hitung dibandingkan target 150 ms. Kode keluar 1 bila ada `beda`/`crash`. Tes: `test_advisor_paritas_script.py` (7, SQLite).
+- `docs/ai-advisor/05-verifikasi-rilis.md` (baru): cara menyetel flag (konsol browser / psql — tidak ada UI Admin), rollback, langkah 1–5 (deploy, cek paritas semua user, uji akun tim di Beranda/chat/Telegram/ringkasan, nyalakan `*`, pantau log 24 jam), daftar penghapusan jalur lama, tabel Catatan uji.
+- `AGENTS.md`: bagian v1 ditulis ulang (hanya untuk user di luar flag, jangan menambah aturan v1, mana yang tetap dipakai); bagian v2 + peta modul v2 dan aturan flag (`advisor_v2_users`, `advisor_konstanta`, cek paritas sebelum melebarkan flag).
+- Arsip: `docs/ai-advisor-review-2026-06-30.md` → `docs/arsip/` dengan catatan "jangan dipakai sebagai acuan kerja".
+- `PROGRESS.md`: S0–S7, S9 → selesai (semua sudah di `main`); S10 → review. `00-indeks.md`: fase sekarang + baris `05-verifikasi-rilis.md`.
+
+**Digantung (butuh VPS/admin — pemilik produk)**
+- Langkah 1–5 `05-verifikasi-rilis.md`: jalankan `advisor_paritas` di VPS, uji akun tim, nyalakan flag `*`, pantau. Isi tabel Catatan uji. Sampai itu, S10 belum selesai walau PR ini di-merge.
+- **S10b (PR lanjutan, sesudah `*` stabil):** hapus jalur lama — jawaban bot lama (`nlp_cmd`, `handlers.cmd_status`, `checkin_cmd`, `summary.py`, `advisor_cmd` tanpa fallback), `AttentionCard`/`attentionItems`/`getAdvisorInsights`, cabang flag-mati `Dashboard.jsx`, `GET /advisor/insights` + aturan v1 + `context.py` bila tak terpakai. Menyentuh file milik S6/S7/S9 — sudah disetujui pemilik produk ("ikut usulmu") untuk dikerjakan sesudah flag `*`.
+- Masih terbuka dari sesi lain: kartu grafik memanjang di layar lebar (S6 lanjutan), bot `fund_shift` tanpa kunci household (S5/S9), "Lihat semua" saran (S7).
+
+**Keputusan kecil**
+- Penghapusan jalur lama dipisah dari PR ini supaya user di luar flag tidak kehilangan bot/Beranda bila flag `*` tertunda atau di-rollback.
+- Skrip paritas memaksa flag lewat `pengaturan` (bukan menulis AppSetting) supaya bisa menilai semua user sebelum `*` tanpa efek samping.
+- Nama amplop pribadi yang kembar dengan amplop yang terlihat viewer tidak dihitung bocor (tidak bisa dibedakan dari teks).
+- Paket baru `app/scripts/` untuk skrip operasional (dijalankan `python -m app.scripts.<nama>` dari `/opt/jatahku/app`).
+
+**Jebakan**
+- Tidak ada UI Admin untuk `advisor_v2_users`; `PUT /admin/settings/{key}?value=` butuh token admin (lihat konsol browser di 05).
+- Cache dashboard 90 detik: perubahan flag/data di Beranda bisa tertunda ≤ 90 detik, bot & ringkasan seketika — jangan dikira beda angka saat uji.
+- `npm run build` mengubah `frontend/dist/index.html`; kembalikan sebelum commit.
+- Sesi ini dikerjakan di branch `ai-advisor/s10-verifikasi-rilis` (bukan branch bawaan sesi Claude Code).
+
+**Tes:** backend 853 OK (7 baru) · frontend 260 OK · build OK.
+
+**Cara mencoba:** di VPS sesudah deploy: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.advisor_paritas` (atau `--user <id>`). Lokal: `python -m unittest app.tests.test_advisor_paritas_script -v`.
+
+**Lanjut:** ikuti `05-verifikasi-rilis.md` langkah 1–5, catat hasilnya; lalu buka sesi "S10b hapus jalur lama" (prompt pembuka §3, issue #65 atau issue baru berlabel `ai-advisor`) dengan daftar di langkah 6. Bila cek paritas menemukan `beda`/`crash`, kirim keluarannya (tanpa data pribadi) ke sesi Claude Code untuk perbaikan kecil sebelum `*`.
+
+---
+
 ## S6 lanjutan · 2026-10-16 · Claude
 
 **Selesai**

@@ -77,11 +77,11 @@
 - Always convert with `str(value)` before comparison: `str(getattr(obj, "field", "default"))`
 - This applies to all SAEnum/String columns
 
-## Advisor Insights Engine (v1, sedang diganti v2)
-- Paket `app/services/advisor/` — `build_advisor_insights()` di `rules/__init__.py`, aturan per file di `rules/` (depletion, subscription, drift, goals, overspend), `context.py` (`load_advisor_context`), `allocation.py`, `sinking.py`, `projection.py`, `confidence.py`
-- Card types: `env_depletion`, `subscription_pressure`, `allocation_drift`, `goal_progress`, `budget_overspend`
-- Do NOT wrap advisor route in silent try/except — hides real errors (per-rule isolation sudah ada di `rules/__init__.py`)
-- New envelopes without spending history still get stats (all zeros) — they won't generate cards but won't crash either
+## Advisor Insights Engine v1 (lama — hanya untuk user di luar flag, dihapus setelah flag `*`)
+- `GET /advisor/insights` → `build_advisor_insights()` di `rules/__init__.py`, aturan v1 di `rules/{depletion,subscription,drift,goals,overspend}.py`, loader `context.py`. Dipakai `AttentionCard` (Beranda lama) dan jawaban bot lama.
+- Jangan menambah aturan v1. Aturan baru masuk v2 (`rules/{hari,periode,amplop,tagihan,pemasukan,tabungan,data}.py`).
+- Tetap dipakai (bukan bagian yang dihapus): `allocation.py` (`/advisor/allocation-recommendation`), `sinking.py` (`/advisor/sinking-funds`, juga `signals.py` v2), `formatting.py`.
+- Do NOT wrap advisor route in silent try/except — hides real errors.
 
 ## AI Advisor v2 (WAJIB untuk semua sesi AI Advisor)
 Dokumen: `docs/ai-advisor/` (mulai dari `00-indeks.md`). Satu sesi = satu PR; status di `docs/ai-advisor/PROGRESS.md`, serah-terima di `SESI-LOG.md`.
@@ -92,6 +92,8 @@ Dokumen: `docs/ai-advisor/` (mulai dari `00-indeks.md`). Satu sesi = satu PR; st
 5. **CTA pemindah dana lewat `/advisor/plan` → `/advisor/execute`**, dengan `client_ref`. Tidak ada transfer dari frontend tanpa rencana.
 6. **Privasi household** tetap lewat `visibility.py`; perencana tidak pernah memakai amplop pribadi anggota lain; cache advisor dihapus per household.
    Cache dashboard dihapus otomatis oleh hook sesi SQLAlchemy (`advisor_cache.install()`, dipasang di `main.py`) setiap commit yang menulis transaksi/pemasukan/alokasi/amplop/langganan/target/cocokkan saldo — jalur tulis baru (route, bot, scheduler) tidak perlu memanggil `invalidate` sendiri.
+- **Peta v2** (`app/services/advisor/`): `snapshot.py` (loader, satu-satunya DB) → `metrics.py` (angka) → `signals.py` → `rules/{hari,periode,amplop,tagihan,pemasukan,tabungan,data}.py` → `select.py` (skor, penekanan, slot) → `render.py` (teks) → `dashboard.py` (`GET /advisor/dashboard`, flag, konstanta, cache) / `chat.py` (jawaban chat web & Telegram, ringkasan). Perencana: `planner.py` + `execute.py` (`/advisor/plan`, `/advisor/execute`). Bot: `bot/advisor_cmd.py`. Frontend: `lib/advisorDashboard.js`, `lib/advisorCard.js`, `lib/advisorAction.js`, `components/{AdvisorChip,AdvisorCard,PlanSheet}.jsx`.
+- **Flag `advisor_v2_users`** (AppSetting, `PUT /admin/settings/advisor_v2_users?value=…`): daftar `user_id` dipisah koma, atau `*`. Satu flag untuk Beranda, chat web, Telegram, dan ringkasan — angka yang dilihat user selalu dari satu mesin. Konstanta §11 bisa ditimpa lewat AppSetting `advisor_konstanta` (JSON). Sebelum melebarkan flag, jalankan cek paritas read-only di VPS: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.advisor_paritas` (kode keluar 1 = ada user crash, angka beda, atau amplop pribadi bocor).
 - Tes: `pip install -r requirements-test.txt`, lalu `python -m unittest discover -s app/tests -t .`; frontend `cd frontend && node --test src/lib/*.test.js && npm run build`. CI (`.github/workflows/test.yml`) menjalankan yang sama di setiap PR.
 
 ## Household Visibility Contract (WAJIB)
