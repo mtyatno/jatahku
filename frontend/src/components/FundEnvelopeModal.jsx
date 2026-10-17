@@ -4,9 +4,9 @@ import { formatCurrency, formatShort } from '../lib/utils';
 import { Icon, EnvelopeIcon } from './Icon';
 import { PlanReview } from './PlanSheet';
 
-// advisor: dibuka lewat `jatahku:open-action` {kind:'fund'} (CTA AI Advisor).
-// Tab Geser memakai rencana multi-sumber dari /advisor/plan → /advisor/execute;
-// tanpa advisor tetap transfer satu sumber seperti sebelumnya.
+// advisor: tab Geser memakai rencana multi-sumber dari /advisor/plan → /advisor/execute
+// (aturan kerja #5). Dipakai CTA AI Advisor (`jatahku:open-action` {kind:'fund'}) dan, sejak S11,
+// QuickAddTransaction, MultiAddTransaction, SpendingEnvelopes. Tanpa advisor: transfer satu sumber.
 export default function FundEnvelopeModal({
   isOpen,
   onClose,

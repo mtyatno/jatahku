@@ -259,6 +259,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
 
       {showFundModal && selectedEnv && (
         <FundEnvelopeModal
+          advisor
           isOpen={showFundModal}
           onClose={() => setShowFundModal(false)}
           targetEnvelope={selectedEnv}

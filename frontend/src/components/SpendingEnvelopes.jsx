@@ -279,6 +279,7 @@ export default function SpendingEnvelopes({ envelopes, allEnvelopes, isDark, tra
 
       {fund && (
         <FundEnvelopeModal
+          advisor
           isOpen
           onClose={() => setFund(null)}
           targetEnvelope={fund.env}
