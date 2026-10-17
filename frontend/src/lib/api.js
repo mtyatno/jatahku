@@ -545,6 +545,19 @@ class ApiClient {
     return null;
   }
 
+  // GET /advisor/page/{halaman} (S11: 'amplop'). Sama dengan dashboard: {"enabled": false} atau
+  // null → halaman memakai tampilan lama.
+  async getAdvisorPage(halaman) {
+    try {
+      const res = await this.request(`/advisor/page/${halaman}`);
+      if (res.ok) return await res.json();
+      console.error('[advisor] page request failed:', halaman, res.status);
+    } catch (e) {
+      console.error('[advisor] page request error:', halaman, e);
+    }
+    return null;
+  }
+
   async _advisorPost(path, body) {
     try {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });

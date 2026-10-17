@@ -773,6 +773,36 @@ def render_insight(ins: Insight, ctx: Konteks, kpi: str | None = None) -> dict:
 
 
 # ── grafik harian (§7) ──────────────────────────────────────────────────
+def baris_dasar_amplop(d: dict) -> dict:
+    """Strip halaman Amplop (§7 "Halaman lain: Amplop") bila tidak ada insight untuk amplop itu.
+    `d` dari `halaman.dasar_amplop`: jenis `aman` (belanja, bebas > 0), `terpakai` (belanja,
+    bebas ≤ 0 tanpa aturan yang menyala), atau `tabungan`. Bentuk sama dengan `render_insight`
+    tanpa dismiss (bukan aturan, tidak bisa disembunyikan)."""
+    nama, jenis = d["nama"], d["jenis"]
+    aksi = []
+    if jenis == "aman":
+        jumlah = rp_ringkas(d["batas"])
+        judul = f"Aman, {jumlah} tersedia hari ini" if d["hari_terakhir"] else f"Aman, ±{jumlah}/hari tersedia"
+        out = {"tone": "ok", "chip": "Aman", "judul": judul,
+               "isi": f"Sisa bebas {rp_penuh(d['bebas'])} sampai {tgl(d['pe'])}.",
+               "fakta": [{"label": "Sisa bebas", "nilai": rp_penuh(d["bebas"])},
+                         {"label": "Maksimal per hari", "nilai": f"{rp_penuh(d['batas'])}/hari"}]}
+    elif jenis == "terpakai":
+        out = {"tone": "info", "chip": "Terpakai semua", "judul": f"Dana {nama} sudah terpakai semua",
+               "isi": f"Sisa bebas {rp_penuh(d['bebas'])} sampai {tgl(d['pe'])}.",
+               "fakta": [{"label": "Sisa bebas", "nilai": rp_penuh(d["bebas"])}]}
+        aksi.append({"kind": "fund", "label": "Isi dana", "payload": {"amplop_id": d["amplop_id"]}})
+    else:
+        saldo = rp_ringkas(d["saldo"])
+        out = {"tone": "ok", "chip": f"Saldo {saldo}", "judul": f"{nama}: saldo {saldo}",
+               "isi": "Sesuai rencana." if d["ada_target"] else "Tambahkan target biar terarah.",
+               "fakta": [{"label": "Saldo", "nilai": rp_penuh(d["saldo"])}]}
+        if d["boleh_setor"]:
+            aksi.append({"kind": "fund", "label": "Setor", "payload": {"amplop_id": d["amplop_id"]}})
+    return {"id": None, "aturan": None, **out, "aksi": aksi,
+            "dasar": {"teks": "Dari data periode ini", "keyakinan": "tinggi"}, "dismiss": None}
+
+
 def teks_grafik(m, s) -> dict:
     """Baris analisa grafik: S6 "{n} dari 7 hari terakhir lewat jatah" + puncaknya."""
     akhir = m.harian[-7:]

@@ -137,6 +137,16 @@ async def advisor_dashboard(
     return await get_dashboard(user, db)
 
 
+@router.get("/page/amplop")
+async def advisor_page_amplop(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Strip AI per kartu di halaman Amplop (S11, 02-aturan.md §7 "Halaman lain")."""
+    from app.services.advisor.halaman import get_halaman_amplop
+    return await get_halaman_amplop(user, db)
+
+
 class DismissRequest(BaseModel):
     kunci: str = Field(min_length=3, max_length=200)
     pilihan: Literal["nanti", "periode", "tidak_relevan"] = "nanti"
