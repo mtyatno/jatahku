@@ -53,8 +53,9 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_KEY }}
+          # deploy.sh membersihkan file hasil build sendiri sebelum git pull.
+          # User SSH hanya boleh sudo untuk deploy.sh (sudo git … gagal minta password).
           script: |
-            sudo git -C /opt/jatahku/app reset --hard HEAD
             sudo /opt/jatahku/deploy.sh
 
       - name: Verifikasi versi yang tayang
