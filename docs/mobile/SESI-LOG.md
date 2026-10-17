@@ -32,6 +32,25 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## A01–A03 · 1.3 penutupan: verifikasi produksi · 2026-10-17 · Claude
+
+**Selesai**
+- #109 merge dan deploy Actions berhasil. Diverifikasi langsung di produksi (commit `fe77ea2`, sudah memuat #109): `/health` healthy; `GET /app/config` benar per header (android/ios → `sales_mode: none`, web dan tanpa header → `web`, tanpa header → `platform: unknown`); `Cache-Control: public, max-age=300` + `Vary: X-Jatahku-Client`; `POST /app/errors` memvalidasi isi (422 untuk `{}`); preflight CORS dari jatahku.com mengizinkan `x-jatahku-client`; bundle web yang tayang mengirim `web/0.1.0/<commit7>`.
+- `PROGRESS.md`: 1.3 selesai. `00-indeks.md`: baris "Fase sekarang" diperbarui (O01 tidak lagi "di review").
+
+**Digantung**
+- Isi log `jatahku.client_errors` di VPS belum dilihat (laporan error web aktif sejak #109). Bila terlalu ramai: AppSetting `app_config` = `{"error_reporting": {"enabled": false}}`.
+- Temuan di luar scope dari entri di bawah tetap berlaku (CORS Capacitor sebelum 3.1, `fetch` tanpa header di 1.5, gerbang update di `App.jsx`, tautan toko di 3.2).
+
+**Jebakan**
+- Sandbox Claude Code awalnya menolak `api.jatahku.com`/`jatahku.com` (proxy 403); setelah domain ditambahkan di Network access environment, verifikasi langsung bisa.
+- Branch PR yang sudah merge tidak dipakai lagi: penutupan ini di branch baru `mobile/1.3-tutup` dari `origin/main` (force push ke branch lama ditolak, dan memang tidak perlu).
+
+**Cara melanjutkan**
+- `/sesi B01` (1.5, lapisan `src/native/`) atau `/sesi A18` (1.6, helper jualan: baca `sales_mode` lewat `useAppConfig()` di web dan `build_config(client_of(request))` di server).
+
+---
+
 ## A01–A03 · 1.3 Header klien, /app/config, layar perlu update · 2026-10-17 · Claude
 
 **Selesai** (paket selesai dalam satu sesi; status review)
