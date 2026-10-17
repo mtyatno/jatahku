@@ -142,6 +142,12 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 //   review & triwulanan/semesteran → `route` /transactions?envelope=<id>. Rekomendasi yang di-dismiss tidak muncul.
 // GET /analytics/daily-spending  (S15) — hanya amplop bersama + pribadi milik viewer (seperti endpoint
 //   analytics lain); amplop pribadi anggota lain tidak ikut.
+
+// POST /bot/chat/proaktif  (S16, 02-aturan.md §9 "Notifikasi proaktif") — dipanggil ChatPanel saat dibuka
+//   → {"ops": [{"type": "message", "id", "text" (HTML), "format": "html", "buttons": []}]}  atau {"ops": []}
+//   Isi = insight advisor hari ini (yang sudah dikirim peringatan/ringkasan, atau item #1 danger/warn), dari
+//   render.notifikasi_insight. Server membatasi: 1 hal advisor/hari, hal yang sama maks 2 permukaan
+//   (telegram, lonceng, chat), status dismiss terbaru (#91). Tidak ada jalur dismiss sendiri.
 ```
 
 ## Aksi CTA di frontend (S8)

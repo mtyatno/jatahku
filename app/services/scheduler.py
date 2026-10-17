@@ -146,14 +146,17 @@ async def run_user_summaries():
     """Check each user's timezone + preferred time, send if it matches now."""
     from datetime import datetime, timezone as tz
     from zoneinfo import ZoneInfo
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
     from app.core.database import AsyncSessionLocal
     from app.models.models import User, NotificationPreference
 
     now_utc = datetime.now(tz.utc)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(User).where(User.telegram_id != None))
+        # Semua user aktif: lonceng web & peringatan advisor juga untuk user tanpa Telegram (S16).
+        result = await db.execute(select(User).where(
+            or_(User.email == None, ~or_(User.email.startswith("deleted_"), User.email.startswith("banned_")))
+        ))
         users = result.scalars().all()
 
         for user in users:
@@ -174,17 +177,29 @@ async def run_user_summaries():
             daily_time = getattr(prefs, 'daily_summary_time', '20:00') or '20:00' if prefs else '20:00'
             weekly_time = getattr(prefs, 'weekly_summary_time', '08:00') or '08:00' if prefs else '08:00'
 
-            # Daily summary
-            if prefs and prefs.daily_summary_tg and user_hour == daily_time.split(':')[0] + ':00':
+            # AI Advisor: peringatan danger (item #1), maks 1/hari, di luar jam tenang (S16).
+            # Sebelum ringkasan: bila ringkasan harian jalan di jam yang sama, kuota dipakai sekali.
+            try:
+                from app.services.advisor.proaktif import kirim_peringatan
+                await kirim_peringatan(user, prefs, user_now)
+            except Exception as e:
+                logger.error(f"Advisor warning failed for {user.id}: {e}")
+
+            # Daily summary (Telegram dan/atau lonceng web, sesuai preferensi)
+            daily_tg = bool(prefs and prefs.daily_summary_tg and user.telegram_id)
+            daily_web = bool(prefs and prefs.daily_summary_web)
+            if (daily_tg or daily_web) and user_hour == daily_time.split(':')[0] + ':00':
                 try:
-                    await send_daily_summary(user_id=user.id)
+                    await send_daily_summary(user_id=user.id, telegram=daily_tg, web=daily_web)
                 except Exception as e:
                     logger.error(f"Daily summary failed for {user.id}: {e}")
 
             # Weekly summary (Monday only)
-            if user_now.weekday() == 0 and prefs and prefs.weekly_summary_tg and user_hour == weekly_time.split(':')[0] + ':00':
+            weekly_tg = bool(prefs and prefs.weekly_summary_tg and user.telegram_id)
+            weekly_web = bool(prefs and prefs.weekly_summary_web)
+            if user_now.weekday() == 0 and (weekly_tg or weekly_web) and user_hour == weekly_time.split(':')[0] + ':00':
                 try:
-                    await send_weekly_summary(user_id=user.id)
+                    await send_weekly_summary(user_id=user.id, telegram=weekly_tg, web=weekly_web)
                 except Exception as e:
                     logger.error(f"Weekly summary failed for {user.id}: {e}")
 
@@ -309,8 +324,7 @@ def start_scheduler():
     scheduler.add_job(
         process_recurring_transactions,
         trigger="cron",
-        hour=0,  # 07:00 WIB = 00:00 UTC
-        minute=1,
+        minute=1,  # tiap jam; per user mulai 07.00 lokal, sekali per jatuh tempo (S16)
         id="recurring_transactions",
         replace_existing=True,
     )

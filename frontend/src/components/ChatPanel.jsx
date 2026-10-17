@@ -419,6 +419,16 @@ export default function ChatPanel({ open, onClose, draft = null }) {
     if (looksLikeChange(ops)) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
   }, [showToast]);
 
+  // AI Advisor proaktif (S16): saat panel dibuka, tarik item hari ini. Server yang membatasi
+  // (sekali per hari, maks 2 permukaan), jadi buka-tutup panel tidak menggandakan pesan.
+  // Tidak dibatalkan saat panel ditutup: server sudah mencatatnya terkirim, jadi tetap disimpan.
+  useEffect(() => {
+    if (!open || !uid) return;
+    api.chatProaktif().then(res => {
+      if (res.ok && res.ops.length) receive(res.ops);
+    });
+  }, [open, uid, receive]);
+
   const deliver = useCallback(async (msg) => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       setMessages(m => setStatus(m, msg.id, 'failed'));
