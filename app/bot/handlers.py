@@ -663,7 +663,7 @@ async def handle_fund_shift_callback(update, context):
     import json
     import redis.asyncio as aioredis
     from app.services.fund_shift import (
-        compute_shortfall, record_topup, record_transfer, transfer_error,
+        compute_shortfall, lock_household, record_topup, record_transfer, transfer_error,
     )
 
     query = update.callback_query
@@ -713,6 +713,12 @@ async def handle_fund_shift_callback(update, context):
             return
         hid = await get_household_id(user, db)
         payday_day = getattr(user, "payday_day", 1) or 1
+        if not topup and hid:
+            # Kunci household yang sama dengan POST /envelopes/transfer dan /advisor/execute
+            # (02-aturan.md §14), SEBELUM saldo dihitung ulang: dua geser dana bersamaan
+            # (anggota lain di web, atau bot) tidak boleh sama-sama lolos cek sisa sumber.
+            # Dilepas saat commit/akhir sesi.
+            await lock_household(db, hid)
 
         # Hitung ulang dari data terbaru: saldo bisa berubah selama tombol menunggu.
         # get_envelopes_with_spent juga membatasi ke amplop aktif yang boleh diakses user.

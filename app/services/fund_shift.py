@@ -5,6 +5,10 @@ Dua cara, sama dengan dua tab di modal web:
 - Geser Amplop: transfer net-nol dari amplop lain. Sumber yang sah = amplop
   aktif lain yang sisanya (remaining) > 0; jumlah maksimal = sisa sumber.
 - Top-up Pemasukan: pemasukan baru yang 100% dialokasikan ke amplop tujuan.
+
+Setiap jalur yang memindah dana antar amplop memegang `lock_household` sebelum
+menghitung saldo: POST /envelopes/transfer, POST /advisor/execute, geser dana di bot
+(satu item & multi-item, termasuk chat web), dan hapus amplop (sisa → Tabungan).
 """
 from decimal import Decimal
 
@@ -12,6 +16,17 @@ from app.models.models import Allocation, Income
 
 # Berapa banyak amplop sumber yang ditawarkan sebagai tombol di Telegram.
 MAX_SOURCES = 4
+
+
+async def lock_household(db, hid) -> None:
+    """Kunci baris household sampai commit/rollback (`FOR NO KEY UPDATE`, pola
+    balance_check.apply). Ambil SEBELUM saldo dihitung ulang: dua geser dana
+    bersamaan diserialkan, dan penerus kunci melihat data yang sudah di-commit
+    pemegang sebelumnya (READ COMMITTED), jadi tidak sama-sama lolos cek sisa sumber.
+    key_share=True tidak memblokir insert ber-FK ke household (pemasukan, amplop)."""
+    from sqlalchemy import select
+    from app.models.models import Household
+    await db.execute(select(Household.id).where(Household.id == hid).with_for_update(key_share=True))
 
 
 def compute_shortfall(target_remaining: Decimal, amount: Decimal) -> Decimal:

@@ -363,6 +363,89 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.remaining("Transport"), D("175000"))
 
 
+    # ── Kunci household: sama dengan POST /envelopes/transfer & /advisor/execute ─
+
+    def record_lock_order(self, module):
+        """Catat urutan kunci household vs hitung ulang saldo di `module` (handlers/batch_cmd).
+        SQLite mengabaikan FOR UPDATE, jadi yang diuji: kunci diambil, dengan household yang
+        benar, SEBELUM saldo dihitung ulang (penerus kunci melihat data yang sudah di-commit)."""
+        from app.services import fund_shift
+        events = []
+        real_lock, real_rows = fund_shift.lock_household, module.get_envelopes_with_spent
+
+        async def lock(db, hid):
+            events.append(("kunci", hid))
+            await real_lock(db, hid)
+
+        async def rows(*a, **kw):
+            events.append(("saldo", None))
+            return await real_rows(*a, **kw)
+
+        ps = [patch.object(fund_shift, "lock_household", new=lock),
+              patch.object(module, "get_envelopes_with_spent", new=rows)]
+        if module is batch_cmd:
+            ps.append(patch.object(batch_cmd, "lock_household", new=lock))
+        for p in ps:
+            p.start()
+            self.addCleanup(p.stop)
+        return events
+
+    async def single_item_offer(self):
+        async def offer():
+            async with self.Session() as db:
+                user = (await db.execute(select(User).where(User.id == self.user_id))).scalar_one()
+                env = (await db.execute(select(Envelope).where(Envelope.name == "Makan"))).scalar_one()
+                send = AsyncMock()
+                await handlers._send_fund_shift_offer(send, str(TG_ID), user, self.hid, env,
+                                                      D("35000"), "sate", db)
+                return send.call_args
+        return (await self.go(offer)).kwargs["reply_markup"].inline_keyboard
+
+    async def test_single_item_shift_locks_household_before_recount(self):
+        keyboard = await self.single_item_offer()
+        events = self.record_lock_order(handlers)
+        await self.tap(next(r[0].callback_data for r in keyboard if "Transport" in r[0].text))
+        self.assertEqual(events[0], ("kunci", self.hid))
+        self.assertEqual([e for e, _ in events].count("kunci"), 1)
+        self.assertIn("saldo", [e for e, _ in events[1:]])
+        self.assertEqual(await self.remaining("Transport"), D("175000"))
+
+    async def test_single_item_topup_takes_no_lock(self):
+        keyboard = await self.single_item_offer()
+        events = self.record_lock_order(handlers)
+        await self.tap(next(r[0].callback_data for r in keyboard if r[0].callback_data.endswith(":t")))
+        self.assertNotIn("kunci", [e for e, _ in events])
+        self.assertEqual(await self.count(Transaction), 1)
+
+    async def test_multi_item_shift_locks_household_before_recount(self):
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        await self.go(lambda: batch_cmd.handle_multi_expense(update, None, [(D("30000"), "sate")]),
+                      {"sate": "Makan"})
+        keyboard = update.message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard
+        events = self.record_lock_order(batch_cmd)
+        call = await self.tap(next(r[0].callback_data for r in keyboard if "Transport" in r[0].text))
+        self.assertIn("1 transaksi dicatat", call.args[0])
+        names = [e for e, _ in events]
+        self.assertEqual(events[0], ("kunci", self.hid))
+        self.assertEqual(names.count("kunci"), 1)
+        self.assertIn("saldo", names[1:])
+        self.assertEqual(await self.remaining("Transport"), D("180000"))
+
+    async def test_multi_item_topup_and_skip_take_no_lock(self):
+        update = MagicMock()
+        update.effective_user = SimpleNamespace(id=TG_ID, first_name="Tes")
+        update.message.reply_text = AsyncMock()
+        await self.go(lambda: batch_cmd.handle_multi_expense(
+            update, None, [(D("30000"), "sate"), (D("30000"), "soto")]), {"sate": "Makan", "soto": "Makan"})
+        keyboard = update.message.reply_text.call_args.kwargs["reply_markup"].inline_keyboard
+        events = self.record_lock_order(batch_cmd)
+        call = await self.tap(next(r[0].callback_data for r in keyboard if r[0].callback_data.endswith("_t")))
+        keyboard = call.kwargs["reply_markup"].inline_keyboard
+        await self.tap(next(r[0].callback_data for r in keyboard if r[0].callback_data.endswith("_skip")))
+        self.assertNotIn("kunci", [e for e, _ in events])
+
     # ── Sisi web: aturan yang sama ditegakkan server ─────────────────────────
 
     async def web_user(self, db):

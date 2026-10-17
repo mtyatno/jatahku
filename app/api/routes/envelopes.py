@@ -378,6 +378,12 @@ async def delete_envelope(
             detail=f"Amplop ini masih punya {active_subs} langganan aktif. Pindahkan atau hentikan dulu.",
         )
 
+    # Sisa amplop dipindah ke Tabungan = geser dana: kunci household sebelum sisanya
+    # dihitung (sama dengan transfer & bot), supaya geser dana bersamaan dari amplop
+    # ini tidak membuat jumlah yang dipindah basi.
+    from app.services.fund_shift import lock_household
+    await lock_household(db, hid)
+
     # Find or create Tabungan
     tab_result = await db.execute(
         select(Envelope).where(
@@ -434,7 +440,7 @@ async def transfer_between_envelopes(
     Aturan (amplop aktif yang boleh diakses, jumlah ≤ sisa sumber) dan bentuk
     datanya dari app/services/fund_shift.py — sama dengan geser dana di bot."""
     from app.services.envelope_balance import compute_envelope_summaries
-    from app.services.advisor.execute import lock_household
+    from app.services.fund_shift import lock_household
     from app.services.fund_shift import record_transfer, transfer_error
 
     hid = await _get_hid(user, db)

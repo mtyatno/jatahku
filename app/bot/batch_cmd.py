@@ -50,7 +50,7 @@ from app.services.expense_rules import FUNDS_BLOCKS, after_expense_recorded, che
 from app.services.plan_limits import check_transaction_limit, quota_notice_after_input
 from app.services.goal_notify import goal_snapshot, notify_goals_reached
 from app.services.fund_shift import (
-    compute_shortfall, pick_sources, record_topup, record_transfer, transfer_error,
+    compute_shortfall, lock_household, pick_sources, record_topup, record_transfer, transfer_error,
 )
 
 BATCH_TTL = 600
@@ -290,6 +290,10 @@ async def _shift_step(db, user, hid, data, choice):
             return None
 
     payday_day = getattr(user, "payday_day", 1) or 1
+    if not topup and hid:
+        # Kunci household (sama dengan web & /advisor/execute) sebelum saldo dihitung
+        # ulang; dilepas saat _record_item commit atau sesi ditutup.
+        await lock_household(db, hid)
     env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     by_id = {str(e["envelope"].id): e for e in env_data}
     target = by_id.get(item["env_id"])
