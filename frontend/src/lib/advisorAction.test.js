@@ -116,3 +116,9 @@ test('undismiss & teks toast dismiss (#91)', () => {
   assert.equal(dismissNotice('dismiss', undefined), 'Disembunyikan sampai besok 05.00');
   assert.equal(dismissNotice('not_duplicate', 'tidak_relevan'), 'Ditandai bukan dobel');
 });
+
+test('teks toast pilihan khusus DAT-03 / DAT-06 (#93)', () => {
+  assert.equal(dismissNotice('not_duplicate', 'bukan_dobel'), 'Ditandai bukan dobel');
+  assert.equal(dismissNotice('not_duplicate', 'bukan_tagihan'), 'Ditandai bukan pembayaran tagihan');
+  assert.equal(dismissNotice('not_duplicate', undefined), 'Ditandai bukan dobel');   // payload lama
+});

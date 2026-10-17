@@ -1,10 +1,14 @@
 import { saveCache, loadCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
+import { withClientHeader } from './clientInfo';
 
 const API_URL = import.meta.env.PROD
   ? 'https://api.jatahku.com'
   : '/api';
+
+// Semua panggilan ke API membawa X-Jatahku-Client (ADR-M9).
+const apiFetch = (url, options = {}) => fetch(url, { ...options, headers: withClientHeader(options.headers) });
 
 class ApiClient {
   constructor() {
@@ -41,13 +45,13 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+    const res = await apiFetch(`${API_URL}${path}`, { ...options, headers });
 
     if (res.status === 401 && this.getRefreshToken()) {
       const refreshed = await this.refresh();
       if (refreshed) {
         headers['Authorization'] = `Bearer ${this.token}`;
-        return fetch(`${API_URL}${path}`, { ...options, headers });
+        return apiFetch(`${API_URL}${path}`, { ...options, headers });
       }
     }
 
@@ -56,7 +60,7 @@ class ApiClient {
 
   async refresh() {
     try {
-      const res = await fetch(`${API_URL}/auth/refresh`, {
+      const res = await apiFetch(`${API_URL}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: this.getRefreshToken() }),
@@ -73,7 +77,7 @@ class ApiClient {
   }
 
   logout({ revoke = true } = {}) {
-    if (revoke) revokeSession(API_URL, this.getRefreshToken());
+    if (revoke) revokeSession(API_URL, this.getRefreshToken(), apiFetch);
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
@@ -83,7 +87,7 @@ class ApiClient {
   // Auth
   async register(email, password, name) {
     try {
-      const res = await fetch(`${API_URL}/auth/register`, {
+      const res = await apiFetch(`${API_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, name }),
@@ -101,7 +105,7 @@ class ApiClient {
 
   async login(email, password) {
     try {
-      const res = await fetch(`${API_URL}/auth/login`, {
+      const res = await apiFetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -119,7 +123,7 @@ class ApiClient {
 
   async forgotPassword(email) {
     try {
-      const res = await fetch(`${API_URL}/auth/forgot-password`, {
+      const res = await apiFetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -133,7 +137,7 @@ class ApiClient {
 
   async resetPassword(token, newPassword) {
     try {
-      const res = await fetch(`${API_URL}/auth/reset-password`, {
+      const res = await apiFetch(`${API_URL}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, new_password: newPassword }),
@@ -163,7 +167,7 @@ class ApiClient {
 
   async getGoogleClientId() {
     try {
-      const res = await fetch(`${API_URL}/auth/google/config`);
+      const res = await apiFetch(`${API_URL}/auth/google/config`);
       if (res.ok) return (await res.json()).client_id || null;
     } catch {}
     return null;
@@ -171,7 +175,7 @@ class ApiClient {
 
   async loginWithGoogle(credential) {
     try {
-      const res = await fetch(`${API_URL}/auth/google`, {
+      const res = await apiFetch(`${API_URL}/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ credential }),
@@ -188,13 +192,34 @@ class ApiClient {
   }
 
   async loginWithTgToken(token) {
-    const res = await fetch(`${API_URL}/auth/tg-login?token=${encodeURIComponent(token)}`);
+    const res = await apiFetch(`${API_URL}/auth/tg-login?token=${encodeURIComponent(token)}`);
     const data = await res.json();
     if (res.ok) {
       this.setToken(data.access_token);
       this.setRefreshToken(data.refresh_token);
     }
     return { ok: res.ok, data };
+  }
+
+  // Config klien (paket mobile 1.3). null = gagal; lihat lib/appConfig.js.
+  async getAppConfig() {
+    try {
+      const res = await apiFetch(`${API_URL}/app/config`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Laporan error klien; tidak pernah melempar.
+  async reportClientError(report) {
+    try {
+      await apiFetch(`${API_URL}/app/errors`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(report),
+        keepalive: true,
+      });
+    } catch {}
   }
 
   // Envelopes

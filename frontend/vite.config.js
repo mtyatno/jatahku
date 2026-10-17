@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -19,6 +20,10 @@ function buildCommit() {
 }
 
 const COMMIT = buildCommit()
+// Header X-Jatahku-Client (src/lib/clientInfo.js). Build aplikasi mobile
+// mengisi JATAHKU_PLATFORM; build web tetap 'web'.
+const APP_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url))).version
+const APP_PLATFORM = ['android', 'ios'].includes(process.env.JATAHKU_PLATFORM) ? process.env.JATAHKU_PLATFORM : 'web'
 const BUILT_AT = new Date().toISOString()
 
 function versionFile() {
@@ -38,6 +43,8 @@ function versionFile() {
 export default defineConfig({
   define: {
     __APP_COMMIT__: JSON.stringify(COMMIT),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+    __APP_PLATFORM__: JSON.stringify(APP_PLATFORM),
   },
   plugins: [
     react(),

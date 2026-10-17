@@ -25,13 +25,19 @@ export function normalizeAction(detail) {
 }
 
 // Toast sesudah menyembunyikan (§9), dengan tombol Urungkan (#91).
+// bukan_dobel / bukan_tagihan: pilihan khusus CTA DAT-03 / DAT-06, dikirim server di payload (#93).
 const DISMISS_NOTICE = {
   nanti: 'Disembunyikan sampai besok 05.00',
   periode: 'Disembunyikan sampai akhir periode',
   tidak_relevan: 'Ditandai tidak relevan',
+  bukan_dobel: 'Ditandai bukan dobel',
+  bukan_tagihan: 'Ditandai bukan pembayaran tagihan',
 };
-export const dismissNotice = (kind, pilihan) =>
-  (kind === 'not_duplicate' ? 'Ditandai bukan dobel' : DISMISS_NOTICE[pilihan] || DISMISS_NOTICE.nanti);
+export function dismissNotice(kind, pilihan) {
+  if (pilihan === 'bukan_dobel' || pilihan === 'bukan_tagihan') return DISMISS_NOTICE[pilihan];
+  if (kind === 'not_duplicate') return DISMISS_NOTICE.bukan_dobel; // payload lama tanpa pilihan
+  return DISMISS_NOTICE[pilihan] || DISMISS_NOTICE.nanti;
+}
 
 export function openAction(detail) {
   window.dispatchEvent(new CustomEvent('jatahku:open-action', { detail }));

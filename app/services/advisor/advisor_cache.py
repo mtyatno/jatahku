@@ -13,8 +13,10 @@ jalur baru otomatis ikut. Pemanggilan langsung tetap boleh (mis. dari skrip).
 
 Dismiss: `advisor:dismiss:{viewer}:{kunci}` → JSON {"pilihan", "tone", "rupiah"} dengan
 TTL sesuai pilihan (Nanti s/d besok 05.00 waktu user, Periode s/d akhir periode,
-Tidak relevan 90 hari). User bisa membatalkannya kapan saja (`hapus_dismiss`, #91).
-Redis mati → fail open (tanpa cache, tanpa dismiss).
+Tidak relevan 90 hari). Dua pilihan khusus CTA (#93), hanya sah untuk kunci aturannya:
+`bukan_dobel` (DAT-03 "Bukan dobel") tanpa TTL = permanen, dan `bukan_tagihan` (DAT-06
+"Bukan pembayaran tagihan") s/d akhir periode. User bisa membatalkan dismiss apa pun kapan
+saja (`hapus_dismiss`, #91). Redis mati → fail open (tanpa cache, tanpa dismiss).
 """
 from __future__ import annotations
 
@@ -30,7 +32,9 @@ logger = logging.getLogger("jatahku.advisor.cache")
 
 TTL_DASHBOARD = 90
 TTL_TIDAK_RELEVAN = 90 * 24 * 3600
-PILIHAN = ("nanti", "periode", "tidak_relevan")
+PILIHAN = ("nanti", "periode", "tidak_relevan", "bukan_dobel", "bukan_tagihan")
+# Pilihan dari CTA satu aturan (#93) → aturan yang boleh memakainya.
+PILIHAN_ATURAN = {"bukan_dobel": "DAT-03", "bukan_tagihan": "DAT-06"}
 
 _tasks: set = set()
 _installed = False
@@ -107,18 +111,36 @@ async def invalidate_viewer(hid, viewer) -> None:
 
 
 # ── dismiss (§9) ────────────────────────────────────────────────────────
-def ttl_dismiss(pilihan: str, now_local: datetime, period_end: date) -> int:
-    """Detik sampai dismiss kedaluwarsa. `now_local` = waktu user (aware)."""
+def pilihan_sah(pilihan: str, kunci: str) -> bool:
+    """Pilihan umum sah untuk kunci mana pun; pilihan khusus CTA hanya untuk kunci aturannya
+    (`bukan_dobel` → `DAT-03:*`, `bukan_tagihan` → `DAT-06:*`)."""
+    if pilihan not in PILIHAN:
+        return False
+    aturan = PILIHAN_ATURAN.get(pilihan)
+    return aturan is None or kunci.startswith(f"{aturan}:")
+
+
+def ttl_dismiss(pilihan: str, now_local: datetime, period_end: date) -> int | None:
+    """Detik sampai dismiss kedaluwarsa; None = permanen sampai user memunculkannya lagi.
+    `now_local` = waktu user (aware)."""
+    if pilihan == "bukan_dobel":
+        # Spesifikasi DAT-03: pasangan yang ditandai bukan dobel tidak ditandai lagi. Tanpa TTL
+        # supaya tidak bergantung pada S4/S4b yang hari ini hanya melihat periode berjalan.
+        return None
     if pilihan == "tidak_relevan":
         return TTL_TIDAK_RELEVAN
-    if pilihan == "periode":
+    if pilihan in ("periode", "bukan_tagihan"):
+        # bukan_tagihan: DAT-06 dikunci per langganan, jadi hanya periode ini (02-aturan §6G);
+        # pembayaran manual periode berikutnya tetap ditandai.
         sampai = datetime.combine(period_end + timedelta(days=1), time.min, tzinfo=now_local.tzinfo)
     else:  # nanti: besok pukul 05.00 waktu user
         sampai = datetime.combine(now_local.date() + timedelta(days=1), time(5), tzinfo=now_local.tzinfo)
     return max(int((sampai - now_local).total_seconds()), 60)
 
 
-async def simpan_dismiss(viewer, kunci: str, pilihan: str, tone: str | None, rupiah, ttl: int) -> None:
+async def simpan_dismiss(viewer, kunci: str, pilihan: str, tone: str | None, rupiah, ttl: int | None) -> None:
+    """`ttl` None = tanpa kedaluwarsa. SET selalu menimpa TTL lama, jadi "Bukan dobel" sesudah
+    "Nanti" pada kunci yang sama menjadi permanen, dan sebaliknya."""
     try:
         r = _redis()
         try:

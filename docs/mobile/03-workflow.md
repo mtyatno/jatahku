@@ -33,7 +33,13 @@ Perintah di `.claude/commands/` (dipakai di Claude Code mana pun yang membuka re
 - `/sesi A01` — pembuka: cari paket untuk kode itu di `PROGRESS.md`, baca dokumen yang relevan dan entri terakhir `SESI-LOG.md`, buat atau lanjutkan branch, rangkum scope, lalu tunggu "lanjut".
 - `/tutup-sesi` — penutup: tes, `PROGRESS.md`, entri `SESI-LOG.md`, commit, push, PR, dan satu baris status untuk tracker.
 
-Setelah `/tutup-sesi`, ubah status paket di tracker claude.ai (satu menit).
+- `/cek-deploy <nomor PR>` — setelah PR di-merge: memastikan kodenya benar-benar tayang lewat hasil workflow `deploy.yml` di GitHub.
+
+Setelah `/tutup-sesi`, ubah status paket di tracker claude.ai (satu menit). Status **selesai** hanya setelah `/cek-deploy` melaporkan "terverifikasi tayang".
+
+### Verifikasi deploy tanpa akses ke produksi
+
+Sesi Claude Code di cloud tidak bisa membuka `api.jatahku.com`/`jatahku.com` (akses jaringan sesi dibatasi ke registry paket dan GitHub). Itu tidak menghalangi verifikasi: langkah "Verifikasi versi yang tayang" di `deploy.yml` sudah mengecek `/health` dan `/version.json` dari runner GitHub, dan `/cek-deploy` membaca hasilnya lewat GitHub API. Run yang `cancelled` karena push lain menyusul dianggap tayang bila run sukses yang lebih baru memuat commit itu. Yang tetap butuh akses produksi (orang atau Claude Code di laptop): migrasi manual, memeriksa data, dan uji di perangkat.
 
 ## 4. Template PR
 
@@ -66,7 +72,7 @@ AI Advisor v2 sedang dikembangkan paralel (lihat `docs/ai-advisor/PROGRESS.md`).
 
 ## 6. Daftar paket & jadwal sesi
 
-Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 185 sesi (O 17, A 77, B 91), termasuk 17 sesi fitur native v1.x. Dengan dua developer paralel, Android tayang sekitar minggu ke-10 dan iOS minggu ke-12 (satu pengembang penuh waktu: minggu ke-14 dan 17, lihat `01-kajian.md`). Minggu 1 dimulai pada tanggal yang diisi di tracker.
+Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 191 sesi (O 17, A 83, B 91; 1.4b ditambahkan 17 Okt 2026 dengan kode A78–A83 supaya kode sesi lain tidak bergeser), termasuk 17 sesi fitur native v1.x. Dengan dua developer paralel, Android tayang sekitar minggu ke-10 dan iOS minggu ke-12 (satu pengembang penuh waktu: minggu ke-14 dan 17, lihat `01-kajian.md`). Minggu 1 dimulai pada tanggal yang diisi di tracker.
 
 | Kode sesi | WBS | Paket | Sesi | Minggu | Butuh | Selesai bila | Koordinasi AI Advisor |
 |---|---|---|---|---|---|---|---|
@@ -85,6 +91,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | **Dev A · server & web** | | | | | | | |
 | A01–A03 | 1.3 | Header X-Jatahku-Client, GET /app/config, layar perlu update | 3 | 1 | 0.1 | Web mengirim header; config ter-cache |  |
 | A04–A06 | 1.4 | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 3 | 1 | 0.1 | PR yang menghapus field gagal di CI | `.github/workflows/test.yml` (sudah ada dari AI Advisor S0) |
+| A78–A83 | 1.4b | `response_model` untuk endpoint yang dipakai aplikasi: auth, amplop, transaksi, pemasukan, langganan, `/app/config`, notifikasi. Model menyalin bentuk keluaran sekarang; tiap endpoint diuji keluarannya tidak berubah (`response_model` menyaring field) | 6 | 3–4 | 1.4 | Endpoint daftar itu punya skema respons; Cek API menangkap field respons yang hilang; tes keluaran-sama hijau | Route yang sedang diubah sesi AI Advisor (mis. `routes/advisor.py`) dikerjakan terakhir |
 | A07–A12 | 1.1 | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 6 | 2 | 0.1 | Token lama ditolak; web tetap login |  |
 | A13–A17 | 1.2 | Hapus akun sungguhan + halaman permintaan hapus di web | 5 | 2 | 1.1 | Data terhapus; sesi tercabut |  |
 | A18–A20 | 1.6 | Satu helper jualan untuk semua ajakan upgrade (web + bot) | 3 | 3 | 1.3 | Mode none: tanpa teks beli | `bot/*` (AI Advisor S9/S17) |

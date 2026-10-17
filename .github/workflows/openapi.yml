@@ -1,0 +1,47 @@
+name: Cek API
+
+# Mobile 1.4 (ADR-M9): API hanya bertambah. Membandingkan OpenAPI hasil merge PR dengan
+# base-nya; field/endpoint yang hilang atau berubah arti menggagalkan PR. Tes lain tetap
+# di test.yml. Lokal: python -m app.scripts.openapi_cek
+#
+# Perubahan memutus yang disengaja: label PR `api-memutus`, hanya setelah
+# min_supported_version di /app/config dinaikkan dan user melihat banner pembaruan.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: cek-api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      # Commit merge PR; induk pertamanya adalah base yang di-merge.
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-test.txt
+      - name: Pasang dependensi
+        run: pip install -r requirements-test.txt
+      - name: Bandingkan OpenAPI dengan base
+        env:
+          IZIN_MEMUTUS: ${{ contains(github.event.pull_request.labels.*.name, 'api-memutus') }}
+        run: |
+          set +e
+          python -m app.scripts.openapi_cek --dasar HEAD^1 --ringkasan "$GITHUB_STEP_SUMMARY"
+          rc=$?
+          set -e
+          if [ "$rc" = 1 ] && [ "$IZIN_MEMUTUS" = "true" ]; then
+            echo "::warning::Perubahan API memutus diloloskan lewat label api-memutus."
+            exit 0
+          fi
+          if [ "$rc" = 1 ]; then
+            echo "::error::PR ini memutus API untuk aplikasi lama. Lihat ringkasan job."
+          fi
+          exit "$rc"
