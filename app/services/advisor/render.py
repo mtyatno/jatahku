@@ -805,6 +805,29 @@ def alasan_rencana(tingkat: str, surplus) -> str:
     return ALASAN_RENCANA[tingkat].format(surplus=rp_penuh(surplus))
 
 
+# ── halaman Alokasi (§7, S14): alasan per amplop di rekomendasi ─────────
+def alasan_alokasi(ins: Insight, ctx: Konteks) -> str:
+    """Satu kalimat kenapa rekomendasi amplop ini disesuaikan (AMP-01/04/05/06, TAG-04, TAB-02)."""
+    d = ins.data
+    if ins.aturan == "AMP-01":
+        return f"Menutup minus {rp_penuh(d['minus'])} periode ini dulu."
+    if ins.aturan == "AMP-04":
+        butuh = f"; kebutuhannya ±{rp_penuh(d['kebutuhan'])} per periode" if d.get("kebutuhan") else ""
+        return f"Ditambal {d['n']}× periode ini{butuh}."
+    if ins.aturan == "AMP-05":
+        return f"3 periode terakhir terpakai rata-rata {rp_penuh(d['median'])}, di atas jatah {rp_penuh(d['jatah'])}."
+    if ins.aturan == "AMP-06":
+        return (f"3 periode terakhir hanya terpakai {persen(d['porsi'])} dari jatah; "
+                f"cukup {rp_penuh(d['saran'])}.")
+    if ins.aturan == "TAG-04":
+        return f"Menyisihkan {rp_penuh(d['per_bulan'])}/bulan untuk {d['nama']} {tgl(d['jatuh_tempo'])}."
+    if ins.aturan == "TAB-02":
+        if d.get("tunda"):
+            return f"Target {d['nama']} tertinggal, tapi didahulukan setelah sisa bebas tidak defisit."
+        return f"Mengejar target {d['nama']}: perlu {rp_penuh(d['butuh'])}/bulan sampai {tgl(d['tenggat'])}."
+    return teks(ins, ctx)["isi"]
+
+
 # ── Telegram / chat (S9 memakai ini) ────────────────────────────────────
 def teks_telegram(item: dict) -> str:
     """Insight yang sudah dirender → teks Telegram: 🔴 judul, lalu isi."""

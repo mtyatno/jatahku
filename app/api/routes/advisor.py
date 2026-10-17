@@ -43,6 +43,16 @@ async def allocation_recommendation(
     return await build_allocation_recommendation(user, req.income_amount, db)
 
 
+@router.get("/page/alokasi")
+async def alokasi_page(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Halaman Alokasi (S14): INC-04/INC-03 di atas form + amplop penerima sisa income."""
+    from app.services.advisor.allocation import build_alokasi_page
+    return await build_alokasi_page(user, db)
+
+
 @router.get("/sinking-funds")
 async def sinking_fund_advice(
     user: User = Depends(get_current_user),

@@ -531,6 +531,15 @@ class ApiClient {
     return { ok: res.ok, data: await res.json() };
   }
 
+  // Halaman Alokasi (S14): banner INC-04/INC-03 + amplop penerima sisa income.
+  async getAlokasiPage() {
+    try {
+      const res = await this.request('/advisor/page/alokasi');
+      if (res.ok) return await res.json();
+    } catch {}
+    return { enabled: false, banner: [], sisa_ke: null };
+  }
+
   // AI Advisor v2 — pipa CTA (S8). Kontrak: docs/ai-advisor/04-kontrak-api.md.
   // GET /advisor/dashboard (S3). {"enabled": false} → user di luar flag; null bila gagal.
   // Keduanya membuat Beranda memakai UI lama.
