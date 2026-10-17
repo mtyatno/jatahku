@@ -169,7 +169,9 @@ async def advisor_batal_dismiss(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Urungkan / Munculkan lagi (§9, #91). Idempoten: 204 walau tidak ada yang disembunyikan."""
+    """Urungkan / Munculkan lagi (§9, #91). Idempoten: 204 walau tidak ada yang disembunyikan;
+    503 bila penyimpanan dismiss gagal (insight mungkin masih tersembunyi)."""
     from app.services.advisor.dashboard import batal_dismiss
-    await batal_dismiss(user, db, kunci)
+    if await batal_dismiss(user, db, kunci) is None:
+        raise HTTPException(503, "Gagal memunculkan lagi, coba sebentar lagi")
     return Response(status_code=204)

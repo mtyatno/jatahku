@@ -76,6 +76,7 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
 // DELETE /advisor/dismiss?kunci=…  (#91, Urungkan / Munculkan lagi) → 204
 //   Menghapus dismiss milik viewer sendiri untuk kunci itu + cache dashboard viewer; insight tampil lagi di muatan
 //   berikutnya. Idempoten: 204 juga bila kunci tidak sedang disembunyikan. Dismiss viewer lain tidak tersentuh.
+//   503 {"detail"} bila penyimpanan dismiss (Redis) gagal → frontend menampilkan "Gagal memunculkan lagi".
 // GET /advisor/page/alokasi  (S14) → {"enabled", "banner": [insight INC-04, INC-03 — bentuk item daftar],
 //                                      "sisa_ke": {"envelope_id"|null, "name"}}
 //   banner kosong bila flag mati atau insight disembunyikan. sisa_ke = amplop yang menerima sisa income saat

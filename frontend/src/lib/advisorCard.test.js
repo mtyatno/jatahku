@@ -113,7 +113,7 @@ test('hiddenList: yang disembunyikan, tanpa yang baru dimunculkan lagi (#91)', (
     ],
   };
   assert.deepEqual(hiddenList(adv), [
-    { kunci: 'HAR-01:2026-10-17', judul: 'Belanja hari ini 1,8× jatah', sampai: 'sampai besok' },
+    { kunci: 'HAR-01:2026-10-17', judul: 'Belanja hari ini 1,8× jatah', sampai: 'sampai pukul 05.00' },
     { kunci: 'TAB-01:darurat', judul: 'Dana Darurat baru 4%', sampai: 'sampai akhir periode' },
     { kunci: 'DAT-05:x', judul: 'DAT-05:x', sampai: 'tidak relevan' },
   ]);

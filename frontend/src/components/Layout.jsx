@@ -710,7 +710,7 @@ export default function Layout() {
         <div role="status" className="fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-2 bg-gray-900 text-white text-sm shadow-lg flex items-center gap-4">
           <span>{notice.text}</span>
           {notice.action && (
-            <button type="button" className="font-semibold text-brand-200 hover:underline"
+            <button type="button" className="font-semibold text-white underline underline-offset-2"
               onClick={() => { const { run } = notice.action; setNotice(null); run(); }}>
               {notice.action.label}
             </button>
