@@ -531,9 +531,9 @@ export default function Layout() {
           Tanpa backdrop-filter: modal laporan yang dirender di slot ini memakai position: fixed. */}
       <div className="hidden lg:flex sticky top-0 z-40 items-center justify-between gap-6 px-8"
         style={{ height: TOPBAR_HEIGHT, background: 'var(--page)', borderBottom: '1px solid var(--border)' }}>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[26px] font-bold leading-tight truncate" style={{ color: 'var(--text)' }}>Halo, {firstName}</p>
-          <p className="text-[15px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{todayLabel()}</p>
+          <p className="text-[15px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>{todayLabel()}</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div ref={setTopbarSlot} className="flex items-center gap-3" />

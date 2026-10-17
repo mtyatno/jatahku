@@ -261,6 +261,12 @@ export function tileTones(isDark) {
 // Kartu ringkas: label + badge, angka + keterangan sebaris, satu batang, satu baris bawah.
 // `advisor` (Beranda AI Advisor, S6): chip AI menggantikan badge; popover di bawah kartu.
 // `bar.split`: penanda waktu — batang hijau sampai penanda, `bar.lateColor` sesudahnya.
+const KPI_HEAD_WIDE = [
+  '[@container(min-width:22rem)]:flex-row', '[@container(min-width:22rem)]:items-center',
+  '[@container(min-width:22rem)]:justify-between', '[@container(min-width:22rem)]:gap-2',
+  '[@container(min-width:22rem)]:min-h-[24px]',
+].join(' ');
+
 export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, footer, alert, isDark, advisor }) {
   const t = tileTones(isDark);
   const ref = useRef(null);
@@ -279,8 +285,12 @@ export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, fo
     : alert ? `inset 0 0 0 1px ${t.danger.border}` : null;
   return (
     <div ref={ref} className={`card !p-4 sm:!p-5 min-w-0 relative ${open ? 'z-30' : ''}`} style={ring ? { boxShadow: ring } : undefined}>
-      <div className="flex items-center justify-between gap-2 min-h-[24px]">
-        <div className="flex items-center gap-1 min-w-0">
+      {/* Kartu sempit (< 22rem: ponsel, 2–3 kolom di layar sedang): chip di baris sendiri di bawah label,
+          tinggi kepala sama di semua kartu supaya angka tetap sejajar. Kartu lebar: chip di kanan label,
+          dipotong (…) bila terlalu panjang. Label tidak pernah terpotong lebih dulu. */}
+      <div className="[container-type:inline-size]">
+      <div className={`flex flex-col items-start gap-1.5 min-h-[54px] ${KPI_HEAD_WIDE}`}>
+        <div className="flex items-center gap-1 min-w-0 max-w-full shrink-0">
           <p className="text-sm text-gray-400 truncate">{label}</p>
           {info && <InfoTooltip text={info} position="bottom" />}
         </div>
@@ -288,10 +298,11 @@ export function KpiTile({ label, info, badge, value, valueColor, suffix, bar, fo
           <AdvisorChip look={advisor.look} open={open} isDark={isDark} onClick={advisor.onToggle} />
         ) : badge && (
           <span
-            className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap"
+            className="text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap max-w-full truncate"
             style={{ color: t[badge.tone].text, background: t[badge.tone].bg }}
           >{badge.text}</span>
         )}
+      </div>
       </div>
       <p className="mt-2 flex items-baseline flex-wrap gap-x-1.5 leading-tight">
         <span className="font-display text-2xl font-bold" style={valueColor ? { color: valueColor } : undefined}>{value}</span>
