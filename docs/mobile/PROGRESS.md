@@ -19,7 +19,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | O15–O17 | 5.7 | O | App Store Connect: label privasi, rating usia, screenshot iPhone dan iPad, catatan review; ajukan review | 11 | belum |  |  |  | |
 | A01–A03 | 1.3 | A | Header X-Jatahku-Client, GET /app/config, layar perlu update | 1 | belum |  |  |  | |
 | A04–A06 | 1.4 | A | CI untuk PR: pytest, tes node, cek OpenAPI yang memutus | 1 | belum |  |  |  | |
-| A07–A12 | 1.1 | A | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 2 | belum |  |  |  | |
+| A07–A12 | 1.1 | A | Sesi per perangkat: auth_sessions, rotasi refresh, logout-all sungguhan | 2 | review | Pemilik produk + Claude | (PR ini) | 2026-10-17 | |
 | A13–A17 | 1.2 | A | Hapus akun sungguhan + halaman permintaan hapus di web | 2 | belum |  |  |  | |
 | A18–A20 | 1.6 | A | Satu helper jualan untuk semua ajakan upgrade (web + bot) | 3 | belum |  |  |  | |
 | A21–A22 | 1.7 | A | Izin eksplisit sebelum audio/foto dikirim ke Groq | 3 | belum |  |  |  | |
