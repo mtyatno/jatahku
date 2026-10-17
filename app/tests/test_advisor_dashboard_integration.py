@@ -29,6 +29,7 @@ from app.models.models import (
     Allocation, AppSetting, Envelope, Household, HouseholdMember, HouseholdRole, Income, Transaction, User,
 )
 from app.services.advisor import advisor_cache
+from app.services.advisor import dashboard as advisor_dashboard_svc
 from app.services.advisor.dashboard import dismiss as do_dismiss, get_dashboard
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -53,8 +54,10 @@ class FakeRedis:
         return [await self.get(k) for k in keys]
 
     async def delete(self, *keys):
+        n = 0
         for k in keys:
-            self.store.pop(k.decode() if isinstance(k, bytes) else k, None)
+            n += self.store.pop(k.decode() if isinstance(k, bytes) else k, None) is not None
+        return n
 
     async def scan_iter(self, match="*", count=None):
         for k in list(self.store):
@@ -194,6 +197,42 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT))
         self.assertIn(advisor_cache.kunci_dismiss(self.me.id, "PER-05:x"), self.redis.store)
+
+    async def test_batal_dismiss_memunculkan_lagi(self):
+        # #91: Sembunyikan chip Jatah hari ini → masuk `disembunyikan` → Urungkan → kembali.
+        data = await self.dashboard()
+        chip = data["kpi"]["jatah"]
+        kunci = chip["dismiss"]["kunci"]
+        self.assertEqual(data["advisor"]["disembunyikan"], [])
+        async with self.Session() as db:
+            await advisor_routes.advisor_dismiss(
+                advisor_routes.DismissRequest(kunci=kunci, pilihan="nanti"), user=self.me, db=db)
+        data = await self.dashboard()
+        self.assertNotEqual((data["kpi"]["jatah"] or {}).get("id"), chip["id"])
+        sembunyi = data["advisor"]["disembunyikan"]
+        self.assertEqual([d["kunci"] for d in sembunyi], [kunci])
+        self.assertEqual(sembunyi[0]["pilihan"], "nanti")
+        self.assertTrue(sembunyi[0]["judul_pendek"])
+
+        self.redis.store[advisor_cache.kunci_dismiss(self.rina.id, kunci)] = '{"pilihan": "nanti"}'
+        async with self.Session() as db:
+            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db)
+        self.assertEqual(resp.status_code, 204)
+        self.assertNotIn(advisor_cache.kunci_dismiss(self.me.id, kunci), self.redis.store)
+        self.assertNotIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)
+        self.assertIn(advisor_cache.kunci_dismiss(self.rina.id, kunci), self.redis.store)  # milik viewer lain
+        data = await self.dashboard()
+        self.assertEqual(data["kpi"]["jatah"]["id"], chip["id"])
+        self.assertEqual(data["advisor"]["disembunyikan"], [])
+
+    async def test_batal_dismiss_idempoten(self):
+        async with self.Session() as db:
+            resp = await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db)
+        self.assertEqual(resp.status_code, 204)
+        async with self.Session() as db:
+            self.assertFalse(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x"))
+            await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT))
+            self.assertTrue(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x"))
 
     async def test_tanggal_berganti_cache_lama_diabaikan(self):
         await self.dashboard()

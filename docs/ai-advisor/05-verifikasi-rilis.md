@@ -82,3 +82,5 @@ Dicatat dari S6/S7/S9; dikerjakan setelah langkah 4–5:
 |---|---|---|---|---|
 | 2026-10-17 | 2 (cek paritas) | 95 user | crash 95 | Migrasi `a9c3e7d1f5b2` + `c5e9a2d7f4b1` belum jalan di produksi (`envelopes.is_emergency` tidak ada). `alembic upgrade head` + restart; 4 amplop ditandai dana darurat. `deploy.sh` kini memeriksa migrasi. |
 | 2026-10-17 | 2 (ulang) | 95 user | ok 54 · beda 0 · crash 0 · lewati 41 | 1 user > 150 ms. Lolos. |
+| 2026-10-17 | 3 (uji akun tim) | 1 akun (pemilik produk) | 3c, 3d, 3e, 3g ok | Angka acuan dana Rp13.397.448 · terpakai Rp9.730.274 · sisa bebas Rp3.667.174 · J0 Rp366.700 · J1 Rp407.400 identik di Beranda, chat, Telegram; transaksi tes 1k mengubah semua tempat sama. 3h/3i dilewati (privasi dicek skrip). Temuan: dismiss tidak bisa diurungkan → #91 |
+| 2026-10-17 | 4 (flag `*`) | semua | dinyalakan 11:39 WIB | Log bersih sejak 00:25 UTC (setelah migrasi) dan sejak `*` |

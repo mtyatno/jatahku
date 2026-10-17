@@ -16,7 +16,7 @@ import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
-import { chatDraft, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
+import { chatDraft, dismissNotice, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
 import { Icon, EnvelopeIcon } from './Icon';
 
 function QuickAddEnvelope({ onClose }) {
@@ -384,9 +384,11 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const showNotice = useCallback((text) => {
-    setNotice(text);
-    setTimeout(() => setNotice(n => (n === text ? null : n)), 3500);
+  // Toast kecil; `action` = {label, run} menambah tombol (mis. Urungkan, #91) dan waktu tampil lebih lama.
+  const showNotice = useCallback((text, action = null) => {
+    const n = { text, action };
+    setNotice(n);
+    setTimeout(() => setNotice(cur => (cur === n ? null : cur)), action ? 6000 : 3500);
   }, []);
 
   // Pintu masuk lain membuka aksi lewat event `jatahku:open-action`:
@@ -394,6 +396,13 @@ export default function Layout() {
   // (docs/ai-advisor/04-kontrak-api.md). Lihat lib/advisorAction.js.
   useEffect(() => {
     const openModal = (key, payload = null) => { setActionPayload(payload); setActionSeq(n => n + 1); setFabAction(key); };
+    // Munculkan lagi insight yang disembunyikan (§9, #91): Urungkan di toast atau daftar di kartu.
+    const undismiss = async (kunci) => {
+      const res = await api.advisorUndismiss(kunci);
+      if (!res.ok) { showNotice('Gagal memunculkan lagi'); return; }
+      window.dispatchEvent(new CustomEvent('jatahku:advisor-undismissed', { detail: { kunci } }));
+      showNotice('Ditampilkan lagi');
+    };
     const onOpen = async (e) => {
       const action = normalizeAction(e.detail);
       if (!action) return;
@@ -447,9 +456,12 @@ export default function Layout() {
           const res = await api.advisorDismiss(payload.kunci, pilihan);
           if (!res.ok) { showNotice(res.status === 404 ? 'Belum tersedia, coba lagi nanti' : 'Gagal menyimpan'); return; }
           window.dispatchEvent(new CustomEvent('jatahku:advisor-dismissed', { detail: { kunci: payload.kunci, pilihan } }));
-          if (kind === 'not_duplicate') showNotice('Ditandai bukan dobel');
+          showNotice(dismissNotice(kind, pilihan), { label: 'Urungkan', run: () => undismiss(payload.kunci) });
           return;
         }
+        case 'undismiss':
+          if (payload.kunci) await undismiss(payload.kunci);
+          return;
         case 'delete_txn': {
           // txn_ids: struk terkirim dua kali (DAT-03 S4b) → hapus seluruh rantai kedua sekaligus.
           const ids = Array.isArray(payload.txn_ids) && payload.txn_ids.length
@@ -709,8 +721,14 @@ export default function Layout() {
           envelopes={fundAction.envelopes} onClose={() => setFundAction(null)} />
       )}
       {notice && (
-        <div role="status" className="fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-2 bg-gray-900 text-white text-sm shadow-lg">
-          {notice}
+        <div role="status" className="fixed bottom-24 lg:bottom-8 left-1/2 -translate-x-1/2 z-[70] rounded-xl px-4 py-2 bg-gray-900 text-white text-sm shadow-lg flex items-center gap-4">
+          <span>{notice.text}</span>
+          {notice.action && (
+            <button type="button" className="font-semibold text-brand-200 hover:underline"
+              onClick={() => { const { run } = notice.action; setNotice(null); run(); }}>
+              {notice.action.label}
+            </button>
+          )}
         </div>
       )}
       {/* Modals for speed dial actions */}

@@ -4,6 +4,44 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## #91 Urungkan sembunyikan + S10 lanjutan · 2026-10-17 · pemilik produk + Claude
+
+**Selesai (#91)**
+- `DELETE /advisor/dismiss?kunci=` (204, idempoten): `advisor_cache.hapus_dismiss` + `dashboard.batal_dismiss` (hapus cache dashboard viewer). Hanya dismiss milik viewer sendiri.
+- `GET /advisor/dashboard` → `advisor.disembunyikan` = `[{kunci, judul_pendek, pilihan}]` dari `sel.disembunyikan` (insight yang menyala tapi di-dismiss, daftar maupun chip KPI), urut `kunci_urut`.
+- Frontend:
+  - toast setelah dismiss ("Disembunyikan sampai besok 05.00" / "… akhir periode" / "Ditandai tidak relevan" / "Ditandai bukan dobel") dengan tombol **Urungkan** (6 detik);
+  - kind baru `undismiss`;
+  - event `jatahku:advisor-undismissed` (Beranda memuat ulang, kartu langsung memperbarui);
+  - kartu AI Advisor: "N disembunyikan · Tampilkan" → judul pendek + sampai kapan + **Munculkan lagi**.
+- Spesifikasi: `02-aturan.md` §9 (aturan Urungkan / Munculkan lagi), `04-kontrak-api.md` (endpoint, field, kind). `03-workflow.md` §7: baris S16 & S17 diberi catatan **cek #91**.
+
+**Selesai (S10 lanjutan, di luar PR #86)**
+- **Insiden 17 Okt:** migrasi `a9c3e7d1f5b2` + `c5e9a2d7f4b1` belum jalan di produksi → setiap query amplop 500 (`envelopes.is_emergency`). Ditemukan oleh `advisor_paritas` (crash 95/95). `alembic upgrade head` + restart; cek ulang: ok 54 · beda 0 · crash 0 · lewati 41.
+- **Deploy:** `/opt/jatahku/deploy.sh` ternyata salinan 4 Okt (perubahan repo sejak 5 Okt tidak pernah jalan).
+  - #87: cek migrasi (exit 2 bila tertinggal).
+  - #88: repo disamakan dengan VPS — blog rsync dari CI, landing dari repo, webhook diperbaiki.
+  - Symlink `/opt/jatahku/deploy.sh → app/deploy.sh`.
+  - #89: mode 100755.
+  - #90: `sudo git reset` di workflow dihapus.
+  - Deploy #365 hijau lewat symlink.
+- Uji akun tim (langkah 3) lolos: Beranda, chat `sisa`, Telegram `/status`, perubahan angka setelah transaksi tes. Flag `*` dinyalakan 17 Okt 11:39 WIB; log bersih sejak itu (pantauan 24 jam berjalan).
+
+**Digantung**
+- S10: cek ringkasan harian malam 17 Okt + paritas pagi 18 Okt, lalu **S10b** (hapus jalur lama, tutup #65).
+- #91 belum mengubah chat/Telegram (tidak ada tombol sembunyikan di sana). **S16/S17 wajib cek #91** (catatan di 03-workflow §7).
+
+**Jebakan**
+- `journalctl --since` memakai jam server (UTC), bukan WIB, dan tidak menerima akhiran `Asia/Jakarta`. Konversi dulu: `date -u -d 'TZ="Asia/Jakarta" 2026-10-17 11:39' '+%F %T'`.
+- `chmod` manual pada file ter-track di VPS membuat `git pull` di `deploy.sh` gagal. Mode file diatur lewat git (`git update-index --chmod=+x`).
+- Peringatan `(trapped) error reading bcrypt version` di log = passlib vs bcrypt baru, tidak berbahaya.
+
+**Tes:** backend 855 OK (2 baru) · frontend 262 OK (2 baru) · build OK.
+
+**Cara mencoba:** Beranda (flag aktif) → chip KPI → Sembunyikan → toast **Urungkan**; atau kartu AI Advisor → Nanti → "1 disembunyikan · Tampilkan" → **Munculkan lagi**.
+
+---
+
 ## S10 · 2026-10-17 · pemilik produk + Claude
 
 **Selesai (PR ini)**

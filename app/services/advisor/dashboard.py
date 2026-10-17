@@ -20,7 +20,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.services.advisor import advisor_cache
-from app.services.advisor.insight import DEFAULT as KA_DEFAULT, KonstantaAturan, Konteks
+from app.services.advisor.insight import DEFAULT as KA_DEFAULT, KonstantaAturan, Konteks, kunci_urut
 from app.services.advisor.metrics import DEFAULT as KM_DEFAULT, Konstanta, compute_metrics
 from app.services.advisor.render import judul_pendek, render_insight, teks_grafik
 from app.services.advisor.rules import amplop, data, hari, pemasukan, periode, tabungan, tagihan
@@ -123,6 +123,11 @@ def susun_dashboard(snap, *, now_local: datetime, dismiss: dict | None = None,
             "sisa": [{"id": ins.id, "judul_pendek": judul_pendek(ins, ctx)} for ins in sel.sisa],
             "total": len(sel.daftar) + len(sel.sisa),
             "aman": render_insight(sel.aman, ctx) if sel.aman else None,
+            # Yang sedang disembunyikan viewer (§9 "Munculkan lagi", #91).
+            "disembunyikan": [{"kunci": ins.id, "judul_pendek": judul_pendek(ins, ctx),
+                               "pilihan": (dismiss or {}).get(ins.id, {}).get("pilihan", "nanti")}
+                              for ins in sorted((i for i in sel.semua if i.id in sel.disembunyikan),
+                                                key=kunci_urut)],
         },
         "redam_chip": sel.redam,
     }
@@ -185,3 +190,14 @@ async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = Non
         logger.info("advisor tidak_relevan user=%s kunci=%s tone=%s", user.id, kunci, info.get("tone"))
     if hid:
         await advisor_cache.invalidate_viewer(hid, user.id)
+
+
+async def batal_dismiss(user, db, kunci: str) -> bool:
+    """Munculkan lagi insight yang disembunyikan viewer (§9, #91): hapus status dismiss-nya
+    lalu cache dashboard viewer, supaya muatan berikutnya langsung menampilkannya."""
+    ada = await advisor_cache.hapus_dismiss(user.id, kunci)
+    logger.info("advisor batal_dismiss user=%s kunci=%s ada=%s", user.id, kunci, ada)
+    hid = await _household_id(user, db)
+    if hid:
+        await advisor_cache.invalidate_viewer(hid, user.id)
+    return ada

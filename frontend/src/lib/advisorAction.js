@@ -7,7 +7,7 @@ export const LEGACY_ACTIONS = ['expense', 'envelope', 'income', 'langganan', 'ba
 
 export const ACTION_KINDS = [
   'plan', 'fund', 'pay', 'mark_paid', 'income', 'daily_limit', 'raise_budget', 'make_recurring',
-  'route', 'chat', 'dismiss', 'delete_txn', 'not_duplicate',
+  'route', 'chat', 'dismiss', 'undismiss', 'delete_txn', 'not_duplicate',
 ];
 
 // Detail event → { kind, payload } atau null. String lama dipetakan ke kind
@@ -23,6 +23,15 @@ export function normalizeAction(detail) {
   const payload = detail.payload && typeof detail.payload === 'object' ? detail.payload : {};
   return typeof detail.label === 'string' && detail.label ? { kind, payload, label: detail.label } : { kind, payload };
 }
+
+// Toast sesudah menyembunyikan (§9), dengan tombol Urungkan (#91).
+const DISMISS_NOTICE = {
+  nanti: 'Disembunyikan sampai besok 05.00',
+  periode: 'Disembunyikan sampai akhir periode',
+  tidak_relevan: 'Ditandai tidak relevan',
+};
+export const dismissNotice = (kind, pilihan) =>
+  (kind === 'not_duplicate' ? 'Ditandai bukan dobel' : DISMISS_NOTICE[pilihan] || DISMISS_NOTICE.nanti);
 
 export function openAction(detail) {
   window.dispatchEvent(new CustomEvent('jatahku:open-action', { detail }));

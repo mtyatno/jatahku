@@ -3,7 +3,7 @@ from typing import Literal
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,4 +150,16 @@ async def advisor_dismiss(
 ):
     from app.services.advisor.dashboard import dismiss
     await dismiss(user, db, req.kunci, req.pilihan)
+    return Response(status_code=204)
+
+
+@router.delete("/dismiss", status_code=204)
+async def advisor_batal_dismiss(
+    kunci: str = Query(min_length=3, max_length=200),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Urungkan / Munculkan lagi (§9, #91). Idempoten: 204 walau tidak ada yang disembunyikan."""
+    from app.services.advisor.dashboard import batal_dismiss
+    await batal_dismiss(user, db, kunci)
     return Response(status_code=204)

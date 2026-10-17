@@ -85,9 +85,11 @@ export default function Dashboard() {
   useEffect(() => {
     const onChanged = () => setAdvisorTick(t => t + 1);
     window.addEventListener('jatahku:advisor-dismissed', onChanged);
+    window.addEventListener('jatahku:advisor-undismissed', onChanged);
     window.addEventListener('jatahku:envelope-updated', onChanged);
     return () => {
       window.removeEventListener('jatahku:advisor-dismissed', onChanged);
+      window.removeEventListener('jatahku:advisor-undismissed', onChanged);
       window.removeEventListener('jatahku:envelope-updated', onChanged);
     };
   }, []);
