@@ -42,7 +42,7 @@ Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu 
 | A69–A72 | 5.5a | A | Billing server: validasi Play dan App Store, hak per sumber, refund | 9 | belum |  |  |  | |
 | A73–A74 | 6.1 | A | Token widget baca-saja + /widget/summary | 10 | belum |  |  |  | |
 | A75–A77 | 6.4 | A | Tombol aksi "Catat ke amplop" di notifikasi struk | 10 | belum |  |  |  | |
-| B01–B06 | 1.5 | B | Lapisan src/native/ versi web; pindahkan semua pemanggil | 1 | belum |  |  |  | |
+| B01–B06 | 1.5 | B | Lapisan src/native/ versi web; pindahkan semua pemanggil | 1 | review | Pemilik produk + Claude | #120 | 2026-10-17 | |
 | B07–B10 | 1.10 | B | Pemeriksaan tablet di web (md/lg, rotasi) | 1 | belum |  |  |  | |
 | B11–B16 | 2.1 | B | Spike Capacitor di Android, iPhone, tablet: semua butir tersulit | 2 | belum |  |  |  | |
 | B17–B19 | 3.1 | B | Scaffold mobile/: Capacitor 8, appId, android/ di-commit, safe area, tombol kembali | 3 | belum |  |  |  | |

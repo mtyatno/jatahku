@@ -4,6 +4,38 @@ Entri terbaru di atas. Format: **Kode sesi · paket · tanggal · siapa** — se
 
 ---
 
+## B01–B06 · 1.5 Lapisan src/native/ versi web · 2026-10-17 · pemilik produk + Claude
+
+**Selesai** (paket selesai dalam satu sesi; status review, PR #120)
+- `frontend/src/native/index.js` (antarmuka, didokumentasikan di kepala file) + `web.js` (`createWebNative`, global browser bisa disuntik untuk tes) + `web.test.js` (16 tes). Isi: `init`, `platform` (`apiUrl` dari build: prod `https://api.jatahku.com`, dev `/api`), `tokens`, `queue` (store, `withAuth`, `requestBackgroundSync`, `onBackgroundSynced`), `files.save/share`, `print.pdf`, `openExternal`, `externalLinkProps(url, onClick, {appUrl})`, `onInstallPrompt`.
+- Pemanggil dipindah: `api.js` (alamat API + token; `api.token` jadi getter), `Upgrade.jsx` dan `Settings.jsx` (dua `fetch` manual → `api.request` FormData; tebakan hostname hilang), `ExportButtons.jsx`, `Settings.jsx` (unduh data, tautan Telegram), `ChatPanel.jsx`, `TelegramPrompt.jsx`, `PWAPrompt.jsx`, `main.jsx` (render setelah `native.init()`), `offlineQueue.js`, `OfflineQueueCenter.jsx`.
+- `.github/workflows/test.yml`: `node --test` juga menjalankan `src/native/*.test.js`.
+- Tes: unittest 1064 OK, node 331 lulus, build ok. Chromium + API tiruan: token lama terbaca, SW terdaftar, header `Bearer` + `X-Jatahku-Client` di semua request, unggah foto profil, unduh data, CSV, Simpan PDF, Print.
+
+**Digantung (di luar scope, dicatat)**
+- Tombol toko di `UpdateRequired.jsx` dan tautan di `Admin.jsx` masih `<a target=_blank>` biasa → pakai `native.externalLinkProps` (3.2).
+- `navigator.clipboard` (Settings, Upgrade, Admin) belum lewat native; cek di WebView saat spike 2.1.
+- Pratinjau PDF di `ExportButtons` memakai `<iframe>` blob — kemungkinan tidak tampil di WebView Android (spike 2.1 / 3.2; `print.pdf` sudah menerima `url`).
+- Preferensi UI (tema, tab, prompt Telegram, `pwa-dismissed`) tetap di `localStorage`: bukan rahasia, tidak dipindah.
+- Gerbang "perlu update" masih di `Layout`, belum di `App.jsx`.
+- Antrean offline dan tautan `t.me` belum diuji di browser (tes unit saja).
+
+**Jebakan**
+- `vite preview` melayani `dist/index.html` hasil build; kalau `git checkout -- frontend/dist` dijalankan sebelum preview, halaman kosong (aset lama). Kembalikan `dist/` setelah selesai menguji.
+- Container cloud baru belum punya dependensi Python: `pip install -r requirements.txt -r requirements-test.txt` sebelum unittest (tanpa itu 65 modul gagal import, juga di main).
+- `externalLinkProps` menjalankan `onClick` pemanggil dulu; bila pemanggil `preventDefault()` (mis. kode Telegram kedaluwarsa), tautan tidak dibuka. Di `ChatPanel`, klik link ditangani `externalLinkProps`, `openLink` hanya membuka tautan luar bila dipanggil tanpa event (jangan buka dua kali).
+
+**Keputusan kecil**
+- Antarmuka token sinkron + `init()` async sebelum render (aplikasi memuat Keystore di `init`, lalu cache di memori), supaya `useAuth` tidak perlu diubah.
+- Item antrean web tetap membawa token (service worker butuh); di aplikasi `queue.withAuth` tidak menambahkan token (aturan #6).
+- `index.js` sekarang selalu memakai web; 3.2 memilih `capacitor.js` dari `CLIENT.platform` (build), bukan deteksi runtime.
+
+**Cara melanjutkan**
+- Review dan merge #120, lalu `/cek-deploy 120`. Setelah tayang: coba login tetap bertahan, ganti foto profil, bukti bayar di Upgrade.
+- Paket berikutnya jalur B: `/sesi B07` (1.10, pemeriksaan tablet). 3.1 butuh 2.1 (spike) dan F1.
+
+---
+
 ## A07 · 1.1 Sesi per perangkat · 2026-10-17 · pemilik produk + Claude
 
 **Selesai** (kriteria paket terpenuhi dalam 1 dari 6 sesi; status review)
