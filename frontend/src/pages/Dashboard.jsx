@@ -510,7 +510,7 @@ export default function Dashboard() {
       )}
 
       {/* Pengeluaran harian + kartu AI Advisor (flag) / Perlu perhatian (UI lama) berdampingan di layar lebar */}
-      <div className={`grid grid-cols-1 gap-4 ${isCurrentPeriod ? 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
+      <div className={`grid grid-cols-1 gap-4 ${isCurrentPeriod ? 'xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
         <DailySpendingChart
           daily={daily}
           periodStart={prediction?.period_start || selectedPeriod?.period_start}
@@ -546,7 +546,7 @@ export default function Dashboard() {
 
       {/* Amplop pengeluaran (bertab) + Target tabungan berdampingan di layar lebar */}
       {(spending.length > 0 || savingEnvelopes.length > 0) && (
-        <div className={`grid grid-cols-1 gap-4 items-start ${spending.length > 0 && savingEnvelopes.length > 0 ? 'lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
+        <div className={`grid grid-cols-1 gap-4 items-start ${spending.length > 0 && savingEnvelopes.length > 0 ? 'xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]' : ''}`}>
           {spending.length > 0 && (
             <SpendingEnvelopes
               envelopes={spending}
@@ -571,7 +571,7 @@ export default function Dashboard() {
       )}
 
       {/* Transaksi terbaru + Langganan berdampingan di layar lebar */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] gap-4 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] gap-4 items-start">
         <RecentTransactions transactions={transactions} envelopes={envelopes} isCurrentPeriod={isCurrentPeriod} />
         <SubscriptionsCard items={subscriptions} />
       </div>

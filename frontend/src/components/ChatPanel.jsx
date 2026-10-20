@@ -241,14 +241,16 @@ export default function ChatPanel({ open, onClose, draft = null }) {
     const el = sheetRef.current;
     if (!el) return;
     if (vp.desktop) {
+      // Panel samping (≥768px, termasuk tablet): keyboard layar menutupi bagian bawah
+      // tanpa mengecilkan layout, jadi panel dinaikkan di atasnya.
       el.style.height = '';
-      el.style.bottom = '';
+      el.style.bottom = vp.keyboard && vp.inset > 0 ? `${vp.inset}px` : '';
       return;
     }
     if (drag.current?.active) return;
     el.style.height = `${targetH}px`;
     el.style.bottom = `${vp.inset}px`;
-  }, [targetH, vp.inset, vp.desktop, phase]);
+  }, [targetH, vp.inset, vp.keyboard, vp.desktop, phase]);
 
   // Daftar pesan tetap menempel di bawah saat tinggi sheet berubah.
   useEffect(() => {
@@ -395,14 +397,17 @@ export default function ChatPanel({ open, onClose, draft = null }) {
     if (!open) return;
     const onKey = e => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
-    // Kunci gulir halaman di belakang panel layar penuh (mobile).
-    const prev = document.body.style.overflow;
-    if (!isDesktop()) document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [open, close]);
+
+  // Kunci gulir halaman di belakang sheet (mobile); dilepas saat layar diputar
+  // ke lebar ≥768px dan chat menjadi panel samping.
+  useEffect(() => {
+    if (!open || vp.desktop) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open, vp.desktop]);
 
   // Tinggi kotak ketik mengikuti isi (maks ±4 baris).
   useLayoutEffect(() => {

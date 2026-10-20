@@ -2,7 +2,7 @@
 
 Aplikasi Android (Google Play) dan iOS (App Store) dengan **Capacitor 8** di atas bundle React yang sama dengan web, termasuk fitur **Bagikan ke Jatahku** (bukti transfer, e-wallet, tagihan, invoice marketplace → Kotak Struk → konfirmasi amplop). Dirancang supaya tidak mengulang migrasi shell Alurik (Tauri → Capacitor).
 
-**Fase sekarang:** F0 — keputusan, akun, legal. O01 selesai (#100). Fondasi F1 dimulai: 1.3 `/app/config` dan header `X-Jatahku-Client` tayang (#109). 1.5 lapisan `src/native/` versi web di review (#120). Belum ada proyek `mobile/`. Status per paket: `PROGRESS.md`.
+**Fase sekarang:** F0 — keputusan, akun, legal. O01 selesai (#100). Fondasi F1 dimulai: 1.3 `/app/config` dan header `X-Jatahku-Client` tayang (#109). 1.2 hapus akun (#119) dan 1.5 lapisan `src/native/` versi web (#120) tayang. 1.10 pemeriksaan tablet berjalan (sesi B07 selesai). Belum ada proyek `mobile/`. Status per paket: `PROGRESS.md`.
 
 ## Dokumen
 | File | Isi | Kapan dibaca |
