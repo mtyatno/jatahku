@@ -4,6 +4,25 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## #105 Kunci household di geser dana bot & hapus amplop · 2026-10-17 · pemilik produk + Claude
+
+**Selesai**
+- `fund_shift.lock_household` (dipindah dari `advisor/execute.py`; `execute.lock_household` tetap ada dan memanggilnya). Satu kunci untuk semua jalur geser dana.
+- Kunci diambil **sebelum saldo dihitung ulang** di: `handlers.handle_fund_shift_callback` (bot & chat web satu item), `batch_cmd._shift_step` (multi-item), `DELETE /envelopes/{id}` (sisa → Tabungan). `POST /envelopes/transfer` kini mengimpor dari `fund_shift`.
+- Tes: 4 tes integrasi SQLite (urutan kunci → hitung ulang di dua jalur bot; top-up dan "Lewati" tanpa kunci) + 1 tes hapus amplop. Uji mutasi: tanpa kunci, 2 tes jalur bot merah.
+
+**Keputusan kecil**
+- Top-up pemasukan tidak dikunci: tidak ada amplop sumber yang bisa minus, jadi tidak perlu menserialkan.
+- Kunci di jalur multi-item dilepas oleh commit di `_record_item`; bila ditolak (savepoint rollback) kunci bertahan sampai sesi callback ditutup — beberapa milidetik, tidak menahan pencatatan web (insert transaksi tidak menyentuh baris household).
+
+**Jebakan**
+- SQLite mengabaikan `FOR UPDATE`; tes hanya bisa membuktikan urutan & household yang dikunci, bukan blokir sungguhan. Perilaku blokir sama dengan `balance_check` (Postgres, `FOR NO KEY UPDATE`).
+- `test_delete_envelope` memakai mock DB berurutan: hasil kunci household disisipkan setelah hitung langganan aktif.
+
+**Tes:** backend 995 OK (5 baru).
+
+---
+
 ## #93 "Bukan dobel" permanen · 2026-10-17 · pemilik produk + Claude
 
 **Konteks:** Spesifikasi DAT-03 (§6G): "Bukan dobel" permanen. Kode memakai dismiss `tidak_relevan` (90 hari). Dalam praktik 90 hari sudah cukup karena S4/S4b hanya melihat periode berjalan (≤ 31 hari), tetapi jaminan itu bergantung diam-diam pada batas tersebut. DAT-06 "Bukan pembayaran tagihan" lewat jalur yang sama dan ikut tersembunyi 90 hari (±3 periode), padahal spesifikasinya "untuk periode ini".

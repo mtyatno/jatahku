@@ -4,8 +4,9 @@
 execute = satu langkah konfirmasi:
 1. idempoten dengan `client_ref` (Redis `txnref:*`, sama dengan pencatatan transaksi);
 2. kunci baris household (`FOR NO KEY UPDATE`, pola `balance_check.apply`) — dua anggota
-   yang mengeksekusi bersamaan diserialkan, dan `POST /envelopes/transfer` memakai
-   kunci yang sama;
+   yang mengeksekusi bersamaan diserialkan, dan semua jalur geser dana lain
+   (`POST /envelopes/transfer`, bot, hapus amplop) memakai kunci yang sama
+   (`fund_shift.lock_household`);
 3. snapshot + metrik dihitung ulang DI DALAM kunci; `saldo_versi` beda → 409 dengan
    rencana baru;
 4. semua transfer + pembayaran tagihan dalam satu commit.
@@ -38,10 +39,10 @@ def _rp(value) -> Decimal:
 
 
 async def lock_household(db, hid) -> None:
-    """Kunci baris household sampai commit (dipakai execute & transfer manual)."""
-    from sqlalchemy import select
-    from app.models.models import Household
-    await db.execute(select(Household.id).where(Household.id == hid).with_for_update(key_share=True))
+    """Kunci baris household sampai commit — implementasinya di fund_shift.lock_household,
+    dipakai semua jalur geser dana (web, bot, execute, hapus amplop)."""
+    from app.services import fund_shift
+    await fund_shift.lock_household(db, hid)
 
 
 def _plan(snap, m, kebutuhan, kecuali, sertakan) -> dict:
