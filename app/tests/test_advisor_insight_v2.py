@@ -160,8 +160,10 @@ class SkenarioTests(unittest.TestCase):
         base = j0(normal(dana=6_000_000))
         b = normal(dana=6_000_000)
         b.txn("makan", 2_000_000, desc="kulkas")                   # outlier
-        b.txn("makan", 30_000, desc="penyesuaian", adjustment=True)  # penyesuaian saldo
         self.assertEqual(j0(b), base)
+        b = normal(dana=6_000_000)
+        b.txn("makan", 300_000, desc="penyesuaian", adjustment=True)  # cocokkan saldo: J0 ikut turun (20 Okt)
+        self.assertLess(j0(b), base)
         b = normal(dana=6_000_000)
         b.recurring("makan", 250_000, "Langganan", date(2026, 10, 20))
         belum_bayar = j0(b)

@@ -102,7 +102,7 @@ Setiap permintaan (Beranda, halaman lain, chat, ringkasan terjadwal) melewati 7 
 | T4 | laju_total | Σ variabel semua amplop belanja 7 hari terakhir ÷ 7, bila ada belanja di ≥ 3 dari 7 hari itu; selain itu Σ variabel sejak ps ÷ d. **Bukan** Σ laju(e): dengan begitu T4 selalu sama dengan jumlah 7 batang terakhir di grafik ÷ 7, dan labelnya boleh "rata-rata 7 hari terakhir" |
 | T5 | belanja_hari_ini | Σ variabel(e, hari ini). Inilah angka utama kartu Jatah hari ini; yang dikecualikan hari ini (tagihan, outlier, penyesuaian) disebut di catatan kaki kartu, bukan dihitung |
 | T5b | keluar_hari_ini | Semua transaksi hari ini **kecuali** pembayaran tagihan (tagihan sudah dipotong lewat M4, jadi netral terhadap T3). Termasuk outlier dan penyesuaian |
-| T6 | jatah_hari_ini (J0) | floor100((T3 + T5b) ÷ H0) = sisa bebas **awal hari** ÷ H0. Tetap sepanjang hari apa pun yang dicatat; hanya berubah bila ada dana masuk hari ini (alokasi/transfer) |
+| T6 | jatah_hari_ini (J0) | floor100((T3 + T5b − penyesuaian keluar hari ini) ÷ H0) = sisa bebas **awal hari** ÷ H0, dengan hasil cocokkan saldo hari ini dianggap koreksi saldo awal. Tetap sepanjang hari untuk belanja, outlier, dan tagihan; berubah bila ada dana masuk hari ini (alokasi/transfer) atau cocokkan saldo hari ini (dua arah, revisi 20 Okt 2026) |
 | T7 | aman_per_hari (J1) | floor100(max(T3, 0) ÷ H) |
 | T8 | proyeksi_akhir | T2 + Σ M4 + Σ M5 + T4 × r |
 | T9 | kekurangan | max(0, T4 × r − T3), sama dengan proyeksi − dana bila positif |
@@ -117,7 +117,8 @@ Setiap permintaan (Beranda, halaman lain, chat, ringkasan terjadwal) melewati 7 
 **Kenapa J0 dan J1 dipisah.** Kartu "Jatah hari ini" sekarang membandingkan belanja hari ini dengan J1, yang sudah dipotong belanja hari ini lalu dibagi r. Akibatnya batasnya ikut turun saat user belanja. Batas "lewat" tetap sama secara matematis, tapi angka jatah dan lebihnya kurang tepat.
 - Usul: kartu Jatah hari ini memakai J0 (contoh: Rp297.100 / Rp165.100, lewat Rp132.000).
 - Kartu Sisa bebas memakai J1 (Rp153.200/hari untuk 11 hari ke depan).
-- **Invarian J0** (untuk unit test): mencatat transaksi apa pun hari ini, termasuk outlier, penyesuaian saldo, atau tagihan, tidak mengubah J0. Hanya alokasi atau transfer masuk hari ini yang mengubahnya.
+- **Invarian J0** (untuk unit test): mencatat belanja, outlier, atau tagihan hari ini tidak mengubah J0. Alokasi atau transfer masuk hari ini, dan penyesuaian cocokkan saldo hari ini (dua arah), mengubahnya.
+- **Revisi 20 Okt 2026:** sebelumnya penyesuaian saldo juga dikembalikan ke saldo awal hari. Kasus nyata: cocokkan saldo menemukan uang kurang ±Rp3,86 jt → sisa bebas Rp1,17 jt untuk 6 hari (aman Rp195 rb/hari), tetapi Jatah hari ini Rp719 rb dan chip "Sisa Rp719 rb hari ini", dihitung dari saldo pagi yang ternyata tidak ada. Cocokkan saldo adalah koreksi, bukan belanja, jadi langsung berlaku untuk jatah hari itu (juga di deret harian grafik).
 
 **Grafik Pengeluaran harian membaca deret dari metrik ini,** bukan dari `/analytics/daily-spending` (yang sekarang ikut menghitung pembayaran tagihan dan amplop pribadi anggota lain). Batang = variabel per hari, diwarnai menurut S6; pembayaran tagihan dan penyesuaian digambar sebagai segmen abu-abu redup di atas batang, tidak dibandingkan dengan jatah. Dengan begitu grafik, T4, T5, dan daftar transaksi menunjuk angka yang sama.
 
@@ -740,7 +741,7 @@ Mockup di canvas "AI Advisor — Jatahku" sudah disamakan dengan contoh ini.
   10. Perencana: amplop terkunci, milik anggota lain, atau punya tagihan tidak dipakai sebagai sumber; tabungan tidak pernah otomatis.
   11. Kekurangan total vs kekurangan per amplop (penekanan §5.2).
   12. Dismiss, lalu tone naik → muncul lagi.
-  13. Invarian J0: mencatat outlier, penyesuaian saldo, atau tagihan hari ini tidak mengubah J0; alokasi hari ini mengubahnya.
+  13. Invarian J0: mencatat outlier atau tagihan hari ini tidak mengubah J0; alokasi dan penyesuaian cocokkan saldo hari ini mengubahnya.
   14. Tagihan dibayar manual dengan nominal persis: M4 menganggap lunas (tidak ada hitung ganda di T3) dan DAT-06 menyala.
   15. Struk berisi 2 barang kembar dalam satu rantai S1: tidak ditandai dobel; struk yang sama dikirim ulang 40 detik kemudian: S4b menyala; kiriman ulang dengan `client_ref` sama: ditolak server, tidak ada transaksi baru.
   16. Urutan kelompok tone: info berskor 90 tetap di bawah warn berskor 40.

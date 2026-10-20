@@ -17,9 +17,11 @@ Keputusan kecil S1 (dicatat juga di SESI-LOG.md):
 - M8, T8, T9, T10 tidak dihitung bila d < 3 (konstanta "hari minimum proyeksi").
 - `tanggal_habis` = hari pertama uang tidak cukup = t + ⌊T3 ÷ T4⌋ + 1 (§12: cukup
   sampai 23 Okt, habis 24 Okt); `cukup_sampai` = t + ⌊T3 ÷ T4⌋.
-- J0 tidak boleh negatif (dibatasi 0). Penyesuaian cocokkan saldo yang MENAMBAH
-  dana hari ini (Income penyesuaian) juga dikeluarkan dari J0, supaya invarian J0
-  berlaku untuk penyesuaian dua arah.
+- J0 tidak boleh negatif (dibatasi 0). Penyesuaian cocokkan saldo hari itu (dua arah:
+  transaksi penyesuaian maupun Income penyesuaian) LANGSUNG mengubah J0 hari itu: hasil
+  cocokkan saldo adalah koreksi saldo awal, bukan belanja hari ini. Tanpa ini, cocokkan
+  saldo yang menemukan uang berkurang Rp3,86 jt membuat jatah hari ini tetap dihitung dari
+  saldo pagi yang tidak pernah ada (revisi 20 Okt 2026).
 - M4: transaksi "🔄 X" hanya melunasi langganan X (lewat `next_run` yang sudah maju),
   dan tidak ikut kolam nominal-persis tagihan lain. Selebihnya sama dengan `reserved.py`.
 """
@@ -552,15 +554,14 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
 
     cur_belanja_txns = [x for eid in belanja_ids for x in cur_txns_by_env.get(eid, [])]
     T5b = sum((x.amount for x in cur_belanja_txns if x.transaction_date == t and x.id not in lunas_ids), ZERO)
-    def _is_adj(a) -> bool:
-        inc = incomes.get(a.income_id)
-        return inc is not None and inc.is_adjustment
-
-    adj_in_today = sum(
-        (a.amount for a in snap.allocations if a.envelope_id in belanja_set and a.income_date == t and _is_adj(a)),
+    # Penyesuaian keluar hari ini tidak dikembalikan ke saldo awal hari; penyesuaian masuk
+    # sudah ada di T3. Jadi J0 = (T3 + keluar hari ini selain tagihan & penyesuaian) ÷ H0.
+    adj_out_today = sum(
+        (x.amount for x in cur_belanja_txns
+         if x.transaction_date == t and x.id not in lunas_ids and jenis[x.id] == "penyesuaian"),
         ZERO,
     )
-    J0 = jatah_awal_hari(T3 + T5b - adj_in_today, H0)
+    J0 = jatah_awal_hari(T3 + T5b - adj_out_today, H0)
     J1 = floor100(max(T3, ZERO) / H) if H > 0 else None
 
     if proyeksi_valid:
@@ -595,13 +596,12 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         if day == t:
             jatah = J0
         else:
-            dana_awal = roll_bel + sum(
-                (a.amount for a in alloc_bel_cur
-                 if a.income_date < day or (a.income_date == day and not _is_adj(a))),
-                ZERO,
-            )
+            dana_awal = roll_bel + sum((a.amount for a in alloc_bel_cur if a.income_date <= day), ZERO)
             keluar_sebelum = sum(
-                (x.amount for x in cur_belanja_txns if x.transaction_date < day and x.id not in lunas_ids), ZERO,
+                (x.amount for x in cur_belanja_txns
+                 if x.id not in lunas_ids and (x.transaction_date < day
+                                               or (x.transaction_date == day and jenis[x.id] == "penyesuaian"))),
+                ZERO,
             )
             _, h0_day = horizons(snap.income_type, (pe - day).days)
             jatah = jatah_awal_hari(dana_awal - keluar_sebelum - komitmen, h0_day)
