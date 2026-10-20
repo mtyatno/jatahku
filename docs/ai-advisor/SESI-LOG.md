@@ -4,6 +4,19 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## Jatah hari ini sesudah cocokkan saldo · 2026-10-20 · pemilik produk + Claude
+
+**Konteks:** akun pemilik produk: sisa bebas Rp1,17 jt untuk 6 hari (aman Rp195 rb/hari), tetapi Jatah hari ini Rp719.300 dan chip "Sisa Rp719 rb hari ini". Penyebab: cocokkan saldo hari itu menemukan uang kurang ±Rp3,86 jt; J0 mengembalikan penyesuaian itu ke "saldo awal hari" (invarian J0 lama), jadi jatah dihitung dari ±Rp5,03 jt yang tidak ada.
+
+**Selesai**
+- `metrics.py`: J0 = floor100((T3 + T5b − penyesuaian keluar hari ini) ÷ H0). Penyesuaian masuk tidak lagi dikeluarkan (sudah di T3). Deret harian grafik memakai aturan yang sama untuk hari lalu.
+- 02-aturan §3 (T6, invarian J0, revisi), uji #13.
+- Tes: penyesuaian keluar/masuk mengubah J0, kasus besar, deret harian.
+
+**Keputusan kecil:** outlier (pengeluaran besar sekali waktu) tetap tidak mengubah J0 — belum diputuskan pemilik produk.
+
+---
+
 ## #105 Kunci household di geser dana bot & hapus amplop · 2026-10-17 · pemilik produk + Claude
 
 **Selesai**

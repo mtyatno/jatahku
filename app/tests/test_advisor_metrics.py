@@ -82,7 +82,8 @@ class Contoh15OktTests(unittest.TestCase):
 
 
 class InvarianJ0Tests(unittest.TestCase):
-    """Skenario 13: catat apa pun hari ini tidak mengubah J0; dana masuk hari ini mengubahnya."""
+    """Skenario 13: belanja, outlier, dan tagihan hari ini tidak mengubah J0; dana masuk dan
+    penyesuaian cocokkan saldo hari ini (dua arah) mengubahnya (revisi 20 Okt 2026)."""
 
     def j0(self, mutate=None):
         b = contoh_15_okt()
@@ -93,13 +94,35 @@ class InvarianJ0Tests(unittest.TestCase):
     def test_outlier_hari_ini(self):
         self.assertEqual(self.j0(lambda b: b.txn("belanja", 5_000_000)), D("165100"))
 
-    def test_penyesuaian_keluar(self):
+    def test_penyesuaian_keluar_menurunkan(self):
+        # Cocokkan saldo menemukan uang kurang Rp250 rb: (1.685.200 − 250.000 + 297.100) ÷ 12.
         self.assertEqual(self.j0(lambda b: b.txn("belanja", 250_000, desc="Tak tercatat", adjustment=True)),
-                         D("165100"))
+                         D("144300"))
 
-    def test_penyesuaian_masuk(self):
+    def test_penyesuaian_masuk_menaikkan(self):
+        # +300.000 ÷ 12 = +25.000
         self.assertEqual(self.j0(lambda b: b.income(300_000, on=b.snap.today, alloc={"belanja": 300_000},
-                                                    adjustment=True)), D("165100"))
+                                                    adjustment=True)), D("190100"))
+
+    def test_penyesuaian_besar_tidak_melebihi_saldo(self):
+        # Kasus 20 Okt: cocokkan saldo memotong hampir semua sisa bebas. J0 tidak boleh lagi
+        # dihitung dari saldo pagi (dulu ±4× jatah aman), jadi J0 ≤ (sisa bebas + belanja hari ini) ÷ H0.
+        b = contoh_15_okt()
+        b.txn("belanja", 1_500_000, desc="Penyesuaian saldo", adjustment=True)
+        m = compute_metrics(b.build())
+        self.assertEqual(m.j0, floor100((m.sisa_bebas + m.belanja_hari_ini) / m.horizon_awal))
+        self.assertEqual(m.harian[-1]["jatah"], m.j0)
+
+    def test_penyesuaian_hari_lalu_di_deret_harian(self):
+        # Penyesuaian kemarin memotong jatah kemarin di grafik, sama dengan aturan hari ini.
+        def jatah_kemarin(mutate=None):
+            b = contoh_15_okt()
+            if mutate:
+                mutate(b)
+            return compute_metrics(b.build()).harian[-2]["jatah"]
+        kemarin = contoh_15_okt().snap.today - timedelta(days=1)
+        self.assertLess(jatah_kemarin(lambda b: b.txn("belanja", 600_000, on=kemarin, desc="Penyesuaian",
+                                                      adjustment=True)), jatah_kemarin())
 
     def test_bayar_tagihan_manual(self):
         self.assertEqual(self.j0(lambda b: b.txn("tagihan", 1_600_000, desc="bayar kpr")), D("165100"))
