@@ -2,14 +2,14 @@
 title: "Enam Kartu Ringkas di Dashboard, Masing-masing dengan Analisa AI"
 description: "Bagian atas Dashboard Jatahku berisi enam kartu: Jatah hari ini, Sisa bebas, Terpakai periode ini, Income periode ini, Tagihan belum dibayar, dan Tabungan. Setiap kartu punya satu angka, satu batang, dan chip analisa AI Advisor."
 pubDate: 2026-10-05
-updatedDate: 2026-10-17
+updatedDate: 2026-10-23
 category: update-fitur
 author: Tim Jatahku
 cover: /covers/kartu-ringkas-dashboard.svg
 featured: false
 ---
 
-**Diperbarui 17 Oktober 2026:** susunan kartunya berubah. Setiap kartu kini punya chip analisa AI Advisor di pojok kanan atas. Artikel ini sudah disesuaikan.
+**Diperbarui 23 Oktober 2026:** jatah harian kini dihitung dari amplop harian saja dan dipagari ritme ideal; kartu Sisa bebas menampilkan dana harian, "dicadangkan", dan surplus. Penjelasannya di [Jaga Ritme, Amankan Sisanya](/insight/jaga-ritme-amankan-sisanya/). Artikel ini sudah disesuaikan.
 
 Buka Dashboard, dan bagian paling atas langsung menjawab "keuanganku gimana periode ini?". Ada enam kartu. Setiap kartu berisi:
 
@@ -22,15 +22,15 @@ Ikon ⓘ menjelaskan arti angka dan batangnya. Ketuk chip-nya untuk membuka anal
 
 ## 1. Jatah hari ini
 
-Belanja hari ini dibandingkan dengan **jatah sejak pagi**, misalnya "Rp297.100 / Rp165.100". Jatah ini tidak ikut turun saat kamu belanja. Garis putih di batang menandai jatahnya, dan batang jadi merah kalau sudah lewat.
+Belanja hari ini dibandingkan dengan **jatah sejak pagi**, misalnya "Rp297.100 / Rp165.100". Jatah ini tidak ikut turun saat kamu belanja biasa; ia hanya berubah bila ada dana masuk, cocokkan saldo, atau belanja besar sekali waktu. Jatah dihitung dari amplop harian saja dan dipagari **dana harian ÷ jumlah hari periode**, jadi uang yang masuk di tengah periode tidak melambungkannya. Di bawahnya ada "ritme Rp…/hari", rata-rata belanja harianmu periode ini. Garis putih di batang menandai jatahnya, dan batang jadi merah kalau sudah lewat.
 
 Contoh chip: "1,8× jatah", "Sisa Rp40 rb hari ini", atau "Belum ada catatan". Tombolnya **Lihat transaksi hari ini** dan **Tanya di chat**.
 
 ## 2. Sisa bebas
 
-Dana amplop belanja dikurangi yang sudah terpakai dan tagihan yang belum dibayar. Inilah uang yang benar-benar bebas dipakai sampai akhir periode. Keterangannya menunjukkan hari ke berapa periode ini dan batas aman ke depan, misalnya "aman Rp153 rb/hari".
+Angka utamanya **dana harian**: dana amplop harian dikurangi yang sudah terpakai dan tagihan yang belum dibayar. Saldo amplop bulanan (SPP, cicilan, listrik) tidak ikut; ia tampil di keterangan sebagai "dicadangkan". Keterangannya juga menunjukkan hari ke berapa periode ini dan ritme yang perlu dijaga, misalnya "jaga Rp153 rb/hari".
 
-Contoh chip: "Habis ±24 Okt" atau "Cukup s/d 26 Okt". Penjelasan lengkapnya ada di artikel [Sisa Bebas di Dashboard](/insight/sisa-bebas-dengan-bill-reserve/), dan soal batas aman harian di artikel [AI Advisor Kini Ikut Ritme Pendapatanmu](/insight/ai-advisor-daily-weekly-earners/).
+Contoh chip: "Habis ±24 Okt", "Surplus +Rp1,65 jt" (dana harian di bawah pagar; tombolnya Setor ke tabungan), atau "Cukup s/d 26 Okt". Penjelasan lengkapnya ada di artikel [Sisa Bebas di Dashboard](/insight/sisa-bebas-dengan-bill-reserve/), dan soal batas aman harian di artikel [AI Advisor Kini Ikut Ritme Pendapatanmu](/insight/ai-advisor-daily-weekly-earners/).
 
 ## 3. Terpakai periode ini
 
