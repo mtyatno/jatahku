@@ -83,7 +83,7 @@ class ParitasTests(unittest.TestCase):
                 self.assertIn(baris, isi, nama)
             p = polos(isi)
             self.assertIn(f"Sisa bebas  {rp_penuh(m['sisa_bebas'])}", p, nama)
-            self.assertIn(f"Aman {m['sisa_hari']} hari ke depan  {rp_penuh(m['j1'])}/hari", p, nama)
+            self.assertIn(f"Jaga {m['sisa_hari']} hari ke depan  {rp_penuh(m['j1'])}/hari", p, nama)
             self.assertIn(f"Jatah hari ini  {rp_penuh(m['j0'])} · belanja {rp_penuh(m['belanja_hari_ini'])}", p, nama)
             self.assertIn(f"Dana belanja  {rp_penuh(m['dana_belanja'])}", p, nama)
             self.assertIn(f"Terpakai  {rp_penuh(m['terpakai'])}", p, nama)
@@ -94,7 +94,7 @@ class ParitasTests(unittest.TestCase):
         self.assertIn("Terpakai  Rp8.000.000", p)
         self.assertIn("Disisihkan tagihan  Rp1.600.000", p)
         self.assertIn("Sisa bebas  Rp1.685.200", p)       # 11.285.200 − 8.000.000 − 1.600.000
-        self.assertIn("Aman 11 hari ke depan  Rp153.200/hari", p)
+        self.assertIn("Jaga 11 hari ke depan  Rp153.200/hari", p)
         self.assertIn("Jatah hari ini  Rp165.100", p)
 
     def test_chip_dan_item_sama_dengan_web(self):
@@ -151,9 +151,9 @@ class HariTerakhirTests(unittest.TestCase):
         self.assertIsNone(m.j1)
         limit = polos(chat.jawab_limit_harian(a))
         self.assertIn("hari terakhir periode", limit)
-        # J0 = sisa bebas awal hari (sisa sekarang + belanja hari ini), dibulatkan ke bawah Rp100
-        self.assertEqual(m.j0, (m.sisa_bebas + m.belanja_hari_ini) // 100 * 100)
-        self.assertIn("Hari terakhir periode: sisa bebas = jatah hari ini", polos(chat.jawab_sisa(a)))
+        # Fase 5: J0 = min(sisa harian awal hari, pagar ideal), dibulatkan ke bawah Rp100
+        self.assertEqual(m.j0, min((m.sisa_bebas_harian + m.belanja_hari_ini) // 100 * 100, m.jatah_ideal))
+        self.assertIn("Hari terakhir periode", polos(chat.jawab_sisa(a)))
 
     def test_jawaban_lama_tidak_membagi_nol(self):
         user = SimpleNamespace(payday_day=1)
@@ -182,7 +182,7 @@ class KenapaTests(unittest.TestCase):
         p = polos(chat.jawab_kenapa(self.a, "kenapa boros?"))
         self.assertTrue(p.startswith("🟡 Rem belanja harian ke Rp153 rb"), p)
         self.assertIn("Penyumbang: Makan & Jajan", p)          # penyumbang M12
-        self.assertIn("Sisa bebas: Rp1.685.200 ÷ 11 hari = Rp153.200/hari", p)
+        self.assertIn("Sisa bebas harian: Rp1.685.200 ÷ 11 hari = Rp153.200/hari", p)
         self.assertIn("Rincian:", p)                          # AMP-03 & HAR-01 yang diserap
         self.assertIn("Lunasi KPR Rumah", p)                  # item lain di daftar
 

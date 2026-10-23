@@ -61,6 +61,7 @@ class Konstanta:
     outlier_hari_median: int = 90
     periode_riwayat: int = 3
     bulan_target_tanpa_tenggat: int = 24
+    ritme_min_hari: int = 7                 # T6r ditampilkan bila d ≥ ini (Fase 5)
 
 
 DEFAULT = Konstanta()
@@ -100,6 +101,7 @@ class EnvelopeMetrics:
     id: str
     nama: str
     kelompok: str                  # belanja | tabungan
+    jenis: str                     # harian | bulanan (kolam jatah harian, Fase 5); tabungan = "-"
     kebutuhan: bool                # classification needs (kosong = needs)
     dana: Decimal                  # M1
     terpakai: Decimal              # M2
@@ -155,7 +157,12 @@ class Metrics:
     terpakai_belanja: Decimal
     tagihan_sisa: Decimal          # Σ M4 belanja
     sisihan: Decimal               # Σ M5 belanja
-    sisa_bebas: Decimal            # T3
+    sisa_bebas: Decimal            # T3 = T3h + T3b
+    sisa_bebas_harian: Decimal     # T3h (Fase 5)
+    cadangan_bulanan: Decimal      # T3b
+    jatah_ideal: Decimal | None    # T6i (None = tidak dipagari: pendapatan harian/mingguan)
+    ritme: Decimal | None          # T6r (None bila d < ritme_min_hari)
+    surplus_harian: Decimal        # T7s
     laju_total: Decimal            # T4
     belanja_hari_ini: Decimal      # T5
     keluar_hari_ini: Decimal       # T5b
@@ -204,6 +211,11 @@ class Metrics:
             "terpakai": rupiah(self.terpakai_belanja),
             "tagihan_sisa": rupiah(self.tagihan_sisa),
             "sisa_bebas": rupiah(self.sisa_bebas),
+            "sisa_bebas_harian": rupiah(self.sisa_bebas_harian),
+            "cadangan_bulanan": rupiah(self.cadangan_bulanan),
+            "jatah_ideal": rupiah(self.jatah_ideal),
+            "ritme": rupiah(self.ritme),
+            "surplus_harian": rupiah(self.surplus_harian),
             "j0": rupiah(self.j0),
             "j1": rupiah(self.j1),
             "laju7": rupiah(self.laju_total),
@@ -241,11 +253,14 @@ def horizons(income_type: str, r: int) -> tuple[int, int]:
     return r, r + 1
 
 
-def jatah_awal_hari(sisa_bebas_awal: Decimal, h0: int) -> Decimal:
-    """J0 = floor100(sisa bebas awal hari ÷ H0), tidak negatif."""
+def jatah_awal_hari(sisa_bebas_awal: Decimal, h0: int, pagar: Decimal | None = None) -> Decimal:
+    """J0 = floor100(min(sisa bebas harian awal hari ÷ H0, pagar)), tidak negatif.
+    `pagar` = T6i (dana harian ÷ D); None = tanpa pagar. Aturan asimetri waktu (02-aturan §2):
+    sisa hari boleh menekan jatah ke bawah, tidak boleh mendongkraknya ke atas."""
     if h0 <= 0:
         return ZERO
-    return floor100(max(sisa_bebas_awal, ZERO) / h0)
+    jatah = floor100(max(sisa_bebas_awal, ZERO) / h0)
+    return min(jatah, pagar) if pagar is not None else jatah
 
 
 def monthly_equivalent(amount: Decimal, frequency: str) -> Decimal:
@@ -349,6 +364,10 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
 
     envs = {e.id: e for e in snap.envelopes}
     belanja_ids = [e.id for e in snap.envelopes if e.purpose in BELANJA_PURPOSES]
+    # Fase 5 (02-aturan §3): hanya amplop belanja HARIAN yang membentuk jatah harian;
+    # amplop bulanan (grup `bulanan` atau purpose debt) adalah cadangan.
+    harian_ids = [eid for eid in belanja_ids if envs[eid].jenis == "harian"]
+    harian_set = set(harian_ids)
     tabungan_ids = [e.id for e in snap.envelopes if e.purpose in SAVING_PURPOSES]
     belanja_set = set(belanja_ids)
 
@@ -519,6 +538,7 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         amplop[eid] = EnvelopeMetrics(
             id=eid, nama=e.name,
             kelompok="belanja" if eid in belanja_set else "tabungan",
+            jenis=e.jenis if eid in belanja_set else "-",
             kebutuhan=(e.classification or "needs") != "wants",
             dana=dana, terpakai=terpakai, sisa=sisa, tagihan_sisa=m4, sisihan=m5, bebas=bebas,
             variabel_periode=sum(days.values(), ZERO),
@@ -540,35 +560,45 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
 
     # T1–T11
     bel = [amplop[eid] for eid in belanja_ids]
+    har = [amplop[eid] for eid in harian_ids]
     T1 = sum((m.dana for m in bel), ZERO)
     T2 = sum((m.terpakai for m in bel), ZERO)
     M4 = sum((m.tagihan_sisa for m in bel), ZERO)
     M5 = sum((m.sisihan for m in bel), ZERO)
-    T3 = sum((m.bebas for m in bel), ZERO)
+    T3h = sum((m.bebas for m in har), ZERO)
+    T3b = sum((m.bebas for m in bel if m.jenis == "bulanan"), ZERO)
+    T3 = T3h + T3b
     belanja_days = defaultdict(lambda: ZERO)
-    for eid in belanja_ids:
+    for eid in harian_ids:
         for day, amt in var_day[eid].items():
             belanja_days[day] += amt
     T4 = laju_dari(belanja_days)
     T5 = belanja_days.get(t, ZERO)
+    # T6i pagar ideal: dana harian satu periode dibagi rata ke seluruh hari periode. Pendapatan
+    # harian/mingguan tidak dipagari — dananya memang masuk bertahap.
+    T6i = floor100(sum((m.dana for m in har), ZERO) / D) if snap.income_type not in ("daily", "weekly") else None
+    T6r = floor100(sum(belanja_days.values(), ZERO) / d) if d >= k.ritme_min_hari else None
 
-    cur_belanja_txns = [x for eid in belanja_ids for x in cur_txns_by_env.get(eid, [])]
+    cur_belanja_txns = [x for eid in harian_ids for x in cur_txns_by_env.get(eid, [])]
     T5b = sum((x.amount for x in cur_belanja_txns if x.transaction_date == t and x.id not in lunas_ids), ZERO)
-    # Penyesuaian keluar hari ini tidak dikembalikan ke saldo awal hari; penyesuaian masuk
-    # sudah ada di T3. Jadi J0 = (T3 + keluar hari ini selain tagihan & penyesuaian) ÷ H0.
-    adj_out_today = sum(
+    # Penyesuaian cocokkan saldo (20 Okt) dan belanja besar sekali waktu/outlier (23 Okt) hari ini
+    # langsung memotong saldo awal hari; penyesuaian masuk sudah ada di T3h. Jadi
+    # J0 = min((T3h + belanja biasa hari ini) ÷ H0, T6i).
+    potong_today = sum(
         (x.amount for x in cur_belanja_txns
-         if x.transaction_date == t and x.id not in lunas_ids and jenis[x.id] == "penyesuaian"),
+         if x.transaction_date == t and x.id not in lunas_ids and jenis[x.id] in ("penyesuaian", "outlier")),
         ZERO,
     )
-    J0 = jatah_awal_hari(T3 + T5b - adj_out_today, H0)
-    J1 = floor100(max(T3, ZERO) / H) if H > 0 else None
+    J0 = jatah_awal_hari(T3h + T5b - potong_today, H0, T6i)
+    J1 = jatah_awal_hari(T3h, H, T6i) if H > 0 else None
+    # T7s surplus: dana harian yang tidak tersentuh jatah sampai pe (> 0 hanya bila pagar menahan).
+    T7s = max(ZERO, T3h - max(ZERO, J0 - T5) - (J1 or ZERO) * r)
 
     if proyeksi_valid:
         T8 = T2 + M4 + M5 + T4 * r
-        T9 = max(ZERO, T4 * r - T3)
-        if T3 > 0 and T4 > 0:
-            hari = int((T3 / T4).to_integral_value(rounding=ROUND_FLOOR))
+        T9 = max(ZERO, T4 * r - T3h)
+        if T3h > 0 and T4 > 0:
+            hari = int((T3h / T4).to_integral_value(rounding=ROUND_FLOOR))
             cukup = t + timedelta(days=hari)
             habis = cukup + timedelta(days=1)
         else:
@@ -578,13 +608,14 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
     persen_dana = T2 / T1 if T1 > 0 else None
     persen_waktu = Decimal(d) / Decimal(D)
 
-    # Deret harian (grafik + S6): J0 tiap hari dihitung dari sisa bebas awal hari itu.
-    roll_bel = sum((rollover(eid, n_periods - 1) for eid in belanja_ids), ZERO)
+    # Deret harian (grafik + S6): J0 tiap hari dihitung dari sisa bebas harian awal hari itu,
+    # dipagari T6i, dengan penyesuaian/outlier hari itu ikut memotong (sama dengan T6).
+    roll_bel = sum((rollover(eid, n_periods - 1) for eid in harian_ids), ZERO)
     lunas_total = sum((x.amount for x in cur_belanja_txns if x.id in lunas_ids), ZERO)
-    komitmen = M4 + M5 + lunas_total
+    komitmen = sum((m.tagihan_sisa + m.sisihan for m in har), ZERO) + lunas_total
     alloc_bel_cur = [
         a for a in snap.allocations
-        if a.envelope_id in belanja_set and ps <= a.income_date <= pe
+        if a.envelope_id in harian_set and ps <= a.income_date <= pe
     ]
     harian = []
     day = ps
@@ -600,11 +631,12 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
             keluar_sebelum = sum(
                 (x.amount for x in cur_belanja_txns
                  if x.id not in lunas_ids and (x.transaction_date < day
-                                               or (x.transaction_date == day and jenis[x.id] == "penyesuaian"))),
+                                               or (x.transaction_date == day
+                                                   and jenis[x.id] in ("penyesuaian", "outlier")))),
                 ZERO,
             )
             _, h0_day = horizons(snap.income_type, (pe - day).days)
-            jatah = jatah_awal_hari(dana_awal - keluar_sebelum - komitmen, h0_day)
+            jatah = jatah_awal_hari(dana_awal - keluar_sebelum - komitmen, h0_day, T6i)
         harian.append({**kind_sum, "tanggal": day, "jatah": jatah, "lewat": kind_sum["variabel"] > jatah})
         day += timedelta(days=1)
 
@@ -709,6 +741,7 @@ def compute_metrics(snap: Snapshot, k: Konstanta = DEFAULT) -> Metrics:
         horizon=H, horizon_awal=H0, income_type=snap.income_type, proyeksi_valid=proyeksi_valid,
         amplop=amplop, tagihan=tagihan, jenis_transaksi=jenis,
         dana_belanja=T1, terpakai_belanja=T2, tagihan_sisa=M4, sisihan=M5, sisa_bebas=T3,
+        sisa_bebas_harian=T3h, cadangan_bulanan=T3b, jatah_ideal=T6i, ritme=T6r, surplus_harian=T7s,
         laju_total=T4, belanja_hari_ini=T5, keluar_hari_ini=T5b, j0=J0, j1=J1,
         proyeksi_akhir=T8, kekurangan=T9, tanggal_habis=habis, cukup_sampai=cukup,
         persen_dana=persen_dana, persen_waktu=persen_waktu, harian=harian,
@@ -825,10 +858,11 @@ def persen_variabel(m: Metrics) -> Decimal | None:
 
 
 def perkiraan_sisa(m: Metrics) -> Decimal | None:
-    """Perkiraan sisa bebas di akhir periode: T3 − T4 × r (PER-04/05/06). None bila d < 3."""
+    """Perkiraan sisa bebas harian di akhir periode: T3h − T4 × r (PER-04/05/06). None bila d < 3.
+    Cadangan bulanan (T3b) tidak ikut: itu uang yang akan dipakai, bukan sisa (Fase 5)."""
     if not m.proyeksi_valid:
         return None
-    return m.sisa_bebas - m.laju_total * m.sisa_hari
+    return m.sisa_bebas_harian - m.laju_total * m.sisa_hari
 
 
 def jumlah_transaksi_laju(snap: Snapshot, m: Metrics, k: Konstanta = DEFAULT) -> int:

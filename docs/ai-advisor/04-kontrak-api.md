@@ -17,10 +17,15 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // metrics = Metrics.to_api() dari app/services/advisor/metrics.py (S1). harian: satu baris per hari ps..hari ini,
   // hanya amplop belanja; "jatah" = J0 hari itu, "lewat" = variabel > jatah (S6). outlier & jatah ditambah di S1.
   // Angka null bila belum bisa dihitung: j1 di hari terakhir; proyeksi_akhir/kekurangan/tanggal_habis bila hari_ke < 3.
-  // S20 (02-aturan §3, revisi 23 Okt 2026) menambah: "sisa_bebas_harian" (T3h), "cadangan_bulanan" (T3b),
-  // "jatah_ideal" (T6i, null bila tidak dipagari), "ritme" (T6r, null bila hari_ke < 7), "surplus_harian" (T7s).
-  // j0/j1/kekurangan/tanggal_habis sejak S20 dihitung dari T3h dan dipagari T6i; sisa_bebas tetap total.
-  // GET/POST/PATCH /envelopes/groups menambah "jenis": "harian" | "bulanan" | null (otomatis).
+  // S20 (02-aturan §3, revisi 23 Okt 2026): "sisa_bebas_harian" (T3h), "cadangan_bulanan" (T3b),
+  // "jatah_ideal" (T6i, null bila tidak dipagari: pendapatan harian/mingguan), "ritme" (T6r, null bila hari_ke < 7),
+  // "surplus_harian" (T7s). j0/j1/kekurangan/tanggal_habis dihitung dari T3h dan dipagari T6i; harian[].jatah
+  // juga berpagar; sisa_bebas tetap total = sisa_bebas_harian + cadangan_bulanan.
+  // Aturan baru: HAR-06 (chip Jatah), PER-08 (chip Sisa bebas, CTA `plan` setor_surplus + `chat`), DAT-07 (daftar,
+  // CTA `route` /envelopes). Belum ada perubahan tampilan sampai S21.
+  // GET /envelopes/groups → [{id, name, sort_order, "jenis": "harian"|"bulanan"|null}] (null = otomatis).
+  // POST /envelopes/groups {name, jenis?} · PATCH /envelopes/groups/{id} {name?, jenis?} (field tak dikirim tidak
+  // berubah; "jenis": null = kembali otomatis; jenis lain → 422). Mengubah jenis menghapus cache advisor household.
   "kpi": { "jatah": {/* insight */}, "sisa_bebas": {}, "terpakai": {}, "income": {}, "tagihan": {}, "tabungan": {} },
   // kpi.<kartu> = insight terpilih untuk kartu itu (chip sudah sesuai kartu: PER-01 di Terpakai = "Lewat ±Rp525 rb",
   // di Sisa bebas = "Habis ±24 Okt"), atau null. Sejak S4 keenam kartu terisi (income: INC-*, cadangan INC-05;

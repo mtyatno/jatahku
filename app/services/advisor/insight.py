@@ -73,6 +73,13 @@ class KonstantaAturan:
     hampir_tercapai: Decimal = Decimal("0.9")         # TAB-04
     target_paralel_n: int = 5                         # TAB-06
     target_paralel_progres: Decimal = Decimal("0.15")  # TAB-06
+    # Fase 5 (02-aturan §3/§11, revisi 23 Okt 2026)
+    ritme_rasio: Decimal = Decimal("1.3")             # HAR-06: T5 ≥ 1,3× ritme
+    surplus_min: Decimal = Decimal("100000")          # PER-08 menyala bila surplus ≥ ini DAN ≥ satu hari jatah (J1)
+    surplus_daftar_min: Decimal = Decimal("500000")   # PER-08 masuk daftar (tone info) bila ≥ ini
+    bulanan_dana_min: Decimal = Decimal("500000")     # DAT-07
+    bulanan_txn_maks: int = 3                         # DAT-07: ≤ 3 transaksi per periode
+    bulanan_median_porsi: Decimal = Decimal("0.25")   # DAT-07: median nominal ≥ 25% dana
     cocokkan_lama_hari: int = 14                      # DAT-01
     cocokkan_lama_txn: int = 20                       # DAT-01
     selisih_besar: Decimal = Decimal("0.05")          # DAT-02

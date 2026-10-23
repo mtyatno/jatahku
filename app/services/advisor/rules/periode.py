@@ -1,4 +1,7 @@
-"""Aturan B. Periode & sisa bebas — PER-01..07 (02-aturan.md §6B). Fungsi murni `(Konteks) → [Insight]`.
+"""Aturan B. Periode & sisa bebas — PER-01..08 (02-aturan.md §6B). Fungsi murni `(Konteks) → [Insight]`.
+
+Fase 5 (23 Okt 2026): T9/T10/perkiraan sisa dihitung dari sisa bebas HARIAN (T3h); cadangan
+bulanan (T3b) hanya disebut sebagai fakta. PER-08 surplus harian = kelebihan yang ditahan pagar T6i.
 
 Semua angka dari metrics.py (T3, T4, T9, T10, J1, porsi_7h, perkiraan sisa) dan sinyal
 (S6 hari lewat jatah, S12 pemasukan terlambat, S16 sisa non-rollover). Tanpa teks.
@@ -60,7 +63,7 @@ def per_01(ctx: Konteks) -> list[Insight]:
     t = m.today
     t9 = m.kekurangan
     habis_dekat = m.tanggal_habis is not None and m.tanggal_habis <= t + timedelta(days=k.danger_habis_hari)
-    danger = habis_dekat or t9 >= max(m.sisa_bebas, ZERO) * k.danger_kekurangan
+    danger = habis_dekat or t9 >= max(m.sisa_bebas_harian, ZERO) * k.danger_kekurangan
     mulai7 = t - timedelta(days=6)
     lewat7 = sum(1 for h in s.lewat_jatah if mulai7 <= h["tanggal"] <= t)
     penyumbang = _penyumbang(ctx)
@@ -81,7 +84,8 @@ def per_01(ctx: Konteks) -> list[Insight]:
     return [Insight(
         aturan="PER-01", entitas=m.period_start.isoformat(), tone="danger" if danger else "warn",
         slot=("daftar", "kpi:sisa_bebas", "kpi:terpakai"),
-        data={"t3": m.sisa_bebas, "t4": m.laju_total, "t9": t9, "j1": m.j1, "r": m.sisa_hari,
+        data={"t3": m.sisa_bebas_harian, "t3b": m.cadangan_bulanan, "t4": m.laju_total, "t9": t9, "j1": m.j1,
+              "r": m.sisa_hari,
               "pe": m.period_end, "habis": m.tanggal_habis, "lewat7": lewat7, "penyumbang": penyumbang,
               "tagihan_sisa": m.tagihan_sisa, "tagihan_minus": tagihan_minus, "batas_amplop_id": batas_id,
               "proyeksi_akhir": m.proyeksi_akhir, "dana": m.dana_belanja, "terpakai": m.terpakai_belanja},
@@ -92,7 +96,7 @@ def per_01(ctx: Konteks) -> list[Insight]:
 
 def per_02(ctx: Konteks) -> list[Insight]:
     m = ctx.m
-    if m.sisa_bebas >= 0:
+    if m.sisa_bebas >= 0 and m.sisa_bebas_harian >= 0:
         return []
     minus = [a for a in m.amplop.values() if a.kelompok == "belanja" and a.sisa < 0]
     minus.sort(key=lambda a: (a.sisa, a.id))
@@ -104,10 +108,10 @@ def per_02(ctx: Konteks) -> list[Insight]:
     return [Insight(
         aturan="PER-02", entitas=m.period_start.isoformat(), tone="danger",
         slot=("daftar", "kpi:sisa_bebas"),
-        data={"minus": -m.sisa_bebas, "r": m.sisa_hari, "pe": m.period_end,
+        data={"minus": -min(m.sisa_bebas, m.sisa_bebas_harian), "r": m.sisa_hari, "pe": m.period_end,
               "amplop_minus": [{"amplop_id": a.id, "nama": a.nama, "sisa": a.sisa} for a in minus],
               "tagihan_sisa": m.tagihan_sisa},
-        aksi=aksi, rupiah=-m.sisa_bebas, urgensi=Decimal("1"),
+        aksi=aksi, rupiah=-min(m.sisa_bebas, m.sisa_bebas_harian), urgensi=Decimal("1"),
     )]
 
 
@@ -145,10 +149,36 @@ def per_04_05(ctx: Konteks) -> list[Insight]:
         aturan="PER-05", entitas=m.period_start.isoformat(), tone="ok",
         slot=("kpi:sisa_bebas", "kpi:terpakai"),
         data={"pe": m.period_end, "sisa": sisa, "t4": m.laju_total, "j1": m.j1, "r": m.sisa_hari,
-              "proyeksi_akhir": m.proyeksi_akhir, "dana": m.dana_belanja},
+              "t3b": m.cadangan_bulanan, "proyeksi_akhir": m.proyeksi_akhir, "dana": m.dana_belanja},
         keyakinan=yakin, dasar_hari=m.hari_ke,
     ))
     return out
+
+
+def per_08(ctx: Konteks) -> list[Insight]:
+    """PER-08 surplus harian (Fase 5): T7s > 0 dan tidak ada kekurangan. ok; info bila ≥ batas daftar
+    supaya jadi kandidat kartu AI Advisor dengan CTA setor ke tabungan."""
+    m, k, s = ctx.m, ctx.k, ctx.s
+    if not _per08_menyala(m, k):
+        return []
+    besar = m.surplus_harian >= k.surplus_daftar_min
+    tujuan = _tabungan_tujuan(ctx)
+    aksi = []
+    if tujuan and rupiah(m.surplus_harian) > 0:
+        aksi.append({"kind": "plan", "kode": "setor_surplus", "payload": {"kebutuhan": [
+            {"tujuan_id": tujuan, "jumlah": rupiah(m.surplus_harian)}
+        ]}})
+    aksi.append({"kind": "chat", "kode": "tanya_surplus", "payload": {}})
+    return [Insight(
+        aturan="PER-08", entitas=m.period_start.isoformat(), tone="info" if besar else "ok",
+        slot=("daftar", "kpi:sisa_bebas") if besar else ("kpi:sisa_bebas",),
+        data={"surplus": m.surplus_harian, "t3h": m.sisa_bebas_harian, "t3b": m.cadangan_bulanan,
+              "j1": m.j1, "r": m.sisa_hari, "ps_berikut": m.period_end + timedelta(days=1),
+              "tujuan_id": tujuan, "tujuan": ctx.nama.get(tujuan, "") if tujuan else "",
+              "non_rollover": [{"amplop_id": x["envelope_id"], "nama": ctx.nama.get(x["envelope_id"], ""),
+                                "bebas": x["bebas"]} for x in s.sisa_non_rollover]},
+        aksi=aksi, rupiah=m.surplus_harian, urgensi=Decimal("0.2"), keyakinan=_keyakinan(ctx), dasar_hari=m.hari_ke,
+    )]
 
 
 def _tabungan_tujuan(ctx: Konteks) -> str | None:
@@ -160,6 +190,12 @@ def _tabungan_tujuan(ctx: Konteks) -> str | None:
     return boleh[0].id if boleh else None
 
 
+def _per08_menyala(m, k) -> bool:
+    """Surplus setara ≥ 1 hari jatah dan ≥ Rp100 rb, tanpa kekurangan (PER-08, Fase 5)."""
+    return (m.surplus_harian > 0 and (m.kekurangan or ZERO) <= 0
+            and m.surplus_harian >= max(k.surplus_min, m.j1 or ZERO))
+
+
 def per_06(ctx: Konteks) -> list[Insight]:
     m, s, k = ctx.m, ctx.s, ctx.k
     if m.sisa_hari > k.akhir_periode_hari or not m.proyeksi_valid:
@@ -168,6 +204,8 @@ def per_06(ctx: Konteks) -> list[Insight]:
     sisa = perkiraan_sisa(m) or ZERO
     if hangus <= 0 and sisa <= k.akhir_periode_sisa_min:
         return []
+    if hangus <= 0 and _per08_menyala(m, k):
+        return []   # Fase 5: sisa yang dibawa (rollover) sudah dibahas PER-08 dengan angka berpagar
     jumlah = hangus if hangus > 0 else sisa
     tujuan = _tabungan_tujuan(ctx)
     aksi = []
@@ -203,4 +241,4 @@ def per_07(ctx: Konteks) -> list[Insight]:
 
 
 def evaluasi(ctx: Konteks) -> list[Insight]:
-    return [*per_01(ctx), *per_02(ctx), *per_03(ctx), *per_04_05(ctx), *per_06(ctx), *per_07(ctx)]
+    return [*per_01(ctx), *per_02(ctx), *per_03(ctx), *per_04_05(ctx), *per_06(ctx), *per_07(ctx), *per_08(ctx)]

@@ -1,10 +1,13 @@
-"""Aturan A. Hari ini — HAR-01..05 (02-aturan.md §6A). Fungsi murni `(Konteks) → [Insight]`.
+"""Aturan A. Hari ini — HAR-01..06 (02-aturan.md §6A). Fungsi murni `(Konteks) → [Insight]`.
 
-Angka dari metrics.py (T5 belanja variabel hari ini, J0, J1), penyumbang dari sinyal
-S1 (struk) dan `variabel_hari_ini_per_amplop`. Tanpa teks: render.py merakit kalimat.
+Angka dari metrics.py (T5 belanja variabel hari ini, J0, J1, T6r ritme, T7s surplus), penyumbang
+dari sinyal S1 (struk) dan `variabel_hari_ini_per_amplop`. Tanpa teks: render.py merakit kalimat.
+Fase 5 (23 Okt 2026): J0 sudah dipagari T6i di metrics; HAR-06 "di atas ritme biasa" = rem ritme
+dalam bentuk pembanding + pemicu, bukan `min()` pada J0.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from app.services.advisor.insight import Insight, Konteks
@@ -65,22 +68,34 @@ def har_01_02_04(ctx: Konteks) -> list[Insight]:
             aturan="HAR-01", entitas=hari, tone="danger" if danger else "warn",
             slot=("kpi:jatah", "daftar") if danger else ("kpi:jatah",),
             data={"t5": t5, "j0": j0, "j1": m.j1, "r": m.sisa_hari, "rasio": rasio, "lebih": t5 - j0,
-                  "penyumbang": penyumbang,
+                  "ritme": m.ritme, "penyumbang": penyumbang,
                   "terbesar": ({"amplop_id": terbesar[0], "nama": ctx.nama.get(terbesar[0], ""),
                                 "jumlah": terbesar[1], "porsi": terbesar[1] / t5} if terbesar else None),
                   "batas_amplop_id": batas_id},
             aksi=aksi, rupiah=t5 - j0, urgensi=Decimal("1"),
         )]
+    # HAR-06 di atas ritme biasa (Fase 5): masih dalam jatah, tetapi ≥ 1,3× rata-rata harian periode ini.
+    # Berdampingan dengan HAR-02/HAR-04; urutan chip (§7) menentukan yang tampil.
+    out = []
+    if m.ritme is not None and m.ritme > 0 and t5 >= m.ritme * k.ritme_rasio:
+        out.append(Insight(
+            aturan="HAR-06", entitas=hari, tone="info", slot=("kpi:jatah",),
+            data={"t5": t5, "j0": j0, "ritme": m.ritme, "rasio": t5 / m.ritme, "surplus": m.surplus_harian,
+                  "ps_berikut": m.period_end + timedelta(days=1)},
+            aksi=[_route_hari_ini(ctx)], rupiah=t5 - m.ritme, urgensi=Decimal("0.3"),
+        ))
     if j0 > 0 and t5 >= j0 * k.mendekati_jatah:
-        return [Insight(
+        out.append(Insight(
             aturan="HAR-02", entitas=hari, tone="warn", slot=("kpi:jatah",),
             data={"t5": t5, "j0": j0, "sisa": j0 - t5, "j1": m.j1, "r": m.sisa_hari},
             aksi=[_route_hari_ini(ctx)],
-        )]
-    return [Insight(
+        ))
+        return out
+    out.append(Insight(
         aturan="HAR-04", entitas=hari, tone="ok" if j0 > 0 else "info", slot=("kpi:jatah",),
         data={"t5": t5, "j0": j0, "sisa": max(j0 - t5, ZERO), "j1": m.j1, "r": m.sisa_hari},
-    )]
+    ))
+    return out
 
 
 def har_03(ctx: Konteks) -> list[Insight]:
@@ -93,7 +108,7 @@ def har_03(ctx: Konteks) -> list[Insight]:
         out.append(Insight(
             aturan="HAR-03", entitas=o["txn_id"], tone="info", slot=("kpi:jatah", "transaksi"),
             data={"jumlah": o["jumlah"], "amplop_id": o["envelope_id"],
-                  "amplop": ctx.nama.get(o["envelope_id"], ""), "j1": m.j1, "r": m.sisa_hari,
+                  "amplop": ctx.nama.get(o["envelope_id"], ""), "j0": m.j0, "j1": m.j1, "r": m.sisa_hari,
                   "txn_id": o["txn_id"]},
             aksi=[_route_hari_ini(ctx, o["envelope_id"])],
             amplop_id=o["envelope_id"],

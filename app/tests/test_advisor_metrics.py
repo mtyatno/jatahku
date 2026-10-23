@@ -91,8 +91,10 @@ class InvarianJ0Tests(unittest.TestCase):
             mutate(b)
         return compute_metrics(b.build()).j0
 
-    def test_outlier_hari_ini(self):
-        self.assertEqual(self.j0(lambda b: b.txn("belanja", 5_000_000)), D("165100"))
+    def test_outlier_hari_ini_memotong(self):
+        # Fase 5 (C): belanja besar sekali waktu langsung memotong jatah hari itu; sisa harian awal hari
+        # 1.982.300 − 5.000.000 < 0 → J0 = 0.
+        self.assertEqual(self.j0(lambda b: b.txn("belanja", 5_000_000)), D("0"))
 
     def test_penyesuaian_keluar_menurunkan(self):
         # Cocokkan saldo menemukan uang kurang Rp250 rb: (1.685.200 − 250.000 + 297.100) ÷ 12.
@@ -229,7 +231,10 @@ class HorizonTests(unittest.TestCase):
         m = compute_metrics(b.build())
         self.assertEqual(m.sisa_hari, 0)
         self.assertIsNone(m.j1)
-        self.assertEqual(m.j0, D("970000"))                  # J0 = T3 + T5
+        # Fase 5: hari terakhir J0 = min(T3h + T5, T6i); dana 1 jt ÷ 31 hari = Rp32.200; sisanya surplus.
+        self.assertEqual(m.jatah_ideal, D("32200"))
+        self.assertEqual(m.j0, D("32200"))
+        self.assertEqual(m.surplus_harian, D("900000"))      # T3h − sisa jatah hari ini (0: sudah lewat)
         self.assertEqual(m.kekurangan, D("0"))
 
     def test_hari_1_2_tanpa_proyeksi(self):  # skenario 2

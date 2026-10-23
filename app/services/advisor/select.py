@@ -41,8 +41,9 @@ from app.services.advisor.metrics import rupiah
 ZERO = Decimal("0")
 
 URUTAN_KPI: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    "jatah": (("HAR-01", "HAR-03", "HAR-02", "HAR-05"), ("HAR-04",)),
-    "sisa_bebas": (("PER-02", "PER-01", "PER-06"), ("PER-04", "PER-05", "PER-07")),
+    "jatah": (("HAR-01", "HAR-03", "HAR-02", "HAR-06", "HAR-05"), ("HAR-04",)),
+    # PER-04 (laju membaik = sebab) didahulukan dari PER-08 (surplus = akibat); PER-05 cadangan.
+    "sisa_bebas": (("PER-02", "PER-01", "PER-06", "PER-04", "PER-08"), ("PER-05", "PER-07")),
     "terpakai": (("PER-01", "PER-03", "AMP-08"), ("PER-05", "PER-07")),
     "income": (("INC-01", "INC-04", "INC-03", "INC-06", "INC-02"), ("INC-05",)),
     "tagihan": (("TAG-01", "TAG-02", "TAG-04", "DAT-06", "TAG-03"), ("TAG-09",)),
