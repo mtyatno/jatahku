@@ -4,6 +4,37 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S20 Kolam harian & pagar ritme (backend) · 2026-10-23 · pemilik produk + Claude ⚠ migrasi
+
+**Selesai**
+- Migrasi `a7c3e9d1f5b2`: `envelope_groups.jenis` (String(10), null = otomatis). Model `EnvelopeGroup.jenis`; `GET/POST/PATCH /envelopes/groups` membawa `jenis`; PATCH kini `EnvelopeGroupUpdate` (name?/jenis?, extra forbid) dan menghapus cache advisor household saat jenis berubah. `openapi_cek`: tidak memutus.
+- `snapshot.py`: `EnvelopeSnap.jenis_grup` + properti `jenis` (grup → otomatis: `debt` → bulanan, selain itu harian); loader outer-join grup.
+- `metrics.py`: `harian_ids`; T3h `sisa_bebas_harian`, T3b `cadangan_bulanan`, T6i `jatah_ideal` (Σ M1 harian ÷ D; None untuk daily/weekly), T6r `ritme` (d ≥ 7), T7s `surplus_harian`; `jatah_awal_hari(…, pagar)`; J0 = min((T3h + T5b − penyesuaian − outlier hari ini) ÷ H0, T6i), J1 = min(T3h ÷ H, T6i); T4/T5/T5b/T9/T10 dan `perkiraan_sisa` dari amplop harian; deret harian berpagar + outlier memotong hari itu; `EnvelopeMetrics.jenis`; `to_api` 5 field baru.
+- Aturan: HAR-03 isi baru (jatah hari ini jadi …), **HAR-06** (berdampingan dengan HAR-02/04; urutan chip HAR-01 › HAR-03 › HAR-02 › HAR-06 › HAR-05), PER-01/02 memakai T3h (+ fakta "Dicadangkan"), PER-05 menyebut cadangan, **PER-08** (chip "Surplus +…", CTA `setor_surplus` lewat perencana + "Tanya di chat" → intent sisa), PER-06 diam bila PER-08 menyala dan tidak ada yang hangus, **DAT-07** (CTA `atur_jenis_grup` → /envelopes). Urutan chip Sisa bebas: PER-02 › PER-01 › PER-06 › PER-04 › PER-08 | PER-05.
+- Chat/bot (`baris_kpi`, `chat_limit_harian`): baris "harian … · dicadangkan …", "Jaga N hari ke depan" (dulu "Aman"), "Ritme biasamu", "Surplus … dibawa ke periode depan"; hari terakhir tanpa klaim "sisa bebas = jatah".
+- Konstanta `KonstantaAturan`: `ritme_rasio` 1,3; `surplus_min` 100 rb; `surplus_daftar_min` 500 rb; `bulanan_*` (DAT-07). `Konstanta.ritme_min_hari` 7.
+- 02-aturan: PER-08 pemicu ≥ max(Rp100 rb, J1); PER-06 mengalah; urutan chip; §11.
+
+**Keputusan kecil**
+- PER-04 (laju membaik = sebab) didahulukan dari PER-08 (surplus = akibat) di chip Sisa bebas; spesifikasi §7 disesuaikan.
+- PER-08 butuh surplus ≥ 1 hari jatah supaya surplus receh tidak menggeser PER-04/05.
+- HAR-06 dievaluasi terpisah dari HAR-02/04 (bisa menyala bersamaan); chip tetap HAR-02 bila ≥ 80% jatah.
+- Pengecekan `jenis` pilihan bulanan/harian hanya di tingkat grup; amplop tanpa grup ikut otomatis (tidak ada override per amplop) — sesuai keputusan 23 Okt.
+- CTA "Tanya di chat" PER-08 memakai teks "Sisa jatah periode ini" (ditangkap `SISA_RE`), bukan kalimat "kenapa surplus" yang belum punya intent.
+
+**Jebakan**
+- Pagar ideal mengubah J0 di fixture lama yang hemat (`normal()`: 112.900, dulu 128.100) → beberapa tes lama diperbarui; §12 contoh 15 Okt **tidak** berubah (T6i Rp322.800 tidak menahan).
+- `test_13_invarian_j0`: penyesuaian kecil tidak mengubah J0 bila pagar yang menahan — pakai nominal besar untuk menguji potongan.
+- Frontend lama tetap jalan (field lama ada) tetapi kartu Sisa bebas masih menampilkan T3 total dan "aman …/hari" sampai S21.
+
+**Tes:** backend 1096 OK (13 baru di `test_advisor_fase5.py`: #21–26, outlier memotong, to_api, route grup) · frontend 315 OK · build OK · `openapi_cek` bersih.
+
+**Merge:** label `migrasi` — ikuti "Urutan merge PR bermigrasi" di AGENTS.md (merge → tunggu deploy pull → `alembic upgrade head` → restart → cek `GET /envelopes/groups`).
+
+**Lanjut:** S21 (#124) — layar.
+
+---
+
 ## Spesifikasi Fase 5: kolam harian & pagar ritme · 2026-10-23 · pemilik produk + Claude (dokumen saja)
 
 **Konteks:** H-3 periode, pemasukan Rp7,6 jt di luar gaji dialokasikan (Pendidikan Rp3,19 jt, Tagihan Hutang Rp2,2 jt, Makan Rp1,76 jt, …) → kartu Jatah hari ini "Rp116.000 / Rp2.128.800", Sisa bebas "aman Rp2,73 jt/hari". Rumus "sisa ÷ sisa hari" menjawab "cukup sampai gajian?", bukan "berapa pantas dibelanjakan hari ini?". Analisa pemilik produk + temannya dicocokkan dengan kode (`envelope_groups` ada tetapi tidak dibaca advisor; tagihan bulanan jatuh tempo > pe disisihkan Rp0; rollover membawa saldo utuh).

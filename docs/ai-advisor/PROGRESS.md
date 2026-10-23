@@ -24,5 +24,5 @@ Diubah di PR sesi itu sendiri (lihat `03-workflow.md` §9). Status: belum · ber
 | S17 | #72 | Chat lengkap | 4 | 2 | selesai | Pemilik produk + Claude | #103 | 2026-10-17 | 2026-10-17 |
 | S18 | #73 | Copy, landing, blog, dokumen | 4 | 2 | selesai | Pemilik produk + Claude | #101 | 2026-10-17 | 2026-10-17 |
 | S19 | #74 | Pikir-Pikir masuk AI Advisor (aturan siap; sambungan menunggu Pikir-Pikir Fase 2/3) | 4 | 2 | selesai | Pemilik produk + Claude | #104 | 2026-10-17 | 2026-10-17 |
-| S20 | #123 | Kolam harian & pagar ritme (backend) ⚠ migrasi | 5 | 3 | belum | — | — | — | — |
+| S20 | #123 | Kolam harian & pagar ritme (backend) ⚠ migrasi | 5 | 3 | review | Pemilik produk + Claude | (PR ini) | 2026-10-23 | 2026-10-23 |
 | S21 | #124 | Kolam harian & pagar ritme (layar) | 5 | 2,5 | belum | — | — | — | — |

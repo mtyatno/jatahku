@@ -41,6 +41,15 @@ class EnvelopeSnap:
     owner_id: str | None = None
     budget_amount: Decimal = Decimal("0")
     daily_limit: Decimal | None = None
+    jenis_grup: str | None = None      # envelope_groups.jenis: "harian" | "bulanan" | None (otomatis)
+
+    @property
+    def jenis(self) -> str:
+        """Kolam jatah harian (02-aturan.md §3): jenis grup bila diisi; otomatis `debt` → bulanan,
+        selain itu harian. Hanya bermakna untuk amplop belanja."""
+        if self.jenis_grup in ("harian", "bulanan"):
+            return self.jenis_grup
+        return "bulanan" if self.purpose == "debt" else "harian"
 
 
 @dataclass
@@ -169,7 +178,7 @@ async def load_snapshot(user, db, today: date | None = None,
     from sqlalchemy import func, or_, select
     from app.core.period import get_last_n_periods
     from app.models.models import (
-        Allocation, BalanceCheck, Envelope, Goal, HouseholdMember, Income, MonthlySnapshot,
+        Allocation, BalanceCheck, Envelope, EnvelopeGroup, Goal, HouseholdMember, Income, MonthlySnapshot,
         RecurringTransaction, Transaction, User,
     )
     from app.services.visibility import masked_description
@@ -202,15 +211,17 @@ async def load_snapshot(user, db, today: date | None = None,
         snap.member_names[str(uid)] = name
 
     # 3. amplop terlihat
-    envelopes = (await db.execute(
-        select(Envelope)
+    rows = (await db.execute(
+        select(Envelope, EnvelopeGroup.jenis)
+        .outerjoin(EnvelopeGroup, EnvelopeGroup.id == Envelope.group_id)
         .where(
             Envelope.household_id == hid,
             Envelope.is_active == True,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
         .order_by(Envelope.created_at)
-    )).scalars().all()
+    )).all()
+    envelopes = [e for e, _ in rows]
     snap.envelopes = [
         EnvelopeSnap(
             id=str(e.id), name=e.name, emoji=e.emoji or "", purpose=str(e.purpose or "expense"),
@@ -218,8 +229,9 @@ async def load_snapshot(user, db, today: date | None = None,
             is_emergency=bool(getattr(e, "is_emergency", False)), is_locked=bool(e.is_locked),
             owner_id=_sid(e.owner_id), budget_amount=_to_decimal(e.budget_amount),
             daily_limit=None if e.daily_limit is None else _to_decimal(e.daily_limit),
+            jenis_grup=jenis,
         )
-        for e in envelopes
+        for e, jenis in rows
     ]
     env_ids = [e.id for e in envelopes]
     visible = {str(i) for i in env_ids}

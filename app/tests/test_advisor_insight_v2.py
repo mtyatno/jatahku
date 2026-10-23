@@ -118,7 +118,9 @@ class SkenarioTests(unittest.TestCase):
         ctx, sel = run(normal())
         self.assertEqual([i.id for i in sel.semua if i.tone in ("danger", "warn")], [])
         self.assertEqual(sel.kpi["jatah"].aturan, "HAR-04")
-        self.assertEqual(sel.kpi["sisa_bebas"].aturan, "PER-05")
+        # Fase 5: user ini sedikit di bawah pagar ideal → surplus kecil tetapi ≥ 1 hari jatah → PER-08 (ok).
+        self.assertEqual(sel.kpi["sisa_bebas"].aturan, "PER-08")
+        self.assertTrue(render.teks(sel.kpi["sisa_bebas"], ctx)["chip"].startswith("Surplus +"))
         self.assertEqual(render.teks(sel.kpi["terpakai"], ctx, "terpakai")["chip"], "Sesuai jalur")
         self.assertEqual(sel.daftar, [])
         self.assertIsNotNone(sel.aman)   # "Semua aman" + satu kabar baik
@@ -150,7 +152,9 @@ class SkenarioTests(unittest.TestCase):
         m = payload["metrics"]
         self.assertEqual(m["sisa_hari"], 0)
         self.assertIsNone(m["j1"])
-        self.assertEqual(m["j0"], int(floor100(D(m["sisa_bebas"]) + D(m["belanja_hari_ini"]))))
+        # Fase 5: hari terakhir J0 = min(sisa harian awal hari, pagar ideal); sisanya surplus.
+        self.assertEqual(m["j0"], min(int(floor100(D(m["sisa_bebas_harian"]) + D(m["belanja_hari_ini"]))), m["jatah_ideal"]))
+        self.assertGreater(m["surplus_harian"], 0)
         self.assertIsNotNone(payload["kpi"]["jatah"])
         self.assertNotIn("PER-01", [i["aturan"] for i in payload["advisor"]["items"]])
 
@@ -159,11 +163,14 @@ class SkenarioTests(unittest.TestCase):
             return susun_dashboard(b.build(), now_local=jam(b.snap.today))[0]["metrics"]["j0"]
         base = j0(normal(dana=6_000_000))
         b = normal(dana=6_000_000)
-        b.txn("makan", 2_000_000, desc="kulkas")                   # outlier
-        self.assertEqual(j0(b), base)
-        b = normal(dana=6_000_000)
-        b.txn("makan", 300_000, desc="penyesuaian", adjustment=True)  # cocokkan saldo: J0 ikut turun (20 Okt)
+        b.txn("makan", 2_000_000, desc="kulkas")                   # outlier: J0 ikut turun (23 Okt, C)
         self.assertLess(j0(b), base)
+        b = normal(dana=6_000_000)
+        b.txn("makan", 2_000_000, desc="penyesuaian", adjustment=True)  # cocokkan saldo: J0 ikut turun (20 Okt)
+        self.assertLess(j0(b), base)
+        b = normal(dana=6_000_000)
+        b.txn("makan", 300_000, desc="penyesuaian", adjustment=True)  # kecil: pagar ideal tetap yang menahan
+        self.assertEqual(j0(b), base)
         b = normal(dana=6_000_000)
         b.recurring("makan", 250_000, "Langganan", date(2026, 10, 20))
         belum_bayar = j0(b)
@@ -187,7 +194,8 @@ class SkenarioTests(unittest.TestCase):
         har = next(i for i in sel.semua if i.aturan == "HAR-01")
         self.assertEqual(har.tone, "warn")
         self.assertNotIn("HAR-01", ids(sel.daftar))
-        self.assertEqual(render.teks(har, ctx, "jatah")["chip"], "Lewat Rp17 rb")
+        self.assertEqual(ctx.m.j0, ctx.m.jatah_ideal)          # pagar ideal menahan: 4,5 jt ÷ 31 = Rp145.100
+        self.assertEqual(render.teks(har, ctx, "jatah")["chip"], "Lewat Rp54 rb")
 
 
 def _ins(aturan, tone, skor=0, amplop=None, entitas="x", aksi=True, rupiah=0):

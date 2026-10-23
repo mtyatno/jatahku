@@ -1,3 +1,4 @@
+from typing import Literal
 from decimal import Decimal
 from uuid import UUID
 from datetime import date, timedelta
@@ -79,14 +80,26 @@ class EnvelopeSummary(BaseModel):
     is_emergency: bool = False
 
 
+JENIS_GRUP = ("harian", "bulanan")
+
+
 class EnvelopeGroupCreate(BaseModel):
     name: str
+    # AI Advisor Fase 5: "harian" | "bulanan"; None = otomatis. Dikirim eksplisit null untuk kembali otomatis.
+    jenis: Literal["harian", "bulanan"] | None = None
+
+
+class EnvelopeGroupUpdate(BaseModel):
+    name: str | None = None
+    jenis: Literal["harian", "bulanan"] | None = None
+    model_config = {"extra": "forbid"}
 
 
 class EnvelopeGroupResponse(BaseModel):
     id: UUID
     name: str
     sort_order: int
+    jenis: str | None = None
     model_config = {"from_attributes": True}
 
 
@@ -176,7 +189,7 @@ async def create_group(
         .where(EnvelopeGroup.household_id == hid)
     )
     next_order = int(max_result.scalar()) + 1
-    group = EnvelopeGroup(household_id=hid, name=name, sort_order=next_order)
+    group = EnvelopeGroup(household_id=hid, name=name, sort_order=next_order, jenis=req.jenis)
     db.add(group)
     await db.commit()
     await db.refresh(group)
@@ -184,12 +197,14 @@ async def create_group(
 
 
 @router.patch("/groups/{group_id}", response_model=EnvelopeGroupResponse)
-async def rename_group(
+async def update_group(
     group_id: UUID,
-    req: EnvelopeGroupCreate,
+    req: EnvelopeGroupUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Ganti nama dan/atau jenis grup (field yang tidak dikirim tidak diubah; `"jenis": null`
+    mengembalikan ke otomatis). Jenis mengubah jatah harian AI Advisor → cache household dihapus."""
     hid = await _get_hid(user, db)
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
@@ -197,11 +212,18 @@ async def rename_group(
     group = result.scalar_one_or_none()
     if not group:
         raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Nama grup tidak boleh kosong")
-    group.name = name
+    fields = req.model_dump(exclude_unset=True)
+    if "name" in fields:
+        name = (fields["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama grup tidak boleh kosong")
+        group.name = name
+    if "jenis" in fields:
+        group.jenis = fields["jenis"]
     await db.commit()
+    if "jenis" in fields:
+        from app.services.advisor import advisor_cache
+        await advisor_cache.invalidate(str(hid))
     await db.refresh(group)
     return group
 

@@ -129,5 +129,36 @@ def dat_06(ctx: Konteks) -> list[Insight]:
     return out
 
 
+def dat_07(ctx: Konteks) -> list[Insight]:
+    """DAT-07 (Fase 5): amplop harian yang polanya bulanan — ≤ 3 transaksi per periode (berjalan &
+    lalu), median nominal ≥ 25% dana, dana ≥ Rp500 rb — saldonya keliru masuk jatah harian."""
+    m, k, snap = ctx.m, ctx.k, ctx.snap
+    if len(snap.periods) < 2:
+        return []
+    (ps0, pe0), (ps1, pe1) = snap.periods[-2], snap.periods[-1]
+    out = []
+    for e in snap.envelopes:
+        a = m.amplop.get(e.id)
+        if a is None or a.kelompok != "belanja" or a.jenis != "harian" or a.dana < k.bulanan_dana_min:
+            continue
+        txns = [x for x in snap.transactions if x.envelope_id == e.id and not x.is_adjustment]
+        cur = [x.amount for x in txns if ps1 <= x.transaction_date <= pe1]
+        lalu = [x.amount for x in txns if ps0 <= x.transaction_date <= pe0]
+        if not cur or not lalu or len(cur) > k.bulanan_txn_maks or len(lalu) > k.bulanan_txn_maks:
+            continue
+        semua = sorted(cur + lalu)
+        median = semua[len(semua) // 2]
+        if median < a.dana * k.bulanan_median_porsi:
+            continue
+        out.append(Insight(
+            aturan="DAT-07", entitas=e.id, tone="info", slot=("daftar", "amplop"),
+            data={"amplop_id": e.id, "amplop": e.name, "bebas": a.bebas, "dana": a.dana,
+                  "n_txn": len(cur), "median": median},
+            aksi=[{"kind": "route", "kode": "atur_jenis_grup", "payload": {"path": "/envelopes"}}],
+            amplop_id=e.id, rupiah=max(a.bebas, ZERO), urgensi=Decimal("0.3"),
+        ))
+    return out
+
+
 def evaluasi(ctx: Konteks) -> list[Insight]:
-    return [*dat_01_02(ctx), *dat_03(ctx), *dat_04(ctx), *dat_05(ctx), *dat_06(ctx)]
+    return [*dat_01_02(ctx), *dat_03(ctx), *dat_04(ctx), *dat_05(ctx), *dat_06(ctx), *dat_07(ctx)]

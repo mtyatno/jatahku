@@ -160,6 +160,9 @@ class EnvelopeGroup(TimestampMixin, Base):
     household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id"))
     name: Mapped[str] = mapped_column(String(100))
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # AI Advisor Fase 5 (02-aturan.md §3): "harian" | "bulanan" | None = otomatis (purpose debt →
+    # bulanan, selain itu harian). Hanya amplop harian yang membentuk jatah harian.
+    jenis: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     # Relationships
     household: Mapped["Household"] = relationship(back_populates="envelope_groups")

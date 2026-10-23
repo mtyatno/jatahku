@@ -344,14 +344,14 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 
 **PER-06 · Menjelang akhir periode**
 - Slot: daftar (info ber-CTA).
-- Pemicu: r ≤ 3, dan ada S16 atau perkiraan sisa > Rp50 rb.
+- Pemicu: r ≤ 3, dan ada S16 atau perkiraan sisa > Rp50 rb. Bila tidak ada yang hangus dan PER-08 menyala, PER-06 diam (Fase 5): sisa yang dibawa sudah dibahas PER-08 dengan angka berpagar.
 - Judul: "Sisa ±{rp} — pindahkan ke tabungan?"
 - Isi: "{rp} di {amplop non-rollover} akan kembali ke 0 saat periode berganti."
 - CTA: Pindahkan ke {tabungan} (lewat perencana §8).
 
 **PER-08 · Surplus harian** (revisi 23 Okt 2026)
 - Slot: KPI Sisa bebas; daftar bila T7s ≥ Rp500 rb (tone info supaya jadi kandidat; selain itu ok).
-- Pemicu: T7s > 0 dan T9 = 0.
+- Pemicu: T9 = 0 dan T7s ≥ max(Rp100 rb, J1) — surplus setara minimal satu hari jatah; yang lebih kecil tidak perlu chip sendiri (PER-04/05 tampil).
 - Chip: "Surplus +{T7s}".
 - Judul: "Jaga {J1}/hari → +{T7s} ke periode {ps berikutnya}".
 - Isi: "Dana harian {T3h} cukup untuk {r} hari. Kelebihan {T7s} dibawa ke periode depan.{ Dicadangkan {T3b} untuk amplop bulanan.}" Bila ada amplop harian tanpa rollover yang ikut surplus: "{rp} di {amplop} akan kembali ke 0 saat periode berganti" (PER-06 tetap menyala untuk itu).
@@ -587,7 +587,7 @@ Setiap kartu selalu punya chip. Mesin mengambil aturan yang menyala dengan skor 
 | Kartu | Urutan aturan | Bila tidak ada yang menyala |
 |---|---|---|
 | Jatah hari ini | HAR-01 › HAR-03 › HAR-02 › HAR-06 › HAR-05 | HAR-04 |
-| Sisa bebas | PER-02 › PER-01 › PER-06 › PER-08 | PER-04 › PER-05 |
+| Sisa bebas | PER-02 › PER-01 › PER-06 › PER-04 › PER-08 | PER-05 |
 | Terpakai periode ini | PER-01 › PER-03 › AMP-08 (terbesar) | PER-05 ("Sesuai jalur") |
 | Income periode ini | INC-01 › INC-04 › INC-03 › INC-06 › INC-02 | INC-05 |
 | Tagihan belum dibayar | TAG-01 › TAG-02 › TAG-04 › TAG-03 | TAG-09 |
@@ -696,6 +696,7 @@ Nilai default; bisa diatur lewat `AppSetting` tanpa deploy.
 | Pagar jatah ideal | Σ dana harian ÷ D; hanya pendapatan bulanan/tidak tentu | T6i |
 | Ritme ditampilkan | d ≥ 7 | T6r, HAR-06 |
 | Di atas ritme biasa | ≥ 1,3× ritme | HAR-06 |
+| Surplus menyala | ≥ max(Rp100 rb, J1) | PER-08 |
 | Surplus masuk daftar | ≥ Rp500 rb | PER-08 |
 | Amplop sepertinya bulanan | dana ≥ Rp500 rb, ≤ 3 transaksi/periode, median ≥ 25% dana, 2 periode | DAT-07 |
 | Jatuh tempo dekat | ≤ 3 hari | TAG-02/03 |
