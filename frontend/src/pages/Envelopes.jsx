@@ -34,7 +34,7 @@ function buildGroupSections(envelopes, groups) {
   const sections = [...groups]
     .sort((a, b) => a.sort_order - b.sort_order)
     .filter((g) => byGroup[g.id]?.length)
-    .map((g) => ({ id: g.id, name: g.name, envelopes: byGroup[g.id] }));
+    .map((g) => ({ id: g.id, name: g.name, jenis: g.jenis ?? null, envelopes: byGroup[g.id] }));
   if (byGroup['__none__']?.length) {
     sections.push({ id: null, name: 'Lainnya', envelopes: byGroup['__none__'] });
   }
@@ -837,7 +837,16 @@ function CompactRow({ env, goal, open, onToggle, first, ...actions }) {
   );
 }
 
-function CompactEnvelopeList({ sections, goals, onRenameGroup, onDeleteGroup, ...actions }) {
+// Jenis grup untuk jatah harian AI Advisor (Fase 5, 02-aturan §3): hanya amplop di grup "harian"
+// yang membentuk jatah harian; saldo grup "bulanan" dicadangkan. Kosong = otomatis (cicilan → bulanan).
+export const JENIS_GRUP = [
+  { value: '', label: 'Otomatis' },
+  { value: 'harian', label: 'Harian' },
+  { value: 'bulanan', label: 'Bulanan' },
+];
+const JENIS_TITLE = 'Jenis pengeluaran grup: Harian ikut jatah harian AI Advisor; Bulanan (SPP, cicilan, listrik) dicadangkan, tidak dibagi ke hari. Otomatis: amplop cicilan bulanan, lainnya harian.';
+
+function CompactEnvelopeList({ sections, goals, onRenameGroup, onDeleteGroup, onJenisGroup, ...actions }) {
   const [openId, setOpenId] = useState(null);
   const wide = useMediaQuery('(min-width: 1024px)');
 
@@ -845,6 +854,18 @@ function CompactEnvelopeList({ sections, goals, onRenameGroup, onDeleteGroup, ..
     <div className="group flex items-center justify-between gap-2 px-1 mb-2">
       <div className="flex items-center gap-2 min-w-0">
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider truncate">{sec.name}</h3>
+        {sec.id && (
+          <select
+            aria-label={`Jenis grup ${sec.name}`} title={JENIS_TITLE}
+            value={sec.jenis || ''} onChange={(e) => onJenisGroup(sec, e.target.value)}
+            className="text-[11px] font-semibold rounded-md px-1.5 py-0.5 border bg-transparent cursor-pointer"
+            style={{
+              borderColor: 'var(--border)',
+              color: sec.jenis === 'bulanan' ? 'var(--brand-600)' : 'var(--text-muted)',
+            }}>
+            {JENIS_GRUP.map(j => <option key={j.value} value={j.value}>{j.label}</option>)}
+          </select>
+        )}
         {sec.id && (
           <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex gap-2">
             <button onClick={() => onRenameGroup(sec)} className="text-xs text-gray-400 hover:text-brand-600">Rename</button>
@@ -1053,6 +1074,14 @@ export default function Envelopes() {
     load();
   };
 
+  // Fase 5: jenis grup mengubah jatah harian AI Advisor → muat ulang + beri tahu Beranda (cache dihapus server).
+  const handleJenisGroup = async (g, jenis) => {
+    const res = await api.setEnvelopeGroupJenis(g.id, jenis || null);
+    if (!res.ok) { alert('Gagal menyimpan jenis grup'); return; }
+    window.dispatchEvent(new CustomEvent('jatahku:envelope-updated'));
+    load();
+  };
+
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
 
   const totalSaldo = groupBalance(envelopes);
@@ -1140,7 +1169,7 @@ export default function Envelopes() {
               return (
                 <CompactEnvelopeList sections={sections} goals={goals} advice={advice}
                   onEdit={setEditing} onDelete={handleDelete} onTransfer={setTransferTarget} onGoal={setGoalTarget}
-                  onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} />
+                  onRenameGroup={handleRenameGroup} onDeleteGroup={handleDeleteGroup} onJenisGroup={handleJenisGroup} />
               );
             })()
           )}

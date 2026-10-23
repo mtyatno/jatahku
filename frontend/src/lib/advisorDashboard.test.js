@@ -76,8 +76,12 @@ test('chart series: a day with only a bill payment is not "empty" and never "ove
 
 test('KPI values come straight from metrics', () => {
   const k = advisorKpi(METRICS);
-  assert.deepEqual(k.jatah, { spent: 297100, j0: 165100 });
-  assert.equal(k.sisa.value, 1685200);
+  assert.deepEqual(k.jatah, { spent: 297100, j0: 165100, ritme: null });
+  assert.equal(k.sisa.value, 1685200);          // tanpa field S20: jatuh ke sisa_bebas total
+  assert.equal(k.sisa.total, 1685200);
+  assert.equal(k.sisa.cadangan, 0);
+  assert.equal(k.sisa.surplus, 0);
+  assert.equal(k.jatah.ritme, null);
   assert.equal(k.sisa.dayLabel, 'Hari ke-19 dari 30');
   assert.equal(k.sisa.j1, 153200);
   assert.equal(k.terpakai.persen, 71);
@@ -95,4 +99,18 @@ test('KPI values: null metrics stay null (last day, first two days)', () => {
   assert.equal(k.terpakai.persen, null);
   assert.equal(k.terpakai.fill, 0);
   assert.equal(k.income.kekurangan, null);
+});
+
+test('advisorKpi Fase 5: dana harian, dicadangkan, surplus, ritme (02-aturan §3, kasus 23 Okt)', () => {
+  const k = advisorKpi({
+    ...METRICS, sisa_bebas: 8190000, sisa_bebas_harian: 2390000, cadangan_bulanan: 5800000,
+    jatah_ideal: 224600, ritme: 161000, surplus_harian: 1650000, j0: 224600, j1: 224600, sisa_hari: 3,
+  });
+  assert.equal(k.sisa.value, 2390000);          // angka utama = dana harian, bukan total
+  assert.equal(k.sisa.total, 8190000);
+  assert.equal(k.sisa.cadangan, 5800000);
+  assert.equal(k.sisa.surplus, 1650000);
+  assert.equal(k.sisa.j1, 224600);
+  assert.equal(k.jatah.j0, 224600);
+  assert.equal(k.jatah.ritme, 161000);
 });

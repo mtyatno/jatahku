@@ -375,7 +375,7 @@ export default function Dashboard() {
           <>
             <KpiTile
               isDark={isDark} label="Jatah hari ini" advisor={chipFor('jatah')}
-              info="Belanja hari ini dibanding jatah sejak pagi (sisa bebas awal hari dibagi sisa hari). Garis putih: jatah."
+              info="Belanja hari ini dibanding jatah sejak pagi: dana amplop harian awal hari dibagi sisa hari, dipagari dana harian dibagi jumlah hari periode (uang masuk di tengah periode dibagi rata, kelebihannya jadi surplus). Amplop bulanan tidak dihitung. Garis putih: jatah."
               value={rpFull(k.jatah.spent)}
               suffix={k.jatah.j0 > 0 ? `/ ${rpFull(k.jatah.j0)}` : null}
               alert={advMeter.over}
@@ -384,16 +384,23 @@ export default function Dashboard() {
                 color: advMeter.over ? tt.danger.bar : tt.bars.green,
                 ariaLabel: `Belanja hari ini ${rpFull(k.jatah.spent)} dari jatah ${rpFull(k.jatah.j0)}`,
               }}
-              footer={todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini'}
+              footer={[
+                todayCount > 0 ? `${todayCount} transaksi hari ini` : 'Belum ada transaksi hari ini',
+                k.jatah.ritme != null ? `ritme ${rpCompact(k.jatah.ritme)}/hari` : null,
+              ].filter(Boolean).join(' · ')}
             />
             <KpiTile
               isDark={isDark} label="Sisa bebas" advisor={chipFor('sisa_bebas')}
-              info="Dana amplop belanja dikurangi yang sudah terpakai dan tagihan yang belum dibayar. Batang: hari yang sudah lewat di periode ini."
+              info="Dana amplop harian dikurangi yang sudah terpakai dan tagihan yang belum dibayar. Saldo amplop bulanan (SPP, cicilan, listrik) dicadangkan, tidak dihitung sebagai uang bebas. Batang: hari yang sudah lewat di periode ini."
               value={rpCompact(k.sisa.value)}
               valueColor={k.sisa.value < 0 ? tt.danger.text : null}
-              suffix={k.sisa.sisaHari > 0 ? `untuk ${k.sisa.sisaHari} hari` : null}
+              suffix={k.sisa.sisaHari > 0 ? `dana harian, ${k.sisa.sisaHari} hari` : 'dana harian'}
               bar={{ fill: k.sisa.progress, color: tt.bars.slate, ariaLabel: k.sisa.dayLabel }}
-              footer={[k.sisa.dayLabel, k.sisa.j1 != null ? `aman ${rpCompact(k.sisa.j1)}/hari` : null].filter(Boolean).join(' · ')}
+              footer={[
+                k.sisa.dayLabel,
+                k.sisa.j1 != null ? `jaga ${rpCompact(k.sisa.j1)}/hari` : null,
+                k.sisa.cadangan > 0 ? `dicadangkan ${rpCompact(k.sisa.cadangan)}` : null,
+              ].filter(Boolean).join(' · ')}
             />
             <KpiTile
               isDark={isDark} label="Terpakai periode ini" advisor={chipFor('terpakai')}

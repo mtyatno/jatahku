@@ -22,7 +22,8 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // "surplus_harian" (T7s). j0/j1/kekurangan/tanggal_habis dihitung dari T3h dan dipagari T6i; harian[].jatah
   // juga berpagar; sisa_bebas tetap total = sisa_bebas_harian + cadangan_bulanan.
   // Aturan baru: HAR-06 (chip Jatah), PER-08 (chip Sisa bebas, CTA `plan` setor_surplus + `chat`), DAT-07 (daftar,
-  // CTA `route` /envelopes). Belum ada perubahan tampilan sampai S21.
+  // CTA `route` /envelopes). S21: kartu Jatah (catatan kaki "ritme …/hari"), kartu Sisa bebas (angka utama
+  // sisa_bebas_harian "dana harian", catatan kaki "jaga …/hari · dicadangkan …"), pilihan jenis grup di halaman Amplop.
   // GET /envelopes/groups → [{id, name, sort_order, "jenis": "harian"|"bulanan"|null}] (null = otomatis).
   // POST /envelopes/groups {name, jenis?} · PATCH /envelopes/groups/{id} {name?, jenis?} (field tak dikirim tidak
   // berubah; "jenis": null = kembali otomatis; jenis lain → 422). Mengubah jenis menghapus cache advisor household.
