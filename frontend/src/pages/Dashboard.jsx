@@ -310,67 +310,63 @@ export default function Dashboard() {
         </>,
         topbarSlot,
       )}
-      <div className="lg:hidden">
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="text-2xl font-display font-bold">Hai, {user?.name || 'User'}</h1>
+      {/* Header mobile ringkas: baris 1 sapaan + streak + Laporan (menu PDF/CSV), baris 2 periode + papan disiplin (scroll-x). */}
+      <div className="lg:hidden space-y-1">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-display font-bold truncate">Hai, {user?.name || 'User'}</h1>
           {streak && streak.current_streak >= 1 && (
             <span
-              className="text-sm px-2.5 py-1 rounded-full font-semibold flex-shrink-0 inline-flex items-center gap-1"
+              className="text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 inline-flex items-center gap-1"
               style={{ background: streak.logged_today ? '#FEF3C7' : '#F3F4F6', color: streak.logged_today ? '#92400E' : '#6B7280' }}
               title={`Rekor ${streak.longest_streak} hari · total ${streak.total_logged_days} hari tercatat`}
             >
-              <Icon name="fire" size={14} weight="fill" /> {streak.current_streak} hari
+              <Icon name="fire" size={12} weight="fill" /> {streak.current_streak}
             </span>
           )}
+          <div className="ml-auto flex-shrink-0">
+            <ExportButtons compact
+              periodStart={selectedPeriod?.period_start}
+              periodEnd={selectedPeriod?.period_end}
+              periodLabel={selectedPeriod?.label}
+            />
+          </div>
         </div>
-        {/* Period Navigator */}
-        <div className="flex items-center gap-1 mt-1">
+        <div className="flex items-center gap-1 overflow-x-auto whitespace-nowrap text-xs text-gray-500 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             onClick={() => setPeriodIdx(i => i - 1)}
             disabled={periodIdx === 0}
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm leading-none"
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed leading-none flex-shrink-0"
             aria-label="Periode sebelumnya"
           >←</button>
-          <span className="text-sm text-gray-500">{periodLabel}{isCurrentPeriod && daysLeft > 0 ? ` · ${daysLeft} hari lagi` : ''}</span>
-          {isCurrentPeriod && (
-            <span className="text-xs px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded font-medium">Sekarang</span>
-          )}
+          <span>{periodLabel}{isCurrentPeriod && daysLeft > 0 ? ` · ${daysLeft} hr lagi` : ''}</span>
           <button
             onClick={() => setPeriodIdx(i => i + 1)}
             disabled={isCurrentPeriod}
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed text-gray-500 text-sm leading-none"
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed leading-none flex-shrink-0"
             aria-label="Periode berikutnya"
           >→</button>
-          {periodLoading && <span className="text-xs text-gray-400 ml-1">...</span>}
-        </div>
-      </div>
-
-      <div className="lg:hidden flex items-center justify-between gap-4 flex-wrap">
-        <ExportButtons
-          periodStart={selectedPeriod?.period_start}
-          periodEnd={selectedPeriod?.period_end}
-          periodLabel={selectedPeriod?.label}
-        />
-        {isCurrentPeriod && leaderboard.length >= 2 && (
-          <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-white border border-gray-200">
-            <span className="text-xs font-medium text-gray-400 inline-flex items-center gap-1"><Icon name="trophy" size={14} /> Papan disiplin</span>
-            <div className="flex items-center gap-3">
-              {leaderboard.map((m, i) => {
-                const medal = ['🥇', '🥈', '🥉'][i] || '';
-                return (
-                  <span key={m.user_id} className="flex items-center gap-1 text-xs">
-                    <span className="shrink-0">{medal}</span>
-                    <span className={m.is_me ? 'font-semibold text-brand-600' : 'text-gray-500'}>
-                      {m.name.split(' ')[0]}
-                    </span>
+          {!isCurrentPeriod && (
+            <button onClick={() => setPeriodIdx(periods.length - 1)}
+              className="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded font-medium flex-shrink-0">Sekarang</button>
+          )}
+          {periodLoading && <span className="text-gray-400">…</span>}
+          {isCurrentPeriod && leaderboard.length >= 2 && (
+            <>
+              <span className="mx-1.5 h-3 w-px bg-gray-300 flex-shrink-0" aria-hidden="true" />
+              <span className="inline-flex items-center gap-2.5" title="Papan disiplin">
+                <Icon name="trophy" size={12} className="text-gray-400" />
+                {leaderboard.map((m, i) => (
+                  <span key={m.user_id} className="inline-flex items-center gap-1">
+                    <span>{['🥇', '🥈', '🥉'][i] || ''}</span>
+                    <span className={m.is_me ? 'font-semibold text-brand-600' : ''}>{m.name.split(' ')[0]}</span>
                     <span className="font-medium text-gray-600">{m.current_streak > 0 ? `${m.current_streak}h` : '—'}</span>
                     {m.logged_today && <span className="text-[10px]" title="Sudah catat">✅</span>}
                   </span>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                ))}
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       {/* KPI Cards — lg:!mt-0: blok sapaan/periode di atasnya tersembunyi di layar lebar (pindah ke top bar) */}
