@@ -122,7 +122,7 @@ export default function DailySpendingChart({ daily, periodStart, periodEnd, toda
   const note = advisor?.grafik;
 
   return (
-    <section aria-labelledby="pengeluaran-harian-title" className="card !px-4 md:!px-6 !pt-5 md:!pt-6 !pb-4 min-w-0">
+    <section aria-labelledby="pengeluaran-harian-title" className="card !px-4 md:!px-6 !pt-5 md:!pt-6 !pb-4 min-w-0 flex flex-col">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 px-1">
         <h2 id="pengeluaran-harian-title" className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>Pengeluaran harian</h2>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]" style={{ color: 'var(--text-muted)' }}>
@@ -137,7 +137,7 @@ export default function DailySpendingChart({ daily, periodStart, periodEnd, toda
           )}
         </div>
       </div>
-      <div className="mt-4 h-[230px]" role="img" aria-label={ariaLabel}>
+      <div className="mt-4 h-[230px] xl:h-auto xl:flex-1 xl:min-h-[230px]" role="img" aria-label={ariaLabel}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 4 }} barCategoryGap="22%">
             <CartesianGrid vertical={false} style={{ stroke: 'var(--border)' }} strokeOpacity={0.6} />
