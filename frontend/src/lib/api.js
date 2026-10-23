@@ -342,10 +342,10 @@ class ApiClient {
     return [];
   }
 
-  async createEnvelopeGroup(name) {
+  async createEnvelopeGroup(name, jenis = null) {
     const res = await this.request('/envelopes/groups', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(jenis ? { name, jenis } : { name }),
     });
     return { ok: res.ok, data: await res.json() };
   }
@@ -354,6 +354,15 @@ class ApiClient {
     const res = await this.request(`/envelopes/groups/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ name }),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  // Jenis grup untuk jatah harian AI Advisor (Fase 5): 'harian' | 'bulanan' | null (otomatis).
+  async setEnvelopeGroupJenis(id, jenis) {
+    const res = await this.request(`/envelopes/groups/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ jenis: jenis || null }),
     });
     return { ok: res.ok, data: await res.json() };
   }

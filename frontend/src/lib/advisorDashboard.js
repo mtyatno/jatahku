@@ -77,10 +77,19 @@ export function advisorKpi(metrics) {
   const hariTotal = num(m.hari_total);
   const waktu = hariTotal > 0 ? Math.min(num(m.hari_ke) / hariTotal, 1) : 0;
   const rt = num(m.pemasukan_rumah_tangga);
+  // Fase 5 (S20/S21, 02-aturan §3): angka utama Sisa bebas = dana harian (T3h); amplop bulanan
+  // tampil terpisah sebagai "Dicadangkan"; ritme & surplus hanya ditampilkan, tidak dihitung di sini.
+  const harian = m.sisa_bebas_harian == null ? num(m.sisa_bebas) : num(m.sisa_bebas_harian);
   return {
-    jatah: { spent: num(m.belanja_hari_ini), j0: num(m.j0) },
+    jatah: {
+      spent: num(m.belanja_hari_ini), j0: num(m.j0),
+      ritme: m.ritme == null ? null : num(m.ritme),
+    },
     sisa: {
-      value: num(m.sisa_bebas),
+      value: harian,
+      total: num(m.sisa_bebas),
+      cadangan: num(m.cadangan_bulanan),
+      surplus: num(m.surplus_harian),
       dayLabel: hariTotal > 0 ? `Hari ke-${num(m.hari_ke)} dari ${hariTotal}` : '',
       progress: waktu,
       sisaHari: num(m.sisa_hari),

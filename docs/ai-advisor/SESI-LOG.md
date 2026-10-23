@@ -4,6 +4,25 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## S21 Kolam harian & pagar ritme (layar) · 2026-10-23 · pemilik produk + Claude
+
+**Selesai**
+- `advisorDashboard.js` `advisorKpi`: `jatah.ritme`; `sisa.value` = `sisa_bebas_harian` (jatuh ke `sisa_bebas` bila field belum ada), `sisa.total/cadangan/surplus`.
+- Beranda: kartu Jatah hari ini — catatan kaki "{n} transaksi hari ini · ritme Rp…/hari"; kartu Sisa bebas — angka utama dana harian dengan keterangan "dana harian, {r} hari", catatan kaki "Hari ke-d dari D · jaga Rp…/hari · dicadangkan Rp…" (dulu "aman …/hari" dari total). Tooltip kedua kartu menjelaskan pagar & cadangan. Chip PER-08 "Surplus +…" datang dari server (S20).
+- Halaman Amplop: pilihan jenis grup (Otomatis / Harian / Bulanan) di kepala tiap grup, `api.setEnvelopeGroupJenis` (PATCH `{jenis}`), lalu `jatahku:envelope-updated` supaya Beranda memuat ulang. `createEnvelopeGroup(name, jenis?)`.
+- Grafik harian tidak diubah: sudah membaca `harian[].jatah` yang kini berpagar (S20).
+- Dicek Playwright 1440 px (API dipalsukan, angka kasus 23 Okt): "Rp116.000 / Rp224.600 · ritme Rp161 rb/hari", "Rp2,39 jt dana harian, 3 hari · jaga Rp224 rb/hari · dicadangkan Rp5,8 jt", chip "Surplus +Rp1,65 jt", pilihan jenis di kepala grup.
+
+**Tidak dikerjakan:** paragraf blog/landing "Jaga ritme, amankan sisanya" (opsional di issue) — ditunda ke copy berikutnya.
+
+**Jebakan:** amplop tanpa grup tidak punya pilihan jenis (ikut otomatis: cicilan → bulanan); DAT-07 mengarahkan ke /envelopes, user perlu memasukkan amplop ke grup dulu. Pertimbangkan pilihan per amplop bila banyak user tanpa grup.
+
+**Tes:** frontend 316 OK (1 baru) · build OK · backend tidak disentuh.
+
+**Lanjut:** Fase 5 selesai. Sisa pekerjaan AI Advisor: S10b, S19 (Pikir-Pikir), #107 (M4 "bukan pembayaran tagihan").
+
+---
+
 ## S20 Kolam harian & pagar ritme (backend) · 2026-10-23 · pemilik produk + Claude ⚠ migrasi
 
 **Selesai**
