@@ -131,8 +131,10 @@ Estimasi dalam jam Claude Code aktif. "Paralel" = boleh dikerjakan bersamaan ole
 | **S17** | Chat lengkap | 2 | S9 | semua intent §6H, chip cepat per halaman, `help_cmd.py`, daftar `BotCommand`, "aman beli" dengan pilihan ganti amplop; **cek #91**: bila chat menawarkan sembunyikan/munculkan lagi, pakai `POST`/`DELETE /advisor/dismiss` yang sama |
 | **S18** | Copy, landing, blog, dokumen | 2 | S10 | `landing.html` (±10 tempat), 6 artikel blog + 1 artikel baru, `README.md`, `og-image.svg`, hapus kode basi |
 | **S19** | Pikir-Pikir masuk AI Advisor | 2 | Pikir-Pikir Fase 2/3 | PP-01..03 — menunggu |
+| **S20** | Kolam harian & pagar ritme (backend) ⚠ migrasi | 3 | S10 | `envelope_groups.jenis` (harian/bulanan, migrasi) + endpoint grup; `snapshot.py` membaca jenis; `metrics.py`: T3h, T3b, T6i, T6r, T7s, J0/J1 berpagar, T9/T10 dari T3h, outlier memotong J0 (C); HAR-03/06, PER-01/02/05/08, DAT-07 di `rules/` + `render.py`; `/status` bot & chat ikut lewat metrics; 02-aturan §3/§6/§7/§11 final, §12 dicek ulang; tes #21–26 |
+| **S21** | Kolam harian & pagar ritme (layar) | 2,5 | S20 | Beranda: kartu Jatah hari ini (ritme di catatan kaki), kartu Sisa bebas (angka utama dana harian, "Dicadangkan", "jaga …/hari", surplus); halaman Amplop: pilihan "Jenis grup: Harian / Bulanan"; grafik harian memakai jatah berpagar; `04-kontrak-api.md`; tes `node --test` |
 
-**Total:** Fase 1 ≈ 30,5 jam (11 sesi) · Fase 2 ≈ 5,5 jam · Fase 3 ≈ 8,5 jam · Fase 4 ≈ 7 jam (+ S19). Keseluruhan ≈ 52 jam, 19 sesi + S19.
+**Total:** Fase 1 ≈ 30,5 jam (11 sesi) · Fase 2 ≈ 5,5 jam · Fase 3 ≈ 8,5 jam · Fase 4 ≈ 7 jam (+ S19) · Fase 5 (ritme harian, 23 Okt) ≈ 5,5 jam. Keseluruhan ≈ 57,5 jam, 21 sesi + S19.
 
 ### Kepemilikan file (mencegah konflik saat paralel)
 | Area | Sesi pemilik | Catatan |

@@ -50,8 +50,8 @@ Chip menggantikan badge status di pojok kanan atas. Klik chip membuka popover (d
 
 | Kartu | Contoh chip | Isi analisa | CTA |
 |---|---|---|---|
-| Jatah hari ini | "1,8× jatah" (danger) | Penyumbang terbesar hari ini; jatah sejak pagi (Rp165.100) vs aman 11 hari ke depan (Rp153.200) | Lihat transaksi hari ini · Tanya di chat |
-| Sisa bebas | "Habis ±24 Okt" (warn) / "Cukup s/d 26 Okt" (ok) | Rata-rata 7 hari vs batas aman, tanggal habis, kekurangan | Batas harian di penyumbang terbesar · Tanya di chat |
+| Jatah hari ini | "1,8× jatah" (danger) / "1,4× ritme biasa" (info) | Penyumbang terbesar hari ini; jatah sejak pagi (Rp165.100) vs aman 11 hari ke depan (Rp153.200); ritme biasamu. Jatah dipagari dana harian ÷ hari periode (02-aturan §3, revisi 23 Okt 2026) | Lihat transaksi hari ini · Tanya di chat |
+| Sisa bebas | "Habis ±24 Okt" (warn) / "Surplus +Rp1,65 jt" (ok) / "Cukup s/d 26 Okt" (ok) | Angka utama = dana harian (amplop bulanan ditampilkan terpisah sebagai "Dicadangkan"); rata-rata 7 hari vs "jaga Rp…/hari", tanggal habis, kekurangan, surplus yang dibawa ke periode depan | Batas harian di penyumbang terbesar · Setor surplus ke tabungan · Tanya di chat |
 | Terpakai periode ini | "Lewat ±Rp525 rb" (warn) | Proyeksi = terpakai + tagihan belum dibayar + laju 7 hari × sisa hari. Batang: hijau sampai penanda waktu, kuning setelahnya | Lihat per amplop · Atur alokasi |
 | Income periode ini | "Terisi dari Rina" (info, redam) / "Belum masuk" (warn) | Pemasukan sendiri vs rumah tangga; jangan minta catat ulang | Catat pemasukan |
 | Tagihan belum dibayar | "KPR telat 9 hari" (danger) | Jatuh tempo, kondisi amplop tagihan, rencana tutup. Batang: lunas hijau, telat merah | Geser & bayar · Bayar saja |
@@ -64,6 +64,7 @@ Grafik Pengeluaran harian membaca deret harian dari metrik yang sama (belanja va
 - **Terpakai** dari dana belanja (71%, sebelumnya 44% dari semua amplop termasuk tabungan), dengan penanda waktu 63%.
 - **Arus kas:** sisa − (tagihan belum dibayar + laju 7 hari × sisa hari): −Rp525 rb (sebelumnya −Rp1,34 jt karena tagihan dirata-rata sebagai belanja harian).
 - **Laju:** rata-rata 7 hari terakhir, sama persis dengan 7 batang terakhir grafik.
+- **Jaga ritme, amankan sisanya** (revisi 23 Okt 2026, S20–S21): jatah harian hanya dari amplop harian dan dipagari dana harian ÷ hari periode; uang untuk pembayaran bulanan "Dicadangkan"; kelebihan jadi "Surplus +Rp… ke periode depan". Kasus 23 Okt: Rp2.128.800/hari → Rp224.600/hari (02-aturan §3).
 
 ### Kartu AI Advisor (pengganti "Perlu perhatian")
 - Judul "AI Advisor" + badge jumlah + cap waktu; subjudul "Tiga langkah paling berdampak untuk sisa periode ini".

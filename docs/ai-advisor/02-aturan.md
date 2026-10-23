@@ -61,6 +61,7 @@ Setiap permintaan (Beranda, halaman lain, chat, ringkasan terjadwal) melewati 7 
   - Tidak ada insight yang menilai anggota lain.
 - **Aman secara finansial.** Tidak menyarankan utang. Tabungan hanya disebut sebagai sumber terakhir dan selalu eksplisit; dana darurat paling akhir.
 - **Uang tidak pindah tanpa konfirmasi**, dan rencana selalu bisa diubah sebelum dijalankan.
+- **Jaga ritme, amankan sisanya** (revisi 23 Okt 2026). Jatah harian menjaga ritme belanja normal, bukan "habiskan semua sisa tepat di hari terakhir". Sisa hari boleh **menekan** jatah ke bawah saat uang menipis, tetapi tidak boleh **mendongkrak** jatah saat uang berlebih atau ada top-up; kelebihannya ditampilkan sebagai surplus yang dibawa ke periode berikutnya. Uang untuk pembayaran bulanan (SPP, cicilan, listrik) bukan uang jajan, jadi tidak pernah masuk jatah harian.
 
 ## 3. Metrik dasar — satu sumber angka
 
@@ -73,6 +74,7 @@ Setiap permintaan (Beranda, halaman lain, chat, ringkasan terjadwal) melewati 7 
 - **Belanja** = purpose `expense` + `debt` (cicilan). Sekarang `/analytics/prediction` hanya memakai `expense`, sedangkan kartu Sisa bebas memakai semua selain tabungan; keduanya disatukan di sini.
 - **Tabungan** = `saving` + `sinking_fund`.
 - **Kebutuhan / keinginan** = `classification` needs / wants. Kosong dianggap needs supaya aman.
+- **Belanja harian / belanja bulanan** (revisi 23 Okt 2026, S20). Amplop belanja dibagi menurut `jenis` grup amplopnya (`envelope_groups.jenis`: `harian` | `bulanan`; kosong = otomatis). Otomatis: purpose `debt` → bulanan, selain itu harian. User mengubahnya di halaman Amplop ("Jenis grup: Harian / Bulanan"). Hanya amplop **harian** yang membentuk jatah harian (T3h, T4, T5, J0, J1); saldo amplop **bulanan** adalah cadangan (T3b, "Dicadangkan"), bukan uang bebas, apa pun tanggal jatuh temponya. DAT-07 membantu menandai amplop yang polanya bulanan tetapi masih harian.
 
 ### Per amplop e
 
@@ -98,27 +100,41 @@ Setiap permintaan (Beranda, halaman lain, chat, ringkasan terjadwal) melewati 7 
 |---|---|---|
 | T1 | dana_belanja | Σ M1 amplop belanja |
 | T2 | terpakai_belanja | Σ M2 amplop belanja |
-| T3 | sisa_bebas | Σ M6 amplop belanja. Boleh negatif; minus di satu amplop mengurangi total |
-| T4 | laju_total | Σ variabel semua amplop belanja 7 hari terakhir ÷ 7, bila ada belanja di ≥ 3 dari 7 hari itu; selain itu Σ variabel sejak ps ÷ d. **Bukan** Σ laju(e): dengan begitu T4 selalu sama dengan jumlah 7 batang terakhir di grafik ÷ 7, dan labelnya boleh "rata-rata 7 hari terakhir" |
-| T5 | belanja_hari_ini | Σ variabel(e, hari ini). Inilah angka utama kartu Jatah hari ini; yang dikecualikan hari ini (tagihan, outlier, penyesuaian) disebut di catatan kaki kartu, bukan dihitung |
-| T5b | keluar_hari_ini | Semua transaksi hari ini **kecuali** pembayaran tagihan (tagihan sudah dipotong lewat M4, jadi netral terhadap T3). Termasuk outlier dan penyesuaian |
-| T6 | jatah_hari_ini (J0) | floor100((T3 + T5b − penyesuaian keluar hari ini) ÷ H0) = sisa bebas **awal hari** ÷ H0, dengan hasil cocokkan saldo hari ini dianggap koreksi saldo awal. Tetap sepanjang hari untuk belanja, outlier, dan tagihan; berubah bila ada dana masuk hari ini (alokasi/transfer) atau cocokkan saldo hari ini (dua arah, revisi 20 Okt 2026) |
-| T7 | aman_per_hari (J1) | floor100(max(T3, 0) ÷ H) |
+| T3 | sisa_bebas | Σ M6 amplop belanja = T3h + T3b. Boleh negatif; minus di satu amplop mengurangi total. Dipakai untuk "dana belanja" dan PER-02; bukan lagi dasar jatah harian |
+| T3h | sisa_bebas_harian | Σ M6 amplop belanja **harian**. Dasar J0, J1, T9, T10, surplus (revisi 23 Okt 2026) |
+| T3b | cadangan_bulanan | Σ M6 amplop belanja **bulanan** — "Dicadangkan". Tidak pernah dibagi ke hari |
+| T4 | laju_total | Σ variabel amplop belanja **harian** 7 hari terakhir ÷ 7, bila ada belanja di ≥ 3 dari 7 hari itu; selain itu Σ variabel sejak ps ÷ d. **Bukan** Σ laju(e): dengan begitu T4 selalu sama dengan jumlah 7 batang terakhir di grafik ÷ 7, dan labelnya boleh "rata-rata 7 hari terakhir" |
+| T5 | belanja_hari_ini | Σ variabel(e, hari ini) amplop harian. Inilah angka utama kartu Jatah hari ini; yang dikecualikan hari ini (tagihan, outlier, penyesuaian) disebut di catatan kaki kartu, bukan dihitung |
+| T5b | keluar_hari_ini | Semua transaksi hari ini di amplop harian **kecuali** pembayaran tagihan (tagihan sudah dipotong lewat M4, jadi netral terhadap T3h). Termasuk outlier dan penyesuaian |
+| T6i | jatah_ideal (L_ideal) | floor100(Σ M1 amplop harian ÷ D): dana harian satu periode dibagi rata ke **seluruh** hari periode, bukan ke sisa hari. Top-up di H-3 hanya menambah jatah sebesar top-up ÷ D. Hanya untuk jenis pendapatan bulanan/tidak tentu; harian/mingguan tidak dipagari (T6i = ∞) karena dananya memang masuk bertahap |
+| T6 | jatah_hari_ini (J0) | floor100(min(S0 ÷ H0, T6i)), S0 = T3h + T5b − penyesuaian keluar hari ini − outlier hari ini = sisa bebas harian **awal hari**, dengan cocokkan saldo dan belanja besar sekali waktu hari ini dianggap langsung memotong saldo awal. Tetap sepanjang hari untuk belanja biasa dan tagihan; berubah bila ada dana masuk hari ini (alokasi/transfer), cocokkan saldo hari ini (dua arah, revisi 20 Okt), atau outlier hari ini (revisi 23 Okt) |
+| T6r | ritme | Σ variabel amplop harian sejak ps ÷ d, bila d ≥ 7 ("ritme biasamu"). **Pembanding dan pemicu HAR-06, bukan pagar**: dipakai sebagai `min()` ia menurunkan jatah justru saat user hemat dan menandai belanja mingguan sebagai lewat jatah |
+| T7 | aman_per_hari (J1) | floor100(min(max(T3h, 0) ÷ H, T6i)) |
+| T7s | surplus_harian | max(0, T3h − max(0, J0 − T5) − J1 × r): dana harian yang tidak tersentuh jatah sampai pe. > 0 hanya bila pagar T6i menahan; saat uang menipis selalu 0 |
 | T8 | proyeksi_akhir | T2 + Σ M4 + Σ M5 + T4 × r |
-| T9 | kekurangan | max(0, T4 × r − T3), sama dengan proyeksi − dana bila positif |
-| T10 | tanggal_habis | t + ⌊T3 ÷ T4⌋ hari (bila T3 > 0 dan T4 > 0) |
+| T9 | kekurangan | max(0, T4 × r − T3h). Cadangan bulanan tidak boleh menutup kekurangan harian: itulah uang SPP |
+| T10 | tanggal_habis | t + ⌊T3h ÷ T4⌋ hari (bila T3h > 0 dan T4 > 0) |
 | T11 | persen_dana · persen_waktu | T2 ÷ T1 · d ÷ D |
 
 **Horizon H dan H0** (mengikuti Jenis Pendapatan, seperti PR #20):
 - Bulanan atau tidak tentu: H = r, H0 = r + 1.
 - Harian: H = min(1, r), H0 = 1. Mingguan: H = min(7, r), H0 = min(7, r + 1).
-- Hari terakhir periode (r = 0): J1 tidak ditampilkan dan J0 = T3 + T5. Ini sekaligus menutup crash pembagian nol di bot.
+- Hari terakhir periode (r = 0): J1 tidak ditampilkan dan J0 = min(S0, T6i). Ini sekaligus menutup crash pembagian nol di bot.
 
 **Kenapa J0 dan J1 dipisah.** Kartu "Jatah hari ini" sekarang membandingkan belanja hari ini dengan J1, yang sudah dipotong belanja hari ini lalu dibagi r. Akibatnya batasnya ikut turun saat user belanja. Batas "lewat" tetap sama secara matematis, tapi angka jatah dan lebihnya kurang tepat.
 - Usul: kartu Jatah hari ini memakai J0 (contoh: Rp297.100 / Rp165.100, lewat Rp132.000).
 - Kartu Sisa bebas memakai J1 (Rp153.200/hari untuk 11 hari ke depan).
-- **Invarian J0** (untuk unit test): mencatat belanja, outlier, atau tagihan hari ini tidak mengubah J0. Alokasi atau transfer masuk hari ini, dan penyesuaian cocokkan saldo hari ini (dua arah), mengubahnya.
+- **Invarian J0** (untuk unit test): mencatat belanja biasa atau tagihan hari ini tidak mengubah J0. Alokasi atau transfer masuk hari ini, penyesuaian cocokkan saldo hari ini (dua arah), dan belanja besar sekali waktu (outlier) hari ini mengubahnya.
 - **Revisi 20 Okt 2026:** sebelumnya penyesuaian saldo juga dikembalikan ke saldo awal hari. Kasus nyata: cocokkan saldo menemukan uang kurang ±Rp3,86 jt → sisa bebas Rp1,17 jt untuk 6 hari (aman Rp195 rb/hari), tetapi Jatah hari ini Rp719 rb dan chip "Sisa Rp719 rb hari ini", dihitung dari saldo pagi yang ternyata tidak ada. Cocokkan saldo adalah koreksi, bukan belanja, jadi langsung berlaku untuk jatah hari itu (juga di deret harian grafik).
+
+**Kolam harian dan pagar ritme (revisi 23 Okt 2026).** Kasus nyata pemilik produk, 23 Okt (H-3, periode 27 Sep – 26 Okt): pemasukan Rp7,6 jt di luar gaji dialokasikan ke 5 amplop, terbesar Pendidikan Rp3,19 jt (SPP bulan depan) dan Tagihan Hutang Rp2,2 jt. Hasilnya kartu Jatah hari ini "Rp116.000 / Rp2.128.800" dan Sisa bebas "aman Rp2,73 jt/hari", padahal ritme makan + transport user hanya ±Rp160 rb/hari. Tiga cacat rumus lama:
+1. Satu kolam untuk semua amplop belanja: uang SPP dianggap uang jajan 3 hari. Tagihan bulanan yang jatuh tempo **setelah** pe disisihkan Rp0 (`reserved.py`), jadi mendaftarkan SPP sebagai langganan pun tidak menolong. → **Kolam harian vs bulanan** (T3h, T3b).
+2. Pembagi "sisa hari" mengecil di ujung periode: top-up Rp1,97 jt ke Makan & Transport menjadi +Rp490 rb/hari, bukan +Rp66 rb/hari. → **Pagar ideal T6i**: dana harian ÷ D. Dari top-up di H-3, 27/30 bagian otomatis menjadi surplus.
+3. Tidak ada rem dari kebiasaan nyata. → **Ritme T6r** ditampilkan dan memicu HAR-06; sengaja bukan pagar (lihat T6r).
+
+Aturan asimetri waktu: J0 dan J1 = min(sisa ÷ hari, T6i). Saat uang menipis `min()` memilih sisa ÷ hari dan jatah turun; saat uang berlebih `min()` memilih T6i dan kelebihannya menjadi T7s. Surplus benar-benar terjadi: `rollover.py` membawa saldo akhir amplop ber-`is_rollover` utuh ke periode berikutnya; untuk amplop tanpa rollover PER-06 tetap menawarkan pindah ke tabungan. T3b **bukan** surplus — itu uang yang akan dipakai — jadi selalu berlabel "Dicadangkan", terpisah dari "Surplus".
+
+Dengan angka di atas (grup Kebutuhan Rumah dipindah ke bulanan): T3h ≈ Rp2,39 jt, T3b ≈ Rp5,79 jt, Σ M1 harian ≈ Rp6,74 jt → T6i = Rp224.600, J0 = min(Rp597.500, Rp224.600) = **Rp224.600**, T7s ≈ Rp1,65 jt, ritme ≈ Rp161 rb/hari. Kartu: "Rp116.000 / Rp224.600", Sisa bebas "Rp2,39 jt dana harian untuk 3 hari · jaga Rp224 rb/hari · surplus +Rp1,65 jt ke 27 Okt · dicadangkan Rp5,79 jt".
 
 **Grafik Pengeluaran harian membaca deret dari metrik ini,** bukan dari `/analytics/daily-spending` (yang sekarang ikut menghitung pembayaran tagihan dan amplop pribadi anggota lain). Batang = variabel per hari, diwarnai menurut S6; pembayaran tagihan dan penyesuaian digambar sebagai segmen abu-abu redup di atas batang, tidak dibandingkan dengan jatah. Dengan begitu grafik, T4, T5, dan daftar transaksi menunjuk angka yang sama.
 
@@ -259,9 +275,9 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 - Chip: "{rasio}× jatah" (bila ≥ 1,5×) atau "Lewat {rp lebih}".
 - Judul: "Belanja hari ini {rasio}× jatah". Isi: "Lewat {rp lebih}. {penyumbang} menyumbang {x}%."
   - Penyumbang = struk terbesar (S1) bila ≥ 40% T5; kalau tidak, amplop terbesar.
-- Fakta: jatah hari ini sejak pagi (J0) · aman {r} hari ke depan (J1) · J1 turun {J0 − J1}/hari · terbesar hari ini: {amplop} {rp}.
+- Fakta: jatah hari ini sejak pagi (J0) · aman {r} hari ke depan (J1) · J1 turun {J0 − J1}/hari · ritme biasamu {T6r}/hari (bila d ≥ 7) · terbesar hari ini: {amplop} {rp}.
 - CTA: Lihat transaksi hari ini · Batas harian {amplop} {floor100(bebas(e) ÷ r)} (bila satu amplop ≥ 50% T5) · Tanya di chat.
-- Catatan: kalau penyebabnya outlier, HAR-03 yang tampil. Pembayaran tagihan dan penyesuaian tidak dihitung.
+- Catatan: kalau penyebabnya outlier, HAR-03 yang tampil. Pembayaran tagihan dan penyesuaian tidak dihitung. Sesudah outlier hari ini J0 ikut turun (T6), jadi belanja biasa sesudahnya bisa menyalakan HAR-01 — itu benar: sisa jatah hari itu memang tinggal sedikit.
 
 **HAR-02 · Mendekati jatah**
 - Slot: KPI. Pemicu: T5 ≥ 80% J0 dan belum lewat. Tone: warn.
@@ -270,11 +286,18 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 **HAR-03 · Belanja besar satu kali**
 - Slot: KPI; penanda baris di Transaksi. Pemicu: ada outlier (S2) hari ini. Tone: info.
 - Chip: "Belanja besar {rp}".
-- Isi: "Tidak dihitung sebagai kebiasaan harian. Aman {r} hari ke depan jadi {J1}/hari."
+- Isi: "Tidak dihitung sebagai kebiasaan harian, tetapi langsung memotong jatah: hari ini jadi {J0}, aman {r} hari ke depan {J1}/hari." (revisi 23 Okt 2026: sebelumnya J0 tidak berubah, sehingga chip "Sisa {rp} hari ini" tetap besar sesudah belanja besar.)
 - CTA: Lihat transaksi.
 
 **HAR-04 · Hari ini aman**
 - Slot: KPI. Pemicu: T5 < 80% J0. Tone: ok. Chip: "Sisa {rp} hari ini".
+
+**HAR-06 · Di atas ritme biasa** (revisi 23 Okt 2026)
+- Slot: KPI. Pemicu: d ≥ 7, T5 ≤ J0 (belum lewat), dan T5 ≥ 1,3× T6r. Tone: info.
+- Chip: "{rasio}× ritme biasa".
+- Judul: "Hari ini {rasio}× ritme biasamu". Isi: "Masih dalam jatah {J0}, tetapi biasanya kamu {T6r}/hari.{ Jaga ritme itu, surplus {T7s} dibawa ke {ps berikutnya}.}" Kalimat kedua hanya bila T7s > 0.
+- CTA: Lihat transaksi hari ini.
+- Catatan: inilah bentuk "rem ritme" yang dipilih (pembanding + pemicu), bukan `min()` pada J0.
 
 **HAR-05 · Belum ada catatan hari ini**
 - Slot: KPI. Pemicu: jam ≥ 20.00 waktu user, belum ada transaksi hari ini, dan user biasa mencatat setiap hari (dasar S15). Tone: info.
@@ -285,12 +308,12 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 
 **PER-01 · Sisa bebas tidak cukup sampai akhir periode**
 - Slot: KPI Sisa bebas (chip "Habis ±{tgl}"), KPI Terpakai (chip "Lewat ±{rp}"), daftar.
-- Pemicu: d ≥ 3 dan T9 > 0.
-- Tone: warn; danger bila T10 ≤ t + 3 atau T9 ≥ 50% dari max(T3, 0).
+- Pemicu: d ≥ 3 dan T9 > 0 (dihitung dari T3h: cadangan bulanan tidak menutup kekurangan harian).
+- Tone: warn; danger bila T10 ≤ t + 3 atau T9 ≥ 50% dari max(T3h, 0).
 - Judul: "Rem belanja harian ke {J1}".
 - Isi: "{Hari ini {rasio}× jatah; }{n} dari 7 hari terakhir lewat jatah. Kalau tetap {T4}/hari, dana belanja kurang ±{T9} sebelum {pe}." Bagian pertama hanya bila HAR-01 ikut menyala (penekanan 6).
 - Fakta (Rincian):
-  - sisa bebas {T3} ÷ {r} hari = {J1}/hari;
+  - sisa bebas harian {T3h} ÷ {r} hari = {J1}/hari (dicadangkan {T3b} tidak dihitung);
   - rata-rata 7 hari terakhir {T4}/hari;
   - 3 penyumbang terbesar menurut porsi_7h(e) (M12), dengan persennya;
   - penyebab non-harian: amplop tagihan minus, tagihan yang belum dibayar.
@@ -301,7 +324,7 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
   - Tanya di chat.
 
 **PER-02 · Sisa bebas negatif**
-- Pemicu: T3 < 0. Tone: danger. Chip: "Minus {rp}".
+- Pemicu: T3 < 0 atau T3h < 0. Tone: danger. Chip: "Minus {rp}".
 - Judul: "Dana belanja sudah minus {rp}".
 - CTA: Catat pemasukan · Tutup dari tabungan (lewat perencana §8; tabungan umum dulu, dana darurat terakhir).
 
@@ -317,7 +340,7 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 
 **PER-05 · Cukup sampai akhir periode**
 - Pemicu: T9 = 0. Tone: ok. Chip: "Cukup s/d {pe}".
-- Isi: "Perkiraan sisa ±{T3 − T4 × r} di akhir periode."
+- Isi: "Perkiraan sisa ±{T3h − T4 × r} di akhir periode.{ Dicadangkan {T3b} untuk amplop bulanan.}"
 
 **PER-06 · Menjelang akhir periode**
 - Slot: daftar (info ber-CTA).
@@ -325,6 +348,15 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 - Judul: "Sisa ±{rp} — pindahkan ke tabungan?"
 - Isi: "{rp} di {amplop non-rollover} akan kembali ke 0 saat periode berganti."
 - CTA: Pindahkan ke {tabungan} (lewat perencana §8).
+
+**PER-08 · Surplus harian** (revisi 23 Okt 2026)
+- Slot: KPI Sisa bebas; daftar bila T7s ≥ Rp500 rb (tone info supaya jadi kandidat; selain itu ok).
+- Pemicu: T7s > 0 dan T9 = 0.
+- Chip: "Surplus +{T7s}".
+- Judul: "Jaga {J1}/hari → +{T7s} ke periode {ps berikutnya}".
+- Isi: "Dana harian {T3h} cukup untuk {r} hari. Kelebihan {T7s} dibawa ke periode depan.{ Dicadangkan {T3b} untuk amplop bulanan.}" Bila ada amplop harian tanpa rollover yang ikut surplus: "{rp} di {amplop} akan kembali ke 0 saat periode berganti" (PER-06 tetap menyala untuk itu).
+- CTA: Setor {T7s} ke {tabungan} (perencana §8; sumber hanya amplop harian yang menyumbang surplus, tabungan umum sebelum dana darurat) · Tanya di chat.
+- Catatan: menggantikan teks "aman {J1}/hari" yang lama di kartu Sisa bebas saat uang berlebih; J1 tetap ditampilkan sebagai "jaga {J1}/hari".
 
 **PER-07 · Awal periode**
 - Slot: daftar. Pemicu: d ≤ 2. Tone: info.
@@ -507,6 +539,12 @@ Format tiap aturan: **slot** · **pemicu** · **tone** · **chip** · judul/isi 
 - Isi: "Klasifikasi membantu AI memilih sumber dana yang aman."
 - CTA: Klasifikasikan.
 
+**DAT-07 · Amplop sepertinya pengeluaran bulanan** (revisi 23 Okt 2026)
+- Slot: daftar, amplop. Tone: info.
+- Pemicu: amplop berjenis harian (otomatis maupun diset) dengan dana periode ≥ Rp500 rb, ≤ 3 transaksi per periode di periode berjalan dan periode lalu, dan median nominalnya ≥ 25% dana amplop.
+- Judul: "{amplop} sepertinya pengeluaran bulanan". Isi: "Saldonya {bebas(e)} sekarang ikut dihitung sebagai jatah harian. Tandai grupnya Bulanan supaya dicadangkan."
+- CTA: Atur jenis grup (`route` /envelopes). Dismiss `tidak_relevan` mematikannya 90 hari.
+
 ### H. Sesudah catat, simulasi, dan chat
 
 **FB-01 · Cermin dampak sesudah simpan** (rancangan Pikir-Pikir §2)
@@ -548,14 +586,16 @@ Setiap kartu selalu punya chip. Mesin mengambil aturan yang menyala dengan skor 
 
 | Kartu | Urutan aturan | Bila tidak ada yang menyala |
 |---|---|---|
-| Jatah hari ini | HAR-01 › HAR-03 › HAR-02 › HAR-05 | HAR-04 |
-| Sisa bebas | PER-02 › PER-01 › PER-06 | PER-04 › PER-05 |
+| Jatah hari ini | HAR-01 › HAR-03 › HAR-02 › HAR-06 › HAR-05 | HAR-04 |
+| Sisa bebas | PER-02 › PER-01 › PER-06 › PER-08 | PER-04 › PER-05 |
 | Terpakai periode ini | PER-01 › PER-03 › AMP-08 (terbesar) | PER-05 ("Sesuai jalur") |
 | Income periode ini | INC-01 › INC-04 › INC-03 › INC-06 › INC-02 | INC-05 |
 | Tagihan belum dibayar | TAG-01 › TAG-02 › TAG-04 › TAG-03 | TAG-09 |
 | Tabungan | TAB-02 › TAB-01 › TAB-03 › TAB-06 › TAB-04 › TAB-05 | TAB-07 |
 
 Baris analisa di grafik harian: S6 ("{n} dari 7 hari terakhir lewat jatah") + puncaknya. Kalau tidak ada: "Semua hari dalam jatah minggu ini".
+
+**Isi kartu Jatah hari ini dan Sisa bebas (revisi 23 Okt 2026).** Jatah hari ini: angka T5 / J0; catatan kaki "{n} transaksi hari ini · ritme {T6r}/hari" (ritme bila d ≥ 7). Sisa bebas: angka utama **T3h** dengan keterangan "dana harian, untuk {r} hari"; catatan kaki "Hari ke-{d} dari {D} · jaga {J1}/hari · dicadangkan {T3b}". T3 total tidak lagi jadi angka utama supaya uang SPP tidak terbaca sebagai uang bebas.
 
 **Peredaman chip.** Bila di Beranda ada ≥ 1 chip danger atau ≥ 2 chip warn, chip bertone info dan ok tampil redam: tanpa latar berwarna dan tanpa ikon ✦, hanya teks dengan garis tepi tipis. Isi popover-nya tetap lengkap. Tujuannya supaya mata langsung ke kartu merah/kuning.
 
@@ -653,6 +693,11 @@ Nilai default; bisa diatur lewat `AppSetting` tanpa deploy.
 | Outlier | > 2× median **dan** > 30% dana | S2 |
 | Danger lewat jatah | ≥ 1,5× J0 | HAR-01 |
 | Mendekati jatah | ≥ 80% J0 | HAR-02 |
+| Pagar jatah ideal | Σ dana harian ÷ D; hanya pendapatan bulanan/tidak tentu | T6i |
+| Ritme ditampilkan | d ≥ 7 | T6r, HAR-06 |
+| Di atas ritme biasa | ≥ 1,3× ritme | HAR-06 |
+| Surplus masuk daftar | ≥ Rp500 rb | PER-08 |
+| Amplop sepertinya bulanan | dana ≥ Rp500 rb, ≤ 3 transaksi/periode, median ≥ 25% dana, 2 periode | DAT-07 |
 | Jatuh tempo dekat | ≤ 3 hari | TAG-02/03 |
 | Tagihan tahunan dilihat | 60 hari ke depan | TAG-04 |
 | Beban tagihan tinggi | > 40% dana belanja | TAG-05 |
@@ -731,7 +776,7 @@ Mockup di canvas "AI Advisor — Jatahku" sudah disamakan dengan contoh ini.
 - **Skenario emas** (memperluas `app/tests/evaluator`):
   1. Periode normal: tidak boleh ada danger/warn.
   2. Hari 1–2: tidak ada proyeksi.
-  3. Belanja besar sekali (outlier): HAR-03, bukan HAR-01 atau PER-01.
+  3. Belanja besar sekali (outlier): HAR-03, bukan HAR-01 atau PER-01; J0 hari itu ikut turun (revisi 23 Okt).
   4. Tagihan dibayar di hari pertama: tidak dianggap laju harian.
   5. Pemasukan dicatat pasangan: INC-02, bukan "Belum dicatat".
   6. Hari terakhir periode: tidak crash; J0 = sisa.
@@ -741,7 +786,7 @@ Mockup di canvas "AI Advisor — Jatahku" sudah disamakan dengan contoh ini.
   10. Perencana: amplop terkunci, milik anggota lain, atau punya tagihan tidak dipakai sebagai sumber; tabungan tidak pernah otomatis.
   11. Kekurangan total vs kekurangan per amplop (penekanan §5.2).
   12. Dismiss, lalu tone naik → muncul lagi.
-  13. Invarian J0: mencatat outlier atau tagihan hari ini tidak mengubah J0; alokasi dan penyesuaian cocokkan saldo hari ini mengubahnya.
+  13. Invarian J0: mencatat belanja biasa atau tagihan hari ini tidak mengubah J0; alokasi, penyesuaian cocokkan saldo, dan outlier hari ini mengubahnya.
   14. Tagihan dibayar manual dengan nominal persis: M4 menganggap lunas (tidak ada hitung ganda di T3) dan DAT-06 menyala.
   15. Struk berisi 2 barang kembar dalam satu rantai S1: tidak ditandai dobel; struk yang sama dikirim ulang 40 detik kemudian: S4b menyala; kiriman ulang dengan `client_ref` sama: ditolak server, tidak ada transaksi baru.
   16. Urutan kelompok tone: info berskor 90 tetap di bawah warn berskor 40.
@@ -749,6 +794,12 @@ Mockup di canvas "AI Advisor — Jatahku" sudah disamakan dengan contoh ini.
   18. Perencana memakai amplop e sebagai sumber → batas harian e turun sesuai bebas_setelah_rencana.
   19. Saat defisit, CTA setor TAB-01 berganti dan skor dampaknya 0.
   20. T4 sama dengan rata-rata 7 batang terakhir grafik; grafik tidak memuat amplop pribadi anggota lain.
+  21. Kolam harian (23 Okt): saldo amplop bulanan (grup `bulanan` atau purpose `debt`) tidak mengubah J0, J1, T9, T10; T3 = T3h + T3b; grup tanpa jenis → otomatis.
+  22. Pagar ideal: top-up ke amplop harian di H-3 menaikkan J0 paling banyak top-up ÷ D, sisanya jadi T7s; pendapatan harian/mingguan tidak dipagari.
+  23. Asimetri: saat T3h ÷ H < T6i, J1 = T3h ÷ H dan T7s = 0 (pagar tidak menahan uang yang menipis).
+  24. Kasus 23 Okt (§3): Rp7,6 jt masuk di H-3 → J0 = T6i, PER-08 menyala dengan surplus ±Rp1,65 jt, PER-01 tidak menyala, T3b tidak masuk angka utama Sisa bebas.
+  25. HAR-06 menyala saat 1,3× ritme ≤ T5 ≤ J0; tidak menyala bila d < 7 atau T5 > J0 (HAR-01 yang tampil).
+  26. DAT-07 menyala untuk amplop harian berpola 1–3 transaksi besar per periode; tidak untuk amplop yang grupnya sudah bulanan.
 - **Paritas.** Dari snapshot yang sama, KPI web, chat "sisa", `/status` Telegram, dan ringkasan harian harus menghasilkan angka identik.
 - **Snapshot teks.** Template dibandingkan dengan teks yang disetujui, supaya perubahan kata selalu sengaja.
 - **Performa.** Satu snapshot per permintaan dengan jumlah query tetap; target < 150 ms di VPS untuk 10 amplop; cache Redis 60–120 detik.

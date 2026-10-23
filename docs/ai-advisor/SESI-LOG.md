@@ -4,6 +4,23 @@ Entri terbaru di atas. Format: **Sesi · tanggal · siapa** — selesai · digan
 
 ---
 
+## Spesifikasi Fase 5: kolam harian & pagar ritme · 2026-10-23 · pemilik produk + Claude (dokumen saja)
+
+**Konteks:** H-3 periode, pemasukan Rp7,6 jt di luar gaji dialokasikan (Pendidikan Rp3,19 jt, Tagihan Hutang Rp2,2 jt, Makan Rp1,76 jt, …) → kartu Jatah hari ini "Rp116.000 / Rp2.128.800", Sisa bebas "aman Rp2,73 jt/hari". Rumus "sisa ÷ sisa hari" menjawab "cukup sampai gajian?", bukan "berapa pantas dibelanjakan hari ini?". Analisa pemilik produk + temannya dicocokkan dengan kode (`envelope_groups` ada tetapi tidak dibaca advisor; tagihan bulanan jatuh tempo > pe disisihkan Rp0; rollover membawa saldo utuh).
+
+**Keputusan pemilik produk**
+1. Ritme nyata (T6r) = pembanding + pemicu HAR-06, **bukan** pagar `min()` (menghindari ratchet saat hemat dan alarm belanja mingguan).
+2. Jenis amplop di tingkat grup: `envelope_groups.jenis` harian/bulanan, kosong = otomatis (`debt` → bulanan). Satu kolom, satu migrasi.
+3. Outlier hari ini langsung memotong J0, sama dengan cocokkan saldo (#122).
+
+**Ditulis:** 02-aturan §2 prinsip "Jaga ritme, amankan sisanya"; §3 T3h/T3b/T6i/T6r/T7s + bagian "Kolam harian dan pagar ritme" (aturan asimetri waktu, contoh 23 Okt); §6 HAR-03 (isi), HAR-06, PER-01/02/05 (T3h), PER-08, DAT-07; §7 urutan chip + isi kartu; §11 konstanta; §13 tes #21–26. 01-desain tabel kartu; 03-workflow S20/S21; 04-kontrak catatan field S20; PROGRESS; 00-indeks. Issue #123 (S20, migrasi), #124 (S21), milestone Fase 5.
+
+**Catatan dari analisa teman yang dikoreksi:** "Total siap rollover = surplus + saldo bulanan" tidak dipakai — saldo bulanan adalah uang yang akan dipakai, selalu berlabel "Dicadangkan"; "system prompt AI" tidak berlaku (tanpa LLM, teks di `render.py`).
+
+**Lanjut:** S20 (#123) lalu S21 (#124). §12 contoh 15 Okt tidak berubah (tagihan `debt` bebas 0; T6i Rp322.800 tidak menahan).
+
+---
+
 ## Jatah hari ini sesudah cocokkan saldo · 2026-10-20 · pemilik produk + Claude
 
 **Konteks:** akun pemilik produk: sisa bebas Rp1,17 jt untuk 6 hari (aman Rp195 rb/hari), tetapi Jatah hari ini Rp719.300 dan chip "Sisa Rp719 rb hari ini". Penyebab: cocokkan saldo hari itu menemukan uang kurang ±Rp3,86 jt; J0 mengembalikan penyesuaian itu ke "saldo awal hari" (invarian J0 lama), jadi jatah dihitung dari ±Rp5,03 jt yang tidak ada.

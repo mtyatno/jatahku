@@ -17,6 +17,10 @@ Bentuk respons yang disepakati supaya frontend (S6–S8) bisa dikerjakan paralel
   // metrics = Metrics.to_api() dari app/services/advisor/metrics.py (S1). harian: satu baris per hari ps..hari ini,
   // hanya amplop belanja; "jatah" = J0 hari itu, "lewat" = variabel > jatah (S6). outlier & jatah ditambah di S1.
   // Angka null bila belum bisa dihitung: j1 di hari terakhir; proyeksi_akhir/kekurangan/tanggal_habis bila hari_ke < 3.
+  // S20 (02-aturan §3, revisi 23 Okt 2026) menambah: "sisa_bebas_harian" (T3h), "cadangan_bulanan" (T3b),
+  // "jatah_ideal" (T6i, null bila tidak dipagari), "ritme" (T6r, null bila hari_ke < 7), "surplus_harian" (T7s).
+  // j0/j1/kekurangan/tanggal_habis sejak S20 dihitung dari T3h dan dipagari T6i; sisa_bebas tetap total.
+  // GET/POST/PATCH /envelopes/groups menambah "jenis": "harian" | "bulanan" | null (otomatis).
   "kpi": { "jatah": {/* insight */}, "sisa_bebas": {}, "terpakai": {}, "income": {}, "tagihan": {}, "tabungan": {} },
   // kpi.<kartu> = insight terpilih untuk kartu itu (chip sudah sesuai kartu: PER-01 di Terpakai = "Lewat ±Rp525 rb",
   // di Sisa bebas = "Habis ±24 Okt"), atau null. Sejak S4 keenam kartu terisi (income: INC-*, cadangan INC-05;
