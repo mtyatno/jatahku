@@ -52,6 +52,48 @@ HALF_MASKED = {
     "Ref 61234567   8812": "Ref …4567   8812",
 }
 
+# Huruf mirip angka (OCR "88" -> "BB", "10" -> "lO") memotong nomor menjadi potongan < 6 digit, jadi mask_line hanya
+# menyamarkan sebagian (re-review A13 I1-r2): hitungan seluruh baris harus menandainya.
+LOOKALIKE_SPLIT = {
+    "HP 866 8BB74 127 96": "HP 866 8BB…2796",
+    "RRN 6288 BB92 - 4674": "RRN 6288 BB…4674",
+    "ID Transaksi 4223 149 - 8BB98 6798": "ID Transaksi …1498BB…6798",
+    "Rekening Tujuan 65525-2Ol6  508": "Rekening Tujuan …5252Ol6  508",
+}
+
+# Potongan nomor berbentuk jam yang menempel (langsung atau lewat satu pemisah) pada penanda, digit, atau huruf mirip
+# angka (re-review A13 m-c): aturan jam membiarkannya, tetapi digitnya harus ikut dihitung.
+TIME_FRAGMENT = {
+    "RRN 612345675412   S6:25": "RRN …5412   S6:25",
+    "No. Rek 61234901389/3B12:56": "No. Rek …1389/3B12:56",
+    "No. Rek 61234903/09:45": "No. Rek …4903/09:45",
+    "HP 081234560995l1:43": "HP …0995l1:43",
+    "No. Rek 61239281-05:39": "No. Rek …9281-05:39",
+    "Ref 08:12:612345674567": "Ref 08:12:…4567",
+}
+
+# Jam yang menempel pada kata, tanggal, atau jam lain (bukan potongan nomor) tetap sunyi.
+CLEAN_TIME_FORMS = [
+    "Tanggal 2026-10-26T09:30:15+07:00", "26/10/2026,08:12:33", "Jam08:12:33", "08:12:33WIB", "Pukul08.12.33",
+    "Jam 08.12.33 WIB", "Waktu: 08:12:33", "(08:12:33)", "08:12 - 08:15", "26/10/2026 08:12:33 Ref …8812",
+    "26/10/2026 - 08:12:33", "08:12:33,26/10/2026", "08:12:33, 26/10/2026", "Transaction Date 2026-10-26 08:12:33",
+]
+
+# Dua penanda tersamar dari satu nomor yang terpotong (ruling A13 fix round 4: setiap cara penyambungan ditandai,
+# termasuk satu spasi — "Ref …5678 …1234" menampilkan 8 digit).
+TOKEN_PAIRS = {
+    "RRN 612345673091 | 612345673755": "RRN …3091 | …3755",            # m-a: tanda baca lain
+    "Ref 612345673091 ; 612345673755": "Ref …3091 ; …3755",
+    "Ref 612345673091 , 612345673755": "Ref …3091 , …3755",
+    "Ref 612345673091 . 612345673755": "Ref …3091 . …3755",
+    "Ref 612345673091  -  612345673755": "Ref …3091  -  …3755",
+    "Ref 612345673091  /  612345673755": "Ref …3091  /  …3755",        # m-b: dua spasi mengapit "/"
+    "Ref 612345673091/612345673755": "Ref …3091/…3755",
+    "Ref 612345673091   612345673755": "Ref …3091   …3755",
+    "Ref 612345673091 / 612345673755": "Ref …3091 / …3755",
+    "Ref 612345673091 : 612345673755": "Ref …3091 : …3755",
+}
+
 _SEP = r"[\s.,\-‐-―−]"
 _END = r"(?![.,:/\-]?\d)"
 _THOUSANDS = r"(?!0)\d{1,3}([.,])\d{3}(?:\1\d{3})*(?:[.,]\d{2})?"     # nominal tidak berawalan 0
@@ -211,6 +253,32 @@ class MaskLineTests(unittest.TestCase):
         self.assertKept(["Kode 24.12.34"])                # tanggal d.m.yy yang sah (24 Des 2034) tetap utuh
         self.assertKept(["Jam 08:12:33", "Jam 08.12.33", "Jam 23.59"])
 
+    def test_day_month_name_year_is_a_kept_date(self):
+        # "26 Okt 2026" (bentuk yang dibaca pembaca, labels._DMY_NAME, dengan pemisah yang sama: spasi, ".", "-", "/",
+        # atau menempel) adalah rentang yang dibiarkan: hitungan PERIKSA tidak menghitung 6 digitnya, dan deret di
+        # sampingnya tidak menyeret harinya ("1234 26 Okt 2026").
+        self.assertKept(["26 Okt 2026, 09:30 WIB", "26 Oktober 2026", "26 Okt. 2026", "Ref 1234 26 Okt 2026 08:12",
+                         "26 Okt 2026 12345", "26-Okt-2026 08:12", "26/Okt/2026", "26.Okt.2026", "26Okt2026 08:12",
+                         "Ref 1234 26-Okt-2026"])
+        self.assertMasked({
+            "26 Okt 2026 123456": "26 Okt 2026 …3456",      # tanggal utuh, deret di sampingnya disamarkan sendiri
+            "Ref 123456-26 Okt 2026": "Ref …5626 Okt 2026",   # tanggal yang menempel strip pada deret lain bukan tanggal
+            "Ref 123456-26-Okt-2026": "Ref …5626-Okt-2026",
+            "26 Okt 2026-123456": "26 Okt …3456",
+            "26-Okt-2026-123456": "26-Okt-…3456",
+            "Kode 12 1999 5678": "Kode …5678",               # tanpa nama bulan bukan tanggal
+            "12 Xyz 2026 5678": "12 Xyz …5678",
+            "32 Okt 2026 5678": "32 Okt …5678",              # hari 32 bukan tanggal
+            "26 Okt 1234 5678": "26 Okt …5678",              # tahun 1234 bukan tanggal
+        })
+        for line in ["26 Okt 2026, 09:30 WIB", "Tanggal 26 Oktober 2026 08:12:33 WIB", "26 Okt 2026 • 08:12",
+                     "26 Oct 2026, 08:12 AM", "Ref 1234 26 Okt 2026 08:12", "26-Okt-2026 08:12", "26/Okt/2026 08:12",
+                     "Tanggal 26Okt2026 08:12:33"]:
+            with self.subTest(line):
+                self.assertFalse(needs_review(line))
+        self.assertTrue(needs_review("Kode 12 Xyz 2026 5"))      # bukan tanggal: 2 + 4 + 1 = 7 digit lepas
+        self.assertTrue(needs_review("Kode 32 Okt 2026"))        # hari 32 bukan tanggal: 2 + 4 digit lepas
+
     def test_short_numbers_and_already_masked_text_kept(self):
         self.assertKept(["Rekening Tujuan …4567", "Kartu ****1234", "No. Rek xxxx1234", "Terminal ID A01",
                          "ID Transaksi A1B2C3D4", "Kode 12345", "NMID ID10…6544"])
@@ -259,57 +327,148 @@ class ReviewFlagTests(unittest.TestCase):
                 self.assertGreaterEqual(len(re.findall(r"\d", masked)), 6)
                 self.assertTrue(needs_review(masked))
 
-    def test_masked_tokens_count_as_four_digits(self):
-        self.assertTrue(needs_review("Ref …4567 12"))         # token + 2 digit lepas = 6
+    def test_whole_line_count_digits_and_tokens(self):
+        # Hitungan seluruh baris (ruling A13 fix round 4): digit 1, penanda `…dddd` 4; ambang >= 6, apa pun yang
+        # ada di antaranya (kata, spasi, tanda baca).
+        self.assertTrue(needs_review("Ref …4567 12"))         # 4 + 2
         self.assertFalse(needs_review("Ref …4567 1"))         # 5: di bawah ambang
-        self.assertTrue(needs_review("Ref …4567,…1234"))   # dua token menempel tanda baca
+        self.assertTrue(needs_review("Ref 123 a.n. BUDI 456"))   # kata tidak memisahkan: 3 + 3
+        self.assertFalse(needs_review("Ref 123 a.n. BUDI 45"))
+        self.assertTrue(needs_review("Ref …4567,…1234"))
         self.assertTrue(needs_review("Ref …4567/…1234"))
-        self.assertFalse(needs_review("Ref …4567 …1234"))  # token berdiri sendiri, dipisah spasi
-        self.assertFalse(needs_review("…4567 …1234"))      # awal dan akhir baris juga pemisah
-        self.assertFalse(needs_review("Ref (…4567)"))          # satu token: 4 digit saja
-        # Dua nomor >= 6 digit yang dipisah huruf OCR: token kedua menempel huruf di depannya.
-        self.assertEqual(mask_line("Rek 678812 B47276394242"), "Rek …8812 B…4242")
+        self.assertEqual(mask_line("Rek 678812 B47276394242"), "Rek …8812 B…4242")   # dua deret dipisah huruf OCR
         self.assertTrue(needs_review("Rek …8812 B…4242"))
-        # Hanya keluaran mask_line (`…` + tepat 4 digit) yang dihitung sebagai penanda; "…123" adalah digit lepas.
-        self.assertTrue(needs_review("Ref …123 …4567"))
-        # Nominal nol tetap bentuk yang dibiarkan: tidak ikut dihitung bersama penanda di sebelahnya.
-        self.assertFalse(needs_review("Biaya Rp 0,00 …4567"))
-        self.assertTrue(needs_review("Biaya 0,00 …4567"))     # tanpa Rp bukan nominal: 3 + 4 digit
+        self.assertTrue(needs_review("Ref …123 …4567"))      # "…123" = 3 digit lepas + penanda 4
+        self.assertFalse(needs_review("Ref (…4567)"))          # satu penanda: 4
+        self.assertFalse(needs_review("…4567"))
+        self.assertTrue(needs_review("Biaya 0,00 …4567"))     # "0,00" tanpa Rp bukan nominal: 3 + 4
+        self.assertFalse(needs_review("Biaya Rp 0,00 …4567"))  # nominal dibiarkan: 0 + 4
+        self.assertFalse(needs_review("Ref 12345"))
+        self.assertTrue(needs_review("Ref 12345 6"))          # tepat 6 digit lepas
+        self.assertTrue(needs_review("Terminal ID A01 Ref 12345"))   # 2 + 5: kata di antaranya tidak memisahkan
 
-    def test_two_masked_tokens_of_one_split_number_are_flagged(self):
-        # Satu nomor panjang yang dipotong >= 3 spasi atau "/", ":", "_" menjadi dua deret >= 6 digit: dua penanda
-        # berdiri sendiri tetap menampilkan 8 digit (aturan A13 fix round 3).
-        for line in ["No. Ref …3091 / …3755", "Ref …4567   …8812", "Ref …4567:…8812", "Ref …4567_…8812",
-                     "Ref …4567 : …8812", "Ref …4567 _ …8812", "Ref …4567/ …8812", "Ref …4567\t\t\t…8812",
-                     "Ref …4567 / …8812", "Ref …4567    …8812", "…1111 / …2222 / …3333"]:
+    def test_every_pair_of_masked_tokens_is_flagged(self):
+        # Dua penanda dari satu nomor yang terpotong menampilkan 8 digit, apa pun penyambungnya (m-a, m-b) — juga
+        # satu spasi, yang dulu sunyi ("Ref …5678 …1234" kini ditandai, ruling fix round 4).
+        for line in ["Ref …5678 …1234", "…4567 …1234", "Ref …5678  …1234", "Ref …5678\t…1234", "Rek …4567 a.n. …1234",
+                     "Ref …4567 08:12 …8812", "Ref …4567 26/10/2026 …8812", "No. Ref …3091 / …3755", "Ref …4567   …8812",
+                     "Ref …4567:…8812", "Ref …4567_…8812", "Ref …4567 : …8812", "Ref …4567 _ …8812", "Ref …4567/ …8812",
+                     "Ref …4567\t\t\t…8812", "Ref …4567 / …8812", "Ref …4567    …8812", "…1111 / …2222 / …3333",
+                     "…6642 | …5446", "…1940 ; …5690", "…1524 , …5280", "…0036 . …3316", "…0311  -  …8625",
+                     *TOKEN_PAIRS.values()]:
             with self.subTest(line):
                 self.assertTrue(needs_review(line))
+        for raw, masked in TOKEN_PAIRS.items():
+            with self.subTest(raw):
+                self.assertEqual(mask_line(raw), masked)   # bentuk tersimpan persis seperti yang dipin di atas
 
-    def test_masked_tokens_one_or_two_spaces_apart_stay_quiet(self):
-        for line in ["Ref …5678 …1234", "Ref …5678  …1234", "Ref …5678\t…1234", "Rek …4567 a.n. …1234",
-                     "Ref …4567 08:12 …8812", "Ref …4567 26/10/2026 …8812", "Ref …4567 / Rp 25.000"]:
-            with self.subTest(line):
-                self.assertFalse(needs_review(line))
-
-    def test_split_number_end_to_end(self):
-        for raw, masked in {"Ref 612345673091/612345673755": "Ref …3091/…3755",
-                            "Ref 612345673091   612345673755": "Ref …3091   …3755",
-                            "Ref 612345673091 / 612345673755": "Ref …3091 / …3755",
-                            "Ref 612345673091 : 612345673755": "Ref …3091 : …3755"}.items():
+    def test_lookalike_letters_count_when_touching_digits(self):
+        for raw, masked in LOOKALIKE_SPLIT.items():
             with self.subTest(raw):
                 self.assertEqual(mask_line(raw), masked)
-                self.assertTrue(needs_review(mask_line(raw)))
+                self.assertTrue(needs_review(masked))
+        # Huruf mirip angka [OoDlIiSsBZGgq] dihitung 1 hanya dalam deret 1-3 huruf yang menempel digit atau penanda.
+        self.assertTrue(needs_review("Ref 12BB3 45"))          # 5 digit + BB = 7
+        self.assertTrue(needs_review("Ref lO…4567"))          # lO menempel penanda: 2 + 4
+        self.assertTrue(needs_review("Ref …4567S1"))          # S di antara penanda dan digit: 4 + 1 + 1
+        self.assertFalse(needs_review("Ref 12345 S"))         # tidak menempel (spasi): 5
+        self.assertFalse(needs_review("Ref 1234 SO 5"))       # SO tidak menempel digit: 5
+        self.assertFalse(needs_review("Ref 123 SOSIS 45"))    # deret 5 huruf: bukan salah baca, 5 digit
+        self.assertFalse(needs_review("Ref 1234 BOSS5"))      # deret 4 huruf (> 3) tidak dihitung: 5
+        self.assertFalse(needs_review("Ref 12345R"))          # "R" bukan huruf mirip angka: 5
+        self.assertFalse(needs_review("Ref 12345ok"))         # "o" diikuti huruf lain: bagian kata, bukan salah baca
+        self.assertFalse(needs_review("Ref 1234A5"))          # "A" bukan huruf mirip angka: 5
+        self.assertTrue(needs_review("Ref 1234o5"))           # huruf kecil juga
+        self.assertTrue(needs_review("Ref 1234Z5"))
+        self.assertTrue(needs_review("Ref 1234GD"))           # 4 + G + D
+        self.assertTrue(needs_review("Ref 1234qI"))
+        self.assertTrue(needs_review("Ref 1234gi"))
+        self.assertTrue(needs_review("Ref 1234sD"))
+        self.assertTrue(needs_review("Ref 12345i"))
+        self.assertTrue(needs_review("Ref 12345l"))
+        self.assertTrue(needs_review("Ref 12345O"))
+        self.assertTrue(needs_review("Ref 12345B"))
+        self.assertTrue(needs_review("Ref 1234 5S"))          # 5 + S yang menempel "5" = 6
+        self.assertTrue(needs_review("Transaction ID…5678"))    # "ID" = dua huruf mirip angka yang menempel penanda: 4 + 2
+        self.assertFalse(needs_review("Transaction ID …5678"))  # tidak menempel: 4
+        self.assertFalse(needs_review("TID…5678"))              # "ID" di dalam kata (didahului huruf T): 4
+
+    def test_time_fragment_glued_to_a_number_counts(self):
+        for raw, masked in TIME_FRAGMENT.items():
+            with self.subTest(raw):
+                self.assertEqual(mask_line(raw), masked)
+                self.assertTrue(needs_review(masked))
+        # Setiap pemisah penyambung (/ - _ : . , –) dan menempel langsung; di kedua sisi jam.
+        for sep in ("/", "-", "_", ":", ".", ",", "–", ""):
+            with self.subTest(sep=sep):
+                self.assertTrue(needs_review(f"Ref …4567{sep}08:12"))
+                self.assertTrue(needs_review(f"Ref 08:12{sep}…4567"))
+                self.assertTrue(needs_review(f"Ref 08:12{sep}lO1"))            # 4 + 1 + lO yang menempel "1" (2)
+                self.assertTrue(needs_review(f"Ref 1lO{sep}08:12"))
+                if sep not in (":", "."):                                      # "12:08:12" / "12.08:12" = satu jam
+                    self.assertTrue(needs_review(f"Ref 12{sep}08:12"))          # 2 + 4
+        self.assertTrue(needs_review("Ref 08:12lO"))          # jam menempel langsung huruf mirip angka: 4 + 2
+        self.assertFalse(needs_review("Ref 08:12/lO"))        # jam dihitung (4), tetapi "lO" sendiri tidak menempel digit
+        self.assertFalse(needs_review("Ref …4567 08:12"))     # spasi memutus: jam dibiarkan, 4
+        self.assertFalse(needs_review("Ref …4567//08:12"))    # tepat satu pemisah yang menyambung; dua tidak
+        self.assertFalse(needs_review("Ref …4567 /08:12"))
+        self.assertFalse(needs_review("Ref …4567|08:12"))     # hanya / - _ : . , – yang menyambung (ruling), bukan "|"
+        self.assertFalse(needs_review("Ref 08:12(…4567)"))
+        self.assertFalse(needs_review("Ref 08:12 S"))
+        self.assertFalse(needs_review("Ref 1 08:12"))
+        self.assertFalse(needs_review("Ref …4567 03:43 1"))   # jam dibiarkan: 4 + 1 (bentuk yang diserahkan ke manusia)
+        # Hanya rentang berbentuk jam yang kehilangan perlindungannya: nominal, tanggal angka, dan NMID yang menempel
+        # penanda tetap dikosongkan (penyamaran sudah menjaga tanggal/nominal yang menempel digit lain).
+        self.assertFalse(needs_review("Ref …4567/Rp25.000"))
+        self.assertFalse(needs_review("Ref …4567,26/10/2026"))
+        self.assertFalse(needs_review("26/10/2026-…4567"))
+        self.assertFalse(needs_review("NMID …4567/ID1024358806544"))
+        # Tetangga yang bagian dari rentang lain yang dibiarkan bukan penyambung — juga bila hurufnya mirip angka
+        # ("ID" di dalam NMID).
+        self.assertFalse(needs_review("NMID 08:12:33/ID1024358806544"))
+        for line in CLEAN_TIME_FORMS:
+            with self.subTest(line):
+                self.assertEqual(mask_line(line), line)      # premis: bentuk bersih tidak berubah
+                self.assertFalse(needs_review(line))
+        # Jam yang menempel kata >= 2 huruf atau rentang lain yang dibiarkan (tanggal, jam) tidak dihitung — juga
+        # bila hurufnya kebetulan mirip angka tetapi bagian dari kata yang lebih panjang.
+        self.assertFalse(needs_review("08:12:33SOSIS"))
+        self.assertFalse(needs_review("SOSIS08:12:33"))
+        self.assertFalse(needs_review("08:12:33,26/10/2026"))
+        self.assertFalse(needs_review("08:12:33-Rp25.000"))
+        # Tanggal yang menempel strip pada digit lain bukan rentang yang dibiarkan (aturan mask_line yang ada), jadi
+        # 8 digitnya dihitung seluruhnya.
+        self.assertTrue(needs_review("08:12:33-26/10/2026"))
+        # "12.10.26" dibiarkan sebagai tanggal d.m.yy, tetapi berbentuk jam juga: menempel penanda -> dihitung (arah
+        # aman untuk bentuk yang rancu).
+        self.assertTrue(needs_review("Ref …4567/12.10.26"))
+        self.assertFalse(needs_review("Ref …4567 12.10.26"))
+        # "24.12.34" bukan jam (jam 24), hanya tanggal d.m.yy: tetap dibiarkan walau menempel penanda (ruling: hanya
+        # rentang berbentuk jam yang kehilangan perlindungannya).
+        self.assertFalse(needs_review("Ref …4567 24.12.34"))
+        self.assertFalse(needs_review("Ref …4567,24.12.34"))
+        self.assertTrue(needs_review("08:12:33SO"))           # 2 huruf mirip angka lepas: dihitung
 
     def test_kept_forms_masked_numbers_and_short_codes_not_flagged(self):
-        lines = [mask_line(x) for s in SYNTHETIC for x in s["lines"]] + [
-            "Rekening: …7890 a.n. BUDI", "No. Rek: …7890", "+…7890", "Kode 24.12.34",
-            "Tanggal 26 Okt 2026 08:12:33 WIB", "Kasir 01 14-10-2026 08:15", "NMID ID1024358806544", "Nominal Rp1.500.000",
-            "Rekening Tujuan …4567", "Ref …5678 …1234", "ID Transaksi A1B2C3D4", "Kode 1_2345", "Terminal ID A01 Ref 12345",
-            "Rp 25.000 x 3 = Rp 75.000", "26/10/2026 19:05",
+        lines = [
+            "Rekening: …7890 a.n. BUDI", "No. Rek: …7890", "+…7890", "Kode 24.12.34", "Rekening Tujuan …4567",
+            "No. Referensi …8812", "Transaction ID …5678", "Tanggal 26 Okt 2026 08:12:33 WIB", "Kasir 01 14-10-2026 08:15",
+            "NMID ID1024358806544", "Nominal Rp1.500.000", "Total Rp153.500", "Biaya Admin Rp2.500", "Kode 1_2345",
+            "Terminal ID A01", "Rp 25.000 x 3 = Rp 75.000", "26/10/2026 19:05", "Ref …4567 / Rp 25.000",
+            "26 Okt 2026, 09:30 WIB", "26 Okt 2026 10:00", "Oct 26 2026 09:30", "Tanggal 2026-10-26 10:15",
+            "Rp 0", "Rp 0,00", "BI-FAST", "Kode Bayar …7890 (BRIVA)", "NMID ID1024358806544 TID…7890",
+            "Jumlah: Rp:150000", "Saldo 12.345.678.901", "26/10/2026 - 08:12", "Kartu ****1234", "No. Rek xxxx1234",
+            *CLEAN_TIME_FORMS,
         ]
         for line in lines:
             with self.subTest(line):
                 self.assertFalse(needs_review(line))
+
+    def test_synthetic_samples_flag_only_the_alphanumeric_reference(self):
+        # Ruling fix round 4: referensi huruf-angka pendek ditandai ("ID Transaksi A1B2C3D4" = 4 digit + B + D);
+        # semua baris sintetis lain sunyi.
+        flagged = [(s["id"], mask_line(x)) for s in SYNTHETIC for x in s["lines"] if needs_review(mask_line(x))]
+        self.assertEqual(flagged, [("sint-topup", "ID Transaksi A1B2C3D4")])
 
 
 class EvaluateTests(unittest.TestCase):
@@ -548,6 +707,8 @@ class CorpusFileTests(unittest.TestCase):
             "expect hilang": ({k: v for k, v in good.items() if k != "expect"}, "expect"),
             "id kosong": ({**good, "id": ""}, "id"),
             "id angka": ({**good, "id": 7}, "id"),
+            "id dicadangkan": ({**good, "id": "indomaret-s1"}, "indomaret-"),   # bentrok dengan struk Indomaret (m-d)
+            "id dicadangkan baru": ({**good, "id": "indomaret-qris-9"}, "indomaret-"),
         }
         path = self.root / "corpus.json"
         for label, (bad, field) in cases.items():
@@ -648,12 +809,16 @@ class CliTests(unittest.TestCase):
 
     def test_add_flags_lines_that_still_hold_six_digits(self):
         txt = self.write_txt("periksa.txt", ["Transfer Berhasil", "Penerima ANDI", "Nominal Rp50.000", "26/10/2026 10:00",
-                                             "Kode Bayar 6123/4567/8812", "Ref 1234567890", "RRN 612345673091   612345673755"])
+                                             "Kode Bayar 6123/4567/8812", "Ref 1234567890", "RRN 612345673091   612345673755",
+                                             "26 Okt 2026, 09:30 WIB", "HP 866 8BB74 127 96", "No. Rek 61234903/09:45",
+                                             "Ref 612345675678 612345671234"])
         code, out, _ = self.run_main("add", str(txt), "--id", "sint-periksa", "--corpus", str(self.corpus))
         self.assertEqual(code, 0)   # peringatan tidak memblokir
         self.assertIn("PERIKSA baris 5: Kode Bayar 6123/4567/8812", out)
         self.assertIn("PERIKSA baris 7: RRN …3091   …3755", out)
-        self.assertEqual(out.count("PERIKSA"), 2)   # baris 6 sudah disamarkan (Ref …7890)
+        self.assertIn("PERIKSA baris 9: HP 866 8BB…2796", out)
+        self.assertIn("PERIKSA baris 10: No. Rek …4903/09:45", out)
+        self.assertEqual(out.count("PERIKSA"), 4)   # baris 6 (Ref …7890), 8 (tanggal) dan 11 (satu deret: …1234) sunyi
         self.assertIn("sint-periksa", self.corpus.read_text(encoding="utf-8"))
 
     def test_add_synthetic_with_user_name(self):
@@ -672,6 +837,38 @@ class CliTests(unittest.TestCase):
         code, _, err = self.run_main("add", str(self.txt), "--id", "sint-qris-1", "--corpus", str(self.corpus))
         self.assertEqual(code, 2)
         self.assertIn("sint-qris-1", err)
+        self.assertEqual(self.corpus.read_bytes(), before)
+
+    def test_add_refuses_reserved_indomaret_id(self):
+        # Id berawalan "indomaret-" milik struk Indomaret (receipt_samples); evaluasi bawaan akan menampilkannya
+        # dua kali (m-d). Ditolak sebelum ekstraksi, berkas tidak disentuh.
+        before = self.corpus.read_bytes()
+        for bad in ("indomaret-s1", "indomaret-s9", "indomaret-"):
+            with self.subTest(bad), patch.object(kotak_corpus, "extract_text", AsyncMock()) as fake:
+                code, _, err = self.run_main("add", str(self.txt), "--id", bad, "--corpus", str(self.corpus))
+                self.assertEqual(code, 2)
+                self.assertIn("indomaret-", err)
+                fake.assert_not_awaited()
+        self.assertEqual(self.corpus.read_bytes(), before)
+        # Awalan lain yang mirip tetap boleh.
+        self.assertEqual(self.run_main("add", str(self.txt), "--id", "indomaret", "--corpus", str(self.corpus))[0], 0)
+        self.assertEqual(self.run_main("add", str(self.txt), "--id", "alfamart-s1", "--corpus", str(self.corpus))[0], 0)
+
+    def test_reserved_indomaret_id_in_corpus_exits_2(self):
+        data = json.loads(self.corpus.read_text(encoding="utf-8"))
+        data["samples"][0]["id"] = "indomaret-s1"
+        self.corpus.write_text(json.dumps(data), encoding="utf-8")
+        before = self.corpus.read_bytes()
+        with self.assertRaises(CorpusError) as caught:
+            load_corpus(self.corpus)
+        self.assertIn("indomaret-", str(caught.exception))
+        for argv in (("add", str(self.txt), "--id", "x-1"), ("eval",), ("eval", "--real-only")):
+            with self.subTest(argv), patch.object(kotak_corpus, "extract_text", AsyncMock()) as fake:
+                code, out, err = self.run_main(*argv, "--corpus", str(self.corpus))
+                self.assertEqual(code, 2)
+                self.assertIn("indomaret-", err)
+                self.assertNotIn("Gerbang", out)
+                fake.assert_not_awaited()
         self.assertEqual(self.corpus.read_bytes(), before)
 
     def test_add_reports_extract_error(self):

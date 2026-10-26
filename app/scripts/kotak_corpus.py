@@ -11,8 +11,9 @@ memuat 4 struk Indomaret asli dari `app/tests/fixtures/receipt_ocr_lines.json` (
 `add` mengekstrak teks (OCR untuk gambar, lapisan teks/OCR untuk PDF, `.txt` apa adanya), menyamarkan
 tiap baris (`mask_line`), menjalankan pembaca pada baris tersamar, lalu menambahkan sampel dengan
 `expect` = hasil pembaca saat ini dan `reviewed: false`. Berkas asli tidak disalin. Baris yang masih memuat
->= 6 digit di luar bentuk yang dibiarkan dicetak sebagai `PERIKSA baris N`. Periksa baris dan `expect` dengan
-bukti aslinya, samarkan nama orang pribadi (juga `user_name`), lalu set `"reviewed": true`.
+>= 6 digit di luar bentuk yang dibiarkan (dihitung seluruh baris, lihat `needs_review`) dicetak sebagai
+`PERIKSA baris N`. Periksa baris dan `expect` dengan bukti aslinya, samarkan nama orang pribadi (juga `user_name`),
+lalu set `"reviewed": true`. Id berawalan `indomaret-` dicadangkan untuk struk Indomaret.
 
 `eval` mencetak hasil per sampel dan ringkasan, lalu keluar dengan kode 1 bila gerbang rilis tidak
 lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak.
@@ -46,6 +47,7 @@ from app.services.kotak_struk.registry import read_document  # noqa: E402
 _FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 DEFAULT_CORPUS = _FIXTURES / "kotak" / "corpus.json"
 RECEIPTS_FIXTURE = _FIXTURES / "receipt_ocr_lines.json"
+RESERVED_ID_PREFIX = "indomaret-"   # id struk Indomaret dari receipt_samples(); sampel korpus tidak boleh memakainya
 
 GATE = {"amount_date_status_pct": 95.0, "counterparty_pct": 90.0, "doc_type_pct": 98.0}
 
@@ -99,6 +101,13 @@ _DATE_DMY = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})([-/.])(\d{{1,2}})
 _DATE_YMD = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{4}})([-/.])(\d{{1,2}})\2(\d{{1,2}})(?![/.{_DASH}]?\d)")
 # Tanggal dengan nama bulan di depan ("Oct 26 2026", "Okt 26, 2026"): hari dan tahun hanya dipisah spasi.
 _DATE_MDY = re.compile(r"(?<![A-Za-z])([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)")
+# Tanggal dengan nama bulan di tengah ("26 Okt 2026", "26-Okt-2026", "26Okt2026"; pemisah seperti labels._DMY_NAME
+# pembaca). Hari dan tahunnya tidak membentuk satu deret, jadi mask_line tidak mengubahnya; sebagai rentang yang
+# dibiarkan, 6 digitnya tidak dihitung PERIKSA dan deret di sampingnya tidak menyeret harinya.
+_NAME_DATE_SEP = rf"(?:{_HWS}|[.,/-])*"
+_DATE_DMY_NAME = re.compile(
+    rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})(?:st|nd|rd|th)?{_NAME_DATE_SEP}([A-Za-z]{{3,9}}){_NAME_DATE_SEP}(\d{{4}})"
+    rf"(?![/.{_DASH}]?\d)")
 # Jam: 08:12, 08:12:33, 08.12.33.
 _TIME = re.compile(r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?(?!\d|[:.]\d)")
 # Nominal ribuan ketat tanpa Rp. Tidak boleh menempel strip pada deret lain ("01.234.567.8-901.000").
@@ -121,14 +130,18 @@ def _mdy_ok(m: re.Match) -> bool:
     return m.group(1).lower() in _MONTH_WORDS and 1 <= int(m.group(2)) <= 31 and _year_ok(m.group(3))
 
 
+def _dmy_name_ok(m: re.Match) -> bool:
+    return 1 <= int(m.group(1)) <= 31 and m.group(2).lower() in _MONTH_WORDS and _year_ok(m.group(3))
+
+
 def _time_ok(m: re.Match) -> bool:
     return int(m.group(1)) <= 23 and int(m.group(2)) <= 59 and int(m.group(3) or 0) <= 59
 
 
 # Urutan = prioritas: rentang yang ditemukan lebih dulu menang bila bertumpang tindih.
 _KEEP = (
-    (_CURRENCY, None), (_DATE_DMY, _dmy_ok), (_DATE_YMD, _ymd_ok), (_DATE_MDY, _mdy_ok), (_TIME, _time_ok),
-    (_GROUPED, None),
+    (_CURRENCY, None), (_DATE_DMY, _dmy_ok), (_DATE_YMD, _ymd_ok), (_DATE_MDY, _mdy_ok),
+    (_DATE_DMY_NAME, _dmy_name_ok), (_TIME, _time_ok), (_GROUPED, None),
 )
 
 
@@ -158,8 +171,8 @@ def mask_line(line: str) -> str:
     Deret >= 6 digit (kelompoknya boleh dipisah <= 2 spasi jenis apa pun, satu strip jenis apa pun, atau satu
     titik/koma) menjadi `…` + 4 digit terakhirnya. Dibiarkan: nominal ribuan yang ketat (1.500.000, 150,000.00),
     nominal langsung sesudah Rp/IDR (ribuan ketat atau <= 9 digit), tanggal (d-m-y, d/m/y, d.m.y, y-m-d,
-    "Oct 26 2026"), jam, dan NMID (`ID` + >= 10 digit) di baris berlabel NMID. Teks yang sudah tersamar
-    (`…4567`, `****1234`) tidak berubah."""
+    "Oct 26 2026", "26 Okt 2026"), jam, dan NMID (`ID` + >= 10 digit) di baris berlabel NMID. Teks yang sudah
+    tersamar (`…4567`, `****1234`) tidak berubah."""
     out, pos = [], 0
     for start, end in _kept_spans(line):
         out.append(_mask_runs(line[pos:start]))
@@ -169,42 +182,54 @@ def mask_line(line: str) -> str:
     return "".join(out)
 
 
-_MASKED_TOKEN = re.compile(r"…\d{4}")       # keluaran mask_line; digit sesudahnya (bila ada) tetap digit lepas
-_LONE_TOKEN = re.compile(r"(?<!\S)…\d{4}(?!\S)")   # dipisah spasi (atau awal/akhir baris) di kedua sisi
-_WORD = re.compile(r"[^\W\d_]{2,}")
-_DIGIT = re.compile(r"\d")
-# Dua penanda dari satu nomor yang terpotong: dipisah >= 3 spasi, atau "/", ":", "_" (boleh diapit spasi). Satu-dua
-# spasi tidak: "Ref …5678 …1234" adalah cara bank mencetak nilai yang sudah tersamar, dan satu-dua spasi di dalam satu
-# nomor sudah membuatnya satu deret.
-_TOKEN_PAIR = re.compile(rf"…\d{{4}}(?:{_HWS}{{3,}}|{_HWS}*[/:_]{_HWS}*)…\d{{4}}")
+# Huruf yang sering dibaca OCR dari angka (0 1 5 8 2 6 9), dalam deret 1-3 huruf yang tidak menempel huruf lain:
+# "S6", "BB", "lO" — bukan bagian kata ("SOSIS", "TID…", "WIB").
+_LOOKALIKE_RUN = re.compile(r"(?<![^\W\d_])[OoDlIiSsBZGgq]{1,3}(?![^\W\d_])")
+_TIME_GLUE = "/-_:.,–"   # tepat satu pemisah ini masih menyambung jam ke potongan nomor di sebelahnya
 
 
-def _chunk_needs_review(chunk: str) -> bool:
-    total = len(_DIGIT.findall(chunk))   # penanda `…dddd` ikut dihitung 4 digit
-    if total < MIN_RUN_DIGITS:
-        return False
-    bare = len(_DIGIT.findall(_MASKED_TOKEN.sub(" ", chunk)))
-    glued = len(_MASKED_TOKEN.findall(chunk)) > len(_LONE_TOKEN.findall(chunk))
-    return bool(bare) or glued
+def _is_time(text: str) -> bool:
+    """Berbentuk jam yang sah (08:12, 08.12.33, juga "12.10.26" yang bisa tanggal d.m.yy); "24.12.34" hanya tanggal."""
+    m = _TIME.fullmatch(text)
+    return bool(m and _time_ok(m))
+
+
+def _number_at(blank: str, i: int, step: int, lookalike: set[int]) -> bool:
+    """Apakah blank[i] — langsung, atau sesudah tepat satu pemisah `_TIME_GLUE` ke arah `step` — digit, awal
+    penanda `…dddd`, atau huruf mirip angka lepas. `blank` sudah mengosongkan rentang yang dibiarkan, jadi tetangga
+    yang bagian dari tanggal/nominal/jam lain tidak terlihat."""
+    if 0 <= i < len(blank) and blank[i] in _TIME_GLUE:
+        i += step
+    return 0 <= i < len(blank) and (blank[i].isdecimal() or blank[i] == "…" or i in lookalike)
 
 
 def needs_review(line: str) -> bool:
-    """Jaring pengaman untuk tinjauan manusia: apakah baris (sesudah `mask_line`) mungkin masih menampilkan >= 6
-    digit sebuah nomor? Bentuk yang dibiarkan (nominal, tanggal, jam, NMID) diabaikan. Digit dihitung melintasi
-    pemisah apa pun yang bukan kata (/, :, _, spasi, satu huruf salah-baca OCR seperti "4S6"); kata >= 2 huruf
-    memisahkan. Penanda `…dddd` dihitung 4 digit: potongan dengan >= 6 digit ditandai bila masih ada digit lepas di
-    sampingnya ("…1234S6 7890") atau penanda yang menempel ("…8472B …4242"); penanda yang berdiri sendiri
-    ("…5678 …1234") tidak, kecuali dua penanda yang dipisah >= 3 spasi atau "/", ":", "_" ("…3091 / …3755": satu
-    nomor yang terpotong). Tidak pernah memblokir."""
-    if _TOKEN_PAIR.search(line):   # pada baris asli: tanggal/jam/nominal di antaranya tetap memisahkan
-        return True
-    parts, pos = [], 0
-    for start, end in _kept_spans(line):
-        parts.append(line[pos:start])
-        parts.append(" ")
-        pos = end
-    parts.append(line[pos:])
-    return any(_chunk_needs_review(chunk) for chunk in _WORD.split("".join(parts)))
+    """Jaring pengaman untuk tinjauan manusia (tidak pernah memblokir): hitungan seluruh baris sesudah `mask_line`.
+
+    Rentang yang dibiarkan (nominal, tanggal, jam, NMID) dikosongkan — kecuali jam yang menempel, langsung atau lewat
+    satu dari `/ - _ : . , –`, pada digit, penanda `…dddd`, atau huruf mirip angka lepas: itu potongan nomor berbentuk
+    jam ("…4903/09:45", "S6:25") dan digitnya tetap dihitung. Lalu dihitung: tiap digit 1 (penanda `…dddd` = 4) dan
+    tiap huruf mirip angka (`_LOOKALIKE_RUN`) yang menempel digit atau penanda 1 ("8BB…2796", "ID…5678"). Baris
+    ditandai bila jumlahnya >= MIN_RUN_DIGITS. Kata, spasi, dan tanda baca di antaranya tidak memisahkan:
+    "Ref …5678 …1234" dan "ID Transaksi A1B2C3D4" ditandai (ruling A13 fix round 4) — salah tanda hanya satu lirikan
+    di tinjauan A14, sedangkan yang lolos masuk ke korpus."""
+    spans = _kept_spans(line)
+    chars = list(line)
+    for start, end in spans:
+        chars[start:end] = " " * (end - start)
+    blank = "".join(chars)
+    lookalike = {i for m in _LOOKALIKE_RUN.finditer(blank) for i in range(*m.span())}
+    for start, end in spans:   # jam yang menempel potongan nomor: digitnya dihitung lagi
+        if _is_time(line[start:end]) and (_number_at(blank, start - 1, -1, lookalike)
+                                          or _number_at(blank, end, 1, lookalike)):
+            chars[start:end] = line[start:end]
+    text = "".join(chars)
+    count = sum(c.isdecimal() for c in text)
+    for m in _LOOKALIKE_RUN.finditer(text):
+        a, b = m.span()
+        if (a > 0 and text[a - 1].isdecimal()) or (b < len(text) and (text[b] == "…" or text[b].isdecimal())):
+            count += b - a
+    return count >= MIN_RUN_DIGITS
 
 
 # ── Evaluasi ────────────────────────────────────────────────────────────────
@@ -401,6 +426,8 @@ def _sample_problem(sample) -> str | None:
         return "harus objek"
     if not isinstance(sample.get("id"), str) or not sample["id"]:
         return '"id" harus teks yang tidak kosong'
+    if sample["id"].startswith(RESERVED_ID_PREFIX):
+        return f'"id" berawalan {RESERVED_ID_PREFIX!r} dicadangkan untuk struk Indomaret'
     if type(sample.get("real")) is not bool:
         return '"real" harus true atau false'
     if "reviewed" in sample and type(sample["reviewed"]) is not bool:
@@ -425,7 +452,8 @@ def _sample_problem(sample) -> str | None:
 
 def receipt_samples(path: Path = RECEIPTS_FIXTURE) -> list[dict]:
     """Struk Indomaret asli yang sudah ada (spec §7a) sebagai sampel `struk_belanja`: hanya `doc_type` (dan
-    `struk_as_proof`) yang berlaku. `today` = tanggal struk, supaya evaluasi tidak ikut kalender."""
+    `struk_as_proof`) yang berlaku. `today` = tanggal struk, supaya evaluasi tidak ikut kalender. Id-nya
+    `indomaret-<id struk>`; awalan itu dicadangkan (RESERVED_ID_PREFIX)."""
     path = Path(path)
     try:
         receipts = json.loads(path.read_text(encoding="utf-8"))["receipts"]
@@ -522,6 +550,9 @@ def cmd_add(args) -> int:
         samples = load_corpus(corpus_path)   # sebelum ekstraksi: salah ketik --corpus tidak membuang waktu OCR
     except CorpusError as e:
         return _err(str(e))
+    if args.id.startswith(RESERVED_ID_PREFIX):
+        return _err(f"id {args.id!r} berawalan {RESERVED_ID_PREFIX!r}, yang dicadangkan untuk struk Indomaret; "
+                    "pakai id lain.")
     if any(s.get("id") == args.id for s in samples):
         return _err(f"id {args.id!r} sudah ada di {corpus_path}; pakai id lain.")
     source = Path(args.file)
@@ -557,7 +588,8 @@ def cmd_add(args) -> int:
     print("  " + _dumps(sample["expect"]))
     flagged = [(i, line) for i, line in enumerate(lines, 1) if needs_review(line)]
     if flagged:
-        print("Baris yang masih memuat >= 6 digit (cek nomor rekening/referensi/HP yang belum tersamar):")
+        print("Baris yang masih memuat >= 6 digit atau huruf mirip angka (cek nomor rekening/referensi/HP yang belum "
+              "tersamar; bisa juga referensi pendek atau dua nilai tersamar yang memang terpisah):")
         for i, line in flagged:
             print(f"PERIKSA baris {i}: {line}")
     if args.real:
