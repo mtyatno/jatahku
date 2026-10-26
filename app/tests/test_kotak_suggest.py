@@ -23,7 +23,9 @@ from app.services.expense_rules import after_expense_recorded
 from app.services.kotak_struk import record
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import merchant_for_item, set_display_name
-from app.services.kotak_struk.record import NotRecordable, check_recordable, learn_text_for_item, mark_recorded
+from app.services.kotak_struk.record import (
+    NotRecordable, check_recordable, claim_for_recording, learn_text_for_item, mark_recorded,
+)
 from app.services.kotak_struk.suggest import suggest_for_item, visible_expense_envelopes
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -107,10 +109,11 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
 
     async def merchant_id(self, key=KEY):
         return (await self.db.execute(
-            select(HouseholdMerchant.id).where(HouseholdMerchant.counterparty_key == key))).scalar_one()
+            select(HouseholdMerchant.id).where(HouseholdMerchant.household_id == self.hh.id,
+                                               HouseholdMerchant.counterparty_key == key))).scalar_one()
 
-    async def map(self, env, count, used=T1):
-        self.db.add(MerchantEnvelopeMap(merchant_id=await self.merchant_id(), envelope_id=env.id,
+    async def map(self, env, count, used=T1, key=KEY):
+        self.db.add(MerchantEnvelopeMap(merchant_id=await self.merchant_id(key), envelope_id=env.id,
                                         count=count, last_used_at=used))
         await self.db.commit()
 
@@ -151,6 +154,21 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         await self.map(self.env["Pribadi B"], 5); await self.map(self.env["Lama"], 5); await self.map(self.env["Tabungan"], 5)
         s = await suggest_for_item(self.db, self.item, self.a)
         self.assertNotIn(s["envelope_name"], ("Pribadi B", "Lama", "Tabungan"))
+
+    async def test_only_visible_rows_decide_merchant_suggestion_and_confidence(self):
+        # Baris tersembunyi (jumlah besar) tidak menggeser pemenang maupun porsi keyakinan: 1 dari 1 baris terlihat.
+        await self.map(self.env["Makan"], 1)
+        for hidden in ("Pribadi B", "Lama", "Tabungan"):
+            await self.map(self.env[hidden], 5)
+        s = await suggest_for_item(self.db, self.item, self.a)
+        self.assertEqual((s["envelope_name"], s["confident"], s["source"]), ("Makan", True, "merchant"))
+
+    async def test_hidden_only_map_falls_through_to_keyword(self):
+        item = await self.qris_item("WARUNG BAKSO PAK DI", key="nama:warung bakso pak di|")
+        for hidden in ("Pribadi B", "Lama", "Tabungan"):
+            await self.map(self.env[hidden], 5, key=item.counterparty_key)
+        s = await suggest_for_item(self.db, item, self.a)
+        self.assertEqual((s["envelope_name"], s["source"]), ("Makan", "keyword"))
 
     async def test_keyword_fallback_from_merchant_name(self):
         item = await self.qris_item("WARUNG BAKSO PAK DI", key="nama:warung bakso pak di|")
@@ -211,10 +229,14 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_item_of_another_household_skips_merchant_map(self):
         await self.map(self.env["Makan"], 3)
+        # Rumah tangga lain punya merchant berkunci sama dengan nama panggilan yang cocok kata kunci "Makan":
+        # tanpa penjagaan rumah tangga, nama itu yang dipakai dan hasilnya jadi ("Makan", "keyword").
+        self.db.add(HouseholdMerchant(household_id=self.other.id, counterparty_key=KEY, raw_name="SITI AMINAH",
+                                      display_name="Bakso Bu Siti", last_seen_at=T1, created_at=T1))
         self.item.household_id = self.other.id
         await self.db.commit()
         s = await suggest_for_item(self.db, self.item, self.a)
-        self.assertEqual(s["source"], "none")
+        self.assertEqual((s["envelope_id"], s["source"]), (None, "none"))
 
     async def test_no_signal_gives_none(self):
         s = await suggest_for_item(self.db, self.item, self.a)
@@ -261,6 +283,61 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         row = await self.map_row(self.env["Makan"])
         self.assertEqual((row.count, row.last_user_id), (2, self.b.id))
         self.assertEqual(await self.map_count(), 1)
+
+    async def test_mark_recorded_is_idempotent_per_transaction(self):
+        tid = uuid4()
+        self.assertTrue(await self.record(self.item, self.env["Makan"], tid=tid))
+        self.assertTrue(await self.record(self.item, self.env["Makan"], tid=tid))
+        got = await self.get(self.item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(tid)]))
+        self.assertEqual((await self.map_row(self.env["Makan"])).count, 1)
+        store = await self.store_item()
+        for _ in range(2):
+            self.assertTrue(await self.record(store, self.env["Makan"], tid=tid))
+        self.assertEqual((await self.get(store.id)).transaction_ids, [str(tid)])
+
+    async def test_mark_recorded_after_claim_appends_and_learns(self):
+        tid = uuid4()
+        self.assertTrue(await claim_for_recording(self.db, self.item.id, self.a.id))   # status sudah tercatat
+        self.assertTrue(await self.record(self.item, self.env["Makan"], tid=tid))
+        got = await self.get(self.item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(tid)]))
+        self.assertEqual((await self.map_row(self.env["Makan"])).count, 1)
+
+    async def test_claim_for_recording_proof_only_once(self):
+        self.assertTrue(await claim_for_recording(self.db, self.item.id, self.a.id))
+        self.assertFalse(await claim_for_recording(self.db, self.item.id, self.a.id))   # transaksi yang sama
+        await self.db.commit()
+        async with self.Session() as other_request:                                      # permintaan lain, setelah commit
+            self.assertFalse(await claim_for_recording(other_request, self.item.id, self.a.id))
+        self.assertEqual((await self.get(self.item.id)).status, "tercatat")
+
+    async def test_claim_is_rolled_back_with_the_caller(self):
+        item_id, user_id = self.item.id, self.a.id
+        self.assertTrue(await claim_for_recording(self.db, item_id, user_id))
+        await self.db.rollback()                                                         # transaksi gagal disimpan
+        self.assertEqual((await self.get(item_id)).status, "siap")
+        self.assertTrue(await claim_for_recording(self.db, item_id, user_id))            # bisa diklaim lagi
+
+    async def test_claim_for_recording_needs_own_existing_item(self):
+        self.assertFalse(await claim_for_recording(self.db, self.item.id, self.b.id))
+        self.assertFalse(await claim_for_recording(self.db, uuid4(), self.a.id))
+        store_of_b = await self.store_item(user_id=self.b.id)
+        self.assertFalse(await claim_for_recording(self.db, store_of_b.id, self.a.id))
+        self.assertEqual((await self.get(self.item.id)).status, "siap")
+
+    async def test_claim_for_recording_proof_must_be_siap(self):
+        for status in ("diproses", "gagal", "dilewati", "kedaluwarsa"):
+            item = await self.qris_item("X", key="nmid:ID7", merchant_row=False, status=status)
+            self.assertFalse(await claim_for_recording(self.db, item.id, self.a.id), status)
+
+    async def test_store_receipt_can_be_claimed_repeatedly_without_change(self):
+        store = await self.store_item()
+        self.assertTrue(await claim_for_recording(self.db, store.id, self.a.id))
+        self.assertTrue(await claim_for_recording(self.db, store.id, self.a.id))
+        self.assertEqual((await self.get(store.id)).status, "siap")
+        self.assertTrue(await claim_for_recording(self.db, (await self.store_item(status="tercatat")).id, self.a.id))
+        self.assertFalse(await claim_for_recording(self.db, (await self.store_item(status="diproses")).id, self.a.id))
 
     async def test_unknown_item_is_not_recorded(self):
         self.assertFalse(await mark_recorded(self.db, uuid4(), user_id=self.a.id, transaction_id=uuid4(),

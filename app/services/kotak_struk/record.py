@@ -3,6 +3,9 @@ beserta pembelajaran peta merchant (spec 2026-10-26 bagian 4d).
 
 Struk belanja tidak pernah masuk peta merchant (saran per barang tetap lewat kata kunci, umpan balik lewat
 `apply_feedback`); hanya bukti bayar (`PROOF_TYPES`) yang mengajari peta.
+
+Urutan pemanggil: `check_recordable` (pesan yang ramah), `claim_for_recording` (penjaga atomik terhadap pencatatan
+ganda, di-commit bersama transaksinya), lalu `mark_recorded`.
 """
 import logging
 import uuid
@@ -56,6 +59,25 @@ async def check_recordable(db: AsyncSession, item_id: uuid.UUID, user: User) -> 
     return item
 
 
+async def claim_for_recording(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Penjaga atomik terhadap pencatatan ganda: `check_recordable` tidak mengunci, jadi dua simpan bersamaan (bot dan
+    web, dua ketukan) bisa sama-sama lolos. Bukti bayar: satu UPDATE bersyarat `siap` -> `tercatat`; hanya satu
+    pemanggil yang mendapat True, yang lain False. Item lain (struk belanja: banyak transaksi): True bila milik user dan
+    `siap`/`tercatat`, tanpa perubahan. Item tidak ada atau milik user lain: False. TIDAK meng-commit: pemanggil
+    meng-commit klaim bersama penyimpanan transaksinya, jadi transaksi yang gagal dibatalkan juga mengembalikan klaimnya."""
+    row = (await db.execute(
+        select(ReceiptScan.doc_type, ReceiptScan.user_id, ReceiptScan.status).where(ReceiptScan.id == item_id)
+    )).first()
+    if row is None or row.user_id != user_id:
+        return False
+    if row.doc_type in PROOF_TYPES:
+        claim = (update(ReceiptScan)
+                 .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status == ST_SIAP)
+                 .values(status=ST_TERCATAT))
+        return (await db.execute(claim)).rowcount == 1
+    return row.status in (ST_SIAP, ST_TERCATAT)
+
+
 async def learn_text_for_item(db: AsyncSession, item_id: uuid.UUID, description: str) -> str | None:
     """Bagian `description` yang boleh dipelajari sebagai kata kunci amplop: catatan user tanpa nama merchant
     (nama asli, nama panggilan, nama di bukti), "(QRIS)", dan "transfer ke". None untuk struk belanja dan item
@@ -107,10 +129,14 @@ async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.U
                         envelope_id: uuid.UUID) -> bool:
     """Tandai item `tercatat` setelah transaksinya dibuat: id transaksi ditambahkan ke `transaction_ids`, dan untuk
     bukti bayar peta merchant rumah tangga belajar (amplop terpilih +1). Struk belanja: `ocr_lines` dibiarkan
-    (umpan balik lama yang menghapusnya), peta tidak disentuh. False bila item tidak ada. Meng-commit sendiri."""
+    (umpan balik lama yang menghapusnya), peta tidak disentuh. Idempoten per `transaction_id`: id yang sudah ada di
+    `transaction_ids` tidak ditambah dan peta tidak dinaikkan lagi. Boleh dipanggil setelah `claim_for_recording`
+    (status sudah `tercatat`). False bila item tidak ada. Meng-commit sendiri."""
     item = await db.get(ReceiptScan, item_id)
     if item is None:
         return False
+    if str(transaction_id) in (item.transaction_ids or []):
+        return True
     item.transaction_ids = list(item.transaction_ids or []) + [str(transaction_id)]  # daftar baru: perubahan terdeteksi
     item.status = ST_TERCATAT
     if item.doc_type in PROOF_TYPES and item.household_id is not None and item.counterparty_key:
