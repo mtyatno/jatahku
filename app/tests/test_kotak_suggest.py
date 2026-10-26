@@ -395,6 +395,23 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         warn = await self.qris_item("Z", key="nmid:ID4", merchant_row=False, document=warn_doc)
         await check_recordable(self.db, warn.id, self.a)                    # peringatan tidak memblokir
 
+    async def test_expired_item_has_its_own_reason(self):
+        async def reason(item):
+            with self.assertRaises(NotRecordable) as cm:
+                await check_recordable(self.db, item.id, self.a)
+            return cm.exception.detail
+        expired = "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."
+        self.assertEqual(record.MSG_EXPIRED, expired)
+        for i, doc_type in enumerate(("qris", "transfer", "tidak_dikenali")):
+            item = await self.qris_item("K", key=f"nmid:IDK{i}", merchant_row=False, doc_type=doc_type,
+                                        status="kedaluwarsa")
+            self.assertEqual(await reason(item), expired, doc_type)
+        self.assertEqual(await reason(await self.store_item(status="kedaluwarsa")), expired)
+        # Status lain tetap dengan pesan lamanya.
+        self.assertEqual(await reason(await self.store_item(status="dilewati")), "Bukti ini belum siap dicatat")
+        self.assertEqual(await reason(await self.qris_item("G", key="nmid:IDG", merchant_row=False, status="gagal")),
+                         "Bukti ini belum siap dicatat")
+
     async def test_recorded_duplicate_blocks(self):
         await self.qris_item("Dup", key="nmid:ID5", merchant_row=False, status="tercatat", ref_hash="r" * 64)
         item = await self.qris_item("Dup", key="nmid:ID5", merchant_row=False, ref_hash="r" * 64)

@@ -394,6 +394,14 @@ class RecordWithReceiptItemTests(TxnBase):
         r = await self.post(item)
         self.assertEqual((r.status_code, r.json()["detail"]), (409, "Bukti ini belum siap dicatat"))
 
+    async def test_expired_item_is_409_with_expired_message(self):
+        item = await self.ready_qris()
+        await self.set(item.id, status="kedaluwarsa")
+        r = await self.post(item)
+        self.assertEqual((r.status_code, r.json()["detail"]),
+                         (409, "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."))
+        self.assertEqual(await self.count(Transaction), 0)
+
     async def test_receipt_check_runs_after_idempotency_and_before_envelope_checks(self):
         item = await self.ready_transfer(CORPUS[3]["lines"])
         r = await self.c.post("/transactions/", json={"envelope_id": str(uuid4()), "amount": 1, "description": "x",

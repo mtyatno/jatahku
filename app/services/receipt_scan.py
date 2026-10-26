@@ -337,9 +337,11 @@ async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dic
 
 # Tanggal transaksi bukti bayar = tanggal bayar di WIB (seperti `parsed_date` worker Kotak Struk).
 _WIB = timezone(timedelta(hours=7), "WIB")
+ID_CHUNK = 1000  # id transaksi per SELECT ... IN (...): batas parameter asyncpg/SQLite ~32k
 
 
-def _first_txn_ids(raw) -> list[uuid.UUID]:
+def _txn_ids(raw) -> list[uuid.UUID]:
+    """Semua id sah di `transaction_ids`, urutan tetap; yang bukan UUID dilewati."""
     ids = []
     for value in raw if isinstance(raw, list) else []:
         try:
@@ -369,7 +371,8 @@ async def _kotak_breakdown(db: AsyncSession, since: datetime) -> dict:
     """Rincian Kotak Struk untuk Admin (spec §7d butir 4), dihitung di Python dari item periode ini (baris lama tanpa
     status tidak ikut): jumlah per `doc_type`, jumlah `tidak_dikenali`, dan per `issuer` (`document->>'issuer'`)
     total/tercatat/dikoreksi. Dikoreksi: struk belanja = outcome `corrected`; jenis lain = item tercatat yang
-    transaksinya (id pertama di `transaction_ids` yang masih ada) berbeda nominal/tanggal dari hasil baca."""
+    transaksinya (id pertama di `transaction_ids` yang masih ada) berbeda nominal/tanggal dari hasil baca. Transaksi
+    dibaca per ID_CHUNK id."""
     rows = (await db.execute(
         select(ReceiptScan.doc_type, ReceiptScan.status, ReceiptScan.outcome,
                ReceiptScan.document["issuer"].as_string(), ReceiptScan.parsed_total, ReceiptScan.paid_at,
@@ -386,16 +389,16 @@ async def _kotak_breakdown(db: AsyncSession, since: datetime) -> dict:
         if doc_type == "tidak_dikenali":
             unrecognized += 1
         if issuer:
-            ids = _first_txn_ids(txn_ids) if status == ST_TERCATAT and doc_type != "struk_belanja" else []
+            ids = _txn_ids(txn_ids) if status == ST_TERCATAT and doc_type != "struk_belanja" else []
             issued.append((str(issuer), doc_type, status, outcome, parsed_total, paid_at, ids))
 
-    wanted = {i for *_, ids in issued for i in ids}
+    wanted = list({i for *_, ids in issued for i in ids})
     txns = {}
-    if wanted:
-        txns = {tid: (amount, txn_date) for tid, amount, txn_date in (await db.execute(
+    for start in range(0, len(wanted), ID_CHUNK):
+        txns.update({tid: (amount, txn_date) for tid, amount, txn_date in (await db.execute(
             select(Transaction.id, Transaction.amount, Transaction.transaction_date)
-            .where(Transaction.id.in_(list(wanted)))
-        )).all()}
+            .where(Transaction.id.in_(wanted[start:start + ID_CHUNK]))
+        )).all()})
 
     by_issuer: dict[str, dict] = {}
     for issuer, doc_type, status, outcome, parsed_total, paid_at, ids in issued:

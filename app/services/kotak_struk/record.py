@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, Transaction, User
 from app.services.expense_rules import after_expense_recorded
 from app.services.kotak_struk import dedup
-from app.services.kotak_struk.config import PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_SIAP, ST_TERCATAT
+from app.services.kotak_struk.config import PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import _find_merchant, learnable_text, merchant_for_item, upsert_household_merchant
 
@@ -33,6 +33,7 @@ STORE_RECEIPT = "struk_belanja"
 MSG_NOT_FOUND = "Bukti tidak ditemukan"
 MSG_RECORDED = "Bukti ini sudah tercatat"
 MSG_NOT_READY = "Bukti ini belum siap dicatat"
+MSG_EXPIRED = "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."
 MSG_BLOCKED = "Transaksi gagal, tidak bisa dicatat"
 MSG_CANNOT_SKIP = "Bukti ini tidak bisa dilewati"
 
@@ -47,10 +48,13 @@ class NotRecordable(Exception):
 
 async def check_recordable(db: AsyncSession, item_id: uuid.UUID, user: User) -> ReceiptScan:
     """Item milik `user` yang boleh dicatat sekarang, atau `NotRecordable`. Struk belanja boleh dicatat lagi
-    setelah `tercatat` (satu struk, banyak transaksi); bukti lain hanya selagi `siap`."""
+    setelah `tercatat` (satu struk, banyak transaksi); bukti lain hanya selagi `siap`. Item `kedaluwarsa` (jenis apa
+    pun) mendapat MSG_EXPIRED: membagikannya lagi membuka item baru."""
     item = await db.get(ReceiptScan, item_id)
     if item is None or item.user_id != user.id:
         raise NotRecordable(MSG_NOT_FOUND)
+    if item.status == ST_KEDALUWARSA:
+        raise NotRecordable(MSG_EXPIRED)
     if item.doc_type == STORE_RECEIPT:
         if item.status not in (ST_SIAP, ST_TERCATAT):
             raise NotRecordable(MSG_NOT_READY)

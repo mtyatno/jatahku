@@ -28,6 +28,8 @@ from app.services.kotak_struk.config import (
 
 log = logging.getLogger(__name__)
 
+ID_CHUNK = 1000  # id per SELECT ... IN (...): batas parameter asyncpg/SQLite ~32k
+
 
 def _utc(dt: datetime) -> datetime:
     """Tanpa zona dianggap UTC (seperti worker)."""
@@ -61,6 +63,8 @@ def _old_candidates(kotak_dir: str, cutoff: datetime) -> list[tuple[uuid.UUID, s
                 item_id = uuid.UUID(entry.name)
             except ValueError:
                 continue  # bukan berkas intake (namanya str(item.id))
+            if str(item_id) != entry.name:
+                continue  # hanya bentuk kanonik (huruf kecil, bertanda hubung); md5/hex/{...} dibiarkan
             try:
                 if not entry.is_file(follow_symlinks=False):
                     continue
@@ -90,16 +94,19 @@ def _unlink_all(paths: list[str]) -> int:
 
 
 async def delete_orphan_files(kotak_dir: str, db: AsyncSession, *, now: datetime) -> int:
-    """Hapus berkas yatim di `kotak_dir`: lebih tua dari ORPHAN_FILE_AGE (`now - mtime`), nama berupa UUID, dan
-    bukan berkas item berstatus `diterima`/`diproses` (satu SELECT). Berkas item status lain atau tanpa baris
-    dihapus. Folder tidak ada -> 0 (tidak dibuat). Mengembalikan jumlah berkas yang dihapus."""
+    """Hapus berkas yatim di `kotak_dir`: lebih tua dari ORPHAN_FILE_AGE (`now - mtime`), nama berupa UUID kanonik,
+    dan bukan berkas item berstatus `diterima`/`diproses` (SELECT per ID_CHUNK id). Berkas item status lain atau
+    tanpa baris dihapus. Folder tidak ada -> 0 (tidak dibuat). Mengembalikan jumlah berkas yang dihapus."""
     candidates = await asyncio.to_thread(_old_candidates, kotak_dir, _utc(now) - ORPHAN_FILE_AGE)
     if not candidates:
         return 0
-    queued = set((await db.execute(
-        select(ReceiptScan.id)
-        .where(ReceiptScan.id.in_([item_id for item_id, _ in candidates]),
-               ReceiptScan.status.in_((ST_DITERIMA, ST_DIPROSES)))
-    )).scalars())
+    ids = [item_id for item_id, _ in candidates]
+    queued: set[uuid.UUID] = set()
+    for start in range(0, len(ids), ID_CHUNK):
+        queued.update((await db.execute(
+            select(ReceiptScan.id)
+            .where(ReceiptScan.id.in_(ids[start:start + ID_CHUNK]),
+                   ReceiptScan.status.in_((ST_DITERIMA, ST_DIPROSES)))
+        )).scalars())
     doomed = [path for item_id, path in candidates if item_id not in queued]
     return await asyncio.to_thread(_unlink_all, doomed) if doomed else 0

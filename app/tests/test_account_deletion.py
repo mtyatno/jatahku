@@ -329,31 +329,26 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             return m.id, [r.id for r in rows]
 
-    def record_sql(self):
-        """Statement SQL yang dijalankan. FK (CASCADE / SET NULL) juga akan membersihkan tabel peta, jadi tes peta
-        merchant memeriksa bahwa penghapusannya eksplisit dan tidak bergantung pada aksi FK."""
-        statements = []
+    async def foreign_keys(self, on: bool):
+        """FK di koneksi StaticPool (satu-satunya koneksi) dinyalakan/dimatikan. Dengan FK menyala, aksi CASCADE /
+        SET NULL ikut membersihkan tabel peta, jadi hanya varian tanpa FK yang membuktikan penghapusan eksplisit."""
+        async with self.engine.connect() as conn:
+            await conn.exec_driver_sql(f"PRAGMA foreign_keys={'ON' if on else 'OFF'}")
+            self.assertEqual((await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar(), int(on))
 
-        def _rec(_conn, _cursor, statement, *_a):
-            statements.append(" ".join(statement.split()))
-        event.listen(self.engine.sync_engine, "before_cursor_execute", _rec)
-        self.addCleanup(event.remove, self.engine.sync_engine, "before_cursor_execute", _rec)
-        return statements
-
-    def assert_ran(self, statements, prefix):
-        self.assertTrue(any(s.startswith(prefix) for s in statements), prefix)
-
-    async def test_sole_member_deletion_removes_household_merchants_and_map(self):
+    async def sole_member_scenario(self, *, fk: bool):
         uid, hid, env = await self.add_user("Sari", "sari@example.com")
         other, other_hid, other_env = await self.add_user("Budi", "budi@example.com")
         async with self.Session() as db:
             dapur = Envelope(household_id=hid, name="Dapur")
             db.add(dapur)
             await db.commit()
-        await self.add_merchant(hid, "nmid:ID1020", {dapur.id: uid, env: None})
+        # Baris buatan tangan: merchant milik household yang dihapus, amplopnya milik household lain. Hanya
+        # penghapusan peta lewat merchant_id (bukan lewat amplop) yang membuangnya.
+        await self.add_merchant(hid, "nmid:ID1020", {dapur.id: uid, env: None, other_env: None})
         await self.add_merchant(hid, "nama:warung|", {dapur.id: uid})
         other_mid, other_maps = await self.add_merchant(other_hid, "nmid:ID1020", {other_env: other})
-        sql = self.record_sql()
+        await self.foreign_keys(fk)
 
         async with self.Session() as db:
             await account_deletion.delete_account(db, await db.get(User, uid))
@@ -361,17 +356,22 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.count(HouseholdMerchant, HouseholdMerchant.household_id == hid), 0)
         self.assertEqual(await self.count(MerchantEnvelopeMap, MerchantEnvelopeMap.merchant_id != other_mid), 0)
         self.assertIsNone(await self.get(Household, hid))
-        self.assert_ran(sql, "DELETE FROM merchant_envelope_map")
-        self.assert_ran(sql, "DELETE FROM household_merchants")
         # Rumah tangga lain tidak tersentuh.
         self.assertIsNotNone(await self.get(HouseholdMerchant, other_mid))
         self.assertEqual((await self.get(MerchantEnvelopeMap, other_maps[0])).last_user_id, other)
+        self.assertIsNotNone(await self.get(Envelope, other_env))
 
-    async def test_member_deletion_keeps_shared_map_and_clears_last_user(self):
+    async def test_sole_member_deletion_removes_household_merchants_and_map(self):
+        await self.sole_member_scenario(fk=True)
+
+    async def test_sole_member_deletion_removes_household_merchants_and_map_without_fk_actions(self):
+        await self.sole_member_scenario(fk=False)
+
+    async def shared_map_scenario(self, *, fk: bool):
         andi, sari, hid, dapur, sari_env, _ = await self.shared_household()
         mid, [shared_map] = await self.add_merchant(hid, "nmid:ID1020", {dapur: sari})
         andi_mid, [andi_map] = await self.add_merchant(hid, "nama:pasar|", {dapur: andi})
-        sql = self.record_sql()
+        await self.foreign_keys(fk)
 
         await self.client.delete("/user/account", headers=self.auth(await self.login("sari@example.com")))
 
@@ -380,19 +380,30 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((row.merchant_id, row.envelope_id, row.count, row.last_user_id), (mid, dapur, 3, None))
         self.assertIsNotNone(await self.get(HouseholdMerchant, mid))
         self.assertEqual((await self.get(MerchantEnvelopeMap, andi_map)).last_user_id, andi)
-        self.assert_ran(sql, "UPDATE merchant_envelope_map SET last_user_id")
 
-    async def test_member_deletion_drops_map_rows_of_personal_envelopes(self):
+    async def test_member_deletion_keeps_shared_map_and_clears_last_user(self):
+        await self.shared_map_scenario(fk=True)
+
+    async def test_member_deletion_keeps_shared_map_and_clears_last_user_without_fk_actions(self):
+        await self.shared_map_scenario(fk=False)
+
+    async def personal_map_scenario(self, *, fk: bool):
         andi, sari, hid, dapur, sari_env, _ = await self.shared_household()
         mid, [personal_map, shared_map] = await self.add_merchant(hid, "nmid:ID1020", {sari_env: sari, dapur: andi})
-        sql = self.record_sql()
+        await self.foreign_keys(fk)
 
         await self.client.delete("/user/account", headers=self.auth(await self.login("sari@example.com")))
 
+        self.assertIsNone(await self.get(Envelope, sari_env))
         self.assertIsNone(await self.get(MerchantEnvelopeMap, personal_map))
         self.assertEqual((await self.get(MerchantEnvelopeMap, shared_map)).last_user_id, andi)
         self.assertIsNotNone(await self.get(HouseholdMerchant, mid))
-        self.assert_ran(sql, "DELETE FROM merchant_envelope_map")
+
+    async def test_member_deletion_drops_map_rows_of_personal_envelopes(self):
+        await self.personal_map_scenario(fk=True)
+
+    async def test_member_deletion_drops_map_rows_of_personal_envelopes_without_fk_actions(self):
+        await self.personal_map_scenario(fk=False)
 
     async def test_former_member_cannot_be_deleted(self):
         await self.shared_household()

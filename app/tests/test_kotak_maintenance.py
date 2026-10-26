@@ -26,6 +26,13 @@ from app.services.receipt_scan import accuracy_stats
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)  # 10:00 WIB
+WIB = timezone(timedelta(hours=7))
+
+
+def selects_from(spy, table: str) -> int:
+    """Jumlah pemanggilan `db.execute` (spy) yang membaca dari `table`."""
+    return sum(1 for c in spy.call_args_list
+               if hasattr(c.args[0], "get_final_froms") and table in {f.name for f in c.args[0].get_final_froms()})
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
@@ -133,6 +140,15 @@ class ExpireItemsTests(MaintenanceBase):
         # Idempoten: putaran berikutnya tidak mengubah apa pun.
         self.assertEqual(await expire_items(self.db, now=NOW + timedelta(hours=1)), 0)
 
+    async def test_now_in_any_zone_or_naive_utc_gives_same_result(self):
+        # SQLite menyimpan jam dinding UTC: `now` ber-zona lain harus dikonversi dulu, `now` tanpa zona = UTC.
+        for now in (NOW, NOW.astimezone(WIB), NOW.replace(tzinfo=None)):
+            with self.subTest(now=now.isoformat()):
+                old = await self.item(status="siap", expires_at=NOW - timedelta(minutes=1))
+                soon = await self.item(status="siap", expires_at=NOW + timedelta(hours=1))
+                self.assertEqual(await expire_items(self.db, now=now), 1)
+                self.assertEqual([(await self.get(i.id)).status for i in (old, soon)], ["kedaluwarsa", "siap"])
+
 
 # ── file yatim ───────────────────────────────────────────────────────────────
 
@@ -148,6 +164,10 @@ class OrphanFileTests(MaintenanceBase):
     async def test_only_old_uuid_named_regular_files_are_candidates(self):
         not_uuid = self.write_file("deadbeef", age=timedelta(days=2))
         hidden = self.write_file(".gitkeep", age=timedelta(days=2))
+        # uuid.UUID() juga menerima bentuk ini; hanya bentuk kanonik str(item.id) yang ditulis intake.
+        md5 = self.write_file("d41d8cd98f00b204e9800998ecf8427e", age=timedelta(days=2))
+        upper = self.write_file(str(uuid.uuid4()).upper(), age=timedelta(days=2))
+        braced = self.write_file("{%s}" % uuid.uuid4(), age=timedelta(days=2))
         sub = Path(self.dir) / str(uuid.uuid4())
         sub.mkdir()
         (sub / str(uuid.uuid4())).write_bytes(b"x")  # tidak rekursif
@@ -162,7 +182,7 @@ class OrphanFileTests(MaintenanceBase):
         exactly_one_hour = self.write_file(str(uuid.uuid4()), age=timedelta(hours=1))
         self.assertEqual(await delete_orphan_files(self.dir, self.db, now=NOW), 1)
         self.assertFalse(just_old.exists())
-        for kept in (not_uuid, hidden, sub, link, target, exactly_one_hour):
+        for kept in (not_uuid, hidden, md5, upper, braced, sub, link, target, exactly_one_hour):
             self.assertTrue(os.path.lexists(kept), kept)
 
     async def test_files_of_unfinished_items_kept_everything_else_removed(self):
@@ -176,6 +196,17 @@ class OrphanFileTests(MaintenanceBase):
         self.assertFalse(no_row.exists())
         # Baris item tidak diubah oleh penyapu.
         self.assertEqual([(await self.get(i.id)).status for i in kept], ["diterima", "diproses"])
+
+    async def test_status_lookup_is_chunked(self):
+        # 3 item belum selesai + 2 tanpa baris, potongan 2 id: 3 SELECT, dan hanya berkas yang tidak dilindungi yang
+        # dihapus apa pun urutan daftar folder (3 id terlindung tidak muat dalam satu potongan).
+        kept = [await self.item(status=s, file=True) for s in ("diterima", "diproses", "diterima")]
+        gone = [self.write_file(str(uuid.uuid4()), age=timedelta(hours=2)) for _ in range(2)]
+        with patch.object(maintenance, "ID_CHUNK", 2), patch.object(self.db, "execute", wraps=self.db.execute) as spy:
+            self.assertEqual(await delete_orphan_files(self.dir, self.db, now=NOW), 2)
+        self.assertEqual(selects_from(spy, "receipt_scans"), 3)
+        self.assertTrue(all(Path(i.file_path).exists() for i in kept))
+        self.assertFalse(any(p.exists() for p in gone))
 
     async def test_missing_dir_is_not_an_error_and_not_created(self):
         missing = os.path.join(self.dir, "belum-ada")
@@ -254,12 +285,13 @@ class SchedulerJobTests(unittest.IsolatedAsyncioTestCase):
             await scheduler_mod.kotak_maintenance()
 
     def test_registered_hourly(self):
+        # Cron menit 17 tiap jam (bukan interval): interval baru jalan 1 jam setelah tiap restart/deploy.
         fake = MagicMock()
         with patch.object(scheduler_mod, "scheduler", fake):
             scheduler_mod.start_scheduler()
         calls = [c for c in fake.add_job.call_args_list if c.args and c.args[0] is scheduler_mod.kotak_maintenance]
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].kwargs, {"trigger": "interval", "hours": 1, "id": "kotak_maintenance",
+        self.assertEqual(calls[0].kwargs, {"trigger": "cron", "minute": 17, "id": "kotak_maintenance",
                                            "replace_existing": True})
         # Job pembersih teks OCR 24 jam tetap ada.
         self.assertTrue(any(c.kwargs.get("id") == "purge_receipt_ocr_text" for c in fake.add_job.call_args_list))
@@ -323,9 +355,11 @@ class StatsTests(MaintenanceBase):
         await self.recorded("shopeepay", parsed_total=None, paid_at=NOW, txns=[await self.txn(45000, today)])
         # Tanpa jam bayar: hanya nominal yang dibandingkan.
         await self.recorded("livin", parsed_total=45000, paid_at=None, txns=[await self.txn(45000, date(2026, 1, 1))])
-        # Transaksi pertama yang masih ada yang dipakai.
+        # Transaksi pertama yang MASIH ADA yang dipakai: id pertama hilang, id kedua tidak sah, transaksi ketiga
+        # (50.000 = dikoreksi) dipakai, bukan yang keempat (45.000 = cocok). Hanya aturan itu yang memberi 1.
         await self.recorded("brimo", parsed_total=45000, paid_at=NOW,
-                            txns=[str(uuid.uuid4()), "bukan-uuid", await self.txn(45000, today), await self.txn(1, today)])
+                            txns=[str(uuid.uuid4()), "bukan-uuid", await self.txn(50000, today),
+                                  await self.txn(45000, today)])
         # Belum dicatat: dihitung total, bukan recorded/corrected.
         await self.item(status="siap", doc_type="qris", document={"issuer": "gopay"}, parsed_total=Decimal(1))
         s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
@@ -336,8 +370,19 @@ class StatsTests(MaintenanceBase):
             "ovo": {"total": 1, "recorded": 1, "corrected": 0},
             "shopeepay": {"total": 1, "recorded": 1, "corrected": 1},
             "livin": {"total": 1, "recorded": 1, "corrected": 0},
-            "brimo": {"total": 1, "recorded": 1, "corrected": 0},
+            "brimo": {"total": 1, "recorded": 1, "corrected": 1},
         })
+
+    async def test_transaction_lookup_is_chunked(self):
+        today = date(2026, 10, 26)
+        for i, amount in enumerate((45000, 50000, 45000, 99000, 45000)):
+            await self.recorded(f"bank{i}", parsed_total=45000, paid_at=NOW, txns=[await self.txn(amount, today)])
+        with patch("app.services.receipt_scan.ID_CHUNK", 2), \
+                patch.object(self.db, "execute", wraps=self.db.execute) as spy:
+            s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
+        self.assertEqual(selects_from(spy, "transactions"), 3)
+        self.assertEqual({k: v["corrected"] for k, v in s["by_issuer"].items()},
+                         {"bank0": 0, "bank1": 1, "bank2": 0, "bank3": 1, "bank4": 0})
 
     async def test_store_receipt_corrected_follows_outcome(self):
         today = date(2026, 10, 26)

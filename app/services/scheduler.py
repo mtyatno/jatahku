@@ -298,7 +298,7 @@ async def purge_receipt_ocr_text():
 
 
 async def kotak_maintenance():
-    """Kotak Struk, tiap jam (spec 2026-10-26 §2d): item siap/gagal yang lewat masa simpan → kedaluwarsa, lalu
+    """Kotak Struk, tiap jam di menit 17 (spec 2026-10-26 §2d): item siap/gagal yang lewat masa simpan → kedaluwarsa, lalu
     berkas yatim di folder sementara dihapus. Tiap langkah memakai sesinya sendiri dan blok try sendiri: satu
     langkah gagal tidak melewatkan yang lain. Galat hanya dicatat."""
     from datetime import datetime, timezone
@@ -363,8 +363,8 @@ def start_scheduler():
     )
     scheduler.add_job(
         kotak_maintenance,
-        trigger="interval",
-        hours=1,
+        trigger="cron",
+        minute=17,  # tiap jam di menit tetap: interval baru jalan 1 jam setelah tiap restart; :17 menghindari job :00
         id="kotak_maintenance",
         replace_existing=True,
     )
