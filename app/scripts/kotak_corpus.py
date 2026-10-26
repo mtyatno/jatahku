@@ -2,44 +2,58 @@
 
 Korpus `app/tests/fixtures/kotak/corpus.json` berisi baris teks yang sudah disamarkan (bukan gambar
 atau PDF asli) bersama hasil yang diharapkan. Sampel sintetis (`real: false`) selalu dievaluasi;
-sampel nyata (`real: true`) hanya bila sudah ditinjau manusia (`reviewed: true`).
+sampel nyata (`real: true`) hanya bila sudah ditinjau manusia (`reviewed: true`). Evaluasi bawaan juga
+memuat 4 struk Indomaret asli dari `app/tests/fixtures/receipt_ocr_lines.json` (harus tetap `struk_belanja`).
 
     python -m app.scripts.kotak_corpus add <file> --id <id> [--real] [--user-name NAMA] [--corpus PATH]
     python -m app.scripts.kotak_corpus eval [--real-only] [--corpus PATH]
 
 `add` mengekstrak teks (OCR untuk gambar, lapisan teks/OCR untuk PDF, `.txt` apa adanya), menyamarkan
-tiap baris (`mask_line`), menjalankan pembaca, lalu menambahkan sampel dengan `expect` = hasil pembaca
-saat ini dan `reviewed: false`. Berkas asli tidak disalin. Periksa baris dan `expect` dengan bukti
-aslinya, samarkan nama orang pribadi selain penerima/merchant, lalu set `"reviewed": true`.
+tiap baris (`mask_line`), menjalankan pembaca pada baris tersamar, lalu menambahkan sampel dengan
+`expect` = hasil pembaca saat ini dan `reviewed: false`. Berkas asli tidak disalin. Baris yang masih memuat
+>= 6 digit di luar bentuk yang dibiarkan dicetak sebagai `PERIKSA baris N`. Periksa baris dan `expect` dengan
+bukti aslinya, samarkan nama orang pribadi (juga `user_name`), lalu set `"reviewed": true`.
 
 `eval` mencetak hasil per sampel dan ringkasan, lalu keluar dengan kode 1 bila gerbang rilis tidak
-lulus (atau korpus kosong). Lokal butuh `DATABASE_URL` dan `JWT_SECRET` di lingkungan (konfigurasi
-aplikasi dimuat saat impor; alat ini tidak memakai database).
+lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak.
 """
 from __future__ import annotations
 
-import argparse
-import asyncio
-import json
-import mimetypes
 import os
-import re
-import sys
-import tempfile
-from datetime import date, datetime
-from pathlib import Path
 
-from app.services.kotak_struk.extract import KIND_IMAGE, ExtractError, TextDoc, extract_text
-from app.services.kotak_struk.readers.base import ParseContext
-from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.registry import read_document
+# Alat ini tidak membuka database, tetapi impor pembaca memuat konfigurasi aplikasi yang mewajibkan dua nilai ini
+# (seperti `openapi_cek._env()`). Nilai yang sudah ada di lingkungan tidak diubah.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("JWT_SECRET", "kotak-corpus")
 
-DEFAULT_CORPUS = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "kotak" / "corpus.json"
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import contextlib  # noqa: E402
+import json  # noqa: E402
+import mimetypes  # noqa: E402
+import re  # noqa: E402
+import stat  # noqa: E402
+import sys  # noqa: E402
+import tempfile  # noqa: E402
+from datetime import date, datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from app.services.kotak_struk.extract import KIND_IMAGE, ExtractError, TextDoc, extract_text  # noqa: E402
+from app.services.kotak_struk.readers.base import ParseContext  # noqa: E402
+from app.services.kotak_struk.readers.labels import WIB  # noqa: E402
+from app.services.kotak_struk.registry import read_document  # noqa: E402
+
+_FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
+DEFAULT_CORPUS = _FIXTURES / "kotak" / "corpus.json"
+RECEIPTS_FIXTURE = _FIXTURES / "receipt_ocr_lines.json"
 
 GATE = {"amount_date_status_pct": 95.0, "counterparty_pct": 90.0, "doc_type_pct": 98.0}
 
 PROOF_TYPES = ("qris", "transfer")
-FIELDS = ("doc_type", "total", "date", "status", "flow", "counterparty")
+# Urutan kolom laporan. `date` dibandingkan dengan kunci `paid_at` di expect.
+FIELDS = ("doc_type", "issuer", "total", "date", "status", "flow", "counterparty")
+_PROOF_FIELDS = ("total", "date", "status", "flow", "counterparty")   # wajib ada di expect bukti bayar
+_EXPECT_KEY = {"date": "paid_at"}
 
 _GATE_LABELS = {
     "amount_date_status_pct": "total/tanggal/status benar",
@@ -50,6 +64,8 @@ _GATE_LABELS = {
 
 # ── Penyamaran ──────────────────────────────────────────────────────────────
 
+MIN_RUN_DIGITS = 6
+
 _MONTH_WORDS = {
     "januari", "january", "jan", "februari", "february", "feb", "peb", "maret", "march", "mar", "april", "apr",
     "mei", "may", "juni", "june", "jun", "juli", "july", "jul", "agustus", "august", "agu", "ags", "aug",
@@ -57,22 +73,33 @@ _MONTH_WORDS = {
     "desember", "december", "des", "dec",
 }
 
-# NMID QRIS (publik): "ID" + >= 10 digit.
-_NMID = re.compile(r"(?<![A-Za-z0-9])ID\d{10,}")
-# Nominal langsung sesudah Rp/IDR (spasi, titik, atau titik dua boleh): "Rp 1500000", "IDR150000", "Rp. 1.500.000,00".
-_CURRENCY = re.compile(r"(?<![A-Za-z])(?:rp|idr)\s*[.:]?\s*\d[\d.,]*", re.IGNORECASE)
+_HWS = r"[^\S\r\n]"                    # spasi horizontal jenis apa pun: spasi, NBSP, U+202F, U+2009, tab, ...
+_DASH = "\\-\u2010-\u2015\u2212"       # isi kelas karakter: "-", U+2010..U+2015, U+2212 (minus)
+# Pemisah di dalam satu deret digit: <= 2 spasi (OCR menyambung kotak dengan dua spasi), satu strip jenis apa pun
+# (boleh diapit satu spasi), atau satu titik/koma.
+_RUN_SEP = rf"(?:{_HWS}{{1,2}}|{_HWS}?[{_DASH}]{_HWS}?|[.,])"
+_DIGIT_RUN = re.compile(rf"\d+(?:{_RUN_SEP}\d+)*")
+
+# Nominal berkelompok ribuan yang ketat: kelompok pertama 1-3 digit, sisanya tepat 3, pemisah konsisten, desimal
+# 2 digit opsional dengan pemisah yang lain (1.500.000 / 150,000.00 / 1.500.000,00).
+_THOUSANDS = r"\d{1,3}(?P<g>[.,])\d{3}(?:(?P=g)\d{3})*(?:(?!(?P=g))[.,]\d{2})?"
+_NUM_END = rf"(?![.,]?\d)(?![{_DASH}]\d)"   # tidak bersambung ke digit lain
+_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
+# NMID QRIS (publik): "ID" + >= 10 digit, hanya di baris berlabel NMID.
+_NMID = re.compile(rf"(?<![A-Za-z0-9])ID{_HWS}?\d{{10,}}", re.IGNORECASE)
+# Nominal langsung sesudah Rp/IDR: nominal ribuan ketat, atau angka tanpa kelompok <= 9 digit (Rp 999.999.999).
+_CURRENCY = re.compile(
+    rf"(?<![A-Za-z])(?:rp|idr){_HWS}*[.:]?{_HWS}*(?:{_THOUSANDS}|\d{{1,9}}(?:[.,]\d{{2}})?){_NUM_END}", re.IGNORECASE)
 # Tanggal angka dengan pemisah yang sama: d-m-y, d/m/y, d.m.y (tahun 2 atau 4 digit) dan y-m-d. Tidak boleh
 # menempel pada deret angka lain ("1234-12-10-26" bukan tanggal, melainkan nomor yang harus disamarkan).
-_DATE_DMY = re.compile(r"(?<!\d)(?<!\d[-/.])(\d{1,2})([-/.])(\d{1,2})\2(\d{4}|\d{2})(?![-/.]?\d)")
-_DATE_YMD = re.compile(r"(?<!\d)(?<!\d[-/.])(\d{4})([-/.])(\d{1,2})\2(\d{1,2})(?![-/.]?\d)")
+_DATE_DMY = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})([-/.])(\d{{1,2}})\2(\d{{4}}|\d{{2}})(?![/.{_DASH}]?\d)")
+_DATE_YMD = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{4}})([-/.])(\d{{1,2}})\2(\d{{1,2}})(?![/.{_DASH}]?\d)")
 # Tanggal dengan nama bulan di depan ("Oct 26 2026", "Okt 26, 2026"): hari dan tahun hanya dipisah spasi.
 _DATE_MDY = re.compile(r"(?<![A-Za-z])([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)")
 # Jam: 08:12, 08:12:33, 08.12.33.
 _TIME = re.compile(r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?(?!\d|[:.]\d)")
-# Nominal berkelompok ribuan, dengan desimal opsional: 1.500.000, 150,000.00, 1.500.000,00.
-_GROUPED = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?!\d|[.,]\d)")
-# Deret digit: kelompok digit yang dipisah satu spasi atau satu strip.
-_DIGIT_RUN = re.compile(r"\d+(?:[ -]\d+)*")
+# Nominal ribuan ketat tanpa Rp. Tidak boleh menempel strip pada deret lain ("01.234.567.8-901.000").
+_GROUPED = re.compile(rf"(?<![\d.,])(?<!\d[{_DASH}]){_THOUSANDS}{_NUM_END}")
 
 
 def _year_ok(year: str) -> bool:
@@ -97,14 +124,15 @@ def _time_ok(m: re.Match) -> bool:
 
 # Urutan = prioritas: rentang yang ditemukan lebih dulu menang bila bertumpang tindih.
 _KEEP = (
-    (_NMID, None), (_CURRENCY, None), (_DATE_DMY, _dmy_ok), (_DATE_YMD, _ymd_ok), (_DATE_MDY, _mdy_ok),
-    (_TIME, _time_ok), (_GROUPED, None),
+    (_CURRENCY, None), (_DATE_DMY, _dmy_ok), (_DATE_YMD, _ymd_ok), (_DATE_MDY, _mdy_ok), (_TIME, _time_ok),
+    (_GROUPED, None),
 )
 
 
 def _kept_spans(line: str) -> list[tuple[int, int]]:
+    rules = (((_NMID, None),) if _NMID_LINE.search(line) else ()) + _KEEP
     spans: list[tuple[int, int]] = []
-    for rx, valid in _KEEP:
+    for rx, valid in rules:
         for m in rx.finditer(line):
             if valid is not None and not valid(m):
                 continue
@@ -117,17 +145,18 @@ def _kept_spans(line: str) -> list[tuple[int, int]]:
 def _mask_runs(text: str) -> str:
     def repl(m: re.Match) -> str:
         digits = re.sub(r"\D", "", m.group())
-        return "…" + digits[-4:] if len(digits) >= 6 else m.group()
+        return "…" + digits[-4:] if len(digits) >= MIN_RUN_DIGITS else m.group()
     return _DIGIT_RUN.sub(repl, text)
 
 
 def mask_line(line: str) -> str:
     """Samarkan nomor rekening, nomor referensi, nomor HP, dan deret angka panjang lain di satu baris.
 
-    Deret >= 6 digit (boleh dipisah satu spasi atau satu strip antarkelompok) menjadi `…` + 4 digit
-    terakhirnya. Dibiarkan: nominal (berkelompok ribuan, atau langsung sesudah Rp/IDR), tanggal
-    (d-m-y, d/m/y, d.m.y, y-m-d, dan "Oct 26 2026"), jam, dan NMID (`ID` + >= 10 digit, publik).
-    Teks yang sudah tersamar (`…4567`, `****1234`) tidak berubah."""
+    Deret >= 6 digit (kelompoknya boleh dipisah <= 2 spasi jenis apa pun, satu strip jenis apa pun, atau satu
+    titik/koma) menjadi `…` + 4 digit terakhirnya. Dibiarkan: nominal ribuan yang ketat (1.500.000, 150,000.00),
+    nominal langsung sesudah Rp/IDR (ribuan ketat atau <= 9 digit), tanggal (d-m-y, d/m/y, d.m.y, y-m-d,
+    "Oct 26 2026"), jam, dan NMID (`ID` + >= 10 digit) di baris berlabel NMID. Teks yang sudah tersamar
+    (`…4567`, `****1234`) tidak berubah."""
     out, pos = [], 0
     for start, end in _kept_spans(line):
         out.append(_mask_runs(line[pos:start]))
@@ -137,20 +166,42 @@ def mask_line(line: str) -> str:
     return "".join(out)
 
 
+_MASKED_TOKEN = re.compile(r"…\d{4}(?!\d)")
+_WORD = re.compile(r"[^\W\d_]{2,}")
+
+
+def needs_review(line: str) -> bool:
+    """Jaring pengaman untuk tinjauan manusia: apakah baris (sesudah `mask_line`) masih memuat >= 6 digit di luar
+    bentuk yang dibiarkan dan penanda `…dddd`? Digit dihitung melintasi pemisah apa pun yang bukan kata (/, :, _,
+    spasi, satu huruf salah-baca OCR seperti "4S6"); kata >= 2 huruf memisahkan. Tidak pernah memblokir."""
+    parts, pos = [], 0
+    for start, end in _kept_spans(line):
+        parts.append(line[pos:start])
+        parts.append(" ")
+        pos = end
+    parts.append(line[pos:])
+    rest = _MASKED_TOKEN.sub(" ", "".join(parts))
+    return any(len(re.findall(r"\d", chunk)) >= MIN_RUN_DIGITS for chunk in _WORD.split(rest))
+
+
 # ── Evaluasi ────────────────────────────────────────────────────────────────
-
-def _parse_iso(value) -> datetime | None:
-    if not value:
-        return None
-    return value if isinstance(value, datetime) else datetime.fromisoformat(value)
-
 
 def _wib_date(value) -> date | None:
     """Tanggal kalender WIB dari datetime/ISO string; tanpa zona dianggap sudah WIB."""
-    dt = _parse_iso(value)
-    if dt is None:
+    if not value:
         return None
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     return dt.astimezone(WIB).date() if dt.tzinfo else dt.date()
+
+
+def _expected_date(value) -> tuple[date | None, str | None]:
+    """(tanggal WIB, alasan bila `paid_at` di expect tidak sah)."""
+    if value is not None and not isinstance(value, str):
+        return None, "expect.paid_at harus teks tanggal-jam ISO atau null"
+    try:
+        return _wib_date(value), None
+    except ValueError:
+        return None, "expect.paid_at bukan tanggal-jam ISO"
 
 
 def _wib_today() -> date:
@@ -163,7 +214,7 @@ def sample_context(sample: dict) -> ParseContext:
     if sample.get("today"):
         today = date.fromisoformat(sample["today"])
     else:
-        today = _wib_date((sample.get("expect") or {}).get("paid_at")) or _wib_today()
+        today = _expected_date((sample.get("expect") or {}).get("paid_at"))[0] or _wib_today()
     return ParseContext(today=today, user_name=sample.get("user_name"))
 
 
@@ -182,27 +233,55 @@ async def _read_all(samples: list[dict]) -> list:
     return [await _read(s) for s in samples]
 
 
-def _field(expected, actual, ok: bool) -> dict:
-    return {"ok": ok, "expected": expected, "actual": actual}
+def _field(expected, actual, ok: bool, reason: str | None = None) -> dict:
+    out = {"ok": ok, "expected": expected, "actual": actual}
+    if reason:
+        out["reason"] = reason
+    return out
+
+
+def _actual(name: str, doc):
+    if name == "total":
+        return doc.amounts.total
+    if name == "date":
+        d = _wib_date(doc.paid_at)
+        return d.isoformat() if d else None
+    if name == "counterparty":
+        return doc.counterparty.name
+    return getattr(doc, name)
+
+
+def _compare_field(name: str, expected, doc) -> dict:
+    actual = _actual(name, doc)
+    if name == "total":
+        if expected is not None and (type(expected) is not int):
+            return _field(expected, actual, False, "expect.total harus bilangan bulat atau null")
+        return _field(expected, actual, expected == actual)
+    if name == "date":
+        exp_date, reason = _expected_date(expected)
+        if reason:
+            return _field(expected, actual, False, reason)
+        exp_text = exp_date.isoformat() if exp_date else None
+        return _field(exp_text, actual, exp_text == actual)
+    if name == "counterparty":
+        return _field(expected, actual, _name(expected) == _name(actual))
+    return _field(expected, actual, expected == actual)
 
 
 def _compare(sample: dict, doc) -> dict:
+    """Bandingkan satu sampel. `doc_type` selalu; `issuer` bila ada di expect; total/tanggal/status/arah/pihak
+    bila ada di expect, dan wajib ada untuk bukti bayar (tidak ada = salah). Struk Indomaret hanya `doc_type`."""
     e = sample.get("expect") or {}
-    exp_date, act_date = _wib_date(e.get("paid_at")), _wib_date(doc.paid_at)
-    exp_total = e.get("total")
-    fields = {
-        "doc_type": _field(e.get("doc_type"), doc.doc_type, e.get("doc_type") == doc.doc_type),
-        "total": _field(exp_total, doc.amounts.total,
-                        (exp_total is None and doc.amounts.total is None)
-                        or (exp_total is not None and doc.amounts.total is not None
-                            and int(exp_total) == int(doc.amounts.total))),
-        "date": _field(exp_date.isoformat() if exp_date else None, act_date.isoformat() if act_date else None,
-                       exp_date == act_date),
-        "status": _field(e.get("status"), doc.status, e.get("status") == doc.status),
-        "flow": _field(e.get("flow"), doc.flow, e.get("flow") == doc.flow),
-        "counterparty": _field(e.get("counterparty"), doc.counterparty.name,
-                               _name(e.get("counterparty")) == _name(doc.counterparty.name)),
-    }
+    proof = e.get("doc_type") in PROOF_TYPES
+    fields = {"doc_type": _field(e.get("doc_type"), doc.doc_type, e.get("doc_type") == doc.doc_type)}
+    if "issuer" in e:
+        fields["issuer"] = _field(e["issuer"], doc.issuer, e["issuer"] == doc.issuer)
+    for name in _PROOF_FIELDS:
+        key = _EXPECT_KEY.get(name, name)
+        if key in e:
+            fields[name] = _compare_field(name, e[key], doc)
+        elif proof:
+            fields[name] = _field(None, _actual(name, doc), False, f"expect.{key} tidak ada")
     return {"id": sample["id"], "fields": fields, "ok": all(f["ok"] for f in fields.values())}
 
 
@@ -215,8 +294,9 @@ def evaluate(samples: list[dict]) -> dict:
     """Bandingkan hasil pembaca dengan `expect` tiap sampel (sinkron; pembaca dijalankan lewat asyncio.run).
 
     Persen total/tanggal/status, pihak, dan arah dihitung atas sampel yang diharapkan `qris`/`transfer`
-    (None bila tidak ada); `doc_type` atas semua sampel. `struk_as_proof` = struk belanja yang terbaca
-    sebagai bukti bayar; `failures` = sampel dengan salah satu field berbeda, urut seperti di korpus."""
+    (None bila tidak ada); `doc_type` atas semua sampel; `issuer` atas sampel yang punya `issuer` di expect.
+    `struk_as_proof` = struk belanja yang terbaca sebagai bukti bayar; `failures` = sampel dengan salah satu
+    field berbeda, urut seperti masukan."""
     docs = asyncio.run(_read_all(samples))
     rows = [_compare(s, d) for s, d in zip(samples, docs)]
     expected = [(s.get("expect") or {}).get("doc_type") for s in samples]
@@ -231,6 +311,7 @@ def evaluate(samples: list[dict]) -> dict:
         "counterparty_pct": share(proofs, "counterparty"),
         "doc_type_pct": share(rows, "doc_type"),
         "flow_pct": share(proofs, "flow"),
+        "issuer_pct": share([r for r in rows if "issuer" in r["fields"]], "issuer"),
         "struk_as_proof": [s["id"] for s, t, d in zip(samples, expected, docs)
                            if t == "struk_belanja" and d.doc_type in PROOF_TYPES],
         "failures": [r["id"] for r in rows if not r["ok"]],
@@ -239,7 +320,8 @@ def evaluate(samples: list[dict]) -> dict:
 
 
 def gate_failures(result: dict) -> list[str]:
-    """Alasan gerbang rilis (spec §7c) tidak lulus; kosong = lulus. `flow_pct` dilaporkan, tidak digerbang."""
+    """Alasan gerbang rilis (spec §7c) tidak lulus; kosong = lulus. `flow_pct` dan `issuer_pct` dilaporkan,
+    tidak digerbang."""
     reasons = []
     for key, minimum in GATE.items():
         value = result.get(key)
@@ -255,11 +337,46 @@ def gate_failures(result: dict) -> list[str]:
 
 # ── Berkas korpus ───────────────────────────────────────────────────────────
 
+class CorpusError(Exception):
+    """Berkas korpus (atau fixture struk) tidak ada atau rusak; pesannya aman dicetak."""
+
+
 def load_corpus(path: Path) -> list[dict]:
     path = Path(path)
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8"))["samples"]
+    if not path.parent.is_dir():
+        raise CorpusError(f"folder korpus tidak ada: {path.parent}")
+    if not path.is_file():
+        raise CorpusError(f"berkas korpus tidak ada: {path} (periksa --corpus)")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise CorpusError(f"berkas korpus tidak bisa dibaca: {path} ({e})") from e
+    except ValueError as e:   # JSONDecodeError, UnicodeDecodeError
+        raise CorpusError(f"berkas korpus rusak: {path} ({e})") from e
+    samples = data.get("samples") if isinstance(data, dict) else None
+    if not isinstance(samples, list) or not all(isinstance(s, dict) and isinstance(s.get("id"), str) for s in samples):
+        raise CorpusError(f'berkas korpus rusak: {path} (harus {{"samples": [...]}} dan tiap sampel punya "id")')
+    return samples
+
+
+def receipt_samples(path: Path = RECEIPTS_FIXTURE) -> list[dict]:
+    """Struk Indomaret asli yang sudah ada (spec §7a) sebagai sampel `struk_belanja`: hanya `doc_type` (dan
+    `struk_as_proof`) yang berlaku. `today` = tanggal struk, supaya evaluasi tidak ikut kalender."""
+    path = Path(path)
+    try:
+        receipts = json.loads(path.read_text(encoding="utf-8"))["receipts"]
+        out = []
+        for rec in receipts:
+            sample = {"id": f"indomaret-{rec['id']}", "real": True, "reviewed": True}
+            when = (rec.get("expect") or {}).get("date")
+            if when:
+                sample["today"] = when
+            sample["lines"] = list(rec["lines"])
+            sample["expect"] = {"doc_type": "struk_belanja"}
+            out.append(sample)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise CorpusError(f"fixture struk Indomaret tidak bisa dibaca: {path} ({e!r})") from e
+    return out
 
 
 def _dumps(value) -> str:
@@ -279,15 +396,21 @@ def format_corpus(samples: list[dict]) -> str:
 
 
 def write_corpus(path: Path, samples: list[dict]) -> None:
-    """Tulis atomik (berkas sementara di folder yang sama, lalu ganti)."""
+    """Tulis atomik (berkas sementara di folder yang sama, lalu ganti). Bit izin berkas lama dipertahankan
+    (mkstemp membuat 0600); berkas baru 0644."""
     path = Path(path)
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        mode = 0o644
     fd, tmp = tempfile.mkstemp(prefix=".corpus-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(format_corpus(samples))
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
-        if os.path.exists(tmp):
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
         raise
 
@@ -304,12 +427,13 @@ def _content_type(path: Path) -> str | None:
     return guessed if guessed and guessed.startswith("image/") else None
 
 
-def _expect_from(doc) -> dict:
+def expect_from(doc) -> dict:
+    """Hasil pembaca dalam bentuk `expect` korpus (urutan kunci seperti spec §7a)."""
     paid_at = doc.paid_at
     if paid_at is not None:
         paid_at = (paid_at.astimezone(WIB) if paid_at.tzinfo else paid_at.replace(tzinfo=WIB)).isoformat(timespec="seconds")
     return {
-        "doc_type": doc.doc_type, "total": doc.amounts.total, "paid_at": paid_at,
+        "doc_type": doc.doc_type, "issuer": doc.issuer or None, "total": doc.amounts.total, "paid_at": paid_at,
         "counterparty": doc.counterparty.name or None, "status": doc.status, "flow": doc.flow,
     }
 
@@ -319,9 +443,17 @@ def _err(message: str) -> int:
     return 2
 
 
+_NAME_REMINDER = ("Nama orang pribadi: samarkan di baris (selain penerima/merchant yang dibutuhkan) dan di user_name. "
+                  "user_name dan nama penerima transfer ke rekening sendiri adalah nama pribadi — ganti keduanya "
+                  "dengan nama samaran yang sama.")
+
+
 def cmd_add(args) -> int:
     corpus_path = Path(args.corpus)
-    samples = load_corpus(corpus_path)
+    try:
+        samples = load_corpus(corpus_path)   # sebelum ekstraksi: salah ketik --corpus tidak membuang waktu OCR
+    except CorpusError as e:
+        return _err(str(e))
     if any(s.get("id") == args.id for s in samples):
         return _err(f"id {args.id!r} sudah ada di {corpus_path}; pakai id lain.")
     source = Path(args.file)
@@ -346,8 +478,7 @@ def cmd_add(args) -> int:
     if args.user_name:
         sample["user_name"] = args.user_name
     sample["lines"] = lines
-    doc = asyncio.run(_read(sample))
-    sample["expect"] = _expect_from(doc)
+    sample["expect"] = expect_from(asyncio.run(_read(sample)))   # dibaca dari baris tersamar, seperti `eval`
     write_corpus(corpus_path, [*samples, sample])
 
     print(f"Sampel {args.id} ditambahkan ke {corpus_path} ({text.kind}, {len(lines)} baris).")
@@ -356,14 +487,20 @@ def cmd_add(args) -> int:
         print(f"  {i:>2}. {line}")
     print("expect (hasil pembaca saat ini):")
     print("  " + _dumps(sample["expect"]))
+    flagged = [(i, line) for i, line in enumerate(lines, 1) if needs_review(line)]
+    if flagged:
+        print("Baris yang masih memuat >= 6 digit (cek nomor rekening/referensi/HP yang belum tersamar):")
+        for i, line in flagged:
+            print(f"PERIKSA baris {i}: {line}")
     if args.real:
-        print('Periksa baris dan expect dengan bukti aslinya, samarkan nama orang pribadi selain penerima/merchant, '
-              'lalu set "reviewed": true.')
+        print('Periksa baris dan expect dengan bukti aslinya, lalu set "reviewed": true.')
+    print(_NAME_REMINDER)
     return 0
 
 
-def _ok(flag: bool) -> str:
-    return "ok" if flag else "✗"
+def _cell(row: dict, key: str) -> str:
+    field = row["fields"].get(key)
+    return "-" if field is None else ("ok" if field["ok"] else "✗")
 
 
 def _fmt_pct(value) -> str:
@@ -372,34 +509,43 @@ def _fmt_pct(value) -> str:
 
 def _print_report(samples: list[dict], result: dict) -> None:
     width = max([len("id"), *(len(s["id"]) for s in samples)])
-    heads = ("doc_type", "total", "tanggal", "status", "flow", "pihak")
+    heads = ("doc_type", "issuer", "total", "tanggal", "status", "flow", "pihak")
     print((f"{'id':<{width}}  " + "  ".join(f"{h:<8}" for h in heads)).rstrip())
     for row in result["rows"]:
-        print((f"{row['id']:<{width}}  " + "  ".join(f"{_ok(row['fields'][k]['ok']):<8}" for k in FIELDS)).rstrip())
+        print((f"{row['id']:<{width}}  " + "  ".join(f"{_cell(row, k):<8}" for k in FIELDS)).rstrip())
         for key in FIELDS:
-            field = row["fields"][key]
-            if not field["ok"]:
-                print(f"{'':<{width}}    ✗ {key}: diharapkan {_dumps(field['expected'])}, terbaca {_dumps(field['actual'])}")
+            field = row["fields"].get(key)
+            if field is not None and not field["ok"]:
+                reason = f" — {field['reason']}" if field.get("reason") else ""
+                print(f"{'':<{width}}    ✗ {key}: diharapkan {_dumps(field['expected'])}, "
+                      f"terbaca {_dumps(field['actual'])}{reason}")
     print()
     print(f"Ringkasan (n={result['n']})")
     for key, label in _GATE_LABELS.items():
         print(f"  {label:<28} {_fmt_pct(result[key]):>7}  (gerbang ≥{GATE[key]}%)")
     print(f"  {'flow benar':<28} {_fmt_pct(result['flow_pct']):>7}  (tidak digerbang)")
+    print(f"  {'issuer benar':<28} {_fmt_pct(result['issuer_pct']):>7}  (tidak digerbang)")
     print("  struk belanja terbaca sebagai bukti bayar: " + (", ".join(result["struk_as_proof"]) or "-"))
     print("  gagal: " + (", ".join(result["failures"]) or "-"))
 
 
 def cmd_eval(args) -> int:
     corpus_path = Path(args.corpus)
-    samples = load_corpus(corpus_path)
+    try:
+        samples = load_corpus(corpus_path)
+        receipts = [] if args.real_only else receipt_samples()
+    except CorpusError as e:
+        return _err(str(e))
     unreviewed = sum(1 for s in samples if s.get("real") and not s.get("reviewed"))
     if args.real_only:
         chosen = [s for s in samples if s.get("real") and s.get("reviewed")]
     else:
         chosen = [s for s in samples if not s.get("real") or s.get("reviewed")]
     synthetic = sum(1 for s in chosen if not s.get("real"))
-    print(f"Korpus {corpus_path}: {len(chosen)} sampel ({synthetic} sintetis, {len(chosen) - synthetic} nyata); "
-          f"{unreviewed} sampel nyata belum ditinjau dilewati")
+    real = len(chosen) - synthetic
+    chosen = chosen + receipts
+    print(f"Korpus {corpus_path}: {len(chosen)} sampel ({synthetic} sintetis, {real} nyata, "
+          f"{len(receipts)} struk Indomaret); {unreviewed} sampel nyata belum ditinjau dilewati")
     if not chosen:
         print("korpus nyata belum ada")
         return 1
@@ -424,7 +570,7 @@ def main(argv=None) -> int:
     a.add_argument("file")
     a.add_argument("--id", required=True)
     a.add_argument("--real", action="store_true", help="bukti nyata (perlu ditinjau sebelum dievaluasi)")
-    a.add_argument("--user-name", help="nama akun user untuk cek arah 'antar rekening sendiri'")
+    a.add_argument("--user-name", help="nama akun user untuk cek arah 'antar rekening sendiri' (pakai nama samaran)")
     a.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     e = sub.add_parser("eval", help="evaluasi pembaca terhadap korpus dan cek gerbang rilis")
     e.add_argument("--real-only", action="store_true", help="hanya sampel nyata yang sudah ditinjau")
