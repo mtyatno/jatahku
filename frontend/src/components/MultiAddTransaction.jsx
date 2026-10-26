@@ -4,7 +4,9 @@ import { parseMultiExpense, parseAmount } from '../lib/parseAmount';
 import { enqueueTransaction } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
-import ReceiptInput from './ReceiptInput';
+import ReceiptInput, { pickReceiptPhoto } from './ReceiptInput';
+import ReceiptStatusCard from './ReceiptStatusCard';
+import { useReceiptScan } from '../hooks/useReceiptScan';
 import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
 import { buildPlan, applyItemSuggestions } from '../lib/receiptSplit';
@@ -435,6 +437,9 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
     suggestReceiptItems(item);
   };
 
+  // Baca struk: tahap prosesnya tampil di ReceiptStatusCard; Simpan ditahan selama berjalan.
+  const scan = useReceiptScan({ onResult: handleReceiptResult, onBusyChange: handleScanBusy });
+
   const handleVoiceTranscript = (text) => {
     if (savingRef.current) {
       heldTranscripts.current.push(text);
@@ -668,10 +673,10 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>
           <div className="flex items-center gap-3 shrink-0">
             <ReceiptInput
-              onResult={handleReceiptResult}
+              size="sm"
+              onFile={scan.scanFile}
               onError={handleVoiceError}
-              onBusyChange={handleScanBusy}
-              disabled={saving}
+              disabled={saving || scanBusy}
             />
             <VoiceInput
               onTranscript={handleVoiceTranscript}
@@ -687,6 +692,12 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
           value={rawText}
           onChange={e => setRawText(e.target.value)}
           disabled={saving}
+        />
+        <ReceiptStatusCard
+          state={scan.state}
+          disabled={saving}
+          onRetry={scan.retry}
+          onRetake={() => pickReceiptPhoto('camera', { onFile: scan.scanFile, onError: handleVoiceError })}
         />
       </div>
 
