@@ -12,10 +12,12 @@ CATEGORY_KEYWORDS = {
               "lunch", "dinner", "breakfast", "sarapan", "siang", "malam",
               "warteg", "padang", "resto", "restaurant", "cafe", "kafe",
               "kopi", "coffee", "starbucks", "mcd", "kfc", "pizza",
-              "gofood", "grabfood", "shopeefood", "snack", "jajan"],
+              "gofood", "grabfood", "shopeefood", "snack", "jajan",
+              "soto", "martabak", "seblak"],
     "transport": ["grab", "gojek", "ojek", "taxi", "bensin", "parkir",
                   "tol", "busway", "mrt", "krl", "kereta", "bus",
-                  "transport", "uber", "maxim", "indriver"],
+                  "transport", "uber", "maxim", "indriver",
+                  "spbu", "pertamina", "shell", "bengkel"],
     "hiburan": ["nonton", "film", "bioskop", "game", "steam", "netflix",
                 "spotify", "youtube", "premium", "langganan", "subscribe",
                 "hangout", "karaoke", "mall"],
@@ -24,6 +26,7 @@ CATEGORY_KEYWORDS = {
                 "shopee", "tokped", "tokopedia", "lazada", "tiktok shop", "belanja", "online", "shop"],
     "tagihan": ["listrik", "air", "pdam", "internet", "wifi", "pulsa",
                 "token", "indihome", "telkom", "pln"],
+    "kesehatan": ["apotek", "apotik", "klinik", "kimia farma", "k24"],
 }
 
 

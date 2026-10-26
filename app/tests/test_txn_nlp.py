@@ -33,6 +33,18 @@ class TestGuessEnvelopeName(unittest.TestCase):
     def test_no_match_returns_none(self):
         self.assertIsNone(guess_envelope_name("xyzzy qwerty"))
 
+    def test_qris_merchant_words(self):
+        # Kata yang sering muncul di nama merchant QRIS (Kotak Struk).
+        for text, expected in [("SOTO LAMONGAN CAK DI", "makan"), ("martabak 77", "makan"), ("SEBLAK TETEH", "makan"),
+                               ("SPBU 34.401", "transport"), ("Pertamina Sudirman", "transport"),
+                               ("Shell Super", "transport"), ("Bengkel Maju Jaya", "transport"),
+                               ("Apotek Sehat", "kesehatan"), ("apotik kimia", "kesehatan"),
+                               ("Klinik Pratama", "kesehatan"), ("KIMIA FARMA 123", "kesehatan"), ("K24 Dago", "kesehatan")]:
+            self.assertEqual(guess_envelope_name(text), expected, text)
+
+    def test_warung_is_not_food(self):
+        self.assertIsNone(guess_envelope_name("Warung Kelontong Bu Siti"))
+
 
 if __name__ == "__main__":
     unittest.main()

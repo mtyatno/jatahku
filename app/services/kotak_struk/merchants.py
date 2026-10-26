@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.models import HouseholdMerchant
+from app.models.models import HouseholdMerchant, ReceiptScan
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 
 log = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 KEY_MAX = 80            # panjang kolom counterparty_key
 RAW_NAME_MAX = 100      # panjang kolom household_merchants.raw_name
 CITY_MAX = 60           # panjang kolom household_merchants.city
+NICKNAME_MAX = 60       # panjang kolom household_merchants.display_name
 DESCRIPTION_MAX = 500   # batas keterangan transaksi
 MIN_ACCOUNT_DIGITS = 8  # nomor rekening dianggap terbaca utuh bila punya >= ini
 
@@ -179,5 +180,35 @@ async def upsert_household_merchant(db: AsyncSession, household_id: uuid.UUID, k
             if row is None:
                 raise
     _refresh_merchant(row, raw_name, city, now)
+    await db.flush()
+    return row
+
+
+async def merchant_for_item(db: AsyncSession, item: ReceiptScan) -> HouseholdMerchant | None:
+    """Baris peta merchant milik item (kunci pihak penerimanya di rumah tangga item), atau None
+    bila item tanpa rumah tangga/kunci atau barisnya belum ada."""
+    if item.household_id is None or not item.counterparty_key:
+        return None
+    return await _find_merchant(db, item.household_id, item.counterparty_key)
+
+
+def clean_nickname(name: str | None) -> str | None:
+    """Nama panggilan dari input user, aman ditampilkan ke anggota lain: tag `<...>` dan karakter selain huruf,
+    angka, spasi, `&'.-` dibuang (seperti `receipt_scan.clean_merchant_name`), spasi dirapatkan, dipotong
+    NICKNAME_MAX. Tidak ada yang tersisa -> None."""
+    text = re.sub(r"<[^>]*>", "", name or "")
+    text = " ".join(re.sub(r"[^A-Za-z0-9&'.\- ]", "", text).split())[:NICKNAME_MAX].strip()
+    return text or None
+
+
+async def set_display_name(db: AsyncSession, merchant_id: uuid.UUID, household_id: uuid.UUID,
+                           name: str) -> HouseholdMerchant | None:
+    """Pasang nama panggilan merchant (berlaku untuk seluruh rumah tangga). Nama yang setelah dibersihkan
+    kosong menghapus nama panggilan (baris dikembalikan dengan `display_name` None). Merchant yang tidak ada
+    atau milik rumah tangga lain -> None. Tidak meng-commit; pemanggil yang commit."""
+    row = await db.get(HouseholdMerchant, merchant_id)
+    if row is None or row.household_id != household_id:
+        return None
+    row.display_name = clean_nickname(name)
     await db.flush()
     return row
