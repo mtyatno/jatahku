@@ -60,10 +60,10 @@ async def chat_photo(
     client_id: str | None = Form(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
     user: User = Depends(get_current_user),
 ):
-    """Foto struk dari chat → alur scan struk bot (kuota & batas sama)."""
-    # Validasi format/ukuran sama dengan tombol Struk di form transaksi.
+    """Foto struk dari chat → alur scan struk bot (batas per jam sama)."""
+    # Validasi format/ukuran sama dengan tombol Struk di form transaksi, kecuali PDF: alur foto bot belum membacanya.
     from app.api.routes.transactions import _read_receipt_upload
-    data, mime = await _read_receipt_upload(image)
+    data, mime = await _read_receipt_upload(image, allow_pdf=False)
     return {"ops": await run_photo(user, data, mime, client_id)}
 
 

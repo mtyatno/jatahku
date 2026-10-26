@@ -1,4 +1,4 @@
-"""Tests scan struk: parser, susun baris OCR, belajar dari koreksi, kuota, plafon LLM.
+"""Tests scan struk: parser, susun baris OCR, belajar dari koreksi, scan lewat Kotak Struk, plafon LLM.
 
 Run from repo root:  python -m unittest app.tests.test_receipt_scan -v
 (Tidak butuh rapidocr/Redis/Postgres — semua di-fake.)
@@ -14,16 +14,20 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
 from app.services.receipt_parser import (
     amounts_in, merchant_key, normalize_line, parse_receipt,
 )
-from app.services.receipt_ocr import OcrResult, build_lines
+from app.services.receipt_ocr import build_lines
 from app.services import receipt_llm, receipt_scan
-from app.tests.fakes import FakeResult, db_with
+from app.models.models import ReceiptScan, User
+from app.services.kotak_struk import worker as kotak_worker
+from app.tests.fakes import FakeResult
+from app.tests.test_kotak_api import HAS_AIOSQLITE
+from app.tests.test_kotak_transactions import TxnBase
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())
 
@@ -442,57 +446,6 @@ def _user(plan="basic"):
 
 
 class TestScanFlow(unittest.IsolatedAsyncioTestCase):
-    async def test_basic_quota_exceeded(self):
-        db = db_with(FakeResult(15))
-        db.rollback = AsyncMock()
-        with self.assertRaises(receipt_scan.ScanQuotaExceeded):
-            await receipt_scan.scan_receipt(_user(), b"img", "image/jpeg", db, ocr=AsyncMock(), llm=AsyncMock())
-
-    async def test_pro_unlimited_and_result_shape(self):
-        lines = FIXTURES["receipts"][1]["lines"]
-        db = db_with(FakeResult(500), FakeResult(rows=[]), FakeResult(rows=[]))
-        db.refresh = AsyncMock()
-        db.rollback = AsyncMock()
-        llm = AsyncMock()
-        out = await receipt_scan.scan_receipt(
-            _user("pro"), b"img", "image/jpeg", db,
-            ocr=AsyncMock(return_value=OcrResult(lines=lines, score=0.9, seconds=1.0)), llm=llm,
-        )
-        self.assertEqual(out["total"], 51000)
-        self.assertEqual(out["engine"], "rapidocr")
-        self.assertEqual(len(out["items"]), 5)
-        self.assertEqual(out["reconciliation"]["status"], "cocok")
-        self.assertEqual(out["items"][1]["discount"], 4800)  # voucher KOBE melekat ke barangnya
-        json.dumps(out)  # bisa diserialisasi untuk respons API
-        self.assertIsNone(out["quota"]["limit"])
-        llm.assert_not_awaited()  # keyakinan tinggi → LLM tidak dipanggil
-        saved = db.add.call_args[0][0]
-        self.assertEqual(saved.parsed_total, Decimal(51000))
-
-    async def test_low_confidence_uses_llm_fallback(self):
-        db = db_with(FakeResult(0), FakeResult(rows=[]), FakeResult(rows=[]))
-        db.refresh = AsyncMock()
-        db.rollback = AsyncMock()
-        llm = AsyncMock(return_value={"merchant": "Toko A", "date": None, "total": 12000})
-        out = await receipt_scan.scan_receipt(
-            _user(), b"img", "image/jpeg", db,
-            ocr=AsyncMock(return_value=OcrResult(lines=["buram"], score=0.2, seconds=1.0)), llm=llm,
-        )
-        self.assertEqual((out["engine"], out["total"], out["merchant"]), ("llm", 12000, "Toko A"))
-        self.assertEqual(out["quota"], {"limit": 15, "used": 1, "remaining": 14})
-        db.rollback.assert_not_awaited()  # rollback meng-expire `user` → MissingGreenlet (bug prod 15 Okt)
-        db.commit.assert_awaited()  # koneksi DB dilepas sebelum OCR lewat commit
-
-    async def test_llm_crash_keeps_ocr_result(self):
-        db = db_with(FakeResult(0), FakeResult(rows=[]), FakeResult(rows=[]))
-        db.refresh = AsyncMock(); db.rollback = AsyncMock()
-        out = await receipt_scan.scan_receipt(
-            _user(), b"img", "image/jpeg", db,
-            ocr=AsyncMock(return_value=OcrResult(lines=["TOKO", "45.500"], score=0.5, seconds=1.0)),
-            llm=AsyncMock(side_effect=RuntimeError("redis mati")),
-        )
-        self.assertEqual((out["engine"], out["total"]), ("rapidocr", 45500))
-
     @staticmethod
     def _feedback_db(scan):
         db = MagicMock()
@@ -574,6 +527,64 @@ class TestScanFlow(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await receipt_scan.apply_feedback(_user(), uuid4(), db, saved=False))
         self.assertIsNone(await receipt_scan.apply_feedback(_user(), "bukan-uuid", db, saved=False))
         db.commit.assert_not_awaited()
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class TestScanThroughKotak(TxnBase):
+    """`scan_receipt` memakai pintu masuk dan worker Kotak Struk (SQLite, hasil OCR palsu); LLM cadangan tetap ber-plafon."""
+
+    async def scan_with_llm(self, lines, llm):
+        with patch.object(kotak_worker, "try_llm_fallback", llm):
+            return await self.scan(lines)
+
+    async def test_basic_has_no_scan_quota(self):
+        async with self.Session() as db:   # Basic dengan 20 scan bulan ini: dulu batasnya 15
+            db.add_all([ReceiptScan(user_id=self.a.id, status="tercatat", confidence="tinggi", engine="rapidocr")
+                        for _ in range(20)])
+            await db.commit()
+            quota = await receipt_scan.get_quota(await db.get(User, self.a.id), db)
+        self.assertEqual((quota.limit, quota.used, quota.remaining), (None, 20, None))
+        self.assertEqual(quota.as_dict(), {"limit": None, "used": 20, "remaining": None})
+        out = await self.scan(["TOKO MAJU", "TOTAL 45.500"])   # scan ke-21 tetap jalan
+        self.assertEqual(out["quota"], {"limit": None, "used": 0, "remaining": None})
+
+    async def test_result_shape_and_item_breakdown(self):
+        lines = FIXTURES["receipts"][1]["lines"]
+        llm = AsyncMock()
+        out = await self.scan_with_llm(lines, llm)
+        self.assertEqual(out["total"], 51000)
+        self.assertEqual(out["engine"], "rapidocr")
+        self.assertEqual(len(out["items"]), 5)
+        self.assertEqual(out["reconciliation"]["status"], "cocok")
+        self.assertEqual(out["items"][1]["discount"], 4800)  # voucher KOBE melekat ke barangnya
+        json.dumps(out)  # bisa diserialisasi untuk respons API
+        self.assertIsNone(out["quota"]["limit"])
+        llm.assert_not_awaited()  # keyakinan tinggi → LLM tidak dipanggil
+        saved = await self.get(UUID(out["item_id"]))
+        self.assertEqual(saved.parsed_total, Decimal(51000))
+        self.assertTrue(saved.ocr_lines)  # teks OCR disimpan sementara untuk belajar dari umpan balik, seperti dulu
+
+    async def test_low_confidence_uses_llm_fallback(self):
+        llm = AsyncMock(return_value={"merchant": "Toko A", "date": None, "total": 12000})
+        out = await self.scan_with_llm(["buram"], llm)
+        self.assertEqual((out["engine"], out["total"], out["merchant"]), ("llm", 12000, "Toko A"))
+        self.assertEqual(out["confidence"], "sedang")
+        self.assertEqual(out["confidence_source"], "llm")
+        self.assertIn("Dibaca ulang dengan AI cadangan", out["evidence"])
+        self.assertIsNone(out["quota"]["limit"])
+        llm.assert_awaited_once()
+
+    async def test_llm_crash_keeps_ocr_result(self):
+        lines = ["TOKO MAJU", "GULA 20.000", "KOPI 25.500", "JUMLAH 45.500"]   # keyakinan rendah, tetap dibaca pembaca struk
+        with self.assertLogs("app.services.kotak_struk.readers.struk_belanja", "WARNING") as logs:
+            out = await self.scan_with_llm(lines, AsyncMock(side_effect=RuntimeError("redis mati")))
+        self.assertIn("fallback LLM gagal: redis mati", logs.output[0])
+        self.assertEqual((out["engine"], out["total"]), ("rapidocr", 45500))
+
+    async def test_unreadable_photo_has_no_total(self):
+        out = await self.scan_with_llm(["buram"], AsyncMock(return_value=None))
+        self.assertIsNone(out["total"])
+        self.assertEqual(out["confidence"], "gagal")
 
 
 class FakeRedis:
@@ -763,8 +774,9 @@ class TestUploadValidation(unittest.IsolatedAsyncioTestCase):
                 return self.data[:n] if n > 0 else self.data
 
         with self.assertRaises(HTTPException) as ctx:
-            await _read_receipt_upload(Up(b"x", "application/pdf"))
+            await _read_receipt_upload(Up(b"x", "text/plain"))
         self.assertEqual(ctx.exception.status_code, 415)
+        self.assertEqual(await _read_receipt_upload(Up(b"%PDF-1.4", "application/pdf")), (b"%PDF-1.4", "application/pdf"))
         with self.assertRaises(HTTPException) as ctx:
             await _read_receipt_upload(Up(b"x" * (MAX_RECEIPT_BYTES + 5), "image/jpeg"))
         self.assertEqual(ctx.exception.status_code, 413)

@@ -1,4 +1,6 @@
-"""Alur scan struk: kuota → OCR → parser (+ data belajar) → fallback LLM → simpan.
+"""Scan struk untuk web (dan bot, sampai Task A11 memindahkannya): foto/PDF masuk Kotak Struk lewat intake, dibaca
+worker (OCR → parser + data belajar → fallback LLM), lalu hasilnya dikembalikan dalam bentuk respons `scan-receipt`
+yang lama (lihat docs/kotak-struk.md). Tidak ada kuota scan lagi.
 
 Juga memproses feedback (nilai akhir yang disimpan user) untuk belajar:
 - Profil toko: label baris yang berisi total akhir (ReceiptTotalLabel).
@@ -24,10 +26,11 @@ from app.core.config import get_settings
 from app.models.models import (
     ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, User,
 )
+from app.services.receipt_ocr import OcrBusy, OcrFailed
 from app.services.receipt_parser import (
     CARD_KEYS, CASH_KEYS, CHANGE_KEYS, MASKED, NOISE_LINE, NOT_TOTAL,
     ReceiptAdjustment, ReceiptItem, Reconciliation,
-    _label_of, amounts_in, merchant_key, parse_receipt, payment_amounts, reconcile,
+    _label_of, amounts_in, merchant_key, payment_amounts,
 )
 
 logger = logging.getLogger("jatahku.receipt")
@@ -40,9 +43,17 @@ OCR_TEXT_RETENTION = timedelta(hours=24)
 
 
 class ScanQuotaExceeded(Exception):
+    """Tidak dilempar lagi sejak Kotak Struk (kuota scan dihapus untuk semua paket). Tetap didefinisikan karena kode
+    bot lama masih mengimpornya sampai Task A11 menyambungkan ulang bot."""
+
     def __init__(self, limit: int):
         self.limit = limit
         super().__init__(f"Kuota {limit} scan/bulan habis")
+
+
+class ScanBusy(OcrBusy):
+    """Item belum selesai dibaca setelah batas tunggu (antrean ramai). Item tetap diproses dan muncul di Kotak Struk.
+    Turunan `OcrBusy` supaya penangan lama (bot, rute) tetap memperlakukannya sebagai "sedang ramai"."""
 
 
 @dataclass
@@ -58,10 +69,6 @@ class Quota:
         return {"limit": self.limit, "used": self.used, "remaining": self.remaining}
 
 
-def _plan(user: User) -> str:
-    return str(getattr(user, "plan", "basic") or "basic")
-
-
 def _month_start(tz_name: str | None = None) -> datetime:
     """Awal bulan berjalan di zona waktu user (default Asia/Jakarta)."""
     try:
@@ -73,7 +80,8 @@ def _month_start(tz_name: str | None = None) -> datetime:
 
 
 async def get_quota(user: User, db: AsyncSession) -> Quota:
-    # Scan yang totalnya sama sekali tidak terbaca tidak memotong kuota.
+    """Kuota scan sudah dihapus (semua paket, tanpa saklar): `limit` selalu None. `used` (scan bulan ini yang
+    totalnya terbaca) tetap dihitung untuk klien lama yang menampilkannya."""
     used = (await db.execute(
         select(func.count(ReceiptScan.id)).where(
             ReceiptScan.user_id == user.id,
@@ -81,8 +89,7 @@ async def get_quota(user: User, db: AsyncSession) -> Quota:
             ReceiptScan.confidence != "gagal",
         )
     )).scalar() or 0
-    limit = None if _plan(user) == "pro" else get_settings().RECEIPT_SCAN_LIMIT_BASIC
-    return Quota(limit=limit, used=int(used))
+    return Quota(limit=None, used=int(used))
 
 
 async def _load_learning(db: AsyncSession) -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -99,83 +106,30 @@ async def _load_learning(db: AsyncSession) -> tuple[dict[str, str], dict[str, li
     return aliases, profiles
 
 
-async def scan_receipt(user: User, image_bytes: bytes, content_type: str, db: AsyncSession, *, ocr=None, llm=None) -> dict:
-    """Jalankan scan. `ocr`/`llm` bisa diganti di test."""
-    from app.services.receipt_ocr import read_receipt_lines
-    from app.services.receipt_llm import try_llm_fallback
+async def scan_receipt(user: User, data: bytes, content_type: str, db: AsyncSession, *, waiter=None) -> dict:
+    """Scan satu foto/PDF lewat Kotak Struk dan tunggu hasilnya (maks `WAIT_FORM_S`): intake `web_form` → worker →
+    respons bentuk lama + field baru (`document.scan_receipt_response`). `waiter(item_id, timeout_s)` bisa diganti di
+    test. `ScanBusy`: belum selesai (item tetap diproses). `OcrFailed(pesan)`: item `gagal`. `IntakeRejected`: ditolak
+    intake (jenis/ukuran/batas); pemanggil memetakannya ke HTTP.
 
-    ocr = ocr or read_receipt_lines
-    llm = llm or try_llm_fallback
+    Koneksi DB dilepas selama menunggu (bisa puluhan detik): penunggu memakai sesinya sendiri."""
+    from app.services.kotak_struk.config import ST_DIPROSES, ST_DITERIMA, ST_GAGAL, WAIT_FORM_S
+    from app.services.kotak_struk.document import scan_receipt_response
+    from app.services.kotak_struk.intake import IntakeRequest, create_item
+    from app.services.kotak_struk.view import item_detail
+    from app.services.kotak_struk.waiter import wait_for_item
 
-    user_id, plan = user.id, _plan(user)
-    quota = await get_quota(user, db)
-    if quota.limit is not None and quota.used >= quota.limit:
-        raise ScanQuotaExceeded(quota.limit)
-    # Lepas koneksi DB selama menunggu/menjalankan OCR (bisa beberapa detik),
-    # supaya antrean scan tidak menghabiskan pool koneksi API & bot.
-    # PENTING: commit, BUKAN rollback. Rollback meng-expire semua objek di sesi
-    # (termasuk `user` milik pemanggil); akses atributnya sesudah itu memicu
-    # lazy-load → MissingGreenlet di AsyncSession. Commit dengan
-    # expire_on_commit=False melepas koneksi tanpa meng-expire objek.
+    waiter = waiter or wait_for_item
+    item, _ = await create_item(db, IntakeRequest(user, "web_form", data=data, content_type=content_type))
+    # PENTING: commit, BUKAN rollback: rollback meng-expire `user` milik pemanggil (MissingGreenlet di AsyncSession).
+    # `create_item` hanya commit untuk item baru; item yang sudah ada dikembalikan dengan transaksi baca masih terbuka.
     await db.commit()
-
-    result = await ocr(image_bytes, owner=user_id)
-    aliases, profiles = await _load_learning(db)
-    parsed = parse_receipt(result.lines, merchant_aliases=aliases, merchant_profiles=profiles)
-
-    engine = "rapidocr"
-    merchant, total, txn_date = parsed.merchant, parsed.total, parsed.date
-    confidence, evidence = parsed.confidence, list(parsed.evidence)
-    items, adjustments, rec = parsed.items, parsed.adjustments, parsed.reconciliation
-    confidence_source = parsed.confidence_source
-    if confidence in ("rendah", "gagal"):
-        try:
-            fb = await llm(image_bytes, content_type, user_id, plan)
-        except Exception as exc:  # fallback opsional; hasil OCR tetap dipakai
-            logger.warning("fallback LLM gagal: %s", exc)
-            fb = None
-        if fb and fb.get("total"):
-            engine = "llm"
-            total = fb["total"]
-            merchant = fb.get("merchant") or merchant
-            txn_date = fb.get("date") or txn_date
-            confidence, confidence_source = "sedang", "llm"
-            evidence.append("Dibaca ulang dengan AI cadangan")
-            # Rincian OCR dicocokkan ulang ke total versi AI (tanpa tanda lama).
-            for it in items:
-                if it.flag == "cek":
-                    it.flag, it.note, it.suggestion = "ok", None, None
-            rec = reconcile(items, adjustments, total)
-
-    scan = ReceiptScan(
-        user_id=user_id,
-        engine=engine,
-        merchant=merchant,
-        merchant_key=merchant_key(merchant),
-        parsed_total=Decimal(total) if total else None,
-        parsed_date=txn_date,
-        confidence=confidence,
-        total_label=parsed.total_label,
-        ocr_lines=json.dumps(parsed.lines, ensure_ascii=False) if parsed.lines else None,
-    )
-    db.add(scan)
-    await db.commit()
-    await db.refresh(scan)
-
-    quota.used += 1
-    return {
-        "scan_id": str(scan.id),
-        "merchant": merchant,
-        "date": txn_date.isoformat() if txn_date else None,
-        "total": total,
-        "confidence": confidence,
-        "confidence_source": confidence_source,
-        "evidence": evidence,
-        "engine": engine,
-        "ocr_seconds": round(result.seconds, 2),
-        "quota": quota.as_dict(),
-        **items_payload(items, adjustments, rec),
-    }
+    done = await waiter(item.id, WAIT_FORM_S)
+    if done is None or done.status in (ST_DITERIMA, ST_DIPROSES):  # None: item hilang selagi ditunggu
+        raise ScanBusy("scan struk masih diproses")
+    if done.status == ST_GAGAL:
+        raise OcrFailed(done.error or "Bukti tidak bisa dibaca")
+    return scan_receipt_response(done, await item_detail(db, done, user))
 
 
 def items_payload(items: list[ReceiptItem], adjustments: list[ReceiptAdjustment],

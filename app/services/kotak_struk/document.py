@@ -89,3 +89,50 @@ class DokumenBayar:
 def _known(cls: type, d: dict) -> dict[str, Any]:
     names = {f.name for f in fields(cls)}
     return {k: v for k, v in d.items() if k in names}
+
+
+def scan_receipt_response(item, detail: dict) -> dict:
+    """Respons `POST /transactions/scan-receipt`: bentuk lama (klien web/bot yang ada tidak berubah) ditambah
+    `item_id`, `doc_type`, `counterparty` (tersamar), `paid_at`, `flags`, `suggestion`, `description_preview`.
+    `item` = item `ReceiptScan` yang sudah dibaca; `detail` = `view.item_detail` untuknya.
+
+    Struk belanja: `items`/`adjustments`/`reconciliation` dibangun ulang dari `lines` dan `document["receipt"]`
+    (yang disimpan worker) lewat `receipt_scan.items_payload`, jadi persis seperti scan lama. Bukti lain: kosong."""
+    from app.services.receipt_parser import ReceiptAdjustment, ReceiptItem, Reconciliation
+    from app.services.receipt_scan import items_payload
+
+    document = item.document or {}
+    doc = DokumenBayar.from_json(document) if document else None
+    store = doc is not None and item.doc_type == "struk_belanja"
+    receipt = (document.get("receipt") or {}) if store else {}
+    discounts = receipt.get("item_discounts") or []   # sejajar dengan baris `item`
+    items = [
+        ReceiptItem(name=line.name, amount=line.amount, qty=line.qty, unit_price=line.unit_price,
+                    discount=(discounts[i] if i < len(discounts) else 0) or 0,
+                    flag=line.flag, note=line.note, suggestion=line.suggestion)
+        for i, line in enumerate(x for x in doc.lines if x.kind == "item")
+    ] if store else []
+    adjustments = [ReceiptAdjustment(**a) for a in receipt.get("adjustments") or []]
+    rec = receipt.get("reconciliation")
+    reconciliation = Reconciliation(**{"total": doc.amounts.total, **rec}) if rec else None
+
+    return {
+        "scan_id": str(item.id),
+        "merchant": item.merchant,
+        "date": item.parsed_date.isoformat() if item.parsed_date else None,
+        "total": doc.amounts.total if doc else None,
+        "confidence": item.confidence,
+        "confidence_source": receipt.get("confidence_source"),
+        "evidence": list(doc.evidence) if doc else [],
+        "engine": item.engine,
+        "ocr_seconds": 0,
+        "quota": {"limit": None, "used": 0, "remaining": None},
+        **items_payload(items, adjustments, reconciliation),
+        "item_id": str(item.id),
+        "doc_type": item.doc_type,
+        "counterparty": document.get("counterparty"),
+        "paid_at": detail.get("paid_at"),
+        "flags": detail.get("flags"),
+        "suggestion": detail.get("suggestion"),
+        "description_preview": detail.get("description_preview"),
+    }

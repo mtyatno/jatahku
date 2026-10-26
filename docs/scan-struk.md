@@ -12,21 +12,35 @@ total struk.
 
 ## Alur
 
+Sejak **Kotak Struk** ("Bagikan ke Jatahku"), `POST /transactions/scan-receipt` tidak lagi membaca
+fotonya sendiri: ia memasukkannya ke Kotak Struk (`app/services/kotak_struk/intake.py`, sumber
+`web_form`), menunggu worker membacanya (maks `WAIT_FORM_S` = 45 dtk), lalu membalas dalam
+**bentuk respons lama** ditambah field baru. Rincian pintu masuk, worker, jenis dokumen, dan
+status item ada di [`docs/kotak-struk.md`](kotak-struk.md). Yang tetap di dokumen ini: cara
+struk belanja dibaca (parser, rincian barang) dan dicatat per barang.
+
 ```
-foto ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receipt
-        └─ bot: foto Telegram ────────────────┘
-             │
-             ├─ kuota: Basic 15 scan/bulan (RECEIPT_SCAN_LIMIT_BASIC), Pro tanpa batas
-             ├─ RapidOCR → baris teks (susun kiri→kanan, tahan struk melengkung)
-             ├─ parser: toko, tanggal, total + cek silang tunai−kembali / non-tunai
-             │    keyakinan: tinggi | sedang | rendah | gagal
-             ├─ rincian barang → rekonsiliasi dengan total (cocok | selisih | kosong)
-             ├─ (opsional) keyakinan rendah/gagal → fallback LLM ber-plafon
-             └─ simpan ReceiptScan → user cek rincian, pilih amplop (per barang
-                boleh beda), simpan → 1 transaksi per barang (client_ref per transaksi)
+foto/PDF ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receipt
+            └─ bot: foto Telegram ────────────────┘
+                 │
+                 ├─ intake Kotak Struk (item `diterima`) ─► worker: RapidOCR → baris teks
+                 │     (susun kiri→kanan, tahan struk melengkung) → pembaca struk belanja:
+                 ├─ parser: toko, tanggal, total + cek silang tunai−kembali / non-tunai
+                 │    keyakinan: tinggi | sedang | rendah | gagal
+                 ├─ rincian barang → rekonsiliasi dengan total (cocok | selisih | kosong)
+                 ├─ (opsional) keyakinan rendah/gagal → fallback LLM ber-plafon
+                 ├─ item `siap` ─► respons scan-receipt (+ item_id, doc_type, saran amplop, …)
+                 │     (belum selesai dalam 45 dtk → 503 "sedang ramai"; item tetap diproses)
+                 └─ user cek rincian, pilih amplop (per barang boleh beda), simpan →
+                    1 transaksi per barang (client_ref per transaksi, `receipt_item_id` = item
+                    Kotak Struk; item ditandai `tercatat`)
                                         │
               POST /scan-receipt/{id}/feedback (nilai akhir) ─► belajar
 ```
+
+Tidak ada kuota scan (dihapus untuk semua paket, tidak bergantung pada saklar `receipt_inbox`).
+`scan_id` pada respons = `item_id` Kotak Struk, jadi umpan balik lama (`/scan-receipt/{id}/feedback`)
+tetap jalan. File PDF diterima oleh endpoint (maks 10 MB); foto tetap maks 8 MB.
 
 **Di webapp: dari foto sampai hasil.** Empat pintu masuk, semuanya berakhir di form
 Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceiptScan`):
@@ -133,6 +147,13 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
 - Keterangan lebih dari 500 karakter (panjang kolom) dipotong di server; dulu gagal
   500 dan kirim ulang tidak pernah berhasil.
 - Tidak ada tabel atau paket baru.
+- **`receipt_item_id`** (opsional) di `POST /transactions` dan `/transactions/batch` mencatat
+  transaksi atas satu item Kotak Struk: dicek (`check_recordable`) tepat setelah cek `client_ref`;
+  bukti bayar diklaim secara atomik bersama commit transaksinya (`claim_for_recording`), jadi tidak
+  pernah tercatat dua kali walau disimpan bersamaan dari dua tempat (409 "Bukti ini sudah tercatat");
+  struk belanja boleh dicatat per barang (id semua transaksi ditambahkan ke item). Sesudah commit item
+  ditandai `tercatat` (`mark_recorded`, best-effort); `client_ref` yang dikirim ulang dengan
+  `receipt_item_id` yang sama menyembuhkan penandaan yang hilang.
 
 ## Belajar dari koreksi (tanpa LLM)
 
@@ -195,11 +216,14 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 ## Batas & perlindungan
 
 - Foto > 30 MP ditolak dari header sebelum didekode (cegah bom dekompresi).
-- 1 OCR berjalan bersamaan; maks 4 antre (selebihnya 503 "sedang ramai");
-  1 scan berjalan per user. Koneksi DB dilepas selama OCR.
-- Rate limit: web 30 scan/jam per user, bot 20 scan/jam per user.
-- Scan yang totalnya tidak terbaca sama sekali tidak memotong kuota.
-- Kuota bulanan dihitung di zona waktu user.
+- 1 OCR berjalan bersamaan (worker Kotak Struk di proses API). `scan-receipt` menunggu hasilnya
+  maks 45 dtk; lewat itu 503 "sedang ramai" dan itemnya tetap diproses (muncul di Kotak Struk).
+  Koneksi DB dilepas selama menunggu.
+- Rate limit: web 30 scan/jam per user, bot 20 scan/jam per user; ditambah batas intake Kotak Struk
+  (30 bukti/jam gabungan semua kanal, maks 20 item belum selesai per user).
+- **Kuota scan dihapus** (semua paket). `GET /transactions/scan-receipt/quota` tetap ada untuk klien
+  lama: `{limit: null, used, remaining: null}` (`used` = scan bulan ini yang totalnya terbaca, di
+  zona waktu user).
 
 Kalau paket belum terpasang, endpoint membalas 503 "Scan struk sedang tidak
 tersedia" dan bot menyarankan catat manual — fitur lain tidak terpengaruh.
@@ -208,7 +232,7 @@ tersedia" dan bot menyarankan catat manual — fitur lain tidak terpengaruh.
 
 | Env | Default | Arti |
 |---|---|---|
-| `RECEIPT_SCAN_LIMIT_BASIC` | 15 | Scan/bulan untuk user Basic |
+| `RECEIPT_SCAN_LIMIT_BASIC` | — | Dihapus sejak Kotak Struk; kuota scan tidak ada (setelan lama di `.env` diabaikan, tidak membuat startup gagal) |
 | `RECEIPT_LLM_ENABLED` | false | Nyalakan fallback LLM |
 | `RECEIPT_LLM_MONTHLY_BUDGET_IDR` | 100000 | Plafon biaya LLM per bulan (Rp) |
 | `RECEIPT_LLM_USER_MONTHLY_BASIC` / `_PRO` | 3 / 10 | Kuota fallback per user |
@@ -219,6 +243,9 @@ tersedia" dan bot menyarankan catat manual — fitur lain tidak terpengaruh.
 `python -m unittest app.tests.test_receipt_scan -v` — termasuk 4 struk Indomaret
 asli (fixture baris OCR di `app/tests/fixtures/receipt_ocr_lines.json`, nomor
 kartu disamarkan; keempatnya rincian `cocok`), kasus rincian (dua baris, voucher,
-pajak, salah baca digit, dobel), gerbang belajar, idempotensi, dan ringkasan bot.
+pajak, salah baca digit, dobel), gerbang belajar, idempotensi, ringkasan bot, dan
+`scan_receipt` lewat Kotak Struk (SQLite, hasil OCR palsu).
+`python -m unittest app.tests.test_kotak_transactions -v` — bentuk respons scan-receipt,
+kuota tanpa batas, dan `receipt_item_id` (klaim atomik, kirim ulang, batch).
 Frontend: `node --test src/lib/receiptScan.test.js src/lib/receiptSplit.test.js`
 dari folder `frontend` (catat per barang: Σ selalu = total, diuji acak).
