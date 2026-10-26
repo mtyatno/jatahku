@@ -8,7 +8,7 @@ from app.services.kotak_struk.document import Counterparty, DokumenBayar, Ref
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer, labels_for
+from app.services.kotak_struk.readers.profiles import detect_issuer
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -43,8 +43,8 @@ class QrisReader:
         amounts, total_confidence = pc.read_amounts(body, profile)
         status = pc.read_status(body, profile)
         paid_at, paid_confidence = pc.read_paid_at(body, profile)
-        name = pc.read_name(body, profile, "merchant")
-        city = pc.read_text(body, labels_for(profile, "city"), profile)
+        name = pc.read_name(body, profile, "merchant")     # nomor panjang (NMID, telepon) dibuang dari nama
+        city = pc.read_city(body, profile)
         nmid = pc.read_nmid(body, profile)
         refs = pc.read_refs(body, profile)
 
@@ -70,7 +70,7 @@ class QrisReader:
             paid_at=paid_at,
             counterparty=Counterparty(
                 name=name,
-                city=city.strip()[:60] if city else None,
+                city=city,
                 id_kind="nmid" if nmid else None,
                 id_masked=pc.mask_id(nmid) if nmid else None,
             ),

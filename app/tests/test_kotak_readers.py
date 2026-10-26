@@ -113,12 +113,38 @@ class RegistrationTests(unittest.TestCase):
 
 class ProfileTests(unittest.TestCase):
     def test_generic_labels_follow_the_plan(self):
-        self.assertEqual(GENERIC_LABELS["amount"], ["nominal", "jumlah", "jumlah pembayaran", "total bayar", "total pembayaran", "total", "amount"])
-        self.assertEqual(GENERIC_LABELS["fee"], ["biaya admin", "biaya", "admin", "fee"])
-        self.assertEqual(GENERIC_LABELS["merchant"], ["merchant", "nama merchant", "penerima", "tujuan", "ke"])
-        self.assertEqual(GENERIC_LABELS["bank"], ["bank tujuan", "bank"])
+        plan = {
+            "amount": ["nominal", "jumlah", "jumlah pembayaran", "total bayar", "total pembayaran", "total", "amount"],
+            "fee": ["biaya admin", "biaya", "admin", "fee"],
+            "merchant": ["merchant", "nama merchant", "penerima", "tujuan", "ke"],
+            "city": ["lokasi", "kota"],
+            "ref": ["no. referensi", "no referensi", "referensi", "no. ref", "ref", "rrn", "reference no", "id transaksi", "no. transaksi"],
+            "nmid": ["nmid"],
+            "account": ["rekening tujuan", "no. rekening", "rekening"],
+            "bank": ["bank tujuan", "bank"],
+            "note": ["berita", "keterangan", "catatan"],
+        }
+        for key, labels in plan.items():          # semua label rencana tetap ada, dalam urutan relatif yang sama
+            with self.subTest(key):
+                got = GENERIC_LABELS[key]
+                self.assertEqual([l for l in got if l in labels], labels)
         self.assertEqual([p.key for p in PROFILES], ["bca_mobile", "livin", "brimo", "bni", "bsi", "jago", "seabank", "blu", "gopay", "ovo", "dana", "shopeepay"])
         self.assertEqual(PROFILES[0].markers, ["bca", "m-bca", "mybca"])
+
+    def test_common_label_variants_are_known(self):
+        variants = {
+            "merchant": ["nama penerima", "nama tujuan"],
+            "account": ["nomor rekening", "no rekening", "nomor rekening tujuan", "rekening penerima"],
+            "ref": ["nomor referensi", "no ref", "nomor transaksi", "no transaksi", "transaction id"],
+            "bank": ["bank penerima"],
+            "note": ["berita transfer"],
+            "sender": ["pengirim", "nama pengirim"],
+            "discount": ["diskon", "potongan", "promo", "voucher", "discount"],
+        }
+        for key, labels in variants.items():
+            for label in labels:
+                with self.subTest(key=key, label=label):
+                    self.assertIn(label, GENERIC_LABELS[key])
 
     def test_labels_for_puts_profile_labels_first_without_duplicates(self):
         profile = AppProfile("x", "X", ["x"], {"amount": ["total transfer", "Nominal"], "bonus": ["lain"]})
@@ -201,7 +227,7 @@ class ClassificationDetailTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pc.looks_like_store_receipt(["TUNAI : 0"]))
         self.assertFalse(pc.looks_like_store_receipt(["Pembayaran Berhasil", "Kembali ke Beranda"]))          # tombol, bukan baris kembalian
         self.assertTrue(pc.looks_like_store_receipt(["ROTI 1 15.000", "SUSU 2 30.400", "AIR 4.000"]))
-        self.assertFalse(pc.looks_like_store_receipt(["ROTI 1 15.000", "SUSU 2 30.400", "TOTAL 45.400", "AIR 4.000"]))   # hanya yang sebelum Total
+        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "TOTAL 45.400", "AIR 4.000"]))   # hanya yang sebelum Total
         self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "AIR 4.000", "SUBTOTAL 49.400"]))   # SUBTOTAL bukan baris total
         # baris berlabel bukti bayar, tanggal, dan nomor panjang bukan barang
         self.assertFalse(pc.looks_like_store_receipt(["Transfer Berhasil", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Biaya Layanan Rp1.000",
@@ -379,6 +405,9 @@ class StatusTests(unittest.IsolatedAsyncioTestCase):
         footer = "Jika transaksi gagal atau pending silakan hubungi layanan nasabah kami"
         self.assertEqual(await self.status("Transfer Berhasil", "Penerima ANDI", "Nominal Rp1.000", footer), "berhasil")
         self.assertEqual(await self.status("Transfer", "Penerima ANDI", "Nominal Rp1.000", footer), "tidak_diketahui")   # tanpa judul: kalimat panjang diabaikan
+        long_plain = "Transaksi anda tercatat gagal dan dana dikembalikan ke rekening sumber otomatis"   # panjang, tanpa kata bersyarat
+        self.assertEqual(await self.status("Transfer", "Penerima ANDI", "Nominal Rp1.000", long_plain), "tidak_diketahui")
+        self.assertEqual(await self.status("Transfer Berhasil", "Penerima ANDI", "Nominal Rp1.000", long_plain), "berhasil")
 
     async def test_status_label_and_short_lines_anywhere(self):
         self.assertEqual(await self.status("Transfer", "Penerima ANDI", "Nominal Rp1.000", "Status", "Gagal"), "gagal")
@@ -629,3 +658,310 @@ class CommonChecksTests(unittest.IsolatedAsyncioTestCase):
         doc = parsed_doc(doc_type="qris", flow="keluar", counterparty=Counterparty(name="Rina Wulandari"))
         checks_module.apply_flow(doc, CTX)
         self.assertEqual(doc.doc.flow, "keluar")
+
+
+# ── Perbaikan review A5 ─────────────────────────────────────────────────────
+
+class AccountNumbersNeverLeakTests(unittest.IsolatedAsyncioTestCase):
+    """Temuan 1: nomor rekening utuh tidak boleh masuk DokumenBayar maupun kunci pihak (tanpa HMAC)."""
+
+    async def leaks(self, lines, *numbers):
+        res = await read(lines)
+        blob = json.dumps(res.parsed.doc.to_json(), ensure_ascii=False).replace(" ", "")
+        for n in numbers:
+            self.assertNotIn(n.replace(" ", ""), blob)
+        return res
+
+    async def test_number_in_the_name_line(self):
+        res = await self.leaks(["Transfer Berhasil", "Penerima", "BUDI SANTOSO - 0123456789", "Bank Tujuan BCA", "Nominal Rp150.000"], "0123456789")
+        self.assertEqual(res.parsed.doc.counterparty.name, "BUDI SANTOSO")
+        self.assertEqual((res.parsed.secrets.account_number, res.parsed.doc.counterparty.id_kind, res.parsed.doc.counterparty.id_masked),
+                         ("0123456789", "rekening", "…6789"))        # tanpa label rekening: dipindah ke Secrets
+
+    async def test_bank_and_number_on_the_name_line(self):
+        res = await self.leaks(["Transfer Berhasil", "Tujuan", "BCA 0123456789 BUDI SANTOSO", "Nominal Rp150.000", "Berita arisan"], "0123456789")
+        self.assertEqual(res.parsed.secrets.account_number, "0123456789")
+        self.assertNotRegex(res.parsed.doc.counterparty.name, r"\d{4}")
+
+    async def test_number_glued_to_the_bank(self):
+        from app.services.kotak_struk.merchants import counterparty_key
+        for line in ("Bank Tujuan BCA-0123456789", "Bank Tujuan BCA - 0123456789", "Bank Tujuan BCA 0123456789", "Bank Tujuan BCA0123456789",
+                     "Bank Tujuan Bank BCA – 0123456789"):
+            with self.subTest(line):
+                res = await self.leaks(["Transfer Berhasil", "Penerima BUDI", line, "Nominal Rp150.000"], "0123456789")
+                s = res.parsed.secrets
+                self.assertEqual((s.bank_code, res.parsed.doc.counterparty.bank, s.account_number), ("BCA", "BCA", "0123456789"))
+                key = counterparty_key(res.parsed.doc.counterparty, nmid=s.nmid, account_number=s.account_number, bank_code=s.bank_code)
+                self.assertTrue(key.startswith("rek:"), key)
+                self.assertNotIn("0123456789", key)
+
+    async def test_digits_in_parentheses_are_not_a_bank(self):
+        res = await self.leaks(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BRI (01230100)", "Nominal Rp150.000"], "01230100")
+        self.assertEqual((res.parsed.secrets.bank_code, res.parsed.doc.counterparty.bank), ("BRI", "BRI"))
+        res = await self.leaks(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan (01230100)", "Nominal Rp150.000"], "01230100")
+        self.assertEqual((res.parsed.secrets.bank_code, res.parsed.doc.counterparty.bank), (None, None))
+        res = await self.leaks(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan 0123456789", "Nominal Rp150.000"], "0123456789")
+        self.assertEqual(res.parsed.secrets.bank_code, None)
+        self.assertEqual(pc.normalize_bank("Bank Rakyat Indonesia (BRI)"), "BRI")
+        self.assertEqual(pc.normalize_bank("(12345)"), None)
+        for raw, expect in [("BCA-0123456789", "BCA"), ("BCA – 0123456789", "BCA"), ("BCA 12345", "BCA"), ("Bank Mandiri/1234567890", "MANDIRI"),
+                            ("BRI (01230100)", "BRI"), ("01230100", None), ("12", None), ("", None), (None, None), ("(BRI)", "BRI")]:
+            with self.subTest(raw):
+                self.assertEqual(pc.normalize_bank(raw), expect)
+
+    async def test_labelled_account_wins_over_a_number_found_elsewhere(self):
+        res = await self.leaks(["Transfer Berhasil", "Penerima BUDI SANTOSO 0999888777", "Bank Tujuan BCA", "Rekening Tujuan 0123 0100 1234 567", "Nominal Rp1.000"],
+                               "0999888777", "012301001234567")
+        self.assertEqual(res.parsed.secrets.account_number, "0123 0100 1234 567")
+        self.assertEqual(res.parsed.doc.counterparty.name, "BUDI SANTOSO")
+
+    async def test_grouped_and_glued_numbers_in_names(self):
+        for value, name in [("BUDI SANTOSO 0123 0100 1234 567", "BUDI SANTOSO"), ("BUDI 0123-0100-1234", "BUDI"), ("BUDI0123456789", "BUDI"),
+                            ("0123456789 BUDI SANTOSO", "BUDI SANTOSO")]:
+            with self.subTest(value):
+                res = await self.leaks(["Transfer Berhasil", f"Penerima {value}", "Bank Tujuan BCA", "Nominal Rp1.000"], "0123456789", "012301001234567", "012301001234")
+                self.assertEqual(res.parsed.doc.counterparty.name, name)
+
+    async def test_short_numbers_stay_in_names(self):
+        res = await read(["Transfer Berhasil", "Penerima KIOS 24 JAM", "Bank Tujuan BCA", "Nominal Rp1.000"])
+        self.assertEqual(res.parsed.doc.counterparty.name, "KIOS 24 JAM")
+        res = await read(["Pembayaran Berhasil", "QRIS", "Merchant TOKO 17 AGUSTUS", "Nominal Rp1.000"])
+        self.assertEqual(res.parsed.doc.counterparty.name, "TOKO 17 AGUSTUS")
+        res = await read(["Transfer Berhasil", "Penerima BUDI 12345", "Bank Tujuan BCA", "Nominal Rp1.000"])        # 5 digit: bukan rekening
+        self.assertEqual((res.parsed.doc.counterparty.name, res.parsed.secrets.account_number), ("BUDI 12345", None))
+
+    async def test_a_name_made_only_of_digits_is_no_name(self):
+        res = await self.leaks(["Transfer Berhasil", "Ke 0123456789", "Bank Tujuan BCA", "Nominal Rp1.000"], "0123456789")
+        self.assertEqual((res.parsed.doc.counterparty.name, res.parsed.secrets.account_number), (None, "0123456789"))
+        self.assertNotIn("counterparty", res.parsed.doc.confidence)
+
+    async def test_nmid_and_numbers_in_qris_merchant_or_city(self):
+        res = await self.leaks(["Pembayaran Berhasil", "QRIS", "Merchant", "WARUNG X ID1024358806544", "Lokasi BANDUNG 40123 0812345678", "Nominal Rp1.000"],
+                               "ID1024358806544", "1024358806544", "0812345678")
+        self.assertEqual((res.parsed.doc.counterparty.name, res.parsed.doc.counterparty.city), ("WARUNG X", "BANDUNG"))   # kode pos + telepon berurutan = satu deret
+        res = await read(["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Lokasi BANDUNG 40123", "Nominal Rp1.000"])
+        self.assertEqual(res.parsed.doc.counterparty.city, "BANDUNG 40123")
+
+    async def test_secret_numbers_quoted_in_the_note_are_removed(self):
+        res = await self.leaks(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Rekening Tujuan 0123 0100 1234 567", "No. Ref 2026102612345678",
+                                "Nominal Rp1.000", "Berita ke rek 012301001234567 ref 2026102612345678 arisan"], "012301001234567", "2026102612345678")
+        self.assertEqual(res.parsed.doc.note, "ke rek ref arisan")
+        res = await read(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp1.000", "Berita listrik 123456789012"])
+        self.assertEqual(res.parsed.doc.note, "listrik 123456789012")          # angka lain milik user: tidak diubah
+        res = await read(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Rekening Tujuan 0123456789", "Nominal Rp1.000", "Berita 0123456789"])
+        self.assertIsNone(res.parsed.doc.note)
+
+    async def test_no_corpus_style_layout_leaks_any_secret(self):
+        layouts = [
+            ["BRImo", "Transaksi Berhasil", "Nama Penerima", "BUDI SANTOSO", "Bank Tujuan", "Bank BCA", "Nomor Rekening", "0123456789", "Nominal Rp150.000", "Nomor Referensi", "123456789012"],
+            ["Transfer Berhasil", "Rp 150.000", "Penerima", "BUDI SANTOSO", "Bank Mandiri - 1234567890", "Sumber Dana", "RINA WULANDARI", "No. Referensi 123456789012"],
+            ["m-Transfer", "BERHASIL", "26/10/2026 09:30:12", "Ke 0123456789", "BUDI SANTOSO", "Rp 150.000,00", "Berita: arisan", "Ref 1234567890"],
+        ]
+        for lines in layouts:
+            with self.subTest(lines[0]):
+                res = await read(lines)
+                s = res.parsed.secrets
+                raw = [*s.ref_values, (s.account_number or "").replace(" ", "")]
+                await self.leaks(lines, *[r for r in raw if r])
+
+
+class StatusFooterTests(unittest.IsolatedAsyncioTestCase):
+    """Temuan 2: kalimat peringatan di kaki bukti tidak boleh membuat transfer berhasil jadi gagal."""
+
+    BASE = ["BRImo", "26 Okt 2026 09:30", "Rp150.000", "Bukti Transfer", "Transaksi Berhasil", "Penerima BUDI", "Bank Tujuan BCA"]
+
+    async def test_footer_warnings_do_not_flip_a_successful_transfer(self):
+        for footer in ("Jika gagal hubungi 14017", "Transaksi gagal? Hubungi kami", "Bila transaksi gagal, saldo kembali", "Hubungi 14017 jika gagal",
+                       "Gagal? Hubungi CS", "Failed? Contact us", "Silakan hubungi kami bila gagal", "Jika pending cek lagi"):
+            with self.subTest(footer):
+                res = await read([*self.BASE, footer])
+                self.assertEqual(res.parsed.doc.status, "berhasil")
+                self.assertNotIn("status_gagal", {c.code for c in res.checks})
+                self.assertNotIn("status_pending", {c.code for c in res.checks})
+
+    async def test_warning_sentences_before_the_status_line_are_skipped_too(self):
+        banner = ["Jika gagal hubungi 14017", "BRImo", "26 Okt 2026 09:30", "Transaksi Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"]    # judul
+        self.assertEqual((await read(banner)).parsed.doc.status, "berhasil")
+        body = ["BRImo", "26 Okt 2026 09:30", "Rp150.000", "Bukti Transfer", "Jika gagal hubungi 14017", "Transaksi Berhasil", "Penerima BUDI", "Bank Tujuan BCA"]  # badan
+        self.assertEqual((await read(body)).parsed.doc.status, "berhasil")
+        only_footer = ["BRImo", "26 Okt 2026 09:30", "Rp150.000", "Bukti Transfer", "Penerima BUDI", "Bank Tujuan BCA", "Jika gagal hubungi 14017"]
+        self.assertEqual((await read(only_footer)).parsed.doc.status, "tidak_diketahui")                    # kalimat bersyarat bukan status
+
+    async def test_body_tier_takes_the_first_status_line_in_document_order(self):
+        self.assertEqual((await read([*self.BASE, "Gagal"])).parsed.doc.status, "berhasil")          # kata tunggal sesudah status: urutan dokumen
+        self.assertEqual((await read([*self.BASE[:4], "Transaksi Gagal", "Penerima BUDI", "Bank Tujuan BCA", "Berhasil"])).parsed.doc.status, "gagal")
+        self.assertEqual((await read([*self.BASE[:4], "Pending", "Penerima BUDI", "Bank Tujuan BCA", "Gagal"])).parsed.doc.status, "pending")
+
+    async def test_header_and_label_tiers_still_prefer_failure(self):
+        self.assertEqual((await read(["Transfer Gagal", "Transaksi sebelumnya berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp1.000"])).parsed.doc.status, "gagal")
+        self.assertEqual((await read(["Transfer", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp1.000", "Status Berhasil atau gagal"])).parsed.doc.status, "gagal")
+
+    async def test_header_tier_keeps_failure_first(self):
+        res = await read(["Transfer Berhasil", "26 Okt 2026", "Penerima BUDI", "Gagal", "Bank Tujuan BCA", "Nominal Rp1.000"])         # 4 baris pertama memuat keduanya
+        self.assertEqual(res.parsed.doc.status, "gagal")
+
+    async def test_a_failure_without_footer_noise_is_still_blocked(self):
+        res = await read([*self.BASE[:4], "Transfer Gagal", "Penerima BUDI", "Bank Tujuan BCA"])
+        self.assertEqual((res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("gagal", {"status_gagal": "block"}))
+        res = await read(["BRImo", "26 Okt 2026 09:30", "Rp150.000", "Bukti Transfer", "Gagal", "Penerima BUDI", "Bank Tujuan BCA", "Jika saldo terpotong hubungi 14017"])
+        self.assertEqual(res.parsed.doc.status, "gagal")
+
+
+class StoreReceiptWithFewItemsTests(unittest.IsolatedAsyncioTestCase):
+    """Temuan 3: struk toko berisi <= 2 barang yang dibayar QRIS tetap struk belanja, rincian barang tidak hilang."""
+
+    CASES = {
+        "QRIS + kata status": ["KOPI KENANGAN", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "Total 40.000", "QRIS 40.000", "Pembayaran Berhasil"],
+        "QRIS + Terminal ID": ["WARUNG KOPI", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "Total 40.000", "QRIS 40.000", "Terminal ID 0123"],
+        "QRIS + NMID, satu barang": ["CAFE X", "LATTE 1 30.000", "TOTAL 30.000", "QRIS 30.000", "NMID ID1024358806544"],
+        "QRIS + NMID + Terminal ID, tanpa kuantitas": ["TOKO MAJU", "ROTI 15.000", "SUSU 30.400", "TOTAL 45.400", "Pembayaran QRIS 45.400", "NMID ID1024358806544", "Terminal ID A01"],
+        "Non Tunai (QRIS) sebaris": ["ALFAMART", "ROTI 15.000", "SUSU 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400", "Berhasil"],
+        "dua baris kuantitas tanpa baris total": ["KEDAI X", "NASI GORENG 2 50.000", "ES TEH 2 10.000", "QRIS", "Merchant PAN 9360001234567", "NMID ID1024358806544"],
+        "transfer sebagai cara bayar": ["TOKO ABC", "BERAS 1 60.000", "MINYAK 1 20.000", "TOTAL 80.000", "Transfer 80.000", "Berita -"],
+        "debit": ["INDOMARET", "ROTI TAWAR 1 15.000", "SUSU UHT 2 30.400", "TOTAL 45.400", "DEBIT BCA 45.400"],
+    }
+
+    async def test_stays_struk_belanja_with_items(self):
+        for name, lines in self.CASES.items():
+            with self.subTest(name):
+                self.assertEqual((QrisReader().detect(textdoc(lines)), TransferReader().detect(textdoc(lines))), (0.0, 0.0))
+                res = await read(lines)
+                self.assertEqual(res.reader, "struk_belanja")
+                self.assertGreaterEqual(len([l for l in res.parsed.doc.lines if l.kind == "item"]), 1 if "TOTAL 30.000" in lines else 2)
+
+    def test_store_receipt_guard_rules(self):
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "TOTAL 15.000", "QRIS 15.000"]))                        # 1 barang + baris bayar sesudah total
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "TOTAL 15.000", "Pembayaran QRIS Rp 15.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "ROTI 1 15.000"]))                               # 2 baris NAMA QTY HARGA
+        self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 1 x 25.000", "ROTI 2 x 15.000"]))
+        self.assertFalse(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "Pembayaran Berhasil"]))                        # satu baris kuantitas saja
+        self.assertFalse(pc.looks_like_store_receipt(["TOTAL 15.000", "QRIS 15.000"]))                                      # tanpa barang
+        self.assertFalse(pc.looks_like_store_receipt(["Pembayaran Berhasil", "QRIS", "Total Pembayaran Rp25.000", "QRIS Rp25.000"]))   # bukti: tanpa barang
+        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "QRIS 15.000", "TOTAL 15.000"]))                       # baris bayar harus sesudah total
+
+    async def test_qris_proofs_with_totals_and_method_lines_are_not_store_receipts(self):
+        proofs = {
+            "metode sesudah total": ["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", "Biaya Layanan Rp500", "Total Rp25.500", "QRIS Rp25.500", "26/10/2026 08:12"],
+            "satu penanda + terminal": ["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", "Terminal ID 0123", "26/10/2026 08:12"],
+            "korpus": sample("sint-qris-1"),
+        }
+        for name, lines in proofs.items():
+            with self.subTest(name):
+                self.assertEqual((await read(lines)).reader, "qris.umum")
+
+    async def test_note_with_cash_word_and_digit_does_not_make_a_transfer_a_store_receipt(self):
+        lines = ["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Total Rp152.500", "Berita titip tunai 2 bulan"]
+        self.assertFalse(pc.looks_like_store_receipt(lines))
+        self.assertEqual((await read(lines)).reader, "transfer.umum")
+        self.assertFalse(pc.looks_like_store_receipt(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Berita bayar tunai 2"]))   # berita berakhir angka
+        self.assertFalse(pc.looks_like_store_receipt(["Pembayaran Berhasil", "QRIS", "Merchant KIOS", "Nominal Rp1.000", "Keterangan kembali 3"]))
+        self.assertTrue(pc.looks_like_store_receipt(["TUNAI 50.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["KEMBALI : 0"]))
+
+
+class AmountsFalseWarningTests(unittest.IsolatedAsyncioTestCase):
+    """Temuan 4: bukti sah tidak boleh diberi peringatan `selisih_nominal` palsu."""
+
+    async def amounts(self, lines):
+        res = await read(lines)
+        a = res.parsed.doc.amounts
+        return (a.subtotal, a.fee, a.discount, a.total), res
+
+    async def test_two_fee_lines_are_summed(self):
+        got, res = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Biaya Layanan Rp1.000", "Total Rp153.500", "26/10/2026 09:30"])
+        self.assertEqual(got, (150000, 3500, 0, 153500))
+        self.assertEqual((res.checks, res.parsed.doc.confidence["total"]), ([], "tinggi"))
+
+    async def test_one_line_is_not_counted_twice_by_overlapping_labels(self):
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Biaya Admin Rp2.500"])       # "biaya admin" dan "biaya" cocok baris yang sama
+        self.assertEqual(got, (150000, 2500, 0, 152500))
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Admin Rp2.500", "Fee Rp1.000"])
+        self.assertEqual(got, (150000, 3500, 0, 153500))
+
+    async def test_fee_label_without_value_does_not_borrow_the_next_label(self):
+        got, res = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Biaya Admin", "Total Rp150.000"])
+        self.assertEqual(got, (150000, 0, 0, 150000))
+        self.assertEqual(res.checks, [])
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Biaya Admin", "Rp2.500", "Total Rp152.500"])    # label di atas nilai
+        self.assertEqual(got, (150000, 2500, 0, 152500))
+
+    async def test_discount_lines_are_read(self):
+        for line in ("Diskon -Rp5.000", "Diskon Rp5.000", "Potongan Harga: -Rp 5.000", "Promo (Rp5.000)", "Voucher - 5.000", "Discount -IDR 5,000.00"):
+            with self.subTest(line):
+                got, res = await self.amounts(["Pembayaran Berhasil", "QRIS", "NMID ID1024358806544", "Merchant WARUNG X", "Nominal Rp25.000", line, "Total Rp20.000", "26/10/2026 08:12"])
+                self.assertEqual(got, (25000, 0, 5000, 20000))
+                self.assertEqual((res.checks, res.parsed.doc.confidence["total"]), ([], "tinggi"))
+
+    async def test_total_is_computed_with_fee_and_discount_when_missing(self):
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Diskon Rp1.000"])
+        self.assertEqual(got, (150000, 2500, 1000, 151500))
+
+    async def test_a_discount_that_is_not_in_the_total_still_warns(self):
+        _, res = await self.amounts(["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", "Diskon Rp5.000", "Total Rp25.000"])
+        self.assertEqual({c.code for c in res.checks}, {"selisih_nominal"})
+
+    async def test_tax_line_is_read(self):
+        got, res = await self.amounts(["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp100.000", "PPN Rp11.000", "Total Rp111.000"])
+        self.assertEqual((got[3], res.parsed.doc.amounts.tax, res.checks), (111000, 11000, []))
+
+    async def test_total_biaya_is_not_the_total(self):
+        got, res = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Total Biaya Rp2.500", "Total Rp152.500", "26/10/2026 09:30"])
+        self.assertEqual((got, res.checks), ((150000, 2500, 0, 152500), []))
+        got, res = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Total Biaya Rp2.500"])
+        self.assertEqual((got, res.checks), ((150000, 2500, 0, 152500), []))
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Biaya Admin Rp2.000", "Biaya Layanan Rp500", "Total Biaya Rp2.500", "Total Rp152.500"])
+        self.assertEqual(got, (150000, 2500, 0, 152500))                  # jumlah baris biaya, bukan dihitung dua kali
+        got, _ = await self.amounts(["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Biaya Admin Rp2.500", "Total Biaya Rp2.500"])
+        self.assertEqual(got[3], None)                                    # hanya biaya: tidak ada nominal sama sekali
+
+    async def test_total_labels_still_work(self):
+        for line in ("Total Bayar Rp152.500", "Total Pembayaran: Rp152.500", "Total Rp152.500", "Total"):
+            with self.subTest(line):
+                lines = ["Transfer Berhasil", "Penerima BUDI", "Nominal Rp150.000", "Biaya Admin Rp2.500", line] + (["Rp152.500"] if line == "Total" else [])
+                got, _ = await self.amounts(lines)
+                self.assertEqual(got, (150000, 2500, 0, 152500))
+
+
+class BrimoStyleLabelTests(unittest.IsolatedAsyncioTestCase):
+    """Temuan 5: label umum "Nama Penerima", "Nomor Rekening", "Nomor Referensi" dan varian dekatnya."""
+
+    BRIMO = ["BRImo", "Transaksi Berhasil", "26 Oktober 2026, 09:30:12 WIB", "Nomor Referensi", "123456789012", "Nama Penerima", "BUDI SANTOSO", "Bank Tujuan", "Bank BCA",
+             "Nomor Rekening", "0123456789", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Total Rp152.500"]
+
+    async def test_brimo_layout_gets_name_account_and_reference(self):
+        res = await read(self.BRIMO)
+        d, s = res.parsed.doc, res.parsed.secrets
+        self.assertEqual((res.reader, d.issuer, d.counterparty.name, d.counterparty.bank), ("transfer.umum", "brimo", "BUDI SANTOSO", "BCA"))
+        self.assertEqual((s.account_number, d.counterparty.id_kind, d.counterparty.id_masked), ("0123456789", "rekening", "…6789"))
+        self.assertEqual((s.ref_values, [r.masked for r in d.refs]), (["123456789012"], ["…9012"]))
+        self.assertEqual((d.amounts.total, d.status, res.checks), (152500, "berhasil", []))
+        blob = json.dumps(d.to_json()).replace(" ", "")
+        self.assertNotIn("0123456789", blob)
+        self.assertNotIn("123456789012", blob)
+
+    async def test_label_variants(self):
+        base = ["Transfer Berhasil", "BI-FAST", "Nominal Rp1.000"]       # dua penanda transfer: dibaca transfer.umum
+        cases = [
+            (["Nama Penerima BUDI SANTOSO"], lambda r: r.parsed.doc.counterparty.name, "BUDI SANTOSO"),
+            (["Nama Tujuan BUDI SANTOSO"], lambda r: r.parsed.doc.counterparty.name, "BUDI SANTOSO"),
+            (["Nomor Rekening 0123456789"], lambda r: r.parsed.secrets.account_number, "0123456789"),
+            (["No Rekening 0123456789"], lambda r: r.parsed.secrets.account_number, "0123456789"),
+            (["Nomor Rekening Tujuan 0123456789"], lambda r: r.parsed.secrets.account_number, "0123456789"),
+            (["Rekening Penerima 0123456789"], lambda r: r.parsed.secrets.account_number, "0123456789"),
+            (["Nomor Referensi 123456789012"], lambda r: r.parsed.secrets.ref_values, ["123456789012"]),
+            (["No Ref 123456789012"], lambda r: r.parsed.secrets.ref_values, ["123456789012"]),
+            (["Nomor Transaksi A1B2C3D4E5"], lambda r: r.parsed.secrets.ref_values, ["A1B2C3D4E5"]),
+            (["Transaction ID TRX20261026"], lambda r: r.parsed.secrets.ref_values, ["TRX20261026"]),
+            (["Bank Penerima Bank Mandiri"], lambda r: r.parsed.secrets.bank_code, "MANDIRI"),
+            (["Berita Transfer bayar arisan"], lambda r: r.parsed.doc.note, "bayar arisan"),
+        ]
+        for extra, get, expect in cases:
+            with self.subTest(extra[0]):
+                self.assertEqual(get(await read(base + extra)), expect)
+
+    async def test_incoming_with_name_label(self):
+        res = await read(["Dana Masuk", "Nama Pengirim RINA", "Nominal Rp500.000"])
+        self.assertEqual((res.parsed.doc.flow, res.parsed.doc.counterparty.name), ("masuk", "RINA"))
+
+    async def test_name_labels_do_not_hide_destination_for_issuer_detection(self):
+        self.assertIsNone(detect_issuer(["Nama Penerima BCA SAKTI", "Bank Penerima BCA", "Nama Tujuan OVO CELL"]))

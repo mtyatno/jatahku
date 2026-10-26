@@ -17,20 +17,24 @@ class AppProfile:
     labels: dict[str, list[str]] = field(default_factory=dict)   # sinonim label khusus aplikasi, per field
 
 
-# Sinonim label per field. `sender` (pengirim uang masuk) dan `status` tidak ada di
-# daftar awal rencana tapi dibutuhkan pembaca transfer; field lain persis daftar rencana.
+# Sinonim label per field; urutan = prioritas. Daftar rencana tetap ada (dalam urutan yang sama);
+# varian dekat ("Nama Penerima", "Nomor Rekening", "Nomor Referensi", ...) ditambahkan di antaranya.
+# Kunci di luar rencana: `sender`, `status` (pembaca transfer), `discount`, `tax` (cek silang nominal).
 GENERIC_LABELS: dict[str, list[str]] = {
     "amount": ["nominal", "jumlah", "jumlah pembayaran", "total bayar", "total pembayaran", "total", "amount"],
     "fee": ["biaya admin", "biaya", "admin", "fee"],
-    "merchant": ["merchant", "nama merchant", "penerima", "tujuan", "ke"],
+    "discount": ["diskon", "potongan", "promo", "voucher", "discount"],
+    "tax": ["pajak", "ppn", "pb1", "tax"],
+    "merchant": ["merchant", "nama merchant", "nama penerima", "penerima", "nama tujuan", "tujuan", "ke"],
     "city": ["lokasi", "kota"],
-    "ref": ["no. referensi", "no referensi", "referensi", "no. ref", "ref", "rrn", "reference no",
-            "id transaksi", "no. transaksi"],
+    "ref": ["no. referensi", "no referensi", "nomor referensi", "referensi", "no. ref", "no ref", "ref", "rrn", "reference no",
+            "id transaksi", "no. transaksi", "no transaksi", "nomor transaksi", "transaction id"],
     "nmid": ["nmid"],
-    "account": ["rekening tujuan", "no. rekening", "rekening"],
-    "bank": ["bank tujuan", "bank"],
-    "note": ["berita", "keterangan", "catatan"],
-    "sender": ["pengirim", "dari"],
+    "account": ["rekening tujuan", "nomor rekening tujuan", "no. rekening tujuan", "no rekening tujuan", "rekening penerima",
+                "no. rekening", "no rekening", "nomor rekening", "rekening"],
+    "bank": ["bank tujuan", "bank penerima", "bank"],
+    "note": ["berita transfer", "berita", "keterangan", "catatan"],
+    "sender": ["nama pengirim", "pengirim", "dari"],
     "status": ["status transaksi", "status"],
 }
 
@@ -54,8 +58,8 @@ _COMMON_PHRASES = re.compile(
     r"(?<!\w)(dana\s+(masuk|keluar|tersedia|anda|diterima)|(terima|menerima|sumber)\s+dana)(?!\w)", re.IGNORECASE)
 # Baris tentang pihak lawan (bank/rekening tujuan, penerima, pengirim): bank atau nama di sana
 # bukan aplikasi yang dipakai user ("Bank Tujuan BCA" tidak berarti bukti ini dari BCA mobile).
-_COUNTERPARTY_LABELS = ["bank tujuan", "rekening tujuan", "nama merchant", "merchant", "penerima", "tujuan",
-                        "ke", "pengirim", "dari"]
+_COUNTERPARTY_LABELS = ["bank tujuan", "bank penerima", "rekening tujuan", "rekening penerima", "nama merchant", "merchant",
+                        "nama penerima", "penerima", "nama tujuan", "tujuan", "ke", "nama pengirim", "pengirim", "dari"]
 _COUNTERPARTY_LINE = re.compile(
     r"^\s*(?:" + "|".join(r"\s+".join(re.escape(part) for part in label.split()) for label in _COUNTERPARTY_LABELS)
     + r")(?=$|[\s:：])(.*)$", re.IGNORECASE)

@@ -11,7 +11,7 @@ from functools import lru_cache
 
 from app.services.kotak_struk.document import Amounts
 from app.services.kotak_struk.merchants import mask_digits
-from app.services.kotak_struk.readers.labels import find_amount, find_value, parse_datetime_id
+from app.services.kotak_struk.readers.labels import find_value, parse_datetime_id
 from app.services.kotak_struk.readers.profiles import GENERIC_LABELS, AppProfile, labels_for
 from app.services.receipt_parser import amounts_in
 
@@ -73,12 +73,79 @@ def read_text(lines: list[str], labels: list[str], profile: AppProfile | None = 
     return None
 
 
-def read_name(lines: list[str], profile: AppProfile | None, field: str) -> str | None:
+LONG_DIGITS = 6           # deret angka sepanjang ini bukan bagian dari nama, kota, atau bank
+ACCOUNT_MIN_DIGITS = 8    # selaras dengan merchants.MIN_ACCOUNT_DIGITS: rekening "terbaca utuh"
+
+_NUMBER_RUN = re.compile(r"\d(?:[\d \-.]*\d)?")
+_ID_PREFIX = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{1,3}\x00")     # "ID1024358806544", "BCA0123456789": awalan ikut hilang
+
+
+def split_long_numbers(value: str, *, drop_prefix: bool = True) -> tuple[str, list[str]]:
+    """(teks tanpa deret angka panjang, deret angkanya). Deret = angka dengan spasi/strip/titik di antaranya
+    ("0123 0100 1234 567"); yang punya >= LONG_DIGITS angka dibuang, termasuk awalan huruf <= 3 yang menempel
+    ("ID1024358806544") kecuali `drop_prefix=False` (bank: "BCA0123456789" tetap "BCA"). Nomor rekening, NMID,
+    dan nomor telepon tidak boleh bertahan di nama, kota, atau bank."""
+    found: list[str] = []
+
+    def take(m: re.Match) -> str:
+        if sum(c.isdigit() for c in m.group(0)) < LONG_DIGITS:
+            return m.group(0)
+        found.append(" ".join(m.group(0).split()))
+        return "\x00"
+
+    text = _NUMBER_RUN.sub(take, value)
+    text = _ID_PREFIX.sub(" ", text) if drop_prefix else text
+    return " ".join(text.replace("\x00", " ").split()).strip(" :-–,."), found
+
+
+def account_from(numbers: list[str]) -> str | None:
+    """Nomor rekening dari deret angka yang ditemukan di nilai lain: yang pertama dengan >= ACCOUNT_MIN_DIGITS angka."""
+    return next((n for n in numbers if sum(c.isdigit() for c in n) >= ACCOUNT_MIN_DIGITS), None)
+
+
+def read_name(lines: list[str], profile: AppProfile | None, field: str, *, numbers: list[str] | None = None) -> str | None:
+    """Nama pihak (maksimal NAME_MAX). Deret angka panjang dibuang dari nilainya dan, bila `numbers` diberikan,
+    ditambahkan ke sana (bahan rekening cadangan). Tanpa huruf: None."""
     value = read_text(lines, labels_for(profile, field), profile)
     if not value:
         return None
-    value = value.strip(" :-–,")
+    value, found = split_long_numbers(value.strip(" :-–,"))
+    if numbers is not None:
+        numbers.extend(found)
     return value[:NAME_MAX] if re.search(r"[A-Za-z]", value) else None
+
+
+def read_city(lines: list[str], profile: AppProfile | None) -> str | None:
+    value = read_text(lines, labels_for(profile, "city"), profile)
+    value = split_long_numbers(value)[0] if value else ""
+    return value[:60] if re.search(r"[A-Za-z]", value) else None
+
+
+def read_bank(lines: list[str], profile: AppProfile | None, *, numbers: list[str] | None = None) -> str | None:
+    """Kode bank ternormalisasi dari label bank; nomor yang menempel di nilainya dibuang (dan masuk `numbers`)."""
+    value = read_text(lines, labels_for(profile, "bank"), profile)
+    if not value:
+        return None
+    value, found = split_long_numbers(value, drop_prefix=False)
+    if numbers is not None:
+        numbers.extend(found)
+    return normalize_bank(value)
+
+
+def scrub_note(note: str | None, secret_values: list[str]) -> str | None:
+    """Catatan tanpa deret angka panjang yang sama dengan rahasia bukti (rekening, referensi, NMID): user bisa
+    saja menulis "ke rek 0123..." di berita. Angka panjang lain milik user dibiarkan."""
+    if not note:
+        return None
+    secret_digits = {d for d in (re.sub(r"\D", "", v) for v in secret_values if v) if len(d) >= LONG_DIGITS}
+
+    def take(m: re.Match) -> str:
+        digits = re.sub(r"\D", "", m.group(0))
+        known = len(digits) >= LONG_DIGITS and any(digits in d or d in digits for d in secret_digits)
+        return " " if known else m.group(0)
+
+    cleaned = " ".join(_NUMBER_RUN.sub(take, note).split()).strip()
+    return cleaned or None
 
 
 def read_note(lines: list[str], profile: AppProfile | None) -> str | None:
@@ -115,16 +182,17 @@ _BANK_NAMES = {
 
 def normalize_bank(value: str | None) -> str | None:
     """Kode bank untuk kunci: huruf besar, tanpa spasi berlebih, tanpa awalan "Bank" ("Bank BCA" -> "BCA";
-    "Bank Rakyat Indonesia (BRI)" -> "BRI"). Kunci rekening memakainya apa adanya, jadi harus stabil."""
+    "Bank Rakyat Indonesia (BRI)" -> "BRI"). Kunci rekening memakainya apa adanya, jadi harus stabil, dan nomor
+    yang menempel ("BCA-0123456789", "BCA 0123456789", "BRI (01230100)") tidak boleh ikut. Tanpa huruf: None."""
     text = " ".join((value or "").upper().split())
-    abbreviation = re.search(r"\(([A-Z0-9]{2,10})\)", text)
+    abbreviation = re.search(r"\(([A-Z][A-Z0-9]{1,9})\)", text)             # singkatan harus diawali huruf
     if abbreviation:
         return abbreviation.group(1)
-    text = re.split(r"\s+[-–]?\s*\d{4,}", text)[0]          # buang nomor rekening yang menempel
+    text = re.split(r"[\s\-–:/.(]*\d{4,}", text)[0]                          # buang nomor rekening yang menempel
     text = re.sub(r"\(.*?\)", " ", text).strip(" -–:.,")
     text = _BANK_NAMES.get(text, text)
     text = text.removeprefix("BANK ").strip()
-    return text[:30] or None
+    return text[:30] if re.search(r"[A-Z]", text) else None
 
 
 def read_refs(lines: list[str], profile: AppProfile | None) -> list[tuple[str, str]]:
@@ -161,22 +229,78 @@ _ANCHOR = re.compile(r"(?<!\w)(qris|transfer|top[\s-]?up|berhasil|sukses|success
                      re.IGNORECASE)
 
 
+_SIGN = re.compile(r"(?<![\w/])[-–−(]\s*(?=(?:(?:Rp|IDR)\.?\s*)?\d)", re.IGNORECASE)   # "-Rp5.000", "(Rp5.000)": tanda bukan bagian tanggal
+# "Total Biaya", "Total Diskon", ...: jumlah komponen, bukan total bayar.
+_TOTAL_OF_COMPONENT = re.compile(r"^\s*total\s+(?:biaya|admin|fee|layanan|diskon|potongan|promo|voucher|pajak|ppn|tax|discount)(?![A-Za-z])", re.IGNORECASE)
+_COMPONENT_TOTAL_LABELS = ["total biaya", "total admin", "total fee"]
+
+
+def _first_value(lines: list[str], label: str, profile: AppProfile | None, exclude: re.Pattern | None = None) -> int | None:
+    """Nominal di samping/di bawah baris pertama yang diawali `label`. Nilai di baris bawah hanya dipakai bila
+    baris itu bukan label lain ("Biaya Admin" tanpa nilai tidak boleh meminjam "Total Rp150.000")."""
+    start = _label_start((label.lower(),))
+    for i, line in enumerate(lines):
+        m = start.match(line)
+        if not m or (exclude and exclude.match(line)):
+            continue
+        rest = line[m.end():].lstrip(" :：")
+        if not rest and i + 1 < len(lines) and not is_label_line(lines[i + 1], profile):
+            rest = lines[i + 1]
+        amounts = amounts_in(_SIGN.sub(" ", rest))
+        if amounts:
+            return amounts[0]
+    return None
+
+
+def _first_amount(lines: list[str], labels: list[str], profile: AppProfile | None, exclude: re.Pattern | None = None) -> int | None:
+    """Sinonim lebih awal diutamakan (seperti `labels.find_amount`)."""
+    for label in labels:
+        value = _first_value(lines, label, profile, exclude)
+        if value is not None:
+            return value
+    return None
+
+
+def _sum_amounts(lines: list[str], labels: list[str], profile: AppProfile | None) -> int:
+    """Jumlah nominal semua baris berlabel (biaya, diskon, pajak bisa lebih dari satu baris). Satu baris dihitung
+    sekali walau beberapa sinonim cocok ("Biaya Admin" cocok "biaya admin" dan "biaya"). Yang < Rp100 dianggap 0."""
+    if not labels:
+        return 0
+    start = _label_start(tuple(sorted({label.lower() for label in labels}, key=len, reverse=True)))
+    total = 0
+    for i, line in enumerate(lines):
+        m = start.match(line)
+        if not m:
+            continue
+        rest = line[m.end():].lstrip(" :：")
+        if not rest and i + 1 < len(lines) and not is_label_line(lines[i + 1], profile):
+            rest = lines[i + 1]
+        amounts = amounts_in(_SIGN.sub(" ", rest))
+        total += amounts[0] if amounts else 0
+    return total
+
+
 def read_amounts(lines: list[str], profile: AppProfile | None) -> tuple[Amounts, str | None]:
     """(nominal, tingkat keyakinan total). Label "total*" -> total; label lain ("nominal", "jumlah", ...)
-    -> subtotal; tanpa label total: subtotal + biaya. Biaya hilang atau < Rp100 dianggap 0.
+    -> subtotal. Biaya, diskon, dan pajak dijumlahkan dari semua barisnya (hilang atau < Rp100 = 0); "Total Biaya"
+    dipakai sebagai biaya hanya bila tidak ada baris biaya. Tanpa total: subtotal + biaya + pajak - diskon.
     Tanpa label sama sekali: angka `Rp` yang berdiri sendiri, yang pertama setelah baris QRIS/status
     (keyakinan `sedang`), selain itu yang pertama (`rendah`)."""
     labels = labels_for(profile, "amount")
     total_labels = [label for label in labels if label.lower().startswith("total")]
-    subtotal = find_amount(lines, [label for label in labels if label not in total_labels])
-    total = find_amount(lines, total_labels)
-    fee = find_amount(lines, labels_for(profile, "fee")) or 0
+    subtotal = _first_amount(lines, [label for label in labels if label not in total_labels], profile)
+    total = _first_amount(lines, total_labels, profile, exclude=_TOTAL_OF_COMPONENT)
+    fee = _sum_amounts(lines, labels_for(profile, "fee"), profile) \
+        or _first_amount(lines, _COMPONENT_TOTAL_LABELS, profile) or 0
+    discount = _sum_amounts(lines, labels_for(profile, "discount"), profile)
+    tax = _sum_amounts(lines, labels_for(profile, "tax"), profile)
     if subtotal is None and total is None:
         found = _bare_amount(lines)
-        return Amounts(fee=fee, total=found[0] if found else None), found[1] if found else None
+        amounts = Amounts(fee=fee, tax=tax, discount=discount, total=found[0] if found else None)
+        return amounts, found[1] if found else None
     if total is None:
-        total = subtotal + fee
-    return Amounts(subtotal=subtotal, fee=fee, total=total), "tinggi"
+        total = max(subtotal + fee + tax - discount, 0)
+    return Amounts(subtotal=subtotal, fee=fee, tax=tax, discount=discount, total=total), "tinggi"
 
 
 def _bare_amount(lines: list[str]) -> tuple[int, str] | None:
@@ -190,7 +314,7 @@ def _bare_amount(lines: list[str]) -> tuple[int, str] | None:
 
 
 def has_amount(lines: list[str], profile: AppProfile | None = None) -> bool:
-    return find_amount(lines, labels_for(profile, "amount")) is not None or _bare_amount(lines) is not None
+    return read_amounts(lines, profile)[0].total is not None
 
 
 # ── Waktu ───────────────────────────────────────────────────────────────────
@@ -236,19 +360,34 @@ def _classify(text: str) -> str | None:
     return BERHASIL if _BERHASIL.search(text) else None
 
 
+# Kalimat peringatan/bantuan di kaki bukti ("Jika gagal hubungi 14017", "Transaksi gagal? Hubungi kami") memuat
+# kata status tapi bukan status transaksi.
+_NOT_STATUS = re.compile(r"\?|(?<!\w)(?:jika|bila|apabila|kalau|if|hubungi|silakan|silahkan|contact|please)(?!\w)", re.IGNORECASE)
+
+
+def _status_lines(texts: list[str], max_words: int) -> list[str]:
+    return [t for t in texts if len(t.split()) <= max_words and not _NOT_STATUS.search(t)]
+
+
 def _strongest(texts: list[str]) -> str | None:
     found = {c for c in map(_classify, texts) if c}
     return next((s for s in (GAGAL, PENDING, BERHASIL) if s in found), None)
 
 
+def _first(texts: list[str]) -> str | None:
+    return next((c for c in map(_classify, texts) if c), None)
+
+
 def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
-    """Status dari label "Status", lalu judul (4 baris pertama), lalu baris pendek di mana saja.
-    Kalimat panjang ("Jika transaksi gagal atau pending, hubungi ...") tidak dihitung. Tanpa kata
+    """Status dari label "Status" dan judul (4 baris pertama): kata gagal mengalahkan pending mengalahkan berhasil.
+    Lalu baris pendek di mana saja: yang pertama menurut urutan dokumen (bukan yang terburuk, supaya baris
+    "Gagal" lain di bawah status "Transaksi Berhasil" tidak membalikkannya). Kalimat panjang dan kalimat
+    bersyarat/tanya/ajakan ("Jika gagal hubungi ...", "Gagal? Hubungi kami") tidak dihitung. Tanpa kata
     status: `tidak_diketahui`."""
     labelled = read_text(lines, labels_for(profile, "status"), profile)
     status = (_classify(labelled) if labelled else None) \
-        or _strongest([line for line in lines[:HEADER_LINES] if len(line.split()) <= HEADER_WORDS]) \
-        or _strongest([line for line in lines if len(line.split()) <= BODY_WORDS])
+        or _strongest(_status_lines(lines[:HEADER_LINES], HEADER_WORDS)) \
+        or _first(_status_lines(lines, BODY_WORDS))
     return status or TIDAK_DIKETAHUI
 
 
@@ -257,7 +396,13 @@ def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
 _CASH_WORD = re.compile(r"(?<![A-Za-z])(?:KEMBALI|KEMBALIAN|TUNAI)(?![A-Za-z])", re.IGNORECASE)
 _TOTAL_WORD = re.compile(r"(?<![A-Za-z])TOTAL(?![A-Za-z])", re.IGNORECASE)
 _SUBTOTAL = re.compile(r"SUB\s*-?\s*TOTAL", re.IGNORECASE)
-MIN_STORE_ITEMS = 3
+# Baris cara bayar sesudah total: "QRIS 40.000", "Pembayaran QRIS Rp 40.000", "Non Tunai (QRIS) 45.400", "DEBIT BCA 45.400".
+_PAYMENT_LINE = re.compile(
+    r"^\W*(?:(?:pembayaran|bayar|payment|non\s+tunai)\s+)?\(?(?:qris|debit|kredit|credit|e-?money|flazz|brizzi|tapcash)\)?"
+    r"[^\d]{0,20}(?:Rp\.?\s*)?\d[\d.,]*\s*$", re.IGNORECASE)
+_QTY = re.compile(r"\d{1,3}(?:[.,]\d{1,2})?\s*[xX]?")
+MIN_STORE_ITEMS = 3        # barang tanpa kuantitas sebelum total
+MIN_QTY_ITEMS = 2          # baris "NAMA QTY HARGA" (bukti bayar tidak pernah memakai bentuk ini)
 
 
 def _is_item_line(line: str) -> bool:
@@ -272,15 +417,35 @@ def _is_item_line(line: str) -> bool:
     return sum(c.isalpha() for c in name) >= 3
 
 
+def _is_qty_item_line(line: str) -> bool:
+    """Barang dengan kuantitas di antara nama dan harga: "KOPI SUSU 1 25.000", "ROTI 2 x 15.000"."""
+    tokens = line.split()
+    if not _is_item_line(line) or len(tokens) < 3:
+        return False
+    qty = " ".join(tokens[-3:-1]) if tokens[-2].lower() == "x" and len(tokens) >= 4 else tokens[-2]
+    return bool(_QTY.fullmatch(qty))
+
+
+def _is_cash_line(line: str) -> bool:
+    """Baris tunai/kembalian: ada kata TUNAI/KEMBALI dan ujung baris berangka ("TUNAI 50.000", "KEMBALI : 0",
+    "Non Tunai (QRIS) 45.400"). Baris catatan ("Berita titip tunai 2 bulan") dan tombol ("Kembali ke Beranda") bukan."""
+    tokens = line.split()
+    return bool(tokens and _CASH_WORD.search(line) and re.search(r"\d", tokens[-1]) and not is_label_line(line, fields=("note",)))
+
+
 def looks_like_store_receipt(lines: list[str]) -> bool:
-    """Pola struk belanja: baris KEMBALI/TUNAI berangka ("Non Tunai (QRIS) 45.400" juga; "Kembali ke
-    beranda" tidak), atau >= 3 baris barang sebelum baris total. Bukti QRIS dan transfer tidak pernah
-    memakai pola ini, jadi pembaca bukti menolak dokumen seperti ini (skor 0)."""
-    if any(_CASH_WORD.search(line) and re.search(r"\d", line) for line in lines):
+    """Pola struk belanja; bukti QRIS dan transfer tidak pernah memakainya, jadi pembaca bukti menolak
+    dokumen seperti ini (skor 0). Salah satu dari:
+    - baris tunai/kembalian berangka;
+    - >= 3 baris barang sebelum baris total;
+    - >= 2 baris "NAMA QTY HARGA" di mana saja;
+    - >= 1 baris barang sebelum baris total dan sesudahnya baris cara bayar berangka ("QRIS 40.000").
+    Struk toko kecil (1-2 barang) yang dibayar QRIS dan mencetak NMID/Terminal ID masuk pola ini."""
+    if any(_is_cash_line(line) for line in lines):
         return True
-    items = 0
-    for line in lines:
-        if _TOTAL_WORD.search(line) and not _SUBTOTAL.search(line):
-            break
-        items += _is_item_line(line)
-    return items >= MIN_STORE_ITEMS
+    total_at = next((i for i, line in enumerate(lines) if _TOTAL_WORD.search(line) and not _SUBTOTAL.search(line)), None)
+    before = lines if total_at is None else lines[:total_at]
+    items = sum(_is_item_line(line) for line in before)
+    if items >= MIN_STORE_ITEMS or sum(_is_qty_item_line(line) for line in lines) >= MIN_QTY_ITEMS:
+        return True
+    return bool(total_at is not None and items >= 1 and any(_PAYMENT_LINE.match(line) for line in lines[total_at + 1:]))

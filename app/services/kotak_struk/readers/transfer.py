@@ -11,7 +11,7 @@ from app.services.kotak_struk.merchants import mask_digits
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer, labels_for
+from app.services.kotak_struk.readers.profiles import detect_issuer
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -70,9 +70,10 @@ class TransferReader:
             status = pc.BERHASIL            # uang yang tercatat masuk sudah sampai
         amounts, total_confidence = pc.read_amounts(body, profile)
         paid_at, paid_confidence = pc.read_paid_at(body, profile)
-        name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant")
-        bank_code = pc.normalize_bank(pc.read_text(body, labels_for(profile, "bank"), profile))
-        account = pc.read_account(body, profile)
+        numbers: list[str] = []        # deret angka panjang yang tercetak di nama/bank: tidak boleh bertahan di sana
+        name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant", numbers=numbers)
+        bank_code = pc.read_bank(body, profile, numbers=numbers)
+        account = pc.read_account(body, profile) or pc.account_from(numbers)     # tanpa label rekening: dari angka yang ditemukan
         refs = pc.read_refs(body, profile)
 
         confidence = {}
@@ -105,7 +106,7 @@ class TransferReader:
             ),
             amounts=amounts,
             refs=[Ref(kind=kind, masked=pc.mask_ref(value)) for kind, value in refs],
-            note=pc.read_note(body, profile),
+            note=pc.scrub_note(pc.read_note(body, profile), [account or "", *(value for _, value in refs)]),
             confidence=confidence,
             evidence=evidence,
         )
