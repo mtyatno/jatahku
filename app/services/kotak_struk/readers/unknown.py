@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from app.services.kotak_struk.document import Amounts, DokumenBayar
+from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
+from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
+from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
 from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt
 
@@ -54,17 +56,28 @@ class UnknownReader:
         ))
 
     def _legacy_guess(self, doc: TextDoc, ctx: ParseContext) -> Parsed | None:
-        """Tanpa baris "Rp"/"IDR": tebakan terbaik scan struk lama (`parse_receipt`: total, merchant, tanggal), supaya
-        foto yang dulu terbaca (mis. "TOKO" + "45.500") tidak jadi tanpa total. Bentuknya struk belanja, sama dengan
-        penyelamatan LLM, dan keyakinannya paling tinggi `rendah`: ini tebakan, bukan bacaan. Teks yang terbaca
-        sebagai bukti bayar tetap dijaga worker (tanpa teks OCR, tanpa peta merchant). None bila tidak ada total."""
+        """Tanpa baris "Rp"/"IDR": tebakan terbaik scan struk lama (`parse_receipt`), supaya foto yang dulu terbaca
+        (mis. "TOKO" + "45.500") tidak jadi tanpa total. Hanya total, tanggal, dan nama merchant; keyakinannya selalu
+        `rendah`, dan jenisnya tetap `tidak_dikenali` (spec 6a: nominal berkeyakinan rendah, isi manual): sekali
+        dicatat, tanpa teks OCR dan data belajar struk belanja (itu hanya untuk struk belanja yang sungguhan dibaca,
+        penyelamatan LLM). Rincian barang, kutipan baris di bukti, dan nama berisi deret digit sepanjang nomor rekening
+        tidak dibawa: teks yang tidak dikenali siapa pun bisa memuat rekening/telepon. None bila tidak ada total."""
         rp = parse_receipt(doc.lines, ctx.today, merchant_aliases=ctx.merchant_aliases,
                            merchant_profiles=ctx.merchant_profiles)
         if not rp.total:
             return None
-        parsed = parsed_from_receipt(replace(rp, confidence="rendah"))
-        parsed.doc.evidence.append("Jenis bukti tidak dikenali, total ditebak dari teks")
-        return parsed
+        name = rp.merchant
+        if name and sum(c.isdigit() for c in name) >= MIN_ACCOUNT_DIGITS:
+            name = None
+        paid_at = datetime(rp.date.year, rp.date.month, rp.date.day, tzinfo=WIB) if rp.date else None
+        return Parsed(doc=DokumenBayar(
+            doc_type="tidak_dikenali",
+            paid_at=paid_at,
+            counterparty=Counterparty(name=name),
+            amounts=Amounts(total=rp.total),
+            confidence={"total": "rendah"},
+            evidence=["Jenis bukti tidak dikenali", "Total ditebak dari teks tanpa baris Rp"],
+        ))
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []

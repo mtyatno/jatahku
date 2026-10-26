@@ -580,6 +580,12 @@ class TestScanThroughKotak(TxnBase):
         self.assertIn("fallback LLM gagal: redis mati", logs.output[0])
         self.assertEqual((out["engine"], out["total"]), ("rapidocr", 45500))
 
+    async def test_guessed_total_is_an_unknown_document_without_items(self):
+        out = await self.scan_with_llm(["TOKO", "45.500"], AsyncMock(return_value=None))
+        self.assertEqual((out["total"], out["confidence"], out["merchant"], out["doc_type"]),
+                         (45500, "rendah", "Toko", "tidak_dikenali"))
+        self.assertEqual((out["items"], out["engine"]), ([], "rapidocr"))
+
     async def test_unreadable_photo_has_no_total(self):
         out = await self.scan_with_llm(["buram"], AsyncMock(return_value=None))
         self.assertIsNone(out["total"])

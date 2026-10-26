@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-import json, unittest
+import json, re, unittest
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -285,27 +285,45 @@ class UnknownReaderTests(unittest.IsolatedAsyncioTestCase):
                                  ("tidak_diketahui", "tidak_diketahui", []))
                 self.assertEqual(parsed.extra, {})
 
-    async def test_no_rp_amount_falls_back_to_the_legacy_receipt_guess_at_low_confidence(self):
-        """Tanpa baris "Rp"/"IDR", pembaca ini menebak seperti scan struk lama (`parse_receipt`): total, merchant,
-        tanggal. Selalu `rendah`, dan bentuknya struk belanja (sama dengan jalur penyelamatan LLM)."""
-        parsed = await UnknownReader().parse(doc(["TOKO", "45.500"]), CTX)
+    async def test_no_rp_amount_falls_back_to_the_legacy_receipt_guess_as_an_unknown_document(self):
+        """Tanpa baris "Rp"/"IDR", pembaca ini menebak seperti scan struk lama (`parse_receipt`): total, tanggal,
+        nama merchant. Tetap `tidak_dikenali` (spec 6a: nominal berkeyakinan rendah, isi manual): sekali-catat,
+        tanpa rincian barang, tanpa data belajar struk, selalu `rendah`."""
+        parsed = await UnknownReader().parse(doc(["TOKO", "14-10-2026 08:15", "45.500"]), CTX)
         d = parsed.doc
-        self.assertEqual((d.doc_type, d.counterparty.name, d.amounts.total, d.confidence["total"]),
-                         ("struk_belanja", "Toko", 45500, "rendah"))
-        self.assertEqual((d.method, d.flow, d.status), ("lainnya", "keluar", "berhasil"))
-        legacy = parse_receipt(["TOKO", "45.500"], CTX.today)
-        self.assertEqual((parsed.extra["engine"], parsed.extra["confidence_source"]), ("rapidocr", legacy.confidence_source))
-        self.assertEqual(parsed.extra["merchant_key"], merchant_key("Toko"))
-        self.assertEqual(parsed.extra["ocr_lines"], legacy.lines)
-        self.assertIn("Jenis bukti tidak dikenali, total ditebak dari teks", d.evidence)
+        self.assertEqual((d.doc_type, d.counterparty.name, d.amounts.total, d.confidence), ("tidak_dikenali", "Toko", 45500, {"total": "rendah"}))
+        self.assertEqual(d.paid_at, datetime.fromisoformat("2026-10-14T00:00:00+07:00"))
+        self.assertEqual((d.status, d.flow, d.lines), ("tidak_diketahui", "tidak_diketahui", []))
+        self.assertEqual(d.evidence, ["Jenis bukti tidak dikenali", "Total ditebak dari teks tanpa baris Rp"])
+        self.assertEqual(parsed.extra, {})   # tanpa ocr_lines/merchant_key/total_label: itu data belajar struk belanja
 
     async def test_the_guess_is_never_more_confident_than_low(self):
         lines = ["ALFAMART", "ROTI 15.000", "SUSU 30.400", "TOTAL BELANJA 45.400", "TUNAI 50.000", "KEMBALI 4.600"]
         self.assertEqual(parse_receipt(lines, CTX.today).confidence, "tinggi")   # tanpa "Rp": pembaca ini memakainya
         parsed = await UnknownReader().parse(doc(lines), CTX)
         self.assertEqual((parsed.doc.doc_type, parsed.doc.amounts.total, parsed.doc.confidence),
-                         ("struk_belanja", 45400, {"total": "rendah"}))
-        self.assertEqual(parsed.extra["confidence_source"], "payment")   # sumber penguat dari parse_receipt tetap dicatat
+                         ("tidak_dikenali", 45400, {"total": "rendah"}))
+        self.assertEqual((parsed.doc.lines, parsed.extra), ([], {}))   # barang tidak ikut: hanya total, tanggal, nama
+
+    async def test_the_guess_carries_no_digits_from_the_text_into_the_document(self):
+        """Nomor rekening/telepon di teks tidak boleh masuk Dokumen Bayar: baris rincian ("Rek BCA 1234567890" terbaca
+        sebagai barang), bukti (kutipan baris di `evidence`), maupun nama merchant tebakan."""
+        for lines in (["Rek BCA 1234567890", "a.n. BUDI", "150.000"],
+                      ["Rek BCA 1234567890", "150.000"],
+                      ["Toko Sembako Berkah Makmur 081234567", "45.500"],
+                      ["Toko Maju 0812 3456 7890", "45.500"]):
+            with self.subTest(lines):
+                parsed = await UnknownReader().parse(doc(lines), CTX)
+                self.assertEqual(parsed.doc.doc_type, "tidak_dikenali")
+                self.assertIsNotNone(parsed.doc.amounts.total)
+                blob = json.dumps(parsed.doc.to_json(), default=str)
+                self.assertFalse(re.search(r"\d{8}|\d{4}[ -]\d{4}", blob), blob)
+        named = await UnknownReader().parse(doc(["Rek BCA 1234567890", "a.n. BUDI", "150.000"]), CTX)
+        self.assertEqual((named.doc.counterparty.name, named.doc.amounts.total), ("A.N. Budi", 150000))   # nama saja
+        digit_heavy = await UnknownReader().parse(doc(["Toko Sembako Berkah Makmur 081234567", "45.500"]), CTX)
+        self.assertIsNone(digit_heavy.doc.counterparty.name)   # nama berisi deret digit sepanjang rekening: dibuang
+        short = await UnknownReader().parse(doc(["Warung Bu Tini 24 Jam", "14-10-2026", "45.500"]), CTX)
+        self.assertEqual(short.doc.counterparty.name, "Warung Bu Tini 24 Jam")   # angka pendek di nama tetap boleh
 
     async def test_an_rp_line_still_wins_over_the_guess_and_the_llm_over_both(self):
         parsed = await UnknownReader().parse(doc(["TOKO", "45.500", "bayar rp12.000"]), CTX)
@@ -317,7 +335,7 @@ class UnknownReaderTests(unittest.IsolatedAsyncioTestCase):
     async def test_the_guess_reaches_read_document_for_text_no_reader_claims(self):
         res = await read_document(doc(["TOKO", "45.500"]), CTX, proofs_enabled=False)
         self.assertEqual((res.reader, res.parsed.doc.doc_type, res.parsed.doc.amounts.total),
-                         ("tidak_dikenali", "struk_belanja", 45500))
+                         ("tidak_dikenali", "tidak_dikenali", 45500))
 
     async def test_llm_rescues_unreadable_photo(self):
         llm = AsyncMock(return_value={"merchant": "Toko A", "date": date(2026, 10, 14), "total": 12000})

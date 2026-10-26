@@ -158,9 +158,11 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   berikutnya dan pemberitahuan kuota tetap jalan). `client_ref` yang dikirim ulang dengan `receipt_item_id`
   yang sama menyembuhkan penandaan yang hilang (`record.heal_recorded`; hanya item yang diklaim transaksi
   itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer.
-- Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp": pembaca cadangan menebak seperti scan
-  struk lama (`parse_receipt`: total, merchant, tanggal) dengan keyakinan paling tinggi `rendah`, bentuknya
-  struk belanja; teks yang terbaca sebagai bukti bayar tetap tanpa teks OCR dan tanpa peta merchant.
+- Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp" (dan tanpa penyelamatan LLM): pembaca
+  cadangan menebak seperti scan struk lama (`parse_receipt`: total, tanggal, nama merchant) dengan keyakinan
+  `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
+  tanpa teks OCR, tanpa data belajar struk. Rincian, kutipan baris, dan nama yang memuat deret digit sepanjang
+  nomor rekening (>= 8 digit) tidak dibawa; teks yang terbaca sebagai bukti bayar tetap tanpa peta merchant.
 
 ## Belajar dari koreksi (tanpa LLM)
 

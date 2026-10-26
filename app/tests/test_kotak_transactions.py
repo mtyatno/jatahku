@@ -454,6 +454,22 @@ class RecordWithReceiptItemTests(TxnBase):
         self.assertNotIn(f"txnref:{self.a.id}:kalah", self.redis.kv)
         self.assertEqual(await self.learned_keywords(), set())
 
+    async def test_guessed_total_item_is_an_unknown_document_with_an_exclusive_claim(self):
+        """Foto yang hanya terbaca lewat tebakan struk lama (`["TOKO","45.500"]`, tanpa baris Rp) tetap tidak_dikenali:
+        sekali dicatat, klaimnya eksklusif."""
+        item = await self.ready(["TOKO", "45.500"])
+        self.assertEqual((await self.get(item.id)).doc_type, "tidak_dikenali")
+        with self.other_session_claims():
+            lost = await self.post(item, ref="kalah", desc="x", amount=45500)
+        self.assertEqual((lost.status_code, lost.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 0)
+        fresh = await self.ready(["TOKO", "45.500"])
+        first = await self.post(fresh, ref="a", desc="titipan", amount=45500)
+        self.assertEqual(first.status_code, 201, first.text)
+        again = await self.post(fresh, ref="b", desc="titipan", amount=45500)
+        self.assertEqual((again.status_code, again.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 1)
+
     async def test_unknown_document_is_recorded_once_and_never_teaches_the_merchant_map(self):
         item = await self.ready_unknown()
         first = await self.post(item, ref="a", desc="titipan", amount=12000)

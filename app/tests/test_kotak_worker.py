@@ -334,14 +334,45 @@ class WorkerTests(WorkerBase):
         self.assertIsNone(got.counterparty_key)
         self.assertEqual(await self.count_merchants(), 0)
 
-    async def test_sparse_text_without_rp_is_a_low_confidence_store_receipt_guess(self):
-        """Tanpa baris Rp pembaca cadangan menebak seperti scan struk lama (bukan tanpa total), selalu `rendah`."""
+    async def test_sparse_text_without_rp_is_a_low_confidence_unknown_document_guess(self):
+        """Tanpa baris Rp pembaca cadangan menebak seperti scan struk lama (bukan tanpa total), selalu `rendah`, tetap
+        `tidak_dikenali` (spec 6a): tanpa teks OCR (itu hanya untuk struk belanja), tanpa data belajar struk."""
         item = await self.item(text="sepi")
-        self.assertEqual(await self.process(item, ["TOKO", "45.500"]), "siap")
+        self.assertEqual(await self.process(item, ["TOKO", "14-10-2026 08:15", "45.500"]), "siap")
         got = await self.get(item.id)
-        self.assertEqual((got.doc_type, got.parser, int(got.parsed_total), got.confidence),
-                         ("struk_belanja", "tidak_dikenali", 45500, "rendah"))
-        self.assertEqual(json.loads(got.ocr_lines), ["TOKO", "45.500"])  # bukan bukti bayar: teks belajar tetap disimpan
+        self.assertEqual((got.doc_type, got.parser, int(got.parsed_total), got.confidence, got.parsed_date),
+                         ("tidak_dikenali", "tidak_dikenali", 45500, "rendah", date(2026, 10, 14)))
+        self.assertEqual((got.merchant, got.engine), ("Toko", "rapidocr"))
+        self.assertEqual((got.ocr_lines, got.merchant_key, got.total_label), (None, None, None))
+        self.assertNotIn("receipt", got.document)
+        self.assertEqual(got.document["lines"], [])
+
+    async def test_account_number_text_without_rp_is_a_digit_free_unknown_document(self):
+        """Teks yang tidak dikenali siapa pun dan bukan bukti bayar (nomor rekening di baris biasa) dulu bisa jadi
+        struk belanja yang menyimpan teksnya 24 jam dan menamai merchant dari baris itu. Kini: tidak_dikenali, tanpa
+        teks OCR, dan deret digitnya tidak ada di kolom mana pun (dokumen, merchant, kunci pihak, teks, HMAC)."""
+        item = await self.item(text="rekening")
+        self.assertEqual(await self.process(item, ["Rek BCA 1234567890", "a.n. BUDI", "150.000"]), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, int(got.parsed_total), got.confidence), ("tidak_dikenali", 150000, "rendah"))
+        self.assertIsNone(got.ocr_lines)
+        columns = [got.document, got.merchant, got.counterparty_key, got.ocr_lines, got.ref_hash, got.merchant_key,
+                   got.total_label, got.error]
+        self.assertNotIn("1234567890", json.dumps(columns).replace(" ", ""))
+        self.assertEqual((got.merchant, got.counterparty_key), ("A.N. Budi", "nama:an budi|"))   # nama saja (aturan A7)
+        async with self.Session() as db:
+            rows = (await db.execute(select(HouseholdMerchant.raw_name, HouseholdMerchant.counterparty_key))).all()
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertFalse(re.search(r"\d{8}", " ".join(row)), row)
+
+    async def test_digit_heavy_guessed_name_is_dropped_before_it_becomes_a_merchant(self):
+        item = await self.item(text="telepon")
+        self.assertEqual(await self.process(item, ["Toko Sembako Berkah Makmur 081234567", "45.500"]), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, int(got.parsed_total)), ("tidak_dikenali", 45500))
+        self.assertEqual((got.merchant, got.counterparty_key, got.ocr_lines), (None, None, None))
+        self.assertEqual(await self.count_merchants(), 0)
 
     async def test_unread_proof_text_without_rp_is_guessed_low_but_keeps_no_text_and_no_merchant(self):
         """Bukti bayar yang jatuh ke pembaca cadangan lewat tebakan struk lama (tanpa "Rp", saklar mati) tetap dijaga:
@@ -351,9 +382,9 @@ class WorkerTests(WorkerBase):
         self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
         got = await self.get(item.id)
         self.assertEqual((got.doc_type, got.parser, int(got.parsed_total), got.confidence),
-                         ("struk_belanja", "tidak_dikenali", 25000, "rendah"))
+                         ("tidak_dikenali", "tidak_dikenali", 25000, "rendah"))
         self.assertIsNone(got.ocr_lines)
-        self.assertEqual(await self.count_merchants(), 0)
+        self.assertEqual(await self.count_merchants(), 0)   # "Pembayaran Berhasil" bukan merchant (penjaga `unread_proof`)
         blob = json.dumps([got.document, got.ocr_lines, got.counterparty_key, got.ref_hash]).replace(" ", "")
         for number in ("ID1024358806544", "612345678812"):
             self.assertNotIn(number, blob)
