@@ -689,22 +689,22 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
         </div>
       )}
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>
-          <div className="flex items-center gap-3 shrink-0">
-            <ReceiptInput
-              size="sm"
-              onFile={scan.scanFile}
-              onError={handleVoiceError}
-              disabled={saving || scanBusy}
-            />
-            <VoiceInput
-              onTranscript={handleVoiceTranscript}
-              onError={handleVoiceError}
-              onBusyChange={handleVoiceBusy}
-              disabled={saving}
-            />
-          </div>
+        <label className="block text-sm text-gray-500 mb-2">
+          Bisa catat beberapa sekaligus. Pisahkan dengan koma, baris baru, atau kata "dan".
+        </label>
+        <div className="flex items-center gap-4 mb-2">
+          <ReceiptInput
+            size="sm"
+            onFile={scan.scanFile}
+            onError={handleVoiceError}
+            disabled={saving || scanBusy}
+          />
+          <VoiceInput
+            onTranscript={handleVoiceTranscript}
+            onError={handleVoiceError}
+            onBusyChange={handleVoiceBusy}
+            disabled={saving}
+          />
         </div>
         <textarea
           className="input w-full h-24 resize-y font-mono text-sm"
