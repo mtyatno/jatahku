@@ -8,23 +8,23 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import HouseholdMember, ReceiptScan, User
-from app.services.kotak_struk.config import PDF_MAX_BYTES, ST_DILEWATI, ST_GAGAL, ST_SIAP, WAIT_FORM_S
+from app.services.kotak_struk import record
+from app.services.kotak_struk.config import PDF_MAX_BYTES, ST_SIAP, WAIT_FORM_S
 from app.services.kotak_struk.intake import IntakeRejected, IntakeRequest, create_item
 from app.services.kotak_struk.merchants import NICKNAME_MAX, display_name, set_display_name
-from app.services.kotak_struk.record import MSG_NOT_FOUND
+from app.services.kotak_struk.record import MSG_CANNOT_SKIP, MSG_NOT_FOUND
 from app.services.kotak_struk.view import item_detail
 from app.services.kotak_struk.waiter import wait_for_item
 
 router = APIRouter()
 
 LIST_LIMIT = 50
-MSG_CANNOT_SKIP = "Bukti ini tidak bisa dilewati"
 MSG_MERCHANT_NOT_FOUND = "Merchant tidak ditemukan"
 NOTE_MAX = 200
 
@@ -112,18 +112,11 @@ async def suggest(item_id: UUID, body: SuggestIn, user: User = Depends(get_curre
 @router.post("/{item_id}/lewati")
 async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_current_user),
                     db: AsyncSession = Depends(get_db)):
-    """Item `siap`/`gagal` -> `dilewati`. Satu UPDATE bersyarat: pencatatan (`record.claim_for_recording` mengubah
-    `siap` -> `tercatat` dengan cara yang sama) dan melewati tidak mungkin sama-sama menang."""
+    """Item `siap`/`gagal` -> `dilewati` (`record.skip_item`, sama dengan tombol bot): pencatatan dan melewati tidak
+    mungkin sama-sama menang."""
     item = await _owned_item(db, item_id, user)
-    meta = {**(item.channel_meta or {}), "skip_reason": body.reason}
-    done = await db.execute(
-        update(ReceiptScan)
-        .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user.id, ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)))
-        .values(status=ST_DILEWATI, channel_meta=meta).execution_options(synchronize_session=False)
-    )
-    if done.rowcount != 1:
+    if not await record.skip_item(db, item_id, user.id, body.reason):
         raise HTTPException(status_code=409, detail=MSG_CANNOT_SKIP)
-    await db.commit()
     await db.refresh(item)
     return await item_detail(db, item, user)
 

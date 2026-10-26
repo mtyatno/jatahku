@@ -589,6 +589,52 @@ class WorkerTests(WorkerBase):
                 self.assertEqual(await self.process(item), "siap")
         self.assertEqual((await self.get(item.id)).status, "siap")
 
+    # --- kabar ke kanal: `notify` dinyalakan bot sesaat sebelum commit worker (C3) ----
+
+    def racing_sessions(self, item_id, meta):
+        """Sesi yang, tepat sebelum commit pertamanya, menulis `channel_meta` item lewat UPDATE langsung (objek item
+        di sesi tidak ikut berubah): bot menyalakan `notify` di antara pemuatan item oleh worker dan commit-nya.
+        SQLite tidak bisa mengaburkan dua sesi sungguhan, jadi tulisan "sesi bot" lewat sesi worker."""
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+        state = {"done": False}
+
+        class Racing(AsyncSession):
+            async def commit(self):
+                if not state["done"]:
+                    state["done"] = True
+                    await self.execute(update(ReceiptScan).where(ReceiptScan.id == item_id).values(channel_meta=meta)
+                                       .execution_options(synchronize_session=False))
+                await super().commit()
+        return async_sessionmaker(self.engine, class_=Racing, expire_on_commit=False)
+
+    async def test_notify_set_just_before_the_store_commit_still_notifies(self):
+        item = await self.item(text="x", channel_meta={"chat_id": 7, "status_message_id": 9})
+        fake = types.SimpleNamespace(send_ready_message=AsyncMock())
+        racing = self.racing_sessions(item.id, {"chat_id": 7, "status_message_id": 9, "notify": True})
+        with patch.dict(sys.modules, {"app.bot.receipt_cmd": fake}):
+            self.assertEqual(await process_item(item.id, session_factory=racing, extract=fake_extract(CORPUS[0]["lines"]),
+                                                now=NOW, proofs_enabled=True), "siap")
+        fake.send_ready_message.assert_awaited_once_with(item.id)
+
+    async def test_notify_set_just_before_the_failure_commit_still_notifies(self):
+        item = await self.item(text="x", channel_meta={"chat_id": 7})
+        fake = types.SimpleNamespace(send_ready_message=AsyncMock())
+        racing = self.racing_sessions(item.id, {"chat_id": 7, "notify": True})
+        with patch.dict(sys.modules, {"app.bot.receipt_cmd": fake}):
+            self.assertEqual(await process_item(item.id, session_factory=racing, extract=AsyncMock(side_effect=PdfLocked()),
+                                                now=NOW, proofs_enabled=True), "gagal")
+        fake.send_ready_message.assert_awaited_once_with(item.id)
+
+    async def test_notify_set_just_before_the_give_up_commit_still_notifies(self):
+        item = await self.item(text="x", status="diproses", attempts=3, processed_at=NOW - timedelta(minutes=10),
+                               channel_meta={"chat_id": 7})
+        fake = types.SimpleNamespace(send_ready_message=AsyncMock())
+        racing = self.racing_sessions(item.id, {"chat_id": 7, "notify": True})
+        with patch.dict(sys.modules, {"app.bot.receipt_cmd": fake}):
+            async with racing() as db:
+                self.assertEqual(await recover_stale(db, now=NOW), 1)
+        fake.send_ready_message.assert_awaited_once_with(item.id)
+
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
 class RunWorkerTests(WorkerBase):

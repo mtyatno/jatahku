@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import HouseholdMember, HouseholdMerchant, ReceiptScan, User
+from app.models.models import Envelope, HouseholdMember, HouseholdMerchant, ReceiptScan, Transaction, User
 from app.services.kotak_struk import dedup
 from app.services.kotak_struk.config import ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP, ST_TERCATAT
 from app.services.kotak_struk.document import DokumenBayar
@@ -74,6 +74,39 @@ async def _flags(db: AsyncSession, item: ReceiptScan, user: User, doc: DokumenBa
         blocked = BLOCKED_RECORDED   # struk belanja boleh dicatat lagi (satu struk, banyak transaksi)
     return {"duplicate_of": duplicate, "skip_suggestion": doc.flow if doc.flow in SKIP_FLOWS else None,
             "blocked": blocked, "warnings": warnings}
+
+
+def _uuid(value) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+async def recorded_summary(db: AsyncSession, item: ReceiptScan, user: User, flags: dict) -> dict | None:
+    """Untuk pesan "sudah tercatat": `{date, envelope_name}` dari transaksi pertama (tidak terhapus) bukti yang
+    tercatat, yaitu item ini sendiri bila `tercatat`, atau item tercatat di `flags.duplicate_of`. `envelope_name` None
+    bila `user` tidak boleh melihat amplop itu (amplop pribadi anggota lain; kontrak visibilitas). None bila tidak
+    ada keterangan. Bentuk `item_detail` sengaja tidak diubah."""
+    if item.status == ST_TERCATAT:
+        target = item
+    else:
+        duplicate = flags.get("duplicate_of") or {}
+        target_id = _uuid(duplicate.get("item_id")) if duplicate.get("recorded") else None
+        target = await db.get(ReceiptScan, target_id) if target_id is not None else None
+    ids = [i for i in (_uuid(x) for x in (target.transaction_ids or [])) if i is not None] if target else []
+    if not ids:
+        return None
+    row = (await db.execute(
+        select(Transaction.transaction_date, Envelope.name, Envelope.owner_id)
+        .join(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Transaction.id.in_(ids), Transaction.is_deleted == False)  # noqa: E712
+        .order_by(Transaction.created_at, Transaction.id).limit(1)
+    )).first()
+    if row is None:
+        return None
+    visible = row.owner_id is None or row.owner_id == user.id
+    return {"date": row.transaction_date, "envelope_name": row.name if visible else None}
 
 
 async def item_detail(db: AsyncSession, item: ReceiptScan, user: User, *, note: str | None = None) -> dict:

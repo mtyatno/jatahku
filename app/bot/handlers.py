@@ -405,8 +405,21 @@ async def cmd_start(update, context):
         await reply_setup_needed(update, user)
 
 
-async def _receipt_feedback_saved(user_id, scan_id, amount, txn_date, description):
-    """Feedback belajar scan struk setelah transaksinya tersimpan (best-effort).
+def _uuid_or_none(value):
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _receipt_feedback_saved(user_id, scan_id, amount, txn_date, description, *,
+                                  transaction_id=None, envelope_id=None):
+    """Sesudah transaksi dari tombol struk/bukti tersimpan (best-effort).
+
+    Item Kotak Struk selain struk belanja (QRIS, transfer, tidak dikenali): hanya `record.mark_recorded` (item
+    `tercatat`, peta merchant belajar). Struk belanja dan scan lama: umpan balik belajar `apply_feedback` seperti
+    dulu; item Kotak Struk-nya juga ditandai tercatat (transaksi ditambahkan, tanpa peta merchant), supaya tidak
+    tertinggal di "Bukti menunggu".
 
     Sesi terpisah: apply_feedback meng-commit sendiri, dan kalau gagal, sesi
     pemanggil tidak perlu rollback penuh (yang meng-expire objek sesi dan
@@ -414,14 +427,61 @@ async def _receipt_feedback_saved(user_id, scan_id, amount, txn_date, descriptio
     if not scan_id:
         return
     try:
+        from app.models.models import ReceiptScan
+        from app.services.kotak_struk import record
         from app.services.receipt_scan import apply_feedback
+        item_id = _uuid_or_none(scan_id)
         async with AsyncSessionLocal() as fdb:
-            fuser = await fdb.get(User, user_id)
-            if fuser is not None:
-                await apply_feedback(fuser, scan_id, fdb, saved=True, total=int(amount),
-                                     txn_date=txn_date, merchant=description)
+            item = await fdb.get(ReceiptScan, item_id) if item_id is not None else None
+            kotak = item is not None and item.status is not None and item.user_id == user_id
+            if kotak and transaction_id is not None and envelope_id is not None:
+                await record.mark_recorded(fdb, item_id, user_id=user_id, transaction_id=transaction_id,
+                                           envelope_id=envelope_id)
+            if not kotak or item.doc_type == record.STORE_RECEIPT:
+                fuser = await fdb.get(User, user_id)
+                if fuser is not None:
+                    await apply_feedback(fuser, scan_id, fdb, saved=True, total=int(amount),
+                                         txn_date=txn_date, merchant=description)
     except Exception as exc:
         logger.warning("feedback struk gagal: %s", exc)
+
+
+class _ProofGuard:
+    """Bukti yang hanya sekali dicatat (QRIS, transfer, tidak dikenali) di semua jalur catat bot (langsung, geser
+    dana, limit harian): `check` sebelum transaksi dibuat (pesan yang ramah), `claim` di sesi yang sama tepat
+    sebelum commit yang menyimpan transaksinya (penjaga atomik `record.claim_for_recording`; web atau ketukan lain
+    yang lebih dulu meng-klaim → transaksi dibatalkan). Struk belanja (boleh banyak transaksi), scan lama tanpa
+    status, dan payload tanpa item tidak dijaga."""
+
+    def __init__(self, item_id=None, error=None):
+        self.item_id, self.error = item_id, error
+
+    @classmethod
+    async def check(cls, db, user, scan_id) -> "_ProofGuard":
+        from app.bot.receipt_cmd import MSG_ALREADY_RECORDED
+        from app.models.models import ReceiptScan
+        from app.services.kotak_struk import record
+        item_id = _uuid_or_none(scan_id) if scan_id else None
+        item = await db.get(ReceiptScan, item_id) if item_id is not None else None
+        if item is None or item.status is None or item.doc_type == record.STORE_RECEIPT:
+            return cls()
+        try:
+            await record.check_recordable(db, item_id, user)
+        except record.NotRecordable as exc:
+            text = MSG_ALREADY_RECORDED if exc.detail == record.MSG_RECORDED else f"⚠️ {exc.detail}."
+            return cls(item_id, error=text)
+        return cls(item_id)
+
+    async def claim(self, db, user_id) -> bool:
+        """False: bukti sudah diklaim pencatatan lain; sesi di-rollback (transaksi dan dana tambahan batal) dan
+        `error` berisi pesan untuk user."""
+        from app.bot.receipt_cmd import MSG_ALREADY_RECORDED
+        from app.services.kotak_struk import record
+        if self.item_id is None or await record.claim_for_recording(db, self.item_id, user_id):
+            return True
+        await db.rollback()
+        self.error = MSG_ALREADY_RECORDED
+        return False
 
 
 def _parse_iso_date(value):
@@ -535,6 +595,10 @@ async def handle_daily_limit_callback(update, context):
         if not user:
             await query.edit_message_text("⚠️ User tidak ditemukan.")
             return
+        guard = await _ProofGuard.check(db, user, scan_id)
+        if guard.error:
+            await query.edit_message_text(guard.error)
+            return
 
         txn = Transaction(
             envelope_id=envelope.id,
@@ -545,9 +609,15 @@ async def handle_daily_limit_callback(update, context):
             transaction_date=txn_date,
         )
         db.add(txn)
+        if not await guard.claim(db, user.id):
+            await query.edit_message_text(guard.error)
+            return
         await db.commit()
-        await after_expense_recorded(db, user, envelope.id, description)
-        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
+        from app.bot.receipt_cmd import learn_text_for_scan
+        learn = await learn_text_for_scan(db, scan_id, description)
+        await after_expense_recorded(db, user, envelope.id, description, learn_text=learn)
+        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description,
+                                      transaction_id=txn.id, envelope_id=envelope.id)
 
         # Limit dinaikkan sampai tengah malam — fungsi yang sama dengan web
         from app.services.behavior import raise_daily_limit_today
@@ -711,6 +781,10 @@ async def handle_fund_shift_callback(update, context):
         if not user:
             await query.edit_message_text("⚠️ User tidak ditemukan.")
             return
+        guard = await _ProofGuard.check(db, user, scan_id)
+        if guard.error:
+            await query.edit_message_text(guard.error)
+            return
         hid = await get_household_id(user, db)
         payday_day = getattr(user, "payday_day", 1) or 1
         if not topup and hid:
@@ -785,15 +859,22 @@ async def handle_fund_shift_callback(update, context):
                 parse_mode="HTML")
             return
 
-        db.add(Transaction(
+        txn = Transaction(
             envelope_id=target_env.id, user_id=user.id, amount=amount,
             description=description, source=txn_source(),
             transaction_date=txn_date,
-        ))
+        )
+        db.add(txn)
+        if not await guard.claim(db, user.id):
+            await query.edit_message_text(guard.error)
+            return
         await db.commit()
         await _notify_goals(db, user, goals_before)
-        streak_line = _streak_text(await after_expense_recorded(db, user, target_env.id, description))
-        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
+        from app.bot.receipt_cmd import learn_text_for_scan
+        learn = await learn_text_for_scan(db, scan_id, description)
+        streak_line = _streak_text(await after_expense_recorded(db, user, target_env.id, description, learn_text=learn))
+        await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description,
+                                      transaction_id=txn.id, envelope_id=target_env.id)
 
         env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
         by_id = {str(e["envelope"].id): e for e in env_data}
@@ -1033,6 +1114,12 @@ async def handle_template_callback(update, context):
 
 async def cmd_batal(update, context):
     tg_user = update.effective_user
+    # Bot sedang menunggu catatan bukti ("Ketik isi belanjaannya (atau /batal)"): yang dibatalkan catatannya,
+    # bukan transaksi terakhir.
+    from app.bot.receipt_cmd import MSG_NOTE_CANCELLED, cancel_note
+    if await cancel_note(tg_user.id):
+        await update.message.reply_text(MSG_NOTE_CANCELLED)
+        return
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         result = await db.execute(
@@ -1055,6 +1142,16 @@ async def cmd_batal(update, context):
 async def handle_message(update, context):
     text = update.message.text.strip()
     if text.startswith("/"):
+        return
+
+    # Kotak Struk, sebelum batas panjang dan NLP: catatan yang ditunggu tombol "✏️ Tambah catatan", lalu teks
+    # bukti bayar yang ditempel (ketikan biasa tidak memenuhi syaratnya dan tetap ke NLP).
+    from app.bot.receipt_cmd import capture_note, handle_proof_text, looks_like_proof_text
+    from app.services.kotak_struk.config import TEXT_MAX_CHARS
+    if await capture_note(update, context):
+        return
+    if looks_like_proof_text(text) and len(text) <= TEXT_MAX_CHARS:
+        await handle_proof_text(update, context, text)
         return
 
     # Input length guard
@@ -1410,6 +1507,10 @@ async def _handle_txn_callback(update, context):
         if not envelope:
             await query.edit_message_text("Amplop nggak ditemukan.")
             return
+        guard = await _ProofGuard.check(db, user, scan_id)
+        if guard.error:
+            await query.edit_message_text(guard.error)
+            return
 
         # Aturan yang sama dengan web (app/services/expense_rules.py)
         check = await check_expense(envelope, user, amount, db)
@@ -1437,12 +1538,18 @@ async def _handle_txn_callback(update, context):
         txn = Transaction(envelope_id=envelope.id, user_id=user.id, amount=amount,
             description=description, source=txn_source(), transaction_date=txn_date)
         db.add(txn)
+        if not await guard.claim(db, user.id):
+            await query.edit_message_text(guard.error)
+            return
         await db.commit()
-        streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description))
+        from app.bot.receipt_cmd import learn_text_for_scan
+        learn = await learn_text_for_scan(db, scan_id, description)
+        streak_line = _streak_text(await after_expense_recorded(db, user, envelope.id, description, learn_text=learn))
         if scan_id:
             # Sesi terpisah — dulu db.rollback() di sini meng-expire user/amplop
             # sehingga baris di bawah (user.id, envelope.emoji) gagal (MissingGreenlet).
-            await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description)
+            await _receipt_feedback_saved(user.id, scan_id, amount, txn_date, description,
+                                          transaction_id=txn.id, envelope_id=envelope.id)
             r = aioredis.from_url(get_settings().REDIS_URL)
             await r.delete(f"txn:{txn_key}")  # cegah tersimpan dua kali dari tombol yang sama
             await r.aclose()
@@ -1638,11 +1745,12 @@ async def handle_addsub_callback(update, context):
 
 
 async def handle_non_text(update, context):
-    """Handle photos, stickers, voice, etc."""
+    """Handle photos, stickers, voice, etc. Foto, dokumen gambar, dan PDF → Kotak Struk."""
     doc = update.message.document
-    if update.message.photo or (doc and (doc.mime_type or "").startswith("image/")):
-        from app.bot.receipt_cmd import handle_receipt_photo
-        await handle_receipt_photo(update, context)
+    mime = (doc.mime_type or "") if doc else ""
+    if update.message.photo or mime.startswith("image/") or mime == "application/pdf":
+        from app.bot.receipt_cmd import handle_receipt_document
+        await handle_receipt_document(update, context)
     elif update.message.sticker:
         await update.message.reply_text("😄 Stiker lucu! Tapi saya cuma bisa bantu catat pengeluaran.\nKirim: `35k kopi`", parse_mode="Markdown")
     elif update.message.voice or update.message.audio:
@@ -1713,7 +1821,7 @@ def bot_callbacks() -> list:
     from app.bot.batch_cmd import (
         handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
     )
-    from app.bot.receipt_cmd import handle_struk_callback
+    from app.bot.receipt_cmd import handle_kotak_callback, handle_struk_callback
     from app.bot.advisor_cmd import handle_sim_callback
     from app.bot.help_cmd import handle_tanya_callback
     return [
@@ -1728,6 +1836,7 @@ def bot_callbacks() -> list:
         (r"^cool_", handle_cooling_callback),
         (r"^checkin_", handle_checkin_callback),
         (r"^tpl_", handle_template_callback),
+        (r"^k[nxdo]_", handle_kotak_callback),
         (r"^t_", handle_txn_callback),
         (r"^batch_", handle_batch_callback),
         (r"^bshift_", handle_batch_shift_callback),

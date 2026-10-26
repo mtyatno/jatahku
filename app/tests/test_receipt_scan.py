@@ -815,43 +815,58 @@ class TestBotItemsSummary(unittest.TestCase):
 class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
     async def test_photo_flow_offers_suggested_envelope_first_and_keeps_date(self):
         from app.bot import receipt_cmd
+        from app.services.kotak_struk import intake, view, waiter
+        from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 
         env_a = SimpleNamespace(id=uuid4(), name="Makan", emoji="🍜", purpose="expense")
         env_b = SimpleNamespace(id=uuid4(), name="Belanja Harian", emoji="🛒", purpose="expense")
         env_save = SimpleNamespace(id=uuid4(), name="Tabungan", emoji="🐷", purpose="saving")
-        status_msg = MagicMock(edit_text=AsyncMock(), delete=AsyncMock())
+        status_msg = MagicMock(message_id=7, edit_text=AsyncMock(), delete=AsyncMock())
         tg_file = MagicMock(download_as_bytearray=AsyncMock(return_value=bytearray(b"jpg")))
         photo = MagicMock(get_file=AsyncMock(return_value=tg_file))
         message = MagicMock(photo=[photo], document=None, reply_text=AsyncMock(return_value=status_msg))
-        update = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=42, first_name="A"))
-        scan = {"scan_id": "abc", "merchant": "Indomaret", "date": "2026-10-14", "total": 51000,
-                "confidence": "tinggi", "quota": {"limit": 15, "used": 2, "remaining": 13}}
+        update = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=42, first_name="A"),
+                                 effective_chat=SimpleNamespace(id=42))
+        user = _user()
+        document = DokumenBayar(doc_type="struk_belanja", counterparty=Counterparty(name="Indomaret"),
+                                amounts=Amounts(total=51000)).to_json()
+        item = SimpleNamespace(id=uuid4(), status="siap", doc_type="struk_belanja", user_id=user.id, error=None,
+                               merchant="Indomaret", parsed_date=date(2026, 10, 14), confidence="tinggi",
+                               engine="rapidocr", document=document, channel_meta=None)
+        detail = {"id": str(item.id), "doc_type": "struk_belanja", "paid_at": None, "suggestion": None,
+                  "description_preview": "Indomaret",
+                  "flags": {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": []}}
         redis = MagicMock(set=AsyncMock(), aclose=AsyncMock())
 
+        db = MagicMock(commit=AsyncMock())
+        db.get = AsyncMock(side_effect=lambda cls, key: user if cls is User else item)
         session = MagicMock()
-        session.__aenter__ = AsyncMock(return_value=MagicMock())
+        session.__aenter__ = AsyncMock(return_value=db)
         session.__aexit__ = AsyncMock(return_value=False)
-        with patch.object(receipt_cmd, "_rate_limited", AsyncMock(return_value=False)), \
-             patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
-             patch("app.bot.handlers.get_or_create_user", AsyncMock(return_value=_user())), \
+        create = AsyncMock(return_value=(item, True))
+        with patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
+             patch("app.bot.handlers.get_or_create_user", AsyncMock(return_value=user)), \
              patch("app.bot.handlers._is_setup_complete", AsyncMock(return_value=(True, ""))), \
              patch("app.bot.handlers.get_household_id", AsyncMock(return_value=uuid4())), \
              patch("app.bot.handlers.get_envelopes_with_spent", AsyncMock(return_value=[
                  {"envelope": env_a}, {"envelope": env_save}, {"envelope": env_b}])), \
-             patch("app.services.receipt_scan.scan_receipt", AsyncMock(return_value=scan)), \
+             patch.object(intake, "create_item", create), \
+             patch.object(waiter, "wait_for_item", AsyncMock(return_value=item)), \
+             patch.object(view, "item_detail", AsyncMock(return_value=detail)), \
              patch("app.services.txn_nlp.find_best_envelope", AsyncMock(return_value=(env_b, True))), \
              patch("redis.asyncio.from_url", return_value=redis):
             await receipt_cmd.handle_receipt_photo(update, None)
 
+        self.assertEqual(create.call_args.args[1].source, "telegram")   # lewat Kotak Struk, bukan scan_receipt
         text = status_msg.edit_text.call_args[0][0]
         self.assertIn("Indomaret", text)
         self.assertIn("Rp 51.000", text)
-        self.assertIn("13/15", text)
+        self.assertNotIn("Sisa scan", text)   # kuota scan dihapus
         rows = status_msg.edit_text.call_args[1]["reply_markup"].inline_keyboard
         self.assertTrue(rows[0][0].text.startswith("⭐"))       # saran amplop di atas
         self.assertNotIn("Tabungan", " ".join(r[0].text for r in rows))  # amplop tabungan disembunyikan
         stored = json.loads(redis.set.call_args[0][1])
-        self.assertEqual((stored["date"], stored["scan_id"], stored["amount"]), ("2026-10-14", "abc", 51000))
+        self.assertEqual((stored["date"], stored["scan_id"], stored["amount"]), ("2026-10-14", str(item.id), 51000))
 
 if __name__ == "__main__":
     unittest.main()

@@ -116,11 +116,11 @@ async def recover_stale(db, *, now: datetime) -> int:
     now = _aware(now)
     stale = or_(ReceiptScan.processed_at.is_(None), ReceiptScan.processed_at < now - STALE_PROCESSING)
     rows = (await db.execute(
-        select(ReceiptScan.id, ReceiptScan.attempts, ReceiptScan.file_path, ReceiptScan.channel_meta)
+        select(ReceiptScan.id, ReceiptScan.attempts, ReceiptScan.file_path)
         .where(ReceiptScan.status == ST_DIPROSES, stale)
     )).all()
     changed, gave_up = 0, []
-    for item_id, attempts, file_path, channel_meta in rows:
+    for item_id, attempts, file_path in rows:
         giving_up = attempts >= MAX_ATTEMPTS
         values = ({"status": ST_GAGAL, "error": MSG_UNREADABLE, "file_path": None, "expires_at": now + ITEM_EXPIRY}
                   if giving_up else {"status": ST_DITERIMA})
@@ -131,9 +131,11 @@ async def recover_stale(db, *, now: datetime) -> int:
         if res.rowcount == 1:
             changed += 1
             if giving_up:
-                gave_up.append((item_id, file_path, channel_meta))
+                gave_up.append((item_id, file_path))
     await db.commit()
-    for item_id, file_path, channel_meta in gave_up:
+    announce = [(item_id, file_path, await _channel_meta(db, item_id)) for item_id, file_path in gave_up]
+    await db.commit()  # akhiri transaksi baca sebelum mengabari kanal
+    for item_id, file_path, channel_meta in announce:
         _unlink(file_path)
         await _announce(item_id, ST_GAGAL, channel_meta)
     return changed
@@ -141,9 +143,18 @@ async def recover_stale(db, *, now: datetime) -> int:
 
 # --- kabar selesai ------------------------------------------------------
 
+async def _channel_meta(db, item_id: uuid.UUID) -> dict | None:
+    """`channel_meta` dibaca ulang SESUDAH commit status akhir: bot menyalakan `notify` dengan UPDATE bersyarat
+    selama item masih `diterima`/`diproses`, bisa saja di antara pemuatan item di sini dan commit-nya. Nilai di objek
+    yang dimuat sebelum commit bisa basi; yang dibaca sesudahnya tidak (UPDATE bot yang kalah balapan tidak mengenai
+    baris yang sudah selesai, dan bot lalu merender hasilnya sendiri)."""
+    return (await db.execute(select(ReceiptScan.channel_meta).where(ReceiptScan.id == item_id))).scalar_one_or_none()
+
+
 async def _notify_channel(item_id: uuid.UUID) -> None:
-    """Item yang dibaca lewat batas tunggu bot: kanal (Telegram) dikabari lewat hook bot. Hook
-    belum tentu ada (dibuat Task A11); galat apa pun hanya dicatat, item sudah tersimpan."""
+    """Item yang dibaca lewat batas tunggu bot: kanal (Telegram) dikabari lewat hook bot
+    `send_ready_message`. Galat apa pun (termasuk hook yang tidak bisa diimpor) hanya dicatat, item sudah
+    tersimpan."""
     try:
         from app.bot.receipt_cmd import send_ready_message
         await asyncio.wait_for(send_ready_message(item_id), NOTIFY_TIMEOUT_S)
@@ -232,7 +243,8 @@ async def _store(factory, item_id: uuid.UUID, out: _Outcome, now: datetime) -> s
                     log.warning("peta merchant untuk item Kotak Struk %s tidak diperbarui", item_id, exc_info=True)
         item.file_path = None
         await db.commit()
-        status, channel_meta = item.status, item.channel_meta
+        status = item.status
+        channel_meta = await _channel_meta(db, item_id) if siap else None
     _unlink(path)
     if siap:
         await _announce(item_id, ST_SIAP, channel_meta)
@@ -251,7 +263,8 @@ async def _fail(factory, item_id: uuid.UUID, message: str, now: datetime) -> str
             item.processed_at, item.expires_at = now, now + ITEM_EXPIRY
         item.file_path = None
         await db.commit()
-        status, channel_meta = item.status, item.channel_meta
+        status = item.status
+        channel_meta = await _channel_meta(db, item_id) if failed else None
     _unlink(path)
     if failed:
         await _announce(item_id, ST_GAGAL, channel_meta)

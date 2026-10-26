@@ -6,7 +6,8 @@ Struk belanja tidak pernah masuk peta merchant (saran per barang tetap lewat kat
 
 Urutan pemanggil (web dan bot): `check_recordable` (pesan yang ramah), `claim_for_recording` (penjaga atomik terhadap
 pencatatan ganda, di-commit bersama transaksinya), lalu sesudah commit `after_recorded` (streak, kata kunci, dan
-`mark_recorded`). Kirim ulang `client_ref` yang sudah tercatat memanggil `heal_recorded`.
+`mark_recorded`). Kirim ulang `client_ref` yang sudah tercatat memanggil `heal_recorded`. Melewati item (rute
+`lewati` dan tombol bot) lewat `skip_item`, UPDATE bersyarat yang sama polanya dengan klaim.
 
 Satu struk belanja boleh dicatat per barang (banyak transaksi); semua jenis lain (QRIS, transfer, tidak dikenali)
 hanya sekali, dan penjaganya (klaim eksklusif, penyembuhan) berlaku untuk semuanya.
@@ -22,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, Transaction, User
 from app.services.expense_rules import after_expense_recorded
 from app.services.kotak_struk import dedup
-from app.services.kotak_struk.config import PROOF_TYPES, ST_SIAP, ST_TERCATAT
+from app.services.kotak_struk.config import PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_SIAP, ST_TERCATAT
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import _find_merchant, learnable_text, merchant_for_item, upsert_household_merchant
 
@@ -33,6 +34,7 @@ MSG_NOT_FOUND = "Bukti tidak ditemukan"
 MSG_RECORDED = "Bukti ini sudah tercatat"
 MSG_NOT_READY = "Bukti ini belum siap dicatat"
 MSG_BLOCKED = "Transaksi gagal, tidak bisa dicatat"
+MSG_CANNOT_SKIP = "Bukti ini tidak bisa dilewati"
 
 
 class NotRecordable(Exception):
@@ -82,6 +84,28 @@ async def claim_for_recording(db: AsyncSession, item_id: uuid.UUID, user_id: uui
                  .values(status=ST_TERCATAT))
         return (await db.execute(claim)).rowcount == 1
     return row.status in (ST_SIAP, ST_TERCATAT)
+
+
+async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, reason: str) -> bool:
+    """Item `siap`/`gagal` milik user -> `dilewati`, alasan di `channel_meta.skip_reason` (bukan_pengeluaran |
+    duplikat | batal). Satu UPDATE bersyarat: pencatatan (`claim_for_recording` mengubah `siap` -> `tercatat` dengan
+    cara yang sama) dan melewati tidak mungkin sama-sama menang. True bila berhasil (sudah di-commit); False bila item
+    tidak ada, milik user lain, atau statusnya lain (tidak ada yang diubah)."""
+    meta = (await db.execute(
+        select(ReceiptScan.channel_meta).where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id)
+    )).first()
+    if meta is None:
+        return False
+    done = await db.execute(
+        update(ReceiptScan)
+        .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)))
+        .values(status=ST_DILEWATI, channel_meta={**(meta[0] or {}), "skip_reason": reason})
+        .execution_options(synchronize_session=False)
+    )
+    if done.rowcount != 1:
+        return False
+    await db.commit()
+    return True
 
 
 async def learn_text_for_item(db: AsyncSession, item_id: uuid.UUID, description: str) -> str | None:
