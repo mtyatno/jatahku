@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createWebNative, TOKEN_KEY, REFRESH_KEY, PROD_API_URL, DEV_API_URL } from './web.js';
+import { createWebNative, TOKEN_KEY, REFRESH_KEY, PROD_API_URL, DEV_API_URL, CAMERA_MARK_KEY, CAMERA_MARK_MAX_MS } from './web.js';
 
 function memStorage(init = {}) {
   const data = { ...init };
@@ -28,7 +28,14 @@ function fakeDom() {
   const doc = {
     ...eventTarget(),
     body,
-    createElement: () => ({ click() { clicks.push({ href: this.href, download: this.download }); } }),
+    createElement: (tag) => (tag === 'input'
+      ? {
+        type: '', accept: '', attrs: {}, files: [], style: {}, l: {}, clicked: 0,
+        setAttribute(k, v) { this.attrs[k] = v; },
+        addEventListener(t, f) { this.l[t] = f; },
+        click() { this.clicked++; },
+      }
+      : { click() { clicks.push({ href: this.href, download: this.download }); } }),
   };
   const revoked = [];
   const timers = [];
@@ -205,4 +212,53 @@ test('init mendaftarkan service worker setelah load bila didukung', async () => 
   assert.equal(sw.handlers.controllerchange.length, 1);
   // tanpa service worker: tidak melempar
   await createWebNative({ window: eventTarget(), navigator: {} }).init();
+});
+
+test('camera.takePhoto: input foto dengan capture=environment, diklik sinkron, penanda ditulis', () => {
+  const { doc, win } = fakeDom(); const storage = memStorage();
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {}, now: () => 1000 });
+  n.camera.takePhoto();
+  const input = doc.body.children.at(-1);
+  assert.equal(input.type, 'file'); assert.equal(input.accept, 'image/*');
+  assert.equal(input.attrs.capture, 'environment'); assert.equal(input.clicked, 1);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '1000');
+});
+
+test('camera.pickPhoto: tanpa capture', () => {
+  const { doc, win } = fakeDom();
+  const n = createWebNative({ storage: memStorage(), window: win, document: doc, navigator: {} });
+  n.camera.pickPhoto();
+  assert.equal(doc.body.children.at(-1).attrs.capture, undefined);
+});
+
+test('camera: change → File, input dilepas, penanda dihapus; cancel → null', async () => {
+  const { doc, win } = fakeDom(); const storage = memStorage();
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {} });
+  const p = n.camera.takePhoto(); const input = doc.body.children.at(-1);
+  input.files = ['FOTO']; input.l.change();
+  assert.equal(await p, 'FOTO');
+  assert.equal(doc.body.children.includes(input), false);
+  assert.equal(CAMERA_MARK_KEY in storage.data, false);
+  const q = n.camera.pickPhoto(); doc.body.children.at(-1).l.cancel();
+  assert.equal(await q, null);
+});
+
+test('camera: panggilan baru melepas input lama yang belum selesai dan menyelesaikannya dengan null', async () => {
+  const { doc, win } = fakeDom();
+  const n = createWebNative({ storage: memStorage(), window: win, document: doc, navigator: {} });
+  const first = n.camera.takePhoto(); const oldInput = doc.body.children.at(-1);
+  n.camera.takePhoto();
+  assert.equal(await first, null);
+  assert.equal(doc.body.children.includes(oldInput), false);
+  assert.equal(doc.body.children.filter(c => c.type === 'file').length, 1);
+});
+
+test('camera.recover: lost bila penanda < 3 menit, lalu dihapus; file selalu null di web', async () => {
+  const mk = (mark, t) => createWebNative({ storage: memStorage(mark == null ? {} : { [CAMERA_MARK_KEY]: String(mark) }), window: {}, document: {}, navigator: {}, now: () => t });
+  assert.deepEqual(await mk(1000, 1000 + CAMERA_MARK_MAX_MS - 1).camera.recover(), { file: null, lost: true });
+  assert.deepEqual(await mk(1000, 1000 + CAMERA_MARK_MAX_MS).camera.recover(), { file: null, lost: false });
+  assert.deepEqual(await mk(null, 5000).camera.recover(), { file: null, lost: false });
+  const storage = memStorage({ [CAMERA_MARK_KEY]: '1' });
+  await createWebNative({ storage, window: {}, document: {}, navigator: {}, now: () => 2 }).camera.recover();
+  assert.equal(CAMERA_MARK_KEY in storage.data, false);
 });

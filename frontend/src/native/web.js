@@ -14,6 +14,9 @@ export const REFRESH_KEY = 'jatahku_refresh';
 export const PROD_API_URL = 'https://api.jatahku.com';
 // Dev: proxy Vite (vite.config.js) meneruskan /api ke server.
 export const DEV_API_URL = '/api';
+// Penanda "kamera sedang terbuka" (lihat camera di bawah). Dianggap basi setelah 3 menit.
+export const CAMERA_MARK_KEY = 'jatahku_camera_open';
+export const CAMERA_MARK_MAX_MS = 180000;
 
 export function createWebNative({
   window: win = globalThis.window,
@@ -22,6 +25,7 @@ export function createWebNative({
   storage = globalThis.localStorage,
   prod = false,
   queueStore = null,
+  now = () => Date.now(),
 } = {}) {
   // ── Token ────────────────────────────────────────────────────────────────
   // Web: localStorage, kunci sama seperti sebelum 1.5 supaya user tetap login.
@@ -151,6 +155,68 @@ export function createWebNative({
     },
   });
 
+  // ── Kamera & galeri ──────────────────────────────────────────────────────
+  // Web: <input type=file>. click() HARUS dipanggil sinkron dari handler
+  // ketukan (sebelum await apa pun) — Safari iPhone menolak membuka kamera /
+  // pemilih file dari tempat lain. Karena itu openPicker() tidak async: Promise
+  // dibuat dan input diklik di dalam satu panggilan sinkron.
+  //
+  // Penanda: di HP Android RAM kecil, OS bisa mematikan PWA saat aplikasi
+  // kamera terbuka. Penanda (waktu buka) ditulis sebelum kamera dibuka dan
+  // dihapus begitu hasilnya sampai; recover() di app berikutnya yang menemukan
+  // penanda masih baru tahu bahwa fotonya tidak sampai (lost).
+  const markWrite = () => {
+    try { storage?.setItem(CAMERA_MARK_KEY, String(now())); } catch { /* storage diblokir: tanpa penanda */ }
+  };
+  const markClear = () => {
+    try { storage?.removeItem(CAMERA_MARK_KEY); } catch { /* storage diblokir */ }
+  };
+  const markRead = () => {
+    try { return storage?.getItem(CAMERA_MARK_KEY) ?? null; } catch { return null; }
+  };
+
+  let pendingCamera = null; // selesaikan(null) untuk input yang belum selesai
+  function openPicker({ capture }) {
+    // Satu input pada satu waktu: yang lama dilepas dan dijawab null.
+    pendingCamera?.(null);
+    const input = doc.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    if (capture) input.setAttribute('capture', 'environment');
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (file) => {
+        if (done) return;
+        done = true;
+        if (pendingCamera === finish) pendingCamera = null;
+        try { doc.body.removeChild(input); } catch { /* sudah terlepas */ }
+        markClear();
+        resolve(file);
+      };
+      pendingCamera = finish;
+      markWrite();
+      doc.body.appendChild(input);
+      input.addEventListener('change', () => finish(input.files?.[0] ?? null));
+      input.addEventListener('cancel', () => finish(null));
+      input.click();
+    });
+  }
+
+  const camera = {
+    // Foto dari kamera belakang → File | null (dibatalkan).
+    takePhoto: () => openPicker({ capture: true }),
+    // Foto dari galeri/berkas → File | null (dibatalkan).
+    pickPhoto: () => openPicker({ capture: false }),
+    // Dipanggil sekali saat app dibuka. Web tidak bisa memulihkan file yang
+    // hilang; lost = true bila kamera baru saja dibuka dan hasilnya tak sampai.
+    async recover() {
+      const mark = markRead();
+      markClear();
+      return { file: null, lost: mark != null && now() - Number(mark) < CAMERA_MARK_MAX_MS };
+    },
+  };
+
   // ── Info platform ────────────────────────────────────────────────────────
   const platform = {
     name: CLIENT.platform,
@@ -199,5 +265,5 @@ export function createWebNative({
     registerServiceWorker();
   }
 
-  return { init, platform, tokens, queue, files, print, openExternal, externalLinkProps, onInstallPrompt };
+  return { init, platform, tokens, queue, files, camera, print, openExternal, externalLinkProps, onInstallPrompt };
 }
