@@ -27,7 +27,8 @@ class Parsed:
     secrets: Secrets = field(default_factory=Secrets)
     # Struk belanja: total_label, merchant_key, confidence_source, engine,
     # reconciliation, adjustments (bentuk JSON seperti `receipt_scan.items_payload`),
-    # item_discounts (voucher per barang, sejajar dengan baris `item` di doc.lines).
+    # item_discounts (voucher per barang, sejajar dengan baris `item` di doc.lines),
+    # ocr_lines (baris OCR yang sudah dinormalkan parse_receipt, untuk pembelajaran umpan balik).
     extra: dict = field(default_factory=dict)
 
 

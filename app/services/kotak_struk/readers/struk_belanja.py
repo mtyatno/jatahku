@@ -121,6 +121,9 @@ def parsed_from_receipt(rp: ReceiptParse, fb: dict | None = None) -> Parsed:
         },
         # Voucher yang menempel di barang tidak punya tempat di `Line`; sejajar dengan baris `item`.
         "item_discounts": [it.discount for it in items],
+        # Baris OCR yang sudah dinormalkan `parse_receipt` (= kolom `ocr_lines` scan lama); pembelajaran
+        # umpan balik memakainya. Jalur penyelamatan UnknownReader tidak menjalankan parse: baris mentah.
+        "ocr_lines": list(rp.lines),
     }
     return Parsed(doc=doc, extra=extra)
 

@@ -171,6 +171,22 @@ class StrukBelanjaReaderTests(unittest.IsolatedAsyncioTestCase):
                          [("discount", "VC PL", 5900), ("discount", "VC INDOMARCO PRI", 22900)])
         self.assertEqual([a["kind"] for a in res.parsed.extra["adjustments"]], ["discount", "discount"])
 
+    async def test_normalized_ocr_lines_are_kept_for_learning(self):
+        # Pembelajaran umpan balik (payment_amounts, find_label_for_amount) memakai baris yang SUDAH
+        # dinormalkan parse_receipt, seperti kolom ocr_lines pada scan_receipt lama.
+        raw = ["TOKO MAJU", "  T0TAL   15.000 ", "", "ROTI  10.000", "SUSU 5.000"]
+        normalized = ["TOKO MAJU", "TOTAL 15.000", "ROTI 10.000", "SUSU 5.000"]
+        self.assertEqual(parse_receipt(raw, CTX.today).lines, normalized)       # asumsi tes: normalisasi mengubah baris
+        parsed = await StrukBelanjaReader().parse(doc(raw), CTX)
+        self.assertEqual(parsed.extra["ocr_lines"], normalized)
+        llm = AsyncMock(return_value={"merchant": "Toko A", "date": None, "total": 12000})
+        parsed = await StrukBelanjaReader().parse(doc(LOW_RECEIPT), llm_ctx(llm))   # jalur LLM: baris OCR tetap yang dinormalkan
+        self.assertEqual(parsed.extra["ocr_lines"], parse_receipt(LOW_RECEIPT, CTX.today).lines)
+        # Penyelamatan LLM lewat UnknownReader: tidak ada parse yang berjalan, jadi baris mentah dokumen.
+        parsed = await UnknownReader().parse(doc(["  foto  buram "]), llm_ctx(llm))
+        self.assertEqual((parsed.doc.doc_type, parsed.extra["ocr_lines"]), ("struk_belanja", ["  foto  buram "]))
+        self.assertIsInstance(parsed.extra["ocr_lines"], list)
+
     async def test_date_becomes_midnight_wib(self):
         lines = FIX["receipts"][0]["lines"]
         ctx = ParseContext(today=date(2025, 5, 25))
