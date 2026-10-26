@@ -59,6 +59,16 @@ async def llm_fallback(ctx: ParseContext) -> dict | None:
     return fb if fb and fb.get("total") else None
 
 
+def apply_header_status(doc: DokumenBayar, lines: list[str]) -> None:
+    """Status bawaan dokumen dibiarkan; hanya judul yang bisa mengubahnya ke `gagal`/`pending`, supaya bukti transfer/QRIS
+    yang gagal dan salah rute (ke struk belanja atau pembaca tidak dikenali) tetap diblokir oleh cek status
+    (checks.common_checks). Kalimat di badan dan kaki tidak dihitung."""
+    header = read_header_status(lines)
+    if header in ("gagal", "pending"):
+        doc.status = header
+        doc.evidence.append(f"Judul bukti menyebut status {header}")
+
+
 def _midnight_wib(d: date | None) -> datetime | None:
     return datetime(d.year, d.month, d.day, tzinfo=WIB) if d else None
 
@@ -157,12 +167,7 @@ class StrukBelanjaReader:
         )
         fb = await llm_fallback(ctx) if rp.confidence in ("rendah", "gagal") else None
         parsed = parsed_from_receipt(rp, fb)
-        # Status bawaan `berhasil`; hanya judul yang bisa mengubahnya (`gagal`/`pending`), supaya bukti transfer/QRIS
-        # yang gagal dan salah rute ke sini tetap diblokir oleh cek status (checks.common_checks).
-        header = read_header_status(doc.lines)
-        if header in ("gagal", "pending"):
-            parsed.doc.status = header
-            parsed.doc.evidence.append(f"Judul bukti menyebut status {header}")
+        apply_header_status(parsed.doc, doc.lines)        # status bawaan `berhasil`; judul bisa menjadikannya gagal/pending
         return parsed
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:

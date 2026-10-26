@@ -263,12 +263,39 @@ def _first_amount(lines: list[str], labels: list[str], profile: AppProfile | Non
     return None
 
 
-def _sum_amounts(lines: list[str], labels: list[str], profile: AppProfile | None) -> int:
+# Label biaya tambahan (`extra`: layanan, tips, ongkir, ...) juga kata biasa di baris bantuan dan promo ("Layanan Pelanggan
+# 1500888", "Tips Aman: hubungi 1500888", "Ongkir Gratis s/d Rp10.000"). Barisnya dihitung biaya hanya bila sisanya nominal saja
+# ("Rp2.000", "2.000", "2000"), atau keterangan tanpa angka (persen boleh) lalu nominal ber-Rp/IDR atau berpemisah ribuan di ujung
+# baris ("Layanan BI-FAST Rp2.500", "Service Charge 10% Rp2.500"). Keterangan promo/batas (gratis, s/d, maks, ...) bukan biaya.
+_EXTRA_VALUE = re.compile(
+    r"(?P<note>(?:[^\d]|\d+(?:[.,]\d+)?\s*%)*?)\s*"
+    r"(?P<amount>(?:Rp|IDR)\.?\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+)\s*(?:,-|-)?\s*(?:(?:Rp|IDR)\.?)?\s*\)?\s*",
+    re.IGNORECASE)
+_MONEY = re.compile(r"(?:Rp|IDR)|\d{1,3}[.,]\d{3}", re.IGNORECASE)
+_PROMO_WORDS = re.compile(r"(?<!\w)(?:gratis|free|s/d|s\.d|hingga|sampai|maks(?:imal)?|max|min(?:imal)?|up\s+to)(?!\w)", re.IGNORECASE)
+
+
+def _extra_amount(text: str) -> int:
+    """Nominal biaya tambahan dari sisa baris sesudah labelnya (lihat `_EXTRA_VALUE`); selain bentuk itu 0."""
+    m = _EXTRA_VALUE.fullmatch(text.strip())
+    if not m:
+        return 0
+    note, amount = m.group("note").strip(), m.group("amount")
+    if note and (_PROMO_WORDS.search(note) or not _MONEY.match(amount)):
+        return 0
+    found = amounts_in(amount)
+    return found[0] if found else 0
+
+
+def _sum_amounts(lines: list[str], labels: list[str], profile: AppProfile | None,
+                 strict_labels: list[str] | tuple[str, ...] = ()) -> int:
     """Jumlah nominal semua baris berlabel (biaya, diskon, pajak bisa lebih dari satu baris). Satu baris dihitung
-    sekali walau beberapa sinonim cocok ("Biaya Admin" cocok "biaya admin" dan "biaya"). Yang < Rp100 dianggap 0."""
+    sekali walau beberapa sinonim cocok ("Biaya Admin" cocok "biaya admin" dan "biaya"). Yang < Rp100 dianggap 0.
+    Baris yang labelnya di `strict_labels` (biaya tambahan berkata biasa) dibaca dengan `_extra_amount`."""
     if not labels:
         return 0
     start = _label_start(tuple(sorted({label.lower() for label in labels}, key=len, reverse=True)))
+    strict = {" ".join(label.lower().split()) for label in strict_labels}
     total = 0
     for i, line in enumerate(lines):
         m = start.match(line)
@@ -277,7 +304,11 @@ def _sum_amounts(lines: list[str], labels: list[str], profile: AppProfile | None
         rest = line[m.end():].lstrip(" :：")
         if not rest and i + 1 < len(lines) and not is_label_line(lines[i + 1], profile):
             rest = lines[i + 1]
-        amounts = amounts_in(_SIGN.sub(" ", rest))
+        rest = _SIGN.sub(" ", rest)
+        if " ".join(m.group(0).lower().split()) in strict:
+            total += _extra_amount(rest)
+            continue
+        amounts = amounts_in(rest)
         total += amounts[0] if amounts else 0
     return total
 
@@ -292,7 +323,9 @@ def read_amounts(lines: list[str], profile: AppProfile | None) -> tuple[Amounts,
     total_labels = [label for label in labels if label.lower().startswith("total")]
     subtotal = _first_amount(lines, [label for label in labels if label not in total_labels], profile)
     total = _first_amount(lines, total_labels, profile, exclude=_TOTAL_OF_COMPONENT)
-    fee = _sum_amounts(lines, [*labels_for(profile, "fee"), *labels_for(profile, "extra")], profile) \
+    fee_labels = labels_for(profile, "fee")
+    extra_labels = [label for label in labels_for(profile, "extra") if label.lower() not in {f.lower() for f in fee_labels}]
+    fee = _sum_amounts(lines, [*fee_labels, *extra_labels], profile, strict_labels=extra_labels) \
         or _first_amount(lines, _COMPONENT_TOTAL_LABELS, profile) or 0
     discount = _sum_amounts(lines, labels_for(profile, "discount"), profile)
     tax = _sum_amounts(lines, labels_for(profile, "tax"), profile)
@@ -371,9 +404,17 @@ def _classify(text: str) -> str | None:
 # Ajakan yang muncul SESUDAH kata status ("Transaksi Gagal, silakan coba lagi", "Failed. Please try again") adalah
 # kegagalan sungguhan dan tetap dihitung; bagian kalimat sesudah kata bersyarat itu dibuang ("Transaksi Berhasil,
 # jika gagal hubungi 14017" = berhasil).
-_ANY_STATUS = re.compile(r"(?<!\w)(?:gagal|failed|tidak\s+berhasil|diproses|pending|processing|berhasil|sukses|successful|success)(?!\w)", re.IGNORECASE)
+_STATUS_WORD = r"(?:gagal|failed|tidak\s+berhasil|diproses|pending|processing|berhasil|sukses|successful|success)"
+_ANY_STATUS = re.compile(r"(?<!\w)" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
 _CONDITIONAL = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|hubungi|silakan|silahkan|contact|please)(?!\w)", re.IGNORECASE)
 _LEADING_UNTUK = re.compile(r"^\W*untuk(?!\w)", re.IGNORECASE)
+# Frasa bantuan yang menyebut JENIS transaksi, bukan status bukti ini ("Info untuk transaksi gagal: 14017", "Bantuan untuk
+# transaksi gagal", "Pengaduan transaksi gagal: 14017", "Biaya transfer untuk transaksi gagal dikembalikan", "For failed
+# transactions call 14017"): dibuang sebelum status dibaca. "untuk" + nama/tagihan tetap status ("Pembayaran untuk Tagihan PLN Gagal").
+_HELP_PHRASE = re.compile(
+    r"(?<!\w)(?:untuk|pengaduan|bantuan|keluhan)\s+(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?" + _STATUS_WORD + r"(?!\w)"
+    r"|(?<!\w)for\s+(?:failed|pending|successful)\s+(?:transactions?|payments?|transfers?)(?!\w)",
+    re.IGNORECASE)
 
 
 def _is_status_sentence(text: str) -> bool:
@@ -393,8 +434,33 @@ def _status_part(text: str) -> str:
     return text[:cut.start()] if cut else text
 
 
+# Baris nama pihak lawan ("Merchant TOKO GAGAL MANIA", "Penerima CV SUKSES", atau nama di bawah label "Merchant" yang berdiri
+# sendiri): kata status di dalam nama bukan status transaksi.
+_NAME_FIELDS = ("merchant", "sender")
+
+
+def _name_label_end(text: str) -> int | None:
+    labels = {label.lower() for name in _NAME_FIELDS for label in labels_for(None, name)}
+    m = _label_start(tuple(sorted(labels, key=len, reverse=True))).match(text)
+    return m.end() if m else None
+
+
 def _status_lines(texts: list[str], max_words: int) -> list[str]:
-    return [_status_part(t) for t in texts if len(t.split()) <= max_words and _is_status_sentence(t)]
+    """Bagian status dari baris yang cukup pendek, sesudah frasa bantuan (`_HELP_PHRASE`) dibuang. Baris nama pihak
+    lawan (dan nilai di bawah label nama yang berdiri sendiri) dilewati."""
+    out, name_below = [], False
+    for text in texts:
+        is_name, name_below = name_below, False
+        label_end = _name_label_end(text)
+        if label_end is not None:
+            name_below = not text[label_end:].strip(" :：")
+            continue
+        if is_name or len(text.split()) > max_words:
+            continue
+        text = _HELP_PHRASE.sub(" ", text)
+        if _is_status_sentence(text):
+            out.append(_status_part(text))
+    return out
 
 
 def _strongest(texts: list[str]) -> str | None:

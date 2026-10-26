@@ -1,4 +1,4 @@
-"""Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun."""
+"""Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending), seperti struk belanja."""
 from __future__ import annotations
 
 import re
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from app.services.kotak_struk.document import Amounts, DokumenBayar
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
-from app.services.kotak_struk.readers.struk_belanja import llm_fallback, parsed_from_receipt
+from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
 from app.services.receipt_parser import ReceiptParse, amounts_in
 
 if TYPE_CHECKING:
@@ -23,6 +23,13 @@ class UnknownReader:
         return 0.0  # hanya cadangan; registri memakainya bila tidak ada pembaca yang lolos
 
     async def parse(self, doc: TextDoc, ctx: ParseContext) -> Parsed:
+        parsed = await self._parse(doc, ctx)
+        # Bukti gagal/pending yang tidak dikenali pembaca mana pun (atau pembaca bukti mati) tetap diblokir/diperingatkan
+        # oleh cek status; status bawaan (`tidak_diketahui`, atau `berhasil` dari penyelamatan LLM) hanya diubah oleh judul.
+        apply_header_status(parsed.doc, doc.lines)
+        return parsed
+
+    async def _parse(self, doc: TextDoc, ctx: ParseContext) -> Parsed:
         # Seperti scan struk lama: foto yang tidak terbaca pun dicoba ke LLM cadangan (bila aktif).
         fb = await llm_fallback(ctx)
         if fb:

@@ -4,6 +4,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import json, subprocess, sys, unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import AsyncMock
 from app.services.kotak_struk import checks as checks_module
 from app.services.kotak_struk import registry
 from app.services.kotak_struk.document import Counterparty, DokumenBayar, Amounts
@@ -1281,3 +1282,157 @@ class RereviewMinorItemsTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(name=name, inline=len(lines[2].split()) > 1):
                     res = await read(lines)
                     self.assertEqual((res.parsed.doc.counterparty.name, res.parsed.doc.amounts.fee), (name, 0))
+
+
+# ── Perbaikan review A5, putaran 4 ──────────────────────────────────────────
+
+# Baris bantuan/promo yang diawali label tambahan (layanan, tips, ongkir): angkanya nomor telepon atau batas promo, bukan biaya.
+HELP_LINE_FOOTERS = ("Layanan Pelanggan 1500888", "Layanan Nasabah 14017", "Tips Aman: hubungi 1500888", "Layanan Pengaduan Konsumen: 0853 1111 1010",
+                     "Layanan Konsumen 1500-280", "Layanan Halo BCA 1500888", "Layanan 24 Jam 1500 888", "Layanan Pelanggan: 1500-888",
+                     "Ongkir Gratis s/d Rp10.000")
+TRANSFER_OK = ["Transfer Berhasil", "26 Okt 2026 09:30", "Penerima BUDI SANTOSO", "Bank Tujuan BCA", "Nominal Rp150.000"]
+QRIS_OK = ["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", "26/10/2026 08:12"]
+
+
+def rupiah(value):
+    return f"Rp{value:,}".replace(",", ".")
+
+
+class ExtraChargeNeedsAnAmountTests(unittest.IsolatedAsyncioTestCase):
+    """N1: label tambahan adalah kata biasa; baris itu dihitung biaya hanya bila sisanya nominal (atau keterangan + nominal ber-Rp/pemisah ribuan)."""
+
+    async def test_help_line_numbers_do_not_become_a_fee(self):
+        for proof, reader, nominal in ((TRANSFER_OK, "transfer.umum", 150000), (QRIS_OK, "qris.umum", 25000)):
+            for footer in HELP_LINE_FOOTERS:
+                for with_total in (False, True):
+                    lines = [*proof, *([f"Total {rupiah(nominal)}"] if with_total else []), footer]
+                    with self.subTest(reader=reader, footer=footer, total=with_total):
+                        res = await read(lines)
+                        d = res.parsed.doc
+                        self.assertEqual((res.reader, d.status, d.amounts.fee, d.amounts.total, d.confidence["total"], res.checks),
+                                         (reader, "berhasil", 0, nominal, "tinggi", []))
+
+    async def test_extra_charges_with_an_amount_still_count(self):
+        cases = [("Layanan BI-FAST Rp2.500", 2500), ("Tips: Rp2.000", 2000), ("Donasi : Rp1.000", 1000), ("Ongkir 10.000", 10000), ("Tips 2000", 2000),
+                 ("Service Fee IDR 1.500", 1500), ("Layanan Rp 2.500,-", 2500), ("Service Charge 10% Rp2.500", 2500), ("Biaya Layanan Rp2.000", 2000),
+                 ("Donasi Rp0", 0)]
+        for line, fee in cases:
+            with self.subTest(line):
+                res = await read([*QRIS_OK[:5], line, f"Total {rupiah(25000 + fee)}"])
+                a = res.parsed.doc.amounts
+                self.assertEqual((res.reader, a.fee, a.total, res.checks), ("qris.umum", fee, 25000 + fee, []))
+        res = await read([*QRIS_OK[:5], "Tips", "Rp2.000", "Total Rp27.000"])           # nilai di baris bawah label
+        self.assertEqual((res.parsed.doc.amounts.fee, res.checks), (2000, []))
+        res = await read([*TRANSFER_OK, "Layanan BI-FAST Rp2.500"])                         # tanpa Total: ikut dijumlahkan
+        self.assertEqual(res.parsed.doc.amounts.total, 152500)
+
+
+class UnknownReaderStatusTests(unittest.IsolatedAsyncioTestCase):
+    """Putusan (a): bukti gagal/pending yang tidak dikenali pembaca mana pun tetap diblokir/diperingatkan (status dari judul saja)."""
+
+    async def test_failed_proof_read_by_the_unknown_reader_is_blocked(self):
+        cases = [(["Transaksi Gagal", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000"], False),     # pembaca bukti mati
+                 (["Pembayaran Gagal", "Rp50.000", "26/10/2026 10:00"], True)]                             # tidak ada pembaca yang mengenali
+        for lines, enabled in cases:
+            with self.subTest(lines[0], enabled=enabled):
+                res = await read(lines, enabled=enabled)
+                d = res.parsed.doc
+                self.assertEqual((res.reader, d.doc_type, d.status), ("tidak_dikenali", "tidak_dikenali", "gagal"))
+                self.assertEqual({c.code: c.level for c in res.checks}, {"status_gagal": "block"})
+                self.assertEqual(d.checks, [c.as_dict() for c in res.checks])
+
+    async def test_pending_proof_read_by_the_unknown_reader_warns(self):
+        res = await read(["Transaksi Pending", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000"], enabled=False)
+        self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("tidak_dikenali", "pending", {"status_pending": "warn"}))
+
+    async def test_status_stays_unknown_without_a_failure_in_the_header(self):
+        for lines in (["foto buram", "Rp 12.000"], ["Transaksi Berhasil", "Rp 12.000"], ["foto buram", "Rp 12.000", "a", "b", "Transaksi Gagal"],
+                      ["Jika gagal hubungi 14017", "Rp 12.000"], ["Info untuk transaksi gagal: 14017", "Rp 12.000"]):
+            with self.subTest(lines):
+                res = await read(lines)
+                self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("tidak_dikenali", "tidak_diketahui", []))
+
+    async def test_failed_header_still_blocks_after_the_llm_rescue(self):
+        llm = AsyncMock(return_value={"merchant": "Toko A", "date": None, "total": 12000})
+        ctx = ParseContext(today=date(2026, 10, 26), llm=llm, image=b"img", content_type="image/jpeg")
+        res = await read(["Pembayaran Gagal", "buram"], ctx=ctx)
+        d = res.parsed.doc
+        self.assertEqual((res.reader, d.doc_type, d.amounts.total, d.status), ("tidak_dikenali", "struk_belanja", 12000, "gagal"))
+        self.assertEqual({c.code: c.level for c in res.checks}, {"status_gagal": "block"})
+        res = await read(["foto buram"], ctx=ctx)
+        self.assertEqual((res.parsed.doc.status, res.checks), ("berhasil", []))          # penyelamatan LLM biasa: tidak berubah
+
+
+class HelpLineStatusTests(unittest.IsolatedAsyncioTestCase):
+    """Putusan (b): kalimat bantuan ("untuk transaksi gagal", "Pengaduan transaksi gagal") menyebut jenis transaksi, bukan status bukti ini."""
+
+    HELP = ("Info untuk transaksi gagal: 14017", "Bantuan untuk transaksi gagal", "Pengaduan transaksi gagal: 14017",
+            "Biaya transfer untuk transaksi gagal dikembalikan", "Untuk transaksi yang gagal hubungi 14017", "Keluhan transaksi gagal 14017",
+            "Bantuan pembayaran gagal", "For failed transactions call 14017")
+
+    async def test_help_lines_do_not_block_a_proof_without_a_status_word(self):
+        for help_line in self.HELP:
+            for lines in (["Bukti Transfer", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", help_line],     # kaki
+                          ["Bukti Transfer", help_line, "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"]):    # judul
+                with self.subTest(help_line, at=lines.index(help_line)):
+                    res = await read(lines)
+                    self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("transfer.umum", "tidak_diketahui", []))
+
+    async def test_help_lines_do_not_flip_a_successful_proof(self):
+        for help_line in self.HELP:
+            for lines, reader in ((["Transfer Berhasil", help_line, "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"], "transfer.umum"),
+                                  (["Pembayaran Berhasil", help_line, "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000"], "qris.umum")):
+                with self.subTest(help_line, first=lines[0]):
+                    res = await read(lines)
+                    self.assertEqual((res.reader, res.parsed.doc.status, res.checks), (reader, "berhasil", []))
+                    res = await read(lines, enabled=False)                            # salah rute: judul juga tidak boleh memblokir
+                    self.assertEqual([c for c in res.checks if c.level == "block"], [])
+        res = await read(["Transaksi Berhasil, biaya untuk transaksi gagal dikembalikan", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"])
+        self.assertEqual((res.parsed.doc.status, res.checks), ("berhasil", []))
+
+    async def test_real_failures_are_still_blocked(self):
+        for lines in (["Transfer Gagal", "Info untuk transaksi gagal: 14017", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"],
+                      ["Pembayaran untuk Tagihan PLN Gagal", "Penerima PLN", "Bank Tujuan BNI", "Nominal Rp150.000"],
+                      ["Transfer untuk BUDI Gagal", "Bantuan untuk transaksi gagal", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"],
+                      ["Pembayaran Gagal", "Pengaduan transaksi gagal: 14017", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000"]):
+            with self.subTest(lines[0]):
+                res = await read(lines)
+                self.assertEqual((res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("gagal", {"status_gagal": "block"}))
+
+    def test_status_unit_rules(self):
+        cases = [("Info untuk transaksi gagal: 14017", "tidak_diketahui"), ("Pengaduan transaksi gagal: 14017", "tidak_diketahui"),
+                 ("Untuk pembayaran yang gagal, dana kembali", "tidak_diketahui"), ("Bantuan transfer gagal", "tidak_diketahui"),
+                 ("Info untuk transaksi yang gagal: 14017", "tidak_diketahui"), ("Keluhan pembayaran pending", "tidak_diketahui"),
+                 ("For failed transactions call 14017", "tidak_diketahui"), ("Transaksi Berhasil, biaya untuk transaksi gagal dikembalikan", "berhasil"),
+                 ("Pembayaran untuk Tagihan PLN Gagal", "gagal"), ("Gagal untuk rekening ini", "gagal"), ("Transfer untuk BUDI Gagal", "gagal"),
+                 ("Transaction for BUDI failed", "gagal"), ("Transaksi gagal", "gagal")]
+        for text, expect in cases:
+            with self.subTest(text):
+                self.assertEqual(pc.read_status([text]), expect)
+                self.assertEqual(pc.read_header_status([text]), None if expect == "tidak_diketahui" else expect)
+
+
+class NameLinesAreNotStatusTests(unittest.IsolatedAsyncioTestCase):
+    """Ikutan putusan (a): nama merchant/penerima/pengirim di judul ("Merchant TOKO GAGAL MANIA") bukan status. Tanpa ini, bukti sah
+    yang dibaca pembaca tidak dikenali (pembaca bukti mati) ikut diblokir begitu status judul dipakai di sana."""
+
+    async def test_status_words_inside_names_do_not_block(self):
+        for lines, reader in ((["Pembayaran Berhasil", "QRIS", "Merchant TOKO GAGAL MANIA", "Nominal Rp25.000"], "qris.umum"),
+                              (["Pembayaran Berhasil", "QRIS", "Merchant", "TOKO GAGAL MANIA", "Nominal Rp25.000"], "qris.umum"),
+                              (["Transfer Berhasil", "Penerima CV GAGAL JAYA", "Bank Tujuan BCA", "Nominal Rp150.000"], "transfer.umum"),
+                              (["Dana Masuk", "Dari TOKO PENDING", "Nominal Rp500.000", "26 Okt 2026 11:00"], "transfer.umum")):
+            with self.subTest(lines[2]):
+                res = await read(lines)
+                self.assertEqual((res.reader, res.parsed.doc.status, res.checks), (reader, "berhasil", []))
+                res = await read(lines, enabled=False)
+                self.assertEqual([c for c in res.checks if c.level == "block"], [])
+
+    async def test_real_status_lines_next_to_names_still_count(self):
+        for lines, status in ((["Pembayaran Gagal", "QRIS", "Merchant TOKO SUKSES MAKMUR", "Nominal Rp25.000"], "gagal"),
+                              (["QRIS", "Merchant", "TOKO SUKSES MAKMUR", "Pembayaran Gagal", "Nominal Rp25.000"], "gagal"),
+                              (["Transfer Diproses", "Penerima SUKSES JAYA", "Bank Tujuan BCA", "Nominal Rp1.000"], "pending"),
+                              (["Bukti Transfer", "Penerima BUDI", "Status Gagal", "Nominal Rp1.000"], "gagal")):
+            with self.subTest(lines):
+                self.assertEqual(pc.read_status(lines), status)
+        self.assertEqual(pc.read_header_status(["Pembayaran Berhasil", "Merchant TOKO GAGAL MANIA"]), "berhasil")
+        self.assertEqual(pc.read_header_status(["Merchant", "TOKO GAGAL MANIA", "Transaksi Gagal"]), "gagal")
