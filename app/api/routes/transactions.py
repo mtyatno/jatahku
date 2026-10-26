@@ -18,7 +18,7 @@ from app.services.behavior import check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
 from app.services.kotak_struk.config import PDF_MAX_BYTES
 from app.services.kotak_struk.record import (
-    MSG_RECORDED, NotRecordable, after_recorded, check_recordable, claim_for_recording, heal_recorded,
+    NotRecordable, after_recorded, check_recordable, claim_failure_detail, claim_for_recording, heal_recorded,
 )
 from app.services.plan_limits import check_transaction_limit, has_txn_limit, quota_notice_after_input
 from app.services import quota_pass
@@ -263,9 +263,11 @@ async def create_transaction(
     user_id = user.id  # rollback di bawah meng-expire `user`
     try:
         if req.receipt_item_id and not await claim_for_recording(db, req.receipt_item_id, user_id):
-            # Simpan lain (bot, ketukan kedua) mengklaim bukti ini di antara `check_recordable` dan sekarang.
+            # Simpan lain (bot, ketukan kedua) mengklaim bukti ini di antara `check_recordable` dan sekarang, atau
+            # bukti itu kedaluwarsa / dilewati: pesannya dari status terbaru, dibaca sesudah rollback.
             await db.rollback()
-            raise HTTPException(status_code=409, detail=MSG_RECORDED)
+            raise HTTPException(status_code=409,
+                                detail=await claim_failure_detail(db, req.receipt_item_id, user_id))
         txn = Transaction(
             envelope_id=req.envelope_id,
             user_id=user_id,
@@ -430,10 +432,12 @@ async def batch_create_transactions(
             continue
         try:
             if item.receipt_item_id and not await claim_for_recording(db, item.receipt_item_id, user.id):
-                # Simpan lain mengklaim bukti ini di antara `check_recordable` dan sekarang. Klaim yang gagal tidak
-                # mengubah apa pun, jadi tidak ada yang perlu di-rollback (rollback juga meng-expire `user`).
+                # Simpan lain mengklaim bukti ini di antara `check_recordable` dan sekarang (atau bukti itu kedaluwarsa
+                # / dilewati). Klaim yang gagal tidak mengubah apa pun, jadi tidak ada yang perlu di-rollback (rollback
+                # juga meng-expire `user`); `claim_failure_detail` membaca kolom status terbaru, bukan salinan ORM.
                 await idempotency.release(user.id, item.client_ref)
-                results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=MSG_RECORDED))
+                detail = await claim_failure_detail(db, item.receipt_item_id, user.id)
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=detail))
                 continue
             txn = Transaction(
                 envelope_id=item.envelope_id,

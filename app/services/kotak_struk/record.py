@@ -33,7 +33,7 @@ STORE_RECEIPT = "struk_belanja"
 MSG_NOT_FOUND = "Bukti tidak ditemukan"
 MSG_RECORDED = "Bukti ini sudah tercatat"
 MSG_NOT_READY = "Bukti ini belum siap dicatat"
-MSG_EXPIRED = "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."
+MSG_EXPIRED = "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"
 MSG_BLOCKED = "Transaksi gagal, tidak bisa dicatat"
 MSG_CANNOT_SKIP = "Bukti ini tidak bisa dilewati"
 
@@ -88,6 +88,23 @@ async def claim_for_recording(db: AsyncSession, item_id: uuid.UUID, user_id: uui
                  .values(status=ST_TERCATAT))
         return (await db.execute(claim)).rowcount == 1
     return row.status in (ST_SIAP, ST_TERCATAT)
+
+
+async def claim_failure_detail(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    """Pesan untuk klaim yang gagal (`claim_for_recording` False), dari status item SAAT INI: SELECT kolom baru (bukan
+    salinan ORM di sesi), dipanggil sesudah rollback pemanggil bila ada. `tercatat` -> MSG_RECORDED, `kedaluwarsa` ->
+    MSG_EXPIRED, tidak ada / milik user lain -> MSG_NOT_FOUND, status lain (dilewati, gagal, ...) -> MSG_NOT_READY.
+    Tidak menulis dan tidak meng-commit."""
+    row = (await db.execute(
+        select(ReceiptScan.user_id, ReceiptScan.status).where(ReceiptScan.id == item_id)
+    )).first()
+    if row is None or row.user_id != user_id:
+        return MSG_NOT_FOUND
+    if row.status == ST_TERCATAT:
+        return MSG_RECORDED
+    if row.status == ST_KEDALUWARSA:
+        return MSG_EXPIRED
+    return MSG_NOT_READY
 
 
 async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, reason: str) -> bool:

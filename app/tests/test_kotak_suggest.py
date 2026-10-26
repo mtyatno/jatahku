@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from sqlalchemy import delete, event, func, select
+from sqlalchemy import delete, event, func, select, update
 
 from app.core.database import Base
 from app.models.models import (
@@ -24,7 +24,7 @@ from app.services.kotak_struk import record
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import merchant_for_item, set_display_name
 from app.services.kotak_struk.record import (
-    NotRecordable, check_recordable, claim_for_recording, learn_text_for_item, mark_recorded,
+    NotRecordable, check_recordable, claim_failure_detail, claim_for_recording, learn_text_for_item, mark_recorded,
 )
 from app.services.kotak_struk.suggest import suggest_for_item, visible_expense_envelopes
 
@@ -400,7 +400,7 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(NotRecordable) as cm:
                 await check_recordable(self.db, item.id, self.a)
             return cm.exception.detail
-        expired = "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."
+        expired = "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"   # tanpa titik akhir, seperti MSG_* lain (bot menambahkannya)
         self.assertEqual(record.MSG_EXPIRED, expired)
         for i, doc_type in enumerate(("qris", "transfer", "tidak_dikenali")):
             item = await self.qris_item("K", key=f"nmid:IDK{i}", merchant_row=False, doc_type=doc_type,
@@ -411,6 +411,34 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await reason(await self.store_item(status="dilewati")), "Bukti ini belum siap dicatat")
         self.assertEqual(await reason(await self.qris_item("G", key="nmid:IDG", merchant_row=False, status="gagal")),
                          "Bukti ini belum siap dicatat")
+
+    async def test_claim_failure_detail_follows_the_current_status(self):
+        cases = {"tercatat": "Bukti ini sudah tercatat", "kedaluwarsa": "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya",
+                 "dilewati": "Bukti ini belum siap dicatat", "gagal": "Bukti ini belum siap dicatat",
+                 "diproses": "Bukti ini belum siap dicatat", "diterima": "Bukti ini belum siap dicatat",
+                 "siap": "Bukti ini belum siap dicatat", None: "Bukti ini belum siap dicatat"}
+        for i, (status, expected) in enumerate(cases.items()):
+            item = await self.qris_item("C", key=f"nmid:IDC{i}", merchant_row=False, status=status)
+            with self.subTest(status=status):
+                self.assertEqual(await claim_failure_detail(self.db, item.id, self.a.id), expected)
+        store = await self.store_item(status="kedaluwarsa")
+        self.assertEqual(await claim_failure_detail(self.db, store.id, self.a.id), "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya")
+        self.assertEqual(await claim_failure_detail(self.db, uuid4(), self.a.id), "Bukti tidak ditemukan")
+        self.assertEqual(await claim_failure_detail(self.db, self.item.id, self.b.id), "Bukti tidak ditemukan")
+        self.assertEqual(record.MSG_EXPIRED, "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya")
+
+    async def test_claim_failure_detail_reads_the_row_not_the_session_copy_and_never_writes(self):
+        # self.item ada di identity map sesi ini dengan status `siap`; sesi lain lalu mengubah barisnya.
+        await self.db.commit()   # akhiri transaksi baca sesi ini (SQLite: kunci baca menahan penulis lain)
+        async with self.Session() as other:
+            await other.execute(update(ReceiptScan).where(ReceiptScan.id == self.item.id).values(status="kedaluwarsa"))
+            await other.commit()
+        self.assertEqual(self.item.status, "siap")
+        with patch.object(self.db, "commit", AsyncMock()) as commit, patch.object(self.db, "flush", AsyncMock()) as flush:
+            self.assertEqual(await claim_failure_detail(self.db, self.item.id, self.a.id), "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya")
+        commit.assert_not_awaited()
+        flush.assert_not_awaited()
+        self.assertFalse(self.db.dirty or self.db.new or self.db.deleted)
 
     async def test_recorded_duplicate_blocks(self):
         await self.qris_item("Dup", key="nmid:ID5", merchant_row=False, status="tercatat", ref_hash="r" * 64)

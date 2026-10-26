@@ -473,14 +473,15 @@ class _ProofGuard:
         return cls(item_id)
 
     async def claim(self, db, user_id) -> bool:
-        """False: bukti sudah diklaim pencatatan lain; sesi di-rollback (transaksi dan dana tambahan batal) dan
-        `error` berisi pesan untuk user."""
+        """False: bukti sudah diklaim pencatatan lain (atau kedaluwarsa / dilewati sementara itu); sesi di-rollback
+        (transaksi dan dana tambahan batal) dan `error` berisi pesan untuk user, dari status terbaru item."""
         from app.bot.receipt_cmd import MSG_ALREADY_RECORDED
         from app.services.kotak_struk import record
         if self.item_id is None or await record.claim_for_recording(db, self.item_id, user_id):
             return True
         await db.rollback()
-        self.error = MSG_ALREADY_RECORDED
+        detail = await record.claim_failure_detail(db, self.item_id, user_id)
+        self.error = MSG_ALREADY_RECORDED if detail == record.MSG_RECORDED else f"⚠️ {detail}."
         return False
 
 

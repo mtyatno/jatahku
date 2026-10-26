@@ -193,15 +193,16 @@ class TxnBase(kapi.ApiBase):
                 MerchantEnvelopeMap.merchant_id == mid, MerchantEnvelopeMap.envelope_id == self.env[envelope].id))
             ).scalar_one()
 
-    def other_session_claims(self):
+    def other_session_claims(self, status="tercatat"):
         """`check_recordable` asli, lalu "sesi lain" mengklaim dan meng-commit bukti itu sebelum pemanggil
         sempat meng-klaim (dua simpan bersamaan, `client_ref` berbeda). SQLite tidak bisa mengaburkan dua sesi
-        sungguhan di satu koneksi, jadi klaim sesi lain ditulis lewat sesi pemanggil lalu di-commit."""
+        sungguhan di satu koneksi, jadi klaim sesi lain ditulis lewat sesi pemanggil lalu di-commit. `status`: hasil
+        sesi lain (`kedaluwarsa`: job pemeliharaan; `dilewati`: dilewati di kanal lain)."""
         real = txn_route.check_recordable
 
         async def racing(db, item_id, user):
             item = await real(db, item_id, user)
-            await db.execute(update(ReceiptScan).where(ReceiptScan.id == item_id).values(status="tercatat"))
+            await db.execute(update(ReceiptScan).where(ReceiptScan.id == item_id).values(status=status))
             await db.commit()
             return item
         return patch.object(txn_route, "check_recordable", racing)
@@ -399,7 +400,7 @@ class RecordWithReceiptItemTests(TxnBase):
         await self.set(item.id, status="kedaluwarsa")
         r = await self.post(item)
         self.assertEqual((r.status_code, r.json()["detail"]),
-                         (409, "Bukti ini sudah kedaluwarsa. Bagikan lagi untuk mencatatnya."))
+                         (409, "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"))
         self.assertEqual(await self.count(Transaction), 0)
 
     async def test_receipt_check_runs_after_idempotency_and_before_envelope_checks(self):
@@ -449,6 +450,19 @@ class RecordWithReceiptItemTests(TxnBase):
         self.assertEqual((got.status, got.transaction_ids), ("tercatat", None))   # klaim pihak lain utuh
         self.assertNotIn(f"txnref:{self.a.id}:kalah", self.redis.kv)   # kunci dilepas
         self.assertEqual(await self.learned_keywords(), set())
+
+    async def test_proof_expired_or_skipped_between_check_and_commit_is_409_with_its_reason(self):
+        for status, detail in (("kedaluwarsa", "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"),
+                               ("dilewati", "Bukti ini belum siap dicatat")):
+            with self.subTest(status=status):
+                item = await self.ready_qris()
+                with self.other_session_claims(status):
+                    r = await self.post(item, ref=f"kalah-{status}")
+                self.assertEqual((r.status_code, r.json()["detail"]), (409, detail))
+                self.assertEqual(await self.count(Transaction), 0)
+                got = await self.get(item.id)
+                self.assertEqual((got.status, got.transaction_ids), (status, None))
+                self.assertNotIn(f"txnref:{self.a.id}:kalah-{status}", self.redis.kv)   # kunci dilepas
 
     async def test_unknown_document_claimed_by_another_save_between_check_and_commit_is_409(self):
         """`tidak_dikenali` dicatat sekali saja seperti bukti bayar (spec 5c), jadi klaimnya juga eksklusif."""
@@ -670,6 +684,17 @@ class BatchWithReceiptItemTests(TxnBase):
         self.assertEqual([x["ok"] for x in out], [False, True])
         self.assertEqual(out[0]["error"], MSG_RECORDED)
         self.assertEqual(await self.count(Transaction), 1)
+        self.assertNotIn(f"txnref:{self.a.id}:a", self.redis.kv)
+
+    async def test_line_whose_proof_expired_meanwhile_gets_the_expired_reason(self):
+        item = await self.ready_qris()
+        with self.other_session_claims("kedaluwarsa"):
+            out = await self.batch([self.line(item, ref="a", amount=25000),
+                                    self.line(None, ref="b", env="Jajan", amount=4000, desc="permen")])
+        self.assertEqual([x["ok"] for x in out], [False, True])
+        self.assertEqual(out[0]["error"], "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya")
+        self.assertEqual(await self.count(Transaction), 1)
+        self.assertEqual((await self.get(item.id)).status, "kedaluwarsa")
         self.assertNotIn(f"txnref:{self.a.id}:a", self.redis.kv)
 
     async def test_blocked_unknown_and_foreign_items_are_per_line_errors(self):

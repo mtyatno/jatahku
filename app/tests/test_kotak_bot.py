@@ -697,15 +697,15 @@ class KotakBotDbTests(TxnBase):
                 MerchantEnvelopeMap.merchant_id == mid, MerchantEnvelopeMap.envelope_id == self.env[envelope].id))
             ).scalar_one_or_none()
 
-    def other_session_claims(self):
+    def other_session_claims(self, status="tercatat"):
         """`check_recordable` asli, lalu "sesi lain" (mis. web) mengklaim dan meng-commit bukti itu sebelum bot
         sempat meng-klaim. SQLite tidak bisa mengaburkan dua sesi sungguhan di satu koneksi, jadi klaim sesi lain
-        ditulis lewat sesi bot lalu di-commit (pola test_kotak_transactions)."""
+        ditulis lewat sesi bot lalu di-commit (pola test_kotak_transactions). `status`: hasil sesi lain."""
         real = record_mod.check_recordable
 
         async def racing(db, item_id, user):
             item = await real(db, item_id, user)
-            await db.execute(update(ReceiptScan).where(ReceiptScan.id == item_id).values(status="tercatat"))
+            await db.execute(update(ReceiptScan).where(ReceiptScan.id == item_id).values(status=status))
             await db.commit()
             return item
         return patch.object(record_mod, "check_recordable", racing)
@@ -814,6 +814,21 @@ class KotakBotDbTests(TxnBase):
             query = await self.tap(self.button("Makan"))
         self.assertEqual(query.edit_message_text.call_args.args[0], "✅ Bukti ini sudah tercatat.")
         self.assertEqual(await self.txns(), [])
+
+    async def test_expired_proof_message_has_a_single_period(self):
+        await self.send()
+        await self.set(self.items[-1], status="kedaluwarsa")
+        query = await self.tap(self.button("Makan"))
+        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.")
+        self.assertEqual(await self.txns(), [])
+
+    async def test_proof_expired_before_commit_says_so(self):
+        await self.send()
+        with self.other_session_claims("kedaluwarsa"):
+            query = await self.tap(self.button("Makan"))
+        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.")
+        self.assertEqual(await self.txns(), [])
+        self.assertEqual((await self.get(self.items[-1])).status, "kedaluwarsa")
 
     async def test_fund_shift_path_claims_too(self):
         await self.send()
