@@ -148,3 +148,29 @@ class EdgeCaseTests(unittest.TestCase):
         self.assertEqual((back.counterparty.name, back.amounts.total, back.paid_at), ("BUDI", None, None))
         self.assertEqual((back.lines[0].kind, back.lines[0].amount, back.lines[0].flag), ("fee", 2500, "ok"))
         self.assertEqual(DokumenBayar.from_json(back.to_json()), back)
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_nameless_fallback_descriptions_teach_nothing(self):
+        other = DokumenBayar(doc_type="tagihan")
+        t = DokumenBayar(doc_type="transfer")
+        for doc in (qris(), t, other):
+            desc = M.compose_description(doc, display=None, note=None)
+            self.assertEqual(M.learnable_text(desc, []), "", desc)
+            self.assertEqual(M.learnable_text(desc.upper(), []), "", desc)
+            self.assertEqual(M.learnable_text(desc.lower(), []), "", desc)
+
+    def test_fallback_strip_is_exact_user_words_survive(self):
+        self.assertEqual(M.learnable_text("transfer arisan", []), "transfer arisan")
+        self.assertEqual(M.learnable_text("bukti bayar kos", []), "bukti bayar kos")
+        self.assertEqual(M.learnable_text("pembayaran qris bakso", []), "pembayaran qris bakso")
+
+    def test_dot_or_dash_masked_account_is_not_hashed(self):
+        for masked in ("0123 .... 4567", "0123-----4567", "0123 - 4567 8901", "0123....4567", "0123 **** 4567"):
+            k = M.counterparty_key(Counterparty("BUDI", bank="BRI"), account_number=masked, bank_code="BRI")
+            self.assertEqual(k, "nama:budi|bri", masked)
+
+    def test_single_separators_between_digit_groups_still_hashed(self):
+        full = M.counterparty_key(Counterparty("BUDI"), account_number="012301001234567", bank_code="BRI")
+        for ok in ("0123 0100 1234 567", "0123-0100-1234-567", "0123.0100.1234.567", "  0123   0100 1234 567 "):
+            self.assertEqual(M.counterparty_key(Counterparty("BUDI"), account_number=ok, bank_code="BRI"), full, ok)

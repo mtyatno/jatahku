@@ -17,6 +17,13 @@ KEY_MAX = 80            # panjang kolom counterparty_key
 DESCRIPTION_MAX = 500   # batas keterangan transaksi
 MIN_ACCOUNT_DIGITS = 8  # nomor rekening dianggap terbaca utuh bila punya >= ini
 
+# Keterangan cadangan bila bukti tidak punya nama pihak dan user tidak menulis catatan.
+# Terlihat user sebagai deskripsi transaksi, tapi bukan catatan user: learnable_text membuangnya.
+FALLBACK_QRIS = "Pembayaran QRIS"
+FALLBACK_TRANSFER = "Transfer"
+FALLBACK_OTHER = "Bukti bayar"
+_FALLBACKS = {FALLBACK_QRIS.casefold(), FALLBACK_TRANSFER.casefold(), FALLBACK_OTHER.casefold()}
+
 ACRONYMS = {"PT", "CV", "UD", "TB", "SPBU", "BRI", "BCA", "BNI", "BSI", "BTN", "QRIS", "RS", "RSUD"}
 
 _warned_no_key = False
@@ -54,10 +61,12 @@ def counterparty_key(cp: Counterparty, *, nmid: str | None = None,
     nmid = (nmid or "").strip()
     if nmid:
         return f"nmid:{nmid.upper()}"[:KEY_MAX]
-    # Rekening hanya dipakai bila terbaca utuh: angka dengan pemisah spasi/strip/titik.
-    # Nomor tersamar ("****4567", "0123****4567") jatuh ke nama.
-    if account_number and re.fullmatch(r"[\d\s.\-]+", account_number):
-        digits = re.sub(r"\D", "", account_number)
+    # Rekening hanya dipakai bila terbaca utuh: kelompok digit dengan paling banyak satu
+    # pemisah (spasi/strip/titik) di antaranya. Nomor tersamar ("****4567",
+    # "0123****4567", "0123 .... 4567", "0123-----4567") jatuh ke nama.
+    acct = " ".join((account_number or "").split())
+    if re.fullmatch(r"[0-9]+(?:[ .\-][0-9]+)*", acct):
+        digits = re.sub(r"\D", "", acct)
         if len(digits) >= MIN_ACCOUNT_DIGITS:
             return f"rek:{hmac_hex((bank_code or '') + ':' + digits)}"[:KEY_MAX]
     name = normalize_name(cp.name)
@@ -80,7 +89,7 @@ def compose_description(doc: DokumenBayar, *, display: str | None, note: str | N
 
     Tanpa catatan: QRIS `Siti Aminah (QRIS)`, transfer `Transfer ke Budi Santoso`,
     jenis lain `{nama}`. Dengan catatan: `bakso 2, es teh (Siti Aminah)`.
-    Tanpa nama: catatan saja, atau `Pembayaran QRIS` / `Transfer` / `Bukti bayar`.
+    Tanpa nama: catatan saja, atau FALLBACK_QRIS / FALLBACK_TRANSFER / FALLBACK_OTHER.
     """
     name = (display or "").strip()
     note = (note or "").strip()
@@ -90,18 +99,20 @@ def compose_description(doc: DokumenBayar, *, display: str | None, note: str | N
         suffix = f" ({name})"
         return (note[:max(0, DESCRIPTION_MAX - len(suffix))].rstrip() + suffix)[:DESCRIPTION_MAX]
     if doc.doc_type == "qris":
-        text = f"{name} (QRIS)" if name else "Pembayaran QRIS"
+        text = f"{name} (QRIS)" if name else FALLBACK_QRIS
     elif doc.doc_type == "transfer":
-        text = f"Transfer ke {name}" if name else "Transfer"
+        text = f"Transfer ke {name}" if name else FALLBACK_TRANSFER
     else:
-        text = name or "Bukti bayar"
+        text = name or FALLBACK_OTHER
     return text[:DESCRIPTION_MAX]
 
 
 def learnable_text(description: str, names: list[str]) -> str:
     """Bagian keterangan yang boleh dipelajari sebagai kata kunci amplop: nama
     merchant (nama asli, nama panggilan), "(QRIS)", "transfer ke", dan tanda
-    kurung kosong dibuang. Yang tersisa hanya catatan user."""
+    kurung kosong dibuang. Bila yang tersisa persis salah satu keterangan cadangan
+    (bukti tanpa nama dan tanpa catatan), hasilnya kosong. Yang tersisa hanya catatan
+    user; kata user sendiri ("transfer arisan") tetap utuh."""
     text = description or ""
     for name in sorted({n.strip() for n in names if n and n.strip()}, key=len, reverse=True):
         pattern = r"\s+".join(re.escape(part) for part in name.split())
@@ -109,7 +120,8 @@ def learnable_text(description: str, names: list[str]) -> str:
     text = re.sub(r"\(\s*qris\s*\)", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\btransfer\s+ke\b", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\(\s*\)", " ", text)
-    return " ".join(text.split())
+    text = " ".join(text.split())
+    return "" if text.casefold() in _FALLBACKS else text
 
 
 def mask_digits(s: str, keep: int = 4) -> str:
