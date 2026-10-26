@@ -3,8 +3,9 @@ from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
-    ForeignKey, Enum as SAEnum, func, UniqueConstraint
+    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 import enum
@@ -554,6 +555,30 @@ class ReceiptScan(Base):
     outcome: Mapped[str | None] = mapped_column(String(12), nullable=True)  # accepted | corrected | discarded
     feedback_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # --- Kotak Struk ("Bagikan ke Jatahku"; spec 2026-10-26 §2a). Semua nullable
+    # kecuali attempts; status NULL = baris lama (riwayat scan). DDL Postgres-nya
+    # ada di app/services/kotak_struk/schema.py (KOTAK_DDL).
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # telegram | web_chat | web_form | pwa_share
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)  # diterima | diproses | siap | gagal | tercatat | dilewati | kedaluwarsa
+    doc_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # struk_belanja | qris | transfer | tidak_dikenali
+    household_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    upload_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # unik per user (indeks parsial di KOTAK_DDL)
+    file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    content_type: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String(255), nullable=True)  # dikosongkan saat file dihapus
+    ref_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # HMAC nomor referensi
+    counterparty_key: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    document: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)  # Dokumen Bayar
+    parser: Mapped[str | None] = mapped_column(String(40), nullable=True)  # mis. qris.umum
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(String(200), nullable=True)  # alasan gagal yang aman ditampilkan
+    channel_meta: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    transaction_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+
 
 class ReceiptTotalLabel(Base):
     """Profil toko (dipakai bersama semua user): label baris yang berisi total
@@ -587,3 +612,36 @@ class ReceiptLearnVote(Base):
     value: Mapped[str] = mapped_column(String(100), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HouseholdMerchant(Base):
+    """Pihak penerima yang pernah muncul di bukti bayar sebuah rumah tangga
+    (spec 2026-10-26 §2c). counterparty_key: nmid:<NMID> | nama:<nama>|<kota> |
+    rek:<hmac>; nomor rekening tidak pernah disimpan utuh."""
+    __tablename__ = "household_merchants"
+    __table_args__ = (UniqueConstraint("household_id", "counterparty_key", name="uq_hh_merchant"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    counterparty_key: Mapped[str] = mapped_column(String(80))
+    raw_name: Mapped[str] = mapped_column(String(100))  # nama di bukti terakhir
+    display_name: Mapped[str | None] = mapped_column(String(60), nullable=True)  # nama panggilan dari user
+    city: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MerchantEnvelopeMap(Base):
+    """Peta merchant → amplop per rumah tangga: berapa kali amplop itu dipilih
+    untuk merchant itu. Dasar saran amplop (spec 2026-10-26 §4)."""
+    __tablename__ = "merchant_envelope_map"
+    __table_args__ = (UniqueConstraint("merchant_id", "envelope_id", name="uq_merchant_env"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    merchant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("household_merchants.id", ondelete="CASCADE"))
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id", ondelete="CASCADE"))
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    last_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

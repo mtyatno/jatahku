@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS income_type VARCHAR(20) DEFAULT 'monthly'"
             ))
+            # Kotak Struk (spec 2026-10-26): perluas receipt_scans (tabel baru
+            # household_merchants & merchant_envelope_map dibuat create_all).
+            from app.services.kotak_struk.schema import KOTAK_DDL
+            for stmt in KOTAK_DDL:
+                await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
     # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
     from app.services.advisor import advisor_cache
