@@ -718,6 +718,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
           disabled={saving}
           onRetry={scan.retry}
           onRetake={() => pickReceiptPhoto('camera', { onFile: scan.scanFile, onError: handleVoiceError })}
+          onDismiss={scan.reset}
         />
       </div>
 

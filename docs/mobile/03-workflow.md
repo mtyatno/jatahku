@@ -119,7 +119,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | B07–B10 | 1.10 | Pemeriksaan tablet di web (md/lg, rotasi) | 4 | 1 | – | Tangkapan layar tablet diperiksa | `Layout.jsx`, `Dashboard.jsx` (AI Advisor S6–S8) |
 | B11–B16 | 2.1 | Spike Capacitor di Android, iPhone, tablet: semua butir tersulit; progres unggah XHR di WebView | 6 | 2 | 0.2, 0.6 | Laporan lulus/gagal per butir |  |
 | B17–B19 | 3.1 | Scaffold mobile/: Capacitor 8, appId, android/ di-commit, safe area, tombol kembali | 3 | 3 | F1, 2.1 | App login ke produksi |  |
-| B20–B22 | 3.2 | Adapter capacitor.js: Keystore, antrean native, file, cetak, tautan luar; kamera (`@capacitor/camera`: takePhoto/pickPhoto, `recover()` lewat `appRestoredResult`) | 3 | 3 | 3.1 | Ekspor dan cetak jalan |  |
+| B20–B22 | 3.2 | Adapter capacitor.js: Keystore, antrean native, file, cetak, tautan luar; kamera (`@capacitor/camera`: takePhoto/pickPhoto, `recover()` lewat `appRestoredResult`); izin kamera & galeri Android (AndroidManifest) | 3 | 3 | 3.1 | Ekspor dan cetak jalan |  |
 | B23–B24 | 3.3 | Login Google native (multi client ID di server) | 2 | 3 | 3.2 | Login Google di Android |  |
 | B25 | 3.4 | App Links: assetlinks.json, /auth/tg, /reset-password | 1 | 4 | 3.1 | Link bot membuka app |  |
 | B26–B29 | 3.5 | Push Android: Firebase, device_tokens, kanal push | 4 | 4 | 3.2 | Pengingat uji tiba |  |
@@ -127,7 +127,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | B31–B32 | 3.7 | Penandatanganan, versi, workflow AAB + APK | 2 | 4 | 0.2 | Build bertanda tangan dari CI |  |
 | B33–B35 | 3.8 | OTA: live update, kanal beta/stable, rollback | 3 | 5 | 1.3, 3.1 | Rollback teruji |  |
 | B36–B37 | 3.9 | Paritas Android di Samsung, HP kelas bawah, tablet | 2 | 5 | 3.1–3.8 | Semua butir lulus |  |
-| B38–B40 | 5.1 | iOS: cap add ios, capabilities, izin, privacy manifest, universal iPad; izin kamera & galeri (Info.plist, AndroidManifest) | 3 | 5 | F3 | Jalan di iPhone dan iPad |  |
+| B38–B40 | 5.1 | iOS: cap add ios, capabilities, izin, privacy manifest, universal iPad; izin kamera & galeri iOS (Info.plist) | 3 | 5 | F3 | Jalan di iPhone dan iPad |  |
 | B41–B43 | 5.2 | Sign in with Apple + pencabutan token saat hapus akun | 3 | 6 | 1.2 | Daftar, masuk, hapus lewat Apple |  |
 | B44–B45 | 5.3 | Universal Links dan APNs lewat FCM | 2 | 6 | 3.4, 3.5 | Push tiba di iPhone |  |
 | B46–B47 | 5.4 | Penyesuaian iOS: mp4, simpan file, cetak, keyboard | 2 | 6 | 5.1 | Paritas iOS lulus |  |

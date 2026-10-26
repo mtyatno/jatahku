@@ -1,5 +1,5 @@
 // Olah foto struk di browser sebelum upload (butuh DOM: canvas, createImageBitmap).
-// Dipakai tombol Struk di form transaksi dan di chat bot.
+// Dipakai tombol Foto/Galeri di form transaksi dan di chat bot.
 import { fitDimensions } from './receiptScan';
 
 async function decode(file) {

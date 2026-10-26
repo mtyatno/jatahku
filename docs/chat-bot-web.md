@@ -69,9 +69,13 @@ balasan bot cukup ditambahkan ke `CHAT_EMOJI`. Telegram tetap memakai emoji
 
 ## Foto struk
 
-Tombol **Struk** (di samping Suara) mengirim foto ke `POST /bot/chat/photo`.
-Foto dikompres di HP dulu (`lib/receiptImage.js`, sama dengan tombol Struk di
-form), divalidasi sama dengan `/transactions/scan-receipt` (JPG/PNG/WebP, maks
+Tombol **Foto** (kamera langsung) dan **Galeri** (pemilih berkas), di samping
+Suara, mengirim foto ke `POST /bot/chat/photo`. Keduanya komponen bersama
+`ReceiptInput`, sama dengan form Catat. Selama foto dikirim, gelembung foto
+menampilkan tahapnya ("Mengunggah foto… xx%", lalu "Membaca struk…"); unggahan
+lewat XHR (`api.uploadForm`) dengan batas waktu 60 detik.
+Foto dikompres di HP dulu (`lib/receiptImage.js`, sama dengan tombol Foto/Galeri
+di form), divalidasi sama dengan `/transactions/scan-receipt` (JPG/PNG/WebP, maks
 8 MB), lalu dijalankan lewat `handle_non_text` → `receipt_cmd.handle_receipt_photo`
 — alur yang sama dengan kirim foto ke @JatahkuBot: kuota scan bulanan, batas per
 jam, pilih amplop lewat tombol, "Nominal salah", feedback belajar. Foto JPEG

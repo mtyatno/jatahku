@@ -165,6 +165,9 @@ export function createWebNative({
   // kamera terbuka. Penanda (waktu buka) ditulis sebelum kamera dibuka dan
   // dihapus begitu hasilnya sampai; recover() di app berikutnya yang menemukan
   // penanda masih baru tahu bahwa fotonya tidak sampai (lost).
+  // Batasan yang diterima: browser tanpa event `cancel` pada <input type=file> (Chrome/Samsung
+  // Internet lama, Safari iOS) tidak menghapus penanda saat kamera dibatalkan, jadi membuka
+  // ulang app dalam 3 menit bisa menampilkan toast "foto hilang" yang keliru.
   const markWrite = () => {
     try { storage?.setItem(CAMERA_MARK_KEY, String(now())); } catch { /* storage diblokir: tanpa penanda */ }
   };

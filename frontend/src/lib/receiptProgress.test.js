@@ -34,6 +34,11 @@ test('failureMessage: foto tidak bisa dibuka → hanya Foto ulang', () => {
     { text: 'Foto tidak bisa dibuka. Coba foto ulang atau pilih format JPG.', canRetry: false, canRetake: true });
 });
 
+test('failureMessage: tahap menyiapkan tetap pesan dekode walau ada status server (R1)', () => {
+  assert.deepEqual(failureMessage({ stage: STAGE.PREPARING, status: 502 }),
+    { text: 'Foto tidak bisa dibuka. Coba foto ulang atau pilih format JPG.', canRetry: false, canRetake: true });
+});
+
 test('failureMessage: unggahan gagal / lewat batas waktu → Coba lagi', () => {
   assert.deepEqual(failureMessage({ stage: STAGE.UPLOADING, status: 0 }),
     { text: 'Foto belum terkirim. Cek koneksi lalu coba lagi.', canRetry: true, canRetake: true });
@@ -45,10 +50,27 @@ test('failureMessage: koneksi putus saat membaca → pesan tahap membaca', () =>
     { text: 'Koneksi terputus saat membaca struk. Coba lagi.', canRetry: true, canRetake: true });
 });
 
+test('failureMessage: server lama menjawab saat membaca (timeout) → teks sendiri, bisa Coba lagi & Foto ulang', () => {
+  assert.deepEqual(failureMessage({ stage: STAGE.READING, timedOut: true }),
+    { text: 'Server lama menjawab. Coba lagi.', canRetry: true, canRetake: true });
+  // Putus jaringan (bukan timeout) tetap pesan koneksi terputus.
+  assert.equal(failureMessage({ stage: STAGE.READING, status: 0, timedOut: false }).text,
+    'Koneksi terputus saat membaca struk. Coba lagi.');
+});
+
 test('failureMessage: penolakan server memakai detail; 429 tanpa Coba lagi/Foto ulang; 5xx bisa Coba lagi', () => {
   const quota = failureMessage({ stage: STAGE.READING, status: 429, detail: 'Kuota scan struk bulan ini (15x) sudah habis.' });
   assert.deepEqual(quota, { text: 'Kuota scan struk bulan ini (15x) sudah habis.', canRetry: false, canRetake: false });
   assert.equal(failureMessage({ stage: STAGE.READING, status: 413, detail: 'Foto terlalu besar' }).canRetry, false);
   assert.equal(failureMessage({ stage: STAGE.READING, status: 502 }).canRetry, true);
   assert.equal(failureMessage({ stage: STAGE.READING, status: 502 }).text, 'Scan struk gagal, coba lagi');
+});
+
+test('failureMessage: 429 tanpa detail (pembatas laju slowapi) → teks tunggu, tanpa tombol', () => {
+  const expected = { text: 'Terlalu banyak scan. Tunggu sebentar, ya.', canRetry: false, canRetake: false };
+  assert.deepEqual(failureMessage({ stage: STAGE.READING, status: 429 }), expected);
+  assert.deepEqual(failureMessage({ stage: STAGE.UPLOADING, status: 429, detail: null }), expected);
+  assert.deepEqual(failureMessage({ stage: STAGE.READING, status: 429, detail: '   ' }), expected);
+  // Detail dari server (kuota bulanan) tetap dipakai.
+  assert.equal(failureMessage({ stage: STAGE.READING, status: 429, detail: 'Kuota habis.' }).text, 'Kuota habis.');
 });

@@ -827,7 +827,7 @@ class ApiClient {
     return this._chat('/bot/chat/proaktif', {});
   }
 
-  // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Struk).
+  // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Foto/Galeri di form Catat).
   async chatPhoto(blob, clientId, { onProgress, onUploaded } = {}) {
     try {
       const form = new FormData();
@@ -842,7 +842,10 @@ class ApiClient {
       });
       const d = res.data;
       if (res.ok) return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
-      if (res.status === 0 && uploadSelesai) return { ok: false, error: 'Koneksi terputus saat membaca struk. Coba lagi.' };
+      if (res.status === 0 && uploadSelesai) {
+        // Foto sudah sampai: bedakan jawaban yang tak kunjung datang (batas waktu) dari koneksi putus.
+        return { ok: false, error: res.timedOut ? 'Server lama menjawab. Coba lagi.' : 'Koneksi terputus saat membaca struk. Coba lagi.' };
+      }
       if (res.timedOut) return { ok: false, error: 'Koneksi lambat, foto belum terkirim. Coba lagi.' };
       if (res.status === 0) return { ok: false, error: FOTO_GAGAL_KONEKSI };
       if (res.status === 429) return { ok: false, error: 'Terlalu banyak scan. Tunggu sebentar, ya.' };

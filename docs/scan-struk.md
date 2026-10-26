@@ -1,6 +1,6 @@
 # Scan Struk (foto → pengeluaran)
 
-Catat pengeluaran dari foto struk, di webapp (tombol **Struk** di form catat)
+Catat pengeluaran dari foto struk, di webapp (tombol **Foto** / **Galeri** di form catat)
 dan bot Telegram (kirim foto). Tanpa LLM: OCR **RapidOCR** (model PaddleOCR via
 ONNX Runtime, CPU) + parser aturan. Fallback LLM Groq tersedia tapi **mati
 secara default** dan dikunci plafon biaya.
@@ -187,7 +187,7 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
    `receipt_learn_votes`) dibuat otomatis oleh `create_all` saat startup — tidak
    ada ALTER tabel lama.
 3. `sudo systemctl restart jatahku` (API + bot).
-4. Uji: kirim foto struk ke bot, dan tombol **Struk** di form catat webapp.
+4. Uji: kirim foto struk ke bot, dan tombol **Foto** / **Galeri** di form catat webapp.
 5. Pantau RAM: proses API naik ±340 MB setelah scan pertama (model dimuat sekali).
    Pastikan `jatahku.service` menjalankan uvicorn dengan **1 worker**: tiap worker
    memuat model sendiri, dan batas "1 OCR bersamaan" berlaku per proses.

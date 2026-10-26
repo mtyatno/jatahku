@@ -15,6 +15,8 @@ export const SLOW_READING_MS = 8000;
 export const NO_PROGRESS_MS = 1500;
 
 const GENERIC_FAILURE = 'Scan struk gagal, coba lagi';
+// Pembatas laju (slowapi, 30/jam) menjawab 429 dengan {"error": …} tanpa `detail`.
+const RATE_LIMITED = 'Terlalu banyak scan. Tunggu sebentar, ya.';
 
 function clampPercent(percent) {
   const n = Math.round(Number(percent) || 0);
@@ -74,7 +76,8 @@ export function failureMessage({ stage, status = 0, detail = null, timedOut = fa
 
   // Server menjawab dengan penolakan: pakai pesannya bila ada.
   if (code >= 400) {
-    const text = typeof detail === 'string' && detail.trim() ? detail : GENERIC_FAILURE;
+    const hasDetail = typeof detail === 'string' && detail.trim();
+    const text = hasDetail ? detail : code === 429 ? RATE_LIMITED : GENERIC_FAILURE;
     return { text, canRetry, canRetake };
   }
 
@@ -85,5 +88,9 @@ export function failureMessage({ stage, status = 0, detail = null, timedOut = fa
       : 'Foto belum terkirim. Cek koneksi lalu coba lagi.';
     return { text, canRetry, canRetake };
   }
-  return { text: 'Koneksi terputus saat membaca struk. Coba lagi.', canRetry, canRetake };
+  // Foto sudah sampai; jawabannya yang tak kunjung datang (batas 60 dtk) vs. koneksi putus.
+  const text = timedOut
+    ? 'Server lama menjawab. Coba lagi.'
+    : 'Koneksi terputus saat membaca struk. Coba lagi.';
+  return { text, canRetry, canRetake };
 }

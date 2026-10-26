@@ -9,7 +9,7 @@ import {
 } from '../lib/chatHistory';
 import { quickChips } from '../lib/chatChips';
 import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
-import { STAGE, stageLabel } from '../lib/receiptProgress';
+import { STAGE, stageLabel, stageSteps } from '../lib/receiptProgress';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
 import { useTicker } from '../hooks/useTicker';
 import ChatText from './ChatText';
@@ -152,6 +152,25 @@ function BotText({ text, format, onCommand, onLink }) {
   });
 }
 
+// Tahap pengiriman foto di bawah gelembung foto. Pemilik useTicker (500 ms) supaya hanya label ini
+// yang dirender ulang tiap detik, bukan seluruh gelembung di panel. `stage` = state photoStage.
+// Pembaca layar: wadah status terpasang kosong lalu diisi nama tahap (bukan persen), jadi hanya
+// pergantian tahap yang diumumkan; teks berpersen di luar wadah itu.
+function PhotoStageLabel({ stage }) {
+  const now = useTicker(true);
+  const { title, hint } = stageLabel({ ...stage, elapsedMs: Math.max(0, now - stage.startedAt) });
+  const stageName = stageSteps(stage.stage).find(st => st.state === 'active')?.label || '';
+  const [announced, setAnnounced] = useState('');
+  useEffect(() => { setAnnounced(stageName); }, [stageName]);
+  return (
+    <span className="mt-1 text-[11.5px] text-gray-500 text-right">
+      {title}
+      {hint && <span className="block">{hint}</span>}
+      <span role="status" aria-live="polite" className="sr-only">{announced}</span>
+    </span>
+  );
+}
+
 function TypingBubble() {
   return (
     <div className="flex justify-start" aria-live="polite" aria-label="Bot sedang mengetik">
@@ -216,7 +235,6 @@ export default function ChatPanel({ open, onClose, draft = null }) {
   // Tahap pengiriman foto yang sedang berjalan: { id, stage, percent, progressSeen, startedAt } | null.
   // Hanya di state komponen (bukan di pesan): status pesan ikut tersimpan di riwayat, tahap tidak boleh.
   const [photoStage, setPhotoStage] = useState(null);
-  const photoNow = useTicker(!!photoStage);
   const [mode, setMode] = useState('half'); // tinggi sheet mobile: 'half' | 'full'
   const [draftChips, setDraftChips] = useState([]);
   const draftSeen = useRef(null);
@@ -617,9 +635,6 @@ export default function ChatPanel({ open, onClose, draft = null }) {
 
   if (phase === 'closed') return null;
   const shown = phase === 'open';
-  const photoLabel = photoStage
-    ? stageLabel({ ...photoStage, elapsedMs: Math.max(0, photoNow - photoStage.startedAt) })
-    : null;
 
   return (
     <>
@@ -717,11 +732,8 @@ export default function ChatPanel({ open, onClose, draft = null }) {
                       {m.edited && !mine ? 'diubah · ' : ''}{timeLabel(m.ts)}
                     </span>
                   </div>
-                  {mine && m.kind === 'photo' && m.status === 'sending' && photoLabel && photoStage?.id === m.id && (
-                    <span role="status" aria-live="polite" className="mt-1 text-[11.5px] text-gray-500 text-right">
-                      {photoLabel.title}
-                      {photoLabel.hint && <span className="block">{photoLabel.hint}</span>}
-                    </span>
+                  {mine && m.kind === 'photo' && m.status === 'sending' && photoStage?.id === m.id && (
+                    <PhotoStageLabel stage={photoStage} />
                   )}
                   {mine && m.status === 'failed' && (m.kind !== 'photo' || photoFiles.current.has(m.id)) && (
                     <button type="button" onClick={() => retry(m)}
