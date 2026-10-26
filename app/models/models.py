@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
-    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON
+    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -562,7 +562,7 @@ class ReceiptScan(Base):
     status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)  # diterima | diproses | siap | gagal | tercatat | dilewati | kedaluwarsa
     doc_type: Mapped[str | None] = mapped_column(String(30), nullable=True)  # struk_belanja | qris | transfer | tidak_dikenali
     household_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
-    upload_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # unik per user (indeks parsial di KOTAK_DDL)
+    upload_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # unik per user (indeks parsial uq_receipt_scans_upload)
     file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     content_type: Mapped[str | None] = mapped_column(String(60), nullable=True)
     pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -578,6 +578,13 @@ class ReceiptScan(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transaction_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+
+    # Satu unggahan (upload_id dari klien) hanya satu item per user. Nama sama dengan di
+    # KOTAK_DDL, jadi DDL startup tidak membuat indeks ganda di basis data baru.
+    __table_args__ = (
+        Index("uq_receipt_scans_upload", "user_id", "upload_id", unique=True,
+              postgresql_where=text("upload_id IS NOT NULL"), sqlite_where=text("upload_id IS NOT NULL")),
+    )
 
 
 class ReceiptTotalLabel(Base):
