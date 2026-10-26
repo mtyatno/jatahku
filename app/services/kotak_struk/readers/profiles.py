@@ -19,10 +19,13 @@ class AppProfile:
 
 # Sinonim label per field; urutan = prioritas. Daftar rencana tetap ada (dalam urutan yang sama);
 # varian dekat ("Nama Penerima", "Nomor Rekening", "Nomor Referensi", ...) ditambahkan di antaranya.
-# Kunci di luar rencana: `sender`, `status` (pembaca transfer), `discount`, `tax` (cek silang nominal).
+# Kunci di luar rencana: `sender`, `status` (pembaca transfer), `discount`, `tax`, `extra` (cek silang nominal).
 GENERIC_LABELS: dict[str, list[str]] = {
     "amount": ["nominal", "jumlah", "jumlah pembayaran", "total bayar", "total pembayaran", "total", "amount"],
-    "fee": ["biaya admin", "biaya", "admin", "fee", "tip"],      # "tip": tambahan di atas nominal, masuk total seperti biaya
+    "fee": ["biaya admin", "biaya", "admin", "fee"],
+    # Tambahan di atas nominal yang ikut masuk total seperti biaya. Terpisah dari `fee` karena kata awalnya juga kata biasa
+    # ("TIP TOP SWALAYAN", "DONASI KITA BERSAMA"): baris berawalan ini tidak dianggap baris label saat nilai label lain hilang.
+    "extra": ["tips", "tip", "service fee", "service charge", "layanan", "ongkir", "donasi"],
     "discount": ["diskon", "potongan", "promo", "voucher", "discount"],
     "tax": ["pajak", "ppn", "pb1", "tax"],
     "merchant": ["merchant", "nama merchant", "nama penerima", "penerima", "nama tujuan", "tujuan", "ke"],

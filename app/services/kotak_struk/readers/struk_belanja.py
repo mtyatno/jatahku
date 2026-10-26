@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar, Line
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB
+from app.services.kotak_struk.readers.proof_common import read_header_status
 from app.services.receipt_parser import (
     NOT_TOTAL, TOTAL_INCL_TAX, ReceiptParse, amounts_in, merchant_key, normalize_line, parse_receipt, reconcile,
 )
@@ -155,7 +156,14 @@ class StrukBelanjaReader:
             merchant_aliases=ctx.merchant_aliases, merchant_profiles=ctx.merchant_profiles,
         )
         fb = await llm_fallback(ctx) if rp.confidence in ("rendah", "gagal") else None
-        return parsed_from_receipt(rp, fb)
+        parsed = parsed_from_receipt(rp, fb)
+        # Status bawaan `berhasil`; hanya judul yang bisa mengubahnya (`gagal`/`pending`), supaya bukti transfer/QRIS
+        # yang gagal dan salah rute ke sini tetap diblokir oleh cek status (checks.common_checks).
+        header = read_header_status(doc.lines)
+        if header in ("gagal", "pending"):
+            parsed.doc.status = header
+            parsed.doc.evidence.append(f"Judul bukti menyebut status {header}")
+        return parsed
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []

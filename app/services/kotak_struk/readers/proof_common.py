@@ -47,7 +47,7 @@ def _label_start(labels: tuple[str, ...]) -> re.Pattern:
 
 def is_label_line(text: str, profile: AppProfile | None = None, fields: tuple[str, ...] | None = None) -> bool:
     """Teks diawali salah satu label yang dikenal (semua field, atau hanya `fields`)."""
-    names = fields or tuple({*GENERIC_LABELS, *(profile.labels if profile else ())})
+    names = fields or tuple({*GENERIC_LABELS, *(profile.labels if profile else ())} - WORDLIKE_FIELDS)
     labels = {label.lower() for name in names for label in labels_for(profile, name)}
     return bool(labels) and bool(_label_start(tuple(sorted(labels, key=len, reverse=True))).match(text))
 
@@ -73,6 +73,8 @@ def read_text(lines: list[str], labels: list[str], profile: AppProfile | None = 
     return None
 
 
+# Field yang labelnya kata biasa: tidak dianggap baris label saat mencari nilai yang hilang ("TIP TOP SWALAYAN" adalah nama).
+WORDLIKE_FIELDS = frozenset({"extra"})
 LONG_DIGITS = 6           # deret angka sepanjang ini bukan bagian dari nama, kota, atau bank
 ACCOUNT_MIN_DIGITS = 8    # selaras dengan merchants.MIN_ACCOUNT_DIGITS: rekening "terbaca utuh"
 
@@ -290,7 +292,7 @@ def read_amounts(lines: list[str], profile: AppProfile | None) -> tuple[Amounts,
     total_labels = [label for label in labels if label.lower().startswith("total")]
     subtotal = _first_amount(lines, [label for label in labels if label not in total_labels], profile)
     total = _first_amount(lines, total_labels, profile, exclude=_TOTAL_OF_COMPONENT)
-    fee = _sum_amounts(lines, labels_for(profile, "fee"), profile) \
+    fee = _sum_amounts(lines, [*labels_for(profile, "fee"), *labels_for(profile, "extra")], profile) \
         or _first_amount(lines, _COMPONENT_TOTAL_LABELS, profile) or 0
     discount = _sum_amounts(lines, labels_for(profile, "discount"), profile)
     tax = _sum_amounts(lines, labels_for(profile, "tax"), profile)
@@ -362,26 +364,37 @@ def _classify(text: str) -> str | None:
 
 # Kalimat peringatan/bantuan di kaki bukti ("Jika gagal hubungi 14017", "Transaksi gagal? Hubungi kami") memuat
 # kata status tapi bukan status transaksi. Sebuah baris dilewati hanya bila:
-# - kata bersyarat/ajakan (jika, bila, apabila, kalau, if, hubungi, silakan, please, contact, untuk) muncul SEBELUM kata status
-#   pertama ("Hubungi 14017 jika gagal", "Silakan hubungi kami bila gagal"), atau
+# - kata bersyarat/ajakan (jika, bila, apabila, kalau, if, hubungi, silakan, please, contact) muncul SEBELUM kata status
+#   pertama ("Hubungi 14017 jika gagal", "Silakan hubungi kami bila gagal"), atau kalimat dibuka "Untuk ..."
+#   ("Untuk transaksi gagal, cek riwayat"; "Pembayaran untuk Tagihan PLN Gagal" tetap kegagalan), atau
 # - "?" tepat sesudah sebuah kata status ("Transaksi gagal?", "Failed? Contact us").
 # Ajakan yang muncul SESUDAH kata status ("Transaksi Gagal, silakan coba lagi", "Failed. Please try again") adalah
-# kegagalan sungguhan dan tetap dihitung.
+# kegagalan sungguhan dan tetap dihitung; bagian kalimat sesudah kata bersyarat itu dibuang ("Transaksi Berhasil,
+# jika gagal hubungi 14017" = berhasil).
 _ANY_STATUS = re.compile(r"(?<!\w)(?:gagal|failed|tidak\s+berhasil|diproses|pending|processing|berhasil|sukses|successful|success)(?!\w)", re.IGNORECASE)
-_CONDITIONAL = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|hubungi|silakan|silahkan|contact|please|untuk)(?!\w)", re.IGNORECASE)
+_CONDITIONAL = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|hubungi|silakan|silahkan|contact|please)(?!\w)", re.IGNORECASE)
+_LEADING_UNTUK = re.compile(r"^\W*untuk(?!\w)", re.IGNORECASE)
 
 
 def _is_status_sentence(text: str) -> bool:
     words = list(_ANY_STATUS.finditer(text))
     if not words:
         return False
-    if _CONDITIONAL.search(text[:words[0].start()]):
+    before = text[:words[0].start()]
+    if _CONDITIONAL.search(before) or _LEADING_UNTUK.match(before):
         return False
     return not any(text[m.end():].lstrip().startswith("?") for m in words)
 
 
+def _status_part(text: str) -> str:
+    """Bagian kalimat status sampai kata bersyarat/ajakan pertama sesudah kata statusnya."""
+    first = _ANY_STATUS.search(text)
+    cut = _CONDITIONAL.search(text, first.end()) if first else None
+    return text[:cut.start()] if cut else text
+
+
 def _status_lines(texts: list[str], max_words: int) -> list[str]:
-    return [t for t in texts if len(t.split()) <= max_words and _is_status_sentence(t)]
+    return [_status_part(t) for t in texts if len(t.split()) <= max_words and _is_status_sentence(t)]
 
 
 def _strongest(texts: list[str]) -> str | None:
@@ -391,6 +404,12 @@ def _strongest(texts: list[str]) -> str | None:
 
 def _first(texts: list[str]) -> str | None:
     return next((c for c in map(_classify, texts) if c), None)
+
+
+def read_header_status(lines: list[str]) -> str | None:
+    """Hanya tingkat judul (4 baris pertama): `gagal`, `pending`, `berhasil`, atau None. Dipakai pembaca struk belanja
+    supaya bukti yang salah rute tetap ketahuan gagalnya; kalimat di badan dan kaki tidak dihitung."""
+    return _strongest(_status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
 
 
 def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
@@ -420,7 +439,7 @@ _PAYMENT_LINE = re.compile(
 # Kata awal baris bukti bayar yang bukan nama barang, walau berbentuk "kata + nominal": subtotal, harga, tip, tagihan,
 # top up, saldo, dan sejenisnya. Kata utuh di awal baris ("Tipe Roti" tetap barang).
 _NON_ITEM_HEAD = re.compile(
-    r"^\W*(?:sub\s*-?\s*total|harga|tip|tagihan|top[\s-]?up|isi\s+saldo|saldo|kode\s+unik|cashback|pembulatan|materai|"
+    r"^\W*(?:sub\s*-?\s*total|harga|tips?|tagihan|top[\s-]?up|isi\s+saldo|saldo|kode\s+unik|cashback|pembulatan|materai|"
     r"pembayaran|payment|bayar)(?![A-Za-z])", re.IGNORECASE)
 _NUMBER_ONLY = re.compile(r"(?:Rp\.?\s*)?[\d.,]+", re.IGNORECASE)
 _QTY = re.compile(r"\d{1,2}(?:[.,]\d{1,3})?")          # kuantitas: 1-2 angka (boleh desimal "0,5"); kelompok 3-4 angka = nomor rekening
@@ -458,13 +477,18 @@ def _is_qty_item_line(line: str) -> bool:
     return bool(_QTY.fullmatch(qty) and _PRICE.fullmatch(price) and amounts_in(price))
 
 
+# Kata TUNAI/KEMBALI lalu hanya pemisah, "(QRIS)", dan mata uang sampai nominal di ujung baris. Kalimat yang sekadar
+# menyebut kata itu ("Dana Rp50.000 akan kembali ke rekening Anda", "Kembali ke halaman utama 2026", "Tarik tunai di
+# 1.000 ATM") bukan baris tunai.
+_CASH_LINE = re.compile(
+    r"(?<![A-Za-z])(?:KEMBALI|KEMBALIAN|TUNAI)(?![A-Za-z])[\s:：.=]*(?:\([^)]*\)[\s:：.=]*)?(?:(?:Rp|IDR)\.?\s*)?[\d.,]*\d(?:\s*(?:Rp|IDR)\.?)?\s*$",
+    re.IGNORECASE)
+
+
 def _is_cash_line(line: str) -> bool:
-    """Baris tunai/kembalian: ada kata TUNAI/KEMBALI dan nominal ("TUNAI 50.000", "TUNAI 50.000 IDR", "KEMBALI : 0",
-    "Non Tunai (QRIS) 45.400"). Baris catatan ("Berita titip tunai 2 bulan") dan tombol ("Kembali ke Beranda") bukan."""
-    tokens = line.split()
-    if not tokens or not _CASH_WORD.search(line) or is_label_line(line, fields=("note",)):
-        return False
-    return bool(amounts_in(line) or re.search(r"\d", tokens[-1]))
+    """Baris tunai/kembalian ("TUNAI 50.000", "TUNAI 50.000 IDR", "KEMBALI : 0", "Non Tunai (QRIS) 45.400").
+    Baris catatan ("Berita titip tunai 2") dan tombol ("Kembali ke Beranda") bukan."""
+    return bool(_CASH_LINE.search(line)) and not is_label_line(line, fields=("note",))
 
 
 def _total_amounts(lines: list[str], total_at: int) -> list[int]:
@@ -488,7 +512,7 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     - baris tunai/kembalian berangka;
     - >= 3 baris barang sebelum baris total;
     - >= 2 baris "NAMA QTY HARGA" di mana saja;
-    - >= 1 baris barang sebelum baris total dan sesudahnya baris cara bayar ("QRIS 40.000") bernominal sama dengan total.
+    - >= 1 baris "NAMA QTY HARGA" sebelum baris total dan sesudahnya baris cara bayar ("QRIS 40.000") bernominal sama dengan total.
     Baris berlabel bukti (Subtotal, Harga, Tip, Top Up, Nominal, ...) tidak pernah dihitung barang.
     Struk toko kecil (1-2 barang) yang dibayar QRIS dan mencetak NMID/Terminal ID masuk pola ini."""
     if any(_is_cash_line(line) for line in lines):
@@ -498,7 +522,9 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     items = sum(_is_item_line(line) for line in before)
     if items >= MIN_STORE_ITEMS or sum(_is_qty_item_line(line) for line in lines) >= MIN_QTY_ITEMS:
         return True
-    if total_at is None or items < 1:
+    # Baris "NAMA harga" tak berkuantitas bisa saja biaya tambahan bukti ("Donasi Rp2.000", "Layanan Rp1.000"), jadi
+    # untuk aturan baris-cara-bayar hanya baris berkuantitas yang dihitung barang.
+    if total_at is None or not any(_is_qty_item_line(line) for line in before):
         return False
     totals = _total_amounts(lines, total_at)
     return any(_is_payment_line_for(line, totals) for line in lines[total_at + 1:])

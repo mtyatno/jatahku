@@ -439,9 +439,9 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(p is res.parsed for _, p in calls))
 
     async def test_cross_checks_apply_to_payment_proofs_not_store_receipts(self):
-        # Kontrak checks.py: cek silang (nominal, status, tanggal) hanya untuk bukti QRIS/transfer. Struk
-        # belanja tidak diberi cek apa pun, bahkan yang tanggalnya > 60 hari lalu: jalur scan lama tidak
-        # punya cek silang dan perilakunya tidak boleh berubah.
+        # Kontrak checks.py: cek nominal dan tanggal hanya untuk bukti QRIS/transfer; cek status berlaku untuk semua jenis
+        # dokumen (lihat FailureBlockIndependentOfReaderTests). Struk belanja yang berhasil tidak diberi cek apa pun,
+        # bahkan yang tanggalnya > 60 hari lalu: jalur scan lama tidak punya cek silang dan perilakunya tidak boleh berubah.
         res = await read_document(doc(FIX["receipts"][0]["lines"]), CTX, proofs_enabled=True)
         self.assertEqual((res.checks, res.parsed.doc.checks), ([], []))
         old = ["TOKO MAJU", "01-07-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]

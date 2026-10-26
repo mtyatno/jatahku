@@ -1,7 +1,9 @@
-"""Cek silang dan arah uang untuk Dokumen Bayar bukti bayar (QRIS, transfer).
+"""Cek silang dan arah uang untuk Dokumen Bayar.
 
-Struk belanja dan dokumen tidak dikenali tidak dicek di sini: jalur scan struk lama tidak
-punya cek silang, dan tanggal struk yang lama tidak boleh tiba-tiba diberi peringatan."""
+Cek status (`status_gagal` memblokir, `status_pending` memperingatkan) berlaku untuk SEMUA jenis dokumen: pemblokiran
+transaksi gagal tidak boleh bergantung pada pembaca mana yang menang di registri. Cek lain (nominal, tanggal) dan arah
+uang hanya untuk bukti bayar (QRIS, transfer): jalur scan struk lama tidak punya cek itu, dan tanggal struk yang lama
+tidak boleh tiba-tiba diberi peringatan."""
 from app.services.kotak_struk.config import OLD_PROOF_DAYS, PROOF_TYPES
 from app.services.kotak_struk.merchants import normalize_name
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
@@ -17,21 +19,20 @@ def _lower_confidence(confidence: dict, key: str, level: str) -> None:
 
 
 def common_checks(parsed: Parsed, ctx: ParseContext) -> list[Check]:
-    """Nominal (subtotal + biaya + pajak - diskon = total), status, dan tanggal. Menurunkan
-    `confidence` pada dokumen bila perlu."""
+    """Status (semua jenis dokumen), lalu nominal dan tanggal (bukti bayar saja). Menurunkan `confidence`
+    pada dokumen bila perlu."""
     doc = parsed.doc
-    if doc.doc_type not in PROOF_TYPES:
-        return []
     found: list[Check] = []
+    proof = doc.doc_type in PROOF_TYPES
     a = doc.amounts
-    if a.subtotal is not None and a.total is not None and a.subtotal + a.fee + a.tax - a.discount != a.total:
+    if proof and a.subtotal is not None and a.total is not None and a.subtotal + a.fee + a.tax - a.discount != a.total:
         found.append(Check("selisih_nominal", "warn", "Nominal + biaya tidak sama dengan total"))
         _lower_confidence(doc.confidence, "total", "sedang")
     if doc.status == "gagal":
         found.append(Check("status_gagal", "block", "Transaksi gagal, tidak bisa dicatat"))
     elif doc.status == "pending":
         found.append(Check("status_pending", "warn", "Transaksi masih diproses bank"))
-    if doc.paid_at:
+    if proof and doc.paid_at:
         paid_on = doc.paid_at.astimezone(WIB).date() if doc.paid_at.tzinfo else doc.paid_at.date()
         if paid_on > ctx.today:
             found.append(Check("tanggal_depan", "warn", "Tanggal di bukti ada di masa depan"))

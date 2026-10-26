@@ -631,17 +631,6 @@ class CommonChecksTests(unittest.IsolatedAsyncioTestCase):
         checks_module.common_checks(doc, CTX)
         self.assertEqual(doc.doc.confidence, {"total": "sedang"})
 
-    def test_checks_only_apply_to_payment_proofs(self):
-        from datetime import datetime
-        from app.services.kotak_struk.readers.labels import WIB
-        for doc_type in ("struk_belanja", "tidak_dikenali"):
-            doc = parsed_doc(doc_type=doc_type, status="gagal", amounts=Amounts(subtotal=1, total=2), paid_at=datetime(2025, 1, 1, tzinfo=WIB))
-            self.assertEqual(checks_module.common_checks(doc, CTX), [])
-            self.assertEqual(doc.doc.confidence, {})
-        for doc_type in ("qris", "transfer"):
-            doc = parsed_doc(doc_type=doc_type, status="gagal")
-            self.assertEqual([c.code for c in checks_module.common_checks(doc, CTX)], ["status_gagal"])
-
     def test_naive_datetimes_are_compared_by_date(self):
         from datetime import datetime
         doc = parsed_doc(paid_at=datetime(2026, 10, 27, 1, 0))
@@ -814,7 +803,7 @@ class StoreReceiptWithFewItemsTests(unittest.IsolatedAsyncioTestCase):
         "QRIS + kata status": ["KOPI KENANGAN", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "Total 40.000", "QRIS 40.000", "Pembayaran Berhasil"],
         "QRIS + Terminal ID": ["WARUNG KOPI", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "Total 40.000", "QRIS 40.000", "Terminal ID 0123"],
         "QRIS + NMID, satu barang": ["CAFE X", "LATTE 1 30.000", "TOTAL 30.000", "QRIS 30.000", "NMID ID1024358806544"],
-        "QRIS + NMID + Terminal ID, tanpa kuantitas": ["TOKO MAJU", "ROTI 15.000", "SUSU 30.400", "TOTAL 45.400", "Pembayaran QRIS 45.400", "NMID ID1024358806544", "Terminal ID A01"],
+        "QRIS + NMID + Terminal ID, dua barang berkuantitas": ["TOKO MAJU", "ROTI 1 15.000", "SUSU 2 30.400", "TOTAL 45.400", "Pembayaran QRIS 45.400", "NMID ID1024358806544", "Terminal ID A01"],
         "Non Tunai (QRIS) sebaris": ["ALFAMART", "ROTI 15.000", "SUSU 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400", "Berhasil"],
         "dua baris kuantitas tanpa baris total": ["KEDAI X", "NASI GORENG 2 50.000", "ES TEH 2 10.000", "QRIS", "Merchant PAN 9360001234567", "NMID ID1024358806544"],
         "transfer sebagai cara bayar": ["TOKO ABC", "BERAS 1 60.000", "MINYAK 1 20.000", "TOTAL 80.000", "Transfer 80.000", "Berita -"],
@@ -830,8 +819,8 @@ class StoreReceiptWithFewItemsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertGreaterEqual(len([l for l in res.parsed.doc.lines if l.kind == "item"]), 1 if "TOTAL 30.000" in lines else 2)
 
     def test_store_receipt_guard_rules(self):
-        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "TOTAL 15.000", "QRIS 15.000"]))                        # 1 barang + baris bayar sesudah total
-        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "TOTAL 15.000", "Pembayaran QRIS Rp 15.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 1 15.000", "TOTAL 15.000", "QRIS 15.000"]))                      # 1 barang berkuantitas + baris bayar sesudah total
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 1 15.000", "TOTAL 15.000", "Pembayaran QRIS Rp 15.000"]))
         self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "ROTI 1 15.000"]))                               # 2 baris NAMA QTY HARGA
         self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 1 x 25.000", "ROTI 2 x 15.000"]))
         self.assertFalse(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "Pembayaran Berhasil"]))                        # satu baris kuantitas saja
@@ -1051,14 +1040,14 @@ class StoreReceiptGuardDoesNotVetoProofsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("qris.umum", "gagal", {"status_gagal": "block"}))
 
     def test_payment_line_amount_must_equal_the_total(self):
-        receipt = ["KOPI SUSU 25.000", "Total 25.000"]
+        receipt = ["KOPI SUSU 1 25.000", "Total 25.000"]
         for line, expect in [("QRIS 25.000", True), ("Pembayaran QRIS Rp 25.000", True), ("Non Tunai (QRIS) 25.000", True), ("DEBIT BCA 25.000", True),
                              ("QRIS RRN 000151856123", False), ("QRIS Ref 123456789012", False), ("Debit BCA ****1234", False), ("QRIS 999", False),
                              ("QRIS 30.000", False), ("QRIS", False)]:
             with self.subTest(line):
                 self.assertEqual(pc.looks_like_store_receipt([*receipt, line]), expect)
-        self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 25.000", "Total", "25.000", "QRIS 25.000"]))       # nilai total di baris bawah label
-        self.assertFalse(pc.looks_like_store_receipt(["KOPI SUSU 25.000", "Total", "QRIS 25.000"]))                  # total tak terbaca: tidak bisa dicocokkan
+        self.assertTrue(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "Total", "25.000", "QRIS 25.000"]))       # nilai total di baris bawah label
+        self.assertFalse(pc.looks_like_store_receipt(["KOPI SUSU 1 25.000", "Total", "QRIS 25.000"]))                  # total tak terbaca: tidak bisa dicocokkan
 
     def test_labelled_lines_are_never_items(self):
         for head in ("Subtotal", "Sub Total", "Harga", "Tip", "Tagihan", "Top Up", "Topup", "Isi Saldo", "Saldo", "Nominal", "Jumlah", "Kode Unik", "Cashback", "Pembayaran", "Biaya Layanan"):
@@ -1067,7 +1056,7 @@ class StoreReceiptGuardDoesNotVetoProofsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(pc._is_item_line(f"{head} Rp25.000"))
         self.assertTrue(pc._is_item_line("KOPI SUSU Rp25.000"))
         self.assertTrue(pc._is_item_line("Tipe Roti 25.000"))                           # "Tip" hanya kata utuh, bukan awalan kata lain
-        self.assertTrue(pc.looks_like_store_receipt(["Tipe Roti 25.000", "Total 25.000", "QRIS 25.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["Tipe Roti 1 25.000", "Total 25.000", "QRIS 25.000"]))
 
     def test_quantity_rule_needs_a_small_quantity_and_a_priced_amount(self):
         for lines in (["KOPI SUSU 1 25.000", "ROTI 1 15.000"], ["KOPI SUSU 2 x 25.000", "ROTI 12 15.000"], ["TEPUNG 0,5 12.500", "GULA 1,5 18.000"],
@@ -1113,3 +1102,182 @@ class CashLineAndTipFollowUpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((res.reader, a.subtotal, a.fee, a.total, res.checks, res.parsed.doc.confidence["total"]), ("qris.umum", 25000, 2000, 27000, [], "tinggi"))
         res = await read(["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", "Tip Rp2.000", "Total Rp25.000"])
         self.assertEqual({c.code for c in res.checks}, {"selisih_nominal"})            # tip yang tidak masuk total tetap peringatan
+
+
+# ── Perbaikan review A5, putaran 3 ──────────────────────────────────────────
+
+EXTRA_CHARGES = ("Tips", "Tip", "Service Fee", "Service Charge", "Donasi", "Ongkir", "Layanan")
+
+
+class UnlabelledExtraChargeProofTests(unittest.IsolatedAsyncioTestCase):
+    """A: baris biaya tambahan tak berlabel + baris cara bayar sama dengan total tidak boleh menolak bukti sah."""
+
+    def proof(self, extra, pay, head="Pembayaran Gagal"):
+        return [head, "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", f"{extra} Rp2.000", "Total Rp27.000", pay]
+
+    async def test_failed_qris_with_extra_charge_and_payment_line_is_a_blocked_qris(self):
+        for extra in EXTRA_CHARGES:
+            for pay in ("QRIS Rp27.000", "Debit Rp27.000", "Pembayaran QRIS Rp27.000"):
+                with self.subTest(extra=extra, pay=pay):
+                    lines = self.proof(extra, pay)
+                    self.assertFalse(pc.looks_like_store_receipt(pc.clean_lines(lines)))
+                    res = await read(lines)
+                    self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("qris.umum", "gagal", {"status_gagal": "block"}))
+
+    async def test_successful_qris_with_extra_charge_is_a_clean_qris(self):
+        for extra in EXTRA_CHARGES:
+            with self.subTest(extra):
+                res = await read(self.proof(extra, "QRIS Rp27.000", head="Pembayaran Berhasil"))
+                a = res.parsed.doc.amounts
+                self.assertEqual((res.reader, res.checks, (a.subtotal, a.fee, a.total)), ("qris.umum", [], (25000, 2000, 27000)))
+
+    async def test_two_unlabelled_extra_lines_do_not_make_a_receipt_either(self):
+        lines = ["Pembayaran Gagal", "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", "Donasi Rp1.000", "Layanan Rp1.000", "Total Rp27.000", "QRIS Rp27.000"]
+        self.assertEqual((await read(lines)).reader, "qris.umum")
+
+    def test_only_quantity_items_count_for_the_payment_line_rule(self):
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 1 15.000", "Total 15.000", "QRIS 15.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 2 x 15.000", "Total 30.000", "Pembayaran QRIS Rp 30.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["INDOMIE GRG 2 3.100 6.200", "Total 6.200", "QRIS 6.200"]))        # qty, harga satuan, jumlah
+        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "Total 15.000", "QRIS 15.000"]))               # satu barang tanpa kuantitas: tak cukup
+        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "Total 45.400", "QRIS 45.400"]))
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "AIR 4.000", "Total 49.400"]))      # 3 barang: tetap struk
+        self.assertFalse(pc.looks_like_store_receipt(["Tips Rp2.000", "Total Rp2.000", "QRIS Rp2.000"]))
+
+
+class CashLineStrictnessTests(unittest.IsolatedAsyncioTestCase):
+    """B: baris tunai/kembalian = kata TUNAI/KEMBALI lalu nominal di ujung baris (boleh tanda baca, "(QRIS)", mata uang)."""
+
+    def test_cash_lines(self):
+        for line in ("TUNAI 50.000", "TUNAI 50.000 IDR", "KEMBALI 35.000 IDR", "Tunai IDR 50,000", "Tunai Rp 50.000", "TUNAI : Rp. 50.000", "KEMBALI : 0",
+                     "KEMBALIAN 5.000", "Uang Tunai : 50.000", "Bayar Tunai 50.000", "Non Tunai (QRIS) 45.400", "Non Tunai (QRIS) 45.400 IDR"):
+            with self.subTest(line):
+                self.assertTrue(pc._is_cash_line(line))
+
+    def test_sentences_that_only_mention_the_words_are_not_cash_lines(self):
+        for line in ("Dana Rp50.000 akan kembali ke rekening Anda", "Cashback Rp2.500 kembali ke saldo", "Kembali ke halaman utama 2026", "Tarik tunai di 1.000 ATM",
+                     "Metode Tunai di Indomaret Rp100.000", "Dana kembali Rp50.000 ke saldo", "Dana kembali dalam 1x24 jam, hubungi 14017", "Kembali ke Beranda",
+                     "Bayar tunai 2 kali", "Tunai", "Saldo akan kembali dalam 1x24 jam", "Berita bayar tunai 2", "Keterangan tunai Rp50.000"):
+            with self.subTest(line):
+                self.assertFalse(pc._is_cash_line(line))
+
+    async def test_failed_or_ok_proofs_with_refund_wording_stay_proofs(self):
+        cases = [
+            (["Transfer Gagal", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000", "Dana Rp50.000 akan kembali ke rekening Anda"], "transfer.umum", "gagal"),
+            (["Pembayaran Gagal", "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", "Saldo kembali Rp25.000 dalam 1x24 jam"], "qris.umum", "gagal"),
+            (["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", "Cashback Rp2.500 kembali ke saldo"], "qris.umum", "berhasil"),
+            (["Top Up Berhasil", "GoPay", "Nominal Rp100.000", "Metode Tunai di Indomaret Rp100.000", "26/10/2026 10:15"], "transfer.umum", "berhasil"),
+            (["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", "Kembali ke halaman utama 2026"], "qris.umum", "berhasil"),
+        ]
+        for lines, reader, status in cases:
+            with self.subTest(lines[-1]):
+                res = await read(lines)
+                self.assertEqual((res.reader, res.parsed.doc.status), (reader, status))
+                self.assertEqual("status_gagal" in {c.code for c in res.checks}, status == "gagal")
+
+    async def test_store_receipts_with_cash_lines_stay_store_receipts(self):
+        lines = ["TOKO X", "ROTI 15.000", "Total 15.000", "TUNAI 50.000 IDR", "KEMBALI 35.000 IDR", "QRIS NMID ID1024358806544"]
+        self.assertEqual((await read(lines)).reader, "struk_belanja")
+
+
+class FailureBlockIndependentOfReaderTests(unittest.IsolatedAsyncioTestCase):
+    """C: pemblokiran transaksi gagal tidak bergantung pada pembaca mana yang menang."""
+
+    FAILED_PROOFS = {
+        "transfer gagal": ["Transfer Gagal", "26 Okt 2026 10:00", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000"],
+        "QRIS gagal": ["Pembayaran Gagal", "QRIS", "Merchant WARUNG X", "NMID ID1024358806544", "Nominal Rp25.000", "Tips Rp2.000", "Total Rp27.000", "QRIS Rp27.000"],
+    }
+
+    async def test_failed_proof_misrouted_to_struk_belanja_is_still_blocked(self):
+        for name, lines in self.FAILED_PROOFS.items():
+            with self.subTest(name):
+                res = await read(lines, enabled=False)                 # pembaca bukti mati: struk belanja yang membacanya
+                self.assertEqual(res.reader, "struk_belanja")
+                self.assertEqual((res.parsed.doc.doc_type, res.parsed.doc.status), ("struk_belanja", "gagal"))
+                self.assertEqual({c.code: c.level for c in res.checks}, {"status_gagal": "block"})
+                self.assertEqual(res.parsed.doc.checks, [c.as_dict() for c in res.checks])
+
+    async def test_pending_proof_misrouted_to_struk_belanja_warns(self):
+        res = await read(["Transfer Diproses", "26 Okt 2026 10:00", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000"], enabled=False)
+        self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("struk_belanja", "pending", {"status_pending": "warn"}))
+
+    async def test_store_receipts_still_berhasil_without_checks(self):
+        for rec in FIX["receipts"]:
+            with self.subTest(rec["id"]):
+                for enabled in (True, False):
+                    res = await read(rec["lines"], ctx=ParseContext(today=date(2026, 10, 15)), enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, res.checks, res.parsed.doc.checks), ("struk_belanja", "berhasil", [], []))
+
+    async def test_store_receipt_status_comes_from_the_header_only(self):
+        body = ["TOKO MAJU", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000", "Transaksi gagal? Hubungi kami", "Gagal"]
+        res = await read(body, ctx=ParseContext(today=date(2026, 10, 15)))
+        self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("struk_belanja", "berhasil", []))        # kata gagal di badan/kaki: tidak dihitung
+        head = ["TOKO SUKSES MAKMUR", "JL MERDEKA 1", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+        res = await read(head, ctx=ParseContext(today=date(2026, 10, 15)))
+        self.assertEqual((res.parsed.doc.status, res.checks), ("berhasil", []))                                       # "Sukses" = berhasil = nilai bawaan
+        head_failed = ["TRANSAKSI GAGAL", "TOKO MAJU", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+        res = await read(head_failed, ctx=ParseContext(today=date(2026, 10, 15)))
+        self.assertEqual((res.reader, res.parsed.doc.status, [c.code for c in res.checks]), ("struk_belanja", "gagal", ["status_gagal"]))
+
+    def test_status_checks_apply_to_every_doc_type_other_checks_only_to_proofs(self):
+        from datetime import datetime
+        from app.services.kotak_struk.readers.labels import WIB
+        old = datetime(2025, 1, 1, tzinfo=WIB)
+        for doc_type in ("struk_belanja", "tidak_dikenali"):
+            for status, code, level in (("gagal", "status_gagal", "block"), ("pending", "status_pending", "warn")):
+                with self.subTest(doc_type=doc_type, status=status):
+                    doc = parsed_doc(doc_type=doc_type, status=status, amounts=Amounts(subtotal=1, total=2), paid_at=old, confidence={"total": "tinggi"})
+                    self.assertEqual([(c.code, c.level) for c in checks_module.common_checks(doc, CTX)], [(code, level)])
+                    self.assertEqual(doc.doc.confidence, {"total": "tinggi"})              # tanpa cek nominal/tanggal: keyakinan tidak berubah
+            ok = parsed_doc(doc_type=doc_type, status="berhasil", amounts=Amounts(subtotal=1, total=2), paid_at=old)
+            self.assertEqual(checks_module.common_checks(ok, CTX), [])
+            unknown = parsed_doc(doc_type=doc_type, status="tidak_diketahui")
+            self.assertEqual(checks_module.common_checks(unknown, CTX), [])
+
+
+class RereviewMinorItemsTests(unittest.IsolatedAsyncioTestCase):
+    """Butir minor: kata bersyarat sesudah status, 'untuk', label tip dan nama toko berawalan 'Tip'."""
+
+    def test_tip_lines_in_either_number_are_not_items_but_tipe_is(self):
+        for line in ("Tips Rp2.000", "Tip Rp2.000", "TIPS 2.000"):
+            with self.subTest(line):
+                self.assertFalse(pc._is_item_line(line))
+        self.assertTrue(pc._is_item_line("Tipe Roti 25.000"))
+
+    def test_status_word_before_a_conditional_clause_decides(self):
+        for text, expect in [("Transaksi Berhasil, jika gagal hubungi 14017", "berhasil"), ("Transfer Berhasil bila gagal hubungi kami", "berhasil"),
+                             ("Transaksi Gagal, silakan coba lagi", "gagal"), ("Transaksi Pending, jika lama hubungi CS", "pending"),
+                             ("Transaksi gagal atau pending", "gagal")]:
+            with self.subTest(text):
+                self.assertEqual(pc.read_status([text]), expect)
+
+    async def test_success_header_with_conditional_failure_clause_is_not_blocked(self):
+        res = await read(["Transfer Berhasil", "Transaksi Berhasil, jika gagal hubungi 14017", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"])
+        self.assertEqual((res.parsed.doc.status, res.checks), ("berhasil", []))
+        res = await read(["Transaksi Berhasil, jika gagal hubungi 14017", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000"])
+        self.assertEqual((res.parsed.doc.status, res.checks), ("berhasil", []))
+
+    def test_untuk_only_counts_at_the_start_of_the_sentence(self):
+        for text, expect in [("Pembayaran untuk Tagihan PLN Gagal", "gagal"), ("Transfer untuk BUDI Gagal", "gagal"), ("Transfer untuk BUDI Berhasil", "berhasil"),
+                             ("Untuk transaksi gagal, cek riwayat", "tidak_diketahui"), ("Hubungi kami untuk transaksi gagal", "tidak_diketahui")]:
+            with self.subTest(text):
+                self.assertEqual(pc.read_status([text]), expect)
+
+    async def test_failed_payment_for_a_bill_is_blocked(self):
+        res = await read(["Pembayaran untuk Tagihan PLN Gagal", "Penerima PLN", "Bank Tujuan BNI", "Nominal Rp150.000"])
+        self.assertEqual((res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("gagal", {"status_gagal": "block"}))
+
+    async def test_tips_plural_and_service_labels_are_fees(self):
+        for label in ("Tips", "Tip", "Service Fee", "Service Charge", "Layanan", "Ongkir", "Donasi", "Biaya Layanan"):
+            with self.subTest(label):
+                res = await read(["Pembayaran Berhasil", "QRIS", "Merchant WARUNG X", "Nominal Rp25.000", f"{label} Rp2.000", "Total Rp27.000"])
+                a = res.parsed.doc.amounts
+                self.assertEqual((a.subtotal, a.fee, a.total, res.checks), (25000, 2000, 27000, []))
+
+    async def test_a_merchant_named_tip_top_is_a_name_not_a_label(self):
+        for name in ("TIP TOP SWALAYAN", "DONASI KITA BERSAMA", "LAYANAN PRIMA JAYA", "ONGKIR EXPRESS"):
+            for lines in (["Pembayaran Berhasil", "QRIS", "Merchant", name, "NMID ID1024358806544", "Nominal Rp25.000"],
+                          ["Pembayaran Berhasil", "QRIS", f"Merchant {name}", "NMID ID1024358806544", "Nominal Rp25.000"]):
+                with self.subTest(name=name, inline=len(lines[2].split()) > 1):
+                    res = await read(lines)
+                    self.assertEqual((res.parsed.doc.counterparty.name, res.parsed.doc.amounts.fee), (name, 0))
