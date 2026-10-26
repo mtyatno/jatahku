@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.models import (
-    ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, User,
+    ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, Transaction, User,
 )
+from app.services.kotak_struk.config import ST_TERCATAT
 from app.services.receipt_ocr import OcrBusy, OcrFailed
 from app.services.receipt_parser import (
     CARD_KEYS, CASH_KEYS, CHANGE_KEYS, MASKED, NOISE_LINE, NOT_TOTAL,
@@ -308,7 +309,8 @@ async def purge_stale_ocr_text(db: AsyncSession) -> int:
 
 
 async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dict:
-    """Untuk Admin: berapa scan yang diterima tanpa koreksi."""
+    """Untuk Admin: berapa scan yang diterima tanpa koreksi. Ditambah rincian Kotak Struk (`by_doc_type`,
+    `by_issuer`, `unrecognized`); kunci lama dan cara hitungnya tidak berubah."""
     since = since or _month_start()  # zona waktu default app
     rows = (await db.execute(
         select(ReceiptScan.outcome, ReceiptScan.engine, func.count(ReceiptScan.id))
@@ -329,4 +331,81 @@ async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dic
         .group_by(ReceiptScan.merchant_key).order_by(func.count(ReceiptScan.id).desc()).limit(5)
     )).all()
     out["most_corrected"] = [{"merchant_key": k or "(tidak dikenal)", "count": n} for k, n in worst]
+    out.update(await _kotak_breakdown(db, since))
     return out
+
+
+# Tanggal transaksi bukti bayar = tanggal bayar di WIB (seperti `parsed_date` worker Kotak Struk).
+_WIB = timezone(timedelta(hours=7), "WIB")
+
+
+def _first_txn_ids(raw) -> list[uuid.UUID]:
+    ids = []
+    for value in raw if isinstance(raw, list) else []:
+        try:
+            ids.append(uuid.UUID(str(value)))
+        except ValueError:
+            continue
+    return ids
+
+
+def _proof_corrected(parsed_total, paid_at: datetime | None, txn) -> bool:
+    """Bukti bayar tercatat dikoreksi user: nominal tidak terbaca, nominal transaksi beda, atau tanggal transaksi
+    bukan tanggal bayar (WIB). Tanpa transaksi yang masih ada, hanya nominal kosong yang terlihat."""
+    if parsed_total is None:
+        return True
+    if txn is None:
+        return False
+    amount, txn_date = txn
+    if Decimal(amount) != Decimal(parsed_total):
+        return True
+    if paid_at is not None:
+        paid_at = paid_at if paid_at.tzinfo is not None else paid_at.replace(tzinfo=timezone.utc)
+        return txn_date != paid_at.astimezone(_WIB).date()
+    return False
+
+
+async def _kotak_breakdown(db: AsyncSession, since: datetime) -> dict:
+    """Rincian Kotak Struk untuk Admin (spec §7d butir 4), dihitung di Python dari item periode ini (baris lama tanpa
+    status tidak ikut): jumlah per `doc_type`, jumlah `tidak_dikenali`, dan per `issuer` (`document->>'issuer'`)
+    total/tercatat/dikoreksi. Dikoreksi: struk belanja = outcome `corrected`; jenis lain = item tercatat yang
+    transaksinya (id pertama di `transaction_ids` yang masih ada) berbeda nominal/tanggal dari hasil baca."""
+    rows = (await db.execute(
+        select(ReceiptScan.doc_type, ReceiptScan.status, ReceiptScan.outcome,
+               ReceiptScan.document["issuer"].as_string(), ReceiptScan.parsed_total, ReceiptScan.paid_at,
+               ReceiptScan.transaction_ids)
+        .where(ReceiptScan.created_at >= since, ReceiptScan.status.is_not(None))
+    )).all()
+
+    by_doc_type: dict[str, int] = {}
+    unrecognized = 0
+    issued = []
+    for doc_type, status, outcome, issuer, parsed_total, paid_at, txn_ids in rows:
+        if doc_type:
+            by_doc_type[doc_type] = by_doc_type.get(doc_type, 0) + 1
+        if doc_type == "tidak_dikenali":
+            unrecognized += 1
+        if issuer:
+            ids = _first_txn_ids(txn_ids) if status == ST_TERCATAT and doc_type != "struk_belanja" else []
+            issued.append((str(issuer), doc_type, status, outcome, parsed_total, paid_at, ids))
+
+    wanted = {i for *_, ids in issued for i in ids}
+    txns = {}
+    if wanted:
+        txns = {tid: (amount, txn_date) for tid, amount, txn_date in (await db.execute(
+            select(Transaction.id, Transaction.amount, Transaction.transaction_date)
+            .where(Transaction.id.in_(list(wanted)))
+        )).all()}
+
+    by_issuer: dict[str, dict] = {}
+    for issuer, doc_type, status, outcome, parsed_total, paid_at, ids in issued:
+        entry = by_issuer.setdefault(issuer, {"total": 0, "recorded": 0, "corrected": 0})
+        entry["total"] += 1
+        recorded = status == ST_TERCATAT
+        entry["recorded"] += int(recorded)
+        if doc_type == "struk_belanja":
+            entry["corrected"] += int(outcome == "corrected")
+        elif recorded:
+            txn = next((txns[i] for i in ids if i in txns), None)
+            entry["corrected"] += int(_proof_corrected(parsed_total, paid_at, txn))
+    return {"by_doc_type": by_doc_type, "by_issuer": by_issuer, "unrecognized": unrecognized}
