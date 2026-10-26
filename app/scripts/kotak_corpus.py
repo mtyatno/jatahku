@@ -173,6 +173,10 @@ _MASKED_TOKEN = re.compile(r"…\d{4}")       # keluaran mask_line; digit sesuda
 _LONE_TOKEN = re.compile(r"(?<!\S)…\d{4}(?!\S)")   # dipisah spasi (atau awal/akhir baris) di kedua sisi
 _WORD = re.compile(r"[^\W\d_]{2,}")
 _DIGIT = re.compile(r"\d")
+# Dua penanda dari satu nomor yang terpotong: dipisah >= 3 spasi, atau "/", ":", "_" (boleh diapit spasi). Satu-dua
+# spasi tidak: "Ref …5678 …1234" adalah cara bank mencetak nilai yang sudah tersamar, dan satu-dua spasi di dalam satu
+# nomor sudah membuatnya satu deret.
+_TOKEN_PAIR = re.compile(rf"…\d{{4}}(?:{_HWS}{{3,}}|{_HWS}*[/:_]{_HWS}*)…\d{{4}}")
 
 
 def _chunk_needs_review(chunk: str) -> bool:
@@ -190,7 +194,10 @@ def needs_review(line: str) -> bool:
     pemisah apa pun yang bukan kata (/, :, _, spasi, satu huruf salah-baca OCR seperti "4S6"); kata >= 2 huruf
     memisahkan. Penanda `…dddd` dihitung 4 digit: potongan dengan >= 6 digit ditandai bila masih ada digit lepas di
     sampingnya ("…1234S6 7890") atau penanda yang menempel ("…8472B …4242"); penanda yang berdiri sendiri
-    ("…5678 …1234") tidak. Tidak pernah memblokir."""
+    ("…5678 …1234") tidak, kecuali dua penanda yang dipisah >= 3 spasi atau "/", ":", "_" ("…3091 / …3755": satu
+    nomor yang terpotong). Tidak pernah memblokir."""
+    if _TOKEN_PAIR.search(line):   # pada baris asli: tanggal/jam/nominal di antaranya tetap memisahkan
+        return True
     parts, pos = [], 0
     for start, end in _kept_spans(line):
         parts.append(line[pos:start])

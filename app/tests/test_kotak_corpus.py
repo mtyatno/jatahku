@@ -276,6 +276,30 @@ class ReviewFlagTests(unittest.TestCase):
         self.assertFalse(needs_review("Biaya Rp 0,00 …4567"))
         self.assertTrue(needs_review("Biaya 0,00 …4567"))     # tanpa Rp bukan nominal: 3 + 4 digit
 
+    def test_two_masked_tokens_of_one_split_number_are_flagged(self):
+        # Satu nomor panjang yang dipotong >= 3 spasi atau "/", ":", "_" menjadi dua deret >= 6 digit: dua penanda
+        # berdiri sendiri tetap menampilkan 8 digit (aturan A13 fix round 3).
+        for line in ["No. Ref …3091 / …3755", "Ref …4567   …8812", "Ref …4567:…8812", "Ref …4567_…8812",
+                     "Ref …4567 : …8812", "Ref …4567 _ …8812", "Ref …4567/ …8812", "Ref …4567\t\t\t…8812",
+                     "Ref …4567 / …8812", "Ref …4567    …8812", "…1111 / …2222 / …3333"]:
+            with self.subTest(line):
+                self.assertTrue(needs_review(line))
+
+    def test_masked_tokens_one_or_two_spaces_apart_stay_quiet(self):
+        for line in ["Ref …5678 …1234", "Ref …5678  …1234", "Ref …5678\t…1234", "Rek …4567 a.n. …1234",
+                     "Ref …4567 08:12 …8812", "Ref …4567 26/10/2026 …8812", "Ref …4567 / Rp 25.000"]:
+            with self.subTest(line):
+                self.assertFalse(needs_review(line))
+
+    def test_split_number_end_to_end(self):
+        for raw, masked in {"Ref 612345673091/612345673755": "Ref …3091/…3755",
+                            "Ref 612345673091   612345673755": "Ref …3091   …3755",
+                            "Ref 612345673091 / 612345673755": "Ref …3091 / …3755",
+                            "Ref 612345673091 : 612345673755": "Ref …3091 : …3755"}.items():
+            with self.subTest(raw):
+                self.assertEqual(mask_line(raw), masked)
+                self.assertTrue(needs_review(mask_line(raw)))
+
     def test_kept_forms_masked_numbers_and_short_codes_not_flagged(self):
         lines = [mask_line(x) for s in SYNTHETIC for x in s["lines"]] + [
             "Rekening: …7890 a.n. BUDI", "No. Rek: …7890", "+…7890", "Kode 24.12.34",
@@ -624,11 +648,12 @@ class CliTests(unittest.TestCase):
 
     def test_add_flags_lines_that_still_hold_six_digits(self):
         txt = self.write_txt("periksa.txt", ["Transfer Berhasil", "Penerima ANDI", "Nominal Rp50.000", "26/10/2026 10:00",
-                                             "Kode Bayar 6123/4567/8812", "Ref 1234567890"])
+                                             "Kode Bayar 6123/4567/8812", "Ref 1234567890", "RRN 612345673091   612345673755"])
         code, out, _ = self.run_main("add", str(txt), "--id", "sint-periksa", "--corpus", str(self.corpus))
         self.assertEqual(code, 0)   # peringatan tidak memblokir
         self.assertIn("PERIKSA baris 5: Kode Bayar 6123/4567/8812", out)
-        self.assertEqual(out.count("PERIKSA"), 1)   # baris 6 sudah disamarkan (Ref …7890)
+        self.assertIn("PERIKSA baris 7: RRN …3091   …3755", out)
+        self.assertEqual(out.count("PERIKSA"), 2)   # baris 6 sudah disamarkan (Ref …7890)
         self.assertIn("sint-periksa", self.corpus.read_text(encoding="utf-8"))
 
     def test_add_synthetic_with_user_name(self):
