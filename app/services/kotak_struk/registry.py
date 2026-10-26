@@ -49,6 +49,15 @@ def readers_for(proofs_enabled: bool) -> list[DocReader]:
     return [*_PROOF_READERS, _STRUK_BELANJA] if proofs_enabled else [_STRUK_BELANJA]
 
 
+def looks_like_proof(doc: TextDoc) -> bool:
+    """Apakah teks ini terbaca sebagai bukti bayar (QRIS/transfer) oleh salah satu pembaca bukti, apa pun
+    saklar fiturnya? Hanya deteksi: perutean tetap mengikuti `proofs_enabled` di `read_document`.
+
+    Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
+    nomor rekening/referensi dan nama pihak ketiga, jadi tidak boleh disimpan atau masuk peta merchant."""
+    return any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS)
+
+
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
     reader: DocReader | None = None
     best = 0.0

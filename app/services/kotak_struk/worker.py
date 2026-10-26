@@ -25,13 +25,13 @@ from app.services import receipt_scan
 from app.services.app_config import feature_enabled
 from app.services.kotak_struk import waiter
 from app.services.kotak_struk.config import (
-    ITEM_EXPIRY, MAX_ATTEMPTS, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
+    ITEM_EXPIRY, MAX_ATTEMPTS, PROOF_TYPES, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
 )
 from app.services.kotak_struk.extract import ExtractError, TextDoc, extract_text
 from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, upsert_household_merchant
 from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.registry import ReadResult, read_document
+from app.services.kotak_struk.registry import ReadResult, looks_like_proof, read_document
 from app.services.receipt_llm import try_llm_fallback
 
 log = logging.getLogger(__name__)
@@ -163,6 +163,7 @@ class _Outcome(NamedTuple):
     columns: dict
     raw_name: str | None
     city: str | None
+    unread_proof: bool   # teks bukti bayar yang dibaca pembaca struk/tak dikenali: tanpa teks OCR, tanpa peta merchant
 
 
 def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
@@ -173,6 +174,11 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
     # Cabang berdasarkan jenis dokumen, bukan nama pembaca: penyelamatan LLM berpembaca
     # "tidak_dikenali" tetap struk belanja.
     store_receipt = doc.doc_type == "struk_belanja"
+    # Dengan saklar `receipt_inbox` mati (bawaan produksi) bukti bayar dibaca pembaca struk belanja (atau jatuh ke
+    # tidak dikenali). Teksnya tetap bukti bayar: memuat nomor rekening/referensi dan nama pihak ketiga, jadi
+    # diperlakukan sebagai bukti. Bukti yang dibaca pembaca QRIS/transfer sendiri tidak masuk sini: tidak menyimpan
+    # teks OCR dari awal, dan pihak penerimanya memang masuk peta merchant.
+    unread_proof = doc.doc_type not in PROOF_TYPES and looks_like_proof(text)
     document = doc.to_json()
     if store_receipt:
         document["receipt"] = {key: extra.get(key) for key in RECEIPT_KEYS}
@@ -181,7 +187,8 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         paid_at = paid_at.replace(tzinfo=WIB)
     cp = doc.counterparty
     total = doc.amounts.total
-    ocr_lines = extra.get("ocr_lines") if store_receipt else None  # teks bukti bayar memuat nama dan rekening: tidak disimpan
+    # Teks OCR hanya untuk struk belanja sungguhan (belajar dari umpan balik); teks bukti bayar tidak disimpan.
+    ocr_lines = extra.get("ocr_lines") if store_receipt and not unread_proof else None
     columns = {
         "doc_type": doc.doc_type,
         "document": document,
@@ -200,7 +207,7 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         "paid_at": paid_at,
         "pages": text.pages,
     }
-    return _Outcome(columns, cp.name, cp.city)
+    return _Outcome(columns, cp.name, cp.city, unread_proof)
 
 
 async def _store(factory, item_id: uuid.UUID, out: _Outcome, now: datetime) -> str:
@@ -216,7 +223,8 @@ async def _store(factory, item_id: uuid.UUID, out: _Outcome, now: datetime) -> s
             item.status, item.error = ST_SIAP, None
             item.processed_at, item.expires_at = now, now + ITEM_EXPIRY
             key = out.columns["counterparty_key"]
-            if key and item.household_id:
+            # Nama yang dibaca dari teks bukti bayar (mis. "Transfer Berhasil") bukan merchant.
+            if key and item.household_id and not out.unread_proof:
                 try:  # peta merchant itu bonus: galatnya tidak boleh menggagalkan itemnya
                     async with db.begin_nested():
                         await upsert_household_merchant(db, item.household_id, key, out.raw_name, out.city, now=now)

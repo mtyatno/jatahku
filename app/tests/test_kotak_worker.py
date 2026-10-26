@@ -37,6 +37,8 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 CORPUS = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "corpus.json").read_text())["samples"]
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)  # 10:00 WIB
 JPG = b"\xff\xd8\xff\xe0jpeg"
+INDOMARET = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())["receipts"][0]["lines"]
+SECRET_NUMBERS = ("012301001234567", "2026102612345678")  # rekening dan nomor referensi di CORPUS[2]
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
                "Non Tunai (QRIS) 45.400"]
 MSG_UNREADABLE = "Bukti tidak bisa dibaca. Coba kirim ulang."
@@ -280,6 +282,47 @@ class WorkerTests(WorkerBase):
         self.assertEqual(got.counterparty_key, "nama:alfamart|")
         self.assertEqual((await self.merchant("nama:alfamart|")).raw_name, "Alfamart")
         self.assertEqual(DokumenBayar.from_json(got.document).doc_type, "struk_belanja")  # kunci "receipt" diabaikan
+
+    async def test_proofs_read_as_store_receipt_while_flag_is_off_keep_no_text_and_no_merchant(self):
+        """Saklar mati (bawaan produksi): bukti bayar dibaca pembaca struk, tapi teks OCR-nya memuat nomor
+        rekening/referensi dan nama pihak ketiga, jadi tidak disimpan, dan namanya tidak masuk peta merchant."""
+        for sample in CORPUS:
+            if sample["expect"]["doc_type"] not in ("qris", "transfer") and sample["id"] != "sint-masuk":
+                continue
+            with self.subTest(sample["id"]):
+                item = await self.item(text=sample["id"])
+                self.assertEqual(await self.process(item, sample["lines"], proofs_enabled=False), "siap")
+                got = await self.get(item.id)
+                self.assertNotIn(got.parser, ("qris.umum", "transfer.umum"))  # memang lewat jalur struk/tak dikenali
+                self.assertIsNone(got.ocr_lines)
+                blob = json.dumps([got.document, got.ocr_lines, got.counterparty_key, got.ref_hash]).replace(" ", "")
+                for number in SECRET_NUMBERS:
+                    self.assertNotIn(number, blob)
+        self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_transfer_text_with_flag_off_reads_the_same_as_before_just_without_retention(self):
+        item = await self.item(text="transfer")
+        self.assertEqual(await self.process(item, CORPUS[2]["lines"], proofs_enabled=False), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.status), ("struk_belanja", "siap"))
+        self.assertIn("receipt", got.document)  # data respons scan lama tetap ada
+        self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_real_store_receipt_still_keeps_normalized_text_and_merchant_with_flag_off(self):
+        item = await self.item(text="indomaret")
+        self.assertEqual(await self.process(item, INDOMARET, proofs_enabled=False), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.parser), ("struk_belanja", "struk_belanja"))
+        self.assertTrue(json.loads(got.ocr_lines))
+        self.assertTrue(got.counterparty_key)
+        self.assertEqual((await self.merchant(got.counterparty_key)).raw_name, got.merchant)
+
+    async def test_store_receipt_mentioning_qris_still_keeps_text_and_merchant_with_flag_off(self):
+        item = await self.item(text="alfamart")
+        await self.process(item, STORE_LINES, proofs_enabled=False)
+        got = await self.get(item.id)
+        self.assertIn("ROTI 1 15.000", json.loads(got.ocr_lines))
+        self.assertEqual((await self.merchant("nama:alfamart|")).raw_name, "Alfamart")
 
     async def test_unrecognised_text_is_siap_without_retaining_text(self):
         item = await self.item(text="acak")

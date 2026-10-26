@@ -13,7 +13,7 @@ from app.services.kotak_struk.readers import labels as L
 from app.services.kotak_struk.readers.base import Check, Parsed, ParseContext, Secrets
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader, parsed_from_receipt
 from app.services.kotak_struk.readers.unknown import UnknownReader
-from app.services.kotak_struk.registry import read_document
+from app.services.kotak_struk.registry import looks_like_proof, read_document
 from app.services.receipt_parser import ReceiptAdjustment, ReceiptItem, ReceiptParse, merchant_key, parse_receipt
 
 FIX = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())
@@ -469,3 +469,36 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
         s1, s2 = Secrets(), Secrets()
         s1.ref_values.append("1")
         self.assertEqual((s2.ref_values, s2.account_number, s2.bank_code, s2.nmid), ([], None, None, None))
+
+
+CORPUS = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "corpus.json").read_text())["samples"]
+
+
+class LooksLikeProofTests(unittest.TestCase):
+    """`looks_like_proof`: deteksi saja (tidak bergantung pada saklar fitur), dipakai worker untuk tidak menyimpan
+    teks OCR bukti bayar yang kebetulan dibaca sebagai struk belanja."""
+
+    def test_proof_samples_look_like_proofs(self):
+        for sample in CORPUS:
+            if sample["expect"]["doc_type"] in ("qris", "transfer"):
+                with self.subTest(sample["id"]):
+                    self.assertTrue(looks_like_proof(doc(sample["lines"])))
+
+    def test_store_receipts_do_not(self):
+        for rec in FIX["receipts"]:
+            with self.subTest(rec["id"]):
+                self.assertFalse(looks_like_proof(doc(rec["lines"])))
+        self.assertFalse(looks_like_proof(doc(
+            ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400"])))
+
+    def test_empty_and_unrelated_text_do_not(self):
+        self.assertFalse(looks_like_proof(doc([])))
+        self.assertFalse(looks_like_proof(doc(["halo apa kabar", "tidak ada nominal"])))
+
+    def test_uses_the_reader_threshold_and_every_registered_proof_reader(self):
+        below = FakeReader("tipis", "qris", READER_THRESHOLD - 0.01)
+        at = FakeReader("pas", "transfer", READER_THRESHOLD)
+        with patch.object(registry, "_PROOF_READERS", [below]):
+            self.assertFalse(looks_like_proof(doc(["apa saja"])))
+        with patch.object(registry, "_PROOF_READERS", [below, at]):
+            self.assertTrue(looks_like_proof(doc(["apa saja"])))
