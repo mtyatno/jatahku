@@ -9,9 +9,12 @@ import {
 } from '../lib/chatHistory';
 import { quickChips } from '../lib/chatChips';
 import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
+import { STAGE, stageLabel } from '../lib/receiptProgress';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
+import { useTicker } from '../hooks/useTicker';
 import ChatText from './ChatText';
 import { Icon } from './Icon';
+import ReceiptInput from './ReceiptInput';
 import VoiceInput from './VoiceInput';
 
 // Chat bot Jatahku di dalam webapp: otak yang sama dengan @JatahkuBot di
@@ -210,7 +213,10 @@ export default function ChatPanel({ open, onClose, draft = null }) {
   const pushedRef = useRef(false); // entri riwayat browser untuk tombol Back
   const atBottom = useRef(true);   // daftar pesan sedang di paling bawah?
   const photoFiles = useRef(new Map()); // id pesan foto → blob (untuk kirim ulang di sesi ini)
-  const fileRef = useRef(null);
+  // Tahap pengiriman foto yang sedang berjalan: { id, stage, percent, progressSeen, startedAt } | null.
+  // Hanya di state komponen (bukan di pesan): status pesan ikut tersimpan di riwayat, tahap tidak boleh.
+  const [photoStage, setPhotoStage] = useState(null);
+  const photoNow = useTicker(!!photoStage);
   const [mode, setMode] = useState('half'); // tinggi sheet mobile: 'half' | 'full'
   const [draftChips, setDraftChips] = useState([]);
   const draftSeen = useRef(null);
@@ -458,14 +464,36 @@ export default function ChatPanel({ open, onClose, draft = null }) {
     const blob = photoFiles.current.get(msg.id);
     if (!blob) { showToast('Foto sudah tidak tersimpan. Pilih ulang fotonya.'); return; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setPhotoStage(null);
       setMessages(m => setStatus(m, msg.id, 'failed'));
       showToast('Kamu sedang offline. Foto belum terkirim.');
       return;
     }
     setMessages(m => setStatus(m, msg.id, 'sending'));
     setPending('photo');
-    const res = await api.chatPhoto(blob, msg.id);
+    setPhotoStage({ id: msg.id, stage: STAGE.UPLOADING, percent: null, progressSeen: false, startedAt: Date.now() });
+    const res = await api.chatPhoto(blob, msg.id, {
+      // Kirim ulang setelah refresh token memulai progres dari 0 lagi, padahal onUploaded sudah
+      // terpanggil: setiap progres mengembalikan tahap ke MENGUNGGAH (aturan sama dengan form Catat).
+      onProgress: (percent) => setPhotoStage(cur => {
+        if (!cur || cur.id !== msg.id) return cur;
+        if (cur.stage === STAGE.UPLOADING && cur.progressSeen && cur.percent === percent) return cur;
+        return {
+          ...cur,
+          stage: STAGE.UPLOADING,
+          percent,
+          progressSeen: true,
+          startedAt: cur.stage === STAGE.UPLOADING ? cur.startedAt : Date.now(),
+        };
+      }),
+      // Bisa terpanggil dua kali (kirim ulang): pindah ke MEMBACA hanya bila belum di sana.
+      onUploaded: () => setPhotoStage(cur => {
+        if (!cur || cur.id !== msg.id || cur.stage === STAGE.READING) return cur;
+        return { ...cur, stage: STAGE.READING, startedAt: Date.now() };
+      }),
+    });
     setPending(null);
+    setPhotoStage(null);
     if (!res.ok) {
       setMessages(m => setStatus(m, msg.id, 'failed'));
       showToast(res.error);
@@ -476,9 +504,8 @@ export default function ChatPanel({ open, onClose, draft = null }) {
     receive(res.ops);
   }, [receive, showToast]);
 
-  const onPickPhoto = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = ''; // foto yang sama bisa dipilih ulang
+  // Foto dari ReceiptInput (kamera atau galeri). Mengirim ke chat; tahapnya tampil di gelembung foto.
+  const handlePhotoFile = async (file) => {
     if (!file || pending) return;
     if (!file.type.startsWith('image/')) { showToast('Pilih file foto (JPG/PNG)'); return; }
     setPending('photo');
@@ -590,6 +617,9 @@ export default function ChatPanel({ open, onClose, draft = null }) {
 
   if (phase === 'closed') return null;
   const shown = phase === 'open';
+  const photoLabel = photoStage
+    ? stageLabel({ ...photoStage, elapsedMs: Math.max(0, photoNow - photoStage.startedAt) })
+    : null;
 
   return (
     <>
@@ -687,6 +717,12 @@ export default function ChatPanel({ open, onClose, draft = null }) {
                       {m.edited && !mine ? 'diubah · ' : ''}{timeLabel(m.ts)}
                     </span>
                   </div>
+                  {mine && m.kind === 'photo' && m.status === 'sending' && photoLabel && photoStage?.id === m.id && (
+                    <span role="status" aria-live="polite" className="mt-1 text-[11.5px] text-gray-500 text-right">
+                      {photoLabel.title}
+                      {photoLabel.hint && <span className="block">{photoLabel.hint}</span>}
+                    </span>
+                  )}
                   {mine && m.status === 'failed' && (m.kind !== 'photo' || photoFiles.current.has(m.id)) && (
                     <button type="button" onClick={() => retry(m)}
                       className="mt-1 inline-flex items-center gap-1 text-[11.5px] text-red-500 hover:underline">
@@ -732,14 +768,8 @@ export default function ChatPanel({ open, onClose, draft = null }) {
             onError={showToast}
             disabled={!!pending}
           />
-          {/* Foto struk: kamera atau galeri (HP menawarkan keduanya) */}
-          <button type="button" onClick={() => fileRef.current?.click()} disabled={!!pending}
-            className="inline-flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700 disabled:opacity-50 shrink-0"
-            title="Catat dari foto struk" aria-label="Kirim foto struk">
-            <Icon name="camera" size={16} /> Struk
-          </button>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto}
-            aria-hidden="true" tabIndex={-1} />
+          {/* Foto struk: tombol Foto (kamera langsung) dan Galeri, sama dengan form Catat */}
+          <ReceiptInput size="sm" onFile={handlePhotoFile} onError={showToast} disabled={!!pending} />
           <span className="w-px h-4 bg-gray-200 shrink-0" />
           {/* Chip cepat (§6H): dari insight dulu, lalu pertanyaan halaman ini (lib/chatChips) */}
           {quickChips(pathname, draftChips).map(q => (
