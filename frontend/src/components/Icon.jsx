@@ -10,7 +10,7 @@ import {
   DotsThreeVertical, SquaresFour, ListBullets, Rows, ListDashes, FolderSimple, Coins,
   PencilSimple, Trash,
   MagnifyingGlass, Globe, ChartPieSlice, Info, Microphone, Stop, Scales, Camera,
-  ChatCircleDots, PaperPlaneRight, ArrowClockwise, Broom,
+  ChatCircleDots, PaperPlaneRight, ArrowClockwise, Broom, Image, CircleNotch,
   // ikon untuk balasan bot di chat (pengganti emoji, lihat lib/chatIcons.js)
   Lightbulb, Hourglass, LockOpen, Clock, HandWaving, Star, TrendUp,
   ArrowCounterClockwise, Bank, ThumbsUp, Confetti, XCircle, SkipForward, ArrowRight,
@@ -74,6 +74,8 @@ const UI = {
   mic: Microphone,
   stop: Stop,
   camera: Camera,
+  gallery: Image,
+  spinner: CircleNotch,
   balance: Scales,
   chat: ChatCircleDots,
   send: PaperPlaneRight,

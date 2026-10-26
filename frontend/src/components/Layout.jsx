@@ -6,6 +6,7 @@ import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 import OfflineQueueCenter from './OfflineQueueCenter';
 import MultiAddTransaction from './MultiAddTransaction';
+import { pickReceiptPhoto } from './ReceiptInput';
 import PaySubscriptions from './PaySubscriptions';
 import BalanceCheck from './BalanceCheck';
 import ChatPanel from './ChatPanel';
@@ -15,6 +16,7 @@ import Sidebar, { SIDEBAR_WIDTH } from './Sidebar';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
+import { native } from '../native';
 import { formatCurrency } from '../lib/utils';
 import { chatDraft, dismissNotice, incomePrefill, normalizeAction, recurringPrefill, safeRoute } from '../lib/advisorAction';
 import { formEnvelopes, percentagesFor, recommendationAllocations } from '../lib/allocationAdvice';
@@ -305,6 +307,7 @@ function EnvelopeFieldConfirm({ kind, payload, onClose }) {
 
 const FAB_OPTIONS = [
   { key: 'expense', icon: 'expense', label: 'Pengeluaran' },
+  { key: 'struk', icon: 'camera', label: 'Foto struk' },
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
@@ -380,6 +383,19 @@ export default function Layout() {
     setNotice(n);
     setTimeout(() => setNotice(cur => (cur === n ? null : cur)), action ? 6000 : 3500);
   }, []);
+
+  // "Foto struk": buka kamera, lalu form Catat terbuka dan langsung membaca fotonya.
+  // Di sini (bukan di openAction, yang dideklarasikan setelah early return) supaya bisa dipakai
+  // efek pemulihan di bawah. Dipanggil dari ketukan (FAB, menu Catat, tombol toast): kamera
+  // harus dibuka sinkron di dalam handler itu (iPhone Safari), jadi tidak ada await sebelum pickReceiptPhoto.
+  const openReceiptCamera = useCallback(() => {
+    setFabMenu(false);
+    setCatatMenu(false);
+    pickReceiptPhoto('camera', {
+      onFile: (photo) => { setActionPayload({ photo }); setActionSeq(n => n + 1); setFabAction('expense'); },
+      onError: showNotice,
+    });
+  }, [showNotice]);
 
   // Pintu masuk lain membuka aksi lewat event `jatahku:open-action`:
   // string lama ('expense', 'income', 'chat', …) atau CTA AI Advisor {kind, payload}
@@ -505,6 +521,38 @@ export default function Layout() {
     navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
 
+  // Shortcut PWA "Foto struk" (?struk=1): form Catat terbuka dalam mode siap difoto
+  // (tombol besar "Ambil foto struk"). Kamera tidak bisa dibuka dari sini — butuh ketukan.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('struk') !== '1') return;
+    setActionPayload({ photoMode: 'ready' });
+    setActionSeq(n => n + 1);
+    setFabAction('expense');
+    params.delete('struk');
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : '' }, { replace: true });
+  }, [location.search, location.pathname, navigate]);
+
+  // Pemulihan: OS mematikan app saat kamera terbuka → sekali setelah user tersedia (bukan saat layar
+  // loading, supaya toast tidak habis waktunya sebelum terlihat) cek fotonya sempat sampai atau tidak.
+  // Tanpa pembersih efek: StrictMode (dev) menjalankan efek dua kali, dan recover() menghapus penanda
+  // sekali baca; hasil panggilan pertama tetap harus dipakai.
+  const recoverChecked = useRef(false);
+  useEffect(() => {
+    if (!user || recoverChecked.current) return;
+    recoverChecked.current = true;
+    native.camera.recover().then(({ file, lost }) => {
+      if (file) {
+        setActionPayload({ photo: file });
+        setActionSeq(n => n + 1);
+        setFabAction('expense');
+      } else if (lost) {
+        showNotice('Foto struk tadi tidak sempat diterima, coba lagi.', { label: 'Foto ulang', run: openReceiptCamera });
+      }
+    }).catch(() => {});
+  }, [user, showNotice, openReceiptCamera]);
+
   if (isUpdateRequired(appConfig)) return <UpdateRequired config={appConfig} />;
   if (loading) {
     return (
@@ -517,7 +565,10 @@ export default function Layout() {
 
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
-  const openAction = (key) => { setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key); };
+  const openAction = (key) => {
+    if (key === 'struk') { openReceiptCamera(); return; } // bukan modal: kamera dulu, form menyusul
+    setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key);
+  };
   const closeAction = () => { setFabAction(null); setActionPayload(null); };
   const squareBtn = 'w-[var(--nav-h)] h-[var(--nav-h)] shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
@@ -554,7 +605,7 @@ export default function Layout() {
               <Icon name="plus" size={18} weight="bold" /> Catat
             </button>
             <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
-              aria-label="Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo"
+              aria-label="Catat lainnya: foto struk, pemasukan, amplop, langganan, cocokkan saldo"
               className="h-[var(--nav-h)] w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
               <Icon name="chevron" size={14} weight="bold" />
@@ -737,7 +788,10 @@ export default function Layout() {
               {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
               {ENVELOPE_FIELD[fabAction] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[fabAction].title}</>}
             </h3>
-            {fabAction === 'expense' && <MultiAddTransaction onSaved={closeAction} onCancel={closeAction} />}
+            {fabAction === 'expense' && (
+              <MultiAddTransaction onSaved={closeAction} onCancel={closeAction}
+                initialPhoto={actionPayload?.photo} photoMode={actionPayload?.photoMode} />
+            )}
             {fabAction === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
             {fabAction === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
             {fabAction === 'langganan' && (

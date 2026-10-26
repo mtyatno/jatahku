@@ -24,6 +24,12 @@
       "short_name": "Chat bot",
       "url": "/transactions?chat=1",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Foto struk — catat dari struk belanja",
+      "short_name": "Foto struk",
+      "url": "/transactions?struk=1",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

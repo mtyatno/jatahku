@@ -12,6 +12,10 @@
 //   queue.onBackgroundSynced(cb)   → cb(summary) setelah sinkron di latar; → pelepas
 //   files.save(blob, filename)     → simpan ke perangkat
 //   files.share(blob, filename, {title}) → 'shared' | 'cancelled' | 'saved'
+//   camera.takePhoto()             → Promise<File|null> foto dari kamera (null = batal); panggil sinkron dari handler ketukan
+//   camera.pickPhoto()             → Promise<File|null> foto dari galeri (null = batal); panggil sinkron dari handler ketukan
+//   camera.recover()               → Promise<{file, lost}> panggil sekali saat app dibuka: file = foto yang sempat
+//                                    terambil saat app dimatikan OS (aplikasi), lost = kamera dibuka tapi fotonya tak sampai
 //   print.pdf({frame, url})        → cetak PDF yang tampil di iframe
 //   openExternal(url, event?)      → buka tautan di luar app
 //   externalLinkProps(url, onClick?, {appUrl}) → props <a> untuk tautan luar
