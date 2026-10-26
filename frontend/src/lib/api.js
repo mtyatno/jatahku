@@ -8,6 +8,9 @@ import { native } from '../native';
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
 const API_URL = native.platform.apiUrl;
 
+// Pesan bila foto struk tidak sampai ke server (putus jaringan sebelum/selama unggah).
+const FOTO_GAGAL_KONEKSI = 'Gagal mengirim foto. Cek koneksi lalu coba lagi.';
+
 // Semua panggilan ke API membawa X-Jatahku-Client (ADR-M9).
 const apiFetch = (url, options = {}) => fetch(url, { ...options, headers: withClientHeader(options.headers) });
 
@@ -509,15 +512,14 @@ class ApiClient {
   // Scan struk: foto (sudah dikompres) → toko/tanggal/total.
   // onProgress(persen) saat mengunggah, onUploaded() begitu foto selesai terkirim (server mulai membaca).
   async scanReceipt(imageBlob, { onProgress, onUploaded } = {}) {
-    const koneksiGagal = 'Gagal mengirim foto. Cek koneksi lalu coba lagi.';
     try {
       const form = new FormData();
       form.append('image', imageBlob, 'struk.jpg');
       const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded });
-      if (res.status === 0 && !res.data.detail) res.data = { ...res.data, detail: koneksiGagal };
+      if (res.status === 0 && !res.data.detail) res.data = { ...res.data, detail: FOTO_GAGAL_KONEKSI };
       return res;
     } catch {
-      return { ok: false, status: 0, data: { detail: koneksiGagal }, timedOut: false };
+      return { ok: false, status: 0, data: { detail: FOTO_GAGAL_KONEKSI }, timedOut: false };
     }
   }
 
@@ -827,20 +829,26 @@ class ApiClient {
 
   // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Struk).
   async chatPhoto(blob, clientId, { onProgress, onUploaded } = {}) {
-    const koneksiGagal = 'Gagal mengirim foto. Cek koneksi lalu coba lagi.';
     try {
       const form = new FormData();
       form.append('image', blob, 'struk.jpg');
       if (clientId) form.append('client_id', clientId);
-      const res = await this.uploadForm('/bot/chat/photo', form, { onProgress, onUploaded });
+      // Catat apakah foto sudah selesai terunggah: xhr.timeout / putus jaringan setelah itu
+      // artinya foto SUDAH sampai, hanya jawabannya yang tidak kembali.
+      let uploadSelesai = false;
+      const res = await this.uploadForm('/bot/chat/photo', form, {
+        onProgress,
+        onUploaded: () => { uploadSelesai = true; if (onUploaded) onUploaded(); },
+      });
       const d = res.data;
       if (res.ok) return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
+      if (res.status === 0 && uploadSelesai) return { ok: false, error: 'Koneksi terputus saat membaca struk. Coba lagi.' };
       if (res.timedOut) return { ok: false, error: 'Koneksi lambat, foto belum terkirim. Coba lagi.' };
-      if (res.status === 0) return { ok: false, error: koneksiGagal };
+      if (res.status === 0) return { ok: false, error: FOTO_GAGAL_KONEKSI };
       if (res.status === 429) return { ok: false, error: 'Terlalu banyak scan. Tunggu sebentar, ya.' };
       return { ok: false, error: (typeof d.detail === 'string' && d.detail) || 'Foto tidak bisa dikirim. Coba lagi.' };
     } catch {
-      return { ok: false, error: koneksiGagal };
+      return { ok: false, error: FOTO_GAGAL_KONEKSI };
     }
   }
 
