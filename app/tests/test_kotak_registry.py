@@ -438,9 +438,25 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(k for k, _ in calls), ["checks", "flow"])
         self.assertTrue(all(p is res.parsed for _, p in calls))
 
-    async def test_stub_checks_leave_store_receipt_without_checks(self):
+    async def test_cross_checks_apply_to_payment_proofs_not_store_receipts(self):
+        # Kontrak checks.py: cek silang (nominal, status, tanggal) hanya untuk bukti QRIS/transfer. Struk
+        # belanja tidak diberi cek apa pun, bahkan yang tanggalnya > 60 hari lalu: jalur scan lama tidak
+        # punya cek silang dan perilakunya tidak boleh berubah.
         res = await read_document(doc(FIX["receipts"][0]["lines"]), CTX, proofs_enabled=True)
         self.assertEqual((res.checks, res.parsed.doc.checks), ([], []))
+        old = ["TOKO MAJU", "01-07-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+        res = await read_document(doc(old), CTX, proofs_enabled=True)
+        self.assertEqual((res.reader, res.parsed.doc.paid_at.date().isoformat()), ("struk_belanja", "2026-07-01"))   # 106 hari lalu
+        self.assertEqual((res.checks, res.parsed.doc.checks, res.parsed.doc.confidence), ([], [], {"total": "tinggi"}))
+        # Dokumen bukti dari pembaca terdaftar mendapat cek silang bersama, sesudah cek pembacanya.
+        class FailedTransfer(FakeReader):
+            async def parse(self, d, ctx):
+                parsed = await super().parse(d, ctx)
+                parsed.doc.status = "gagal"
+                return parsed
+        self.proofs.append(FailedTransfer("transfer.umum", "transfer", 0.9))
+        res = await read_document(doc(["x"]), CTX, proofs_enabled=True)
+        self.assertEqual([(c.code, c.level) for c in res.checks], [("dari_pembaca", "warn"), ("status_gagal", "block")])
 
     def test_check_as_dict(self):
         self.assertEqual(Check("status_gagal", "block", "Transaksi gagal").as_dict(),

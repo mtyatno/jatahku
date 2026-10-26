@@ -1,14 +1,21 @@
 """Registri pembaca dokumen: pilih pembaca dengan skor `detect` tertinggi (>= ambang),
 jalankan, lalu cek silang. Pembaca struk belanja selalu aktif; pembaca bukti bayar
-(QRIS, transfer) hanya bila saklar `receipt_inbox` menyala."""
+(QRIS, transfer) hanya bila saklar `receipt_inbox` menyala.
+
+Pembaca bukti bayar didaftarkan di sini, di akhir modul, supaya `read_document` selalu melihatnya
+tanpa bergantung pada siapa yang mengimpor modul pembaca (modul pembaca tidak mengimpor registry,
+jadi tidak ada impor melingkar)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.services.kotak_struk import checks as cross_checks
 from app.services.kotak_struk.config import READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
+from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
+from app.services.kotak_struk.readers.transfer import TransferReader
 from app.services.kotak_struk.readers.unknown import UnknownReader
 
 if TYPE_CHECKING:
@@ -43,8 +50,6 @@ def readers_for(proofs_enabled: bool) -> list[DocReader]:
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
-    from app.services.kotak_struk import checks as cross_checks  # diisi Task A5
-
     reader: DocReader | None = None
     best = 0.0
     for candidate in readers_for(proofs_enabled):
@@ -58,3 +63,8 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
     found = [*reader.checks(parsed, ctx), *cross_checks.common_checks(parsed, ctx)]
     parsed.doc.checks = [c.as_dict() for c in found]
     return ReadResult(parsed=parsed, checks=found, reader=reader.name)
+
+
+# Urutan = pemecah seri skor: QRIS, transfer, lalu struk belanja (lihat `readers_for`).
+register_proof_reader(QrisReader())
+register_proof_reader(TransferReader())
