@@ -7,6 +7,7 @@ import VoiceInput from './VoiceInput';
 import ReceiptInput, { pickReceiptPhoto } from './ReceiptInput';
 import ReceiptStatusCard from './ReceiptStatusCard';
 import { useReceiptScan } from '../hooks/useReceiptScan';
+import { STAGE } from '../lib/receiptProgress';
 import ReceiptCard from './ReceiptCard';
 import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
 import { buildPlan, applyItemSuggestions } from '../lib/receiptSplit';
@@ -177,7 +178,9 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
   );
 }
 
-export default function MultiAddTransaction({ onSaved, onCancel }) {
+// initialPhoto: File dari pintu masuk "Foto struk" (FAB / pemulihan) → dibaca sekali saat dibuka.
+// photoMode 'ready': dibuka dari shortcut PWA → tombol besar "Ambil foto struk" di atas isian.
+export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = null, photoMode = null }) {
   const [rawText, setRawText] = useState('');
   const [items, setItems] = useState([]);
   const [envelopes, setEnvelopes] = useState([]);
@@ -440,6 +443,13 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
   // Baca struk: tahap prosesnya tampil di ReceiptStatusCard; Simpan ditahan selama berjalan.
   const scan = useReceiptScan({ onResult: handleReceiptResult, onBusyChange: handleScanBusy });
 
+  // Foto dari pintu masuk lain langsung dibaca begitu form terbuka. Hanya saat dipasang:
+  // foto baru dari Layout memasang ulang form (kunci actionSeq), bukan mengganti prop.
+  useEffect(() => {
+    if (initialPhoto) scan.scanFile(initialPhoto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleVoiceTranscript = (text) => {
     if (savingRef.current) {
       heldTranscripts.current.push(text);
@@ -668,6 +678,16 @@ export default function MultiAddTransaction({ onSaved, onCancel }) {
 
   return (
     <div className="space-y-4">
+      {photoMode === 'ready' && !hasItems && scan.state.stage === STAGE.IDLE && (
+        <div className="py-2">
+          <ReceiptInput
+            size="lg"
+            onFile={scan.scanFile}
+            onError={handleVoiceError}
+            disabled={saving || scanBusy}
+          />
+        </div>
+      )}
       <div>
         <div className="flex items-center justify-between mb-1">
           <label className="label text-xs">Ketik beberapa pengeluaran sekaligus — pisahkan dengan koma, baris baru, atau "dan"</label>

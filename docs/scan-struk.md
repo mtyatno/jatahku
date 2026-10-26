@@ -28,6 +28,29 @@ foto ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receip
               POST /scan-receipt/{id}/feedback (nilai akhir) ─► belajar
 ```
 
+**Di webapp: dari foto sampai hasil.** Empat pintu masuk, semuanya berakhir di form
+Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceiptScan`):
+
+- **Foto struk** di FAB (HP) dan menu **Catat ▾** (desktop): kamera dibuka dulu,
+  form Catat terbuka begitu fotonya sampai (`openReceiptCamera` di `Layout.jsx`).
+- Tombol **Foto** / **Galeri** di dalam form Catat.
+- Shortcut PWA **Foto struk** (`/transactions?struk=1`): form Catat terbuka dalam mode
+  siap difoto, dengan tombol besar **Ambil foto struk**. Kamera tidak bisa dibuka tanpa
+  ketukan, jadi shortcut hanya menyiapkan layar; parameternya dihapus dari URL.
+- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya menampilkan
+  toast "Foto struk tadi tidak sempat diterima, coba lagi." dengan tombol **Foto ulang**.
+
+Kamera dan galeri lewat `native.camera` (`takePhoto` / `pickPhoto` / `recover`; di web
+berupa `<input type=file>`), dan harus dipanggil sinkron di dalam handler ketukan
+karena iPhone Safari menolak membukanya dari tempat lain. Foto dikompres, diunggah lewat
+XHR supaya persennya nyata (`lib/xhrUpload.js`, batas 60 detik, token di-refresh bila kedaluwarsa),
+lalu dibaca server. Tahap yang terlihat user: menyiapkan → mengunggah (dengan persen) →
+membaca; gagal di tahap mana pun memberi pesan sesuai tahap (`lib/receiptProgress.js`).
+Penanda `jatahku_camera_open` (localStorage) ditulis sebelum kamera dibuka dan dihapus
+begitu fotonya sampai atau dibatalkan; `recover()` yang dipanggil sekali saat app dibuka
+menganggap foto hilang kalau penandanya masih baru (< 3 menit). Web tidak bisa
+mengembalikan file yang hilang, hanya memberi tahu.
+
 ## Rincian barang
 
 **Membaca.** Daerah barang: dari baris tanggal sampai baris ringkasan/pembayaran
