@@ -548,6 +548,8 @@ async def handle_daily_limit_callback(update, context):
 
     query = update.callback_query
     await query.answer()
+    from app.bot.receipt_cmd import forget_note
+    await forget_note(query.from_user.id)   # tombol catat: catatan bukti yang ditunggu tidak berlaku lagi
 
     settings = get_settings()
     parts = query.data.split(":", 2)   # dlimit : confirm/cancel : token
@@ -738,6 +740,8 @@ async def handle_fund_shift_callback(update, context):
 
     query = update.callback_query
     await query.answer()
+    from app.bot.receipt_cmd import forget_note
+    await forget_note(query.from_user.id)   # tombol catat: catatan bukti yang ditunggu tidak berlaku lagi
 
     parts = query.data.split(":")
     if len(parts) != 3:
@@ -1116,8 +1120,8 @@ async def cmd_batal(update, context):
     tg_user = update.effective_user
     # Bot sedang menunggu catatan bukti ("Ketik isi belanjaannya (atau /batal)"): yang dibatalkan catatannya,
     # bukan transaksi terakhir.
-    from app.bot.receipt_cmd import MSG_NOTE_CANCELLED, cancel_note
-    if await cancel_note(tg_user.id):
+    from app.bot.receipt_cmd import MSG_NOTE_CANCELLED, forget_note
+    if await forget_note(tg_user.id):
         await update.message.reply_text(MSG_NOTE_CANCELLED)
         return
     async with AsyncSessionLocal() as db:
@@ -1458,6 +1462,8 @@ async def handle_txn_callback(update, context):
 async def _handle_txn_callback(update, context):
     query = update.callback_query
     await query.answer()
+    from app.bot.receipt_cmd import forget_note
+    await forget_note(update.effective_user.id)   # tombol catat: catatan bukti yang ditunggu tidak berlaku lagi
     # t_{redis_key}_{env_idx}
     parts = query.data.split("_", 2)
     if len(parts) < 3:

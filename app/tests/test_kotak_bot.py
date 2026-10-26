@@ -643,8 +643,8 @@ class KotakBotDbTests(TxnBase):
             return before if stale else await self.get(item_id)
         return wait
 
-    async def send(self, lines=CORPUS[0]["lines"], *, text=None, data=None, mime=None, stale=False):
-        self.status = SimpleNamespace(message_id=501, edit_text=AsyncMock(), delete=AsyncMock())
+    async def send(self, lines=CORPUS[0]["lines"], *, text=None, data=None, mime=None, stale=False, message_id=501):
+        self.status = SimpleNamespace(message_id=message_id, edit_text=AsyncMock(), delete=AsyncMock())
         message = SimpleNamespace(photo=None, document=None, sticker=None, voice=None, audio=None, text=text,
                                   reply_text=AsyncMock(return_value=self.status))
         payload = data if data is not None else JPG + uuid4().bytes
@@ -922,6 +922,118 @@ class KotakBotDbTests(TxnBase):
         await self.set(theirs.id, status="tercatat", transaction_ids=[str(txn.id)])
         await self.send()
         self.assertEqual(self.texts(), ["✅ Bukti ini sudah tercatat 26 Okt."])
+
+    # --- catatan yang ditunggu tidak membajak ketikan sesudah bukti diurus (fix 1) ----
+
+    async def type_text(self, text):
+        """Ketikan biasa lewat `handle_message` (NLP sungguhan); pesan tombol bukti yang diedit dicatat `self.bot`."""
+        message = SimpleNamespace(photo=None, document=None, text=text, reply_text=AsyncMock())
+        update_ = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=42, first_name="Ani"),
+                                  effective_chat=SimpleNamespace(id=4242))
+        self.bot.edit_message_text.reset_mock()
+        await handlers.handle_message(update_, SimpleNamespace(bot=self.bot))
+        return message
+
+    async def ask_note(self):
+        await self.send()
+        await self.tap(f"kn_{self.button('Makan').split('_')[1]}")
+        self.assertIn("kotak:note:42", self.redis.store)
+
+    async def assert_typing_reaches_nlp(self):
+        before = len(await self.txns())
+        message = await self.type_text("kopi 35k")
+        self.bot.edit_message_text.assert_not_awaited()   # pesan bukti lama tidak diedit lagi
+        self.assertEqual(message.reply_text.await_count, 1)
+        self.assertIn("Rp35rb — kopi", message.reply_text.call_args.args[0])   # dijawab NLP
+        self.assertEqual(len(await self.txns()), before + 1)
+        self.assertEqual((await self.txns())[-1].description, "kopi")
+        self.assertNotIn("kotak:note:42", self.redis.store)
+
+    async def test_note_pending_then_skipped_typing_goes_to_nlp(self):
+        await self.ask_note()
+        await self.tap(f"kx_{self.items[-1]}")
+        self.assertEqual((await self.get(self.items[-1])).status, "dilewati")
+        await self.assert_typing_reaches_nlp()
+
+    async def test_note_pending_then_recorded_typing_goes_to_nlp(self):
+        await self.ask_note()
+        await self.tap(self.button("Makan"))
+        await self.assert_typing_reaches_nlp()
+
+    async def test_note_pending_then_recorded_through_daily_limit_typing_goes_to_nlp(self):
+        await self.ask_note()
+        offer = (await self.tap(self.button("Harian"))).edit_message_text.call_args
+        confirm = await self.tap(keyboard_of(offer)[0][0].callback_data)
+        done = confirm.edit_message_text.call_args.args[0]
+        await self.assert_typing_reaches_nlp()
+        self.assertEqual(confirm.edit_message_text.call_args.args[0], done)   # pesan sukses tidak ditimpa
+
+    async def test_note_pending_then_cancelled_typing_goes_to_nlp(self):
+        await self.ask_note()
+        await self.tap(f"struk_no_{self.items[-1]}")
+        await self.assert_typing_reaches_nlp()
+
+    async def test_stale_note_is_ignored_when_the_item_left_siap_elsewhere(self):
+        await self.ask_note()
+        await self.set(self.items[-1], status="tercatat")   # dicatat lewat web; tidak ada tombol bot yang ditekan
+        self.assertIn("kotak:note:42", self.redis.store)
+        await self.assert_typing_reaches_nlp()
+
+    async def test_stale_note_is_ignored_when_its_button_session_is_gone(self):
+        await self.ask_note()
+        key = json.loads(self.redis.store["kotak:note:42"])["key"]
+        self.redis.store.pop(f"txn:{key}")
+        await self.assert_typing_reaches_nlp()
+
+    # --- bukti yang sama dikirim lagi selagi dibaca (fix 2) ------------------
+
+    async def test_same_proof_sent_again_while_waiting_keeps_the_first_promise(self):
+        photo = JPG + uuid4().bytes
+        await self.send(lines=None, data=photo, message_id=501)
+        self.assertEqual(self.texts(), ["⏳ Masih dibaca, nanti kukabari."])
+        await self.send(lines=None, data=photo, message_id=502)
+        self.assertEqual(self.texts(),
+                         ["⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di pesan sebelumnya."])
+        self.assertEqual(len(set(self.items)), 1)   # satu item
+        item_id = self.items[0]
+        self.assertEqual((await self.get(item_id)).channel_meta,
+                         {"chat_id": 4242, "status_message_id": 501, "notify": True})
+        bot = MagicMock(edit_message_text=AsyncMock(), send_message=AsyncMock())
+        with patch("telegram.Bot", return_value=bot):
+            await process_item(item_id, session_factory=self.Session, extract=fake_extract(CORPUS[0]["lines"]),
+                               now=NOW, proofs_enabled=True)
+        bot.edit_message_text.assert_awaited_once()
+        self.assertEqual(bot.edit_message_text.call_args.kwargs["message_id"], 501)   # pesan pertama yang diedit
+        self.assertTrue(bot.edit_message_text.call_args.args[0].startswith("QRIS · Siti Aminah"))
+
+    async def test_same_proof_sent_again_after_reading_is_rendered_on_the_new_message(self):
+        photo = JPG + uuid4().bytes
+        await self.send(data=photo, message_id=501)
+        await self.send(data=photo, message_id=502)
+        self.assertEqual(len(set(self.items)), 1)
+        self.assertTrue(self.texts()[-1].startswith("QRIS · Siti Aminah"))
+        self.assertTrue(datas(self.rows())[0].startswith("t_"))
+
+    async def test_same_proof_from_another_channel_still_gets_a_telegram_promise(self):
+        async with self.Session() as db:   # dibagikan lewat PWA dulu, belum dibaca
+            req = intake.IntakeRequest(await db.get(User, self.a.id), "pwa_share", data=JPG + b"pwa",
+                                       content_type="image/jpeg")
+            item, _ = await intake.create_item(db, req)
+        await self.send(lines=None, data=JPG + b"pwa", message_id=503)
+        self.assertEqual(self.texts(), ["⏳ Masih dibaca, nanti kukabari."])
+        self.assertEqual((await self.get(item.id)).channel_meta,
+                         {"chat_id": 4242, "status_message_id": 503, "notify": True})
+
+    async def test_web_chat_same_proof_while_waiting_points_to_the_waiting_list(self):
+        photo = JPG + uuid4().bytes
+        await self.send(lines=None, data=photo, message_id=501)
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
+            ops = await web_adapter.run_photo(user, photo, "image/jpeg")
+        self.assertEqual(ops[-1]["text"],
+                         "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti.")
+        self.assertEqual((await self.get(self.items[0])).channel_meta,
+                         {"chat_id": 4242, "status_message_id": 501, "notify": True})
 
     # --- chat web ---------------------------------------------------------
 

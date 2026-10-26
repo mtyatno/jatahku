@@ -28,7 +28,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import intake, record, view, waiter
 from app.services.kotak_struk.config import (
-    IMAGE_MAX_BYTES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, WAIT_BOT_S,
+    IMAGE_MAX_BYTES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_SIAP, WAIT_BOT_S,
 )
 from app.services.kotak_struk.merchants import display_name
 from app.services.kotak_struk.readers.labels import WIB
@@ -42,6 +42,8 @@ WAITING = (ST_DITERIMA, ST_DIPROSES)
 MSG_READING = "🧾 Membaca bukti..."
 MSG_WAIT_TELEGRAM = "⏳ Masih dibaca, nanti kukabari."
 MSG_WAIT_WEB = "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti."
+MSG_SAME_TELEGRAM = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di pesan sebelumnya."
+MSG_SAME_WEB = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti."
 MSG_UNREADABLE = "😕 Bukti tidak bisa dibaca. Coba kirim ulang."
 MSG_SEND_FILE = "📄 Kirim bukti sebagai foto (JPG/PNG) atau PDF."
 MSG_FAILED_TXN = "⚠️ Transaksi ini gagal di bank, jadi tidak dicatat."
@@ -268,8 +270,9 @@ async def _load_payload(key: str | None) -> dict | None:
     return json.loads(raw) if raw else None
 
 
-async def cancel_note(tg_user_id) -> bool:
-    """/batal saat bot menunggu catatan: hapus `kotak:note:{tg}`. True bila memang ada yang ditunggu."""
+async def forget_note(tg_user_id) -> bool:
+    """Hapus catatan yang ditunggu (`kotak:note:{tg}`): /batal, dan setiap tombol catat/lewati (bukti sudah diurus,
+    ketikan berikutnya bukan catatan lagi). True bila memang ada yang ditunggu. Redis mati: False, tanpa galat."""
     try:
         r = _redis()
         try:
@@ -277,7 +280,7 @@ async def cancel_note(tg_user_id) -> bool:
         finally:
             await r.aclose()
     except Exception:
-        return False   # Redis mati: /batal berjalan seperti biasa
+        return False
 
 
 # ── pesan hasil ─────────────────────────────────────────────────────────────
@@ -450,6 +453,18 @@ async def _promise_notification(status, item, meta: dict) -> bool:
     return True
 
 
+def _answered_elsewhere(old_meta: dict | None, meta: dict) -> bool:
+    """Item lama yang masih dibaca sudah punya pesan yang akan menerima hasilnya: di chat web selalu dianggap begitu
+    (hasilnya di "Bukti menunggu"); di Telegram bila pesan sebelumnya di chat yang sama (masih menunggu, atau sudah
+    dijanjikan kabar) atau kabar sudah dijanjikan ke pesan lain. Selain itu (mis. item dari form web atau PWA) pesan
+    baru ini yang dijanjikan kabar seperti biasa."""
+    if is_web():
+        return True
+    old_meta = old_meta or {}
+    return bool(old_meta.get("notify")) or (old_meta.get("chat_id") is not None
+                                            and old_meta.get("chat_id") == meta.get("chat_id"))
+
+
 async def _take_in(update, **upload) -> None:
     """Satu unggahan (file atau teks) → item Kotak Struk → pesan hasil di pesan status "🧾 Membaca bukti..."."""
     from app.bot.handlers import _is_setup_complete, get_or_create_user
@@ -470,12 +485,16 @@ async def _take_in(update, **upload) -> None:
             user_id = user.id
             req = intake.IntakeRequest(user, "web_chat" if is_web() else "telegram", channel_meta=meta, **upload)
             try:
-                item, _created = await intake.create_item(db, req)
+                item, created = await intake.create_item(db, req)
             except intake.IntakeRejected as exc:
                 await status.edit_text(exc.detail)
                 return
             item_id = item.id
+            again = not created and item.status in WAITING and _answered_elsewhere(item.channel_meta, meta)
             await db.commit()   # item lama dikembalikan dengan transaksi baca terbuka: jangan ditahan selama menunggu
+        if again:   # bukti yang sama selagi dibaca: janji pesan pertama tetap, `channel_meta` tidak diambil alih
+            await status.edit_text(MSG_SAME_WEB if is_web() else MSG_SAME_TELEGRAM)
+            return
 
         item = await waiter.wait_for_item(item_id, WAIT_BOT_S)
         if item is not None and item.status in WAITING:
@@ -558,6 +577,7 @@ async def handle_kotak_callback(update, context):
     tg_user = update.effective_user
 
     if action in ("kx", "kd"):
+        await forget_note(tg_user.id)
         item_id = _uuid(arg)
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
@@ -604,8 +624,9 @@ async def _edit_message(update, context, message_id, text, markup) -> None:
 
 async def capture_note(update, context) -> bool:
     """Teks sesudah "✏️ Tambah catatan" menjadi catatan bukti (sebelum NLP): payload diperbarui (keterangan,
-    catatan, urutan amplop menurut saran dengan catatan), pesan tombol aslinya diedit. False bila tidak ada catatan
-    yang ditunggu (atau Redis mati): teks diproses seperti biasa."""
+    catatan, urutan amplop menurut saran dengan catatan), pesan tombol aslinya diedit. False (teks diproses seperti
+    biasa, pesan lama tidak disentuh) bila tidak ada catatan yang ditunggu, Redis mati, sesi tombolnya sudah habis
+    atau dipakai mencatat, atau itemnya tidak lagi `siap` (sudah tercatat/dilewati, mis. lewat web)."""
     from app.bot.handlers import get_or_create_user
 
     tg_user = update.effective_user
@@ -620,19 +641,16 @@ async def capture_note(update, context) -> bool:
     if not raw:
         return False
     state = json.loads(raw)
+    if await _load_payload(state.get("key")) is None:
+        return False
     note = (update.message.text or "").strip()
-    payload = await _load_payload(state.get("key"))
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        item = await _own_item(db, _uuid(state.get("item_id")), user) if payload is not None else None
-        if item is None:
-            text = None
-        else:
-            text, markup = await _result_reply(db, user, item, key=state["key"], note=note, ready=True)
-    if text is None:
-        await update.message.reply_text(MSG_EXPIRED)
-    else:
-        await _edit_message(update, context, state.get("message_id"), text, markup)
+        item = await _own_item(db, _uuid(state.get("item_id")), user)
+        if item is None or item.status != ST_SIAP:
+            return False
+        text, markup = await _result_reply(db, user, item, key=state["key"], note=note, ready=True)
+    await _edit_message(update, context, state.get("message_id"), text, markup)
     return True
 
 
@@ -647,6 +665,7 @@ async def handle_struk_callback(update, context):
     parts = query.data.split("_", 2)
     if len(parts) < 3:
         return
+    await forget_note(update.effective_user.id)
     action, scan_id = parts[1], parts[2]
     item_id = _uuid(scan_id)
     async with AsyncSessionLocal() as db:
