@@ -3,17 +3,20 @@
 Lapis 1 (upload_id) dan lapis 2 pertama (file yang sama, belum selesai) dipakai
 intake untuk mengembalikan item yang sudah ada. `recorded_duplicate` dan
 `pending_ref_duplicate` dipakai pemrosesan (worker) untuk memberi tanda pada
-item baru. Lapis lunak (transaksi manual yang mirip) ada di modul lain.
+item baru. `soft_duplicate` (lapis lunak: transaksi manual yang mirip) dipakai `view.item_detail`.
 """
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import ReceiptScan, User
-from app.services.kotak_struk.config import OPEN_STATUSES, ST_SIAP, ST_TERCATAT
+from app.models.models import Envelope, ReceiptScan, Transaction, User
+from app.services.kotak_struk.config import OPEN_STATUSES, SOFT_DUP_WINDOW, ST_SIAP, ST_TERCATAT
+from app.services.kotak_struk.readers.labels import WIB
+from app.services.visibility import masked_description
 
 
 async def find_by_upload(db: AsyncSession, user_id: uuid.UUID, upload_id: str) -> ReceiptScan | None:
@@ -81,3 +84,34 @@ async def pending_ref_duplicate(db: AsyncSession, household_id: uuid.UUID | None
     if row is None:
         return None
     return {"kind": "ref", "item_id": str(row[0]), "recorded": False, "by": row[1]}
+
+
+async def soft_duplicate(db: AsyncSession, household_id: uuid.UUID | None, *, amount: int, paid_at: datetime,
+                         viewer_id: uuid.UUID | None = None) -> dict | None:
+    """Lapis lunak: transaksi tidak terhapus di rumah tangga dengan nominal yang sama, tanggal transaksi sama dengan
+    tanggal bayar (WIB, seperti `parsed_date` worker), dan dicatat dalam +/- SOFT_DUP_WINDOW dari `paid_at`.
+    Hanya peringatan "mirip ... yang dicatat ...". Hanya yang boleh dilihat `viewer_id` (kontrak visibilitas):
+    amplop pribadi anggota lain tidak dihitung, dan deskripsi transaksi privat anggota lain disamarkan. Tanpa
+    `viewer_id` yang dikenal hasilnya fail-closed (hanya amplop bersama, deskripsi disamarkan). `paid_at` tanpa zona
+    dianggap UTC."""
+    if household_id is None or not amount:
+        return None
+    paid_at = paid_at if paid_at.tzinfo is not None else paid_at.replace(tzinfo=timezone.utc)
+    visible = Envelope.owner_id.is_(None)
+    if viewer_id is not None:
+        visible = or_(visible, Envelope.owner_id == viewer_id)
+    row = (await db.execute(
+        select(Transaction, Envelope.name)
+        .join(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Envelope.household_id == household_id, visible, Transaction.is_deleted == False,  # noqa: E712
+               Transaction.amount == amount, Transaction.transaction_date == paid_at.astimezone(WIB).date(),
+               Transaction.created_at >= paid_at - SOFT_DUP_WINDOW, Transaction.created_at <= paid_at + SOFT_DUP_WINDOW)
+        .order_by(Transaction.created_at, Transaction.id)
+        .limit(1)
+    )).first()
+    if row is None:
+        return None
+    txn, envelope_name = row
+    return {"kind": "soft", "transaction": {
+        "id": str(txn.id), "description": masked_description(viewer_id, txn), "amount": int(txn.amount),
+        "created_at": txn.created_at.isoformat(), "envelope_name": envelope_name}}
