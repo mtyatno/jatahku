@@ -307,7 +307,6 @@ function EnvelopeFieldConfirm({ kind, payload, onClose }) {
 
 const FAB_OPTIONS = [
   { key: 'expense', icon: 'expense', label: 'Pengeluaran' },
-  { key: 'struk', icon: 'camera', label: 'Foto struk' },
   { key: 'envelope', icon: 'envelope', label: 'Amplop' },
   { key: 'income', icon: 'income', label: 'Income' },
   { key: 'langganan', icon: 'langganan', label: 'Langganan' },
@@ -566,7 +565,6 @@ export default function Layout() {
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
   const openAction = (key) => {
-    if (key === 'struk') { openReceiptCamera(); return; } // bukan modal: kamera dulu, form menyusul
     setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key);
   };
   const closeAction = () => { setFabAction(null); setActionPayload(null); };
@@ -605,7 +603,7 @@ export default function Layout() {
               <Icon name="plus" size={18} weight="bold" /> Catat
             </button>
             <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
-              aria-label="Catat lainnya: foto struk, pemasukan, amplop, langganan, cocokkan saldo"
+              aria-label="Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo"
               className="h-[var(--nav-h)] w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
               <Icon name="chevron" size={14} weight="bold" />
