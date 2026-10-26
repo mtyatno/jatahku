@@ -22,7 +22,7 @@ class AppProfile:
 # Kunci di luar rencana: `sender`, `status` (pembaca transfer), `discount`, `tax` (cek silang nominal).
 GENERIC_LABELS: dict[str, list[str]] = {
     "amount": ["nominal", "jumlah", "jumlah pembayaran", "total bayar", "total pembayaran", "total", "amount"],
-    "fee": ["biaya admin", "biaya", "admin", "fee"],
+    "fee": ["biaya admin", "biaya", "admin", "fee", "tip"],      # "tip": tambahan di atas nominal, masuk total seperti biaya
     "discount": ["diskon", "potongan", "promo", "voucher", "discount"],
     "tax": ["pajak", "ppn", "pb1", "tax"],
     "merchant": ["merchant", "nama merchant", "nama penerima", "penerima", "nama tujuan", "tujuan", "ke"],
