@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,7 @@ from app.api.routes import health, auth, envelopes, transactions, incomes, webho
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
+log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -80,9 +83,24 @@ async def lifespan(app: FastAPI):
     from app.services.advisor import advisor_cache
     advisor_cache.install()
     start_scheduler()
+    # Kotak Struk (spec 2026-10-26): worker pembaca bukti berjalan sebagai tugas asyncio di
+    # proses API, di samping scheduler. Gagal menyalakannya tidak boleh menjatuhkan API.
+    kotak_stop = asyncio.Event()
+    kotak_task = None
+    try:
+        from app.services.kotak_struk.worker import run_worker
+        kotak_task = asyncio.create_task(run_worker(kotak_stop))
+    except Exception:
+        log.exception("worker Kotak Struk tidak bisa dijalankan")
     yield
     # Shutdown
     stop_scheduler()
+    if kotak_task is not None:
+        kotak_stop.set()
+        try:
+            await asyncio.wait_for(kotak_task, 10)
+        except Exception:  # termasuk TimeoutError: tugas dibatalkan, item `diproses` dipulihkan saat start berikutnya
+            log.exception("worker Kotak Struk tidak berhenti dengan rapi")
     print(f"👋 {settings.APP_NAME} shutting down...")
 app = FastAPI(
     title=settings.APP_NAME,

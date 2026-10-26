@@ -6,6 +6,7 @@ tugas worker."""
 from __future__ import annotations
 
 import hashlib
+import importlib
 import logging
 import os
 import uuid
@@ -114,8 +115,10 @@ def _remove_file(path: str | None) -> None:
 
 def _wake_worker() -> None:
     try:
-        from app.services.kotak_struk import worker
-    except ImportError:  # worker belum ada / tidak berjalan di proses ini
+        # import_module (bukan `from paket import worker`): tidak bergantung pada atribut paket,
+        # jadi modul yang diganti di sys.modules (tes) atau yang tidak bisa diimpor tetap dihormati.
+        worker = importlib.import_module("app.services.kotak_struk.worker")
+    except ImportError:  # worker tidak bisa diimpor di proses ini
         return
     try:
         worker.wake()

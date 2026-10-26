@@ -1,19 +1,28 @@
 """Kunci pihak penerima (merchant) dan keterangan transaksi untuk Kotak Struk.
 
-Hanya fungsi murni di modul ini; fungsi basis data (peta merchant per rumah
-tangga) ditambahkan di task berikutnya.
+Hampir semuanya fungsi murni; fungsi basis data (peta merchant per rumah tangga)
+dimulai dari `upsert_household_merchant`.
 """
 import hashlib
 import hmac
 import logging
 import re
+import uuid
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.models.models import HouseholdMerchant
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 
 log = logging.getLogger(__name__)
 
 KEY_MAX = 80            # panjang kolom counterparty_key
+RAW_NAME_MAX = 100      # panjang kolom household_merchants.raw_name
+CITY_MAX = 60           # panjang kolom household_merchants.city
 DESCRIPTION_MAX = 500   # batas keterangan transaksi
 MIN_ACCOUNT_DIGITS = 8  # nomor rekening dianggap terbaca utuh bila punya >= ini
 
@@ -130,3 +139,45 @@ def mask_digits(s: str, keep: int = 4) -> str:
     if not digits:
         return ""
     return "…" + (digits[-keep:] if keep > 0 else "")
+
+
+async def _find_merchant(db: AsyncSession, household_id: uuid.UUID, key: str) -> HouseholdMerchant | None:
+    return (await db.execute(
+        select(HouseholdMerchant).where(
+            HouseholdMerchant.household_id == household_id, HouseholdMerchant.counterparty_key == key)
+    )).scalars().first()
+
+
+def _refresh_merchant(row: HouseholdMerchant, raw_name: str | None, city: str | None, now: datetime) -> None:
+    # Nama dan kota yang tidak terbaca di bukti ini tidak menghapus yang sudah diketahui.
+    # `display_name` (nama panggilan dari user) tidak pernah disentuh.
+    if raw_name:
+        row.raw_name = raw_name[:RAW_NAME_MAX]
+    if city:
+        row.city = city[:CITY_MAX]
+    row.last_seen_at = now
+
+
+async def upsert_household_merchant(db: AsyncSession, household_id: uuid.UUID, key: str, raw_name: str | None,
+                                    city: str | None, *, now: datetime) -> HouseholdMerchant:
+    """Catat pihak penerima di peta merchant rumah tangga: baris baru, atau perbarui `raw_name`, `city`,
+    dan `last_seen_at` baris yang ada (unik per rumah tangga + kunci). Tidak meng-commit; pemanggil
+    yang commit. Balapan dua pembuat baris yang sama ditangani lewat SAVEPOINT, jadi sesi pemanggil
+    tetap bisa dipakai."""
+    row = await _find_merchant(db, household_id, key)
+    if row is None:
+        row = HouseholdMerchant(household_id=household_id, counterparty_key=key,
+                                raw_name=(raw_name or "")[:RAW_NAME_MAX], city=city[:CITY_MAX] if city else None,
+                                last_seen_at=now, created_at=now)
+        try:
+            async with db.begin_nested():
+                db.add(row)
+                await db.flush()
+            return row
+        except IntegrityError:
+            row = await _find_merchant(db, household_id, key)
+            if row is None:
+                raise
+    _refresh_merchant(row, raw_name, city, now)
+    await db.flush()
+    return row
