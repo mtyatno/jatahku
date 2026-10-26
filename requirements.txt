@@ -35,3 +35,6 @@ httpx==0.28.1
 # Scan struk (OCR tanpa LLM). Model ±31 MB ikut paket; RAM ±340 MB saat aktif.
 rapidocr==3.10.0
 onnxruntime==1.31.0
+
+# Bukti PDF (Kotak Struk): lapisan teks dan render halaman; dijalankan di proses anak.
+pypdfium2==5.13.0
