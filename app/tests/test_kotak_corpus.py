@@ -36,11 +36,25 @@ LEAKY_LINES = [
     "Ref 2026-10-26-123456", "Jam 10.15.30.123456", "NPWP 01.234.567.8-901.000", "Kode 12 1999 5678",
     "Rekening 1234 5678  9012", "Ref 6123  4567", "Saldo 150.000.123456", "Ref 150.000-1234",
     "Rek 0812 – 3456 – 7890", "ID1024358806544",
+    "HP 081.234.567.890", "Rek 0.123.456.789", "Rp 081234567", "NMID ID1024358806544 TID1234567890",
+    "Rek 1234–26-10-2026", "Kode 24.13.34",
 ]
+
+# Baris yang setelah disamarkan masih menampilkan 7-10 digit di samping huruf OCR, "/", atau >= 3 spasi
+# (re-review A13 I1-r1): mask_line tidak menyamarkan semuanya, jadi `add` harus memberi tanda PERIKSA.
+HALF_MASKED = {
+    "HP 0812 34S6 7890": "HP …1234S6 7890",
+    "Rek 1234 S678 9012": "Rek 1234 S…9012",
+    "Rek 12345 67S9 012": "Rek …4567S9 012",
+    "No. Rek 0123 0100 1234 S67": "No. Rek …1234 S67",
+    "No. Rek 6788 472B 7639 4242": "No. Rek …8472B …4242",
+    "Ref 61234567/8812": "Ref …4567/8812",
+    "Ref 61234567   8812": "Ref …4567   8812",
+}
 
 _SEP = r"[\s.,\-‐-―−]"
 _END = r"(?![.,:/\-]?\d)"
-_THOUSANDS = r"\d{1,3}([.,])\d{3}(?:\1\d{3})*(?:[.,]\d{2})?"
+_THOUSANDS = r"(?!0)\d{1,3}([.,])\d{3}(?:\1\d{3})*(?:[.,]\d{2})?"     # nominal tidak berawalan 0
 
 
 def _leftover_digit_runs(line: str) -> list[str]:
@@ -49,7 +63,7 @@ def _leftover_digit_runs(line: str) -> list[str]:
     Sengaja ditulis terpisah dari implementasi mask_line."""
     allowed = [
         r"…\d{4}",
-        rf"(?<![\d.,])(?:Rp|IDR)[ .:]*(?:{_THOUSANDS}|\d{{1,9}}(?:[.,]\d{{2}})?){_END}",
+        rf"(?<![\d.,])(?:Rp|IDR)[ .:]*(?:{_THOUSANDS}|(?!0\d)\d{{1,9}}(?:[.,]\d{{2}})?){_END}",
         rf"(?<![\d.,\-]){_THOUSANDS}{_END}",
         rf"(?<![\d.,/\-])\d{{1,2}}([-/.])\d{{1,2}}\1(?:\d{{4}}|\d{{2}}){_END}",
         rf"(?<![\d.,/\-])\d{{4}}([-/.])\d{{1,2}}\1\d{{1,2}}{_END}",
@@ -57,7 +71,7 @@ def _leftover_digit_runs(line: str) -> list[str]:
         r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Okt|Nov|Dec|Des)[a-z]*\.? \d{1,2},? \d{4}(?!\d)",
     ]
     if "NMID" in line.upper():
-        allowed.insert(0, r"ID\s?\d{10,}")
+        allowed.insert(0, r"(?<![A-Za-z0-9])ID\s?\d{10,}")
     rest = line
     for rx in allowed:
         rest = re.sub(rx, "#", rest)
@@ -72,13 +86,14 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(mask_line("NMID ID1024358806544"), "NMID ID1024358806544")
 
     def test_synthetic_corpus_passes_gate(self):
-        r = evaluate([s for s in SAMPLES if not s["real"]] + RECEIPTS)
+        samples = load_corpus(FIXTURE)   # sampel yang salah isi -> CorpusError yang menyebut sampel dan field-nya
+        r = evaluate([s for s in samples if not s["real"]] + RECEIPTS)
         self.assertEqual(r["failures"], [])
         self.assertEqual(gate_failures(r), [])
         self.assertEqual(r["n"], 10)
 
     def test_real_corpus_meets_release_gate(self):
-        real = [s for s in SAMPLES if s["real"] and s.get("reviewed")]
+        real = [s for s in load_corpus(FIXTURE) if s["real"] and s.get("reviewed")]
         if not real:
             self.skipTest("korpus nyata belum ada (FS.5, Task A14)")
         r = evaluate(real + RECEIPTS)
@@ -158,6 +173,16 @@ class MaskLineTests(unittest.TestCase):
             "Grp1234567": "Grp…4567",                    # "rp" di dalam kata bukan Rupiah
         })
 
+    def test_numbers_starting_with_zero_are_not_amounts(self):
+        self.assertMasked({
+            "HP 081.234.567.890": "HP …7890",
+            "Rek 0.123.456.789": "Rek …6789",
+            "Rek 012.345.678": "Rek …5678",
+            "Rp 081234567": "Rp …4567",
+            "Rp. 0.123.456": "Rp. …3456",
+        })
+        self.assertKept(["Rp 0", "Rp 0,00", "Diskon Rp0", "Total Rp 1.500.000", "Rp 10.000"])
+
     def test_nmid_kept_only_on_an_nmid_line(self):
         self.assertKept(["NMID ID1024358806544", "NMID: ID 1024358806544", "nmid : ID1024358806544"])
         self.assertMasked({
@@ -165,6 +190,8 @@ class MaskLineTests(unittest.TestCase):
             "User ID081234567890": "User ID…7890",
             "ID1024358806544": "ID…6544",
             "NMID ID123456789": "NMID ID…6789",          # 9 digit: bukan NMID
+            # "ID" di dalam kata lain di baris NMID bukan NMID.
+            "NMID ID1024358806544 TID1234567890": "NMID ID1024358806544 TID…7890",
         })
 
     def test_dates_and_times_need_their_guards(self):
@@ -177,8 +204,11 @@ class MaskLineTests(unittest.TestCase):
             "Rek 12-10-1234": "Rek …1234",               # tahun 1234 bukan tanggal
             "Rek 12-10.2026": "Rek …2026",               # pemisah tanggal harus sama
             "Kode 99.99.99": "Kode …9999",               # bukan jam
+            "Kode 24.13.34": "Kode …1334",               # jam 24 bukan jam (dan bulan 13 bukan tanggal)
             "Jam 10.15.30.123456": "Jam …3456",
+            "Rek 1234–26-10-2026": "Rek …2026",          # tanggal yang menempel en dash pada deret lain
         })
+        self.assertKept(["Kode 24.12.34"])                # tanggal d.m.yy yang sah (24 Des 2034) tetap utuh
         self.assertKept(["Jam 08:12:33", "Jam 08.12.33", "Jam 23.59"])
 
     def test_short_numbers_and_already_masked_text_kept(self):
@@ -222,8 +252,33 @@ class ReviewFlagTests(unittest.TestCase):
                 self.assertEqual(mask_line(line), line)   # premis: tidak disamarkan aturan mana pun
                 self.assertTrue(needs_review(line))
 
+    def test_half_masked_numbers_are_flagged(self):
+        for line, masked in HALF_MASKED.items():
+            with self.subTest(line):
+                self.assertEqual(mask_line(line), masked)   # premis: >= 6 digit masih terlihat (7-10 bila huruf OCR dibaca)
+                self.assertGreaterEqual(len(re.findall(r"\d", masked)), 6)
+                self.assertTrue(needs_review(masked))
+
+    def test_masked_tokens_count_as_four_digits(self):
+        self.assertTrue(needs_review("Ref …4567 12"))         # token + 2 digit lepas = 6
+        self.assertFalse(needs_review("Ref …4567 1"))         # 5: di bawah ambang
+        self.assertTrue(needs_review("Ref …4567,…1234"))   # dua token menempel tanda baca
+        self.assertTrue(needs_review("Ref …4567/…1234"))
+        self.assertFalse(needs_review("Ref …4567 …1234"))  # token berdiri sendiri, dipisah spasi
+        self.assertFalse(needs_review("…4567 …1234"))      # awal dan akhir baris juga pemisah
+        self.assertFalse(needs_review("Ref (…4567)"))          # satu token: 4 digit saja
+        # Dua nomor >= 6 digit yang dipisah huruf OCR: token kedua menempel huruf di depannya.
+        self.assertEqual(mask_line("Rek 678812 B47276394242"), "Rek …8812 B…4242")
+        self.assertTrue(needs_review("Rek …8812 B…4242"))
+        # Hanya keluaran mask_line (`…` + tepat 4 digit) yang dihitung sebagai penanda; "…123" adalah digit lepas.
+        self.assertTrue(needs_review("Ref …123 …4567"))
+        # Nominal nol tetap bentuk yang dibiarkan: tidak ikut dihitung bersama penanda di sebelahnya.
+        self.assertFalse(needs_review("Biaya Rp 0,00 …4567"))
+        self.assertTrue(needs_review("Biaya 0,00 …4567"))     # tanpa Rp bukan nominal: 3 + 4 digit
+
     def test_kept_forms_masked_numbers_and_short_codes_not_flagged(self):
         lines = [mask_line(x) for s in SYNTHETIC for x in s["lines"]] + [
+            "Rekening: …7890 a.n. BUDI", "No. Rek: …7890", "+…7890", "Kode 24.12.34",
             "Tanggal 26 Okt 2026 08:12:33 WIB", "Kasir 01 14-10-2026 08:15", "NMID ID1024358806544", "Nominal Rp1.500.000",
             "Rekening Tujuan …4567", "Ref …5678 …1234", "ID Transaksi A1B2C3D4", "Kode 1_2345", "Terminal ID A01 Ref 12345",
             "Rp 25.000 x 3 = Rp 75.000", "26/10/2026 19:05",
@@ -452,6 +507,52 @@ class CorpusFileTests(unittest.TestCase):
                 load_corpus(path)
             self.assertIn(name, str(caught.exception))
 
+    def test_load_corpus_validates_each_sample(self):
+        good = copy.deepcopy(BY_ID["sint-qris-1"])
+        cases = {
+            "reviewed": ({**good, "real": True, "reviewed": "false"}, "reviewed"),
+            "real": ({**good, "real": "false"}, "real"),
+            "real hilang": ({k: v for k, v in good.items() if k != "real"}, "real"),
+            "today format lain": ({**good, "today": "27-10-2026"}, "today"),
+            "today ISO dasar": ({**good, "today": "20261027"}, "today"),
+            "today bukan tanggal": ({**good, "today": "2026-02-30"}, "today"),
+            "today angka": ({**good, "today": 20261027}, "today"),
+            "user_name": ({**good, "user_name": ["Rina"]}, "user_name"),
+            "lines teks": ({**good, "lines": "Pembayaran Berhasil"}, "lines"),
+            "lines berisi angka": ({**good, "lines": ["QRIS", 25000]}, "lines"),
+            "expect": ({**good, "expect": ["qris"]}, "expect"),
+            "expect hilang": ({k: v for k, v in good.items() if k != "expect"}, "expect"),
+            "id kosong": ({**good, "id": ""}, "id"),
+            "id angka": ({**good, "id": 7}, "id"),
+        }
+        path = self.root / "corpus.json"
+        for label, (bad, field) in cases.items():
+            path.write_text(json.dumps({"samples": [BY_ID["sint-transfer-1"], bad]}), encoding="utf-8")
+            with self.subTest(label), self.assertRaises(CorpusError) as caught:
+                load_corpus(path)
+            message = str(caught.exception)
+            self.assertIn("sampel ke-2", message)
+            if isinstance(bad.get("id"), str) and bad["id"]:
+                self.assertIn(bad["id"], message)
+            self.assertIn(field, message)
+
+    def test_load_corpus_rejects_duplicate_ids(self):
+        path = self.root / "corpus.json"
+        path.write_text(json.dumps({"samples": [BY_ID["sint-qris-1"], BY_ID["sint-transfer-1"], BY_ID["sint-qris-1"]]}),
+                        encoding="utf-8")
+        with self.assertRaises(CorpusError) as caught:
+            load_corpus(path)
+        self.assertIn("sint-qris-1", str(caught.exception))
+        self.assertIn("ganda", str(caught.exception))
+
+    def test_load_corpus_accepts_valid_optional_fields(self):
+        sample = {**copy.deepcopy(BY_ID["sint-transfer-1"]), "id": "bri-1", "real": True, "reviewed": False,
+                  "today": "2026-10-27", "user_name": "Budi Santoso"}
+        path = self.root / "corpus.json"
+        write_corpus(path, [*SAMPLES, sample])
+        self.assertEqual(load_corpus(path)[-1], sample)
+        self.assertEqual(load_corpus(FIXTURE), SAMPLES)
+
 
 class CliTests(unittest.TestCase):
     def setUp(self):
@@ -508,6 +609,8 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("PERIKSA", out)
         self.assertIn("user_name", out)
         self.assertIn("nama samaran", out)
+        self.assertIn("dua baris", out)                  # nomor yang terpotong ke baris berikutnya
+        self.assertIn("huruf", out)                      # referensi campuran huruf dan angka pendek
         self.assertEqual(sorted(p.name for p in self.corpus.parent.iterdir()), ["corpus.json"])
 
     def test_add_reads_the_masked_lines(self):
@@ -581,6 +684,20 @@ class CliTests(unittest.TestCase):
         code, _, err = self.run_main("eval", "--corpus", str(self.corpus))
         self.assertEqual(code, 2)
         self.assertIn("rusak", err)
+
+    def test_invalid_sample_exits_2_for_add_and_eval(self):
+        data = json.loads(self.corpus.read_text(encoding="utf-8"))
+        data["samples"][0]["reviewed"] = "false"
+        self.corpus.write_text(json.dumps(data), encoding="utf-8")
+        before = self.corpus.read_bytes()
+        for argv in (("add", str(self.txt), "--id", "x-1"), ("eval",), ("eval", "--real-only")):
+            with self.subTest(argv), patch.object(kotak_corpus, "extract_text", AsyncMock()) as fake:
+                code, _, err = self.run_main(*argv, "--corpus", str(self.corpus))
+                self.assertEqual(code, 2)
+                self.assertIn("sint-qris-1", err)
+                self.assertIn("reviewed", err)
+                fake.assert_not_awaited()
+        self.assertEqual(self.corpus.read_bytes(), before)
 
     def test_eval_missing_corpus_exits_2(self):
         code, out, err = self.run_main("eval", "--corpus", str(self.corpus.with_name("corpus.jsn")))

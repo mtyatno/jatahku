@@ -80,16 +80,19 @@ _DASH = "\\-\u2010-\u2015\u2212"       # isi kelas karakter: "-", U+2010..U+2015
 _RUN_SEP = rf"(?:{_HWS}{{1,2}}|{_HWS}?[{_DASH}]{_HWS}?|[.,])"
 _DIGIT_RUN = re.compile(rf"\d+(?:{_RUN_SEP}\d+)*")
 
-# Nominal berkelompok ribuan yang ketat: kelompok pertama 1-3 digit, sisanya tepat 3, pemisah konsisten, desimal
-# 2 digit opsional dengan pemisah yang lain (1.500.000 / 150,000.00 / 1.500.000,00).
-_THOUSANDS = r"\d{1,3}(?P<g>[.,])\d{3}(?:(?P=g)\d{3})*(?:(?!(?P=g))[.,]\d{2})?"
+# Nominal berkelompok ribuan yang ketat: kelompok pertama 1-3 digit dan tidak berawalan 0, sisanya tepat 3, pemisah
+# konsisten, desimal 2 digit opsional dengan pemisah yang lain (1.500.000 / 150,000.00 / 1.500.000,00).
+# "081.234.567.890" dan "0.123.456.789" bukan nominal.
+_THOUSANDS = r"(?!0)\d{1,3}(?P<g>[.,])\d{3}(?:(?P=g)\d{3})*(?:(?!(?P=g))[.,]\d{2})?"
 _NUM_END = rf"(?![.,]?\d)(?![{_DASH}]\d)"   # tidak bersambung ke digit lain
 _NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
 # NMID QRIS (publik): "ID" + >= 10 digit, hanya di baris berlabel NMID.
 _NMID = re.compile(rf"(?<![A-Za-z0-9])ID{_HWS}?\d{{10,}}", re.IGNORECASE)
-# Nominal langsung sesudah Rp/IDR: nominal ribuan ketat, atau angka tanpa kelompok <= 9 digit (Rp 999.999.999).
+# Nominal langsung sesudah Rp/IDR: nominal ribuan ketat, atau angka tanpa kelompok <= 9 digit (Rp 999.999.999) yang
+# tidak berawalan 0 + digit ("Rp 0" dan "Rp 0,00" tetap nominal; "Rp 081234567" bukan).
 _CURRENCY = re.compile(
-    rf"(?<![A-Za-z])(?:rp|idr){_HWS}*[.:]?{_HWS}*(?:{_THOUSANDS}|\d{{1,9}}(?:[.,]\d{{2}})?){_NUM_END}", re.IGNORECASE)
+    rf"(?<![A-Za-z])(?:rp|idr){_HWS}*[.:]?{_HWS}*(?:{_THOUSANDS}|(?!0\d)\d{{1,9}}(?:[.,]\d{{2}})?){_NUM_END}",
+    re.IGNORECASE)
 # Tanggal angka dengan pemisah yang sama: d-m-y, d/m/y, d.m.y (tahun 2 atau 4 digit) dan y-m-d. Tidak boleh
 # menempel pada deret angka lain ("1234-12-10-26" bukan tanggal, melainkan nomor yang harus disamarkan).
 _DATE_DMY = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})([-/.])(\d{{1,2}})\2(\d{{4}}|\d{{2}})(?![/.{_DASH}]?\d)")
@@ -166,22 +169,35 @@ def mask_line(line: str) -> str:
     return "".join(out)
 
 
-_MASKED_TOKEN = re.compile(r"…\d{4}(?!\d)")
+_MASKED_TOKEN = re.compile(r"…\d{4}")       # keluaran mask_line; digit sesudahnya (bila ada) tetap digit lepas
+_LONE_TOKEN = re.compile(r"(?<!\S)…\d{4}(?!\S)")   # dipisah spasi (atau awal/akhir baris) di kedua sisi
 _WORD = re.compile(r"[^\W\d_]{2,}")
+_DIGIT = re.compile(r"\d")
+
+
+def _chunk_needs_review(chunk: str) -> bool:
+    total = len(_DIGIT.findall(chunk))   # penanda `…dddd` ikut dihitung 4 digit
+    if total < MIN_RUN_DIGITS:
+        return False
+    bare = len(_DIGIT.findall(_MASKED_TOKEN.sub(" ", chunk)))
+    glued = len(_MASKED_TOKEN.findall(chunk)) > len(_LONE_TOKEN.findall(chunk))
+    return bool(bare) or glued
 
 
 def needs_review(line: str) -> bool:
-    """Jaring pengaman untuk tinjauan manusia: apakah baris (sesudah `mask_line`) masih memuat >= 6 digit di luar
-    bentuk yang dibiarkan dan penanda `…dddd`? Digit dihitung melintasi pemisah apa pun yang bukan kata (/, :, _,
-    spasi, satu huruf salah-baca OCR seperti "4S6"); kata >= 2 huruf memisahkan. Tidak pernah memblokir."""
+    """Jaring pengaman untuk tinjauan manusia: apakah baris (sesudah `mask_line`) mungkin masih menampilkan >= 6
+    digit sebuah nomor? Bentuk yang dibiarkan (nominal, tanggal, jam, NMID) diabaikan. Digit dihitung melintasi
+    pemisah apa pun yang bukan kata (/, :, _, spasi, satu huruf salah-baca OCR seperti "4S6"); kata >= 2 huruf
+    memisahkan. Penanda `…dddd` dihitung 4 digit: potongan dengan >= 6 digit ditandai bila masih ada digit lepas di
+    sampingnya ("…1234S6 7890") atau penanda yang menempel ("…8472B …4242"); penanda yang berdiri sendiri
+    ("…5678 …1234") tidak. Tidak pernah memblokir."""
     parts, pos = [], 0
     for start, end in _kept_spans(line):
         parts.append(line[pos:start])
         parts.append(" ")
         pos = end
     parts.append(line[pos:])
-    rest = _MASKED_TOKEN.sub(" ", "".join(parts))
-    return any(len(re.findall(r"\d", chunk)) >= MIN_RUN_DIGITS for chunk in _WORD.split(rest))
+    return any(_chunk_needs_review(chunk) for chunk in _WORD.split("".join(parts)))
 
 
 # ── Evaluasi ────────────────────────────────────────────────────────────────
@@ -354,9 +370,50 @@ def load_corpus(path: Path) -> list[dict]:
     except ValueError as e:   # JSONDecodeError, UnicodeDecodeError
         raise CorpusError(f"berkas korpus rusak: {path} ({e})") from e
     samples = data.get("samples") if isinstance(data, dict) else None
-    if not isinstance(samples, list) or not all(isinstance(s, dict) and isinstance(s.get("id"), str) for s in samples):
-        raise CorpusError(f'berkas korpus rusak: {path} (harus {{"samples": [...]}} dan tiap sampel punya "id")')
+    if not isinstance(samples, list):
+        raise CorpusError(f'berkas korpus rusak: {path} (harus {{"samples": [...]}})')
+    seen: set[str] = set()
+    for i, sample in enumerate(samples, 1):
+        problem = _sample_problem(sample)
+        where = f"sampel ke-{i}" + (f" ({sample['id']})" if isinstance(sample, dict) and isinstance(sample.get("id"), str)
+                                    and sample["id"] else "")
+        if problem:
+            raise CorpusError(f"berkas korpus rusak: {path}, {where}: {problem}")
+        if sample["id"] in seen:
+            raise CorpusError(f"berkas korpus rusak: {path}, {where}: id ganda")
+        seen.add(sample["id"])
     return samples
+
+
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _sample_problem(sample) -> str | None:
+    """Isi sampel yang diedit tangan: tipe tiap field (mis. `"reviewed": "false"` adalah teks, dan bernilai benar)."""
+    if not isinstance(sample, dict):
+        return "harus objek"
+    if not isinstance(sample.get("id"), str) or not sample["id"]:
+        return '"id" harus teks yang tidak kosong'
+    if type(sample.get("real")) is not bool:
+        return '"real" harus true atau false'
+    if "reviewed" in sample and type(sample["reviewed"]) is not bool:
+        return '"reviewed" harus true atau false'
+    if "today" in sample:
+        today = sample["today"]
+        try:
+            if not isinstance(today, str) or not _ISO_DATE.fullmatch(today):
+                raise ValueError
+            date.fromisoformat(today)
+        except ValueError:
+            return '"today" harus tanggal ISO (YYYY-MM-DD)'
+    if "user_name" in sample and not isinstance(sample["user_name"], str):
+        return '"user_name" harus teks'
+    lines = sample.get("lines")
+    if not isinstance(lines, list) or not all(isinstance(x, str) for x in lines):
+        return '"lines" harus daftar teks'
+    if not isinstance(sample.get("expect"), dict):
+        return '"expect" harus objek'
+    return None
 
 
 def receipt_samples(path: Path = RECEIPTS_FIXTURE) -> list[dict]:
@@ -446,6 +503,10 @@ def _err(message: str) -> int:
 _NAME_REMINDER = ("Nama orang pribadi: samarkan di baris (selain penerima/merchant yang dibutuhkan) dan di user_name. "
                   "user_name dan nama penerima transfer ke rekening sendiri adalah nama pribadi — ganti keduanya "
                   "dengan nama samaran yang sama.")
+# Dua hal yang tidak bisa dideteksi alat ini (penyamaran per baris, aturan >= 6 digit): hanya tinjauan manusia.
+_LIMITS_REMINDER = ("Yang tidak terdeteksi alat ini, cek sendiri: nomor yang terpotong ke dua baris (mis. \"61234\" lalu "
+                    "\"…8812\" di baris berikutnya) dan nomor referensi campuran huruf dan angka pendek "
+                    "(mis. \"TRX61234AB5678\") — samarkan dengan tangan.")
 
 
 def cmd_add(args) -> int:
@@ -495,6 +556,7 @@ def cmd_add(args) -> int:
     if args.real:
         print('Periksa baris dan expect dengan bukti aslinya, lalu set "reviewed": true.')
     print(_NAME_REMINDER)
+    print(_LIMITS_REMINDER)
     return 0
 
 
