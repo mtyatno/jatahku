@@ -9,6 +9,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -332,6 +333,33 @@ class WorkerTests(WorkerBase):
                          ("tidak_dikenali", "tidak_dikenali", None, None, "gagal"))
         self.assertIsNone(got.counterparty_key)
         self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_sparse_text_without_rp_is_a_low_confidence_store_receipt_guess(self):
+        """Tanpa baris Rp pembaca cadangan menebak seperti scan struk lama (bukan tanpa total), selalu `rendah`."""
+        item = await self.item(text="sepi")
+        self.assertEqual(await self.process(item, ["TOKO", "45.500"]), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.parser, int(got.parsed_total), got.confidence),
+                         ("struk_belanja", "tidak_dikenali", 45500, "rendah"))
+        self.assertEqual(json.loads(got.ocr_lines), ["TOKO", "45.500"])  # bukan bukti bayar: teks belajar tetap disimpan
+
+    async def test_unread_proof_text_without_rp_is_guessed_low_but_keeps_no_text_and_no_merchant(self):
+        """Bukti bayar yang jatuh ke pembaca cadangan lewat tebakan struk lama (tanpa "Rp", saklar mati) tetap dijaga:
+        tanpa teks OCR dan tanpa peta merchant ("Pembayaran Berhasil" bukan merchant). Saklar menyala: pembaca QRIS menang."""
+        lines = [re.sub(r"(?i)\brp\s*", "", ln) for ln in next(c for c in CORPUS if c["id"] == "sint-qris-1")["lines"]]
+        item = await self.item(text="qris tanpa rp")
+        self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.parser, int(got.parsed_total), got.confidence),
+                         ("struk_belanja", "tidak_dikenali", 25000, "rendah"))
+        self.assertIsNone(got.ocr_lines)
+        self.assertEqual(await self.count_merchants(), 0)
+        blob = json.dumps([got.document, got.ocr_lines, got.counterparty_key, got.ref_hash]).replace(" ", "")
+        for number in ("ID1024358806544", "612345678812"):
+            self.assertNotIn(number, blob)
+        on = await self.item(text="qris tanpa rp, saklar menyala")
+        self.assertEqual(await self.process(on, lines, proofs_enabled=True), "siap")
+        self.assertEqual((await self.get(on.id)).doc_type, "qris")
 
     async def test_llm_rescue_is_struk_belanja_by_doc_type_not_by_reader_name(self):
         item = await self.item(data=JPG)

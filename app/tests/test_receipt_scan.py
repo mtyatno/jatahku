@@ -575,9 +575,8 @@ class TestScanThroughKotak(TxnBase):
         llm.assert_awaited_once()
 
     async def test_llm_crash_keeps_ocr_result(self):
-        lines = ["TOKO MAJU", "GULA 20.000", "KOPI 25.500", "JUMLAH 45.500"]   # keyakinan rendah, tetap dibaca pembaca struk
         with self.assertLogs("app.services.kotak_struk.readers.struk_belanja", "WARNING") as logs:
-            out = await self.scan_with_llm(lines, AsyncMock(side_effect=RuntimeError("redis mati")))
+            out = await self.scan_with_llm(["TOKO", "45.500"], AsyncMock(side_effect=RuntimeError("redis mati")))
         self.assertIn("fallback LLM gagal: redis mati", logs.output[0])
         self.assertEqual((out["engine"], out["total"]), ("rapidocr", 45500))
 

@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk.document import Amounts, DokumenBayar
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
-from app.services.receipt_parser import ReceiptParse, amounts_in
+from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -37,6 +38,10 @@ class UnknownReader:
             return parsed_from_receipt(blank, fb)
 
         amounts = [a for line in doc.lines if _RP_LINE.search(line) for a in amounts_in(line)]
+        if not amounts:
+            guess = self._legacy_guess(doc, ctx)
+            if guess is not None:
+                return guess
         total = max(amounts) if amounts else None
         evidence = ["Jenis bukti tidak dikenali"]
         if total is not None:
@@ -47,6 +52,19 @@ class UnknownReader:
             confidence={"total": "rendah"} if total is not None else {},
             evidence=evidence,
         ))
+
+    def _legacy_guess(self, doc: TextDoc, ctx: ParseContext) -> Parsed | None:
+        """Tanpa baris "Rp"/"IDR": tebakan terbaik scan struk lama (`parse_receipt`: total, merchant, tanggal), supaya
+        foto yang dulu terbaca (mis. "TOKO" + "45.500") tidak jadi tanpa total. Bentuknya struk belanja, sama dengan
+        penyelamatan LLM, dan keyakinannya paling tinggi `rendah`: ini tebakan, bukan bacaan. Teks yang terbaca
+        sebagai bukti bayar tetap dijaga worker (tanpa teks OCR, tanpa peta merchant). None bila tidak ada total."""
+        rp = parse_receipt(doc.lines, ctx.today, merchant_aliases=ctx.merchant_aliases,
+                           merchant_profiles=ctx.merchant_profiles)
+        if not rp.total:
+            return None
+        parsed = parsed_from_receipt(replace(rp, confidence="rendah"))
+        parsed.doc.evidence.append("Jenis bukti tidak dikenali, total ditebak dari teks")
+        return parsed
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []

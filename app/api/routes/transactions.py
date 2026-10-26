@@ -12,13 +12,13 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
-    User, Transaction, Envelope, HouseholdMember, ReceiptScan, TransactionSource
+    User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
 from app.services.behavior import check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
-from app.services.kotak_struk.config import PDF_MAX_BYTES, PROOF_TYPES, ST_SIAP, ST_TERCATAT
+from app.services.kotak_struk.config import PDF_MAX_BYTES
 from app.services.kotak_struk.record import (
-    MSG_RECORDED, NotRecordable, check_recordable, claim_for_recording, learn_text_for_item, mark_recorded,
+    MSG_RECORDED, NotRecordable, after_recorded, check_recordable, claim_for_recording, heal_recorded,
 )
 from app.services.plan_limits import check_transaction_limit, has_txn_limit, quota_notice_after_input
 from app.services import quota_pass
@@ -151,8 +151,12 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None) -> TransactionCreateResponse:
+    """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
+    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu)."""
     out = TransactionCreateResponse.model_validate(txn)
+    if after is not None:
+        await after()
     out.quota_notice = await quota_notice_after_input(user, db)
     return out
 
@@ -160,8 +164,9 @@ async def _created(txn, user, db) -> TransactionCreateResponse:
 # ── Kotak Struk: `receipt_item_id` (spec "Bagikan ke Jatahku" 5d) ──
 # Urutan di create/batch: cek idempotensi -> `_receipt_item_error` -> validasi lama -> `claim_for_recording` (sesi
 # yang sama, tepat sebelum commit yang menyimpan transaksi, jadi klaim dan transaksi masuk/batal bersama) ->
-# commit -> `_after_recorded`. Klaim itulah yang mencegah satu bukti tercatat dua kali; `check_recordable` hanya
-# memberi pesan yang ramah.
+# commit -> `record.after_recorded` (kirim ulang: `record.heal_recorded`). Klaim itulah yang mencegah satu bukti
+# tercatat dua kali; `check_recordable` hanya memberi pesan yang ramah. Pemulihan sesi di helper itu meng-expire objek
+# ORM, jadi respons dibangun SEBELUM efek sesudah commit dan batch hanya memakai id.
 
 async def _receipt_item_error(db, user, rid: UUID) -> str | None:
     """None bila item boleh dicatat `user` sekarang, selain itu pesan 409-nya."""
@@ -172,43 +177,16 @@ async def _receipt_item_error(db, user, rid: UUID) -> str | None:
     return None
 
 
-async def _after_recorded(db, user, txn, rid: UUID | None) -> None:
-    """Sesudah commit: streak + belajar kata kunci (hook yang sama dengan bot), lalu menandai item Kotak Struk
-    `tercatat`. Best-effort: gagal di sini tidak membatalkan transaksi, hanya dicatat di log. Kata kunci dari
-    bukti bayar hanya dari catatan user, tanpa nama merchant (`learn_text_for_item`)."""
-    learn = None
-    if rid is not None:
-        try:
-            learn = await learn_text_for_item(db, rid, txn.description)
-        except Exception:
-            log.warning("learn_text_for_item gagal untuk item Kotak Struk %s; kata kunci tidak dipelajari", rid, exc_info=True)
-            learn = ""   # tidak belajar apa pun, dan jangan jatuh ke keterangan utuh yang memuat nama merchant
-    await after_expense_recorded(db, user, txn.envelope_id, txn.description, learn_text=learn)
-    if rid is not None:
-        try:
-            await mark_recorded(db, rid, user_id=user.id, transaction_id=txn.id, envelope_id=txn.envelope_id)
-        except Exception:
-            log.warning("mark_recorded gagal untuk item Kotak Struk %s (transaksi %s tetap tercatat)", rid, txn.id,
-                        exc_info=True)
-
-
-async def _heal_receipt_record(db, user, rid: UUID, txn_id: UUID) -> None:
-    """Kirim ulang `client_ref` yang sudah tercatat membawa `receipt_item_id`: tandai item sekali lagi, supaya
-    crash antara commit dan `mark_recorded` pulih (`mark_recorded` idempoten per transaksi: tidak ganda, tidak
-    belajar dua kali). Hanya untuk item milik user; bukti bayar hanya bila diklaim transaksi tadi tapi belum
-    ditandai (status `tercatat`, `transaction_ids` kosong), jadi kirim ulang tidak bisa mengubah bukti lain."""
-    try:
-        item = await db.get(ReceiptScan, rid)
-        txn = await db.get(Transaction, txn_id)
-        if item is None or item.user_id != user.id or txn is None or txn.user_id != user.id:
-            return
-        if item.status not in (ST_SIAP, ST_TERCATAT):
-            return
-        if item.doc_type in PROOF_TYPES and (item.status != ST_TERCATAT or item.transaction_ids):
-            return
-        await mark_recorded(db, rid, user_id=user.id, transaction_id=txn.id, envelope_id=txn.envelope_id)
-    except Exception:
-        log.warning("mark_recorded (kirim ulang) gagal untuk item Kotak Struk %s", rid, exc_info=True)
+async def _after_saved(db, user, receipt_item_id: UUID | None, *, transaction_id: UUID, envelope_id: UUID,
+                       description: str) -> None:
+    """Sesudah commit: streak + belajar kata kunci (hook yang sama dengan bot); untuk item Kotak Struk juga menandainya
+    `tercatat` (`record.after_recorded`: best-effort, pemulihan sesinya di sana). Hanya id dan keterangan yang
+    diberikan: pemulihan sesi meng-expire objek transaksinya."""
+    if receipt_item_id:
+        await after_recorded(db, user, receipt_item_id, transaction_id=transaction_id, envelope_id=envelope_id,
+                             description=description)
+    else:
+        await after_expense_recorded(db, user, envelope_id, description)
 
 
 @router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -224,9 +202,11 @@ async def create_transaction(
     if existing_ref:
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
+            heal = None
             if req.receipt_item_id:
-                await _heal_receipt_record(db, user, req.receipt_item_id, existing.id)
-            return await _created(existing, user, db)  # sudah tercatat sebelumnya (kirim ulang)
+                async def heal():
+                    await heal_recorded(db, user, req.receipt_item_id, existing.id, existing.envelope_id)
+            return await _created(existing, user, db, after=heal)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
@@ -305,9 +285,10 @@ async def create_transaction(
     await db.refresh(txn)
 
     # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot — dan penandaan item Kotak Struk.
-    await _after_recorded(db, user, txn, req.receipt_item_id)
-
-    return await _created(txn, user, db)
+    async def after():
+        await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
+                           description=txn.description)
+    return await _created(txn, user, db, after=after)
 
 
 @router.post("/suggest-envelope")
@@ -388,7 +369,9 @@ async def batch_create_transactions(
             continue
         if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
             if item.receipt_item_id:
-                await _heal_receipt_record(db, user, item.receipt_item_id, UUID(existing_ref))
+                prior = await db.get(Transaction, UUID(existing_ref))
+                if prior is not None:
+                    await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
         if not hid:
@@ -466,12 +449,14 @@ async def batch_create_transactions(
         except Exception:
             await idempotency.release(user.id, item.client_ref)
             raise
-        await idempotency.store(user.id, item.client_ref, txn.id)
+        txn_id, txn_envelope_id = txn.id, txn.envelope_id   # pemulihan sesi di bawah meng-expire `txn`
+        await idempotency.store(user.id, item.client_ref, txn_id)
         await db.refresh(txn)
 
-        await _after_recorded(db, user, txn, item.receipt_item_id)
+        await _after_saved(db, user, item.receipt_item_id, transaction_id=txn_id, envelope_id=txn_envelope_id,
+                           description=item.description)
 
-        results.append(BatchTransactionResult(index=i, ok=True, id=txn.id, description=item.description))
+        results.append(BatchTransactionResult(index=i, ok=True, id=txn_id, description=item.description))
 
     if any(r.ok for r in results):
         notice = await quota_notice_after_input(user, db)

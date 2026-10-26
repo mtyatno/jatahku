@@ -339,6 +339,33 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await claim_for_recording(self.db, (await self.store_item(status="tercatat")).id, self.a.id))
         self.assertFalse(await claim_for_recording(self.db, (await self.store_item(status="diproses")).id, self.a.id))
 
+    async def test_claim_for_recording_unknown_document_only_once_like_a_proof(self):
+        """Bukti `tidak_dikenali` dicatat sekali saja (`check_recordable` memperlakukan semua selain struk belanja
+        begitu), jadi klaimnya eksklusif juga, bukan hanya untuk QRIS/transfer."""
+        item = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=False)
+        self.assertTrue(await claim_for_recording(self.db, item.id, self.a.id))
+        self.assertFalse(await claim_for_recording(self.db, item.id, self.a.id))
+        await self.db.commit()
+        async with self.Session() as other_request:
+            self.assertFalse(await claim_for_recording(other_request, item.id, self.a.id))
+        self.assertEqual((await self.get(item.id)).status, "tercatat")
+        for status in ("diproses", "gagal", "dilewati", "kedaluwarsa"):
+            blocked = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali",
+                                           merchant_row=False, status=status)
+            self.assertFalse(await claim_for_recording(self.db, blocked.id, self.a.id), status)
+        self.assertFalse(await claim_for_recording(self.db, (await self.qris_item(
+            "Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=False, user_id=self.b.id)).id, self.a.id))
+
+    async def test_mark_recorded_never_teaches_the_merchant_map_from_an_unknown_document(self):
+        item = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=True)
+        tid = uuid4()
+        self.assertTrue(await claim_for_recording(self.db, item.id, self.a.id))
+        self.assertTrue(await mark_recorded(self.db, item.id, user_id=self.a.id, transaction_id=tid,
+                                            envelope_id=self.env["Makan"].id))
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(tid)]))
+        self.assertEqual(await self.map_count(), 0)
+
     async def test_unknown_item_is_not_recorded(self):
         self.assertFalse(await mark_recorded(self.db, uuid4(), user_id=self.a.id, transaction_id=uuid4(),
                                              envelope_id=self.env["Makan"].id))

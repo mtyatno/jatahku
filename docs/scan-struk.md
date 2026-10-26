@@ -149,11 +149,18 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
 - Tidak ada tabel atau paket baru.
 - **`receipt_item_id`** (opsional) di `POST /transactions` dan `/transactions/batch` mencatat
   transaksi atas satu item Kotak Struk: dicek (`check_recordable`) tepat setelah cek `client_ref`;
-  bukti bayar diklaim secara atomik bersama commit transaksinya (`claim_for_recording`), jadi tidak
-  pernah tercatat dua kali walau disimpan bersamaan dari dua tempat (409 "Bukti ini sudah tercatat");
-  struk belanja boleh dicatat per barang (id semua transaksi ditambahkan ke item). Sesudah commit item
-  ditandai `tercatat` (`mark_recorded`, best-effort); `client_ref` yang dikirim ulang dengan
-  `receipt_item_id` yang sama menyembuhkan penandaan yang hilang.
+  semua jenis selain struk belanja (QRIS, transfer, tidak dikenali) diklaim secara atomik bersama commit
+  transaksinya (`claim_for_recording`), jadi tidak pernah tercatat dua kali walau disimpan bersamaan dari
+  dua tempat (409 "Bukti ini sudah tercatat"); struk belanja boleh dicatat per barang (id semua transaksi
+  ditambahkan ke item). Sesudah commit `record.after_recorded` (dipakai web dan bot) menjalankan streak,
+  kata kunci, dan menandai item `tercatat` (`mark_recorded`), semuanya best-effort: galat database yang
+  ditelan di sana tidak merusak sisa permintaan (sesi di-rollback dan `user` dimuat ulang, jadi baris batch
+  berikutnya dan pemberitahuan kuota tetap jalan). `client_ref` yang dikirim ulang dengan `receipt_item_id`
+  yang sama menyembuhkan penandaan yang hilang (`record.heal_recorded`; hanya item yang diklaim transaksi
+  itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer.
+- Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp": pembaca cadangan menebak seperti scan
+  struk lama (`parse_receipt`: total, merchant, tanggal) dengan keyakinan paling tinggi `rendah`, bentuknya
+  struk belanja; teks yang terbaca sebagai bukti bayar tetap tanpa teks OCR dan tanpa peta merchant.
 
 ## Belajar dari koreksi (tanpa LLM)
 

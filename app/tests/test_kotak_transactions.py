@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
+import contextlib
 import json
 import unittest
 from datetime import date
@@ -15,7 +16,8 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import event, func, select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes import transactions as txn_route
@@ -25,6 +27,7 @@ from app.core.deps import get_current_user
 from app.models.models import (
     Allocation, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
 )
+from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
 from app.services.kotak_struk.intake import IntakeRejected
 from app.services.kotak_struk.worker import process_item
@@ -37,6 +40,7 @@ STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400",
                "Non Tunai (QRIS) 45.400"]
 INDOMARET = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())["receipts"][1]["lines"]
 MSG_RECORDED = "Bukti ini sudah tercatat"
+RECORD_LOG = "app.services.kotak_struk.record"
 
 
 class Up:
@@ -136,6 +140,35 @@ class TxnBase(kapi.ApiBase):
         item = await self.ready(STORE_LINES)
         self.assertEqual((await self.get(item.id)).doc_type, "struk_belanja")
         return item
+
+    async def ready_unknown(self):
+        """Item `siap` berjenis tidak_dikenali (ada nominal Rp, tanpa pembaca yang cocok)."""
+        item = await self.ready(["foto buram", "Rp 12.000"])
+        self.assertEqual((await self.get(item.id)).doc_type, "tidak_dikenali")
+        return item
+
+    @contextlib.contextmanager
+    def db_fails_once(self, prefix, needle=""):
+        """Satu galat DATABASE sungguhan (OperationalError dari lapisan eksekusi, sesi menjadi tidak aktif seperti saat
+        disk/koneksi bermasalah) pada pernyataan SQL pertama yang berawalan `prefix` dan memuat `needle`.
+        Menghasilkan penghitung: `[0]` berarti galatnya benar-benar terjadi."""
+        left = [1]
+
+        def hook(conn, cursor, statement, parameters, context, executemany):
+            if left[0] and statement.lstrip().startswith(prefix) and needle in statement:
+                left[0] -= 1
+                raise OperationalError(statement, parameters, Exception("disk I/O error"))
+        event.listen(self.engine.sync_engine, "before_cursor_execute", hook)
+        try:
+            yield left
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", hook)
+
+    async def use_up_all_but_one_of_the_basic_quota(self):
+        async with self.Session() as db:
+            db.add_all([Transaction(envelope_id=self.env["Jajan"].id, user_id=self.a.id, amount=D("1000"),
+                                    description="permen", transaction_date=date.today()) for _ in range(49)])
+            await db.commit()
 
     async def post(self, item=None, *, ref=None, desc="bakso 2 (Siti Aminah)", amount=25000, env="Makan", **extra):
         body = {"envelope_id": str(self.env[env].id), "amount": amount, "description": desc, **extra}
@@ -409,6 +442,29 @@ class RecordWithReceiptItemTests(TxnBase):
         self.assertNotIn(f"txnref:{self.a.id}:kalah", self.redis.kv)   # kunci dilepas
         self.assertEqual(await self.learned_keywords(), set())
 
+    async def test_unknown_document_claimed_by_another_save_between_check_and_commit_is_409(self):
+        """`tidak_dikenali` dicatat sekali saja seperti bukti bayar (spec 5c), jadi klaimnya juga eksklusif."""
+        item = await self.ready_unknown()
+        with self.other_session_claims():
+            r = await self.post(item, ref="kalah", desc="x", amount=12000)
+        self.assertEqual((r.status_code, r.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 0)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", None))
+        self.assertNotIn(f"txnref:{self.a.id}:kalah", self.redis.kv)
+        self.assertEqual(await self.learned_keywords(), set())
+
+    async def test_unknown_document_is_recorded_once_and_never_teaches_the_merchant_map(self):
+        item = await self.ready_unknown()
+        first = await self.post(item, ref="a", desc="titipan", amount=12000)
+        self.assertEqual(first.status_code, 201, first.text)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [first.json()["id"]]))
+        again = await self.post(item, ref="b", desc="titipan", amount=12000)
+        self.assertEqual((again.status_code, again.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 1)
+        self.assertEqual(await self.count(MerchantEnvelopeMap), 0)   # peta merchant hanya belajar dari QRIS/transfer
+
     async def test_store_receipt_claim_is_not_exclusive(self):
         item = await self.ready_store_receipt()
         with self.other_session_claims():   # struk belanja: tidak ada klaim eksklusif; dicatat per barang
@@ -419,8 +475,8 @@ class RecordWithReceiptItemTests(TxnBase):
 
     async def test_replay_heals_a_lost_mark_recorded(self):
         item = await self.ready_qris()
-        with patch.object(txn_route, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
-                self.assertLogs("jatahku.transactions", "WARNING") as logs:
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                self.assertLogs(RECORD_LOG, "WARNING") as logs:
             first = await self.post(item, ref="r1")
         self.assertEqual(first.status_code, 201)   # transaksi tetap sukses
         self.assertIn("mark_recorded", logs.output[0])
@@ -451,18 +507,90 @@ class RecordWithReceiptItemTests(TxnBase):
             got = await self.get(item.id)
             self.assertEqual((got.status, got.transaction_ids), ("siap", None))
 
+    async def test_replay_never_touches_an_unclaimed_unknown_document(self):
+        mine = await self.ready_qris()
+        first = await self.post(mine, ref="r1")
+        unknown = await self.ready_unknown()   # `siap`, belum diklaim transaksi mana pun
+        again = await self.post(unknown, ref="r1")   # `client_ref` lama, tapi bukti lain
+        self.assertEqual(again.json()["id"], first.json()["id"])
+        got = await self.get(unknown.id)
+        self.assertEqual((got.status, got.transaction_ids), ("siap", None))
+
+    async def test_replay_heals_a_lost_mark_recorded_for_an_unknown_document(self):
+        item = await self.ready_unknown()
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            first = await self.post(item, ref="r1", desc="titipan", amount=12000)
+        self.assertEqual(first.status_code, 201)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", None))   # diklaim, belum ditandai
+        again = await self.post(item, ref="r1", desc="titipan", amount=12000)
+        self.assertEqual(again.json()["id"], first.json()["id"])
+        self.assertEqual((await self.get(item.id)).transaction_ids, [first.json()["id"]])
+
+    # --- galat database yang ditelan tidak boleh merusak sisa permintaan ------
+
+    async def test_marking_failure_at_the_database_still_answers_201_with_the_quota_notice(self):
+        """Commit `mark_recorded` gagal sungguhan (sesi jadi tidak aktif): transaksinya sudah tercatat, jadi respons
+        tetap 201 dan pemberitahuan kuota Basic (pertanyaan ke DB) tetap terhitung; kirim ulang menyembuhkan."""
+        await self.use_up_all_but_one_of_the_basic_quota()
+        item = await self.ready_qris()
+        with self.db_fails_once("UPDATE receipt_scans", "transaction_ids") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING") as logs:
+            r = await self.post(item, ref="r1")
+        self.assertEqual(left, [0])
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis", r.json()["quota_notice"])
+        self.assertIn("mark_recorded", logs.output[0])
+        self.assertEqual(await self.count(Transaction), 50)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", None))   # klaim ikut commit transaksi
+        again = await self.post(item, ref="r1")   # dan kirim ulang yang sama menandainya
+        self.assertEqual(again.json()["id"], r.json()["id"])
+        self.assertEqual((await self.get(item.id)).transaction_ids, [r.json()["id"]])
+
+    async def test_resend_whose_healing_fails_at_the_database_still_answers_with_the_same_transaction(self):
+        item = await self.ready_qris()
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            first = await self.post(item, ref="r1")
+        self.assertEqual(first.status_code, 201)
+        with self.db_fails_once("UPDATE receipt_scans", "transaction_ids") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            again = await self.post(item, ref="r1")   # penyembuhan gagal di DB; respons tetap transaksi yang sama
+        self.assertEqual(left, [0])
+        self.assertEqual((again.status_code, again.json()["id"]), (201, first.json()["id"]))
+        self.assertEqual((await self.get(item.id)).transaction_ids, None)
+        third = await self.post(item, ref="r1")   # DB sehat lagi: tersembuhkan
+        self.assertEqual(third.json()["id"], first.json()["id"])
+        self.assertEqual((await self.get(item.id)).transaction_ids, [first.json()["id"]])
+
+    async def test_keyword_learning_failure_at_the_database_still_answers_201_and_marks_the_item(self):
+        await self.use_up_all_but_one_of_the_basic_quota()
+        item = await self.ready_qris()
+        with self.db_fails_once("INSERT INTO user_envelope_keywords") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            r = await self.post(item, ref="r1")
+        self.assertEqual(left, [0])
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertIn("Kuota 50 transaksi bulan ini sudah habis", r.json()["quota_notice"])
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        self.assertEqual(await self.map_count(), 2)   # peta merchant tetap belajar
+        self.assertEqual(await self.learned_keywords(), set())   # kata kunci yang gagal tidak dipelajari
+
     async def test_mark_recorded_failure_is_logged_not_raised(self):
         item = await self.ready_qris()
-        with patch.object(txn_route, "mark_recorded", AsyncMock(side_effect=RuntimeError("x"))), \
-                self.assertLogs("jatahku.transactions", "WARNING"):
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
             r = await self.post(item)
         self.assertEqual(r.status_code, 201)
         self.assertEqual(r.json()["description"], "bakso 2 (Siti Aminah)")
 
     async def test_learn_text_failure_skips_keyword_learning_but_keeps_the_transaction(self):
         item = await self.ready_qris()
-        with patch.object(txn_route, "learn_text_for_item", AsyncMock(side_effect=RuntimeError("x"))), \
-                self.assertLogs("jatahku.transactions", "WARNING"):
+        with patch.object(record_mod, "learn_text_for_item", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
             r = await self.post(item)
         self.assertEqual(r.status_code, 201)
         self.assertEqual(await self.learned_keywords(), set())   # tidak pernah belajar nama merchant
@@ -528,10 +656,59 @@ class BatchWithReceiptItemTests(TxnBase):
         self.assertEqual([x["error"] for x in out[:2]], ["Transaksi gagal, tidak bisa dicatat", "Bukti tidak ditemukan"])
         self.assertEqual((await self.get(theirs.id)).status, "siap")
 
+    async def test_line_whose_marking_fails_at_the_database_does_not_break_the_next_line(self):
+        """Commit `mark_recorded` baris 1 gagal sungguhan: sesinya dipulihkan, jadi baris 2 (cek `check_recordable`,
+        klaim, simpan) dan pemberitahuan kuota di akhir tetap jalan."""
+        await self.use_up_all_but_one_of_the_basic_quota()
+        proof = await self.ready_qris()
+        store = await self.ready_store_receipt()
+        with self.db_fails_once("UPDATE receipt_scans", "transaction_ids") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            out = await self.batch([self.line(proof, ref="a", amount=25000, desc="bakso (Siti Aminah)"),
+                                    self.line(store, ref="b", env="Jajan", amount=15000, desc="ROTI (Alfamart)")])
+        self.assertEqual(left, [0])
+        self.assertEqual([x["ok"] for x in out], [True, True])
+        self.assertEqual(await self.count(Transaction), 51)
+        self.assertEqual((await self.get(proof.id)).transaction_ids, None)            # menunggu kirim ulang
+        self.assertEqual((await self.get(store.id)).transaction_ids, [out[1]["id"]])  # baris 2 ditandai
+        self.assertIn("roti", await self.learned_keywords())
+        self.assertTrue(all("Kuota 50" in x["quota_notice"] for x in out))
+        again = await self.batch([self.line(proof, ref="a", amount=25000, desc="bakso (Siti Aminah)")])
+        self.assertEqual((again[0]["id"], (await self.get(proof.id)).transaction_ids), (out[0]["id"], [out[0]["id"]]))
+
+    async def test_line_whose_keyword_learning_fails_at_the_database_does_not_break_the_next_line(self):
+        proof = await self.ready_qris()
+        store = await self.ready_store_receipt()
+        with self.db_fails_once("INSERT INTO user_envelope_keywords") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            out = await self.batch([self.line(proof, ref="a", amount=25000, desc="bakso (Siti Aminah)"),
+                                    self.line(store, ref="b", env="Jajan", amount=15000, desc="ROTI (Alfamart)")])
+        self.assertEqual(left, [0])
+        self.assertEqual([x["ok"] for x in out], [True, True])
+        self.assertEqual((await self.get(proof.id)).transaction_ids, [out[0]["id"]])
+        self.assertEqual((await self.get(store.id)).transaction_ids, [out[1]["id"]])
+        learned = await self.learned_keywords()
+        self.assertIn("roti", learned)            # baris 2 belajar
+        self.assertNotIn("bakso", learned)        # baris 1 gagal belajar
+
+    async def test_resent_line_whose_healing_fails_at_the_database_does_not_break_the_next_line(self):
+        proof = await self.ready_qris()
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            first = await self.batch([self.line(proof, ref="a", amount=25000, desc="bakso (Siti Aminah)")])
+        with self.db_fails_once("UPDATE receipt_scans", "transaction_ids") as left, \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            out = await self.batch([self.line(proof, ref="a", amount=25000, desc="bakso (Siti Aminah)"),
+                                    self.line(None, ref="b", env="Jajan", amount=4000, desc="permen")])
+        self.assertEqual(left, [0])
+        self.assertEqual([x["ok"] for x in out], [True, True])
+        self.assertEqual(out[0]["id"], first[0]["id"])
+        self.assertEqual(await self.count(Transaction), 2)
+
     async def test_resend_of_a_batch_line_heals_and_does_not_double(self):
         item = await self.ready_qris()
-        with patch.object(txn_route, "mark_recorded", AsyncMock(side_effect=RuntimeError("x"))), \
-                self.assertLogs("jatahku.transactions", "WARNING"):
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
             first = await self.batch([self.line(item, ref="a", amount=25000, desc="bakso (Siti Aminah)")])
         self.assertTrue(first[0]["ok"])
         self.assertEqual((await self.get(item.id)).transaction_ids, None)
