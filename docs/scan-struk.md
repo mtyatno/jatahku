@@ -152,7 +152,10 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   semua jenis selain struk belanja (QRIS, transfer, tidak dikenali) diklaim secara atomik bersama commit
   transaksinya (`claim_for_recording`), jadi tidak pernah tercatat dua kali walau disimpan bersamaan dari
   dua tempat (409 "Bukti ini sudah tercatat"); struk belanja boleh dicatat per barang (id semua transaksi
-  ditambahkan ke item). Sesudah commit `record.after_recorded` (dipakai web dan bot) menjalankan streak,
+  ditambahkan ke item). Teks 409 untuk klaim yang gagal mengikuti status item saat itu
+  (`record.claim_failure_detail`): "Bukti ini sudah tercatat", "Bukti ini sudah kedaluwarsa, bagikan lagi untuk
+  mencatatnya", "Bukti ini belum siap dicatat", atau "Bukti tidak ditemukan".
+  Sesudah commit `record.after_recorded` (dipakai web dan bot) menjalankan streak,
   kata kunci, dan menandai item `tercatat` (`mark_recorded`), semuanya best-effort: galat database yang
   ditelan di sana tidak merusak sisa permintaan (sesi di-rollback dan `user` dimuat ulang, jadi baris batch
   berikutnya dan pemberitahuan kuota tetap jalan). `client_ref` yang dikirim ulang dengan `receipt_item_id`

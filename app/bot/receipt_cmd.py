@@ -51,7 +51,7 @@ MSG_ALREADY_RECORDED = "✅ Bukti ini sudah tercatat."
 MSG_SKIPPED = "❌ Dilewati."
 MSG_ASK_NOTE = "Ketik isi belanjaannya (atau /batal)"
 MSG_NOTE_CANCELLED = "❌ Tambah catatan dibatalkan."
-MSG_EXPIRED = "⏰ Session expired. Kirim ulang."
+MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
 MSG_NO_ENVELOPE = "Belum ada amplop. Ketik /template untuk buat."
 ASK_ENVELOPE = "Masuk ke amplop mana?"
 
@@ -588,7 +588,7 @@ async def handle_kotak_callback(update, context):
 
     payload = await _load_payload(arg)
     if payload is None:
-        await query.edit_message_text(MSG_EXPIRED)
+        await query.edit_message_text(MSG_SESSION_EXPIRED)
         return
     if action == "kn":
         r = _redis()
@@ -604,7 +604,7 @@ async def handle_kotak_callback(update, context):
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
             item = await _own_item(db, _uuid(payload.get("item_id")), user)
             if item is None:
-                text, markup = MSG_EXPIRED, None
+                text, markup = MSG_SESSION_EXPIRED, None
             else:
                 text, markup = await _result_reply(db, user, item, key=arg, note=payload.get("note"), ready=True)
         await query.edit_message_text(text, reply_markup=markup)

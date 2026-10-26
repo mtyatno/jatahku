@@ -374,15 +374,16 @@ class StatsTests(MaintenanceBase):
         })
 
     async def test_transaction_lookup_is_chunked(self):
+        # Semua nominal beda dari parsed_total: tiap transaksi yang TERBACA memberi corrected 1, transaksi yang tidak
+        # pernah dibaca (potongan terlewat) memberi 0. Jadi irisan yang salah selalu gagal, apa pun urutan id-nya.
         today = date(2026, 10, 26)
-        for i, amount in enumerate((45000, 50000, 45000, 99000, 45000)):
+        for i, amount in enumerate((50000, 60000, 70000, 80000, 99000)):
             await self.recorded(f"bank{i}", parsed_total=45000, paid_at=NOW, txns=[await self.txn(amount, today)])
         with patch("app.services.receipt_scan.ID_CHUNK", 2), \
                 patch.object(self.db, "execute", wraps=self.db.execute) as spy:
             s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
         self.assertEqual(selects_from(spy, "transactions"), 3)
-        self.assertEqual({k: v["corrected"] for k, v in s["by_issuer"].items()},
-                         {"bank0": 0, "bank1": 1, "bank2": 0, "bank3": 1, "bank4": 0})
+        self.assertEqual({k: v["corrected"] for k, v in s["by_issuer"].items()}, {f"bank{i}": 1 for i in range(5)})
 
     async def test_store_receipt_corrected_follows_outcome(self):
         today = date(2026, 10, 26)
