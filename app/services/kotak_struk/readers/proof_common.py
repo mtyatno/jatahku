@@ -269,19 +269,26 @@ def _first_amount(lines: list[str], labels: list[str], profile: AppProfile | Non
 # baris ("Layanan BI-FAST Rp2.500", "Service Charge 10% Rp2.500"). Keterangan promo/batas (gratis, s/d, maks, ...) bukan biaya.
 _EXTRA_VALUE = re.compile(
     r"(?P<note>(?:[^\d]|\d+(?:[.,]\d+)?\s*%)*?)\s*"
-    r"(?P<amount>(?:Rp|IDR)\.?\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+)\s*(?:,-|-)?\s*(?:(?:Rp|IDR)\.?)?\s*\)?\s*",
+    r"(?P<amount>(?:Rp|IDR)\.?\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+)\s*(?:,-|-)?\s*(?P<suffix>(?:Rp|IDR)\.?)?\s*\)?\s*",
     re.IGNORECASE)
 _MONEY = re.compile(r"(?:Rp|IDR)|\d{1,3}[.,]\d{3}", re.IGNORECASE)
 _PROMO_WORDS = re.compile(r"(?<!\w)(?:gratis|free|s/d|s\.d|hingga|sampai|maks(?:imal)?|max|min(?:imal)?|up\s+to)(?!\w)", re.IGNORECASE)
 
 
+PLAIN_FEE_DIGITS = 4      # angka polos (tanpa Rp, tanpa pemisah ribuan) lebih panjang dari ini = nomor call centre/telepon
+
+
 def _extra_amount(text: str) -> int:
-    """Nominal biaya tambahan dari sisa baris sesudah labelnya (lihat `_EXTRA_VALUE`); selain bentuk itu 0."""
+    """Nominal biaya tambahan dari sisa baris sesudah labelnya (lihat `_EXTRA_VALUE`); selain bentuk itu 0. Angka polos
+    ("2000") dihitung hanya sampai PLAIN_FEE_DIGITS digit: "14017", "1500888" sesudah "Layanan"/"Tips" adalah nomor
+    call centre, bukan biaya; nominal ber-Rp/IDR atau berpemisah ribuan boleh berapa pun."""
     m = _EXTRA_VALUE.fullmatch(text.strip())
     if not m:
         return 0
     note, amount = m.group("note").strip(), m.group("amount")
     if note and (_PROMO_WORDS.search(note) or not _MONEY.match(amount)):
+        return 0
+    if amount.isdigit() and len(amount) > PLAIN_FEE_DIGITS and not m.group("suffix"):
         return 0
     found = amounts_in(amount)
     return found[0] if found else 0
@@ -408,12 +415,16 @@ _STATUS_WORD = r"(?:gagal|failed|tidak\s+berhasil|diproses|pending|processing|be
 _ANY_STATUS = re.compile(r"(?<!\w)" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
 _CONDITIONAL = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|hubungi|silakan|silahkan|contact|please)(?!\w)", re.IGNORECASE)
 _LEADING_UNTUK = re.compile(r"^\W*untuk(?!\w)", re.IGNORECASE)
+# Daftar kata status: "pending atau gagal", "pending/gagal", "gagal, pending, atau tidak berhasil", "gagal ataupun yang pending",
+# "failed or pending".
+_STATUS_LIST = _STATUS_WORD + r"(?:[\s/,&\-–]+(?:(?:atau|ataupun|maupun|dan|serta|or|and)\s+)?(?:yang\s+)?" + _STATUS_WORD + r")*"
 # Frasa bantuan yang menyebut JENIS transaksi, bukan status bukti ini ("Info untuk transaksi gagal: 14017", "Bantuan untuk
-# transaksi gagal", "Pengaduan transaksi gagal: 14017", "Biaya transfer untuk transaksi gagal dikembalikan", "For failed
-# transactions call 14017"): dibuang sebelum status dibaca. "untuk" + nama/tagihan tetap status ("Pembayaran untuk Tagihan PLN Gagal").
+# transaksi gagal", "Pengaduan transaksi pending/gagal: 14017", "Biaya transfer untuk transaksi gagal dikembalikan", "For failed
+# or pending transactions call 14017"): dibuang sebelum status dibaca. "untuk" + nama/tagihan tetap status ("Pembayaran untuk
+# Tagihan PLN Gagal").
 _HELP_PHRASE = re.compile(
-    r"(?<!\w)(?:untuk|pengaduan|bantuan|keluhan)\s+(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?" + _STATUS_WORD + r"(?!\w)"
-    r"|(?<!\w)for\s+(?:failed|pending|successful)\s+(?:transactions?|payments?|transfers?)(?!\w)",
+    r"(?<!\w)(?:untuk|pengaduan|bantuan|keluhan)\s+(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?" + _STATUS_LIST + r"(?!\w)"
+    r"|(?<!\w)for\s+" + _STATUS_LIST + r"\s+(?:transactions?|payments?|transfers?)(?!\w)",
     re.IGNORECASE)
 
 
@@ -435,8 +446,20 @@ def _status_part(text: str) -> str:
 
 
 # Baris nama pihak lawan ("Merchant TOKO GAGAL MANIA", "Penerima CV SUKSES", atau nama di bawah label "Merchant" yang berdiri
-# sendiri): kata status di dalam nama bukan status transaksi.
+# sendiri): kata status di dalam nama bukan status transaksi. Kecuali bila baris itu sendiri judul status (`_is_status_title`):
+# OCR bisa kehilangan nama di bawah "Merchant" sehingga "Pembayaran Gagal" jatuh di bawah label itu, dan "Tujuan Transfer Gagal"
+# atau "Dari rekening gagal didebet" diawali kata yang kebetulan label nama.
 _NAME_FIELDS = ("merchant", "sender")
+# Judul status: kata benda transaksi, paling banyak 3 kata lain, lalu kata status ("Transfer Gagal", "Transaksi Anda Gagal",
+# "Payment failed", "Top Up Gagal", "rekening gagal didebet"). Nama seperti "TOKO GAGAL MANIA" atau "BUDI GAGAL" tidak.
+# "dana"/"saldo" sengaja tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI").
+_STATUS_TITLE = re.compile(
+    r"(?<!\w)(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|setoran|"
+    r"pembelian|purchase|withdrawal|deposit)(?!\w)\s+(?:\S+\s+){0,3}" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
+
+
+def _is_status_title(text: str) -> bool:
+    return bool(_STATUS_TITLE.search(text))
 
 
 def _name_label_end(text: str) -> int | None:
@@ -446,16 +469,22 @@ def _name_label_end(text: str) -> int | None:
 
 
 def _status_lines(texts: list[str], max_words: int) -> list[str]:
-    """Bagian status dari baris yang cukup pendek, sesudah frasa bantuan (`_HELP_PHRASE`) dibuang. Baris nama pihak
-    lawan (dan nilai di bawah label nama yang berdiri sendiri) dilewati."""
+    """Bagian status dari baris yang cukup pendek. Baris nama pihak lawan (dan nilai di bawah label nama yang berdiri
+    sendiri) dilewati, kecuali yang berupa judul status. Frasa bantuan (`_HELP_PHRASE`) dibuang sebelum status dibaca, dan
+    pembuangan itu hanya boleh MENGURANGI status: baris yang sejak awal bukan kalimat status ("Untuk transaksi pending atau
+    gagal hubungi 14017" dibuka "Untuk") tetap dilewati walau sisa frasanya memuat kata status."""
     out, name_below = [], False
     for text in texts:
         is_name, name_below = name_below, False
         label_end = _name_label_end(text)
         if label_end is not None:
-            name_below = not text[label_end:].strip(" :：")
+            text = text[label_end:].strip(" :：")
+            name_below = not text
+            if not _is_status_title(text):
+                continue
+        elif is_name and not _is_status_title(text):
             continue
-        if is_name or len(text.split()) > max_words:
+        if len(text.split()) > max_words or not _is_status_sentence(text):
             continue
         text = _HELP_PHRASE.sub(" ", text)
         if _is_status_sentence(text):
