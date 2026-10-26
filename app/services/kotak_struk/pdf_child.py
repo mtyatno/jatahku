@@ -18,6 +18,7 @@ import re
 from app.services.kotak_struk.config import PDF_MAX_PAGES
 
 CHILD_MEMORY_LIMIT = 768 * 1024 * 1024  # batas ruang alamat proses anak
+CPU_SLACK_S = 5  # batas CPU anak = batas waktu dinding + ini (cadangan bila batas waktu tak sempat mematikan)
 # Halaman raksasa (MediaBox ribuan poin) tidak dirender sebesar dpi penuh:
 # 25 MP masih di bawah MAX_PIXELS OCR (30 MP) dan muat di batas memori anak.
 MAX_RENDER_PIXELS = 25_000_000
@@ -25,13 +26,22 @@ MAX_RENDER_PIXELS = 25_000_000
 _LINE_SPLIT = re.compile(r"\r\n|\n|\r")
 
 
-def limit_child_memory() -> None:
-    """Initializer proses anak: batasi ruang alamat. Diabaikan bila OS tidak mendukung."""
+def limit_child_resources(cpu_seconds: int) -> None:
+    """Initializer proses anak: batasi ruang alamat dan waktu CPU (spec 6b).
+
+    Melewati batas CPU membuat anak dimatikan sinyal (SIGXCPU), yang oleh
+    run_pdf_isolated dipetakan ke PdfUnreadable (BrokenProcessPool). Tiap
+    batas diabaikan sendiri-sendiri bila OS tidak mendukung.
+    """
     try:
         import resource
-        resource.setrlimit(resource.RLIMIT_AS, (CHILD_MEMORY_LIMIT, CHILD_MEMORY_LIMIT))
-    except (ImportError, ValueError, OSError):
-        pass
+    except ImportError:
+        return
+    for which, value in ((resource.RLIMIT_AS, CHILD_MEMORY_LIMIT), (resource.RLIMIT_CPU, cpu_seconds)):
+        try:
+            resource.setrlimit(which, (value, value))
+        except (ValueError, OSError):
+            pass
 
 
 def _render_png(page, dpi: int) -> bytes:
@@ -58,14 +68,17 @@ def extract_pdf(data: bytes, max_pages: int = PDF_MAX_PAGES, dpi: int = 200) -> 
     from app.services.kotak_struk.extract import PdfLocked, PdfTooManyPages, PdfUnreadable
     import pypdfium2 as pdfium  # ImportError dibiarkan naik -> ExtractUnavailable di run_pdf_isolated
 
+    def pdfium_error(e: Exception):
+        # Hanya PDF yang butuh kata sandi pengguna untuk dibuka yang ditolak (PdfLocked);
+        # PDF terenkripsi dengan kata sandi pemilik saja bisa dibuka tanpa sandi, tetap diterima.
+        if isinstance(e, pdfium.PdfiumError) and "password" in str(e).lower():
+            return PdfLocked()
+        return PdfUnreadable()
+
     try:
         pdf = pdfium.PdfDocument(data)
-    except pdfium.PdfiumError as e:
-        if "password" in str(e).lower():
-            raise PdfLocked() from e
-        raise PdfUnreadable() from e
     except Exception as e:
-        raise PdfUnreadable() from e
+        raise pdfium_error(e) from e
 
     try:
         pages = len(pdf)
@@ -90,11 +103,7 @@ def extract_pdf(data: bytes, max_pages: int = PDF_MAX_PAGES, dpi: int = 200) -> 
         return lines, images, pages
     except PdfTooManyPages:
         raise
-    except pdfium.PdfiumError as e:
-        if "password" in str(e).lower():
-            raise PdfLocked() from e
-        raise PdfUnreadable() from e
     except Exception as e:  # MemoryError (batas RLIMIT_AS), PDF rusak di tengah halaman, dll.
-        raise PdfUnreadable() from e
+        raise pdfium_error(e) from e
     finally:
         pdf.close()

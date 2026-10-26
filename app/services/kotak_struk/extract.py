@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from app.services import receipt_ocr
 from app.services.kotak_struk.config import PDF_MAX_PAGES, PDF_TIMEOUT_S
-from app.services.kotak_struk.pdf_child import extract_pdf, limit_child_memory
+from app.services.kotak_struk.pdf_child import CPU_SLACK_S, extract_pdf, limit_child_resources
 
 log = logging.getLogger(__name__)
 
@@ -92,24 +92,35 @@ async def run_pdf_isolated(
     """Jalankan `fn(data, max_pages)` di proses anak baru (spawn) dengan batas waktu.
 
     Satu pool per panggilan, jadi proses yang macet atau crash tidak memengaruhi
-    panggilan lain. Timeout atau anak yang mati mendadak -> PdfUnreadable.
+    panggilan lain. Timeout atau anak yang mati mendadak (termasuk karena batas
+    memori/CPU) -> PdfUnreadable. Anak juga dimatikan bila pemanggil dibatalkan
+    (mis. API restart), supaya tidak tertinggal di kode native.
     """
     loop = asyncio.get_running_loop()
     executor = ProcessPoolExecutor(
-        max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=limit_child_memory
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=limit_child_resources,
+        initargs=(timeout_s + CPU_SLACK_S,),
     )
+    work = None
     try:
-        return await asyncio.wait_for(loop.run_in_executor(executor, fn, data, max_pages), timeout_s)
+        work = loop.run_in_executor(executor, fn, data, max_pages)
+        return await asyncio.wait_for(work, timeout_s)
     except TimeoutError as e:
         log.warning("PDF melewati batas waktu %ss; proses anak dimatikan", timeout_s)
-        _kill_pool(executor)
         raise PdfUnreadable() from e
-    except BrokenProcessPool as e:  # anak crash / dibunuh (mis. kehabisan memori)
+    except BrokenProcessPool as e:  # anak crash / dibunuh (mis. kehabisan memori atau CPU)
         raise PdfUnreadable() from e
     except ImportError as e:  # pypdfium2 belum terpasang
         raise ExtractUnavailable() from e
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        if work is not None and work.done() and not work.cancelled():
+            executor.shutdown(wait=False, cancel_futures=True)  # anak sudah selesai (hasil atau galat)
+        else:
+            # Timeout, pembatalan, atau galat lain sebelum anak selesai: shutdown() saja tidak
+            # menghentikan anak yang sedang jalan, jadi matikan paksa.
+            _kill_pool(executor)
 
 
 async def _ocr_image(ocr, image: bytes) -> list[str]:

@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-import asyncio, io, time, unittest
+import asyncio, io, tempfile, time, unittest
 from concurrent.futures import ProcessPoolExecutor
 from unittest.mock import AsyncMock, patch
 import pypdfium2
@@ -28,6 +28,24 @@ def minimal_pdf(lines):
 
 def slow(data, max_pages, dpi=200):
     time.sleep(5)
+
+def slow_after_marker(data, max_pages, dpi=200):
+    """`data` = path penanda: tulis dulu (tanda anak sudah menjalankan fungsi), lalu tidur."""
+    open(data.decode(), "w").close()
+    time.sleep(5)
+
+def read_limits(data, max_pages, dpi=200):
+    import resource
+    return resource.getrlimit(resource.RLIMIT_AS), resource.getrlimit(resource.RLIMIT_CPU)
+
+def recording_executor(spawned):
+    """ProcessPoolExecutor yang mencatat proses anaknya, agar tes bisa memeriksa nasibnya."""
+    class Recording(ProcessPoolExecutor):
+        def submit(self, *args, **kwargs):
+            future = super().submit(*args, **kwargs)
+            spawned.extend(self._processes.values())
+            return future
+    return Recording
 
 def crash(data, max_pages, dpi=200):
     os._exit(1)
@@ -104,18 +122,41 @@ class ExtractTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pdf_timeout_terminates_child_process(self):
         spawned = []
-
-        class Recording(ProcessPoolExecutor):
-            def submit(self, *args, **kwargs):
-                future = super().submit(*args, **kwargs)
-                spawned.extend(self._processes.values())
-                return future
-
-        with patch.object(X, "ProcessPoolExecutor", Recording):
+        with patch.object(X, "ProcessPoolExecutor", recording_executor(spawned)):
             with self.assertRaises(X.PdfUnreadable), self.assertLogs(X.log, "WARNING"):
                 await X.run_pdf_isolated(minimal_pdf(["a"]), timeout_s=1, fn=slow)
+        await self.assert_child_dies(spawned)
+
+    async def test_cancelled_call_terminates_child_process(self):
+        # API restart/deploy membatalkan task worker: anak yang sedang jalan tidak boleh tertinggal.
+        spawned = []
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(X, "ProcessPoolExecutor", recording_executor(spawned)):
+            marker = os.path.join(tmp, "mulai")
+            task = asyncio.ensure_future(X.run_pdf_isolated(marker.encode(), timeout_s=30, fn=slow_after_marker))
+            for _ in range(200):  # tunggu sampai anak benar-benar menjalankan fungsi
+                if os.path.exists(marker):
+                    break
+                await asyncio.sleep(0.05)
+            self.assertTrue(os.path.exists(marker), "anak tidak pernah mulai")
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            await self.assert_child_dies(spawned)
+
+    async def test_successful_call_does_not_kill_pool(self):
+        with patch.object(X, "_kill_pool") as kill:
+            await X.run_pdf_isolated(minimal_pdf(["a"]))
+        kill.assert_not_called()
+
+    async def test_child_has_memory_and_cpu_limits(self):
+        as_limit, cpu_limit = await X.run_pdf_isolated(b"", timeout_s=10, fn=read_limits)
+        self.assertEqual(as_limit, (768 * 1024 * 1024,) * 2)
+        self.assertEqual(cpu_limit, (15, 15))  # timeout_s + 5
+
+    async def assert_child_dies(self, spawned):
         self.assertEqual(len(spawned), 1)
-        for _ in range(40):
+        for _ in range(40):  # slow() tidur 5 dtk; anak yang tidak dimatikan masih hidup di sini
             if not spawned[0].is_alive():
                 break
             await asyncio.sleep(0.05)
