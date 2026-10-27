@@ -229,7 +229,7 @@ Rekomendasinya: rilis Android pertama tanpa penjualan di aplikasi, dengan Pro ya
 
 **Harga.** Harga web Rp79.000. Di toko dipakai titik harga terdekat. Bila harga toko Rp79.000 sudah termasuk PPN 11%, hasil bersih setelah komisi 15% sekitar Rp60.500 per penjualan; angka persisnya mengikuti laporan tiap toko, dan di Apple PPN untuk developer lokal menjadi tanggungan developer. Harga di toko boleh disamakan dengan web (lebih sederhana bagi user) atau dinaikkan untuk menutup komisi; ini keputusan pemilik produk.
 
-**Kuota scan untuk share.** Struk yang dibagikan dihitung sebagai scan (Basic 15 per bulan). Saat kuota habis, struk tetap diterima dan user tetap bisa mencatat dengan mengetik nominal sendiri; Jatahku tidak pernah menolak fakta pengeluaran.
+**Kuota scan dihapus (K4, spec Bagikan ke Jatahku, 26 Okt 2026).** Struk, PDF, bukti bayar, dan teks yang dibagikan tidak dihitung sebagai scan, untuk semua paket dan platform; kuota scan Basic (15 per bulan) hilang. Satu-satunya batas bulanan adalah kuota transaksi (Basic 50 per bulan), yang dicek sekali di awal input. Jatahku tidak pernah menolak fakta pengeluaran, dan kebiasaan mencatat tidak boleh terganggu. Beban OCR dijaga batas gabungan 30 bukti per jam per user, bukan kuota bulanan.
 
 ## Fitur "Bagikan ke Jatahku"
 
@@ -264,7 +264,7 @@ Yang baru dibanding scan struk sekarang adalah jalur share, worker asinkron, dan
 - **Konfirmasi amplop.** Layar konfirmasi memakai ulang kartu struk yang sudah ada: satu amplop untuk transfer, e-wallet, dan tagihan; amplop per barang untuk invoice. Saran amplop diambil dari kata kunci penerima, merchant, berita, dan jenis tagihan, dipelajari per user seperti sekarang. Tidak ada yang tercatat tanpa ketukan user. Tombol "Bukan pengeluaran" tersedia untuk top-up, transfer ke rekening sendiri, dan tarik tunai.
 - **Notifikasi.** Push "Transfer Rp150.000 ke Siti siap dicatat — pilih amplop" dikirim saat item siap dan user tidak sedang membuka aplikasi. Item yang belum dicatat diingatkan sekali sehari, digabung dengan check-in 21.00, dan jumlahnya tampil sebagai lencana di aplikasi. Di v1.x ditambah tombol "Catat ke Makan" langsung di notifikasi, hanya untuk item berkeyakinan tinggi tanpa peringatan duplikat.
 - **Duplikat dan bukan pengeluaran.** File dengan hash yang sama atau nomor referensi yang sama ditandai duplikat. Transaksi dengan nominal sama dalam ±1 hari dan keterangan mirip memunculkan peringatan "sepertinya sudah tercatat", begitu juga invoice dan bukti bayar untuk pembelian yang sama. Transfer berstatus gagal atau masih diproses tidak bisa dicatat. Pencatatan memakai `client_ref` dari id item, sehingga kirim ulang tidak menggandakan.
-- **Kuota dan paket.** Share dihitung sebagai scan (Basic 15 per bulan). Saat kuota habis, file tetap diterima dan ditampilkan; user mengetik nominal sendiri dan tetap bisa mencatat, sesuai prinsip "cermin, bukan penjaga gerbang". Teks kuota mengikuti mode jualan per platform.
+- **Kuota dan paket.** Tidak ada kuota scan (K4): share tidak dihitung sebagai scan di paket mana pun. Yang berlaku hanya kuota transaksi Basic (50 per bulan), dicek sekali di awal input, sesuai prinsip "cermin, bukan penjaga gerbang". Teks kuota transaksi mengikuti mode jualan per platform.
 - **Privasi dan keamanan.** Bukti transfer memuat data pihak ketiga, yaitu nama dan rekening penerima. File asli dihapus begitu selesai diproses. Yang disimpan hanya pratinjau kecil (±2 KB, seperti di chat) dan field yang dibutuhkan, tanpa nomor rekening; teks OCR tetap dihapus setelah feedback atau 24 jam seperti sekarang. File dari luar dianggap tidak tepercaya: ada batas ukuran dan halaman, cek tipe dari isi file, perlindungan bom dekompresi (sudah ada), dan parsing PDF di proses terpisah dengan batas waktu.
 - **Kanal tambahan (opsional).** Web Share Target untuk PWA di Android berbasis Chromium, dan terusan email invoice ke alamat khusus per user. Keduanya memakai Kotak Struk yang sama.
 
@@ -279,7 +279,7 @@ Yang baru dibanding scan struk sekarang adalah jalur share, worker asinkron, dan
 | Arsitektur | Jalur share → Kotak Struk → worker OCR → push → konfirmasi |
 | Aturan pengaman | Aturan 11: tidak ada struk yang tercatat diam-diam atau dua kali |
 | Toko dan regulasi | Data safety dan App Privacy mencantumkan foto dan file; DPIA mencakup data pihak ketiga; privacy manifest untuk Share Extension |
-| Paket Pro | Kuota scan berlaku untuk share; pencatatan manual tetap bisa saat kuota habis |
+| Paket Pro | Kuota scan dihapus untuk semua input dan paket (K4); yang berlaku hanya kuota transaksi Basic (50 per bulan) |
 | WBS | Fase baru FS (±21,5 hk), 3.10 Android (1,5 hk), 5.8 iOS (3 hk); di F6, 6.4 menjadi tombol aksi di notifikasi |
 | Jadwal | Android rilis dengan fitur ini sekitar minggu ke-14 dan iOS sekitar minggu ke-17 untuk satu pengembang, termasuk review toko; sekitar 3 minggu lebih cepat bila jalur server/web dan mobile dikerjakan paralel |
 | Risiko | Enam risiko baru: templat beragam, pencatatan ganda, data pihak ketiga, lonjakan OCR, batas Share Extension, file berbahaya |
@@ -368,6 +368,8 @@ Total sampai kedua toko sekitar 76 hari kerja efektif (rentang 66–86), termasu
 
 Fase ini dikerjakan selama closed test Android berjalan. Hasilnya langsung bisa dipakai di web dan Telegram, sehingga data koreksi untuk belajar sudah terkumpul sebelum aplikasi rilis.
 
+**Dipecah menjadi FS-1 dan FS-2 (26 Okt 2026).** Tabel di bawah adalah rencana awal. Rilis 1 (FS-1) mengerjakan FS.1 tanpa service terpisah, FS.2, FS.3, FS.4a dan bagian QRIS/transfer dari FS.4b, FS.5, FS.6, FS.7, sebagian FS.8 (`ProofCard` + banner), FS.9 (Web Share Target kini wajib, PDF di bot), dan FS.11. FS-2 menyusul: tagihan (sisa FS.4b), FS.4c marketplace, invoice umum, worker sebagai service terpisah, FS.10 notifikasi push, dan 6.7 email. Pembagian kode sesi dan status: `03-workflow.md` §6 dan `PROGRESS.md`; ADR-M17 di `02-adr.md`.
+
 | ID | Pekerjaan | File / komponen | Selesai bila | hk | Tergantung |
 | --- | --- | --- | --- | --- | --- |
 | FS.1 | Kotak Struk: perluas `receipt_scans` (sumber, jenis dokumen, status, hash file, hash nomor referensi, kedaluwarsa, transaksi terkait) dan antrean tahan restart; worker OCR sebagai service systemd terpisah | `models.py`, `services/receipt_scan.py`, service baru | Item bertahan saat API di-restart; proses API tidak lagi memuat model OCR | 2,5 | F1 |
@@ -377,7 +379,7 @@ Fase ini dikerjakan selama closed test Android berjalan. Hasilnya langsung bisa 
 | FS.5 | Korpus uji: ≥5 sampel tersamarkan per templat teratas (8 bank, 4 e-wallet, 4 marketplace) yang dikumpulkan dengan izin; disimpan sebagai baris OCR atau teks PDF, tanpa gambar asli | `app/tests/fixtures/` | Gerbang akurasi berjalan di CI | 2 | 1.4 |
 | FS.6 | Deteksi duplikat dan bukan pengeluaran: hash, nomor referensi, transaksi mirip ±1 hari, invoice vs bukti bayar, top-up, transfer ke rekening sendiri, status gagal | `services/receipt_dedupe.py` (baru) | Skenario uji duplikat dan bukan pengeluaran lulus | 1,5 | FS.4 |
 | FS.7 | Saran amplop dan belajar untuk jenis baru: kata kunci penerima, merchant, berita, dan jenis tagihan; feedback membawa jenis dokumen dan penerima/merchant; label per templat dengan aturan ≥2 user | `services/receipt_scan.py`, `user_envelope_keywords` | Struk kedua untuk penerima yang sama langsung disarankan ke amplop yang benar | 1 | FS.4 |
-| FS.8 | UI Kotak Struk di web, dipakai juga di aplikasi: daftar dan layar konfirmasi yang memakai ulang kartu struk; ongkir dan biaya sebagai penambah; tombol "Bukan pengeluaran"; isi manual saat kuota habis; lencana jumlah | `ReceiptCard.jsx`, `receiptSplit.js`, halaman baru | Konfirmasi selesai dengan satu ketukan bila sarannya yakin | 2,5 | FS.2, FS.6 |
+| FS.8 | UI Kotak Struk di web, dipakai juga di aplikasi: daftar dan layar konfirmasi yang memakai ulang kartu struk; ongkir dan biaya sebagai penambah; tombol "Bukan pengeluaran"; lencana jumlah (tanpa kuota scan, K4) | `ReceiptCard.jsx`, `receiptSplit.js`, halaman baru | Konfirmasi selesai dengan satu ketukan bila sarannya yakin | 2,5 | FS.2, FS.6 |
 | FS.9 | Paritas kanal: tombol Struk di web menerima PDF dan drag-and-drop; bot Telegram menerima PDF dan dokumen gambar lewat Kotak Struk; opsional Web Share Target untuk PWA Android | `ReceiptInput.jsx`, `bot/receipt_cmd.py`, `bot/handlers.py`, `manifest.json` | Invoice PDF yang sama memberi hasil sama di web, bot, dan aplikasi | 1,5 | FS.2 |
 | FS.10 | Notifikasi struk: push "siap dicatat" saat user tidak di aplikasi, pengingat harian digabung check-in, dan preferensinya | `services/notification_service.py`, scheduler | Push tiba; pengingat bisa dimatikan | 1 | 3.5 |
 | FS.11 | Privasi: file asli dihapus setelah diproses, pratinjau ±2 KB, nomor rekening tidak disimpan; kebijakan privasi, DPIA, dan formulir toko diperbarui | worker, `privacy.html` | Tidak ada file asli tersisa di server setelah diproses | 0,5 | FS.1, 0.4 |
@@ -497,7 +499,7 @@ Dua belas keputusan ini dibutuhkan sebelum Fase 0 berjalan penuh. Masing-masing 
 6. **Layanan OTA.** Rekomendasi: host sendiri di VPS, tanpa biaya bulanan dan tanpa pihak ketiga baru. Alternatifnya Capawesome Cloud atau Capgo.
 7. **Wilayah distribusi.** Rekomendasi: Indonesia saja di awal.
 8. **Tablet.** Rekomendasi: iPad dan tablet Android didukung sejak rilis pertama (ADR-M15).
-9. **Share: kuota dan bukan pengeluaran.** Rekomendasi: share dihitung sebagai scan (Basic 15 per bulan), pencatatan manual tetap boleh saat kuota habis, dan top-up e-wallet serta transfer ke rekening sendiri default "bukan pengeluaran".
+9. **Share: kuota dan bukan pengeluaran.** Diputuskan (K4, 26 Okt 2026): tidak ada kuota scan untuk share maupun input lain. Top-up e-wallet dan transfer ke rekening sendiri hanya ditawarkan sebagai "bukan pengeluaran", tidak pernah otomatis; user memutuskan.
 10. **Share: fallback LLM untuk templat yang belum dikenal.** Rekomendasi: tetap mati di rilis pertama, lalu dinilai ulang dari data akurasi per templat.
 11. **Perangkat dan penguji.** Siapa yang menyediakan 1 iPhone, 1 iPad, dan 3 perangkat Android, dan siapa 15–20 penguji closed test.
 12. **Pemegang akun dan kunci.** Rekomendasi: pemilik produk memegang akun toko dan kunci upload, dengan cadangan di pengelola sandi dan di penyimpanan terenkripsi terpisah.

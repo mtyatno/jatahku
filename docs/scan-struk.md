@@ -40,7 +40,8 @@ foto/PDF ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-re
 
 Tidak ada kuota scan (dihapus untuk semua paket, tidak bergantung pada saklar `receipt_inbox`).
 `scan_id` pada respons = `item_id` Kotak Struk, jadi umpan balik lama (`/scan-receipt/{id}/feedback`)
-tetap jalan. File PDF diterima oleh endpoint (maks 10 MB); foto tetap maks 8 MB.
+tetap jalan; field `quota` di respons dipertahankan dengan isi `{limit: null, used: 0, remaining: null}`.
+File PDF diterima oleh endpoint (maks 10 MB); foto tetap maks 8 MB.
 
 **Di webapp: dari foto sampai hasil.** Empat pintu masuk, semuanya berakhir di form
 Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceiptScan`):
@@ -193,7 +194,8 @@ Salah-baca kata kunci umum (`T0TAL`, `TUNAL`, `KEHBALI`) ditangani kamus +
 pencocokan jarak-edit 1 di `receipt_parser.py`.
 
 Akurasi bulanan (diterima tanpa koreksi vs dikoreksi) & toko yang paling sering
-dikoreksi: **Admin → Dashboard → Scan Struk** (`GET /admin/receipt-scans/stats`).
+dikoreksi: **Admin → Dashboard → Scan Struk** (`GET /admin/receipt-scans/stats`). Sejak Kotak Struk
+respons itu juga memuat `by_doc_type`, `unrecognized`, dan `by_issuer` (lihat [`docs/kotak-struk.md`](kotak-struk.md)).
 
 ## Fallback LLM — pengaman biaya
 
@@ -212,6 +214,9 @@ Mati kecuali `RECEIPT_LLM_ENABLED=true` di `/opt/jatahku/.env` (pakai `GROQ_API_
 
 Rincian barang & idempotensi tidak menambah paket maupun tabel — cukup merge
 (deploy otomatis). Langkah di bawah hanya untuk pemasangan awal scan struk.
+Kotak Struk menambah `pypdfium2` (PDF), folder berkas sementara, `KOTAK_HMAC_KEY`, dan satu revisi alembic:
+langkahnya di [`docs/kotak-struk.md`](kotak-struk.md) bagian "Deploy manual" dan `AGENTS.md`
+"Deploy Checklist — Kotak Struk".
 
 Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 
@@ -219,7 +224,7 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
    (sesuaikan path venv; model ±31 MB ikut paket, tidak perlu unduh).
 2. Tabel baru (`receipt_scans`, `receipt_total_labels`, `receipt_merchant_aliases`,
    `receipt_learn_votes`) dibuat otomatis oleh `create_all` saat startup — tidak
-   ada ALTER tabel lama.
+   ada ALTER tabel lama. (Kolom Kotak Struk di `receipt_scans` ditambah `lifespan`; lihat `docs/kotak-struk.md`.)
 3. `sudo systemctl restart jatahku` (API + bot).
 4. Uji: kirim foto struk ke bot, dan tombol **Foto** / **Galeri** di form catat webapp.
 5. Pantau RAM: proses API naik ±340 MB setelah scan pertama (model dimuat sekali).
@@ -232,20 +237,26 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 - 1 OCR berjalan bersamaan (worker Kotak Struk di proses API). `scan-receipt` menunggu hasilnya
   maks 45 dtk; lewat itu 503 "sedang ramai" dan itemnya tetap diproses (muncul di Kotak Struk).
   Koneksi DB dilepas selama menunggu.
-- Rate limit: web 30 scan/jam per user, bot 20 scan/jam per user; ditambah batas intake Kotak Struk
-  (30 bukti/jam gabungan semua kanal, maks 20 item belum selesai per user).
+- Rate limit: `POST /transactions/scan-receipt` 30 panggilan/jam per user (slowapi); bot tidak punya batas
+  scan sendiri lagi (batas 30 pesan/menit untuk pesan teks tetap). Di bawahnya, batas intake Kotak Struk
+  berlaku untuk semua kanal: 30 bukti/jam per user (Redis; Redis mati → tidak dibatasi) dan maks 20 item
+  belum selesai per user; terlewati → 429 ("Terlalu banyak bukti. Coba lagi sebentar." / "Masih ada
+  bukti yang sedang dibaca. Tunggu sebentar."), di bot pesan itu menggantikan "Membaca bukti…".
 - **Kuota scan dihapus** (semua paket). `GET /transactions/scan-receipt/quota` tetap ada untuk klien
   lama: `{limit: null, used, remaining: null}` (`used` = scan bulan ini yang totalnya terbaca, di
   zona waktu user).
 
-Kalau paket belum terpasang, endpoint membalas 503 "Scan struk sedang tidak
-tersedia" dan bot menyarankan catat manual — fitur lain tidak terpengaruh.
+Kalau paket OCR (`rapidocr`) atau `pypdfium2` (PDF) belum terpasang, worker menandai item `gagal` dengan
+pesan "Baca bukti sedang tidak bisa. Catat manual dulu.": `scan-receipt` membalas **422** dengan pesan itu
+(bukan lagi 503 "Scan struk sedang tidak tersedia") dan bot membalas "😕 Baca bukti sedang tidak bisa.
+Catat manual dulu." — fitur lain tidak terpengaruh. Kalau belum selesai dalam 45 dtk, tetap 503 "Scan
+struk sedang ramai. Coba lagi beberapa detik lagi.", dan itemnya tetap diproses.
 
 ## Konfigurasi
 
 | Env | Default | Arti |
 |---|---|---|
-| `RECEIPT_SCAN_LIMIT_BASIC` | — | Dihapus sejak Kotak Struk; kuota scan tidak ada (setelan lama di `.env` diabaikan, tidak membuat startup gagal) |
+| `RECEIPT_SCAN_LIMIT_BASIC` | 15 | Tidak dipakai lagi sejak Kotak Struk: kuota scan tidak ada. Tetap ada di `Settings` supaya `.env` lama tidak membuat startup gagal |
 | `RECEIPT_LLM_ENABLED` | false | Nyalakan fallback LLM |
 | `RECEIPT_LLM_MONTHLY_BUDGET_IDR` | 100000 | Plafon biaya LLM per bulan (Rp) |
 | `RECEIPT_LLM_USER_MONTHLY_BASIC` / `_PRO` | 3 / 10 | Kuota fallback per user |

@@ -1,10 +1,10 @@
-# Mobile — keputusan arsitektur (ADR-M1 sampai M16)
+# Mobile — keputusan arsitektur (ADR-M1 sampai M17)
 
-**Status:** disetujui pemilik produk, 16 Okt 2026. Setiap PR mobile merujuk ADR yang relevan. Mengubah ADR = PR yang mengubah file ini dan disetujui pemilik produk; ADR-M3, M4, M5 (identitas aplikasi, kunci, origin) praktis tidak bisa diubah setelah rilis toko pertama.
+**Status:** M1–M16 disetujui pemilik produk, 16 Okt 2026; M17 ditambahkan 26 Okt 2026 lewat spec "Bagikan ke Jatahku" (`docs/superpowers/specs/2026-10-26-bagikan-ke-jatahku-design.md`). Setiap PR mobile merujuk ADR yang relevan. Mengubah ADR = PR yang mengubah file ini dan disetujui pemilik produk; ADR-M3, M4, M5 (identitas aplikasi, kunci, origin) praktis tidak bisa diubah setelah rilis toko pertama.
 
 Alasan lengkap dan perbandingan opsi ada di `01-kajian.md`.
 
-Enam belas keputusan di bawah adalah hal yang mahal diubah. Setelah disetujui, semuanya dicatat sebagai ADR di repo, dan setiap PR mobile wajib merujuknya.
+Tujuh belas keputusan di bawah adalah hal yang mahal diubah. Setelah disetujui, semuanya dicatat sebagai ADR di repo, dan setiap PR mobile wajib merujuknya.
 
 | ID | Keputusan | Alasan | Biaya kalau diubah nanti |
 | --- | --- | --- | --- |
@@ -24,3 +24,4 @@ Enam belas keputusan di bawah adalah hal yang mahal diubah. Setelah disetujui, s
 | ADR-M14 | Distribusi awal hanya untuk Indonesia | Menghindari kewajiban trader DSA di EU dan urusan pajak lintas negara | Rendah |
 | ADR-M15 | HP dan tablet didukung sejak rilis pertama: aplikasi iOS universal (iPhone + iPad), Android termasuk tablet dan layar lipat; tata letak responsif yang ada dipakai dan rotasi tidak dikunci di tablet | Android 16 mengabaikan kunci orientasi di layar ≥600dp; Apple 2.4.1; Jatahku sudah punya tata letak `md` (768 px) dan `lg` (1024 px) | Sedang: menambah iPad belakangan butuh screenshot 13 inci, uji ulang, dan rilis baru |
 | ADR-M16 | Semua struk dan bukti bayar dari share, unggah web, dan Telegram masuk ke satu Kotak Struk di server; diproses asinkron oleh worker dengan status di database; OCR dan parser tetap di server; tidak ada yang tercatat tanpa konfirmasi user | Satu metode untuk semua kanal (aturan paritas); satu share bisa berisi banyak file; Share Extension iOS tidak bisa membuka aplikasinya | Tinggi: pipeline kedua di HP akan menyimpang dari web dan bot |
+| ADR-M17 | Semua jenis dokumen (struk belanja, QRIS, transfer, nanti tagihan dan invoice) menghasilkan satu bentuk Dokumen Bayar berversi, dan dibaca lewat registri pembaca (deteksi + parse + cek silang) dengan profil aplikasi sebagai data. Jenis dokumen baru = modul baru, tanpa perubahan pipeline, skema, atau UI konfirmasi | Template bank dan e-wallet terus berubah, jadi yang berubah harus data profil, bukan pipeline; satu bentuk dokumen membuat bot, web, dan aplikasi (ADR-M16) membaca hasil yang sama dan menyatukan cek duplikat, status, dan konfirmasi; menambah jenis (FS-2) tidak menyentuh kanal yang sudah rilis | Tinggi: bentuk dokumen sudah menjadi kontrak API (`GET /kotak-struk/{id}`) dan tersimpan di kolom `document`; mengubahnya setelah aplikasi terpasang berarti memutus klien lama dan memigrasi data |
