@@ -1010,7 +1010,11 @@ class CliTests(unittest.TestCase):
         code, out, _ = self.run_main("eval", "--real-only", "--corpus", str(self.corpus))
         self.assertEqual(code, 1)
         self.assertIn("korpus nyata belum ada", out)
+        # Struk Indomaret ikut dihitung di baris judul, tetapi tanpa sampel nyata tidak ada yang dievaluasi: tanpa baris
+        # hasil per sampel (judul tidak memuat id) dan tanpa gerbang.
+        self.assertIn("4 sampel (0 sintetis, 0 nyata, 4 struk Indomaret)", out)
         self.assertNotIn("indomaret-s1", out)
+        self.assertNotIn("Gerbang", out)
 
         data = json.loads(self.corpus.read_text(encoding="utf-8"))
         data["samples"][1]["expect"]["total"] = 16000
@@ -1046,7 +1050,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("bri-transfer-1", out)
         self.assertNotIn("sint-qris-1", out)
-        self.assertNotIn("indomaret-s1", out)
+        self.assertIn("indomaret-s1", out)   # spec §7a: 4 struk Indomaret bagian dari korpus nyata
+        self.assertIn("5 sampel (0 sintetis, 1 nyata, 4 struk Indomaret)", out)
 
 
 class ScriptEnvironmentTests(unittest.TestCase):

@@ -16,7 +16,9 @@ tiap baris (`mask_line`), menjalankan pembaca pada baris tersamar, lalu menambah
 lalu set `"reviewed": true`. Id berawalan `indomaret-` dicadangkan untuk struk Indomaret.
 
 `eval` mencetak hasil per sampel dan ringkasan, lalu keluar dengan kode 1 bila gerbang rilis tidak
-lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak.
+lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak. `--real-only`: hanya sampel nyata yang
+sudah ditinjau ditambah 4 struk Indomaret; tanpa satu pun sampel nyata yang ditinjau, mencetak "korpus nyata belum
+ada" dan keluar 1 tanpa evaluasi.
 """
 from __future__ import annotations
 
@@ -660,7 +662,7 @@ def cmd_eval(args) -> int:
     corpus_path = Path(args.corpus)
     try:
         samples = load_corpus(corpus_path)
-        receipts = [] if args.real_only else receipt_samples()
+        receipts = receipt_samples()   # 4 struk Indomaret: bagian dari korpus nyata juga (spec §7a)
     except CorpusError as e:
         return _err(str(e))
     unreviewed = sum(1 for s in samples if s.get("real") and not s.get("reviewed"))
@@ -673,7 +675,9 @@ def cmd_eval(args) -> int:
     chosen = chosen + receipts
     print(f"Korpus {corpus_path}: {len(chosen)} sampel ({synthetic} sintetis, {real} nyata, "
           f"{len(receipts)} struk Indomaret); {unreviewed} sampel nyata belum ditinjau dilewati")
-    if not chosen:
+    # Struk Indomaret saja tidak menguji pembaca bukti bayar: tanpa satu pun sampel nyata yang ditinjau, gerbang rilis
+    # belum bisa dinilai.
+    if not chosen or (args.real_only and real == 0):
         print("korpus nyata belum ada")
         return 1
     print()
@@ -700,7 +704,8 @@ def main(argv=None) -> int:
     a.add_argument("--user-name", help="nama akun user untuk cek arah 'antar rekening sendiri' (pakai nama samaran)")
     a.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     e = sub.add_parser("eval", help="evaluasi pembaca terhadap korpus dan cek gerbang rilis")
-    e.add_argument("--real-only", action="store_true", help="hanya sampel nyata yang sudah ditinjau")
+    e.add_argument("--real-only", action="store_true",
+                   help="hanya sampel nyata yang sudah ditinjau (ditambah 4 struk Indomaret)")
     e.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     args = ap.parse_args(argv)
     return cmd_add(args) if args.perintah == "add" else cmd_eval(args)

@@ -387,9 +387,9 @@ Di VPS: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m 
   menggantikan tinjauan (lihat "Batasan yang diketahui").
 - **`eval`** mencetak hasil per sampel dan ringkasan. Bawaan: sampel sintetis + sampel nyata yang sudah ditinjau + 4
   struk Indomaret asli (`receipt_ocr_lines.json`, harus tetap `struk_belanja`); sampel nyata yang belum ditinjau
-  dilewati dan dihitung. **`--real-only`**: hanya sampel nyata yang sudah ditinjau; tanpa satu pun, mencetak
-  "korpus nyata belum ada" dan keluar 1. Kode keluar: 0 gerbang lulus, 1 tidak lulus atau tanpa sampel, 2 berkas
-  korpus tidak ada atau rusak.
+  dilewati dan dihitung. **`--real-only`**: hanya sampel nyata yang sudah ditinjau ditambah 4 struk Indomaret; tanpa
+  satu pun sampel nyata yang ditinjau, mencetak "korpus nyata belum ada" dan keluar 1 (tanpa evaluasi). Kode keluar:
+  0 gerbang lulus, 1 tidak lulus atau tanpa sampel, 2 berkas korpus tidak ada atau rusak.
 - **Gerbang** (spec §7c; persen satu desimal, dibulatkan ke bawah): pada sampel QRIS/transfer, **total, tanggal
   (WIB), dan status sekaligus benar** ≥ 95% dan nama pihak benar ≥ 90%; `doc_type` benar ≥ 98% pada semua
   sampel; tidak ada struk belanja yang terbaca sebagai bukti bayar. Tanpa sampel QRIS/transfer, gerbang tidak
