@@ -55,7 +55,15 @@ class Settings(BaseSettings):
 
     # Scan struk (OCR RapidOCR, tanpa LLM). Kuota scan per bulan untuk Basic;
     # Pro tanpa batas bulanan (tetap kena rate limit per jam di endpoint).
+    # Tidak dipakai lagi sejak Kotak Struk; dipertahankan supaya .env lama tidak
+    # membuat startup gagal.
     RECEIPT_SCAN_LIMIT_BASIC: int = 15
+
+    # Kotak Struk ("Bagikan ke Jatahku"). KOTAK_HMAC_KEY: kunci HMAC untuk nomor
+    # rekening/RRN (counterparty_key, ref_hash). KOTAK_DIR: folder berkas bukti
+    # sementara.
+    KOTAK_HMAC_KEY: str = ""
+    KOTAK_DIR: str = "/var/lib/jatahku/kotak"
 
     # Fallback LLM (Groq vision) untuk struk yang gagal dibaca OCR.
     # MATI secara default. Biaya dikunci plafon bulanan global (rupiah) +

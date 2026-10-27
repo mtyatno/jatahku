@@ -167,6 +167,31 @@ ini, jadi **semua query user 500 (termasuk login) sampai migrasi dijalankan**. I
 "Urutan merge PR bermigrasi" di atas; `alembic current` harus `c5e9a2d7f4b1` sebelum upgrade.
 Verifikasi: `\d auth_sessions`, `\d users | grep tokens_revoked_at`, login dengan email asal → 401.
 
+## Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — belum jalan, menunggu merge
+Memperluas `receipt_scans` (status, `doc_type`, `document`, hash file, dll.) dan menambah tabel
+`household_merchants` + `merchant_envelope_map`. Migrasi **idempoten**: `lifespan` (`KOTAK_DDL` + `create_all`)
+membuat kolom dan tabel yang sama saat API restart, jadi tidak ada jendela 500 seperti `auth_sessions`; migrasinya
+tetap harus dijalankan, kalau tidak `deploy.sh` berakhir exit 2. Paket, folder, dan kunci harus siap **sebelum
+merge** karena worker langsung berjalan di restart pertama. Detail: `docs/kotak-struk.md`.
+Sebelum merge (aman untuk kode lama):
+1. `sudo -u jatahku /opt/jatahku/venv/bin/pip install pypdfium2==5.13.0` (versi sama dengan `requirements.txt`;
+   deploy tidak meng-install paket). Tanpa ini PDF menjadi item `gagal` ("Baca bukti sedang tidak bisa"), foto tetap jalan.
+2. Folder berkas sementara: `sudo install -d -m 0700 -o jatahku -g jatahku /var/lib/jatahku/kotak`
+   (`KOTAK_DIR`; di luar `backup.sh`, isinya sementara). Tanpa ini unggahan gagal (500 di web, "Bukti tidak bisa
+   dibaca" di bot), karena user `jatahku` tidak bisa membuat folder di bawah `/var/lib`.
+3. Tambahkan `KOTAK_HMAC_KEY=<hasil openssl rand -hex 32>` ke `/opt/jatahku/.env` (kunci HMAC nomor referensi/rekening).
+   Isi **sekali** dan jangan diganti: nilai lain membuat `ref_hash` lama tak cocok (cek duplikat dan peta merchant
+   terputus). Kosong = diturunkan dari `JWT_SECRET` dengan peringatan di log.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+4. `ls /opt/jatahku/app/alembic/versions/ | grep a7c4e2b9d1f3`; `alembic current` harus `a7c3e9d1f5b2` sebelum upgrade.
+5. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
+   `a7c4e2b9d1f3`. Lalu `sudo systemctl restart jatahku`.
+6. Uji (saklar mati): kirim foto struk ke bot → pesan struk tanpa baris sisa scan; kirim PDF → hasil, bukan
+   "📄 File belum didukung"; `sudo ls -A /var/lib/jatahku/kotak` kosong setelah item selesai; `sudo grep -c '^KOTAK_HMAC_KEY=' /opt/jatahku/.env` → 1.
+7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus: `cd /opt/jatahku/app && sudo -u jatahku
+   /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
+   "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.

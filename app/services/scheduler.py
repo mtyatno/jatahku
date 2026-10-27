@@ -297,6 +297,32 @@ async def purge_receipt_ocr_text():
         logger.error(f"purge_receipt_ocr_text failed: {e}")
 
 
+async def kotak_maintenance():
+    """Kotak Struk, tiap jam di menit 17 (spec 2026-10-26 §2d): item siap/gagal yang lewat masa simpan → kedaluwarsa, lalu
+    berkas yatim di folder sementara dihapus. Tiap langkah memakai sesinya sendiri dan blok try sendiri: satu
+    langkah gagal tidak melewatkan yang lain. Galat hanya dicatat."""
+    from datetime import datetime, timezone
+    from app.core.config import get_settings
+    from app.core.database import AsyncSessionLocal
+    from app.services.kotak_struk import maintenance
+
+    try:
+        async with AsyncSessionLocal() as db:
+            n = await maintenance.expire_items(db, now=datetime.now(timezone.utc))
+        if n:
+            logger.info(f"Kotak Struk: {n} item kedaluwarsa")
+    except Exception:
+        logger.exception("kotak_maintenance: expire_items gagal")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            n = await maintenance.delete_orphan_files(get_settings().KOTAK_DIR, db, now=datetime.now(timezone.utc))
+        if n:
+            logger.info(f"Kotak Struk: {n} berkas yatim dihapus")
+    except Exception:
+        logger.exception("kotak_maintenance: delete_orphan_files gagal")
+
+
 def start_scheduler():
     """Start the APScheduler with monthly snapshot job."""
     scheduler.add_job(
@@ -333,6 +359,13 @@ def start_scheduler():
         trigger="interval",
         hours=1,
         id="purge_receipt_ocr_text",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        kotak_maintenance,
+        trigger="cron",
+        minute=17,  # tiap jam di menit tetap: interval baru jalan 1 jam setelah tiap restart; :17 menghindari job :00
+        id="kotak_maintenance",
         replace_existing=True,
     )
     scheduler.start()

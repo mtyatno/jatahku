@@ -76,12 +76,23 @@ menampilkan tahapnya ("Mengunggah foto… xx%", lalu "Membaca struk…"); unggah
 lewat XHR (`api.uploadForm`) dengan batas waktu 60 detik.
 Foto dikompres di HP dulu (`lib/receiptImage.js`, sama dengan tombol Foto/Galeri
 di form), divalidasi sama dengan `/transactions/scan-receipt` (JPG/PNG/WebP, maks
-8 MB), lalu dijalankan lewat `handle_non_text` → `receipt_cmd.handle_receipt_photo`
-— alur yang sama dengan kirim foto ke @JatahkuBot: kuota scan bulanan, batas per
-jam, pilih amplop lewat tombol, "Nominal salah", feedback belajar. Foto JPEG
-masuk sebagai `photo`, format lain sebagai `document`. Kirim ulang dengan
-`client_id` yang sama tidak memindai dua kali (kuota aman). Riwayat lokal hanya
-menyimpan pratinjau kecil (±2–5 KB), bukan fotonya.
+8 MB), lalu dijalankan lewat `handle_non_text` → `receipt_cmd.handle_receipt_document`
+— alur yang sama dengan kirim foto ke @JatahkuBot, yaitu **Kotak Struk** (sumber
+`web_chat`, lihat [`kotak-struk.md`](kotak-struk.md)): pilih amplop lewat tombol,
+"Nominal salah", feedback belajar. **Tidak ada kuota scan** (dihapus untuk semua
+paket); batasnya hanya batas intake Kotak Struk (30 bukti/jam per user dan maks 20
+yang belum selesai, gabungan semua kanal). Foto JPEG masuk sebagai `photo`, format
+lain sebagai `document`. Kirim ulang
+dengan `client_id` yang sama tidak diproses dua kali (balasan yang sama dikembalikan),
+dan file yang sama selagi masih dibaca atau menunggu dikembalikan sebagai item yang
+sama. Bukti yang belum selesai dibaca dalam 10 detik dijawab "Masih dibaca" (hasilnya
+menyusul di Kotak Struk). Riwayat lokal hanya menyimpan pratinjau kecil (±2–5 KB),
+bukan fotonya.
+
+**Route ini tetap khusus gambar**: PDF ditolak 415 ("Format foto tidak didukung. Pakai
+JPG, PNG, atau WebP."). Bot Telegram sudah menerima PDF lewat alur yang sama; dari web,
+PDF masuk lewat tombol Struk di form Catat (`/transactions/scan-receipt`) dan nanti lewat
+Web Share Target PWA (Bagian B "Bagikan ke Jatahku").
 
 ## Keamanan
 
@@ -121,4 +132,5 @@ lain. Setelah deploy: buka webapp, ketuk ikon chat, kirim `kopi 35k` dan
 - Pesan yang dikirim bot atas inisiatif sendiri (pengingat tagihan langganan,
   check-in harian, nanti "Sepadan?" Pikir-Pikir) ke chat web — sekarang hanya
   lewat Telegram.
-- Foto struk di chat (setelah PR scan struk di-merge).
+- Bukti PDF dan banner "Bukti menunggu" untuk bukti yang selesai dibaca belakangan di chat web
+  (Bagian B "Bagikan ke Jatahku"; sekarang chat web hanya menyebut "Cek Bukti menunggu di beranda nanti").

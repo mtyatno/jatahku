@@ -2,7 +2,8 @@
 
 Handler di `app/bot/*` hanya memakai sebagian kecil API Telegram:
 `update.message.reply_text`, `update.callback_query.{answer, edit_message_text}`,
-`update.effective_user`, dan `context.args`. Adapter ini menyediakan objek
+`update.effective_user`, `context.args`, dan (pesan teks) `context.bot.edit_message_text`
+untuk mengedit pesan bot lain. Adapter ini menyediakan objek
 pengganti dengan bentuk yang sama, lalu mengumpulkan balasan sebagai "ops"
 JSON yang dirender webapp:
 
@@ -269,13 +270,25 @@ class WebUpdate:
         self.effective_chat = SimpleNamespace(id=user.id, type="private")
 
 
+class WebBot:
+    """Pengganti telegram.Bot untuk handler yang mengedit pesan bot lain lewat id-nya (mis. catatan bukti mengedit
+    pesan tombolnya): `context.bot.edit_message_text(...)` menjadi op "edit" untuk pesan itu."""
+
+    def __init__(self, outbox: Outbox):
+        self._outbox = outbox
+
+    async def edit_message_text(self, text, chat_id=None, message_id=None, parse_mode=None, reply_markup=None, **_):
+        self._outbox.edit(message_id, text, parse_mode, reply_markup)
+        return True
+
+
 class WebContext:
-    def __init__(self, args=None):
+    def __init__(self, args=None, bot=None):
         self.args = list(args or [])
         self.user_data: dict = {}
         self.chat_data: dict = {}
         self.bot_data: dict = {}
-        self.bot = None
+        self.bot = bot
 
 
 # ── Dispatch ────────────────────────────────────────────────────────────────
@@ -301,7 +314,7 @@ async def _dispatch_text(outbox: Outbox, tg_user: WebChatUser, text: str):
         if text.startswith("/"):
             outbox.send("Perintah tidak dikenal. Ketik /help untuk daftar perintah.")
             return
-        await handle_message(update, WebContext())
+        await handle_message(update, WebContext(bot=WebBot(outbox)))
         return
     name, args = command
     if name in TELEGRAM_ONLY_COMMANDS:
@@ -432,8 +445,8 @@ JPEG_MIME = {"image/jpeg", "image/jpg"}
 
 
 async def run_photo(user, data: bytes, mime: str, client_id: str | None = None) -> list[dict]:
-    """Foto struk dari chat webapp → alur foto bot Telegram (scan struk).
-    JPEG dikirim sebagai foto, format lain sebagai dokumen gambar — sama
+    """Foto struk/bukti dari chat webapp → `handle_non_text` → Kotak Struk (source `web_chat`), alur foto bot
+    Telegram yang sama. JPEG dikirim sebagai foto, format lain sebagai dokumen gambar — sama
     dengan dua cara user Telegram mengirim gambar."""
     from app.bot.handlers import handle_non_text
 

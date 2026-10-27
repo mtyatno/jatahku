@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,10 +9,11 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
+log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,14 +73,34 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS income_type VARCHAR(20) DEFAULT 'monthly'"
             ))
+            # Kotak Struk (spec 2026-10-26): perluas receipt_scans (tabel baru
+            # household_merchants & merchant_envelope_map dibuat create_all).
+            from app.services.kotak_struk.schema import KOTAK_DDL
+            for stmt in KOTAK_DDL:
+                await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
     # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
     from app.services.advisor import advisor_cache
     advisor_cache.install()
     start_scheduler()
+    # Kotak Struk (spec 2026-10-26): worker pembaca bukti berjalan sebagai tugas asyncio di
+    # proses API, di samping scheduler. Gagal menyalakannya tidak boleh menjatuhkan API.
+    kotak_stop = asyncio.Event()
+    kotak_task = None
+    try:
+        from app.services.kotak_struk.worker import run_worker
+        kotak_task = asyncio.create_task(run_worker(kotak_stop))
+    except Exception:
+        log.exception("worker Kotak Struk tidak bisa dijalankan")
     yield
     # Shutdown
     stop_scheduler()
+    if kotak_task is not None:
+        kotak_stop.set()
+        try:
+            await asyncio.wait_for(kotak_task, 10)
+        except Exception:  # termasuk TimeoutError: tugas dibatalkan, item `diproses` dipulihkan saat start berikutnya
+            log.exception("worker Kotak Struk tidak berhenti dengan rapi")
     print(f"👋 {settings.APP_NAME} shutting down...")
 app = FastAPI(
     title=settings.APP_NAME,
@@ -118,6 +141,7 @@ app.include_router(goals.router, prefix="/goals", tags=["goals"])
 app.include_router(balance_check.router, prefix="/balance-check", tags=["balance-check"])
 app.include_router(bot_chat.router, prefix="/bot/chat", tags=["bot-chat"])
 app.include_router(app_config.router, prefix="/app", tags=["app"])
+app.include_router(kotak_struk.router, prefix="/kotak-struk", tags=["kotak-struk"])
 
 
 from starlette.middleware.base import BaseHTTPMiddleware

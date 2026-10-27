@@ -107,6 +107,23 @@ def _features_for(platform: str, overrides: dict) -> dict[str, bool]:
     return out
 
 
+async def feature_enabled(db, name: str, platform: str = "web") -> bool:
+    """Saklar fitur di sisi server: AppSetting `app_config` -> `features` -> nilai untuk `platform`,
+    sama seperti yang dilihat klien di `GET /app/config`. Fitur tak dikenal mati. Galat basis data ->
+    nilai bawaan `FEATURES` (pola yang sama dengan route `/app/config`)."""
+    default = bool(FEATURES.get(name, False))
+    try:
+        from sqlalchemy import select
+        from app.models.models import AppSetting
+        raw = (await db.execute(
+            select(AppSetting.value).where(AppSetting.key == SETTING_KEY)
+        )).scalar_one_or_none()
+        return bool(_features_for(platform, parse_overrides(raw).get("features") or {}).get(name, default))
+    except Exception:
+        log.warning("Gagal membaca AppSetting %s untuk fitur %s; memakai bawaan", SETTING_KEY, name, exc_info=True)
+        return default
+
+
 def _update_status(client: ClientInfo, plat: dict) -> str:
     if is_older(client.version, plat.get("min_supported_version")):
         return "required"

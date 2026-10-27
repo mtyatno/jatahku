@@ -53,10 +53,14 @@ async def check_expense(envelope, user, amount: Decimal, db, *,
     return await check_behavior(envelope.id, user.id, Decimal(amount), db)
 
 
-async def after_expense_recorded(db, user, envelope_id, description: str):
+async def after_expense_recorded(db, user, envelope_id, description: str, learn_text: str | None = None):
     """Efek best-effort setelah pengeluaran tercatat (dan di-commit): streak
     disiplin dan pembelajaran kata kunci → amplop. Tidak pernah menggagalkan
-    transaksi. Mengembalikan hasil streak (atau None) untuk ditampilkan bot."""
+    transaksi. Mengembalikan hasil streak (atau None) untuk ditampilkan bot.
+
+    `learn_text` (Kotak Struk): None → kata kunci dipelajari dari `description` (perilaku
+    lama); string → dari string itu; string kosong → tidak belajar kata kunci (streak tetap).
+    Untuk bukti bayar, server mengisinya dengan catatan user saja (`learn_text_for_item`)."""
     streak = None
     try:
         from app.services.streak import record_activity
@@ -65,7 +69,8 @@ async def after_expense_recorded(db, user, envelope_id, description: str):
         pass
     try:
         from app.services.txn_nlp import save_learned_keywords
-        await save_learned_keywords(user.id, description, envelope_id, db)
+        if learn_text is None or learn_text:
+            await save_learned_keywords(user.id, description if learn_text is None else learn_text, envelope_id, db)
         await db.commit()
     except Exception:
         pass

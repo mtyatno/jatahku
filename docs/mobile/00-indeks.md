@@ -8,7 +8,7 @@ Aplikasi Android (Google Play) dan iOS (App Store) dengan **Capacitor 8** di ata
 | File | Isi | Kapan dibaca |
 |---|---|---|
 | `01-kajian.md` | Kajian lengkap: pelajaran Alurik, kondisi repo, kebutuhan, opsi teknologi, kesiapan toko & regulasi, Paket Pro, Bagikan ke Jatahku, roadmap, WBS, risiko, biaya | Bagian yang disebut paket; seluruhnya sekali di awal |
-| `02-adr.md` | ADR-M1 sampai M16 | Setiap sesi; dirujuk di PR |
+| `02-adr.md` | ADR-M1 sampai M17 | Setiap sesi; dirujuk di PR |
 | `03-workflow.md` | Cara kerja: satu sesi = satu PR, `/sesi` & `/tutup-sesi`, template PR, koordinasi dengan AI Advisor, daftar paket & jadwal sesi | Awal setiap sesi |
 | `PROGRESS.md` | Status tiap paket | Awal dan akhir setiap sesi |
 | `SESI-LOG.md` | Catatan serah-terima | Entri terakhir di awal sesi; entri baru di akhir |

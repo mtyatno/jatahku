@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -15,12 +16,17 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
+from app.services.kotak_struk.config import PDF_MAX_BYTES
+from app.services.kotak_struk.record import (
+    NotRecordable, after_recorded, check_recordable, claim_failure_detail, claim_for_recording, heal_recorded,
+)
 from app.services.plan_limits import check_transaction_limit, has_txn_limit, quota_notice_after_input
 from app.services import quota_pass
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
 
 router = APIRouter()
+log = logging.getLogger("jatahku.transactions")
 
 # Rate limiter lokal (pola sama dengan auth.py). Storage in-memory per instance.
 limiter = Limiter(key_func=get_remote_address)
@@ -45,6 +51,8 @@ class TransactionCreate(BaseModel):
     raise_daily_limit: bool = False
     # Kunci idempotensi dari klien: kirim ulang tidak mencatat dua kali.
     client_ref: str | None = Field(default=None, max_length=64)
+    # Item Kotak Struk yang dicatat transaksi ini (aturan: spec "Bagikan ke Jatahku" 5d).
+    receipt_item_id: UUID | None = None
 
     @field_validator("description")
     @classmethod
@@ -98,6 +106,7 @@ class BatchTransactionItem(BaseModel):
     is_private: bool = False
     raise_daily_limit: bool = False
     client_ref: str | None = Field(default=None, max_length=64)
+    receipt_item_id: UUID | None = None   # lihat TransactionCreate
 
     @field_validator("description")
     @classmethod
@@ -142,10 +151,42 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None) -> TransactionCreateResponse:
+    """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
+    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu)."""
     out = TransactionCreateResponse.model_validate(txn)
+    if after is not None:
+        await after()
     out.quota_notice = await quota_notice_after_input(user, db)
     return out
+
+
+# ── Kotak Struk: `receipt_item_id` (spec "Bagikan ke Jatahku" 5d) ──
+# Urutan di create/batch: cek idempotensi -> `_receipt_item_error` -> validasi lama -> `claim_for_recording` (sesi
+# yang sama, tepat sebelum commit yang menyimpan transaksi, jadi klaim dan transaksi masuk/batal bersama) ->
+# commit -> `record.after_recorded` (kirim ulang: `record.heal_recorded`). Klaim itulah yang mencegah satu bukti
+# tercatat dua kali; `check_recordable` hanya memberi pesan yang ramah. Pemulihan sesi di helper itu meng-expire objek
+# ORM, jadi respons dibangun SEBELUM efek sesudah commit dan batch hanya memakai id.
+
+async def _receipt_item_error(db, user, rid: UUID) -> str | None:
+    """None bila item boleh dicatat `user` sekarang, selain itu pesan 409-nya."""
+    try:
+        await check_recordable(db, rid, user)
+    except NotRecordable as exc:
+        return exc.detail
+    return None
+
+
+async def _after_saved(db, user, receipt_item_id: UUID | None, *, transaction_id: UUID, envelope_id: UUID,
+                       description: str) -> None:
+    """Sesudah commit: streak + belajar kata kunci (hook yang sama dengan bot); untuk item Kotak Struk juga menandainya
+    `tercatat` (`record.after_recorded`: best-effort, pemulihan sesinya di sana). Hanya id dan keterangan yang
+    diberikan: pemulihan sesi meng-expire objek transaksinya."""
+    if receipt_item_id:
+        await after_recorded(db, user, receipt_item_id, transaction_id=transaction_id, envelope_id=envelope_id,
+                             description=description)
+    else:
+        await after_expense_recorded(db, user, envelope_id, description)
 
 
 @router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -161,8 +202,16 @@ async def create_transaction(
     if existing_ref:
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
-            return await _created(existing, user, db)  # sudah tercatat sebelumnya (kirim ulang)
+            heal = None
+            if req.receipt_item_id:
+                async def heal():
+                    await heal_recorded(db, user, req.receipt_item_id, existing.id, existing.envelope_id)
+            return await _created(existing, user, db, after=heal)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
+    if req.receipt_item_id:
+        receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
+        if receipt_error:
+            raise HTTPException(status_code=409, detail=receipt_error)
     # Verify envelope belongs to user's household
     result = await db.execute(
         select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
@@ -211,29 +260,37 @@ async def create_transaction(
 
     if not await idempotency.reserve(user.id, req.client_ref):
         raise HTTPException(status_code=409, detail="Transaksi ini sedang diproses. Coba lagi sebentar.")
-    txn = Transaction(
-        envelope_id=req.envelope_id,
-        user_id=user.id,
-        amount=req.amount,
-        description=req.description,
-        source=req.source,
-        transaction_date=req.transaction_date or date.today(),
-        is_private=req.is_private,
-    )
-    db.add(txn)
+    user_id = user.id  # rollback di bawah meng-expire `user`
     try:
-        await db.commit()
+        if req.receipt_item_id and not await claim_for_recording(db, req.receipt_item_id, user_id):
+            # Simpan lain (bot, ketukan kedua) mengklaim bukti ini di antara `check_recordable` dan sekarang, atau
+            # bukti itu kedaluwarsa / dilewati: pesannya dari status terbaru, dibaca sesudah rollback.
+            await db.rollback()
+            raise HTTPException(status_code=409,
+                                detail=await claim_failure_detail(db, req.receipt_item_id, user_id))
+        txn = Transaction(
+            envelope_id=req.envelope_id,
+            user_id=user_id,
+            amount=req.amount,
+            description=req.description,
+            source=req.source,
+            transaction_date=req.transaction_date or date.today(),
+            is_private=req.is_private,
+        )
+        db.add(txn)
+        await db.commit()   # transaksi dan klaimnya masuk (atau batal) bersama
     except Exception:
-        await idempotency.release(user.id, req.client_ref)
+        await idempotency.release(user_id, req.client_ref)
         raise
     # Catat kunci segera setelah commit (id sudah ada), sebelum langkah lain.
     await idempotency.store(user.id, req.client_ref, txn.id)
     await db.refresh(txn)
 
-    # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot.
-    await after_expense_recorded(db, user, req.envelope_id, req.description)
-
-    return await _created(txn, user, db)
+    # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot — dan penandaan item Kotak Struk.
+    async def after():
+        await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
+                           description=txn.description)
+    return await _created(txn, user, db, after=after)
 
 
 @router.post("/suggest-envelope")
@@ -313,11 +370,20 @@ async def batch_create_transactions(
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
         if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
+            if item.receipt_item_id:
+                prior = await db.get(Transaction, UUID(existing_ref))
+                if prior is not None:
+                    await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
         if not hid:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Household not found"))
             continue
+        if item.receipt_item_id:
+            receipt_error = await _receipt_item_error(db, user, item.receipt_item_id)
+            if receipt_error:
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=receipt_error))
+                continue
 
         result_env = await db.execute(
             select(Envelope).where(
@@ -364,27 +430,37 @@ async def batch_create_transactions(
             results.append(BatchTransactionResult(index=i, ok=False, pending=True, description=item.description,
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
-        txn = Transaction(
-            envelope_id=item.envelope_id,
-            user_id=user.id,
-            amount=item.amount,
-            description=item.description,
-            source=item.source,
-            transaction_date=item.transaction_date or date.today(),
-            is_private=item.is_private,
-        )
-        db.add(txn)
         try:
-            await db.commit()
+            if item.receipt_item_id and not await claim_for_recording(db, item.receipt_item_id, user.id):
+                # Simpan lain mengklaim bukti ini di antara `check_recordable` dan sekarang (atau bukti itu kedaluwarsa
+                # / dilewati). Klaim yang gagal tidak mengubah apa pun, jadi tidak ada yang perlu di-rollback (rollback
+                # juga meng-expire `user`); `claim_failure_detail` membaca kolom status terbaru, bukan salinan ORM.
+                await idempotency.release(user.id, item.client_ref)
+                detail = await claim_failure_detail(db, item.receipt_item_id, user.id)
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=detail))
+                continue
+            txn = Transaction(
+                envelope_id=item.envelope_id,
+                user_id=user.id,
+                amount=item.amount,
+                description=item.description,
+                source=item.source,
+                transaction_date=item.transaction_date or date.today(),
+                is_private=item.is_private,
+            )
+            db.add(txn)
+            await db.commit()   # per baris: transaksi dan klaimnya masuk (atau batal) bersama
         except Exception:
             await idempotency.release(user.id, item.client_ref)
             raise
-        await idempotency.store(user.id, item.client_ref, txn.id)
+        txn_id, txn_envelope_id = txn.id, txn.envelope_id   # pemulihan sesi di bawah meng-expire `txn`
+        await idempotency.store(user.id, item.client_ref, txn_id)
         await db.refresh(txn)
 
-        await after_expense_recorded(db, user, item.envelope_id, item.description)
+        await _after_saved(db, user, item.receipt_item_id, transaction_id=txn_id, envelope_id=txn_envelope_id,
+                           description=item.description)
 
-        results.append(BatchTransactionResult(index=i, ok=True, id=txn.id, description=item.description))
+        results.append(BatchTransactionResult(index=i, ok=True, id=txn_id, description=item.description))
 
     if any(r.ok for r in results):
         notice = await quota_notice_after_input(user, db)
@@ -436,24 +512,32 @@ async def transcribe_endpoint(
 # Client mengompres foto (sisi panjang ≤1600px, JPEG) jadi ±300 KB; batas ini
 # menampung foto mentah dari klien lama / bot.
 MAX_RECEIPT_BYTES = 8 * 1024 * 1024
-RECEIPT_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+RECEIPT_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf"}
 
 
-async def _read_receipt_upload(image: UploadFile) -> tuple[bytes, str]:
-    """Validasi upload foto struk. Tanpa deps framework supaya mudah di-test."""
+async def _read_receipt_upload(image: UploadFile, *, allow_pdf: bool = True) -> tuple[bytes, str]:
+    """Validasi upload foto/PDF struk. Tanpa deps framework supaya mudah di-test. Jenis sebenarnya (byte awal)
+    diperiksa lagi oleh intake Kotak Struk. `allow_pdf=False` untuk rute yang belum menerima PDF (chat web
+    `/bot/chat/photo`, keputusan Bagian B)."""
     content_type = (image.content_type or "").split(";")[0].strip().lower()
-    if content_type not in RECEIPT_MIME:
-        raise HTTPException(status_code=415, detail="Format foto tidak didukung. Pakai JPG, PNG, atau WebP.")
-    data = await image.read(MAX_RECEIPT_BYTES + 1)
+    if content_type not in RECEIPT_MIME or (content_type == "application/pdf" and not allow_pdf):
+        raise HTTPException(
+            status_code=415,
+            detail=("Format tidak didukung. Pakai JPG, PNG, WebP, atau PDF." if allow_pdf
+                    else "Format foto tidak didukung. Pakai JPG, PNG, atau WebP."))
+    is_pdf = content_type == "application/pdf"
+    max_bytes = PDF_MAX_BYTES if is_pdf else MAX_RECEIPT_BYTES
+    data = await image.read(max_bytes + 1)
     if not data:
         raise HTTPException(status_code=422, detail="Foto kosong, coba lagi")
-    if len(data) > MAX_RECEIPT_BYTES:
-        raise HTTPException(status_code=413, detail="Foto terlalu besar (maks 8 MB)")
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="PDF terlalu besar (maks 10 MB)" if is_pdf else "Foto terlalu besar (maks 8 MB)")
     return data, content_type
 
 
 def receipt_key_func(request: Request) -> str:
-    """Rate limit per user (klaim `sub` JWT), stabil walau token di-refresh."""
+    """Rate limit per user (klaim `sub` JWT), stabil walau token di-refresh. Tidak dipakai `scan-receipt` lagi: batasnya
+    batas intake Kotak Struk (gabungan semua kanal)."""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         try:
@@ -467,23 +551,21 @@ def receipt_key_func(request: Request) -> str:
 
 
 async def run_receipt_scan(user: User, data: bytes, content_type: str, db: AsyncSession) -> dict:
-    """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web."""
-    from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
-    from app.services.receipt_scan import ScanQuotaExceeded, scan_receipt
+    """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web. IntakeRejected → status code-nya;
+    OcrBusy (termasuk ScanBusy: belum selesai dibaca) → 503 ramai; OcrFailed → 422 dengan pesan galat item. OCR yang
+    tidak terpasang sampai ke sini sebagai item `gagal` (OcrFailed), bukan OcrUnavailable."""
+    from app.services.kotak_struk.intake import IntakeRejected
+    from app.services.receipt_ocr import OcrBusy, OcrFailed
+    from app.services.receipt_scan import scan_receipt
 
     try:
         return await scan_receipt(user, data, content_type, db)
-    except ScanQuotaExceeded as exc:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Kuota scan struk bulan ini ({exc.limit}x) sudah habis. Upgrade ke Pro untuk scan tanpa batas, atau catat manual.",
-        )
-    except OcrUnavailable:
-        raise HTTPException(status_code=503, detail="Scan struk sedang tidak tersedia. Catat manual dulu ya.")
-    except OcrBusy:
+    except IntakeRejected as exc:  # jenis/ukuran tidak cocok, atau batas per jam / item menunggu
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    except OcrBusy:  # termasuk ScanBusy
         raise HTTPException(status_code=503, detail="Scan struk sedang ramai. Coba lagi beberapa detik lagi.")
-    except OcrFailed:
-        raise HTTPException(status_code=422, detail="Foto tidak bisa dibuka atau resolusinya terlalu besar. Coba foto ulang.")
+    except OcrFailed as exc:  # item `gagal`: pesannya dari worker, aman ditampilkan (mis. "PDF terkunci kata sandi")
+        raise HTTPException(status_code=422, detail=str(exc) or "Foto tidak bisa dibuka atau resolusinya terlalu besar. Coba foto ulang.")
 
 
 class ReceiptFeedback(BaseModel):
@@ -503,13 +585,14 @@ async def receipt_scan_quota(
 
 
 @router.post("/scan-receipt")
-@limiter.limit("30/hour", key_func=receipt_key_func)
 async def scan_receipt_endpoint(
     request: Request,
     image: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Gambar atau PDF → Kotak Struk (source `web_form`), menunggu hasil maks WAIT_FORM_S; respons lama + field baru.
+    Tanpa kuota scan; batas intake Kotak Struk berlaku."""
     data, content_type = await _read_receipt_upload(image)
     return await run_receipt_scan(user, data, content_type, db)
 

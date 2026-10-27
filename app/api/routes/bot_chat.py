@@ -53,17 +53,17 @@ async def chat_action(request: Request, body: ChatActionIn, user: User = Depends
 
 
 @router.post("/photo")
-@limiter.limit("30/hour", key_func=chat_key_func)
 async def chat_photo(
     request: Request,
     image: UploadFile = File(...),
     client_id: str | None = Form(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
     user: User = Depends(get_current_user),
 ):
-    """Foto struk dari chat → alur scan struk bot (kuota & batas sama)."""
-    # Validasi format/ukuran sama dengan tombol Struk di form transaksi.
+    """Foto struk/bukti dari chat → Kotak Struk lewat alur foto bot (`handle_non_text`); batas intake Kotak Struk
+    berlaku; PDF belum diterima di route ini (keputusan Bagian B)."""
+    # Validasi format/ukuran sama dengan tombol Struk di form transaksi, kecuali PDF (lihat docstring).
     from app.api.routes.transactions import _read_receipt_upload
-    data, mime = await _read_receipt_upload(image)
+    data, mime = await _read_receipt_upload(image, allow_pdf=False)
     return {"ops": await run_photo(user, data, mime, client_id)}
 
 

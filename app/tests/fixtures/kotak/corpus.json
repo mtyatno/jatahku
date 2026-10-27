@@ -1,0 +1,14 @@
+{"samples": [
+  {"id": "sint-qris-1", "real": false, "lines": ["Pembayaran Berhasil", "QRIS", "Rp 25.000", "Merchant", "SITI AMINAH", "Lokasi BANDUNG", "NMID ID1024358806544", "Tanggal 26 Okt 2026 08:12:33 WIB", "No. Referensi 612345678812"],
+   "expect": {"doc_type": "qris", "total": 25000, "paid_at": "2026-10-26T08:12:33+07:00", "counterparty": "SITI AMINAH", "status": "berhasil", "flow": "keluar"}},
+  {"id": "sint-qris-2", "real": false, "lines": ["Transaksi Sukses", "Bayar QRIS", "Nama Merchant: WARUNG BAKSO PAK DI", "Kota: SEMARANG", "Jumlah Pembayaran Rp15.000", "26/10/2026 19:05", "RRN 000151856123", "Terminal ID A01"],
+   "expect": {"doc_type": "qris", "total": 15000, "paid_at": "2026-10-26T19:05:00+07:00", "counterparty": "WARUNG BAKSO PAK DI", "status": "berhasil", "flow": "keluar"}},
+  {"id": "sint-transfer-1", "real": false, "lines": ["Transfer Berhasil", "26 Okt 2026, 09:30 WIB", "Penerima", "BUDI SANTOSO", "Bank Tujuan BRI", "Rekening Tujuan 0123 0100 1234 567", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Total Rp152.500", "Berita bayar arisan", "No. Ref 2026102612345678", "BI-FAST"],
+   "expect": {"doc_type": "transfer", "total": 152500, "paid_at": "2026-10-26T09:30:00+07:00", "counterparty": "BUDI SANTOSO", "status": "berhasil", "flow": "keluar"}},
+  {"id": "sint-transfer-gagal", "real": false, "lines": ["Transfer Gagal", "26 Okt 2026 10:00", "Penerima ANDI", "Bank Tujuan BCA", "Nominal Rp50.000"],
+   "expect": {"doc_type": "transfer", "total": 50000, "paid_at": "2026-10-26T10:00:00+07:00", "counterparty": "ANDI", "status": "gagal", "flow": "keluar"}},
+  {"id": "sint-topup", "real": false, "lines": ["Top Up Berhasil", "GoPay", "Nominal Rp100.000", "26/10/2026 10:15", "ID Transaksi A1B2C3D4"],
+   "expect": {"doc_type": "transfer", "total": 100000, "paid_at": "2026-10-26T10:15:00+07:00", "counterparty": null, "status": "berhasil", "flow": "top_up"}},
+  {"id": "sint-masuk", "real": false, "lines": ["Dana Masuk", "Dari RINA", "Nominal Rp500.000", "26 Okt 2026 11:00", "Berita gaji"],
+   "expect": {"doc_type": "transfer", "total": 500000, "paid_at": "2026-10-26T11:00:00+07:00", "counterparty": "RINA", "status": "berhasil", "flow": "masuk"}}
+]}

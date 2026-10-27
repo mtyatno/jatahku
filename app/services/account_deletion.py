@@ -1,18 +1,22 @@
 """Hapus akun sungguhan (mobile paket 1.2; syarat Google Play & App Store 5.1.1(v)).
 
 Yang dihapus permanen: baris `users`, sesi login (semua perangkat langsung keluar),
-notifikasi, preferensi, streak, kata kunci amplop, scan struk, order pembayaran,
-transaksi tertunda, dan foto profil/bukti bayar di disk.
+notifikasi, preferensi, streak, kata kunci amplop, scan struk (termasuk item Kotak
+Struk), order pembayaran, transaksi tertunda, dan foto profil/bukti bayar di disk.
+Berkas Kotak Struk dari item yang belum selesai tidak dihapus di sini: barisnya ikut
+terhapus, lalu penyapu berkas yatim (scheduler `kotak_maintenance`) menghapus berkasnya.
 
 Household:
 - Hanya user ini anggotanya → household dihapus utuh (amplop, transaksi, pemasukan,
-  alokasi, langganan, target, snapshot, cocokkan saldo).
-- Ada anggota lain → amplop pribadi user dihapus; catatannya di amplop bersama
+  alokasi, langganan, target, snapshot, cocokkan saldo, merchant rumah tangga dan
+  peta merchant → amplop).
+- Ada anggota lain → amplop pribadi user dihapus (beserta baris peta merchant ke
+  amplop itu; merchant-nya tetap milik household); catatannya di amplop bersama
   dianonimkan ke user "Mantan anggota" (keterangan diganti, nominal tetap) supaya
   saldo bersama tidak berubah (kajian, keputusan pemilik produk #5). Pemasukan user
   dipangkas ke jumlah yang masih teralokasi ke amplop bersama, jadi uangnya tidak
   muncul sebagai "belum dialokasikan" di household. Peran owner pindah ke anggota
-  tertua.
+  tertua. Peta merchant di amplop bersama tetap, `last_user_id` user ini dikosongkan.
 
 "Mantan anggota" satu baris `users` bersama (FORMER_MEMBER_ID), bukan anggota household
 mana pun dan tidak bisa login. Email berawalan `deleted_` supaya scheduler, admin, dan
@@ -32,8 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
-    HouseholdMember, HouseholdRole, Income, MonthlySnapshot, Notification,
-    NotificationPreference, PaymentOrder, PendingTransaction, ReceiptLearnVote,
+    HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
+    Notification, NotificationPreference, PaymentOrder, PendingTransaction, ReceiptLearnVote,
     ReceiptScan, RecurringTransaction, Transaction, User, UserEnvelopeKeyword, UserStreak,
 )
 
@@ -85,12 +89,16 @@ async def _delete_envelopes(db: AsyncSession, env_ids: list) -> None:
     if not env_ids:
         return
     for model in (Allocation, Transaction, PendingTransaction, RecurringTransaction,
-                  Goal, MonthlySnapshot, UserEnvelopeKeyword):
+                  Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap):
         await db.execute(delete(model).where(model.envelope_id.in_(env_ids)))
     await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
 
 async def _delete_household(db: AsyncSession, hid) -> None:
+    # Peta merchant dan merchant rumah tangga lebih dulu, eksplisit (tidak bergantung pada FK CASCADE).
+    merchant_ids = select(HouseholdMerchant.id).where(HouseholdMerchant.household_id == hid)
+    await db.execute(delete(MerchantEnvelopeMap).where(MerchantEnvelopeMap.merchant_id.in_(merchant_ids)))
+    await db.execute(delete(HouseholdMerchant).where(HouseholdMerchant.household_id == hid))
     env_ids = list((await db.execute(select(Envelope.id).where(Envelope.household_id == hid))).scalars())
     await _delete_envelopes(db, env_ids)
     income_ids = select(Income.id).where(Income.household_id == hid)
@@ -182,6 +190,8 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     for model in (PendingTransaction, Notification, NotificationPreference, UserStreak,
                   UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, PaymentOrder, AuthSession):
         await db.execute(delete(model).where(model.user_id == uid))
+    # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
+    await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))
     await db.flush()
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()
