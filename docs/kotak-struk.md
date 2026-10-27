@@ -7,11 +7,11 @@ setelah user mengonfirmasi**. Desain: `docs/superpowers/specs/2026-10-26-bagikan
 keputusan: ADR-M16 dan ADR-M17 (`docs/mobile/02-adr.md`). Cara struk belanja dibaca dan dicatat per barang:
 [`docs/scan-struk.md`](scan-struk.md).
 
-**Status (27 Okt 2026).** Bagian A (server, bot, API, alat korpus) selesai di branch
-`feat/bagikan-ke-jatahku-server`, menunggu merge. Saklar `features.receipt_inbox` mati. Bagian B (PWA: share
-target, halaman `/bagikan`, `ProofCard`, banner "Bukti menunggu", tombol PDF, tips Settings, rincian di UI Admin)
-belum dimulai. Kalibrasi pembaca dengan sampel nyata (A14) menunggu sampel dari pemilik produk. Perbarui bagian
-ini saat status berubah.
+**Status (28 Okt 2026).** Bagian A (server, bot, API, alat korpus) tayang 28 Okt 2026 06:01 WIB: PR #130 (squash
+`8074a57`), migrasi `a7c4e2b9d1f3`, verifikasi versi yang tayang lulus. Saklar `features.receipt_inbox` mati.
+Bagian B (PWA: share target, halaman `/bagikan`, `ProofCard`, banner "Bukti menunggu", tombol PDF, tips Settings,
+rincian di UI Admin) belum dimulai; dikerjakan di branch `feat/bagikan-ke-jatahku-web`. Kalibrasi pembaca dengan
+sampel nyata (A14) menunggu sampel dari pemilik produk. Perbarui bagian ini saat status berubah.
 
 ## Alur
 
