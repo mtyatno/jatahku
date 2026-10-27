@@ -446,7 +446,8 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
   "BERHASIL"), dan bukti tanpa status sama sekali; untuk teks seperti itu pembaca struk masih bisa menyimpan nomor
   berkelompok sebagai rincian ("Ke BUDI 1234", 5678, 9012). Bukti satu penanda yang sama sekali tidak memuat judul
   status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris
-  tunai/bayar) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap terbaca).
+  tunai dan tanpa kolom jumlah barang) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap
+  terbaca).
 - **Bagian B belum ada**: chat web menyebut "Bukti menunggu di beranda" tetapi banner itu belum ada; item yang
   `siap` bisa dilihat lewat API tetapi belum lewat UI web.
 
