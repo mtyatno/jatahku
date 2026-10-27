@@ -1533,6 +1533,28 @@ class StatusTitlesNextToNameLabelsTests(unittest.IsolatedAsyncioTestCase):
                 res = await read(lines, enabled=False)
                 self.assertEqual([c for c in res.checks if c.level == "block"], [])
 
+    async def test_success_title_on_a_name_line_cannot_mask_a_failure_below(self):
+        """Judul status di baris nama ("Tujuan" + "Transfer CV SUKSES JAYA", "Penerima" + "Transfer Sukses Abadi") hanya
+        boleh menyumbang gagal/pending, tidak pernah berhasil: kalau tidak, "berhasil" palsu di judul menutupi kegagalan
+        di bawah baris 4 (A5, diparkir)."""
+        for lines in (["Tujuan Transfer CV SUKSES JAYA", "26 Okt 2026 10:00", "Bank Tujuan BCA", "Nominal Rp50.000", "Biaya Rp0",
+                       "Transaksi Gagal"],
+                      ["Penerima Transfer Sukses Abadi", "Bank BCA", "Nominal Rp50.000", "Biaya Rp0", "Ref 123456", "Transfer Gagal"],
+                      ["Penerima", "Transfer Sukses Abadi", "Bank BCA", "Nominal Rp50.000", "Biaya Rp0", "Transfer Gagal"]):
+            with self.subTest(lines[:2]):
+                self.assertEqual(pc.read_status(lines), "gagal")
+                res = await read(lines)
+                self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}),
+                                 ("transfer.umum", "gagal", {"status_gagal": "block"}))
+                # Saklar mati: pembaca struk dan pembaca tidak dikenali hanya membaca judul (4 baris pertama, aturan A5).
+                # Judul nama itu tidak lagi menyebut transaksinya berhasil; kegagalan di baris 6 di luar jangkauan jalur itu.
+                self.assertIsNone(pc.read_header_status(lines))
+                self.assertIn((await read(lines, enabled=False)).reader, ("struk_belanja", "tidak_dikenali"))
+        self.assertEqual(pc.read_status(["Transfer Berhasil", "Tujuan Transfer CV SUKSES JAYA", "Nominal Rp50.000"]), "berhasil")
+        self.assertEqual(pc.read_status(["Tujuan Transfer Berhasil", "Nominal Rp50.000"]), "tidak_diketahui")   # tanpa status lain
+        self.assertEqual(pc.read_status(["Merchant Pembayaran Gagal", "Nominal Rp50.000"]), "gagal")              # tetap seperti dulu
+        self.assertEqual(pc.read_status(["Penerima", "Transfer Diproses", "Nominal Rp50.000"]), "pending")       # pending tetap boleh
+
     def test_status_title_unit_rules(self):
         for text, expect in [("Transfer Gagal", True), ("Pembayaran Gagal", True), ("rekening gagal didebet", True), ("Transaksi Anda Gagal", True),
                              ("Top Up Gagal", True), ("Payment failed", True), ("Transaksi yang pending", True),

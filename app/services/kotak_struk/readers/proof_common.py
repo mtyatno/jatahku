@@ -448,7 +448,9 @@ def _status_part(text: str) -> str:
 # Baris nama pihak lawan ("Merchant TOKO GAGAL MANIA", "Penerima CV SUKSES", atau nama di bawah label "Merchant" yang berdiri
 # sendiri): kata status di dalam nama bukan status transaksi. Kecuali bila baris itu sendiri judul status (`_is_status_title`):
 # OCR bisa kehilangan nama di bawah "Merchant" sehingga "Pembayaran Gagal" jatuh di bawah label itu, dan "Tujuan Transfer Gagal"
-# atau "Dari rekening gagal didebet" diawali kata yang kebetulan label nama.
+# atau "Dari rekening gagal didebet" diawali kata yang kebetulan label nama. Judul dari baris nama hanya boleh menyumbang
+# gagal/pending, tidak pernah berhasil: "Tujuan Transfer CV SUKSES JAYA" juga berbentuk judul, dan "berhasil" palsu di judul
+# akan menutupi kegagalan di bawah baris 4.
 _NAME_FIELDS = ("merchant", "sender")
 # Judul status: kata benda transaksi, paling banyak 3 kata lain, lalu kata status ("Transfer Gagal", "Transaksi Anda Gagal",
 # "Payment failed", "Top Up Gagal", "rekening gagal didebet"). Nama seperti "TOKO GAGAL MANIA" atau "BUDI GAGAL" tidak.
@@ -470,7 +472,7 @@ def _name_label_end(text: str) -> int | None:
 
 def _status_lines(texts: list[str], max_words: int) -> list[str]:
     """Bagian status dari baris yang cukup pendek. Baris nama pihak lawan (dan nilai di bawah label nama yang berdiri
-    sendiri) dilewati, kecuali yang berupa judul status. Frasa bantuan (`_HELP_PHRASE`) dibuang sebelum status dibaca, dan
+    sendiri) dilewati, kecuali yang berupa judul status gagal/pending. Frasa bantuan (`_HELP_PHRASE`) dibuang sebelum status dibaca, dan
     pembuangan itu hanya boleh MENGURANGI status: baris yang sejak awal bukan kalimat status ("Untuk transaksi pending atau
     gagal hubungi 14017" dibuka "Untuk") tetap dilewati walau sisa frasanya memuat kata status."""
     out, name_below = [], False
@@ -480,15 +482,19 @@ def _status_lines(texts: list[str], max_words: int) -> list[str]:
         if label_end is not None:
             text = text[label_end:].strip(" :：")
             name_below = not text
-            if not _is_status_title(text):
-                continue
-        elif is_name and not _is_status_title(text):
+            from_name = True
+        else:
+            from_name = is_name
+        if from_name and not _is_status_title(text):
             continue
         if len(text.split()) > max_words or not _is_status_sentence(text):
             continue
         text = _HELP_PHRASE.sub(" ", text)
         if _is_status_sentence(text):
-            out.append(_status_part(text))
+            part = _status_part(text)
+            if from_name and _classify(part) == BERHASIL:   # judul di baris nama: hanya gagal/pending (lihat _NAME_FIELDS)
+                continue
+            out.append(part)
     return out
 
 
