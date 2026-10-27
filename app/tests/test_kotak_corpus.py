@@ -472,8 +472,18 @@ class ReviewFlagTests(unittest.TestCase):
                 self.assertTrue(needs_review(f"Ref 08:12{dash}…4567"))
                 self.assertTrue(needs_review(f"Rek 1.234{dash}…5678"))     # pemisah yang sama untuk nominal tanpa Rp
                 self.assertFalse(needs_review(f"08:12:33{dash}Rp25.000"))   # tetangga di rentang lain tetap sunyi
-        self.assertFalse(needs_review("Ref …9281~05:39"))      # "~" bukan strip
-        self.assertFalse(needs_review("Ref …9281⁃05:39"))      # U+2043 (tanda hubung bulatan) bukan bagian _DASH
+        # "~" dan U+2043 (tanda hubung bulatan) bukan strip: jam yang bersebelahan lewat tanda itu tetap sunyi. (Pin lama
+        # "Ref …9281~05:39" mengunci 8 digit yang terlihat sebagai sunyi; yang dipin kini baris bersih.)
+        self.assertFalse(needs_review("08:12 ~ 08:15"))
+        self.assertFalse(needs_review("Jam 08:12⁃WIB"))
+
+    def test_thousands_shaped_fragments_next_to_digits_are_flagged(self):
+        # m-i: potongan nomor berbentuk nominal ribuan yang bersebelahan dengan digit lain atau penanda (lewat spasi, tab,
+        # atau dua spasi) tetap ditandai sesudah disamarkan.
+        for line in ["No. Rek 703.123.456 700", "Rek 1.234 5 9.012", "RRN 182.222,00 8783", "Rek 1.234\t…5678",
+                     "Rek 1.234  …5678"]:
+            with self.subTest(line):
+                self.assertTrue(needs_review(mask_line(line)))
 
     def test_grouped_fragment_next_to_a_number_counts(self):
         # I1-r4 (ruling): nominal ribuan tanpa Rp/IDR yang menempel digit, penanda, atau huruf mirip angka — langsung,
@@ -863,6 +873,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("nama samaran", out)
         self.assertIn("dua baris", out)                  # nomor yang terpotong ke baris berikutnya
         self.assertIn("huruf", out)                      # referensi campuran huruf dan angka pendek
+        self.assertIn("dua nominal berbentuk ribuan", out)   # nomor yang terbaca sebagai nominal ("614.534 681.544")
         self.assertEqual(sorted(p.name for p in self.corpus.parent.iterdir()), ["corpus.json"])
 
     def test_add_reads_the_masked_lines(self):

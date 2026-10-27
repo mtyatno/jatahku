@@ -566,10 +566,13 @@ def _err(message: str) -> int:
 _NAME_REMINDER = ("Nama orang pribadi: samarkan di baris (selain penerima/merchant yang dibutuhkan) dan di user_name. "
                   "user_name dan nama penerima transfer ke rekening sendiri adalah nama pribadi — ganti keduanya "
                   "dengan nama samaran yang sama.")
-# Dua hal yang tidak bisa dideteksi alat ini (penyamaran per baris, aturan >= 6 digit): hanya tinjauan manusia.
+# Yang tidak bisa dideteksi alat ini (penyamaran per baris, aturan >= 6 digit, nominal berbentuk ribuan dibiarkan): hanya
+# tinjauan manusia.
 _LIMITS_REMINDER = ("Yang tidak terdeteksi alat ini, cek sendiri: nomor yang terpotong ke dua baris (mis. \"61234\" lalu "
                     "\"…8812\" di baris berikutnya) dan nomor referensi campuran huruf dan angka pendek "
-                    "(mis. \"TRX61234AB5678\") — samarkan dengan tangan.")
+                    "(mis. \"TRX61234AB5678\") — samarkan dengan tangan. Juga nomor yang terbaca sebagai dua nominal "
+                    "berbentuk ribuan (mis. \"RRN 614.534 681.544\") atau terpotong tanda lain (\"703.123|…6700\") — alat "
+                    "ini membacanya sebagai nominal.")
 
 
 def cmd_add(args) -> int:
