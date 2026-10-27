@@ -216,7 +216,7 @@ Rincian barang & idempotensi tidak menambah paket maupun tabel — cukup merge
 (deploy otomatis). Langkah di bawah hanya untuk pemasangan awal scan struk.
 Kotak Struk menambah `pypdfium2` (PDF), folder berkas sementara, `KOTAK_HMAC_KEY`, dan satu revisi alembic:
 langkahnya di [`docs/kotak-struk.md`](kotak-struk.md) bagian "Deploy manual" dan `AGENTS.md`
-"Deploy Checklist — Kotak Struk".
+"Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — belum jalan, menunggu merge".
 
 Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 

@@ -118,9 +118,9 @@ yang minimal 2 katanya ada di nama akun (`apply_flow`).
 |---|---|---|
 | 1. `upload_id` | Sama, per user (ketuk Bagikan dua kali, kirim ulang). Indeks unik parsial `(user_id, upload_id)` | Item yang ada dikembalikan (200), tidak ada item baru |
 | 2. Hash file | `file_sha256` sama dengan item user yang masih terbuka (`diterima`, `diproses`, `siap`) | Item itu dikembalikan |
-| 2b. Hash file tercatat | Sama dengan item `tercatat` di rumah tangga | Item baru tetap dibuat; `flags` (dihitung saat item ditampilkan) berisi `duplicate_of = {kind: "file"}` dan `blocked = "sudah_tercatat"` |
-| 3. `ref_hash` | HMAC nomor referensi sama dengan item `tercatat` di rumah tangga | `duplicate_of = {kind: "ref"}`, diblokir |
-| 3b. Referensi anggota lain | Sama dengan item `siap` milik anggota rumah tangga lain | Hanya peringatan "Bukti ini juga dibagikan {nama}"; yang tercatat lebih dulu memblokir yang lain (lapis 3) |
+| 2b. Hash file tercatat | Sama dengan item `tercatat` di rumah tangga | Item baru tetap dibuat; `flags` (dihitung saat item ditampilkan) berisi `duplicate_of = {kind: "file", item_id, recorded: true}` dan `blocked = "sudah_tercatat"` |
+| 3. `ref_hash` | HMAC nomor referensi sama dengan item `tercatat` di rumah tangga | `duplicate_of = {kind: "ref", item_id, recorded: true}` dan `blocked = "sudah_tercatat"` |
+| 3b. Referensi anggota lain | Sama dengan item `siap` milik anggota rumah tangga lain | `duplicate_of = {kind: "ref", item_id, recorded: false, by}` plus peringatan "Bukti ini juga dibagikan {nama}"; **tidak memblokir**. Begitu salah satunya tercatat, yang lain terkena lapis 3 |
 | 4. Lunak | Item `siap` bernominal sama dengan transaksi rumah tangga yang belum dihapus, tanggal transaksi = tanggal bayar (WIB), dan dicatat dalam ±3 jam dari `paid_at`; hanya amplop yang boleh dilihat user | `duplicate_of = {kind: "soft", transaction}`; tidak memblokir: "Sama, lewati" atau "Beda, catat" |
 | Klaim atomik | `claim_for_recording` | Lihat di bawah |
 
@@ -138,7 +138,8 @@ Urutan sinyal (`suggest.py`), hasil `{envelope_id, envelope_name, confident, sou
 
 1. **Catatan user** → `find_best_envelope(catatan)`.
 2. **Peta merchant rumah tangga**: amplop dengan `count` terbesar (seri: `last_used_at` terbaru); `confident`
-   bila `count`-nya ≥ 2/3 dari total `count` merchant itu.
+   bila `count`-nya ≥ 2/3 dari total `count` merchant itu di amplop yang boleh disarankan ke user (aktif, `expense`, bersama
+   atau pribadi user; amplop lain tidak ikut dihitung).
 3. **Kata kunci nama merchant** (nama panggilan bila ada) → `find_best_envelope`.
 4. Tidak ada sinyal → tanpa saran.
 
@@ -151,8 +152,9 @@ Keterangan transaksi (`compose_description`, maks 500 karakter): `Siti Aminah (Q
 dengan catatan `bakso 2, es teh (Siti Aminah)`. **Belajar hanya dari transaksi yang benar-benar tercatat**
 (`record.mark_recorded`): untuk QRIS dan transfer, `merchant_envelope_map.count + 1`; kata kunci hanya dari **catatan
 user**, tanpa nama merchant, "(QRIS)", dan "transfer ke" (`learn_text_for_item`). Melewati item tidak mengajari apa
-pun. Struk belanja dan `tidak_dikenali` tidak masuk peta merchant (saran per barang tetap kata kunci; umpan balik
-struk lewat `apply_feedback`).
+pun. Struk belanja dan `tidak_dikenali` hanya mendapat baris `household_merchants` (nama, nama panggilan) dari worker,
+kecuali teks yang tampak seperti bukti bayar (lihat "Privasi"); `merchant_envelope_map` tidak pernah belajar darinya
+(saran per barang tetap kata kunci; umpan balik struk lewat `apply_feedback`).
 
 Peta ada di dua tabel per rumah tangga: `household_merchants` (`counterparty_key`, `raw_name`, `display_name`
 = nama panggilan opsional dari user, `city`) dan `merchant_envelope_map` (`merchant_id`, `envelope_id`, `count`,
@@ -220,7 +222,9 @@ selesai ("Masih ada bukti yang sedang dibaca. Tunggu sebentar.").
 **Detail item**: `id`, `status`, `doc_type`, `source`, `created_at`, `paid_at`, `document`, `merchant`
 (`{id, name, display_name}`), `suggestion`, `description_preview`, `flags`, `error`. `flags` =
 `{duplicate_of, skip_suggestion, blocked, warnings[]}`: `duplicate_of.kind` = `file` | `ref` | `soft`;
-`skip_suggestion` = `top_up` | `masuk` | `antar_rekening_sendiri`; `blocked` = `transaksi_gagal` | `sudah_tercatat`.
+`skip_suggestion` = `top_up` | `masuk` | `antar_rekening_sendiri`; `blocked` = `transaksi_gagal` | `sudah_tercatat`. `duplicate_of` terisi
+dengan `recorded` (true untuk file/ref yang sudah tercatat, false untuk referensi anggota lain yang masih `siap`; lunak tidak memuat
+`recorded`). **Yang memblokir hanya `blocked`**, bukan `duplicate_of.kind`: klien tidak boleh menolak bukti hanya karena `kind: "ref"`.
 Item `diterima`/`diproses`/`gagal` hanya memuat kolom dasar (tanpa `document`, `merchant`, saran).
 
 **`receipt_item_id` di `POST /transactions` dan `/batch`**: dicek setelah `client_ref` (kirim ulang tetap
@@ -335,7 +339,7 @@ tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti
 ## Deploy manual (sekali)
 
 Deploy otomatis tidak memasang paket Python dan tidak menjalankan alembic, jadi ada langkah manual. Daftar yang
-sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk (a7c4e2b9d1f3)". PR Bagian A berlabel `migrasi`.
+sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — belum jalan, menunggu merge". PR Bagian A berlabel `migrasi`.
 
 1. **Sebelum merge** (aman untuk kode lama):
    `sudo -u jatahku /opt/jatahku/venv/bin/pip install pypdfium2==5.13.0` (versi sama dengan `requirements.txt`);
@@ -349,8 +353,8 @@ sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk (a7c4e2b9d
    `deploy.sh` mengakhiri deploy dengan exit 2. Lalu `sudo systemctl restart jatahku`.
 4. **Uji** (saklar masih mati): kirim foto struk Indomaret ke bot → pesan struk lama **tanpa** baris sisa scan;
    kirim PDF → bot membalas hasil, bukan "📄 File belum didukung" (jawaban "Baca bukti sedang tidak bisa" berarti
-   `pypdfium2` belum terpasang); kirim bukti QRIS → pesan struk berkeyakinan rendah, dan Admin → statistik
-   `unrecognized` bertambah. Bot menjawab "Bukti tidak bisa dibaca" untuk semua file → cek `journalctl -u jatahku`
+   `pypdfium2` belum terpasang); kirim bukti QRIS → pesan struk berkeyakinan rendah, dan `GET /admin/receipt-scans/stats` (admin)
+   → `unrecognized` bertambah (UI Admin belum menampilkannya). Bot menjawab "Bukti tidak bisa dibaca" untuk semua file → cek `journalctl -u jatahku`
    (biasanya `KOTAK_DIR` tidak ada atau tidak bisa ditulis).
 5. **Saklar tetap mati sampai gerbang korpus lulus** (bagian berikut). Setelah itu nyalakan seperti di "Saklar
    fitur", lalu kirim dua bukti QRIS dari merchant yang sama (catat yang pertama): yang kedua datang dengan ⭐.
@@ -364,6 +368,8 @@ yang diharapkan. **Berkas bukti asli tidak pernah di-commit** (alatnya tidak men
 python -m app.scripts.kotak_corpus add <berkas> --id <id> [--real] [--user-name NAMA] [--corpus PATH]
 python -m app.scripts.kotak_corpus eval [--real-only] [--corpus PATH]
 ```
+
+Di VPS: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only`.
 
 - **`add`** menerima `.txt`, `.pdf`, atau gambar; mengekstrak teks (OCR/lapisan teks), menyamarkan tiap baris
   (`mask_line`: deret ≥ 6 digit menjadi `…dddd`; nominal, tanggal, jam, dan NMID dibiarkan), menjalankan pembaca pada

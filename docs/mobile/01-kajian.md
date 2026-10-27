@@ -233,6 +233,8 @@ Rekomendasinya: rilis Android pertama tanpa penjualan di aplikasi, dengan Pro ya
 
 ## Fitur "Bagikan ke Jatahku"
 
+> **Catatan (26 Okt 2026).** Bullet di bawah adalah rancangan awal. Rilis 1 menyimpan tanpa pratinjau gambar (spec §6b; pratinjau menyusul di FS-2), memakai status yang sebenarnya di `docs/kotak-struk.md`, dan menyerahkan drag-and-drop PDF di desktop ke FS-2.
+
 Fitur ini layak menjadi fitur inti rilis pertama, karena cocok dengan prinsip Jatahku sebagai cermin: user mencatat setelah membayar, dan bukti bayarnya sudah ada di HP. Fitur ini menuntut tujuh perubahan sistem. Di server ada empat: Kotak Struk asinkron dengan worker OCR terpisah, pembaca PDF, parser untuk bukti transfer, e-wallet, tagihan, dan invoice, serta deteksi duplikat dan bukan pengeluaran. Di aplikasi ada tiga: penerima share di Android, Share Extension iOS dengan token unggah-saja, dan notifikasi "siap dicatat".
 
 ### Dokumen yang ditangani
@@ -368,7 +370,7 @@ Total sampai kedua toko sekitar 76 hari kerja efektif (rentang 66–86), termasu
 
 Fase ini dikerjakan selama closed test Android berjalan. Hasilnya langsung bisa dipakai di web dan Telegram, sehingga data koreksi untuk belajar sudah terkumpul sebelum aplikasi rilis.
 
-**Dipecah menjadi FS-1 dan FS-2 (26 Okt 2026).** Tabel di bawah adalah rencana awal. Rilis 1 (FS-1) mengerjakan FS.1 tanpa service terpisah, FS.2, FS.3, FS.4a dan bagian QRIS/transfer dari FS.4b, FS.5, FS.6, FS.7, sebagian FS.8 (`ProofCard` + banner), FS.9 (Web Share Target kini wajib, PDF di bot), dan FS.11. FS-2 menyusul: tagihan (sisa FS.4b), FS.4c marketplace, invoice umum, worker sebagai service terpisah, FS.10 notifikasi push, dan 6.7 email. Pembagian kode sesi dan status: `03-workflow.md` §6 dan `PROGRESS.md`; ADR-M17 di `02-adr.md`.
+**Dipecah menjadi FS-1 dan FS-2 (26 Okt 2026).** Tabel di bawah adalah rencana awal. Rilis 1 (FS-1) mengerjakan FS.1 tanpa service terpisah, FS.2, FS.3, FS.4a dan bagian QRIS/transfer dari FS.4b, FS.5, FS.6, FS.7, sebagian FS.8 (`ProofCard` + banner), FS.9 (Web Share Target kini wajib, PDF di bot, tombol PDF di form Catat), dan FS.11. FS-2 menyusul: tagihan (sisa FS.4b), FS.4c marketplace, invoice umum, worker sebagai service terpisah, FS.10 notifikasi push, 6.7 email, dan drag-and-drop PDF di desktop (sisa FS.9). FS.11 di rilis 1 menyimpan tanpa pratinjau gambar (spec §6b; pratinjau menyusul di FS-2). Pembagian kode sesi dan status: `03-workflow.md` §6 dan `PROGRESS.md`; ADR-M17 di `02-adr.md`.
 
 | ID | Pekerjaan | File / komponen | Selesai bila | hk | Tergantung |
 | --- | --- | --- | --- | --- | --- |

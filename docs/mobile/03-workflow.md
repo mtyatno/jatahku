@@ -75,8 +75,8 @@ AI Advisor v2 sedang dikembangkan paralel (lihat `docs/ai-advisor/PROGRESS.md`).
 Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 191 sesi (O 17, A 83, B 91; 1.4b ditambahkan 17 Okt 2026 dengan kode A78–A83 supaya kode sesi lain tidak bergeser), termasuk 17 sesi fitur native v1.x. Dengan dua developer paralel, Android tayang sekitar minggu ke-10 dan iOS minggu ke-12 (satu pengembang penuh waktu: minggu ke-14 dan 17, lihat `01-kajian.md`). Minggu 1 dimulai pada tanggal yang diisi di tracker.
 
 **Paket FS dipecah menjadi FS-1 dan FS-2 (26 Okt 2026, spec `docs/superpowers/specs/2026-10-26-bagikan-ke-jatahku-design.md`).** Kode sesi tidak digeser; paket yang terbagi memecah rentang kodenya (mis. FS.1: A30–A33 di FS-1, A34 di FS-2), jumlah sesi per paket tetap, dan total 191 tidak berubah.
-- **FS-1 (rilis 1, ADR-M16 dan M17):** FS.1 tanpa service terpisah, FS.2, FS.3, FS.4a dan bagian QRIS/transfer dari FS.4b, FS.5, FS.6, FS.7, sebagian FS.8 (`ProofCard` + banner), FS.9 (Web Share Target kini wajib, PDF di bot), dan FS.11. Bagian A (server, bot, API, alat korpus) selesai di branch `feat/bagikan-ke-jatahku-server`, menunggu merge; Bagian B (PWA: share target, `/bagikan`, `ProofCard`, banner, PDF di form) belum dimulai; A14 (kalibrasi, kode sesi A28) menunggu sampel nyata. Rincian: `docs/kotak-struk.md`.
-- **FS-2 (menyusul):** tagihan (sisa FS.4b), FS.4c marketplace, invoice umum (baru), worker sebagai service terpisah, FS.10 notifikasi push, dan 6.7 email. Minggu belum ditetapkan.
+- **FS-1 (rilis 1, ADR-M16 dan M17):** FS.1 tanpa service terpisah, FS.2, FS.3, FS.4a dan bagian QRIS/transfer dari FS.4b, FS.5, FS.6, FS.7, sebagian FS.8 (`ProofCard` + banner), FS.9 (Web Share Target kini wajib, PDF di bot, tombol PDF di form Catat), dan FS.11. Bagian A (server, bot, API, alat korpus) selesai di branch `feat/bagikan-ke-jatahku-server`, menunggu merge; Bagian B (PWA: share target, `/bagikan`, `ProofCard`, banner, tombol PDF di form) belum dimulai; A14 (kalibrasi, kode sesi A28) menunggu sampel nyata. Rincian: `docs/kotak-struk.md`.
+- **FS-2 (menyusul):** tagihan (sisa FS.4b), FS.4c marketplace, invoice umum (baru), worker sebagai service terpisah, FS.10 notifikasi push, 6.7 email, dan drag-and-drop PDF di desktop (sisa FS.9). Sisa FS.5 (sampel marketplace, A29) dan sisa FS.8 (invoice per barang, A60–A62) ikut FS.4c ke FS-2. Minggu belum ditetapkan, jadi A75–A77 (6.4, minggu 10) dan B62–B67 (5.8, minggu 9), yang butuh FS.10, bergantung pada paket FS-2 yang belum dijadwalkan: minggu itu di tabel bukan tanggal pasti.
 
 | Kode sesi | WBS | Paket | Sesi | Minggu | Butuh | Selesai bila | Koordinasi AI Advisor |
 |---|---|---|---|---|---|---|---|
@@ -102,7 +102,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | A21–A22 | 1.7 | Izin eksplisit sebelum audio/foto dikirim ke Groq | 2 | 3 | 0.4 | Tanpa izin, data tidak dikirim | `ChatPanel.jsx` |
 | A23–A24 | 1.8 | Amankan endpoint /auth/link/* | 2 | 3 | – | Panggilan tanpa secret ditolak |  |
 | A25 | 1.9 | Bundel font lokal | 1 | 4 | – | Tampilan sama saat offline |  |
-| A26–A27 | FS.5 | **FS-1** Korpus uji dan gerbang rilis: alat `kotak_corpus`, sampel tersamarkan 8 bank dan 4 e-wallet, tes gerbang | 2 | 4 | 1.4 | Gerbang akurasi jalan di CI |  |
+| A26–A27 | FS.5 | **FS-1** Korpus uji dan gerbang rilis: alat `kotak_corpus`, 6 sampel sintetis, tes gerbang (dilewati sampai A28) | 2 | 4 | 1.4 | Alat dan tes gerbang jalan di CI; gerbang nyata di A28 |  |
 | A28 | FS.5 | **FS-1** Kalibrasi dengan sampel nyata (8 bank, 4 e-wallet): label per aplikasi, titik yang diparkir di `docs/kotak-struk.md` | 1 | 4 | A26–A27, sampel dari pemilik produk | `kotak_corpus eval --real-only` lulus; baru boleh menyalakan saklar `receipt_inbox` |  |
 | A30–A33 | FS.1 | **FS-1** Kotak Struk: perluas receipt_scans, antrean tahan restart, worker OCR di proses API (tanpa service terpisah) | 4 | 4 | F1 | Item bertahan saat restart |  |
 | A35–A37 | FS.2 | **FS-1** API Kotak Struk: unggah gambar/PDF/teks idempoten, daftar, lewati | 3 | 5 | FS.1 | Unggahan ganda tidak membuat item baru |  |
@@ -113,8 +113,8 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | A56–A57 | FS.7 | **FS-1** Saran amplop dan belajar untuk jenis dokumen baru | 2 | 7 | FS.4a | Penerima yang sama langsung disarankan |  |
 | A58–A59 | FS.8 | **FS-1** `ProofCard` dan banner "Bukti menunggu" di web (dipakai juga di app); sebagian FS.8 | 2 | 8 | FS.2, FS.6 | Konfirmasi satu ketukan bila yakin |  |
 | A65 | FS.9 | **FS-1** Paritas kanal, sisi server: PDF di bot Telegram dan di `scan-receipt` | 1 | 9 | FS.2 | PDF yang sama memberi hasil sama di bot dan form Catat | `bot/*` (AI Advisor S17) |
-| A66–A67 | FS.9 | **FS-1** Paritas kanal, sisi web: PDF dan drag-and-drop di form Catat; Web Share Target PWA (kini wajib, bukan opsional) | 2 | 9 | FS.2 | Hasil sama di web, bot, app |  |
-| A68 | FS.11 | **FS-1** Privasi: hapus file asli, tanpa nomor rekening; formulir toko | 1 | 9 | FS.1, 0.4 | Tidak ada file asli tersisa |  |
+| A66–A67 | FS.9 | **FS-1** Paritas kanal, sisi web: tombol PDF di form Catat; Web Share Target PWA (kini wajib, bukan opsional) | 2 | 9 | FS.2 | Hasil sama di web, bot, app |  |
+| A68 | FS.11 | **FS-1** Privasi: hapus file asli, tanpa nomor rekening; formulir toko. Sisi server selesai di branch; sisa: `privacy.html`, DPIA, dan formulir toko, sebelum saklar `receipt_inbox` menyala | 1 | 9 | FS.1, 0.4 | Tidak ada file asli tersisa |  |
 | A69–A72 | 5.5a | Billing server: validasi Play dan App Store, hak per sumber, refund | 4 | 9 | 1.6 | Validasi sandbox lulus |  |
 | A73–A74 | 6.1 | Token widget baca-saja + /widget/summary | 2 | 10 | 1.1 | Token bisa dicabut |  |
 | A75–A77 | 6.4 | Tombol aksi "Catat ke amplop" di notifikasi struk | 3 | 10 | FS.10 | Tercatat dari notifikasi, bisa dibatalkan |  |
@@ -125,8 +125,9 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | A49–A52 | FS.4c | **FS-2** Parser invoice marketplace (barang, ongkir, biaya, diskon) | 4 | – | FS.4a | Sampel invoice lolos |  |
 | A60–A62 | FS.8 | **FS-2** UI Kotak Struk, sisanya: invoice per barang, ongkir dan biaya sebagai penambah | 3 | – | FS.4c | Konfirmasi invoice satu ketukan bila yakin |  |
 | A63–A64 | FS.10 | **FS-2** Notifikasi struk siap dicatat + pengingat harian | 2 | – | 3.5 | Push tiba; bisa dimatikan | `notification_service.py` (AI Advisor S16) |
+| – | FS.9 | **FS-2** Drag-and-drop PDF di desktop (sisa FS.9; spec "Di luar cakupan rilis 1"); kode sesi menyusul | – | – | FS.2 | PDF bisa dijatuhkan ke form Catat di desktop |  |
 | – | baru | **FS-2** Invoice umum: pembaca LLM umum sebagai pembaca terakhir di registri, dengan prompt sendiri | – | – | FS.4c | Belum diestimasi; kode sesi ditambahkan saat dijadwalkan |  |
-| – | 6.7 | **FS-2** Opsional: terusan email invoice ke alamat khusus per user, masuk ke Kotak Struk (2 sesi, di luar total) | – | – | FS.2 | Invoice yang diteruskan muncul di Kotak Struk |  |
+| – | 6.7 | **FS-2** Opsional: terusan email invoice ke alamat khusus per user, masuk ke Kotak Struk (±2 hk, di luar total; kode sesi menyusul) | – | – | FS.2 | Invoice yang diteruskan muncul di Kotak Struk |  |
 | **Dev B · mobile** | | | | | | | |
 | B01–B06 | 1.5 | Lapisan src/native/ versi web; pindahkan semua pemanggil | 6 | 1 | 1.3 | Perilaku web identik | `lib/api.js`, `ChatPanel.jsx` (AI Advisor S8/S11) |
 | B07–B10 | 1.10 | Pemeriksaan tablet di web (md/lg, rotasi) | 4 | 1 | – | Tangkapan layar tablet diperiksa | `Layout.jsx`, `Dashboard.jsx` (AI Advisor S6–S8) |

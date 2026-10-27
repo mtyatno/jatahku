@@ -187,9 +187,10 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
 5. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
    `a7c4e2b9d1f3`. Lalu `sudo systemctl restart jatahku`.
 6. Uji (saklar mati): kirim foto struk ke bot → pesan struk tanpa baris sisa scan; kirim PDF → hasil, bukan
-   "📄 File belum didukung"; `ls /var/lib/jatahku/kotak` kosong setelah item selesai; `grep -c ^KOTAK_HMAC_KEY= /opt/jatahku/.env` → 1.
-7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus (`python -m app.scripts.kotak_corpus
-   eval --real-only` di VPS; `docs/kotak-struk.md` bagian "Alat korpus"). Menyalakannya = keputusan pemilik produk.
+   "📄 File belum didukung"; `sudo ls -A /var/lib/jatahku/kotak` kosong setelah item selesai; `sudo grep -c '^KOTAK_HMAC_KEY=' /opt/jatahku/.env` → 1.
+7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus: `cd /opt/jatahku/app && sudo -u jatahku
+   /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
+   "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
