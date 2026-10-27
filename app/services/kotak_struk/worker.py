@@ -14,6 +14,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import NamedTuple
@@ -174,7 +175,14 @@ class _Outcome(NamedTuple):
     columns: dict
     raw_name: str | None
     city: str | None
-    unread_proof: bool   # teks bukti bayar yang dibaca pembaca struk/tak dikenali: tanpa teks OCR, tanpa peta merchant
+    # Teks bukti bayar yang dibaca pembaca struk/tak dikenali: tanpa teks OCR, rincian baris, nama, dan peta merchant.
+    unread_proof: bool
+
+
+def _plain_evidence(evidence: list[str]) -> list[str]:
+    """Bukti (`evidence`) tanpa yang mengutip baris OCR ('Baris "..."', 'Non-tunai "..."') atau memuat angka: kutipan
+    baris bukti bayar bisa memuat nomor rekening/HP utuh ('Non-tunai "Rekening Debit 0123 0100 1234 567"')."""
+    return [e for e in evidence if '"' not in e and not any(c.isdigit() for c in e)]
 
 
 def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
@@ -190,15 +198,26 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
     # diperlakukan sebagai bukti. Bukti yang dibaca pembaca QRIS/transfer sendiri tidak masuk sini: tidak menyimpan
     # teks OCR dari awal, dan pihak penerimanya memang masuk peta merchant.
     unread_proof = doc.doc_type not in PROOF_TYPES and looks_like_proof(text)
+    cp = doc.counterparty
     document = doc.to_json()
-    if store_receipt:
+    if unread_proof:
+        # Yang dibaca pembaca struk dari teks bukti bayar bukan rincian belanja: "barang"-nya potongan nomor rekening/HP
+        # ("Rekening Tujuan 0123 0100", harga satuan 1234, nominal 567), "merchant"-nya judul status ("Transfer
+        # Berhasil") atau baris pertama yang bisa memuat nomor HP, `evidence` mengutip baris utuh, dan data respons scan
+        # lama (`receipt`) mengutip label baris. Yang disimpan hanya nominal, waktu, status, keyakinan, dan cek. Kunci
+        # pihak dibentuk tanpa nama tebakan itu (teks yang dibaca pembaca struk tidak punya NMID/rekening: kuncinya None).
+        cp = replace(cp, name=None)
+        document["lines"] = []
+        document["counterparty"]["name"] = None
+        document["evidence"] = _plain_evidence(document["evidence"])
+    elif store_receipt:
         document["receipt"] = {key: extra.get(key) for key in RECEIPT_KEYS}
     paid_at = doc.paid_at
     if paid_at is not None and paid_at.tzinfo is None:
         paid_at = paid_at.replace(tzinfo=WIB)
-    cp = doc.counterparty
     total = doc.amounts.total
-    # Teks OCR hanya untuk struk belanja sungguhan (belajar dari umpan balik); teks bukti bayar tidak disimpan.
+    # Teks OCR, rincian baris, dan data belajar struk (nama, label total) hanya untuk struk belanja sungguhan (belajar
+    # dari umpan balik); teks bukti bayar tidak disimpan.
     ocr_lines = extra.get("ocr_lines") if store_receipt and not unread_proof else None
     columns = {
         "doc_type": doc.doc_type,
@@ -206,11 +225,11 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         "parser": res.reader[:40],
         "engine": extra.get("engine") or "rapidocr",
         "merchant": _cut(cp.name, 100),
-        "merchant_key": _cut(extra.get("merchant_key"), 60),
+        "merchant_key": None if unread_proof else _cut(extra.get("merchant_key"), 60),
         "parsed_total": Decimal(total) if total else None,
         "parsed_date": paid_at.astimezone(WIB).date() if paid_at else None,
         "confidence": doc.confidence.get("total") or "gagal",
-        "total_label": _cut(extra.get("total_label"), 100),
+        "total_label": None if unread_proof else _cut(extra.get("total_label"), 100),
         "ocr_lines": json.dumps(ocr_lines, ensure_ascii=False) if ocr_lines else None,
         "counterparty_key": counterparty_key(cp, nmid=secrets.nmid, account_number=secrets.account_number,
                                              bank_code=secrets.bank_code),

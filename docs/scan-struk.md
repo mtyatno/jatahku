@@ -190,6 +190,8 @@ dan nama toko.
 
 Teks OCR (`receipt_scans.ocr_lines`) dihapus begitu feedback diproses; scan yang
 tidak pernah diberi feedback dibersihkan scheduler setelah 24 jam (outcome `expired`).
+Bukti bayar yang dibaca jalur struk ini (saklar `receipt_inbox` mati) tidak menyimpan teks OCR sama sekali, juga
+tanpa rincian barang, nama toko, dan kutipan baris (lihat [`docs/kotak-struk.md`](kotak-struk.md) "Privasi").
 Salah-baca kata kunci umum (`T0TAL`, `TUNAL`, `KEHBALI`) ditangani kamus +
 pencocokan jarak-edit 1 di `receipt_parser.py`.
 

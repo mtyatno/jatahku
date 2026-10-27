@@ -11,6 +11,7 @@ from app.services.kotak_struk.config import READER_THRESHOLD
 from app.services.kotak_struk.extract import TextDoc
 from app.services.kotak_struk.readers import labels as L
 from app.services.kotak_struk.readers.base import Check, Parsed, ParseContext, Secrets
+from app.services.kotak_struk.readers.proof_common import read_header_status
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader, parsed_from_receipt
 from app.services.kotak_struk.readers.unknown import UnknownReader
 from app.services.kotak_struk.registry import looks_like_proof, read_document
@@ -529,6 +530,7 @@ class RegistryTests(unittest.IsolatedAsyncioTestCase):
 
 
 CORPUS = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "corpus.json").read_text())["samples"]
+STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400"]
 
 
 class LooksLikeProofTests(unittest.TestCase):
@@ -545,12 +547,41 @@ class LooksLikeProofTests(unittest.TestCase):
         for rec in FIX["receipts"]:
             with self.subTest(rec["id"]):
                 self.assertFalse(looks_like_proof(doc(rec["lines"])))
-        self.assertFalse(looks_like_proof(doc(
-            ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400"])))
+                self.assertIsNone(read_header_status(rec["lines"]))   # struk Indomaret: tanpa status di judul sama sekali
+        self.assertFalse(looks_like_proof(doc(STORE_LINES)))
+        self.assertIsNone(read_header_status(STORE_LINES))
 
     def test_empty_and_unrelated_text_do_not(self):
         self.assertFalse(looks_like_proof(doc([])))
         self.assertFalse(looks_like_proof(doc(["halo apa kabar", "tidak ada nominal"])))
+
+    def test_status_title_in_header_marks_text_as_proof_like(self):
+        """Bukti dengan satu penanda saja (pembaca bukti tidak mengenalinya) tetap tampak bukti bila 4 baris pertamanya
+        memuat judul status ("Transfer Berhasil", "Pembayaran Gagal"). Hanya untuk penyimpanan; perutean tidak berubah."""
+        for lines in (["Transfer Berhasil", "BUDI SANTOSO", "BRI", "0123 0100 1234 567", "Nominal Rp150.000",
+                       "Biaya Admin Rp2.500", "Total Rp152.500", "26/10/2026 09:30"],
+                      ["Transfer Berhasil", "BRI 0123 0100 1234 567", "Nominal Rp150.000", "Biaya Admin Rp2.500",
+                       "Total Rp152.500"],
+                      ["Transfer Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp150.000", "Total Rp150.000"],
+                      ["BCA", "m-Transfer", "Pembayaran Gagal", "Rp50.000"],
+                      ["Kirim ke SITI AMINAH WULAN 081234567890", "Transfer Berhasil", "Total Rp150.000"]):
+            with self.subTest(lines[:2]):
+                self.assertFalse(any(r.detect(doc(lines)) >= READER_THRESHOLD for r in registry._PROOF_READERS))  # premis
+                self.assertTrue(looks_like_proof(doc(lines)))
+        for rec in FIX["receipts"]:
+            with self.subTest(rec["id"]):
+                self.assertFalse(looks_like_proof(doc(rec["lines"])))
+        self.assertFalse(looks_like_proof(doc(STORE_LINES)))
+        # Kata status di nama toko bukan judul status: `read_header_status` memang membacanya "berhasil" (nilai bawaan
+        # struk), tetapi struk seperti ini tetap bukan bukti, jadi rinciannya tetap disimpan.
+        for name in ("TOKO SUKSES MAKMUR", "SUKSES JAYA MART", "Warung Sukses", "CV BERHASIL JAYA ABADI", "KOPI SUCCESS"):
+            lines = [name, "JL MERDEKA 1", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+            with self.subTest(name):
+                self.assertEqual(read_header_status(lines), "berhasil")   # premis
+                self.assertFalse(looks_like_proof(doc(lines)))
+        # Judul status di luar 4 baris pertama, atau kalimat bantuan, bukan judul.
+        self.assertFalse(looks_like_proof(doc(["TOKO MAJU", "JL MERDEKA 1", "ROTI 10.000", "SUSU 5.000", "Transfer Berhasil"])))
+        self.assertFalse(looks_like_proof(doc(["TOKO MAJU", "Jika transaksi gagal hubungi 14017", "ROTI 10.000"])))
 
     def test_uses_the_reader_threshold_and_every_registered_proof_reader(self):
         below = FakeReader("tipis", "qris", READER_THRESHOLD - 0.01)

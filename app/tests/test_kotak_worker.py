@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import re
 import shutil
@@ -38,11 +39,37 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 CORPUS = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "corpus.json").read_text())["samples"]
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)  # 10:00 WIB
 JPG = b"\xff\xd8\xff\xe0jpeg"
-INDOMARET = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())["receipts"][0]["lines"]
+RECEIPTS = json.loads((Path(__file__).parent / "fixtures" / "receipt_ocr_lines.json").read_text())["receipts"]
+INDOMARET = RECEIPTS[0]["lines"]
 SECRET_NUMBERS = ("012301001234567", "2026102612345678")  # rekening dan nomor referensi di CORPUS[2]
+# Semua NMID, RRN, rekening, dan nomor referensi di sampel bukti CORPUS.
+PROOF_NUMBERS = (*SECRET_NUMBERS, "1024358806544", "612345678812", "000151856123")
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
                "Non Tunai (QRIS) 45.400"]
+# Struk toko yang namanya memuat kata status ("Sukses" = berhasil di judul): tetap struk belanja biasa.
+SUKSES_LINES = ["TOKO SUKSES MAKMUR", "JL MERDEKA 1", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000",
+                "TUNAI 15.000"]
+# Bukti transfer dengan satu penanda saja (judul status): pembaca bukti tidak mengenalinya, pembaca struk memecah nomor
+# rekening/HP berkelompok menjadi nama + harga satuan + nominal ("BRI 0123 0100", 1234, 567).
+ONE_MARKER_SLIPS = (
+    ["Transfer Berhasil", "BUDI SANTOSO", "BRI", "0123 0100 1234 567", "Nominal Rp150.000", "Biaya Admin Rp2.500",
+     "Total Rp152.500", "26/10/2026 09:30"],
+    ["Transfer Berhasil", "BRI 0123 0100 1234 567", "Nominal Rp150.000", "Biaya Admin Rp2.500", "Total Rp152.500"],
+    ["Transfer Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp150.000", "Total Rp150.000"],
+)
 MSG_UNREADABLE = "Bukti tidak bisa dibaca. Coba kirim ulang."
+
+
+def rebuilt_numbers(document: dict) -> list[str]:
+    """Deret digit yang bisa dirangkai ulang dari Dokumen Bayar tersimpan: seluruh JSON-nya tanpa non-digit, dan tiap
+    baris rincian dengan field-fieldnya dirangkai dalam urutan apa pun. Pembaca struk memecah nomor berkelompok ke
+    beberapa field ("Rekening Tujuan 0123 0100", harga satuan 1234, nominal 567), jadi mencari deret utuh di JSON saja
+    tidak menangkapnya (urutan JSON: nama, nominal, ..., harga satuan)."""
+    found = [re.sub(r"\D", "", json.dumps(document))]
+    for line in document.get("lines") or []:
+        parts = [re.sub(r"\D", "", str(value)) for key, value in line.items() if key != "kind" and value is not None]
+        found += ["".join(order) for order in itertools.permutations([p for p in parts if p])]
+    return found
 
 
 _TEMPLATE_DB = None
@@ -152,6 +179,20 @@ class WorkerBase(unittest.IsolatedAsyncioTestCase):
         kw.setdefault("now", NOW)
         kw.setdefault("proofs_enabled", True)
         return await process_item(item.id, session_factory=self.Session, **kw)
+
+    def assertNoNumber(self, document, numbers):
+        rebuilt = rebuilt_numbers(document)
+        for number in numbers:
+            self.assertFalse([r for r in rebuilt if number in r], f"{number} bisa dirangkai ulang dari dokumen")
+
+    def assertKeptAsStoreReceipt(self, got):
+        """Struk belanja dengan saklar mati: rincian, data respons scan lama, teks OCR, dan baris peta merchant tetap ada."""
+        self.assertEqual((got.doc_type, got.parser), ("struk_belanja", "struk_belanja"))
+        self.assertTrue(got.document["lines"])
+        self.assertIn("receipt", got.document)
+        self.assertTrue(json.loads(got.ocr_lines))
+        self.assertTrue(got.merchant and got.merchant_key and got.counterparty_key)
+        self.assertEqual(got.document["counterparty"]["name"], got.merchant)
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
@@ -286,7 +327,9 @@ class WorkerTests(WorkerBase):
 
     async def test_proofs_read_as_store_receipt_while_flag_is_off_keep_no_text_and_no_merchant(self):
         """Saklar mati (bawaan produksi): bukti bayar dibaca pembaca struk, tapi teks OCR-nya memuat nomor
-        rekening/referensi dan nama pihak ketiga, jadi tidak disimpan, dan namanya tidak masuk peta merchant."""
+        rekening/referensi dan nama pihak ketiga, jadi tidak disimpan, dan namanya tidak masuk peta merchant. Rincian
+        baris juga tidak: pembaca struk memecah "Rekening Tujuan 0123 0100 1234 567" menjadi barang ("Rekening Tujuan
+        0123 0100", 1234, 567), jadi digitnya dirangkai ulang per field, bukan dicari sebagai deret utuh."""
         for sample in CORPUS:
             if sample["expect"]["doc_type"] not in ("qris", "transfer") and sample["id"] != "sint-masuk":
                 continue
@@ -296,6 +339,12 @@ class WorkerTests(WorkerBase):
                 got = await self.get(item.id)
                 self.assertNotIn(got.parser, ("qris.umum", "transfer.umum"))  # memang lewat jalur struk/tak dikenali
                 self.assertIsNone(got.ocr_lines)
+                self.assertEqual(got.document["lines"], [])
+                self.assertNotIn("receipt", got.document)
+                self.assertEqual((got.merchant, got.merchant_key, got.total_label, got.counterparty_key),
+                                 (None, None, None, None))
+                self.assertIsNone(got.document["counterparty"]["name"])
+                self.assertNoNumber(got.document, PROOF_NUMBERS)
                 blob = json.dumps([got.document, got.ocr_lines, got.counterparty_key, got.ref_hash]).replace(" ", "")
                 for number in SECRET_NUMBERS:
                     self.assertNotIn(number, blob)
@@ -305,8 +354,46 @@ class WorkerTests(WorkerBase):
         item = await self.item(text="transfer")
         self.assertEqual(await self.process(item, CORPUS[2]["lines"], proofs_enabled=False), "siap")
         got = await self.get(item.id)
-        self.assertEqual((got.doc_type, got.status), ("struk_belanja", "siap"))
-        self.assertIn("receipt", got.document)  # data respons scan lama tetap ada
+        self.assertEqual((got.doc_type, got.status, int(got.parsed_total)), ("struk_belanja", "siap", 152500))
+        # Nominal, tanggal, dan keyakinan dibaca seperti dulu; rincian dan data respons scan lama tidak disimpan (dulu
+        # `receipt` dan `lines` ikut tersimpan dan memuat potongan nomor rekening).
+        self.assertEqual(got.parsed_date, date(2026, 10, 26))
+        self.assertNotIn("receipt", got.document)
+        self.assertEqual(got.document["lines"], [])
+        self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_one_marker_slip_with_grouped_account_is_treated_as_proof_with_flag_off(self):
+        """Bukti dengan satu penanda saja (judul "Transfer Berhasil") tidak dikenali pembaca bukti, tetapi judul status di
+        4 baris pertama menandainya sebagai bukti: tanpa teks OCR, tanpa rincian, tanpa merchant "Transfer Berhasil"."""
+        for lines in ONE_MARKER_SLIPS:
+            with self.subTest(lines[1]):
+                item = await self.item(text=lines[1])
+                self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
+                got = await self.get(item.id)
+                self.assertEqual(got.doc_type, "struk_belanja")
+                self.assertIsNone(got.ocr_lines)
+                self.assertEqual(got.document["lines"], [])
+                self.assertNotIn("receipt", got.document)
+                self.assertEqual((got.merchant, got.merchant_key, got.counterparty_key), (None, None, None))
+                self.assertNoNumber(got.document, ("012301001234567", "081234567890"))
+                self.assertGreater(int(got.parsed_total), 0)   # nominalnya tetap terbaca untuk dikonfirmasi user
+        self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_unread_proof_keeps_no_number_in_evidence_or_counterparty_key(self):
+        """Dua tempat lain yang memuat teks baris: `evidence` mengutip baris utuh (`Non-tunai "Rekening Debit 0123 ..."`),
+        dan kunci pihak dari tebakan nama struk bisa memuat nomor HP di baris pertama. Untuk teks bukti bayar keduanya
+        dibuang; nominal dan status tetap."""
+        cases = (["Transfer Berhasil", "Total Rp150.000", "Rekening Debit 0123 0100 1234 567"],
+                 ["Kirim ke SITI AMINAH WULAN 081234567890", "Transfer Berhasil", "Nominal Rp150.000", "Total Rp150.000"])
+        for lines in cases:
+            with self.subTest(lines[0]):
+                item = await self.item(text=lines[0])
+                self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
+                got = await self.get(item.id)
+                self.assertEqual((got.doc_type, int(got.parsed_total)), ("struk_belanja", 150000))
+                self.assertEqual((got.merchant, got.counterparty_key, got.ocr_lines), (None, None, None))
+                self.assertFalse([e for e in got.document["evidence"] if '"' in e or re.search(r"\d", e)])
+                self.assertNoNumber(got.document, ("012301001234567", "081234567890"))
         self.assertEqual(await self.count_merchants(), 0)
 
     async def test_real_store_receipt_still_keeps_normalized_text_and_merchant_with_flag_off(self):
@@ -317,6 +404,8 @@ class WorkerTests(WorkerBase):
         self.assertTrue(json.loads(got.ocr_lines))
         self.assertTrue(got.counterparty_key)
         self.assertEqual((await self.merchant(got.counterparty_key)).raw_name, got.merchant)
+        self.assertTrue(got.document["lines"])       # penjaga bukti bayar tidak menyala untuk struk belanja
+        self.assertIn("receipt", got.document)
 
     async def test_store_receipt_mentioning_qris_still_keeps_text_and_merchant_with_flag_off(self):
         item = await self.item(text="alfamart")
@@ -324,6 +413,20 @@ class WorkerTests(WorkerBase):
         got = await self.get(item.id)
         self.assertIn("ROTI 1 15.000", json.loads(got.ocr_lines))
         self.assertEqual((await self.merchant("nama:alfamart|")).raw_name, "Alfamart")
+        self.assertTrue(got.document["lines"])
+        self.assertIn("receipt", got.document)
+
+    async def test_every_store_receipt_fixture_keeps_detail_text_and_merchant_with_flag_off(self):
+        """4 struk Indomaret, struk "Non Tunai (QRIS)", dan struk toko bernama "SUKSES" (kata status di judul, tapi
+        bukan judul status bukti): semua tetap seperti sebelum penjaga bukti bayar ada."""
+        for name, lines in [*((r["id"], r["lines"]) for r in RECEIPTS), ("alfamart", STORE_LINES), ("sukses", SUKSES_LINES)]:
+            with self.subTest(name):
+                item = await self.item(text=name)
+                self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
+                got = await self.get(item.id)
+                self.assertKeptAsStoreReceipt(got)
+                self.assertEqual((await self.merchant(got.counterparty_key)).raw_name, got.merchant)
+        self.assertEqual((await self.get(item.id)).merchant, "Toko Sukses Makmur")
 
     async def test_unrecognised_text_is_siap_without_retaining_text(self):
         item = await self.item(text="acak")

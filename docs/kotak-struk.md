@@ -288,8 +288,12 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   HMAC memakai `KOTAK_HMAC_KEY`. NMID QRIS (publik) boleh disimpan.
 - **Teks OCR bukti bayar tidak pernah disimpan.** `receipt_scans.ocr_lines` hanya diisi untuk struk belanja
   sungguhan (bahan `apply_feedback`) dan dihapus setelah feedback atau **24 jam** (`purge_stale_ocr_text`, job
-  scheduler tiap jam); item `kedaluwarsa` juga dikosongkan. Teks yang tampak seperti bukti bayar tapi dibaca pembaca
-  struk (saklar mati) diperlakukan sebagai bukti: tanpa `ocr_lines`, tanpa peta merchant.
+  scheduler tiap jam); item `kedaluwarsa` juga dikosongkan. Teks yang tampak seperti bukti bayar (dikenali pembaca
+  bukti, atau berjudul status seperti "Transfer Berhasil" di 4 baris pertama) tapi dibaca pembaca struk (saklar mati)
+  diperlakukan sebagai bukti: tanpa `ocr_lines`, tanpa rincian baris (`document.lines`, juga tanpa `receipt`), tanpa
+  nama merchant (dan tanpa kunci pihak dari nama itu), tanpa kutipan baris di `evidence`, tanpa peta merchant; yang
+  tersimpan hanya nominal, waktu, status, keyakinan, dan cek. Pembaca struk memecah nomor berkelompok menjadi "barang"
+  (`Rekening Tujuan 0123 0100`, 1234, 567), jadi rincian itu tidak boleh tersimpan.
 - **File asli dihapus begitu item selesai dibaca** (`siap` atau `gagal`), `file_path` dikosongkan. Folder
   `KOTAK_DIR` (mode 0700, milik `jatahku`, di luar `backup.sh`); nama file = id item; file tidak pernah disajikan
   ke browser; tanpa pratinjau gambar. Teks bukti juga ditulis sebagai file sementara dengan aturan yang sama.
@@ -418,7 +422,9 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
   bukti dari aplikasi dengan tata letak tidak biasa bisa terbaca `tidak_dikenali` atau dengan keyakinan `rendah`
   (user tetap mengonfirmasi dan mengoreksi nominal). Contohnya, transfer yang hanya punya satu penanda
   (DANA "Kirim Uang") bisa terbaca `struk_belanja`, dan struk berisi 1–2 barang dengan harga polos plus satu baris
-  QRIS dan NMID bisa terbaca `qris` tanpa status.
+  QRIS dan NMID bisa terbaca `qris` tanpa status. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
+  rincian, dan nama; lihat "Privasi") bila judulnya judul status berkata benda transaksi ("Transfer Berhasil",
+  "Pembayaran Gagal"); judul tanpa kata itu ("Kirim Uang Berhasil") belum dikenali.
 - **Bagian B belum ada**: chat web menyebut "Bukti menunggu di beranda" tetapi banner itu belum ada; item yang
   `siap` bisa dilihat lewat API tetapi belum lewat UI web.
 

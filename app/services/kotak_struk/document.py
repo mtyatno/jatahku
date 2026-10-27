@@ -104,6 +104,7 @@ def scan_receipt_response(item, detail: dict) -> dict:
     document = item.document or {}
     doc = DokumenBayar.from_json(document) if document else None
     store = doc is not None and item.doc_type == "struk_belanja"
+    # Teks bukti bayar yang dibaca pembaca struk (saklar mati) disimpan tanpa `lines` dan tanpa `receipt`: tanpa rincian.
     receipt = (document.get("receipt") or {}) if store else {}
     discounts = receipt.get("item_discounts") or []   # sejajar dengan baris `item`
     items = [

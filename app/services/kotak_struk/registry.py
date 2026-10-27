@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from app.services.kotak_struk import checks as cross_checks
 from app.services.kotak_struk.config import READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
+from app.services.kotak_struk.readers.proof_common import has_header_status_title
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
@@ -50,12 +51,15 @@ def readers_for(proofs_enabled: bool) -> list[DocReader]:
 
 
 def looks_like_proof(doc: TextDoc) -> bool:
-    """Apakah teks ini terbaca sebagai bukti bayar (QRIS/transfer) oleh salah satu pembaca bukti, apa pun
-    saklar fiturnya? Hanya deteksi: perutean tetap mengikuti `proofs_enabled` di `read_document`.
+    """Apakah teks ini tampak bukti bayar (QRIS/transfer), apa pun saklar fiturnya? Ya bila salah satu pembaca bukti
+    mengenalinya, atau bila 4 baris pertamanya memuat judul status ("Transfer Berhasil", "Pembayaran Gagal";
+    `has_header_status_title`): bukti dengan satu penanda saja tidak dikenali pembaca bukti, padahal struk belanja tidak
+    pernah berjudul seperti itu. Hanya untuk penyimpanan: perutean tetap mengikuti `proofs_enabled` di `read_document`.
 
     Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
-    nomor rekening/referensi dan nama pihak ketiga, jadi tidak boleh disimpan atau masuk peta merchant."""
-    return any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS)
+    nomor rekening/referensi dan nama pihak ketiga, jadi teks, rincian baris, dan nama merchant-nya tidak boleh
+    disimpan atau masuk peta merchant."""
+    return any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines)
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:

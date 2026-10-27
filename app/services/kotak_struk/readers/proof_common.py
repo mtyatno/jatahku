@@ -507,6 +507,14 @@ def read_header_status(lines: list[str]) -> str | None:
     return _strongest(_status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
 
 
+def has_header_status_title(lines: list[str]) -> bool:
+    """Ada judul status bukti bayar di judul (4 baris pertama): baris yang dihitung `read_header_status` dan sekaligus
+    judul status (`_is_status_title`: kata benda transaksi lalu kata status, "Transfer Berhasil", "Pembayaran Gagal",
+    "Top Up Sukses"). Kata status di nama toko ("TOKO SUKSES MAKMUR", "Warung Sukses") dibaca `read_header_status`
+    sebagai `berhasil`, tetapi bukan judul status, jadi struk belanja biasa tidak memenuhinya."""
+    return any(_is_status_title(part) for part in _status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
+
+
 def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
     """Status dari label "Status" dan judul (4 baris pertama): kata gagal mengalahkan pending mengalahkan berhasil.
     Lalu baris pendek di mana saja: yang pertama menurut urutan dokumen (bukan yang terburuk, supaya baris
