@@ -31,7 +31,7 @@ from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
 from app.services.kotak_struk.intake import IntakeRejected
 from app.services.kotak_struk.worker import process_item
-from app.services.receipt_ocr import OcrFailed
+from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
 from app.services.receipt_scan import ScanBusy, scan_receipt
 from app.tests import test_kotak_api as kapi
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, QRIS_KEY, fake_extract
@@ -318,9 +318,17 @@ class ScanReceiptTests(TxnBase):
             return cm.exception.status_code, cm.exception.detail
 
         self.assertEqual(await run_with(ScanBusy()), (503, "Scan struk sedang ramai. Coba lagi beberapa detik lagi."))
+        self.assertEqual(await run_with(OcrBusy("x")), (503, "Scan struk sedang ramai. Coba lagi beberapa detik lagi."))
         self.assertEqual(await run_with(OcrFailed("PDF terkunci kata sandi")), (422, "PDF terkunci kata sandi"))
         self.assertEqual(await run_with(IntakeRejected(429, "Masih ada bukti yang sedang dibaca. Tunggu sebentar.")),
                          (429, "Masih ada bukti yang sedang dibaca. Tunggu sebentar."))
+        # OCR yang tidak terpasang tidak lagi jadi 503 di sini: worker membuat itemnya `gagal` dengan pesannya sendiri,
+        # jadi scan_receipt melempar OcrFailed (422, di bawah). OcrUnavailable tidak pernah sampai ke rute.
+        self.assertEqual(await run_with(OcrFailed("Baca bukti sedang tidak bisa. Catat manual dulu.")),
+                         (422, "Baca bukti sedang tidak bisa. Catat manual dulu."))
+        with patch("app.services.receipt_scan.scan_receipt", AsyncMock(side_effect=OcrUnavailable("x"))):
+            with self.assertRaises(OcrUnavailable):
+                await run_receipt_scan(self.a, b"x", "image/jpeg", None)
 
     # --- unggahan ------------------------------------------------------
 

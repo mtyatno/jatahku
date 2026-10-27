@@ -551,18 +551,18 @@ def receipt_key_func(request: Request) -> str:
 
 
 async def run_receipt_scan(user: User, data: bytes, content_type: str, db: AsyncSession) -> dict:
-    """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web."""
+    """Panggil layanan scan + petakan error ke HTTP. Dipakai endpoint web. IntakeRejected → status code-nya;
+    OcrBusy (termasuk ScanBusy: belum selesai dibaca) → 503 ramai; OcrFailed → 422 dengan pesan galat item. OCR yang
+    tidak terpasang sampai ke sini sebagai item `gagal` (OcrFailed), bukan OcrUnavailable."""
     from app.services.kotak_struk.intake import IntakeRejected
-    from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
-    from app.services.receipt_scan import ScanBusy, scan_receipt
+    from app.services.receipt_ocr import OcrBusy, OcrFailed
+    from app.services.receipt_scan import scan_receipt
 
     try:
         return await scan_receipt(user, data, content_type, db)
     except IntakeRejected as exc:  # jenis/ukuran tidak cocok, atau batas per jam / item menunggu
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
-    except OcrUnavailable:
-        raise HTTPException(status_code=503, detail="Scan struk sedang tidak tersedia. Catat manual dulu ya.")
-    except (ScanBusy, OcrBusy):
+    except OcrBusy:  # termasuk ScanBusy
         raise HTTPException(status_code=503, detail="Scan struk sedang ramai. Coba lagi beberapa detik lagi.")
     except OcrFailed as exc:  # item `gagal`: pesannya dari worker, aman ditampilkan (mis. "PDF terkunci kata sandi")
         raise HTTPException(status_code=422, detail=str(exc) or "Foto tidak bisa dibuka atau resolusinya terlalu besar. Coba foto ulang.")
