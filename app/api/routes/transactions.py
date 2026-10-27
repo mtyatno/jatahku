@@ -517,8 +517,8 @@ RECEIPT_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp", "applicati
 
 async def _read_receipt_upload(image: UploadFile, *, allow_pdf: bool = True) -> tuple[bytes, str]:
     """Validasi upload foto/PDF struk. Tanpa deps framework supaya mudah di-test. Jenis sebenarnya (byte awal)
-    diperiksa lagi oleh intake Kotak Struk. `allow_pdf=False` untuk alur yang belum bisa membaca PDF (chat web
-    lewat alur foto bot, sampai disambungkan ke Kotak Struk)."""
+    diperiksa lagi oleh intake Kotak Struk. `allow_pdf=False` untuk rute yang belum menerima PDF (chat web
+    `/bot/chat/photo`, keputusan Bagian B)."""
     content_type = (image.content_type or "").split(";")[0].strip().lower()
     if content_type not in RECEIPT_MIME or (content_type == "application/pdf" and not allow_pdf):
         raise HTTPException(
@@ -591,6 +591,8 @@ async def scan_receipt_endpoint(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Gambar atau PDF → Kotak Struk (source `web_form`), menunggu hasil maks WAIT_FORM_S; respons lama + field baru.
+    Tanpa kuota scan; batas intake Kotak Struk berlaku."""
     data, content_type = await _read_receipt_upload(image)
     return await run_receipt_scan(user, data, content_type, db)
 

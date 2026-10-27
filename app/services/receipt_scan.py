@@ -1,6 +1,6 @@
-"""Scan struk untuk web (dan bot, sampai Task A11 memindahkannya): foto/PDF masuk Kotak Struk lewat intake, dibaca
-worker (OCR → parser + data belajar → fallback LLM), lalu hasilnya dikembalikan dalam bentuk respons `scan-receipt`
-yang lama (lihat docs/kotak-struk.md). Tidak ada kuota scan lagi.
+"""Scan struk untuk web: foto/PDF masuk Kotak Struk lewat intake, dibaca worker (OCR → parser + data belajar →
+fallback LLM), lalu hasilnya dikembalikan dalam bentuk respons `scan-receipt` yang lama (lihat docs/kotak-struk.md).
+Tidak ada kuota scan lagi.
 
 Juga memproses feedback (nilai akhir yang disimpan user) untuk belajar:
 - Profil toko: label baris yang berisi total akhir (ReceiptTotalLabel).
@@ -44,8 +44,7 @@ OCR_TEXT_RETENTION = timedelta(hours=24)
 
 
 class ScanQuotaExceeded(Exception):
-    """Tidak dilempar lagi sejak Kotak Struk (kuota scan dihapus untuk semua paket). Tetap didefinisikan karena kode
-    bot lama masih mengimpornya sampai Task A11 menyambungkan ulang bot."""
+    """Tidak dilempar lagi sejak Kotak Struk (kuota scan dihapus). Dipertahankan untuk kompatibilitas impor."""
 
     def __init__(self, limit: int):
         self.limit = limit

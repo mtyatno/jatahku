@@ -445,8 +445,8 @@ JPEG_MIME = {"image/jpeg", "image/jpg"}
 
 
 async def run_photo(user, data: bytes, mime: str, client_id: str | None = None) -> list[dict]:
-    """Foto struk dari chat webapp → alur foto bot Telegram (scan struk).
-    JPEG dikirim sebagai foto, format lain sebagai dokumen gambar — sama
+    """Foto struk/bukti dari chat webapp → `handle_non_text` → Kotak Struk (source `web_chat`), alur foto bot
+    Telegram yang sama. JPEG dikirim sebagai foto, format lain sebagai dokumen gambar — sama
     dengan dua cara user Telegram mengirim gambar."""
     from app.bot.handlers import handle_non_text
 
