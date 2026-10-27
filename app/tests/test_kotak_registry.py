@@ -11,7 +11,10 @@ from app.services.kotak_struk.config import READER_THRESHOLD
 from app.services.kotak_struk.extract import TextDoc
 from app.services.kotak_struk.readers import labels as L
 from app.services.kotak_struk.readers.base import Check, Parsed, ParseContext, Secrets
-from app.services.kotak_struk.readers.proof_common import read_header_status
+from app.services.kotak_struk.readers import proof_common as pc
+from app.services.kotak_struk.readers.proof_common import (
+    clean_lines, has_header_status_title, looks_like_store_receipt, read_header_status,
+)
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader, parsed_from_receipt
 from app.services.kotak_struk.readers.unknown import UnknownReader
 from app.services.kotak_struk.registry import looks_like_proof, read_document
@@ -579,9 +582,94 @@ class LooksLikeProofTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(read_header_status(lines), "berhasil")   # premis
                 self.assertFalse(looks_like_proof(doc(lines)))
-        # Judul status di luar 4 baris pertama, atau kalimat bantuan, bukan judul.
-        self.assertFalse(looks_like_proof(doc(["TOKO MAJU", "JL MERDEKA 1", "ROTI 10.000", "SUSU 5.000", "Transfer Berhasil"])))
+        # Judul status di luar 4 baris pertama pada teks berpola struk belanja, atau kalimat bantuan, bukan bukti. (Tanpa
+        # pola struk, judul di baris mana pun menandainya: test_status_title_below_the_header_…, N1.)
+        self.assertFalse(looks_like_proof(doc(["TOKO MAJU", "JL MERDEKA 1", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000",
+                                               "TUNAI 15.000", "Transfer Berhasil"])))
         self.assertFalse(looks_like_proof(doc(["TOKO MAJU", "Jika transaksi gagal hubungi 14017", "ROTI 10.000"])))
+
+    # N1: bukti satu penanda yang judul statusnya di bawah baris 4 (di bawah rincian, atau di bawah baris status bar dan
+    # nama aplikasi): pembaca bukti tidak mengenalinya, pembaca struk memecah nomornya menjadi "barang".
+    N1_SLIPS = {
+        "gagal": ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000",
+                  "Transaksi Gagal"],
+        "berhasil": ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000",
+                     "Transaksi Berhasil"],
+        "status bar": ["14:22", "4G 85%", "BCA mobile", "m-Transfer", "Transfer Berhasil", "Ke BUDI 1234 5678 9012",
+                       "Nominal Rp150.000", "Total Rp150.000"],
+        "rekening sebaris": ["BCA mobile", "26/10/2026 14:22", "BUDI SANTOSO", "BRI 0123 0100 1234 567", "Nominal Rp150.000",
+                             "Total Rp150.000", "Transaksi Berhasil"],
+        "va": ["BCA mobile", "26/10/2026 14:22", "VA 8808 0812 3456 7890", "Nominal Rp150.000", "Total Rp150.000",
+               "Pembayaran Berhasil"],
+        "english": ["Jenius", "Send Money", "26/10/2026 14:22", "To BUDI 1234 5678 9012", "Amount Rp150.000",
+                    "Total Rp150.000", "Transaction Successful"],
+        "e-wallet hp": ["DANA", "26/10/2026 14:22", "Kirim ke SITI 0812 3456 7890", "Rp50.000", "Total Rp50.000",
+                        "Transaksi Berhasil"],
+    }
+    # Struk belanja berpola struk (barang berkuantitas + baris bayar bernominal sama, baris tunai, atau >= 3 barang) yang
+    # mencetak judul status di kakinya, atau deret angka panjang (PLU, telepon toko).
+    TITLED_STORES = {
+        "qris berhasil": ["KEDAI KOPI", "01-10-2026 08:15", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "TOTAL 40.000",
+                          "QRIS 40.000", "Pembayaran QRIS berhasil"],
+        "terima kasih": ["KEDAI KOPI", "01-10-2026 08:15", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "TOTAL 40.000",
+                         "QRIS 40.000", "Transaksi Berhasil", "Terima kasih"],
+        "edc": ["RESTO SEDAP", "01-10-2026 08:15", "NASI GORENG 1 25.000", "ES TEH 2 5.000", "TOTAL 35.000",
+                "DEBIT BCA 35.000", "TRANSAKSI BERHASIL"],
+        "batal": ["TOKO MAJU", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000",
+                  "Transaksi gagal - struk ini tidak sah"],
+        "pending": ["TOKO MAJU", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000",
+                    "Pembayaran pending akan diproses otomatis"],
+        "plu": ["INDOMARET", "14.10.26-10:00/1/A/01", "20036598 INDOMIE GRG 2 3100 6,200", "10012345 AQUA 600ML 2 3800 7,600",
+                "TOTAL : 13,800", "TUNAI : 20,000", "KEMBALI : 6,200", "TERIMA KASIH, TRANSAKSI BERHASIL"],
+        "telp toko": ["TOKO MAJU JAYA", "TELP 0812 3456 7890", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000",
+                      "KOPI 2 x 3.500 7.000", "TOTAL 22.000", "TUNAI 22.000", "Pembayaran QRIS berhasil"],
+    }
+
+    def test_status_title_below_the_header_marks_text_without_store_pattern_as_proof_like(self):
+        """N1: judul status di baris mana pun menandai teks sebagai bukti (hanya untuk penyimpanan) bila teks itu tidak
+        berpola struk belanja (`looks_like_store_receipt`, penjaga yang sama dengan `detect` pembaca bukti, dibaca dari
+        baris yang dinormalkan seperti `parse_receipt`). Struk belanja yang mencetak "Pembayaran QRIS berhasil" atau
+        "TRANSAKSI BERHASIL" di kakinya tetap struk."""
+        for name, lines in self.N1_SLIPS.items():
+            with self.subTest(name):
+                self.assertFalse(any(r.detect(doc(lines)) >= READER_THRESHOLD for r in registry._PROOF_READERS))  # premis
+                self.assertFalse(has_header_status_title(lines))                                                    # premis
+                self.assertTrue(looks_like_proof(doc(lines)))
+        # Teks pendek tanpa pola struk (2 barang, tanpa TOTAL/tunai) yang berjudul status: dianggap bukti (arah aman, C3).
+        self.assertTrue(looks_like_proof(doc(["TOKO MAJU", "JL MERDEKA 1", "ROTI 10.000", "SUSU 5.000", "Transfer Berhasil"])))
+        # Hanya judul: kata status di nama toko dan kalimat biasa pada teks tanpa pola struk tidak menjadikannya bukti.
+        for lines in (["WARUNG SUKSES", "01-10-2026 08:15", "NASI GORENG 25.000", "TOTAL 25.000"],
+                      ["TOKO MAJU", "ROTI 10.000", "Cetak ulang gagal"]):
+            with self.subTest(lines[0], last=lines[-1]):
+                self.assertFalse(looks_like_store_receipt(clean_lines(lines)))   # premis: tanpa pola struk
+                self.assertFalse(looks_like_proof(doc(lines)))
+        for name, lines in self.TITLED_STORES.items():
+            with self.subTest(name):
+                self.assertTrue(pc.has_status_title(lines))   # premis: penjaga pola struk yang memutuskan
+                self.assertFalse(looks_like_proof(doc(lines)))
+        for rec in FIX["receipts"]:
+            with self.subTest(rec["id"]):
+                self.assertFalse(looks_like_proof(doc(rec["lines"])))
+                self.assertFalse(looks_like_proof(doc([*rec["lines"], "TRANSAKSI BERHASIL"])))
+        self.assertFalse(looks_like_proof(doc([*STORE_LINES, "Pembayaran QRIS berhasil"])))
+        # Struk Indomaret s4 ber-OCR buruk ("TUNAL 50.000", "KEHBALI 40.800"): tanpa normalisasi ia tidak berpola struk,
+        # jadi judul status di kakinya akan menjadikannya bukti dan rinciannya hilang.
+        s4 = [*FIX["receipts"][3]["lines"], "TRANSAKSI BERHASIL"]
+        self.assertFalse(looks_like_store_receipt(clean_lines(s4)))   # premis
+        self.assertFalse(looks_like_proof(doc(s4)))
+
+    def test_status_title_anywhere_unit_rules(self):
+        top = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000"]
+        for body, expect in ((["Transaksi Gagal"], True), (["Transaksi Berhasil"], True), (["Transfer Diproses"], True),
+                             (["Transaction Successful"], True), (["Terima kasih, transaksi berhasil"], True),
+                             (["Penerima", "Transfer Sukses Abadi"], False),                      # judul dari baris nama
+                             (["Tujuan Transfer CV SUKSES JAYA"], False),
+                             (["Info untuk transaksi gagal: 14017"], False), (["Jika transaksi gagal hubungi 14017"], False),
+                             (["Transaksi gagal? Hubungi kami"], False), (["Cetak ulang gagal"], False), (["BERHASIL"], False),
+                             (["Status: Berhasil"], False), (["WARUNG SUKSES"], False), ([], False)):
+            with self.subTest(body):
+                self.assertEqual(pc.has_status_title([*top, *body]), expect)
+        self.assertTrue(pc.has_status_title(["Transfer Berhasil", "Rp50.000"]))   # 4 baris pertama juga dihitung
 
     def test_uses_the_reader_threshold_and_every_registered_proof_reader(self):
         below = FakeReader("tipis", "qris", READER_THRESHOLD - 0.01)

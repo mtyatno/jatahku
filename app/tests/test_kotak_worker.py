@@ -416,6 +416,82 @@ class WorkerTests(WorkerBase):
                         await record.check_recordable(db, item.id, user)
                 self.assertEqual(caught.exception.detail, record.MSG_BLOCKED)
 
+    async def test_one_marker_slip_with_its_status_title_below_the_header_keeps_no_number(self):
+        """N1: bukti satu penanda yang judul statusnya di bawah baris 4 dibaca pembaca struk belanja (saklar mati, dan juga
+        menyala karena pembaca bukti tidak mengenalinya). Nomor berkelompok yang dipecah pembaca struk menjadi nama + harga
+        satuan + nominal ("Ke BUDI 1234", 5678, 9012) tidak boleh tersimpan: tanpa rincian, tanpa teks OCR, tanpa merchant
+        dan baris peta merchant. Nominal dan status tetap; yang gagal tetap ditolak (C1)."""
+        slips = {   # nama: (baris, status, nomor yang tidak boleh bisa dirangkai ulang, nominal)
+            "gagal": (["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000",
+                       "Transaksi Gagal"], "gagal", "123456789012", 150000),
+            "berhasil": (["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000",
+                          "Transaksi Berhasil"], "berhasil", "123456789012", 150000),
+            "status bar": (["14:22", "4G 85%", "BCA mobile", "m-Transfer", "Transfer Berhasil", "Ke BUDI 1234 5678 9012",
+                            "Nominal Rp150.000", "Total Rp150.000"], "berhasil", "123456789012", 150000),
+            "rekening sebaris": (["BCA mobile", "26/10/2026 14:22", "BUDI SANTOSO", "BRI 0123 0100 1234 567",
+                                  "Nominal Rp150.000", "Total Rp150.000", "Transaksi Berhasil"], "berhasil",
+                                 "012301001234567", 150000),
+            "va": (["BCA mobile", "26/10/2026 14:22", "VA 8808 0812 3456 7890", "Nominal Rp150.000", "Total Rp150.000",
+                    "Pembayaran Berhasil"], "berhasil", "8808081234567890", 150000),
+            "english": (["Jenius", "Send Money", "26/10/2026 14:22", "To BUDI 1234 5678 9012", "Amount Rp150.000",
+                         "Total Rp150.000", "Transaction Successful"], "berhasil", "123456789012", 150000),
+            # Nomor HP e-wallet: pembaca struk tidak memecahnya ke rincian, tetapi teks OCR (24 jam) dan merchant "Dana" dulu
+            # tetap tersimpan.
+            "e-wallet hp": (["DANA", "26/10/2026 14:22", "Kirim ke SITI 0812 3456 7890", "Rp50.000", "Total Rp50.000",
+                             "Transaksi Berhasil"], "berhasil", "081234567890", 50000),
+        }
+        for enabled in (False, True):
+            for name, (lines, status, secret, total) in slips.items():
+                with self.subTest(name, enabled=enabled):
+                    item = await self.item(text=f"{name} {enabled}")
+                    self.assertEqual(await self.process(item, lines, proofs_enabled=enabled), "siap")
+                    got = await self.get(item.id)
+                    self.assertEqual((got.doc_type, got.document["status"], int(got.parsed_total)), ("struk_belanja", status, total))
+                    self.assertNoNumber(got.document, (secret,))   # per field: ("Ke BUDI 1234", 5678, 9012)
+                    self.assertIsNone(got.ocr_lines)
+                    self.assertEqual(got.document["lines"], [])
+                    self.assertNotIn("receipt", got.document)
+                    self.assertEqual((got.merchant, got.merchant_key, got.counterparty_key, got.total_label),
+                                     (None, None, None, None))
+                    self.assertIsNone(got.document["counterparty"]["name"])
+                    if status == "gagal":
+                        async with self.Session() as db:
+                            with self.assertRaises(record.NotRecordable) as caught:
+                                await record.check_recordable(db, item.id, await db.get(User, self.user_id))
+                        self.assertEqual(caught.exception.detail, record.MSG_BLOCKED)
+        self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_store_receipts_with_status_titles_or_digit_runs_keep_detail(self):
+        """Kontrol N1: struk belanja berpola struk (barang berkuantitas + baris bayar bernominal sama, baris tunai, atau
+        >= 3 barang) tetap disimpan lengkap walau mencetak judul status di kaki, kode PLU, "2 x 3.500 7.000", atau nomor
+        telepon toko — juga struk Indomaret s4 yang OCR-nya "TUNAL"/"KEHBALI" (pola struk dibaca dari baris yang
+        dinormalkan). Saklar menyala sama: pembaca bukti menolak pola struk."""
+        plu = ["INDOMARET", "14.10.26-10:00/1/A/01", "20036598 INDOMIE GRG 2 3100 6,200", "10012345 AQUA 600ML 2 3800 7,600",
+               "TOTAL : 13,800", "TUNAI : 20,000", "KEMBALI : 6,200"]
+        qty = ["TOKO MAJU", "01-10-2026 08:15", "INDOMIE GRG 2 x 3.500 7.000", "TEH BOTOL 3 x 4.000 12.000", "TOTAL 19.000",
+               "TUNAI 20.000", "KEMBALI 1.000"]
+        phone = ["TOKO MAJU JAYA", "TELP 0812 3456 7890", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "KOPI 2 x 3.500 7.000",
+                 "TOTAL 22.000", "TUNAI 22.000"]
+        stores = {
+            "qris berhasil": ["KEDAI KOPI", "01-10-2026 08:15", "KOPI SUSU 1 25.000", "ROTI 1 15.000", "TOTAL 40.000",
+                              "QRIS 40.000", "Pembayaran QRIS berhasil"],
+            "edc": ["RESTO SEDAP", "01-10-2026 08:15", "NASI GORENG 1 25.000", "ES TEH 2 5.000", "TOTAL 35.000",
+                    "DEBIT BCA 35.000", "TRANSAKSI BERHASIL"],
+            "plu": plu, "plu + judul": [*plu, "TERIMA KASIH, TRANSAKSI BERHASIL"],
+            "2 x 3.500": qty, "2 x 3.500 + judul": [*qty, "Pembayaran QRIS berhasil"],
+            "telp toko": phone, "telp toko + judul": [*phone, "Transaksi Berhasil"],
+            "indomaret s4 + judul": [*RECEIPTS[3]["lines"], "TRANSAKSI BERHASIL"],
+        }
+        for enabled in (False, True):
+            for name, lines in stores.items():
+                with self.subTest(name, enabled=enabled):
+                    item = await self.item(text=f"{name} {enabled}")
+                    self.assertEqual(await self.process(item, lines, proofs_enabled=enabled), "siap")
+                    got = await self.get(item.id)
+                    self.assertKeptAsStoreReceipt(got)
+                    self.assertEqual(got.document["status"], "berhasil")
+                    self.assertEqual((await self.merchant(got.counterparty_key)).raw_name, got.merchant)
+
     async def test_real_store_receipt_still_keeps_normalized_text_and_merchant_with_flag_off(self):
         item = await self.item(text="indomaret")
         self.assertEqual(await self.process(item, INDOMARET, proofs_enabled=False), "siap")

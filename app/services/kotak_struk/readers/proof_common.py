@@ -522,6 +522,14 @@ def has_header_status_title(lines: list[str]) -> bool:
     return any(_is_status_title(part) for part in _status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
 
 
+def has_status_title(lines: list[str]) -> bool:
+    """Ada judul status bukti bayar di baris mana pun (bukan hanya 4 baris pertama), dibaca seperti
+    `has_header_status_title`: nama-aware, frasa bantuan dibuang, paling banyak 8 kata. Dipakai `registry.looks_like_proof`
+    hanya untuk teks tanpa pola struk belanja: judul di kaki struk belanja sungguhan ("Pembayaran QRIS berhasil",
+    "TRANSAKSI BERHASIL" dari mesin EDC) tidak menjadikannya bukti."""
+    return any(_is_status_title(part) for part in _status_lines(clean_lines(lines), HEADER_WORDS))
+
+
 def read_body_failure_title(lines: list[str]) -> str | None:
     """`gagal`/`pending` dari judul status di badan (sesudah 4 baris pertama), untuk pembaca struk belanja dan tidak
     dikenali, yang selain itu hanya membaca judul (`read_header_status`): bukti bayar yang sampai ke sana (saklar mati,

@@ -300,11 +300,14 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
 - **Teks OCR bukti bayar tidak pernah disimpan.** `receipt_scans.ocr_lines` hanya diisi untuk struk belanja
   sungguhan (bahan `apply_feedback`) dan dihapus setelah feedback atau **24 jam** (`purge_stale_ocr_text`, job
   scheduler tiap jam); item `kedaluwarsa` juga dikosongkan. Teks yang tampak seperti bukti bayar (dikenali pembaca
-  bukti, atau berjudul status seperti "Transfer Berhasil" di 4 baris pertama) tapi dibaca pembaca struk (saklar mati)
-  diperlakukan sebagai bukti: tanpa `ocr_lines`, tanpa rincian baris (`document.lines`, juga tanpa `receipt`), tanpa
-  nama merchant (dan tanpa kunci pihak dari nama itu), tanpa kutipan baris di `evidence`, tanpa peta merchant; yang
-  tersimpan hanya nominal, waktu, status, keyakinan, dan cek. Pembaca struk memecah nomor berkelompok menjadi "barang"
-  (`Rekening Tujuan 0123 0100`, 1234, 567), jadi rincian itu tidak boleh tersimpan.
+  bukti, berjudul status seperti "Transfer Berhasil" di 4 baris pertama, atau memuat judul status di baris mana pun
+  tanpa pola struk belanja; pola struk dibaca dari baris yang dinormalkan seperti pembaca struk, jadi struk belanja
+  yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk) tapi dibaca pembaca struk (saklar mati, atau bukti
+  yang tidak dikenali pembaca bukti) diperlakukan sebagai bukti: tanpa `ocr_lines`, tanpa rincian baris
+  (`document.lines`, juga tanpa `receipt`), tanpa nama merchant (dan tanpa kunci pihak dari nama itu), tanpa kutipan
+  baris di `evidence`, tanpa peta merchant; yang tersimpan hanya nominal, waktu, status, keyakinan, dan cek. Pembaca
+  struk memecah nomor berkelompok menjadi "barang" (`Rekening Tujuan 0123 0100`, 1234, 567), jadi rincian itu tidak
+  boleh tersimpan.
 - **File asli dihapus begitu item selesai dibaca** (`siap` atau `gagal`), `file_path` dikosongkan. Folder
   `KOTAK_DIR` (mode 0700, milik `jatahku`, di luar `backup.sh`); nama file = id item; file tidak pernah disajikan
   ke browser; tanpa pratinjau gambar. Teks bukti juga ditulis sebagai file sementara dengan aturan yang sama.
@@ -437,8 +440,13 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
   (user tetap mengonfirmasi dan mengoreksi nominal). Contohnya, transfer yang hanya punya satu penanda
   (DANA "Kirim Uang") bisa terbaca `struk_belanja`, dan struk berisi 1–2 barang dengan harga polos plus satu baris
   QRIS dan NMID bisa terbaca `qris` tanpa status. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
-  rincian, dan nama; lihat "Privasi") bila judulnya judul status berkata benda transaksi ("Transfer Berhasil",
-  "Pembayaran Gagal"); judul tanpa kata itu ("Kirim Uang Berhasil") belum dikenali.
+  rincian, dan nama; lihat "Privasi") bila memuat judul status berkata benda transaksi ("Transfer Berhasil",
+  "Pembayaran Gagal") di 4 baris pertama, atau di baris mana pun bila teksnya tidak berpola struk belanja. Belum
+  dikenali: judul tanpa kata itu ("Kirim Uang Berhasil"), status berlabel atau kata status saja ("Status: Berhasil",
+  "BERHASIL"), dan bukti tanpa status sama sekali; untuk teks seperti itu pembaca struk masih bisa menyimpan nomor
+  berkelompok sebagai rincian ("Ke BUDI 1234", 5678, 9012). Bukti satu penanda yang sama sekali tidak memuat judul
+  status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris
+  tunai/bayar) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap terbaca).
 - **Bagian B belum ada**: chat web menyebut "Bukti menunggu di beranda" tetapi banner itu belum ada; item yang
   `siap` bisa dilihat lewat API tetapi belum lewat UI web.
 

@@ -13,11 +13,14 @@ from typing import TYPE_CHECKING
 from app.services.kotak_struk import checks as cross_checks
 from app.services.kotak_struk.config import READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
-from app.services.kotak_struk.readers.proof_common import has_header_status_title
+from app.services.kotak_struk.readers.proof_common import (
+    clean_lines, has_header_status_title, has_status_title, looks_like_store_receipt,
+)
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
 from app.services.kotak_struk.readers.unknown import UnknownReader
+from app.services.receipt_parser import normalize_line
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -52,14 +55,24 @@ def readers_for(proofs_enabled: bool) -> list[DocReader]:
 
 def looks_like_proof(doc: TextDoc) -> bool:
     """Apakah teks ini tampak bukti bayar (QRIS/transfer), apa pun saklar fiturnya? Ya bila salah satu pembaca bukti
-    mengenalinya, atau bila 4 baris pertamanya memuat judul status ("Transfer Berhasil", "Pembayaran Gagal";
-    `has_header_status_title`): bukti dengan satu penanda saja tidak dikenali pembaca bukti, padahal struk belanja tidak
-    pernah berjudul seperti itu. Hanya untuk penyimpanan: perutean tetap mengikuti `proofs_enabled` di `read_document`.
+    mengenalinya, bila 4 baris pertamanya memuat judul status ("Transfer Berhasil", "Pembayaran Gagal";
+    `has_header_status_title`), atau bila judul status ada di baris mana pun dan teksnya tidak berpola struk belanja
+    (`has_status_title`, `looks_like_store_receipt` pada baris yang dinormalkan seperti `parse_receipt`): bukti dengan satu
+    penanda saja tidak dikenali pembaca bukti, dan bukti sering mencetak judulnya di bawah rincian atau di bawah baris status
+    bar dan nama aplikasi. Struk belanja yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
+    penyimpanan: perutean, status, cek, dan nominal tetap mengikuti `read_document`.
 
     Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
     nomor rekening/referensi dan nama pihak ketiga, jadi teks, rincian baris, dan nama merchant-nya tidak boleh
     disimpan atau masuk peta merchant."""
-    return any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines)
+    if any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines):
+        return True
+    if not has_status_title(doc.lines):
+        return False
+    # Pola struk dibaca dari baris yang dinormalkan seperti `parse_receipt` ("TUNAL 50.000" = "TUNAI 50.000"), supaya struk
+    # belanja ber-OCR buruk yang mencetak judul status di kakinya tetap struk dan rinciannya tetap tersimpan.
+    normalized = [line for line in (normalize_line(text) for text in clean_lines(doc.lines)) if line]
+    return not looks_like_store_receipt(normalized)
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
