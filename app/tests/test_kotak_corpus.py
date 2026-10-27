@@ -72,6 +72,19 @@ TIME_FRAGMENT = {
     "Ref 08:12:612345674567": "Ref 08:12:…4567",
 }
 
+# Potongan nomor berbentuk nominal ribuan (OCR membaca satu celah antarkelompok sebagai "." / ","): mask_line
+# membiarkannya sebagai nominal (ruling A13 fix round 1), jadi sisa nomornya saja yang tersamar (re-review A13 I1-r4).
+# Menempel digit/penanda/huruf mirip angka — langsung, lewat satu pemisah, atau lewat 1-2 spasi — harus dihitung.
+GROUPED_FRAGMENT = {
+    "No. Rekening 703.123 456 700": "No. Rekening 703.123 …6700",
+    "RRN 182.222 8783": "RRN 182.222 8783",
+    "Rekening Tujuan 1234 5678 9.012": "Rekening Tujuan …5678 9.012",
+    "NPWP 01.234.567.8 - 901.000": "NPWP …5678 - 901.000",
+    "Nomor Rekening Jago 1,048 3333 9078": "Nomor Rekening Jago 1,048 …9078",
+    "VA 7156  738.628": "VA 7156  738.628",
+    "HP 739,850  3397": "HP 739,850  3397",
+}
+
 # Jam yang menempel pada kata, tanggal, atau jam lain (bukan potongan nomor) tetap sunyi.
 CLEAN_TIME_FORMS = [
     "Tanggal 2026-10-26T09:30:15+07:00", "26/10/2026,08:12:33", "Jam08:12:33", "08:12:33WIB", "Pukul08.12.33",
@@ -448,6 +461,60 @@ class ReviewFlagTests(unittest.TestCase):
         self.assertFalse(needs_review("Ref …4567 24.12.34"))
         self.assertFalse(needs_review("Ref …4567,24.12.34"))
         self.assertTrue(needs_review("08:12:33SO"))           # 2 huruf mirip angka lepas: dihitung
+
+    def test_every_dash_kind_glues_a_time(self):
+        # m-e: semua strip yang dianggap pemisah deret oleh mask_line (_DASH: "-", U+2010..U+2015, U+2212) juga
+        # menempelkan jam ke potongan nomor; bukan hanya "-" dan "–".
+        for dash in ("-", "‐", "‑", "‒", "–", "—", "―", "−"):
+            with self.subTest(dash=hex(ord(dash))):
+                self.assertEqual(mask_line(f"No. Rek 61239281{dash}05:39"), f"No. Rek …9281{dash}05:39")
+                self.assertTrue(needs_review(f"No. Rek …9281{dash}05:39"))
+                self.assertTrue(needs_review(f"Ref 08:12{dash}…4567"))
+                self.assertTrue(needs_review(f"Rek 1.234{dash}…5678"))     # pemisah yang sama untuk nominal tanpa Rp
+                self.assertFalse(needs_review(f"08:12:33{dash}Rp25.000"))   # tetangga di rentang lain tetap sunyi
+        self.assertFalse(needs_review("Ref …9281~05:39"))      # "~" bukan strip
+        self.assertFalse(needs_review("Ref …9281⁃05:39"))      # U+2043 (tanda hubung bulatan) bukan bagian _DASH
+
+    def test_grouped_fragment_next_to_a_number_counts(self):
+        # I1-r4 (ruling): nominal ribuan tanpa Rp/IDR yang menempel digit, penanda, atau huruf mirip angka — langsung,
+        # lewat satu pemisah, atau lewat 1-2 spasi — adalah potongan nomor, dan digitnya dihitung.
+        for raw, masked in GROUPED_FRAGMENT.items():
+            with self.subTest(raw):
+                self.assertEqual(mask_line(raw), masked)
+                self.assertTrue(needs_review(raw))         # bentuk mentah juga ditandai
+                self.assertTrue(needs_review(masked))
+        self.assertTrue(needs_review("RRN 182.222 B783"))       # lewat spasi ke huruf mirip angka: 6 + 1 + 3
+        self.assertTrue(needs_review("Rek 1.234/…5678"))        # satu pemisah
+        self.assertTrue(needs_review("Rek 1.234-…5678"))
+        self.assertTrue(needs_review("Rek …5678-1.234"))        # "8-1.234" bukan nominal sama sekali (aturan mask_line)
+        self.assertTrue(needs_review("Rek …5678  1.234"))       # dua spasi (celah antarkotak OCR)
+        self.assertTrue(needs_review("Rek 1.234 …5678"))    # NBSP
+        self.assertTrue(needs_review("Rek …5678 - 1.234"))      # spasi di sekitar pemisah (bentuk NPWP), juga dua
+        self.assertTrue(needs_review("Rek …5678  /  1.234"))
+        self.assertTrue(needs_review("Rp 25.000 ke 703.123 …6700"))   # nominal Rp di tempat lain tidak melindunginya
+        self.assertTrue(needs_review("Rek 12 1.234"))           # 2 + 4 = 6
+        self.assertFalse(needs_review("Rek 1 1.234"))           # 5
+        self.assertFalse(needs_review("RRN 182.222   8783"))    # tiga spasi memutus (seperti deret di mask_line)
+        self.assertFalse(needs_review("Rek …5678   - 1.234"))
+        self.assertFalse(needs_review("Rek …5678 -   1.234"))
+        self.assertFalse(needs_review("Rek …5678 // 1.234"))    # dua pemisah
+        self.assertFalse(needs_review("Rek …5678\n1.234"))      # ganti baris bukan spasi (seperti deret di mask_line)
+        self.assertFalse(needs_review("Ref …4567 / 08:12"))     # jam tidak mendapat kelonggaran spasi (aturan jam tetap)
+        # Nominal langsung sesudah Rp/IDR tetap dikosongkan, juga bila menempel penanda; nominal tanpa Rp yang
+        # dipisah kata, berdiri sendiri, atau bersebelahan dengan nominal lain (dua rentang yang dikosongkan tidak
+        # saling menempelkan) tetap sunyi.
+        for line in ["Total Rp153.500", "Biaya Admin Rp2.500", "Nominal 150.000", "Rp 1.500.000 Biaya 2.500",
+                     "Qty 2 x 15.000", "Ref …4567 / Rp 25.000", "Ref …4567 Rp 25.000", "Rp 25.000 …4567",
+                     "Rp 25.000 x 3 = Rp 75.000", "Rp 25.000 x 3 = 75.000", "Jumlah 25.000 Biaya 2.500",
+                     "Saldo 12.345.678.901", "Nominal  150.000  Biaya  2.500", "Harga 18.000 x 2",
+                     "Subtotal 153.500 PPN 16.885", "Total Rp 150.000 2.500", "2 x Roti 24.000 48.000",
+                     "150.000 + 2.500 = 152.500", "Qty 2 @ 18.000 = 36.000", "1 x Kopi 18.000"]:
+            with self.subTest(line):
+                self.assertFalse(needs_review(line))
+        # "Qty 2 x 15.000": "x" bukan pemisah penyambung atau huruf mirip angka, jadi 15.000 tetap dikosongkan (1 →
+        # sunyi). Jumlah + harga yang langsung bersebelahan memang terhitung (ruling: satu lirikan).
+        self.assertTrue(needs_review("Qty 2 15.000"))           # 1 + 5 = 6
+        self.assertTrue(needs_review("Kopi 2 18.000"))
 
     def test_kept_forms_masked_numbers_and_short_codes_not_flagged(self):
         lines = [

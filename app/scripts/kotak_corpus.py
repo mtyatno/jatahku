@@ -185,7 +185,10 @@ def mask_line(line: str) -> str:
 # Huruf yang sering dibaca OCR dari angka (0 1 5 8 2 6 9), dalam deret 1-3 huruf yang tidak menempel huruf lain:
 # "S6", "BB", "lO" — bukan bagian kata ("SOSIS", "TID…", "WIB").
 _LOOKALIKE_RUN = re.compile(r"(?<![^\W\d_])[OoDlIiSsBZGgq]{1,3}(?![^\W\d_])")
-_TIME_GLUE = "/-_:.,–"   # tepat satu pemisah ini masih menyambung jam ke potongan nomor di sebelahnya
+# Tepat satu karakter ini masih menyambung jam / nominal ke potongan nomor di sebelahnya: "/", "_", ":", ".", ",",
+# dan semua strip yang mask_line anggap pemisah deret (_DASH).
+_GLUE = re.compile(rf"[/_:.,{_DASH}]")
+_HWS_RX = re.compile(_HWS)
 
 
 def _is_time(text: str) -> bool:
@@ -194,34 +197,57 @@ def _is_time(text: str) -> bool:
     return bool(m and _time_ok(m))
 
 
-def _number_at(blank: str, i: int, step: int, lookalike: set[int]) -> bool:
-    """Apakah blank[i] — langsung, atau sesudah tepat satu pemisah `_TIME_GLUE` ke arah `step` — digit, awal
-    penanda `…dddd`, atau huruf mirip angka lepas. `blank` sudah mengosongkan rentang yang dibiarkan, jadi tetangga
-    yang bagian dari tanggal/nominal/jam lain tidak terlihat."""
-    if 0 <= i < len(blank) and blank[i] in _TIME_GLUE:
-        i += step
+def _skip_spaces(blank: str, i: int, step: int, spaces: int) -> int:
+    """Indeks sesudah melewati <= `spaces` spasi horizontal dari blank[i] ke arah `step`."""
+    while spaces and 0 <= i < len(blank) and _HWS_RX.fullmatch(blank[i]):
+        i, spaces = i + step, spaces - 1
+    return i
+
+
+def _number_at(blank: str, i: int, step: int, lookalike: set[int], spaces: int = 0) -> bool:
+    """Apakah ke arah `step` dari blank[i] — langsung, atau lewat tepat satu pemisah `_GLUE`, masing-masing boleh
+    didahului <= `spaces` spasi — ada digit, awal penanda `…dddd`, atau huruf mirip angka lepas. `blank` sudah
+    mengosongkan rentang yang dibiarkan, jadi tetangga yang bagian dari tanggal/nominal/jam lain tidak terlihat."""
+    i = _skip_spaces(blank, i, step, spaces)
+    if 0 <= i < len(blank) and _GLUE.fullmatch(blank[i]):
+        i = _skip_spaces(blank, i + step, step, spaces)
     return 0 <= i < len(blank) and (blank[i].isdecimal() or blank[i] == "…" or i in lookalike)
+
+
+def _is_number_fragment(line: str, blank: str, start: int, end: int, lookalike: set[int]) -> bool:
+    """Rentang yang dibiarkan line[start:end] berbentuk jam atau nominal ribuan tanpa Rp/IDR, dan menempel potongan
+    nomor: jam langsung atau lewat satu pemisah ("…4903/09:45", "S6:25"); nominal tanpa Rp juga lewat 1-2 spasi di
+    sekitar pemisah itu — celah antarkelompok sebuah nomor yang satu celahnya terbaca OCR sebagai titik/koma
+    ("703.123 …6700", "182.222 8783", "…5678 - 901.000"). Nominal langsung sesudah Rp/IDR tetap nominal."""
+    piece = line[start:end]
+    if _is_time(piece):
+        spaces = 0
+    elif _GROUPED.fullmatch(piece):
+        spaces = 2
+    else:
+        return False
+    return _number_at(blank, start - 1, -1, lookalike, spaces) or _number_at(blank, end, 1, lookalike, spaces)
 
 
 def needs_review(line: str) -> bool:
     """Jaring pengaman untuk tinjauan manusia (tidak pernah memblokir): hitungan seluruh baris sesudah `mask_line`.
 
-    Rentang yang dibiarkan (nominal, tanggal, jam, NMID) dikosongkan — kecuali jam yang menempel, langsung atau lewat
-    satu dari `/ - _ : . , –`, pada digit, penanda `…dddd`, atau huruf mirip angka lepas: itu potongan nomor berbentuk
-    jam ("…4903/09:45", "S6:25") dan digitnya tetap dihitung. Lalu dihitung: tiap digit 1 (penanda `…dddd` = 4) dan
-    tiap huruf mirip angka (`_LOOKALIKE_RUN`) yang menempel digit atau penanda 1 ("8BB…2796", "ID…5678"). Baris
-    ditandai bila jumlahnya >= MIN_RUN_DIGITS. Kata, spasi, dan tanda baca di antaranya tidak memisahkan:
-    "Ref …5678 …1234" dan "ID Transaksi A1B2C3D4" ditandai (ruling A13 fix round 4) — salah tanda hanya satu lirikan
-    di tinjauan A14, sedangkan yang lolos masuk ke korpus."""
+    Rentang yang dibiarkan (nominal, tanggal, jam, NMID) dikosongkan — kecuali yang berupa potongan nomor
+    (`_is_number_fragment`): jam yang menempel digit, penanda `…dddd`, atau huruf mirip angka lepas, langsung atau
+    lewat satu pemisah `_GLUE`, dan nominal ribuan tanpa Rp/IDR yang menempel begitu atau lewat 1-2 spasi (juga di
+    kedua sisi pemisah itu, re-review A13 I1-r4); digitnya tetap dihitung. Lalu dihitung: tiap digit 1 (penanda `…dddd` = 4) dan tiap huruf mirip angka (`_LOOKALIKE_RUN`)
+    yang menempel digit atau penanda 1 ("8BB…2796", "ID…5678"). Baris ditandai bila jumlahnya >= MIN_RUN_DIGITS.
+    Kata, spasi, dan tanda baca di antaranya tidak memisahkan: "Ref …5678 …1234" dan "ID Transaksi A1B2C3D4"
+    ditandai (ruling A13 fix round 4) — salah tanda hanya satu lirikan di tinjauan A14, sedangkan yang lolos masuk
+    ke korpus."""
     spans = _kept_spans(line)
     chars = list(line)
     for start, end in spans:
         chars[start:end] = " " * (end - start)
     blank = "".join(chars)
     lookalike = {i for m in _LOOKALIKE_RUN.finditer(blank) for i in range(*m.span())}
-    for start, end in spans:   # jam yang menempel potongan nomor: digitnya dihitung lagi
-        if _is_time(line[start:end]) and (_number_at(blank, start - 1, -1, lookalike)
-                                          or _number_at(blank, end, 1, lookalike)):
+    for start, end in spans:
+        if _is_number_fragment(line, blank, start, end, lookalike):
             chars[start:end] = line[start:end]
     text = "".join(chars)
     count = sum(c.isdecimal() for c in text)
