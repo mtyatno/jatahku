@@ -108,7 +108,16 @@ penyesuaian, rekonsiliasi, sumber keyakinan, label total) supaya respons `scan-r
 | `bukti_lama` | warn | QRIS, transfer | Bukti lebih dari 60 hari lalu |
 
 Cek status sengaja berlaku untuk semua jenis supaya transfer gagal tidak bisa tercatat walau salah dirutekan ke
-pembaca lain. Arah uang: `top_up`, `masuk`, dan `antar_rekening_sendiri` mengisi `flags.skip_suggestion`; bot dan web
+pembaca lain. Pembaca struk belanja dan pembaca tidak dikenali (yang membaca bukti bayar saat saklar mati, atau bukti yang
+tidak dikenali pembaca bukti) mengambil status dari judul (4 baris pertama) **dan dari judul status gagal/pending di
+mana pun di badan** (`apply_header_status` → `read_body_failure_title`: kata benda transaksi + kata status, mis.
+"Transaksi Gagal" di bawah rincian, "Transaction failed", "Transfer Diproses"), jadi bukti seperti itu diblokir atau
+diperingatkan sama seperti di jalur bukti. Hanya judul: kalimat biasa ("Cetak ulang gagal"), kalimat bantuan/ajakan/tanya
+("Info untuk transaksi gagal: 14017", "Jika transaksi gagal hubungi …", "Transaksi gagal? Hubungi kami"), dan judul
+sukses dari baris nama tidak dihitung; judul status yang **pertama** menentukan, seperti `read_status`: judul sukses di
+atasnya ("Transfer Berhasil", atau "Transaksi Berhasil" di badan) membuat kalimat gagal sesudahnya dianggap kaki bukti.
+Pada struk belanja, kaki "Transaksi gagal - struk ini tidak sah" (struk batal) ikut memblokir dan "Pembayaran pending
+akan diproses otomatis" hanya memperingatkan. Arah uang: `top_up`, `masuk`, dan `antar_rekening_sendiri` mengisi `flags.skip_suggestion`; bot dan web
 menawarkan "bukan pengeluaran", **tidak pernah otomatis**, dan user tetap bisa memilih "Tetap catat" (kecuali
 `blocked`). `antar_rekening_sendiri` hanya untuk transfer keluar yang nama penerimanya sama dengan nama akun, atau
 yang minimal 2 katanya ada di nama akun (`apply_flow`).
@@ -412,10 +421,13 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
 
 ## Batasan yang diketahui
 
-- **Judul status dari baris nama.** Bila nama penerima memuat kata seperti "SUKSES" pada baris berlabel nama dan
-  bukti itu gagal tanpa label status baku di empat baris pertama, bukti gagal tersebut bisa terbaca berhasil
-  (jarang). Perbaikannya satu baris (judul dari baris nama hanya boleh menandai gagal/pending) dan dikerjakan di
-  A14. Sampai itu, jangan mengandalkan pemblokiran transfer gagal untuk nama penerima yang memuat kata status.
+- **Status gagal yang belum terbaca.** Judul dari baris nama ("Tujuan Transfer CV SUKSES JAYA") tidak lagi menutupi
+  kegagalan di bawahnya, di jalur bukti maupun jalur struk/tidak dikenali (lihat "Cek silang"). Yang belum: di jalur
+  struk/tidak dikenali, kata status tunggal di badan ("Gagal") dan status berlabel ("Status: Gagal") tidak dibaca
+  (hanya judul status, paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
+  ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi "Pembayaran Gagal" di bawahnya; kaki bantuan berbentuk
+  judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur. Dikalibrasi di
+  A14 dengan sampel nyata.
 - **Alat korpus tidak mendeteksi semua nomor panjang.** `PERIKSA` tidak menandai nomor rekening/RRN yang terbaca
   OCR sebagai dua nominal bertitik ("614.534 681.544") atau terpotong tanda lain di tengahnya ("703.123|…6700"),
   nomor yang terpotong ke dua baris, dan referensi campuran huruf dan angka pendek. Tinjauan manusia sebelum

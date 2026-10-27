@@ -1346,7 +1346,8 @@ class UnknownReaderStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("tidak_dikenali", "pending", {"status_pending": "warn"}))
 
     async def test_status_stays_unknown_without_a_failure_in_the_header(self):
-        for lines in (["foto buram", "Rp 12.000"], ["Transaksi Berhasil", "Rp 12.000"], ["foto buram", "Rp 12.000", "a", "b", "Transaksi Gagal"],
+        # Judul gagal di bawah judul ("foto buram", …, "Transaksi Gagal") kini memblokir: FailureTitleBelowTheHeaderTests (C1).
+        for lines in (["foto buram", "Rp 12.000"], ["Transaksi Berhasil", "Rp 12.000"],
                       ["Jika gagal hubungi 14017", "Rp 12.000"], ["Info untuk transaksi gagal: 14017", "Rp 12.000"]):
             with self.subTest(lines):
                 res = await read(lines)
@@ -1564,6 +1565,122 @@ class StatusTitlesNextToNameLabelsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pc.read_header_status(["Merchant", "Pembayaran Gagal"]), "gagal")
         self.assertEqual(pc.read_header_status(["Merchant", "TOKO GAGAL MANIA"]), None)
         self.assertEqual(pc.read_header_status(["Penerima", "Untuk transaksi gagal hubungi 14017"]), None)   # frasa bantuan di bawah label nama
+
+
+class FailureTitleBelowTheHeaderTests(unittest.IsolatedAsyncioTestCase):
+    """C1: pembaca struk belanja dan pembaca tidak dikenali (saklar mati, atau bukti yang tidak dikenali pembaca bukti) dulu
+    membaca status dari 4 baris pertama saja, jadi transfer gagal yang judul statusnya di bawah rincian bisa dicatat. Kini
+    judul status gagal/pending di badan juga memblokir/memperingatkan: hanya judul (kata benda transaksi + kata status),
+    bukan kalimat bantuan/ajakan/tanya, dan judul status pertama menurut urutan dokumen yang menentukan."""
+
+    SLIP = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
+    FAILED = {
+        "transaksi gagal": ([*SLIP, "Transaksi Gagal"], "gagal"),
+        "english": ([*SLIP, "Transaction failed"], "gagal"),
+        "ajakan sesudah status": ([*SLIP, "Transaksi Gagal, silakan coba lagi"], "gagal"),
+        "diproses": ([*SLIP, "Transaksi Diproses"], "pending"),
+        "nama sukses di judul (A5)": (["Tujuan Transfer CV SUKSES JAYA", "26 Okt 2026 10:00", "Bank Tujuan BCA", "Nominal Rp50.000",
+                                       "Biaya Rp0", "Transaksi Gagal"], "gagal"),
+        "tidak dikenali": (["foto buram", "Rp 12.000", "a", "b", "Transaksi Gagal"], "gagal"),
+    }
+    CHECKS = {"gagal": {"status_gagal": "block"}, "pending": {"status_pending": "warn"}}
+    EVIDENCE = "Bukti menyebut status"
+    STORE = ["TOKO MAJU", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+    STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400", "Non Tunai (QRIS) 45.400"]
+    SUKSES_LINES = ["TOKO SUKSES MAKMUR", "JL MERDEKA 1", "01-10-2026 08:15", "ROTI 10.000", "SUSU 5.000", "TOTAL 15.000", "TUNAI 15.000"]
+    QUIET_FOOTERS = ("Jika transaksi gagal hubungi 14017", "Cetak ulang gagal", "Transaksi gagal? Hubungi kami",
+                     "Untuk transaksi gagal, cek riwayat", "Pembayaran QRIS berhasil", "Info untuk transaksi gagal: 14017",
+                     *HelpLineStatusTests.HELP, *HelpPhraseWithSeveralStatusWordsTests.HELP)
+
+    async def assertQuiet(self, lines, reader, status, ctx=CTX):
+        for enabled in (False, True):
+            res = await read(lines, ctx=ctx, enabled=enabled)
+            self.assertEqual((res.reader, res.parsed.doc.status, res.checks), (reader, status, []), enabled)
+            self.assertFalse([e for e in res.parsed.doc.evidence if e.startswith(self.EVIDENCE)], enabled)
+
+    async def test_failure_title_below_the_header_blocks_on_the_store_and_unknown_paths(self):
+        for name, (lines, status) in self.FAILED.items():
+            for enabled in (False, True):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    d = res.parsed.doc
+                    self.assertEqual((d.status, {c.code: c.level for c in res.checks}), (status, self.CHECKS[status]))
+                    self.assertEqual(d.checks, [c.as_dict() for c in res.checks])
+                    if res.reader in ("struk_belanja", "tidak_dikenali"):
+                        self.assertIn(f"{self.EVIDENCE} {status}", d.evidence)
+                    if not enabled:   # saklar mati (produksi): pembaca bukti tidak jalan
+                        self.assertIn(res.reader, ("struk_belanja", "tidak_dikenali"))
+        # Saklar menyala: yang dikenali pembaca transfer tetap dibaca `read_status` (tidak berubah); bukti yang tidak dikenali
+        # pembaca bukti (SLIP) juga dibaca pembaca struk, jadi perbaikan yang sama berlaku di sana.
+        self.assertEqual((await read(self.FAILED["nama sukses di judul (A5)"][0])).reader, "transfer.umum")
+        self.assertEqual((await read(self.FAILED["transaksi gagal"][0])).reader, "struk_belanja")
+
+    async def test_store_receipts_and_quiet_footers_stay_berhasil(self):
+        for rec in FIX["receipts"]:
+            with self.subTest(rec["id"]):
+                await self.assertQuiet(rec["lines"], "struk_belanja", "berhasil", ctx=ParseContext(today=date(2026, 10, 15)))
+        for name, lines in (("STORE_LINES", self.STORE_LINES), ("SUKSES_LINES", self.SUKSES_LINES)):
+            with self.subTest(name):
+                await self.assertQuiet(lines, "struk_belanja", "berhasil")
+        for footer in self.QUIET_FOOTERS:
+            with self.subTest(footer):
+                await self.assertQuiet([*self.STORE, footer], "struk_belanja", "berhasil")
+        for footer in ("Transaksi Berhasil", "Info untuk transaksi gagal: 14017", "Cetak ulang gagal", "Transaksi gagal? Hubungi kami"):
+            with self.subTest("tidak dikenali", footer=footer):
+                await self.assertQuiet(["foto buram", "Rp 12.000", "a", "b", footer], "tidak_dikenali", "tidak_diketahui")
+
+    async def test_accepted_store_receipt_effects(self):
+        # Putusan pengendali: struk cetak ulang yang batal memang tidak boleh dicatat; "pending" pada struk hanya peringatan.
+        for footer, status in (("Transaksi gagal - struk ini tidak sah", "gagal"), ("Pembayaran pending akan diproses otomatis", "pending")):
+            for enabled in (False, True):
+                with self.subTest(footer, enabled=enabled):
+                    res = await read([*self.STORE, footer], enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, {c.code: c.level for c in res.checks}),
+                                     ("struk_belanja", status, self.CHECKS[status]))
+
+    async def test_a_success_title_before_it_decides_as_on_the_proof_path(self):
+        """Judul sukses yang lebih dulu (di 4 baris pertama atau di badan) yang menentukan, seperti `read_status`: kalimat gagal
+        sesudahnya kaki bukti yang tidak tertangkap penyaring frasa bantuan ("Info transaksi pending/gagal: 14017"), dan bukti
+        berhasil seperti itu tetap bisa dicatat. Judul sukses dari baris nama dan kata status di nama tanpa label tidak menentukan."""
+        ok = ["Transfer Berhasil", "26/10/2026 09:30", "Ke BUDI", "Nominal Rp150.000", "Total Rp150.000"]
+        for lines in ([*ok, "Info transaksi pending/gagal: 14017"], [*ok, "Dana transaksi gagal akan dikembalikan"],
+                      [*ok, "Refund transaksi gagal otomatis"], [*ok, "Cek transaksi pending di menu Riwayat"],
+                      ["BCA mobile", "26/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000", "Transaksi Berhasil",
+                       "Info transaksi pending/gagal: 14017"]):
+            with self.subTest(lines[0], footer=lines[-1]):
+                await self.assertQuiet(lines, "struk_belanja", "berhasil")
+        lines = ["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp150.000", "Info transaksi pending/gagal: 14017"]
+        res = await read(lines, enabled=False)
+        self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("struk_belanja", "berhasil", []))
+        res = await read(lines)   # saklar menyala: pembaca transfer, `read_status` (judul lebih dulu) — sama
+        self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("transfer.umum", "berhasil", []))
+        for lines in (["BCA", "26 Okt 2026", "Nominal Rp50.000", "Biaya Rp0", "Tujuan Transfer CV SUKSES JAYA", "Transaksi Gagal"],
+                      ["BCA", "26 Okt 2026", "Nominal Rp50.000", "Penerima", "Transfer Sukses Abadi", "Transfer Gagal"],
+                      ["QRIS", "TOKO SUKSES MAKMUR", "Rp25.000", "26/10/2026 08:12", "Pembayaran Gagal"]):
+            with self.subTest(lines[-2]):
+                res = await read(lines, enabled=False)
+                self.assertEqual((res.parsed.doc.status, {c.code: c.level for c in res.checks}), ("gagal", {"status_gagal": "block"}))
+
+    def test_body_failure_title_unit_rules(self):
+        top = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000"]
+        for body, expect in ((["Transaksi Gagal"], "gagal"), (["Payment failed"], "gagal"), (["Transfer Anda Gagal"], "gagal"),
+                             (["Transaksi Gagal, silakan coba lagi"], "gagal"), (["Transfer Diproses"], "pending"),
+                             (["Merchant Pembayaran Gagal"], "gagal"), (["Penerima", "Transfer Gagal"], "gagal"),
+                             (["Transaksi gagal - struk ini tidak sah"], "gagal"), (["Total Rp150.000", "Transaksi Gagal"], "gagal"),
+                             (["Transaksi Berhasil"], None), (["Transaksi Berhasil", "Transaksi Gagal"], None),
+                             (["Penerima Transfer Sukses Abadi", "Transfer Gagal"], "gagal"),
+                             (["Cetak ulang gagal"], None), (["Info untuk transaksi gagal: 14017"], None),
+                             (["Pengaduan transaksi pending/gagal: 14017"], None), (["Transaksi gagal? Hubungi kami"], None),
+                             (["Jika transaksi gagal hubungi 14017"], None), (["Untuk transaksi gagal, cek riwayat"], None),
+                             ([], None)):
+            with self.subTest(body):
+                self.assertEqual(pc.read_body_failure_title([*top, *body]), expect)
+        # Judul di 4 baris pertama bukan urusan fungsi ini (gagal/pending: `read_header_status`; sukses menentukan).
+        self.assertIsNone(pc.read_body_failure_title(["Transaksi Gagal", "Rp50.000"]))
+        self.assertIsNone(pc.read_body_failure_title(["Transaksi Gagal", "b", "c", "d", "Transaksi Gagal"]))
+        self.assertIsNone(pc.read_body_failure_title(["Transfer Berhasil", "b", "c", "d", "Transaksi Gagal"]))
+        self.assertEqual(pc.read_body_failure_title(["TOKO SUKSES MAKMUR", "b", "c", "d", "Transaksi Gagal"]), "gagal")
+        self.assertEqual(pc.read_body_failure_title(["Tujuan Transfer CV SUKSES JAYA", "b", "c", "d", "Transaksi Gagal"]), "gagal")
 
 
 class PlainNumberExtraFeeTests(unittest.IsolatedAsyncioTestCase):

@@ -192,6 +192,9 @@ Teks OCR (`receipt_scans.ocr_lines`) dihapus begitu feedback diproses; scan yang
 tidak pernah diberi feedback dibersihkan scheduler setelah 24 jam (outcome `expired`).
 Bukti bayar yang dibaca jalur struk ini (saklar `receipt_inbox` mati) tidak menyimpan teks OCR sama sekali, juga
 tanpa rincian barang, nama toko, dan kutipan baris (lihat [`docs/kotak-struk.md`](kotak-struk.md) "Privasi").
+Statusnya dibaca dari judul dan dari judul status gagal/pending di badan ("Transaksi Gagal" di bawah rincian), jadi
+transfer gagal tetap diblokir di jalur ini; struk dengan kaki "Transaksi gagal - struk ini tidak sah" juga diblokir,
+dan "Pembayaran pending …" hanya memperingatkan (lihat `docs/kotak-struk.md` "Cek silang").
 Salah-baca kata kunci umum (`T0TAL`, `TUNAL`, `KEHBALI`) ditangani kamus +
 pencocokan jarak-edit 1 di `receipt_parser.py`.
 

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar, Line
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.readers.proof_common import read_header_status
+from app.services.kotak_struk.readers.proof_common import read_body_failure_title, read_header_status
 from app.services.receipt_parser import (
     NOT_TOTAL, TOTAL_INCL_TAX, ReceiptParse, amounts_in, merchant_key, normalize_line, parse_receipt, reconcile,
 )
@@ -60,13 +60,20 @@ async def llm_fallback(ctx: ParseContext) -> dict | None:
 
 
 def apply_header_status(doc: DokumenBayar, lines: list[str]) -> None:
-    """Status bawaan dokumen dibiarkan; hanya judul yang bisa mengubahnya ke `gagal`/`pending`, supaya bukti transfer/QRIS
-    yang gagal dan salah rute (ke struk belanja atau pembaca tidak dikenali) tetap diblokir oleh cek status
-    (checks.common_checks). Kalimat di badan dan kaki tidak dihitung."""
+    """Status bawaan dokumen dibiarkan; hanya judul yang bisa mengubahnya ke `gagal`/`pending`: judul bukti (4 baris pertama,
+    `read_header_status`), lalu judul status gagal/pending di badan (`read_body_failure_title`, mis. "Transaksi Gagal" di
+    bawah rincian), supaya bukti transfer/QRIS yang gagal dan salah rute (ke struk belanja atau pembaca tidak dikenali)
+    tetap diblokir oleh cek status (checks.common_checks). Kalimat biasa, bantuan, ajakan, dan tanya di badan dan kaki
+    tidak dihitung."""
     header = read_header_status(lines)
     if header in ("gagal", "pending"):
         doc.status = header
         doc.evidence.append(f"Judul bukti menyebut status {header}")
+        return
+    body = read_body_failure_title(lines)
+    if body is not None:
+        doc.status = body
+        doc.evidence.append(f"Bukti menyebut status {body}")
 
 
 def _midnight_wib(d: date | None) -> datetime | None:
@@ -167,7 +174,7 @@ class StrukBelanjaReader:
         )
         fb = await llm_fallback(ctx) if rp.confidence in ("rendah", "gagal") else None
         parsed = parsed_from_receipt(rp, fb)
-        apply_header_status(parsed.doc, doc.lines)        # status bawaan `berhasil`; judul bisa menjadikannya gagal/pending
+        apply_header_status(parsed.doc, doc.lines)        # status bawaan `berhasil`; judul status bisa menjadikannya gagal/pending
         return parsed
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:

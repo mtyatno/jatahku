@@ -1,4 +1,5 @@
-"""Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending), seperti struk belanja."""
+"""Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending; juga judul status
+gagal/pending di badan), seperti struk belanja."""
 from __future__ import annotations
 
 import re
@@ -28,7 +29,8 @@ class UnknownReader:
     async def parse(self, doc: TextDoc, ctx: ParseContext) -> Parsed:
         parsed = await self._parse(doc, ctx)
         # Bukti gagal/pending yang tidak dikenali pembaca mana pun (atau pembaca bukti mati) tetap diblokir/diperingatkan
-        # oleh cek status; status bawaan (`tidak_diketahui`, atau `berhasil` dari penyelamatan LLM) hanya diubah oleh judul.
+        # oleh cek status; status bawaan (`tidak_diketahui`, atau `berhasil` dari penyelamatan LLM) hanya diubah oleh judul
+        # (atau judul status gagal/pending di badan, `apply_header_status`).
         apply_header_status(parsed.doc, doc.lines)
         return parsed
 

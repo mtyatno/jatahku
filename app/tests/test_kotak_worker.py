@@ -27,7 +27,7 @@ from app.core.database import Base
 from app.main import app, lifespan
 from app.models.models import AppSetting, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, ReceiptScan, User
 from app.services.app_config import FEATURES, feature_enabled
-from app.services.kotak_struk import merchants, waiter, worker
+from app.services.kotak_struk import merchants, record, waiter, worker
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import ExtractError, PdfLocked, TextDoc
 from app.services.kotak_struk.intake import IntakeRequest, create_item
@@ -395,6 +395,26 @@ class WorkerTests(WorkerBase):
                 self.assertFalse([e for e in got.document["evidence"] if '"' in e or re.search(r"\d", e)])
                 self.assertNoNumber(got.document, ("012301001234567", "081234567890"))
         self.assertEqual(await self.count_merchants(), 0)
+
+    async def test_failed_slip_with_its_status_below_the_header_is_siap_but_cannot_be_recorded_with_flag_off(self):
+        """C1: saklar mati, transfer gagal yang judul statusnya di bawah rincian (dibaca pembaca struk belanja): item tetap
+        `siap` (dibaca, ditampilkan dengan pemberitahuan gagal), cek `status_gagal` tersimpan, dan `check_recordable`
+        menolaknya, jadi bot dan web tidak bisa mencatatnya."""
+        for lines in (["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000",
+                       "Transaksi Gagal"],
+                      ["Tujuan Transfer CV SUKSES JAYA", "26 Okt 2026 10:00", "Bank Tujuan BCA", "Nominal Rp50.000", "Biaya Rp0",
+                       "Transaksi Gagal"]):
+            with self.subTest(lines[0]):
+                item = await self.item(text=lines[0])
+                self.assertEqual(await self.process(item, lines, proofs_enabled=False), "siap")
+                got = await self.get(item.id)
+                self.assertEqual((got.status, got.doc_type, got.document["status"]), ("siap", "struk_belanja", "gagal"))
+                self.assertIn({"code": "status_gagal", "level": "block", "message": record.MSG_BLOCKED}, got.document["checks"])
+                async with self.Session() as db:
+                    user = await db.get(User, self.user_id)
+                    with self.assertRaises(record.NotRecordable) as caught:
+                        await record.check_recordable(db, item.id, user)
+                self.assertEqual(caught.exception.detail, record.MSG_BLOCKED)
 
     async def test_real_store_receipt_still_keeps_normalized_text_and_merchant_with_flag_off(self):
         item = await self.item(text="indomaret")

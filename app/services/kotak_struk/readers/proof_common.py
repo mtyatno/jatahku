@@ -509,7 +509,8 @@ def _first(texts: list[str]) -> str | None:
 
 def read_header_status(lines: list[str]) -> str | None:
     """Hanya tingkat judul (4 baris pertama): `gagal`, `pending`, `berhasil`, atau None. Dipakai pembaca struk belanja
-    supaya bukti yang salah rute tetap ketahuan gagalnya; kalimat di badan dan kaki tidak dihitung."""
+    supaya bukti yang salah rute tetap ketahuan gagalnya; kalimat di badan dan kaki tidak dihitung (judul status
+    gagal/pending di badan: `read_body_failure_title`)."""
     return _strongest(_status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
 
 
@@ -519,6 +520,27 @@ def has_header_status_title(lines: list[str]) -> bool:
     "Top Up Sukses"). Kata status di nama toko ("TOKO SUKSES MAKMUR", "Warung Sukses") dibaca `read_header_status`
     sebagai `berhasil`, tetapi bukan judul status, jadi struk belanja biasa tidak memenuhinya."""
     return any(_is_status_title(part) for part in _status_lines(clean_lines(lines)[:HEADER_LINES], HEADER_WORDS))
+
+
+def read_body_failure_title(lines: list[str]) -> str | None:
+    """`gagal`/`pending` dari judul status di badan (sesudah 4 baris pertama), untuk pembaca struk belanja dan tidak
+    dikenali, yang selain itu hanya membaca judul (`read_header_status`): bukti bayar yang sampai ke sana (saklar mati,
+    atau tidak dikenali pembaca bukti) bisa mencetak "Transaksi Gagal" di bawah rinciannya. Hanya judul status
+    (`_is_status_title`: kata benda transaksi + kata status, "Transaksi Gagal", "Transfer Diproses", "Payment failed"),
+    dibaca seperti `_status_lines`:
+    kalimat biasa ("Cetak ulang gagal"), kalimat bantuan/ajakan/tanya ("Info untuk transaksi gagal: 14017", "Transaksi
+    gagal? Hubungi kami"), dan judul sukses dari baris nama tidak dihitung. Yang menentukan judul status PERTAMA menurut
+    urutan dokumen, seperti badan di `read_status`: judul sukses di 4 baris pertama ("Transfer Berhasil") atau di badan
+    ("Transaksi Berhasil") berarti kalimat gagal sesudahnya kaki bukti ("Info transaksi pending/gagal: 14017",
+    "Dana transaksi gagal akan dikembalikan"), bukan status bukti ini. `berhasil` tidak pernah dikembalikan."""
+    cleaned = clean_lines(lines)
+    if has_header_status_title(cleaned):   # judul status di 4 baris pertama yang menentukan (gagal/pending: read_header_status)
+        return None
+    # Seluruh teks, supaya label nama di judul terbawa ke badan ("Penerima" di baris 4, namanya di baris 5). Judul status
+    # dari 4 baris pertama sudah tidak ada (di atas), jadi judul pertama di sini pasti dari badan.
+    first = next((part for part in _status_lines(cleaned, HEADER_WORDS) if _is_status_title(part)), None)
+    status = _classify(first) if first is not None else None
+    return status if status in (GAGAL, PENDING) else None
 
 
 def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
