@@ -293,6 +293,17 @@ class ScanReceiptTests(TxnBase):
             r = await self.c.post("/transactions/scan-receipt", files={"image": ("a.pdf", b"%PDF-1.4 x", "application/pdf")})
         self.assertEqual((r.status_code, r.json()["total"]), (200, 25000))
 
+    async def test_endpoint_has_no_separate_hourly_limit(self):
+        # Batas slowapi 30/jam di rute ini dihapus (spec §6c): yang berlaku batas intake Kotak Struk, gabungan semua
+        # kanal (diuji di test_kotak_intake). Hasil scan diganti tiruan supaya yang diuji hanya rutenya.
+        scan = AsyncMock(return_value={"scan_id": "x"})
+        with patch.object(txn_route, "run_receipt_scan", scan):
+            codes = [(await self.c.post("/transactions/scan-receipt", headers={"Authorization": "Bearer batas-scan"},
+                                        files={"image": ("a.jpg", JPG + bytes([i]), "image/jpeg")})).status_code
+                     for i in range(31)]
+        self.assertEqual(codes, [200] * 31)
+        self.assertEqual(scan.await_count, 31)
+
     async def test_endpoint_busy_is_503(self):
         with patch.object(waiter_mod, "wait_for_item", AsyncMock(side_effect=self.return_unprocessed)):
             r = await self.c.post("/transactions/scan-receipt", files={"image": ("a.jpg", JPG + b"y", "image/jpeg")})

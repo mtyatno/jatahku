@@ -53,7 +53,6 @@ async def chat_action(request: Request, body: ChatActionIn, user: User = Depends
 
 
 @router.post("/photo")
-@limiter.limit("30/hour", key_func=chat_key_func)
 async def chat_photo(
     request: Request,
     image: UploadFile = File(...),

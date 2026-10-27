@@ -239,11 +239,11 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
 - 1 OCR berjalan bersamaan (worker Kotak Struk di proses API). `scan-receipt` menunggu hasilnya
   maks 45 dtk; lewat itu 503 "sedang ramai" dan itemnya tetap diproses (muncul di Kotak Struk).
   Koneksi DB dilepas selama menunggu.
-- Rate limit: `POST /transactions/scan-receipt` 30 panggilan/jam per user (slowapi); bot tidak punya batas
-  scan sendiri lagi (batas 30 pesan/menit untuk pesan teks tetap). Di bawahnya, batas intake Kotak Struk
-  berlaku untuk semua kanal: 30 bukti/jam per user (Redis; Redis mati → tidak dibatasi) dan maks 20 item
+- Rate limit: tidak ada batas slowapi terpisah lagi di `POST /transactions/scan-receipt`; batas intake Kotak
+  Struk berlaku untuk semua kanal: 30 bukti/jam per user (Redis; Redis mati → tidak dibatasi) dan maks 20 item
   belum selesai per user; terlewati → 429 ("Terlalu banyak bukti. Coba lagi sebentar." / "Masih ada
-  bukti yang sedang dibaca. Tunggu sebentar."), di bot pesan itu menggantikan "Membaca bukti…".
+  bukti yang sedang dibaca. Tunggu sebentar."), di bot pesan itu menggantikan "Membaca bukti…". Bot tidak
+  punya batas scan sendiri lagi (batas 30 pesan/menit untuk pesan teks tetap).
 - **Kuota scan dihapus** (semua paket). `GET /transactions/scan-receipt/quota` tetap ada untuk klien
   lama: `{limit: null, used, remaining: null}` (`used` = scan bulan ini yang totalnya terbaca, di
   zona waktu user).

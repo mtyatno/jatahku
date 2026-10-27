@@ -536,7 +536,8 @@ async def _read_receipt_upload(image: UploadFile, *, allow_pdf: bool = True) -> 
 
 
 def receipt_key_func(request: Request) -> str:
-    """Rate limit per user (klaim `sub` JWT), stabil walau token di-refresh."""
+    """Rate limit per user (klaim `sub` JWT), stabil walau token di-refresh. Tidak dipakai `scan-receipt` lagi: batasnya
+    batas intake Kotak Struk (gabungan semua kanal)."""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         try:
@@ -584,7 +585,6 @@ async def receipt_scan_quota(
 
 
 @router.post("/scan-receipt")
-@limiter.limit("30/hour", key_func=receipt_key_func)
 async def scan_receipt_endpoint(
     request: Request,
     image: UploadFile = File(...),

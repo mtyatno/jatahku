@@ -267,7 +267,7 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
 | `STALE_PROCESSING` | 5 menit | Item `diproses` lebih lama dari ini dikembalikan ke antrean |
 | `MAX_ATTEMPTS` | 3 | Percobaan baca sebelum `gagal` |
 | `ITEM_EXPIRY` | 7 hari | `siap`/`gagal` tanpa konfirmasi → `kedaluwarsa` (dihitung dari selesai dibaca) |
-| `RATE_PER_HOUR` | 30 | Bukti per user per jam, gabungan semua kanal (Redis `kotak:rate:{user_id}`; Redis mati → tidak dibatasi) |
+| `RATE_PER_HOUR` | 30 | Bukti per user per jam, gabungan semua kanal (Redis `kotak:rate:{user_id}`; Redis mati → tidak dibatasi); menggantikan batas slowapi 30/jam di `scan-receipt` dan `/bot/chat/photo` |
 | `MAX_FILES_PER_SHARE` | 10 | File per satu share. Dipakai klien (Bagian B); server belum memakainya |
 | `MAX_PENDING` | 20 | Item `diterima`/`diproses` per user |
 | `IMAGE_MAX_BYTES` | 8 MB | Gambar (batas 30 MP di OCR tetap) |

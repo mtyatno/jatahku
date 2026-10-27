@@ -80,9 +80,9 @@ di form), divalidasi sama dengan `/transactions/scan-receipt` (JPG/PNG/WebP, mak
 — alur yang sama dengan kirim foto ke @JatahkuBot, yaitu **Kotak Struk** (sumber
 `web_chat`, lihat [`kotak-struk.md`](kotak-struk.md)): pilih amplop lewat tombol,
 "Nominal salah", feedback belajar. **Tidak ada kuota scan** (dihapus untuk semua
-paket); batasnya 30 foto/jam per token akses di route ini, ditambah batas intake
-Kotak Struk (30 bukti/jam per user dan maks 20 yang belum selesai, gabungan semua
-kanal). Foto JPEG masuk sebagai `photo`, format lain sebagai `document`. Kirim ulang
+paket); batasnya hanya batas intake Kotak Struk (30 bukti/jam per user dan maks 20
+yang belum selesai, gabungan semua kanal). Foto JPEG masuk sebagai `photo`, format
+lain sebagai `document`. Kirim ulang
 dengan `client_id` yang sama tidak diproses dua kali (balasan yang sama dikembalikan),
 dan file yang sama selagi masih dibaca atau menunggu dikembalikan sebagai item yang
 sama. Bukti yang belum selesai dibaca dalam 10 detik dijawab "Masih dibaca" (hasilnya

@@ -353,6 +353,16 @@ class PhotoEndpointTests(unittest.TestCase):
             self.assertEqual(bad_id.status_code, 422)
         self.assertEqual(run.await_count, 1)
 
+    def test_photo_has_no_separate_hourly_limit(self):
+        # Batas 30 foto/jam per token di rute ini dihapus: yang berlaku batas intake Kotak Struk (gabungan semua kanal).
+        run = AsyncMock(return_value=[])
+        with patch("app.api.routes.bot_chat.run_photo", new=run):
+            c = self.client()
+            codes = [c.post("/bot/chat/photo", files={"image": ("s.jpg", b"\xff\xd8x", "image/jpeg")},
+                            headers={"Authorization": "Bearer batas-foto"}).status_code for _ in range(31)]
+        self.assertEqual(codes, [200] * 31)
+        self.assertEqual(run.await_count, 31)
+
 
 # ── Teks khusus kanal ────────────────────────────────────────────────────────
 
