@@ -75,6 +75,10 @@ async def upload(
         item, created = await create_item(db, req)
     except IntakeRejected as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+    # PENTING: commit, BUKAN rollback: rollback meng-expire `user` milik pemanggil (MissingGreenlet di AsyncSession).
+    # `create_item` hanya commit untuk item baru; item yang sudah ada dikembalikan dengan transaksi baca masih terbuka,
+    # yang menahan koneksi (`idle in transaction`) selama menunggu.
+    await db.commit()
     response.status_code = 201 if created else 200
     if wait > 0:
         await wait_for_item(item.id, wait)

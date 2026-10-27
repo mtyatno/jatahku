@@ -92,8 +92,8 @@ async def run_pdf_isolated(
     """Jalankan `fn(data, max_pages)` di proses anak baru (spawn) dengan batas waktu.
 
     Satu pool per panggilan, jadi proses yang macet atau crash tidak memengaruhi
-    panggilan lain. Timeout atau anak yang mati mendadak (termasuk karena batas
-    memori/CPU) -> PdfUnreadable. Anak juga dimatikan bila pemanggil dibatalkan
+    panggilan lain. Timeout, anak yang mati mendadak (termasuk karena batas
+    memori/CPU), atau MemoryError dari anak -> PdfUnreadable. Anak juga dimatikan bila pemanggil dibatalkan
     (mis. API restart), supaya tidak tertinggal di kode native.
     """
     loop = asyncio.get_running_loop()
@@ -111,6 +111,8 @@ async def run_pdf_isolated(
         log.warning("PDF melewati batas waktu %ss; proses anak dimatikan", timeout_s)
         raise PdfUnreadable() from e
     except BrokenProcessPool as e:  # anak crash / dibunuh (mis. kehabisan memori atau CPU)
+        raise PdfUnreadable() from e
+    except MemoryError as e:  # anak bisa bertahan dari RLIMIT_AS dengan melempar MemoryError sendiri (dibawa pulang)
         raise PdfUnreadable() from e
     except ImportError as e:  # pypdfium2 belum terpasang
         raise ExtractUnavailable() from e

@@ -50,6 +50,9 @@ def recording_executor(spawned):
 def crash(data, max_pages, dpi=200):
     os._exit(1)
 
+def out_of_memory(data, max_pages, dpi=200):
+    raise MemoryError()   # anak yang bertahan dari RLIMIT_AS dengan melempar sendiri
+
 def missing_dependency(data, max_pages, dpi=200):
     import pustaka_pdf_yang_tidak_ada  # noqa: F401
 
@@ -165,6 +168,12 @@ class ExtractTests(unittest.IsolatedAsyncioTestCase):
     async def test_crashed_child_is_unreadable(self):
         with self.assertRaises(X.PdfUnreadable):
             await X.run_pdf_isolated(minimal_pdf(["a"]), timeout_s=10, fn=crash)
+
+    async def test_child_out_of_memory_is_unreadable(self):
+        # MemoryError anak dibawa pulang lewat pickle; tanpa ini worker menganggapnya galat tak terduga dan mencoba lagi
+        # PDF yang sama sampai MAX_ATTEMPTS.
+        with self.assertRaises(X.PdfUnreadable):
+            await X.run_pdf_isolated(minimal_pdf(["a"]), timeout_s=10, fn=out_of_memory)
 
     async def test_missing_pdf_library_is_unavailable(self):
         with self.assertRaises(X.ExtractUnavailable):

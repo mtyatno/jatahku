@@ -309,6 +309,27 @@ class KotakApiTests(ApiBase):
         self.assertEqual((r.status_code, r.json()["status"], r.json()["doc_type"]), (201, "siap", "qris"))
         self.assertEqual(wait.await_args.args[1], 5)
 
+    async def test_waiting_holds_no_open_transaction_on_the_request_session(self):
+        """Item yang sudah ada (upload_id sama) dikembalikan `create_item` dengan transaksi baca masih terbuka. Rute
+        meng-commit sebelum menunggu, supaya koneksi permintaan tidak tertahan `idle in transaction` sampai 45 dtk."""
+        first = await self.upload(b"m1", upload_id="m1")
+        self.assertEqual(first.status_code, 201)
+        real, sessions, seen = kotak_route.create_item, [], []
+
+        async def spy(db, req, **kw):
+            sessions.append(db)
+            return await real(db, req, **kw)
+
+        async def wait(item_id, timeout_s):
+            seen.append(sessions[-1].in_transaction())
+
+        with patch.object(kotak_route, "create_item", spy), \
+                patch.object(kotak_route, "wait_for_item", AsyncMock(side_effect=wait)):
+            again = await self.upload(b"m1", upload_id="m1", wait="1")
+            new = await self.upload(b"m2", upload_id="m2", wait="1")
+        self.assertEqual((again.status_code, again.json()["id"], new.status_code), (200, first.json()["id"], 201))
+        self.assertEqual(seen, [False, False])
+
     async def test_no_wait_by_default_and_wait_is_bounded(self):
         wait = AsyncMock()
         with patch.object(kotak_route, "wait_for_item", wait):
