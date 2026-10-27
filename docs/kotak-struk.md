@@ -60,7 +60,8 @@ dicatat berkali-kali (satu transaksi per barang): statusnya `tercatat` sejak yan
 ditambahkan ke `transaction_ids`. Jenis lain (QRIS, transfer, tidak dikenali) hanya sekali.
 
 Pesan `error` untuk item `gagal` (aman ditampilkan): "PDF terkunci kata sandi", "PDF lebih dari 5 halaman", "PDF
-tidak bisa dibaca" (rusak atau lewat batas waktu), "Gambar tidak bisa dibaca. Coba kirim ulang.", "Baca bukti
+tidak bisa dibaca" (rusak, lewat batas waktu, atau melewati batas memori/CPU proses anak; langsung `gagal`, tidak
+diulang), "Gambar tidak bisa dibaca. Coba kirim ulang.", "Baca bukti
 sedang tidak bisa. Catat manual dulu." (paket OCR atau `pypdfium2` belum terpasang; fitur lain tidak
 terpengaruh), "Bukti tidak bisa dibaca. Coba kirim ulang." (galat tak terduga setelah 3 percobaan, atau file
 hilang). `source`: `telegram`, `web_chat`, `web_form`, `pwa_share` (nanti `web_upload`, `android`, `ios`, `email`).
@@ -152,7 +153,8 @@ Keterangan transaksi (`compose_description`, maks 500 karakter): `Siti Aminah (Q
 dengan catatan `bakso 2, es teh (Siti Aminah)`. **Belajar hanya dari transaksi yang benar-benar tercatat**
 (`record.mark_recorded`): untuk QRIS dan transfer, `merchant_envelope_map.count + 1`; kata kunci hanya dari **catatan
 user**, tanpa nama merchant, "(QRIS)", dan "transfer ke" (`learn_text_for_item`). Melewati item tidak mengajari apa
-pun. Struk belanja dan `tidak_dikenali` hanya mendapat baris `household_merchants` (nama, nama panggilan) dari worker,
+pun. Struk belanja dan `tidak_dikenali` hanya mendapat baris `household_merchants` (nama dan kota dari worker; nama
+panggilan hanya dari user lewat `PUT /kotak-struk/merchants/{id}`),
 kecuali teks yang tampak seperti bukti bayar (lihat "Privasi"); `merchant_envelope_map` tidak pernah belajar darinya
 (saran per barang tetap kata kunci; umpan balik struk lewat `apply_feedback`).
 
@@ -203,7 +205,7 @@ garis miring penutup (`/kotak-struk/`); tanpa itu dijawab 307.
 
 | Endpoint | Isi |
 |---|---|
-| `POST /kotak-struk/` | Multipart: `file` **atau** `text`, `source`, `upload_id` (≤ 64), `wait` (0–45 dtk, bawaan 0). 201 item baru, 200 item yang sudah ada. Menjawab detail item |
+| `POST /kotak-struk/` | Multipart: `file` **atau** `text`, `source`, `upload_id` (≤ 64), `wait` (0–45 dtk, bawaan 0; koneksi DB dilepas selama menunggu). 201 item baru, 200 item yang sudah ada. Menjawab detail item |
 | `GET /kotak-struk/?status=siap` | Item milik user dengan status itu (bawaan `siap`), terbaru dulu, maks 50 |
 | `GET /kotak-struk/{id}` | Detail item |
 | `POST /kotak-struk/{id}/saran` | `{note}` (≤ 200) → `{suggestion, description_preview}` |
@@ -224,7 +226,7 @@ selesai ("Masih ada bukti yang sedang dibaca. Tunggu sebentar.").
 `{duplicate_of, skip_suggestion, blocked, warnings[]}`: `duplicate_of.kind` = `file` | `ref` | `soft`;
 `skip_suggestion` = `top_up` | `masuk` | `antar_rekening_sendiri`; `blocked` = `transaksi_gagal` | `sudah_tercatat`. `duplicate_of` terisi
 dengan `recorded` (true untuk file/ref yang sudah tercatat, false untuk referensi anggota lain yang masih `siap`; lunak tidak memuat
-`recorded`). **Yang memblokir hanya `blocked`**, bukan `duplicate_of.kind`: klien tidak boleh menolak bukti hanya karena `kind: "ref"`.
+`recorded`). **Yang memblokir hanya `blocked`** (di antara `flags`; yang bisa dicatat tetap hanya item `siap`, lihat `receipt_item_id` di bawah), bukan `duplicate_of.kind`: klien tidak boleh menolak bukti hanya karena `kind: "ref"`.
 Item `diterima`/`diproses`/`gagal` hanya memuat kolom dasar (tanpa `document`, `merchant`, saran).
 
 **`receipt_item_id` di `POST /transactions` dan `/batch`**: dicek setelah `client_ref` (kirim ulang tetap
@@ -343,7 +345,7 @@ tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti
 ## Deploy manual (sekali)
 
 Deploy otomatis tidak memasang paket Python dan tidak menjalankan alembic, jadi ada langkah manual. Daftar yang
-sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — belum jalan, menunggu merge". PR Bagian A berlabel `migrasi`.
+sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3)". PR Bagian A berlabel `migrasi`.
 
 1. **Sebelum merge** (aman untuk kode lama):
    `sudo -u jatahku /opt/jatahku/venv/bin/pip install pypdfium2==5.13.0` (versi sama dengan `requirements.txt`);

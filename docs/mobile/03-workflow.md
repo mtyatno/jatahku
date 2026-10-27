@@ -114,7 +114,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | A58–A59 | FS.8 | **FS-1** `ProofCard` dan banner "Bukti menunggu" di web (dipakai juga di app); sebagian FS.8 | 2 | 8 | FS.2, FS.6 | Konfirmasi satu ketukan bila yakin |  |
 | A65 | FS.9 | **FS-1** Paritas kanal, sisi server: PDF di bot Telegram dan di `scan-receipt` | 1 | 9 | FS.2 | PDF yang sama memberi hasil sama di bot dan form Catat | `bot/*` (AI Advisor S17) |
 | A66–A67 | FS.9 | **FS-1** Paritas kanal, sisi web: tombol PDF di form Catat; Web Share Target PWA (kini wajib, bukan opsional) | 2 | 9 | FS.2 | Hasil sama di web, bot, app |  |
-| A68 | FS.11 | **FS-1** Privasi: hapus file asli, tanpa nomor rekening; formulir toko. Sisi server selesai di branch; sisa: `privacy.html`, DPIA, dan formulir toko, sebelum saklar `receipt_inbox` menyala | 1 | 9 | FS.1, 0.4 | Tidak ada file asli tersisa |  |
+| A68 | FS.11 | **FS-1** Privasi: hapus file asli, tanpa nomor rekening; formulir toko. Sisa: `privacy.html`, DPIA, dan formulir toko, sebelum saklar `receipt_inbox` menyala | 1 | 9 | FS.1, 0.4 | Tidak ada file asli tersisa |  |
 | A69–A72 | 5.5a | Billing server: validasi Play dan App Store, hak per sumber, refund | 4 | 9 | 1.6 | Validasi sandbox lulus |  |
 | A73–A74 | 6.1 | Token widget baca-saja + /widget/summary | 2 | 10 | 1.1 | Token bisa dicabut |  |
 | A75–A77 | 6.4 | Tombol aksi "Catat ke amplop" di notifikasi struk | 3 | 10 | FS.10 | Tercatat dari notifikasi, bisa dibatalkan |  |
