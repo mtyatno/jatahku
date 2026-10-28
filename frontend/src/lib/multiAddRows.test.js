@@ -4,7 +4,7 @@ import { receiptToItem, applyDocumentDate, dateNotice, feedbackFor } from './rec
 import {
   isInsufficientFundsError, isDailyLimitError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
   notReadyMessage, applyRowPatch, withSaveDate, toPayload, toParts, wantsReceiptFeedback, removalCalls,
-  wantsKeywordSuggestion, pastDated, fundCandidate, showRaisedLimit,
+  wantsKeywordSuggestion, pastDated, fundCandidate, showRaisedLimit, alreadyListed, withSaveError,
 } from './multiAddRows.js';
 import { toBatchItem } from './offlineSync.js';
 
@@ -191,11 +191,75 @@ test('umpan balik belajar struk hanya untuk struk belanja (dan scan lama); item 
   assert.deepEqual(removalCalls(undefined), { feedback: null, skip: null });
 });
 
-test('saran kata kunci tidak menimpa saran server untuk QRIS/transfer/tidak dikenali', () => {
+test('saran kata kunci tidak menimpa saran server untuk QRIS/transfer; tidak dikenali seperti struk belanja', () => {
   assert.equal(wantsKeywordSuggestion(manual()), true);
   assert.equal(wantsKeywordSuggestion(store()), true);
   assert.equal(wantsKeywordSuggestion(receiptToItem({ scan_id: 's', merchant: 'A', total: 1, confidence: 'tinggi' }, 'k')), true);
-  for (const doc_type of ['qris', 'transfer', 'tidak_dikenali']) assert.equal(wantsKeywordSuggestion(proof({ doc_type })), false, doc_type);
+  assert.equal(wantsKeywordSuggestion(proof({ doc_type: 'tidak_dikenali' })), true);
+  for (const doc_type of ['qris', 'transfer']) assert.equal(wantsKeywordSuggestion(proof({ doc_type })), false, doc_type);
+});
+
+test('satu item Kotak Struk = satu baris: scan yang sama lagi tidak menambah baris', () => {
+  const result = { item_id: 'k-same', scan_id: 'k-same', doc_type: 'struk_belanja', merchant: 'Alfamart', total: 45400,
+    confidence: 'tinggi', flags: OK_FLAGS, items: [] };
+  const first = receiptToItem(result, 'k1');
+  assert.deepEqual(alreadyListed(result, [manual(), first]), { type: 'mixed', text: 'Struk ini sudah ada di daftar.' });
+  assert.equal(alreadyListed(result, [manual()]), null);
+  assert.equal(alreadyListed({ ...result, item_id: 'lain' }, [first]), null);
+  assert.equal(alreadyListed({ scan_id: 'lama', merchant: 'A', total: 1, confidence: 'tinggi' }, [first]), null);   // scan lama
+  assert.equal(alreadyListed(result, []), null);
+  const qris = { ...result, item_id: 'k-q', scan_id: 'k-q', doc_type: 'qris' };
+  assert.deepEqual(alreadyListed(qris, [receiptToItem(qris, 'k2')]), { type: 'mixed', text: 'Bukti ini sudah ada di daftar.' });
+  const unknown = { ...result, item_id: 'k-u', scan_id: 'k-u', doc_type: 'tidak_dikenali' };
+  assert.equal(alreadyListed(unknown, [receiptToItem(unknown, 'k3')]).text, 'Struk ini sudah ada di daftar.');
+  const card = { ...result, item_id: 'k-c', scan_id: 'k-c', items: [{ name: 'ROTI', amount: 45400 }] };
+  assert.equal(alreadyListed(card, [receiptToItem(card, 'k4')]).text, 'Struk ini sudah ada di daftar.');   // kartu struk
+});
+
+test('menghapus satu dari dua baris untuk item yang sama tidak melewati item dan tidak membuang umpan baliknya', () => {
+  // Reproduksi review I1: foto yang sama dua kali → dua baris untuk SATU item. Menghapus satu baris dulu
+  // melewatinya (dilewati), lalu baris yang tersisa ditolak "Bukti ini belum siap dicatat" selamanya.
+  const result = { item_id: 'k-same', scan_id: 'k-same', doc_type: 'struk_belanja', merchant: 'Alfamart', total: 45400,
+    confidence: 'tinggi', flags: OK_FLAGS, items: [] };
+  const first = receiptToItem(result, 'k1');
+  const second = receiptToItem(result, 'k2');
+  assert.deepEqual(removalCalls(second, [first, second]), { feedback: null, skip: null });
+  assert.deepEqual(removalCalls(first, [first, second, manual()]), { feedback: null, skip: null });
+  // Baris terakhir untuk item itu: dilewati dan umpan balik "tidak disimpan" seperti biasa.
+  assert.deepEqual(removalCalls(first, [first]), { feedback: 'k-same', skip: 'k-same' });
+  assert.deepEqual(removalCalls(first, [first, manual(), store()]), { feedback: 'k-same', skip: 'k-same' });
+  // Bukti (tanpa umpan balik struk): hanya skip yang dijaga.
+  const qris = proof();
+  assert.deepEqual(removalCalls(qris, [qris, { ...qris, key: 'kx' }]), { feedback: null, skip: null });
+  assert.deepEqual(removalCalls(qris, [qris]), { feedback: null, skip: 'i1' });
+});
+
+test('penolakan bukti saat simpan (409) jadi alasan blokir yang terlihat; galat lain tetap error biasa', () => {
+  const row = { ...proof(), envelopeId: 'e1', ref: 'r1' };
+  for (const [error, reason] of [
+    ['Bukti ini sudah tercatat', 'Bukti ini sudah tercatat.'],
+    ['Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya', 'Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.'],
+    ['Bukti ini belum siap dicatat', 'Bukti ini belum siap dicatat.'],
+    ['Bukti tidak ditemukan', 'Bukti tidak ditemukan.'],
+    ['Transaksi gagal, tidak bisa dicatat', 'Transaksi gagal, tidak bisa dicatat.'],
+  ]) {
+    const next = withSaveError(row, error);
+    assert.deepEqual([next.blockedReason, next.error, isReady(next)], [reason, null, false], error);
+    assert.equal(applyRowPatch(next, { envelopeId: 'e2' }).blockedReason, reason, error);   // tetap sesudah diedit
+  }
+  // Struk belanja dengan rincian (kartu): alasan di tingkat kartu, rencana tidak dikirim lagi.
+  const card = { ...store(), envelopeId: 'e1' };
+  assert.equal(isReady(withSaveError(card, 'Bukti ini sudah tercatat')), false);
+  // Galat lain (dana, limit harian, sedang diproses): tetap `error` (Gagal, Geser, Naikkan limit), baris bisa dicoba lagi.
+  for (const error of ['Dana tidak cukup. Sisa: Rp0, diminta: Rp25,000', 'Melebihi limit harian Makan: Rp50.000',
+    'Sedang diproses, coba lagi sebentar', 'Amplop dikunci. Tidak bisa belanja.', 'Gagal']) {
+    const next = withSaveError(row, error);
+    assert.deepEqual([next.blockedReason, next.error, isReady(next)], [null, error, true], error);
+  }
+  assert.deepEqual([withSaveError(row, null).blockedReason, withSaveError(row, null).error], [null, null]);
+  // Baris tanpa item Kotak Struk (ketikan, scan lama): teks yang sama tetap galat biasa.
+  const typed = withSaveError(manual(), 'Bukti tidak ditemukan');
+  assert.deepEqual([typed.error, 'blockedReason' in typed], ['Bukti tidak ditemukan', false]);
 });
 
 test('tanggal sebelum awal periode: tanpa tawaran Geser / "limit ↑" dari dugaan; jawaban server tetap tampil', () => {
@@ -204,6 +268,8 @@ test('tanggal sebelum awal periode: tanpa tawaran Geser / "limit ↑" dari dugaa
   const todayDated = applyRowPatch(row, { transactionDate: TODAY, raiseDailyLimit: true });
   assert.equal(pastDated(docDated, PERIOD.start), true);
   assert.equal(pastDated(todayDated, PERIOD.start), false);
+  assert.equal(pastDated(applyRowPatch(row, { transactionDate: PERIOD.start }), PERIOD.start), false);   // hari pertama periode
+  assert.equal(pastDated(applyRowPatch(row, { transactionDate: '2026-10-26' }), PERIOD.start), true);   // sehari sebelumnya
   assert.equal(showRaisedLimit(docDated, PERIOD.start), false);   // server tidak menaikkan limit untuk baris ini
   assert.equal(showRaisedLimit(todayDated, PERIOD.start), true);
   // Pesan "Dana tidak cukup" sisa percobaan "Hari ini": sesudah pindah ke tanggal dokumen, baris ini bukan target Geser.

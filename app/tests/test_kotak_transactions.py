@@ -9,7 +9,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import contextlib
 import json
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal as D
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -29,9 +29,11 @@ from app.models.models import (
     Allocation, Envelope, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
 )
 from app.services.expense_rules import NOT_SPENDABLE_MSG
+from app.services.kotak_struk import maintenance
 from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
-from app.services.kotak_struk.intake import IntakeRejected
+from app.services.kotak_struk.extract import PdfLocked
+from app.services.kotak_struk.intake import IntakeRejected, IntakeRequest, create_item
 from app.services.kotak_struk.worker import process_item
 from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
 from app.services.receipt_scan import ScanBusy, scan_receipt
@@ -151,6 +153,23 @@ class TxnBase(kapi.ApiBase):
         """Item `siap` berjenis tidak_dikenali (ada nominal Rp, tanpa pembaca yang cocok)."""
         item = await self.ready(["foto buram", "Rp 12.000"])
         self.assertEqual((await self.get(item.id)).doc_type, "tidak_dikenali")
+        return item
+
+    async def expire_unconfirmed(self):
+        """Job pemeliharaan sungguhan 8 hari sesudah dibaca: item `siap`/`gagal` menjadi `kedaluwarsa`."""
+        async with self.Session() as db:
+            return await maintenance.expire_items(db, now=NOW + timedelta(days=8))
+
+    async def unread_item(self):
+        """Item yang tidak pernah terbaca (`gagal`, tanpa dokumen), lewat intake + worker sungguhan."""
+        async with self.Session() as db:
+            user = await db.get(User, self.a.id)
+            req = IntakeRequest(user, "web_form", data=JPG + uuid4().bytes, content_type="image/jpeg")
+            item, _ = await create_item(db, req, redis=kapi.FakeRedis(), kotak_dir=self.kotak, now=NOW)
+        status = await process_item(item.id, session_factory=self.Session, extract=AsyncMock(side_effect=PdfLocked()),
+                                    now=NOW)
+        self.assertEqual(status, "gagal")
+        self.assertIsNone((await self.get(item.id)).document)
         return item
 
     @contextlib.contextmanager
@@ -428,6 +447,75 @@ class RecordWithReceiptItemTests(TxnBase):
                          (409, "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"))
         self.assertEqual(await self.count(Transaction), 0)
 
+    async def test_expired_proofs_keep_the_share_again_answer(self):
+        """A12 tidak berubah untuk QRIS/transfer: kedaluwarsa = bagikan lagi, walau sudah terbaca."""
+        for item in (await self.ready_qris(), await self.ready_transfer(CORPUS[2]["lines"])):
+            await self.expire_unconfirmed()
+            self.assertEqual((await self.get(item.id)).status, "kedaluwarsa")
+            r = await self.post(item, ref=f"p-{item.id}")
+            self.assertEqual((r.status_code, r.json()["detail"]),
+                             (409, "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"))
+        self.assertEqual(await self.count(Transaction), 0)
+
+    async def test_expired_store_receipt_is_recorded_like_siap(self):
+        """Simpan dari antrean offline form Catat yang baru sampai sesudah item kedaluwarsa (7 hari): struk belanja
+        yang sudah terbaca tetap dicatat dan ditandai tercatat; dulu (tanpa receipt_item_id) juga tercatat."""
+        item = await self.ready_store_receipt()
+        self.assertEqual(await self.expire_unconfirmed(), 1)
+        self.assertEqual((await self.get(item.id)).status, "kedaluwarsa")
+        r = await self.post(item, ref="late-1", desc="ROTI (Alfamart)", amount=15000)
+        self.assertEqual(r.status_code, 201, r.text)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        again = await self.post(item, ref="late-2", desc="SUSU (Alfamart)", amount=30400)   # bagian struk berikutnya
+        self.assertEqual(again.status_code, 201, again.text)
+        self.assertEqual(len((await self.get(item.id)).transaction_ids), 2)
+
+    async def test_expired_unknown_document_is_recorded_once(self):
+        item = await self.ready_unknown()
+        await self.expire_unconfirmed()
+        r = await self.post(item, ref="u-1", desc="Belanja", amount=12000)
+        self.assertEqual(r.status_code, 201, r.text)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        dup = await self.post(item, ref="u-2", desc="Belanja", amount=12000)
+        self.assertEqual((dup.status_code, dup.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 1)
+
+    async def test_expired_item_that_was_never_read_keeps_the_expired_answer(self):
+        item = await self.unread_item()
+        await self.set(item.id, status="kedaluwarsa")
+        r = await self.post(item, ref="n-1")
+        self.assertEqual((r.status_code, r.json()["detail"]),
+                         (409, "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"))
+        self.assertEqual(await self.count(Transaction), 0)
+
+    async def test_expired_store_receipt_keeps_every_other_check(self):
+        theirs = await self.ready_store_receipt()
+        await self.set(theirs.id, user_id=self.b.id)
+        blocked = await self.ready_store_receipt()
+        failed = (await self.get(blocked.id)).document
+        await self.set(blocked.id, document={**failed, "checks": [{"code": "status_gagal", "level": "block",
+                                                                   "message": "Transaksi gagal, tidak bisa dicatat"}]})
+        await self.expire_unconfirmed()
+        self.assertEqual((await self.post(theirs, ref="t-1")).json()["detail"], "Bukti tidak ditemukan")
+        self.assertEqual((await self.post(blocked, ref="t-2")).json()["detail"], "Transaksi gagal, tidak bisa dicatat")
+        self.assertEqual(await self.count(Transaction), 0)
+
+    async def test_resend_heals_a_lost_mark_recorded_for_an_expired_store_receipt(self):
+        item = await self.ready_store_receipt()
+        await self.expire_unconfirmed()
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            first = await self.post(item, ref="h-1", desc="ROTI (Alfamart)", amount=15000)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual((await self.get(item.id)).status, "kedaluwarsa")   # struk belanja: klaim tanpa ubah status
+        again = await self.post(item, ref="h-1", desc="ROTI (Alfamart)", amount=15000)
+        self.assertEqual(again.json()["id"], first.json()["id"])
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [first.json()["id"]]))
+        self.assertEqual(await self.count(Transaction), 1)
+
     async def test_receipt_check_runs_after_idempotency_and_before_envelope_checks(self):
         item = await self.ready_transfer(CORPUS[3]["lines"])
         r = await self.c.post("/transactions/", json={"envelope_id": str(uuid4()), "amount": 1, "description": "x",
@@ -685,6 +773,36 @@ class BatchWithReceiptItemTests(TxnBase):
         self.assertEqual(await self.count(Transaction), 2)
         self.assertTrue({"roti", "permen"} <= await self.learned_keywords())   # struk belanja: belajar dari keterangan utuh
 
+    async def test_offline_store_receipt_synced_after_expiry_is_recorded(self):
+        """Antrean offline (satu kiriman batch, semua bagian struk) yang tersinkron sesudah item kedaluwarsa."""
+        item = await self.ready_store_receipt()
+        await self.expire_unconfirmed()
+        self.assertEqual((await self.get(item.id)).status, "kedaluwarsa")
+        out = await self.batch([self.line(item, ref="a", amount=15000, desc="ROTI (Alfamart)"),
+                                self.line(item, ref="b", env="Jajan", amount=30400, desc="SUSU (Alfamart)")])
+        self.assertEqual([x["ok"] for x in out], [True, True], out)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [x["id"] for x in out]))
+
+    async def test_expired_unknown_document_line_is_claimed_once(self):
+        item = await self.ready_unknown()
+        await self.expire_unconfirmed()
+        out = await self.batch([self.line(item, ref="a", amount=12000, desc="Belanja"),
+                                self.line(item, ref="b", amount=12000, desc="Belanja")])
+        self.assertEqual([x["ok"] for x in out], [True, False])
+        self.assertEqual(out[1]["error"], MSG_RECORDED)
+        self.assertEqual((await self.get(item.id)).transaction_ids, [out[0]["id"]])
+
+    async def test_expired_proof_and_unread_lines_keep_the_expired_reason(self):
+        qris, transfer, unread = await self.ready_qris(), await self.ready_transfer(CORPUS[2]["lines"]), await self.unread_item()
+        await self.expire_unconfirmed()
+        await self.set(unread.id, status="kedaluwarsa")
+        out = await self.batch([self.line(qris, ref="a", amount=25000), self.line(transfer, ref="b", amount=152500),
+                                self.line(unread, ref="c"), self.line(None, ref="d", env="Jajan", amount=4000, desc="permen")])
+        self.assertEqual([x["ok"] for x in out], [False, False, False, True])
+        self.assertEqual({x["error"] for x in out[:3]}, {"Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"})
+        self.assertEqual(await self.count(Transaction), 1)
+
     async def test_same_proof_twice_in_one_batch_second_line_rejected(self):
         item = await self.ready_qris()
         out = await self.batch([self.line(item, ref="a", amount=25000, desc="bakso (Siti Aminah)"),
@@ -940,6 +1058,16 @@ class ReceiptItemDateTests(TxnBase):
             with self.subTest(route=route):
                 await self.assert_refused(route, item, PREV_PERIOD, "Kuota 50 transaksi bulan ini sudah habis",
                                           env="Makan")
+
+    async def test_expired_store_receipt_keeps_the_document_date_rule(self):
+        """Struk belanja yang kedaluwarsa lalu dicatat terlambat (antrean offline form Catat) tetap memakai aturan
+        tanggal B0: periode lalu tanpa blok dana, tanggal yang belum lewat menjadi hari ini."""
+        for route in ROUTES:
+            with self.subTest(route=route):
+                past, future = await self.ready(STORE_LINES), await self.ready(STORE_LINES)
+                await self.expire_unconfirmed()
+                await self.assert_recorded(route, past, PREV_PERIOD, PREV_PERIOD, env="Kecil", desc="ROTI (Alfamart)")
+                await self.assert_recorded(route, future, TOMORROW, TODAY, env="Makan", desc="ROTI (Alfamart)")
 
     # --- tanggal lain ---------------------------------------------------
 

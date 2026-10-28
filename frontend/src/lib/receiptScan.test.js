@@ -107,15 +107,23 @@ test('receiptToItem: struk belanja tetap bentuk lama + receiptItemId (saran serv
     ['s9', 'struk_belanja', 'Indomaret', '2026-10-14', '', false, null, 1]);
 });
 
-test('receiptToItem: tidak dikenali seperti bukti — keterangan server, saran yakin, tanpa rincian', () => {
+test('receiptToItem: tidak dikenali seperti struk belanja (sama dengan bot) — nama toko atau "Belanja", tanpa saran server', () => {
   const base = { item_id: 'i4', scan_id: 'i4', doc_type: 'tidak_dikenali', total: 12000, merchant: 'TOKO X', confidence: 'rendah',
-    flags: { blocked: null, warnings: [] }, items: [{ name: 'abaikan', amount: 1 }] };
-  const item = receiptToItem({ ...base, description_preview: 'Toko X', suggestion: { envelope_id: 'e3', confident: true } }, 'k4');
-  assert.deepEqual([item.docType, item.description, item.envelopeId, item.suggested, item.receiptItems], ['tidak_dikenali', 'Toko X', 'e3', true, []]);
-  assert.equal(receiptToItem({ ...base, description_preview: null }, 'k').description, 'TOKO X');
-  assert.equal(receiptToItem({ ...base, description_preview: null, merchant: null }, 'k').description, 'Belanja');
-  // Yakin tanpa amplop → tidak dipilihkan dan tidak ditandai "disarankan".
-  const noEnv = receiptToItem({ ...base, suggestion: { envelope_id: null, confident: true } }, 'k');
+    flags: { blocked: null, warnings: [] }, items: [], description_preview: 'Toko X',
+    suggestion: { envelope_id: 'e3', confident: true, source: 'keyword' } };
+  const item = receiptToItem(base, 'k4');
+  assert.deepEqual([item.docType, item.receiptItemId, item.description, item.envelopeId, item.suggested, item.receiptItems],
+    ['tidak_dikenali', 'i4', 'TOKO X', '', false, []]);
+  // Foto buram tanpa nama: "Belanja" seperti dulu (bukan "Bukti bayar" dari server).
+  assert.equal(receiptToItem({ ...base, merchant: null, description_preview: 'Bukti bayar' }, 'k').description, 'Belanja');
+  // Aturan baru tetap berlaku: blokir dari server.
+  assert.equal(receiptToItem({ ...base, flags: { blocked: 'transaksi_gagal', warnings: [] } }, 'k').blockedReason,
+    'Transaksi ini gagal di bank, jadi tidak bisa dicatat.');
+});
+
+test('receiptToItem: saran server yakin tanpa amplop tidak dipilihkan (bukti)', () => {
+  const noEnv = receiptToItem({ item_id: 'q', scan_id: 'q', doc_type: 'qris', total: 1000, merchant: 'A', flags: {}, items: [],
+    suggestion: { envelope_id: null, confident: true } }, 'k');
   assert.deepEqual([noEnv.envelopeId, noEnv.suggested], ['', false]);
 });
 
@@ -273,7 +281,7 @@ test('docNoun / isProofRow: kata benda tanggal dan jenis baris bukti', () => {
   assert.deepEqual(['qris', 'transfer', 'struk_belanja', 'tidak_dikenali', null, undefined].map(docNoun),
     ['bukti', 'bukti', 'struk', 'struk', 'struk', 'struk']);
   assert.deepEqual(['qris', 'transfer', 'tidak_dikenali', 'struk_belanja', null, undefined].map(isProofRow),
-    [true, true, true, false, false, false]);
+    [true, true, false, false, false, false]);
 });
 
 test('scanMessage: bukti QRIS/transfer — nama, nominal, satu peringatan (server → duplikat lunak → lewati)', () => {
@@ -306,6 +314,9 @@ test('scanMessage: dokumen yang diblokir → pesan blokir (semua jenis dokumen)'
     { type: 'error', text: 'Transaksi ini gagal di bank, jadi tidak bisa dicatat.' });
   assert.deepEqual(scanMessage({ doc_type: 'struk_belanja', total: 9000, merchant: 'Indomaret', confidence: 'tinggi', flags: { blocked: 'sudah_tercatat' } }),
     { type: 'error', text: 'Bukti ini sudah tercatat.' });
+  // Blokir menang atas "total tidak terbaca" (mis. transfer gagal yang nominalnya tidak terbaca).
+  assert.deepEqual(scanMessage({ doc_type: 'transfer', total: null, flags: { blocked: 'transaksi_gagal' } }),
+    { type: 'error', text: 'Transaksi ini gagal di bank, jadi tidak bisa dicatat.' });
 });
 
 test('scanMessage: struk belanja dan tidak dikenali tetap memakai pesan struk lama', () => {

@@ -96,9 +96,10 @@ export function documentDateKind(docDate, { periodStart = null, today = null } =
 
 // ── Jenis dokumen ───────────────────────────────────────────────────────────
 
-const PROOF_ROW_TYPES = new Set(['qris', 'transfer', 'tidak_dikenali']);
+const PROOF_ROW_TYPES = new Set(['qris', 'transfer']);
 
-// Baris dari bukti (bukan struk belanja): keterangan dan saran amplop dari server, tanpa rincian barang.
+// Baris dari bukti bayar (QRIS/transfer): keterangan dan saran amplop dari server, tanpa rincian barang. Tidak dikenali
+// (foto buram, saklar mati) diperlakukan seperti struk belanja, sama dengan bot: nama toko atau "Belanja", saran kata kunci.
 export function isProofRow(docType) {
   return PROOF_ROW_TYPES.has(docType);
 }

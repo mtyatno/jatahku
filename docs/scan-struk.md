@@ -163,7 +163,9 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   ditambahkan ke item). Teks 409 untuk klaim yang gagal (di batch: `error` baris itu dengan `ok: false`)
   mengikuti status item saat itu (`record.claim_failure_detail`): "Bukti ini sudah tercatat", "Bukti ini sudah
   kedaluwarsa, bagikan lagi untuk mencatatnya", "Bukti ini belum siap dicatat", atau "Bukti tidak ditemukan".
-  Item yang sudah kedaluwarsa sebelum disimpan mendapat teks kedaluwarsa yang sama dari `check_recordable`.
+  Item yang sudah kedaluwarsa sebelum disimpan mendapat teks kedaluwarsa yang sama dari `check_recordable`, kecuali
+  struk belanja dan tidak dikenali yang sudah terbaca: itu tetap dicatat seperti `siap` (simpan terlambat dari antrean
+  offline).
   Sesudah commit `record.after_recorded` (dipakai web dan bot) menjalankan streak,
   kata kunci, dan menandai item `tercatat` (`mark_recorded`), semuanya best-effort: galat database yang
   ditelan di sana tidak merusak sisa permintaan (sesi di-rollback dan `user` dimuat ulang, jadi baris batch

@@ -5,7 +5,7 @@
 // batch, antrean offline, bagian rencana struk), `blockedReason` (blokir dari server, tidak hilang karena diedit),
 // dan aturan tanggal dokumen (`dateKind`, receiptScan.applyDocumentDate).
 import { buildPlan } from './receiptSplit.js';
-import { isProofRow } from './receiptScan.js';
+import { docNoun, isProofRow } from './receiptScan.js';
 
 // Ditolak karena limit harian → tawarkan "naikkan limit hari ini" (sama dengan bot).
 export function isDailyLimitError(errMsg) {
@@ -117,16 +117,47 @@ export function wantsReceiptFeedback(item) {
 }
 
 // Baris struk/bukti dihapus (×) atau sisanya dilewati: umpan balik "tidak disimpan" (struk belanja) dan item Kotak
-// Struk dilewati di server dengan alasan 'batal' (seperti tombol Batal bot), supaya tidak menunggu dicatat.
-export function removalCalls(item) {
-  return {
-    feedback: wantsReceiptFeedback(item) ? item.scanId : null,
-    skip: item?.origin === 'receipt' && item.receiptItemId ? item.receiptItemId : null,
-  };
+// Struk dilewati di server dengan alasan 'batal' (seperti tombol Batal bot), supaya tidak menunggu dicatat. `rows` =
+// daftar baris saat ini: selama baris/kartu lain masih memakai item (atau scan) yang sama, tidak ada yang dikirim,
+// karena item yang dilewati tidak bisa dicatat lagi dari baris lain itu.
+export function removalCalls(item, rows = []) {
+  const others = (rows || []).filter(r => r.key !== item?.key);
+  const feedback = wantsReceiptFeedback(item) && !others.some(r => r.scanId === item.scanId) ? item.scanId : null;
+  const skip = item?.origin === 'receipt' && item.receiptItemId && !others.some(r => r.receiptItemId === item.receiptItemId)
+    ? item.receiptItemId : null;
+  return { feedback, skip };
 }
 
-// Saran kata kunci (suggest-envelopes) hanya untuk baris yang tidak membawa saran server: QRIS, transfer, dan tidak
-// dikenali sudah memakai saran Kotak Struk (peta merchant + kata kunci), jadi tidak ditimpa.
+// Satu item Kotak Struk = satu baris/kartu. Foto yang sama di-scan lagi (server mengembalikan item yang sama selama
+// belum selesai) tidak menambah baris: pesan pengganti hasil scan, atau null bila item itu belum ada di daftar.
+export function alreadyListed(result, rows) {
+  const id = result?.item_id;
+  if (!id || !(rows || []).some(r => r.receiptItemId === id)) return null;
+  return { type: 'mixed', text: docNoun(result.doc_type) === 'bukti' ? 'Bukti ini sudah ada di daftar.' : 'Struk ini sudah ada di daftar.' };
+}
+
+// Penolakan bukti dari server saat simpan (record.MSG_*; di batch: `error` baris itu): permanen, mengulang simpan
+// tidak akan berhasil.
+const RECEIPT_REJECTIONS = new Set([
+  'Bukti ini sudah tercatat',
+  'Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya',
+  'Bukti ini belum siap dicatat',
+  'Bukti tidak ditemukan',
+  'Transaksi gagal, tidak bisa dicatat',
+]);
+
+// Galat simpan satu baris (hasil batch) → baris. Penolakan bukti untuk baris dengan item Kotak Struk menjadi alasan
+// blokir yang terlihat (bukan hanya tooltip "Gagal") dan baris tidak dikirim lagi; galat lain tetap `error` (Gagal,
+// Geser, Naikkan limit, coba lagi). "Sedang diproses" bukan penolakan.
+export function withSaveError(item, error) {
+  const text = typeof error === 'string' ? error.trim().replace(/\.$/, '') : '';
+  if (item.receiptItemId && RECEIPT_REJECTIONS.has(text)) return { ...item, error: null, blockedReason: `${text}.` };
+  return { ...item, error: error || null };
+}
+
+// Saran kata kunci (suggest-envelopes) hanya untuk baris yang tidak membawa saran server: QRIS dan transfer sudah memakai
+// saran Kotak Struk (peta merchant + kata kunci), jadi tidak ditimpa. Tidak dikenali seperti struk belanja (sama dengan
+// bot): saran kata kunci dari nama tokonya.
 export function wantsKeywordSuggestion(item) {
   return !isProofRow(item.docType);
 }

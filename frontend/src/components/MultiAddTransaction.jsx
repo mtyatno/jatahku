@@ -16,7 +16,7 @@ import { applyItemSuggestions } from '../lib/receiptSplit';
 import {
   isDailyLimitError, isInsufficientFundsError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
   notReadyMessage, applyRowPatch, withSaveDate, toParts, wantsReceiptFeedback, removalCalls, wantsKeywordSuggestion,
-  fundCandidate, showRaisedLimit,
+  fundCandidate, showRaisedLimit, alreadyListed, withSaveError,
 } from '../lib/multiAddRows';
 import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
@@ -443,11 +443,11 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
   };
 
   // Baris struk/bukti keluar dari daftar tanpa dicatat: umpan balik "tidak disimpan" (struk belanja saja) dan item
-  // Kotak Struk dilewati (alasan batal) supaya tidak menunggu dicatat. Best-effort: galat dan offline diabaikan
-  // (sudah tercatat sebagian → server menjawab 409, tidak apa-apa).
+  // Kotak Struk dilewati (alasan batal) supaya tidak menunggu dicatat; tidak selama baris lain masih memakai item itu.
+  // Best-effort: galat dan offline diabaikan (sudah tercatat sebagian → server menjawab 409, tidak apa-apa).
   const sendRemoval = (item) => {
     if (!item) return;
-    const { feedback, skip } = removalCalls(item);
+    const { feedback, skip } = removalCalls(item, items);
     if (feedback) api.receiptFeedback(feedback, feedbackFor(item, false));
     if (skip) api.kotakSkip(skip, 'batal');
   };
@@ -482,9 +482,15 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     });
   }, []);
 
-  // Tanggal dokumen di luar periode berjalan ditanya dulu, tanggal yang belum lewat jadi hari ini (aturan bot).
-  // QRIS/transfer/tidak dikenali memakai saran amplop server; saran kata kunci tidak menimpanya.
+  // Satu item Kotak Struk = satu baris: foto yang sama lagi hanya diberi tahu. Tanggal dokumen di luar periode
+  // berjalan ditanya dulu, tanggal yang belum lewat jadi hari ini (aturan bot). QRIS/transfer memakai saran amplop
+  // server; saran kata kunci tidak menimpanya.
   const handleReceiptResult = (result) => {
+    const listed = alreadyListed(result, itemsRef.current);
+    if (listed) {
+      setResultMsg(listed);
+      return;
+    }
     const item = applyDocumentDate(receiptToItem(result, nextKey()), { period: periodRef.current.value, today: wibToday() });
     setItems(prev => [item, ...prev]);
     setResultMsg(scanMessage(result));
@@ -666,12 +672,13 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
       if (okKeys.has(item.key)) return;
       // "Sedang diproses" = kiriman lain dengan kunci yang sama belum selesai:
       // belum pasti, bukan gagal permanen.
+      // Penolakan bukti (409) menjadi alasan blokir yang terlihat; galat lain tetap `error` (withSaveError).
       const uncertain = pendingKeys.has(item.key);
       if (nextPlans[item.key]) {
         const firstErr = nextPlans[item.key].find(g => !g.saved && g.error)?.error || null;
-        updated[item.key] = { ...item, plan: nextPlans[item.key], uncertain, error: firstErr };
+        updated[item.key] = withSaveError({ ...item, plan: nextPlans[item.key], uncertain }, firstErr);
       } else {
-        updated[item.key] = { ...item, uncertain, error: errByKey[item.key] || null };
+        updated[item.key] = withSaveError({ ...item, uncertain }, errByKey[item.key] || null);
       }
     });
 

@@ -1135,6 +1135,16 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.")
         self.assertEqual(await self.txns(), [])
 
+    async def test_expired_transfer_proof_still_asks_to_share_again(self):
+        """A12 tetap untuk bukti bayar di bot: hanya struk belanja dan tidak dikenali yang sudah terbaca boleh dicatat
+        sesudah kedaluwarsa (antrean offline form Catat); transfer/QRIS tetap "bagikan lagi"."""
+        await self.send(CORPUS[2]["lines"])
+        await self.set(self.items[-1], status="kedaluwarsa")
+        query = await self.tap(self.button("Makan"))
+        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.")
+        self.assertEqual(await self.txns(), [])
+        self.assertEqual((await self.get(self.items[-1])).status, "kedaluwarsa")
+
     async def test_proof_expired_before_commit_says_so(self):
         await self.send()
         with self.other_session_claims("kedaluwarsa"):

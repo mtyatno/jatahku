@@ -54,6 +54,9 @@ export default function ReceiptCard({
   const suggestedCount = items.filter(it => it.suggested && !it.removed).length;
   const spread = adjustments.length > 0 || rec.status === 'selisih';
   const locked = frozen || saving;
+  // Diblokir server (alasan di `notice`): kartu tidak bisa disimpan, jadi isian & pilihan amplop dikunci (× tetap bisa).
+  const blocked = !!entry.blockedReason;
+  const inputsLocked = locked || blocked;
   const [open, setOpen] = useState(() => rec.status !== 'cocok');
   const doubtful = entry.confidence !== 'tinggi';
   const fromItemsSum = entry.confidenceSource === 'items_sum';
@@ -94,7 +97,7 @@ export default function ReceiptCard({
           className="shrink-0 text-gray-400 hover:text-red-500 text-sm leading-none p-1 disabled:opacity-30"
           title="Hapus struk"
         >&times;</button>
-        <fieldset disabled={locked} className="flex-1 min-w-0 space-y-1.5">
+        <fieldset disabled={inputsLocked} className="flex-1 min-w-0 space-y-1.5">
           <span className="text-xs text-brand-600 inline-flex items-center gap-1">
             <Icon name="camera" size={12} /> Dari struk
             {fromItemsSum
@@ -129,7 +132,7 @@ export default function ReceiptCard({
             />
           </div>
           <select
-            className={`input text-sm py-1.5 w-full ${!entry.envelopeId && plan.some(g => !g.envelopeId) ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
+            className={`input text-sm py-1.5 w-full ${!blocked && !entry.envelopeId && plan.some(g => !g.envelopeId) ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
             value={entry.envelopeId}
             onChange={e => onChange(entry.key, { envelopeId: e.target.value, suggested: false, touched: true })}
             aria-label="Amplop struk"
@@ -157,7 +160,7 @@ export default function ReceiptCard({
           {open ? 'Sembunyikan' : `Lihat ${liveCount} barang`}
         </button>
       </div>
-      {rec.status === 'selisih' && !locked && (
+      {rec.status === 'selisih' && !inputsLocked && (
         <div className="text-xs text-amber-700 flex items-center gap-2 flex-wrap">
           <span>
             {rec.diff > 0
@@ -174,7 +177,7 @@ export default function ReceiptCard({
 
       {/* Daftar barang */}
       {open && (
-        <fieldset disabled={locked}>
+        <fieldset disabled={inputsLocked}>
           <ul className="border border-gray-100 rounded-lg divide-y divide-gray-100">
             {items.map(it => (it.removed ? null : (
               <li key={it.id} className={`px-2 py-1.5 space-y-1 ${it.flag === 'cek' ? 'bg-amber-50/60' : ''}`}>

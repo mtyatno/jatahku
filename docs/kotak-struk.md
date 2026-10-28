@@ -53,7 +53,7 @@ POST /kotak-struk ────────┘  (isi, batas,   (file sementara,  
 | `gagal` | Tidak terbaca; alasan di `error` (`expires_at` sama) | `dilewati`, `kedaluwarsa` |
 | `tercatat` | Sudah menjadi transaksi (`transaction_ids`) | akhir |
 | `dilewati` | User melewati; alasan di `channel_meta.skip_reason`: `bukan_pengeluaran`, `duplikat`, `batal` | akhir |
-| `kedaluwarsa` | `siap`/`gagal` lebih dari 7 hari tanpa konfirmasi | akhir |
+| `kedaluwarsa` | `siap`/`gagal` lebih dari 7 hari tanpa konfirmasi | akhir; struk belanja dan tidak dikenali yang sudah terbaca masih boleh dicatat (simpan terlambat dari antrean offline) → `tercatat` |
 
 `status` NULL = baris riwayat scan lama, bukan item Kotak Struk (API menjawab 404 untuknya). Struk belanja boleh
 dicatat berkali-kali (satu transaksi per barang): statusnya `tercatat` sejak yang pertama dan idnya
@@ -135,7 +135,7 @@ yang minimal 2 katanya ada di nama akun (`apply_flow`).
 | Klaim atomik | `claim_for_recording` | Lihat di bawah |
 
 **Klaim atomik** (`record.py`): semua jenis selain struk belanja diklaim dengan satu `UPDATE … siap → tercatat`
-**di commit yang sama dengan transaksinya**; hanya satu pemanggil yang menang (bot dan web bersamaan, dua ketukan),
+(tidak dikenali yang sudah terbaca juga dari `kedaluwarsa`) **di commit yang sama dengan transaksinya**; hanya satu pemanggil yang menang (bot dan web bersamaan, dua ketukan),
 yang lain mendapat 409 (web) atau "Bukti ini sudah tercatat" (bot) dan tidak ada transaksi. Urutan di web dan bot:
 `check_recordable` (pesan ramah) → `claim_for_recording` → insert transaksi → satu commit → `after_recorded`
 (streak, kata kunci, `mark_recorded`, peta merchant; best-effort dan idempoten per transaksi). `client_ref` yang
@@ -220,6 +220,19 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
 membalas bentuk respons lama ditambah `item_id`, `doc_type`, `counterparty`, `paid_at`, `flags`, `suggestion`,
 `description_preview`. Menerima gambar atau PDF. Kontrak frontend lama tidak putus.
 
+Baris hasil scan di form Catat (B1, tidak bergantung saklar; `frontend/src/lib/receiptScan.js`, `multiAddRows.js`):
+- Setiap simpan membawa `receipt_item_id`: batch, antrean offline (app dan service worker), dan setiap bagian struk
+  per barang.
+- Satu item = satu baris/kartu: foto yang sama di-scan lagi tidak menambah baris ("Struk ini sudah ada di daftar." /
+  "Bukti ini sudah ada di daftar.").
+- `flags.blocked`, dan penolakan 409 saat simpan, tampil sebagai alasan di baris; baris itu tidak dikirim lagi.
+- Tanggal dokumen di luar periode ditanya dulu ("Hari ini" atau tanggal dokumen); tanggal yang belum lewat menjadi
+  hari ini (lihat `receipt_item_id` di bawah).
+- × dan "Lewati yang gagal" melewati item (`lewati`, alasan `batal`), kecuali baris lain masih memakai item itu.
+- Umpan balik belajar struk (`scan-receipt/{id}/feedback`) hanya untuk struk belanja.
+- QRIS/transfer: keterangan `description_preview` dan saran amplop server yang yakin. Struk belanja dan tidak
+  dikenali seperti dulu, sama dengan bot: nama toko atau "Belanja", saran kata kunci.
+
 **PWA share target, halaman `/bagikan`, `ProofCard`, banner, tombol PDF**: Bagian B (belum ada).
 
 ## API
@@ -255,7 +268,11 @@ Item `diterima`/`diproses`/`gagal` hanya memuat kolom dasar (tanpa `document`, `
 
 **`receipt_item_id` di `POST /transactions` dan `/batch`**: dicek setelah `client_ref` (kirim ulang tetap
 mengembalikan transaksi yang sama). Item harus milik user, `siap` (struk belanja: `siap` atau `tercatat`), tidak
-diblokir, dan bukan duplikat yang sudah tercatat; selain itu 409 (di batch: `error` baris itu, `ok: false`) dengan
+diblokir, dan bukan duplikat yang sudah tercatat. Struk belanja dan tidak dikenali yang sudah terbaca (punya
+`document`) tetap boleh dicatat sesudah `kedaluwarsa`, seperti `siap` dengan cek yang sama: simpan dari antrean offline
+form Catat yang baru sampai sesudah 7 hari adalah konfirmasi yang terlambat (`record._late_ok`). QRIS/transfer yang
+kedaluwarsa dan item yang tidak pernah terbaca tetap mendapat teks kedaluwarsa. Selain itu 409 (di batch: `error`
+baris itu, `ok: false`) dengan
 salah satu teks: "Bukti ini sudah tercatat", "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya", "Bukti
 ini belum siap dicatat", "Bukti tidak ditemukan", "Transaksi gagal, tidak bisa dicatat". Kuota transaksi Basic
 (50/bulan) tetap berlaku. Tanggal (aturan bot yang sama, `period.document_date_kind` terhadap gajian user):
