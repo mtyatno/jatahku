@@ -133,7 +133,7 @@ Asumsi: 8 sesi per developer per minggu; pemilik produk sesuai kebutuhan. Total 
 | B07–B10 | 1.10 | Pemeriksaan tablet di web (md/lg, rotasi) | 4 | 1 | – | Tangkapan layar tablet diperiksa | `Layout.jsx`, `Dashboard.jsx` (AI Advisor S6–S8) |
 | B11–B16 | 2.1 | Spike Capacitor di Android, iPhone, tablet: semua butir tersulit; progres unggah XHR di WebView | 6 | 2 | 0.2, 0.6 | Laporan lulus/gagal per butir |  |
 | B17–B19 | 3.1 | Scaffold mobile/: Capacitor 8, appId, android/ di-commit, safe area, tombol kembali | 3 | 3 | F1, 2.1 | App login ke produksi |  |
-| B20–B22 | 3.2 | Adapter capacitor.js: Keystore, antrean native, file, cetak, tautan luar; kamera (`@capacitor/camera`: takePhoto/pickPhoto, `recover()` lewat `appRestoredResult`); izin kamera & galeri Android (AndroidManifest) | 3 | 3 | 3.1 | Ekspor dan cetak jalan |  |
+| B20–B22 | 3.2 | Adapter capacitor.js: Keystore, antrean native, file (`files.save`/`share`, dan `files.pickDocument`: gambar atau PDF bukti bayar untuk tombol PDF form Catat, tanpa penanda kamera; versi web sudah ada sejak FS-1 Bagian B), cetak, tautan luar; kamera (`@capacitor/camera`: takePhoto/pickPhoto, `recover()` lewat `appRestoredResult`); izin kamera & galeri Android (AndroidManifest) | 3 | 3 | 3.1 | Ekspor dan cetak jalan |  |
 | B23–B24 | 3.3 | Login Google native (multi client ID di server) | 2 | 3 | 3.2 | Login Google di Android |  |
 | B25 | 3.4 | App Links: assetlinks.json, /auth/tg, /reset-password | 1 | 4 | 3.1 | Link bot membuka app |  |
 | B26–B29 | 3.5 | Push Android: Firebase, device_tokens, kanal push | 4 | 4 | 3.2 | Pengingat uji tiba |  |

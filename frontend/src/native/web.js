@@ -112,6 +112,9 @@ export function createWebNative({
       await files.save(blob, filename);
       return 'saved';
     },
+    // Gambar atau PDF dari berkas (bukti bayar) → File | null (dibatalkan). Panggil sinkron dari handler ketukan,
+    // seperti kamera (pemilihnya openPicker di bawah). Bukan kamera: penanda kamera tidak ditulis maupun dihapus.
+    pickDocument: () => openPicker({ accept: 'image/*,application/pdf', mark: false }),
   };
 
   // ── Cetak ────────────────────────────────────────────────────────────────
@@ -155,7 +158,7 @@ export function createWebNative({
     },
   });
 
-  // ── Kamera & galeri ──────────────────────────────────────────────────────
+  // ── Kamera, galeri & dokumen ─────────────────────────────────────────────
   // Web: <input type=file>. click() HARUS dipanggil sinkron dari handler
   // ketukan (sebelum await apa pun) — Safari iPhone menolak membuka kamera /
   // pemilih file dari tempat lain. Karena itu openPicker() tidak async: Promise
@@ -164,7 +167,9 @@ export function createWebNative({
   // Penanda: di HP Android RAM kecil, OS bisa mematikan PWA saat aplikasi
   // kamera terbuka. Penanda (waktu buka) ditulis sebelum kamera dibuka dan
   // dihapus begitu hasilnya sampai; recover() di app berikutnya yang menemukan
-  // penanda masih baru tahu bahwa fotonya tidak sampai (lost).
+  // penanda masih baru tahu bahwa fotonya tidak sampai (lost). Hanya kamera dan
+  // galeri: pemilih dokumen (files.pickDocument, mark: false) tidak menulis atau
+  // menghapusnya, karena recover() menjanjikan "foto struk" dan tombol Foto ulang.
   // Batasan yang diterima: browser tanpa event `cancel` pada <input type=file> (Chrome/Samsung
   // Internet lama, Safari iOS) tidak menghapus penanda saat kamera dibatalkan, jadi membuka
   // ulang app dalam 3 menit bisa menampilkan toast "foto hilang" yang keliru.
@@ -178,13 +183,14 @@ export function createWebNative({
     try { return storage?.getItem(CAMERA_MARK_KEY) ?? null; } catch { return null; }
   };
 
-  let pendingCamera = null; // selesaikan(null) untuk input yang belum selesai
-  function openPicker({ capture }) {
+  let pendingPicker = null; // selesaikan(null) untuk input yang belum selesai (kamera, galeri, atau dokumen)
+  // accept: jenis file yang ditawarkan; mark: tulis & hapus penanda kamera (false untuk dokumen).
+  function openPicker({ capture = false, accept = 'image/*', mark = true }) {
     // Satu input pada satu waktu: yang lama dilepas dan dijawab null.
-    pendingCamera?.(null);
+    pendingPicker?.(null);
     const input = doc.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*';
+    input.accept = accept;
     input.style.display = 'none';
     if (capture) input.setAttribute('capture', 'environment');
     return new Promise((resolve) => {
@@ -192,13 +198,13 @@ export function createWebNative({
       const finish = (file) => {
         if (done) return;
         done = true;
-        if (pendingCamera === finish) pendingCamera = null;
+        if (pendingPicker === finish) pendingPicker = null;
         try { doc.body.removeChild(input); } catch { /* sudah terlepas */ }
-        markClear();
+        if (mark) markClear();
         resolve(file);
       };
-      pendingCamera = finish;
-      markWrite();
+      pendingPicker = finish;
+      if (mark) markWrite();
       doc.body.appendChild(input);
       input.addEventListener('change', () => finish(input.files?.[0] ?? null));
       input.addEventListener('cancel', () => finish(null));

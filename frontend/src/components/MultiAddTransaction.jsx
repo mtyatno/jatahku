@@ -7,7 +7,8 @@ import VoiceInput from './VoiceInput';
 import ReceiptInput, { pickReceiptPhoto } from './ReceiptInput';
 import ReceiptStatusCard from './ReceiptStatusCard';
 import { useReceiptScan } from '../hooks/useReceiptScan';
-import { STAGE } from '../lib/receiptProgress';
+import { useAppConfig } from '../hooks/useAppConfig';
+import { STAGE, retakeAction } from '../lib/receiptProgress';
 import ReceiptCard from './ReceiptCard';
 import {
   receiptToItem, scanMessage, feedbackFor, confidenceLabel, applyDocumentDate, dateNotice, currentPeriod, wibToday,
@@ -211,6 +212,8 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
   const [showSingleForm, setShowSingleForm] = useState(false);
   const [singleFormKey, setSingleFormKey] = useState(0);
   const [fundingTarget, setFundingTarget] = useState(null);
+  // Tombol PDF dan pembacaan PDF hanya saat saklar `receipt_inbox` menyala; saklar mati = form seperti dulu.
+  const allowPdf = useAppConfig().features?.receipt_inbox === true;
   const debounceRef = useRef(null);
   const lastParsedRef = useRef('');
   const keySeq = useRef(0);
@@ -499,7 +502,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
   };
 
   // Baca struk: tahap prosesnya tampil di ReceiptStatusCard; Simpan ditahan selama berjalan.
-  const scan = useReceiptScan({ onResult: handleReceiptResult, onBusyChange: handleScanBusy });
+  const scan = useReceiptScan({ onResult: handleReceiptResult, onBusyChange: handleScanBusy, allowPdf });
 
   // Foto dari pintu masuk lain langsung dibaca begitu form terbuka. Hanya saat dipasang:
   // foto baru dari Layout memasang ulang form (kunci actionSeq), bukan mengganti prop.
@@ -733,6 +736,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
             onFile={scan.scanFile}
             onError={handleVoiceError}
             disabled={saving || scanBusy}
+            allowPdf={allowPdf}
           />
           <VoiceInput
             onTranscript={handleVoiceTranscript}
@@ -752,7 +756,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
           state={scan.state}
           disabled={saving}
           onRetry={scan.retry}
-          onRetake={() => pickReceiptPhoto('camera', { onFile: scan.scanFile, onError: handleVoiceError })}
+          onRetake={() => pickReceiptPhoto(retakeAction(scan.state.noun).source, { onFile: scan.scanFile, onError: handleVoiceError })}
           onDismiss={scan.reset}
         />
       </div>

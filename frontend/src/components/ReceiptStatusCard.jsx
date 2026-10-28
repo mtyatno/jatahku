@@ -1,4 +1,4 @@
-import { STAGE, stageLabel, stageSteps } from '../lib/receiptProgress';
+import { STAGE, stageLabel, stageSteps, retakeAction } from '../lib/receiptProgress';
 import { useTicker } from '../hooks/useTicker';
 import { Icon } from './Icon';
 
@@ -19,9 +19,11 @@ function StepRow({ step }) {
 }
 
 // Kartu tahap proses baca struk (di bawah kotak teks). Tidak menampilkan apa pun saat idle.
-// onRetry(): kirim ulang foto yang sama · onRetake(): ambil foto baru (harus memanggil kamera langsung dari onClick).
+// onRetry(): kirim ulang file yang sama · onRetake(): pilih file baru — "Foto ulang" (kamera) untuk foto struk,
+// "Pilih file lain" (pemilih dokumen) untuk PDF bukti (retakeAction); harus memanggil pemilihnya langsung dari onClick.
 // onDismiss(): tutup kartu gagal (tombol Tutup; hanya tampil bila diberikan).
-// disabled: tombol Coba lagi / Foto ulang dimatikan (mis. induk sedang menyimpan).
+// disabled: tombol Coba lagi / ganti file dimatikan (mis. induk sedang menyimpan).
+// state.noun: 'struk' (foto, teks lama) | 'bukti' (PDF: teks "bukti", ikon dokumen, tanpa gambar kecil).
 //
 // Pembaca layar: wadah role="status" selalu terpasang dan awalnya kosong (live region yang sudah
 // terisi saat dipasang sering tidak dibacakan). Isinya hanya nama tahap atau teks gagal, jadi
@@ -30,25 +32,37 @@ export default function ReceiptStatusCard({ state, onRetry, onRetake, onDismiss,
   const busy = BUSY_STAGES.includes(state.stage);
   const now = useTicker(busy);
 
+  const noun = state.noun;
   const failed = state.stage === STAGE.FAILED;
   const failure = state.failure;
-  const activeStep = stageSteps(state.stage).find(s => s.state === 'active');
+  const steps = stageSteps(state.stage, noun);
+  const activeStep = steps.find(s => s.state === 'active');
   const announce = failed ? failure?.text : activeStep?.label;
   const { title, hint } = stageLabel({
     stage: state.stage,
     percent: state.percent,
     progressSeen: state.progressSeen,
     elapsedMs: Math.max(0, now - state.stageStartedAt),
+    noun,
   });
+  const retake = retakeAction(noun);
 
   const card = state.stage === STAGE.IDLE ? null : (
     <div className="mt-2 flex items-start gap-3 rounded-xl border border-gray-100 bg-gray-50 p-2.5">
-      {state.thumbUrl && (
+      {state.thumbUrl ? (
         <img
           src={state.thumbUrl}
           alt="Foto struk"
           className="w-14 h-14 rounded-lg object-cover shrink-0 border border-gray-100"
         />
+      ) : noun === 'bukti' && (
+        // PDF bukan foto: tidak ada gambar kecil, ikon dokumen di tempatnya.
+        <span
+          aria-hidden="true"
+          className="w-14 h-14 rounded-lg shrink-0 border border-gray-100 bg-white text-brand-600 flex items-center justify-center"
+        >
+          <Icon name="file" size={26} />
+        </span>
       )}
       <div className="min-w-0 flex-1">
         {failed ? (
@@ -73,7 +87,7 @@ export default function ReceiptStatusCard({ state, onRetry, onRetake, onDismiss,
                     disabled={disabled}
                     className="inline-flex items-center gap-1.5 border border-brand-200 text-brand-600 hover:bg-brand-50 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all disabled:opacity-50"
                   >
-                    <Icon name="camera" size={13} /> Foto ulang
+                    <Icon name={retake.icon} size={13} /> {retake.label}
                   </button>
                 )}
                 {onDismiss && (
@@ -93,7 +107,7 @@ export default function ReceiptStatusCard({ state, onRetry, onRetake, onDismiss,
             <p className="text-sm text-gray-700 font-medium">{title}</p>
             {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
             <ul className="mt-1.5 space-y-0.5">
-              {stageSteps(state.stage).map(step => <StepRow key={step.key} step={step} />)}
+              {steps.map(step => <StepRow key={step.key} step={step} />)}
             </ul>
           </>
         )}

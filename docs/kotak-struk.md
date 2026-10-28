@@ -233,7 +233,13 @@ Baris hasil scan di form Catat (B1, tidak bergantung saklar; `frontend/src/lib/r
 - QRIS/transfer: keterangan `description_preview` dan saran amplop server yang yakin. Struk belanja dan tidak
   dikenali seperti dulu, sama dengan bot: nama toko atau "Belanja", saran kata kunci.
 
-**PWA share target, halaman `/bagikan`, `ProofCard`, banner, tombol PDF**: Bagian B (belum ada).
+**Tombol PDF** di form Catat (B2), hanya saat saklar menyala: `native.files.pickDocument` (gambar atau PDF, tanpa
+penanda kamera). PDF dikirim apa adanya dengan nama aslinya ke `scan-receipt`; di atas 10 MB ditolak sebelum diunggah
+(`receiptProgress.checkScanFile`). Teks tahapnya memakai kata "bukti", tanpa gambar kecil, dan "Pilih file lain"
+menggantikan "Foto ulang". Saklar mati: tidak ada tombol PDF, dan PDF yang terpilih lewat Galeri tetap ditolak seperti
+dulu.
+
+**PWA share target, halaman `/bagikan`, `ProofCard`, banner**: Bagian B (belum ada).
 
 ## API
 

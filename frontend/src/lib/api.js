@@ -509,12 +509,14 @@ class ApiClient {
     }
   }
 
-  // Scan struk: foto (sudah dikompres) → toko/tanggal/total.
-  // onProgress(persen) saat mengunggah, onUploaded() begitu foto selesai terkirim (server mulai membaca).
+  // Scan struk: foto (sudah dikompres) atau PDF (File asli, tombol PDF) → toko/tanggal/total.
+  // onProgress(persen) saat mengunggah, onUploaded() begitu file selesai terkirim (server mulai membaca).
+  // Nama file: nama asli File (PDF); foto terkompres adalah Blob tanpa nama → 'struk.jpg' seperti dulu.
+  // Server menentukan jenis dari content type bagian ini, bukan dari namanya.
   async scanReceipt(imageBlob, { onProgress, onUploaded } = {}) {
     try {
       const form = new FormData();
-      form.append('image', imageBlob, 'struk.jpg');
+      form.append('image', imageBlob, imageBlob?.name || 'struk.jpg');
       const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded });
       if (res.status === 0 && !res.data.detail) res.data = { ...res.data, detail: FOTO_GAGAL_KONEKSI };
       return res;

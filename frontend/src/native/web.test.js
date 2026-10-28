@@ -253,6 +253,56 @@ test('camera: panggilan baru melepas input lama yang belum selesai dan menyelesa
   assert.equal(doc.body.children.filter(c => c.type === 'file').length, 1);
 });
 
+test('files.pickDocument: input menerima gambar dan PDF, tanpa capture, tanpa penanda kamera', () => {
+  const { doc, win } = fakeDom(); const storage = memStorage();
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {} });
+  n.files.pickDocument();
+  const input = doc.body.children.at(-1);
+  assert.equal(input.accept, 'image/*,application/pdf');
+  assert.equal(input.attrs.capture, undefined);
+  assert.equal(CAMERA_MARK_KEY in storage.data, false);
+});
+
+test('files.pickDocument: diklik sinkron; change → File, cancel → null; penanda kamera yang ada tidak disentuh', async () => {
+  const { doc, win } = fakeDom(); const storage = memStorage({ [CAMERA_MARK_KEY]: '5' });
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {}, now: () => 9000 });
+  const p = n.files.pickDocument(); const input = doc.body.children.at(-1);
+  assert.equal(input.type, 'file'); assert.equal(input.clicked, 1);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '5');
+  input.files = ['BUKTI.pdf']; input.l.change();
+  assert.equal(await p, 'BUKTI.pdf');
+  assert.equal(doc.body.children.includes(input), false);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '5');
+  const q = n.files.pickDocument(); doc.body.children.at(-1).l.cancel();
+  assert.equal(await q, null);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '5');
+});
+
+test('camera.pickPhoto tetap image/* dan tetap menulis penanda (tidak berubah karena pickDocument)', () => {
+  const { doc, win } = fakeDom(); const storage = memStorage();
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {}, now: () => 7 });
+  n.camera.pickPhoto();
+  const input = doc.body.children.at(-1);
+  assert.equal(input.accept, 'image/*'); assert.equal(input.attrs.capture, undefined); assert.equal(input.clicked, 1);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '7');
+});
+
+test('files.pickDocument dan kamera berbagi satu input: yang belum selesai dijawab null', async () => {
+  const { doc, win } = fakeDom(); const storage = memStorage();
+  const n = createWebNative({ storage, window: win, document: doc, navigator: {}, now: () => 3 });
+  const inputs = () => doc.body.children.filter(c => c.type === 'file').map(c => c.accept);
+  const photo = n.camera.takePhoto();
+  const pdf = n.files.pickDocument();
+  assert.equal(await photo, null);
+  // Kamera sudah dijawab → penandanya dihapus; dokumen tidak menulis penanda baru.
+  assert.equal(CAMERA_MARK_KEY in storage.data, false);
+  assert.deepEqual(inputs(), ['image/*,application/pdf']);
+  n.camera.takePhoto();
+  assert.equal(await pdf, null);
+  assert.equal(storage.data[CAMERA_MARK_KEY], '3');
+  assert.deepEqual(inputs(), ['image/*']);
+});
+
 test('camera.recover: lost bila penanda < 3 menit, lalu dihapus; file selalu null di web', async () => {
   const mk = (mark, t) => createWebNative({ storage: memStorage(mark == null ? {} : { [CAMERA_MARK_KEY]: String(mark) }), window: {}, document: {}, navigator: {}, now: () => t });
   assert.deepEqual(await mk(1000, 1000 + CAMERA_MARK_MAX_MS - 1).camera.recover(), { file: null, lost: true });

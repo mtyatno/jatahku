@@ -1,37 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { compressImage } from '../lib/receiptImage';
-import { STAGE, failureMessage } from '../lib/receiptProgress';
+import { STAGE, failureMessage, checkScanFile, offlineFailure } from '../lib/receiptProgress';
 
 // Alur baca struk dengan tahap yang terlihat:
 //   foto → MENYIAPKAN (kompres) → MENGUNGGAH (progres) → MEMBACA (server) → onResult(hasil) → IDLE
+//   PDF  → MENGUNGGAH (file asli dengan namanya, tanpa kompres & gambar kecil) → MEMBACA → onResult(hasil) → IDLE
 // Gagal di tahap mana pun → FAILED + pesan sesuai tahap; retry() mengulang unggah dengan
-// foto yang sudah disiapkan (tanpa kompres ulang).
+// file yang sudah disiapkan (tanpa kompres ulang). Aturan file (jenis, batas PDF): receiptProgress.checkScanFile.
 //
 // onResult(hasilApi)  : saat struk berhasil dibaca.
 // onBusyChange(bool)  : true selama MENYIAPKAN/MENGUNGGAH/MEMBACA; false saat IDLE, FAILED, dan saat dilepas.
+// allowPdf            : PDF boleh dibaca (saklar `receipt_inbox`); tanpa itu PDF ditolak seperti dulu.
+// state.noun          : 'struk' (foto) | 'bukti' (PDF) — kata benda teks tahap di ReceiptStatusCard.
 const BUSY_STAGES = new Set([STAGE.PREPARING, STAGE.UPLOADING, STAGE.READING]);
 
 // Isian awal tiap pemindaian baru (tanpa stage & stageStartedAt: itu diatur per pemanggilan).
-const FRESH = { percent: null, progressSeen: false, thumbUrl: null, failure: null };
+const FRESH = { percent: null, progressSeen: false, thumbUrl: null, failure: null, noun: 'struk' };
 const IDLE_STATE = { ...FRESH, stage: STAGE.IDLE, stageStartedAt: 0 };
 
-const NOT_IMAGE = { text: 'Pilih file foto (JPG/PNG)', canRetry: false, canRetake: true };
-const OFFLINE = { text: 'Butuh koneksi internet untuk scan struk', canRetry: true, canRetake: false };
-
-export function useReceiptScan({ onResult, onBusyChange } = {}) {
+export function useReceiptScan({ onResult, onBusyChange, allowPdf = false } = {}) {
   const [state, setState] = useState(IDLE_STATE);
   // Sumber kebenaran untuk callback async: state React bisa basi di dalam closure.
   const stateRef = useRef(IDLE_STATE);
   const mountedRef = useRef(true);
   const runRef = useRef(0); // nomor pemindaian; hasil dari pemindaian yang sudah digantikan diabaikan
-  const blobRef = useRef(null); // foto terkompres untuk retry()
-  const fileRef = useRef(null); // foto asli, hanya ditahan bila gagal sebelum sempat dikompres (offline)
+  const blobRef = useRef(null); // file siap kirim untuk retry(): foto terkompres, atau PDF asli
+  const fileRef = useRef(null); // file asli, hanya ditahan bila gagal sebelum sempat disiapkan (offline)
   const busyRef = useRef(false);
   const resultCbRef = useRef(onResult);
   resultCbRef.current = onResult;
   const busyCbRef = useRef(onBusyChange);
   busyCbRef.current = onBusyChange;
+  const allowPdfRef = useRef(allowPdf);
+  allowPdfRef.current = allowPdf;
 
   const setBusy = (busy) => {
     if (busyRef.current === busy) return;
@@ -112,6 +114,7 @@ export function useReceiptScan({ onResult, onBusyChange } = {}) {
         status: res.status,
         detail: res.data?.detail,
         timedOut: res.timedOut,
+        noun: stateRef.current.noun,
       }),
     });
   };
@@ -125,22 +128,31 @@ export function useReceiptScan({ onResult, onBusyChange } = {}) {
     blobRef.current = null;
     fileRef.current = null;
 
-    if (!String(file.type || '').startsWith('image/')) {
-      apply({ ...FRESH, stage: STAGE.FAILED, failure: NOT_IMAGE });
+    const { kind, noun, failure } = checkScanFile(file, { allowPdf: allowPdfRef.current });
+    if (failure) {
+      apply({ ...FRESH, noun, stage: STAGE.FAILED, failure });
       return;
     }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      fileRef.current = file; // retry() memulai dari awal karena belum ada foto terkompres
-      apply({ ...FRESH, stage: STAGE.FAILED, failure: OFFLINE });
+      fileRef.current = file; // retry() memulai dari awal karena belum ada file yang disiapkan
+      apply({ ...FRESH, noun, stage: STAGE.FAILED, failure: offlineFailure(noun) });
       return;
     }
 
-    apply({ ...FRESH, stage: STAGE.PREPARING, stageStartedAt: Date.now() });
+    if (kind === 'pdf') {
+      // PDF dikirim apa adanya dengan nama aslinya: tanpa kompres, dan tanpa gambar kecil (bukan foto).
+      blobRef.current = file;
+      apply({ ...FRESH, noun, stage: STAGE.UPLOADING, stageStartedAt: Date.now() });
+      await upload(file, run);
+      return;
+    }
+
+    apply({ ...FRESH, noun, stage: STAGE.PREPARING, stageStartedAt: Date.now() });
     let blob;
     try {
       blob = await compressImage(file);
     } catch {
-      if (alive()) apply({ stage: STAGE.FAILED, failure: failureMessage({ stage: STAGE.PREPARING }) });
+      if (alive()) apply({ stage: STAGE.FAILED, failure: failureMessage({ stage: STAGE.PREPARING, noun }) });
       return;
     }
     if (!alive()) return;
