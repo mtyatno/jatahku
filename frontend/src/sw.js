@@ -1,6 +1,7 @@
 // Custom Service Worker — Jatahku PWA
 import { idbStore, syncQueue } from './lib/offlineSync.js';
 import { newRef } from './lib/ref.js';
+import { handleShareTarget, isShareTarget, shareStore } from './lib/shareInbox.js';
 // vite-plugin-pwa (injectManifest) will replace self.__WB_MANIFEST
 
 const manifest = self.__WB_MANIFEST || [];
@@ -40,6 +41,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+
+  // Bagikan ke Jatahku (Web Share Target, spec 5b): file/teks dari menu Bagikan disimpan ke IndexedDB, lalu 303 ke
+  // /bagikan?s=<batch> (lib/shareInbox.js). Hanya POST /bagikan di origin ini; harus sebelum cek GET di bawah.
+  if (isShareTarget(request, self.location.origin)) {
+    event.respondWith(handleShareTarget(request, { store: shareStore(), newId: newRef }));
+    return;
+  }
 
   if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 

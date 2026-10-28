@@ -3,6 +3,7 @@ import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
 import { xhrUpload, sendWithRefresh } from './xhrUpload';
+import { clearSharesOnLogout } from './shareInbox';
 import { native } from '../native';
 
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
@@ -90,7 +91,10 @@ class ApiClient {
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
-    window.location.href = '/login';
+    // Bukti yang dibagikan tapi belum terkirim: dikosongkan hanya saat user sendiri keluar (revoke), dan pindah ke
+    // /login menunggu penghapusannya (maks 2 dtk; tanpa ditunggu, navigasi memutusnya). Refresh ditolak
+    // (revoke:false): bukti tetap aman sampai login lagi (spec 5b), langsung ke /login. Tidak pernah melempar.
+    clearSharesOnLogout({ revoke }, { next: () => { window.location.href = '/login'; } });
   }
 
   // Auth
