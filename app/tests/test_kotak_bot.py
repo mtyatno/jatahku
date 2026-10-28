@@ -654,7 +654,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         query.edit_message_text.assert_not_awaited()
         self.assertEqual(self.payload(key), payload)
 
-    async def test_second_date_answer_changes_nothing(self):
+    async def test_second_date_answer_only_shows_the_first_answer_again(self):
         self.owner_payday()
         await self.send_photo(detail=DETAIL_QRIS)
         key = self.date_key()
@@ -1312,6 +1312,75 @@ class KotakBotDbTests(TxnBase):
         key = json.loads(self.redis.store["kotak:note:42"])["key"]
         self.redis.store.pop(f"txn:{key}")
         await self.assert_typing_reaches_nlp()
+
+    # --- catatan yang menunggu tombol sesi yang sama tidak menjadi transaksi (fix round 2, N1) ----
+
+    async def test_note_sent_while_an_envelope_tap_records_is_not_read_as_an_expense(self):
+        await self.ask_note()
+        makan = self.button("Makan")
+        key = makan.split("_")[1]
+        answering, go, busy = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def slow_answer(*args, **kwargs):   # t_ memegang txnlock, belum sampai forget_note
+            answering.set()
+            await go.wait()
+
+        real_lock = receipt_cmd._txn_lock
+
+        async def watched_lock(k):
+            lock = await real_lock(k)
+            if lock is False:
+                busy.set()
+            return lock
+
+        query = SimpleNamespace(data=makan, answer=AsyncMock(side_effect=slow_answer), edit_message_text=AsyncMock(),
+                                message=SimpleNamespace(message_id=501, reply_text=AsyncMock()),
+                                from_user=SimpleNamespace(id=42, first_name="Ani"))
+        update_ = SimpleNamespace(callback_query=query, effective_user=query.from_user,
+                                  effective_chat=SimpleNamespace(id=4242))
+        with patch.object(receipt_cmd, "_txn_lock", watched_lock):
+            tap = asyncio.create_task(handlers.handle_txn_callback(update_, SimpleNamespace(bot=self.bot)))
+            await answering.wait()
+            note = asyncio.create_task(self.type_text("bakso 2, es teh"))
+            await asyncio.wait_for(busy.wait(), 2)   # catatan menunggu kunci
+            go.set()
+            await tap
+            message = await note
+        [txn] = await self.txns()   # hanya bukti; "bakso 2, es teh" tidak menjadi transaksi Rp2
+        self.assertEqual(txn.amount, 25000)
+        message.reply_text.assert_awaited_once_with("⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan.")
+        self.assertNotIn(f"txnlock:{key}", self.redis.store)
+
+    async def test_note_resent_after_a_busy_reply_is_not_read_as_an_expense(self):
+        await self.ask_note()
+        key = self.button("Makan").split("_")[1]
+        self.redis.store[f"txnlock:{key}"] = "1"   # tombol amplop sesi ini sedang mencatat (lebih lama dari batas tunggu)
+        with patch.object(receipt_cmd, "NOTE_LOCK_TRIES", 2), patch.object(receipt_cmd, "NOTE_LOCK_WAIT_S", 0.01):
+            first = await self.type_text("bakso 2, es teh")
+        first.reply_text.assert_awaited_once_with("⏳ Sedang diproses, kirim ulang catatannya.")
+        # tombol itu selesai mencatat; forget_note-nya sudah jalan sebelum catatan dikembalikan
+        self.redis.store.pop(f"txnlock:{key}")
+        self.redis.store.pop(f"txn:{key}")
+        await self.set(self.items[-1], status="tercatat")
+        before = len(await self.txns())
+        again = await self.type_text("bakso 2, es teh")   # dikirim ulang seperti diminta
+        again.reply_text.assert_awaited_once_with("⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan.")
+        self.assertEqual(len(await self.txns()), before)
+
+    async def test_note_resent_after_a_busy_reply_for_a_proof_recorded_elsewhere_is_not_read_as_an_expense(self):
+        await self.ask_note()
+        key = self.button("Makan").split("_")[1]
+        self.redis.store[f"txnlock:{key}"] = "1"
+        with patch.object(receipt_cmd, "NOTE_LOCK_TRIES", 2), patch.object(receipt_cmd, "NOTE_LOCK_WAIT_S", 0.01):
+            first = await self.type_text("bakso 2, es teh")
+        first.reply_text.assert_awaited_once_with("⏳ Sedang diproses, kirim ulang catatannya.")
+        self.redis.store.pop(f"txnlock:{key}")
+        await self.set(self.items[-1], status="tercatat")   # dicatat lewat web; sesi tombol bot masih ada
+        before = len(await self.txns())
+        again = await self.type_text("bakso 2, es teh")
+        again.reply_text.assert_awaited_once_with("⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan.")
+        self.assertEqual(len(await self.txns()), before)
+        self.assertIn(f"txn:{key}", self.redis.store)   # sesi tombolnya tidak disentuh
 
     # --- bukti yang sama dikirim lagi selagi dibaca (fix 2) ------------------
 

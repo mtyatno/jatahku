@@ -195,7 +195,10 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   **Beda, catat** (`ko_`). Top-up, uang masuk, rekening sendiri: **Oke, lewati** dan **Tetap catat**.
 - **Tambah catatan**: bot membalas "Ketik isi belanjaannya (atau /batal)" dan menyimpan `kotak:note:{tg_user_id}`
   (TTL 300 dtk). Pesan teks berikutnya menjadi catatan sebelum NLP; saran dan pesan tombol dihitung ulang. `/batal`
-  selama menunggu catatan hanya membatalkan catatan (bukan transaksi terakhir).
+  selama menunggu catatan hanya membatalkan catatan (bukan transaksi terakhir). Catatan yang masuk saat tombol pesan
+  yang sama sedang diproses menunggu sebentar (≤ 2 dtk); masih sibuk → "⏳ Sedang diproses, kirim ulang catatannya.";
+  bila tombol itu sudah memakai sesinya (mis. mencatat) → "⚠️ Bukti ini sudah diproses, catatannya tidak
+  ditambahkan." Catatan yang sempat menunggu tidak pernah diproses NLP.
 - **Lewat batas tunggu**: Telegram membalas "⏳ Masih dibaca, nanti kukabari." lalu worker mengedit pesan itu
   menjadi hasil (atau gagal) lewat `send_ready_message`; pesan terhapus → pesan baru. Chat web membalas "⏳ Masih
   dibaca. Cek Bukti menunggu di beranda nanti." (banner itu datang di Bagian B). Bukti yang sama dikirim lagi

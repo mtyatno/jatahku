@@ -59,6 +59,7 @@ MSG_SKIPPED = "❌ Dilewati."
 MSG_ASK_NOTE = "Ketik isi belanjaannya (atau /batal)"
 MSG_NOTE_CANCELLED = "❌ Tambah catatan dibatalkan."
 MSG_NOTE_BUSY = "⏳ Sedang diproses, kirim ulang catatannya."
+MSG_NOTE_LATE = "⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan."
 NOTE_LOCK_TRIES = 20      # catatan menunggu kunci sesi tombol (tombol amplop/tanggal yang sedang diproses) ...
 NOTE_LOCK_WAIT_S = 0.1    # ... paling lama 20 × 0,1 detik
 MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
@@ -832,8 +833,9 @@ async def capture_note(update, context) -> bool:
     biasa, pesan lama tidak disentuh) bila tidak ada catatan yang ditunggu, Redis mati, sesi tombolnya sudah habis
     atau dipakai mencatat, atau itemnya tidak lagi `siap` (sudah tercatat/dilewati, mis. lewat web). Dari membaca
     payload sampai pesannya diedit memakai kunci sesi tombol (`_txn_lock`), ditunggu paling lama NOTE_LOCK_TRIES ×
-    NOTE_LOCK_WAIT_S; masih dipakai → catatannya dikembalikan dan user diminta mengirim ulang (True: teksnya tidak
-    sampai ke NLP)."""
+    NOTE_LOCK_WAIT_S; masih dipakai → catatannya dikembalikan (bertanda `busy`) dan user diminta mengirim ulang.
+    Catatan yang sempat menunggu (sekarang, atau kiriman ulang sesudah MSG_NOTE_BUSY) tidak pernah sampai ke NLP:
+    bila tombol itu sudah memakai sesinya (payload habis, item tidak lagi `siap`) → MSG_NOTE_LATE (True)."""
     from app.bot.handlers import get_or_create_user
 
     tg_user = update.effective_user
@@ -852,29 +854,39 @@ async def capture_note(update, context) -> bool:
     if not key:
         return False
     lock = await _txn_lock(key)
+    # Tombol sesi ini (t_, kt_, ko_) sedang berjalan saat catatan masuk, atau ini kiriman ulang sesudah MSG_NOTE_BUSY:
+    # sesi yang habis dipakai tombol itu bukan alasan membaca teksnya sebagai pengeluaran baru.
+    waited = lock is False or bool(state.get("busy"))
     for _ in range(NOTE_LOCK_TRIES):
         if lock is not False:
             break
         await asyncio.sleep(NOTE_LOCK_WAIT_S)
         lock = await _txn_lock(key)
     if lock is False:
-        await _keep_note(tg_user.id, raw)
+        await _keep_note(tg_user.id, json.dumps({**state, "busy": True}))
         await update.message.reply_text(MSG_NOTE_BUSY)
         return True
     try:
         if await _load_payload(key) is None:
-            return False
+            return await _late_note(update) if waited else False
         note = (update.message.text or "").strip()
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
             item = await _own_item(db, _uuid(state.get("item_id")), user)
             if item is None or item.status != ST_SIAP:
-                return False
+                return await _late_note(update) if waited else False
             text, markup = await _result_reply(db, user, item, key=key, note=note, ready=True)
         await _edit_message(update, context, state.get("message_id"), text, markup)
         return True
     finally:
         await _txn_unlock(key, lock)
+
+
+async def _late_note(update) -> bool:
+    """Catatan yang masuk SELAGI tombol sesi yang sama diproses, lalu sesinya habis dipakai tombol itu (mis. tombol
+    amplop mencatat tanpa catatan ini): teksnya catatan, bukan ketikan baru, jadi tidak ke NLP."""
+    await update.message.reply_text(MSG_NOTE_LATE)
+    return True
 
 
 async def _keep_note(tg_user_id, raw) -> None:
