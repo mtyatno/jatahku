@@ -11,6 +11,11 @@ paling lama `WAIT_BOT_S` → pesan hasil yang menggantikan "🧾 Membaca bukti..
 
 Pencatatan memakai callback `t_{key}_{idx}` yang sudah ada (handle_txn_callback) dengan payload Redis `txn:{key}`:
 "date" (tanggal struk/bayar) dan "scan_id" (id item), ditambah untuk bukti bayar "kind": "proof", "item_id", "note".
+
+Tanggal dokumen sebelum awal periode anggaran berjalan user (Task H1): tombol amplop diganti pertanyaan "Catat untuk
+tanggal berapa?" (`kt_{key}_h` hari ini, `kt_{key}_d` tanggal dokumen, `handle_date_callback`). Jawabannya mengubah
+payload yang sama: "date" hari ini, atau "past_period" (dicatat di tanggal dokumen tanpa geser dana dan limit
+harian); keduanya "date_answered". Tanggal yang belum lewat (salah baca) langsung dicatat hari ini.
 """
 import json
 import logging
@@ -25,6 +30,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from app.bot.channel import is_web
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
+from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import intake, record, view, waiter
 from app.services.kotak_struk.config import (
@@ -54,6 +60,15 @@ MSG_NOTE_CANCELLED = "❌ Tambah catatan dibatalkan."
 MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
 MSG_NO_ENVELOPE = "Belum ada amplop. Ketik /template untuk buat."
 ASK_ENVELOPE = "Masuk ke amplop mana?"
+
+# Tanggal dokumen di luar periode berjalan (Task H1). {noun}: "struk" (struk belanja, tidak dikenali) atau "bukti".
+ASK_DATE = "📅 Tanggal di {noun}: {doc} — di luar periode sekarang ({period}). Catat untuk tanggal berapa?"
+DATE_FUTURE = "📅 Tanggal di {noun} ({doc}) belum lewat — dicatat hari ini."
+DATE_SET = "📅 Dicatat untuk {day}"
+BTN_DATE_TODAY = "📅 Hari ini ({day})"
+BTN_DATE_DOC = "📅 {day}"
+DATE_ANSWERED = "date_answered"   # payload `txn:{key}`: pertanyaan tanggal sudah dijawab
+TXN_LOCK = "txnlock:{}"           # kunci sesi tombol yang sama dengan tombol amplop (handlers.handle_txn_callback)
 
 PROOF_LABEL = {"qris": "QRIS", "transfer": "Transfer"}
 PAY_STATUS = {"berhasil": "Berhasil", "pending": "Pending"}
@@ -86,6 +101,24 @@ def _fmt_date(iso: str | None) -> str:
 
 def _rp(n) -> str:
     return "Rp " + f"{int(n):,}".replace(",", ".")
+
+
+def short_date(value: date, today: date) -> str:
+    """"26 Okt"; dengan tahun bila bukan tahun `today` ("30 Sep 2025")."""
+    text = f"{value.day} {BULAN[value.month - 1]}"
+    return text if value.year == today.year else f"{text} {value.year}"
+
+
+def period_label(start: date, end: date, today: date) -> str:
+    """"27 Okt–26 Nov" (tahun tiap tanggal seperti `short_date`)."""
+    return f"{short_date(start, today)}–{short_date(end, today)}"
+
+
+def _iso_day(value) -> date | None:
+    try:
+        return date.fromisoformat(value) if value else None
+    except (TypeError, ValueError):
+        return None
 
 
 MAX_ITEM_LINES = 12
@@ -209,16 +242,9 @@ def _recorded_text(recorded: dict | None) -> str:
     return f"✅ Bukti ini sudah tercatat {day}."
 
 
-def proof_message(detail: dict, *, recorded: dict | None = None, note: str | None = None) -> str:
-    """Pesan bot untuk bukti bayar (QRIS/transfer) dari `view.item_detail`. `recorded` = `{date, envelope_name}`
-    transaksi yang sudah mencatat bukti ini (`view.recorded_summary`); `note` = catatan user (keterangannya
-    ditampilkan)."""
+def _proof_reading(detail: dict, note: str | None = None) -> str:
+    """Teks bacaan bukti bayar tanpa pertanyaannya: pihak, nominal/waktu/status, peringatan, dan catatan user."""
     flags = detail.get("flags") or {}
-    if flags.get("blocked") == view.BLOCKED_FAILED:
-        return MSG_FAILED_TXN
-    if flags.get("blocked"):
-        return _recorded_text(recorded)
-
     doc = detail.get("document") or {}
     city = (doc.get("counterparty") or {}).get("city")
     who = [PROOF_LABEL.get(detail.get("doc_type"), "Bukti"), (detail.get("merchant") or {}).get("name"),
@@ -231,6 +257,18 @@ def proof_message(detail: dict, *, recorded: dict | None = None, note: str | Non
     lines += [f"⚠️ {w}" for w in flags.get("warnings") or []]
     if note:
         lines.append(f"📝 {detail.get('description_preview') or note}")
+    return "\n".join(lines)
+
+
+def proof_message(detail: dict, *, recorded: dict | None = None, note: str | None = None) -> str:
+    """Pesan bot untuk bukti bayar (QRIS/transfer) dari `view.item_detail`. `recorded` = `{date, envelope_name}`
+    transaksi yang sudah mencatat bukti ini (`view.recorded_summary`); `note` = catatan user (keterangannya
+    ditampilkan)."""
+    flags = detail.get("flags") or {}
+    if flags.get("blocked") == view.BLOCKED_FAILED:
+        return MSG_FAILED_TXN
+    if flags.get("blocked"):
+        return _recorded_text(recorded)
 
     prompt = _prompt(detail)
     if prompt == "skip":
@@ -241,7 +279,7 @@ def proof_message(detail: dict, *, recorded: dict | None = None, note: str | Non
         ask = f'🤔 Mirip "{txn.get("description")}" yang dicatat {_clock(at) if at else "tadi"}. Sama?'
     else:
         ask = ASK_ENVELOPE
-    return "\n".join(lines) + "\n\n" + ask
+    return _proof_reading(detail, note) + "\n\n" + ask
 
 
 # ── Redis ────────────────────────────────────────────────────────────────────
@@ -285,8 +323,77 @@ async def forget_note(tg_user_id) -> bool:
 
 # ── pesan hasil ─────────────────────────────────────────────────────────────
 
+def _second_row(payload: dict) -> list:
+    """Baris tombol di bawah amplop (atau pertanyaan tanggal): bukti "Bukan pengeluaran" + "Batal", struk "Nominal
+    salah" + "Batal"."""
+    if payload.get("kind") == "proof":
+        item_id = payload["item_id"]
+        return [InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=f"kx_{item_id}"),
+                InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{item_id}")]
+    scan_id = payload["scan_id"]
+    return [InlineKeyboardButton("✏️ Nominal salah", callback_data=f"struk_fix_{scan_id}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{scan_id}")]
+
+
+def _envelope_reply(key: str, payload: dict, reading: str, labels: list[str],
+                    line: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    """Pesan tombol amplop: teks bacaan (+ `line` tanggal), "Masuk ke amplop mana?", satu tombol per amplop (`t_{key}_{i}`,
+    urutan `payload["envs"]`), "Tambah catatan" untuk bukti, lalu `_second_row`."""
+    proof = payload.get("kind") == "proof"
+    if line:   # bukti: satu baris di blok bacaan (seperti peringatan dan catatan); struk: paragraf sendiri
+        reading += ("\n" if proof else "\n\n") + line
+    rows = [[InlineKeyboardButton(label, callback_data=f"t_{key}_{i}")] for i, label in enumerate(labels)]
+    if proof:
+        rows.append([InlineKeyboardButton("✏️ Tambah catatan", callback_data=f"kn_{key}")])
+    rows.append(_second_row(payload))
+    return f"{reading}\n\n{ASK_ENVELOPE}", InlineKeyboardMarkup(rows)
+
+
+def _date_question(key: str, payload: dict, reading: str, doc_day: date, today: date,
+                   period: tuple[date, date]) -> tuple[str, InlineKeyboardMarkup]:
+    """Dokumen dari periode lalu: pertanyaan tanggal menggantikan "Masuk ke amplop mana?", tombol "Hari ini" dan
+    tanggal dokumen (`kt_{key}_h` / `kt_{key}_d`) menggantikan tombol amplop; `_second_row` tetap."""
+    noun = "bukti" if payload.get("kind") == "proof" else "struk"
+    ask = ASK_DATE.format(noun=noun, doc=short_date(doc_day, today), period=period_label(*period, today))
+    rows = [[InlineKeyboardButton(BTN_DATE_TODAY.format(day=short_date(today, today)), callback_data=f"kt_{key}_h"),
+             InlineKeyboardButton(BTN_DATE_DOC.format(day=short_date(doc_day, today)), callback_data=f"kt_{key}_d")],
+            _second_row(payload)]
+    return f"{reading}\n\n{ask}", InlineKeyboardMarkup(rows)
+
+
+async def _dated_reply(key: str, payload: dict, payday_day: int, reading: str, labels: list[str], *,
+                       old: dict | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    """Simpan payload `txn:{key}` lalu susun pesan tombol amplopnya menurut tanggal dokumen (`payload["date"]`)
+    terhadap periode berjalan (Task H1): sebelum awal periode → tanya dulu dicatat untuk tanggal berapa (teks bacaan
+    dan label tombol amplop ikut disimpan untuk jawabannya, `handle_date_callback`); belum lewat (salah baca) →
+    dicatat hari ini dengan satu baris keterangan; tanpa tanggal atau di periode berjalan → seperti biasa. `old`:
+    payload sesi tombol yang sama (render ulang sesudah "Tetap catat" atau catatan): jawaban tanggalnya tetap
+    berlaku."""
+    today = date.today()
+    answered = _iso_day(old.get("date")) if old and old.get(DATE_ANSWERED) else None
+    line = None
+    if answered is not None:
+        payload.update({k: old[k] for k in ("date", "past_period") if k in old})
+        payload[DATE_ANSWERED] = True
+        line = DATE_SET.format(day=short_date(answered, today))
+    else:
+        doc_day = _iso_day(payload.get("date"))
+        kind = document_date_kind(doc_day, payday_day=payday_day, today=today)
+        if kind == "past":
+            payload.update(reading=reading, labels=labels)
+            await _save_payload(key, payload)
+            return _date_question(key, payload, reading, doc_day, today, get_budget_period(payday_day, today))
+        if kind == "future":
+            noun = "bukti" if payload.get("kind") == "proof" else "struk"
+            line = DATE_FUTURE.format(noun=noun, doc=short_date(doc_day, today))
+            payload["date"] = today.isoformat()
+    await _save_payload(key, payload)
+    return _envelope_reply(key, payload, reading, labels, line)
+
+
 async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Pesan struk yang lama (struk belanja dan tidak dikenali), tanpa baris kuota scan."""
+    """Pesan struk yang lama (struk belanja dan tidak dikenali), tanpa baris kuota scan; tanggal struk di luar periode
+    berjalan lewat `_dated_reply`."""
     from app.bot.handlers import get_envelopes_with_spent, get_household_id
     from app.services.kotak_struk.document import scan_receipt_response
     from app.services.txn_nlp import find_best_envelope
@@ -311,18 +418,16 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
         envs.sort(key=lambda e: e["envelope"].id != suggested.id)
 
     txn_key = secrets.token_hex(4)
-    await _save_payload(txn_key, {
+    payload = {
         "amount": int(total), "desc": merchant,
         "envs": {str(i): str(e["envelope"].id) for i, e in enumerate(envs)},
         "date": result.get("date"), "scan_id": result.get("scan_id"),
-    })
-    keyboard = []
-    for i, e in enumerate(envs):
+    }
+    labels = []
+    for e in envs:
         env = e["envelope"]
         star = "⭐ " if (suggested and confident and env.id == suggested.id) else ""
-        keyboard.append([InlineKeyboardButton(f"{star}{env.emoji or '📁'} {env.name}", callback_data=f"t_{txn_key}_{i}")])
-    keyboard.append([InlineKeyboardButton("✏️ Nominal salah", callback_data=f"struk_fix_{result['scan_id']}"),
-                     InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{result['scan_id']}")])
+        labels.append(f"{star}{env.emoji or '📁'} {env.name}")
 
     conf = CONF_TEXT.get(result.get("confidence"), "")
     if result.get("confidence") == "tinggi" and result.get("confidence_source") == "items":
@@ -330,21 +435,20 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
     elif result.get("confidence_source") == "items_sum":
         conf = "⚠️ dihitung dari rincian, cek dengan struk"
     summary = _items_summary(result)
-    text = (f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"
-            f"Total: {_rp(total)}  {conf}\n\n"
-            + (f"{summary}\n\n" if summary else "")
-            + ASK_ENVELOPE)
-    return text, InlineKeyboardMarkup(keyboard)
+    reading = (f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"
+               f"Total: {_rp(total)}  {conf}"
+               + (f"\n\n{summary}" if summary else ""))
+    return await _dated_reply(txn_key, payload, payday_day, reading, labels)
 
 
 async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Pesan bukti bayar + tombolnya; payload `txn:{key}` (baru, atau yang sudah ada bila `key`) diperbarui."""
+    """Pesan bukti bayar + tombolnya; payload `txn:{key}` (baru, atau yang sudah ada bila `key`, dengan jawaban
+    tanggalnya) diperbarui. Tombol amplop lewat `_dated_reply`."""
     from app.bot.handlers import _spendable_rows, get_envelopes_with_spent, get_household_id
 
-    text = proof_message(detail, recorded=recorded, note=note)
     prompt = _prompt(detail)
     if prompt == "blocked":
-        return text, None
+        return proof_message(detail, recorded=recorded, note=note), None
     hid = await get_household_id(user, db)
     payday_day = getattr(user, "payday_day", 1) or 1
     envs = _spendable_rows(await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day))
@@ -355,31 +459,31 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
     if suggested:   # yang disarankan teratas; ⭐ hanya bila yakin
         envs.sort(key=lambda e: str(e["envelope"].id) != suggested)
 
+    old = await _load_payload(key) if key else None
     key = key or secrets.token_hex(4)
     item_id = detail["id"]
     paid = _wib(detail.get("paid_at"))
-    await _save_payload(key, {
+    payload = {
         "amount": int(_total(detail)), "desc": detail.get("description_preview"),
         "envs": {str(i): str(e["envelope"].id) for i, e in enumerate(envs)},
         "date": paid.date().isoformat() if paid else None, "scan_id": item_id,
         "kind": "proof", "item_id": item_id, "note": note,
-    })
-    if prompt == "skip":
-        rows = [[InlineKeyboardButton("Oke, lewati", callback_data=f"kx_{item_id}"),
-                 InlineKeyboardButton("Tetap catat", callback_data=f"ko_{key}")]]
-    elif prompt == "soft":
-        rows = [[InlineKeyboardButton("Sama, lewati", callback_data=f"kd_{item_id}"),
-                 InlineKeyboardButton("Beda, catat", callback_data=f"ko_{key}")]]
-    else:
-        rows = []
-        for i, e in enumerate(envs):
-            env = e["envelope"]
-            star = "⭐ " if suggestion.get("confident") and str(env.id) == suggested else ""
-            rows.append([InlineKeyboardButton(f"{star}{env.emoji or '📁'} {env.name}", callback_data=f"t_{key}_{i}")])
-        rows.append([InlineKeyboardButton("✏️ Tambah catatan", callback_data=f"kn_{key}")])
-        rows.append([InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=f"kx_{item_id}"),
-                     InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{item_id}")])
-    return text, InlineKeyboardMarkup(rows)
+    }
+    if prompt in ("skip", "soft"):   # tawaran lewati dulu; tanggal ditanyakan sesudah "Tetap catat"/"Beda, catat"
+        await _save_payload(key, payload)
+        if prompt == "skip":
+            rows = [[InlineKeyboardButton("Oke, lewati", callback_data=f"kx_{item_id}"),
+                     InlineKeyboardButton("Tetap catat", callback_data=f"ko_{key}")]]
+        else:
+            rows = [[InlineKeyboardButton("Sama, lewati", callback_data=f"kd_{item_id}"),
+                     InlineKeyboardButton("Beda, catat", callback_data=f"ko_{key}")]]
+        return proof_message(detail, recorded=recorded, note=note), InlineKeyboardMarkup(rows)
+    labels = []
+    for e in envs:
+        env = e["envelope"]
+        star = "⭐ " if suggestion.get("confident") and str(env.id) == suggested else ""
+        labels.append(f"{star}{env.emoji or '📁'} {env.name}")
+    return await _dated_reply(key, payload, payday_day, _proof_reading(detail, note), labels, old=old)
 
 
 async def _result_reply(db, user, item, *, key=None, note=None, ready=False) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -608,6 +712,61 @@ async def handle_kotak_callback(update, context):
             else:
                 text, markup = await _result_reply(db, user, item, key=arg, note=payload.get("note"), ready=True)
         await query.edit_message_text(text, reply_markup=markup)
+
+
+async def handle_date_callback(update, context):
+    """kt_{key}_h = catat untuk hari ini, kt_{key}_d = catat untuk tanggal dokumen (periode lalu: tanpa geser dana dan
+    limit harian, lihat handlers._handle_txn_callback). Memakai kunci sesi tombol yang sama dengan tombol amplop
+    (`txnlock:{key}`): dua ketukan bersamaan tidak saling menimpa jawaban, dan jawaban tidak berselang dengan
+    pencatatan. Redis mati: lanjut tanpa kunci, seperti tombol amplop."""
+    query = update.callback_query
+    _, key, choice = ((query.data or "").split("_") + ["", ""])[:3]
+    lock, r = TXN_LOCK.format(key), None
+    try:
+        r = _redis()
+        if not await r.set(lock, "1", nx=True, ex=30):
+            await r.aclose()
+            await query.answer("Sedang diproses...")
+            return
+    except Exception:
+        r = None
+    try:
+        await _answer_date(query, key, choice)
+    finally:
+        if r is not None:
+            try:
+                await r.delete(lock)
+                await r.aclose()
+            except Exception:
+                pass
+
+
+async def _answer_date(query, key: str, choice: str) -> None:
+    """Jawaban pertanyaan tanggal: payload `txn:{key}` yang SAMA diperbarui ("date" hari ini, atau "past_period";
+    keduanya "date_answered"), lalu pesannya menjadi pesan tombol amplop dari teks bacaan dan label yang disimpan saat
+    bertanya: item tidak dibaca ulang, daftar dan urutan amplop tetap. Sesi habis → MSG_SESSION_EXPIRED. Sudah
+    dijawab (ketukan kedua): tidak ada yang diubah, pesan juga tidak."""
+    await query.answer()
+    payload = await _load_payload(key)
+    if payload is None:
+        await query.edit_message_text(MSG_SESSION_EXPIRED)
+        return
+    if payload.get(DATE_ANSWERED):
+        return
+    doc_day = _iso_day(payload.get("date"))
+    if choice not in ("h", "d") or doc_day is None or "labels" not in payload:
+        await query.edit_message_text(MSG_SESSION_EXPIRED)
+        return
+    today = date.today()
+    if choice == "h":
+        payload["date"] = today.isoformat()
+    else:
+        payload["past_period"] = True
+    payload[DATE_ANSWERED] = True
+    await _save_payload(key, payload)
+    line = DATE_SET.format(day=short_date(today if choice == "h" else doc_day, today))
+    text, markup = _envelope_reply(key, payload, payload["reading"], payload["labels"], line)
+    await query.edit_message_text(text, reply_markup=markup)
 
 
 async def _edit_message(update, context, message_id, text, markup) -> None:

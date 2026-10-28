@@ -35,9 +35,11 @@ from app.models.models import (
     PendingTransaction, PendingTransactionStatus, ReceiptScan, RecurringFrequency, RecurringTransaction,
     Transaction, TransactionSource, User,
 )
-from app.tests.fakes import FakeResult, db_with
+from app.tests.fakes import FakeResult, db_with, fixed_date
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
+# Struk tiruan bertanggal 12 Okt 2026: "hari ini" untuk pertanyaan tanggal dokumen bot (H1) dipatok 28 Okt 2026.
+OCT28 = fixed_date(date(2026, 10, 28))
 
 
 class FakeRedis:
@@ -460,6 +462,7 @@ class WebChatIntegrationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(recurring_cmd, "AsyncSessionLocal", new=self.Session),
             patch.object(behavior_cmd, "AsyncSessionLocal", new=self.Session),
             patch.object(receipt_cmd, "AsyncSessionLocal", new=self.Session),
+            patch.object(receipt_cmd, "date", OCT28),
         ]
         if not real_find:
             ps.append(patch.object(handlers, "find_best_envelope", new=find))

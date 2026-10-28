@@ -3,6 +3,7 @@
 FakeResult meniru bentuk hasil SQLAlchemy yang dipakai kode app:
 scalar(), scalar_one_or_none(), scalar_one(), scalars().all(), all().
 """
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -28,6 +29,16 @@ class FakeResult:
 
     def all(self):
         return self._rows
+
+
+def fixed_date(today: date) -> type:
+    """Pengganti kelas `date` di modul yang diuji (pola `_Oct5` di test_income_type_safe_daily): `today()` selalu
+    `today`, selebihnya `date` biasa. Pakai `patch.object(modul, "date", fixed_date(...))`."""
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return today
+    return FixedDate
 
 
 def db_with(*results):

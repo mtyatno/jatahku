@@ -494,6 +494,19 @@ def _parse_iso_date(value):
         return None
 
 
+# Struk/bukti dari periode lalu yang dicatat di tanggalnya (payload `past_period`, jawaban "📅 {tanggal}" di
+# receipt_cmd.handle_date_callback): dana dan limit harian periode berjalan bukan urusannya, jadi blok ini dilewati
+# tanpa tawaran geser dana atau naikkan limit. Kunci amplop, kuota paket, amplop tabungan, dan galat tetap memblokir.
+PAST_PERIOD_IGNORED = (*FUNDS_BLOCKS, "daily_limit")
+
+
+def _date_suffix(txn_date) -> str:
+    """" · 📅 26 Okt" untuk baris amplop pesan sukses bila transaksinya tidak bertanggal hari ini (tanggal struk/bukti)."""
+    from app.bot.receipt_cmd import short_date
+    today = date.today()
+    return "" if txn_date == today else f" · 📅 {short_date(txn_date, today)}"
+
+
 # ── Daily-limit bypass helpers ────────────────────────────────────────────────
 
 async def _send_daily_limit_blocked(send_fn, user_id, d, envelope, settings):
@@ -636,7 +649,7 @@ async def handle_daily_limit_callback(update, context):
     emoji = envelope.emoji or "📁"
     await query.edit_message_text(
         f"✅ <b>{format_currency(amount)}</b> — {description}\n"
-        f"{emoji} {envelope.name} · sisa <b>{format_currency(remaining)}</b>\n\n"
+        f"{emoji} {envelope.name} · sisa <b>{format_currency(remaining)}</b>{_date_suffix(txn_date)}\n\n"
         f"<i>Limit harian dinaikkan sementara sampai tengah malam.</i>{quota_line}",
         parse_mode="HTML",
     )
@@ -891,7 +904,8 @@ async def handle_fund_shift_callback(update, context):
     if funding_line:
         lines.append(funding_line)
     lines.append("")
-    lines.append(f"{target_env.emoji or '📁'} {_esc(target_env.name)} · sisa <b>{format_currency(target_left)}</b>")
+    lines.append(f"{target_env.emoji or '📁'} {_esc(target_env.name)} · sisa <b>{format_currency(target_left)}</b>"
+                 f"{_date_suffix(txn_date)}")
     if source_env is not None and funded > 0:
         lines.append(f"{source_env.emoji or '📁'} {_esc(source_env.name)} · sisa <b>{format_currency(source_left)}</b>")
     await query.edit_message_text("\n".join(lines) + _esc(streak_line) + quota_line, parse_mode="HTML")
@@ -1495,6 +1509,7 @@ async def _handle_txn_callback(update, context):
         except ValueError:
             pass
     scan_id = data.get("scan_id")
+    past_period = bool(data.get("past_period"))   # dokumen periode lalu, dicatat di tanggalnya (PAST_PERIOD_IGNORED)
     if not envelope_id:
         await query.edit_message_text("Error: amplop tidak valid.")
         return
@@ -1521,7 +1536,7 @@ async def _handle_txn_callback(update, context):
 
         # Aturan yang sama dengan web (app/services/expense_rules.py)
         check = await check_expense(envelope, user, amount, db)
-        if not check.allowed:
+        if not check.allowed and not (past_period and check.check_type in PAST_PERIOD_IGNORED):
             if await _reply_blocked_basic(query.edit_message_text, check):
                 return
             elif check.check_type in FUNDS_BLOCKS:
@@ -1560,15 +1575,22 @@ async def _handle_txn_callback(update, context):
             r = aioredis.from_url(get_settings().REDIS_URL)
             await r.delete(f"txn:{txn_key}")  # cegah tersimpan dua kali dari tombol yang sama
             await r.aclose()
-        envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
-        env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
-        remaining = env_data["remaining"] if env_data else Decimal("0")
+        if past_period:
+            from app.bot.receipt_cmd import period_label
+            from app.core.period import get_budget_period
+            left = (f"Tercatat di periode {period_label(*get_budget_period(payday_day, txn_date), date.today())}; "
+                    "sisa periode sekarang tidak berubah.")
+        else:
+            envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
+            env_data = next((e for e in envelopes if e["envelope"].id == envelope.id), None)
+            remaining = env_data["remaining"] if env_data else Decimal("0")
+            left = f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)})"
         quota_line = await _quota_line(user, db)
     emoji = envelope.emoji or "📁"
     await query.edit_message_text(
         f"✅ {format_currency(amount)} — {description}\n"
-        f"Masuk ke {emoji} {envelope.name}\n\n"
-        f"Sisa: {format_currency(remaining)} (dana {format_currency(envelope.budget_amount)}){streak_line}{quota_line}"
+        f"Masuk ke {emoji} {envelope.name}{_date_suffix(txn_date)}\n\n"
+        f"{left}{streak_line}{quota_line}"
     )
 
 async def handle_checkin_callback(update, context):
@@ -1828,7 +1850,7 @@ def bot_callbacks() -> list:
     from app.bot.batch_cmd import (
         handle_batch_callback, handle_batch_limit_callback, handle_batch_shift_callback,
     )
-    from app.bot.receipt_cmd import handle_kotak_callback, handle_struk_callback
+    from app.bot.receipt_cmd import handle_date_callback, handle_kotak_callback, handle_struk_callback
     from app.bot.advisor_cmd import handle_sim_callback
     from app.bot.help_cmd import handle_tanya_callback
     return [
@@ -1844,6 +1866,7 @@ def bot_callbacks() -> list:
         (r"^checkin_", handle_checkin_callback),
         (r"^tpl_", handle_template_callback),
         (r"^k[nxdo]_", handle_kotak_callback),
+        (r"^kt_", handle_date_callback),
         (r"^t_", handle_txn_callback),
         (r"^batch_", handle_batch_callback),
         (r"^bshift_", handle_batch_shift_callback),

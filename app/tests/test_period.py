@@ -5,7 +5,7 @@ Run from repo root:  python -m unittest app.tests.test_period
 import unittest
 from datetime import date, timedelta
 
-from app.core.period import get_budget_period, get_previous_period
+from app.core.period import document_date_kind, get_budget_period, get_previous_period
 
 
 # Days-per-month edge cases + a regular payday + start-of-month
@@ -115,6 +115,45 @@ class TestGapDaysRegression(unittest.TestCase):
                 start <= today <= end,
                 f"payday={payday} today={today}: orphaned (period {start}..{end})",
             )
+
+
+class TestDocumentDateKind(unittest.TestCase):
+    """Tanggal dokumen (struk/bukti) terhadap periode berjalan: bot hanya bertanya untuk "past" (Task H1)."""
+
+    def kind(self, doc, payday, today):
+        return document_date_kind(doc, payday_day=payday, today=today)
+
+    def test_owner_payday_27_boundaries(self):
+        today = date(2026, 10, 28)   # periode 27 Okt–26 Nov
+        for doc, expected in [(date(2026, 10, 26), "past"), (date(2026, 10, 27), "current"),
+                              (date(2026, 10, 28), "current"), (date(2026, 10, 29), "future"),
+                              (date(2026, 9, 30), "past"), (date(2026, 11, 26), "future")]:
+            with self.subTest(doc=doc):
+                self.assertEqual(self.kind(doc, 27, today), expected)
+
+    def test_payday_1_is_the_calendar_month(self):
+        today = date(2026, 10, 28)
+        self.assertEqual(self.kind(date(2026, 9, 30), 1, today), "past")
+        self.assertEqual(self.kind(date(2026, 10, 1), 1, today), "current")
+        self.assertEqual(self.kind(date(2026, 10, 28), 1, today), "current")
+        first = date(2026, 11, 1)   # hari pertama periode: kemarin sudah periode lalu
+        self.assertEqual(self.kind(date(2026, 10, 31), 1, first), "past")
+        self.assertEqual(self.kind(first, 1, first), "current")
+
+    def test_without_a_date(self):
+        self.assertIsNone(self.kind(None, 27, date(2026, 10, 28)))
+
+    def test_year_boundary(self):
+        jan = date(2027, 1, 3)   # payday 27 → periode 27 Des 2026–26 Jan 2027
+        self.assertEqual(self.kind(date(2026, 12, 27), 27, jan), "current")
+        self.assertEqual(self.kind(date(2026, 12, 26), 27, jan), "past")
+        self.assertEqual(self.kind(date(2027, 1, 4), 27, jan), "future")
+        self.assertEqual(self.kind(date(2026, 12, 31), 1, date(2027, 1, 1)), "past")
+
+    def test_capped_payday_in_a_short_month(self):
+        today = date(2026, 3, 1)   # payday 31 → periode dimulai 28 Feb (Februari tanpa tanggal 31)
+        self.assertEqual(self.kind(date(2026, 2, 28), 31, today), "current")
+        self.assertEqual(self.kind(date(2026, 2, 27), 31, today), "past")
 
 
 if __name__ == "__main__":

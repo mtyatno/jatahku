@@ -25,7 +25,7 @@ from app.services.receipt_ocr import build_lines
 from app.services import receipt_llm, receipt_scan
 from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import worker as kotak_worker
-from app.tests.fakes import FakeResult
+from app.tests.fakes import FakeResult, fixed_date
 from app.tests.test_kotak_api import HAS_AIOSQLITE
 from app.tests.test_kotak_transactions import TxnBase
 
@@ -844,7 +844,9 @@ class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
         session.__aenter__ = AsyncMock(return_value=db)
         session.__aexit__ = AsyncMock(return_value=False)
         create = AsyncMock(return_value=(item, True))
-        with patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
+        # struk 14 Okt 2026: "hari ini" pertanyaan tanggal dokumen (H1) dipatok 28 Okt supaya tetap periode berjalan
+        with patch.object(receipt_cmd, "date", fixed_date(date(2026, 10, 28))), \
+             patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.get_or_create_user", AsyncMock(return_value=user)), \
              patch("app.bot.handlers._is_setup_complete", AsyncMock(return_value=(True, ""))), \
              patch("app.bot.handlers.get_household_id", AsyncMock(return_value=uuid4())), \

@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal as D
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,9 +30,19 @@ from app.models.models import (
 from app.services.kotak_struk import intake, record as record_mod, view, waiter
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.worker import process_item
+from app.tests.fakes import fixed_date
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, PAID, QRIS_KEY, fake_extract
 from app.tests.test_kotak_transactions import STORE_LINES, TxnBase
 from app.tests.test_web_chat import FakeRedis as ChatRedis
+
+# Fixture bertanggal Oktober 2026 (bukti 26 Okt, struk 14 Okt): "hari ini" untuk pertanyaan tanggal dokumen (H1) dipatok
+# 28 Okt, supaya tes tidak berubah perilaku begitu kalender masuk periode berikutnya.
+TODAY = date(2026, 10, 28)
+OCT28 = fixed_date(TODAY)
+QUESTION_STRUK = ("📅 Tanggal di struk: 14 Okt — di luar periode sekarang (27 Okt–26 Nov). "
+                  "Catat untuk tanggal berapa?")
+QUESTION_PROOF = ("📅 Tanggal di bukti: 26 Okt — di luar periode sekarang (27 Okt–26 Nov). "
+                  "Catat untuk tanggal berapa?")
 
 UID = uuid4()
 HID = uuid4()
@@ -199,6 +209,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.skip = AsyncMock(return_value=True)
         envs = [{"envelope": e} for e in (JAJAN, TABUNGAN, MAKAN)]
         for p in (
+            patch.object(receipt_cmd, "date", OCT28),
             patch.object(receipt_cmd, "AsyncSessionLocal", new=lambda: self.db),
             patch.object(handlers, "AsyncSessionLocal", new=lambda: self.db),
             patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)),
@@ -492,7 +503,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         message.reply_text.assert_not_awaited()
 
     async def test_expired_session_buttons(self):
-        for data in ("kn_dead1234", "ko_dead1234"):
+        for data in ("kn_dead1234", "ko_dead1234", "kt_dead1234_h", "kt_dead1234_d"):
             with self.subTest(data):
                 query = await self.press(data)
                 self.assertEqual(query.edit_message_text.call_args.args[0], "⏰ Session expired. Kirim ulang.")
@@ -534,6 +545,147 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         await handlers.handle_message(self._update(message), SimpleNamespace(bot=None))
         self.assertEqual(self.created_request().text, proof.strip())
 
+    # --- tanggal dokumen di luar periode berjalan (H1) ----------------------
+
+    def owner_payday(self):
+        """Gajian tanggal 27 seperti pemilik produk: hari ini 28 Okt → periode berjalan 27 Okt–26 Nov."""
+        p = patch.object(USER, "payday_day", 27)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def date_key(self):
+        return next(d for d in datas(self.keyboard()) if d.startswith("kt_")).split("_")[1]
+
+    def payload(self, key):
+        return json.loads(self.redis.store[f"txn:{key}"])
+
+    async def test_store_receipt_from_previous_period_asks_for_the_date(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_STRUK)   # struk 14 Okt
+        self.assertEqual(self.text(), "🧾 Struk Indomaret · 14 Okt 2026\nTotal: Rp 51.000  ✅ cocok dengan pembayaran"
+                                      "\n\n" + QUESTION_STRUK)
+        key, item_id = self.date_key(), DETAIL_STRUK["id"]
+        self.assertEqual([[b.text for b in row] for row in self.keyboard()],
+                         [["📅 Hari ini (28 Okt)", "📅 14 Okt"], ["✏️ Nominal salah", "❌ Batal"]])
+        self.assertEqual(datas(self.keyboard()),
+                         [f"kt_{key}_h", f"kt_{key}_d", f"struk_fix_{item_id}", f"struk_no_{item_id}"])
+        payload = self.payload(key)
+        self.assertEqual(payload["date"], "2026-10-14")   # belum dijawab: tanggal tidak diubah
+        self.assertFalse(payload.get("past_period") or payload.get("date_answered"))
+
+    async def test_today_answer_shows_the_envelopes_of_the_same_session(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_STRUK)
+        key = self.date_key()
+        envs = self.payload(key)["envs"]
+        reads, lists = view.item_detail.await_count, handlers.get_envelopes_with_spent.await_count
+        query = await self.press(f"kt_{key}_h")
+        self.assertEqual(query.edit_message_text.call_args.args[0],
+                         "🧾 Struk Indomaret · 14 Okt 2026\nTotal: Rp 51.000  ✅ cocok dengan pembayaran\n\n"
+                         "📅 Dicatat untuk 28 Okt\n\nMasuk ke amplop mana?")
+        rows = keyboard_of(query.edit_message_text.call_args)
+        item_id = DETAIL_STRUK["id"]
+        self.assertEqual(datas(rows), [f"t_{key}_0", f"t_{key}_1", f"struk_fix_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual([b.text for row in rows for b in row][:2], ["🛒 Jajan", "🍜 Makan"])
+        payload = self.payload(key)
+        self.assertEqual((payload["date"], payload["date_answered"], payload["envs"]), ("2026-10-28", True, envs))
+        self.assertFalse(payload.get("past_period"))
+        # item tidak dibaca ulang, daftar amplop tidak dihitung ulang, dan tidak ada payload kedua
+        self.assertEqual((view.item_detail.await_count, handlers.get_envelopes_with_spent.await_count), (reads, lists))
+        self.assertEqual([k for k in self.redis.store if k.startswith("txn:")], [f"txn:{key}"])
+
+    async def test_proof_from_previous_period_asks_before_the_envelopes(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_QRIS)   # bukti 26 Okt
+        self.assertEqual(self.text(), "QRIS · Siti Aminah · Bandung\nRp 25.000 · 26 Okt 08.12 · Berhasil\n\n"
+                         + QUESTION_PROOF)
+        key, item_id = self.date_key(), DETAIL_QRIS["id"]
+        self.assertEqual([[b.text for b in row] for row in self.keyboard()],
+                         [["📅 Hari ini (28 Okt)", "📅 26 Okt"], ["🚫 Bukan pengeluaran", "❌ Batal"]])
+        self.assertEqual(datas(self.keyboard()), [f"kt_{key}_h", f"kt_{key}_d", f"kx_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual(self.payload(key)["date"], "2026-10-26")
+
+    async def test_document_date_answer_marks_the_payload_past_period(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_QRIS)
+        key, item_id = self.date_key(), DETAIL_QRIS["id"]
+        query = await self.press(f"kt_{key}_d")
+        self.assertEqual(query.edit_message_text.call_args.args[0],
+                         "QRIS · Siti Aminah · Bandung\nRp 25.000 · 26 Okt 08.12 · Berhasil\n📅 Dicatat untuk 26 Okt"
+                         "\n\nMasuk ke amplop mana?")
+        rows = keyboard_of(query.edit_message_text.call_args)
+        self.assertEqual(rows[0][0].text, "⭐ 🍜 Makan")
+        self.assertEqual(datas(rows), [f"t_{key}_0", f"t_{key}_1", f"kn_{key}", f"kx_{item_id}", f"struk_no_{item_id}"])
+        payload = self.payload(key)
+        self.assertEqual((payload["date"], payload["past_period"], payload["date_answered"]), ("2026-10-26", True, True))
+
+    async def test_proof_from_previous_period_asks_after_record_anyway(self):
+        self.owner_payday()
+        await self.send_photo(detail=with_flags(DETAIL_QRIS, skip_suggestion="top_up"))
+        self.assertTrue(self.text().endswith("ℹ️ Ini top-up saldo, bukan pengeluaran."))   # tawaran lewati lebih dulu
+        key = next(d for d in datas(self.keyboard()) if d.startswith("ko_"))[3:]
+        query = await self.press(f"ko_{key}")   # "Tetap catat"
+        self.assertTrue(query.edit_message_text.call_args.args[0].endswith("\n\n" + QUESTION_PROOF))
+        self.assertEqual(datas(keyboard_of(query.edit_message_text.call_args)),
+                         [f"kt_{key}_h", f"kt_{key}_d", f"kx_{DETAIL_QRIS['id']}", f"struk_no_{DETAIL_QRIS['id']}"])
+
+    async def test_note_keeps_the_date_question_until_answered_and_the_answer_afterwards(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_QRIS)
+        key = self.date_key()
+        await self.press(f"kn_{key}")   # catatan diminta sebelum tanggalnya dijawab (tombol lama)
+        self.assertTrue(await self.reply_text("bakso 2, es teh", detail_after_note=DETAIL_QRIS_NOTE))
+        edit = self.bot.edit_message_text.call_args
+        self.assertIn("\n📝 bakso 2, es teh (Siti Aminah)\n\n" + QUESTION_PROOF, edit.args[0])
+        self.assertFalse([d for d in datas(keyboard_of(edit)) if d.startswith(("t_", "kn_"))])
+
+        await self.press(f"kt_{key}_h")
+        await self.press(f"kn_{key}")
+        self.assertTrue(await self.reply_text("bakso 3", detail_after_note=DETAIL_QRIS_NOTE))
+        edit = self.bot.edit_message_text.call_args
+        self.assertTrue(edit.args[0].endswith("📝 bakso 2, es teh (Siti Aminah)\n📅 Dicatat untuk 28 Okt\n\n"
+                                              "Masuk ke amplop mana?"))
+        self.assertEqual(datas(keyboard_of(edit))[0], f"t_{key}_0")
+        payload = self.payload(key)
+        self.assertEqual((payload["date"], payload["date_answered"], payload["note"]), ("2026-10-28", True, "bakso 3"))
+
+    async def test_second_date_answer_changes_nothing(self):
+        self.owner_payday()
+        await self.send_photo(detail=DETAIL_QRIS)
+        key = self.date_key()
+        await self.press(f"kt_{key}_h")
+        answered = self.redis.store[f"txn:{key}"]
+        query = await self.press(f"kt_{key}_d")   # ketukan kedua yang terlambat
+        self.assertEqual(self.redis.store[f"txn:{key}"], answered)
+        query.edit_message_text.assert_not_awaited()
+
+    async def test_future_document_date_is_recorded_today_without_asking(self):
+        self.owner_payday()
+        await self.send_photo(detail={**DETAIL_QRIS, "id": str(uuid4()), "paid_at": "2026-10-30T01:12:33+00:00"})
+        self.assertEqual(self.text(), "QRIS · Siti Aminah · Bandung\nRp 25.000 · 30 Okt 08.12 · Berhasil\n"
+                                      "📅 Tanggal di bukti (30 Okt) belum lewat — dicatat hari ini.\n\nMasuk ke amplop mana?")
+        self.assertEqual(self.stored_payload()["date"], "2026-10-28")
+        self.assertEqual(self.keyboard()[0][0].callback_data, f"t_{self.key}_0")
+
+    async def test_current_period_and_undated_documents_are_unchanged(self):
+        self.owner_payday()
+        for paid_at in ("2026-10-27T01:12:33+00:00", None):   # awal periode berjalan; tanpa tanggal
+            with self.subTest(paid_at=paid_at):
+                detail = {**DETAIL_QRIS, "id": str(uuid4()), "paid_at": paid_at}
+                await self.send_photo(detail=detail)
+                self.assertEqual(self.text(), proof_message(detail))
+                self.assertEqual(self.keyboard()[0][0].text, "⭐ 🍜 Makan")
+                self.assertFalse([d for d in datas(self.keyboard()) if d.startswith("kt_")])
+
+
+class CallbackRegistryTests(unittest.TestCase):
+    def test_date_answer_is_routed_on_telegram_and_in_the_web_chat(self):
+        for data in ("kt_1a2b3c4d_h", "kt_1a2b3c4d_d"):
+            with self.subTest(data):
+                telegram = next(h for pattern, h in handlers.bot_callbacks() if re.match(pattern, data))
+                self.assertIs(telegram, receipt_cmd.handle_date_callback)
+                self.assertIs(web_adapter._find_callback(data), receipt_cmd.handle_date_callback)
+
 
 class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
     """Kabar Telegram untuk item yang selesai sesudah batas tunggu bot (`worker._notify_channel`)."""
@@ -543,7 +695,8 @@ class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
         self.db = FakeDb()
         self.bot = MagicMock(edit_message_text=AsyncMock(), send_message=AsyncMock())
         self.bot_cls = MagicMock(return_value=self.bot)
-        for p in (patch.object(receipt_cmd, "AsyncSessionLocal", new=lambda: self.db),
+        for p in (patch.object(receipt_cmd, "date", OCT28),
+                  patch.object(receipt_cmd, "AsyncSessionLocal", new=lambda: self.db),
                   patch("telegram.Bot", new=self.bot_cls),
                   patch("redis.asyncio.from_url", return_value=ChatRedis()),
                   patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)),
@@ -621,6 +774,7 @@ class KotakBotDbTests(TxnBase):
             return item, created
 
         for p in (patch("redis.asyncio.from_url", return_value=self.redis),
+                  patch.object(receipt_cmd, "date", OCT28),
                   patch.object(handlers, "AsyncSessionLocal", new=self.Session),
                   patch.object(receipt_cmd, "AsyncSessionLocal", new=self.Session),
                   patch.object(intake, "create_item", new=spy_create)):
@@ -629,21 +783,25 @@ class KotakBotDbTests(TxnBase):
 
     # --- pembantu -------------------------------------------------------
 
-    def worker_inline(self, lines, *, stale=False):
+    def worker_inline(self, lines, *, stale=False, paid_at=PAID, **cols):
         """Penunggu: worker sungguhan membaca item (hasil OCR palsu) lalu item dikembalikan. `lines=None`: tidak
         diproses (habis waktu). `stale`: dikembalikan item sebelum diproses (worker selesai tepat sesudah batas
-        tunggu). Jam bayar dibuat seperti `ready()` (SQLite menyimpan jam dinding apa adanya)."""
+        tunggu). Jam bayar dibuat seperti `ready()` (SQLite menyimpan jam dinding apa adanya), `paid_at` bawaan
+        PAID; `cols`: kolom lain yang ditimpa sesudah dibaca (mis. `parsed_date` struk)."""
         async def wait(item_id, timeout_s, **kw):
             before = await self.get(item_id)
             if lines is not None and before.status in ("diterima", "diproses"):
                 await process_item(item_id, session_factory=self.Session, extract=fake_extract(lines), now=NOW,
                                    proofs_enabled=True)
                 if (await self.get(item_id)).paid_at is not None:
-                    await self.set(item_id, paid_at=PAID)
+                    await self.set(item_id, paid_at=paid_at)
+                if cols:
+                    await self.set(item_id, **cols)
             return before if stale else await self.get(item_id)
         return wait
 
-    async def send(self, lines=CORPUS[0]["lines"], *, text=None, data=None, mime=None, stale=False, message_id=501):
+    async def send(self, lines=CORPUS[0]["lines"], *, text=None, data=None, mime=None, stale=False, message_id=501,
+                   **read):
         self.status = SimpleNamespace(message_id=message_id, edit_text=AsyncMock(), delete=AsyncMock())
         message = SimpleNamespace(photo=None, document=None, sticker=None, voice=None, audio=None, text=text,
                                   reply_text=AsyncMock(return_value=self.status))
@@ -656,7 +814,7 @@ class KotakBotDbTests(TxnBase):
             message.photo = [SimpleNamespace(get_file=AsyncMock(return_value=tg_file))]
         update_ = SimpleNamespace(message=message, effective_user=SimpleNamespace(id=42, first_name="Ani"),
                                   effective_chat=SimpleNamespace(id=4242))
-        with patch.object(waiter, "wait_for_item", new=self.worker_inline(lines, stale=stale)):
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(lines, stale=stale, **read)):
             if text is None:
                 await handlers.handle_non_text(update_, SimpleNamespace(bot=self.bot))
             else:
@@ -1072,10 +1230,164 @@ class KotakBotDbTests(TxnBase):
         [txn] = await self.txns()
         self.assertEqual((txn.description, txn.source.value), ("bakso 2, es teh (Siti Aminah)", "webapp"))
 
-    async def remaining(self, name):
+    async def remaining(self, name, payday_day=1):
         async with self.Session() as db:
-            rows = await handlers.get_envelopes_with_spent(self.hh.id, db, self.a.id)
+            rows = await handlers.get_envelopes_with_spent(self.hh.id, db, self.a.id, payday_day=payday_day)
         return next(r["remaining"] for r in rows if r["envelope"].name == name)
+
+    # --- tanggal dokumen di luar periode berjalan (H1) ----------------------
+
+    async def owner_today(self):
+        """Pemilik produk: gajian tanggal 27, hari ini 28 Okt (periode 27 Okt–26 Nov). Jam `handlers` juga dipatok
+        supaya pesan sukses sama berapa pun tanggal tes dijalankan (cek dana tetap memakai tanggal sungguhan, sama
+        dengan pemasukan `date.today()` di setUp)."""
+        async with self.Session() as db:
+            await db.execute(update(User).where(User.id == self.a.id).values(payday_day=27))
+            await db.commit()
+        p = patch.object(handlers, "date", OCT28)
+        p.start()
+        self.addCleanup(p.stop)
+
+    async def answer_date(self, choice):
+        """Jawab pertanyaan tanggal pesan terakhir: `h` hari ini, `d` tanggal dokumen. Pesan tombol amplopnya."""
+        [question] = self.texts()
+        self.assertTrue(question.endswith("Catat untuk tanggal berapa?"), question)
+        self.assertFalse([d for d in datas(self.rows()) if d.startswith("t_")])
+        key = self.button("Hari ini").split("_")[1]
+        answer = (await self.tap(f"kt_{key}_{choice}")).edit_message_text.call_args
+        self.assertTrue(answer.args[0].endswith("Masuk ke amplop mana?"), answer.args[0])
+        return key, answer
+
+    def pick(self, call, label):
+        return next(b.callback_data for row in keyboard_of(call) for b in row if label in b.text)
+
+    async def test_today_answer_records_today_through_the_usual_fund_checks(self):
+        await self.owner_today()
+        await self.send()   # QRIS Rp25.000 dibayar 26 Okt: periode lalu
+        key, answer = await self.answer_date("h")
+        self.assertIn("\n📅 Dicatat untuk 28 Okt\n\n", answer.args[0])
+        kecil = self.pick(answer, "Kecil")
+        self.assertTrue(kecil.startswith(f"t_{key}_"))   # sesi tombol yang sama
+        offer = (await self.tap(kecil)).edit_message_text.call_args
+        self.assertIn("Dana amplop kurang", offer.args[0])   # sisa 10rb: tawaran geser dana seperti biasa
+        done = (await self.tap(self.pick(offer, "Makan"))).edit_message_text.call_args.args[0]
+        [txn] = await self.txns()
+        self.assertEqual((txn.transaction_date, txn.envelope_id), (TODAY, self.env["Kecil"].id))
+        self.assertIn("digeser dari", done)
+        self.assertNotIn("📅", done)   # dicatat hari ini: tanpa tanggal di baris amplop
+        item = await self.get(self.items[-1])
+        self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+
+    async def test_document_date_answer_records_in_its_period_without_fund_shift_or_limit(self):
+        await self.owner_today()
+        for envelope, lines, amount in (("Kecil", CORPUS[0]["lines"], "Rp25rb"),     # dana kurang (sisa 10rb)
+                                        ("Harian", CORPUS[1]["lines"], "Rp15rb")):   # limit harian 10rb
+            with self.subTest(envelope):
+                await self.send(lines)
+                key, answer = await self.answer_date("d")
+                self.assertIn("\n📅 Dicatat untuk 26 Okt\n\n", answer.args[0])
+                done = (await self.tap(self.pick(answer, envelope))).edit_message_text.call_args.args[0]
+                txn = (await self.txns())[-1]
+                self.assertEqual((txn.transaction_date, txn.envelope_id), (date(2026, 10, 26), self.env[envelope].id))
+                emoji = self.env[envelope].emoji
+                self.assertTrue(done.startswith(f"✅ {amount} — "), done)
+                self.assertIn(f"\nMasuk ke {emoji} {envelope} · 📅 26 Okt\n\n"
+                              "Tercatat di periode 27 Sep–26 Okt; sisa periode sekarang tidak berubah.", done)
+                self.assertNotIn("Dana amplop kurang", done)
+                self.assertNotIn("Limit harian", done)
+                item = await self.get(self.items[-1])
+                self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+                self.assertNotIn(f"txn:{key}", self.redis.store)
+        self.assertEqual(len(await self.txns()), 2)
+        self.assertFalse([k for k in self.redis.store if k.startswith(("fshift:", "dlimit_pending:", "dlimit_temp:"))])
+        self.assertEqual(await self.remaining("Kecil", payday_day=27), D("10000"))   # periode berjalan tidak berubah
+        self.assertEqual(await self.remaining("Makan", payday_day=27), D("1000000"))   # tidak ada dana yang digeser
+
+    async def test_document_date_answer_keeps_lock_quota_and_savings_blocks(self):
+        await self.owner_today()
+        makan = self.env["Makan"].id
+
+        async def makan_is(**cols):
+            async with self.Session() as db:
+                await db.execute(update(Envelope).where(Envelope.id == makan).values(**cols))
+                await db.commit()
+
+        async def quota_used_up():   # Basic: 50 transaksi bulan ini (tanggal sungguhan, seperti cek kuota)
+            async with self.Session() as db:
+                db.add_all([Transaction(envelope_id=self.env["Jajan"].id, user_id=self.a.id, amount=D("1000"),
+                                        description="permen", transaction_date=date.today()) for _ in range(50)])
+                await db.commit()
+
+        async def nothing():
+            pass
+
+        for name, block, undo, expect in (
+                ("locked", lambda: makan_is(is_locked=True), lambda: makan_is(is_locked=False),
+                 "🔒 Amplop Makan sedang dikunci"),
+                ("not_spendable", lambda: makan_is(purpose="saving"), lambda: makan_is(purpose="expense"),
+                 "🏦 Amplop tabungan tidak bisa"),
+                ("plan_limit", quota_used_up, nothing, "⚠️ Kuota 50 transaksi bulan ini sudah habis")):
+            with self.subTest(name):
+                await self.send()
+                _, answer = await self.answer_date("d")
+                await block()   # sesudah tombol amplop tampil
+                before = len(await self.txns())
+                text = (await self.tap(self.pick(answer, "Makan"))).edit_message_text.call_args.args[0]
+                self.assertTrue(text.startswith(expect), text)
+                self.assertEqual(len(await self.txns()), before)
+                self.assertEqual((await self.get(self.items[-1])).status, "siap")   # bukti tidak diklaim
+                await undo()
+
+    async def test_future_document_date_is_recorded_today_with_a_note_line(self):
+        await self.owner_today()
+        await self.send(STORE_LINES, parsed_date=date(2026, 10, 30))   # salah baca: tanggal belum lewat
+        [text] = self.texts()
+        self.assertTrue(text.startswith("🧾 Struk Alfamart · 30 Okt 2026\n"), text)
+        self.assertTrue(text.endswith("\n\n📅 Tanggal di struk (30 Okt) belum lewat — dicatat hari ini.\n\n"
+                                      "Masuk ke amplop mana?"), text)
+        done = (await self.tap(self.button("Jajan"))).edit_message_text.call_args.args[0]
+        [txn] = await self.txns()
+        self.assertEqual(txn.transaction_date, TODAY)
+        self.assertIn("Masuk ke 📁 Jajan\n\nSisa:", done)
+
+    async def test_current_period_older_date_is_not_asked_and_named_in_every_success_message(self):
+        await self.owner_today()
+        early = datetime(2026, 10, 27, 1, 0, tzinfo=timezone.utc)   # 27 Okt 08.00 WIB: awal periode berjalan
+        await self.send(paid_at=early)
+        self.assertTrue(self.texts()[-1].endswith("\n\nMasuk ke amplop mana?"))
+        self.assertNotIn("📅", self.texts()[-1])
+        done = (await self.tap(self.button("Makan"))).edit_message_text.call_args.args[0]
+        self.assertIn("\nMasuk ke 📁 Makan · 📅 27 Okt\n\nSisa:", done)
+
+        await self.send(CORPUS[1]["lines"], paid_at=early)   # Rp15.000 ke Kecil (sisa 10rb): geser dana
+        offer = (await self.tap(self.button("Kecil"))).edit_message_text.call_args
+        self.assertIn("Dana amplop kurang", offer.args[0])
+        done = (await self.tap(self.pick(offer, "Makan"))).edit_message_text.call_args.args[0]
+        self.assertRegex(done, r"\n🪙 Kecil · sisa <b>[^<]+</b> · 📅 27 Okt\n")
+
+        await self.send(STORE_LINES, parsed_date=date(2026, 10, 27))   # Rp45.400 ke Harian: limit harian 10rb
+        offer = (await self.tap(self.button("Harian"))).edit_message_text.call_args
+        self.assertIn("Limit harian terlampaui", offer.args[0])
+        done = (await self.tap(keyboard_of(offer)[0][0].callback_data)).edit_message_text.call_args.args[0]
+        self.assertRegex(done, r"\n☕ Harian · sisa <b>[^<]+</b> · 📅 27 Okt\n")
+        self.assertEqual([t.transaction_date for t in await self.txns()], [date(2026, 10, 27)] * 3)
+
+    async def test_web_chat_routes_the_date_answer(self):
+        await self.owner_today()
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        msg_id, question = ops[0]["id"], ops[-1]
+        self.assertTrue(question["text"].endswith("\n\n" + QUESTION_PROOF))
+        doc_date = next(b["data"] for row in question["buttons"] for b in row if b["text"] == "📅 26 Okt")
+        [edit] = await web_adapter.run_action(user, msg_id, doc_date)
+        self.assertEqual((edit["type"], edit["id"]), ("edit", msg_id))
+        self.assertIn("\n📅 Dicatat untuk 26 Okt\n\n", edit["text"])
+        kecil = next(b["data"] for row in edit["buttons"] for b in row if "Kecil" in b["text"])
+        ops = await web_adapter.run_action(user, msg_id, kecil)
+        self.assertIn("Tercatat di periode 27 Sep–26 Okt; sisa periode sekarang tidak berubah.", ops[-1]["text"])
+        [txn] = await self.txns()
+        self.assertEqual((txn.transaction_date, txn.source.value), (date(2026, 10, 26), "webapp"))
 
 
 if __name__ == "__main__":

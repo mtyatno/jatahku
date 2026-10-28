@@ -57,6 +57,19 @@ def get_budget_period(payday_day: int, today: date | None = None) -> tuple[date,
     return period_start, period_end
 
 
+def document_date_kind(doc_date: date | None, *, payday_day: int, today: date) -> str | None:
+    """Tanggal dokumen (struk/bukti bayar) terhadap periode anggaran berjalan user: None (tanpa tanggal), "past"
+    (sebelum awal periode berjalan), "future" (sesudah hari ini), atau "current". Bot menanyakan tanggal catat hanya
+    untuk "past" (app/bot/receipt_cmd.py)."""
+    if doc_date is None:
+        return None
+    if doc_date > today:
+        return "future"
+    if doc_date < get_budget_period(payday_day, today)[0]:
+        return "past"
+    return "current"
+
+
 def get_previous_period(payday_day: int, today: date | None = None) -> tuple[date, date]:
     """Return (period_start, period_end) for the period before the current one."""
     if today is None:

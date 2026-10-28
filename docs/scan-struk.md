@@ -126,6 +126,13 @@ selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
 dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di
 webapp; bot tetap mencatat total sebagai satu transaksi.
 
+**Bot: tanggal struk.** Transaksi bertanggal struk. Bila tanggal itu sebelum awal periode
+anggaran berjalan, bot bertanya dulu "Catat untuk tanggal berapa?": **Hari ini** (cek dana,
+geser dana, dan limit harian seperti biasa) atau **tanggal struk** (masuk periode lalu tanpa
+geser dana dan tanpa limit harian; kunci amplop dan kuota tetap berlaku). Tanggal yang belum
+lewat dianggap salah baca dan dicatat hari ini. Detail di [`kotak-struk.md`](kotak-struk.md)
+bagian "Kanal".
+
 ## Kirim ulang aman (idempotensi)
 
 Respons simpan bisa hilang (sinyal putus, 5xx) padahal transaksi sudah tercatat.
