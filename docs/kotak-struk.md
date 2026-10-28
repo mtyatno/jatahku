@@ -140,7 +140,10 @@ yang lain mendapat 409 (web) atau "Bukti ini sudah tercatat" (bot) dan tidak ada
 `check_recordable` (pesan ramah) → `claim_for_recording` → insert transaksi → satu commit → `after_recorded`
 (streak, kata kunci, `mark_recorded`, peta merchant; best-effort dan idempoten per transaksi). `client_ref` yang
 dikirim ulang menyembuhkan penandaan yang hilang (`heal_recorded`). Item yang dibagikan ulang setelah `kedaluwarsa`
-membuka item baru (lapis 2 dan 3 hanya mencocokkan item terbuka dan `tercatat`).
+membuka item baru (lapis 2 dan 3 hanya mencocokkan item terbuka dan `tercatat`). Item `tercatat` yang semua
+transaksinya sudah dihapus (atau tidak ada lagi) tidak lagi memblokir file/referensi yang sama, jadi bukti itu bisa
+dibagikan dan dicatat lagi; item tanpa id transaksi tercatat yang bisa dipastikan (`transaction_ids` kosong/NULL,
+bukan daftar, atau berisi id yang tidak valid) tetap memblokir (`dedup._recorded_by`).
 
 ## Saran amplop dan belajar
 
@@ -192,12 +195,24 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   **Beda, catat** (`ko_`). Top-up, uang masuk, rekening sendiri: **Oke, lewati** dan **Tetap catat**.
 - **Tambah catatan**: bot membalas "Ketik isi belanjaannya (atau /batal)" dan menyimpan `kotak:note:{tg_user_id}`
   (TTL 300 dtk). Pesan teks berikutnya menjadi catatan sebelum NLP; saran dan pesan tombol dihitung ulang. `/batal`
-  selama menunggu catatan hanya membatalkan catatan (bukan transaksi terakhir).
+  selama menunggu catatan hanya membatalkan catatan (bukan transaksi terakhir). Catatan yang masuk saat tombol pesan
+  yang sama sedang diproses menunggu sebentar (≤ 2 dtk); masih sibuk → "⏳ Sedang diproses, kirim ulang catatannya.";
+  bila tombol itu sudah memakai sesinya (mis. mencatat) → "⚠️ Bukti ini sudah diproses, catatannya tidak
+  ditambahkan." Catatan yang sempat menunggu tidak pernah diproses NLP.
 - **Lewat batas tunggu**: Telegram membalas "⏳ Masih dibaca, nanti kukabari." lalu worker mengedit pesan itu
   menjadi hasil (atau gagal) lewat `send_ready_message`; pesan terhapus → pesan baru. Chat web membalas "⏳ Masih
   dibaca. Cek Bukti menunggu di beranda nanti." (banner itu datang di Bagian B). Bukti yang sama dikirim lagi
   selagi dibaca tidak merebut janji pesan pertama.
-- Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`.
+- **Tanggal di luar periode berjalan** (struk dan bukti; `period.document_date_kind`): tanggal struk/bayar sebelum
+  awal periode anggaran user → sebelum tombol amplop bot bertanya "📅 Tanggal di {struk|bukti}: {tgl} — di luar
+  periode sekarang ({periode}). Catat untuk tanggal berapa?" dengan **📅 Hari ini** dan **📅 {tgl}** (`kt_{key}_h` /
+  `kt_{key}_d`; juga sesudah "Tetap catat"/"Beda, catat" dan catatan). Hari ini → cek dana, geser dana, dan limit
+  harian seperti biasa. Tanggal dokumen → dicatat di periode lalu **tanpa geser dana**: blok dana dan limit harian
+  dilewati, kunci amplop, kuota, dan amplop tabungan tetap memblokir ("Tercatat di periode …; sisa periode sekarang
+  tidak berubah."). Tanggal yang belum lewat dianggap salah baca: dicatat hari ini dengan satu baris keterangan.
+  Pesan sukses yang tanggalnya bukan hari ini menyebut tanggal itu (`· 📅 26 Okt`).
+- Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, dan untuk jawaban
+  tanggal `date_answered` dan `past_period` (selama menunggu jawaban juga teks bacaan dan label tombol amplopnya).
 - Route foto chat web (`/bot/chat/photo`) hanya menerima gambar (415 untuk PDF); PDF dari web masuk lewat form
   Catat dan share target (Bagian B).
 
