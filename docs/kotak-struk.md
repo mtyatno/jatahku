@@ -258,7 +258,11 @@ mengembalikan transaksi yang sama). Item harus milik user, `siap` (struk belanja
 diblokir, dan bukan duplikat yang sudah tercatat; selain itu 409 (di batch: `error` baris itu, `ok: false`) dengan
 salah satu teks: "Bukti ini sudah tercatat", "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya", "Bukti
 ini belum siap dicatat", "Bukti tidak ditemukan", "Transaksi gagal, tidak bisa dicatat". Kuota transaksi Basic
-(50/bulan) tetap berlaku.
+(50/bulan) tetap berlaku. Tanggal (aturan bot yang sama, `period.document_date_kind` terhadap gajian user):
+`transaction_date` sesudah hari ini dicatat hari ini, dan sebelum awal periode berjalan dicatat di tanggal itu tanpa
+blok dana dan limit harian (limit juga tidak dinaikkan walau `raise_daily_limit`), sedangkan kunci amplop, amplop
+tabungan, dan kuota tetap menolak; form Catat dan kartu bukti di web menanyakan "Hari ini" atau tanggal dokumen
+lebih dulu (Bagian B, B1/B4, belum ada), dan baris tanpa `receipt_item_id` tidak berubah.
 
 ## Saklar fitur
 

@@ -1,5 +1,6 @@
 """`scan-receipt` lewat Kotak Struk, kuota scan dihapus, dan `receipt_item_id` di POST /transactions
-(+ /transactions/batch) (SQLite in-memory; klien httpx langsung ke ASGI supaya satu event loop dengan mesin async).
+(+ /transactions/batch), termasuk tanggal di luar periode berjalan (SQLite in-memory; klien httpx langsung ke ASGI
+supaya satu event loop dengan mesin async).
 Run: python -m unittest app.tests.test_kotak_transactions -v"""
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
@@ -25,7 +26,7 @@ from app.api.routes.transactions import _read_receipt_upload, run_receipt_scan
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
-    Allocation, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
+    Allocation, Envelope, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
 )
 from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
@@ -34,6 +35,7 @@ from app.services.kotak_struk.worker import process_item
 from app.services.receipt_ocr import OcrBusy, OcrFailed, OcrUnavailable
 from app.services.receipt_scan import ScanBusy, scan_receipt
 from app.tests import test_kotak_api as kapi
+from app.tests.fakes import fixed_date
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, QRIS_KEY, fake_extract
 
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
@@ -68,6 +70,9 @@ class KvRedis:
             return None
         self.kv[key] = value
         return True
+
+    async def setex(self, key, ttl, value):   # `raise_daily_limit_today` (limit harian dinaikkan sampai tengah malam)
+        self.kv[key] = value
 
     async def delete(self, key):
         self.kv.pop(key, None)
@@ -784,6 +789,188 @@ class BatchWithReceiptItemTests(TxnBase):
         self.assertEqual(again[0]["id"], first[0]["id"])
         self.assertEqual((await self.get(item.id)).transaction_ids, [first[0]["id"]])
         self.assertEqual(await self.count(Transaction), 1)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+ROUTES = ("create", "batch")
+TODAY = date(2026, 10, 28)          # gajian tanggal 27 (pemilik produk): periode berjalan 27 Okt–26 Nov
+PREV_PERIOD = date(2026, 10, 26)    # hari terakhir periode lalu (bukti Jago di produksi)
+SEP30 = date(2026, 9, 30)           # invoice Shopee di produksi
+PERIOD_START = date(2026, 10, 27)
+TOMORROW = date(2026, 10, 29)
+INSUFFICIENT = "Dana tidak cukup. Sisa: Rp10,000, diminta: Rp25,000"   # Kecil: dana 10rb, bukti Rp25.000
+LOCKED = "Amplop dikunci. Tidak bisa belanja."
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class ReceiptItemDateTests(TxnBase):
+    """Baris dengan `receipt_item_id` bertanggal di luar periode berjalan (Task B0, aturan bot H1 di
+    `handlers._handle_txn_callback`), lewat POST /transactions/ dan /transactions/batch. "Hari ini" rute dipatok 28 Okt
+    dan gajian 27, supaya periode lalu/berjalan sama berapa pun tanggal tes dijalankan. Cek dana, limit harian, dan
+    kuota tetap memakai tanggal sungguhan, sama dengan pemasukan `date.today()` di setUp: hasilnya (dana kurang, belum
+    didanai, limit, kunci, kuota) tidak bergantung pada tanggal itu."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.proofs = 0
+        async with self.Session() as db:
+            await db.execute(update(User).where(User.id == self.a.id).values(payday_day=27))
+            extra = {"Kecil": {}, "Kosong": {}, "Harian": {"daily_limit": D("10000")}, "Terkunci": {"is_locked": True}}
+            for name, cols in extra.items():
+                self.env[name] = Envelope(household_id=self.hh.id, name=name, **cols)
+                db.add(self.env[name])
+            income = Income(household_id=self.hh.id, user_id=self.a.id, amount=D("210000"), description="Bonus",
+                            income_date=date.today())
+            db.add(income)
+            await db.flush()
+            db.add_all([Allocation(income_id=income.id, envelope_id=self.env[name].id, amount=D(amount))
+                        for name, amount in (("Kecil", 10000), ("Harian", 100000), ("Terkunci", 100000))])
+            await db.commit()   # Kosong: tanpa alokasi (belum didanai)
+        p = patch.object(txn_route, "date", fixed_date(TODAY))
+        p.start()
+        self.addCleanup(p.stop)
+
+    # --- pembantu ------------------------------------------------------
+
+    async def ready_proof(self):
+        """Item `siap`: QRIS Siti Aminah Rp25.000 dibayar 26 Okt, nomor referensinya sendiri (tiap item bisa dicatat
+        sekali; referensi yang sama sudah tercatat = 409)."""
+        self.proofs += 1
+        lines = [f"No. Referensi 6123456788{self.proofs:02d}" if line.startswith("No. Referensi") else line
+                 for line in CORPUS[0]["lines"]]
+        return await self.ready(lines)
+
+    def body(self, item, on, *, env, amount=25000, desc="bakso (Siti Aminah)", **extra):
+        """Satu baris create/batch. `item` None: baris manual; `on` None: tanpa tanggal (hari ini)."""
+        out = {"envelope_id": str(self.env[env].id), "amount": amount, "description": desc,
+               "client_ref": uuid4().hex, **extra}
+        if on is not None:
+            out["transaction_date"] = on.isoformat()
+        if item is not None:
+            out["receipt_item_id"] = str(item.id)
+        return out
+
+    async def batch(self, rows):
+        r = await self.c.post("/transactions/batch", json={"items": rows})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    async def txn(self, txn_id):
+        async with self.Session() as db:
+            return await db.get(Transaction, UUID(txn_id))
+
+    async def save(self, route, item, on, **kw):
+        """Simpan satu baris lewat `route`: (transaksi, None) bila tercatat, (None, pesan) bila ditolak (create: 403
+        dengan `detail`; batch: `error` barisnya)."""
+        body = self.body(item, on, **kw)
+        if route == "create":
+            r = await self.c.post("/transactions/", json=body)
+            if r.status_code != 201:
+                self.assertEqual(r.status_code, 403, r.text)
+                return None, r.json()["detail"]
+            return await self.txn(r.json()["id"]), None
+        [row] = await self.batch([body])
+        return (await self.txn(row["id"]), None) if row["ok"] else (None, row["error"])
+
+    async def assert_recorded(self, route, item, on, recorded_on, **kw):
+        """Tercatat bertanggal `recorded_on`; buktinya `tercatat` dengan id transaksi itu."""
+        txn, error = await self.save(route, item, on, **kw)
+        self.assertIsNone(error)
+        self.assertEqual(txn.transaction_date, recorded_on)
+        if item is not None:
+            got = await self.get(item.id)
+            self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(txn.id)]))
+        return txn
+
+    async def assert_refused(self, route, item, on, message, **kw):
+        """Ditolak seperti sekarang: pesan yang sama, tanpa transaksi, bukti tetap `siap` (tidak diklaim)."""
+        before = await self.count(Transaction)
+        txn, error = await self.save(route, item, on, **kw)
+        self.assertIsNone(txn)
+        self.assertIn(message, error)
+        self.assertEqual(await self.count(Transaction), before)
+        if item is not None:
+            self.assertEqual((await self.get(item.id)).status, "siap")
+
+    # --- tanggal sebelum awal periode berjalan --------------------------
+
+    async def test_previous_period_proof_is_recorded_on_its_date_despite_the_fund_blocks(self):
+        for route in ROUTES:
+            for env in ("Kecil", "Kosong"):   # dana kurang (sisa 10rb), belum didanai
+                with self.subTest(route=route, env=env):
+                    txn = await self.assert_recorded(route, await self.ready_proof(), PREV_PERIOD, PREV_PERIOD,
+                                                     env=env)
+                    self.assertEqual(txn.envelope_id, self.env[env].id)
+
+    async def test_previous_period_proof_skips_the_daily_limit_and_never_raises_it(self):
+        for raise_limit in (False, True):   # True: baris yang sebelumnya ditawari "Catat, naikkan limit hari ini"
+            for route in ROUTES:
+                with self.subTest(route=route, raise_daily_limit=raise_limit):
+                    await self.assert_recorded(route, await self.ready_proof(), PREV_PERIOD, PREV_PERIOD,
+                                               env="Harian", raise_daily_limit=raise_limit)
+                    self.assertFalse([k for k in self.redis.kv if k.startswith("dlimit_temp:")])
+        # limit harian hari ini tetap berlaku untuk belanja hari ini
+        await self.assert_refused("create", None, None, "Melebihi limit harian Harian", env="Harian")
+
+    async def test_previous_period_proof_into_a_locked_envelope_is_refused_as_today(self):
+        item = await self.ready_proof()
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_refused(route, item, PREV_PERIOD, LOCKED, env="Terkunci")
+
+    async def test_previous_period_proof_over_the_plan_limit_is_refused_as_today(self):
+        async with self.Session() as db:   # Basic: 50 transaksi bulan ini (tanggal sungguhan, seperti cek kuota)
+            db.add_all([Transaction(envelope_id=self.env["Jajan"].id, user_id=self.a.id, amount=D("1000"),
+                                    description="permen", transaction_date=date.today()) for _ in range(50)])
+            await db.commit()
+        item = await self.ready_proof()
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_refused(route, item, PREV_PERIOD, "Kuota 50 transaksi bulan ini sudah habis",
+                                          env="Makan")
+
+    # --- tanggal lain ---------------------------------------------------
+
+    async def test_future_receipt_date_is_recorded_today(self):
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_recorded(route, await self.ready_proof(), TOMORROW, TODAY, env="Makan")
+
+    async def test_current_period_older_receipt_date_keeps_the_fund_check(self):
+        item = await self.ready_proof()
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_refused(route, item, PERIOD_START, INSUFFICIENT, env="Kecil")
+
+    async def test_rows_without_receipt_item_keep_their_date_and_every_check(self):
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_refused(route, None, PREV_PERIOD, INSUFFICIENT, env="Kecil")
+                await self.assert_recorded(route, None, TOMORROW, TOMORROW, env="Makan")   # tanggal pilihan user
+
+    async def test_batch_judges_each_row_on_its_own_date(self):
+        """Satu kiriman berisi bukti periode lalu, invoice 30 Sep (struk belanja, dua barang), bukti periode berjalan,
+        baris manual, dan tanggal salah baca: tiap baris dinilai sendiri, dan baris periode lalu tidak memakai sisa
+        periode berjalan (Kecil tetap bisa menerima 10rb hari ini)."""
+        past, current, future = await self.ready_proof(), await self.ready_proof(), await self.ready_proof()
+        invoice = await self.ready_store_receipt()
+        await self.set(invoice.id, parsed_date=SEP30)   # tanggal di struk; aturannya memakai tanggal baris
+        out = await self.batch([
+            self.body(past, PREV_PERIOD, env="Kecil"),
+            self.body(invoice, SEP30, env="Kecil", amount=15000, desc="ROTI (Alfamart)"),
+            self.body(invoice, SEP30, env="Kosong", amount=30400, desc="SUSU (Alfamart)"),
+            self.body(current, PERIOD_START, env="Kecil"),
+            self.body(None, PREV_PERIOD, env="Kecil"),
+            self.body(None, None, env="Kecil", amount=10000, desc="kopi"),
+            self.body(future, TOMORROW, env="Makan"),
+        ])
+        self.assertEqual([x["ok"] for x in out], [True, True, True, False, False, True, True])
+        self.assertEqual([x["error"] for x in out[3:5]], [INSUFFICIENT, INSUFFICIENT])
+        dates = [(await self.txn(x["id"])).transaction_date for x in out if x["ok"]]
+        self.assertEqual(dates, [PREV_PERIOD, SEP30, SEP30, TODAY, TODAY])
+        self.assertEqual(((await self.get(past.id)).status, (await self.get(current.id)).status), ("tercatat", "siap"))
+        self.assertEqual((await self.get(invoice.id)).transaction_ids, [out[1]["id"], out[2]["id"]])
 
 
 if __name__ == "__main__":
