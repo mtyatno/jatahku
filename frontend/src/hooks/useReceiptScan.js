@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { compressImage } from '../lib/receiptImage';
-import { STAGE, failureMessage, checkScanFile, offlineFailure } from '../lib/receiptProgress';
+import {
+  STAGE, failureMessage, checkScanFile, offlineFailure, uploadTimeoutMs, needsPdfSniff, isPdfHead, asPdfFile,
+  PDF_HEAD_BYTES,
+} from '../lib/receiptProgress';
 
 // Alur baca struk dengan tahap yang terlihat:
 //   foto → MENYIAPKAN (kompres) → MENGUNGGAH (progres) → MEMBACA (server) → onResult(hasil) → IDLE
 //   PDF  → MENGUNGGAH (file asli dengan namanya, tanpa kompres & gambar kecil) → MEMBACA → onResult(hasil) → IDLE
 // Gagal di tahap mana pun → FAILED + pesan sesuai tahap; retry() mengulang unggah dengan
-// file yang sudah disiapkan (tanpa kompres ulang). Aturan file (jenis, batas PDF): receiptProgress.checkScanFile.
+// file yang sudah disiapkan (tanpa kompres ulang). Aturan file (jenis, batas PDF, PDF tanpa tipe, batas waktu
+// unggah): receiptProgress.
 //
 // onResult(hasilApi)  : saat struk berhasil dibaca.
 // onBusyChange(bool)  : true selama MENYIAPKAN/MENGUNGGAH/MEMBACA; false saat IDLE, FAILED, dan saat dilepas.
@@ -18,6 +22,15 @@ const BUSY_STAGES = new Set([STAGE.PREPARING, STAGE.UPLOADING, STAGE.READING]);
 // Isian awal tiap pemindaian baru (tanpa stage & stageStartedAt: itu diatur per pemanggilan).
 const FRESH = { percent: null, progressSeen: false, thumbUrl: null, failure: null, noun: 'struk' };
 const IDLE_STATE = { ...FRESH, stage: STAGE.IDLE, stageStartedAt: 0 };
+
+// Byte awal file untuk receiptProgress.isPdfHead (I/O tipis). Gagal dibaca → null (tidak dikenali sebagai PDF).
+async function readHead(file) {
+  try {
+    return new Uint8Array(await file.slice(0, PDF_HEAD_BYTES).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
 
 export function useReceiptScan({ onResult, onBusyChange, allowPdf = false } = {}) {
   const [state, setState] = useState(IDLE_STATE);
@@ -79,6 +92,8 @@ export function useReceiptScan({ onResult, onBusyChange, allowPdf = false } = {}
     apply({ stage: STAGE.UPLOADING, percent: null, progressSeen: false, failure: null });
 
     const res = await api.scanReceipt(blob, {
+      // Foto: 60 dtk seperti dulu; PDF besar mendapat waktu unggah lebih lama.
+      timeoutMs: uploadTimeoutMs(blob),
       // Kirim ulang setelah refresh token memulai progres dari 0 lagi: selalu kembali ke MENGUNGGAH.
       onProgress: (percent) => {
         if (!alive()) return;
@@ -119,14 +134,23 @@ export function useReceiptScan({ onResult, onBusyChange, allowPdf = false } = {}
     });
   };
 
-  const scanFile = useCallback(async (file) => {
-    if (!file || !mountedRef.current) return;
+  const scanFile = useCallback(async (picked) => {
+    if (!picked || !mountedRef.current) return;
     const run = (runRef.current += 1);
     const alive = () => mountedRef.current && runRef.current === run;
 
     releaseThumb();
     blobRef.current = null;
     fileRef.current = null;
+
+    // Saklar menyala dan file tanpa tipe berguna: PDF dikenali dari isinya, lalu diberi tipe application/pdf.
+    // Selain itu (termasuk saklar mati) tidak ada yang dibaca dan tidak ada jeda: file dipakai apa adanya.
+    let file = picked;
+    if (needsPdfSniff(picked, { allowPdf: allowPdfRef.current })) {
+      const head = await readHead(picked);
+      if (!alive()) return;
+      if (isPdfHead(head)) file = asPdfFile(picked);
+    }
 
     const { kind, noun, failure } = checkScanFile(file, { allowPdf: allowPdfRef.current });
     if (failure) {

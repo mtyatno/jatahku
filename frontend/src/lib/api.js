@@ -513,11 +513,12 @@ class ApiClient {
   // onProgress(persen) saat mengunggah, onUploaded() begitu file selesai terkirim (server mulai membaca).
   // Nama file: nama asli File (PDF); foto terkompres adalah Blob tanpa nama → 'struk.jpg' seperti dulu.
   // Server menentukan jenis dari content type bagian ini, bukan dari namanya.
-  async scanReceipt(imageBlob, { onProgress, onUploaded } = {}) {
+  // timeoutMs: batas waktu kiriman (receiptProgress.uploadTimeoutMs); tanpa nilai = batas bawaan xhrUpload (60 dtk).
+  async scanReceipt(imageBlob, { onProgress, onUploaded, timeoutMs } = {}) {
     try {
       const form = new FormData();
       form.append('image', imageBlob, imageBlob?.name || 'struk.jpg');
-      const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded });
+      const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded, timeoutMs });
       if (res.status === 0 && !res.data.detail) res.data = { ...res.data, detail: FOTO_GAGAL_KONEKSI };
       return res;
     } catch {

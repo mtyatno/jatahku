@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STAGE, PDF_MAX_BYTES, stageLabel, stageSteps, failureMessage, checkScanFile, offlineFailure, pickMessages, retakeAction,
+  waitingLabel, uploadTimeoutMs, needsPdfSniff, isPdfHead, asPdfFile, PDF_HEAD_BYTES,
 } from './receiptProgress.js';
 
 const ELL = '…'; // elipsis satu karakter, seperti teks lama
@@ -115,7 +116,14 @@ test('noun bawaan / struk / tak dikenal: semua teks lama persis sama', () => {
       { text: 'Terlalu banyak scan. Tunggu sebentar, ya.', canRetry: false, canRetake: false });
     assert.deepEqual(offlineFailure(noun), { text: 'Butuh koneksi internet untuk scan struk', canRetry: true, canRetake: false });
     assert.deepEqual(retakeAction(noun), { label: 'Foto ulang', icon: 'camera', source: 'camera' });
+    assert.equal(waitingLabel(noun), 'Menunggu struk...');
   }
+});
+
+test('waitingLabel: tombol simpan selama membaca — struk persis seperti dulu, bukti untuk PDF', () => {
+  assert.equal(waitingLabel(), 'Menunggu struk...');
+  assert.equal(waitingLabel('struk'), 'Menunggu struk...');
+  assert.equal(waitingLabel('bukti'), 'Menunggu bukti...');
 });
 
 test('stageLabel: bukti — menyiapkan, unggah tanpa laporan progres, gabungan, persen, hint lambat', () => {
@@ -194,4 +202,112 @@ test('checkScanFile: PDF di atas 10 MB ditolak sebelum diunggah (batas sama deng
   assert.deepEqual(checkScanFile(pick('application/pdf', 50 * 1024 * 1024), { allowPdf: true }), tooBig);
   // Foto tidak memakai batas PDF: dikompres dulu sebelum diunggah.
   assert.equal(checkScanFile(pick('image/jpeg', 50 * 1024 * 1024), { allowPdf: true }).failure, null);
+});
+
+// ── Batas waktu unggah (fix m2) ──
+
+test('uploadTimeoutMs: foto dan jenis lain tetap 60 dtk persis, berapa pun ukurannya', () => {
+  for (const blob of [pick('image/jpeg', 0), pick('image/jpeg', 300 * 1024), pick('image/png', 50 * 1024 * 1024),
+    pick('', 10), pick('application/octet-stream', 5 * 1024 * 1024), {}, undefined, null]) {
+    assert.equal(uploadTimeoutMs(blob), 60000);
+  }
+});
+
+test('uploadTimeoutMs: PDF 60 dtk + 1 dtk per 25 KB (dibulatkan ke atas), maks 5 menit', () => {
+  const pdfMs = (size) => uploadTimeoutMs(pick('application/pdf', size));
+  assert.equal(pdfMs(0), 60000);
+  assert.equal(pdfMs(1), 61000);
+  assert.equal(pdfMs(77), 61000);
+  assert.equal(pdfMs(25000), 61000);
+  assert.equal(pdfMs(25001), 62000);
+  assert.equal(pdfMs(500 * 1000), 80000);
+  assert.equal(pdfMs(5975000), 299000);
+  assert.equal(pdfMs(5975001), 300000);
+  assert.equal(pdfMs(10 * 1024 * 1024), 300000); // PDF terbesar yang boleh (10 MB)
+  assert.equal(pdfMs(50 * 1024 * 1024), 300000);
+});
+
+// ── PDF tanpa tipe yang berguna (fix m3) ──
+
+const bytesOf = (s) => Uint8Array.from(s, (c) => c.charCodeAt(0));
+const PDF_CONTENT = bytesOf('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF\n');
+
+test('needsPdfSniff: hanya saat saklar menyala dan tipe file kosong atau application/octet-stream', () => {
+  for (const type of ['', 'application/octet-stream']) {
+    const f = { type, name: 'x.pdf', size: 10 };
+    assert.equal(needsPdfSniff(f, { allowPdf: true }), true, type);
+    // Saklar mati (dan bawaan): isi file tidak pernah dibaca — perilaku lama.
+    assert.equal(needsPdfSniff(f, { allowPdf: false }), false, type);
+    assert.equal(needsPdfSniff(f), false, type);
+  }
+  for (const type of ['application/pdf', 'image/jpeg', 'text/plain', 'application/zip']) {
+    assert.equal(needsPdfSniff({ type, name: 'x.pdf', size: 10 }, { allowPdf: true }), false, type);
+  }
+  assert.equal(needsPdfSniff({ name: 'tanpa-tipe', size: 10 }, { allowPdf: true }), true);
+  assert.equal(needsPdfSniff(null, { allowPdf: true }), false);
+});
+
+test('isPdfHead: "%PDF-" di byte pertama, sama dengan server (extract.sniff_type)', () => {
+  assert.equal(PDF_HEAD_BYTES, 5);
+  assert.equal(isPdfHead(bytesOf('%PDF-')), true);
+  assert.equal(isPdfHead(PDF_CONTENT), true);
+  assert.equal(isPdfHead(bytesOf('%PDF-').buffer), true); // ArrayBuffer juga
+  assert.equal(isPdfHead([0x25, 0x50, 0x44, 0x46, 0x2d]), true);
+  for (const s of ['%PDF', '%pdf-', ' %PDF-', 'PDF-1', '%PDX-', '', '\xff\xd8\xff\xe0\x00']) {
+    assert.equal(isPdfHead(bytesOf(s)), false, JSON.stringify(s));
+  }
+  assert.equal(isPdfHead(Uint8Array.from([0xef, 0xbb, 0xbf, 0x25, 0x50, 0x44, 0x46, 0x2d])), false); // BOM di depan
+  assert.equal(isPdfHead(null), false);
+  assert.equal(isPdfHead(undefined), false);
+});
+
+test('asPdfFile: dibungkus ulang bertipe application/pdf, nama asli (atau bukti.pdf), isi sama', async () => {
+  const src = new File([PDF_CONTENT], 'Bukti Transfer', { type: '' });
+  const out = asPdfFile(src);
+  assert.equal(out.type, 'application/pdf');
+  assert.equal(out.name, 'Bukti Transfer');
+  assert.equal(out.size, src.size);
+  assert.deepEqual(new Uint8Array(await out.arrayBuffer()), PDF_CONTENT);
+  assert.equal(asPdfFile(new File([PDF_CONTENT], '', { type: 'application/octet-stream' })).name, 'bukti.pdf');
+  // Setelah diberi tipe, batas waktu unggahnya batas PDF.
+  assert.equal(uploadTimeoutMs(asPdfFile(new File([new Uint8Array(30000)], 'x', { type: '' }))), 62000);
+});
+
+test('checkScanFile: nama .pdf tanpa tipe tidak cukup — saklar mati menolak dengan teks lama', () => {
+  const untyped = { type: '', size: 1000, name: 'x.pdf' };
+  const octet = { type: 'application/octet-stream', size: 1000, name: 'bukti.pdf' };
+  assert.deepEqual(checkScanFile(untyped, { allowPdf: false }), REJECT_OLD);
+  assert.deepEqual(checkScanFile(untyped), REJECT_OLD);
+  assert.deepEqual(checkScanFile(octet, { allowPdf: false }), REJECT_OLD);
+  // Saklar menyala: tidak menebak dari nama. Isi yang menentukan (needsPdfSniff → isPdfHead → asPdfFile, di hook).
+  assert.equal(checkScanFile(untyped, { allowPdf: true }).kind, null);
+  assert.equal(checkScanFile(octet, { allowPdf: true }).kind, null);
+});
+
+// Alur yang dijalankan useReceiptScan sebelum checkScanFile (pembacaan 5 byte = I/O tipis di hook).
+async function pickedForScan(file, allowPdf) {
+  let f = file;
+  if (needsPdfSniff(f, { allowPdf })) {
+    const head = new Uint8Array(await f.slice(0, PDF_HEAD_BYTES).arrayBuffer());
+    if (isPdfHead(head)) f = asPdfFile(f);
+  }
+  return { file: f, ...checkScanFile(f, { allowPdf }) };
+}
+
+test('PDF tanpa tipe: saklar menyala → dikenali dari isinya; saklar mati → ditolak seperti dulu, tidak diubah', async () => {
+  const untypedPdf = new File([PDF_CONTENT], 'bukti', { type: '' });
+  const octetPdf = new File([PDF_CONTENT], 'bukti.pdf', { type: 'application/octet-stream' });
+  for (const f of [untypedPdf, octetPdf]) {
+    const on = await pickedForScan(f, true);
+    assert.deepEqual([on.kind, on.noun, on.failure, on.file.type, on.file.name], ['pdf', 'bukti', null, 'application/pdf', f.name]);
+    const off = await pickedForScan(f, false);
+    assert.deepEqual({ kind: off.kind, noun: off.noun, failure: off.failure }, REJECT_OLD);
+    assert.equal(off.file, f);
+  }
+  // Isi bukan PDF: tetap teks "tidak didukung" (saklar menyala menyebut PDF).
+  const txt = await pickedForScan(new File([bytesOf('halo')], 'catatan', { type: '' }), true);
+  assert.equal(txt.failure.text, 'Pilih file foto (JPG/PNG) atau PDF');
+  // Aturan 10 MB tetap berlaku setelah diberi tipe.
+  const big = await pickedForScan(new File([PDF_CONTENT, new Uint8Array(PDF_MAX_BYTES)], 'besar', { type: '' }), true);
+  assert.equal(big.failure.text, 'PDF terlalu besar (maks 10 MB)');
 });

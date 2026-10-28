@@ -8,7 +8,7 @@ import ReceiptInput, { pickReceiptPhoto } from './ReceiptInput';
 import ReceiptStatusCard from './ReceiptStatusCard';
 import { useReceiptScan } from '../hooks/useReceiptScan';
 import { useAppConfig } from '../hooks/useAppConfig';
-import { STAGE, retakeAction } from '../lib/receiptProgress';
+import { STAGE, retakeAction, waitingLabel } from '../lib/receiptProgress';
 import ReceiptCard from './ReceiptCard';
 import {
   receiptToItem, scanMessage, feedbackFor, confidenceLabel, applyDocumentDate, dateNotice, currentPeriod, wibToday,
@@ -857,7 +857,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
           className="btn-primary disabled:opacity-50"
         >
           {saving ? 'Menyimpan...'
-            : scanBusy ? 'Menunggu struk...'
+            : scanBusy ? waitingLabel(scan.state.noun)
               : voiceBusy ? 'Menunggu suara...'
                 : `Simpan Semua${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
         </button>

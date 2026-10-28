@@ -3,6 +3,7 @@
 //
 // Kata benda (`noun`): 'struk' (bawaan: foto struk, teks lama tidak berubah) atau 'bukti' (PDF bukti bayar dari
 // tombol PDF di form Catat, hanya saat saklar `receipt_inbox` menyala). Nilai lain dibaca 'struk'.
+import { UPLOAD_TIMEOUT_MS } from './xhrUpload.js';
 
 export const STAGE = {
   IDLE: 'idle',
@@ -37,6 +38,7 @@ const STRUK = {
   offline: 'Butuh koneksi internet untuk scan struk',
   pickFailed: 'Foto tidak bisa diambil, coba lagi',
   retake: { label: 'Foto ulang', icon: 'camera', source: 'camera' },
+  waiting: 'Menunggu struk...',
 };
 
 const BUKTI = {
@@ -56,6 +58,7 @@ const BUKTI = {
   pickFailed: 'File tidak bisa dibuka, coba lagi',
   // Bukan foto: ganti file lewat pemilih dokumen, bukan kamera.
   retake: { label: 'Pilih file lain', icon: 'file', source: 'document' },
+  waiting: 'Menunggu bukti...',
 };
 
 const words = (noun) => (noun === 'bukti' ? BUKTI : STRUK);
@@ -151,6 +154,48 @@ export function pickMessages(source) {
 // Tombol ganti file di kartu gagal (canRetake): label, ikon, dan `source` untuk pickReceiptPhoto.
 export function retakeAction(noun = 'struk') {
   return { ...words(noun).retake };
+}
+
+// Tombol simpan form Catat selama struk/bukti masih dibaca.
+export function waitingLabel(noun = 'struk') {
+  return words(noun).waiting;
+}
+
+// Batas waktu satu kiriman scan (unggah + server membaca, xhrUpload). Foto sudah dikompres (±300 KB): batas lama
+// UPLOAD_TIMEOUT_MS persis. PDF dikirim apa adanya (maks 10 MB): ditambah 1 dtk per 25 KB (±200 kbit/s), maks 5 menit;
+// server tetap menjawab paling lama ±45 dtk setelah file sampai, jadi tambahannya hanya untuk unggahnya.
+const PDF_BYTES_PER_EXTRA_S = 25000;
+const PDF_UPLOAD_MAX_MS = 300000;
+export function uploadTimeoutMs(blob) {
+  if (blob?.type !== PDF_TYPE) return UPLOAD_TIMEOUT_MS;
+  const size = Math.max(0, Number(blob.size) || 0);
+  return Math.min(PDF_UPLOAD_MAX_MS, UPLOAD_TIMEOUT_MS + Math.ceil(size / PDF_BYTES_PER_EXTRA_S) * 1000);
+}
+
+// PDF tanpa tipe yang berguna (sebagian penyedia file Android memberi '' atau application/octet-stream; server menolak
+// keduanya): hanya saat saklar menyala, isinya yang menentukan. Hook membaca PDF_HEAD_BYTES byte awal (I/O tipis), lalu
+// isPdfHead → asPdfFile. Saklar mati: isi tidak pernah dibaca, file ditolak seperti dulu. Nama file tidak dipakai.
+const UNTYPED = new Set(['', 'application/octet-stream']);
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-", sama dengan server (kotak_struk/extract.py sniff_type)
+export const PDF_HEAD_BYTES = PDF_MAGIC.length;
+
+export function needsPdfSniff(file, { allowPdf = false } = {}) {
+  if (!file || !allowPdf) return false;
+  return UNTYPED.has(String(file.type ?? ''));
+}
+
+// Byte awal file (Uint8Array, ArrayBuffer, atau array) diawali "%PDF-"?
+export function isPdfHead(bytes) {
+  if (!bytes) return false;
+  const b = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
+  if (!(b.length >= PDF_MAGIC.length)) return false;
+  return PDF_MAGIC.every((v, i) => b[i] === v);
+}
+
+// PDF yang dikenali dari isinya → File bertipe application/pdf (server memilih jenis dari tipe bagian unggahan),
+// isi dan nama aslinya tetap; tanpa nama → 'bukti.pdf'.
+export function asPdfFile(file, FileCtor = globalThis.File) {
+  return new FileCtor([file], file.name || 'bukti.pdf', { type: PDF_TYPE });
 }
 
 // File yang dipilih → { kind: 'image' | 'pdf' | null, noun, failure } (failure null = boleh dibaca).
