@@ -35,8 +35,11 @@ const toInt = v => Math.max(0, Math.round(Number(v) || 0));
 // terkunci, percobaan ulang mengirim bagian yang belum tersimpan saja. Rencana
 // ditampilkan ringkas per amplop; perbaikan (geser dana, naikkan limit, pindah
 // amplop) berlaku untuk semua barang yang gagal di amplop itu.
+//
+// `notice`: isi dari form di bawah kepala struk (alasan blokir dari server, pertanyaan
+// tanggal dokumen); ikut terkunci bersama kepala struk.
 export default function ReceiptCard({
-  entry, envelopes, saving,
+  entry, envelopes, saving, notice = null,
   onChange, onRemove, onFundGroup, onRaiseLimitGroup, onRetargetGroup, onUnlock, onSkipRest,
 }) {
   const items = entry.receiptItems || [];
@@ -137,6 +140,7 @@ export default function ReceiptCard({
             ))}
           </select>
           {entry.suggested && <span className="text-xs text-brand-600">disarankan</span>}
+          {notice}
         </fieldset>
       </div>
 

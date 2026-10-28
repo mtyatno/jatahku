@@ -124,3 +124,27 @@ test('toBatchItem: kolom batch saja (token & id antrean tidak ikut)', () => {
     transaction_date: '2026-10-14', raise_daily_limit: true, client_ref: 'ref-7',
   });
 });
+
+test('toBatchItem: receipt_item_id (baris struk/bukti) ikut dikirim; tanpa itu bentuk lama', () => {
+  assert.deepEqual(toBatchItem({ ...item(7), receipt_item_id: 'kotak-7' }), {
+    envelope_id: 'e1', amount: 7000, description: 'barang 7', source: 'webapp', is_private: false,
+    client_ref: 'ref-7', receipt_item_id: 'kotak-7',
+  });
+  assert.equal('receipt_item_id' in toBatchItem(item(7)), false);
+});
+
+test('syncQueue: baris bukti dari antrean dikirim dengan receipt_item_id (app dan service worker)', async () => {
+  const store = memStore([item(1, { receipt_item_id: 'kotak-1' }), item(2)]);
+  const sent = [];
+  const send = async (payloads) => {
+    sent.push(...payloads);
+    return { ok: true, status: 200, data: payloads.map((_, i) => ({ index: i, ok: true })) };
+  };
+  await syncQueue({ store, send, newRef });
+  assert.deepEqual(sent.map(p => p.receipt_item_id), ['kotak-1', undefined]);
+  // Ditolak lalu dicoba lagi (retryRejected menyebar item yang sama): tetap membawa receipt_item_id.
+  const again = memStore([{ ...item(3, { receipt_item_id: 'kotak-3' }), envelope_id: 'e2' }]);
+  sent.length = 0;
+  await syncQueue({ store: again, send, newRef });
+  assert.equal(sent[0].receipt_item_id, 'kotak-3');
+});

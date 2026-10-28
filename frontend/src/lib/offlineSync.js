@@ -53,7 +53,8 @@ export function idbStore() {
 
 export const isPending = item => !item.rejected;
 
-// Item antrean → baris POST /transactions/batch.
+// Item antrean → baris POST /transactions/batch. `receipt_item_id` (baris struk/bukti dari form Catat) ikut
+// dikirim: tanpa itu bukti tidak diklaim (bisa tercatat dua kali) dan aturan tanggal dokumen server tidak berlaku.
 export function toBatchItem(item) {
   return {
     envelope_id: item.envelope_id,
@@ -64,6 +65,7 @@ export function toBatchItem(item) {
     ...(item.transaction_date ? { transaction_date: item.transaction_date } : {}),
     ...(item.raise_daily_limit ? { raise_daily_limit: true } : {}),
     ...(item.client_ref ? { client_ref: item.client_ref } : {}),
+    ...(item.receipt_item_id ? { receipt_item_id: item.receipt_item_id } : {}),
   };
 }
 

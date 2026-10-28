@@ -533,6 +533,79 @@ class ApiClient {
     } catch {}
   }
 
+  // Kotak Struk ("Bagikan ke Jatahku", docs/kotak-struk.md bagian API). Rute memakai garis miring penutup
+  // (`/kotak-struk/`; tanpa itu 307). Item orang lain = 404.
+
+  // Unggah satu file atau teks (FormData: file|text, source, upload_id?, wait?) → {ok, status, data, timedOut};
+  // status 0 = tidak sampai / batas waktu. Tidak pernah melempar.
+  async kotakUpload(formData, opts = {}) {
+    try {
+      return await this.uploadForm('/kotak-struk/', formData, opts);
+    } catch {
+      return { ok: false, status: 0, data: {}, timedOut: false };
+    }
+  }
+
+  // Detail satu item, atau null (tidak ada / bukan milik user / gagal).
+  async kotakItem(id) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Item yang menunggu dicatat (status siap), terbaru dulu. Server membungkusnya {items: [...]}; gagal → [].
+  async kotakPending() {
+    try {
+      const res = await this.request('/kotak-struk/?status=siap');
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data?.items) ? data.items : [];
+      }
+    } catch {}
+    return [];
+  }
+
+  // Saran amplop dan keterangan dengan catatan user (≤ 200 karakter) → {suggestion, description_preview} atau null.
+  async kotakSuggest(id, note) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/saran`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note || null }),
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Lewati item siap/gagal; reason: bukan_pengeluaran | duplikat | batal. 409 bila statusnya lain.
+  async kotakSkip(id, reason) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/lewati`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  // Nama panggilan merchant untuk serumah (≤ 60; kosong menghapus) → {id, name, display_name}. merchantId dari
+  // `item.merchant.id`, yang bisa null (tanpa peta merchant): jangan panggil.
+  async kotakRenameMerchant(merchantId, displayName) {
+    try {
+      const res = await this.request(`/kotak-struk/merchants/${encodeURIComponent(merchantId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
   // Incomes
   async getIncomes(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();

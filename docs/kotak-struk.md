@@ -262,7 +262,8 @@ ini belum siap dicatat", "Bukti tidak ditemukan", "Transaksi gagal, tidak bisa d
 `transaction_date` sesudah hari ini dicatat hari ini, dan sebelum awal periode berjalan dicatat di tanggal itu tanpa
 blok dana dan limit harian (limit juga tidak dinaikkan walau `raise_daily_limit`), sedangkan kunci amplop, amplop
 tabungan, dan kuota tetap menolak; form Catat dan kartu bukti di web menanyakan "Hari ini" atau tanggal dokumen
-lebih dulu (Bagian B, B1/B4, belum ada), dan baris tanpa `receipt_item_id` tidak berubah.
+lebih dulu (form Catat: B1, periode dari `GET /analytics/periods`, tanggal yang belum lewat diganti hari ini oleh
+form sebelum disimpan; kartu bukti: B4, belum ada), dan baris tanpa `receipt_item_id` tidak berubah.
 
 ## Saklar fitur
 

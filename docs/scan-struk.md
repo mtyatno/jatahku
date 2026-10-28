@@ -169,7 +169,9 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   ditelan di sana tidak merusak sisa permintaan (sesi di-rollback dan `user` dimuat ulang, jadi baris batch
   berikutnya dan pemberitahuan kuota tetap jalan). `client_ref` yang dikirim ulang dengan `receipt_item_id`
   yang sama menyembuhkan penandaan yang hilang (`record.heal_recorded`; hanya item yang diklaim transaksi
-  itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer.
+  itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer. Tanggal baris dengan
+  `receipt_item_id` (sesudah hari ini → hari ini; sebelum awal periode → tanpa blok dana dan limit harian; form
+  Catat menanyakan "Hari ini" atau tanggal dokumen lebih dulu): `docs/kotak-struk.md` bagian API.
 - Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp" (dan tanpa penyelamatan LLM): pembaca
   cadangan menebak seperti scan struk lama (`parse_receipt`: total, tanggal, nama merchant) dengan keyakinan
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,

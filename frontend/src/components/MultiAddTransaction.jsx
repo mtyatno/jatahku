@@ -9,8 +9,15 @@ import ReceiptStatusCard from './ReceiptStatusCard';
 import { useReceiptScan } from '../hooks/useReceiptScan';
 import { STAGE } from '../lib/receiptProgress';
 import ReceiptCard from './ReceiptCard';
-import { receiptToItem, scanMessage, feedbackFor, confidenceLabel } from '../lib/receiptScan';
-import { buildPlan, applyItemSuggestions } from '../lib/receiptSplit';
+import {
+  receiptToItem, scanMessage, feedbackFor, confidenceLabel, applyDocumentDate, dateNotice, currentPeriod, wibToday,
+} from '../lib/receiptScan';
+import { applyItemSuggestions } from '../lib/receiptSplit';
+import {
+  isDailyLimitError, isInsufficientFundsError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
+  notReadyMessage, applyRowPatch, withSaveDate, toParts, wantsReceiptFeedback, removalCalls, wantsKeywordSuggestion,
+  fundCandidate, showRaisedLimit,
+} from '../lib/multiAddRows';
 import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
@@ -25,36 +32,6 @@ function localToday() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// Ditolak karena limit harian → tawarkan "naikkan limit hari ini" (sama dengan bot).
-function isDailyLimitError(errMsg) {
-  return !!errMsg && String(errMsg).toLowerCase().includes('limit harian');
-}
-
-function isInsufficientFundsError(errMsg) {
-  if (!errMsg) return false;
-  const lower = String(errMsg).toLowerCase();
-  return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
-}
-
-// Struk dengan rincian barang → disimpan lewat rencana (1 transaksi per barang).
-function hasReceiptItems(item) {
-  return item.origin === 'receipt' && (item.receiptItems || []).length > 0;
-}
-
-// Rencana yang dibekukan (sesudah percobaan simpan) atau dihitung dari isian sekarang.
-function receiptPlan(item) {
-  return item.plan || buildPlan(item);
-}
-
-// Siap disimpan: punya amplop (struk: setiap bagian yang belum tersimpan punya amplop).
-function isReady(item) {
-  if (hasReceiptItems(item)) {
-    const left = receiptPlan(item).filter(g => !g.saved);
-    return left.length > 0 && left.every(g => g.envelopeId);
-  }
-  return !!item.envelopeId;
-}
-
 // Struk dicatat per barang, jadi masalah amplop (dana kurang, limit harian,
 // pindah amplop) berlaku untuk SEMUA barang yang belum tersimpan di amplop itu.
 const patchPlanEnvelope = (item, envelopeId, patch) => ({
@@ -64,11 +41,48 @@ const patchPlanEnvelope = (item, envelopeId, patch) => ({
 
 const groupEnvelope = (item, gid) => (item.plan || []).find(g => g.id === gid)?.envelopeId;
 
-function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
+// Di bawah baris struk/bukti: alasan blokir dari server dan aturan tanggal dokumen (lib/receiptScan.dateNotice):
+// pertanyaan "Catat untuk tanggal berapa?" dengan pilihan Hari ini / tanggal dokumen, atau keterangan tanggal yang
+// belum lewat. Dipakai ItemRow dan ReceiptCard.
+function RowNotices({ item, onPickDate, className = '' }) {
+  const today = wibToday();
+  const notice = dateNotice(item, today);
+  if (!item.blockedReason && !notice) return null;
+  return (
+    <div className={`space-y-1 ${className}`}>
+      {item.blockedReason && <p className="text-xs font-medium text-red-600">{item.blockedReason}</p>}
+      {notice && <p className="text-xs text-amber-700">{notice.text}</p>}
+      {notice?.choices && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {notice.choices.map(choice => {
+            const picked = item.transactionDate === choice.date;
+            return (
+              <button
+                key={choice.label}
+                type="button"
+                aria-pressed={picked}
+                onClick={() => onPickDate(item.key, choice.date)}
+                className={`px-2.5 py-1 rounded-full border text-xs whitespace-nowrap disabled:opacity-50 ${picked
+                  ? 'border-brand-400 bg-brand-50 text-brand-700 font-medium'
+                  : 'border-gray-200 text-gray-600 hover:border-brand-400 hover:text-brand-600'}`}
+              >
+                {choice.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemRow({ item, envelopes, periodStart, onChangeEnvelope, onChangeField, onRemove, onFundEnvelope, onRaiseLimit }) {
   const isShortage = isInsufficientFundsError(item.error);
   const isOverDailyLimit = isDailyLimitError(item.error);
   const isReceipt = item.origin === 'receipt';
   const doubtful = isReceipt && item.confidence !== 'tinggi';
+  const blocked = !!item.blockedReason;
+  const needsEnvelopeMark = !item.envelopeId && !blocked;
 
   // Hasil simpan belum pasti: isian dikunci supaya kirim ulang (kunci yang sama)
   // tidak membawa nilai berbeda dari yang mungkin sudah tercatat.
@@ -76,7 +90,7 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
     <fieldset disabled={!!item.uncertain} className={`
       group flex flex-col md:grid md:grid-cols-12 gap-2 md:gap-3 items-start md:items-center
       py-2 md:py-1.5 border-b border-gray-100 last:border-0
-      ${!item.envelopeId ? 'bg-amber-50/50 -mx-2 px-2 rounded' : ''}
+      ${needsEnvelopeMark ? 'bg-amber-50/50 -mx-2 px-2 rounded' : ''}
     `}>
       {item.uncertain && (
         <span className="md:col-span-12 text-xs text-amber-700">
@@ -103,7 +117,7 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
             />
             <input
               type="date"
-              className="input text-xs py-1 w-full md:w-40"
+              className={`input text-xs py-1 w-full md:w-40 ${needsDate(item) ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
               value={item.transactionDate || ''}
               max={localToday()}
               onChange={e => onChangeField(item.key, 'transactionDate', e.target.value || null)}
@@ -132,8 +146,9 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
       </div>
       <div className="md:col-span-4 w-full">
         <select
-          className={`input text-sm py-1.5 w-full ${!item.envelopeId ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
+          className={`input text-sm py-1.5 w-full ${needsEnvelopeMark ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
           value={item.envelopeId}
+          disabled={blocked}
           onChange={e => onChangeEnvelope(item.key, e.target.value)}
         >
           <option value="">Pilih amplop</option>
@@ -169,11 +184,18 @@ function ItemRow({ item, envelopes, onChangeEnvelope, onChangeField, onRemove, o
             Naikkan limit
           </button>
         )}
-        {item.raiseDailyLimit && !item.error && (
+        {showRaisedLimit(item, periodStart) && (
           <span className="text-xs text-brand-600" title="Limit harian dinaikkan sementara saat disimpan">limit ↑</span>
         )}
         {item.saving && <span className="text-xs text-gray-400">...</span>}
       </div>
+      {isReceipt && (
+        <RowNotices
+          item={item}
+          onPickDate={(key, date) => onChangeField(key, 'transactionDate', date)}
+          className="md:col-span-12 w-full"
+        />
+      )}
     </fieldset>
   );
 }
@@ -207,7 +229,28 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
   // Versi ref untuk dibaca di akhir penyimpanan (closure handleSaveAll sudah basi).
   const inputBusyRef = useRef({ voice: false, scan: false });
   const handleVoiceBusy = useCallback((b) => { inputBusyRef.current.voice = b; setVoiceBusy(b); }, []);
-  const handleScanBusy = useCallback((b) => { inputBusyRef.current.scan = b; setScanBusy(b); }, []);
+  // Periode anggaran berjalan untuk aturan tanggal dokumen (receiptScan.applyDocumentDate). Diambil sekali per
+  // form, saat struk pertama mulai dibaca (form tanpa scan tidak memintanya); gagal → dicoba lagi pada scan
+  // berikutnya. Selama belum ada, struk dari periode lalu tidak ditanya (seperti dulu).
+  const [period, setPeriod] = useState(null);
+  const periodRef = useRef({ value: null, loading: false });
+  const loadPeriod = useCallback(() => {
+    const p = periodRef.current;
+    if (p.value || p.loading) return;
+    p.loading = true;
+    api.getPeriods(1)
+      .then(list => {
+        p.value = currentPeriod(list);
+        if (p.value) setPeriod(p.value);
+      })
+      .catch(() => {})
+      .finally(() => { p.loading = false; });
+  }, []);
+  const handleScanBusy = useCallback((b) => {
+    inputBusyRef.current.scan = b;
+    setScanBusy(b);
+    if (b) loadPeriod();
+  }, [loadPeriod]);
   const inputBusy = () => inputBusyRef.current.voice || inputBusyRef.current.scan;
 
   const loadEnvelopes = useCallback(async () => {
@@ -371,18 +414,19 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     return () => clearTimeout(debounceRef.current);
   }, [rawText, applySuggestions]);
 
+  // Suntingan baris lewat applyRowPatch: error simpan sebelumnya hilang, blokir dari server tetap.
   const handleEnvelopeChange = (key, value) => {
     setItems(prev => prev.map(item =>
-      item.key === key ? { ...item, envelopeId: value, suggested: false, touched: true, error: null } : item
+      item.key === key ? applyRowPatch(item, { envelopeId: value, suggested: false, touched: true }) : item
     ));
   };
 
   const handleFieldChange = (key, field, value) => {
-    setItems(prev => prev.map(item => (item.key === key ? { ...item, [field]: value, error: null } : item)));
+    setItems(prev => prev.map(item => (item.key === key ? applyRowPatch(item, { [field]: value }) : item)));
   };
 
   const handleReceiptChange = (key, patch) => {
-    setItems(prev => prev.map(item => (item.key === key ? { ...item, ...patch, error: null } : item)));
+    setItems(prev => prev.map(item => (item.key === key ? applyRowPatch(item, patch) : item)));
   };
 
   // Bagian yang gagal dipindah ke amplop lain (nominal tetap).
@@ -398,18 +442,24 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
       ? { ...item, plan: null, error: null } : item)));
   };
 
+  // Baris struk/bukti keluar dari daftar tanpa dicatat: umpan balik "tidak disimpan" (struk belanja saja) dan item
+  // Kotak Struk dilewati (alasan batal) supaya tidak menunggu dicatat. Best-effort: galat dan offline diabaikan
+  // (sudah tercatat sebagian → server menjawab 409, tidak apa-apa).
+  const sendRemoval = (item) => {
+    if (!item) return;
+    const { feedback, skip } = removalCalls(item);
+    if (feedback) api.receiptFeedback(feedback, feedbackFor(item, false));
+    if (skip) api.kotakSkip(skip, 'batal');
+  };
+
   // Sebagian sudah tercatat; sisanya dilewati (struk keluar dari daftar).
   const handleSkipRest = (key) => {
-    const item = items.find(i => i.key === key);
-    if (item?.scanId) api.receiptFeedback(item.scanId, feedbackFor(item, false));
+    sendRemoval(items.find(i => i.key === key));
     setItems(prev => prev.filter(i => i.key !== key));
   };
 
   const handleRemove = (key) => {
-    const removed = items.find(i => i.key === key);
-    if (removed?.origin === 'receipt' && removed.scanId) {
-      api.receiptFeedback(removed.scanId, feedbackFor(removed, false));
-    }
+    sendRemoval(items.find(i => i.key === key));
     setItems(prev => prev.filter(i => i.key !== key));
   };
 
@@ -432,11 +482,13 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     });
   }, []);
 
+  // Tanggal dokumen di luar periode berjalan ditanya dulu, tanggal yang belum lewat jadi hari ini (aturan bot).
+  // QRIS/transfer/tidak dikenali memakai saran amplop server; saran kata kunci tidak menimpanya.
   const handleReceiptResult = (result) => {
-    const item = receiptToItem(result, nextKey());
+    const item = applyDocumentDate(receiptToItem(result, nextKey()), { period: periodRef.current.value, today: wibToday() });
     setItems(prev => [item, ...prev]);
     setResultMsg(scanMessage(result));
-    applySuggestions([item]);
+    if (wantsKeywordSuggestion(item)) applySuggestions([item]);
     suggestReceiptItems(item);
   };
 
@@ -472,36 +524,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     setResultMsg({ type: 'error', text: msg });
   };
 
-  const toPayload = (item) => ({
-    envelope_id: item.envelopeId,
-    amount: item.amount,
-    description: (item.description || '').trim() || 'Belanja',
-    source: 'webapp',
-    ...(item.transactionDate ? { transaction_date: item.transactionDate } : {}),
-    ...(item.raiseDailyLimit ? { raise_daily_limit: true } : {}),
-    ...(item.ref ? { client_ref: item.ref } : {}),
-  });
-
-  // Satu entri → satu atau beberapa transaksi. Struk dengan rincian memakai
-  // rencana (1 transaksi per barang); bagian yang sudah tersimpan tidak dikirim ulang.
-  const toParts = (item, plan) => {
-    if (plan) {
-      return plan.filter(g => !g.saved).map(g => ({
-        key: item.key,
-        gid: g.id,
-        payload: toPayload({
-          ...item,
-          envelopeId: g.envelopeId,
-          amount: g.amount,
-          description: g.description,
-          raiseDailyLimit: g.raiseLimit,
-          ref: g.ref,
-        }),
-      }));
-    }
-    return [{ key: item.key, gid: null, payload: toPayload(item) }];
-  };
-
+  // Payload per transaksi: lib/multiAddRows toPayload/toParts (receipt_item_id ikut di setiap bagian).
   const handleSaveAll = async () => {
     if (savingRef.current || voiceBusy || scanBusy) return;
     // Teks yang baru diketik belum dibaca (jeda 300 ms). Kalau disimpan sekarang,
@@ -516,14 +539,17 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
       return;
     }
     if (!items.some(isReady)) {
-      setResultMsg({ type: 'error', text: 'Pilih amplop untuk setiap item' });
+      setResultMsg({ type: 'error', text: notReadyMessage(items) });
       return;
     }
     // Setiap transaksi diberi kunci idempotensi sekali, lalu dipakai ulang di
-    // percobaan berikutnya; rencana struk dibekukan bersama kuncinya.
+    // percobaan berikutnya; rencana struk dibekukan bersama kuncinya. Tanggal struk/bukti
+    // yang belum lewat diganti hari ini di sini, sebelum payload, antrean offline, dan feedbackFor.
+    const today = wibToday();
     const plans = {};
-    const snapshot = items.map(item => {
-      if (!isReady(item)) return item;
+    const snapshot = items.map(row => {
+      if (!isReady(row)) return row;
+      const item = withSaveDate(row, today);
       if (hasReceiptItems(item)) {
         plans[item.key] = receiptPlan(item).map(g => (g.ref ? g : { ...g, ref: newRef() }));
         return { ...item, plan: plans[item.key] };
@@ -627,9 +653,10 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     });
     const failedCount = data.length - successCount;
 
-    // Bahan belajar scan struk: nilai akhir yang benar-benar tersimpan.
+    // Bahan belajar scan struk: nilai akhir yang benar-benar tersimpan (struk belanja saja;
+    // bukti bayar belajar di server saat tercatat).
     pending.forEach(item => {
-      if (item.origin === 'receipt' && item.scanId && okKeys.has(item.key)) {
+      if (wantsReceiptFeedback(item) && okKeys.has(item.key)) {
         api.receiptFeedback(item.scanId, feedbackFor(item, true));
       }
     });
@@ -673,8 +700,9 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
 
   const hasItems = items.length > 0;
   const selectedCount = items.filter(isReady).length;
-  const unselectedCount = items.length - selectedCount;
+  const unselectedCount = items.filter(needsEnvelope).length;
   const hasReceiptCard = items.some(hasReceiptItems);
+  const periodStart = period?.start ?? null;
 
   return (
     <div className="space-y-4">
@@ -751,6 +779,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
                   entry={item}
                   envelopes={envelopes}
                   saving={saving}
+                  notice={<RowNotices item={item} onPickDate={(key, date) => handleReceiptChange(key, { transactionDate: date })} />}
                   onChange={handleReceiptChange}
                   onRemove={handleRemove}
                   onFundGroup={handleOpenFundModal}
@@ -764,6 +793,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
                   key={item.key}
                   item={item}
                   envelopes={envelopes}
+                  periodStart={periodStart}
                   onChangeEnvelope={handleEnvelopeChange}
                   onChangeField={handleFieldChange}
                   onRemove={handleRemove}
@@ -784,7 +814,7 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
         }`} style={resultMsg.type === 'error' ? {color:'#E24B4A'} : undefined}>
           <div className="font-medium">{resultMsg.text}</div>
           {resultMsg.type === 'error' && isInsufficientFundsError(resultMsg.text) && (() => {
-            const candidateItem = items.find(i => isInsufficientFundsError(i.error)) || items.find(i => i.envelopeId) || null;
+            const candidateItem = fundCandidate(items, periodStart);
             const group = candidateItem ? insufficientGroup(candidateItem) : null;
             const targetEnvId = group ? group.envelopeId : candidateItem?.envelopeId;
             const targetEnv = targetEnvId ? envelopes.find(e => e.id === targetEnvId) : null;
