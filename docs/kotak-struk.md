@@ -142,8 +142,8 @@ yang lain mendapat 409 (web) atau "Bukti ini sudah tercatat" (bot) dan tidak ada
 dikirim ulang menyembuhkan penandaan yang hilang (`heal_recorded`). Item yang dibagikan ulang setelah `kedaluwarsa`
 membuka item baru (lapis 2 dan 3 hanya mencocokkan item terbuka dan `tercatat`). Item `tercatat` yang semua
 transaksinya sudah dihapus (atau tidak ada lagi) tidak lagi memblokir file/referensi yang sama, jadi bukti itu bisa
-dibagikan dan dicatat lagi; item tanpa id transaksi tercatat (`transaction_ids` kosong/NULL) tetap memblokir
-(`dedup._recorded_by`).
+dibagikan dan dicatat lagi; item tanpa id transaksi tercatat yang bisa dipastikan (`transaction_ids` kosong/NULL,
+bukan daftar, atau berisi id yang tidak valid) tetap memblokir (`dedup._recorded_by`).
 
 ## Saran amplop dan belajar
 

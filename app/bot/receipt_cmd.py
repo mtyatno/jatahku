@@ -17,6 +17,7 @@ tanggal berapa?" (`kt_{key}_h` hari ini, `kt_{key}_d` tanggal dokumen, `handle_d
 payload yang sama: "date" hari ini, atau "past_period" (dicatat di tanggal dokumen tanpa geser dana dan limit
 harian); keduanya "date_answered". Tanggal yang belum lewat (salah baca) langsung dicatat hari ini.
 """
+import asyncio
 import json
 import logging
 import re
@@ -57,6 +58,9 @@ MSG_ALREADY_RECORDED = "✅ Bukti ini sudah tercatat."
 MSG_SKIPPED = "❌ Dilewati."
 MSG_ASK_NOTE = "Ketik isi belanjaannya (atau /batal)"
 MSG_NOTE_CANCELLED = "❌ Tambah catatan dibatalkan."
+MSG_NOTE_BUSY = "⏳ Sedang diproses, kirim ulang catatannya."
+NOTE_LOCK_TRIES = 20      # catatan menunggu kunci sesi tombol (tombol amplop/tanggal yang sedang diproses) ...
+NOTE_LOCK_WAIT_S = 0.1    # ... paling lama 20 × 0,1 detik
 MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
 MSG_NO_ENVELOPE = "Belum ada amplop. Ketik /template untuk buat."
 ASK_ENVELOPE = "Masuk ke amplop mana?"
@@ -306,6 +310,39 @@ async def _load_payload(key: str | None) -> dict | None:
     finally:
         await r.aclose()
     return json.loads(raw) if raw else None
+
+
+async def _txn_lock(key: str):
+    """Kunci sesi tombol `txnlock:{key}` (SET NX, 30 dtk), sama dengan tombol amplop (handlers.handle_txn_callback):
+    jawaban tanggal, "Tetap catat", dan catatan yang menulis ulang `txn:{key}` tidak saling menyalip, jadi pesan yang
+    tampil dan payload-nya selalu dari render yang sama. Klien Redis bila didapat (lepas dengan `_txn_unlock`), False
+    bila sedang dipakai, None bila Redis mati (lanjut tanpa kunci, seperti tombol amplop)."""
+    try:
+        r = _redis()
+    except Exception:
+        return None
+    try:
+        if await r.set(TXN_LOCK.format(key), "1", nx=True, ex=30):
+            return r
+        busy = False
+    except Exception:
+        busy = None
+    try:
+        await r.aclose()
+    except Exception:
+        pass
+    return busy
+
+
+async def _txn_unlock(key: str, lock) -> None:
+    """Lepas kunci yang didapat `_txn_lock` (False/None: tidak ada yang dilepas)."""
+    if lock is None or lock is False:
+        return
+    try:
+        await lock.delete(TXN_LOCK.format(key))
+        await lock.aclose()
+    except Exception:
+        pass   # kunci habis sendiri setelah 30 dtk
 
 
 async def forget_note(tg_user_id) -> bool:
@@ -672,12 +709,24 @@ async def send_ready_message(item_id) -> None:
 
 async def handle_kotak_callback(update, context):
     """kn_{key} tambah catatan · kx_{item_id} bukan pengeluaran · kd_{item_id} duplikat (lewati) ·
-    ko_{key} tetap catat (tampilkan tombol amplop)."""
+    ko_{key} tetap catat (tampilkan tombol amplop). ko_ menulis ulang `txn:{key}`, jadi memakai kunci sesi tombol
+    (`_txn_lock`) sampai pesannya diedit; sedang dipakai → "Sedang diproses..."."""
+    query = update.callback_query
+    action, _, arg = (query.data or "").partition("_")
+    lock = await _txn_lock(arg) if action == "ko" else None
+    if lock is False:
+        await query.answer("Sedang diproses...")
+        return
+    try:
+        await _kotak_action(update, query, action, arg)
+    finally:
+        await _txn_unlock(arg, lock)
+
+
+async def _kotak_action(update, query, action: str, arg: str) -> None:
     from app.bot.handlers import get_or_create_user
 
-    query = update.callback_query
     await query.answer()
-    action, _, arg = (query.data or "").partition("_")
     tg_user = update.effective_user
 
     if action in ("kx", "kd"):
@@ -716,57 +765,53 @@ async def handle_kotak_callback(update, context):
 
 async def handle_date_callback(update, context):
     """kt_{key}_h = catat untuk hari ini, kt_{key}_d = catat untuk tanggal dokumen (periode lalu: tanpa geser dana dan
-    limit harian, lihat handlers._handle_txn_callback). Memakai kunci sesi tombol yang sama dengan tombol amplop
-    (`txnlock:{key}`): dua ketukan bersamaan tidak saling menimpa jawaban, dan jawaban tidak berselang dengan
-    pencatatan. Redis mati: lanjut tanpa kunci, seperti tombol amplop."""
+    limit harian, lihat handlers._handle_txn_callback). Memakai kunci sesi tombol (`_txn_lock`, sama dengan tombol
+    amplop, "Tetap catat", dan catatan): dua ketukan bersamaan tidak saling menimpa jawaban, dan jawaban tidak
+    berselang dengan pencatatan atau render ulang. Redis mati: lanjut tanpa kunci, seperti tombol amplop."""
     query = update.callback_query
     _, key, choice = ((query.data or "").split("_") + ["", ""])[:3]
-    lock, r = TXN_LOCK.format(key), None
-    try:
-        r = _redis()
-        if not await r.set(lock, "1", nx=True, ex=30):
-            await r.aclose()
-            await query.answer("Sedang diproses...")
-            return
-    except Exception:
-        r = None
+    lock = await _txn_lock(key)
+    if lock is False:
+        await query.answer("Sedang diproses...")
+        return
     try:
         await _answer_date(query, key, choice)
     finally:
-        if r is not None:
-            try:
-                await r.delete(lock)
-                await r.aclose()
-            except Exception:
-                pass
+        await _txn_unlock(key, lock)
 
 
 async def _answer_date(query, key: str, choice: str) -> None:
     """Jawaban pertanyaan tanggal: payload `txn:{key}` yang SAMA diperbarui ("date" hari ini, atau "past_period";
     keduanya "date_answered"), lalu pesannya menjadi pesan tombol amplop dari teks bacaan dan label yang disimpan saat
     bertanya: item tidak dibaca ulang, daftar dan urutan amplop tetap. Sesi habis → MSG_SESSION_EXPIRED. Sudah
-    dijawab (ketukan kedua): tidak ada yang diubah, pesan juga tidak."""
+    dijawab: jawaban pertama ditampilkan lagi dari label yang tersimpan (memulihkan edit yang tadi gagal; edit yang
+    sama persis diabaikan); payload yang sudah dirender ulang catatan/"Tetap catat" (tanpa label) tidak disentuh."""
     await query.answer()
     payload = await _load_payload(key)
     if payload is None:
         await query.edit_message_text(MSG_SESSION_EXPIRED)
         return
-    if payload.get(DATE_ANSWERED):
-        return
-    doc_day = _iso_day(payload.get("date"))
-    if choice not in ("h", "d") or doc_day is None or "labels" not in payload:
-        await query.edit_message_text(MSG_SESSION_EXPIRED)
+    answered = bool(payload.get(DATE_ANSWERED))
+    if "labels" not in payload or _iso_day(payload.get("date")) is None or \
+            (not answered and choice not in ("h", "d")):
+        if not answered:
+            await query.edit_message_text(MSG_SESSION_EXPIRED)
         return
     today = date.today()
-    if choice == "h":
-        payload["date"] = today.isoformat()
-    else:
-        payload["past_period"] = True
-    payload[DATE_ANSWERED] = True
-    await _save_payload(key, payload)
-    line = DATE_SET.format(day=short_date(today if choice == "h" else doc_day, today))
+    if not answered:
+        if choice == "h":
+            payload["date"] = today.isoformat()
+        else:
+            payload["past_period"] = True
+        payload[DATE_ANSWERED] = True
+        await _save_payload(key, payload)
+    line = DATE_SET.format(day=short_date(_iso_day(payload["date"]), today))
     text, markup = _envelope_reply(key, payload, payload["reading"], payload["labels"], line)
-    await query.edit_message_text(text, reply_markup=markup)
+    try:
+        await query.edit_message_text(text, reply_markup=markup)
+    except Exception as exc:
+        if not answered or "not modified" not in str(exc).lower():
+            raise
 
 
 async def _edit_message(update, context, message_id, text, markup) -> None:
@@ -785,7 +830,10 @@ async def capture_note(update, context) -> bool:
     """Teks sesudah "✏️ Tambah catatan" menjadi catatan bukti (sebelum NLP): payload diperbarui (keterangan,
     catatan, urutan amplop menurut saran dengan catatan), pesan tombol aslinya diedit. False (teks diproses seperti
     biasa, pesan lama tidak disentuh) bila tidak ada catatan yang ditunggu, Redis mati, sesi tombolnya sudah habis
-    atau dipakai mencatat, atau itemnya tidak lagi `siap` (sudah tercatat/dilewati, mis. lewat web)."""
+    atau dipakai mencatat, atau itemnya tidak lagi `siap` (sudah tercatat/dilewati, mis. lewat web). Dari membaca
+    payload sampai pesannya diedit memakai kunci sesi tombol (`_txn_lock`), ditunggu paling lama NOTE_LOCK_TRIES ×
+    NOTE_LOCK_WAIT_S; masih dipakai → catatannya dikembalikan dan user diminta mengirim ulang (True: teksnya tidak
+    sampai ke NLP)."""
     from app.bot.handlers import get_or_create_user
 
     tg_user = update.effective_user
@@ -800,17 +848,45 @@ async def capture_note(update, context) -> bool:
     if not raw:
         return False
     state = json.loads(raw)
-    if await _load_payload(state.get("key")) is None:
+    key = state.get("key")
+    if not key:
         return False
-    note = (update.message.text or "").strip()
-    async with AsyncSessionLocal() as db:
-        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        item = await _own_item(db, _uuid(state.get("item_id")), user)
-        if item is None or item.status != ST_SIAP:
+    lock = await _txn_lock(key)
+    for _ in range(NOTE_LOCK_TRIES):
+        if lock is not False:
+            break
+        await asyncio.sleep(NOTE_LOCK_WAIT_S)
+        lock = await _txn_lock(key)
+    if lock is False:
+        await _keep_note(tg_user.id, raw)
+        await update.message.reply_text(MSG_NOTE_BUSY)
+        return True
+    try:
+        if await _load_payload(key) is None:
             return False
-        text, markup = await _result_reply(db, user, item, key=state["key"], note=note, ready=True)
-    await _edit_message(update, context, state.get("message_id"), text, markup)
-    return True
+        note = (update.message.text or "").strip()
+        async with AsyncSessionLocal() as db:
+            user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+            item = await _own_item(db, _uuid(state.get("item_id")), user)
+            if item is None or item.status != ST_SIAP:
+                return False
+            text, markup = await _result_reply(db, user, item, key=key, note=note, ready=True)
+        await _edit_message(update, context, state.get("message_id"), text, markup)
+        return True
+    finally:
+        await _txn_unlock(key, lock)
+
+
+async def _keep_note(tg_user_id, raw) -> None:
+    """Kembalikan catatan yang ditunggu (`kotak:note:{tg}`) yang tadi diambil `capture_note`. Redis mati: diabaikan."""
+    try:
+        r = _redis()
+        try:
+            await r.set(NOTE_KEY.format(tg_user_id), raw, ex=NOTE_TTL_S)
+        finally:
+            await r.aclose()
+    except Exception:
+        pass
 
 
 async def handle_struk_callback(update, context):

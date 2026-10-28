@@ -1518,6 +1518,9 @@ async def _handle_txn_callback(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         hid = await get_household_id(user, db)
         payday_day = getattr(user, 'payday_day', 1) or 1
+        if past_period:   # payday bisa berubah sejak pertanyaan: hanya tanggal yang masih periode lalu yang dilewati
+            from app.core.period import document_date_kind
+            past_period = document_date_kind(txn_date, payday_day=payday_day, today=date.today()) == "past"
         import uuid as _uuid
         try:
             env_uuid = _uuid.UUID(str(envelope_id))
