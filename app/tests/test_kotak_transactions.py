@@ -28,6 +28,7 @@ from app.core.deps import get_current_user
 from app.models.models import (
     Allocation, Envelope, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
 )
+from app.services.expense_rules import NOT_SPENDABLE_MSG
 from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
 from app.services.kotak_struk.intake import IntakeRejected
@@ -918,6 +919,16 @@ class ReceiptItemDateTests(TxnBase):
         for route in ROUTES:
             with self.subTest(route=route):
                 await self.assert_refused(route, item, PREV_PERIOD, LOCKED, env="Terkunci")
+
+    async def test_previous_period_proof_into_a_savings_envelope_is_refused_as_today(self):
+        async with self.Session() as db:
+            self.env["Tabungan"] = Envelope(household_id=self.hh.id, name="Tabungan", purpose="saving")
+            db.add(self.env["Tabungan"])
+            await db.commit()
+        item = await self.ready_proof()
+        for route in ROUTES:
+            with self.subTest(route=route):
+                await self.assert_refused(route, item, PREV_PERIOD, NOT_SPENDABLE_MSG, env="Tabungan")
 
     async def test_previous_period_proof_over_the_plan_limit_is_refused_as_today(self):
         async with self.Session() as db:   # Basic: 50 transaksi bulan ini (tanggal sungguhan, seperti cek kuota)
