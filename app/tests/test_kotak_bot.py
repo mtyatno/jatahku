@@ -1389,6 +1389,38 @@ class KotakBotDbTests(TxnBase):
         [txn] = await self.txns()
         self.assertEqual((txn.transaction_date, txn.source.value), (date(2026, 10, 26), "webapp"))
 
+    # --- bukti yang transaksinya dihapus boleh dibagikan lagi (H2) ----------
+
+    async def delete_txn(self, txn_id):
+        """Seperti tombol hapus di web (`DELETE /transactions/{id}`): soft delete."""
+        async with self.Session() as db:
+            await db.execute(update(Transaction).where(Transaction.id == txn_id).values(is_deleted=True))
+            await db.commit()
+
+    async def test_same_file_is_offered_again_after_its_transaction_was_deleted(self):
+        photo = JPG + uuid4().bytes
+        await self.send(data=photo)
+        await self.tap(self.button("Makan"))
+        [first] = await self.txns()
+        await self.delete_txn(first.id)
+        await self.send(data=photo)   # file yang sama, mis. setelah nominal salah dihapus
+        [text] = self.texts()
+        self.assertEqual(text, "QRIS · Siti Aminah · Bandung\nRp 25.000 · 26 Okt 08.12 · Berhasil\n\nMasuk ke amplop mana?")
+        self.assertEqual(self.rows()[0][0].callback_data.split("_")[0], "t")
+        await self.tap(self.button("Makan"))
+        self.assertEqual(len([t for t in await self.txns() if not t.is_deleted]), 1)
+        await self.send(data=photo)   # sekarang tercatat lagi: diblokir
+        self.assertEqual(self.texts(), ["✅ Bukti ini sudah tercatat 26 Okt di Makan."])
+
+    async def test_same_reference_is_offered_again_after_its_transaction_was_deleted(self):
+        await self.send()
+        await self.tap(self.button("Makan"))
+        [first] = await self.txns()
+        await self.delete_txn(first.id)
+        await self.send()   # file lain, nomor referensi sama
+        self.assertTrue(self.texts()[-1].endswith("Masuk ke amplop mana?"))
+        self.assertTrue(datas(self.rows())[0].startswith("t_"))
+
 
 if __name__ == "__main__":
     unittest.main()

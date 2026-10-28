@@ -393,6 +393,44 @@ class KotakApiTests(ApiBase):
         self.assertEqual((d["flags"]["blocked"], d["flags"]["duplicate_of"]["kind"], d["flags"]["duplicate_of"]["recorded"]),
                          ("sudah_tercatat", "ref", True))
 
+    # --- transaksi yang dihapus melepas bukti tercatat (H2) ---------------
+
+    async def proof_txn(self, *, deleted):
+        return await self.add_txn(amount=25000, description="Siti Aminah (QRIS)", created_at=NOW, on=PAID.date(),
+                                  deleted=deleted)
+
+    async def test_recorded_proof_whose_transaction_was_deleted_no_longer_blocks_the_same_file_or_reference(self):
+        old = await self.ready_qris()
+        await self.set(old.id, status="tercatat", transaction_ids=[str((await self.proof_txn(deleted=True)).id)])
+        same_ref = await self.ready_qris()   # file lain, nomor referensi sama
+        same_file = await self.ready_qris()
+        await self.set(same_file.id, file_sha256=(await self.get(old.id)).file_sha256, ref_hash=None)
+        for item in (same_file, same_ref):
+            with self.subTest(item=item.id):
+                flags = (await self.detail(item))["flags"]
+                self.assertEqual((flags["duplicate_of"], flags["blocked"]), (None, None))
+
+    async def test_recorded_proof_still_blocks_while_a_transaction_lives_or_none_is_listed(self):
+        old, new = await self.ready_qris(), await self.ready_qris()   # nomor referensi sama
+        gone, live = await self.proof_txn(deleted=True), await self.proof_txn(deleted=False)
+        for ids in ([str(gone.id), str(live.id)], [], None):
+            with self.subTest(ids=ids):
+                await self.set(old.id, status="tercatat", transaction_ids=ids)
+                flags = (await self.detail(new))["flags"]
+                self.assertEqual((flags["blocked"], flags["duplicate_of"]["item_id"]), ("sudah_tercatat", str(old.id)))
+
+    async def test_released_older_proof_does_not_hide_a_newer_recorded_one(self):
+        older, newer, item = await self.ready_qris(), await self.ready_qris(), await self.ready_qris()
+        sha = (await self.get(older.id)).file_sha256
+        await self.set(older.id, status="tercatat", created_at=NOW - timedelta(hours=2),
+                       transaction_ids=[str((await self.proof_txn(deleted=True)).id)])
+        await self.set(newer.id, status="tercatat", created_at=NOW - timedelta(hours=1), file_sha256=sha,
+                       transaction_ids=[str((await self.proof_txn(deleted=False)).id)])
+        await self.set(item.id, file_sha256=sha)
+        flags = (await self.detail(item))["flags"]
+        self.assertEqual((flags["blocked"], flags["duplicate_of"]["kind"], flags["duplicate_of"]["item_id"]),
+                         ("sudah_tercatat", "file", str(newer.id)))
+
     async def test_recorded_proof_item_is_blocked_but_store_receipt_is_not(self):
         proof = await self.ready_qris()
         await self.set(proof.id, status="tercatat")

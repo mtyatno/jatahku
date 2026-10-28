@@ -140,7 +140,10 @@ yang lain mendapat 409 (web) atau "Bukti ini sudah tercatat" (bot) dan tidak ada
 `check_recordable` (pesan ramah) → `claim_for_recording` → insert transaksi → satu commit → `after_recorded`
 (streak, kata kunci, `mark_recorded`, peta merchant; best-effort dan idempoten per transaksi). `client_ref` yang
 dikirim ulang menyembuhkan penandaan yang hilang (`heal_recorded`). Item yang dibagikan ulang setelah `kedaluwarsa`
-membuka item baru (lapis 2 dan 3 hanya mencocokkan item terbuka dan `tercatat`).
+membuka item baru (lapis 2 dan 3 hanya mencocokkan item terbuka dan `tercatat`). Item `tercatat` yang semua
+transaksinya sudah dihapus (atau tidak ada lagi) tidak lagi memblokir file/referensi yang sama, jadi bukti itu bisa
+dibagikan dan dicatat lagi; item tanpa id transaksi tercatat (`transaction_ids` kosong/NULL) tetap memblokir
+(`dedup._recorded_by`).
 
 ## Saran amplop dan belajar
 

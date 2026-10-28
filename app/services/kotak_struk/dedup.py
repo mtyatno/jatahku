@@ -39,19 +39,44 @@ async def find_open_by_file(db: AsyncSession, user_id: uuid.UUID, sha: str) -> R
     )).scalars().first()
 
 
+def _listed_transactions(raw) -> list[uuid.UUID]:
+    """Id transaksi di `transaction_ids` item tercatat. Kosong bila NULL, bukan daftar, atau ada isi yang bukan UUID:
+    tidak bisa dipastikan transaksinya sudah dihapus, jadi item tetap dihitung tercatat."""
+    if not isinstance(raw, list):
+        return []
+    try:
+        return [uuid.UUID(str(value)) for value in raw]
+    except ValueError:
+        return []
+
+
 async def _recorded_by(db: AsyncSession, household_id: uuid.UUID, column, value: str,
                        exclude_id: uuid.UUID | None) -> uuid.UUID | None:
-    q = select(ReceiptScan.id).where(
+    """Item `tercatat` tertua (`created_at`, `id`) dengan `column == value` yang belum dilepas. Dilepas: semua
+    transaksi di `transaction_ids` sudah dihapus atau tidak ada lagi (user menghapus catatannya, jadi bukti yang sama
+    boleh dicatat lagi). `transaction_ids` kosong/NULL tetap tercatat (fail closed): bukti menjadi `tercatat` lewat
+    klaim di commit yang sama dengan transaksinya dan id-nya baru ditambahkan `mark_recorded` sesudahnya, jadi daftar
+    kosong bisa berarti transaksinya ada. Tanpa fungsi JSON SQL (SQLite di tes, Postgres di produksi): kandidat dibaca
+    berurutan, lalu satu SELECT transaksi yang masih hidup di antara id mereka."""
+    q = select(ReceiptScan.id, ReceiptScan.transaction_ids).where(
         ReceiptScan.household_id == household_id, ReceiptScan.status == ST_TERCATAT, column == value)
     if exclude_id is not None:
         q = q.where(ReceiptScan.id != exclude_id)
-    return (await db.execute(q.order_by(ReceiptScan.created_at, ReceiptScan.id).limit(1))).scalars().first()
+    candidates = [(item_id, _listed_transactions(raw)) for item_id, raw in
+                  (await db.execute(q.order_by(ReceiptScan.created_at, ReceiptScan.id))).all()]
+    listed = sorted({txn_id for _, ids in candidates for txn_id in ids})
+    # uuid.UUID(str(...)): tipe UUID dari driver (asyncpg) belum tentu sama dengan uuid.UUID di himpunan
+    live = {uuid.UUID(str(txn_id)) for txn_id in (await db.execute(
+        select(Transaction.id).where(Transaction.id.in_(listed), Transaction.is_deleted == False)  # noqa: E712
+    )).scalars()} if listed else set()
+    return next((item_id for item_id, ids in candidates if not ids or not live.isdisjoint(ids)), None)
 
 
 async def recorded_duplicate(db: AsyncSession, household_id: uuid.UUID | None, *, file_sha: str | None,
                              ref_hash: str | None, exclude_id: uuid.UUID | None) -> dict | None:
-    """Lapis 2 (file) dan 3 (ref): item `tercatat` di rumah tangga yang sama. Pencatatan
-    item ini harus diblokir. File dicek lebih dulu. Tanpa rumah tangga tidak ada cakupan."""
+    """Lapis 2 (file) dan 3 (ref): item `tercatat` di rumah tangga yang sama yang belum dilepas (`_recorded_by`:
+    item yang semua transaksinya dihapus tidak dihitung). Pencatatan item ini harus diblokir. File dicek lebih dulu.
+    Tanpa rumah tangga tidak ada cakupan."""
     if household_id is None:
         return None
     if file_sha:

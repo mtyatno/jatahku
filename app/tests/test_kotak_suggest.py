@@ -9,7 +9,8 @@ import json
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -17,7 +18,8 @@ from sqlalchemy import delete, event, func, select, update
 
 from app.core.database import Base
 from app.models.models import (
-    Envelope, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, MerchantEnvelopeMap, ReceiptScan, User,
+    Envelope, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, MerchantEnvelopeMap, ReceiptScan,
+    Transaction, User,
 )
 from app.services.expense_rules import after_expense_recorded
 from app.services.kotak_struk import record
@@ -446,6 +448,28 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NotRecordable) as cm:
             await check_recordable(self.db, item.id, self.a)
         self.assertEqual(cm.exception.detail, "Bukti ini sudah tercatat")
+
+    async def transaction(self, *, deleted):
+        t = Transaction(envelope_id=self.env["Makan"].id, user_id=self.a.id, amount=Decimal("25000"), description="x",
+                        transaction_date=date(2026, 10, 26), is_deleted=deleted)
+        self.db.add(t)
+        await self.db.commit()
+        return str(t.id)
+
+    async def test_recorded_duplicate_whose_transactions_were_deleted_is_recordable_again(self):
+        """H2: transaksi bukti lama dihapus user → bukti yang sama boleh dicatat lagi; daftar id kosong/NULL atau satu
+        transaksi yang masih hidup tetap memblokir."""
+        old = await self.qris_item("Dup", key="nmid:ID8", merchant_row=False, status="tercatat", ref_hash="s" * 64,
+                                   transaction_ids=[await self.transaction(deleted=True)])
+        item = await self.qris_item("Dup", key="nmid:ID8", merchant_row=False, ref_hash="s" * 64)
+        self.assertEqual((await check_recordable(self.db, item.id, self.a)).id, item.id)
+        for ids in ([], None, old.transaction_ids + [await self.transaction(deleted=False)]):
+            with self.subTest(ids=ids):
+                await self.db.execute(update(ReceiptScan).where(ReceiptScan.id == old.id).values(transaction_ids=ids))
+                await self.db.commit()
+                with self.assertRaises(NotRecordable) as cm:
+                    await check_recordable(self.db, item.id, self.a)
+                self.assertEqual(cm.exception.detail, "Bukti ini sudah tercatat")
 
     async def test_merchant_for_item(self):
         self.assertEqual((await merchant_for_item(self.db, self.item)).counterparty_key, KEY)

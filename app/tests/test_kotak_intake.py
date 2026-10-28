@@ -11,13 +11,16 @@ import sys
 import tempfile
 import types
 import unittest
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import event, func, select
 
 from app.core.database import Base
-from app.models.models import Household, HouseholdMember, HouseholdRole, ReceiptScan, User
+from app.models.models import Envelope, Household, HouseholdMember, HouseholdRole, ReceiptScan, Transaction, User
 from app.services.kotak_struk import dedup, intake as intake_mod
 from app.services.kotak_struk.dedup import pending_ref_duplicate, recorded_duplicate
 from app.services.kotak_struk.intake import IntakeRejected, IntakeRequest, create_item
@@ -411,6 +414,54 @@ class KotakIntakeTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(kw=kw):
                 self.assertIsNone(await recorded_duplicate(self.db, self.hh.id, exclude_id=None, **kw))
         self.assertIsNone(await recorded_duplicate(self.db, None, file_sha="f8", ref_hash="h8", exclude_id=None))
+
+    # --- transaksi yang dihapus melepas item tercatat (H2) ---------------
+
+    async def txn(self, *, deleted):
+        if not hasattr(self, "envelope"):
+            self.envelope = Envelope(household_id=self.hh.id, name="Makan")
+            self.db.add(self.envelope)
+            await self.db.flush()
+        t = Transaction(envelope_id=self.envelope.id, user_id=self.user.id, amount=Decimal("25000"), description="x",
+                        transaction_date=date(2026, 10, 26), is_deleted=deleted)
+        self.db.add(t)
+        await self.db.commit()
+        return str(t.id)
+
+    async def recorded(self, ids, *, key="1", at=datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)):
+        """Item `tercatat` di rumah tangga ini dengan file f{key} dan referensi h{key}."""
+        item = ReceiptScan(user_id=self.user.id, household_id=self.hh.id, status="tercatat", file_sha256=f"f{key}",
+                           ref_hash=f"h{key}", transaction_ids=ids, created_at=at)
+        self.db.add(item)
+        await self.db.commit()
+        return item
+
+    async def duplicates(self, key="1"):
+        """Lapis 2 (file saja) dan lapis 3 (referensi saja) untuk item baru dengan file f{key} / referensi h{key}."""
+        return [await recorded_duplicate(self.db, self.hh.id, file_sha=f"f{key}", ref_hash=None, exclude_id=None),
+                await recorded_duplicate(self.db, self.hh.id, file_sha=None, ref_hash=f"h{key}", exclude_id=None)]
+
+    async def test_recorded_item_is_released_only_when_every_listed_transaction_is_gone(self):
+        gone, live = await self.txn(deleted=True), await self.txn(deleted=False)
+        missing = str(uuid.uuid4())   # baris transaksi tidak ada: dihitung dihapus
+        for key, (ids, released) in enumerate([([gone], True), ([missing], True), ([gone, missing], True),
+                                               ([gone, live], False), ([live], False),
+                                               ([], False), (None, False),   # tanpa id: tetap tercatat (fail closed)
+                                               ([gone, "bukan-id"], False)]):  # isi bukan id: tidak terbukti dihapus
+            with self.subTest(ids=ids):
+                item = await self.recorded(ids, key=str(key))
+                expected = [{"kind": kind, "item_id": str(item.id), "recorded": True} for kind in ("file", "ref")]
+                self.assertEqual(await self.duplicates(str(key)), [None, None] if released else expected)
+
+    async def test_released_older_item_does_not_hide_a_newer_recorded_one(self):
+        gone, live = await self.txn(deleted=True), await self.txn(deleted=False)
+        old = await self.recorded([gone])
+        new = await self.recorded([live], at=old.created_at + timedelta(hours=1))
+        self.assertEqual(await self.duplicates(), [{"kind": kind, "item_id": str(new.id), "recorded": True}
+                                                   for kind in ("file", "ref")])
+        old.transaction_ids = [live]   # keduanya tercatat: tetap yang tertua lebih dulu
+        await self.db.commit()
+        self.assertEqual([d["item_id"] for d in await self.duplicates()], [str(old.id)] * 2)
 
     async def test_pending_ref_duplicate_is_about_other_members_only(self):
         other = await self.add_member("Dewi")
