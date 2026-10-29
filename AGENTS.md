@@ -211,7 +211,7 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
 ## Deploy Checklist — Bagikan ke Jatahku, Bagian B (web)
-Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun npm): merge → deploy otomatis. Saklar
+Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terpasang, batas unggah dicek). Tanpa migrasi dan tanpa paket baru (Python maupun npm): merge → deploy otomatis. Saklar
 `features.receipt_inbox` tetap mati. Detail: `docs/kotak-struk.md` bagian "Web dan PWA".
 1. Merge, tunggu deploy, lalu cek versi yang tayang: `api.jatahku.com/health` → `commit` baru, dan
    `https://jatahku.com/version.json` → commit yang sama (juga dicek `deploy.sh` dan workflow).
@@ -240,8 +240,9 @@ Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun n
      lain). Kalau HP online lebih dulu, app atau service worker lama sudah mengirim antreannya, dan cek ini tidak
      menguji pembaruan. Sesudah deploy tayang: online-kan HP, buka app, tunggu muat ulang otomatis, lalu
      `https://jatahku.com/version.json` → commit baru, dan transaksi di antrean tetap terkirim (sekali).
-3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
-   saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
+3. Pasang aturan nginx `/bagikan` (file HestiaCP `nginx.ssl_conf_bagikan`): langkah dan hasil yang diharapkan ada di
+   `docs/kotak-struk.md` bagian "Menyalakan saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR
+   `share_target`.
 4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
    PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
    sini.
