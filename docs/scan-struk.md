@@ -20,7 +20,8 @@ status item ada di [`docs/kotak-struk.md`](kotak-struk.md). Yang tetap di dokume
 struk belanja dibaca (parser, rincian barang) dan dicatat per barang.
 
 ```
-foto/PDF ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receipt
+foto ─► kompres di HP (≤1600px JPEG) ─────────────┐
+PDF (tombol PDF, saklar menyala) ─► apa adanya ───┴─► POST /transactions/scan-receipt
             └─ bot: foto Telegram ────────────────┘
                  │
                  ├─ intake Kotak Struk (item `diterima`) ─► worker: RapidOCR → baris teks
@@ -48,7 +49,10 @@ Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceip
 
 - **Foto struk** di FAB (HP) dan menu **Catat ▾** (desktop): kamera dibuka dulu,
   form Catat terbuka begitu fotonya sampai (`openReceiptCamera` di `Layout.jsx`).
-- Tombol **Foto** / **Galeri** di dalam form Catat.
+- Tombol **Foto** / **Galeri** di dalam form Catat, ditambah tombol **PDF** saat saklar `receipt_inbox` menyala
+  (gambar atau PDF bukti bayar, dikirim apa adanya tanpa kompres, maks 10 MB). Saat saklar menyala, screenshot atau
+  PDF bukti QRIS/transfer menjadi satu baris biasa yang sudah terisi (keterangan, tanggal bayar, amplop yang disarankan
+  bila yakin), bukan kartu struk. Rincian: [`docs/kotak-struk.md`](kotak-struk.md) bagian "Web dan PWA".
 - Shortcut PWA **Foto struk** (`/transactions?struk=1`): form Catat terbuka dalam mode
   siap difoto, dengan tombol besar **Ambil foto struk**. Kamera tidak bisa dibuka tanpa
   ketukan, jadi shortcut hanya menyiapkan layar; parameternya dihapus dari URL.
@@ -131,7 +135,8 @@ anggaran berjalan, bot bertanya dulu "Catat untuk tanggal berapa?": **Hari ini**
 geser dana, dan limit harian seperti biasa) atau **tanggal struk** (masuk periode lalu tanpa
 geser dana dan tanpa limit harian; kunci amplop dan kuota tetap berlaku). Tanggal yang belum
 lewat dianggap salah baca dan dicatat hari ini. Detail di [`kotak-struk.md`](kotak-struk.md)
-bagian "Kanal".
+bagian "Kanal". Form Catat di web memakai aturan yang sama: baris struk menanyakan **Hari ini** atau tanggal struk
+(`kotak-struk.md` "Tanggal dokumen" di bagian "Web dan PWA").
 
 ## Kirim ulang aman (idempotensi)
 
@@ -173,7 +178,8 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   yang sama menyembuhkan penandaan yang hilang (`record.heal_recorded`; hanya item yang diklaim transaksi
   itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer. Tanggal baris dengan
   `receipt_item_id` (sesudah hari ini → hari ini; sebelum awal periode → tanpa blok dana dan limit harian; form
-  Catat menanyakan "Hari ini" atau tanggal dokumen lebih dulu): `docs/kotak-struk.md` bagian API.
+  Catat dan kartu bukti `ProofCard` di halaman `/bagikan` menanyakan "Hari ini" atau tanggal dokumen lebih dulu):
+  [`docs/kotak-struk.md`](kotak-struk.md) bagian API dan "Tanggal dokumen" di bagian "Web dan PWA".
 - Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp" (dan tanpa penyelamatan LLM): pembaca
   cadangan menebak seperti scan struk lama (`parse_receipt`: total, tanggal, nama merchant) dengan keyakinan
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
@@ -211,7 +217,8 @@ pencocokan jarak-edit 1 di `receipt_parser.py`.
 
 Akurasi bulanan (diterima tanpa koreksi vs dikoreksi) & toko yang paling sering
 dikoreksi: **Admin → Dashboard → Scan Struk** (`GET /admin/receipt-scans/stats`). Sejak Kotak Struk
-respons itu juga memuat `by_doc_type`, `unrecognized`, dan `by_issuer` (lihat [`docs/kotak-struk.md`](kotak-struk.md)).
+respons itu juga memuat `by_doc_type`, `unrecognized`, dan `by_issuer`; kartu yang sama menampilkannya sebagai baris
+"Jenis dokumen" dan tabel "Per penerbit" (lihat [`docs/kotak-struk.md`](kotak-struk.md)).
 
 ## Fallback LLM — pengaman biaya
 

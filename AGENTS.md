@@ -207,6 +207,24 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
+## Deploy Checklist — Bagikan ke Jatahku, Bagian B (web)
+Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun npm): merge → deploy otomatis. Saklar
+`features.receipt_inbox` tetap mati. Detail: `docs/kotak-struk.md` bagian "Web dan PWA".
+1. Merge, tunggu deploy, lalu cek versi yang tayang: `api.jatahku.com/health` → `commit` baru, dan
+   `https://jatahku.com/version.json` → commit yang sama (juga dicek `deploy.sh` dan workflow).
+2. Uji dengan saklar mati (jendela incognito, supaya service worker lama tidak dipakai):
+   - Form Catat: scan foto struk belanja biasa → baris/kartu struk seperti biasa, lalu Simpan tercatat. Tidak ada
+     tombol **PDF** di samping Foto/Galeri.
+   - Tidak ada banner "Bukti menunggu" di halaman mana pun, dan tidak ada tips berbagi bukti di Settings.
+   - `https://jatahku.com/bagikan` dibuka langsung → hanya "Fitur ini segera hadir." (butuh nginx menyajikan
+     `app.html` untuk `/bagikan`; kalau masih 404, cek lagi sesudah langkah 3).
+   - Admin → Dashboard → Scan Struk → baris "Jenis dokumen: Struk belanja … · QRIS … · Transfer … · Tidak dikenali …"
+     (tabel "Per penerbit" baru muncul setelah ada bukti QRIS/transfer yang dibaca saat saklar menyala).
+3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
+   saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
+4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, PR `share_target`, uji HP): ikuti urutan di
+   `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.
