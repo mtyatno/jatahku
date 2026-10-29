@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyBatch, syncQueue, toBatchItem, CHUNK } from './offlineSync.js';
+import { classifyBatch, syncQueue, toBatchItem, CHUNK, receiptItemIdsOf } from './offlineSync.js';
 
 function memStore(items) {
   const map = new Map(items.map(it => [it.id, { ...it }]));
@@ -147,4 +147,19 @@ test('syncQueue: baris bukti dari antrean dikirim dengan receipt_item_id (app da
   sent.length = 0;
   await syncQueue({ store: again, send, newRef });
   assert.equal(sent[0].receipt_item_id, 'kotak-3');
+});
+
+test('receiptItemIdsOf: id item Kotak Struk di antrean, menunggu maupun ditolak (form Catat tidak menambah baris kedua)', () => {
+  const entries = [
+    item(1, { receipt_item_id: 's1' }),
+    item(2, { receipt_item_id: 's1' }),   // struk per barang: beberapa bagian, satu item
+    item(3, { receipt_item_id: 'q1', rejected: { message: 'Amplop dikunci. Tidak bisa belanja.', at: 1 } }),
+    item(4),                               // ketikan: tanpa item
+    item(5, { receipt_item_id: '' }),
+    null,
+  ];
+  const ids = receiptItemIdsOf(entries);
+  assert.ok(ids instanceof Set);
+  assert.deepEqual([...ids].sort(), ['q1', 's1']);
+  for (const bad of [[], null, undefined, 'x', {}]) assert.deepEqual([...receiptItemIdsOf(bad)], [], String(bad));
 });

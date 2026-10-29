@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { confidenceLabel } from '../lib/receiptScan';
 import { reconcileItems, buildPlan, summarizePlan } from '../lib/receiptSplit';
+import { canUnlockPlan } from '../lib/multiAddRows';
 
 function rupiah(n) {
   return 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -57,6 +58,8 @@ export default function ReceiptCard({
   // Diblokir server (alasan di `notice`): kartu tidak bisa disimpan, jadi isian & pilihan amplop dikunci (× tetap bisa).
   const blocked = !!entry.blockedReason;
   const inputsLocked = locked || blocked;
+  // "Ubah rincian": tidak untuk kartu yang diblokir (isiannya tetap terkunci, jadi tombol itu tidak berguna).
+  const unlockable = canUnlockPlan(entry);
   const [open, setOpen] = useState(() => rec.status !== 'cocok');
   const doubtful = entry.confidence !== 'tinggi';
   const fromItemsSum = entry.confidenceSource === 'items_sum';
@@ -310,9 +313,9 @@ export default function ReceiptCard({
               Hasil simpan belum pasti (koneksi terputus). Tekan Simpan Semua lagi — yang sudah tercatat tidak akan tercatat dua kali.
             </div>
           )}
-          {frozen && !saving && !entry.uncertain && (
+          {frozen && !saving && !entry.uncertain && (unlockable || anySaved) && (
             <div className="flex items-center gap-3 flex-wrap pt-1">
-              {!anySaved ? (
+              {unlockable ? (
                 <button type="button" onClick={() => onUnlock(entry.key)} className="text-brand-600 underline font-medium">
                   Ubah rincian
                 </button>

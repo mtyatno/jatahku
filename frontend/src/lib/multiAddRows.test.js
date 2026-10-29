@@ -4,9 +4,10 @@ import { receiptToItem, applyDocumentDate, dateNotice, feedbackFor } from './rec
 import {
   isInsufficientFundsError, isDailyLimitError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
   notReadyMessage, applyRowPatch, withSaveDate, toPayload, toParts, wantsReceiptFeedback, removalCalls,
-  wantsKeywordSuggestion, pastDated, fundCandidate, showRaisedLimit, alreadyListed, withSaveError,
+  wantsKeywordSuggestion, pastDated, fundCandidate, showRaisedLimit, alreadyListed, withSaveError, canUnlockPlan,
 } from './multiAddRows.js';
 import { toBatchItem } from './offlineSync.js';
+import { summarizePlan } from './receiptSplit.js';
 
 const PERIOD = { start: '2026-10-27', end: '2026-11-26' };
 const TODAY = '2026-10-29';
@@ -284,4 +285,60 @@ test('tanggal sebelum awal periode: tanpa tawaran Geser / "limit ↑" dari dugaa
   assert.equal(fundCandidate([manual()], PERIOD.start).key, 't1');
   assert.equal(showRaisedLimit(manual({ raiseDailyLimit: true }), PERIOD.start), true);
   assert.equal(showRaisedLimit(manual({ raiseDailyLimit: true, error: 'Gagal' }), PERIOD.start), false);
+});
+
+// ── Review akhir Bagian B: R3 (antrean offline) dan R4 (kartu terblokir) ───────────────────────────────────────
+
+test('alreadyListed: item yang sudah disimpan offline (antrean, menunggu atau ditolak) tidak menambah baris; teks lama tetap', () => {
+  const queued = new Set(['s1', 'q1', 't1', 'u1']);
+  const QUEUED = ' ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.';
+  // Sudah ada di daftar: teks lama, persis sama, juga bila item itu ada di antrean.
+  assert.deepEqual(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, [{ receiptItemId: 's1' }], queued),
+    { type: 'mixed', text: 'Struk ini sudah ada di daftar.' });
+  assert.deepEqual(alreadyListed({ item_id: 'q1', doc_type: 'qris' }, [{ receiptItemId: 'q1' }], queued),
+    { type: 'mixed', text: 'Bukti ini sudah ada di daftar.' });
+  // Di antrean offline: kata benda sama dengan teks lama (bukti untuk QRIS/transfer, struk untuk lainnya).
+  assert.deepEqual(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, [], queued), { type: 'mixed', text: `Struk${QUEUED}` });
+  assert.deepEqual(alreadyListed({ item_id: 'u1', doc_type: 'tidak_dikenali' }, [manual()], queued), { type: 'mixed', text: `Struk${QUEUED}` });
+  assert.deepEqual(alreadyListed({ item_id: 'q1', doc_type: 'qris' }, [], queued), { type: 'mixed', text: `Bukti${QUEUED}` });
+  assert.deepEqual(alreadyListed({ item_id: 't1', doc_type: 'transfer' }, [], queued), { type: 'mixed', text: `Bukti${QUEUED}` });
+  // Bukan di daftar dan bukan di antrean; tanpa antrean (null / tidak diberikan / bukan Set); scan lama tanpa item.
+  assert.equal(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, [], new Set(['lain'])), null);
+  assert.equal(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, [], null), null);
+  assert.equal(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, []), null);
+  assert.equal(alreadyListed({ item_id: 's1', doc_type: 'struk_belanja' }, [], ['s1']), null);
+  assert.equal(alreadyListed({ scan_id: 'lama', merchant: 'A', total: 1 }, [], new Set([undefined, null, 'lama'])), null);
+});
+
+test('withSaveError: penolakan bukti pada struk berencana → hanya alasan kartu; bagian yang belum tersimpan tanpa galat', () => {
+  const item = { key: 'k', receiptItemId: 'i1', plan: [
+    { id: 'g1', envelopeId: 'e1', amount: 10, saved: true, error: null },
+    { id: 'g2', envelopeId: 'e1', amount: 5, saved: false, error: 'Bukti ini sudah tercatat' },
+    { id: 'g3', envelopeId: 'e2', amount: 7, saved: false, error: 'Bukti ini sudah tercatat' } ] };
+  const out = withSaveError(item, 'Bukti ini sudah tercatat');
+  assert.equal(out.blockedReason, 'Bukti ini sudah tercatat.');
+  assert.equal(out.error, null);
+  assert.deepEqual(out.plan.map(g => [g.id, g.saved, g.error]), [['g1', true, null], ['g2', false, null], ['g3', false, null]]);
+  assert.equal(out.plan[0], item.plan[0], 'bagian yang sudah tersimpan tidak disentuh');
+  assert.equal(item.plan[1].error, 'Bukti ini sudah tercatat', 'baris asal tidak diubah');
+  // Kartu tidak lagi menampilkan "Gagal: …" per amplop, jadi juga tanpa pindah amplop / Geser / Naikkan limit.
+  assert.ok(summarizePlan(out.plan).every(r => r.error === null && r.failed.length === 0));
+  // Tanpa rencana: bentuk lama (tidak ada kunci `plan` baru); galat lain tidak menyentuh rencana.
+  assert.equal('plan' in withSaveError({ key: 'r', receiptItemId: 'i2' }, 'Bukti ini sudah tercatat'), false);
+  assert.equal(withSaveError({ key: 'r', receiptItemId: 'i2', plan: null }, 'Bukti ini belum siap dicatat').plan, null);
+  const other = withSaveError(item, 'Dana tidak cukup. Sisa: Rp0, diminta: Rp5');
+  assert.equal(other.plan, item.plan);
+  assert.equal(other.error, 'Dana tidak cukup. Sisa: Rp0, diminta: Rp5');
+});
+
+test('canUnlockPlan: "Ubah rincian" hanya untuk rencana beku tanpa bagian tersimpan, tidak belum pasti, dan tidak diblokir', () => {
+  const plan = [{ id: 'g1', saved: false, error: 'Dana tidak cukup' }, { id: 'g2', saved: false, error: null }];
+  const card = { ...store(), plan };
+  assert.equal(canUnlockPlan(card), true);
+  assert.equal(canUnlockPlan({ ...card, plan: null }), false, 'belum pernah disimpan: rincian memang belum dikunci');
+  assert.equal(canUnlockPlan({ ...card, plan: [{ ...plan[0], saved: true }, plan[1]] }), false, 'sebagian sudah tercatat');
+  assert.equal(canUnlockPlan({ ...card, uncertain: true }), false, 'hasil simpan belum pasti');
+  assert.equal(canUnlockPlan(withSaveError(card, 'Bukti ini belum siap dicatat')), false, 'kartu yang ditolak server');
+  assert.equal(canUnlockPlan({ ...card, blockedReason: 'Bukti ini sudah tercatat.' }), false);
+  assert.equal(canUnlockPlan(withSaveError(card, 'Dana tidak cukup. Sisa: Rp0, diminta: Rp5')), true, 'galat biasa tetap bisa diubah');
 });

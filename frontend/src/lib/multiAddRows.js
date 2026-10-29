@@ -130,10 +130,19 @@ export function removalCalls(item, rows = []) {
 
 // Satu item Kotak Struk = satu baris/kartu. Foto yang sama di-scan lagi (server mengembalikan item yang sama selama
 // belum selesai) tidak menambah baris: pesan pengganti hasil scan, atau null bila item itu belum ada di daftar.
-export function alreadyListed(result, rows) {
+// `queuedIds` (Set id item di antrean offline, menunggu maupun ditolak; offlineQueue.queuedReceiptItemIds): item yang
+// sudah disimpan offline juga tidak menambah baris. Simpan kedua akan mencatat struk yang sama dua kali, dan × pada
+// baris itu melewati item yang simpanannya belum terkirim (simpanan itu lalu ditolak selamanya). Perbaikan dan kirim
+// ulang lewat pemberitahuan antrean offline. null / tanpa Set → hanya baris di daftar.
+export function alreadyListed(result, rows, queuedIds = null) {
   const id = result?.item_id;
-  if (!id || !(rows || []).some(r => r.receiptItemId === id)) return null;
-  return { type: 'mixed', text: docNoun(result.doc_type) === 'bukti' ? 'Bukti ini sudah ada di daftar.' : 'Struk ini sudah ada di daftar.' };
+  if (!id) return null;
+  const noun = docNoun(result.doc_type) === 'bukti' ? 'Bukti' : 'Struk';
+  if ((rows || []).some(r => r.receiptItemId === id)) return { type: 'mixed', text: `${noun} ini sudah ada di daftar.` };
+  if (typeof queuedIds?.has === 'function' && queuedIds.has(id)) {
+    return { type: 'mixed', text: `${noun} ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.` };
+  }
+  return null;
 }
 
 // Penolakan bukti dari server saat simpan (record.MSG_*; di batch: `error` baris itu): permanen, mengulang simpan
@@ -149,10 +158,22 @@ const RECEIPT_REJECTIONS = new Set([
 // Galat simpan satu baris (hasil batch) → baris. Penolakan bukti untuk baris dengan item Kotak Struk menjadi alasan
 // blokir yang terlihat (bukan hanya tooltip "Gagal") dan baris tidak dikirim lagi; galat lain tetap `error` (Gagal,
 // Geser, Naikkan limit, coba lagi). "Sedang diproses" bukan penolakan.
+// Penolakan berlaku untuk seluruh struk: bagian rencana yang belum tersimpan tidak membawa galatnya sendiri lagi, jadi
+// kartu hanya menampilkan alasannya, tanpa "Gagal: …" per amplop dan tanpa pindah amplop/Geser/Naikkan limit.
 export function withSaveError(item, error) {
   const text = typeof error === 'string' ? error.trim().replace(/\.$/, '') : '';
-  if (item.receiptItemId && RECEIPT_REJECTIONS.has(text)) return { ...item, error: null, blockedReason: `${text}.` };
+  if (item.receiptItemId && RECEIPT_REJECTIONS.has(text)) {
+    const out = { ...item, error: null, blockedReason: `${text}.` };
+    if (Array.isArray(item.plan)) out.plan = item.plan.map(g => (g.saved ? g : { ...g, error: null }));
+    return out;
+  }
   return { ...item, error: error || null };
+}
+
+// "Ubah rincian" di kartu struk (rencana dihitung ulang): hanya rencana yang sudah dibekukan, tanpa bagian yang
+// tersimpan, tanpa hasil simpan yang belum pasti, dan bukan kartu yang diblokir server (isiannya tetap terkunci).
+export function canUnlockPlan(item) {
+  return Array.isArray(item?.plan) && !item.uncertain && !item.blockedReason && !item.plan.some(g => g.saved);
 }
 
 // Saran kata kunci (suggest-envelopes) hanya untuk baris yang tidak membawa saran server: QRIS dan transfer sudah memakai

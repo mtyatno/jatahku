@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
 import { parseMultiExpense, parseAmount } from '../lib/parseAmount';
-import { enqueueTransaction } from '../lib/offlineQueue';
+import { enqueueTransaction, queuedReceiptItemIds } from '../lib/offlineQueue';
 import QuickAddTransaction from './QuickAddTransaction';
 import VoiceInput from './VoiceInput';
 import ReceiptInput, { pickReceiptPhoto } from './ReceiptInput';
@@ -17,7 +17,7 @@ import { applyItemSuggestions } from '../lib/receiptSplit';
 import {
   isDailyLimitError, isInsufficientFundsError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
   notReadyMessage, applyRowPatch, withSaveDate, toParts, wantsReceiptFeedback, removalCalls, wantsKeywordSuggestion,
-  fundCandidate, showRaisedLimit, alreadyListed, withSaveError,
+  fundCandidate, showRaisedLimit, alreadyListed, withSaveError, canUnlockPlan,
 } from '../lib/multiAddRows';
 import { announceKotakChange } from '../lib/pendingProofs';
 import { newRef } from '../lib/ref';
@@ -250,10 +250,16 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
       .catch(() => {})
       .finally(() => { p.loading = false; });
   }, []);
+  // Id item Kotak Struk di antrean offline, dibaca setiap kali scan mulai (hasil scan tetap diproses sinkron): item
+  // yang sudah disimpan offline tidak menjadi baris kedua (multiAddRows.alreadyListed).
+  const queuedRef = useRef(null);
   const handleScanBusy = useCallback((b) => {
     inputBusyRef.current.scan = b;
     setScanBusy(b);
-    if (b) loadPeriod();
+    if (b) {
+      loadPeriod();
+      queuedReceiptItemIds().then((ids) => { queuedRef.current = ids; }, () => {});
+    }
   }, [loadPeriod]);
   const inputBusy = () => inputBusyRef.current.voice || inputBusyRef.current.scan;
 
@@ -440,9 +446,9 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
       ? patchPlanEnvelope(item, groupEnvelope(item, gid), { envelopeId, error: null, raiseLimit: false }) : item)));
   };
 
-  // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang).
+  // Belum ada bagian tersimpan → rincian boleh diubah lagi (rencana dihitung ulang; multiAddRows.canUnlockPlan).
   const handleUnlockReceipt = (key) => {
-    setItems(prev => prev.map(item => (item.key === key && !item.uncertain && !(item.plan || []).some(g => g.saved)
+    setItems(prev => prev.map(item => (item.key === key && canUnlockPlan(item)
       ? { ...item, plan: null, error: null } : item)));
   };
 
@@ -487,11 +493,11 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
     });
   }, []);
 
-  // Satu item Kotak Struk = satu baris: foto yang sama lagi hanya diberi tahu. Tanggal dokumen di luar periode
-  // berjalan ditanya dulu, tanggal yang belum lewat jadi hari ini (aturan bot). QRIS/transfer memakai saran amplop
-  // server; saran kata kunci tidak menimpanya.
+  // Satu item Kotak Struk = satu baris: foto yang sama lagi (juga yang sudah disimpan offline) hanya diberi tahu.
+  // Tanggal dokumen di luar periode berjalan ditanya dulu, tanggal yang belum lewat jadi hari ini (aturan bot).
+  // QRIS/transfer memakai saran amplop server; saran kata kunci tidak menimpanya.
   const handleReceiptResult = (result) => {
-    const listed = alreadyListed(result, itemsRef.current);
+    const listed = alreadyListed(result, itemsRef.current, queuedRef.current);
     if (listed) {
       setResultMsg(listed);
       return;
