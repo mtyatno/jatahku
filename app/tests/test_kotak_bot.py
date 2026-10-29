@@ -44,6 +44,13 @@ QUESTION_STRUK = ("📅 Tanggal di struk: 14 Okt — di luar periode sekarang (2
                   "Catat untuk tanggal berapa?")
 QUESTION_PROOF = ("📅 Tanggal di bukti: 26 Okt — di luar periode sekarang (27 Okt–26 Nov). "
                   "Catat untuk tanggal berapa?")
+# Nominal kurang yakin (H3): struk tanpa baris TOTAL (Rp15.000 dari rincian), QRIS yang nominalnya hanya angka Rp lepas di
+# atas judul (Rp25.000), dan bukti Jago Syariah produksi 2026-10-28 (tidak dikenali, Rp19.000).
+LOW_STORE = ["TOKO MAJU", "14-10-2026 08:15", "ROTI 10.000", "SUSU 5.000"]
+LOW_QRIS = ["Rp25.000", "Pembayaran Berhasil", "QRIS", "Merchant", "SITI AMINAH", "Lokasi BANDUNG",
+            "NMID ID1024358806544", "Tanggal 26 Okt 2026 08:12:33 WIB", "No. Referensi 612345678812"]
+JAGO_QRIS = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
+             "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses", "ID Terminal", "A01"]
 
 UID = uuid4()
 HID = uuid4()
@@ -840,6 +847,13 @@ class CallbackRegistryTests(unittest.TestCase):
                 telegram = next(h for pattern, h in handlers.bot_callbacks() if re.match(pattern, data))
                 self.assertIs(telegram, receipt_cmd.handle_date_callback)
                 self.assertIs(web_adapter._find_callback(data), receipt_cmd.handle_date_callback)
+
+    def test_amount_confirmation_is_routed_on_telegram_and_in_the_web_chat(self):
+        data = "ky_1a2b3c4d_0"
+        telegram = next(h for pattern, h in handlers.bot_callbacks() if re.match(pattern, data))
+        self.assertIs(telegram, handlers.handle_txn_callback)
+        self.assertIs(web_adapter._find_callback(data), handlers.handle_txn_callback)
+        self.assertEqual([p for p, _ in handlers.bot_callbacks() if re.match(p, data)], [r"^ky_"])   # tanpa tabrakan
 
 
 class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
@@ -1684,6 +1698,182 @@ class KotakBotDbTests(TxnBase):
         await self.send()   # file lain, nomor referensi sama
         self.assertTrue(self.texts()[-1].endswith("Masuk ke amplop mana?"))
         self.assertTrue(datas(self.rows())[0].startswith("t_"))
+
+    # --- nominal kurang yakin ditanya dulu (H3) -----------------------------
+
+    async def ask_amount(self, label, *, rows=None):
+        """Ketuk tombol amplop `label` (pesan terakhir, atau `rows`) yang nominalnya kurang yakin: pesannya menjadi
+        pertanyaan nominal, belum ada yang dicatat. Mengembalikan (pesan pertanyaan, callback "Ya")."""
+        before = len(await self.txns())
+        tap = next(b.callback_data for row in (rows or self.rows()) for b in row if label in b.text)
+        call = (await self.tap(tap)).edit_message_text.call_args
+        self.assertEqual(len(await self.txns()), before)   # belum dicatat
+        [[yes], _] = keyboard_of(call)
+        self.assertTrue(yes.callback_data.startswith("ky_"), yes.callback_data)
+        self.assertEqual(yes.callback_data.split("_")[1:], tap.split("_")[1:])   # sesi dan amplop yang sama
+        return call, yes.callback_data
+
+    async def test_low_confidence_store_receipt_asks_before_recording(self):
+        await self.send(LOW_STORE)
+        [text] = self.texts()
+        self.assertIn("Total: Rp 15.000  ⚠️ dihitung dari rincian, cek dengan struk", text)
+        item_id = self.items[-1]
+        key = self.button("Jajan").split("_")[1]
+        stored = json.loads(self.redis.store[f"txn:{key}"])
+        self.assertEqual((stored["amount"], stored["confidence"], stored["noun"]), (15000, "rendah", "struk"))
+        call, yes = await self.ask_amount("Jajan")
+        self.assertEqual(call.args[0], "Nominal Rp15.000 belum pasti — cek dengan struk. Sudah benar?")
+        rows = keyboard_of(call)
+        self.assertEqual([[b.text for b in row] for row in rows],
+                         [["✅ Ya, catat ke 📁 Jajan"], ["✏️ Nominal salah", "❌ Batal"]])
+        self.assertEqual(datas(rows)[1:], [f"struk_fix_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual((await self.get(item_id)).status, "siap")
+
+        done = (await self.tap(yes)).edit_message_text.call_args.args[0]
+        self.assertTrue(done.startswith("✅ Rp15rb — Toko Maju\nMasuk ke 📁 Jajan"), done)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id, txn.transaction_date),
+                         (D("15000"), self.env["Jajan"].id, date(2026, 10, 14)))
+        item = await self.get(item_id)
+        self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+
+        # Ketukan kedua (Ya atau tombol amplop lama): tidak mencatat lagi.
+        for again in (yes, f"t_{key}_0"):
+            query = await self.tap(again)
+            self.assertEqual(query.edit_message_text.call_args.args[0], "⏰ Session expired. Kirim ulang.")
+        self.assertEqual(len(await self.txns()), 1)
+
+    async def test_jago_qris_read_as_unknown_asks_with_the_real_amount(self):
+        """Kasus produksi 2026-10-28: bukti QRIS Jago Syariah Rp19.000 (tidak dikenali pembaca bukti) dulu tercatat
+        Rp261.026 dengan satu ketukan."""
+        await self.send(JAGO_QRIS)
+        self.assertEqual((await self.get(self.items[-1])).doc_type, "tidak_dikenali")
+        call, yes = await self.ask_amount("Makan")
+        self.assertEqual(call.args[0], "Nominal Rp19.000 belum pasti — cek dengan struk. Sudah benar?")
+        await self.tap(yes)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("19000"), self.env["Makan"].id))
+        self.assertEqual((await self.get(self.items[-1])).status, "tercatat")
+
+    async def test_low_confidence_proof_asks_with_the_proof_noun(self):
+        await self.send(LOW_QRIS)
+        item = await self.get(self.items[-1])
+        self.assertEqual((item.doc_type, item.document["confidence"]["total"]), ("qris", "rendah"))
+        self.assertTrue(self.texts()[-1].startswith("QRIS · Siti Aminah · Bandung\nRp 25.000 · "))
+        call, yes = await self.ask_amount("Makan")
+        self.assertEqual(call.args[0], "Nominal Rp25.000 belum pasti — cek dengan bukti. Sudah benar?")
+        self.assertEqual([[b.text for b in row] for row in keyboard_of(call)],
+                         [["✅ Ya, catat ke 📁 Makan"], ["✏️ Nominal salah", "❌ Batal"]])
+        await self.tap(yes)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("25000"), self.env["Makan"].id))
+        item = await self.get(item.id)
+        self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+
+    async def test_confident_totals_still_record_in_one_tap(self):
+        for lines, label, confidence in ((CORPUS[0]["lines"], "Makan", "sedang"),
+                                         (STORE_LINES, "Jajan", "tinggi")):
+            with self.subTest(confidence):
+                before = len(await self.txns())
+                await self.send(lines)
+                self.assertEqual((await self.get(self.items[-1])).confidence, confidence)
+                done = (await self.tap(self.button(label))).edit_message_text.call_args.args[0]
+                self.assertTrue(done.startswith("✅ "), done)
+                self.assertEqual(len(await self.txns()), before + 1)
+
+    async def test_yes_with_insufficient_funds_offers_the_fund_shift(self):
+        await self.send(LOW_QRIS)   # Rp25.000 ke Kecil (sisa 10rb)
+        _, yes = await self.ask_amount("Kecil")
+        offer = (await self.tap(yes)).edit_message_text.call_args
+        self.assertIn("Dana amplop kurang", offer.args[0])
+        self.assertEqual(await self.txns(), [])
+        done = (await self.tap(self.pick(offer, "Makan"))).edit_message_text.call_args.args[0]
+        self.assertIn("digeser dari", done)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("25000"), self.env["Kecil"].id))
+        self.assertEqual((await self.get(self.items[-1])).status, "tercatat")
+
+    async def test_yes_over_the_daily_limit_offers_the_daily_limit_choice(self):
+        await self.send(LOW_STORE)   # Rp15.000 ke Harian (limit harian 10rb)
+        _, yes = await self.ask_amount("Harian")
+        offer = (await self.tap(yes)).edit_message_text.call_args
+        self.assertIn("Limit harian terlampaui", offer.args[0])
+        self.assertEqual(await self.txns(), [])
+        await self.tap(keyboard_of(offer)[0][0].callback_data)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("15000"), self.env["Harian"].id))
+
+    async def test_date_question_comes_first_then_the_amount_question(self):
+        await self.owner_today()
+        await self.send(LOW_QRIS)   # dibayar 26 Okt: periode lalu
+        _, answer = await self.answer_date("d")
+        call, yes = await self.ask_amount("Kecil", rows=keyboard_of(answer))   # bukan tawaran geser dana
+        self.assertEqual(call.args[0], "Nominal Rp25.000 belum pasti — cek dengan bukti. Sudah benar?")
+        done = (await self.tap(yes)).edit_message_text.call_args.args[0]
+        self.assertIn("Tercatat di periode 27 Sep–26 Okt; sisa periode sekarang tidak berubah.", done)
+        [txn] = await self.txns()
+        self.assertEqual((txn.transaction_date, txn.envelope_id), (date(2026, 10, 26), self.env["Kecil"].id))
+        self.assertFalse([k for k in self.redis.store if k.startswith("fshift:")])
+
+    async def test_wrong_amount_goes_to_manual_entry_without_a_second_question(self):
+        await self.send(LOW_STORE)
+        item_id = self.items[-1]
+        call, _ = await self.ask_amount("Jajan")
+        fix = (await self.tap(datas(keyboard_of(call))[1])).edit_message_text.call_args.args[0]
+        self.assertTrue(fix.startswith("✏️ Oke, ketik manual nominal yang benar"), fix)
+        item = await self.get(item_id)
+        self.assertEqual((item.status, item.outcome), ("dilewati", "corrected"))   # umpan balik "nominal salah" seperti biasa
+        typed = SimpleNamespace(photo=None, document=None, text="roti susu 16000", reply_text=AsyncMock())
+        update_ = SimpleNamespace(message=typed, effective_user=SimpleNamespace(id=42, first_name="Ani"),
+                                  effective_chat=SimpleNamespace(id=4242))
+        await handlers.handle_message(update_, SimpleNamespace(bot=self.bot))
+        jajan = next(b.callback_data for row in keyboard_of(typed.reply_text.call_args) for b in row
+                     if "Jajan" in b.text)
+        done = (await self.tap(jajan)).edit_message_text.call_args.args[0]   # nominal ketikan user: satu ketukan
+        self.assertTrue(done.startswith("✅ Rp16rb — "), done)
+        [txn] = await self.txns()
+        self.assertEqual(txn.amount, D("16000"))
+
+    async def test_cancel_from_the_amount_question(self):
+        await self.send(LOW_STORE)
+        call, _ = await self.ask_amount("Jajan")
+        query = await self.tap(datas(keyboard_of(call))[2])
+        self.assertEqual(query.edit_message_text.call_args.args[0], "❌ Struk dibatalkan.")
+        self.assertEqual((await self.get(self.items[-1])).status, "dilewati")
+        self.assertEqual(await self.txns(), [])
+
+    async def test_expired_session_at_yes(self):
+        await self.send(LOW_QRIS)
+        _, yes = await self.ask_amount("Makan")
+        self.redis.store.pop(f"txn:{yes.split('_')[1]}")
+        query = await self.tap(yes)
+        self.assertEqual(query.edit_message_text.call_args.args[0], "⏰ Session expired. Kirim ulang.")
+        self.assertEqual(await self.txns(), [])
+        self.assertEqual((await self.get(self.items[-1])).status, "siap")
+
+    async def test_yes_while_its_session_is_busy_records_nothing(self):
+        await self.send(LOW_STORE)
+        _, yes = await self.ask_amount("Jajan")
+        self.redis.store[f"txnlock:{yes.split('_')[1]}"] = "1"
+        query = await self.tap(yes)
+        query.answer.assert_awaited_once_with("Sedang diproses...")
+        self.assertEqual(await self.txns(), [])
+
+    async def test_web_chat_routes_the_amount_question(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(LOW_QRIS)):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        msg_id, reading = ops[0]["id"], ops[-1]
+        makan = next(b["data"] for row in reading["buttons"] for b in row if "Makan" in b["text"])
+        [edit] = await web_adapter.run_action(user, msg_id, makan)
+        self.assertEqual((edit["type"], edit["id"], edit["text"]),
+                         ("edit", msg_id, "Nominal Rp25.000 belum pasti — cek dengan bukti. Sudah benar?"))
+        self.assertEqual(await self.txns(), [])
+        yes = next(b["data"] for row in edit["buttons"] for b in row if b["text"] == "✅ Ya, catat ke 📁 Makan")
+        ops = await web_adapter.run_action(user, msg_id, yes)
+        self.assertTrue(ops[-1]["text"].startswith("✅ Rp25rb — "), ops[-1]["text"])
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.source.value), (D("25000"), "webapp"))
 
 
 if __name__ == "__main__":
