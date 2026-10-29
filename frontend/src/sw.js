@@ -20,6 +20,11 @@ function manifestVersion(entries) {
 }
 const CACHE = `jatahku-${manifestVersion(manifest)}`;
 
+// Jawaban navigasi yang boleh disimpan sebagai app shell: 2xx berisi HTML.
+function isAppShell(res) {
+  return res.ok && /^text\/html\b/i.test(res.headers.get('content-type') || '');
+}
+
 // Install: pre-cache app shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -54,13 +59,18 @@ self.addEventListener('fetch', (event) => {
   // API: bypass service worker entirely — let browser handle directly
   if (url.hostname === 'api.jatahku.com') return;
 
-  // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline
+  // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline.
+  // Hanya halaman HTML yang berhasil (2xx) yang menjadi app shell offline: 404, 5xx, redirect, atau berkas bukan HTML
+  // diteruskan ke halaman apa adanya tetapi tidak menimpa /index.html (kalau tidak, app offline menampilkan halaman
+  // error itu sampai navigasi baik berikutnya).
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put('/index.html', clone));
+          if (isAppShell(res)) {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put('/index.html', clone));
+          }
           return res;
         })
         .catch(() => caches.match('/index.html'))

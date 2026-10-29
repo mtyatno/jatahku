@@ -7,6 +7,9 @@ import assert from 'node:assert/strict';
 const ORIGIN = 'https://jatahku.com';
 const listeners = {};
 const network = [];
+const shellPuts = [];   // cache.put dari service worker: [kunci, status]
+const shellReads = [];  // caches.match: kunci yang dibaca
+const SHELL = new Response('<!doctype html><title>app shell</title>', { status: 200, headers: { 'Content-Type': 'text/html' } });
 globalThis.self = {
   __WB_MANIFEST: [],
   location: { origin: ORIGIN },
@@ -15,12 +18,14 @@ globalThis.self = {
   clients: { claim: async () => {}, matchAll: async () => [] },
 };
 globalThis.caches = {
-  open: async () => ({ put: async () => {}, addAll: async () => {} }),
-  match: async () => undefined,
+  open: async () => ({ put: async (key, res) => { shellPuts.push([key, res.status]); }, addAll: async () => {} }),
+  match: async (key) => { shellReads.push(key); return key === '/index.html' ? SHELL : undefined; },
   keys: async () => [],
   delete: async () => true,
 };
-globalThis.fetch = async (request) => { network.push(request); return new Response('<!doctype html>', { status: 200 }); };
+// Jawaban jaringan tiruan untuk navigasi; tes boleh menggantinya (respond = …).
+let respond = () => new Response('<!doctype html>', { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+globalThis.fetch = async (request) => { network.push(request); return respond(request); };
 
 await import('../sw.js');
 
@@ -78,4 +83,51 @@ test('sw: GET /bagikan?s=… tetap navigasi biasa (jaringan dulu), bukan penanga
   const res = await answered;
   assert.equal(res.status, 200);
   assert.deepEqual(network, [request]);
+});
+
+// ── App shell offline (D4): hanya navigasi 2xx HTML yang disimpan sebagai /index.html ─────────────
+
+const settle = () => new Promise(r => setTimeout(r, 5)); // cache.put berjalan tanpa ditunggu jawaban
+const navigate = path => ({ method: 'GET', url: `${ORIGIN}${path}`, mode: 'navigate' });
+
+test('sw (D4): navigasi 2xx HTML menjadi app shell offline (/index.html)', async () => {
+  for (const [status, type] of [[200, 'text/html; charset=utf-8'], [200, 'text/html'], [203, 'TEXT/HTML']]) {
+    shellPuts.length = 0;
+    respond = () => new Response('<!doctype html>', { status, headers: { 'Content-Type': type } });
+    const res = await dispatch(navigate('/bagikan?s=abc'));
+    await settle();
+    assert.equal(res.status, status);
+    assert.deepEqual(shellPuts, [['/index.html', status]], `${status} ${type}`);
+  }
+});
+
+test('sw (D4): navigasi 404/5xx/redirect atau bukan HTML tidak menimpa app shell, tetap diteruskan ke halaman', async () => {
+  for (const [status, type] of [
+    [404, 'text/html'], [500, 'text/html; charset=utf-8'], [502, 'text/html'], [503, 'text/html'], [302, 'text/html'],
+    [200, 'application/json'], [200, 'text/plain'], [200, 'application/pdf'], [200, null], [204, null],
+  ]) {
+    shellPuts.length = 0;
+    respond = () => {
+      const body = status === 204 || status === 302 ? null : 'isi';
+      const headers = type ? { 'Content-Type': type } : {};
+      if (status === 302) headers.Location = '/login';
+      const res = new Response(body, { status, headers });
+      if (!type) res.headers.delete('Content-Type');
+      return res;
+    };
+    const res = await dispatch(navigate('/bagikan'));
+    await settle();
+    assert.equal(res.status, status, 'jawaban jaringan diteruskan apa adanya');
+    assert.deepEqual(shellPuts, [], `${status} ${type} tidak boleh disimpan sebagai app shell`);
+  }
+});
+
+test('sw (D4): jaringan gagal → app shell dari cache (NetworkFirst tetap)', async () => {
+  shellReads.length = 0;
+  shellPuts.length = 0;
+  respond = () => { throw new TypeError('Failed to fetch'); };
+  const res = await dispatch(navigate('/transactions'));
+  assert.equal(res, SHELL);
+  assert.deepEqual(shellReads, ['/index.html']);
+  assert.deepEqual(shellPuts, []);
 });
