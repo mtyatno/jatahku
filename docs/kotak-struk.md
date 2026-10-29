@@ -690,7 +690,8 @@ lagi."), dan `GET /bagikan` disajikan `app.html` seperti route SPA lain. Bila ng
    POST yang lebih besar dari `client_max_body_size` domain jatahku.com dijawab 413 oleh nginx sebelum `return` jalan,
    jadi share besar saat service worker belum aktif berakhir di halaman galat nginx, bukan teks `?err=sw` (POST di
    langkah 1 tanpa isi, jadi tidak menguji ini). Cek nilainya dengan `sudo nginx -T | grep client_max_body_size`; bila
-   kecil (bawaan nginx 1m), tambahkan mis. `client_max_body_size 100m;` di dalam blok `location = /bagikan`.
+   kecil (bawaan nginx 1m), tambahkan mis. `client_max_body_size 110m;` di dalam blok `location = /bagikan` (cukup
+   untuk 10 file × 10 MB ditambah bungkus multipart; `100m` kurang sedikit).
 
 **Batas unggah `api.jatahku.com`.** Foto yang dibagikan tidak dikompres (server menerima sampai 8 MB) dan PDF sampai
 10 MB, padahal unggahan web selama ini foto terkompres ±300 KB. `client_max_body_size` nginx untuk api.jatahku.com harus
@@ -783,11 +784,11 @@ Catatan:
   `/app/config`) tidak punya batas waktu; hanya unggahan XHR yang punya. Koneksi yang menggantung membuat `/bagikan`
   tetap "Memuat…" (saat membaca `/app/config`) atau tanpa daftar bukti menunggu, dan angka server di banner tidak
   diperbarui (angka share lokal tetap tampil). Memuat ulang halaman memulihkannya.
-- **Share yang tidak pernah bisa terkirim** (ditinjau di review akhir Bagian B). Entri yang setiap kali gagal tanpa
-  jawaban yang terbaca (mis. 413 dari nginx tanpa header CORS) tetap "Bukti belum terkirim. Akan dikirim lagi saat
-  online.": `/bagikan` hanya punya "Kirim lagi", tanpa tombol buang, dan banner terus menampilkan "{n} bukti menunggu
-  dikirim". Entri itu pindah ke belakang antrean, jadi entri lain terkirim lebih dulu di putaran berikutnya. Selama
-  saklar menyala, yang menghapusnya hanya logout oleh user sendiri.
+- **Share yang tidak pernah bisa terkirim** (ditinjau di review akhir Bagian B). Entri yang setiap kali berakhir
+  "disimpan" (lihat "Hasil tiap entri"; mis. 413 dari nginx tanpa header CORS, yang terbaca browser sebagai koneksi
+  gagal) tidak pernah dibuang: `/bagikan` hanya punya "Kirim lagi", tanpa tombol buang, dan banner terus menampilkan
+  "{n} bukti menunggu dikirim". Entri itu pindah ke belakang antrean, jadi entri lain terkirim lebih dulu di putaran
+  berikutnya. Selama saklar menyala, yang menghapusnya hanya logout oleh user sendiri.
 
 ## Tes
 

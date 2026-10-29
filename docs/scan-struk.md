@@ -56,10 +56,10 @@ Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceip
 - Shortcut PWA **Foto struk** (`/transactions?struk=1`): form Catat terbuka dalam mode
   siap difoto, dengan tombol besar **Ambil foto struk**. Kamera tidak bisa dibuka tanpa
   ketukan, jadi shortcut hanya menyiapkan layar; parameternya dihapus dari URL.
-- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya membuka form Catat dengan foto yang sempat
-  diterima (hanya aplikasi native; web tidak bisa memulihkannya, lihat di bawah), atau menampilkan toast "Foto struk
-  tadi tidak sempat diterima, coba lagi." dengan tombol **Foto ulang** (kamera dibuka dulu, form Catat terbuka begitu
-  fotonya sampai; `openReceiptCamera` di `Layout.jsx`).
+- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya menampilkan toast "Foto struk tadi tidak sempat
+  diterima, coba lagi." dengan tombol **Foto ulang** (kamera dibuka dulu, form Catat terbuka begitu fotonya sampai;
+  `openReceiptCamera` di `Layout.jsx`). Web tidak bisa mengembalikan fotonya (lihat di bawah). `Layout.jsx` sudah
+  membuka form Catat bila `recover()` mengembalikan foto, untuk aplikasi native nanti (paket 3.2).
 
 Kamera dan galeri lewat `native.camera` (`takePhoto` / `pickPhoto` / `recover`; di web
 berupa `<input type=file>`), dan harus dipanggil sinkron di dalam handler ketukan
