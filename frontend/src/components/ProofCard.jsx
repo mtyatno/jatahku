@@ -26,13 +26,14 @@ const chipClass = selected => `inline-flex items-center gap-1.5 min-h-[36px] px-
 // Kartu konfirmasi satu item Kotak Struk (bukti QRIS/transfer, struk belanja, tidak dikenali): satu transaksi untuk
 // total dokumen. Aturannya di lib/proofFormat.js. Tidak ada geser dana dan tidak ada antrean offline di kartu ini.
 // - envelopes: daftar amplop (api.getEnvelopeSummary/getEnvelopes); yang ditawarkan disaring proofFormat.envelopeChoices.
-// - onSaved({ item, transaction, quotaNotice }) sesudah tercatat; onSkipped({ item, reason, detail }) sesudah dilewati.
+// - onSaved({ item, transaction, quotaNotice }) sesudah tercatat; onSkipped({ item, reason, detail }) sesudah dilewati;
+//   onBlocked({ item, text }) bila server menolak simpan/lewati (409/404): kartu terkunci, tidak ada tindakan lagi.
 // Isian (termasuk client_ref) hidup per item: kartu yang dipakai ulang untuk item lain mulai dari awal.
 export default function ProofCard(props) {
   return <ProofCardInner key={props.item?.id} {...props} />;
 }
 
-function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
+function ProofCardInner({ item, envelopes, onSaved, onSkipped, onBlocked }) {
   const ids = useId();
   const refRef = useRef(null);
   if (!refRef.current) refRef.current = newRef();   // client_ref: sekali per kartu
@@ -150,6 +151,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
       onSaved?.({ item, transaction: out.transaction, quotaNotice: out.quotaNotice });
     } else if (out.kind === 'blocked') {
       setBlockedReason(out.text);
+      onBlocked?.({ item, text: out.text });
     } else {
       setFailure(out);
     }
@@ -169,6 +171,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
       onSkipped?.({ item, reason, detail: out.item });
     } else if (out.kind === 'blocked') {
       setBlockedReason(out.text);
+      onBlocked?.({ item, text: out.text });
     } else {
       setFailure(out);
     }

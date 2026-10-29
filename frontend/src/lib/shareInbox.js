@@ -2,15 +2,15 @@
 //
 // Alur: menu Bagikan Android → POST multipart /bagikan → service worker (src/sw.js) menyimpan tiap file dan teksnya
 // ke IndexedDB `jatahku-share` (store `shares`) lalu menjawab 303 ke /bagikan?s=<batch>. Halaman /bagikan mengunggah
-// entri satu per satu ke Kotak Struk (`uploadFormFor`, tertua dulu lewat `nextToUpload`) dan menghapus entri yang
-// sudah diterima server. Semua fungsi di sini murni (tanpa DOM, tanpa `self`): dipakai service worker dan halaman,
-// dan diuji dengan node --test.
+// entri satu per satu ke Kotak Struk (`uploadFormFor`, urutan `nextToUpload`: tertua dulu, entri yang gagal ke
+// belakang) dan menghapus entri yang sudah diterima server. Semua fungsi di sini murni (tanpa DOM, tanpa `self`):
+// dipakai service worker dan halaman, dan diuji dengan node --test.
 //
 // Privasi: entri berisi gambar/PDF/teks bukti apa adanya (belum disamarkan). Isinya tidak pernah di-log. Entri dihapus
 // setelah terunggah, dan seluruh kotak dikosongkan saat user sendiri logout (`clearSharesOnLogout`). Sesi yang
 // kedaluwarsa tidak menghapusnya: bukti tetap aman sampai user login lagi.
 import { newRef } from './ref.js';
-import { PDF_TYPE, uploadTimeoutMs } from './receiptProgress.js';
+import { PDF_MAX_BYTES, PDF_TYPE, isPdfHead, uploadTimeoutMs } from './receiptProgress.js';
 
 export const SHARE_DB = 'jatahku-share'; // terpisah dari antrean offline (`jatahku-offline`, offlineSync.js)
 export const SHARE_STORE = 'shares';
@@ -28,6 +28,11 @@ function memoryStore() {
     put: async (entry) => { if (entry && entry.id != null) map.set(entry.id, entry); },
     del: async (id) => { map.delete(id); },
     clear: async () => { map.clear(); },
+    touch: async (id, patch) => {
+      if (!map.has(id)) return false;
+      map.set(id, { ...map.get(id), ...patch });
+      return true;
+    },
   };
 }
 
@@ -81,8 +86,10 @@ function defaultIndexedDB() {
   }
 }
 
-// Kotak share: { all(), put(entry), del(id), clear() }, entri ber-keyPath `id`. Tanpa IndexedDB → store memori kosong
-// yang tidak melempar. Dengan IndexedDB, error (penyimpanan penuh, DB rusak) menjadi promise yang ditolak.
+// Kotak share: { all(), put(entry), del(id), clear(), touch(id, patch) }, entri ber-keyPath `id`. Tanpa IndexedDB →
+// store memori kosong yang tidak melempar. Dengan IndexedDB, error (penyimpanan penuh, DB rusak) menjadi promise yang
+// ditolak. touch: ubah entri yang MASIH ada (baca + tulis dalam satu transaksi) → true; entri yang sudah dihapus
+// (logout, tab lain) tidak pernah dibuat ulang → false.
 export function shareStore(idb = defaultIndexedDB()) {
   if (!idb || typeof idb.open !== 'function') return memoryStore();
   return {
@@ -90,6 +97,11 @@ export function shareStore(idb = defaultIndexedDB()) {
     put: entry => run(idb, 'readwrite', s => s.put(entry)),
     del: id => run(idb, 'readwrite', s => s.delete(id)),
     clear: () => run(idb, 'readwrite', s => s.clear()),
+    touch: (id, patch) => run(idb, 'readwrite', (s) => {
+      const req = s.get(id);
+      req.onsuccess = () => { if (req.result) s.put({ ...req.result, ...patch }); };
+      return req;
+    }).then(prev => !!prev),
   };
 }
 
@@ -214,16 +226,19 @@ export async function handleShareTarget(request, { store, now = Date.now, newId 
 
 // ── Mengunggah (halaman /bagikan) ───────────────────────────────────────────────────────────────────
 
-const order = e => [Number(e.createdAt) || 0, Number(e.seq) || 0];
+// Urutan unggah: belum pernah dicoba (triedAt kosong = 0) dulu, lalu yang paling lama tidak dicoba, lalu share tertua
+// dan urutan dalam share. `triedAt` dicatat saat unggahan sebuah entri berakhir `keep` (runSharePage): entri yang terus
+// gagal (file tidak terbaca, 5xx per file) pindah ke belakang dan tidak menahan entri lain selamanya.
+const order = e => [Number(e.triedAt) || 0, Number(e.createdAt) || 0, Number(e.seq) || 0];
+const earlier = (a, b) => {
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+};
 
-// Entri berikutnya untuk diunggah: share tertua dulu, dalam satu share sesuai urutan dibagikan. Kosong → null.
+// Entri berikutnya untuk diunggah (urutan di atas). Kosong → null.
 export function nextToUpload(entries) {
   if (!Array.isArray(entries) || entries.length === 0) return null;
-  return entries.reduce((best, e) => {
-    const [t, s] = order(e);
-    const [bt, bs] = order(best);
-    return t < bt || (t === bt && s < bs) ? e : best;
-  });
+  return entries.reduce((best, e) => (earlier(order(e), order(best)) ? e : best));
 }
 
 // FormData untuk POST /kotak-struk/ (api.kotakUpload): tepat satu dari `file`/`text` (server menolak keduanya),
@@ -260,6 +275,10 @@ export const SHARE_TEXT = Object.freeze({
   cannotSend: 'Bukti tidak bisa dikirim.',
   tooMany: 'Terlalu banyak bukti. Coba lagi sebentar.', // = MSG_RATE server, untuk 429 tanpa detail
   empty: 'Tidak ada bukti yang menunggu.',
+  // File > 10 MB dibuang di HP (oversizeMessage): teks yang sama dengan intake server (kotak_struk/intake.py).
+  pdfTooBig: 'PDF terlalu besar (maks 10 MB)', // = MSG_PDF_BIG
+  photoTooBig: 'Foto terlalu besar (maks 8 MB)', // = MSG_IMAGE_BIG
+  badType: 'Kirim foto (JPG/PNG/WebP), PDF, atau teks', // = MSG_TYPE (415)
 });
 
 // Banner entri yang belum terkirim (offline). 0 → null.
@@ -276,12 +295,62 @@ const textDetail = res => (typeof res?.data?.detail === 'string' && res.data.det
 //   keep → entri tetap, putaran berhenti, dikirim lagi nanti (upload_id sama: tidak dobel): tanpa jawaban/batas waktu,
 //          5xx, 401 (sesi; refresh gagal → ke /login, entri aman), 429 (pesan server), dan 4xx lain (tidak dibuang).
 export function uploadOutcome(res) {
-  if (res?.ok) return { action: 'done', item: res.data };
+  // 2xx tanpa item (bukan jawaban API Kotak Struk, mis. halaman HTML dari proxy) → simpan: entri lokal hanya dihapus
+  // bila server terbukti menerima bukti itu.
+  if (res?.ok) return res.data?.id ? { action: 'done', item: res.data } : { action: 'keep', message: SHARE_TEXT.notSent };
   const status = Number(res?.status) || 0;
   if (status === 0 || res?.timedOut || status >= 500 || status === 401) return { action: 'keep', message: SHARE_TEXT.notSent };
   if (status === 413 || status === 415 || status === 422) return { action: 'drop', message: textDetail(res) || SHARE_TEXT.cannotSend };
   if (status === 429) return { action: 'keep', message: textDetail(res) || SHARE_TEXT.tooMany };
   return { action: 'keep', message: textDetail(res) || SHARE_TEXT.notSent };
+}
+
+// ── File yang tidak mungkin diterima server: diputuskan di HP, tanpa mengunggah ─────────────────────────────────
+// Server membaca paling banyak PDF_MAX_BYTES + 1 byte dan mengenali jenis dari isinya (intake.py): file > 10 MB tidak
+// pernah diterima. Mengunggahnya hanya membuang kuota data dan, di koneksi lambat, bisa berakhir di batas waktu (keep)
+// alih-alih 413 sehingga menahan antrean.
+
+const SNIFF_BYTES = 12; // cukup untuk tanda WebP (RIFF....WEBP)
+const startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
+
+// Jenis isi dari byte awal, sama dengan server (kotak_struk/extract.py sniff_type): JPG/PNG/WebP/PDF; selain itu null.
+export function sniffShareType(head) {
+  if (!head) return null;
+  const b = head instanceof ArrayBuffer ? new Uint8Array(head) : head;
+  if (startsWith(b, [0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (startsWith(b, [0x89, 0x50, 0x4e, 0x47])) return 'image/png';
+  if (startsWith(b, [0x52, 0x49, 0x46, 0x46]) && startsWith(b, [0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
+  if (isPdfHead(b)) return PDF_TYPE;
+  return null;
+}
+
+// Pesan untuk file > 10 MB: yang sama dengan jawaban server untuk isi itu (PDF → 413 PDF, JPG/PNG/WebP → 413 foto,
+// isi lain → 415). `head` = byte awal file, null bila tidak terbaca: menurut tipe yang dibagikan. File ≤ 10 MB atau teks
+// → null (diunggah; batas foto 8 MB tetap diputuskan server).
+export function oversizeMessage(entry, head) {
+  const blob = entry?.blob;
+  if (!blob || !(Number(blob.size) > PDF_MAX_BYTES)) return null;
+  if (head) {
+    const kind = sniffShareType(head);
+    if (kind === PDF_TYPE) return SHARE_TEXT.pdfTooBig;
+    return kind ? SHARE_TEXT.photoTooBig : SHARE_TEXT.badType;
+  }
+  return (entry.type || blob.type) === PDF_TYPE ? SHARE_TEXT.pdfTooBig : SHARE_TEXT.photoTooBig;
+}
+
+// Byte awal sebuah Blob, atau null bila tidak terbaca (berkas IndexedDB rusak/hilang). Tidak melempar.
+async function headOf(blob) {
+  try {
+    return new Uint8Array(await blob.slice(0, SNIFF_BYTES).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+// Penolakan lokal untuk satu entri: pesan (dibuang tanpa diunggah) atau null. Byte awal hanya dibaca untuk file > 10 MB.
+async function localRefusal(entry) {
+  if (!oversizeMessage(entry, null)) return null;
+  return oversizeMessage(entry, await headOf(entry.blob));
 }
 
 const IN_PROGRESS = new Set(['diterima', 'diproses']);
@@ -340,13 +409,15 @@ export async function discardBatch(store, batchId) {
 //   onItem(item)    → item dari unggahan, langsung saat diterima server
 //   onMode(mode)    → begitu mode diputuskan (sharePageMode)
 //   alive()         → false: halaman ditutup; tidak ada unggahan baru dan bukti menunggu tidak dimuat
+//   now()           → waktu untuk `triedAt`
 // → { mode, waiting, items, pending, dropped: [{name, message}], kept: pesan|null, storeFailed }. Tidak melempar.
-// Saklar mati: hanya getConfig yang dipanggil (lalu entri batch dihapus). Unggahan satu per satu, tertua dulu
-// (nextToUpload); tiap entri dicoba sekali per putaran, juga bila menghapusnya gagal (dikirim ulang lain kali dengan
-// upload_id yang sama → item yang sama, tidak dobel).
+// Saklar mati: hanya getConfig yang dipanggil (lalu entri batch dihapus). Unggahan satu per satu menurut nextToUpload;
+// tiap entri dicoba sekali per putaran, juga bila menghapusnya gagal (dikirim ulang lain kali dengan upload_id yang
+// sama → item yang sama, tidak dobel). File > 10 MB dibuang tanpa diunggah (oversizeMessage). Keep menghentikan
+// putaran (offline, 429, 5xx: entri lain tidak akan bernasib lain) dan mencatat `triedAt` pada entrinya.
 export async function runSharePage({
   getConfig, isOnline = () => true, batchId = null, store, upload, loadPending,
-  onItem = () => {}, onMode = () => {}, alive = () => true,
+  onItem = () => {}, onMode = () => {}, alive = () => true, now = Date.now,
 } = {}) {
   const out = { mode: 'hold', waiting: 0, items: [], pending: [], dropped: [], kept: null, storeFailed: false };
   let config = null;
@@ -378,15 +449,22 @@ export async function runSharePage({
     const entry = nextToUpload(entries.filter(e => !tried.has(e.id)));
     if (!entry) break;
     tried.add(entry.id);
-    let res = null;
-    try {
-      res = await upload(entry);
-    } catch {
-      res = null;
+    const refused = await localRefusal(entry);
+    let verdict = refused ? { action: 'drop', message: refused } : null;
+    if (!verdict) {
+      let res = null;
+      try {
+        res = await upload(entry);
+      } catch {
+        res = null;
+      }
+      verdict = uploadOutcome(res);
     }
-    const verdict = uploadOutcome(res);
     if (verdict.action === 'keep') {
       out.kept = verdict.message;
+      // Ke belakang antrean (nextToUpload). Hanya entri yang masih ada (touch): logout di tengah putaran tidak
+      // menghidupkannya lagi. Gagal → urutan saja yang tidak berubah.
+      try { await store.touch(entry.id, { triedAt: now() }); } catch { /* urutan saja */ }
       break;
     }
     try { await store.del(entry.id); } catch { /* lihat di atas: tidak dobel */ }
@@ -557,7 +635,8 @@ export function dropLine({ name = '', message = '' } = {}) {
 //              pesan unggah, dan entri dibuang dari putaran sebelumnya disembunyikan: kartu tidak boleh memanggil
 //              Kotak Struk saat saklar mati);
 //   notices  → pageNotices; banner → offline/ditahan dengan entri menunggu;
-//   finished → tombol Ke Transaksi (hanya mode kirim, pageFinished); empty → tidak ada kartu dan tidak ada pesan unggah.
+//   finished → tombol Ke Transaksi (hanya mode kirim, pageFinished); empty → tidak ada kartu dan tidak ada pesan unggah;
+//   retry    → tombol "Kirim lagi".
 export function pageView({
   mode = null, err = null, storeFailed = false, waiting = 0, items = [], handled = new Set(), running = false,
   polling = false, dropped = [], kept = null,
@@ -571,5 +650,8 @@ export function pageView({
     banner: mode === 'hold' ? offlineBannerText(waiting) : null,
     finished,
     empty: finished && items.length === 0 && dropped.length === 0 && !kept ? SHARE_TEXT.empty : null,
+    // Tombol "Kirim lagi": putaran berhenti dengan entri yang disimpan (keep) atau entri ditahan, tanpa putaran berjalan.
+    // Tanpa event `online` halaman tidak mencoba lagi sendiri (mis. 503 saat deploy, koneksi tersendat).
+    retry: !running && ((mode === 'send' && !!kept) || (mode === 'hold' && waiting > 0)),
   };
 }

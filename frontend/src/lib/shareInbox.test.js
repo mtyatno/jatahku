@@ -5,7 +5,7 @@ import {
   clearShares, clearSharesOnLogout, isShareTarget,
   uploadOutcome, needsPolling, POLL_MS, POLL_LIMIT_MS, SHARE_TEXT, offlineBannerText, shareFlag, sharePageMode,
   discardBatch, runSharePage, mergeItems, pollTargets, fetchPendingDetails, pageFinished, pageNotices, dropLine,
-  shareUploadTimeoutMs, pageView, serialRuns, createPoller,
+  shareUploadTimeoutMs, pageView, serialRuns, createPoller, sniffShareType, oversizeMessage,
 } from './shareInbox.js';
 import { DB_NAME as OFFLINE_DB } from './offlineSync.js';
 import { DEFAULT_CONFIG } from './appConfig.js';
@@ -13,7 +13,10 @@ import { uploadTimeoutMs } from './receiptProgress.js';
 
 function memStore() {
   const map = new Map();
-  return { map, all: async () => [...map.values()], put: async e => { map.set(e.id, e); }, del: async id => { map.delete(id); }, clear: async () => map.clear() };
+  return {
+    map, all: async () => [...map.values()], put: async e => { map.set(e.id, e); }, del: async id => { map.delete(id); }, clear: async () => map.clear(),
+    touch: async (id, patch) => { if (!map.has(id)) return false; map.set(id, { ...map.get(id), ...patch }); return true; },
+  };
 }
 let n = 0; const newId = () => `id-${++n}`;
 
@@ -357,6 +360,7 @@ function fakeIndexedDB() {
           assert.equal(storeName, name);
           return {
             getAll: () => request('getAll', () => [...st.rows.keys()].sort().map(k => st.rows.get(k))),
+            get: k => request('get', () => st.rows.get(k)),
             put: v => request('put', () => { writable(); st.rows.set(v[st.keyPath], v); return v[st.keyPath]; }),
             delete: k => request('delete', () => { writable(); st.rows.delete(k); }),
             clear: () => request('clear', () => { writable(); st.rows.clear(); }),
@@ -586,21 +590,21 @@ test('pageNotices (D3): ?err=sw, ?err=baca + petunjuk memori penuh, kotak share 
 
 test('pageView: memeriksa → hanya "Memuat…"; saklar mati → hanya "Fitur ini segera hadir." (kartu dan hasil unggah disembunyikan)', () => {
   const busyPage = { err: 'baca', storeFailed: true, waiting: 3, items: [{ id: 'a', status: 'siap' }], dropped: [{ name: 'x', message: 'y' }], kept: 'z' };
-  assert.deepEqual(pageView({ ...busyPage, mode: null }), { checking: true, soon: null, results: true, notices: [], banner: null, finished: false, empty: null });
-  assert.deepEqual(pageView({ ...busyPage, mode: 'off' }), { checking: false, soon: 'Fitur ini segera hadir.', results: false, notices: [], banner: null, finished: false, empty: null });
+  assert.deepEqual(pageView({ ...busyPage, mode: null }), { checking: true, soon: null, results: true, notices: [], banner: null, finished: false, empty: null, retry: false });
+  assert.deepEqual(pageView({ ...busyPage, mode: 'off' }), { checking: false, soon: 'Fitur ini segera hadir.', results: false, notices: [], banner: null, finished: false, empty: null, retry: false });
 });
 
 test('pageView: tahan (offline) → banner jumlah entri + pemberitahuan, tanpa Ke Transaksi', () => {
   const v = pageView({ mode: 'hold', err: 'sw', waiting: 2, items: [] });
   assert.deepEqual(v, {
     checking: false, soon: null, results: true, notices: ['Buka Jatahku sekali, lalu bagikan lagi.'],
-    banner: '2 bukti menunggu dikirim. Akan dikirim saat online.', finished: false, empty: null,
+    banner: '2 bukti menunggu dikirim. Akan dikirim saat online.', finished: false, empty: null, retry: true,
   });
   assert.equal(pageView({ mode: 'hold', waiting: 0 }).banner, null);
 });
 
 test('pageView: kirim → Ke Transaksi saat selesai; teks kosong hanya tanpa kartu, tanpa entri dibuang, tanpa pesan simpan', () => {
-  assert.deepEqual(pageView({ mode: 'send' }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: 'Tidak ada bukti yang menunggu.' });
+  assert.deepEqual(pageView({ mode: 'send' }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: 'Tidak ada bukti yang menunggu.', retry: false });
   assert.equal(pageView({ mode: 'send', waiting: 5 }).banner, null);
   assert.equal(pageView({ mode: 'send', running: true }).finished, false);
   assert.equal(pageView({ mode: 'send', running: true }).empty, null);
@@ -608,7 +612,7 @@ test('pageView: kirim → Ke Transaksi saat selesai; teks kosong hanya tanpa kar
   assert.equal(pageView({ mode: 'send', kept: 'Bukti belum terkirim. Akan dikirim lagi saat online.' }).empty, null);
   const siap = [{ id: 'a', status: 'siap' }];
   assert.equal(pageView({ mode: 'send', items: siap }).finished, false);
-  assert.deepEqual(pageView({ mode: 'send', items: siap, handled: new Set(['a']) }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: null });
+  assert.deepEqual(pageView({ mode: 'send', items: siap, handled: new Set(['a']) }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: null, retry: false });
 });
 
 test('pageNotices: tidak ada selama saklar diperiksa (mode null) dan dengan saklar mati (hanya "segera hadir")', () => {
@@ -1109,4 +1113,152 @@ test('createPoller (D5): stop() saat halaman dilepas membatalkan timer; GET yang
   assert.deepEqual(log.got, [], 'jawaban yang tiba sesudah dilepas diabaikan');
   assert.equal(t.pending(), 0, 'tidak ada GET baru');
   assert.deepEqual(log.running, [true], 'tidak ada pembaruan tampilan sesudah dilepas');
+});
+
+// ── Perbaikan putaran 1 (review B5): antrean tidak macet, file terlalu besar, respons tanpa item, Kirim lagi ──────
+
+test('uploadOutcome (m3): 2xx tanpa item (bukan jawaban Kotak Struk) → disimpan, entri tidak dihapus', () => {
+  for (const data of [{}, [], { detail: 'x' }, { id: '' }, null, undefined]) {
+    assert.deepEqual(uploadOutcome({ ok: true, status: 200, data }), { action: 'keep', message: KEEP_TEXT }, JSON.stringify(data));
+  }
+});
+
+test('runSharePage (m3): 2xx tanpa item → entri tetap di HP, tidak ada kartu', async () => {
+  const { deps, store, items } = pageDeps({ entries: [shareEntry('a', 'b1', 1)], replies: { a: { ok: true, status: 200, data: {} } } });
+  const out = await runSharePage(deps);
+  assert.equal(out.kept, KEEP_TEXT);
+  assert.deepEqual([out.items, items], [[], []]);
+  assert.deepEqual([...store.map.keys()], ['a']);
+});
+
+test('pageView: "Kirim lagi" sesudah putaran berhenti dengan entri disimpan, atau entri ditahan; tidak selama putaran berjalan', () => {
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT }).retry, true);
+  assert.equal(pageView({ mode: 'send', kept: 'Terlalu banyak bukti. Coba lagi sebentar.' }).retry, true);
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT, running: true }).retry, false);
+  assert.equal(pageView({ mode: 'send' }).retry, false);
+  assert.equal(pageView({ mode: 'hold', waiting: 1 }).retry, true);
+  assert.equal(pageView({ mode: 'hold', waiting: 1, running: true }).retry, false);
+  assert.equal(pageView({ mode: 'hold', waiting: 0 }).retry, false);
+  assert.equal(pageView({ mode: 'off', kept: KEEP_TEXT, waiting: 2 }).retry, false);
+  assert.equal(pageView({ mode: null, kept: KEEP_TEXT, waiting: 2 }).retry, false);
+});
+
+test('nextToUpload (m1): yang belum pernah dicoba dulu, lalu yang paling lama tidak dicoba; yang setara menurut urutan share', () => {
+  const e = (id, createdAt, seq, triedAt) => ({ id, createdAt, seq, ...(triedAt ? { triedAt } : {}) });
+  assert.equal(nextToUpload([e('racun', 1, 0, 500), e('baik', 2, 0)]).id, 'baik', 'entri yang gagal pindah ke belakang');
+  assert.equal(nextToUpload([e('a', 1, 0, 900), e('b', 2, 0, 700)]).id, 'b', 'paling lama tidak dicoba');
+  assert.equal(nextToUpload([e('a', 2, 0, 700), e('b', 1, 1, 700), e('c', 1, 0, 700)]).id, 'c', 'triedAt sama → share tertua, urutan dibagikan');
+  assert.equal(nextToUpload([e('x', 5, 0), e('y', 3, 2), e('z', 3, 1)]).id, 'z', 'belum ada yang dicoba → urutan lama');
+});
+
+test('runSharePage (m1): keep mencatat triedAt pada entri; putaran berikutnya mendahulukan entri lain (satu file rusak tidak menahan antrean)', async () => {
+  let t = 1000;
+  const { deps, calls, store } = pageDeps({
+    entries: [shareEntry('racun', 'b1', 1), shareEntry('baik', 'b2', 2)],
+    replies: { racun: { ok: false, status: 500, data: {} } },
+  });
+  deps.now = () => t;
+  const first = await runSharePage(deps);
+  assert.equal(first.kept, KEEP_TEXT);
+  assert.deepEqual(calls, ['config', 'upload:racun', 'pending'], 'putaran tetap berhenti pada keep');
+  assert.equal(store.map.get('racun').triedAt, 1000);
+  assert.equal(store.map.get('baik').triedAt, undefined);
+  t = 2000;
+  calls.length = 0;
+  const second = await runSharePage(deps);
+  assert.deepEqual(calls, ['config', 'upload:baik', 'upload:racun', 'pending'], 'yang belum dicoba dulu');
+  assert.deepEqual(second.items.map(i => i.id), ['item-baik']);
+  assert.deepEqual([...store.map.keys()], ['racun']);
+  assert.equal(store.map.get('racun').triedAt, 2000);
+});
+
+test('runSharePage (m1): entri yang dihapus selama unggahan (logout) tidak dihidupkan lagi oleh triedAt', async () => {
+  const { deps, store } = pageDeps({ entries: [shareEntry('a', 'b1', 1)] });
+  deps.upload = async () => { await store.clear(); return { ok: false, status: 0, data: {} }; }; // logout di tengah unggahan
+  const out = await runSharePage(deps);
+  assert.equal(out.kept, KEEP_TEXT);
+  assert.equal(store.map.size, 0);
+});
+
+test('shareStore.touch (m1): mengubah entri yang masih ada; entri yang sudah dihapus (logout, tab lain) tidak dibuat ulang', async () => {
+  for (const s of [shareStore(fakeIndexedDB()), shareStore(null)]) { // IndexedDB tiruan, lalu store memori
+    await s.put({ id: 'a', text: 'Rp1' });
+    assert.equal(await s.touch('a', { triedAt: 5 }), true);
+    assert.deepEqual(await s.all(), [{ id: 'a', text: 'Rp1', triedAt: 5 }]);
+    await clearShares(s);
+    assert.equal(await s.touch('a', { triedAt: 6 }), false);
+    assert.deepEqual(await s.all(), [], 'tidak dibuat ulang');
+  }
+});
+
+const MiB = 1024 * 1024;
+const HEAD = {
+  pdf: [0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34],
+  jpg: [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10],
+  png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+  webp: [0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50],
+  heic: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63],
+};
+// File besar tiruan tanpa mengalokasikan isinya: `size` + `slice()` byte awal (Blob kecil sungguhan); atau tidak terbaca.
+const bigBlob = (size, head, type = '') => ({ size, type, slice: (a = 0, b = head.length) => new Blob([new Uint8Array(head.slice(a, b))]) });
+const unreadableBlob = (size, type = '') => ({ size, type, slice: () => { throw new DOMException('rusak', 'NotReadableError'); } });
+
+test('sniffShareType: jenis dari byte awal seperti server (JPG/PNG/WebP/PDF); lainnya, terlalu pendek, atau kosong → null', () => {
+  assert.equal(sniffShareType(new Uint8Array(HEAD.jpg)), 'image/jpeg');
+  assert.equal(sniffShareType(new Uint8Array(HEAD.png)), 'image/png');
+  assert.equal(sniffShareType(new Uint8Array(HEAD.webp)), 'image/webp');
+  assert.equal(sniffShareType(new Uint8Array(HEAD.pdf)), 'application/pdf');
+  assert.equal(sniffShareType(new Uint8Array(HEAD.pdf).buffer), 'application/pdf', 'ArrayBuffer');
+  const riffAvi = [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x41, 0x56, 0x49, 0x20];
+  for (const head of [HEAD.heic, riffAvi, HEAD.webp.slice(0, 11), [0xff, 0xd8], [0x89, 0x50, 0x4e], [0x25, 0x50, 0x44, 0x46], []]) {
+    assert.equal(sniffShareType(new Uint8Array(head)), null, JSON.stringify(head));
+  }
+  assert.equal(sniffShareType(null), null);
+});
+
+test('oversizeMessage (m1): file > 10 MB → pesan server untuk isinya; byte awal tak terbaca → menurut tipe; ≤ 10 MB atau teks → null', () => {
+  const over = 10 * MiB + 1;
+  const e = (type, size = over) => ({ id: 'x', name: 'x', type, blob: { size, type } });
+  const h = k => new Uint8Array(HEAD[k]);
+  assert.equal(SHARE_TEXT.pdfTooBig, 'PDF terlalu besar (maks 10 MB)'); // = MSG_PDF_BIG server (intake.py)
+  assert.equal(SHARE_TEXT.photoTooBig, 'Foto terlalu besar (maks 8 MB)'); // = MSG_IMAGE_BIG
+  assert.equal(SHARE_TEXT.badType, 'Kirim foto (JPG/PNG/WebP), PDF, atau teks'); // = MSG_TYPE
+  assert.equal(oversizeMessage(e('application/pdf'), h('pdf')), SHARE_TEXT.pdfTooBig);
+  assert.equal(oversizeMessage(e(''), h('pdf')), SHARE_TEXT.pdfTooBig, 'tanpa tipe: isinya yang menentukan, seperti server');
+  for (const k of ['jpg', 'png', 'webp']) assert.equal(oversizeMessage(e('image/jpeg'), h(k)), SHARE_TEXT.photoTooBig, k);
+  assert.equal(oversizeMessage(e('application/pdf'), h('jpg')), SHARE_TEXT.photoTooBig, 'tipe keliru: isinya yang menentukan');
+  assert.equal(oversizeMessage(e('image/heic'), h('heic')), SHARE_TEXT.badType, 'isi tidak dikenal: 415 server');
+  assert.equal(oversizeMessage(e('application/pdf'), null), SHARE_TEXT.pdfTooBig, 'tidak terbaca → tipe yang dibagikan');
+  for (const type of ['image/jpeg', 'image/heic', '', 'application/octet-stream']) {
+    assert.equal(oversizeMessage(e(type), null), SHARE_TEXT.photoTooBig, type);
+  }
+  assert.equal(oversizeMessage({ id: 'x', type: '', blob: { size: over, type: 'application/pdf' } }, null), SHARE_TEXT.pdfTooBig, 'tipe Blob');
+  assert.equal(oversizeMessage(e('application/pdf', 10 * MiB), h('pdf')), null, 'tepat 10 MB (= PDF_MAX_BYTES server) tetap diunggah');
+  assert.equal(oversizeMessage(e('image/jpeg', 9 * MiB), h('jpg')), null, 'foto 8–10 MB: server yang memutuskan');
+  assert.equal(oversizeMessage({ id: 't', text: 'x'.repeat(5000) }, null), null, 'teks tidak pernah dibuang di HP');
+  assert.equal(oversizeMessage(undefined, null), null);
+});
+
+test('runSharePage (m1): file > 10 MB dibuang di HP tanpa diunggah, dengan pesan server; putaran lanjut ke entri berikutnya', async () => {
+  const over = 10 * MiB + 1;
+  const { deps, calls, store } = pageDeps({
+    entries: [
+      shareEntry('pdf', 'b1', 1, 0, { name: 'mutasi.pdf', type: 'application/pdf', blob: bigBlob(over, HEAD.pdf, 'application/pdf') }),
+      shareEntry('foto', 'b1', 1, 1, { name: 'struk.jpg', type: 'image/jpeg', blob: bigBlob(15 * MiB, HEAD.jpg, 'image/jpeg') }),
+      shareEntry('heic', 'b1', 1, 2, { name: 'IMG_1.heic', type: 'image/heic', blob: bigBlob(over, HEAD.heic, 'image/heic') }),
+      shareEntry('rusak', 'b1', 1, 3, { name: 'rusak.pdf', type: 'application/pdf', blob: unreadableBlob(over, 'application/pdf') }),
+      shareEntry('pas', 'b1', 1, 4, { name: 'pas.pdf', type: 'application/pdf', blob: bigBlob(10 * MiB, HEAD.pdf, 'application/pdf') }),
+    ],
+  });
+  const out = await runSharePage(deps);
+  assert.deepEqual(calls, ['config', 'upload:pas', 'pending'], 'hanya file ≤ 10 MB yang diunggah');
+  assert.deepEqual(out.dropped, [
+    { name: 'mutasi.pdf', message: 'PDF terlalu besar (maks 10 MB)' },
+    { name: 'struk.jpg', message: 'Foto terlalu besar (maks 8 MB)' },
+    { name: 'IMG_1.heic', message: 'Kirim foto (JPG/PNG/WebP), PDF, atau teks' },
+    { name: 'rusak.pdf', message: 'PDF terlalu besar (maks 10 MB)' },
+  ]);
+  assert.equal(out.kept, null);
+  assert.deepEqual(out.items.map(i => i.id), ['item-pas']);
+  assert.equal(store.map.size, 0, 'entri yang dibuang dihapus dari HP');
 });

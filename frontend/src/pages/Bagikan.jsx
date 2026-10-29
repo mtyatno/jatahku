@@ -49,6 +49,7 @@ export default function Bagikan() {
   const startedAt = useRef(new Map());      // id → saat item diterima dari unggahan (batas pantau 30 dtk)
   const life = useRef({ alive: false });    // satu objek per pemasangan: async yang tertinggal berhenti sendiri
   const envLoaded = useRef(false);
+  const startRef = useRef(null);            // putaran baru dari tombol "Kirim lagi" (serialRuns pemasangan ini)
 
   // Detail baru → kartu (satu per id, detail terbaru di tempat yang sama; key kartu tidak pernah berganti).
   const mergeIn = useCallback((me, incoming) => {
@@ -128,10 +129,12 @@ export default function Bagikan() {
 
     // Satu putaran pada satu waktu: event `online` di tengah putaran → satu putaran lagi sesudahnya.
     const start = serialRuns(runOnce, { alive: () => me.alive });
+    startRef.current = start;
     start();
     window.addEventListener('online', start);
     return () => {
       me.alive = false;
+      if (startRef.current === start) startRef.current = null;
       poller.stop();
       setPolling(false);   // hanya `?s=` yang berganti: pemantau baru di atas menyalakannya lagi bila masih ada target
       window.removeEventListener('online', start);
@@ -146,7 +149,8 @@ export default function Bagikan() {
     api.getEnvelopeSummary().then((list) => { if (me.alive) setEnvelopes(Array.isArray(list) ? list : []); });
   }, [items.length]);
 
-  // Kartu dicatat/dilewati → tandai, lalu segarkan bukti menunggu (flag item lain bisa berubah, mis. bukti yang sama).
+  // Kartu dicatat, dilewati, atau ditolak server (terblokir, tidak ada tindakan lagi) → tandai, lalu segarkan bukti
+  // menunggu (flag item lain bisa berubah, mis. bukti yang sama).
   const settle = useCallback(({ item } = {}) => {
     if (!item?.id) return;
     const me = life.current;
@@ -183,6 +187,9 @@ export default function Bagikan() {
 
       <ReceiptStatusCard state={progress} />
       {view.results && kept && <p role="status" className="text-sm text-amber-600">{kept}</p>}
+      {view.retry && (
+        <button type="button" onClick={() => startRef.current?.()} className="btn-outline w-full sm:w-auto">Kirim lagi</button>
+      )}
       {view.results && dropped.length > 0 && (
         <ul role="alert" className="space-y-1">
           {dropped.map((d, i) => <li key={i} className="text-sm text-red-600 break-words">{dropLine(d)}</li>)}
@@ -190,7 +197,7 @@ export default function Bagikan() {
       )}
 
       {view.results && items.map(item => (
-        <ProofCard key={item.id} item={item} envelopes={envelopes} onSaved={settle} onSkipped={settle} />
+        <ProofCard key={item.id} item={item} envelopes={envelopes} onSaved={settle} onSkipped={settle} onBlocked={settle} />
       ))}
 
       {view.empty && <p className="text-sm text-gray-500">{view.empty}</p>}
