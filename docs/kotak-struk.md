@@ -719,6 +719,10 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
 Semua langkah saat `features.receipt_inbox` dinyalakan, berurutan. Aturan nginx boleh dipasang lebih dulu, langsung
 sesudah Bagian B di-merge; ia harus sudah aktif sebelum PR `share_target` di-merge.
 
+**Status produksi (29 Okt 2026):** aturan nginx `/bagikan` terpasang (GET → 200 `text/html`, POST → 303
+`…/bagikan?err=sw`) dan batas unggah `api.jatahku.com` sudah dicek (file 10 MB → 401). Langkah 2 dan 3 di "Urutan"
+sudah selesai.
+
 **Aturan nginx `/bagikan`** (di luar repo: konfigurasi nginx domain jatahku.com di HestiaCP). Share yang sampai ke
 server karena service worker belum aktif dijawab 303 ke `/bagikan?err=sw` ("Buka Jatahku sekali, lalu bagikan
 lagi."), dan `GET /bagikan` disajikan `app.html` seperti route SPA lain. Bila nginx tidak menyajikan `app.html` untuk
@@ -729,8 +733,13 @@ lagi."), dan `GET /bagikan` disajikan `app.html` seperti route SPA lain. Bila ng
    curl -sI https://jatahku.com/bagikan
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -X POST https://jatahku.com/bagikan
    ```
-2. Tambahkan blok ini ke konfigurasi nginx domain jatahku.com, di tempat yang sama dengan aturan route SPA yang ada
-   (`app.html` disalin `deploy.sh` ke `/home/jatahku/web/jatahku.com/public_html/`):
+2. Tambahkan blok ini sebagai file tambahan HestiaCP domain jatahku.com,
+   `/home/jatahku/conf/web/jatahku.com/nginx.ssl_conf_bagikan` (file tambahan dibaca lewat
+   `include …/nginx.ssl_conf_*;` di `nginx.ssl.conf`, jadi tidak hilang saat template dibangun ulang; perhatikan
+   garis bawah sebelum `conf` — nama `nginx.ssl.conf_*` tidak terbaca). Cek polanya dulu dengan
+   `sudo grep -n include /home/jatahku/conf/web/jatahku.com/nginx.ssl.conf`. Route SPA lain sudah disajikan
+   `app.html` oleh template (`try_files $uri $uri/ /app.html`), jadi GET `/bagikan` sudah 200 sebelum aturan ini;
+   yang ditambahkan aturan ini adalah POST → 303:
    ```nginx
    location = /bagikan {
        if ($request_method = POST) { return 303 /bagikan?err=sw; }
