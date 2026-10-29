@@ -326,17 +326,19 @@ Struk dan untuk `ProofCard`. Tanggal dokumen = tanggal struk, atau tanggal WIB d
   Nama harus sama dengan kode: `action` = `POST /bagikan` (`isShareTarget`), `files` = `formData.getAll('files')`,
   `title`/`text`/`url` = kolom teks share.
 
-**Pemilik kotak share** (`shareInbox.ensureShareOwner`): entri share tidak membawa id user, jadi kotak dicap dengan
-pemiliknya: `localStorage` `jatahku_share_owner` = id user. Cap diperiksa oleh pembaca kotak (banner dan `/bagikan`),
-tepat sebelum kotak dibaca dan lagi bila user berganti, bukan oleh jalur login. Saklar mati: cap tidak dibaca dan tidak
-ditulis. Saklar yang belum diketahui ditahan seperti offline, dan `/bagikan` tetap memeriksa cap sebelum menghitung entri
-yang menunggu.
-- Belum ada cap → dicap dengan user yang login. Cap sama → kotak dibaca. Cap akun lain → kotak dikosongkan dulu, baru
-  dicap ulang (cap tidak pernah berganti selama entri akun lain masih ada). Share akun sebelumnya tidak pernah
+**Pemilik kotak share** (`shareInbox.ensureShareOwner`, `tokenSubject`): entri share tidak membawa id user, jadi kotak
+dicap dengan pemiliknya: `localStorage` `jatahku_share_owner` = id akun token sesi yang dipakai tab itu (klaim `sub`
+access token). Itu akun yang menerima unggahan, bukan profil yang tampil: bila `/auth/me` gagal sesudah login, profil
+di layar bisa salinan cache akun sebelumnya. Cap diperiksa oleh pembaca kotak (banner dan `/bagikan`), tepat sebelum
+kotak dibaca dan lagi bila user berganti, bukan oleh jalur login. Saklar mati: cap tidak dibaca dan tidak ditulis.
+Saklar yang belum diketahui ditahan seperti offline, dan `/bagikan` tetap memeriksa cap sebelum menghitung entri yang
+menunggu.
+- Belum ada cap → dicap dengan akun token sesi itu. Cap sama → kotak dibaca. Cap akun lain → kotak dikosongkan dulu,
+  baru dicap ulang (cap tidak pernah berganti selama entri akun lain masih ada). Share akun sebelumnya tidak pernah
   terhitung, tampil, atau terunggah ke akun baru.
-- Cap tidak terbaca atau tidak bisa ditulis, atau kotak gagal dikosongkan → kotak dianggap tidak terbaca, dicoba lagi
-  pada bacaan berikutnya. Banner tanpa angka share lokal; `/bagikan` menampilkan "File yang dibagikan tidak bisa dibaca.
-  Coba bagikan lagi.".
+- Token sesi tidak ada atau tidak terbaca, cap tidak terbaca atau tidak bisa ditulis, atau kotak gagal dikosongkan →
+  kotak dianggap tidak terbaca, dicoba lagi pada bacaan berikutnya. Banner tanpa angka share lokal; `/bagikan`
+  menampilkan "File yang dibagikan tidak bisa dibaca. Coba bagikan lagi.".
 - Logout oleh user sendiri mengosongkan kotak tetapi menyimpan cap. Share yang dibagikan sesudahnya saat belum login
   hanya terkirim ke akun yang sama; bila akun lain yang login berikutnya, share itu dihapus. Privasi lebih penting
   daripada kenyamanan. Share yang tersimpan sebelum kotak pernah dicap (belum ada banner atau `/bagikan` yang membacanya
@@ -439,8 +441,8 @@ sini.
 - Dipasang di `Layout` tepat sesudah banner antrean offline, jadi tampil di semua halaman kecuali `/bagikan` sendiri
   (juga `/bagikan/`; besar-kecil huruf diabaikan). Spec 5c menyebut "beranda dan Transaksi"; banner ini mengikuti pola
   banner antrean offline, yang tampil di semua halaman.
-- Dua angka: share yang belum terkirim (jumlah entri IndexedDB `jatahku-share`, hanya bila kotaknya milik user yang
-  login: lihat "Pemilik kotak share") dan item `siap` milik user di server (`GET /kotak-struk/count?status=siap`).
+- Dua angka: share yang belum terkirim (jumlah entri IndexedDB `jatahku-share`, hanya bila kotaknya milik akun token
+  sesi tab itu: lihat "Pemilik kotak share") dan item `siap` milik user di server (`GET /kotak-struk/count?status=siap`).
   Server menghitung semua item `siap`, juga dari Telegram, chat web, dan scan form Catat yang ditinggalkan tanpa
   disimpan atau dihapus.
 - Teks: "{u} bukti menunggu dikirim, {r} menunggu dicatat · Tinjau", "{u} bukti menunggu dikirim · Kirim", atau "{r}
@@ -825,8 +827,9 @@ Catatan:
 - **Ganti akun di HP yang sama.** Kotak share dicap dengan pemiliknya (lihat "Pemilik kotak share"), jadi share akun
   sebelumnya tidak pernah terhitung, tampil, atau terunggah ke akun lain. Harganya: share yang dibagikan saat belum
   login dihapus bila akun lain yang login berikutnya, dan share yang tersimpan sebelum kotak pernah dicap diklaim akun
-  pertama yang membacanya. Tab lain yang masih menampilkan akun sebelumnya (tokennya sudah milik akun baru) bisa
-  mengosongkan kotak akun baru: aman untuk privasi, tetapi share itu hilang.
+  pertama yang membacanya. Tab yang dibuka sebelum ganti akun menyimpan sesi akun sebelumnya di memori, dan
+  pemeriksaan pemiliknya berjalan sebagai akun itu, jadi tab itu bisa mengosongkan kotak akun baru: aman untuk privasi,
+  tetapi share itu hilang.
 - **Batas waktu permintaan.** `/bagikan` memakai batas waktu baca (config 10 dtk, daftar bukti menunggu 20 dtk, satu
   item 20 dtk; lihat "Halaman `/bagikan`"), jadi koneksi yang menggantung tidak lagi menahan halaman. Yang belum:
   permintaan di kartu (Simpan, lewati, Ubah nama, saran catatan) dan COUNT banner tetap tanpa batas waktu. Tombol kartu
@@ -837,9 +840,13 @@ Catatan:
   terkirim lebih dulu di putaran berikutnya.
 - **Struk belanja tercatat dua kali.** Server menerima lebih dari satu transaksi per struk belanja (dicatat per barang),
   jadi klien yang menjaganya: form Catat tidak menambah baris untuk struk yang simpanannya di antrean offline,
-  `/bagikan` menampilkan kartu struk itu hanya-baca, dan kartu membaca ulang struk tepat sebelum Simpan. Sisa: dua tab
-  yang menekan Simpan pada saat yang sama (cek ulang keduanya masih melihat `siap`), dan tombol bot Telegram yang diketuk
-  dalam 10 menit sesudah kartu mencatat struk yang sama (sesi tombol `TXN_TTL` = 600 dtk). Keduanya dua tindakan sadar.
+  `/bagikan` menampilkan kartu struk itu hanya-baca, dan kartu membaca ulang struk tepat sebelum Simpan. Sisanya selalu
+  dua penyimpanan yang disengaja:
+  - baris form Catat yang di-scan sebelum struk itu tercatat di tempat lain (kartu `/bagikan`, tab atau HP lain) tetap
+    tersimpan lewat "Simpan Semua", karena form tidak membaca ulang item sebelum menyimpan;
+  - dua tab yang menekan Simpan pada saat yang sama (cek ulang keduanya masih melihat `siap`);
+  - tombol bot Telegram yang diketuk dalam 10 menit sesudah kartu mencatat struk yang sama (sesi tombol `TXN_TTL` =
+    600 dtk).
 - **Struk yang tercatat sebagian tidak bisa di-scan ulang.** Bila sebagian barang struk sudah tersimpan lalu form Catat
   ditutup, foto yang sama di-scan lagi terblokir ("Bukti ini sudah tercatat."); sisanya harus dari antrean offline atau
   diketik. Mengizinkan scan ulang untuk sisanya butuh "plan id" di server (FS-2).

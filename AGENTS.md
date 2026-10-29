@@ -229,11 +229,16 @@ Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun n
      Simpan Semua meminta "Pilih tanggal catat" sampai salah satu dipilih.
    - × pada baris hasil scan → item dilewati (tab Network: `POST /kotak-struk/{id}/lewati` → 200).
    - Simpan struk hasil scan saat offline (DevTools → Offline), lalu online → tersinkron sekali (satu set transaksi).
-     Ulangi dengan struk lain, tetapi kunci amplopnya sebelum online (sinkron ditolak): scan ulang foto yang sama →
-     "Struk ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.", tanpa baris baru;
-     buka kunci, lalu "Coba lagi" di pemberitahuan antrean → tercatat sekali.
+     Ulangi dengan struk lain. Sebelum menyimpan offline, kunci **setiap** amplop di rencana kartunya (baris "Dicatat …
+     1 per barang"; saran per barang bisa membagi satu struk ke beberapa amplop, mis. KOPI → Makan). Kunci dari tab
+     lain supaya form tidak tertutup. Lalu: simpan offline → online (sinkron ditolak) → scan ulang foto yang sama →
+     "Struk ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.", tanpa baris baru →
+     buka kunci → "Coba lagi semua" di pemberitahuan antrean → tercatat sekali (satu set). Bila ada amplop yang tidak
+     dikunci, bagian itu tersinkron, struknya jadi tercatat, dan scan ulang menampilkan "Bukti ini sudah tercatat.".
    - HP dengan PWA terpasang (service worker lama, bukan incognito): sebelum merge, catat satu transaksi saat offline
-     (masuk antrean) dan tutup app. Sesudah deploy, buka app saat online, tunggu muat ulang otomatis, lalu
+     (masuk antrean), tutup app, dan biarkan HP tetap offline sampai deploy tayang (cek `version.json` dari perangkat
+     lain). Kalau HP online lebih dulu, app atau service worker lama sudah mengirim antreannya, dan cek ini tidak
+     menguji pembaruan. Sesudah deploy tayang: online-kan HP, buka app, tunggu muat ulang otomatis, lalu
      `https://jatahku.com/version.json` → commit baru, dan transaksi di antrean tetap terkirim (sekali).
 3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
    saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
