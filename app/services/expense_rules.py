@@ -12,6 +12,7 @@ Urutan cek (check_expense):
    ada selalu selesai utuh (aturan pemilik produk, 15 Okt 2026).
 3. check_behavior: kunci amplop, dana (belum didanai / tidak cukup), limit
    harian. Cooling period tidak lagi menahan pencatatan (Pikir-Pikir Fase 0).
+   Struk/bukti periode lalu yang dicatat di tanggalnya: PAST_PERIOD_IGNORED.
 """
 from decimal import Decimal
 
@@ -24,6 +25,11 @@ NOT_SPENDABLE_MSG = (
     "Transfer dana ke amplop expense terlebih dahulu."
 )
 FUNDS_BLOCKS = ("not_funded", "insufficient")
+# Struk/bukti dari periode lalu yang dicatat di tanggalnya (bot: jawaban "📅 {tanggal}", payload `past_period`; web:
+# baris dengan `receipt_item_id` bertanggal sebelum awal periode berjalan): dana dan limit harian periode berjalan
+# bukan urusannya, jadi blok ini dilewati tanpa tawaran geser dana atau naikkan limit. Kunci amplop, kuota paket,
+# amplop tabungan, dan galat tetap memblokir.
+PAST_PERIOD_IGNORED = (*FUNDS_BLOCKS, "daily_limit")
 
 
 def envelope_purpose(env) -> str:

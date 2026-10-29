@@ -12,6 +12,8 @@
 //   queue.onBackgroundSynced(cb)   → cb(summary) setelah sinkron di latar; → pelepas
 //   files.save(blob, filename)     → simpan ke perangkat
 //   files.share(blob, filename, {title}) → 'shared' | 'cancelled' | 'saved'
+//   files.pickDocument()           → Promise<File|null> gambar atau PDF dari berkas (null = batal); panggil sinkron dari
+//                                    handler ketukan; bukan kamera: penanda camera.recover tidak ditulis/dihapus
 //   camera.takePhoto()             → Promise<File|null> foto dari kamera (null = batal); panggil sinkron dari handler ketukan
 //   camera.pickPhoto()             → Promise<File|null> foto dari galeri (null = batal); panggil sinkron dari handler ketukan
 //   camera.recover()               → Promise<{file, lost}> panggil sekali saat app dibuka: file = foto yang sempat

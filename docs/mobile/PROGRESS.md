@@ -4,7 +4,7 @@ Diubah **di PR sesi itu sendiri** (lihat `03-workflow.md` §2). Status: belum ·
 
 Jalur: O = pemilik produk, A = Dev A (server & web), B = Dev B (mobile). Minggu dihitung dari tanggal mulai di tracker. Detail tiap paket (file, kriteria selesai, dependensi): `03-workflow.md` §6 dan `01-kajian.md` bagian WBS.
 
-Paket FS dipecah menjadi **FS-1** (rilis 1) dan **FS-2** (menyusul, minggu belum ditetapkan) pada 26 Okt 2026; rinciannya di `03-workflow.md` §6. Paket FS-1 Bagian A ditandai `review` dengan keterangan "selesai di branch, menunggu merge": belum di-merge dan belum tayang, jadi belum `selesai` (aturan `/cek-deploy`). Bagian B (PWA) belum dimulai; A29 (sampel marketplace) dan A60–A62 (sisa FS.8) ikut FS-2, dan A75–A77 serta B62–B67 bergantung pada FS.10 (FS-2, belum dijadwalkan). A28 (kalibrasi, A14 di rencana) `terhambat` menunggu sampel dari pemilik produk.
+Paket FS dipecah menjadi **FS-1** (rilis 1) dan **FS-2** (menyusul, minggu belum ditetapkan) pada 26 Okt 2026; rinciannya di `03-workflow.md` §6. Paket FS-1 Bagian A tayang 28 Okt 2026 (PR #130, verifikasi versi yang tayang lulus) dan ditandai `selesai`, kecuali A68 (sisa `privacy.html`, DPIA, formulir toko). Bagian B (PWA dan web) selesai di kode di branch `feat/bagikan-ke-jatahku-web`, dalam PR #132 yang menunggu merge: A58–A59 dan A66–A67 ditandai `review`, dan menjadi `selesai` bersama rilis yang menyalakan saklar `receipt_inbox` (fiturnya baru terlihat user setelah saklar menyala; menu Bagikan Android setelah PR kecil `share_target` di-merge); A29 (sampel marketplace) dan A60–A62 (sisa FS.8) ikut FS-2, dan A75–A77 serta B62–B67 bergantung pada FS.10 (FS-2, belum dijadwalkan). A28 (kalibrasi, A14 di rencana) `terhambat` menunggu sampel dari pemilik produk.
 
 | Kode sesi | WBS | Jalur | Paket | Minggu | Status | Pemilik | PR | Mulai | Selesai |
 |---|---|---|---|---|---|---|---|---|---|
@@ -28,19 +28,19 @@ Paket FS dipecah menjadi **FS-1** (rilis 1) dan **FS-2** (menyusul, minggu belum
 | A21–A22 | 1.7 | A | Izin eksplisit sebelum audio/foto dikirim ke Groq | 3 | belum |  |  |  | |
 | A23–A24 | 1.8 | A | Amankan endpoint /auth/link/* | 3 | belum |  |  |  | |
 | A25 | 1.9 | A | Bundel font lokal | 4 | belum |  |  |  | |
-| A26–A27 | FS.5 | A | **FS-1** Korpus uji dan gerbang rilis: alat `kotak_corpus`, 6 sampel sintetis, tes gerbang (dilewati sampai A28) — selesai di branch, menunggu merge | 4 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
+| A26–A27 | FS.5 | A | **FS-1** Korpus uji dan gerbang rilis: alat `kotak_corpus`, 6 sampel sintetis, tes gerbang (dilewati sampai A28) | 4 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
 | A28 | FS.5 | A | **FS-1** Kalibrasi dengan sampel nyata (8 bank, 4 e-wallet): label per aplikasi dan titik yang diparkir — menunggu sampel dari pemilik produk; saklar `receipt_inbox` tetap mati sampai gerbang nyata lulus | 4 | terhambat | Pemilik produk (sampel) + Claude |  |  | |
-| A30–A33 | FS.1 | A | **FS-1** Kotak Struk: perluas receipt_scans, antrean tahan restart, worker OCR di proses API (tanpa service terpisah) — selesai di branch, menunggu merge | 4 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A35–A37 | FS.2 | A | **FS-1** API Kotak Struk: unggah gambar/PDF/teks idempoten, daftar, lewati — selesai di branch, menunggu merge | 5 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A38–A40 | FS.3 | A | **FS-1** Pembaca PDF (teks langsung, render untuk pindaian), proses terpisah — selesai di branch, menunggu merge | 5 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A41–A44 | FS.4a | A | **FS-1** Klasifikasi dokumen + parser bukti transfer bank — selesai di branch, menunggu merge | 6 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A45–A46 | FS.4b | A | **FS-1** Parser e-wallet/QRIS (bagian QRIS/transfer dari FS.4b) — selesai di branch, menunggu merge | 6 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A53–A55 | FS.6 | A | **FS-1** Deteksi duplikat dan bukan pengeluaran — selesai di branch, menunggu merge | 7 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A56–A57 | FS.7 | A | **FS-1** Saran amplop dan belajar untuk jenis dokumen baru — selesai di branch, menunggu merge | 7 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A58–A59 | FS.8 | A | **FS-1** `ProofCard` dan banner "Bukti menunggu" di web (sebagian FS.8) — Bagian B | 8 | belum |  |  |  | |
-| A65 | FS.9 | A | **FS-1** Paritas kanal, sisi server: PDF di bot Telegram dan di `scan-receipt` — selesai di branch, menunggu merge | 9 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
-| A66–A67 | FS.9 | A | **FS-1** Paritas kanal, sisi web: tombol PDF di form Catat; Web Share Target PWA (kini wajib) — Bagian B | 9 | belum |  |  |  | |
-| A68 | FS.11 | A | **FS-1** Privasi, sisi server: file asli dihapus, tanpa nomor rekening — sisi server selesai di branch, menunggu merge; sisa: `privacy.html`, DPIA, dan formulir toko, sebelum saklar `receipt_inbox` menyala (jangan jadikan `selesai` saat merge) | 9 | review | Claude | branch `feat/bagikan-ke-jatahku-server` (PR belum dibuka) | 2026-10-26 | |
+| A30–A33 | FS.1 | A | **FS-1** Kotak Struk: perluas receipt_scans, antrean tahan restart, worker OCR di proses API (tanpa service terpisah) | 4 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A35–A37 | FS.2 | A | **FS-1** API Kotak Struk: unggah gambar/PDF/teks idempoten, daftar, lewati | 5 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A38–A40 | FS.3 | A | **FS-1** Pembaca PDF (teks langsung, render untuk pindaian), proses terpisah | 5 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A41–A44 | FS.4a | A | **FS-1** Klasifikasi dokumen + parser bukti transfer bank | 6 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A45–A46 | FS.4b | A | **FS-1** Parser e-wallet/QRIS (bagian QRIS/transfer dari FS.4b) | 6 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A53–A55 | FS.6 | A | **FS-1** Deteksi duplikat dan bukan pengeluaran | 7 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A56–A57 | FS.7 | A | **FS-1** Saran amplop dan belajar untuk jenis dokumen baru | 7 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A58–A59 | FS.8 | A | **FS-1** `ProofCard` dan banner "Bukti menunggu" di web (sebagian FS.8) — Bagian B, selesai di branch `feat/bagikan-ke-jatahku-web`, menunggu merge; `selesai` setelah saklar `receipt_inbox` menyala | 8 | review | Claude | #132 | 2026-10-28 | |
+| A65 | FS.9 | A | **FS-1** Paritas kanal, sisi server: PDF di bot Telegram dan di `scan-receipt` | 9 | selesai | Claude | #130 | 2026-10-26 | 2026-10-28 |
+| A66–A67 | FS.9 | A | **FS-1** Paritas kanal, sisi web: tombol PDF di form Catat; Web Share Target PWA (kini wajib) — Bagian B, selesai di branch `feat/bagikan-ke-jatahku-web`, menunggu merge; `share_target` di manifest menyusul di PR kecil saat saklar `receipt_inbox` menyala, lalu `selesai` | 9 | review | Claude | #132 | 2026-10-28 | |
+| A68 | FS.11 | A | **FS-1** Privasi, sisi server: file asli dihapus, tanpa nomor rekening — sisi server tayang 2026-10-28 (#130); sisa: `privacy.html`, DPIA, dan formulir toko, sebelum saklar `receipt_inbox` menyala | 9 | berjalan | Claude | #130 | 2026-10-26 | |
 | A69–A72 | 5.5a | A | Billing server: validasi Play dan App Store, hak per sumber, refund | 9 | belum |  |  |  | |
 | A73–A74 | 6.1 | A | Token widget baca-saja + /widget/summary | 10 | belum |  |  |  | |
 | A75–A77 | 6.4 | A | Tombol aksi "Catat ke amplop" di notifikasi struk | 10 | belum |  |  |  | |

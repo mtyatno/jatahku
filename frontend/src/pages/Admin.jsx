@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
+import { docTypeLine, issuerRows } from '../lib/scanStats';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
 
 function formatDate(isoStr) {
@@ -1405,7 +1406,8 @@ function PaymentsTab({ onAction }) {
   );
 }
 
-// Scan struk: akurasi bulan ini (diterima tanpa koreksi) + pemakaian fallback LLM vs plafon.
+// Scan struk: akurasi bulan ini (diterima tanpa koreksi) + pemakaian fallback LLM vs plafon, lalu rincian Kotak
+// Struk per jenis dokumen dan per penerbit (lib/scanStats.js; server lama tanpa rincian → bagian itu tidak tampil).
 function ReceiptScanCard() {
   const [s, setS] = useState(null);
   useEffect(() => {
@@ -1417,6 +1419,8 @@ function ReceiptScanCard() {
   if (!s) return null;
   const llm = s.llm_budget;
   const rp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+  const docTypes = docTypeLine(s);
+  const issuers = issuerRows(s);
   return (
     <div className="card">
       <h3 className="font-semibold text-sm mb-3">📸 Scan Struk (bulan ini)</h3>
@@ -1441,6 +1445,36 @@ function ReceiptScanCard() {
       {s.most_corrected?.length > 0 && (
         <div className="mt-3 text-xs text-gray-500">
           Paling sering dikoreksi: {s.most_corrected.map(m => `${m.merchant_key} (${m.count})`).join(', ')}
+        </div>
+      )}
+      {docTypes && <div className="mt-3 text-xs text-gray-500">Jenis dokumen: {docTypes}</div>}
+      {issuers?.length > 0 && (
+        <div className="mt-3">
+          <div className="text-xs text-gray-500 mb-1">Per penerbit</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-400">
+                  <th scope="col" className="text-left font-normal py-1 pr-2">Penerbit</th>
+                  <th scope="col" className="text-right font-normal py-1 px-2">Total</th>
+                  <th scope="col" className="text-right font-normal py-1 px-2">Tercatat</th>
+                  <th scope="col" className="text-right font-normal py-1 px-2">Dikoreksi</th>
+                  <th scope="col" className="text-right font-normal py-1 pl-2">% dikoreksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issuers.map(r => (
+                  <tr key={r.key} className="border-t border-gray-100">
+                    <th scope="row" className="text-left font-normal py-1 pr-2">{r.label}</th>
+                    <td className="text-right py-1 px-2">{r.total}</td>
+                    <td className="text-right py-1 px-2">{r.recorded}</td>
+                    <td className="text-right py-1 px-2">{r.corrected}</td>
+                    <td className="text-right py-1 pl-2">{r.correctedPct}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

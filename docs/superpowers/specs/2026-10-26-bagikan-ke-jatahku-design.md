@@ -1,7 +1,7 @@
 # Bagikan ke Jatahku: bukti bayar QRIS & transfer — desain
 
 **Tanggal:** 26 Okt 2026
-**Status:** desain disetujui pemilik produk di chat, bagian 1–7 (26 Okt 2026); spec ini menunggu review.
+**Status:** desain disetujui pemilik produk di chat, bagian 1–7 (26 Okt 2026). **Bagian A (server + bot) tayang 28 Okt 2026 06:01 WIB:** PR #130 (squash `8074a57`), migrasi `a7c4e2b9d1f3`; kuota scan dihapus, bot membaca PDF. Saklar `features.receipt_inbox` (pembaca QRIS/transfer) masih **mati** sampai gerbang korpus A14 lulus (menunggu sampel bukti asli). Bagian B (web/PWA) selesai di kode di branch `feat/bagikan-ke-jatahku-web`, menunggu merge; `share_target` di manifest menyusul di PR kecil saat saklar dinyalakan (keputusan pemilik produk 28 Okt 2026), jadi uji di HP sungguhan juga dijalankan saat itu. Perilaku yang benar-benar dibangun, termasuk keputusan selama implementasi, ada di `docs/kotak-struk.md` di repo.
 **Klasifikasi:** arsitektural. Menambah subsistem baru (Kotak Struk, registri pembaca dokumen, peta merchant) dan antarmuka yang nanti dipakai aplikasi Android/iOS.
 **Rencana mobile terkait:** `docs/mobile/` paket FS (ADR-M16). Spec ini mengubah urutan dan cakupannya (lihat "Dampak ke rencana mobile").
 

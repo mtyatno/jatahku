@@ -3,6 +3,8 @@ import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
 import { xhrUpload, sendWithRefresh } from './xhrUpload';
+import { clearSharesOnLogout } from './shareInbox';
+import { pendingCountOf } from './pendingProofs';
 import { native } from '../native';
 
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
@@ -90,7 +92,10 @@ class ApiClient {
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
-    window.location.href = '/login';
+    // Bukti yang dibagikan tapi belum terkirim: dikosongkan hanya saat user sendiri keluar (revoke), dan pindah ke
+    // /login menunggu penghapusannya (maks 2 dtk; tanpa ditunggu, navigasi memutusnya). Refresh ditolak
+    // (revoke:false): bukti tetap aman sampai login lagi (spec 5b), langsung ke /login. Tidak pernah melempar.
+    clearSharesOnLogout({ revoke }, { next: () => { window.location.href = '/login'; } });
   }
 
   // Auth
@@ -509,13 +514,16 @@ class ApiClient {
     }
   }
 
-  // Scan struk: foto (sudah dikompres) → toko/tanggal/total.
-  // onProgress(persen) saat mengunggah, onUploaded() begitu foto selesai terkirim (server mulai membaca).
-  async scanReceipt(imageBlob, { onProgress, onUploaded } = {}) {
+  // Scan struk: foto (sudah dikompres) atau PDF (File asli, tombol PDF) → toko/tanggal/total.
+  // onProgress(persen) saat mengunggah, onUploaded() begitu file selesai terkirim (server mulai membaca).
+  // Nama file: nama asli File (PDF); foto terkompres adalah Blob tanpa nama → 'struk.jpg' seperti dulu.
+  // Server menentukan jenis dari content type bagian ini, bukan dari namanya.
+  // timeoutMs: batas waktu kiriman (receiptProgress.uploadTimeoutMs); tanpa nilai = batas bawaan xhrUpload (60 dtk).
+  async scanReceipt(imageBlob, { onProgress, onUploaded, timeoutMs } = {}) {
     try {
       const form = new FormData();
-      form.append('image', imageBlob, 'struk.jpg');
-      const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded });
+      form.append('image', imageBlob, imageBlob?.name || 'struk.jpg');
+      const res = await this.uploadForm('/transactions/scan-receipt', form, { onProgress, onUploaded, timeoutMs });
       if (res.status === 0 && !res.data.detail) res.data = { ...res.data, detail: FOTO_GAGAL_KONEKSI };
       return res;
     } catch {
@@ -531,6 +539,89 @@ class ApiClient {
         body: JSON.stringify(payload),
       });
     } catch {}
+  }
+
+  // Kotak Struk ("Bagikan ke Jatahku", docs/kotak-struk.md bagian API). Rute memakai garis miring penutup
+  // (`/kotak-struk/`; tanpa itu 307). Item orang lain = 404.
+
+  // Unggah satu file atau teks (FormData: file|text, source, upload_id?, wait?) → {ok, status, data, timedOut};
+  // status 0 = tidak sampai / batas waktu. Tidak pernah melempar.
+  async kotakUpload(formData, opts = {}) {
+    try {
+      return await this.uploadForm('/kotak-struk/', formData, opts);
+    } catch {
+      return { ok: false, status: 0, data: {}, timedOut: false };
+    }
+  }
+
+  // Detail satu item, atau null (tidak ada / bukan milik user / gagal).
+  async kotakItem(id) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Item yang menunggu dicatat (status siap), terbaru dulu. Server membungkusnya {items: [...]}; gagal → [].
+  async kotakPending() {
+    try {
+      const res = await this.request('/kotak-struk/?status=siap');
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data?.items) ? data.items : [];
+      }
+    } catch {}
+    return [];
+  }
+
+  // Jumlah item yang menunggu dicatat (status siap): satu COUNT di server, tanpa detail item (banner bukti menunggu).
+  // Gagal (jaringan, bukan 2xx, isi tanpa `count` bilangan bulat) → null: banner memakai angka terakhir.
+  async kotakPendingCount() {
+    try {
+      const res = await this.request('/kotak-struk/count?status=siap');
+      if (res.ok) return pendingCountOf(await res.json());
+    } catch {}
+    return null;
+  }
+
+  // Saran amplop dan keterangan dengan catatan user (≤ 200 karakter) → {suggestion, description_preview} atau null.
+  async kotakSuggest(id, note) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/saran`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note || null }),
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Lewati item siap/gagal; reason: bukan_pengeluaran | duplikat | batal. 409 bila statusnya lain.
+  async kotakSkip(id, reason) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/lewati`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
+  // Nama panggilan merchant untuk serumah (≤ 60; kosong menghapus) → {id, name, display_name}. merchantId dari
+  // `item.merchant.id`, yang bisa null (tanpa peta merchant): jangan panggil.
+  async kotakRenameMerchant(merchantId, displayName) {
+    try {
+      const res = await this.request(`/kotak-struk/merchants/${encodeURIComponent(merchantId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
   }
 
   // Incomes

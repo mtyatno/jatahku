@@ -21,7 +21,7 @@ from app.models.models import (
 from app.services.behavior import check_behavior, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
 from app.services.expense_rules import (
-    FUNDS_BLOCKS, after_expense_recorded, check_expense, is_spendable,
+    FUNDS_BLOCKS, PAST_PERIOD_IGNORED, after_expense_recorded, check_expense, is_spendable,
 )
 from app.bot.channel import find_chat_user, is_web, is_web_chat_id, txn_source
 from app.bot.link_cmd import link_with_code
@@ -492,12 +492,6 @@ def _parse_iso_date(value):
         return date.fromisoformat(value)
     except (TypeError, ValueError):
         return None
-
-
-# Struk/bukti dari periode lalu yang dicatat di tanggalnya (payload `past_period`, jawaban "📅 {tanggal}" di
-# receipt_cmd.handle_date_callback): dana dan limit harian periode berjalan bukan urusannya, jadi blok ini dilewati
-# tanpa tawaran geser dana atau naikkan limit. Kunci amplop, kuota paket, amplop tabungan, dan galat tetap memblokir.
-PAST_PERIOD_IGNORED = (*FUNDS_BLOCKS, "daily_limit")
 
 
 def _date_suffix(txn_date) -> str:

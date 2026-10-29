@@ -16,6 +16,7 @@ import Analytics from './pages/Analytics';
 import Admin from './pages/Admin';
 import Upgrade from './pages/Upgrade';
 import Settings from './pages/Settings';
+import Bagikan from './pages/Bagikan';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/admin" element={<Admin />} />
             <Route path="/upgrade" element={<Upgrade />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/bagikan" element={<Bagikan />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -52,10 +52,13 @@
      `ls /opt/jatahku/app/alembic/versions/ | grep <revisi>`. Tidak ada = kode belum
      ter-pull; `alembic upgrade head` sebelum ini **tidak menjalankan apa pun**.
   3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`
-     (tabel milik `postgres` → jalankan sebagai postgres), lalu `alembic current` harus
+     (bila tabelnya milik `postgres`, jalankan sebagai postgres; cek pemiliknya dengan query di checklist Kotak Struk), lalu `alembic current` harus
      sama dengan revisi baru.
   4. `sudo systemctl restart jatahku`, lalu cek endpoint yang memakai tabel itu
      (mis. `POST /auth/login` dengan email asal → 401, bukan 500).
+  5. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"; satu restart lagi) supaya
+     langkah "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`; di run pertama langkah itu
+     dilewati karena deploy berhenti di migrasi.
 - **One deploy at a time.** `.github/workflows/deploy.yml` uses `concurrency`
   (`cancel-in-progress: false`): a newer push waits for the running deploy.
   Keep it — two `deploy.sh` runs overlapping (`git pull` + `npm run build` into
@@ -99,6 +102,9 @@
   sync, only when the queue has items. Never drop a queued transaction silently:
   rejected ones are kept with `rejected: {message}` and shown for fix/retry/delete;
   5xx/401/offline keep them pending. Every item carries a `client_ref`.
+- **Bagikan ke Jatahku** (`POST /bagikan`, `lib/shareInbox.js`): penangannya harus tetap di atas cek
+  `request.method !== 'GET'`. Share disimpan di IndexedDB `jatahku-share` (terpisah dari `jatahku-offline`) dan hanya
+  dikosongkan saat user sendiri logout. Navigasi: hanya jawaban 2xx `text/html` yang disimpan sebagai app shell offline.
 
 ## Enum vs String in Python
 - `PurposeType.expense` (enum member) does NOT equal `"expense"` (string)
@@ -144,7 +150,7 @@ Dokumen: `docs/ai-advisor/` (mulai dari `00-indeks.md`). Satu sesi = satu PR; st
 ## Deploy Checklist — Advisor Foundation Migration (f2a7c9e4b1d3)
 Migrasi ini menambah `envelopes.classification`, `transactions.is_private`
 (purpose `debt` tidak butuh DDL). CICD tidak menjalankan alembic — jalankan manual:
-1. Cek ownership tabel: `sudo -u postgres psql jatahku -c "\dt envelopes" -c "\dt transactions"`
+1. Cek ownership tabel: `sudo -u postgres psql jatahku_db -c "\dt envelopes" -c "\dt transactions"`
 2. Cek head: `alembic current` → harus `d3a9f1c5b820` sebelum upgrade
 3. `alembic upgrade head` (jika tabel owned by `postgres`, jalankan sebagai postgres)
 4. Verifikasi: `\d envelopes | grep classification`, `\d transactions | grep is_private`
@@ -154,7 +160,7 @@ Migrasi ini menambah `envelopes.classification`, `transactions.is_private`
 Menambah `envelopes.is_emergency` (boolean, default false) dan mengisinya `true` untuk amplop
 `saving`/`sinking_fund` yang namanya mengandung "darurat"/"emergency". Model sudah memetakan
 kolom ini, jadi **API amplop 500 sampai migrasi dijalankan** — jalankan di jam yang sama dengan merge:
-1. Cek ownership tabel: `sudo -u postgres psql jatahku -c "\dt envelopes"`
+1. Cek ownership tabel: `sudo -u postgres psql jatahku_db -c "\dt envelopes"`
 2. Cek head: `alembic current` → harus `a9c3e7d1f5b2` sebelum upgrade
 3. `alembic upgrade head` (jika tabel owned by `postgres`, jalankan sebagai postgres)
 4. Verifikasi: `\d envelopes | grep is_emergency` dan
@@ -167,7 +173,7 @@ ini, jadi **semua query user 500 (termasuk login) sampai migrasi dijalankan**. I
 "Urutan merge PR bermigrasi" di atas; `alembic current` harus `c5e9a2d7f4b1` sebelum upgrade.
 Verifikasi: `\d auth_sessions`, `\d users | grep tokens_revoked_at`, login dengan email asal → 401.
 
-## Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — belum jalan, menunggu merge
+## Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3) — sudah jalan 2026-10-28
 Memperluas `receipt_scans` (status, `doc_type`, `document`, hash file, dll.) dan menambah tabel
 `household_merchants` + `merchant_envelope_map`. Migrasi **idempoten**: `lifespan` (`KOTAK_DDL` + `create_all`)
 membuat kolom dan tabel yang sama saat API restart, jadi tidak ada jendela 500 seperti `auth_sessions`; migrasinya
@@ -182,6 +188,18 @@ Sebelum merge (aman untuk kode lama):
 3. Tambahkan `KOTAK_HMAC_KEY=<hasil openssl rand -hex 32>` ke `/opt/jatahku/.env` (kunci HMAC nomor referensi/rekening).
    Isi **sekali** dan jangan diganti: nilai lain membuat `ref_hash` lama tak cocok (cek duplikat dan peta merchant
    terputus). Kosong = diturunkan dari `JWT_SECRET` dengan peringatan di log.
+   Cek hak tabel (ditambahkan setelah deploy 28 Okt 2026): restart pertama setelah merge menjalankan `create_all` +
+   `KOTAK_DDL` sebagai user DB aplikasi, jadi user itu harus boleh ALTER `receipt_scans` (pemilik) dan REFERENCES
+   `households`, `envelopes`, `users`; kalau tidak, API gagal start. Database dan user diambil dari `DATABASE_URL`
+   (produksi: database `jatahku_db`, user `jatahku`; per 28 Okt 2026 kelima tabel di bawah milik `jatahku`):
+   ```bash
+   sudo -u postgres psql jatahku_db -v role=jatahku <<'SQL'
+   SELECT c.relname, pg_get_userbyid(c.relowner) AS pemilik, pg_has_role(:'role', c.relowner, 'USAGE') AS bisa_alter,
+          has_table_privilege(:'role', c.oid, 'REFERENCES') AS bisa_fk, has_table_privilege(:'role', c.oid, 'UPDATE') AS bisa_update
+   FROM pg_class c WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+     AND c.relname IN ('receipt_scans','households','envelopes','users','alembic_version') ORDER BY 1;
+   SQL
+   ```
 Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
 4. `ls /opt/jatahku/app/alembic/versions/ | grep a7c4e2b9d1f3`; `alembic current` harus `a7c3e9d1f5b2` sebelum upgrade.
 5. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
@@ -191,6 +209,42 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
 7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus: `cd /opt/jatahku/app && sudo -u jatahku
    /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
+
+## Deploy Checklist — Bagikan ke Jatahku, Bagian B (web)
+Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun npm): merge → deploy otomatis. Saklar
+`features.receipt_inbox` tetap mati. Detail: `docs/kotak-struk.md` bagian "Web dan PWA".
+1. Merge, tunggu deploy, lalu cek versi yang tayang: `api.jatahku.com/health` → `commit` baru, dan
+   `https://jatahku.com/version.json` → commit yang sama (juga dicek `deploy.sh` dan workflow).
+2. Uji dengan saklar mati (jendela incognito, supaya service worker lama tidak dipakai):
+   - Form Catat: scan foto struk belanja biasa → baris/kartu struk seperti biasa, lalu Simpan tercatat. Tidak ada
+     tombol **PDF** di samping Foto/Galeri.
+   - Tidak ada banner "Bukti menunggu" di halaman mana pun, dan tidak ada tips berbagi bukti di Settings.
+   - `https://jatahku.com/bagikan` dibuka langsung → hanya "Fitur ini segera hadir." (butuh nginx menyajikan
+     `app.html` untuk `/bagikan`; kalau masih 404, cek lagi sesudah langkah 3).
+   - Admin → Dashboard → Scan Struk → baris "Jenis dokumen: Struk belanja … · QRIS … · Transfer … · Tidak dikenali …"
+     (tabel "Per penerbit" baru muncul setelah ada bukti QRIS/transfer yang dibaca saat saklar menyala).
+   - Scan ulang foto struk yang baru saja tercatat → baris terblokir "Bukti ini sudah tercatat.", dan Simpan Semua
+     menolak.
+   - Struk dari periode lalu → "Tanggal di struk: … — di luar periode sekarang (…). Catat untuk tanggal berapa?";
+     Simpan Semua meminta "Pilih tanggal catat" sampai salah satu dipilih.
+   - × pada baris hasil scan → item dilewati (tab Network: `POST /kotak-struk/{id}/lewati` → 200).
+   - Simpan struk hasil scan saat offline (DevTools → Offline), lalu online → tersinkron sekali (satu set transaksi).
+     Ulangi dengan struk lain. Sebelum menyimpan offline, kunci **setiap** amplop di rencana kartunya (baris "Dicatat …
+     1 per barang"; saran per barang bisa membagi satu struk ke beberapa amplop, mis. KOPI → Makan). Kunci dari tab
+     lain supaya form tidak tertutup. Lalu: simpan offline → online (sinkron ditolak) → scan ulang foto yang sama →
+     "Struk ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.", tanpa baris baru →
+     buka kunci → "Coba lagi semua" di pemberitahuan antrean → tercatat sekali (satu set). Bila ada amplop yang tidak
+     dikunci, bagian itu tersinkron, struknya jadi tercatat, dan scan ulang menampilkan "Bukti ini sudah tercatat.".
+   - HP dengan PWA terpasang (service worker lama, bukan incognito): sebelum merge, catat satu transaksi saat offline
+     (masuk antrean), tutup app, dan biarkan HP tetap offline sampai deploy tayang (cek `version.json` dari perangkat
+     lain). Kalau HP online lebih dulu, app atau service worker lama sudah mengirim antreannya, dan cek ini tidak
+     menguji pembaruan. Sesudah deploy tayang: online-kan HP, buka app, tunggu muat ulang otomatis, lalu
+     `https://jatahku.com/version.json` → commit baru, dan transaksi di antrean tetap terkirim (sekali).
+3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
+   saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
+4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
+   PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
+   sini.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.

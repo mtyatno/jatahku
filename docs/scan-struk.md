@@ -20,7 +20,8 @@ status item ada di [`docs/kotak-struk.md`](kotak-struk.md). Yang tetap di dokume
 struk belanja dibaca (parser, rincian barang) dan dicatat per barang.
 
 ```
-foto/PDF ─► kompres di HP (≤1600px JPEG) ─► POST /transactions/scan-receipt
+foto ─► kompres di HP (≤1600px JPEG) ─────────────┐
+PDF (tombol PDF, saklar menyala) ─► apa adanya ───┴─► POST /transactions/scan-receipt
             └─ bot: foto Telegram ────────────────┘
                  │
                  ├─ intake Kotak Struk (item `diterima`) ─► worker: RapidOCR → baris teks
@@ -43,17 +44,22 @@ Tidak ada kuota scan (dihapus untuk semua paket, tidak bergantung pada saklar `r
 tetap jalan; field `quota` di respons dipertahankan dengan isi `{limit: null, used: 0, remaining: null}`.
 File PDF diterima oleh endpoint (maks 10 MB); foto tetap maks 8 MB.
 
-**Di webapp: dari foto sampai hasil.** Empat pintu masuk, semuanya berakhir di form
+**Di webapp: dari foto sampai hasil.** Tiga pintu masuk, semuanya berakhir di form
 Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceiptScan`):
 
-- **Foto struk** di FAB (HP) dan menu **Catat ▾** (desktop): kamera dibuka dulu,
-  form Catat terbuka begitu fotonya sampai (`openReceiptCamera` di `Layout.jsx`).
-- Tombol **Foto** / **Galeri** di dalam form Catat.
+- Tombol **Foto** / **Galeri** di dalam form Catat (dibuka lewat **Catat** di top bar desktop, atau FAB **+** →
+  **Pengeluaran** di HP), ditambah tombol **PDF** saat saklar `receipt_inbox` menyala (memilih gambar atau PDF bukti
+  bayar; PDF dikirim apa adanya tanpa kompres, maks 10 MB, sedangkan gambar tetap dikompres seperti foto). Saat saklar
+  menyala, screenshot atau PDF bukti QRIS/transfer menjadi satu baris biasa yang sudah terisi (keterangan, tanggal
+  bayar, amplop yang disarankan bila yakin), bukan kartu struk. Rincian: [`docs/kotak-struk.md`](kotak-struk.md)
+  bagian "Web dan PWA".
 - Shortcut PWA **Foto struk** (`/transactions?struk=1`): form Catat terbuka dalam mode
   siap difoto, dengan tombol besar **Ambil foto struk**. Kamera tidak bisa dibuka tanpa
   ketukan, jadi shortcut hanya menyiapkan layar; parameternya dihapus dari URL.
-- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya menampilkan
-  toast "Foto struk tadi tidak sempat diterima, coba lagi." dengan tombol **Foto ulang**.
+- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya menampilkan toast "Foto struk tadi tidak sempat
+  diterima, coba lagi." dengan tombol **Foto ulang** (kamera dibuka dulu, form Catat terbuka begitu fotonya sampai;
+  `openReceiptCamera` di `Layout.jsx`). Web tidak bisa mengembalikan fotonya (lihat di bawah). `Layout.jsx` sudah
+  membuka form Catat bila `recover()` mengembalikan foto, untuk aplikasi native nanti (paket 3.2).
 
 Kamera dan galeri lewat `native.camera` (`takePhoto` / `pickPhoto` / `recover`; di web
 berupa `<input type=file>`), dan harus dipanggil sinkron di dalam handler ketukan
@@ -131,7 +137,8 @@ anggaran berjalan, bot bertanya dulu "Catat untuk tanggal berapa?": **Hari ini**
 geser dana, dan limit harian seperti biasa) atau **tanggal struk** (masuk periode lalu tanpa
 geser dana dan tanpa limit harian; kunci amplop dan kuota tetap berlaku). Tanggal yang belum
 lewat dianggap salah baca dan dicatat hari ini. Detail di [`kotak-struk.md`](kotak-struk.md)
-bagian "Kanal".
+bagian "Kanal". Form Catat di web memakai aturan yang sama: baris struk menanyakan **Hari ini** atau tanggal struk
+(`kotak-struk.md` "Tanggal dokumen" di bagian "Web dan PWA").
 
 ## Kirim ulang aman (idempotensi)
 
@@ -163,13 +170,18 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   ditambahkan ke item). Teks 409 untuk klaim yang gagal (di batch: `error` baris itu dengan `ok: false`)
   mengikuti status item saat itu (`record.claim_failure_detail`): "Bukti ini sudah tercatat", "Bukti ini sudah
   kedaluwarsa, bagikan lagi untuk mencatatnya", "Bukti ini belum siap dicatat", atau "Bukti tidak ditemukan".
-  Item yang sudah kedaluwarsa sebelum disimpan mendapat teks kedaluwarsa yang sama dari `check_recordable`.
+  Item yang sudah kedaluwarsa sebelum disimpan mendapat teks kedaluwarsa yang sama dari `check_recordable`, kecuali
+  struk belanja dan tidak dikenali yang sudah terbaca: itu tetap dicatat seperti `siap` (simpan terlambat dari antrean
+  offline).
   Sesudah commit `record.after_recorded` (dipakai web dan bot) menjalankan streak,
   kata kunci, dan menandai item `tercatat` (`mark_recorded`), semuanya best-effort: galat database yang
   ditelan di sana tidak merusak sisa permintaan (sesi di-rollback dan `user` dimuat ulang, jadi baris batch
   berikutnya dan pemberitahuan kuota tetap jalan). `client_ref` yang dikirim ulang dengan `receipt_item_id`
   yang sama menyembuhkan penandaan yang hilang (`record.heal_recorded`; hanya item yang diklaim transaksi
-  itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer.
+  itu tapi belum ditandai). Peta merchant hanya belajar dari QRIS/transfer. Tanggal baris dengan
+  `receipt_item_id` (sesudah hari ini → hari ini; sebelum awal periode → tanpa blok dana dan limit harian; form
+  Catat dan kartu bukti `ProofCard` di halaman `/bagikan` menanyakan "Hari ini" atau tanggal dokumen lebih dulu):
+  [`docs/kotak-struk.md`](kotak-struk.md) bagian API dan "Tanggal dokumen" di bagian "Web dan PWA".
 - Foto yang tidak dikenali pembaca mana pun dan tanpa baris "Rp" (dan tanpa penyelamatan LLM): pembaca
   cadangan menebak seperti scan struk lama (`parse_receipt`: total, tanggal, nama merchant) dengan keyakinan
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
@@ -207,7 +219,8 @@ pencocokan jarak-edit 1 di `receipt_parser.py`.
 
 Akurasi bulanan (diterima tanpa koreksi vs dikoreksi) & toko yang paling sering
 dikoreksi: **Admin → Dashboard → Scan Struk** (`GET /admin/receipt-scans/stats`). Sejak Kotak Struk
-respons itu juga memuat `by_doc_type`, `unrecognized`, dan `by_issuer` (lihat [`docs/kotak-struk.md`](kotak-struk.md)).
+respons itu juga memuat `by_doc_type`, `unrecognized`, dan `by_issuer`; kartu yang sama menampilkannya sebagai baris
+"Jenis dokumen" dan tabel "Per penerbit" (lihat [`docs/kotak-struk.md`](kotak-struk.md)).
 
 ## Fallback LLM — pengaman biaya
 

@@ -11,6 +11,11 @@ pencatatan ganda, di-commit bersama transaksinya), lalu sesudah commit `after_re
 
 Satu struk belanja boleh dicatat per barang (banyak transaksi); semua jenis lain (QRIS, transfer, tidak dikenali)
 hanya sekali, dan penjaganya (klaim eksklusif, penyembuhan) berlaku untuk semuanya.
+
+Kedaluwarsa hanya untuk item yang tidak dikonfirmasi. Struk belanja dan tidak dikenali yang sudah terbaca (punya
+dokumen) lalu kedaluwarsa tetap boleh dicatat seperti `siap` (`_late_ok`): simpan dari antrean offline form Catat yang
+baru sampai sesudah 7 hari adalah konfirmasi yang terlambat. QRIS/transfer yang kedaluwarsa dan item yang tidak pernah
+terbaca tetap MSG_EXPIRED (bagikan lagi).
 """
 import logging
 import uuid
@@ -30,6 +35,7 @@ from app.services.kotak_struk.merchants import _find_merchant, learnable_text, m
 log = logging.getLogger(__name__)
 
 STORE_RECEIPT = "struk_belanja"
+LATE_RECORDABLE = {STORE_RECEIPT, "tidak_dikenali"}   # jenis yang tetap boleh dicatat sesudah kedaluwarsa (bila terbaca)
 MSG_NOT_FOUND = "Bukti tidak ditemukan"
 MSG_RECORDED = "Bukti ini sudah tercatat"
 MSG_NOT_READY = "Bukti ini belum siap dicatat"
@@ -46,21 +52,32 @@ class NotRecordable(Exception):
         self.detail = detail
 
 
+def _late_ok(doc_type: str | None, document) -> bool:
+    """Item jenis ini, bila kedaluwarsa, tetap boleh dicatat seperti `siap`: struk belanja atau tidak dikenali yang
+    sudah terbaca (punya dokumen; item `gagal` tidak pernah punya). Jenis dan dokumen tidak berubah sesudah item
+    terbaca, jadi hasilnya sama selama item hidup."""
+    return doc_type in LATE_RECORDABLE and bool(document)
+
+
 async def check_recordable(db: AsyncSession, item_id: uuid.UUID, user: User) -> ReceiptScan:
     """Item milik `user` yang boleh dicatat sekarang, atau `NotRecordable`. Struk belanja boleh dicatat lagi
-    setelah `tercatat` (satu struk, banyak transaksi); bukti lain hanya selagi `siap`. Item `kedaluwarsa` (jenis apa
-    pun) mendapat MSG_EXPIRED: membagikannya lagi membuka item baru."""
+    setelah `tercatat` (satu struk, banyak transaksi); bukti lain hanya selagi `siap`. Item `kedaluwarsa` mendapat
+    MSG_EXPIRED (membagikannya lagi membuka item baru), kecuali struk belanja dan tidak dikenali yang sudah terbaca
+    (`_late_ok`): itu diperlakukan seperti `siap`. Cek lain (blokir, duplikat tercatat) sama untuk semuanya."""
     item = await db.get(ReceiptScan, item_id)
     if item is None or item.user_id != user.id:
         raise NotRecordable(MSG_NOT_FOUND)
-    if item.status == ST_KEDALUWARSA:
-        raise NotRecordable(MSG_EXPIRED)
+    status = item.status
+    if status == ST_KEDALUWARSA:
+        if not _late_ok(item.doc_type, item.document):
+            raise NotRecordable(MSG_EXPIRED)
+        status = ST_SIAP
     if item.doc_type == STORE_RECEIPT:
-        if item.status not in (ST_SIAP, ST_TERCATAT):
+        if status not in (ST_SIAP, ST_TERCATAT):
             raise NotRecordable(MSG_NOT_READY)
-    elif item.status == ST_TERCATAT:
+    elif status == ST_TERCATAT:
         raise NotRecordable(MSG_RECORDED)
-    elif item.status != ST_SIAP:
+    elif status != ST_SIAP:
         raise NotRecordable(MSG_NOT_READY)
     if any(c.get("level") == "block" for c in (item.document or {}).get("checks") or []):
         raise NotRecordable(MSG_BLOCKED)
@@ -73,21 +90,25 @@ async def check_recordable(db: AsyncSession, item_id: uuid.UUID, user: User) -> 
 async def claim_for_recording(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     """Penjaga atomik terhadap pencatatan ganda: `check_recordable` tidak mengunci, jadi dua simpan bersamaan (bot dan
     web, dua ketukan) bisa sama-sama lolos. Semua jenis selain struk belanja (QRIS, transfer, tidak dikenali; hanya
-    sekali dicatat, sama dengan `check_recordable`): satu UPDATE bersyarat `siap` -> `tercatat`; hanya satu pemanggil
-    yang mendapat True, yang lain False. Struk belanja (banyak transaksi): True bila milik user dan `siap`/`tercatat`,
-    tanpa perubahan. Item tidak ada atau milik user lain: False. TIDAK meng-commit: pemanggil meng-commit klaim
-    bersama penyimpanan transaksinya, jadi transaksi yang gagal dibatalkan juga mengembalikan klaimnya."""
+    sekali dicatat, sama dengan `check_recordable`): satu UPDATE bersyarat `siap` -> `tercatat` (tidak dikenali yang
+    terbaca juga dari `kedaluwarsa`, `_late_ok`); hanya satu pemanggil yang mendapat True, yang lain False. Struk
+    belanja (banyak transaksi): True bila milik user dan `siap`/`tercatat` (atau `kedaluwarsa` sesudah terbaca), tanpa
+    perubahan. Item tidak ada atau milik user lain: False. TIDAK meng-commit: pemanggil meng-commit klaim bersama
+    penyimpanan transaksinya, jadi transaksi yang gagal dibatalkan juga mengembalikan klaimnya."""
     row = (await db.execute(
-        select(ReceiptScan.doc_type, ReceiptScan.user_id, ReceiptScan.status).where(ReceiptScan.id == item_id)
+        select(ReceiptScan.doc_type, ReceiptScan.user_id, ReceiptScan.status, ReceiptScan.document)
+        .where(ReceiptScan.id == item_id)
     )).first()
     if row is None or row.user_id != user_id:
         return False
+    late_ok = _late_ok(row.doc_type, row.document)
     if row.doc_type != STORE_RECEIPT:
+        claimable = (ST_SIAP, ST_KEDALUWARSA) if late_ok else (ST_SIAP,)
         claim = (update(ReceiptScan)
-                 .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status == ST_SIAP)
+                 .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status.in_(claimable))
                  .values(status=ST_TERCATAT))
         return (await db.execute(claim)).rowcount == 1
-    return row.status in (ST_SIAP, ST_TERCATAT)
+    return row.status in (ST_SIAP, ST_TERCATAT) or (row.status == ST_KEDALUWARSA and late_ok)
 
 
 async def claim_failure_detail(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID) -> str:
@@ -248,7 +269,8 @@ async def heal_recorded(db: AsyncSession, user: User, item_id: uuid.UUID, transa
                         envelope_id: uuid.UUID) -> None:
     """Kirim ulang `client_ref` yang sudah tercatat membawa item: tandai item sekali lagi, supaya crash antara commit
     transaksi dan `mark_recorded` pulih (`mark_recorded` idempoten per transaksi: tidak ganda, tidak belajar dua kali).
-    Hanya untuk item dan transaksi milik user. Jenis yang hanya sekali dicatat (semua selain struk belanja) hanya
+    Hanya untuk item dan transaksi milik user, berstatus `siap`/`tercatat` (atau `kedaluwarsa` yang masih boleh
+    dicatat, `_late_ok`). Jenis yang hanya sekali dicatat (semua selain struk belanja) hanya
     disembuhkan bila diklaim transaksi tadi tapi belum ditandai (status `tercatat`, `transaction_ids` kosong), jadi
     kirim ulang tidak bisa mengonsumsi atau mengubah bukti lain. Tidak pernah melempar galat."""
     user_id = user.id
@@ -257,7 +279,8 @@ async def heal_recorded(db: AsyncSession, user: User, item_id: uuid.UUID, transa
         owner = (await db.execute(select(Transaction.user_id).where(Transaction.id == transaction_id))).scalar_one_or_none()
         if item is None or item.user_id != user_id or owner != user_id:
             return
-        if item.status not in (ST_SIAP, ST_TERCATAT):
+        late = item.status == ST_KEDALUWARSA and _late_ok(item.doc_type, item.document)
+        if item.status not in (ST_SIAP, ST_TERCATAT) and not late:
             return
         if item.doc_type != STORE_RECEIPT and (item.status != ST_TERCATAT or item.transaction_ids):
             return

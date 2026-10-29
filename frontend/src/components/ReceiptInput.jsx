@@ -1,36 +1,37 @@
 import { native } from '../native';
+import { pickMessages } from '../lib/receiptProgress';
 import { Icon } from './Icon';
 
-const OFFLINE_MSG = 'Butuh koneksi internet untuk scan struk';
-const PICK_FAILED_MSG = 'Foto tidak bisa diambil, coba lagi';
-
-// Buka kamera ('camera') atau galeri ('gallery'). HARUS dipanggil langsung di dalam
-// handler ketukan: tidak boleh ada await sebelum native.camera.* (iPhone Safari menolak
-// membuka kamera dari tempat lain). Dibatalkan (null) → tidak melakukan apa-apa.
-// Offline → onError(pesan) dan kamera tidak dibuka.
+// Buka kamera ('camera'), galeri ('gallery'), atau pemilih dokumen gambar/PDF ('document', tombol PDF).
+// HARUS dipanggil langsung di dalam handler ketukan: tidak boleh ada await sebelum native.camera.* /
+// native.files.pickDocument (iPhone Safari menolak membuka kamera/pemilih file dari tempat lain).
+// Dibatalkan (null) → tidak melakukan apa-apa. Offline → onError(pesan) dan pemilih tidak dibuka.
 export function pickReceiptPhoto(source, { onFile, onError }) {
+  const msg = pickMessages(source);
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    onError?.(OFFLINE_MSG);
+    onError?.(msg.offline);
     return;
   }
   let pending;
   try {
-    pending = source === 'camera' ? native.camera.takePhoto() : native.camera.pickPhoto();
+    pending = source === 'document' ? native.files.pickDocument()
+      : source === 'camera' ? native.camera.takePhoto() : native.camera.pickPhoto();
   } catch {
-    onError?.(PICK_FAILED_MSG);
+    onError?.(msg.failed);
     return;
   }
   Promise.resolve(pending).then(
     (file) => { if (file) onFile(file); },
-    () => onError?.(PICK_FAILED_MSG),
+    () => onError?.(msg.failed),
   );
 }
 
-// Tombol ambil foto struk. Hanya memilih foto: pembacaannya oleh useReceiptScan
+// Tombol ambil foto struk. Hanya memilih file: pembacaannya oleh useReceiptScan
 // (onFile = scan.scanFile), tahapnya ditampilkan ReceiptStatusCard.
-//   size="sm": dua tombol teks kecil "Foto" / "Galeri" (form Catat)
+//   size="sm": tombol teks kecil "Foto" / "Galeri", plus "PDF" bila allowPdf (form Catat)
 //   size="lg": tombol utama "Ambil foto struk" + tautan "pilih dari galeri"
-export default function ReceiptInput({ onFile, onError, disabled = false, size = 'sm' }) {
+// allowPdf: tombol PDF (bukti bayar PDF atau gambar), hanya saat saklar `receipt_inbox` menyala.
+export default function ReceiptInput({ onFile, onError, disabled = false, size = 'sm', allowPdf = false }) {
   const pick = (source) => pickReceiptPhoto(source, { onFile, onError });
 
   if (size === 'lg') {
@@ -77,6 +78,17 @@ export default function ReceiptInput({ onFile, onError, disabled = false, size =
       >
         <Icon name="gallery" size={16} /> Galeri
       </button>
+      {allowPdf && (
+        <button
+          type="button"
+          onClick={() => pick('document')}
+          disabled={disabled}
+          className={btn}
+          title="Pilih PDF bukti bayar"
+        >
+          <Icon name="file" size={16} /> PDF
+        </button>
+      )}
     </span>
   );
 }

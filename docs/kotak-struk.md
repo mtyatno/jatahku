@@ -1,17 +1,22 @@
 # Kotak Struk ("Bagikan ke Jatahku")
 
 Satu pintu masuk untuk struk dan bukti bayar (QRIS, transfer) dari semua kanal: bot Telegram, chat bot di
-webapp, dan tombol Struk di form Catat; nanti PWA (menu Bagikan di Android) dan aplikasi native. Setiap unggahan
-menjadi satu baris `receipt_scans` berstatus `diterima`, dibaca worker di dalam proses API, lalu dicatat **hanya
-setelah user mengonfirmasi**. Desain: `docs/superpowers/specs/2026-10-26-bagikan-ke-jatahku-design.md`;
-keputusan: ADR-M16 dan ADR-M17 (`docs/mobile/02-adr.md`). Cara struk belanja dibaca dan dicatat per barang:
-[`docs/scan-struk.md`](scan-struk.md).
+webapp, form Catat (Foto/Galeri, dan tombol PDF saat saklar menyala), dan PWA (menu Bagikan di Android → halaman
+`/bagikan`, lihat "Web dan PWA"); nanti aplikasi native. Setiap unggahan menjadi satu baris `receipt_scans` berstatus
+`diterima`, dibaca worker di dalam proses API, lalu dicatat **hanya setelah user mengonfirmasi**. Desain:
+`docs/superpowers/specs/2026-10-26-bagikan-ke-jatahku-design.md`; keputusan: ADR-M16 dan ADR-M17
+(`docs/mobile/02-adr.md`). Cara struk belanja dibaca dan dicatat per barang: [`docs/scan-struk.md`](scan-struk.md).
 
-**Status (27 Okt 2026).** Bagian A (server, bot, API, alat korpus) selesai di branch
-`feat/bagikan-ke-jatahku-server`, menunggu merge. Saklar `features.receipt_inbox` mati. Bagian B (PWA: share
-target, halaman `/bagikan`, `ProofCard`, banner "Bukti menunggu", tombol PDF, tips Settings, rincian di UI Admin)
-belum dimulai. Kalibrasi pembaca dengan sampel nyata (A14) menunggu sampel dari pemilik produk. Perbarui bagian
-ini saat status berubah.
+**Status (29 Okt 2026).** Bagian A (server, bot, API, alat korpus) tayang 28 Okt 2026 06:01 WIB: PR #130 (squash
+`8074a57`), migrasi `a7c4e2b9d1f3`, verifikasi versi yang tayang lulus. Bagian B (web dan PWA: baris bukti dan
+tombol PDF di form Catat, halaman `/bagikan`, `ProofCard`, banner "Bukti menunggu", tips Settings, rincian Scan Struk
+di Admin) selesai di kode di branch `feat/bagikan-ke-jatahku-web` dan menunggu merge; tanpa migrasi dan tanpa paket
+baru. Saklar `features.receipt_inbox` tetap mati. Dengan saklar mati, yang terlihat baru hanya baris hasil scan di form
+Catat (satu baris per item, alasan blokir, pertanyaan tanggal) dan rincian Scan Struk di Admin. Tombol PDF, banner,
+tips Settings, dan isi halaman `/bagikan` baru aktif saat saklar menyala (tabel di "Saklar fitur"). Menu Bagikan Android
+butuh `share_target` di manifest, yang sengaja belum ada di branch ini: PR kecil terpisah saat saklar dinyalakan
+(keputusan pemilik produk 28 Okt 2026; urutannya di "Menyalakan saklar"). Kalibrasi pembaca dengan sampel nyata (A14)
+masih menunggu sampel dari pemilik produk. Perbarui bagian ini saat status berubah.
 
 ## Alur
 
@@ -19,7 +24,7 @@ ini saat status berubah.
 bot Telegram / chat web ─┐
 form Catat (scan-receipt) ┼─► intake ──► item `diterima` ──► worker ──► `siap` ──► user konfirmasi ──► `tercatat`
 POST /kotak-struk ────────┘  (isi, batas,   (file sementara,   (teks, pembaca,  (saran amplop,    (jalur catat yang ada
- (PWA/app: Bagian B)          idempotensi)    hash)             cek silang)      tanda duplikat)   + belajar)
+ (PWA: /bagikan)              idempotensi)    hash)             cek silang)      tanda duplikat)   + belajar)
 ```
 
 - **Intake** (`services/kotak_struk/intake.py`) adalah satu-satunya pintu. Urutan: tepat satu file atau satu teks;
@@ -53,7 +58,7 @@ POST /kotak-struk ────────┘  (isi, batas,   (file sementara,  
 | `gagal` | Tidak terbaca; alasan di `error` (`expires_at` sama) | `dilewati`, `kedaluwarsa` |
 | `tercatat` | Sudah menjadi transaksi (`transaction_ids`) | akhir |
 | `dilewati` | User melewati; alasan di `channel_meta.skip_reason`: `bukan_pengeluaran`, `duplikat`, `batal` | akhir |
-| `kedaluwarsa` | `siap`/`gagal` lebih dari 7 hari tanpa konfirmasi | akhir |
+| `kedaluwarsa` | `siap`/`gagal` lebih dari 7 hari tanpa konfirmasi | akhir; struk belanja dan tidak dikenali yang sudah terbaca masih boleh dicatat (simpan terlambat dari antrean offline) → `tercatat` |
 
 `status` NULL = baris riwayat scan lama, bukan item Kotak Struk (API menjawab 404 untuknya). Struk belanja boleh
 dicatat berkali-kali (satu transaksi per barang): statusnya `tercatat` sejak yang pertama dan idnya
@@ -135,7 +140,7 @@ yang minimal 2 katanya ada di nama akun (`apply_flow`).
 | Klaim atomik | `claim_for_recording` | Lihat di bawah |
 
 **Klaim atomik** (`record.py`): semua jenis selain struk belanja diklaim dengan satu `UPDATE … siap → tercatat`
-**di commit yang sama dengan transaksinya**; hanya satu pemanggil yang menang (bot dan web bersamaan, dua ketukan),
+(tidak dikenali yang sudah terbaca juga dari `kedaluwarsa`) **di commit yang sama dengan transaksinya**; hanya satu pemanggil yang menang (bot dan web bersamaan, dua ketukan),
 yang lain mendapat 409 (web) atau "Bukti ini sudah tercatat" (bot) dan tidak ada transaksi. Urutan di web dan bot:
 `check_recordable` (pesan ramah) → `claim_for_recording` → insert transaksi → satu commit → `after_recorded`
 (streak, kata kunci, `mark_recorded`, peta merchant; best-effort dan idempoten per transaksi). `client_ref` yang
@@ -201,8 +206,8 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   ditambahkan." Catatan yang sempat menunggu tidak pernah diproses NLP.
 - **Lewat batas tunggu**: Telegram membalas "⏳ Masih dibaca, nanti kukabari." lalu worker mengedit pesan itu
   menjadi hasil (atau gagal) lewat `send_ready_message`; pesan terhapus → pesan baru. Chat web membalas "⏳ Masih
-  dibaca. Cek Bukti menunggu di beranda nanti." (banner itu datang di Bagian B). Bukti yang sama dikirim lagi
-  selagi dibaca tidak merebut janji pesan pertama.
+  dibaca. Cek Bukti menunggu di beranda nanti." (banner itu hanya tampil saat saklar menyala, lihat "Batasan yang
+  diketahui"). Bukti yang sama dikirim lagi selagi dibaca tidak merebut janji pesan pertama.
 - **Tanggal di luar periode berjalan** (struk dan bukti; `period.document_date_kind`): tanggal struk/bayar sebelum
   awal periode anggaran user → sebelum tombol amplop bot bertanya "📅 Tanggal di {struk|bukti}: {tgl} — di luar
   periode sekarang ({periode}). Catat untuk tanggal berapa?" dengan **📅 Hari ini** dan **📅 {tgl}** (`kt_{key}_h` /
@@ -213,14 +218,252 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   Pesan sukses yang tanggalnya bukan hari ini menyebut tanggal itu (`· 📅 26 Okt`).
 - Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, dan untuk jawaban
   tanggal `date_answered` dan `past_period` (selama menunggu jawaban juga teks bacaan dan label tombol amplopnya).
-- Route foto chat web (`/bot/chat/photo`) hanya menerima gambar (415 untuk PDF); PDF dari web masuk lewat form
-  Catat dan share target (Bagian B).
+- Route foto chat web (`/bot/chat/photo`) hanya menerima gambar (415 untuk PDF); PDF dari web masuk lewat tombol PDF
+  di form Catat dan share target PWA, keduanya hanya saat saklar menyala (lihat "Web dan PWA").
 
 **Form Catat** (`POST /transactions/scan-receipt`): membuat item (source `web_form`), menunggu maks 45 dtk, lalu
 membalas bentuk respons lama ditambah `item_id`, `doc_type`, `counterparty`, `paid_at`, `flags`, `suggestion`,
-`description_preview`. Menerima gambar atau PDF. Kontrak frontend lama tidak putus.
+`description_preview`. Menerima gambar atau PDF. Kontrak frontend lama tidak putus. Tampilannya di web (baris hasil
+scan, tombol PDF): bagian berikut.
 
-**PWA share target, halaman `/bagikan`, `ProofCard`, banner, tombol PDF**: Bagian B (belum ada).
+## Web dan PWA (Bagian B)
+
+Aturannya ada di modul murni `frontend/src/lib/` yang diuji `node --test` (`receiptScan.js`, `multiAddRows.js`,
+`receiptProgress.js`, `shareInbox.js`, `proofFormat.js`, `pendingProofs.js`, `scanStats.js`); komponen JSX hanya
+merender. Saklar `features.receipt_inbox` dibaca dari `/app/config`; hanya nilai `true` yang berarti menyala.
+
+**Form Catat: baris hasil scan** (tidak bergantung saklar; `receiptScan.js`, `multiAddRows.js`):
+- QRIS dan transfer menjadi satu baris biasa tanpa rincian barang: keterangan dari `description_preview`, tanggal bayar
+  (WIB), dan amplop dari saran server bila saran itu yakin (ditandai "disarankan"). Saran kata kunci tidak menimpanya.
+  Pesan hasil scan menyebut satu peringatan bila ada (peringatan server, duplikat lunak, atau arah uang: top-up, uang
+  masuk, rekening sendiri).
+- Struk belanja dan `tidak_dikenali` seperti dulu, sama dengan bot: keterangan nama toko atau "Belanja", amplop dari
+  saran kata kunci. Keduanya tetap membawa `receipt_item_id`, alasan blokir, dan aturan tanggal di bawah.
+- Satu item = satu baris/kartu. Item yang sudah ada di daftar (mis. foto yang sama di-scan lagi) tidak menambah baris:
+  "Struk ini sudah ada di daftar." atau "Bukti ini sudah ada di daftar.". Item yang simpanannya masih di antrean
+  offline (menunggu atau ditolak; dibaca setiap kali scan mulai) juga tidak menambah baris, dengan "Struk ini sudah
+  disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline." ("Bukti …" untuk QRIS/transfer), jadi
+  struk itu tidak tercatat dua kali dan × tidak bisa melewati item yang simpanannya belum terkirim.
+- `flags.blocked` tampil sebagai alasan di baris sejak scan, untuk semua jenis dokumen (saat saklar mati bukti bayar
+  terbaca sebagai struk belanja atau tidak dikenali): "Transaksi ini gagal di bank, jadi tidak bisa dicatat." atau
+  "Bukti ini sudah tercatat.". Penolakan bukti saat simpan (teks 409 di `receipt_item_id` di bawah) juga menjadi alasan
+  di baris. Baris itu tidak bisa disimpan: pilihan amplopnya dikunci (kartu struk: semua isiannya), Simpan Semua
+  melewatinya, dan bila semua baris diblokir, Simpan Semua menampilkan alasannya. Kartu struk yang ditolak saat simpan
+  hanya menampilkan alasan kartu itu, tanpa "Gagal: …" per amplop, pindah amplop, Geser, Naikkan limit, atau "Ubah
+  rincian".
+- Setiap jalur simpan membawa `receipt_item_id`: batch, setiap bagian struk per barang, dan antrean offline (payload
+  antrean menyimpannya, `offlineSync.toBatchItem` meneruskannya saat sinkron dari app maupun dari service worker).
+- × dan "Lewati yang gagal" melewati item di server (`POST /kotak-struk/{id}/lewati`, alasan `batal`) supaya tidak
+  menunggu dicatat, kecuali baris lain masih memakai item itu. Jawaban 2xx memicu event `jatahku:kotak-changed`, jadi
+  banner langsung menghitung ulang.
+- Umpan balik belajar struk (`scan-receipt/{id}/feedback`) hanya untuk struk belanja (dan scan lama tanpa jenis); bukti
+  bayar belajar di server saat tercatat.
+
+**Tombol PDF** (hanya saat saklar menyala; `ReceiptInput.jsx`, `useReceiptScan.js`, `receiptProgress.js`):
+- Tombol **PDF** di samping Foto/Galeri membuka `native.files.pickDocument` (gambar atau PDF, tanpa penanda kamera).
+- PDF dikirim apa adanya ke `scan-receipt` dengan nama aslinya: tanpa kompres dan tanpa gambar kecil. PDF di atas 10 MB
+  (`PDF_MAX_BYTES` = 10 × 1024 × 1024 byte) ditolak sebelum diunggah: "PDF terlalu besar (maks 10 MB)".
+- File bertipe kosong atau `application/octet-stream` (sebagian penyedia file Android) dikenali dari isinya: 5 byte
+  awal `%PDF-` → dikirim sebagai `application/pdf`. Saklar mati: isi file tidak pernah dibaca.
+- Batas waktu unggah PDF: 60 dtk ditambah 1 dtk per 25 kB, maks 300 dtk (`uploadTimeoutMs`). Foto (sudah dikompres)
+  tetap 60 dtk.
+- Teks tahap memakai kata "bukti" ("Mengunggah bukti…", "Membaca bukti…", tombol simpan "Menunggu bukti..."), ikon
+  dokumen menggantikan gambar kecil, dan "Pilih file lain" menggantikan "Foto ulang".
+- Saklar mati: tidak ada tombol PDF, dan PDF yang terpilih lewat Galeri tetap ditolak seperti dulu ("Pilih file foto
+  (JPG/PNG)").
+
+**Tanggal dokumen** (keputusan pemilik produk 28 Okt 2026; server: `_check_row` di `routes/transactions.py`): aturan
+yang sama dengan bot ("Tanggal di luar periode berjalan" di bagian "Kanal"), untuk baris form Catat dengan item Kotak
+Struk dan untuk `ProofCard`. Tanggal dokumen = tanggal struk, atau tanggal WIB dari `paid_at`.
+- Sebelum awal periode anggaran berjalan → "Tanggal di {struk|bukti}: {tgl} — di luar periode sekarang ({periode}).
+  Catat untuk tanggal berapa?" dengan pilihan **Hari ini** dan **{tgl}**. Tanggalnya kosong sampai dipilih ("Pilih
+  tanggal catat").
+- Hari ini → cek dana dan limit harian seperti biasa. Tanggal dokumen → server mencatat di tanggal itu tanpa blok dana
+  dan limit harian (`PAST_PERIOD_IGNORED` di `expense_rules.py`; limit juga tidak dinaikkan). Kunci amplop, amplop
+  tabungan/sinking fund, dan kuota paket tetap menolak. Form tidak menawarkan Geser atau "limit ↑" dari dugaannya
+  sendiri untuk baris itu; galat dana/limit yang tetap dijawab server (gajian berubah, sinkron offline sesudah gajian)
+  tampil seperti biasa.
+- Tanggal yang belum lewat dianggap salah baca → hari ini, dengan keterangan "Tanggal di {struk|bukti} ({tgl}) belum
+  lewat — dicatat hari ini." Form dan kartu menggantinya sebelum menyimpan (juga untuk antrean offline dan umpan balik
+  struk); server memakai aturan yang sama.
+- Periode dari `GET /analytics/periods`: form memintanya sekali saat struk pertama mulai dibaca, kartu memakai satu
+  permintaan bersama (disimpan 1 menit). Selama periode belum terbaca tidak ada pertanyaan, dan server tetap menerapkan
+  aturannya. Bukti yang diblokir tidak ditanya; baris tanpa `receipt_item_id` tidak berubah.
+
+**Share target dan service worker** (`sw.js`, `shareInbox.js`):
+- Service worker menangani `POST /bagikan` di origin aplikasi (`isShareTarget`; POST lain tidak dicegat), sebelum cek
+  GET. Share disimpan ke IndexedDB `jatahku-share`, store `shares` (terpisah dari antrean offline `jatahku-offline`),
+  lalu dijawab 303 ke `/bagikan?s=<batch>`. Form yang tidak bisa dibaca atau disimpan (termasuk memori penuh) → 303 ke
+  `/bagikan?err=baca`, dan entri batch itu yang sempat tersimpan dihapus lagi.
+- Satu share = satu batch. Maks 10 file (`MAX_FILES`, sama dengan `MAX_FILES_PER_SHARE`; file berikutnya diabaikan);
+  nilai bukan file dan file 0 byte diabaikan. Entri file `{id, batchId, seq, name, type, blob, createdAt}` berisi file
+  asli. Teks menjadi satu entri `{id, batchId, seq, text, type: 'text/plain', createdAt}`: `title` lalu `text`, digabung
+  baris baru (yang sama tidak diulang); `url` hanya bila tidak ada teks lain. Share tanpa file dan teks tidak menyimpan
+  apa pun.
+- Entri berisi bukti asli yang belum disamarkan dan tidak pernah di-log. Entri dihapus begitu server menerimanya, saat
+  ditolak permanen, atau saat halaman membaca saklar mati (batch `?s=` itu). Logout oleh user sendiri mengosongkan
+  store, dan pindah ke `/login` menunggu penghapusan itu maks 2 dtk. Sesi yang kedaluwarsa (refresh token ditolak) tidak
+  menghapusnya: bukti tetap ada sampai user yang sama login lagi; bila akun lain yang login, kotak dikosongkan sebelum
+  dibaca (lihat "Pemilik kotak share").
+- Navigasi tetap NetworkFirst, tetapi hanya jawaban 2xx ber-`Content-Type` `text/html` yang disimpan sebagai app shell
+  offline: 404, 5xx, redirect, atau berkas bukan HTML tidak lagi menimpa `/index.html`.
+- `share_target` di `frontend/public/manifest.json` belum ada di branch ini (keputusan pemilik produk 28 Okt 2026), jadi
+  menu Bagikan Android belum menampilkan Jatahku. PR kecil saat saklar dinyalakan menambah blok ini sebagai kunci
+  tingkat atas di samping `"shortcuts"` (tambahkan koma sesudah larik `shortcuts`):
+
+  ```json
+    "share_target": {
+      "action": "/bagikan",
+      "method": "POST",
+      "enctype": "multipart/form-data",
+      "params": {
+        "title": "title", "text": "text", "url": "url",
+        "files": [{ "name": "files", "accept": ["image/*", "application/pdf"] }]
+      }
+    }
+  ```
+
+  Nama harus sama dengan kode: `action` = `POST /bagikan` (`isShareTarget`), `files` = `formData.getAll('files')`,
+  `title`/`text`/`url` = kolom teks share.
+
+**Pemilik kotak share** (`shareInbox.ensureShareOwner`, `tokenSubject`): entri share tidak membawa id user, jadi kotak
+dicap dengan pemiliknya: `localStorage` `jatahku_share_owner` = id akun token sesi yang dipakai tab itu (klaim `sub`
+access token). Itu akun yang menerima unggahan, bukan profil yang tampil: bila `/auth/me` gagal sesudah login, profil
+di layar bisa salinan cache akun sebelumnya. Cap diperiksa oleh pembaca kotak (banner dan `/bagikan`), tepat sebelum
+kotak dibaca dan lagi bila user berganti, bukan oleh jalur login. Saklar mati: cap tidak dibaca dan tidak ditulis.
+Saklar yang belum diketahui ditahan seperti offline, dan `/bagikan` tetap memeriksa cap sebelum menghitung entri yang
+menunggu.
+- Belum ada cap → dicap dengan akun token sesi itu. Cap sama → kotak dibaca. Cap akun lain → kotak dikosongkan dulu,
+  baru dicap ulang (cap tidak pernah berganti selama entri akun lain masih ada). Share akun sebelumnya tidak pernah
+  terhitung, tampil, atau terunggah ke akun baru.
+- Token sesi tidak ada atau tidak terbaca, cap tidak terbaca atau tidak bisa ditulis, atau kotak gagal dikosongkan →
+  kotak dianggap tidak terbaca, dicoba lagi pada bacaan berikutnya. Banner tanpa angka share lokal; `/bagikan`
+  menampilkan "File yang dibagikan tidak bisa dibaca. Coba bagikan lagi.".
+- Logout oleh user sendiri mengosongkan kotak tetapi menyimpan cap. Share yang dibagikan sesudahnya saat belum login
+  hanya terkirim ke akun yang sama; bila akun lain yang login berikutnya, share itu dihapus. Privasi lebih penting
+  daripada kenyamanan. Share yang tersimpan sebelum kotak pernah dicap (belum ada banner atau `/bagikan` yang membacanya
+  sejak saklar menyala) diklaim akun pertama yang membacanya.
+
+**Halaman `/bagikan`** (`Bagikan.jsx`, `shareInbox.js`): route di dalam `Layout`, judul "Bagikan ke Jatahku". Belum
+login → `/login`; entri lokal tetap, dan setelah login (akun yang sama) banner "Bukti menunggu" membawa user kembali ke
+sini.
+- Saklar dibaca dari `/app/config` setiap putaran, bukan dari cache lokal, karena saklar mati menghapus share. Jawaban
+  server boleh disimpan browser sampai 5 menit (`Cache-Control: public, max-age=300`), jadi perubahan saklar bisa sampai
+  ke sini 5 menit kemudian. Gagal mengambil → nilai cache terakhir; belum pernah terbaca → ditahan seperti offline.
+- Batas waktu baca (`pageReads`): `/app/config` 10 dtk (lalu nilai cache terakhir, atau ditahan bila belum pernah
+  terbaca), daftar bukti menunggu 20 dtk (lalu kosong), dan setiap `GET /kotak-struk/{id}` (pantauan, detail kartu, cek
+  ulang struk belanja) 20 dtk (lalu dianggap gagal). Batas waktu hanya berhenti menunggu; permintaannya tidak
+  dibatalkan. Koneksi yang menggantung tidak lagi menahan halaman di "Memuat…": putaran selalu berakhir, dengan "Ke
+  Transaksi" atau "Kirim lagi".
+- Saklar mati → hanya "Fitur ini segera hadir.". Entri batch `?s=` itu dihapus dari HP, dan tidak ada permintaan Kotak
+  Struk (juga tanpa kartu, teks `?err=`, dan permintaan amplop).
+- Offline (atau saklar belum diketahui) → entri tetap, dengan "{n} bukti menunggu dikirim. Akan dikirim saat online."
+  dan tombol "Kirim lagi". Event `online` selama halaman terbuka memulai putaran baru.
+- Kirim: entri diunggah satu per satu ke `POST /kotak-struk/` (`source=pwa_share`, `upload_id` = id entri, `wait=10`,
+  tepat satu `file` atau `text`), dengan teks tahap "bukti". Urutannya: entri yang belum pernah dicoba dulu, lalu yang
+  paling lama tidak dicoba; sesamanya, share tertua dulu lalu urutan dalam share. File dikirim apa adanya (tidak
+  dikompres), jadi semua file memakai batas waktu PDF (60 dtk + 1 dtk per 25 kB, maks 300 dtk); teks 60 dtk.
+- Hasil tiap entri (`uploadOutcome`):
+  - diterima (2xx berisi item) → entri dihapus, kartunya tampil;
+  - dibuang (413, 415, 422 dari API) → entri dihapus, dengan baris "{nama file}: {pesan server}", atau "Bukti tidak bisa
+    dikirim." bila pesannya bukan teks. 413 dari nginx sendiri tidak terbaca browser dan berakhir sebagai "disimpan"
+    (lihat "Batas unggah `api.jatahku.com`");
+  - disimpan (tanpa jawaban, lewat batas waktu, 5xx, 401, 429, 4xx lain, atau 2xx tanpa item) → entri tetap: "Bukti
+    belum terkirim. Akan dikirim lagi saat online." (429: pesan server, atau "Terlalu banyak bukti. Coba lagi
+    sebentar."). Putaran berhenti, entri itu pindah ke belakang antrean, dan "Kirim lagi" mengirim ulang dengan
+    `upload_id` yang sama (tidak membuat item ganda). Di bawah pesannya, entri yang masih di HP terdaftar (nama file,
+    atau "teks") dengan tombol **Hapus** per entri: entri dibuang dari HP, lalu daftarnya dihitung ulang (daftar kosong →
+    pesan dan "Kirim lagi" hilang). Banner menghitung ulang saat halaman ditinggalkan.
+- File di atas 10 MB dibuang di HP tanpa diunggah, dengan teks server untuk isinya: "PDF terlalu besar (maks 10 MB)",
+  "Foto terlalu besar (maks 8 MB)", atau "Kirim foto (JPG/PNG/WebP), PDF, atau teks". Foto 8–10 MB tetap diputuskan
+  server (413).
+- Sesudah putaran unggah, halaman menampilkan kartu untuk semua bukti `siap` milik user
+  (`GET /kotak-struk/?status=siap`, maks 50), jadi halaman ini juga tujuan "Tinjau" di banner. Item hasil unggahan yang
+  masih `diterima`/`diproses` dipantau dengan `GET /kotak-struk/{id}` tiap 1,5 dtk, paling lama 30 dtk sejak diterima
+  halaman.
+- Item yang simpanannya masih di antrean offline (form Catat; menunggu atau ditolak) tampil sebagai kartu hanya-baca:
+  badge, "{nominal} · {nama} · {tanggal}", dan "Struk ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan
+  antrean offline." ("Bukti …" untuk QRIS/transfer), tanpa Simpan dan tanpa tombol lewati (melewatinya membuat simpanan
+  di antrean ditolak). Id antrean dibaca setiap putaran kirim sebelum kartu pertama, dan lagi saat antrean berubah
+  (sinkron dari app atau service worker, coba lagi, hapus). Saat itu detail kartu juga disegarkan, jadi struk yang baru
+  tersinkron tampil "Bukti ini sudah tercatat.".
+- Satu `ProofCard` per id item: detail baru menggantikan yang lama di tempat yang sama, dan status yang lebih awal tidak
+  menimpa yang lebih baru. Amplop dimuat sekali saat kartu pertama muncul. Kartu yang dicatat, dilewati, atau ditolak
+  server menyegarkan daftar bukti menunggu.
+- "Ke Transaksi" tampil bila tidak ada unggahan atau pantauan yang berjalan dan setiap kartu `siap` sudah ditangani.
+  Tanpa kartu dan tanpa pesan: "Tidak ada bukti yang menunggu.".
+- `?err=sw` → "Buka Jatahku sekali, lalu bagikan lagi." (share sampai ke server, lihat aturan nginx di "Menyalakan
+  saklar"). `?err=baca` → "File yang dibagikan tidak bisa dibaca. Coba bagikan lagi." dan "Kalau memori HP penuh,
+  kosongkan sedikit lalu bagikan lagi.". Kotak share yang tidak bisa dibaca halaman → kalimat pertama saja.
+- Meninggalkan halaman menghentikan unggahan berikutnya; unggahan yang sedang berjalan tetap selesai.
+
+**`ProofCard`** (`ProofCard.jsx`, `proofFormat.js`): satu kartu = satu transaksi untuk total dokumen, untuk semua jenis
+(rincian per barang tetap di form Catat). Tanpa geser dana dan tanpa antrean offline.
+- Badge jenis "QRIS", "Transfer", "Struk belanja", atau "Bukti bayar" (`tidak_dikenali`); QRIS/transfer dari aplikasi
+  yang profilnya dikenali ditambah penerbit ("QRIS · GoPay"). Status bayar: "Berhasil", "Pending", atau "Gagal".
+- Nominal: QRIS/transfer dengan total terbaca yang keyakinannya bukan `rendah`/`gagal` hanya ditampilkan (besar). Selain
+  itu (tanpa total, keyakinan `rendah`/`gagal`, struk belanja, tidak dikenali) kolom "Nominal" bisa diubah: terisi total
+  dokumen, juga bila item baru selesai dibaca sesudah kartu tampil, dengan label keyakinan ("total tidak terbaca",
+  "kurang yakin, mohon dicek", "cek lagi nominalnya"). Nominal pecahan ditolak.
+- Nama tampilan (nama panggilan rumah tangga, lalu nama dari bukti) dan "Ubah nama" (`PUT /kotak-struk/merchants/{id}`,
+  bila item punya merchant). Tanggal dan jam bayar WIB ("26 Okt 2026, 08.12"; struk belanja dan tidak dikenali tanpa
+  jam) dan kota. Tanggal sebelum periode berjalan: pilihan Hari ini/{tgl} (lihat "Tanggal dokumen" di atas).
+- Amplop: daftar yang sama dengan form Catat (aktif, bukan tabungan/sinking fund), saran server paling depan. Saran yang
+  yakin dipilihkan dan diberi label "· disarankan"; saran yang tidak yakin hanya ada di urutan pertama.
+- "Catatan" (contoh "bakso 2, es teh (opsional)", maks 200 karakter): 600 ms sesudah berhenti mengetik →
+  `POST /kotak-struk/{id}/saran`, lalu saran amplop dan "Keterangan: …" diperbarui (jawaban lama diabaikan).
+- Peringatan, berurutan: alasan blokir; arah uang ("Ini top-up saldo, biasanya bukan pengeluaran.", "Ini uang masuk,
+  biasanya bukan pengeluaran.", "Sepertinya transfer ke rekeningmu sendiri."); duplikat lunak ("Mirip "{keterangan}"
+  yang dicatat {jam}. Sudah dicatat?"); lalu peringatan server apa adanya. Tidak ada langkah konfirmasi tambahan:
+  menekan Simpan dengan peringatan yang terlihat sama dengan "Tetap catat" di bot.
+- Tombol: **Simpan**; **Sama, lewati** (duplikat lunak, dan satu-satunya tombol lewati untuk bukti yang sudah
+  tercatat); **Bukan pengeluaran** (selain bukti yang sudah tercatat). Simpan mati sampai kartu siap; alasan pertama
+  yang menghalangi tampil di bawahnya ("Nominal tidak terbaca", "Pilih tanggal catat", "Pilih amplop dulu", atau "Butuh
+  koneksi internet"), sedangkan alasan blokir tampil di peringatan.
+- Struk belanja dibaca ulang (`GET /kotak-struk/{id}`, maks 20 dtk) tepat sebelum Simpan, karena server menerima lebih
+  dari satu transaksi per struk (dicatat per barang di form Catat): `tercatat` → alasan blokir "Struk ini sudah
+  tercatat."; `dilewati` → "Bukti ini sudah dilewati."; tidak terbaca → galat koneksi, tidak ada yang dikirim; status
+  lain (juga `kedaluwarsa`) → disimpan, server yang menilai. Jenis lain tetap mengandalkan klaim server (409).
+- Simpan → `POST /transactions/` dengan `receipt_item_id`, `client_ref` (satu per kartu), dan tanggal catat:
+  - 409 → teks server menjadi alasan blokir kartu: Simpan mati dan tombol lewati hilang (sama untuk 409/404 saat
+    melewati);
+  - koneksi putus, 5xx, atau 409 "sedang diproses" → hasil belum pasti: isian dikunci dan Simpan mengirim ulang
+    permintaan yang sama ("… tidak akan tercatat dua kali.");
+  - limit harian → tombol "Catat, naikkan limit hari ini"; dana kurang → "Pilih amplop lain lalu Simpan lagi.";
+  - tercatat → "Tercatat di {amplop}." (ditambah pemberitahuan kuota bila ada) dan event `jatahku:txn-added`; dilewati
+    → "Dilewati.".
+- Offline: Simpan dan tombol lewati mati. Item yang belum `siap` hanya menampilkan badge dan alasannya (gagal: pesan
+  `error` item); item yang simpanannya di antrean offline: kartu hanya-baca (lihat "Halaman `/bagikan`").
+
+**Banner "Bukti menunggu"** (`PendingProofsBanner.jsx`, `pendingProofs.js`):
+- Hanya saat saklar menyala. Saklar mati (juga sebelum config terbaca): tanpa permintaan, tanpa IndexedDB, tanpa
+  listener.
+- Dipasang di `Layout` tepat sesudah banner antrean offline, jadi tampil di semua halaman kecuali `/bagikan` sendiri
+  (juga `/bagikan/`; besar-kecil huruf diabaikan). Spec 5c menyebut "beranda dan Transaksi"; banner ini mengikuti pola
+  banner antrean offline, yang tampil di semua halaman.
+- Dua angka: share yang belum terkirim (jumlah entri IndexedDB `jatahku-share`, hanya bila kotaknya milik akun token
+  sesi tab itu: lihat "Pemilik kotak share") dan item `siap` milik user di server (`GET /kotak-struk/count?status=siap`).
+  Server menghitung semua item `siap`, juga dari Telegram, chat web, dan scan form Catat yang ditinggalkan tanpa
+  disimpan atau dihapus.
+- Teks: "{u} bukti menunggu dikirim, {r} menunggu dicatat · Tinjau", "{u} bukti menunggu dikirim · Kirim", atau "{r}
+  bukti menunggu dicatat · Tinjau"; keduanya 0 → banner tidak tampil. Ketuk → `/bagikan`.
+- Dihitung ulang saat dipasang, saklar menyala, atau user berganti, setiap pindah halaman, pada event `online`,
+  `jatahku:txn-added`, `jatahku:kotak-changed`, dan saat tab terlihat lagi. Tiap angka tampil begitu bacaannya sendiri
+  selesai, dan jawaban lama tidak menimpa yang lebih baru. COUNT gagal → angka terakhir; IndexedDB gagal, atau kotak
+  yang tidak bisa dipastikan miliknya → 0.
+- Banner tidak mengunggah apa pun. Share lokal dikirim halaman `/bagikan` (saat dibuka, pada event `online` selama
+  halaman terbuka, atau lewat "Kirim lagi"), jadi share yang belum terkirim menunggu satu ketukan.
+
+**Tips Settings dan rincian Admin**:
+- Settings, tepat sesudah kartu Telegram, hanya saat saklar menyala: "Bagikan bukti bayar ke Jatahku: di Android,
+  pasang Jatahku dari browser lalu pilih Jatahku di menu Bagikan. Di iPhone, bagikan bukti ke bot Telegram Jatahku."
+  Teks ini menganggap menu Bagikan sudah ada (PR `share_target`).
+- Admin → Dashboard → kartu "Scan Struk (bulan ini)" (`scanStats.js`, tidak bergantung saklar) menambah baris "Jenis
+  dokumen: Struk belanja {n} · QRIS {n} · Transfer {n} · Tidak dikenali {n}" (jenis lain menyusul dengan kuncinya) dan
+  tabel "Per penerbit": Penerbit, Total, Tercatat, Dikoreksi, dan "% dikoreksi" (dikoreksi / tercatat, dibulatkan; "–"
+  bila belum ada yang tercatat), urut total terbanyak. Hanya pembaca QRIS dan transfer yang mengisi `issuer`, jadi
+  selama saklar mati tabel itu tidak tampil. Server lama tanpa rincian → bagian itu tidak tampil. Angkanya dari
+  `GET /admin/receipt-scans/stats` (lihat "Statistik Admin").
 
 ## API
 
@@ -231,6 +474,7 @@ garis miring penutup (`/kotak-struk/`); tanpa itu dijawab 307.
 |---|---|
 | `POST /kotak-struk/` | Multipart: `file` **atau** `text`, `source`, `upload_id` (≤ 64), `wait` (0–45 dtk, bawaan 0; koneksi DB dilepas selama menunggu). 201 item baru, 200 item yang sudah ada. Menjawab detail item |
 | `GET /kotak-struk/?status=siap` | Item milik user dengan status itu (bawaan `siap`), terbaru dulu, maks 50 |
+| `GET /kotak-struk/count?status=siap` | `{count}`: jumlah item milik user dengan status itu (bawaan `siap`), saringan sama dengan daftar tanpa batas 50; satu COUNT tanpa detail item (banner bukti menunggu di web) |
 | `GET /kotak-struk/{id}` | Detail item |
 | `POST /kotak-struk/{id}/saran` | `{note}` (≤ 200) → `{suggestion, description_preview}` |
 | `POST /kotak-struk/{id}/lewati` | `{reason: bukan_pengeluaran \| duplikat \| batal}` → `dilewati`. Hanya item `siap`/`gagal`; selain itu 409 "Bukti ini tidak bisa dilewati" |
@@ -255,10 +499,19 @@ Item `diterima`/`diproses`/`gagal` hanya memuat kolom dasar (tanpa `document`, `
 
 **`receipt_item_id` di `POST /transactions` dan `/batch`**: dicek setelah `client_ref` (kirim ulang tetap
 mengembalikan transaksi yang sama). Item harus milik user, `siap` (struk belanja: `siap` atau `tercatat`), tidak
-diblokir, dan bukan duplikat yang sudah tercatat; selain itu 409 (di batch: `error` baris itu, `ok: false`) dengan
+diblokir, dan bukan duplikat yang sudah tercatat. Struk belanja dan tidak dikenali yang sudah terbaca (punya
+`document`) tetap boleh dicatat sesudah `kedaluwarsa`, seperti `siap` dengan cek yang sama: simpan dari antrean offline
+form Catat yang baru sampai sesudah 7 hari adalah konfirmasi yang terlambat (`record._late_ok`). QRIS/transfer yang
+kedaluwarsa dan item yang tidak pernah terbaca tetap mendapat teks kedaluwarsa. Selain itu 409 (di batch: `error`
+baris itu, `ok: false`) dengan
 salah satu teks: "Bukti ini sudah tercatat", "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya", "Bukti
 ini belum siap dicatat", "Bukti tidak ditemukan", "Transaksi gagal, tidak bisa dicatat". Kuota transaksi Basic
-(50/bulan) tetap berlaku.
+(50/bulan) tetap berlaku. Tanggal (aturan bot yang sama, `period.document_date_kind` terhadap gajian user):
+`transaction_date` sesudah hari ini dicatat hari ini, dan sebelum awal periode berjalan dicatat di tanggal itu tanpa
+blok dana dan limit harian (limit juga tidak dinaikkan walau `raise_daily_limit`), sedangkan kunci amplop, amplop
+tabungan, dan kuota tetap menolak; form Catat dan kartu bukti (`ProofCard`) di web menanyakan "Hari ini" atau tanggal
+dokumen lebih dulu (periode dari `GET /analytics/periods`; tanggal yang belum lewat diganti hari ini oleh form atau
+kartu sebelum disimpan; lihat "Tanggal dokumen" di "Web dan PWA"), dan baris tanpa `receipt_item_id` tidak berubah.
 
 ## Saklar fitur
 
@@ -270,11 +523,21 @@ ini belum siap dicatat", "Bukti tidak ditemukan", "Transaksi gagal, tidak bisa d
 | Pembaca | Hanya `struk_belanja`; bukti QRIS biasanya jatuh ke `tidak_dikenali`, transfer kadang terbaca `struk_belanja` | `qris.umum` dan `transfer.umum` didahulukan |
 | Pesan bot untuk QRIS | Pesan struk lama berkeyakinan rendah ("⚠️ kurang yakin, mohon dicek") | Pesan bukti dengan tombol catatan dan "Bukan pengeluaran" |
 | Teks OCR dan peta merchant | Teks yang terbaca seperti bukti bayar **tidak** disimpan dan tidak masuk peta merchant (nomor rekening/RRN tidak boleh tersimpan) | Bukti yang dibaca pembaca QRIS/transfer tidak pernah menyimpan teks OCR; penerimanya masuk peta |
-| Klien (Bagian B) | Banner, `/bagikan`, tombol PDF tersembunyi | Tampil |
+| Form Catat (web) | Tanpa tombol PDF; PDF lewat Galeri ditolak seperti dulu | Tombol PDF |
+| Banner "Bukti menunggu", tips Settings | Tidak tampil; banner tidak meminta apa pun ke server | Tampil |
+| Halaman `/bagikan` | Hanya "Fitur ini segera hadir."; entri batch `?s=` itu dihapus dari HP, tanpa permintaan Kotak Struk | Mengunggah share, lalu `ProofCard` untuk tiap bukti `siap` |
 
 **Tidak bergantung pada saklar**: penghapusan kuota scan, PDF/gambar lewat intake, transfer gagal tetap diblokir,
-pencegahan ganda. Menyalakan (setelah gerbang korpus lulus; `PUT` mengganti **seluruh** nilai, jadi gabungkan dengan
-isi `GET /admin/settings/app_config` bila sudah ada):
+pencegahan ganda, baris hasil scan di form Catat (satu baris per item, `receipt_item_id`, alasan blokir, pertanyaan
+tanggal, × melewati item), penangan `POST /bagikan` di service worker, dan rincian Scan Struk di Admin (lihat "Web dan
+PWA"). Menu Bagikan Android juga tidak diatur saklar: Jatahku muncul di sana setelah `share_target` ada di manifest dan
+PWA memperbarui manifestnya. Klien web membaca saklar dari cache `/app/config` (lihat "Menyalakan saklar"); halaman
+`/bagikan` memintanya lagi setiap putaran (jawaban yang disimpan browser berumur paling lama 5 menit).
+
+Menyalakan: ikuti urutan di "Menyalakan saklar" (gerbang korpus, nginx, batas unggah, keputusan hari pertama, saklar,
+uji HP tanpa share, PR `share_target`, uji share).
+Perintahnya (`PUT` mengganti **seluruh** nilai, jadi gabungkan dengan isi `GET /admin/settings/app_config` bila sudah
+ada):
 
 ```
 PUT /admin/settings/app_config?value={"features": {"receipt_inbox": {"web": true}}}
@@ -288,13 +551,13 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
 
 | Nama | Nilai | Arti |
 |---|---|---|
-| `WAIT_BOT_S` | 10 | Bot (dan PWA) menunggu hasil sebelum menjawab "masih dibaca" |
+| `WAIT_BOT_S` | 10 | Bot menunggu hasil sebelum menjawab "masih dibaca"; halaman `/bagikan` mengirim `wait` yang sama (`UPLOAD_WAIT_S`) |
 | `WAIT_FORM_S` | 45 | Tombol Struk di form Catat menunggu sebelum 503 "sedang ramai"; batas atas `wait` di API |
 | `STALE_PROCESSING` | 5 menit | Item `diproses` lebih lama dari ini dikembalikan ke antrean |
 | `MAX_ATTEMPTS` | 3 | Percobaan baca sebelum `gagal` |
 | `ITEM_EXPIRY` | 7 hari | `siap`/`gagal` tanpa konfirmasi → `kedaluwarsa` (dihitung dari selesai dibaca) |
 | `RATE_PER_HOUR` | 30 | Bukti per user per jam, gabungan semua kanal (Redis `kotak:rate:{user_id}`; Redis mati → tidak dibatasi); menggantikan batas slowapi 30/jam di `scan-receipt` dan `/bot/chat/photo` |
-| `MAX_FILES_PER_SHARE` | 10 | File per satu share. Dipakai klien (Bagian B); server belum memakainya |
+| `MAX_FILES_PER_SHARE` | 10 | File per satu share. Klien memakai nilai yang sama (`shareInbox.js` `MAX_FILES`): service worker menyimpan 10 file pertama, sisanya diabaikan. Server sendiri tidak memakainya (tiap unggahan satu file) |
 | `MAX_PENDING` | 20 | Item `diterima`/`diproses` per user |
 | `IMAGE_MAX_BYTES` | 8 MB | Gambar (batas 30 MP di OCR tetap) |
 | `PDF_MAX_BYTES` / `PDF_MAX_PAGES` | 10 MB / 5 | PDF |
@@ -358,7 +621,8 @@ sesi dan penanganan galat sendiri:
 dan `by_issuer` (`{issuer: {total, recorded, corrected}}`, hanya aplikasi yang profilnya dikenali). `corrected`
 untuk QRIS/transfer **diturunkan**: item `tercatat` yang nominal transaksinya beda dari hasil baca, nominalnya
 tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti bayar tidak pernah memakai
-`outcome`. Data ini dipakai untuk menambah profil aplikasi. Tampilan di `Admin.jsx` belum ada (Bagian B).
+`outcome`. Data ini dipakai untuk menambah profil aplikasi. Tampilannya di Admin → Dashboard → kartu "Scan Struk (bulan
+ini)" (`Admin.jsx`, `scanStats.js`): lihat "Tips Settings dan rincian Admin" di "Web dan PWA".
 
 ## Konfigurasi (`/opt/jatahku/.env`)
 
@@ -373,6 +637,9 @@ tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti
 
 Deploy otomatis tidak memasang paket Python dan tidak menjalankan alembic, jadi ada langkah manual. Daftar yang
 sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk / Bagikan ke Jatahku, Bagian A (a7c4e2b9d1f3)". PR Bagian A berlabel `migrasi`.
+Bagian B tidak menambah paket maupun migrasi. Langkah manualnya di server hanya aturan nginx `/bagikan` dan, bila
+perlu, batas unggah nginx api.jatahku.com (keduanya di bagian "Menyalakan saklar"); checklist-nya `AGENTS.md` "Deploy
+Checklist — Bagikan ke Jatahku, Bagian B (web)".
 
 1. **Sebelum merge** (aman untuk kode lama):
    `sudo -u jatahku /opt/jatahku/venv/bin/pip install pypdfium2==5.13.0` (versi sama dengan `requirements.txt`);
@@ -387,10 +654,11 @@ sama, format checklist: `AGENTS.md` "Deploy Checklist — Kotak Struk / Bagikan 
 4. **Uji** (saklar masih mati): kirim foto struk Indomaret ke bot → pesan struk lama **tanpa** baris sisa scan;
    kirim PDF → bot membalas hasil, bukan "📄 File belum didukung" (jawaban "Baca bukti sedang tidak bisa" berarti
    `pypdfium2` belum terpasang); kirim bukti QRIS → pesan struk berkeyakinan rendah, dan `GET /admin/receipt-scans/stats` (admin)
-   → `unrecognized` bertambah (UI Admin belum menampilkannya). Bot menjawab "Bukti tidak bisa dibaca" untuk semua file → cek `journalctl -u jatahku`
+   → `unrecognized` bertambah (sejak Bagian B juga di Admin → Scan Struk, baris "Jenis dokumen"). Bot menjawab "Bukti tidak bisa dibaca" untuk semua file → cek `journalctl -u jatahku`
    (biasanya `KOTAK_DIR` tidak ada atau tidak bisa ditulis).
-5. **Saklar tetap mati sampai gerbang korpus lulus** (bagian berikut). Setelah itu nyalakan seperti di "Saklar
-   fitur", lalu kirim dua bukti QRIS dari merchant yang sama (catat yang pertama): yang kedua datang dengan ⭐.
+5. **Saklar tetap mati sampai gerbang korpus lulus** (bagian berikut). Setelah itu nyalakan dengan urutan di
+   "Menyalakan saklar", lalu kirim dua bukti QRIS dari merchant yang sama (catat yang pertama): yang kedua datang
+   dengan ⭐.
 
 ## Alat korpus dan gerbang rilis
 
@@ -431,11 +699,96 @@ memeriksa cakupan itu, jadi peninjau yang memastikannya sebelum menganggap gerba
 `test_real_corpus_meets_release_gate` dilewati ("korpus nyata belum ada") sampai ada sampel nyata yang sudah
 ditinjau, dan baru benar-benar berjalan setelah itu. Butir spec §7c yang bergantung pada klien (share Android
 ≤ 5 dtk, saran yakin di share kedua, folder sementara kosong setelah semua item diproses) diuji manual di HP
-sungguhan bersama Bagian B; butir server lain (tidak pernah tercatat dua kali, transfer gagal tidak bisa dicatat)
-dicakup tes otomatis.
+sungguhan saat saklar dinyalakan (langkah terakhir "Menyalakan saklar"); butir server lain (tidak pernah tercatat dua
+kali, transfer gagal tidak bisa dicatat) dicakup tes otomatis.
 
 **Kalibrasi A14 menunggu sampel nyata** dari pemilik produk (bukti QRIS dan transfer dari 8 bank dan 4 e-wallet).
 Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan label per aplikasi di `profiles.py`.
+
+## Menyalakan saklar
+
+Semua langkah saat `features.receipt_inbox` dinyalakan, berurutan. Aturan nginx boleh dipasang lebih dulu, langsung
+sesudah Bagian B di-merge; ia harus sudah aktif sebelum PR `share_target` di-merge.
+
+**Aturan nginx `/bagikan`** (di luar repo: konfigurasi nginx domain jatahku.com di HestiaCP). Share yang sampai ke
+server karena service worker belum aktif dijawab 303 ke `/bagikan?err=sw` ("Buka Jatahku sekali, lalu bagikan
+lagi."), dan `GET /bagikan` disajikan `app.html` seperti route SPA lain. Bila nginx tidak menyajikan `app.html` untuk
+`/bagikan`, service worker hanya meneruskan jawaban server (mis. 404), jadi halaman itu tidak terbuka, juga sesudah
+303 dari service worker.
+1. Cek dulu cara route SPA disajikan sekarang:
+   ```bash
+   curl -sI https://jatahku.com/bagikan
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -X POST https://jatahku.com/bagikan
+   ```
+2. Tambahkan blok ini ke konfigurasi nginx domain jatahku.com, di tempat yang sama dengan aturan route SPA yang ada
+   (`app.html` disalin `deploy.sh` ke `/home/jatahku/web/jatahku.com/public_html/`):
+   ```nginx
+   location = /bagikan {
+       if ($request_method = POST) { return 303 /bagikan?err=sw; }
+       try_files /app.html =404;
+   }
+   ```
+3. `sudo nginx -t && sudo systemctl reload nginx`.
+4. Ulangi dua perintah di langkah 1. Hasil yang benar: GET → `200` dengan `Content-Type: text/html`; POST → `303` ke
+   `…/bagikan?err=sw`.
+   POST yang lebih besar dari `client_max_body_size` domain jatahku.com dijawab 413 oleh nginx sebelum `return` jalan,
+   jadi share besar saat service worker belum aktif berakhir di halaman galat nginx, bukan teks `?err=sw` (POST di
+   langkah 1 tanpa isi, jadi tidak menguji ini). Cek nilainya dengan `sudo nginx -T | grep client_max_body_size`; bila
+   kecil (bawaan nginx 1m), tambahkan mis. `client_max_body_size 110m;` di dalam blok `location = /bagikan` (cukup
+   untuk 10 file × 10 MB ditambah bungkus multipart; `100m` kurang sedikit).
+
+**Batas unggah `api.jatahku.com`.** Foto yang dibagikan tidak dikompres (server menerima sampai 8 MB) dan PDF sampai
+10 MB, padahal unggahan web selama ini foto terkompres ±300 KB. `client_max_body_size` nginx untuk api.jatahku.com harus
+menerima file 10 MB ditambah bungkus multipart-nya (`10m` tidak cukup). Kalau terlalu kecil, nginx menjawab 413 sebelum
+API, dan halaman galat nginx itu tanpa header CORS: browser tidak bisa membacanya dan menganggapnya koneksi gagal. Form
+Catat lalu menampilkan galat koneksi dengan "Coba lagi", dan di `/bagikan` entrinya tidak dibuang sendiri: tetap "Bukti
+belum terkirim", dicoba lagi di setiap putaran, dan terus dihitung banner sampai user menekan **Hapus** (lihat "Batasan
+yang diketahui"). Karena itu cek ini wajib sebelum saklar menyala. Cek tanpa token (tidak ada item yang dibuat):
+```bash
+head -c 10485760 /dev/urandom > /tmp/bukti-10mb.bin
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -F source=pwa_share -F file=@/tmp/bukti-10mb.bin https://api.jatahku.com/kotak-struk/
+rm /tmp/bukti-10mb.bin
+```
+`413` = batas nginx terlalu kecil: naikkan `client_max_body_size` di konfigurasi nginx api.jatahku.com (mis. `12m`),
+`sudo nginx -t && sudo systemctl reload nginx`, lalu ulangi cek. `401` = cukup (permintaan sampai ke API dan ditolak
+karena tanpa login).
+
+**Urutan:**
+1. Gerbang korpus A14 lulus (`eval --real-only` keluar 0, bagian "Alat korpus dan gerbang rilis"), sisa privasi A68
+   selesai (`privacy.html`, DPIA, formulir toko; `docs/mobile/PROGRESS.md`), dan pemilik produk memutuskan menyalakan.
+2. Aturan nginx `/bagikan` aktif (di atas).
+3. Batas unggah `api.jatahku.com` sudah dicek (di atas).
+4. Keputusan hari pertama (pemilik produk). Begitu saklar menyala, banner langsung menghitung semua item `siap` 7 hari
+   terakhir, termasuk scan form Catat yang ditutup tanpa Simpan atau × dan bukti bot/chat yang tombolnya tidak pernah
+   diketuk (lihat "Batasan yang diketahui"). Pilihannya: terima, atau lewati sekali item `siap` lama dari form Catat
+   (`source='web_form'`) sebelum menyalakan. Langkah sekali jalan untuk pilihan kedua belum ada di repo.
+5. Nyalakan saklar (`PUT /admin/settings/app_config`, bagian "Saklar fitur").
+6. Uji di HP sungguhan tanpa menu Bagikan (spec 7c), sebelum PR `share_target` di-merge: bot Telegram di Android dan
+   iPhone, chat bot web, PDF dari tombol PDF di desktop, dan screenshot QRIS dari Galeri di form Catat.
+7. Merge PR `share_target` (blok di "Share target dan service worker") segera sesudah langkah 6, lalu cek versi yang
+   tayang (`https://jatahku.com/version.json`). Saklar harus menyala lebih dulu, paling sedikit 5 menit sebelumnya:
+   share yang tiba di `/bagikan` saat saklar terbaca mati (juga dari cache, bila `/app/config` gagal diambil, atau dari
+   cache browser yang berumur sampai 5 menit) dihapus. Jarak langkah 5 dan 7 dibuat pendek karena tips Settings sudah
+   menyuruh user Android memilih Jatahku di menu Bagikan.
+8. Langsung sesudah deploy `share_target`, uji alur share di HP sungguhan (spec 7c): PWA terpasang di Android Chrome
+   (buka app sekali supaya manifest baru terbaca; bila Jatahku belum muncul di menu Bagikan, pasang ulang PWA-nya),
+   share dari beberapa aplikasi bank dan e-wallet, saat belum login, dan saat offline; share Android → kartu
+   konfirmasi ≤ 5 dtk saat online; share kedua dari merchant yang sama → saran yakin. Terakhir: folder file sementara
+   (`KOTAK_DIR`) kosong setelah semua item diproses.
+
+Catatan:
+- Klien web membaca saklar dari cache `/app/config`, yang diambil ulang saat app dibuka atau tab terlihat lagi, paling
+  cepat sejam sekali (`CONFIG_TTL_MS`). Perubahan saklar (nyala atau mati) baru sampai ke klien yang sudah terbuka pada
+  kesempatan itu, jadi bisa butuh sejam atau lebih. Halaman `/bagikan` memintanya lagi setiap putaran, tetapi browser
+  boleh memakai jawaban yang berumur sampai 5 menit (`Cache-Control: public, max-age=300`).
+- PWA yang sudah terpasang memakai penangan service worker baru setelah app dibuka sekali sesudah deploy Bagian B
+  (service worker baru langsung aktif: `skipWaiting` + `clients.claim`). Jatahku muncul di menu Bagikan setelah Chrome
+  memperbarui manifest PWA itu, saat app dibuka dan tidak langsung.
+- Penyimpanan permanen (`navigator.storage.persist()`) tidak diminta: saat memori HP sangat penuh, browser bisa
+  menghapus data situs, termasuk share yang belum terkirim (seperti antrean offline). Share yang gagal disimpan karena
+  memori penuh berakhir di teks `?err=baca` dengan petunjuk memori.
+- Saklar dimatikan lagi sesudah PR `share_target` tayang: menu Bagikan tetap menampilkan Jatahku, dan `/bagikan`
+  menjawab "Fitur ini segera hadir." lalu menghapus share itu.
 
 ## Batasan yang diketahui
 
@@ -463,8 +816,44 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
   status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris
   tunai dan tanpa kolom jumlah barang) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap
   terbaca).
-- **Bagian B belum ada**: chat web menyebut "Bukti menunggu di beranda" tetapi banner itu belum ada; item yang
-  `siap` bisa dilihat lewat API tetapi belum lewat UI web.
+- **Saklar mati: janji chat web tanpa banner.** Bukti yang belum selesai dibaca dalam 10 dtk di chat web dijawab "⏳
+  Masih dibaca. Cek Bukti menunggu di beranda nanti.", tetapi banner "Bukti menunggu" hanya tampil saat saklar
+  menyala. Diterima (jarang).
+- **Form lintas situs ke `/bagikan`.** Situs mana pun bisa mengirim form `POST` ke `/bagikan` lewat navigasi lintas
+  situs, dan service worker menyimpannya seperti share. Saat saklar menyala, halaman `/bagikan` mengunggahnya ke kotak
+  user yang sedang login sebagai item sampah. Dibatasi batas intake (30 bukti/jam, 20 item belum selesai), file di
+  atas 10 MB dibuang di HP, dan tidak ada yang tercatat tanpa Simpan. Cek asal/referer tidak dipasang: cek itu tidak
+  bisa membedakan share asli dari form lintas situs tanpa referer, dan cek yang salah memblokir share asli. Diterima.
+- **Ganti akun di HP yang sama.** Kotak share dicap dengan pemiliknya (lihat "Pemilik kotak share"), jadi share akun
+  sebelumnya tidak pernah terhitung, tampil, atau terunggah ke akun lain. Harganya: share yang dibagikan saat belum
+  login dihapus bila akun lain yang login berikutnya, dan share yang tersimpan sebelum kotak pernah dicap diklaim akun
+  pertama yang membacanya. Tab yang dibuka sebelum ganti akun menyimpan sesi akun sebelumnya di memori, dan
+  pemeriksaan pemiliknya berjalan sebagai akun itu, jadi tab itu bisa mengosongkan kotak akun baru: aman untuk privasi,
+  tetapi share itu hilang.
+- **Batas waktu permintaan.** `/bagikan` memakai batas waktu baca (config 10 dtk, daftar bukti menunggu 20 dtk, satu
+  item 20 dtk; lihat "Halaman `/bagikan`"), jadi koneksi yang menggantung tidak lagi menahan halaman. Yang belum:
+  permintaan di kartu (Simpan, lewati, Ubah nama, saran catatan) dan COUNT banner tetap tanpa batas waktu. Tombol kartu
+  menunggu jawabannya, dan banner tetap menampilkan angka share lokal.
+- **Share yang tidak pernah bisa terkirim.** Entri yang setiap kali berakhir "disimpan" (lihat "Hasil tiap entri"; mis.
+  413 dari nginx tanpa header CORS, yang terbaca browser sebagai koneksi gagal) tetap dicoba lagi di setiap putaran dan
+  dihitung banner sampai user menekan **Hapus** di `/bagikan`. Entri itu pindah ke belakang antrean, jadi entri lain
+  terkirim lebih dulu di putaran berikutnya.
+- **Struk belanja tercatat dua kali.** Server menerima lebih dari satu transaksi per struk belanja (dicatat per barang),
+  jadi klien yang menjaganya: form Catat tidak menambah baris untuk struk yang simpanannya di antrean offline,
+  `/bagikan` menampilkan kartu struk itu hanya-baca, dan kartu membaca ulang struk tepat sebelum Simpan. Sisanya selalu
+  dua penyimpanan yang disengaja:
+  - baris form Catat yang di-scan sebelum struk itu tercatat di tempat lain (kartu `/bagikan`, tab atau HP lain) tetap
+    tersimpan lewat "Simpan Semua", karena form tidak membaca ulang item sebelum menyimpan;
+  - dua tab yang menekan Simpan pada saat yang sama (cek ulang keduanya masih melihat `siap`);
+  - tombol bot Telegram yang diketuk dalam 10 menit sesudah kartu mencatat struk yang sama (sesi tombol `TXN_TTL` =
+    600 dtk).
+- **Struk yang tercatat sebagian tidak bisa di-scan ulang.** Bila sebagian barang struk sudah tersimpan lalu form Catat
+  ditutup, foto yang sama di-scan lagi terblokir ("Bukti ini sudah tercatat."); sisanya harus dari antrean offline atau
+  diketik. Mengizinkan scan ulang untuk sisanya butuh "plan id" di server (FS-2).
+- **Hari pertama saklar menyala.** Banner langsung menghitung semua item `siap` 7 hari terakhir (`ITEM_EXPIRY`),
+  termasuk scan form Catat yang ditutup tanpa Simpan atau × dan bukti bot/chat yang tombolnya tidak pernah diketuk.
+  Pemilik produk memutuskannya sebelum saklar menyala: terima, atau lewati sekali item `web_form` lama (langkah 4 di
+  "Menyalakan saklar").
 
 ## Tes
 
@@ -472,3 +861,8 @@ Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan la
 (intake, ekstraksi, pembaca, registri, worker, API, bot, pemeliharaan, saran, transaksi, korpus, skema, dokumen),
 `test_receipt_scan.py`, `test_account_deletion.py`, `test_web_chat.py`. Cek API hanya bertambah:
 `python -m app.scripts.openapi_cek`.
+
+Web (Bagian B): `cd frontend && node --test src/lib/*.test.js src/native/*.test.js`, antara lain `shareInbox`,
+`swShareTarget` (memuat `sw.js` asli dengan `self`, `caches`, dan `fetch` tiruan), `proofFormat`, `pendingProofs`,
+`scanStats`, `multiAddRows`, `receiptScan`, `receiptProgress`, `offlineSync`, dan `native/web`. Komponen JSX
+(`Bagikan.jsx`, `ProofCard.jsx`, banner, form Catat) tidak diuji otomatis; aturannya ada di modul-modul itu.

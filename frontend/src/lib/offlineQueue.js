@@ -3,7 +3,7 @@
 // setiap kali isi antrean berubah (masuk, tersinkron, dicoba lagi, dihapus).
 // Tempat menyimpan antrean ditentukan lapisan native (web: IndexedDB bersama
 // service worker; aplikasi: penyimpanan native, ADR-M11).
-import { syncQueue, isPending } from './offlineSync.js';
+import { syncQueue, isPending, receiptItemIdsOf } from './offlineSync.js';
 import { newRef } from './ref.js';
 import { native } from '../native/index.js';
 
@@ -31,6 +31,16 @@ export const onBackgroundSynced = (cb) => native.queue.onBackgroundSynced(cb);
 // Menunggu dikirim (tidak termasuk yang ditolak).
 export async function getPendingCount() {
   return (await store.all()).filter(isPending).length;
+}
+
+// Id item Kotak Struk di antrean, menunggu maupun ditolak (offlineSync.receiptItemIdsOf). Gagal membaca → Set kosong:
+// form Catat dan /bagikan tidak pernah tertahan oleh antrean yang tidak terbaca.
+export async function queuedReceiptItemIds() {
+  try {
+    return receiptItemIdsOf(await store.all());
+  } catch {
+    return new Set();
+  }
 }
 
 // Ditolak saat sinkron — menunggu keputusan user.

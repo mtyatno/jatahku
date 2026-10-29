@@ -106,6 +106,7 @@ class ApiBase(unittest.IsolatedAsyncioTestCase):
         app = FastAPI()
         app.include_router(kotak_route.router, prefix="/kotak-struk")
         app.dependency_overrides[get_current_user] = lambda: self.a
+        self.app = app
 
         async def _db():
             async with self.Session() as db:
@@ -501,6 +502,71 @@ class KotakApiTests(ApiBase):
         self.assertEqual([i["id"] for i in (await self.c.get("/kotak-struk/")).json()["items"]], ids)   # bawaan: siap
         with patch.object(kotak_route, "LIST_LIMIT", 1):
             self.assertEqual(len((await self.c.get("/kotak-struk/?status=siap")).json()["items"]), 1)
+
+    # --- jumlah (banner "bukti menunggu dicatat") --------------------------
+
+    async def add_items(self, status, n=1, owner=None):
+        """`n` baris Kotak Struk berstatus `status` langsung di DB (tanpa intake/worker): cukup untuk menghitung."""
+        async with self.Session() as db:
+            db.add_all([ReceiptScan(user_id=(owner or self.a).id, status=status) for _ in range(n)])
+            await db.commit()
+
+    async def count(self, query=""):
+        r = await self.c.get(f"/kotak-struk/count{query}")
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    async def test_count_only_own_items_with_that_status(self):
+        await self.add_items("siap", 2)
+        await self.ready_qris()   # item siap sungguhan (intake + worker)
+        await self.add_items("gagal")
+        await self.add_items("tercatat", 3)
+        await self.add_items("siap", 4, owner=self.b)   # milik user lain: tidak ikut
+        self.assertEqual(await self.count("?status=siap"), {"count": 3})
+        self.assertEqual(await self.count(), {"count": 3})   # bawaan: siap
+        self.assertEqual(await self.count("?status=gagal"), {"count": 1})
+        self.assertEqual(await self.count("?status=tercatat"), {"count": 3})
+        self.assertEqual(await self.count("?status=dilewati"), {"count": 0})
+        self.app.dependency_overrides[get_current_user] = lambda: self.b
+        self.assertEqual(await self.count(), {"count": 4})
+        self.assertEqual(await self.count("?status=tercatat"), {"count": 0})
+
+    async def test_count_ignores_legacy_scan_history_rows(self):
+        async with self.Session() as db:
+            db.add_all([ReceiptScan(user_id=self.a.id) for _ in range(3)])   # riwayat scan lama: status NULL
+            await db.commit()
+        self.assertEqual(await self.count(), {"count": 0})
+        await self.add_items("siap")
+        self.assertEqual(await self.count(), {"count": 1})
+
+    async def test_count_is_not_capped_by_the_list_limit(self):
+        await self.add_items("siap", 3)
+        with patch.object(kotak_route, "LIST_LIMIT", 1):
+            self.assertEqual(await self.count(), {"count": 3})
+            self.assertEqual(len((await self.c.get("/kotak-struk/?status=siap")).json()["items"]), 1)
+
+    async def test_count_is_one_query_and_never_writes(self):
+        await self.add_items("siap", 5)
+        await self.add_items("gagal", 2)
+        await self.add_items("siap", 2, owner=self.b)
+        self.statements.clear()
+        self.assertEqual(await self.count(), {"count": 5})
+        queries = [s for s in self.statements
+                   if s.lstrip().split(None, 1)[0].upper() not in ("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE")]
+        self.assertEqual(len(queries), 1, queries)
+        self.assertTrue(queries[0].lstrip().upper().startswith("SELECT COUNT("), queries[0])
+
+    async def test_count_needs_login(self):
+        self.app.dependency_overrides.pop(get_current_user)
+        r = await self.c.get("/kotak-struk/count")
+        self.assertEqual((r.status_code, r.json()["detail"]), (401, "Not authenticated"))
+        r = await self.c.get("/kotak-struk/count", headers={"Authorization": "Bearer bukan-token"})
+        self.assertEqual(r.status_code, 401)
+
+    async def test_count_status_is_validated_like_the_list(self):
+        self.assertEqual((await self.c.get(f"/kotak-struk/count?status={'x' * 17}")).status_code, 422)
+        self.assertEqual((await self.c.get(f"/kotak-struk/?status={'x' * 17}")).status_code, 422)
+        self.assertEqual(await self.count(f"?status={'x' * 16}"), {"count": 0})
 
     # --- lewati --------------------------------------------------------
 

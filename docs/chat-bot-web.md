@@ -91,8 +91,10 @@ bukan fotonya.
 
 **Route ini tetap khusus gambar**: PDF ditolak 415 ("Format foto tidak didukung. Pakai
 JPG, PNG, atau WebP."). Bot Telegram sudah menerima PDF lewat alur yang sama; dari web,
-PDF masuk lewat tombol Struk di form Catat (`/transactions/scan-receipt`) dan nanti lewat
-Web Share Target PWA (Bagian B "Bagikan ke Jatahku").
+PDF masuk lewat tombol **PDF** di form Catat (`/transactions/scan-receipt`) dan lewat
+Web Share Target PWA (halaman `/bagikan`, Bagian B "Bagikan ke Jatahku"), keduanya hanya
+saat saklar `receipt_inbox` menyala; menu Bagikan Android menunggu `share_target` di
+manifest (lihat [`kotak-struk.md`](kotak-struk.md) bagian "Web dan PWA").
 
 ## Keamanan
 
@@ -132,5 +134,7 @@ lain. Setelah deploy: buka webapp, ketuk ikon chat, kirim `kopi 35k` dan
 - Pesan yang dikirim bot atas inisiatif sendiri (pengingat tagihan langganan,
   check-in harian, nanti "Sepadan?" Pikir-Pikir) ke chat web — sekarang hanya
   lewat Telegram.
-- Bukti PDF dan banner "Bukti menunggu" untuk bukti yang selesai dibaca belakangan di chat web
-  (Bagian B "Bagikan ke Jatahku"; sekarang chat web hanya menyebut "Cek Bukti menunggu di beranda nanti").
+- Bukti PDF di chat web (route foto tetap khusus gambar; PDF dari web lewat form Catat dan
+  `/bagikan`). Bukti yang selesai dibaca belakangan dihitung banner "Bukti menunggu" dan tampil
+  sebagai kartu di `/bagikan` (Bagian B "Bagikan ke Jatahku"), hanya saat saklar `receipt_inbox`
+  menyala: selama saklar mati, "Cek Bukti menunggu di beranda nanti." di chat web belum punya banner.

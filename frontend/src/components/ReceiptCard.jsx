@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { confidenceLabel } from '../lib/receiptScan';
 import { reconcileItems, buildPlan, summarizePlan } from '../lib/receiptSplit';
+import { canUnlockPlan } from '../lib/multiAddRows';
 
 function rupiah(n) {
   return 'Rp ' + Number(n || 0).toLocaleString('id-ID');
@@ -35,8 +36,11 @@ const toInt = v => Math.max(0, Math.round(Number(v) || 0));
 // terkunci, percobaan ulang mengirim bagian yang belum tersimpan saja. Rencana
 // ditampilkan ringkas per amplop; perbaikan (geser dana, naikkan limit, pindah
 // amplop) berlaku untuk semua barang yang gagal di amplop itu.
+//
+// `notice`: isi dari form di bawah kepala struk (alasan blokir dari server, pertanyaan
+// tanggal dokumen); ikut terkunci bersama kepala struk.
 export default function ReceiptCard({
-  entry, envelopes, saving,
+  entry, envelopes, saving, notice = null,
   onChange, onRemove, onFundGroup, onRaiseLimitGroup, onRetargetGroup, onUnlock, onSkipRest,
 }) {
   const items = entry.receiptItems || [];
@@ -51,6 +55,11 @@ export default function ReceiptCard({
   const suggestedCount = items.filter(it => it.suggested && !it.removed).length;
   const spread = adjustments.length > 0 || rec.status === 'selisih';
   const locked = frozen || saving;
+  // Diblokir server (alasan di `notice`): kartu tidak bisa disimpan, jadi isian & pilihan amplop dikunci (× tetap bisa).
+  const blocked = !!entry.blockedReason;
+  const inputsLocked = locked || blocked;
+  // "Ubah rincian": tidak untuk kartu yang diblokir (isiannya tetap terkunci, jadi tombol itu tidak berguna).
+  const unlockable = canUnlockPlan(entry);
   const [open, setOpen] = useState(() => rec.status !== 'cocok');
   const doubtful = entry.confidence !== 'tinggi';
   const fromItemsSum = entry.confidenceSource === 'items_sum';
@@ -91,7 +100,7 @@ export default function ReceiptCard({
           className="shrink-0 text-gray-400 hover:text-red-500 text-sm leading-none p-1 disabled:opacity-30"
           title="Hapus struk"
         >&times;</button>
-        <fieldset disabled={locked} className="flex-1 min-w-0 space-y-1.5">
+        <fieldset disabled={inputsLocked} className="flex-1 min-w-0 space-y-1.5">
           <span className="text-xs text-brand-600 inline-flex items-center gap-1">
             <Icon name="camera" size={12} /> Dari struk
             {fromItemsSum
@@ -126,7 +135,7 @@ export default function ReceiptCard({
             />
           </div>
           <select
-            className={`input text-sm py-1.5 w-full ${!entry.envelopeId && plan.some(g => !g.envelopeId) ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
+            className={`input text-sm py-1.5 w-full ${!blocked && !entry.envelopeId && plan.some(g => !g.envelopeId) ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
             value={entry.envelopeId}
             onChange={e => onChange(entry.key, { envelopeId: e.target.value, suggested: false, touched: true })}
             aria-label="Amplop struk"
@@ -137,6 +146,7 @@ export default function ReceiptCard({
             ))}
           </select>
           {entry.suggested && <span className="text-xs text-brand-600">disarankan</span>}
+          {notice}
         </fieldset>
       </div>
 
@@ -153,7 +163,7 @@ export default function ReceiptCard({
           {open ? 'Sembunyikan' : `Lihat ${liveCount} barang`}
         </button>
       </div>
-      {rec.status === 'selisih' && !locked && (
+      {rec.status === 'selisih' && !inputsLocked && (
         <div className="text-xs text-amber-700 flex items-center gap-2 flex-wrap">
           <span>
             {rec.diff > 0
@@ -170,7 +180,7 @@ export default function ReceiptCard({
 
       {/* Daftar barang */}
       {open && (
-        <fieldset disabled={locked}>
+        <fieldset disabled={inputsLocked}>
           <ul className="border border-gray-100 rounded-lg divide-y divide-gray-100">
             {items.map(it => (it.removed ? null : (
               <li key={it.id} className={`px-2 py-1.5 space-y-1 ${it.flag === 'cek' ? 'bg-amber-50/60' : ''}`}>
@@ -303,9 +313,9 @@ export default function ReceiptCard({
               Hasil simpan belum pasti (koneksi terputus). Tekan Simpan Semua lagi — yang sudah tercatat tidak akan tercatat dua kali.
             </div>
           )}
-          {frozen && !saving && !entry.uncertain && (
+          {frozen && !saving && !entry.uncertain && (unlockable || anySaved) && (
             <div className="flex items-center gap-3 flex-wrap pt-1">
-              {!anySaved ? (
+              {unlockable ? (
                 <button type="button" onClick={() => onUnlock(entry.key)} className="text-brand-600 underline font-medium">
                   Ubah rincian
                 </button>

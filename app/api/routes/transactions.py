@@ -11,11 +11,12 @@ from sqlalchemy import select, func, or_
 from pydantic import BaseModel, Field, field_validator
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.period import document_date_kind
 from app.models.models import (
     User, Transaction, Envelope, HouseholdMember, TransactionSource
 )
-from app.services.behavior import check_behavior
-from app.services.expense_rules import NOT_SPENDABLE_MSG, after_expense_recorded, is_spendable
+from app.services.behavior import BehaviorCheckResult, check_behavior
+from app.services.expense_rules import NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable
 from app.services.kotak_struk.config import PDF_MAX_BYTES
 from app.services.kotak_struk.record import (
     NotRecordable, after_recorded, check_recordable, claim_failure_detail, claim_for_recording, heal_recorded,
@@ -189,6 +190,26 @@ async def _after_saved(db, user, receipt_item_id: UUID | None, *, transaction_id
         await after_expense_recorded(db, user, envelope_id, description)
 
 
+async def _check_row(db, user, row) -> tuple[date | None, BehaviorCheckResult]:
+    """`check_behavior` satu baris create/batch (`TransactionCreate` / `BatchTransactionItem`), plus tanggal catatnya
+    (None = hari ini). Baris dengan `receipt_item_id` mengikuti aturan bot (Task H1, `handlers._handle_txn_callback`):
+    tanggal sesudah hari ini (salah baca) dicatat hari ini; tanggal sebelum awal periode anggaran berjalan dicatat di
+    tanggal itu tanpa blok `PAST_PERIOD_IGNORED` (dana dan limit harian periode berjalan; limitnya juga tidak
+    dinaikkan). Kunci amplop dan galat tetap memblokir; amplop tabungan dan kuota paket dicek pemanggil sebelumnya.
+    Baris tanpa `receipt_item_id` (tanggalnya dipilih user): apa adanya. Hari ini = `date.today()`, sama dengan bot
+    dan `check_behavior`."""
+    check = await check_behavior(row.envelope_id, user.id, row.amount, db)
+    txn_date = row.transaction_date
+    if row.receipt_item_id and txn_date is not None:
+        today = date.today()
+        kind = document_date_kind(txn_date, payday_day=getattr(user, "payday_day", 1) or 1, today=today)
+        if kind == "future":
+            txn_date = today
+        elif kind == "past" and not check.allowed and check.check_type in PAST_PERIOD_IGNORED:
+            check = BehaviorCheckResult.ok()
+    return txn_date, check
+
+
 @router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     req: TransactionCreate,
@@ -240,7 +261,7 @@ async def create_transaction(
 
     # Behavior checks — satu kali (dulu dua kali, dan cek pertama menolak cooling
     # sebelum pending sempat dibuat). Cooling tidak lagi menahan pencatatan.
-    check = await check_behavior(req.envelope_id, user.id, req.amount, db)
+    txn_date, check = await _check_row(db, user, req)
     if not check.allowed and check.check_type == "daily_limit" and req.raise_daily_limit:
         # Dikonfirmasi user → limit dinaikkan sampai tengah malam, lalu cek ulang.
         await _raise_daily_limit(user.id, envelope.id)
@@ -274,7 +295,7 @@ async def create_transaction(
             amount=req.amount,
             description=req.description,
             source=req.source,
-            transaction_date=req.transaction_date or date.today(),
+            transaction_date=txn_date or date.today(),
             is_private=req.is_private,
         )
         db.add(txn)
@@ -404,7 +425,7 @@ async def batch_create_transactions(
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=quota_msg))
             continue
 
-        check = await check_behavior(item.envelope_id, user.id, item.amount, db)
+        txn_date, check = await _check_row(db, user, item)
         if not check.allowed and check.check_type == "daily_limit" and item.raise_daily_limit:
             try:
                 from app.services.behavior import raise_daily_limit_today
@@ -445,7 +466,7 @@ async def batch_create_transactions(
                 amount=item.amount,
                 description=item.description,
                 source=item.source,
-                transaction_date=item.transaction_date or date.today(),
+                transaction_date=txn_date or date.today(),
                 is_private=item.is_private,
             )
             db.add(txn)

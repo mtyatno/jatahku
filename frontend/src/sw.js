@@ -1,6 +1,7 @@
 // Custom Service Worker — Jatahku PWA
 import { idbStore, syncQueue } from './lib/offlineSync.js';
 import { newRef } from './lib/ref.js';
+import { handleShareTarget, isShareTarget, shareStore } from './lib/shareInbox.js';
 // vite-plugin-pwa (injectManifest) will replace self.__WB_MANIFEST
 
 const manifest = self.__WB_MANIFEST || [];
@@ -18,6 +19,11 @@ function manifestVersion(entries) {
   return (h >>> 0).toString(36);
 }
 const CACHE = `jatahku-${manifestVersion(manifest)}`;
+
+// Jawaban navigasi yang boleh disimpan sebagai app shell: 2xx berisi HTML.
+function isAppShell(res) {
+  return res.ok && /^text\/html\b/i.test(res.headers.get('content-type') || '');
+}
 
 // Install: pre-cache app shell
 self.addEventListener('install', (event) => {
@@ -41,18 +47,30 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // Bagikan ke Jatahku (Web Share Target, spec 5b): file/teks dari menu Bagikan disimpan ke IndexedDB, lalu 303 ke
+  // /bagikan?s=<batch> (lib/shareInbox.js). Hanya POST /bagikan di origin ini; harus sebelum cek GET di bawah.
+  if (isShareTarget(request, self.location.origin)) {
+    event.respondWith(handleShareTarget(request, { store: shareStore(), newId: newRef }));
+    return;
+  }
+
   if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
   // API: bypass service worker entirely — let browser handle directly
   if (url.hostname === 'api.jatahku.com') return;
 
-  // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline
+  // SPA navigation: NetworkFirst — fresh index.html when online, cached fallback offline.
+  // Hanya halaman HTML yang berhasil (2xx) yang menjadi app shell offline: 404, 5xx, redirect, atau berkas bukan HTML
+  // diteruskan ke halaman apa adanya tetapi tidak menimpa /index.html (kalau tidak, app offline menampilkan halaman
+  // error itu sampai navigasi baik berikutnya).
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put('/index.html', clone));
+          if (isAppShell(res)) {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put('/index.html', clone));
+          }
           return res;
         })
         .catch(() => caches.match('/index.html'))

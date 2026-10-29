@@ -351,12 +351,34 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as other_request:
             self.assertFalse(await claim_for_recording(other_request, item.id, self.a.id))
         self.assertEqual((await self.get(item.id)).status, "tercatat")
-        for status in ("diproses", "gagal", "dilewati", "kedaluwarsa"):
+        for status in ("diproses", "gagal", "dilewati"):
             blocked = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali",
                                            merchant_row=False, status=status)
             self.assertFalse(await claim_for_recording(self.db, blocked.id, self.a.id), status)
         self.assertFalse(await claim_for_recording(self.db, (await self.qris_item(
             "Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=False, user_id=self.b.id)).id, self.a.id))
+
+    async def test_expired_item_that_was_read_is_claimed_like_siap_for_store_and_unknown_only(self):
+        # Struk belanja: tanpa perubahan status, berulang (satu struk, banyak transaksi).
+        store = await self.store_item(status="kedaluwarsa")
+        self.assertTrue(await claim_for_recording(self.db, store.id, self.a.id))
+        self.assertTrue(await claim_for_recording(self.db, store.id, self.a.id))
+        self.assertEqual((await self.get(store.id)).status, "kedaluwarsa")
+        # Tidak dikenali: klaim eksklusif dari kedaluwarsa -> tercatat, sekali saja.
+        unknown = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=False,
+                                       status="kedaluwarsa")
+        self.assertTrue(await claim_for_recording(self.db, unknown.id, self.a.id))
+        self.assertFalse(await claim_for_recording(self.db, unknown.id, self.a.id))
+        await self.db.commit()
+        self.assertEqual((await self.get(unknown.id)).status, "tercatat")
+        # QRIS/transfer kedaluwarsa (A12) dan item kedaluwarsa tanpa dokumen: tidak bisa diklaim.
+        for i, (doc_type, cols) in enumerate((("qris", {}), ("transfer", {}), ("struk_belanja", {"document": None}),
+                                               ("tidak_dikenali", {"document": None}))):
+            item = await self.qris_item("Z", key=f"nmid:IDZ{i}", merchant_row=False, doc_type=doc_type,
+                                        status="kedaluwarsa", **cols)
+            self.assertFalse(await claim_for_recording(self.db, item.id, self.a.id), doc_type)
+        self.assertFalse(await claim_for_recording(self.db, (await self.store_item(status="kedaluwarsa",
+                                                                                     user_id=self.b.id)).id, self.a.id))
 
     async def test_mark_recorded_never_teaches_the_merchant_map_from_an_unknown_document(self):
         item = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=True)
@@ -404,15 +426,45 @@ class KotakSuggestTests(unittest.IsolatedAsyncioTestCase):
             return cm.exception.detail
         expired = "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya"   # tanpa titik akhir, seperti MSG_* lain (bot menambahkannya)
         self.assertEqual(record.MSG_EXPIRED, expired)
-        for i, doc_type in enumerate(("qris", "transfer", "tidak_dikenali")):
+        # QRIS/transfer (A12): kedaluwarsa = bagikan lagi.
+        for i, doc_type in enumerate(("qris", "transfer")):
             item = await self.qris_item("K", key=f"nmid:IDK{i}", merchant_row=False, doc_type=doc_type,
                                         status="kedaluwarsa")
             self.assertEqual(await reason(item), expired, doc_type)
-        self.assertEqual(await reason(await self.store_item(status="kedaluwarsa")), expired)
+        # Jenis apa pun yang kedaluwarsa tanpa dokumen (tidak pernah terbaca, dari `gagal`): tetap pesan kedaluwarsa.
+        for i, doc_type in enumerate(("struk_belanja", "tidak_dikenali", "qris", None)):
+            item = await self.qris_item("N", key=f"nmid:IDN{i}", merchant_row=False, doc_type=doc_type,
+                                        status="kedaluwarsa", document=None)
+            self.assertEqual(await reason(item), expired, doc_type)
         # Status lain tetap dengan pesan lamanya.
         self.assertEqual(await reason(await self.store_item(status="dilewati")), "Bukti ini belum siap dicatat")
         self.assertEqual(await reason(await self.qris_item("G", key="nmid:IDG", merchant_row=False, status="gagal")),
                          "Bukti ini belum siap dicatat")
+
+    async def test_expired_store_receipt_or_unknown_document_that_was_read_is_recordable_like_siap(self):
+        """Kedaluwarsa hanya untuk item yang tidak dikonfirmasi: simpan dari antrean offline form Catat (B1) yang baru
+        sampai sesudah 7 hari tetap dicatat. Hanya struk belanja dan tidak dikenali yang sudah terbaca (punya
+        dokumen); cek lain tetap berlaku (pemilik, blokir, duplikat tercatat)."""
+        store = await self.store_item(status="kedaluwarsa")
+        self.assertEqual((await check_recordable(self.db, store.id, self.a)).id, store.id)
+        unknown = await self.qris_item("Entah", key="nama:entah|", doc_type="tidak_dikenali", merchant_row=False,
+                                       status="kedaluwarsa")
+        self.assertEqual((await check_recordable(self.db, unknown.id, self.a)).id, unknown.id)
+        with self.assertRaises(NotRecordable) as cm:   # milik user lain: tetap tidak ditemukan
+            await check_recordable(self.db, (await self.store_item(status="kedaluwarsa", user_id=self.b.id)).id, self.a)
+        self.assertEqual(cm.exception.detail, "Bukti tidak ditemukan")
+        failed_doc = DokumenBayar(doc_type="struk_belanja", status="gagal",
+                                  checks=[{"code": "status_gagal", "level": "block",
+                                           "message": "Transaksi gagal, tidak bisa dicatat"}]).to_json()
+        with self.assertRaises(NotRecordable) as cm:   # blokir tetap memblokir
+            await check_recordable(self.db, (await self.store_item(status="kedaluwarsa", document=failed_doc)).id, self.a)
+        self.assertEqual(cm.exception.detail, "Transaksi gagal, tidak bisa dicatat")
+        recorded = await self.store_item(status="tercatat", file_sha256="sha-sama", transaction_ids=None)
+        late_copy = await self.store_item(status="kedaluwarsa", file_sha256="sha-sama")
+        with self.assertRaises(NotRecordable) as cm:   # file yang sama sudah tercatat: tetap duplikat
+            await check_recordable(self.db, late_copy.id, self.a)
+        self.assertEqual(cm.exception.detail, "Bukti ini sudah tercatat")
+        self.assertEqual((await self.get(recorded.id)).status, "tercatat")
 
     async def test_claim_failure_detail_follows_the_current_status(self):
         cases = {"tercatat": "Bukti ini sudah tercatat", "kedaluwarsa": "Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya",
