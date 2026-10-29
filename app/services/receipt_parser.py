@@ -225,6 +225,24 @@ def _is_label_line(up: str) -> bool:
 # ── Nominal ─────────────────────────────────────────────────────────────────
 
 _AMOUNT_RE = re.compile(r"(?:RP\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{2}))?(?!\d)", re.I)
+# Sambungan token sesudah angka: huruf/digit yang menempel, atau sesudah satu "-" ("2610264RL9", "261026-4RL9").
+_TOKEN_TAIL = re.compile(r"(-?)([A-Za-z0-9]+)")
+_QTY_TAIL = re.compile(r"[xX]\d+")   # "3.500x2": pengali jumlah, bukan kode
+# Baris bertanda mata uang ("Rp19.000", "IDR 18,000"); sama dengan pembaca tidak_dikenali.
+RP_MARK = re.compile(r"(?<![A-Za-z])(?:RP|IDR)(?![A-Za-z])", re.IGNORECASE)
+
+
+def _id_digits(raw: str, rest: str) -> bool:
+    """Angka ini bagian ID/kode transaksi, bukan nominal: sambungannya kode campuran huruf+digit ≥ 2 karakter
+    ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke segmen lain
+    ("261026-PVRERW"). Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML") tetap nominal."""
+    m = _TOKEN_TAIL.match(rest)
+    if not m:
+        return False
+    dash, run = m.groups()
+    if len(run) >= 2 and re.search(r"[A-Za-z]", run) and re.search(r"\d", run) and not _QTY_TAIL.fullmatch(run):
+        return True
+    return bool(dash) and raw.isdigit() and len(raw) >= 6
 
 
 def amounts_in(line: str) -> list[int]:
@@ -236,6 +254,8 @@ def amounts_in(line: str) -> list[int]:
         after = line[m.end():m.end() + 1]
         if before in ("/", "-") or before.isalpha() or after in ("/", ":"):
             continue  # bagian tanggal/jam/kode: 14.10.26-19:21/3.0.27/THTV-363626
+        if _id_digits(raw, line[m.end():]):
+            continue  # ID transaksi: 261026-4RL9-PVRERW, 2610264RL9
         value = int(re.sub(r"[.,]", "", raw))
         if value < MIN_AMOUNT or value > MAX_AMOUNT:
             continue  # < Rp100 biasanya qty/kode
@@ -499,16 +519,23 @@ def find_total(lines: list[str], learned_labels: list[str] | None = None):
     if pas is not None:  # bisa jadi uang yang diserahkan, bukan total
         return result(pas, "rendah")
 
-    biggest = None
+    # 4) Tebakan: nominal terbesar. Ada nominal bertanda Rp/IDR → hanya di antara itu (angka polos bisa nomor
+    #    antrean/ID, mis. bukti bayar yang dibaca sebagai struk).
+    guesses = []  # (bertanda Rp, nilai, baris, indeks)
     for i, line in enumerate(lines):
         up = line.upper()
         if CASH_KEYS.search(up) or _skip_line(up):
             continue
-        for v in amounts_in(line):
-            if biggest is None or v > biggest[0]:
-                biggest = (v, line, i)
+        rp = bool(RP_MARK.search(line))
+        guesses += [(rp, v, line, i) for v in amounts_in(line)]
+    with_rp = [g for g in guesses if g[0]]
+    biggest = None
+    for _, v, line, i in with_rp or guesses:
+        if biggest is None or v > biggest[0]:
+            biggest = (v, line, i)
     if biggest:
-        evidence.append(f'Tidak ada kata TOTAL; pakai nominal terbesar "{biggest[1]}"')
+        what = "nominal Rp terbesar" if with_rp else "nominal terbesar"
+        evidence.append(f'Tidak ada kata TOTAL; pakai {what} "{biggest[1]}"')
         value, conf, ev, label, idx, _ = result(biggest[0], "rendah")
         return value, conf, ev, label, idx, biggest[2]
     return None, "gagal", ["Tidak ada nominal yang terbaca"], None, None, None
