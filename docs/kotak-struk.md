@@ -220,7 +220,8 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   `document.confidence.total`) → ketukan amplop (`t_`) belum mencatat; pesannya menjadi "Nominal {Rp} belum pasti —
   cek dengan {struk|bukti}. Sudah benar?" dengan **✅ Ya, catat ke {emoji} {amplop}** (`ky_{key}_{idx}`, jalur catat
   yang sama: cek bukti, cek dana/geser dana, limit harian, aturan periode lalu), **✏️ Nominal salah** (`struk_fix_`,
-  ketik manual; nominal ketikan dicatat tanpa pertanyaan lagi), dan **❌ Batal** (`struk_no_`). Pertanyaan tanggal
+  ketik manual; nominal ketikan dicatat tanpa pertanyaan lagi; untuk QRIS/transfer contohnya netral "`bakso 25000`",
+  tanpa teks scan struk), dan **❌ Batal** (`struk_no_`). Pertanyaan tanggal
   datang lebih dulu, pertanyaan nominal saat amplop diketuk. Bot tidak memecah struk per barang, jadi satu
   pertanyaan sebelum satu-satunya pencatatan. `tinggi`/`sedang` tetap satu ketukan.
 - Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, `confidence`

@@ -69,6 +69,7 @@ MSG_NOTE_LATE = "⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan."
 NOTE_LOCK_TRIES = 20      # catatan menunggu kunci sesi tombol (tombol amplop/tanggal yang sedang diproses) ...
 NOTE_LOCK_WAIT_S = 0.1    # ... paling lama 20 × 0,1 detik
 MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
+MSG_FIX_PROOF = "✏️ Oke, ketik manual nominal yang benar, misalnya:\n`bakso 25000`"   # "Nominal salah" bukti bayar
 MSG_NO_ENVELOPE = "Belum ada amplop. Ketik /template untuk buat."
 ASK_ENVELOPE = "Masuk ke amplop mana?"
 
@@ -951,6 +952,7 @@ async def handle_struk_callback(update, context):
         user = await get_or_create_user(str(update.effective_user.id), update.effective_user.first_name, db)
         item = await db.get(ReceiptScan, item_id) if item_id is not None else None
         kotak = item is not None and item.status is not None
+        proof = item is not None and item.doc_type in PROOF_TYPES
         store = item is None or item.doc_type == record.STORE_RECEIPT or item.status is None
         try:
             if kotak:
@@ -959,7 +961,9 @@ async def handle_struk_callback(update, context):
                 await apply_feedback(user, scan_id, db, saved=False, wrong=(action == "fix"))
         except Exception as exc:  # best-effort
             logger.warning("feedback struk gagal: %s", exc)
-    if action == "fix":
+    if action == "fix" and proof:
+        await query.edit_message_text(MSG_FIX_PROOF, parse_mode="Markdown")
+    elif action == "fix":
         await query.edit_message_text(
             "✏️ Oke, ketik manual nominal yang benar, misalnya:\n`indomaret 140500`\n\n"
             "Laporan ini membantu scan struk makin akurat 🙏", parse_mode="Markdown")

@@ -1821,6 +1821,7 @@ class KotakBotDbTests(TxnBase):
         call, _ = await self.ask_amount("Jajan")
         fix = (await self.tap(datas(keyboard_of(call))[1])).edit_message_text.call_args.args[0]
         self.assertTrue(fix.startswith("✏️ Oke, ketik manual nominal yang benar"), fix)
+        self.assertIn("indomaret 140500", fix)   # struk: teks lama
         item = await self.get(item_id)
         self.assertEqual((item.status, item.outcome), ("dilewati", "corrected"))   # umpan balik "nominal salah" seperti biasa
         typed = SimpleNamespace(photo=None, document=None, text="roti susu 16000", reply_text=AsyncMock())
@@ -1833,6 +1834,31 @@ class KotakBotDbTests(TxnBase):
         self.assertTrue(done.startswith("✅ Rp16rb — "), done)
         [txn] = await self.txns()
         self.assertEqual(txn.amount, D("16000"))
+
+    async def test_wrong_amount_of_a_proof_has_neutral_wording(self):
+        await self.send(LOW_QRIS)
+        call, _ = await self.ask_amount("Makan")
+        query = await self.tap(datas(keyboard_of(call))[1])
+        fix = query.edit_message_text.call_args
+        self.assertEqual(fix.args[0], "✏️ Oke, ketik manual nominal yang benar, misalnya:\n`bakso 25000`")
+        self.assertNotIn("struk", fix.args[0].lower())
+        self.assertEqual((await self.get(self.items[-1])).status, "dilewati")
+        self.assertEqual(await self.txns(), [])
+
+    async def test_jago_qris_from_the_previous_period_asks_the_date_then_the_amount(self):
+        await self.owner_today()
+        await self.send(JAGO_QRIS)
+        [text] = self.texts()
+        self.assertTrue(text.startswith("🧾 Struk Belanja · 26 Okt 2026\n"), text)   # nama tebakan tidak dibawa
+        self.assertTrue(text.endswith("\n\n📅 Tanggal di struk: 26 Okt — di luar periode sekarang (27 Okt–26 Nov). "
+                                      "Catat untuk tanggal berapa?"), text)
+        _, answer = await self.answer_date("d")
+        call, yes = await self.ask_amount("Makan", rows=keyboard_of(answer))
+        self.assertEqual(call.args[0], "Nominal Rp19.000 belum pasti — cek dengan struk. Sudah benar?")
+        done = (await self.tap(yes)).edit_message_text.call_args.args[0]
+        self.assertIn("Tercatat di periode 27 Sep–26 Okt", done)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.description, txn.transaction_date), (D("19000"), "Belanja", date(2026, 10, 26)))
 
     async def test_cancel_from_the_amount_question(self):
         await self.send(LOW_STORE)
