@@ -145,15 +145,34 @@ export function clearSharesOnLogout({ revoke } = {}, {
 
 // ── Pemilik kotak share ─────────────────────────────────────────────────────────────────────────────
 // Entri tidak membawa id user, dan sesi yang kedaluwarsa tidak mengosongkan kotak. Karena itu kotak dicap dengan
-// pemiliknya (localStorage `SHARE_OWNER_KEY` = id user) oleh pembacanya (banner, /bagikan), bukan oleh jalur login:
-// sebelum kotak dibaca, akun lain yang login di HP yang sama mendapati kotak dikosongkan dulu. Logout oleh user sendiri
-// mengosongkan kotak tetapi tidak menghapus cap: share yang dibagikan sesudahnya (belum login) hanya terkirim ke akun
-// yang sama; bila akun lain yang login berikutnya, share itu dihapus (privasi lebih penting).
+// pemiliknya (localStorage `SHARE_OWNER_KEY` = akun token sesi tab ini, `tokenSubject`) oleh pembacanya (banner,
+// /bagikan), bukan oleh jalur login: sebelum kotak dibaca, akun lain yang login di HP yang sama mendapati kotak
+// dikosongkan dulu. Logout oleh user sendiri mengosongkan kotak tetapi tidak menghapus cap: share yang dibagikan
+// sesudahnya (belum login) hanya terkirim ke akun yang sama; bila akun lain yang login berikutnya, share itu dihapus
+// (privasi lebih penting).
 
 export const SHARE_OWNER_KEY = 'jatahku_share_owner';
 
-// Cap pemilik yang tersimpan vs user yang login → 'claim' (belum ada pemilik: dicap), 'keep' (akun yang sama), atau
-// 'clear' (akun lain: kotak dikosongkan dulu). `userId` wajib (ensureShareOwner memeriksanya lebih dulu).
+// Pemilik = klaim `sub` access token yang dipakai tab ini (JWT, app/core/security.py: id user), yaitu akun yang
+// menerima unggahan /bagikan. Bukan profil di layar (useAuth): bila /auth/me gagal sesudah login, profil itu bisa
+// salinan cache akun sebelumnya. Tanda tangan tidak diperiksa (tugas server). Token tidak ada atau tidak terbaca →
+// null, jadi pemanggil menganggap kotak tidak terbaca (gagal tertutup). Tidak pernah melempar.
+export function tokenSubject(token) {
+  if (typeof token !== 'string') return null;
+  const part = token.split('.')[1];
+  if (!part) return null;
+  try {
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0))));
+    return typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+// Cap pemilik yang tersimpan vs akun token sesi (tokenSubject) → 'claim' (belum ada pemilik: dicap), 'keep' (akun yang
+// sama), atau 'clear' (akun lain: kotak dikosongkan dulu). `userId` wajib (ensureShareOwner memeriksanya lebih dulu).
 export function shareOwnerAction(storedOwnerId, userId) {
   if (storedOwnerId === null || storedOwnerId === undefined || storedOwnerId === '') return 'claim';
   return String(storedOwnerId) === String(userId) ? 'keep' : 'clear';

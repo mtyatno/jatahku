@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
-import { ownedShares, ownerGate, shareStore } from '../lib/shareInbox';
+import { ownedShares, ownerGate, shareStore, tokenSubject } from '../lib/shareInbox';
 import { useAppConfig } from '../hooks/useAppConfig';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -21,12 +21,13 @@ export default function PendingProofsBanner() {
 
   // Saklar menyala → satu penghitung dan pemicunya (online, txn-added, kotak-changed, terlihat lagi). Saklar mati,
   // juga sebelum config terbaca: tanpa permintaan, tanpa IndexedDB, tanpa listener. Mati sesudah menyala → semuanya
-  // dilepas dan banner hilang. Share lokal dihitung hanya bila kotaknya milik user yang login (shareInbox.ownerGate:
-  // kotak akun lain dikosongkan dulu; tidak bisa dipastikan → 0); user berganti → penghitung baru.
+  // dilepas dan banner hilang. Share lokal dihitung hanya bila kotaknya milik akun token sesi tab ini
+  // (shareInbox.ownerGate + tokenSubject, bukan profil di layar: kotak akun lain dikosongkan dulu; tidak bisa
+  // dipastikan → 0); user berganti → penghitung baru.
   useEffect(() => {
     if (!enabled) return undefined;
     const store = shareStore();
-    const owned = ownerGate(store, userId);
+    const owned = ownerGate(store, tokenSubject(api.token));
     const counter = createPendingCounter({
       loadUnsent: () => ownedShares(store, owned),
       loadReady: () => api.kotakPendingCount(),

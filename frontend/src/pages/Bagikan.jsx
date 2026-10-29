@@ -7,7 +7,7 @@ import { onBackgroundSynced, queuedReceiptItemIds } from '../lib/offlineQueue';
 import { STAGE } from '../lib/receiptProgress';
 import {
   shareStore, uploadFormFor, shareUploadTimeoutMs, runSharePage, serialRuns, mergeItems, pollTargets, createPoller,
-  fetchPendingDetails, pageView, dropLine, ensureShareOwner, pageReads, discardKept, SHARE_TEXT,
+  fetchPendingDetails, pageView, dropLine, ensureShareOwner, pageReads, discardKept, SHARE_TEXT, tokenSubject,
 } from '../lib/shareInbox';
 import { useAuth } from '../hooks/useAuth';
 import ProofCard from '../components/ProofCard';
@@ -34,13 +34,14 @@ const pendingDetails = (items, handled) => fetchPendingDetails({
 // entri lokal diunggah satu per satu ke Kotak Struk, lalu tiap item tampil sebagai ProofCard bertumpuk (ditambah bukti
 // lain yang menunggu dicatat). Semua aturan di lib/shareInbox.js (runSharePage, serialRuns, createPoller,
 // uploadOutcome, mergeItems, ensureShareOwner, pageReads, …); komponen ini hanya merender dan menyambungkan API, state,
-// dan timer. Kotak share hanya dibaca bila milik user yang login; item yang ada di antrean offline tampil hanya-baca.
+// dan timer. Kotak share hanya dibaca bila milik akun token sesi tab ini; item yang ada di antrean offline tampil
+// hanya-baca.
 export default function Bagikan() {
   const [params] = useSearchParams();
   const batchId = params.get('s');
   const err = params.get('err');
   const navigate = useNavigate();
-  const userId = useAuth().user?.id ?? null;         // pemilik kotak share (shareInbox.ensureShareOwner)
+  const userId = useAuth().user?.id ?? null;         // user berganti → putaran baru (pemilik kotak: tokenSubject)
 
   const [mode, setMode] = useState(null);           // null = memeriksa saklar | 'off' | 'hold' | 'send'
   const [waiting, setWaiting] = useState(0);        // entri lokal yang belum terkirim (mode 'hold')
@@ -114,7 +115,8 @@ export default function Bagikan() {
         isOnline: () => navigator.onLine !== false,
         batchId,
         store,
-        ensureOwner: () => ensureShareOwner(store, userId),
+        // Pemilik kotak = akun token sesi tab ini (akun yang menerima unggahan), bukan profil di layar.
+        ensureOwner: () => ensureShareOwner(store, tokenSubject(api.token)),
         loadQueued: queuedReceiptItemIds,
         onQueued: (ids) => { if (me.alive) setQueued(ids); },
         upload,

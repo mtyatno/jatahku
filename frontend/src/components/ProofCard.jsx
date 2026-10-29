@@ -17,9 +17,10 @@ const loadPeriod = createSharedLoader(async () => currentPeriod(await api.getPer
 
 const rupiah = n => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
-const STATUS_PILL = { success: 'bg-green-50 text-green-700', warning: 'bg-amber-50 text-amber-700', danger: 'bg-red-50 text-red-600' };
-const WARNING_TEXT = { danger: 'text-red-600 font-medium', warning: 'text-amber-700' };
-// Kartu hanya-baca: amber-600 (bukan amber-700) karena tema gelap hanya mencerahkan amber-600 (index.css).
+// Teks amber di kartu ini selalu amber-600 (#854F0B): tema gelap hanya mencerahkan kelas itu (index.css), sedangkan
+// amber-700 bawaan Tailwind tetap gelap dan di bawah 4,5:1 pada kartu tema gelap.
+const STATUS_PILL = { success: 'bg-green-50 text-green-700', warning: 'bg-amber-50 text-amber-600', danger: 'bg-red-50 text-red-600' };
+const WARNING_TEXT = { danger: 'text-red-600 font-medium', warning: 'text-amber-600' };
 const READ_ONLY_TEXT = { danger: 'text-red-600', warning: 'text-amber-600', muted: 'text-gray-500' };
 const chipClass = selected => `inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-full border text-sm
   transition-colors disabled:opacity-50 ${selected
@@ -235,7 +236,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
             {done.kind === 'saved' ? (done.envelopeName ? `Tercatat di ${done.envelopeName}.` : 'Tercatat.') : 'Dilewati.'}
           </p>
           <p className="text-xs text-gray-500 truncate">{[header.badge, name, when].filter(Boolean).join(' · ')}</p>
-          {done.quotaNotice && <p className="text-xs text-amber-700">{done.quotaNotice}</p>}
+          {done.quotaNotice && <p className="text-xs text-amber-600">{done.quotaNotice}</p>}
         </div>
       </section>
     );
@@ -275,7 +276,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
       {editable ? (
         <div>
           <label htmlFor={`${ids}-amount`} className="block text-xs text-gray-500 mb-1">
-            Nominal{amountDoubt && <span className="text-amber-700"> · {amountDoubt}</span>}
+            Nominal{amountDoubt && <span className="text-amber-600"> · {amountDoubt}</span>}
           </label>
           <input
             id={`${ids}-amount`}
@@ -332,7 +333,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
 
       {dates.notice && (
         <div className="space-y-1.5">
-          <p className="text-sm text-amber-700">{dates.notice.text}</p>
+          <p className="text-sm text-amber-600">{dates.notice.text}</p>
           {dates.choices.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="Tanggal catat">
               {dates.choices.map(c => (
@@ -395,7 +396,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
 
       {failure && (
         <div role="alert" className={`rounded-xl border px-3 py-2 text-sm space-y-2 ${uncertain
-          ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-red-200 bg-red-50 text-red-600'}`}>
+          ? 'border-amber-200 bg-amber-50 text-amber-600' : 'border-red-200 bg-red-50 text-red-600'}`}>
           <p>{failure.text}</p>
           {failure.kind === 'limit' && (
             <button type="button" disabled={!!busy} onClick={() => save({ raiseLimit: true })}

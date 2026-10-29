@@ -7,7 +7,7 @@ import {
   discardBatch, runSharePage, mergeItems, pollTargets, fetchPendingDetails, pageFinished, pageNotices, dropLine,
   shareUploadTimeoutMs, pageView, serialRuns, createPoller, sniffShareType, oversizeMessage,
   SHARE_OWNER_KEY, shareOwnerAction, ensureShareOwner, ownerGate, ownedShares, keptEntries, discardKept, withTimeout,
-  pageReads, CONFIG_WAIT_MS, READ_WAIT_MS,
+  pageReads, CONFIG_WAIT_MS, READ_WAIT_MS, tokenSubject,
 } from './shareInbox.js';
 import { DB_NAME as OFFLINE_DB } from './offlineSync.js';
 import { DEFAULT_CONFIG } from './appConfig.js';
@@ -1656,4 +1656,58 @@ test('createPoller + pageReads (R6): GET item yang menggantung berakhir null ses
   reads.fire();
   await second;
   assert.deepEqual([got.length, chain.pending(), running], [2, 0, [true, false]], 'berhenti: pantauan tidak tertahan');
+});
+
+// ── Verifikasi review akhir Bagian B (§8), N1: pemilik kotak = akun token sesi tab ini, bukan profil di layar ──────
+
+// JWT tiruan: header.payload.tanda-tangan, base64url tanpa padding (seperti PyJWT). Tanda tangan tidak diperiksa klien.
+const jwtWith = (claims, header = { alg: 'HS256', typ: 'JWT' }) =>
+  `${[header, claims].map(p => Buffer.from(JSON.stringify(p)).toString('base64url')).join('.')}.tanda-tangan`;
+const SUB_A = 'b772feb0-eea0-4fd8-b724-6fa5665b1491';
+
+test('tokenSubject (N1): klaim `sub` access token (akun yang menerima unggahan), base64url dan UTF-8', () => {
+  assert.equal(tokenSubject(jwtWith({ sub: SUB_A, exp: 1793270357, type: 'access', sid: 'sesi-1' })), SUB_A);
+  // "-" dan "_" (base64url) tanpa padding: premisnya dicek juga.
+  const odd = jwtWith({ sub: SUB_A, note: 'ab?cd>' });
+  const payload = odd.split('.')[1];
+  assert.ok(payload.includes('-') && payload.includes('_') && payload.length % 4 !== 0, payload);
+  assert.equal(tokenSubject(odd), SUB_A);
+  assert.equal(tokenSubject(jwtWith({ sub: 'akun-ü-é' })), 'akun-ü-é');
+});
+
+test('tokenSubject (N1): token yang tidak terbaca → null (gagal tertutup); tidak pernah melempar', () => {
+  const b64 = text => Buffer.from(text).toString('base64url');
+  const bad = [
+    null, undefined, 42, {}, ['h', 'p'], '', 'abc', 'a..c', 'expired.token.x', 'a.@@@@.c', 'h.eyJzdWIiOiJ4In0xx.s',
+    `h.${b64('bukan json')}.s`, `h.${b64('{"sub":"x"}')}1.s`, `h.${b64('null')}.s`, `h.${b64('"teks"')}.s`,
+    jwtWith({ type: 'access' }), jwtWith({ sub: '' }), jwtWith({ sub: 42 }), jwtWith({ sub: null }), jwtWith({ sub: { id: 'x' } }),
+    // Bukan teks, walau menjadi token yang sah bila diubah ke teks.
+    [jwtWith({ sub: SUB_A })], { toString: () => jwtWith({ sub: SUB_A }) },
+  ];
+  for (const token of bad) assert.equal(tokenSubject(token), null, String(token));
+});
+
+test('tokenSubject + ensureShareOwner (N1): profil cache akun sebelumnya tidak menentukan pemilik; token tak terbaca → kotak tidak dibaca', async () => {
+  // B login, /auth/me gagal: profil di layar = cache A, token = B → kotak A dikosongkan sebelum dibaca, cap B.
+  const box = countedBox([shareEntry('a', 'b1', 1)]);
+  const storage = memStorage({ [OWNER]: SUB_A });
+  assert.equal(await ensureShareOwner(box.store, tokenSubject(jwtWith({ sub: 'u-b', type: 'access' })), { storage }), true);
+  assert.deepEqual([box.store.map.size, box.clears(), storage.map.get(OWNER)], [0, 1, 'u-b']);
+  // Banner: gerbang pemilik dengan subjek token yang sama → tanpa angka share A.
+  const box2 = countedBox([shareEntry('a', 'b1', 1)]);
+  const s2 = memStorage({ [OWNER]: SUB_A });
+  assert.deepEqual(await ownedShares(box2.store, ownerGate(box2.store, tokenSubject(jwtWith({ sub: 'u-b' })), { storage: s2 })), []);
+  assert.deepEqual([box2.store.map.size, s2.map.get(OWNER)], [0, 'u-b']);
+  // Token rusak atau tidak ada: tanpa pemilik → false, kotak dan cap tidak disentuh.
+  for (const token of ['expired.token.x', null]) {
+    const b3 = countedBox([shareEntry('a', 'b1', 1)]);
+    const s3 = memStorage({ [OWNER]: SUB_A });
+    assert.equal(await ensureShareOwner(b3.store, tokenSubject(token), { storage: s3 }), false, String(token));
+    assert.deepEqual([b3.store.map.size, b3.clears(), s3.writes], [1, 0, []]);
+  }
+  // Akun yang sama di token: kotak tetap (share yang dibagikan saat belum login terkirim ke akun itu).
+  const b4 = countedBox([shareEntry('a', 'b1', 1)]);
+  const s4 = memStorage({ [OWNER]: SUB_A });
+  assert.equal(await ensureShareOwner(b4.store, tokenSubject(jwtWith({ sub: SUB_A })), { storage: s4 }), true);
+  assert.deepEqual([b4.store.map.size, b4.clears(), s4.writes], [1, 0, []]);
 });
