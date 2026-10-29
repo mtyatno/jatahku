@@ -223,10 +223,23 @@ Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun n
      `app.html` untuk `/bagikan`; kalau masih 404, cek lagi sesudah langkah 3).
    - Admin → Dashboard → Scan Struk → baris "Jenis dokumen: Struk belanja … · QRIS … · Transfer … · Tidak dikenali …"
      (tabel "Per penerbit" baru muncul setelah ada bukti QRIS/transfer yang dibaca saat saklar menyala).
+   - Scan ulang foto struk yang baru saja tercatat → baris terblokir "Bukti ini sudah tercatat.", dan Simpan Semua
+     menolak.
+   - Struk dari periode lalu → "Tanggal di struk: … — di luar periode sekarang (…). Catat untuk tanggal berapa?";
+     Simpan Semua meminta "Pilih tanggal catat" sampai salah satu dipilih.
+   - × pada baris hasil scan → item dilewati (tab Network: `POST /kotak-struk/{id}/lewati` → 200).
+   - Simpan struk hasil scan saat offline (DevTools → Offline), lalu online → tersinkron sekali (satu set transaksi).
+     Ulangi dengan struk lain, tetapi kunci amplopnya sebelum online (sinkron ditolak): scan ulang foto yang sama →
+     "Struk ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.", tanpa baris baru;
+     buka kunci, lalu "Coba lagi" di pemberitahuan antrean → tercatat sekali.
+   - HP dengan PWA terpasang (service worker lama, bukan incognito): sebelum merge, catat satu transaksi saat offline
+     (masuk antrean) dan tutup app. Sesudah deploy, buka app saat online, tunggu muat ulang otomatis, lalu
+     `https://jatahku.com/version.json` → commit baru, dan transaksi di antrean tetap terkirim (sekali).
 3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
    saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
-4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, saklar, uji HP tanpa share, PR `share_target`, uji
-   share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
+4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
+   PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
+   sini.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
