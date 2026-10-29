@@ -252,6 +252,21 @@ test('clearSharesOnLogout: penghapusan macet → tetap pindah setelah batas wakt
   assert.equal(moved, 1);
 });
 
+test('clearSharesOnLogout: timer batas waktu dibersihkan begitu penghapusan selesai (tidak ada timer 2 dtk tertinggal)', async () => {
+  const realClear = globalThis.clearTimeout;
+  const cleared = [];
+  globalThis.clearTimeout = (h) => { cleared.push(h); return realClear(h); };
+  try {
+    const handle = { timer: 'batas' }; // pegangan tiruan: mutan yang lupa membersihkan tidak menahan proses tes
+    let moved = 0;
+    const ok = await clearSharesOnLogout({ revoke: true }, { makeStore: () => memStore(), next: () => { moved += 1; }, setTimer: () => handle });
+    assert.deepEqual([ok, moved], [true, 1]);
+    assert.deepEqual(cleared, [handle]);
+  } finally {
+    globalThis.clearTimeout = realClear;
+  }
+});
+
 test('clearSharesOnLogout: gagal mengosongkan tidak pernah melempar, logout tetap pindah', async () => {
   for (const makeStore of [
     () => ({ clear: async () => { throw new Error('rusak'); } }),
@@ -300,7 +315,7 @@ function fakeIndexedDB() {
   const stores = new Map();
   let version = 0;
   const later = fn => setTimeout(fn, 0);
-  const fake = { opens: [], created: [], events: [], failOpen: false, failNext: null, lastDb: null };
+  const fake = { opens: [], created: [], events: [], failOpen: false, failNext: null, failCommit: false, lastDb: null };
   fake.open = (name, ver) => {
     fake.opens.push([name, ver]);
     const req = {};
@@ -338,6 +353,7 @@ function fakeIndexedDB() {
           };
         };
         later(() => {
+          const snapshot = new Map(st.rows);
           for (const { r, op, fn } of reqs) {
             if (fake.failNext === op) {
               fake.failNext = null;
@@ -347,7 +363,13 @@ function fakeIndexedDB() {
             }
             r.result = fn(); fake.events.push(op); r.onsuccess?.({ target: r });
           }
-          later(() => { fake.events.push('complete'); tx.oncomplete?.({}); });
+          later(() => {
+            if (fake.failCommit && mode === 'readwrite') { // kuota penuh saat commit: request sudah sukses, hanya 'abort'
+              fake.failCommit = false; st.rows = snapshot; tx.error = new Error('QuotaExceededError');
+              fake.events.push('abort'); tx.onabort?.({}); return;
+            }
+            fake.events.push('complete'); tx.oncomplete?.({});
+          });
         });
         return tx;
       },
@@ -397,6 +419,20 @@ test('shareStore: tulis gagal (penyimpanan penuh) ditolak; buka gagal ditolak la
   idb2.failOpen = false;
   assert.deepEqual(await s2.all(), []);
   assert.equal(idb2.opens.length, 2);
+});
+
+test('shareStore: kuota penuh saat commit (Chromium: request sukses, transaksi hanya abort) → ditolak; share → err=baca tanpa sisa', async () => {
+  const idb = fakeIndexedDB();
+  const store = shareStore(idb);
+  idb.failCommit = true;
+  await assert.rejects(store.put({ id: 'a' }), /QuotaExceededError/);
+  assert.deepEqual(await store.all(), []);
+  await store.put({ id: 'lama', text: 'Rp9' });
+  idb.failCommit = true;
+  const fd = form({ text: 'Rp1' }, [new File(['a'], 'a.jpg', { type: 'image/jpeg' })]);
+  const res = await handleShareTarget(shareRequest(fd), { store, newId });
+  assert.equal(res.headers.get('location'), '/bagikan?err=baca');
+  assert.deepEqual((await store.all()).map(e => e.id), ['lama']);
 });
 
 test('shareStore: koneksi ditutup saat versionchange (tidak menahan upgrade/hapus DB), lalu dibuka ulang', async () => {

@@ -118,10 +118,15 @@ export function clearSharesOnLogout({ revoke } = {}, {
   } catch {
     cleared = Promise.resolve(false);
   }
+  let timer;
   const capped = new Promise((resolve) => {
-    try { setTimer(() => resolve(false), waitMs); } catch { resolve(false); } // pindah ke /login tidak boleh tertahan
+    try { timer = setTimer(() => resolve(false), waitMs); } catch { resolve(false); } // pindah ke /login tidak boleh tertahan
   });
-  return Promise.race([cleared, capped]).then((ok) => { proceed(); return ok; });
+  return Promise.race([cleared, capped]).then((ok) => {
+    try { clearTimeout(timer); } catch { /* timer tiruan */ }
+    proceed();
+    return ok;
+  });
 }
 
 // ── Menerima share (service worker) ─────────────────────────────────────────────────────────────────
