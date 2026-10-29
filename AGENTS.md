@@ -102,6 +102,9 @@
   sync, only when the queue has items. Never drop a queued transaction silently:
   rejected ones are kept with `rejected: {message}` and shown for fix/retry/delete;
   5xx/401/offline keep them pending. Every item carries a `client_ref`.
+- **Bagikan ke Jatahku** (`POST /bagikan`, `lib/shareInbox.js`): penangannya harus tetap di atas cek
+  `request.method !== 'GET'`. Share disimpan di IndexedDB `jatahku-share` (terpisah dari `jatahku-offline`) dan hanya
+  dikosongkan saat user sendiri logout. Navigasi: hanya jawaban 2xx `text/html` yang disimpan sebagai app shell offline.
 
 ## Enum vs String in Python
 - `PurposeType.expense` (enum member) does NOT equal `"expense"` (string)
@@ -222,8 +225,8 @@ Belum jalan, menunggu merge. Tanpa migrasi dan tanpa paket baru (Python maupun n
      (tabel "Per penerbit" baru muncul setelah ada bukti QRIS/transfer yang dibaca saat saklar menyala).
 3. Pasang aturan nginx `/bagikan`: langkah dan hasil yang diharapkan ada di `docs/kotak-struk.md` bagian "Menyalakan
    saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR `share_target`.
-4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, PR `share_target`, uji HP): ikuti urutan di
-   `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
+4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, saklar, uji HP tanpa share, PR `share_target`, uji
+   share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.

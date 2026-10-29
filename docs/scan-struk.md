@@ -44,20 +44,22 @@ Tidak ada kuota scan (dihapus untuk semua paket, tidak bergantung pada saklar `r
 tetap jalan; field `quota` di respons dipertahankan dengan isi `{limit: null, used: 0, remaining: null}`.
 File PDF diterima oleh endpoint (maks 10 MB); foto tetap maks 8 MB.
 
-**Di webapp: dari foto sampai hasil.** Empat pintu masuk, semuanya berakhir di form
+**Di webapp: dari foto sampai hasil.** Tiga pintu masuk, semuanya berakhir di form
 Catat yang sama dan langsung membaca fotonya (`MultiAddTransaction` + `useReceiptScan`):
 
-- **Foto struk** di FAB (HP) dan menu **Catat ▾** (desktop): kamera dibuka dulu,
-  form Catat terbuka begitu fotonya sampai (`openReceiptCamera` di `Layout.jsx`).
-- Tombol **Foto** / **Galeri** di dalam form Catat, ditambah tombol **PDF** saat saklar `receipt_inbox` menyala
-  (gambar atau PDF bukti bayar, dikirim apa adanya tanpa kompres, maks 10 MB). Saat saklar menyala, screenshot atau
-  PDF bukti QRIS/transfer menjadi satu baris biasa yang sudah terisi (keterangan, tanggal bayar, amplop yang disarankan
-  bila yakin), bukan kartu struk. Rincian: [`docs/kotak-struk.md`](kotak-struk.md) bagian "Web dan PWA".
+- Tombol **Foto** / **Galeri** di dalam form Catat (dibuka lewat **Catat** di top bar desktop, atau FAB **+** →
+  **Pengeluaran** di HP), ditambah tombol **PDF** saat saklar `receipt_inbox` menyala (memilih gambar atau PDF bukti
+  bayar; PDF dikirim apa adanya tanpa kompres, maks 10 MB, sedangkan gambar tetap dikompres seperti foto). Saat saklar
+  menyala, screenshot atau PDF bukti QRIS/transfer menjadi satu baris biasa yang sudah terisi (keterangan, tanggal
+  bayar, amplop yang disarankan bila yakin), bukan kartu struk. Rincian: [`docs/kotak-struk.md`](kotak-struk.md)
+  bagian "Web dan PWA".
 - Shortcut PWA **Foto struk** (`/transactions?struk=1`): form Catat terbuka dalam mode
   siap difoto, dengan tombol besar **Ambil foto struk**. Kamera tidak bisa dibuka tanpa
   ketukan, jadi shortcut hanya menyiapkan layar; parameternya dihapus dari URL.
-- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya menampilkan
-  toast "Foto struk tadi tidak sempat diterima, coba lagi." dengan tombol **Foto ulang**.
+- Pemulihan: kalau OS mematikan app saat kamera terbuka, app berikutnya membuka form Catat dengan foto yang sempat
+  diterima (hanya aplikasi native; web tidak bisa memulihkannya, lihat di bawah), atau menampilkan toast "Foto struk
+  tadi tidak sempat diterima, coba lagi." dengan tombol **Foto ulang** (kamera dibuka dulu, form Catat terbuka begitu
+  fotonya sampai; `openReceiptCamera` di `Layout.jsx`).
 
 Kamera dan galeri lewat `native.camera` (`takePhoto` / `pickPhoto` / `recover`; di web
 berupa `<input type=file>`), dan harus dipanggil sinkron di dalam handler ketukan

@@ -242,10 +242,10 @@ merender. Saklar `features.receipt_inbox` dibaca dari `/app/config`; hanya nilai
 - Satu item = satu baris/kartu. Item yang sudah ada di daftar (mis. foto yang sama di-scan lagi) tidak menambah baris:
   "Struk ini sudah ada di daftar." atau "Bukti ini sudah ada di daftar.".
 - `flags.blocked` tampil sebagai alasan di baris sejak scan, untuk semua jenis dokumen (saat saklar mati bukti bayar
-  terbaca sebagai struk belanja): "Transaksi ini gagal di bank, jadi tidak bisa dicatat." atau "Bukti ini sudah
-  tercatat.". Penolakan bukti saat simpan (teks 409 di `receipt_item_id` di bawah) juga menjadi alasan di baris. Baris
-  itu tidak bisa disimpan: pilihan amplopnya dikunci (kartu struk: semua isiannya), Simpan Semua melewatinya, dan bila
-  semua baris diblokir, Simpan Semua menampilkan alasannya.
+  terbaca sebagai struk belanja atau tidak dikenali): "Transaksi ini gagal di bank, jadi tidak bisa dicatat." atau
+  "Bukti ini sudah tercatat.". Penolakan bukti saat simpan (teks 409 di `receipt_item_id` di bawah) juga menjadi alasan
+  di baris. Baris itu tidak bisa disimpan: pilihan amplopnya dikunci (kartu struk: semua isiannya), Simpan Semua
+  melewatinya, dan bila semua baris diblokir, Simpan Semua menampilkan alasannya.
 - Setiap jalur simpan membawa `receipt_item_id`: batch, setiap bagian struk per barang, dan antrean offline (payload
   antrean menyimpannya, `offlineSync.toBatchItem` meneruskannya saat sinkron dari app maupun dari service worker).
 - × dan "Lewati yang gagal" melewati item di server (`POST /kotak-struk/{id}/lewati`, alasan `batal`) supaya tidak
@@ -322,8 +322,9 @@ Struk dan untuk `ProofCard`. Tanggal dokumen = tanggal struk, atau tanggal WIB d
 
 **Halaman `/bagikan`** (`Bagikan.jsx`, `shareInbox.js`): route di dalam `Layout`, judul "Bagikan ke Jatahku". Belum
 login → `/login`; entri lokal tetap, dan setelah login banner "Bukti menunggu" membawa user kembali ke sini.
-- Saklar dibaca segar dari `/app/config` setiap putaran, bukan dari cache, karena saklar mati menghapus share. Gagal
-  mengambil → nilai cache terakhir; belum pernah terbaca → ditahan seperti offline.
+- Saklar dibaca dari `/app/config` setiap putaran, bukan dari cache lokal, karena saklar mati menghapus share. Jawaban
+  server boleh disimpan browser sampai 5 menit (`Cache-Control: public, max-age=300`), jadi perubahan saklar bisa sampai
+  ke sini 5 menit kemudian. Gagal mengambil → nilai cache terakhir; belum pernah terbaca → ditahan seperti offline.
 - Saklar mati → hanya "Fitur ini segera hadir.". Entri batch `?s=` itu dihapus dari HP, dan tidak ada permintaan Kotak
   Struk (juga tanpa kartu, teks `?err=`, dan permintaan amplop).
 - Offline (atau saklar belum diketahui) → entri tetap, dengan "{n} bukti menunggu dikirim. Akan dikirim saat online."
@@ -334,8 +335,9 @@ login → `/login`; entri lokal tetap, dan setelah login banner "Bukti menunggu"
   dikompres), jadi semua file memakai batas waktu PDF (60 dtk + 1 dtk per 25 kB, maks 300 dtk); teks 60 dtk.
 - Hasil tiap entri (`uploadOutcome`):
   - diterima (2xx berisi item) → entri dihapus, kartunya tampil;
-  - dibuang (413, 415, 422) → entri dihapus, dengan baris "{nama file}: {pesan server}", atau "Bukti tidak bisa
-    dikirim." bila pesannya bukan teks;
+  - dibuang (413, 415, 422 dari API) → entri dihapus, dengan baris "{nama file}: {pesan server}", atau "Bukti tidak bisa
+    dikirim." bila pesannya bukan teks. 413 dari nginx sendiri tidak terbaca browser dan berakhir sebagai "disimpan"
+    (lihat "Batas unggah `api.jatahku.com`");
   - disimpan (tanpa jawaban, lewat batas waktu, 5xx, 401, 429, 4xx lain, atau 2xx tanpa item) → entri tetap: "Bukti
     belum terkirim. Akan dikirim lagi saat online." (429: pesan server, atau "Terlalu banyak bukti. Coba lagi
     sebentar."). Putaran berhenti, entri itu pindah ke belakang antrean, dan "Kirim lagi" mengirim ulang dengan
@@ -486,9 +488,10 @@ pencegahan ganda, baris hasil scan di form Catat (satu baris per item, `receipt_
 tanggal, × melewati item), penangan `POST /bagikan` di service worker, dan rincian Scan Struk di Admin (lihat "Web dan
 PWA"). Menu Bagikan Android juga tidak diatur saklar: Jatahku muncul di sana setelah `share_target` ada di manifest dan
 PWA memperbarui manifestnya. Klien web membaca saklar dari cache `/app/config` (lihat "Menyalakan saklar"); halaman
-`/bagikan` selalu membacanya segar.
+`/bagikan` memintanya lagi setiap putaran (jawaban yang disimpan browser berumur paling lama 5 menit).
 
-Menyalakan: ikuti urutan di "Menyalakan saklar" (gerbang korpus, nginx, batas unggah, PR `share_target`, uji HP).
+Menyalakan: ikuti urutan di "Menyalakan saklar" (gerbang korpus, nginx, batas unggah, saklar, uji HP tanpa share, PR
+`share_target`, uji share).
 Perintahnya (`PUT` mengganti **seluruh** nilai, jadi gabungkan dengan isi `GET /admin/settings/app_config` bila sudah
 ada):
 
@@ -684,17 +687,26 @@ lagi."), dan `GET /bagikan` disajikan `app.html` seperti route SPA lain. Bila ng
 3. `sudo nginx -t && sudo systemctl reload nginx`.
 4. Ulangi dua perintah di langkah 1. Hasil yang benar: GET → `200` dengan `Content-Type: text/html`; POST → `303` ke
    `…/bagikan?err=sw`.
+   POST yang lebih besar dari `client_max_body_size` domain jatahku.com dijawab 413 oleh nginx sebelum `return` jalan,
+   jadi share besar saat service worker belum aktif berakhir di halaman galat nginx, bukan teks `?err=sw` (POST di
+   langkah 1 tanpa isi, jadi tidak menguji ini). Cek nilainya dengan `sudo nginx -T | grep client_max_body_size`; bila
+   kecil (bawaan nginx 1m), tambahkan mis. `client_max_body_size 100m;` di dalam blok `location = /bagikan`.
 
 **Batas unggah `api.jatahku.com`.** Foto yang dibagikan tidak dikompres (server menerima sampai 8 MB) dan PDF sampai
 10 MB, padahal unggahan web selama ini foto terkompres ±300 KB. `client_max_body_size` nginx untuk api.jatahku.com harus
-menerima file 10 MB ditambah bungkus multipart-nya. Kalau terlalu kecil, nginx menjawab 413 sebelum API, jadi bukti
-besar dari form Catat dan `/bagikan` tidak pernah sampai. Cek tanpa token (tidak ada item yang dibuat):
+menerima file 10 MB ditambah bungkus multipart-nya (`10m` tidak cukup). Kalau terlalu kecil, nginx menjawab 413 sebelum
+API, dan halaman galat nginx itu tanpa header CORS: browser tidak bisa membacanya dan menganggapnya koneksi gagal. Form
+Catat lalu menampilkan galat koneksi dengan "Coba lagi", dan di `/bagikan` entrinya tidak dibuang: tetap "Bukti belum
+terkirim", dicoba lagi di setiap putaran, dan terus dihitung banner (lihat "Batasan yang diketahui"). Karena itu cek
+ini wajib sebelum saklar menyala. Cek tanpa token (tidak ada item yang dibuat):
 ```bash
 head -c 10485760 /dev/urandom > /tmp/bukti-10mb.bin
 curl -s -o /dev/null -w '%{http_code}\n' -X POST -F source=pwa_share -F file=@/tmp/bukti-10mb.bin https://api.jatahku.com/kotak-struk/
 rm /tmp/bukti-10mb.bin
 ```
-`413` = batas nginx terlalu kecil; `401` = cukup (permintaan sampai ke API dan ditolak karena tanpa login).
+`413` = batas nginx terlalu kecil: naikkan `client_max_body_size` di konfigurasi nginx api.jatahku.com (mis. `12m`),
+`sudo nginx -t && sudo systemctl reload nginx`, lalu ulangi cek. `401` = cukup (permintaan sampai ke API dan ditolak
+karena tanpa login).
 
 **Urutan:**
 1. Gerbang korpus A14 lulus (`eval --real-only` keluar 0, bagian "Alat korpus dan gerbang rilis"), sisa privasi A68
@@ -702,19 +714,24 @@ rm /tmp/bukti-10mb.bin
 2. Aturan nginx `/bagikan` aktif (di atas).
 3. Batas unggah `api.jatahku.com` sudah dicek (di atas).
 4. Nyalakan saklar (`PUT /admin/settings/app_config`, bagian "Saklar fitur").
-5. Segera merge PR `share_target` (blok di "Share target dan service worker"). Saklar harus menyala lebih dulu: share
-   yang tiba di `/bagikan` saat saklar terbaca mati (juga dari cache, bila `/app/config` gagal diambil) dihapus. Jarak
-   keduanya dibuat pendek karena tips Settings sudah menyuruh user Android memilih Jatahku di menu Bagikan.
-6. Uji di HP sungguhan (spec 7c): PWA terpasang di Android Chrome (share dari beberapa aplikasi bank dan e-wallet, saat
-   belum login, dan saat offline), bot Telegram di Android dan iPhone, chat bot web, PDF dari tombol PDF di desktop,
-   dan screenshot QRIS dari Galeri di form Catat. Juga butir 7c yang bergantung pada klien: share Android → kartu
-   konfirmasi ≤ 5 dtk saat online; share kedua dari merchant yang sama → saran yakin; folder file sementara
+5. Uji di HP sungguhan tanpa menu Bagikan (spec 7c), sebelum PR `share_target` di-merge: bot Telegram di Android dan
+   iPhone, chat bot web, PDF dari tombol PDF di desktop, dan screenshot QRIS dari Galeri di form Catat.
+6. Merge PR `share_target` (blok di "Share target dan service worker") segera sesudah langkah 5, lalu cek versi yang
+   tayang (`https://jatahku.com/version.json`). Saklar harus menyala lebih dulu, paling sedikit 5 menit sebelumnya:
+   share yang tiba di `/bagikan` saat saklar terbaca mati (juga dari cache, bila `/app/config` gagal diambil, atau dari
+   cache browser yang berumur sampai 5 menit) dihapus. Jarak langkah 4 dan 6 dibuat pendek karena tips Settings sudah
+   menyuruh user Android memilih Jatahku di menu Bagikan.
+7. Langsung sesudah deploy `share_target`, uji alur share di HP sungguhan (spec 7c): PWA terpasang di Android Chrome
+   (buka app sekali supaya manifest baru terbaca; bila Jatahku belum muncul di menu Bagikan, pasang ulang PWA-nya),
+   share dari beberapa aplikasi bank dan e-wallet, saat belum login, dan saat offline; share Android → kartu
+   konfirmasi ≤ 5 dtk saat online; share kedua dari merchant yang sama → saran yakin. Terakhir: folder file sementara
    (`KOTAK_DIR`) kosong setelah semua item diproses.
 
 Catatan:
 - Klien web membaca saklar dari cache `/app/config`, yang diambil ulang saat app dibuka atau tab terlihat lagi, paling
   cepat sejam sekali (`CONFIG_TTL_MS`). Perubahan saklar (nyala atau mati) baru sampai ke klien yang sudah terbuka pada
-  kesempatan itu, jadi bisa butuh sejam atau lebih. Halaman `/bagikan` selalu mengambil nilai terbaru.
+  kesempatan itu, jadi bisa butuh sejam atau lebih. Halaman `/bagikan` memintanya lagi setiap putaran, tetapi browser
+  boleh memakai jawaban yang berumur sampai 5 menit (`Cache-Control: public, max-age=300`).
 - PWA yang sudah terpasang memakai penangan service worker baru setelah app dibuka sekali sesudah deploy Bagian B
   (service worker baru langsung aktif: `skipWaiting` + `clients.claim`). Jatahku muncul di menu Bagikan setelah Chrome
   memperbarui manifest PWA itu, saat app dibuka dan tidak langsung.
@@ -766,6 +783,11 @@ Catatan:
   `/app/config`) tidak punya batas waktu; hanya unggahan XHR yang punya. Koneksi yang menggantung membuat `/bagikan`
   tetap "Memuat…" (saat membaca `/app/config`) atau tanpa daftar bukti menunggu, dan angka server di banner tidak
   diperbarui (angka share lokal tetap tampil). Memuat ulang halaman memulihkannya.
+- **Share yang tidak pernah bisa terkirim** (ditinjau di review akhir Bagian B). Entri yang setiap kali gagal tanpa
+  jawaban yang terbaca (mis. 413 dari nginx tanpa header CORS) tetap "Bukti belum terkirim. Akan dikirim lagi saat
+  online.": `/bagikan` hanya punya "Kirim lagi", tanpa tombol buang, dan banner terus menampilkan "{n} bukti menunggu
+  dikirim". Entri itu pindah ke belakang antrean, jadi entri lain terkirim lebih dulu di putaran berikutnya. Selama
+  saklar menyala, yang menghapusnya hanya logout oleh user sendiri.
 
 ## Tes
 
