@@ -197,8 +197,10 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
   tanpa teks OCR, tanpa data belajar struk. Rincian, kutipan baris, dan nama yang memuat deret digit sepanjang
   nomor rekening (>= 8 digit) tidak dibawa; teks yang terbaca sebagai bukti bayar tetap tanpa peta merchant.
-  Dengan baris "Rp": total = nominal Rp terbesar, tanggal tetap dari tebakan `parse_receipt` (bukti yang dulu
-  terbaca sebagai struk, mis. QRIS Jago Syariah, tetap bertanggal untuk pertanyaan tanggal periode lalu), tanpa nama.
+  Dengan baris "Rp": total = nominal Rp terbesar, tanggal dari tebakan `parse_receipt` hanya bila teksnya mencetak
+  tepat satu tanggal (bukti yang dulu terbaca sebagai struk, mis. QRIS Jago Syariah, tetap bertanggal untuk
+  pertanyaan tanggal periode lalu; dua tanggal atau lebih, mis. berita, masa berlaku, jatuh tempo, periode tagihan,
+  nomor bertitik "12.10.26" → tanpa tanggal, dicatat hari ini), tanpa nama.
 
 ## Belajar dari koreksi (tanpa LLM)
 

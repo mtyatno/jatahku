@@ -308,6 +308,24 @@ def find_date(lines: list[str], today: date, max_age_days: int = 366) -> date | 
     return None
 
 
+def printed_dates(lines: list[str]) -> set[date]:
+    """Semua tanggal kalender sah yang tercetak (pola `find_date`, berapa pun umurnya), tanpa duplikat."""
+    found = set()
+    for line in lines:
+        up = line.upper()
+        for pat, conv in _DATE_PATTERNS:
+            for m in pat.finditer(up):
+                parts = conv(m)
+                if not parts:
+                    continue
+                d, mo, y = parts
+                try:
+                    found.add(date(y + 2000 if y < 100 else y, mo, d))
+                except ValueError:
+                    pass
+    return found
+
+
 # ── Toko ────────────────────────────────────────────────────────────────────
 
 def _title(s: str) -> str:

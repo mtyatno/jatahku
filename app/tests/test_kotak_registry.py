@@ -348,6 +348,35 @@ class UnknownReaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(blurry.doc.paid_at, datetime.fromisoformat("2026-10-14T00:00:00+07:00"))
         self.assertEqual(blurry.extra, {})
 
+    async def test_rp_amount_keeps_the_date_only_when_one_date_is_printed(self):
+        """H3 (R1): tanggal pertama belum tentu tanggal bayar (berita, masa berlaku, nomor referensi, jatuh tempo,
+        periode tagihan). Lebih dari satu tanggal tercetak → tanpa tanggal dokumen (dicatat hari ini, seperti dulu)."""
+        ctx = ParseContext(today=date(2026, 10, 29))
+        several = {
+            "berita": ["Bukti Bayar", "Berita: arisan 15/10/2026", "Rp150.000", "Ke BUDI", "28 Okt 2026 09:30"],
+            "berlaku_lewat": ["Voucher Pulsa", "Rp50.000", "Berlaku s/d 20/10/2026", "Dibeli 28/10/2026"],
+            "berlaku_nanti": ["Voucher Pulsa", "Rp50.000", "Berlaku s/d 30/11/2026", "Dibeli 28/10/2026"],
+            "nomor_bertitik": ["Bukti Bayar", "No. 12.10.26", "Rp75.000", "28 Okt 2026"],
+            "jatuh_tempo": ["Tagihan PLN", "Jatuh tempo 20/10/2026", "Rp250.000", "Dibayar 28/10/2026"],
+            "periode": ["Tagihan", "Periode 01/09/2026 - 30/09/2026", "Rp120.000", "Tgl bayar 28/10/2026"],
+        }
+        for name, lines in several.items():
+            with self.subTest(name):
+                res = await read_document(doc(lines), ctx, proofs_enabled=False)
+                self.assertEqual((res.parsed.doc.doc_type, res.parsed.doc.paid_at), ("tidak_dikenali", None))
+                self.assertIsNotNone(res.parsed.doc.amounts.total)
+        single = {
+            "dicetak": (["Bukti", "Rp30.000", "Dicetak 01/09/2026"], "2026-09-01"),
+            "jago": (["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
+                      "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses"], "2026-10-26"),
+            "tanggal_sama_dua_kali": (["Bukti Bayar", "Rp40.000", "28/10/2026", "Tanggal 28 Okt 2026"], "2026-10-28"),
+        }
+        for name, (lines, day) in single.items():
+            with self.subTest(name):
+                res = await read_document(doc(lines), ctx, proofs_enabled=False)
+                self.assertEqual((res.parsed.doc.doc_type, res.parsed.doc.paid_at),
+                                 ("tidak_dikenali", datetime.fromisoformat(f"{day}T00:00:00+07:00")))
+
     async def test_an_rp_line_still_wins_over_the_guess_and_the_llm_over_both(self):
         parsed = await UnknownReader().parse(doc(["TOKO", "45.500", "bayar rp12.000"]), CTX)
         self.assertEqual((parsed.doc.doc_type, parsed.doc.amounts.total), ("tidak_dikenali", 12000))
