@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, parseAmountInput, saveAmount,
-  proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome,
-  skipOutcome, createSharedLoader,
+  ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
+  parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
+  savePayload, saveOutcome, skipOutcome, createSharedLoader,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -154,6 +154,26 @@ test('saveAmount: nominal yang diubah dipakai hanya bila boleh diubah', () => {
   assert.equal(proofTotal({ id: 'x', document: null }), null);
 });
 
+test('amountFieldText: belum disentuh → total dokumen terbaru (bukti yang baru terbaca sesudah kartu dipasang ikut terisi)', () => {
+  // Bentuk view.item_detail untuk item yang belum terbaca: tanpa dokumen.
+  const pending = { id: 'p1', status: 'diproses', doc_type: null, paid_at: null, document: null, merchant: null,
+    suggestion: null, description_preview: null, flags: FLAGS, error: null };
+  const store = { ...withDoc({ confidence: { total: 'tinggi' }, amounts: { total: 45400 } }, typed('struk_belanja')), id: 'p1' };
+  const low = { ...withDoc({ confidence: { total: 'rendah' }, amounts: { total: 261026 } }, typed('transfer')), id: 'p1' };
+  assert.equal(amountFieldText(pending, null), '');
+  // Kartu yang sama (id sama) menerima detail siap: kolomnya terisi total, bisa langsung disimpan.
+  assert.equal(amountFieldText(store, null), '45400');
+  assert.equal(amountFieldText(low, null), '261026');
+  assert.deepEqual(canSave(store, { ...FORM, amountText: undefined }), { ok: true, reason: null });
+  assert.equal(savePayload(store, { ...FORM, ref: 'r1', amountText: undefined }).amount, 45400);
+  assert.equal(saveAmount(store, undefined), 45400);
+  // Sudah disentuh: ketikan user tetap, termasuk kolom yang dikosongkan.
+  assert.equal(amountFieldText(store, ''), '');
+  assert.equal(amountFieldText(store, '26.000'), '26.000');
+  assert.equal(amountFieldText(pending, '26.000'), '26.000');
+  assert.equal(amountFieldText(withDoc({ amounts: { total: null }, confidence: {} }), undefined), '');
+});
+
 test('proofDate: tanggal dokumen di periode berjalan → tanggal itu; tanpa paid_at → tanpa tanggal', () => {
   assert.deepEqual(proofDate(ITEM, FORM), { kind: 'current', docDate: '2026-10-26', date: '2026-10-26', notice: null, choices: [] });
   assert.deepEqual(proofDate({ ...ITEM, paid_at: null }, FORM), { kind: null, docDate: null, date: null, notice: null, choices: [] });
@@ -300,6 +320,20 @@ test('canSave: urutan alasan — blokir, belum siap, nominal, tanggal, amplop, k
   assert.deepEqual(canSave({ ...ITEM, paid_at: '2026-11-02T01:00:00+00:00' }, FORM), { ok: true, reason: null });
 });
 
+test('canSave: status selesai punya alasannya sendiri; status lain yang belum siap → "Bukti belum siap"', () => {
+  const store = withDoc({ confidence: { total: 'tinggi' } }, typed('struk_belanja'));
+  // Struk belanja tercatat tidak membawa blocked (boleh dicatat lagi di form Catat): alasannya dari status.
+  assert.equal(canSave({ ...store, status: 'tercatat' }, FORM).reason, 'Bukti ini sudah tercatat.');
+  assert.equal(canSave({ ...ITEM, status: 'dilewati' }, FORM).reason, 'Bukti ini sudah dilewati.');
+  assert.equal(canSave({ ...ITEM, status: 'kedaluwarsa' }, FORM).reason, 'Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.');
+  for (const status of ['diterima', 'diproses', 'gagal', undefined]) {
+    assert.equal(canSave({ ...ITEM, status }, FORM).reason, 'Bukti belum siap', String(status));
+  }
+  // Blokir tetap lebih dulu (bukti tercatat membawa blocked dari server).
+  assert.equal(canSave(withFlags({ blocked: 'transaksi_gagal' }, { ...ITEM, status: 'dilewati' }), FORM).reason,
+    'Transaksi ini gagal di bank, jadi tidak bisa dicatat.');
+});
+
 test('savePayload (rencana): satu transaksi dengan receipt_item_id, client_ref, tanggal WIB', () => {
   assert.deepEqual(savePayload(ITEM, { ...FORM, description: 'Siti Aminah (QRIS)', ref: 'r1' }), {
     envelope_id: 'e1', amount: 25000, description: 'Siti Aminah (QRIS)', source: 'webapp',
@@ -337,8 +371,11 @@ test('saveOutcome: tercatat; belum pasti (jaringan, 5xx, sedang diproses); 409 �
   for (const res of [null, undefined, { ok: false, status: 0, data: {} }]) {
     assert.deepEqual(saveOutcome(res), { kind: 'uncertain', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
   }
-  assert.deepEqual(saveOutcome({ ok: false, status: 502, data: {} }),
-    { kind: 'uncertain', text: 'Hasil simpan belum pasti. Tekan Simpan lagi — tidak akan tercatat dua kali.' });
+  // 500 = bisa jadi sudah ter-commit lalu gagal (efek sesudah commit): belum pasti, isian dikunci, kirim ulang sama.
+  for (const status of [500, 502]) {
+    assert.deepEqual(saveOutcome({ ok: false, status, data: {} }),
+      { kind: 'uncertain', text: 'Hasil simpan belum pasti. Tekan Simpan lagi — tidak akan tercatat dua kali.' }, String(status));
+  }
   assert.deepEqual(saveOutcome({ ok: false, status: 503, data: { detail: 'Gagal menaikkan limit harian. Coba lagi sebentar.' } }),
     { kind: 'uncertain', text: 'Gagal menaikkan limit harian. Coba lagi sebentar. Tekan Simpan lagi — tidak akan tercatat dua kali.' });
   assert.equal(saveOutcome({ ok: false, status: 409, data: { detail: 'Transaksi ini sedang diproses. Coba lagi sebentar.' } }).kind,

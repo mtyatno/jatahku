@@ -3,8 +3,9 @@ import { api } from '../lib/api';
 import { newRef } from '../lib/ref';
 import { currentPeriod, proofBlockReason, wibToday } from '../lib/receiptScan';
 import {
-  proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, proofDate, descriptionFor, displayNameOf,
-  envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome, skipOutcome, createSharedLoader,
+  proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText, proofDate, descriptionFor,
+  displayNameOf, envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome, skipOutcome,
+  createSharedLoader,
 } from '../lib/proofFormat';
 import { EnvelopeIcon, Icon } from './Icon';
 
@@ -36,7 +37,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
   const refRef = useRef(null);
   if (!refRef.current) refRef.current = newRef();   // client_ref: sekali per kartu
   const [picked, setPicked] = useState(null);     // amplop pilihan user (null = ikut saran yakin)
-  const [amountText, setAmountText] = useState(() => String(proofTotal(item) || ''));
+  const [amountText, setAmountText] = useState(null);   // null = belum disentuh: ikut total dokumen terbaru
   const [dateChoice, setDateChoice] = useState(null);
   const [note, setNote] = useState('');
   const [hint, setHint] = useState(null);         // saran + keterangan terakhir dari POST /saran
@@ -104,7 +105,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
   const envelopeId = effectiveEnvelope(choices, { picked, suggestion });
   const preview = hint ? { note: hint.note, name: hint.name, text: hint.text } : undefined;
   const description = descriptionFor(item, { note, preview, merchant });
-  const form = { envelopeId, amountText, dateChoice, period, today: wibToday(), online, blockedReason };
+  const form = { envelopeId, amountText: amountText ?? undefined, dateChoice, period, today: wibToday(), online, blockedReason };
   const verdict = canSave(item, form);
   const header = proofHeader(item);
   const dates = proofDate(item, form);
@@ -181,7 +182,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
 
   const submitRename = async (e) => {
     e.preventDefault();
-    if (renameBusy || !merchant?.id) return;
+    if (renameBusy || locked || !merchant?.id) return;   // simpan belum pasti: nama dikunci seperti isian lain
     setRenameBusy(true);
     setRenameError('');
     const res = await api.kotakRenameMerchant(merchant.id, renameText.trim());
@@ -251,7 +252,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
             inputMode="numeric"
             autoComplete="off"
             className={`input font-mono text-xl font-semibold ${amountDoubt ? 'border-amber-400 ring-1 ring-amber-200' : ''}`}
-            value={amountText}
+            value={amountFieldText(item, amountText)}
             placeholder="0"
             onChange={e => change(setAmountText)(e.target.value)}
             disabled={locked || !!blockedText}
@@ -266,7 +267,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
           <div className="flex items-baseline gap-2 flex-wrap">
             {name && <span className="font-semibold text-gray-800 break-words">{name}</span>}
             {merchant?.id && !renaming && !blockedText && (
-              <button type="button" onClick={startRename} disabled={!!busy}
+              <button type="button" onClick={startRename} disabled={locked}
                 className="text-xs text-brand-600 underline font-medium px-1 py-2 disabled:opacity-50">
                 Ubah nama
               </button>
@@ -283,9 +284,9 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
                 onChange={e => setRenameText(e.target.value)}
                 aria-label="Nama tampilan"
                 autoFocus
-                disabled={renameBusy}
+                disabled={renameBusy || locked}
               />
-              <button type="submit" disabled={renameBusy} className="text-sm text-brand-600 font-medium underline px-1 py-2 disabled:opacity-50">
+              <button type="submit" disabled={renameBusy || locked} className="text-sm text-brand-600 font-medium underline px-1 py-2 disabled:opacity-50">
                 {renameBusy ? 'Menyimpan…' : 'Simpan nama'}
               </button>
               <button type="button" disabled={renameBusy} onClick={() => setRenaming(false)} className="text-sm text-gray-500 underline px-1 py-2">
@@ -351,7 +352,7 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
       )}
 
       {warnings.length > 0 && (
-        <ul className="space-y-1">
+        <ul id={`${ids}-warn`} className="space-y-1">
           {warnings.map((w, i) => (
             <li key={`${i}-${w.text}`} className={`flex items-start gap-1.5 text-sm ${WARNING_TEXT[w.tone] || ''}`}>
               <Icon name="warning" size={16} className="shrink-0 mt-0.5" />
@@ -380,7 +381,8 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped }) {
           type="button"
           onClick={() => save()}
           disabled={!!busy || (uncertain ? !online : !verdict.ok)}
-          aria-describedby={reasonShown ? `${ids}-reason` : undefined}
+          aria-describedby={[warnings.length ? `${ids}-warn` : null, reasonShown ? `${ids}-reason` : null]
+            .filter(Boolean).join(' ') || undefined}
           className="btn-primary disabled:opacity-50"
         >
           {busy === 'save' ? 'Menyimpan…' : 'Simpan'}

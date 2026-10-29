@@ -127,6 +127,12 @@ export function parseAmountInput(text) {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+// Isi kolom nominal: ketikan user bila sudah disentuh (teks, juga kosong), selain itu total dokumen terbaru, supaya item
+// yang baru terbaca sesudah kartu dipasang (diterima/diproses → siap, id sama) tetap terisi totalnya.
+export function amountFieldText(item, amountText) {
+  return typeof amountText === 'string' ? amountText : String(proofTotal(item) || '');
+}
+
 // Nominal yang dicatat: isian kartu bila nominal boleh diubah dan isiannya ada, selain itu total dokumen.
 export function saveAmount(item, amountText) {
   if (!amountEditable(item) || amountText === undefined || amountText === null) return proofTotal(item);
@@ -210,12 +216,20 @@ export function skipActions(item, { blockedReason = null } = {}) {
 
 const no = reason => ({ ok: false, reason });
 
-// Boleh disimpan sekarang? Alasan pertama yang menghalangi, urut dari atas kartu: blokir, belum siap, nominal,
-// tanggal, amplop, lalu koneksi (kartu tidak punya antrean offline).
+// Status yang sudah selesai (item disegarkan induk sesudah dicatat/dilewati/kedaluwarsa di tempat lain). Struk belanja
+// yang tercatat tidak membawa `blocked` (boleh dicatat lagi per barang di form Catat), jadi alasannya dari status.
+const DONE_REASON = {
+  tercatat: 'Bukti ini sudah tercatat.',
+  dilewati: 'Bukti ini sudah dilewati.',
+  kedaluwarsa: 'Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya.',
+};
+
+// Boleh disimpan sekarang? Alasan pertama yang menghalangi, urut dari atas kartu: blokir, belum siap (status selesai
+// dengan alasannya sendiri), nominal, tanggal, amplop, lalu koneksi (kartu tidak punya antrean offline).
 export function canSave(item, form = {}) {
   const blocked = form.blockedReason || proofBlockReason(item?.flags);
   if (blocked) return no(blocked);
-  if (item?.status !== 'siap') return no('Bukti belum siap');
+  if (item?.status !== 'siap') return no(DONE_REASON[item?.status] || 'Bukti belum siap');
   if (!(saveAmount(item, form.amountText) > 0)) return no('Nominal tidak terbaca');
   const { kind, date } = proofDate(item, form);
   if (kind === 'past' && !date) return no('Pilih tanggal catat');
