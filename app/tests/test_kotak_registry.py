@@ -329,6 +329,25 @@ class UnknownReaderTests(unittest.IsolatedAsyncioTestCase):
         short = await UnknownReader().parse(doc(["Warung Bu Tini 24 Jam", "14-10-2026", "45.500"]), CTX)
         self.assertEqual(short.doc.counterparty.name, "Warung Bu Tini 24 Jam")   # angka pendek di nama tetap boleh
 
+    async def test_rp_amount_keeps_the_legacy_date(self):
+        """H3: bukti QRIS Jago Syariah yang tidak dikenali (ID transaksi bukan nominal lagi) tetap membawa tanggal
+        tebakan scan struk lama, supaya pertanyaan tanggal periode lalu (H1) tetap muncul; nominalnya dari baris Rp.
+        Nama tebakan tidak dibawa (judul/label seperti "Foto Buram")."""
+        lines = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
+                 "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses", "ID Terminal", "A01"]
+        for flag in (False, True):
+            with self.subTest(proofs_enabled=flag):
+                res = await read_document(doc(lines), ParseContext(today=date(2026, 10, 28)), proofs_enabled=flag)
+                d = res.parsed.doc
+                self.assertEqual((res.reader, d.doc_type, d.amounts.total, d.confidence, d.counterparty.name),
+                                 ("tidak_dikenali", "tidak_dikenali", 19000, {"total": "rendah"}, None))
+                self.assertEqual(d.paid_at, datetime.fromisoformat("2026-10-26T00:00:00+07:00"))
+                self.assertEqual(d.evidence, ["Jenis bukti tidak dikenali", "Total ditebak dari nominal Rp terbesar"])
+        blurry = await UnknownReader().parse(doc(["foto buram", "14-10-2026", "Rp 12.000"]), CTX)
+        self.assertEqual((blurry.doc.counterparty.name, blurry.doc.amounts.total), (None, 12000))
+        self.assertEqual(blurry.doc.paid_at, datetime.fromisoformat("2026-10-14T00:00:00+07:00"))
+        self.assertEqual(blurry.extra, {})
+
     async def test_an_rp_line_still_wins_over_the_guess_and_the_llm_over_both(self):
         parsed = await UnknownReader().parse(doc(["TOKO", "45.500", "bayar rp12.000"]), CTX)
         self.assertEqual((parsed.doc.doc_type, parsed.doc.amounts.total), ("tidak_dikenali", 12000))

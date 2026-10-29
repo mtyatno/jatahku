@@ -146,12 +146,12 @@ JAGO_ID_GLUED = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2
 
 
 class TestTransactionIdDigits(unittest.TestCase):
-    """Task H3: angka ID transaksi bukan nominal (P1); tebakan "nominal terbesar" mengutamakan nominal Rp/IDR (P2)."""
+    """Task H3: angka ID transaksi bukan nominal; tebakan "nominal terbesar" tanpa label tetap seperti semula."""
     TODAY = date(2026, 10, 28)
 
     def test_transaction_id_digits_are_not_amounts(self):
         for line in ("261026-4RL9-PVRERW", "2610264RL9-PVRERW", "ID Transaksi 2610264RL9PVRERW",
-                     "ID Transaksi 261026-4RL9-PVRERW", "Ref 202610-26AB", "261026-PVRERW"):
+                     "ID Transaksi 261026-4RL9-PVRERW", "Ref 202610-26AB", "261026-PVRERW", "Ref 12500-A1B"):
             with self.subTest(line):
                 self.assertEqual(amounts_in(line), [])
 
@@ -161,6 +161,9 @@ class TestTransactionIdDigits(unittest.TestCase):
         self.assertEqual(amounts_in("KOPI 8.500B"), [8500])
         self.assertEqual(amounts_in("GULA 125000A"), [125000])
         self.assertEqual(amounts_in("KOPI 3.500x2"), [3500])   # pengali jumlah, bukan kode
+        self.assertEqual(amounts_in("KOPI 3.500x12"), [3500])
+        self.assertEqual(amounts_in("ROTI 12500B1"), [12500])   # kode pajak dua karakter huruf+digit
+        self.assertEqual(amounts_in("SUSU 8500P2"), [8500])
         self.assertEqual(amounts_in("Telp 1500-280"), [1500])  # seperti sebelumnya (angka < 6 digit)
         self.assertEqual(amounts_in("AQUA 600ML 2 3800 7,600"), [600, 3800, 7600])   # seperti sebelumnya
         p = parse_receipt(["TOKO MAJU", "ROTI TAWAR 12.500A", "SUSU UHT 15.000 A", "TOTAL 27.500", "TUNAI 27.500"],
@@ -173,14 +176,16 @@ class TestTransactionIdDigits(unittest.TestCase):
                 p = parse_receipt(lines, today=self.TODAY)
                 self.assertEqual((p.total, p.confidence), (19000, "rendah"), p.evidence)
 
-    def test_largest_amount_guess_prefers_rp_amounts(self):
-        p = parse_receipt(["TOKO", "Antrian 52817", "Rp 18.000", "26/10/2026"], today=self.TODAY)
-        self.assertEqual((p.total, p.confidence), (18000, "rendah"), p.evidence)
-        p = parse_receipt(["TOKO", "Antrian 52817", "IDR 18,000", "26/10/2026"], today=self.TODAY)
-        self.assertEqual((p.total, p.confidence), (18000, "rendah"), p.evidence)
-        # Tanpa nominal Rp/IDR sama sekali: tetap nominal terbesar (perilaku lama).
-        p = parse_receipt(["TOKO", "Antrian 52817", "18.000", "26/10/2026"], today=self.TODAY)
-        self.assertEqual((p.total, p.confidence), (52817, "rendah"), p.evidence)
+    def test_untitled_total_with_an_rp_adjustment_line_is_unchanged(self):
+        """Tanpa baris TOTAL, baris pajak/servis/kembalian bertanda Rp bukan totalnya (nilai sama dengan bc4572e)."""
+        for lines, expect in (
+                (["RESTO", "NASI GORENG 30.000", "ES JERUK 10.000", "PPN Rp 4.000", "44.000"], (44000, "sedang")),
+                (["CAFE", "LATTE 35.000", "CROISSANT 28.000", "Service Rp 3.150", "66.150"], (66150, "sedang")),
+                (["TOKO", "KOPI 25.000", "ROTI 20.000", "Kembalian Rp 5.000"], (45000, "rendah")),
+                (["TOKO", "KOPI Rp 25.000", "ROTI 20.000", "45.000"], (45000, "sedang"))):
+            with self.subTest(lines[0] + " " + lines[-2]):
+                p = parse_receipt(lines, today=self.TODAY)
+                self.assertEqual((p.total, p.confidence), expect, p.evidence)
 
 
 class TestReceiptItems(unittest.TestCase):

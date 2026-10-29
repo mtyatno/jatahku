@@ -48,10 +48,17 @@ class UnknownReader:
                 return guess
         total = max(amounts) if amounts else None
         evidence = ["Jenis bukti tidak dikenali"]
+        paid_at = None
         if total is not None:
             evidence.append("Total ditebak dari nominal Rp terbesar")
+            # Tanggal tetap tebakan scan struk lama (seperti `_legacy_guess`): bukti yang dulu terbaca sebagai struk (mis.
+            # QRIS Jago Syariah, Task H3) tetap bertanggal, jadi pertanyaan tanggal periode lalu (H1) tetap ada. Nama
+            # tebakannya tidak dibawa: di teks dengan baris Rp itu biasanya judul/label ("Foto Buram", "Merchant").
+            _, paid_at = self._legacy_meta(parse_receipt(doc.lines, ctx.today, merchant_aliases=ctx.merchant_aliases,
+                                                         merchant_profiles=ctx.merchant_profiles))
         return Parsed(doc=DokumenBayar(
             doc_type="tidak_dikenali",
+            paid_at=paid_at,
             amounts=Amounts(total=total),
             confidence={"total": "rendah"} if total is not None else {},
             evidence=evidence,
@@ -68,10 +75,7 @@ class UnknownReader:
                            merchant_profiles=ctx.merchant_profiles)
         if not rp.total:
             return None
-        name = rp.merchant
-        if name and sum(c.isdigit() for c in name) >= MIN_ACCOUNT_DIGITS:
-            name = None
-        paid_at = datetime(rp.date.year, rp.date.month, rp.date.day, tzinfo=WIB) if rp.date else None
+        name, paid_at = self._legacy_meta(rp)
         return Parsed(doc=DokumenBayar(
             doc_type="tidak_dikenali",
             paid_at=paid_at,
@@ -80,6 +84,16 @@ class UnknownReader:
             confidence={"total": "rendah"},
             evidence=["Jenis bukti tidak dikenali", "Total ditebak dari teks tanpa baris Rp"],
         ))
+
+    @staticmethod
+    def _legacy_meta(rp: ReceiptParse) -> tuple[str | None, datetime | None]:
+        """(nama merchant, tanggal) tebakan `parse_receipt`; nama yang memuat deret digit sepanjang nomor rekening
+        dibuang (teks yang tidak dikenali bisa memuat rekening/telepon)."""
+        name = rp.merchant
+        if name and sum(c.isdigit() for c in name) >= MIN_ACCOUNT_DIGITS:
+            name = None
+        paid_at = datetime(rp.date.year, rp.date.month, rp.date.day, tzinfo=WIB) if rp.date else None
+        return name, paid_at
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []

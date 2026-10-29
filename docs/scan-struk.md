@@ -92,13 +92,12 @@ nilai (`suggestion`; `0` = kemungkinan terbaca dobel) — tidak diubah diam-diam
 rincian yang cocok asalkan tidak dibantah pembayaran, baris totalnya berlabel
 kuat (TOTAL, GRAND TOTAL, TOTAL BAYAR, …; bukan SUBTOTAL atau label lemah seperti
 JUMLAH), dan tidak ada pajak/servis setelah TOTAL.
-Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`. Tanpa barang juga: tebakan nominal terbesar
-(`rendah`); bila dokumen punya nominal bertanda `Rp`/`IDR`, hanya di antara itu (angka polos bisa nomor antrean,
-telepon, atau ID).
+Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`.
 **Angka ID bukan nominal** (`amounts_in`): angka yang disambung, menempel atau lewat "-", ke kode campuran
-huruf+digit ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke segmen lain,
-dilewati. Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML") dan pengali "3.500x2" tetap
-nominal. Kasus produksi 2026-10-28: bukti QRIS Jago Syariah Rp19.000 sempat terbaca Rp261.026.
+huruf+digit ≥ 3 karakter ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke
+segmen lain, dilewati. Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML"), kode pajak dua
+karakter ("12500B1"), dan pengali "3.500x12" tetap nominal. Kasus produksi 2026-10-28: bukti QRIS Jago Syariah
+Rp19.000 sempat terbaca Rp261.026.
 `confidence_source`: `payment` | `items` | `items_sum`.
 
 **Respons API** (tambahan): `items[]` (name, qty, unit_price, amount, discount,
@@ -198,6 +197,8 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
   tanpa teks OCR, tanpa data belajar struk. Rincian, kutipan baris, dan nama yang memuat deret digit sepanjang
   nomor rekening (>= 8 digit) tidak dibawa; teks yang terbaca sebagai bukti bayar tetap tanpa peta merchant.
+  Dengan baris "Rp": total = nominal Rp terbesar, tanggal tetap dari tebakan `parse_receipt` (bukti yang dulu
+  terbaca sebagai struk, mis. QRIS Jago Syariah, tetap bertanggal untuk pertanyaan tanggal periode lalu), tanpa nama.
 
 ## Belajar dari koreksi (tanpa LLM)
 
@@ -278,6 +279,8 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
   belum selesai per user; terlewati → 429 ("Terlalu banyak bukti. Coba lagi sebentar." / "Masih ada
   bukti yang sedang dibaca. Tunggu sebentar."), di bot pesan itu menggantikan "Membaca bukti…". Bot tidak
   punya batas scan sendiri lagi (batas 30 pesan/menit untuk pesan teks tetap).
+- ID transaksi berupa angka polos yang hanya disambung huruf ("TRX 20261026ABCD") masih terbaca sebagai nominal;
+  menunggu contoh bukti asli (A14, profil Jago). Nominal seperti itu berkeyakinan `rendah`, jadi bot menanyakannya dulu.
 - **Kuota scan dihapus** (semua paket). `GET /transactions/scan-receipt/quota` tetap ada untuk klien
   lama: `{limit: null, used, remaining: null}` (`used` = scan bulan ini yang totalnya terbaca, di
   zona waktu user).
