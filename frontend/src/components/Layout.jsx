@@ -5,6 +5,7 @@ import { useTheme } from '../hooks/useTheme';
 import NotificationBell from './NotificationBell';
 import TelegramPrompt from './TelegramPrompt';
 import OfflineQueueCenter from './OfflineQueueCenter';
+import PendingProofsBanner from './PendingProofsBanner';
 import MultiAddTransaction from './MultiAddTransaction';
 import { pickReceiptPhoto } from './ReceiptInput';
 import PaySubscriptions from './PaySubscriptions';
@@ -707,6 +708,7 @@ export default function Layout() {
 
       <TelegramPrompt />
       <OfflineQueueCenter />
+      <PendingProofsBanner />
       <main className="max-w-6xl lg:max-w-[1520px] mx-auto lg:mx-0 px-4 lg:px-8 py-6 lg:py-8 pb-24 lg:pb-10"><Outlet context={{ topbarSlot }} /></main>
       </div>
       {/* Global FAB — speed dial */}

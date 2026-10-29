@@ -1,5 +1,5 @@
-"""API Kotak Struk ("Bagikan ke Jatahku"; spec 2026-10-26 bagian 5d): unggah bukti, daftar dan detail item, saran
-amplop, lewati, dan nama panggilan merchant. Tipis: validasi dan pengecekan intake ada di
+"""API Kotak Struk ("Bagikan ke Jatahku"; spec 2026-10-26 bagian 5d): unggah bukti, daftar, jumlah, dan detail item,
+saran amplop, lewati, dan nama panggilan merchant. Tipis: validasi dan pengecekan intake ada di
 `services/kotak_struk/intake.py`, bentuk detail di `services/kotak_struk/view.py`.
 
 Hanya pemilik item yang bisa melihat atau mengubahnya; item orang lain sama dengan tidak ada (404)."""
@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -39,6 +39,16 @@ class SkipIn(BaseModel):
 
 class MerchantNameIn(BaseModel):
     display_name: str = Field(max_length=NICKNAME_MAX)
+
+
+class KotakCountResponse(BaseModel):
+    count: int
+
+
+def _mine_with_status(user: User, status: str) -> tuple:
+    """Saringan daftar dan jumlah: item milik `user` dengan status itu. Baris riwayat scan lama (status NULL) tidak
+    pernah cocok."""
+    return ReceiptScan.user_id == user.id, ReceiptScan.status == status
 
 
 async def _owned_item(db: AsyncSession, item_id: UUID, user: User, *, reload: bool = False) -> ReceiptScan:
@@ -94,10 +104,25 @@ async def list_items(
 ):
     """Item milik user dengan status itu (bawaan `siap`: bukti menunggu dicatat), terbaru dulu."""
     rows = (await db.execute(
-        select(ReceiptScan).where(ReceiptScan.user_id == user.id, ReceiptScan.status == status)
+        select(ReceiptScan).where(*_mine_with_status(user, status))
         .order_by(ReceiptScan.created_at.desc(), ReceiptScan.id.desc()).limit(LIST_LIMIT)
     )).scalars().all()
     return {"items": [await item_detail(db, item, user) for item in rows]}
+
+
+# Harus di atas `/{item_id}`: rute itu bertipe UUID, jadi "count" di sana dijawab 422, bukan diteruskan ke sini.
+@router.get("/count", response_model=KotakCountResponse)
+async def count_items(
+    status: str = Query(default=ST_SIAP, max_length=16),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Jumlah item milik user dengan status itu (bawaan `siap`), saringan yang sama dengan daftar tanpa batas daftar:
+    satu COUNT tanpa detail per item (angka banner "bukti menunggu dicatat" di web)."""
+    count = (await db.execute(
+        select(func.count()).select_from(ReceiptScan).where(*_mine_with_status(user, status))
+    )).scalar_one()
+    return {"count": count}
 
 
 @router.get("/{item_id}")

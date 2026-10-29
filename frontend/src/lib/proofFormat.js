@@ -306,3 +306,17 @@ export function createSharedLoader(load, { ttlMs = 60_000, now = () => Date.now(
     return current.promise;
   };
 }
+
+const countOf = v => (Number.isSafeInteger(v) && v > 0 ? v : 0);
+
+// Teks banner "bukti menunggu" (PendingProofsBanner di Layout): `unsent` = bukti yang dibagikan tapi belum terkirim
+// (kotak share lokal), `ready` = item siap yang menunggu dicatat (server). Keduanya 0 → null (banner tidak tampil).
+// Kata sesudah " · " adalah tindakannya: Kirim bila hanya ada yang belum terkirim, selain itu Tinjau.
+export function pendingBannerText({ unsent = 0, ready = 0 } = {}) {
+  const u = countOf(unsent);
+  const r = countOf(ready);
+  if (u && r) return `${u} bukti menunggu dikirim, ${r} menunggu dicatat · Tinjau`;
+  if (u) return `${u} bukti menunggu dikirim · Kirim`;
+  if (r) return `${r} bukti menunggu dicatat · Tinjau`;
+  return null;
+}

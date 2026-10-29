@@ -5,7 +5,9 @@ import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
 import GoogleButton from '../components/GoogleButton';
 import { useTheme } from '../hooks/useTheme';
+import { useAppConfig } from '../hooks/useAppConfig';
 import { formatCurrency } from '../lib/utils';
+import { SHARE_TIP, receiptInboxOn } from '../lib/pendingProofs';
 
 const TIMEZONES = [
   { value: 'Asia/Jakarta', label: 'WIB (Jakarta, GMT+7)' },
@@ -335,6 +337,7 @@ export default function Settings() {
   const { user, logout } = useAuth();
   const { color: themeColor, setColor } = useTheme();
   const navigate = useNavigate();
+  const receiptInbox = receiptInboxOn(useAppConfig());
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -716,6 +719,13 @@ export default function Settings() {
           <div className="flex items-center justify-between">
             <span className="text-sm text-brand-600">✅ Terhubung (ID: {profile.telegram_id})</span>
           </div>
+        </div>
+      )}
+
+      {/* Tips berbagi bukti bayar (Bagikan ke Jatahku), hanya saat saklar receipt_inbox menyala */}
+      {receiptInbox && (
+        <div className="card">
+          <p className="text-sm text-gray-600">{SHARE_TIP}</p>
         </div>
       )}
 

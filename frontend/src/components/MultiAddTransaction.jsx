@@ -19,6 +19,7 @@ import {
   notReadyMessage, applyRowPatch, withSaveDate, toParts, wantsReceiptFeedback, removalCalls, wantsKeywordSuggestion,
   fundCandidate, showRaisedLimit, alreadyListed, withSaveError,
 } from '../lib/multiAddRows';
+import { announceKotakChange } from '../lib/pendingProofs';
 import { newRef } from '../lib/ref';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import { Icon } from './Icon';
@@ -64,7 +65,7 @@ function RowNotices({ item, onPickDate, className = '' }) {
                 aria-pressed={picked}
                 onClick={() => onPickDate(item.key, choice.date)}
                 className={`px-2.5 py-1 rounded-full border text-xs whitespace-nowrap disabled:opacity-50 ${picked
-                  ? 'border-brand-400 bg-brand-50 text-brand-700 font-medium'
+                  ? 'border-brand-400 bg-brand-50 text-brand-600 font-medium'
                   : 'border-gray-200 text-gray-600 hover:border-brand-400 hover:text-brand-600'}`}
               >
                 {choice.label}
@@ -447,12 +448,13 @@ export default function MultiAddTransaction({ onSaved, onCancel, initialPhoto = 
 
   // Baris struk/bukti keluar dari daftar tanpa dicatat: umpan balik "tidak disimpan" (struk belanja saja) dan item
   // Kotak Struk dilewati (alasan batal) supaya tidak menunggu dicatat; tidak selama baris lain masih memakai item itu.
-  // Best-effort: galat dan offline diabaikan (sudah tercatat sebagian → server menjawab 409, tidak apa-apa).
+  // Best-effort: galat dan offline diabaikan (sudah tercatat sebagian → server menjawab 409, tidak apa-apa). Dilewati
+  // (2xx) → event jatahku:kotak-changed: banner bukti menunggu langsung menghitung ulang.
   const sendRemoval = (item) => {
     if (!item) return;
     const { feedback, skip } = removalCalls(item, items);
     if (feedback) api.receiptFeedback(feedback, feedbackFor(item, false));
-    if (skip) api.kotakSkip(skip, 'batal');
+    if (skip) api.kotakSkip(skip, 'batal').then(res => announceKotakChange(res, window)).catch(() => {});
   };
 
   // Sebagian sudah tercatat; sisanya dilewati (struk keluar dari daftar).

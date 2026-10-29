@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
   parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
-  savePayload, saveOutcome, skipOutcome, createSharedLoader,
+  savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -436,4 +436,21 @@ test('createSharedLoader: satu permintaan untuk banyak kartu, disimpan sebentar,
   await none();
   await none();
   assert.equal(empty, 2);
+});
+
+test('pendingBannerText', () => {
+  assert.equal(pendingBannerText({ unsent: 0, ready: 0 }), null);
+  assert.equal(pendingBannerText({ unsent: 2, ready: 0 }), '2 bukti menunggu dikirim · Kirim');
+  assert.equal(pendingBannerText({ unsent: 0, ready: 3 }), '3 bukti menunggu dicatat · Tinjau');
+  assert.equal(pendingBannerText({ unsent: 1, ready: 2 }), '1 bukti menunggu dikirim, 2 menunggu dicatat · Tinjau');
+});
+
+test('pendingBannerText: hitungan yang hilang, negatif, atau bukan bilangan bulat dianggap 0', () => {
+  assert.equal(pendingBannerText(), null);
+  assert.equal(pendingBannerText({}), null);
+  assert.equal(pendingBannerText({ unsent: 1 }), '1 bukti menunggu dikirim · Kirim');
+  assert.equal(pendingBannerText({ ready: 12 }), '12 bukti menunggu dicatat · Tinjau');
+  assert.equal(pendingBannerText({ unsent: -1, ready: 0 }), null);
+  assert.equal(pendingBannerText({ unsent: NaN, ready: '3' }), null);
+  assert.equal(pendingBannerText({ unsent: 1.5, ready: 2 }), '2 bukti menunggu dicatat · Tinjau');
 });

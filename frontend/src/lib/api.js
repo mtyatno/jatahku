@@ -4,6 +4,7 @@ import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
 import { xhrUpload, sendWithRefresh } from './xhrUpload';
 import { clearSharesOnLogout } from './shareInbox';
+import { pendingCountOf } from './pendingProofs';
 import { native } from '../native';
 
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
@@ -572,6 +573,16 @@ class ApiClient {
       }
     } catch {}
     return [];
+  }
+
+  // Jumlah item yang menunggu dicatat (status siap): satu COUNT di server, tanpa detail item (banner bukti menunggu).
+  // Gagal (jaringan, bukan 2xx, isi tanpa `count` bilangan bulat) → null: banner memakai angka terakhir.
+  async kotakPendingCount() {
+    try {
+      const res = await this.request('/kotak-struk/count?status=siap');
+      if (res.ok) return pendingCountOf(await res.json());
+    } catch {}
+    return null;
   }
 
   // Saran amplop dan keterangan dengan catatan user (≤ 200 karakter) → {suggestion, description_preview} atau null.

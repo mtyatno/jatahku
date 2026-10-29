@@ -250,6 +250,7 @@ garis miring penutup (`/kotak-struk/`); tanpa itu dijawab 307.
 |---|---|
 | `POST /kotak-struk/` | Multipart: `file` **atau** `text`, `source`, `upload_id` (≤ 64), `wait` (0–45 dtk, bawaan 0; koneksi DB dilepas selama menunggu). 201 item baru, 200 item yang sudah ada. Menjawab detail item |
 | `GET /kotak-struk/?status=siap` | Item milik user dengan status itu (bawaan `siap`), terbaru dulu, maks 50 |
+| `GET /kotak-struk/count?status=siap` | `{count}`: jumlah item milik user dengan status itu (bawaan `siap`), saringan sama dengan daftar tanpa batas 50; satu COUNT tanpa detail item (banner bukti menunggu di web) |
 | `GET /kotak-struk/{id}` | Detail item |
 | `POST /kotak-struk/{id}/saran` | `{note}` (≤ 200) → `{suggestion, description_preview}` |
 | `POST /kotak-struk/{id}/lewati` | `{reason: bukan_pengeluaran \| duplikat \| batal}` → `dilewati`. Hanya item `siap`/`gagal`; selain itu 409 "Bukti ini tidak bisa dilewati" |
