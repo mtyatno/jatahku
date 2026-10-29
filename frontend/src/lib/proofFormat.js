@@ -8,7 +8,7 @@
 import {
   wibDate, wibTime, wibToday, shortDate, documentDateKind, dateNotice, isProofRow, proofBlockReason, confidenceLabel,
 } from './receiptScan.js';
-import { isDailyLimitError, isInsufficientFundsError } from './multiAddRows.js';
+import { isDailyLimitError, isInsufficientFundsError, queuedText } from './multiAddRows.js';
 
 export const ISSUER_LABEL = {
   bca_mobile: 'BCA mobile', livin: "Livin' by Mandiri", brimo: 'BRImo', bni: 'wondr by BNI', bsi: 'BSI', jago: 'Jago',
@@ -205,9 +205,10 @@ const SKIP_NOT_EXPENSE = { label: 'Bukan pengeluaran', reason: 'bukan_pengeluara
 
 // Tombol lewati (`kotakSkip(id, reason)`): "Bukan pengeluaran" selalu; "Sama, lewati" untuk duplikat lunak, dan satu-
 // satunya untuk bukti yang sudah tercatat (supaya tidak menunggu di kotak sampai kedaluwarsa). Tidak ada sesudah
-// kartu menerima penolakan 409 (bukti itu sudah tercatat / kedaluwarsa / dilewati di tempat lain).
-export function skipActions(item, { blockedReason = null } = {}) {
-  if (blockedReason || item?.status !== 'siap') return [];
+// kartu menerima penolakan 409 (bukti itu sudah tercatat / kedaluwarsa / dilewati di tempat lain), dan tidak untuk item
+// yang simpanannya di antrean offline (`queued`: melewatinya membuat simpanan antrean itu ditolak selamanya).
+export function skipActions(item, { blockedReason = null, queued = false } = {}) {
+  if (queued || blockedReason || item?.status !== 'siap') return [];
   const flags = item.flags || {};
   if (flags.blocked === 'sudah_tercatat') return [SKIP_SAME];
   if (!flags.blocked && flags.duplicate_of?.kind === 'soft') return [SKIP_SAME, SKIP_NOT_EXPENSE];
@@ -225,17 +226,52 @@ const DONE_REASON = {
 };
 
 // Boleh disimpan sekarang? Alasan pertama yang menghalangi, urut dari atas kartu: blokir, belum siap (status selesai
-// dengan alasannya sendiri), nominal, tanggal, amplop, lalu koneksi (kartu tidak punya antrean offline).
+// dengan alasannya sendiri), simpanan di antrean offline (`form.queued`: struk dari form Catat yang disimpan offline,
+// menunggu atau ditolak; kirim ulangnya lewat pemberitahuan antrean), nominal, tanggal, amplop, lalu koneksi (kartu
+// tidak punya antrean offline).
 export function canSave(item, form = {}) {
   const blocked = form.blockedReason || proofBlockReason(item?.flags);
   if (blocked) return no(blocked);
   if (item?.status !== 'siap') return no(DONE_REASON[item?.status] || 'Bukti belum siap');
+  if (form.queued) return no(queuedText(docTypeOf(item)));
   if (!(saveAmount(item, form.amountText) > 0)) return no('Nominal tidak terbaca');
   const { kind, date } = proofDate(item, form);
   if (kind === 'past' && !date) return no('Pilih tanggal catat');
   if (!form.envelopeId) return no('Pilih amplop dulu');
   if (form.online === false) return no('Butuh koneksi internet');
   return { ok: true, reason: null };
+}
+
+// Kartu tanpa isian dan tombol → null (kartu biasa) atau { text, tone: 'danger' | 'warning' | 'muted', queued }:
+// item yang belum siap atau sudah selesai (badge + alasan seperti sebelumnya; gagal: pesan `error` item), dan item siap
+// yang simpanannya masih di antrean offline (`form.queued`: tanpa Simpan dan tanpa tombol lewati). Alasannya dari
+// canSave; merah bila diblokir atau gagal.
+export function readOnlyNotice(item, form = {}) {
+  const queued = item?.status === 'siap' && !!form.queued;
+  if (item?.status === 'siap' && !queued) return null;
+  const blocked = form.blockedReason || proofBlockReason(item?.flags);
+  const failed = item?.status === 'gagal';
+  const text = failed && item.error ? item.error : canSave(item, form).reason;
+  const tone = blocked || failed ? 'danger' : queued ? 'warning' : 'muted';
+  return { text, tone, queued };
+}
+
+// Cek ulang tepat sebelum kartu menyimpan: hanya struk belanja. Server mengizinkan beberapa transaksi per struk (dicatat
+// per barang di form Catat), jadi tab/HP lain atau antrean offline bisa mencatatnya lagi; jenis lain mengandalkan klaim
+// eksklusif server (409 "Bukti ini sudah tercatat.").
+export function needsRecheck(item) {
+  return docTypeOf(item) === 'struk_belanja';
+}
+
+// Detail terbaru dari cek ulang (api.kotakItem; null bila gagal atau lewat batas waktu) → null (simpan seperti biasa,
+// server yang menilai; struk yang kedaluwarsa tetap boleh dicatat) atau hasil seperti saveOutcome: tercatat → blocked
+// "Struk ini sudah tercatat."; dilewati → blocked dengan alasan status selesai kartu; tidak terbaca → galat koneksi
+// kartu, tidak ada yang dikirim (`resend`: kiriman sebelumnya belum pasti → tetap belum pasti, isian tetap dikunci).
+export function recheckOutcome(fresh, { resend = false } = {}) {
+  if (!fresh) return { kind: resend ? 'uncertain' : 'error', text: MSG_CONNECTION };
+  if (fresh.status === 'tercatat') return { kind: 'blocked', text: 'Struk ini sudah tercatat.' };
+  if (fresh.status === 'dilewati') return { kind: 'blocked', text: DONE_REASON.dilewati };
+  return null;
 }
 
 // Body `POST /transactions/` untuk isian kartu (`form` sama dengan canSave): nominal ubahan bila boleh diubah,

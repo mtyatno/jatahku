@@ -34,7 +34,7 @@ export async function getPendingCount() {
 }
 
 // Id item Kotak Struk di antrean, menunggu maupun ditolak (offlineSync.receiptItemIdsOf). Gagal membaca → Set kosong:
-// form Catat tidak pernah tertahan oleh antrean yang tidak terbaca.
+// form Catat dan /bagikan tidak pernah tertahan oleh antrean yang tidak terbaca.
 export async function queuedReceiptItemIds() {
   try {
     return receiptItemIdsOf(await store.all());

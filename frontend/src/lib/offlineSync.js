@@ -54,8 +54,8 @@ export function idbStore() {
 export const isPending = item => !item.rejected;
 
 // Id item Kotak Struk (`receipt_item_id`) di antrean, menunggu maupun ditolak (yang ditolak masih bisa dikirim ulang
-// lewat pemberitahuan antrean offline). Form Catat tidak menjadikan item itu baris kedua (multiAddRows.alreadyListed).
-// Bukan daftar → Set kosong.
+// lewat pemberitahuan antrean offline). Form Catat tidak menjadikan item itu baris kedua (multiAddRows.alreadyListed),
+// dan /bagikan menampilkan kartunya hanya-baca (proofFormat.readOnlyNotice). Bukan daftar → Set kosong.
 export function receiptItemIdsOf(entries) {
   return new Set((Array.isArray(entries) ? entries : []).map(it => it?.receipt_item_id).filter(Boolean));
 }

@@ -139,10 +139,15 @@ export function alreadyListed(result, rows, queuedIds = null) {
   if (!id) return null;
   const noun = docNoun(result.doc_type) === 'bukti' ? 'Bukti' : 'Struk';
   if ((rows || []).some(r => r.receiptItemId === id)) return { type: 'mixed', text: `${noun} ini sudah ada di daftar.` };
-  if (typeof queuedIds?.has === 'function' && queuedIds.has(id)) {
-    return { type: 'mixed', text: `${noun} ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.` };
-  }
+  if (typeof queuedIds?.has === 'function' && queuedIds.has(id)) return { type: 'mixed', text: queuedText(result.doc_type) };
   return null;
+}
+
+// Teks untuk item yang simpanannya sudah di antrean offline (menunggu atau ditolak): form Catat (alreadyListed) dan
+// kartu /bagikan (proofFormat). Kata benda sama dengan teks "sudah ada di daftar".
+export function queuedText(docType) {
+  const noun = docNoun(docType) === 'bukti' ? 'Bukti' : 'Struk';
+  return `${noun} ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.`;
 }
 
 // Penolakan bukti dari server saat simpan (record.MSG_*; di batch: `error` baris itu): permanen, mengulang simpan

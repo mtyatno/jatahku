@@ -5,8 +5,9 @@ import { currentPeriod, proofBlockReason, wibToday } from '../lib/receiptScan';
 import {
   proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText, proofDate, descriptionFor,
   displayNameOf, envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome, skipOutcome,
-  createSharedLoader,
+  createSharedLoader, readOnlyNotice, needsRecheck, recheckOutcome,
 } from '../lib/proofFormat';
+import { READ_WAIT_MS, withTimeout } from '../lib/shareInbox';
 import { EnvelopeIcon, Icon } from './Icon';
 
 const NOTE_DEBOUNCE_MS = 600;
@@ -18,6 +19,8 @@ const rupiah = n => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
 const STATUS_PILL = { success: 'bg-green-50 text-green-700', warning: 'bg-amber-50 text-amber-700', danger: 'bg-red-50 text-red-600' };
 const WARNING_TEXT = { danger: 'text-red-600 font-medium', warning: 'text-amber-700' };
+// Kartu hanya-baca: amber-600 (bukan amber-700) karena tema gelap hanya mencerahkan amber-600 (index.css).
+const READ_ONLY_TEXT = { danger: 'text-red-600', warning: 'text-amber-600', muted: 'text-gray-500' };
 const chipClass = selected => `inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 rounded-full border text-sm
   transition-colors disabled:opacity-50 ${selected
     ? 'border-brand-400 bg-brand-50 text-brand-600 font-medium'
@@ -26,14 +29,16 @@ const chipClass = selected => `inline-flex items-center gap-1.5 min-h-[36px] px-
 // Kartu konfirmasi satu item Kotak Struk (bukti QRIS/transfer, struk belanja, tidak dikenali): satu transaksi untuk
 // total dokumen. Aturannya di lib/proofFormat.js. Tidak ada geser dana dan tidak ada antrean offline di kartu ini.
 // - envelopes: daftar amplop (api.getEnvelopeSummary/getEnvelopes); yang ditawarkan disaring proofFormat.envelopeChoices.
+// - queued: simpanan item ini masih di antrean offline (form Catat): kartu hanya-baca, tanpa Simpan dan tombol lewati.
 // - onSaved({ item, transaction, quotaNotice }) sesudah tercatat; onSkipped({ item, reason, detail }) sesudah dilewati;
-//   onBlocked({ item, text }) bila server menolak simpan/lewati (409/404): kartu terkunci, tidak ada tindakan lagi.
+//   onBlocked({ item, text }) bila server menolak simpan/lewati (409/404), atau cek ulang struk belanja mendapati struk
+//   itu sudah tercatat/dilewati: kartu terkunci, tidak ada tindakan lagi.
 // Isian (termasuk client_ref) hidup per item: kartu yang dipakai ulang untuk item lain mulai dari awal.
 export default function ProofCard(props) {
   return <ProofCardInner key={props.item?.id} {...props} />;
 }
 
-function ProofCardInner({ item, envelopes, onSaved, onSkipped, onBlocked }) {
+function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, onBlocked }) {
   const ids = useId();
   const refRef = useRef(null);
   if (!refRef.current) refRef.current = newRef();   // client_ref: sekali per kartu
@@ -106,12 +111,13 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped, onBlocked }) {
   const envelopeId = effectiveEnvelope(choices, { picked, suggestion });
   const preview = hint ? { note: hint.note, name: hint.name, text: hint.text } : undefined;
   const description = descriptionFor(item, { note, preview, merchant });
-  const form = { envelopeId, amountText: amountText ?? undefined, dateChoice, period, today: wibToday(), online, blockedReason };
+  const form = { envelopeId, amountText: amountText ?? undefined, dateChoice, period, today: wibToday(), online, blockedReason, queued };
   const verdict = canSave(item, form);
+  const readOnly = readOnlyNotice(item, form);
   const header = proofHeader(item);
   const dates = proofDate(item, form);
   const warnings = proofWarnings(item, { blockedReason });
-  const skips = skipActions(item, { blockedReason });
+  const skips = skipActions(item, { blockedReason, queued });
   const blockedText = blockedReason || proofBlockReason(item.flags);
   const editable = amountEditable(item);
   const uncertain = failure?.kind === 'uncertain';
@@ -124,15 +130,34 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped, onBlocked }) {
   const save = async ({ raiseLimit = false } = {}) => {
     if (busyRef.current) return;
     let payload = sentRef.current;
+    const resend = !!payload;
     if (!payload) {
       const fresh = { ...form, today: wibToday() };   // "Hari ini" = hari saat disimpan
       if (!canSave(item, fresh).ok) return;
       payload = savePayload(item, { ...fresh, description, ref: refRef.current, raiseLimit });
     }
     busyRef.current = true;
-    sentRef.current = payload;
     setBusy('save');
     setFailure(null);
+    // Struk belanja: dibaca ulang tepat sebelum disimpan (tab/HP lain atau antrean offline bisa sudah mencatatnya;
+    // proofFormat.recheckOutcome). Bacaan menggantung → batas waktu, dianggap gagal dibaca; tidak ada yang dikirim.
+    if (needsRecheck(item)) {
+      const pre = recheckOutcome(await withTimeout(api.kotakItem(item.id), READ_WAIT_MS, null), { resend });
+      if (pre) {
+        busyRef.current = false;
+        if (pre.kind === 'blocked') sentRef.current = null;
+        if (!mounted.current) return;
+        setBusy(null);
+        if (pre.kind === 'blocked') {
+          setBlockedReason(pre.text);
+          onBlocked?.({ item, text: pre.text });
+        } else {
+          setFailure(pre);
+        }
+        return;
+      }
+    }
+    sentRef.current = payload;
     let res = null;
     try {
       res = await api.createTransaction(payload);
@@ -216,13 +241,16 @@ function ProofCardInner({ item, envelopes, onSaved, onSkipped, onBlocked }) {
     );
   }
 
-  if (item.status !== 'siap') {
+  // Belum siap / sudah selesai, atau simpanannya di antrean offline: badge dan alasannya saja (proofFormat.readOnlyNotice).
+  if (readOnly) {
+    const total = proofTotal(item);
     return (
       <section className="card p-4 space-y-1" aria-label={header.badge}>
         <span className="inline-flex rounded-full bg-brand-50 text-brand-600 px-2.5 py-0.5 text-xs font-semibold">{header.badge}</span>
-        <p className={`text-sm ${blockedText || item.status === 'gagal' ? 'text-red-600' : 'text-gray-500'}`}>
-          {item.status === 'gagal' && item.error ? item.error : verdict.reason}
-        </p>
+        {readOnly.queued && (
+          <p className="text-xs text-gray-500 truncate">{[total ? rupiah(total) : null, name, when].filter(Boolean).join(' · ')}</p>
+        )}
+        <p className={`text-sm ${READ_ONLY_TEXT[readOnly.tone] || ''}`}>{readOnly.text}</p>
       </section>
     );
   }

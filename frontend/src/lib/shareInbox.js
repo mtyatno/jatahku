@@ -8,7 +8,8 @@
 //
 // Privasi: entri berisi gambar/PDF/teks bukti apa adanya (belum disamarkan). Isinya tidak pernah di-log. Entri dihapus
 // setelah terunggah, dan seluruh kotak dikosongkan saat user sendiri logout (`clearSharesOnLogout`). Sesi yang
-// kedaluwarsa tidak menghapusnya: bukti tetap aman sampai user login lagi.
+// kedaluwarsa tidak menghapusnya: bukti tetap aman sampai user login lagi. Kotak milik satu akun (`ensureShareOwner`):
+// akun lain yang login di HP itu mendapati kotak dikosongkan sebelum dibaca.
 import { newRef } from './ref.js';
 import { PDF_MAX_BYTES, PDF_TYPE, isPdfHead, uploadTimeoutMs } from './receiptProgress.js';
 
@@ -140,6 +141,71 @@ export function clearSharesOnLogout({ revoke } = {}, {
     proceed();
     return ok;
   });
+}
+
+// ── Pemilik kotak share ─────────────────────────────────────────────────────────────────────────────
+// Entri tidak membawa id user, dan sesi yang kedaluwarsa tidak mengosongkan kotak. Karena itu kotak dicap dengan
+// pemiliknya (localStorage `SHARE_OWNER_KEY` = id user) oleh pembacanya (banner, /bagikan), bukan oleh jalur login:
+// sebelum kotak dibaca, akun lain yang login di HP yang sama mendapati kotak dikosongkan dulu. Logout oleh user sendiri
+// mengosongkan kotak tetapi tidak menghapus cap: share yang dibagikan sesudahnya (belum login) hanya terkirim ke akun
+// yang sama; bila akun lain yang login berikutnya, share itu dihapus (privasi lebih penting).
+
+export const SHARE_OWNER_KEY = 'jatahku_share_owner';
+
+// Cap pemilik yang tersimpan vs user yang login → 'claim' (belum ada pemilik: dicap), 'keep' (akun yang sama), atau
+// 'clear' (akun lain: kotak dikosongkan dulu). `userId` wajib (ensureShareOwner memeriksanya lebih dulu).
+export function shareOwnerAction(storedOwnerId, userId) {
+  if (storedOwnerId === null || storedOwnerId === undefined || storedOwnerId === '') return 'claim';
+  return String(storedOwnerId) === String(userId) ? 'keep' : 'clear';
+}
+
+// Panggil sebelum membaca kotak → true bila kotak boleh dibaca user ini. 'claim' menulis cap; 'keep' tidak menulis
+// apa pun; 'clear' mengosongkan kotak LEBIH DULU, baru menulis cap baru (cap tidak pernah berganti selama entri akun
+// lain masih ada). Gagal tertutup: tanpa user, localStorage yang tidak ada/melempar, atau kotak yang gagal dikosongkan
+// → false (kotak dianggap tidak terbaca), tanpa menyentuh kotak bila cap tidak terbaca. Tidak pernah melempar/ditolak.
+// `opts.storage` = localStorage tiruan (tes); bawaan globalThis.localStorage.
+export async function ensureShareOwner(store, userId, opts = {}) {
+  if (userId === null || userId === undefined || userId === '') return false;
+  let storage;
+  let stored;
+  try {
+    storage = opts?.storage === undefined ? globalThis.localStorage : opts.storage;
+    stored = storage.getItem(SHARE_OWNER_KEY);
+  } catch {
+    return false;
+  }
+  const action = shareOwnerAction(stored, userId);
+  if (action === 'keep') return true;
+  if (action === 'clear') {
+    try {
+      await clearShares(store);
+    } catch {
+      return false;   // cap lama tetap: pembacaan berikutnya mencoba mengosongkan lagi
+    }
+  }
+  try {
+    storage.setItem(SHARE_OWNER_KEY, String(userId));
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+// Pemeriksaan pemilik untuk satu pemakai yang membaca berkali-kali (banner: hitung ulang bisa bertumpuk). Panggilan
+// selama pemeriksaan berjalan memakai janji yang sama (kotak dikosongkan paling banyak sekali per pemakai); sesudah
+// selesai, panggilan berikutnya memeriksa lagi (cap bisa berganti di tab lain). → () => Promise<boolean>.
+export function ownerGate(store, userId, opts) {
+  let inflight = null;
+  return () => {
+    if (!inflight) inflight = ensureShareOwner(store, userId, opts).finally(() => { inflight = null; });
+    return inflight;
+  };
+}
+
+// Entri kotak untuk hitungan banner: hanya bila kotak milik user ini (`owned()` → true); selain itu [] tanpa membaca
+// kotak.
+export async function ownedShares(store, owned) {
+  return (await owned()) ? store.all() : [];
 }
 
 // ── Menerima share (service worker) ─────────────────────────────────────────────────────────────────
@@ -279,6 +345,9 @@ export const SHARE_TEXT = Object.freeze({
   pdfTooBig: 'PDF terlalu besar (maks 10 MB)', // = MSG_PDF_BIG
   photoTooBig: 'Foto terlalu besar (maks 8 MB)', // = MSG_IMAGE_BIG
   badType: 'Kirim foto (JPG/PNG/WebP), PDF, atau teks', // = MSG_TYPE (415)
+  // Daftar entri yang tertahan (keptEntries): tombol per entri, dan label entri teks (entri file: nama filenya).
+  remove: 'Hapus',
+  textEntry: 'teks',
 });
 
 // Banner entri yang belum terkirim (offline). 0 → null.
@@ -360,6 +429,49 @@ export function needsPolling(item, startedAt, now) {
   return IN_PROGRESS.has(item?.status) && now - startedAt < POLL_LIMIT_MS;
 }
 
+// ── Batas waktu baca halaman /bagikan ──────────────────────────────────────────────────────────────────
+// Permintaan `fetch` biasa tidak punya batas waktu; koneksi yang menggantung tidak boleh menahan halaman di "Memuat…"
+// atau menahan putaran (tanpa Ke Transaksi / Kirim lagi).
+
+export const CONFIG_WAIT_MS = 10000;   // /app/config
+export const READ_WAIT_MS = 20000;     // bukti menunggu (GET /kotak-struk/?status=siap) dan satu item (GET /kotak-struk/{id})
+
+// Nilai atau penolakan `promise` bila datang sebelum `ms`; selain itu `fallback`. Hanya berhenti menunggu: permintaannya
+// tidak dibatalkan, dan jawaban yang datang sesudah batas waktu diabaikan. Timer bisa disuntikkan (tes).
+export function withTimeout(promise, ms, fallback, { setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimer(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, ms);
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      try { clearTimer(timer); } catch { /* timer tiruan */ }
+      fn(value);
+    };
+    Promise.resolve(promise).then(v => finish(resolve, v), e => finish(reject, e));
+  });
+}
+
+// Bacaan halaman /bagikan dengan batas waktu, dari pembaca aslinya (Bagikan.jsx: api + appConfig):
+//   config()  → getConfig() paling lama CONFIG_WAIT_MS, lalu config cache terakhir (`cachedConfig()`, readCachedConfig)
+//               atau null: saklar belum diketahui → ditahan seperti offline (shareFlag/sharePageMode);
+//   pending() → loadPending() paling lama READ_WAIT_MS, lalu [];
+//   item(id)  → loadItem(id) paling lama READ_WAIT_MS, lalu null (pantauan, detail kartu yang hilang, cek ulang struk).
+export function pageReads({ getConfig, cachedConfig = () => null, loadPending, loadItem }, timers = {}) {
+  const cached = () => {
+    try { return cachedConfig() ?? null; } catch { return null; }
+  };
+  return {
+    config: () => withTimeout(Promise.resolve().then(getConfig), CONFIG_WAIT_MS, cached(), timers),
+    pending: () => withTimeout(Promise.resolve().then(loadPending), READ_WAIT_MS, [], timers),
+    item: id => withTimeout(Promise.resolve().then(() => loadItem(id)), READ_WAIT_MS, null, timers),
+  };
+}
+
 // Saklar `features.receipt_inbox` dari config /app/config: 'on' | 'off' | 'unknown'. Server selalu mengirim nilai
 // boolean; tanpa nilai boolean (DEFAULT_CONFIG: belum pernah terbaca, tanpa cache) = belum diketahui.
 export function shareFlag(config) {
@@ -398,28 +510,59 @@ export async function discardBatch(store, batchId) {
   return n;
 }
 
+// Entri yang tertahan di kotak share (putaran berhenti dengan keep) untuk daftar Hapus di /bagikan → [{id, label}]:
+// label = nama file (file tanpa nama: "bukti", sama dengan nama unggahannya), atau "teks" untuk entri teks. Urutan
+// share: tertua dulu, lalu urutan dalam share. Bukan daftar → [].
+export function keptEntries(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter(e => e && e.id != null)
+    .sort((a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || (Number(a.seq) || 0) - (Number(b.seq) || 0))
+    .map(e => ({ id: e.id, label: e.blob ? (e.name || 'bukti') : SHARE_TEXT.textEntry }));
+}
+
+// Tombol Hapus: entri yang tidak pernah bisa terkirim dibuang, lalu kotak dihitung ulang → daftar yang tersisa
+// (keptEntries). Hapus gagal → entri tetap terdaftar; kotak tidak terbaca → []. Tidak melempar.
+export async function discardKept(store, id) {
+  try { await store.del(id); } catch { /* dihitung ulang di bawah */ }
+  try {
+    return keptEntries(await store.all());
+  } catch {
+    return [];
+  }
+}
+
 // Satu putaran halaman /bagikan (dibuka, atau event `online`). I/O disuntikkan, supaya urutan dan gerbang saklar
 // teruji di Node:
-//   getConfig()     → config /app/config terbaru (gagal → cache terakhir / bawaan, lihat appConfig.refreshAppConfig)
+//   getConfig()     → config /app/config terbaru (gagal → cache terakhir / bawaan, lihat appConfig.refreshAppConfig;
+//                     menggantung → pageReads.config)
 //   isOnline()      → navigator.onLine
 //   batchId         → `?s=` (hanya untuk saklar mati)
 //   store           → shareStore()
+//   ensureOwner()   → true bila kotak milik user yang login (ensureShareOwner); dipanggil sebelum kotak dibaca, hanya
+//                     saat saklar tidak mati. false/melempar → kotak dianggap tidak terbaca (storeFailed)
+//   loadQueued()    → Set id item di antrean offline (offlineQueue.queuedReceiptItemIds); mode kirim saja, sekali,
+//                     sebelum unggahan dan kartu pertama. onQueued(set) menerimanya; melempar → Set kosong
 //   upload(entry)   → hasil api.kotakUpload (satu entri, progres diurus pemanggil)
 //   loadPending()   → detail item untuk kartu sesudah antrean lokal (fetchPendingDetails)
 //   onItem(item)    → item dari unggahan, langsung saat diterima server
 //   onMode(mode)    → begitu mode diputuskan (sharePageMode)
 //   alive()         → false: halaman ditutup; tidak ada unggahan baru dan bukti menunggu tidak dimuat
 //   now()           → waktu untuk `triedAt`
-// → { mode, waiting, items, pending, dropped: [{name, message}], kept: pesan|null, storeFailed }. Tidak melempar.
-// Saklar mati: hanya getConfig yang dipanggil (lalu entri batch dihapus). Unggahan satu per satu menurut nextToUpload;
-// tiap entri dicoba sekali per putaran, juga bila menghapusnya gagal (dikirim ulang lain kali dengan upload_id yang
-// sama → item yang sama, tidak dobel). File > 10 MB dibuang tanpa diunggah (oversizeMessage). Keep menghentikan
-// putaran (offline, 429, 5xx: entri lain tidak akan bernasib lain) dan mencatat `triedAt` pada entrinya.
+// → { mode, waiting, items, pending, dropped: [{name, message}], kept: pesan|null, keptEntries, queued, storeFailed }.
+// Tidak melempar. Saklar mati: hanya getConfig yang dipanggil (lalu entri batch dihapus; pemilik dan antrean offline
+// tidak dibaca). Unggahan satu per satu menurut nextToUpload; tiap entri dicoba sekali per putaran, juga bila
+// menghapusnya gagal (dikirim ulang lain kali dengan upload_id yang sama → item yang sama, tidak dobel). File > 10 MB
+// dibuang tanpa diunggah (oversizeMessage). Keep menghentikan putaran (offline, 429, 5xx: entri lain tidak akan
+// bernasib lain), mencatat `triedAt` pada entrinya, dan `keptEntries` = entri yang masih di kotak (daftar Hapus).
 export async function runSharePage({
   getConfig, isOnline = () => true, batchId = null, store, upload, loadPending,
+  ensureOwner = async () => true, loadQueued = async () => new Set(), onQueued = () => {},
   onItem = () => {}, onMode = () => {}, alive = () => true, now = Date.now,
 } = {}) {
-  const out = { mode: 'hold', waiting: 0, items: [], pending: [], dropped: [], kept: null, storeFailed: false };
+  const out = {
+    mode: 'hold', waiting: 0, items: [], pending: [], dropped: [], kept: null, keptEntries: [], queued: new Set(),
+    storeFailed: false,
+  };
   let config = null;
   try {
     config = await getConfig();
@@ -433,18 +576,38 @@ export async function runSharePage({
     return out;
   }
 
-  let entries = [];
+  let owned = false;
   try {
-    entries = (await store.all()) || [];
+    owned = (await ensureOwner()) === true;
   } catch {
+    owned = false;
+  }
+  let entries = [];
+  if (!owned) {
     out.storeFailed = true;
+  } else {
+    try {
+      entries = (await store.all()) || [];
+    } catch {
+      out.storeFailed = true;
+    }
   }
   if (out.mode === 'hold') {
     out.waiting = entries.length;
     return out;
   }
 
+  // Sebelum kartu pertama: item yang simpanannya masih di antrean offline tampil hanya-baca (proofFormat.readOnlyNotice).
+  try {
+    const ids = await loadQueued();
+    out.queued = ids instanceof Set ? ids : new Set();
+  } catch {
+    out.queued = new Set();
+  }
+  try { onQueued(out.queued); } catch { /* tampilan saja */ }
+
   const tried = new Set();
+  const gone = new Set();
   while (alive()) {
     const entry = nextToUpload(entries.filter(e => !tried.has(e.id)));
     if (!entry) break;
@@ -467,13 +630,26 @@ export async function runSharePage({
       try { await store.touch(entry.id, { triedAt: now() }); } catch { /* urutan saja */ }
       break;
     }
-    try { await store.del(entry.id); } catch { /* lihat di atas: tidak dobel */ }
+    try {
+      await store.del(entry.id);
+      gone.add(entry.id);
+    } catch { /* lihat di atas: tidak dobel */ }
     if (verdict.action === 'done') {
       out.items.push(verdict.item);
       try { onItem(verdict.item); } catch { /* tampilan saja */ }
     } else {
       out.dropped.push({ name: entry.name || '', message: verdict.message });
     }
+  }
+  if (out.kept) {
+    // Daftar Hapus: isi kotak sekarang (kotak tidak terbaca → sisa putaran ini).
+    let left;
+    try {
+      left = await store.all();
+    } catch {
+      left = entries.filter(e => !gone.has(e.id));
+    }
+    out.keptEntries = keptEntries(left);
   }
   if (!alive()) return out;
   try {
@@ -636,10 +812,12 @@ export function dropLine({ name = '', message = '' } = {}) {
 //              Kotak Struk saat saklar mati);
 //   notices  → pageNotices; banner → offline/ditahan dengan entri menunggu;
 //   finished → tombol Ke Transaksi (hanya mode kirim, pageFinished); empty → tidak ada kartu dan tidak ada pesan unggah;
-//   retry    → tombol "Kirim lagi".
+//   retry    → tombol "Kirim lagi";
+//   discard  → daftar entri yang tertahan (`keptList`, keptEntries) dengan tombol Hapus per entri: sesudah putaran mode
+//              kirim berhenti dengan entri disimpan (keep), tanpa putaran berjalan.
 export function pageView({
   mode = null, err = null, storeFailed = false, waiting = 0, items = [], handled = new Set(), running = false,
-  polling = false, dropped = [], kept = null,
+  polling = false, dropped = [], kept = null, keptList = [],
 } = {}) {
   const finished = mode === 'send' && pageFinished({ items, handled, running, polling });
   return {
@@ -653,5 +831,6 @@ export function pageView({
     // Tombol "Kirim lagi": putaran berhenti dengan entri yang disimpan (keep) atau entri ditahan, tanpa putaran berjalan.
     // Tanpa event `online` halaman tidak mencoba lagi sendiri (mis. 503 saat deploy, koneksi tersendat).
     retry: !running && ((mode === 'send' && !!kept) || (mode === 'hold' && waiting > 0)),
+    discard: !running && mode === 'send' && !!kept && Array.isArray(keptList) && keptList.length > 0,
   };
 }

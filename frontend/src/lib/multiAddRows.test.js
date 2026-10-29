@@ -5,6 +5,7 @@ import {
   isInsufficientFundsError, isDailyLimitError, hasReceiptItems, receiptPlan, needsDate, isReady, needsEnvelope,
   notReadyMessage, applyRowPatch, withSaveDate, toPayload, toParts, wantsReceiptFeedback, removalCalls,
   wantsKeywordSuggestion, pastDated, fundCandidate, showRaisedLimit, alreadyListed, withSaveError, canUnlockPlan,
+  queuedText,
 } from './multiAddRows.js';
 import { toBatchItem } from './offlineSync.js';
 import { summarizePlan } from './receiptSplit.js';
@@ -341,4 +342,11 @@ test('canUnlockPlan: "Ubah rincian" hanya untuk rencana beku tanpa bagian tersim
   assert.equal(canUnlockPlan(withSaveError(card, 'Bukti ini belum siap dicatat')), false, 'kartu yang ditolak server');
   assert.equal(canUnlockPlan({ ...card, blockedReason: 'Bukti ini sudah tercatat.' }), false);
   assert.equal(canUnlockPlan(withSaveError(card, 'Dana tidak cukup. Sisa: Rp0, diminta: Rp5')), true, 'galat biasa tetap bisa diubah');
+});
+
+test('queuedText (R2): satu teks antrean offline untuk form Catat dan kartu /bagikan; kata benda seperti teks lama', () => {
+  const tail = ' ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.';
+  for (const t of ['qris', 'transfer']) assert.equal(queuedText(t), `Bukti${tail}`, t);
+  for (const t of ['struk_belanja', 'tidak_dikenali', null, undefined]) assert.equal(queuedText(t), `Struk${tail}`, String(t));
+  assert.equal(alreadyListed({ item_id: 'q1', doc_type: 'qris' }, [], new Set(['q1'])).text, queuedText('qris'));
 });

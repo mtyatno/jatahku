@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
   parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
-  savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText,
+  savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText, readOnlyNotice, needsRecheck,
+  recheckOutcome,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -453,4 +454,66 @@ test('pendingBannerText: hitungan yang hilang, negatif, atau bukan bilangan bula
   assert.equal(pendingBannerText({ unsent: -1, ready: 0 }), null);
   assert.equal(pendingBannerText({ unsent: NaN, ready: '3' }), null);
   assert.equal(pendingBannerText({ unsent: 1.5, ready: 2 }), '2 bukti menunggu dicatat · Tinjau');
+});
+
+// ── Review akhir Bagian B, R2: struk di antrean offline dan cek ulang sebelum simpan ─────────────────────────
+
+const QUEUED = ' ini sudah disimpan offline dan menunggu dikirim. Cek pemberitahuan antrean offline.';
+
+test('canSave (R2): item yang simpanannya di antrean offline ditolak dengan teks antrean (kata benda seperti form Catat)', () => {
+  const store = withDoc({ confidence: { total: 'tinggi' } }, typed('struk_belanja'));
+  assert.deepEqual(canSave(store, { ...FORM, queued: true }), { ok: false, reason: `Struk${QUEUED}` });
+  assert.equal(canSave(typed('tidak_dikenali'), { ...FORM, queued: true }).reason, `Struk${QUEUED}`);
+  assert.equal(canSave(ITEM, { ...FORM, queued: true }).reason, `Bukti${QUEUED}`);
+  assert.equal(canSave(typed('transfer'), { ...FORM, queued: true }).reason, `Bukti${QUEUED}`);
+  // Urutan: blokir dan status selesai lebih dulu (alasannya lebih tepat), lalu antrean, baru nominal/tanggal/amplop/koneksi.
+  assert.equal(canSave(withFlags({ blocked: 'transaksi_gagal' }, store), { ...FORM, queued: true }).reason,
+    'Transaksi ini gagal di bank, jadi tidak bisa dicatat.');
+  assert.equal(canSave({ ...store, status: 'tercatat' }, { ...FORM, queued: true }).reason, 'Bukti ini sudah tercatat.');
+  const noTotal = withDoc({ amounts: { total: null }, confidence: {} }, { ...store, paid_at: OLD });
+  assert.equal(canSave(noTotal, { envelopeId: '', online: false, period: PERIOD, today: TODAY, queued: true }).reason, `Struk${QUEUED}`);
+  assert.deepEqual(canSave(store, { ...FORM, queued: false }), { ok: true, reason: null });
+});
+
+test('skipActions (R2): tanpa tombol lewati untuk item di antrean offline (melewatinya menggagalkan simpanan antrean)', () => {
+  assert.deepEqual(skipActions(ITEM, { queued: true }), []);
+  assert.deepEqual(skipActions(withFlags({ blocked: 'sudah_tercatat' }), { queued: true }), []);
+  assert.deepEqual(skipActions(withFlags({ duplicate_of: { kind: 'soft', transaction: {} } }), { queued: true }), []);
+  assert.deepEqual(skipActions(ITEM, { queued: false }).map(a => a.reason), ['bukan_pengeluaran']);
+});
+
+test('readOnlyNotice (R2): kartu hanya-baca untuk item belum siap/selesai (seperti dulu) dan item siap di antrean offline', () => {
+  const store = withDoc({ confidence: { total: 'tinggi' } }, typed('struk_belanja'));
+  assert.equal(readOnlyNotice(ITEM, FORM), null);
+  assert.equal(readOnlyNotice(store, { ...FORM, queued: false }), null);
+  assert.deepEqual(readOnlyNotice(store, { ...FORM, queued: true }), { text: `Struk${QUEUED}`, tone: 'warning', queued: true });
+  assert.deepEqual(readOnlyNotice(ITEM, { ...FORM, queued: true }), { text: `Bukti${QUEUED}`, tone: 'warning', queued: true });
+  assert.deepEqual(readOnlyNotice(withFlags({ blocked: 'sudah_tercatat' }), { ...FORM, queued: true }),
+    { text: 'Bukti ini sudah tercatat.', tone: 'danger', queued: true });
+  // Belum siap / selesai: badge + alasan seperti sebelumnya (gagal: pesan item; merah bila diblokir atau gagal).
+  assert.deepEqual(readOnlyNotice({ ...ITEM, status: 'gagal', error: 'Bukti tidak bisa dibaca' }, FORM),
+    { text: 'Bukti tidak bisa dibaca', tone: 'danger', queued: false });
+  assert.deepEqual(readOnlyNotice({ ...ITEM, status: 'gagal' }, FORM), { text: 'Bukti belum siap', tone: 'danger', queued: false });
+  assert.deepEqual(readOnlyNotice({ ...store, status: 'tercatat' }, { ...FORM, queued: true }),
+    { text: 'Bukti ini sudah tercatat.', tone: 'muted', queued: false });
+  assert.deepEqual(readOnlyNotice({ ...ITEM, status: 'diproses' }, FORM), { text: 'Bukti belum siap', tone: 'muted', queued: false });
+  assert.deepEqual(readOnlyNotice(withFlags({ blocked: 'transaksi_gagal' }, { ...ITEM, status: 'dilewati' }), FORM),
+    { text: 'Transaksi ini gagal di bank, jadi tidak bisa dicatat.', tone: 'danger', queued: false });
+  assert.deepEqual(readOnlyNotice({ ...ITEM, status: 'dilewati' }, { ...FORM, blockedReason: 'Bukti tidak ditemukan.' }),
+    { text: 'Bukti tidak ditemukan.', tone: 'danger', queued: false });
+});
+
+test('needsRecheck dan recheckOutcome (R2): struk belanja dibaca ulang tepat sebelum disimpan; jenis lain tidak', () => {
+  assert.equal(needsRecheck(typed('struk_belanja')), true);
+  assert.equal(needsRecheck({ id: 'x', status: 'siap', doc_type: null, document: { doc_type: 'struk_belanja' } }), true);
+  for (const t of ['qris', 'transfer', 'tidak_dikenali']) assert.equal(needsRecheck(typed(t)), false, t);
+  assert.equal(needsRecheck({ id: 'x', status: 'siap' }), false);
+  assert.deepEqual(recheckOutcome({ id: 'i1', status: 'tercatat' }), { kind: 'blocked', text: 'Struk ini sudah tercatat.' });
+  assert.deepEqual(recheckOutcome({ id: 'i1', status: 'dilewati' }), { kind: 'blocked', text: 'Bukti ini sudah dilewati.' });
+  // Status lain (termasuk kedaluwarsa, B1 I2): simpan seperti biasa, server yang menilai.
+  for (const status of ['siap', 'kedaluwarsa', 'gagal', 'diproses', undefined]) assert.equal(recheckOutcome({ id: 'i1', status }), null, String(status));
+  // Gagal dibaca: galat koneksi kartu, tidak ada yang dikirim; kiriman sebelumnya yang belum pasti tetap belum pasti.
+  assert.deepEqual(recheckOutcome(null), { kind: 'error', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
+  assert.deepEqual(recheckOutcome(undefined, { resend: true }), { kind: 'uncertain', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
+  assert.deepEqual(recheckOutcome({ id: 'i1', status: 'tercatat' }, { resend: true }), { kind: 'blocked', text: 'Struk ini sudah tercatat.' });
 });

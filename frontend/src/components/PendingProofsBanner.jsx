@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
-import { shareStore } from '../lib/shareInbox';
+import { ownedShares, ownerGate, shareStore } from '../lib/shareInbox';
 import { useAppConfig } from '../hooks/useAppConfig';
+import { useAuth } from '../hooks/useAuth';
 import {
   NO_COUNTS, bannerView, createPendingCounter, receiptInboxOn, watchRefreshTriggers,
 } from '../lib/pendingProofs';
@@ -12,6 +13,7 @@ import {
 // hanya menyambungkan saklar, router, API, dan kotak share.
 export default function PendingProofsBanner() {
   const enabled = receiptInboxOn(useAppConfig());
+  const userId = useAuth().user?.id ?? null;
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [counts, setCounts] = useState(NO_COUNTS);
@@ -19,12 +21,14 @@ export default function PendingProofsBanner() {
 
   // Saklar menyala → satu penghitung dan pemicunya (online, txn-added, kotak-changed, terlihat lagi). Saklar mati,
   // juga sebelum config terbaca: tanpa permintaan, tanpa IndexedDB, tanpa listener. Mati sesudah menyala → semuanya
-  // dilepas dan banner hilang.
+  // dilepas dan banner hilang. Share lokal dihitung hanya bila kotaknya milik user yang login (shareInbox.ownerGate:
+  // kotak akun lain dikosongkan dulu; tidak bisa dipastikan → 0); user berganti → penghitung baru.
   useEffect(() => {
     if (!enabled) return undefined;
     const store = shareStore();
+    const owned = ownerGate(store, userId);
     const counter = createPendingCounter({
-      loadUnsent: () => store.all(),
+      loadUnsent: () => ownedShares(store, owned),
       loadReady: () => api.kotakPendingCount(),
       onCounts: setCounts,
     });
@@ -36,13 +40,13 @@ export default function PendingProofsBanner() {
       if (counterRef.current === counter) counterRef.current = null;
       setCounts(NO_COUNTS);
     };
-  }, [enabled]);
+  }, [enabled, userId]);
 
-  // Hitung saat dipasang atau saklar menyala, dan setiap pindah halaman: melewati kartu di /bagikan tidak mengirim
-  // event, jadi meninggalkan /bagikan harus menghitung ulang.
+  // Hitung saat dipasang, saklar menyala, atau user berganti, dan setiap pindah halaman: melewati kartu atau Hapus di
+  // /bagikan tidak mengirim event, jadi meninggalkan /bagikan harus menghitung ulang.
   useEffect(() => {
     counterRef.current?.refresh();
-  }, [enabled, pathname]);
+  }, [enabled, pathname, userId]);
 
   const view = bannerView({ enabled, pathname, counts });
   if (!view) return null;

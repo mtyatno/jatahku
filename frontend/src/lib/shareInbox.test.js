@@ -6,6 +6,8 @@ import {
   uploadOutcome, needsPolling, POLL_MS, POLL_LIMIT_MS, SHARE_TEXT, offlineBannerText, shareFlag, sharePageMode,
   discardBatch, runSharePage, mergeItems, pollTargets, fetchPendingDetails, pageFinished, pageNotices, dropLine,
   shareUploadTimeoutMs, pageView, serialRuns, createPoller, sniffShareType, oversizeMessage,
+  SHARE_OWNER_KEY, shareOwnerAction, ensureShareOwner, ownerGate, ownedShares, keptEntries, discardKept, withTimeout,
+  pageReads, CONFIG_WAIT_MS, READ_WAIT_MS,
 } from './shareInbox.js';
 import { DB_NAME as OFFLINE_DB } from './offlineSync.js';
 import { DEFAULT_CONFIG } from './appConfig.js';
@@ -590,21 +592,21 @@ test('pageNotices (D3): ?err=sw, ?err=baca + petunjuk memori penuh, kotak share 
 
 test('pageView: memeriksa → hanya "Memuat…"; saklar mati → hanya "Fitur ini segera hadir." (kartu dan hasil unggah disembunyikan)', () => {
   const busyPage = { err: 'baca', storeFailed: true, waiting: 3, items: [{ id: 'a', status: 'siap' }], dropped: [{ name: 'x', message: 'y' }], kept: 'z' };
-  assert.deepEqual(pageView({ ...busyPage, mode: null }), { checking: true, soon: null, results: true, notices: [], banner: null, finished: false, empty: null, retry: false });
-  assert.deepEqual(pageView({ ...busyPage, mode: 'off' }), { checking: false, soon: 'Fitur ini segera hadir.', results: false, notices: [], banner: null, finished: false, empty: null, retry: false });
+  assert.deepEqual(pageView({ ...busyPage, mode: null }), { checking: true, soon: null, results: true, notices: [], banner: null, finished: false, empty: null, retry: false, discard: false });
+  assert.deepEqual(pageView({ ...busyPage, mode: 'off' }), { checking: false, soon: 'Fitur ini segera hadir.', results: false, notices: [], banner: null, finished: false, empty: null, retry: false, discard: false });
 });
 
 test('pageView: tahan (offline) → banner jumlah entri + pemberitahuan, tanpa Ke Transaksi', () => {
   const v = pageView({ mode: 'hold', err: 'sw', waiting: 2, items: [] });
   assert.deepEqual(v, {
     checking: false, soon: null, results: true, notices: ['Buka Jatahku sekali, lalu bagikan lagi.'],
-    banner: '2 bukti menunggu dikirim. Akan dikirim saat online.', finished: false, empty: null, retry: true,
+    banner: '2 bukti menunggu dikirim. Akan dikirim saat online.', finished: false, empty: null, retry: true, discard: false,
   });
   assert.equal(pageView({ mode: 'hold', waiting: 0 }).banner, null);
 });
 
 test('pageView: kirim → Ke Transaksi saat selesai; teks kosong hanya tanpa kartu, tanpa entri dibuang, tanpa pesan simpan', () => {
-  assert.deepEqual(pageView({ mode: 'send' }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: 'Tidak ada bukti yang menunggu.', retry: false });
+  assert.deepEqual(pageView({ mode: 'send' }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: 'Tidak ada bukti yang menunggu.', retry: false, discard: false });
   assert.equal(pageView({ mode: 'send', waiting: 5 }).banner, null);
   assert.equal(pageView({ mode: 'send', running: true }).finished, false);
   assert.equal(pageView({ mode: 'send', running: true }).empty, null);
@@ -612,7 +614,7 @@ test('pageView: kirim → Ke Transaksi saat selesai; teks kosong hanya tanpa kar
   assert.equal(pageView({ mode: 'send', kept: 'Bukti belum terkirim. Akan dikirim lagi saat online.' }).empty, null);
   const siap = [{ id: 'a', status: 'siap' }];
   assert.equal(pageView({ mode: 'send', items: siap }).finished, false);
-  assert.deepEqual(pageView({ mode: 'send', items: siap, handled: new Set(['a']) }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: null, retry: false });
+  assert.deepEqual(pageView({ mode: 'send', items: siap, handled: new Set(['a']) }), { checking: false, soon: null, results: true, notices: [], banner: null, finished: true, empty: null, retry: false, discard: false });
 });
 
 test('pageNotices: tidak ada selama saklar diperiksa (mode null) dan dengan saklar mati (hanya "segera hadir")', () => {
@@ -1261,4 +1263,397 @@ test('runSharePage (m1): file > 10 MB dibuang di HP tanpa diunggah, dengan pesan
   assert.equal(out.kept, null);
   assert.deepEqual(out.items.map(i => i.id), ['item-pas']);
   assert.equal(store.map.size, 0, 'entri yang dibuang dihapus dari HP');
+});
+
+// ── Review akhir Bagian B: pemilik kotak (R1), antrean offline (R2), Hapus (R5), batas waktu baca (R6) ────────────
+
+// localStorage tiruan: `writes` mencatat setiap setItem.
+function memStorage(init = {}) {
+  const map = new Map(Object.entries(init));
+  const writes = [];
+  return {
+    map, writes,
+    getItem: k => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { writes.push([k, String(v)]); map.set(k, String(v)); },
+    removeItem: (k) => { map.delete(k); },
+  };
+}
+// Kotak share tiruan yang menghitung clear(); `hold` (opsional) menahan clear sampai janjinya selesai.
+function countedBox(entries = [], { hold = null } = {}) {
+  const store = memStore();
+  for (const e of entries) store.map.set(e.id, e);
+  let clears = 0;
+  const clear = store.clear;
+  store.clear = async () => { clears += 1; if (hold) await hold; return clear(); };
+  return { store, clears: () => clears };
+}
+const tick = () => new Promise(r => setImmediate(r));
+async function until(cond, n = 200) {
+  for (let i = 0; i < n && !cond(); i += 1) await tick();
+  assert.ok(cond(), 'kondisi tidak tercapai');
+}
+const OWNER = 'jatahku_share_owner';
+
+test('shareOwnerAction (R1): belum ada pemilik → claim; akun yang sama → keep; akun lain → clear', () => {
+  assert.equal(SHARE_OWNER_KEY, OWNER);
+  for (const stored of [null, undefined, '']) assert.equal(shareOwnerAction(stored, 'u-b'), 'claim', String(stored));
+  assert.equal(shareOwnerAction('u-a', 'u-a'), 'keep');
+  assert.equal(shareOwnerAction('u-a', 'u-b'), 'clear');
+  assert.equal(shareOwnerAction('42', 42), 'keep', 'localStorage menyimpan teks');
+});
+
+test('ensureShareOwner (R1): claim menulis pemilik; keep tidak menulis; akun lain → kotak dikosongkan, lalu pemilik baru', async () => {
+  const claim = countedBox([shareEntry('a', 'b1', 1)]);
+  const s1 = memStorage();
+  assert.equal(await ensureShareOwner(claim.store, 'u-a', { storage: s1 }), true);
+  assert.deepEqual(s1.writes, [[OWNER, 'u-a']]);
+  assert.deepEqual([claim.store.map.size, claim.clears()], [1, 0], 'kotak tanpa pemilik diklaim, tidak dikosongkan');
+
+  const keep = countedBox([shareEntry('a', 'b1', 1)]);
+  const s2 = memStorage({ [OWNER]: 'u-a' });
+  assert.equal(await ensureShareOwner(keep.store, 'u-a', { storage: s2 }), true);
+  assert.deepEqual([s2.writes, keep.store.map.size, keep.clears()], [[], 1, 0]);
+
+  const other = countedBox([shareEntry('a', 'b1', 1), shareEntry('b', 'b1', 1, 1)]);
+  const s3 = memStorage({ [OWNER]: 'u-a' });
+  assert.equal(await ensureShareOwner(other.store, 'u-b', { storage: s3 }), true);
+  assert.deepEqual([other.store.map.size, other.clears(), s3.map.get(OWNER)], [0, 1, 'u-b']);
+});
+
+test('ensureShareOwner (R1): pemilik baru ditulis SESUDAH kotak akun lain kosong; hapus gagal → false, pemilik tetap', async () => {
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  const box = countedBox([shareEntry('a', 'b1', 1)], { hold });
+  const storage = memStorage({ [OWNER]: 'u-a' });
+  const p = ensureShareOwner(box.store, 'u-b', { storage });
+  await tick();
+  assert.equal(box.clears(), 1);
+  assert.deepEqual([storage.writes, storage.map.get(OWNER), box.store.map.size], [[], 'u-a', 1], 'belum ditulis selama penghapusan berjalan');
+  release();
+  assert.equal(await p, true);
+  assert.deepEqual([storage.map.get(OWNER), box.store.map.size], ['u-b', 0]);
+
+  const failing = { all: async () => [shareEntry('a', 'b1', 1)], clear: async () => { throw new Error('UnknownError'); } };
+  const s2 = memStorage({ [OWNER]: 'u-a' });
+  assert.equal(await ensureShareOwner(failing, 'u-b', { storage: s2 }), false);
+  assert.deepEqual([s2.writes, s2.map.get(OWNER)], [[], 'u-a'], 'tanpa pemilik baru: berikutnya dicoba lagi');
+});
+
+test('ensureShareOwner (R1): banner dan halaman bersamaan → dikosongkan paling banyak dua kali, entri akun lain tidak terbaca', async () => {
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  const box = countedBox([shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2)], { hold });
+  const storage = memStorage({ [OWNER]: 'u-a' });
+  const owned = ownerGate(box.store, 'u-b', { storage });   // banner: refresh yang bertumpuk
+  const banner = () => ownedShares(box.store, owned);
+  // Halaman: satu pemeriksaan per putaran, dan putarannya berurutan (serialRuns).
+  const page = async () => ((await ensureShareOwner(box.store, 'u-b', { storage })) ? box.store.all() : null);
+  const reads = Promise.all([banner(), page(), banner()]);
+  await tick();
+  release();
+  const got = await reads;
+  assert.ok(box.clears() <= 2, `clear ${box.clears()}×`);
+  for (const r of got) assert.deepEqual(r, [], 'tidak ada entri akun sebelumnya yang terbaca');
+  assert.equal(storage.map.get(OWNER), 'u-b');
+  // Share baru milik akun ini (sesudah ganti akun) tetap: pemeriksaan berikutnya "keep".
+  await box.store.put(shareEntry('n', 'b9', 9));
+  assert.deepEqual((await banner()).map(e => e.id), ['n']);
+  assert.equal(await ensureShareOwner(box.store, 'u-b', { storage }), true);
+  assert.deepEqual([...box.store.map.keys()], ['n']);
+});
+
+test('ensureShareOwner (R1): tanpa user, atau penyimpanan yang melempar/tidak ada → false; kotak tidak disentuh; tidak pernah melempar', async () => {
+  for (const userId of [null, undefined, '']) {
+    const box = countedBox([shareEntry('a', 'b1', 1)]);
+    const storage = memStorage({ [OWNER]: 'u-a' });
+    assert.equal(await ensureShareOwner(box.store, userId, { storage }), false, String(userId));
+    assert.deepEqual([box.store.map.size, box.clears(), storage.writes], [1, 0, []]);
+  }
+  const blocked = { getItem: () => { throw new Error('SecurityError'); }, setItem: () => { throw new Error('SecurityError'); } };
+  const box = countedBox([shareEntry('a', 'b1', 1)]);
+  assert.equal(await ensureShareOwner(box.store, 'u-b', { storage: blocked }), false);
+  assert.deepEqual([box.store.map.size, box.clears()], [1, 0]);
+  // Cap tidak terbaca (getItem melempar) walau bisa ditulis: tidak dianggap "belum ada pemilik".
+  const unreadable = { writes: [], getItem: () => { throw new Error('SecurityError'); }, setItem(k, v) { this.writes.push([k, v]); } };
+  const box4 = countedBox([shareEntry('a', 'b1', 1)]);
+  assert.equal(await ensureShareOwner(box4.store, 'u-b', { storage: unreadable }), false);
+  assert.deepEqual([unreadable.writes, box4.store.map.size, box4.clears()], [[], 1, 0]);
+  // Pemilik tidak bisa ditulis (penuh): kotak tetap tidak boleh dibaca.
+  const full = { getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); } };
+  const box2 = countedBox([shareEntry('a', 'b1', 1)]);
+  assert.equal(await ensureShareOwner(box2.store, 'u-b', { storage: full }), false);
+  assert.deepEqual([box2.store.map.size, box2.clears()], [1, 0]);
+  // Tanpa localStorage (Node, diblokir), opsi null, atau getter storage yang melempar: tetap false, tidak ditolak.
+  const box3 = countedBox([shareEntry('a', 'b1', 1)]);
+  assert.equal(await ensureShareOwner(box3.store, 'u-b', { storage: null }), false);
+  assert.equal(await ensureShareOwner(box3.store, 'u-b'), false);
+  assert.equal(await ensureShareOwner(box3.store, 'u-b', null), false);
+  assert.equal(await ensureShareOwner(box3.store, 'u-b', { get storage() { throw new Error('SecurityError'); } }), false);
+  assert.deepEqual([box3.store.map.size, box3.clears()], [1, 0]);
+  // Kotak hilang saat akun lain → false (tidak melempar).
+  assert.equal(await ensureShareOwner(null, 'u-b', { storage: memStorage({ [OWNER]: 'u-a' }) }), false);
+});
+
+test('ownerGate (R1, banner): refresh bersamaan memakai satu pemeriksaan; sesudah selesai diperiksa lagi (akun berganti di tab lain)', async () => {
+  let release;
+  const hold = new Promise((r) => { release = r; });
+  const box = countedBox([shareEntry('a', 'b1', 1)], { hold });
+  const storage = memStorage({ [OWNER]: 'u-a' });
+  const owned = ownerGate(box.store, 'u-b', { storage });
+  const p1 = owned();
+  const p2 = owned();
+  assert.equal(p1, p2, 'janji yang sama selama pemeriksaan berjalan');
+  release();
+  assert.deepEqual(await Promise.all([p1, p2]), [true, true]);
+  assert.equal(box.clears(), 1);
+  const p3 = owned();
+  assert.notEqual(p3, p1);
+  assert.equal(await p3, true);
+  assert.equal(box.clears(), 1, 'akun yang sama: keep');
+  storage.map.set(OWNER, 'u-c');
+  await box.store.put(shareEntry('c', 'b3', 3));
+  assert.equal(await owned(), true);
+  assert.deepEqual([box.clears(), box.store.map.size, storage.map.get(OWNER)], [2, 0, 'u-b']);
+});
+
+test('ownedShares (R1): hitungan banner hanya dari kotak milik user ini; bukan miliknya → [] tanpa membaca kotak', async () => {
+  let reads = 0;
+  const store = { all: async () => { reads += 1; return [shareEntry('a', 'b1', 1)]; } };
+  assert.deepEqual(await ownedShares(store, async () => false), []);
+  assert.equal(reads, 0);
+  assert.deepEqual((await ownedShares(store, async () => true)).map(e => e.id), ['a']);
+  assert.equal(reads, 1);
+});
+
+// Dependensi halaman dengan log urutan bersama: pemilik, baca kotak, antrean offline, unggah, bukti menunggu.
+function loggedPage(opts, { owner = async () => true, queued = async () => new Set() } = {}) {
+  const d = pageDeps(opts);
+  const log = [];
+  const all = d.deps.store.all;
+  d.deps.store = { ...d.deps.store, all: async () => { log.push('store'); return all(); } };
+  d.deps.ensureOwner = async () => { log.push('owner'); return owner(); };
+  d.deps.loadQueued = async () => { log.push('queued'); return queued(); };
+  d.deps.onQueued = ids => log.push(`onQueued:${[...ids].join(',')}`);
+  const upload = d.deps.upload;
+  d.deps.upload = (entry) => { log.push(`upload:${entry.id}`); return upload(entry); };
+  const loadPending = d.deps.loadPending;
+  d.deps.loadPending = () => { log.push('pending'); return loadPending(); };
+  return { ...d, log };
+}
+
+test('runSharePage (R1): pemilik diperiksa sebelum kotak dibaca (tahan dan kirim); saklar mati tidak memeriksa pemilik', async () => {
+  const off = loggedPage({ flag: false, batchId: 'b1', entries: [shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2)] });
+  await runSharePage(off.deps);
+  assert.ok(!off.log.includes('owner') && !off.log.includes('queued'), off.log.join(' '));
+  assert.deepEqual([...off.store.map.keys()], ['b'], 'saklar mati: tetap hanya batch ?s= yang dihapus');
+
+  const hold = loggedPage({ online: false, entries: [shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2)] });
+  assert.equal((await runSharePage(hold.deps)).waiting, 2);
+  assert.deepEqual(hold.log, ['owner', 'store']);
+
+  const send = loggedPage({ entries: [shareEntry('a', 'b1', 1)] });
+  await runSharePage(send.deps);
+  assert.deepEqual(send.log.slice(0, 2), ['owner', 'store']);
+});
+
+test('runSharePage (R1): kotak bukan milik user ini (false / melempar) → tidak dibaca dan tidak diunggah; storeFailed; bukti server tetap dimuat', async () => {
+  for (const owner of [async () => false, async () => { throw new Error('x'); }]) {
+    const send = loggedPage({ entries: [shareEntry('a', 'b1', 1)], pending: [{ id: 'p1', status: 'siap' }] }, { owner });
+    const out = await runSharePage(send.deps);
+    assert.deepEqual([out.mode, out.storeFailed, out.items, out.pending.map(i => i.id)], ['send', true, [], ['p1']]);
+    assert.ok(!send.log.includes('store') && !send.log.some(l => l.startsWith('upload')), send.log.join(' '));
+    assert.equal(send.store.map.size, 1);
+    const hold = loggedPage({ online: false, entries: [shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2)] }, { owner });
+    const outH = await runSharePage(hold.deps);
+    assert.deepEqual([outH.mode, outH.waiting, outH.storeFailed], ['hold', 0, true]);
+    assert.ok(!hold.log.includes('store'));
+  }
+});
+
+test('runSharePage (R2): mode kirim membaca id antrean offline sekali, sebelum unggahan dan kartu pertama; mati/tahan tidak', async () => {
+  const send = loggedPage({ entries: [shareEntry('a', 'b1', 1)], pending: [{ id: 'p1', status: 'siap' }] }, { queued: async () => new Set(['p1']) });
+  const out = await runSharePage(send.deps);
+  assert.deepEqual(send.log, ['owner', 'store', 'queued', 'onQueued:p1', 'upload:a', 'pending']);
+  assert.deepEqual([...out.queued], ['p1']);
+  for (const opts of [{ flag: false }, { online: false }, { flag: null }]) {
+    const d = loggedPage(opts);
+    const o = await runSharePage(d.deps);
+    assert.ok(!d.log.includes('queued'), JSON.stringify(opts));
+    assert.deepEqual([...o.queued], []);
+  }
+  const bad = loggedPage({}, { queued: async () => { throw new Error('x'); } });
+  const o = await runSharePage(bad.deps);
+  assert.deepEqual([...o.queued], []);
+  assert.ok(bad.log.includes('onQueued:'), 'gagal membaca antrean → Set kosong');
+});
+
+test('keptEntries (R5): entri tertahan untuk daftar Hapus — nama file, "teks" untuk teks, urutan share', () => {
+  assert.equal(SHARE_TEXT.remove, 'Hapus');
+  assert.equal(SHARE_TEXT.textEntry, 'teks');
+  const list = keptEntries([
+    shareEntry('c', 'b2', 2, 1, { name: '' }),
+    shareEntry('t', 'b1', 1, 1, { blob: undefined, name: '', text: 'Transfer Rp150.000', type: 'text/plain' }),
+    shareEntry('a', 'b1', 1, 0, { name: 'mutasi.pdf' }),
+    null,
+    { name: 'tanpa-id.jpg' },
+  ]);
+  assert.deepEqual(list, [{ id: 'a', label: 'mutasi.pdf' }, { id: 't', label: 'teks' }, { id: 'c', label: 'bukti' }]);
+  for (const bad of [null, undefined, 'x', {}]) assert.deepEqual(keptEntries(bad), [], String(bad));
+});
+
+test('runSharePage (R5): putaran berhenti dengan keep → entri yang tertahan di kotak (dibaca ulang); tanpa keep → []', async () => {
+  const kept = pageDeps({
+    entries: [shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2), shareEntry('c', 'b3', 3, 0, { blob: undefined, name: '', text: 'Rp1' })],
+    replies: { b: { ok: false, status: 0, data: {} } },
+  });
+  const out = await runSharePage(kept.deps);
+  assert.equal(out.kept, KEEP_TEXT);
+  assert.deepEqual(out.keptEntries, [{ id: 'b', label: 'b.jpg' }, { id: 'c', label: 'teks' }], 'a terkirim; b tertahan; c belum dicoba');
+  // Kotak tidak terbaca ulang → sisa putaran ini (tanpa yang sudah terkirim/dibuang).
+  const reread = pageDeps({ entries: [shareEntry('a', 'b1', 1), shareEntry('b', 'b2', 2)], replies: { b: { ok: false, status: 503, data: {} } } });
+  let reads = 0;
+  const all = reread.deps.store.all;
+  reread.deps.store = { ...reread.deps.store, all: async () => { reads += 1; if (reads > 1) throw new Error('x'); return all(); } };
+  assert.deepEqual((await runSharePage(reread.deps)).keptEntries.map(e => e.id), ['b']);
+  for (const opts of [{ entries: [shareEntry('a', 'b1', 1)] }, { online: false, entries: [shareEntry('a', 'b1', 1)] }, { flag: false }]) {
+    assert.deepEqual((await runSharePage(pageDeps(opts).deps)).keptEntries, [], JSON.stringify(opts));
+  }
+});
+
+test('discardKept (R5): Hapus membuang satu entri lalu menghitung ulang; hapus gagal → tetap terdaftar; kotak tak terbaca → []', async () => {
+  const store = memStore();
+  for (const e of [shareEntry('a', 'b1', 1), shareEntry('b', 'b1', 1, 1)]) await store.put(e);
+  assert.deepEqual(await discardKept(store, 'a'), [{ id: 'b', label: 'b.jpg' }]);
+  assert.deepEqual([...store.map.keys()], ['b']);
+  assert.deepEqual(await discardKept(store, 'b'), []);
+  const stuck = { all: async () => [shareEntry('a', 'b1', 1)], del: async () => { throw new Error('UnknownError'); } };
+  assert.deepEqual(await discardKept(stuck, 'a'), [{ id: 'a', label: 'a.jpg' }]);
+  const broken = { all: async () => { throw new Error('x'); }, del: async () => {} };
+  assert.deepEqual(await discardKept(broken, 'a'), []);
+  await assert.doesNotReject(discardKept(null, 'a'));
+});
+
+test('pageView (R5): daftar Hapus hanya sesudah putaran berhenti dengan entri tertahan (mode kirim, tidak sedang berjalan)', () => {
+  const keptList = [{ id: 'b', label: 'b.jpg' }];
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT, keptList }).discard, true);
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT, keptList, running: true }).discard, false);
+  assert.equal(pageView({ mode: 'send', kept: null, keptList }).discard, false);
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT, keptList: [] }).discard, false);
+  assert.equal(pageView({ mode: 'send', kept: KEEP_TEXT }).discard, false);
+  for (const mode of ['hold', 'off', null]) {
+    assert.equal(pageView({ mode, waiting: 1, kept: KEEP_TEXT, keptList }).discard, false, String(mode));
+  }
+});
+
+test('withTimeout (R6): nilai atau penolakan sebelum batas waktu; sesudahnya cadangan; jawaban terlambat diabaikan', async () => {
+  const t = fakeTimers();
+  assert.equal(await withTimeout(Promise.resolve(5), 1000, 'x', t), 5);
+  assert.deepEqual([t.delays, t.cleared, t.pending()], [[1000], [1], 0], 'timer dibersihkan begitu ada jawaban');
+  await assert.rejects(withTimeout(Promise.reject(new Error('boom')), 1000, 'x', t), /boom/);
+  assert.equal(t.pending(), 0);
+  let late;
+  const p = withTimeout(new Promise((r) => { late = r; }), 20000, null, t);
+  assert.equal(t.delays.at(-1), 20000);
+  t.fire();
+  assert.equal(await p, null);
+  late('terlambat');
+  await tick();
+  assert.equal(await p, null);
+  assert.equal(await withTimeout('langsung', 10, 'x', t), 'langsung');
+});
+
+test('pageReads (R6): config 10 dtk → config cache atau null (ditahan); bukti menunggu 20 dtk → []; satu item 20 dtk → null', async () => {
+  assert.deepEqual([CONFIG_WAIT_MS, READ_WAIT_MS], [10000, 20000]);
+  const t = fakeTimers();
+  const never = () => new Promise(() => {});
+  const cached = { features: { receipt_inbox: true } };
+  const hang = pageReads({ getConfig: never, cachedConfig: () => cached, loadPending: never, loadItem: never }, t);
+  const c = hang.config();
+  assert.equal(t.delays.at(-1), CONFIG_WAIT_MS);
+  t.fire();
+  assert.equal(await c, cached);
+  const pl = hang.pending();
+  assert.equal(t.delays.at(-1), READ_WAIT_MS);
+  t.fire();
+  assert.deepEqual(await pl, []);
+  const it = hang.item('i1');
+  assert.equal(t.delays.at(-1), READ_WAIT_MS);
+  t.fire();
+  assert.equal(await it, null);
+  // Tanpa cache (atau cache tak terbaca) → null: saklar belum diketahui → ditahan seperti offline.
+  for (const cachedConfig of [() => null, () => { throw new Error('x'); }]) {
+    const r = pageReads({ getConfig: never, cachedConfig, loadPending: never, loadItem: never }, t);
+    const p = r.config();
+    t.fire();
+    const config = await p;
+    assert.equal(config, null);
+    assert.equal(sharePageMode({ flag: shareFlag(config), online: true }), 'hold');
+  }
+  // Jawaban yang tepat waktu dipakai; id diteruskan; tidak ada timer yang tertinggal.
+  const asked = [];
+  const ok = pageReads({
+    getConfig: async () => ({ features: { receipt_inbox: false } }), cachedConfig: () => cached,
+    loadPending: async () => [{ id: 'p1' }], loadItem: async (id) => { asked.push(id); return { id, status: 'siap' }; },
+  }, t);
+  assert.deepEqual(await ok.config(), { features: { receipt_inbox: false } });
+  assert.deepEqual(await ok.pending(), [{ id: 'p1' }]);
+  assert.deepEqual(await ok.item('i9'), { id: 'i9', status: 'siap' });
+  assert.deepEqual([asked, t.pending()], [['i9'], 0]);
+});
+
+test('runSharePage + pageReads (R6): config dan daftar bukti menunggu yang menggantung → putaran tetap selesai (Kirim lagi / Ke Transaksi)', async () => {
+  const never = () => new Promise(() => {});
+  // Config menggantung, tanpa cache → ditahan: jumlah menunggu dan "Kirim lagi".
+  const t1 = fakeTimers();
+  const hold = pageDeps({ entries: [shareEntry('a', 'b1', 1)] });
+  hold.deps.getConfig = pageReads({ getConfig: never, cachedConfig: () => null, loadPending: never, loadItem: never }, t1).config;
+  const p1 = runSharePage(hold.deps);
+  await until(() => t1.pending() === 1);
+  t1.fire();
+  const out1 = await p1;
+  assert.deepEqual([out1.mode, out1.waiting], ['hold', 1]);
+  assert.equal(pageView({ mode: out1.mode, waiting: out1.waiting }).retry, true);
+  // Config menggantung, cache menyala → kirim; daftar bukti menunggu menggantung → [] sesudah 20 dtk → Ke Transaksi.
+  const t2 = fakeTimers();
+  const reads = pageReads({ getConfig: never, cachedConfig: () => ({ features: { receipt_inbox: true } }), loadPending: never, loadItem: never }, t2);
+  const send = pageDeps({});
+  send.deps.getConfig = reads.config;
+  send.deps.loadPending = () => fetchPendingDetails({ items: [], loadPending: reads.pending, loadItem: reads.item });
+  const p2 = runSharePage(send.deps);
+  await until(() => t2.pending() === 1);
+  assert.equal(t2.delays.at(-1), CONFIG_WAIT_MS);
+  t2.fire();
+  await until(() => t2.pending() === 1);
+  assert.equal(t2.delays.at(-1), READ_WAIT_MS);
+  t2.fire();
+  const out2 = await p2;
+  assert.deepEqual([out2.mode, out2.pending], ['send', []]);
+  const view = pageView({ mode: out2.mode, items: out2.pending, running: false });
+  assert.deepEqual([view.finished, view.empty], [true, 'Tidak ada bukti yang menunggu.']);
+});
+
+test('createPoller + pageReads (R6): GET item yang menggantung berakhir null sesudah 20 dtk; pantauan lanjut lalu berhenti', async () => {
+  const reads = fakeTimers();
+  const chain = fakeTimers();
+  const item = pageReads({ getConfig: async () => null, loadPending: async () => [], loadItem: () => new Promise(() => {}) }, reads).item;
+  let rounds = 0;
+  const got = [];
+  const running = [];
+  const poller = createPoller({
+    targets: () => (rounds < 2 ? ['a'] : []), fetchItem: item, onDetails: (d) => { rounds += 1; got.push(d); },
+    onRunning: on => running.push(on), setTimer: chain.setTimer, clearTimer: chain.clearTimer,
+  });
+  assert.equal(poller.start(), true);
+  const first = chain.fire();
+  await until(() => reads.pending() === 1);
+  assert.equal(reads.delays.at(-1), READ_WAIT_MS);
+  reads.fire();
+  await first;
+  assert.deepEqual(got, [[]], 'GET yang menggantung dianggap null');
+  assert.equal(chain.pending(), 1, 'rantai lanjut');
+  const second = chain.fire();
+  await until(() => reads.pending() === 1);
+  reads.fire();
+  await second;
+  assert.deepEqual([got.length, chain.pending(), running], [2, 0, [true, false]], 'berhenti: pantauan tidak tertahan');
 });
