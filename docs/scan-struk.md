@@ -92,7 +92,13 @@ nilai (`suggestion`; `0` = kemungkinan terbaca dobel) — tidak diubah diam-diam
 rincian yang cocok asalkan tidak dibantah pembayaran, baris totalnya berlabel
 kuat (TOTAL, GRAND TOTAL, TOTAL BAYAR, …; bukan SUBTOTAL atau label lemah seperti
 JUMLAH), dan tidak ada pajak/servis setelah TOTAL.
-Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`.
+Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`. Tanpa barang juga: tebakan nominal terbesar
+(`rendah`); bila dokumen punya nominal bertanda `Rp`/`IDR`, hanya di antara itu (angka polos bisa nomor antrean,
+telepon, atau ID).
+**Angka ID bukan nominal** (`amounts_in`): angka yang disambung, menempel atau lewat "-", ke kode campuran
+huruf+digit ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke segmen lain,
+dilewati. Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML") dan pengali "3.500x2" tetap
+nominal. Kasus produksi 2026-10-28: bukti QRIS Jago Syariah Rp19.000 sempat terbaca Rp261.026.
 `confidence_source`: `payment` | `items` | `items_sum`.
 
 **Respons API** (tambahan): `items[]` (name, qty, unit_price, amount, discount,
@@ -131,6 +137,11 @@ selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
 **Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)
 dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di
 webapp; bot tetap mencatat total sebagai satu transaksi.
+
+**Bot: nominal kurang yakin.** Total berkeyakinan `rendah` (struk/tidak dikenali: `confidence`; bukti:
+`document.confidence.total`) tidak langsung dicatat dengan satu ketukan amplop: bot bertanya "Nominal Rp19.000
+belum pasti — cek dengan struk. Sudah benar?" (bukti: "cek dengan bukti") dengan **✅ Ya, catat ke {amplop}**,
+**✏️ Nominal salah**, dan **❌ Batal**. Detail di [`kotak-struk.md`](kotak-struk.md) bagian "Kanal".
 
 **Bot: tanggal struk.** Transaksi bertanggal struk. Bila tanggal itu sebelum awal periode
 anggaran berjalan, bot bertanya dulu "Catat untuk tanggal berapa?": **Hari ini** (cek dana,
