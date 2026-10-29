@@ -53,7 +53,7 @@ function RowNotices({ item, onPickDate, className = '' }) {
   return (
     <div className={`space-y-1 ${className}`}>
       {item.blockedReason && <p className="text-xs font-medium text-red-600">{item.blockedReason}</p>}
-      {notice && <p className="text-xs text-amber-700">{notice.text}</p>}
+      {notice && <p className="text-xs text-amber-600">{notice.text}</p>}
       {notice?.choices && (
         <div className="flex items-center gap-2 flex-wrap">
           {notice.choices.map(choice => {
