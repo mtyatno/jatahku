@@ -6,13 +6,17 @@ memakai `body_lines(lines)`, penanda dan tanggal memakai `lines`."""
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 
 from app.services.kotak_struk.document import Amounts
 from app.services.kotak_struk.merchants import mask_digits
 from app.services.kotak_struk.readers.labels import find_value, parse_datetime_id
-from app.services.kotak_struk.readers.profiles import GENERIC_LABELS, AppProfile, labels_for
+from app.services.kotak_struk.readers.labels import count_markers
+from app.services.kotak_struk.readers.profiles import (
+    GENERIC_LABELS, PROVIDER_LINE, AppProfile, is_money_provider, labels_for, logo_profile,
+)
 from app.services.receipt_parser import amounts_in
 
 NAME_MAX = 100          # kolom raw_name di peta merchant
@@ -30,7 +34,8 @@ def clean_lines(raw: list[str]) -> list[str]:
 
 
 # Baris yang diawali label "merchant"/"id" tapi bukan nama merchant: jangan terbaca sebagai nilainya.
-_NOISE_LINE = re.compile(r"^\s*(?:merchant\s+(?:pan|id)|terminal\s+id)(?=$|[\s:：])", re.IGNORECASE)
+_NOISE_LINE = re.compile(r"^\s*(?:merchant\s+(?:pan|id)|terminal\s+id|pan\s+(?:merchant|pelanggan)|customer\s+pan|id\s+terminal)"
+                         r"(?=$|[\s:：])", re.IGNORECASE)
 
 
 def body_lines(lines: list[str]) -> list[str]:
@@ -107,14 +112,132 @@ def account_from(numbers: list[str]) -> str | None:
 
 def read_name(lines: list[str], profile: AppProfile | None, field: str, *, numbers: list[str] | None = None) -> str | None:
     """Nama pihak (maksimal NAME_MAX). Deret angka panjang dibuang dari nilainya dan, bila `numbers` diberikan,
-    ditambahkan ke sana (bahan rekening cadangan). Tanpa huruf: None."""
+    ditambahkan ke sana (bahan rekening cadangan). Nama yang terbelah dua baris di samping labelnya digabung
+    (`_wrapped_head`). Tanpa label: nama di bawah logo bila tata letak aplikasinya begitu (`read_header_party`).
+    Tanpa huruf: None."""
     value = read_text(lines, labels_for(profile, field), profile)
+    if value:
+        head = _wrapped_head(lines, labels_for(profile, field), value, profile)
+        value = f"{head} {value}" if head else value
+    else:
+        party = read_header_party(lines, profile)
+        value = party.name if party else None
     if not value:
         return None
     value, found = split_long_numbers(value.strip(" :-–,"))
     if numbers is not None:
         numbers.extend(found)
     return value[:NAME_MAX] if re.search(r"[A-Za-z]", value) else None
+
+
+_NAME_PART = re.compile(r"[A-Z][A-Z.'\-]*(?: [A-Z][A-Z.'\-]*){0,2}")
+
+
+def _wrapped_head(lines: list[str], labels: list[str], value: str, profile: AppProfile | None) -> str | None:
+    """Baris pertama nama yang terbelah dua baris ("ANDI" lalu "Nama Penerima PRATAMA"): aplikasi yang mencetak nilai
+    rata kanan memecah nama panjang, dan OCR menaruh potongan pertamanya DI ATAS baris label. Digabung hanya bila nilai
+    ada sebaris dengan label, nilai dan baris di atasnya sama-sama 1-3 kata huruf besar tanpa angka, dan baris di atas
+    itu yatim: bukan label, bukan nilai label yang berdiri sendiri di atasnya, tanpa kata status atau jenis bukti
+    ("QRIS", "TRANSFER"), dan bukan nama bank/aplikasi. Baris lain (judul, "QRIS", "BANK BCA", "BRIMO", nilai
+    "Keterangan") tidak pernah digabung."""
+    start = _label_start(tuple(sorted({label.lower() for label in labels}, key=len, reverse=True)))
+    at = next((i for i, line in enumerate(lines) if (m := start.match(line)) and line[m.end():].strip(" :：") == value), None)
+    if not at or not _NAME_PART.fullmatch(value):
+        return None
+    head = lines[at - 1]
+    if not _NAME_PART.fullmatch(head) or is_label_line(head, profile) or _ANCHOR.search(head) or is_money_provider(head):
+        return None
+    above = lines[at - 2] if at >= 2 else ""
+    if above and is_label_line(above, profile) and not _rest_of_label(above, profile):
+        return None                                   # nilai label lain ("Keterangan" / "BAYAR")
+    return head
+
+
+def _rest_of_label(line: str, profile: AppProfile | None) -> str:
+    names = tuple({*GENERIC_LABELS, *(profile.labels if profile else ())} - WORDLIKE_FIELDS)
+    labels = {label.lower() for name in names for label in labels_for(profile, name)}
+    m = _label_start(tuple(sorted(labels, key=len, reverse=True))).match(line)
+    return line[m.end():].strip(" :：") if m else line
+
+
+@dataclass
+class HeaderParty:
+    """Pihak lawan tanpa label di bawah logo (`AppProfile.party_on_top`)."""
+    name: str | None
+    city: str | None
+    provider: str | None        # "GoPay", "Mandiri", "PLN Prepaid": bank/e-wallet tujuan, atau penyedia tagihan
+    number: str | None          # nomor di baris penyedia (rekening/HP/meter), seperti tercetak
+    amount: int                 # nominal besar di bawahnya
+
+
+HEADER_PARTY_LINES = 5          # baris antara logo dan nominal
+_INITIALS = re.compile(r"^(?P<name>.*\S)\s+(?P<initials>[A-Z]{1,2})$")
+_PROVIDER_NUMBER = re.compile(r"[\d*•…]*\d(?:[ \-]?\d{3,})*")
+_CITY = re.compile(r"[A-Za-z][A-Za-z .'\-]*")
+
+
+def _initials_of(name: str) -> set[str]:
+    words = re.findall(r"[A-Za-z]+", name)
+    if not words:
+        return set()
+    if len(words) == 1:
+        return {words[0][0].upper(), words[0][:2].upper()}
+    return {(words[0][0] + words[-1][0]).upper()}
+
+
+def read_header_party(lines: list[str], profile: AppProfile | None) -> HeaderParty | None:
+    """Pihak lawan di tata letak "nama di bawah logo" (Jago Syariah): baris sesudah baris logo aplikasi (`logo_profile`,
+    salah satu dari 2 baris pertama) sampai baris nominal Rp yang berdiri sendiri (paling banyak HEADER_PARTY_LINES baris di antaranya).
+    - baris "Penyedia · nomor" ("GoPay·…7890", "Mandiri·…4321", "PLN Prepaid·…1234") = penyedia dan nomornya;
+    - nama = baris pertama; bila inisial avatar menempel di ujung salah satu baris ("SITI AMINAH SA", "PRATAMA AP"), nama
+      = baris-baris sampai di situ digabung, tanpa inisialnya (inisial harus huruf awal kata pertama dan terakhir);
+    - kota = baris huruf sesudah nama (QRIS: "BANDUNG").
+    None bila profilnya bukan tata letak ini atau baris-barisnya tidak ada."""
+    if profile is None or not profile.party_on_top:
+        return None
+    logo = next((i for i, line in enumerate(lines[:2]) if (p := logo_profile(line)) and p.key == profile.key), None)
+    if logo is None:
+        return None
+    end = next((i for i in range(logo + 1, min(len(lines), logo + 2 + HEADER_PARTY_LINES))
+                if _AMOUNT_ONLY.fullmatch(lines[i]) and amounts_in(lines[i])), None)
+    if end is None or end == logo + 1:
+        return None
+    # Judul status ("Transfer Sedang Diproses") dan baris yang hanya berisi kata status/jenis bukti ("Berhasil", "QRIS")
+    # bukan nama; nama yang memuat kata status ("CV SUKSES JAYA") tetap nama.
+    block = [line for line in lines[logo + 1:end]
+             if line and not is_label_line(line, profile) and not _is_status_title(line)
+             and _ANCHOR.sub(" ", line).strip(" !.,:-")]
+    provider = number = None
+    at = next((j for j, line in enumerate(block) if PROVIDER_LINE.match(line)), None)
+    if at is not None:
+        m = PROVIDER_LINE.match(block[at])
+        provider = m.group("name").strip() or None
+        found = _PROVIDER_NUMBER.search(m.group("rest"))
+        number = found.group(0) if found and sum(c.isdigit() for c in found.group(0)) >= 4 else None
+        block = block[:at]
+    name, rest = (block[0], block[1:]) if block else (None, [])
+    for k, line in enumerate(block):
+        m = _INITIALS.match(line)
+        joined = " ".join([*block[:k], m.group("name")]) if m else ""
+        if m and m.group("initials") in _initials_of(joined):
+            name, rest = joined, block[k + 1:]
+            break
+    if name:
+        name = split_long_numbers(name)[0] or None
+    city = next((line for line in rest if _CITY.fullmatch(line) and len(line.split()) <= 3), None)
+    return HeaderParty(name=name, city=city, provider=provider, number=number, amount=amounts_in(lines[end])[0])
+
+
+def is_app_receipt(lines: list[str]) -> bool:
+    """Resi dari aplikasi bank/e-wallet, bukan struk belanja: baris logo aplikasi (`logo_profile`: hanya nama aplikasi,
+    bukan "TOKO MANDIRI JAYA") di salah satu dari 2 baris pertama dan ada label rekening/akun sumber ("Sumber akun", "Sumber Dana", "Rekening Sumber"). Toko tidak mencetak
+    rekening sumber user; tagihan dan pulsa dari aplikasi bank ("PPj", "Materai", "Admin Bank" di atas "Total Bayar")
+    berbentuk struk tetapi bukan belanja, jadi pembaca struk belanja tidak mengambilnya (FS-2: jenis `tagihan`)."""
+    cleaned = clean_lines(lines)
+    if not any(logo_profile(line) for line in cleaned[:2]):
+        return False
+    source = _label_start(tuple(sorted({label.lower() for label in labels_for(None, "source")}, key=len, reverse=True)))
+    return any(source.match(line) for line in cleaned)
 
 
 def read_city(lines: list[str], profile: AppProfile | None) -> str | None:
@@ -204,6 +327,9 @@ def read_refs(lines: list[str], profile: AppProfile | None) -> list[tuple[str, s
     seen: set[str] = set()
     for label in labels_for(profile, "ref"):
         value = read_text(lines, [label], profile)
+        status = _ANY_STATUS.search(value or "")
+        if status:                       # status dicetak di samping ID ("123456-ABCD-EFGHIJ  Sukses")
+            value = value[:status.start()]
         m = re.match(r"[A-Za-z0-9][A-Za-z0-9 \-]*", value or "")
         normalized = re.sub(r"[^A-Za-z0-9]", "", m.group(0)).upper() if m else ""
         if len(normalized) >= 6 and re.search(r"\d", normalized) and normalized not in seen:
@@ -337,7 +463,8 @@ def read_amounts(lines: list[str], profile: AppProfile | None) -> tuple[Amounts,
     discount = _sum_amounts(lines, labels_for(profile, "discount"), profile)
     tax = _sum_amounts(lines, labels_for(profile, "tax"), profile)
     if subtotal is None and total is None:
-        found = _bare_amount(lines)
+        party = read_header_party(lines, profile)
+        found = (party.amount, "sedang") if party else _bare_amount(lines)
         amounts = Amounts(fee=fee, tax=tax, discount=discount, total=found[0] if found else None)
         return amounts, found[1] if found else None
     if total is None:
@@ -557,12 +684,36 @@ def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
     "Gagal" lain di bawah status "Transaksi Berhasil" tidak membalikkannya). Kalimat panjang dan kalimat
     bersyarat/tanya ("Jika gagal hubungi ...", "Gagal? Hubungi kami") tidak dihitung, tapi kegagalan yang
     diikuti ajakan ("Gagal, silakan coba lagi") tetap dihitung (lihat `_is_status_sentence`). Tanpa kata
-    status: `tidak_diketahui`."""
+    status: `tidak_diketahui` (pembaca bukti: lihat `read_proof_status`)."""
     labelled = read_text(lines, labels_for(profile, "status"), profile)
     status = (_classify(labelled) if labelled else None) \
         or _strongest(_status_lines(lines[:HEADER_LINES], HEADER_WORDS)) \
         or _first(_status_lines(lines, BODY_WORDS))
     return status or TIDAK_DIKETAHUI
+
+
+# Kata yang berarti transaksi tidak (atau belum) selesai, di luar kosakata status: kalimat resi aplikasi tidak boleh
+# menjadikannya berhasil ("Dibatalkan", "Ditolak", "Menunggu", "Dikembalikan" di samping ID, "Pembayaran tertunda").
+_NOT_DONE = re.compile(
+    r"(?<!\w)(?:(?:di|ter|pem)?batal(?:kan|an)?|(?:di|pe)?tolak(?:an)?|(?:di|ter|pe)?tunda(?:kan|an)?|menunggu|"
+    r"dikembalikan|pengembalian|refund(?:ed)?|kedaluwarsa|kadaluarsa|expired|cancel(?:l?ed)?|rejected|reversal)(?!\w)",
+    re.IGNORECASE)
+
+
+def read_proof_status(lines: list[str], profile: AppProfile | None = None) -> str:
+    """Status untuk pembaca bukti (QRIS, transfer): `read_status`, lalu judul status gagal/pending di badan
+    (`read_body_failure_title`, seperti jalur struk/tidak dikenali: "Transaksi gagal, dana dikembalikan ke saldo kamu",
+    "Transaksi kamu sedang diproses bank tujuan", yang terlalu panjang untuk `read_status`) yang hanya boleh memperburuk
+    status. Tanpa status apa pun: `berhasil` bila tercetak kalimat resi aplikasinya (`AppProfile.done_phrases`) dan tidak ada
+    kata gagal/pending/belum selesai di mana pun (`_NOT_DONE`), selain itu `tidak_diketahui`."""
+    status = read_status(lines, profile)
+    body = read_body_failure_title(lines)
+    if body == GAGAL or (body == PENDING and status != GAGAL):
+        status = body
+    if status == TIDAK_DIKETAHUI and profile and profile.done_phrases and count_markers(lines, profile.done_phrases) \
+            and not any(_NOT_DONE.search(line) or _ANY_STATUS.search(line) for line in lines):
+        status = BERHASIL
+    return status
 
 
 # ── Penjaga struk belanja ───────────────────────────────────────────────────

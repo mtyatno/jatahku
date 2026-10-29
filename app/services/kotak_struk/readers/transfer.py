@@ -11,7 +11,7 @@ from app.services.kotak_struk.merchants import mask_digits
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer
+from app.services.kotak_struk.readers.profiles import detect_issuer, is_money_provider
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -55,6 +55,9 @@ class TransferReader:
         markers = count_markers(lines, TRANSFER_MARKERS)
         if markers >= 2:
             return STRONG
+        party = pc.read_header_party(lines, detect_issuer(lines))
+        if party and is_money_provider(party.provider):
+            return STRONG       # nama penerima lalu "GoPay · 0812…" / "Mandiri · 123…" di bawah logo (Jago Syariah)
         status = pc.read_status(lines)
         if _other_flow(lines, status) and pc.has_amount(lines):
             return OTHER_FLOW_CORROBORATED if markers or status != pc.TIDAK_DIKETAHUI else OTHER_FLOW
@@ -64,7 +67,7 @@ class TransferReader:
         lines = pc.clean_lines(doc.lines)
         body = pc.body_lines(lines)
         profile = detect_issuer(lines)
-        status = pc.read_status(body, profile)
+        status = pc.read_proof_status(body, profile)
         flow = _other_flow(body, status) or "keluar"
         if flow == "masuk" and status == pc.TIDAK_DIKETAHUI:
             status = pc.BERHASIL            # uang yang tercatat masuk sudah sampai
@@ -74,6 +77,10 @@ class TransferReader:
         name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant", numbers=numbers)
         bank_code = pc.read_bank(body, profile, numbers=numbers)
         account = pc.read_account(body, profile) or pc.account_from(numbers)     # tanpa label rekening: dari angka yang ditemukan
+        party = pc.read_header_party(body, profile)
+        if party and is_money_provider(party.provider):      # "Mandiri·…4321" di bawah nama penerima
+            bank_code = bank_code or pc.normalize_bank(party.provider)
+            account = account or party.number
         refs = pc.read_refs(body, profile)
 
         confidence = {}

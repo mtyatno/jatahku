@@ -1,5 +1,6 @@
 """Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending; juga judul status
-gagal/pending di badan), seperti struk belanja."""
+gagal/pending di badan), seperti struk belanja. Total: label total atau nominal utama bila teksnya resi aplikasi bank
+(tagihan, pulsa, bukti bayar saat saklar mati), selain itu nominal Rp terbesar."""
 from __future__ import annotations
 
 import re
@@ -8,8 +9,10 @@ from typing import TYPE_CHECKING
 
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
+from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB
+from app.services.kotak_struk.readers.profiles import detect_issuer
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
 from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt, printed_dates
 
@@ -42,15 +45,16 @@ class UnknownReader:
             return parsed_from_receipt(blank, fb)
 
         amounts = [a for line in doc.lines if _RP_LINE.search(line) for a in amounts_in(line)]
-        if not amounts:
+        app_total = self._app_receipt_total(doc)
+        if not amounts and app_total is None:
             guess = self._legacy_guess(doc, ctx)
             if guess is not None:
                 return guess
-        total = max(amounts) if amounts else None
+        total = app_total if app_total is not None else (max(amounts) if amounts else None)
         evidence = ["Jenis bukti tidak dikenali"]
         paid_at = None
         if total is not None:
-            evidence.append("Total ditebak dari nominal Rp terbesar")
+            evidence.append("Total dari resi aplikasi" if app_total is not None else "Total ditebak dari nominal Rp terbesar")
             # Tanggal tetap tebakan scan struk lama (seperti `_legacy_guess`): bukti yang dulu terbaca sebagai struk (mis.
             # QRIS Jago Syariah, Task H3) tetap bertanggal, jadi pertanyaan tanggal periode lalu (H1) tetap ada. Hanya
             # bila tercetak tepat satu tanggal: tanggal pertama bisa tanggal berita, masa berlaku, jatuh tempo, periode,
@@ -64,9 +68,25 @@ class UnknownReader:
             doc_type="tidak_dikenali",
             paid_at=paid_at,
             amounts=Amounts(total=total),
-            confidence={"total": "rendah"} if total is not None else {},
+            confidence={"total": "sedang" if app_total is not None else "rendah"} if total is not None else {},
             evidence=evidence,
         ))
+
+    @staticmethod
+    def _app_receipt_total(doc: TextDoc) -> int | None:
+        """Total resi aplikasi bank/e-wallet (`is_app_receipt`: tagihan, pulsa, atau bukti bayar saat saklar mati) dari
+        label total ("Total Bayar", "Total") atau nominal utama di bawah nama pihak lawan (tata letak Jago), dibaca seperti
+        pembaca bukti. Nominal Rp terbesar bisa saja saldo atau nominal sebelum biaya. None bila bukan resi aplikasi atau
+        tidak ada label/nominal utama (nominal terbesar tetap dipakai, keyakinan `rendah`)."""
+        lines = pc.clean_lines(doc.lines)
+        if not pc.is_app_receipt(lines):
+            return None
+        profile = detect_issuer(lines)
+        body = pc.body_lines(lines)
+        amounts, confidence = pc.read_amounts(body, profile)
+        if amounts.total is None or not (confidence == "tinggi" or pc.read_header_party(body, profile)):
+            return None
+        return amounts.total
 
     def _legacy_guess(self, doc: TextDoc, ctx: ParseContext) -> Parsed | None:
         """Tanpa baris "Rp"/"IDR": tebakan terbaik scan struk lama (`parse_receipt`), supaya foto yang dulu terbaca

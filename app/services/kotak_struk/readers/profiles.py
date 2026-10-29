@@ -1,6 +1,6 @@
 """Profil aplikasi (bank, e-wallet) untuk pembaca QRIS dan transfer. Data, bukan kode:
 kata pengenal aplikasi (penerbit) dan sinonim label per field. Menambah aplikasi biasanya
-cukup menambah satu entri di PROFILES; label khusus aplikasi diisi dari korpus nyata (Task A14)."""
+cukup menambah satu entri di PROFILES; label dan tata letak khusus aplikasi diisi dari korpus nyata (Task A14)."""
 from __future__ import annotations
 
 import re
@@ -15,6 +15,12 @@ class AppProfile:
     label: str                                  # nama untuk manusia
     markers: list[str]                          # kata pengenal aplikasi di bukti
     labels: dict[str, list[str]] = field(default_factory=dict)   # sinonim label khusus aplikasi, per field
+    # Tata letak: pihak lawan dicetak tanpa label sebagai baris pertama di bawah logo, sebelum nominal (nama, lalu kota
+    # untuk QRIS atau "Bank/e-wallet · nomor" untuk transfer); lihat proof_common.read_header_party.
+    party_on_top: bool = False
+    # Kalimat yang aplikasi ini cetak pada bukti transaksi yang selesai. Hanya dipakai bila tidak ada kata status sama
+    # sekali (gagal/pending selalu menang; lihat proof_common.read_status).
+    done_phrases: list[str] = field(default_factory=list)
 
 
 # Sinonim label per field; urutan = prioritas. Daftar rencana tetap ada (dalam urutan yang sama);
@@ -39,6 +45,8 @@ GENERIC_LABELS: dict[str, list[str]] = {
     "note": ["berita transfer", "berita", "keterangan", "catatan"],
     "sender": ["nama pengirim", "pengirim", "dari"],
     "status": ["status transaksi", "status"],
+    # Rekening/akun user sendiri. Tidak dibaca sebagai field; barisnya label (bukan nama, barang, atau nilai label lain).
+    "source": ["sumber akun", "sumber dana", "rekening sumber", "sumber rekening", "rekening asal"],
 }
 
 PROFILES: list[AppProfile] = [
@@ -47,7 +55,9 @@ PROFILES: list[AppProfile] = [
     AppProfile("brimo", "BRImo", ["brimo", "bri"]),
     AppProfile("bni", "BNI Mobile (wondr)", ["wondr", "bni"]),
     AppProfile("bsi", "BSI Mobile", ["bsi", "byond"]),
-    AppProfile("jago", "Bank Jago", ["jago"]),
+    # Dikalibrasi A14 ronde 1 (5 bukti asli Jago Syariah: QRIS, transfer ke e-wallet dan bank, PLN, pulsa).
+    AppProfile("jago", "Bank Jago", ["jago"], labels={"ref": ["id transaksi", "nomor referensi"]}, party_on_top=True,
+               done_phrases=["resi ini merupakan bukti transaksi yang sah"]),
     AppProfile("seabank", "SeaBank", ["seabank"]),
     AppProfile("blu", "blu by BCA Digital", ["blu"]),
     AppProfile("gopay", "GoPay", ["gopay"]),
@@ -55,6 +65,41 @@ PROFILES: list[AppProfile] = [
     AppProfile("dana", "DANA", ["dana"]),
     AppProfile("shopeepay", "ShopeePay", ["shopeepay"]),
 ]
+
+# Bank dan e-wallet yang bisa jadi tujuan transfer (selain penanda di PROFILES). Data: baris "GoPay · 0812…" atau
+# "Mandiri · 123…" di bawah nama penerima berarti transfer; "PLN Prepaid · 5500…" atau "Indosat · 0815…" tagihan/pulsa.
+MONEY_PROVIDERS = [
+    "bank", "bca", "mandiri", "bri", "bni", "bsi", "btn", "cimb", "niaga", "permata", "danamon", "mega", "ocbc", "maybank",
+    "panin", "btpn", "jenius", "uob", "hsbc", "sinarmas", "bjb", "bpd", "nagari", "muamalat", "neo", "allo", "superbank",
+    "krom", "linkaja", "isaku", "sakuku", "flip",
+]
+
+
+# Kata yang boleh menyertai nama aplikasi di baris logo ("Jago Syariah", "livin' by mandiri", "BCA mobile", "Bank Jago").
+LOGO_WORDS = {"syariah", "by", "mobile", "bank", "digital", "app", "banking"}
+
+
+def logo_profile(line: str) -> AppProfile | None:
+    """Profil aplikasi bila baris ini baris logo: hanya nama aplikasi (penanda profil) dan kata pendamping LOGO_WORDS.
+    Nama usaha yang memuat kata bank/aplikasi ("TOKO MANDIRI JAYA", "KANTIN BNI", "JAGO COFFEE") bukan logo."""
+    words = [w.strip("'") for w in re.findall(r"[a-z0-9][a-z0-9'.-]*", (line or "").lower())]
+    words = [w for w in words if w]
+    markers = {m for p in PROFILES for m in p.markers}
+    if not words or not any(w in markers for w in words) or any(w not in markers | LOGO_WORDS for w in words):
+        return None
+    return detect_issuer([line])
+
+
+def is_money_provider(name: str | None) -> bool:
+    """Nama penyedia ("GoPay", "Mandiri", "Bank Jago Syariah") adalah bank atau e-wallet."""
+    words = set(re.findall(r"[a-z][a-z'-]*", (name or "").lower()))
+    known = {w for p in PROFILES for w in p.markers} | set(MONEY_PROVIDERS)
+    return bool(words & known)
+
+
+# Baris "Penyedia · nomor" di bawah nama pihak lawan ("Mandiri·…4321", "Bank Jago Syariah•", "GoPay · 0812…"): bank
+# di sana milik pihak lawan, bukan aplikasi yang dipakai user. Diawali huruf (baris tanggal "29 Okt 2026·19:35" tidak).
+PROVIDER_LINE = re.compile(r"^\s*(?P<name>[A-Za-z][A-Za-z0-9'&.\- ]*?)\s*[·•]\s*(?P<rest>.*?)\s*$")
 
 # Kata "dana" juga kata biasa ("Dana Masuk", "Terima Dana"); bukan penanda aplikasi DANA.
 _COMMON_PHRASES = re.compile(
@@ -79,6 +124,8 @@ def _issuer_lines(lines: list[str]) -> list[str]:
         m = _COUNTERPARTY_LINE.match(line)
         if m:
             skip_next = not m.group(1).strip()
+            continue
+        if PROVIDER_LINE.match(line):
             continue
         out.append(_COMMON_PHRASES.sub(" ", line))
     return out

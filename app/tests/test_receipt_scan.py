@@ -139,7 +139,7 @@ SUBTOTAL 70.000"""
 
 # Perkiraan baris OCR bukti QRIS Jago Syariah (produksi 2026-10-28: Rp19.000 tercatat Rp261.026 dari ID transaksi).
 JAGO_ID_DASH = ["Jago Syariah", "RM AJO PIAMAN", "936001189020026", "Rp19.000", "ID Transaksi", "261026-4RL9-PVRERW",
-                "Sumber dana", "Nomor Akun", "5038389468011", "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB",
+                "Sumber dana", "Nomor Akun", "1234567890123", "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB",
                 "Nama Acquirer", "Bank Nagari", "Status", "Sukses", "ID Terminal", "A01"]
 JAGO_ID_GLUED = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
                  "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses", "ID Terminal", "A01"]

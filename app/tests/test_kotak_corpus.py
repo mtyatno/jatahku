@@ -824,7 +824,9 @@ class CliTests(unittest.TestCase):
         (root / "korpus").mkdir()
         (root / "masukan").mkdir()
         self.corpus = root / "korpus" / "corpus.json"
-        self.corpus.write_bytes(FIXTURE.read_bytes())
+        # Hanya sampel sintetis: hitungan dan hasil CLI di tes ini tidak boleh ikut sampel nyata di fixture (belum atau
+        # sudah ditinjau pemilik; Task A14).
+        write_corpus(self.corpus, [s for s in load_corpus(FIXTURE) if not s["real"]])
         self.txt = root / "masukan" / "bukti.txt"
         self.txt.write_text(TRANSFER_TXT, encoding="utf-8")
 
