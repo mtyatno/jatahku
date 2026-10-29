@@ -1479,6 +1479,8 @@ async def _handle_txn_callback(update, context):
         await query.edit_message_text("Error: data nggak valid.")
         return
     txn_key, env_idx = parts[1], parts[2]
+    from app.bot.receipt_cmd import AMOUNT_OK, amount_question, needs_amount_check
+    amount_confirmed = parts[0] == AMOUNT_OK   # ky_: "Ya, catat" sesudah pertanyaan nominal kurang yakin (H3)
     import redis.asyncio as aioredis, json as json_mod
     from app.core.config import get_settings
     r = aioredis.from_url(get_settings().REDIS_URL)
@@ -1529,6 +1531,10 @@ async def _handle_txn_callback(update, context):
         guard = await _ProofGuard.check(db, user, scan_id)
         if guard.error:
             await query.edit_message_text(guard.error)
+            return
+        if needs_amount_check(data) and not amount_confirmed:   # total kurang yakin: tanya dulu, belum dicatat
+            text, markup = amount_question(txn_key, env_idx, data, envelope)
+            await query.edit_message_text(text, reply_markup=markup)
             return
 
         # Aturan yang sama dengan web (app/services/expense_rules.py)
@@ -1865,6 +1871,7 @@ def bot_callbacks() -> list:
         (r"^k[nxdo]_", handle_kotak_callback),
         (r"^kt_", handle_date_callback),
         (r"^t_", handle_txn_callback),
+        (r"^ky_", handle_txn_callback),   # "Ya, catat" nominal kurang yakin (receipt_cmd.amount_question)
         (r"^batch_", handle_batch_callback),
         (r"^bshift_", handle_batch_shift_callback),
         (r"^blimit_", handle_batch_limit_callback),

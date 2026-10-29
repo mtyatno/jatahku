@@ -216,8 +216,17 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   dilewati, kunci amplop, kuota, dan amplop tabungan tetap memblokir ("Tercatat di periode …; sisa periode sekarang
   tidak berubah."). Tanggal yang belum lewat dianggap salah baca: dicatat hari ini dengan satu baris keterangan.
   Pesan sukses yang tanggalnya bukan hari ini menyebut tanggal itu (`· 📅 26 Okt`).
-- Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, dan untuk jawaban
-  tanggal `date_answered` dan `past_period` (selama menunggu jawaban juga teks bacaan dan label tombol amplopnya).
+- **Nominal kurang yakin** (Task H3): total `rendah` (struk/tidak dikenali: `item.confidence`; QRIS/transfer:
+  `document.confidence.total`) → ketukan amplop (`t_`) belum mencatat; pesannya menjadi "Nominal {Rp} belum pasti —
+  cek dengan {struk|bukti}. Sudah benar?" dengan **✅ Ya, catat ke {emoji} {amplop}** (`ky_{key}_{idx}`, jalur catat
+  yang sama: cek bukti, cek dana/geser dana, limit harian, aturan periode lalu), **✏️ Nominal salah** (`struk_fix_`,
+  ketik manual; nominal ketikan dicatat tanpa pertanyaan lagi; untuk QRIS/transfer contohnya netral "`bakso 25000`",
+  tanpa teks scan struk), dan **❌ Batal** (`struk_no_`). Pertanyaan tanggal
+  datang lebih dulu, pertanyaan nominal saat amplop diketuk. Bot tidak memecah struk per barang, jadi satu
+  pertanyaan sebelum satu-satunya pencatatan. `tinggi`/`sedang` tetap satu ketukan.
+- Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, `confidence`
+  (keyakinan total) dan `noun` (`struk`/`bukti`), dan untuk jawaban tanggal `date_answered` dan `past_period` (selama
+  menunggu jawaban juga teks bacaan dan label tombol amplopnya).
 - Route foto chat web (`/bot/chat/photo`) hanya menerima gambar (415 untuk PDF); PDF dari web masuk lewat tombol PDF
   di form Catat dan share target PWA, keduanya hanya saat saklar menyala (lihat "Web dan PWA").
 

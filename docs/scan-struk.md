@@ -93,6 +93,11 @@ rincian yang cocok asalkan tidak dibantah pembayaran, baris totalnya berlabel
 kuat (TOTAL, GRAND TOTAL, TOTAL BAYAR, …; bukan SUBTOTAL atau label lemah seperti
 JUMLAH), dan tidak ada pajak/servis setelah TOTAL.
 Tanpa baris TOTAL: total = Σ barang, keyakinan `rendah`.
+**Angka ID bukan nominal** (`amounts_in`): angka yang disambung, menempel atau lewat "-", ke kode campuran
+huruf+digit ≥ 3 karakter ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke
+segmen lain, dilewati. Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML"), kode pajak dua
+karakter ("12500B1"), dan pengali "3.500x12" tetap nominal. Kasus produksi 2026-10-28: bukti QRIS Jago Syariah
+Rp19.000 sempat terbaca Rp261.026.
 `confidence_source`: `payment` | `items` | `items_sum`.
 
 **Respons API** (tambahan): `items[]` (name, qty, unit_price, amount, discount,
@@ -131,6 +136,11 @@ selisih. Tiap barang bisa memilih amplop sendiri (default: amplop struk).
 **Bot.** Ringkas: daftar barang (maks 12 baris + 5 penyesuaian, ≤ 2.500 karakter)
 dan status cocok/selisih. Kalau selisih, bot menyarankan koreksi & pecah amplop di
 webapp; bot tetap mencatat total sebagai satu transaksi.
+
+**Bot: nominal kurang yakin.** Total berkeyakinan `rendah` (struk/tidak dikenali: `confidence`; bukti:
+`document.confidence.total`) tidak langsung dicatat dengan satu ketukan amplop: bot bertanya "Nominal Rp19.000
+belum pasti — cek dengan struk. Sudah benar?" (bukti: "cek dengan bukti") dengan **✅ Ya, catat ke {amplop}**,
+**✏️ Nominal salah**, dan **❌ Batal**. Detail di [`kotak-struk.md`](kotak-struk.md) bagian "Kanal".
 
 **Bot: tanggal struk.** Transaksi bertanggal struk. Bila tanggal itu sebelum awal periode
 anggaran berjalan, bot bertanya dulu "Catat untuk tanggal berapa?": **Hari ini** (cek dana,
@@ -187,6 +197,10 @@ Supaya "Simpan" lagi tidak mencatat dua kali:
   `rendah`, jenisnya tetap `tidak_dikenali` (spec 6a): sekali dicatat (klaim eksklusif), tanpa rincian barang,
   tanpa teks OCR, tanpa data belajar struk. Rincian, kutipan baris, dan nama yang memuat deret digit sepanjang
   nomor rekening (>= 8 digit) tidak dibawa; teks yang terbaca sebagai bukti bayar tetap tanpa peta merchant.
+  Dengan baris "Rp": total = nominal Rp terbesar, tanggal dari tebakan `parse_receipt` hanya bila teksnya mencetak
+  tepat satu tanggal (bukti yang dulu terbaca sebagai struk, mis. QRIS Jago Syariah, tetap bertanggal untuk
+  pertanyaan tanggal periode lalu; dua tanggal atau lebih, mis. berita, masa berlaku, jatuh tempo, periode tagihan,
+  nomor bertitik "12.10.26" → tanpa tanggal, dicatat hari ini), tanpa nama.
 
 ## Belajar dari koreksi (tanpa LLM)
 
@@ -267,6 +281,8 @@ Deploy otomatis **tidak** meng-install paket Python, jadi sebelum/sesudah merge:
   belum selesai per user; terlewati → 429 ("Terlalu banyak bukti. Coba lagi sebentar." / "Masih ada
   bukti yang sedang dibaca. Tunggu sebentar."), di bot pesan itu menggantikan "Membaca bukti…". Bot tidak
   punya batas scan sendiri lagi (batas 30 pesan/menit untuk pesan teks tetap).
+- ID transaksi berupa angka polos yang hanya disambung huruf ("TRX 20261026ABCD") masih terbaca sebagai nominal;
+  menunggu contoh bukti asli (A14, profil Jago). Nominal seperti itu berkeyakinan `rendah`, jadi bot menanyakannya dulu.
 - **Kuota scan dihapus** (semua paket). `GET /transactions/scan-receipt/quota` tetap ada untuk klien
   lama: `{limit: null, used, remaining: null}` (`used` = scan bulan ini yang totalnya terbaca, di
   zona waktu user).

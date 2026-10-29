@@ -16,6 +16,12 @@ Tanggal dokumen sebelum awal periode anggaran berjalan user (Task H1): tombol am
 tanggal berapa?" (`kt_{key}_h` hari ini, `kt_{key}_d` tanggal dokumen, `handle_date_callback`). Jawabannya mengubah
 payload yang sama: "date" hari ini, atau "past_period" (dicatat di tanggal dokumen tanpa geser dana dan limit
 harian); keduanya "date_answered". Tanggal yang belum lewat (salah baca) langsung dicatat hari ini.
+
+Nominal kurang yakin (Task H3): payload menyimpan "confidence" (keyakinan total: struk `item.confidence`, bukti
+`document.confidence.total`) dan "noun" ("struk"/"bukti"). Total `rendah` → ketukan amplop belum mencatat, pesannya
+menjadi pertanyaan `amount_question` (handlers._handle_txn_callback): "Ya, catat ke ..." (`ky_{key}_{idx}`, jalur catat
+yang sama dengan `t_`), "Nominal salah" (`struk_fix_`), "Batal" (`struk_no_`). Bot tidak memecah struk per barang
+(itu di webapp), jadi satu pertanyaan sebelum satu-satunya pencatatan.
 """
 import asyncio
 import json
@@ -63,6 +69,7 @@ MSG_NOTE_LATE = "⚠️ Bukti ini sudah diproses, catatannya tidak ditambahkan."
 NOTE_LOCK_TRIES = 20      # catatan menunggu kunci sesi tombol (tombol amplop/tanggal yang sedang diproses) ...
 NOTE_LOCK_WAIT_S = 0.1    # ... paling lama 20 × 0,1 detik
 MSG_SESSION_EXPIRED = "⏰ Session expired. Kirim ulang."
+MSG_FIX_PROOF = "✏️ Oke, ketik manual nominal yang benar, misalnya:\n`bakso 25000`"   # "Nominal salah" bukti bayar
 MSG_NO_ENVELOPE = "Belum ada amplop. Ketik /template untuk buat."
 ASK_ENVELOPE = "Masuk ke amplop mana?"
 
@@ -73,6 +80,11 @@ DATE_SET = "📅 Dicatat untuk {day}"
 BTN_DATE_TODAY = "📅 Hari ini ({day})"
 BTN_DATE_DOC = "📅 {day}"
 DATE_ANSWERED = "date_answered"   # payload `txn:{key}`: pertanyaan tanggal sudah dijawab
+
+# Nominal kurang yakin (Task H3): ditanya saat tombol amplop diketuk, sebelum dicatat.
+ASK_AMOUNT = "Nominal {amount} belum pasti — cek dengan {noun}. Sudah benar?"
+BTN_AMOUNT_OK = "✅ Ya, catat ke {emoji} {name}"
+AMOUNT_OK = "ky"                  # callback `ky_{key}_{idx}`: nominal dikonfirmasi, catat ke amplop idx
 TXN_LOCK = "txnlock:{}"           # kunci sesi tombol yang sama dengan tombol amplop (handlers.handle_txn_callback)
 
 PROOF_LABEL = {"qris": "QRIS", "transfer": "Transfer"}
@@ -373,6 +385,25 @@ def _second_row(payload: dict) -> list:
             InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{scan_id}")]
 
 
+def needs_amount_check(payload: dict) -> bool:
+    """Total dokumen ini kurang yakin: ketukan amplop ditanya dulu (`amount_question`)."""
+    return payload.get("confidence") == "rendah"
+
+
+def amount_question(key: str, env_idx: str, payload: dict, envelope) -> tuple[str, InlineKeyboardMarkup]:
+    """Pertanyaan nominal kurang yakin untuk amplop yang diketuk: "Ya, catat ke {amplop}" (`ky_{key}_{idx}`),
+    "Nominal salah" (`struk_fix_`, catat manual), dan "Batal" (`struk_no_`)."""
+    amount = "Rp" + f"{int(payload['amount']):,}".replace(",", ".")
+    text = ASK_AMOUNT.format(amount=amount, noun=payload.get("noun") or "struk")
+    rows = [[InlineKeyboardButton(BTN_AMOUNT_OK.format(emoji=envelope.emoji or "📁", name=envelope.name),
+                                  callback_data=f"{AMOUNT_OK}_{key}_{env_idx}")]]
+    scan_id = payload.get("scan_id")
+    if scan_id:
+        rows.append([InlineKeyboardButton("✏️ Nominal salah", callback_data=f"struk_fix_{scan_id}"),
+                     InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{scan_id}")])
+    return text, InlineKeyboardMarkup(rows)
+
+
 def _envelope_reply(key: str, payload: dict, reading: str, labels: list[str],
                     line: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
     """Pesan tombol amplop: teks bacaan (+ `line` tanggal), "Masuk ke amplop mana?", satu tombol per amplop (`t_{key}_{i}`,
@@ -460,6 +491,7 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
         "amount": int(total), "desc": merchant,
         "envs": {str(i): str(e["envelope"].id) for i, e in enumerate(envs)},
         "date": result.get("date"), "scan_id": result.get("scan_id"),
+        "confidence": result.get("confidence"), "noun": "struk",
     }
     labels = []
     for e in envs:
@@ -506,6 +538,7 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
         "envs": {str(i): str(e["envelope"].id) for i, e in enumerate(envs)},
         "date": paid.date().isoformat() if paid else None, "scan_id": item_id,
         "kind": "proof", "item_id": item_id, "note": note,
+        "confidence": ((detail.get("document") or {}).get("confidence") or {}).get("total"), "noun": "bukti",
     }
     if prompt in ("skip", "soft"):   # tawaran lewati dulu; tanggal ditanyakan sesudah "Tetap catat"/"Beda, catat"
         await _save_payload(key, payload)
@@ -919,6 +952,7 @@ async def handle_struk_callback(update, context):
         user = await get_or_create_user(str(update.effective_user.id), update.effective_user.first_name, db)
         item = await db.get(ReceiptScan, item_id) if item_id is not None else None
         kotak = item is not None and item.status is not None
+        proof = item is not None and item.doc_type in PROOF_TYPES
         store = item is None or item.doc_type == record.STORE_RECEIPT or item.status is None
         try:
             if kotak:
@@ -927,7 +961,9 @@ async def handle_struk_callback(update, context):
                 await apply_feedback(user, scan_id, db, saved=False, wrong=(action == "fix"))
         except Exception as exc:  # best-effort
             logger.warning("feedback struk gagal: %s", exc)
-    if action == "fix":
+    if action == "fix" and proof:
+        await query.edit_message_text(MSG_FIX_PROOF, parse_mode="Markdown")
+    elif action == "fix":
         await query.edit_message_text(
             "✏️ Oke, ketik manual nominal yang benar, misalnya:\n`indomaret 140500`\n\n"
             "Laporan ini membantu scan struk makin akurat 🙏", parse_mode="Markdown")

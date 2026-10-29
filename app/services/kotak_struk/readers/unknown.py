@@ -11,7 +11,7 @@ from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
-from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt
+from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt, printed_dates
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -48,10 +48,21 @@ class UnknownReader:
                 return guess
         total = max(amounts) if amounts else None
         evidence = ["Jenis bukti tidak dikenali"]
+        paid_at = None
         if total is not None:
             evidence.append("Total ditebak dari nominal Rp terbesar")
+            # Tanggal tetap tebakan scan struk lama (seperti `_legacy_guess`): bukti yang dulu terbaca sebagai struk (mis.
+            # QRIS Jago Syariah, Task H3) tetap bertanggal, jadi pertanyaan tanggal periode lalu (H1) tetap ada. Hanya
+            # bila tercetak tepat satu tanggal: tanggal pertama bisa tanggal berita, masa berlaku, jatuh tempo, periode,
+            # atau nomor referensi bertitik. Nama tebakannya tidak dibawa: di teks dengan baris Rp itu biasanya
+            # judul/label ("Foto Buram", "Merchant").
+            rp = parse_receipt(doc.lines, ctx.today, merchant_aliases=ctx.merchant_aliases,
+                               merchant_profiles=ctx.merchant_profiles)
+            if len(printed_dates(rp.lines)) == 1:
+                _, paid_at = self._legacy_meta(rp)
         return Parsed(doc=DokumenBayar(
             doc_type="tidak_dikenali",
+            paid_at=paid_at,
             amounts=Amounts(total=total),
             confidence={"total": "rendah"} if total is not None else {},
             evidence=evidence,
@@ -68,10 +79,7 @@ class UnknownReader:
                            merchant_profiles=ctx.merchant_profiles)
         if not rp.total:
             return None
-        name = rp.merchant
-        if name and sum(c.isdigit() for c in name) >= MIN_ACCOUNT_DIGITS:
-            name = None
-        paid_at = datetime(rp.date.year, rp.date.month, rp.date.day, tzinfo=WIB) if rp.date else None
+        name, paid_at = self._legacy_meta(rp)
         return Parsed(doc=DokumenBayar(
             doc_type="tidak_dikenali",
             paid_at=paid_at,
@@ -80,6 +88,16 @@ class UnknownReader:
             confidence={"total": "rendah"},
             evidence=["Jenis bukti tidak dikenali", "Total ditebak dari teks tanpa baris Rp"],
         ))
+
+    @staticmethod
+    def _legacy_meta(rp: ReceiptParse) -> tuple[str | None, datetime | None]:
+        """(nama merchant, tanggal) tebakan `parse_receipt`; nama yang memuat deret digit sepanjang nomor rekening
+        dibuang (teks yang tidak dikenali bisa memuat rekening/telepon)."""
+        name = rp.merchant
+        if name and sum(c.isdigit() for c in name) >= MIN_ACCOUNT_DIGITS:
+            name = None
+        paid_at = datetime(rp.date.year, rp.date.month, rp.date.day, tzinfo=WIB) if rp.date else None
+        return name, paid_at
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []

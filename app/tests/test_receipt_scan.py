@@ -137,6 +137,57 @@ SUBTOTAL 70.000"""
         self.assertEqual(p.merchant, "Indomaret")
 
 
+# Perkiraan baris OCR bukti QRIS Jago Syariah (produksi 2026-10-28: Rp19.000 tercatat Rp261.026 dari ID transaksi).
+JAGO_ID_DASH = ["Jago Syariah", "RM AJO PIAMAN", "936001189020026", "Rp19.000", "ID Transaksi", "261026-4RL9-PVRERW",
+                "Sumber dana", "Nomor Akun", "5038389468011", "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB",
+                "Nama Acquirer", "Bank Nagari", "Status", "Sukses", "ID Terminal", "A01"]
+JAGO_ID_GLUED = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
+                 "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses", "ID Terminal", "A01"]
+
+
+class TestTransactionIdDigits(unittest.TestCase):
+    """Task H3: angka ID transaksi bukan nominal; tebakan "nominal terbesar" tanpa label tetap seperti semula."""
+    TODAY = date(2026, 10, 28)
+
+    def test_transaction_id_digits_are_not_amounts(self):
+        for line in ("261026-4RL9-PVRERW", "2610264RL9-PVRERW", "ID Transaksi 2610264RL9PVRERW",
+                     "ID Transaksi 261026-4RL9-PVRERW", "Ref 202610-26AB", "261026-PVRERW", "Ref 12500-A1B"):
+            with self.subTest(line):
+                self.assertEqual(amounts_in(line), [])
+
+    def test_tax_letters_and_units_glued_to_prices_stay_amounts(self):
+        self.assertEqual(amounts_in("ROTI TAWAR 12.500A"), [12500])
+        self.assertEqual(amounts_in("SUSU UHT 15.000 A"), [15000])
+        self.assertEqual(amounts_in("KOPI 8.500B"), [8500])
+        self.assertEqual(amounts_in("GULA 125000A"), [125000])
+        self.assertEqual(amounts_in("KOPI 3.500x2"), [3500])   # pengali jumlah, bukan kode
+        self.assertEqual(amounts_in("KOPI 3.500x12"), [3500])
+        self.assertEqual(amounts_in("ROTI 12500B1"), [12500])   # kode pajak dua karakter huruf+digit
+        self.assertEqual(amounts_in("SUSU 8500P2"), [8500])
+        self.assertEqual(amounts_in("Telp 1500-280"), [1500])  # seperti sebelumnya (angka < 6 digit)
+        self.assertEqual(amounts_in("AQUA 600ML 2 3800 7,600"), [600, 3800, 7600])   # seperti sebelumnya
+        p = parse_receipt(["TOKO MAJU", "ROTI TAWAR 12.500A", "SUSU UHT 15.000 A", "TOTAL 27.500", "TUNAI 27.500"],
+                          today=self.TODAY)
+        self.assertEqual((p.total, p.confidence), (27500, "tinggi"))
+
+    def test_jago_qris_total_is_the_rp_amount_not_the_transaction_id(self):
+        for name, lines in (("ID-dash", JAGO_ID_DASH), ("ID-glued", JAGO_ID_GLUED)):
+            with self.subTest(name):
+                p = parse_receipt(lines, today=self.TODAY)
+                self.assertEqual((p.total, p.confidence), (19000, "rendah"), p.evidence)
+
+    def test_untitled_total_with_an_rp_adjustment_line_is_unchanged(self):
+        """Tanpa baris TOTAL, baris pajak/servis/kembalian bertanda Rp bukan totalnya (nilai sama dengan bc4572e)."""
+        for lines, expect in (
+                (["RESTO", "NASI GORENG 30.000", "ES JERUK 10.000", "PPN Rp 4.000", "44.000"], (44000, "sedang")),
+                (["CAFE", "LATTE 35.000", "CROISSANT 28.000", "Service Rp 3.150", "66.150"], (66150, "sedang")),
+                (["TOKO", "KOPI 25.000", "ROTI 20.000", "Kembalian Rp 5.000"], (45000, "rendah")),
+                (["TOKO", "KOPI Rp 25.000", "ROTI 20.000", "45.000"], (45000, "sedang"))):
+            with self.subTest(lines[0] + " " + lines[-2]):
+                p = parse_receipt(lines, today=self.TODAY)
+                self.assertEqual((p.total, p.confidence), expect, p.evidence)
+
+
 class TestReceiptItems(unittest.TestCase):
     """Rincian barang: Σ barang − diskon + pajak harus = total struk."""
     TODAY = date(2026, 10, 14)

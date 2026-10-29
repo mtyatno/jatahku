@@ -225,6 +225,23 @@ def _is_label_line(up: str) -> bool:
 # ── Nominal ─────────────────────────────────────────────────────────────────
 
 _AMOUNT_RE = re.compile(r"(?:RP\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{2}))?(?!\d)", re.I)
+# Sambungan token sesudah angka: huruf/digit yang menempel, atau sesudah satu "-" ("2610264RL9", "261026-4RL9").
+_TOKEN_TAIL = re.compile(r"(-?)([A-Za-z0-9]+)")
+_QTY_TAIL = re.compile(r"[xX]\d+")   # "3.500x12": pengali jumlah, bukan kode
+
+
+def _id_digits(raw: str, rest: str) -> bool:
+    """Angka ini bagian ID/kode transaksi, bukan nominal: sambungannya kode campuran huruf+digit ≥ 3 karakter
+    ("261026-4RL9-PVRERW", "2610264RL9"), atau angka polos ≥ 6 digit yang disambung "-" ke segmen lain
+    ("261026-PVRERW"). Huruf pajak/satuan yang menempel ke harga ("12.500A", "8.500B", "600ML") dan kode pajak dua
+    karakter ("12500B1") tetap nominal."""
+    m = _TOKEN_TAIL.match(rest)
+    if not m:
+        return False
+    dash, run = m.groups()
+    if len(run) >= 3 and re.search(r"[A-Za-z]", run) and re.search(r"\d", run) and not _QTY_TAIL.fullmatch(run):
+        return True
+    return bool(dash) and raw.isdigit() and len(raw) >= 6
 
 
 def amounts_in(line: str) -> list[int]:
@@ -236,6 +253,8 @@ def amounts_in(line: str) -> list[int]:
         after = line[m.end():m.end() + 1]
         if before in ("/", "-") or before.isalpha() or after in ("/", ":"):
             continue  # bagian tanggal/jam/kode: 14.10.26-19:21/3.0.27/THTV-363626
+        if _id_digits(raw, line[m.end():]):
+            continue  # ID transaksi: 261026-4RL9-PVRERW, 2610264RL9
         value = int(re.sub(r"[.,]", "", raw))
         if value < MIN_AMOUNT or value > MAX_AMOUNT:
             continue  # < Rp100 biasanya qty/kode
@@ -287,6 +306,24 @@ def find_date(lines: list[str], today: date, max_age_days: int = 366) -> date | 
                 if dt:
                     return dt
     return None
+
+
+def printed_dates(lines: list[str]) -> set[date]:
+    """Semua tanggal kalender sah yang tercetak (pola `find_date`, berapa pun umurnya), tanpa duplikat."""
+    found = set()
+    for line in lines:
+        up = line.upper()
+        for pat, conv in _DATE_PATTERNS:
+            for m in pat.finditer(up):
+                parts = conv(m)
+                if not parts:
+                    continue
+                d, mo, y = parts
+                try:
+                    found.add(date(y + 2000 if y < 100 else y, mo, d))
+                except ValueError:
+                    pass
+    return found
 
 
 # ── Toko ────────────────────────────────────────────────────────────────────
