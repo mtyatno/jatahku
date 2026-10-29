@@ -37,9 +37,11 @@ export function docTypeLine(stats) {
   return rows ? rows.map(r => `${r.label} ${r.count}`).join(' · ') : null;
 }
 
-// Satu baris per penerbit (`by_issuer`; kunci toko seperti indomaret juga muncul di sini): label ISSUER_LABEL atau
-// kunci aslinya, total, tercatat (`recorded`), dikoreksi (`corrected`), dan % dikoreksi = Math.round(100 × dikoreksi /
-// tercatat) + "%" ("–" bila belum ada yang tercatat). Urut total terbanyak, lalu label (lalu kunci).
+// Satu baris per penerbit (`by_issuer`): label ISSUER_LABEL, total, tercatat (`recorded`), dikoreksi (`corrected`), dan
+// % dikoreksi = Math.round(100 × dikoreksi / tercatat) + "%" ("–" bila belum ada yang tercatat). Urut total terbanyak,
+// lalu label (lalu kunci). Hari ini `issuer` hanya diisi pembaca QRIS dan transfer (server readers/qris.py,
+// readers/transfer.py) dari 12 profil aplikasi yang semuanya punya label di ISSUER_LABEL; struk belanja tidak punya
+// penerbit. Kunci asli sebagai label hanya jaga-jaga untuk profil baru yang belum diberi label di klien.
 // → [{ key, label, total, recorded, corrected, correctedPct }] atau null tanpa `by_issuer`.
 export function issuerRows(stats) {
   const map = stats?.by_issuer;

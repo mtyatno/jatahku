@@ -60,35 +60,38 @@ async function settle(load, fallback) {
 //   loadUnsent() → entri kotak share (shareStore().all()); ditolak/melempar (IndexedDB rusak) → 0, tidak pernah lolos;
 //   loadReady()  → api.kotakPendingCount(): angka, atau null bila gagal → angka terakhir yang diketahui (awalnya 0);
 //   onCounts({ unsent, ready }) → hasil untuk ditampilkan.
-// refresh() boleh dipanggil kapan saja dan bertumpuk (pemicu bisa datang bersamaan; tidak ada batas waktu permintaan,
-// jadi hitung ulang baru tidak menunggu yang lama). Setiap angka berasal dari hitung ulang TERBARU yang membawanya:
-// jawaban yang lebih lama tidak pernah menimpa yang lebih baru. stop(): hasil yang masih berjalan diabaikan dan
-// refresh() berikutnya tidak membaca apa pun (saklar dimatikan / banner dilepas).
+// Tiap angka tampil begitu bacaannya sendiri selesai, tanpa menunggu yang lain: COUNT yang lambat atau macet (tidak ada
+// batas waktu permintaan) tidak menahan jumlah lokal, dan IndexedDB yang macet tidak menahan angka server. Teksnya bisa
+// berganti dua kali berturut-turut. refresh() boleh dipanggil kapan saja dan bertumpuk (hitung ulang baru tidak
+// menunggu yang lama); setiap angka berasal dari hitung ulang TERBARU yang membawanya: jawaban yang lebih lama tidak
+// pernah menimpa yang lebih baru. stop(): hasil yang masih berjalan diabaikan dan refresh() berikutnya tidak membaca apa
+// pun (saklar dimatikan / banner dilepas). → janji yang selesai saat kedua bacaan selesai (macet → tidak pernah).
 export function createPendingCounter({ loadUnsent, loadReady, onCounts }) {
   let started = 0;
   let unsentFrom = 0;
   let readyFrom = 0;
   let counts = NO_COUNTS;
   let stopped = false;
+  const show = (patch) => {
+    counts = { ...counts, ...patch };
+    onCounts(counts);
+  };
   return {
     async refresh() {
       if (stopped) return;
       const mine = ++started;
-      const [entries, ready] = await Promise.all([settle(loadUnsent, []), settle(loadReady, null)]);
-      if (stopped) return;
-      let next = counts;
-      if (mine > unsentFrom) {
-        unsentFrom = mine;
-        next = { ...next, unsent: Array.isArray(entries) ? entries.length : 0 };
-      }
-      const known = Number.isSafeInteger(ready) && ready >= 0;
-      if (known && mine > readyFrom) {
-        readyFrom = mine;
-        next = { ...next, ready };
-      }
-      if (next === counts) return;
-      counts = next;
-      onCounts(counts);
+      await Promise.all([
+        settle(loadUnsent, []).then((entries) => {
+          if (stopped || mine <= unsentFrom) return;
+          unsentFrom = mine;
+          show({ unsent: Array.isArray(entries) ? entries.length : 0 });
+        }),
+        settle(loadReady, null).then((ready) => {
+          if (stopped || !(Number.isSafeInteger(ready) && ready >= 0) || mine <= readyFrom) return;
+          readyFrom = mine;
+          show({ ready });
+        }),
+      ]);
     },
     stop() {
       stopped = true;

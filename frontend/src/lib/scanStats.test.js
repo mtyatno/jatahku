@@ -70,7 +70,8 @@ test('issuerRows: % dikoreksi = Math.round(100 × dikoreksi / tercatat), "–" t
   assert.equal(pct(3, 0), '0%');
   assert.equal(pct(0, 0), '–');
   assert.equal(pct(0, 2), '–');
-  // Struk belanja: koreksi dihitung dari umpan balik form Catat, bisa melebihi yang tercatat lewat kotak → apa adanya.
+  // Tidak terjadi dengan data hari ini: untuk QRIS/transfer server menghitung koreksi hanya pada bukti yang tercatat
+  // (dikoreksi ≤ tercatat). Jaga-jaga bila kelak pembaca lain mengisi penerbit: angkanya tampil apa adanya, tanpa dipotong.
   assert.equal(pct(2, 3), '150%');
 });
 

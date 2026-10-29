@@ -11,6 +11,10 @@ function deferred() {
   const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+const pushDeferred = (list) => { const d = deferred(); list.push(d); return d.promise; };
+const never = () => new Promise(() => {});
+const flush = () => new Promise(r => setTimeout(r, 0));
+const entriesOf = k => Array.from({ length: k }, (_, i) => ({ id: `e${i}` }));
 
 test('receiptInboxOn: banner dan tips hanya bila features.receipt_inbox === true', () => {
   assert.equal(receiptInboxOn({ features: { receipt_inbox: true } }), true);
@@ -70,11 +74,77 @@ test('createPendingCounter: unsent = jumlah entri kotak share, ready = angka ser
     onCounts: c => seen.push(c),
   });
   await counter.refresh();
-  assert.deepEqual(seen, [{ unsent: 2, ready: 3 }]);
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 3 });
   entries = [];
   ready = 0;
   await counter.refresh();
   assert.deepEqual(seen.at(-1), { unsent: 0, ready: 0 });
+});
+
+test('createPendingCounter: tiap angka tampil begitu bacaannya sendiri selesai, tanpa menunggu yang lain', async () => {
+  const seen = [];
+  const reads = { unsent: [], ready: [] };
+  const counter = createPendingCounter({
+    loadUnsent: () => pushDeferred(reads.unsent),
+    loadReady: () => pushDeferred(reads.ready),
+    onCounts: c => seen.push(c),
+  });
+  const first = counter.refresh();
+  reads.unsent[0].resolve(entriesOf(2));   // IndexedDB lebih dulu: jumlah lokal langsung tampil
+  await flush();
+  assert.deepEqual(seen, [{ unsent: 2, ready: 0 }]);
+  reads.ready[0].resolve(3);
+  await first;
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 3 });
+  const second = counter.refresh();
+  reads.ready[1].resolve(5);               // server lebih dulu: angka server langsung tampil
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 5 });
+  reads.unsent[1].resolve(entriesOf(1));
+  await second;
+  assert.deepEqual(seen.at(-1), { unsent: 1, ready: 5 });
+});
+
+test('createPendingCounter: COUNT yang tidak pernah menjawab tidak menahan jumlah lokal; angka server terakhir tetap', async () => {
+  const seen = [];
+  let entries = entriesOf(2);
+  let hang = false;
+  const counter = createPendingCounter({
+    loadUnsent: async () => entries,
+    loadReady: () => (hang ? never() : Promise.resolve(3)),
+    onCounts: c => seen.push(c),
+  });
+  await counter.refresh();
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 3 });
+  hang = true;   // koneksi macet (sinyal ada, data tidak); api.request tanpa batas waktu
+  entries = entriesOf(4);
+  counter.refresh();
+  counter.refresh();
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 4, ready: 3 });
+  // Macet sejak awal (dipasang + online + pindah halaman): jumlah lokal tetap tampil.
+  const fresh = [];
+  const stuck = createPendingCounter({ loadUnsent: async () => entriesOf(2), loadReady: never, onCounts: c => fresh.push(c) });
+  stuck.refresh();
+  stuck.refresh();
+  stuck.refresh();
+  await flush();
+  assert.deepEqual(fresh.at(-1), { unsent: 2, ready: 0 });
+  assert.equal(bannerView({ enabled: true, pathname: '/', counts: fresh.at(-1) }).text, '2 bukti menunggu dikirim · Kirim');
+});
+
+test('createPendingCounter: IndexedDB yang tidak pernah selesai tidak menahan angka server', async () => {
+  const seen = [];
+  let ready = 3;
+  const counter = createPendingCounter({ loadUnsent: never, loadReady: async () => ready, onCounts: c => seen.push(c) });
+  counter.refresh();
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 0, ready: 3 });
+  ready = 5;
+  counter.refresh();   // pembukaan IndexedDB dipakai bersama satu halaman: bacaan berikutnya juga macet
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 0, ready: 5 });
+  assert.equal(bannerView({ enabled: true, pathname: '/', counts: seen.at(-1) }).text, '5 bukti menunggu dicatat · Tinjau');
 });
 
 test('createPendingCounter: server gagal (null) → angka terakhir yang diketahui; awalnya 0', async () => {
@@ -118,55 +188,73 @@ test('createPendingCounter: galat IndexedDB atau server (ditolak / melempar) tid
   assert.deepEqual(seen.at(-1), { unsent: 0, ready: 0 });
 });
 
+// Hitung ulang ke-k (mulai 1) membaca k entri lokal dan angka server 10·k, jadi asal tiap angka yang tampil terbaca dari
+// nilainya: "angka lama tidak pernah tampil sesudah yang lebih baru" = deret yang tampil tidak pernah turun.
 test('createPendingCounter: jawaban hitung ulang yang lebih lama tidak pernah menimpa yang lebih baru', async () => {
   const seen = [];
-  const pending = [];
-  let unsent = [{ id: 'lama' }];
+  const reads = { unsent: [], ready: [] };
   const counter = createPendingCounter({
-    loadUnsent: async () => unsent,
-    loadReady: () => { const d = deferred(); pending.push(d); return d.promise; },
+    loadUnsent: () => pushDeferred(reads.unsent),
+    loadReady: () => pushDeferred(reads.ready),
     onCounts: c => seen.push(c),
   });
-  const older = counter.refresh();
-  unsent = [];
-  const newer = counter.refresh();
-  pending[1].resolve(2);   // yang baru selesai lebih dulu
-  await newer;
-  pending[0].resolve(5);   // jawaban lama menyusul: dibuang
-  await older;
-  assert.deepEqual(seen, [{ unsent: 0, ready: 2 }]);
+  const local = k => reads.unsent[k - 1].resolve(entriesOf(k));
+  const server = (k, value = 10 * k) => reads.ready[k - 1].resolve(value);
 
-  // Urutan biasa (yang lama selesai lebih dulu): keduanya dipakai, yang baru terakhir.
-  const a = counter.refresh();
-  const b = counter.refresh();
-  pending[2].resolve(7);
-  await a;
-  pending[3].resolve(1);
-  await b;
-  assert.deepEqual(seen.slice(1), [{ unsent: 0, ready: 7 }, { unsent: 0, ready: 1 }]);
+  // 1 dan 2 bertumpuk; 2 selesai lebih dulu (kedua angkanya), jawaban 1 menyusul dan dibuang.
+  const r1 = counter.refresh();
+  const r2 = counter.refresh();
+  local(2);
+  server(2);
+  await r2;
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 20 });
+  local(1);
+  server(1);
+  await r1;
+  assert.deepEqual(seen.at(-1), { unsent: 2, ready: 20 });
 
-  // Yang baru gagal (null), yang lama menyusul dengan angka: angka server itu tetap lebih baru dari angka yang tampil
-  // (dimulai sesudahnya) → dipakai; jumlah lokal dari jawaban lama tetap dibuang.
-  unsent = [{ id: 'x' }];
-  const c = counter.refresh();
-  unsent = [];
-  const d = counter.refresh();
-  pending[5].resolve(null);
-  await d;
-  assert.deepEqual(seen.at(-1), { unsent: 0, ready: 1 });
-  pending[4].resolve(9);
-  await c;
-  assert.deepEqual(seen.at(-1), { unsent: 0, ready: 9 });
-  assert.equal(seen.length, 5);
-  // Lalu jawaban yang lebih lama lagi dari angka itu tidak pernah menimpanya.
-  const e = counter.refresh();
-  const f = counter.refresh();
-  pending[7].resolve(6);
-  await f;
-  pending[6].resolve(8);
-  await e;
-  assert.deepEqual(seen.at(-1), { unsent: 0, ready: 6 });
-  assert.equal(seen.length, 6);
+  // 3 lalu 4 selesai berurutan: keduanya dipakai, yang baru terakhir.
+  const r3 = counter.refresh();
+  const r4 = counter.refresh();
+  local(3);
+  server(3);
+  await r3;
+  assert.deepEqual(seen.at(-1), { unsent: 3, ready: 30 });
+  local(4);
+  server(4);
+  await r4;
+  assert.deepEqual(seen.at(-1), { unsent: 4, ready: 40 });
+
+  // 5 dan 6: COUNT 6 gagal (null) → angka server terakhir tetap; COUNT 5 menyusul dengan angka yang lebih baru dari
+  // yang tampil (40) → dipakai; jumlah lokal 5 lebih lama dari 6 → dibuang.
+  const r5 = counter.refresh();
+  const r6 = counter.refresh();
+  local(6);
+  server(6, null);
+  await r6;
+  assert.deepEqual(seen.at(-1), { unsent: 6, ready: 40 });
+  local(5);
+  server(5);
+  await r5;
+  assert.deepEqual(seen.at(-1), { unsent: 6, ready: 50 });
+
+  // 7 dan 8 bercampur: lokal 8, server 7, server 8, lalu lokal 7 (dibuang). Tiap angka tampil begitu terbaca.
+  const r7 = counter.refresh();
+  const r8 = counter.refresh();
+  local(8);
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 8, ready: 50 });
+  server(7);
+  await flush();
+  assert.deepEqual(seen.at(-1), { unsent: 8, ready: 70 });
+  server(8);
+  local(7);
+  await Promise.all([r7, r8]);
+  assert.deepEqual(seen.at(-1), { unsent: 8, ready: 80 });
+
+  const rising = xs => xs.every((x, i) => i === 0 || x >= xs[i - 1]);
+  assert.ok(rising(seen.map(c => c.unsent)) && rising(seen.map(c => c.ready)), JSON.stringify(seen));
+  assert.ok(!seen.some(c => [1, 5, 7].includes(c.unsent) || c.ready === 10), JSON.stringify(seen));
 });
 
 test('createPendingCounter: sesudah stop() tidak ada hasil, permintaan, atau baca IndexedDB lagi', async () => {
