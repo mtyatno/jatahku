@@ -252,16 +252,21 @@ test('clearSharesOnLogout: penghapusan macet → tetap pindah setelah batas wakt
   assert.equal(moved, 1);
 });
 
-test('clearSharesOnLogout: timer batas waktu dibersihkan begitu penghapusan selesai (tidak ada timer 2 dtk tertinggal)', async () => {
+test('clearSharesOnLogout: timer batas waktu tetap aktif selama penghapusan berjalan, dibersihkan sekali begitu selesai', async () => {
   const realClear = globalThis.clearTimeout;
   const cleared = [];
   globalThis.clearTimeout = (h) => { cleared.push(h); return realClear(h); };
   try {
     const handle = { timer: 'batas' }; // pegangan tiruan: mutan yang lupa membersihkan tidak menahan proses tes
     let moved = 0;
-    const ok = await clearSharesOnLogout({ revoke: true }, { makeStore: () => memStore(), next: () => { moved += 1; }, setTimer: () => handle });
-    assert.deepEqual([ok, moved], [true, 1]);
-    assert.deepEqual(cleared, [handle]);
+    let release;
+    const slow = { clear: () => new Promise((resolve) => { release = resolve; }) };
+    const p = clearSharesOnLogout({ revoke: true }, { makeStore: () => slow, next: () => { moved += 1; }, setTimer: () => handle });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual([cleared, moved], [[], 0], 'batas waktu tetap aktif selama penghapusan berjalan');
+    release();
+    assert.equal(await p, true);
+    assert.deepEqual([cleared, moved], [[handle], 1]);
   } finally {
     globalThis.clearTimeout = realClear;
   }
