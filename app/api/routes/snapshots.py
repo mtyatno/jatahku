@@ -1,13 +1,15 @@
 from datetime import date
 from uuid import UUID
 from decimal import Decimal
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
-from app.models.models import User, MonthlySnapshot, Envelope, HouseholdMember
+from app.core.period import get_period_for_month
+from app.models.models import User, MonthlySnapshot, Envelope, Household, HouseholdMember
+from app.services.household_cycle import household_payday, payday_context, recompute_history
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
 
 router = APIRouter()
@@ -75,25 +77,41 @@ async def run_monthly_snapshot(
     month: int = Query(None),
     force: bool = Query(False),
     user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Manually trigger snapshot for a budget period (admin/debug).
-    year/month refer to period_start year/month. Uses caller's payday_day to reconstruct period dates."""
-    import calendar
+    year/month refer to period_start year/month. Setiap household yang punya anggota dihitung dengan tanggal gajian
+    rumahnya sendiri (bukan tanggal si pemanggil), jadi periode tiap household bisa berbeda."""
     now = date.today()
     y = year or now.year
     m = month or now.month
-    payday = user.payday_day or 1
 
-    # Reconstruct the period whose start falls in y/m
-    last_day = calendar.monthrange(y, m)[1]
-    target_day = min(payday, last_day)
-    target_date = date(y, m, target_day)  # = period_start
+    households = (await db.execute(
+        select(Household).where(Household.id.in_(select(HouseholdMember.household_id)))
+    )).scalars().all()
 
-    from app.core.period import get_budget_period
-    period_start, period_end = get_budget_period(payday, target_date)
+    # Semua tanggal dihitung dulu, lalu pengisian tanggal rumah yang NULL (`household_payday` flush di sesi ini)
+    # di-commit sebelum snapshot dibuat: `create_monthly_snapshots` bekerja lewat sesinya sendiri dan tidak boleh
+    # berhadapan dengan UPDATE yang belum di-commit (kontrak yang sama dengan `household_cycle.recompute_history`).
+    plan = []
+    for h in households:
+        payday = await household_payday(db, h)
+        period_start, period_end = get_period_for_month(payday, y, m)
+        plan.append((h.id, period_start, period_end))
+    await db.commit()
 
-    result = await create_monthly_snapshots(period_start, period_end, force=force)
-    return {"period": f"{period_start} → {period_end}", **result}
+    out = []
+    for household_id, period_start, period_end in plan:
+        r = await create_monthly_snapshots(
+            period_start, period_end, force=force, household_ids=[household_id]
+        )
+        out.append({"household_id": str(household_id), "period": f"{period_start} → {period_end}", **r})
+    return {
+        "households": out,
+        "processed": sum(e["processed"] for e in out),
+        "snapshots_created": sum(e["snapshots_created"] for e in out),
+        "errors": [err for e in out for err in e["errors"]],
+    }
 
 @router.post("/recompute")
 async def recompute_snapshots(
@@ -101,26 +119,25 @@ async def recompute_snapshots(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Rebuild the last N closed snapshots for the caller's household, oldest-first
-    and with force=True, so the rollover chain is recomputed correctly end-to-end.
-    Repairs chains corrupted by missed snapshot runs."""
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
-    if not hid:
+    """Hitung ulang `periods` snapshot periode tertutup terakhir household pemanggil, oldest-first dan force=True,
+    dengan tanggal gajian rumah (bukan tanggal si pemanggil), supaya rantai rollover terbangun ulang dari ujung ke
+    ujung. Memperbaiki rantai yang rusak karena job snapshot terlewat.
+
+    Siklus milik rumah, jadi hanya yang boleh mengubahnya (owner/admin, atau member yang sendirian) yang boleh
+    menghitung ulang riwayat; member lain mendapat 403. Tanpa household tidak ada yang dihitung."""
+    ctx = await payday_context(db, user)
+    if ctx is None:
         return {"recomputed": 0, "periods": []}
-
-    from app.core.period import get_closed_periods
-    payday = user.payday_day or 1
-    closed = get_closed_periods(payday, date.today(), periods)
-
-    out = []
-    for period_start, period_end in closed:  # oldest-first → chain rebuilds in order
-        r = await create_monthly_snapshots(
-            period_start, period_end, force=True, household_ids=[hid]
+    if not ctx.can_change:
+        raise HTTPException(
+            status_code=403,
+            detail="Hanya owner atau admin rumah tangga yang bisa menghitung ulang riwayat.",
         )
-        out.append({"period": f"{period_start} → {period_end}", **r})
+    # `recompute_history` membaca lewat sesinya sendiri dan tidak boleh berhadapan dengan tulisan sesi ini yang belum
+    # di-commit: `payday_context` bisa mengisi tanggal rumah yang NULL (flush). Commit dulu (lihat docstring
+    # `household_cycle.recompute_history`).
+    await db.commit()
+    out = await recompute_history(ctx.household.id, periods)
     return {"recomputed": len(out), "periods": out}
 
 
