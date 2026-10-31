@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
             from app.services.ruang_schema import RUANG_DDL
             for stmt in RUANG_DDL:
                 await conn.execute(text(stmt))
+            # Siklus anggaran household (spec 2026-10-31): households.payday_day dan
+            # allocated/spent di monthly_snapshots, lalu backfill payday dari owner.
+            from app.services.household_cycle_schema import HOUSEHOLD_CYCLE_DDL
+            for stmt in HOUSEHOLD_CYCLE_DDL:
+                await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
     from app.services import email_service
     email_service.check_configured()
