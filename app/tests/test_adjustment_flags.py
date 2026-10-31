@@ -44,10 +44,12 @@ class AdjustmentFlagTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_incomes_flags_adjustment(self):
         from app.api.routes.incomes import list_incomes
         inc = SimpleNamespace(id=uuid.uuid4(), amount=D("200000"), description="Penyesuaian saldo",
-                              income_date=date(2026, 9, 30), created_at=NOW, balance_check_id=uuid.uuid4())
+                              income_date=date(2026, 9, 30), created_at=NOW, balance_check_id=uuid.uuid4(),
+                              kind="penyesuaian")
         db = db_with(FakeResult(HID), FakeResult(rows=[inc]), FakeResult(rows=[]))
         out = await list_incomes(period_start=date(2026, 9, 1), period_end=date(2026, 9, 30), user=USER, db=db)
         self.assertTrue(out[0]["is_adjustment"])
+        self.assertEqual(out[0]["kind"], "penyesuaian")
 
 
 if __name__ == "__main__":

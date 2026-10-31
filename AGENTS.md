@@ -211,6 +211,28 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
+## Deploy Checklist — Plugin R1: model ruang (1c7e5a9d3b20)
+Menambah `households.type` (bawaan `rumah_tangga`), `incomes.kind` (bawaan `pemasukan`) beserta backfill, dan unik
+`(user_id, household_id)` di `household_members`. Kolom **idempoten**: `lifespan` (`RUANG_DDL` di
+`app/services/ruang_schema.py`) menambahkannya saat restart pertama, jadi tidak ada jendela 500; backfill `kind` dan
+constraint hanya dijalankan migrasi, jadi migrasi tetap wajib. Tanpa paket, folder, atau `.env` baru. Detail:
+`docs/plugin/04-kontrak-api.md` bagian 0.
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart pertama menjalankan `ALTER TABLE households` dan `ALTER TABLE incomes` sebagai user DB aplikasi,
+   jadi `jatahku` harus pemilik (`bisa_alter` = t) `households`, `incomes`, dan `household_members`; kalau tidak, API
+   gagal start. Pakai query di checklist Kotak Struk dengan nama tabel itu di `IN (…)`.
+2. Keanggotaan ganda harus kosong, kalau tidak migrasi berhenti (tanpa menghapus apa pun) dan constraint tidak dibuat:
+   `sudo -u postgres psql jatahku_db -c "SELECT user_id, household_id, COUNT(*) FROM household_members GROUP BY 1, 2 HAVING COUNT(*) > 1"`
+   → 0 baris. Bila ada, rapikan manual dulu (sisakan satu baris per pasangan, utamakan peran tertinggi).
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+3. `ls /opt/jatahku/app/alembic/versions/ | grep 1c7e5a9d3b20`; `alembic current` harus `a7c4e2b9d1f3` sebelum upgrade.
+4. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
+   `1c7e5a9d3b20`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job deploy yang gagal.
+5. Verifikasi: `SELECT type, COUNT(*) FROM households GROUP BY 1` → hanya `rumah_tangga`;
+   `SELECT kind, COUNT(*) FROM incomes GROUP BY 1` → empat jenis masuk akal (transfer = baris bernominal 0);
+   `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
+   bot tetap jalan.
+
 ## Deploy Checklist — Kredensial SMTP dari `.env` (langkah 1–2 wajib SEBELUM merge)
 `app/services/email_service.py` tidak lagi memuat kredensial; semuanya dibaca dari `/opt/jatahku/.env`
 (`app/core/config.py`, `SMTP_*`). Tanpa `SMTP_PASSWORD`, **semua email berhenti** (reset password, konfirmasi hapus

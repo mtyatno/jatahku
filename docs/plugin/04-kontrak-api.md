@@ -12,6 +12,18 @@ Bentuk header dan endpoint baru supaya frontend dan backend bisa dikerjakan para
 6. **Galat.** Klien sekarang menampilkan `detail` sebagai teks, jadi `detail` tetap teks siap tampil. Galat baru menambah field `kode` untuk mesin: `{"detail": "Batas catatanmu Rp1.000.000. Catatan ini perlu disetujui admin.", "kode": "perlu_persetujuan"}`. Daftar kode di bagian 7.
 7. Data karyawan dibatasi di server: endpoint laporan (laba, kas, omzet, arus kas, saldo yang tidak diizinkan) menjawab 403 `khusus_admin` untuk peran `member`, termasuk lewat `/dashboard/data` dan ekspor.
 
+## 0. Field baru di endpoint inti (R1) — **v1 (R1, PR plugin/r1-model-ruang)**
+
+Hanya bertambah; field lama tidak berubah arti. Belum ada perilaku ruang: semua household lama dan baru bertipe `rumah_tangga`, dan endpoint lama tetap memakai satu keanggotaan per user sampai R2.
+
+| Endpoint | Field baru | Nilai |
+| --- | --- | --- |
+| `GET /household/` | `type` | `rumah_tangga` atau `usaha` (`households.type`; di `GET /ruang` bagian 2 field yang sama bernama `jenis`) |
+| `POST /incomes/` body | `kind` (opsional) | `pemasukan` (bawaan) atau `top-up`; nilai lain 422. `transfer` dan `penyesuaian` hanya ditulis server lewat geser dana, hapus amplop, dan cocokkan saldo |
+| `POST /incomes/` respons, `GET /incomes/` item | `kind` | `pemasukan`, `transfer`, `top-up`, atau `penyesuaian` (`incomes.kind`). Field lama `type` (`income`/`transfer`) dan `is_adjustment` tetap ada |
+
+Pemasukan lama diberi `kind` oleh migrasi `1c7e5a9d3b20`: `balance_check_id` terisi → `penyesuaian`; nominal 0 → `transfer`; keterangan `Top-up` atau diawali `Top-up ` → `top-up`; selain itu `pemasukan`. Jenis usaha (penjualan, modal pemilik, pinjaman, lain-lain) disimpan Buku Usaha di tabelnya sendiri (U1–U2), bukan di kolom ini.
+
 ## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3)
 
 Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`).

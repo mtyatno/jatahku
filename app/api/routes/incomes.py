@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
+from typing import Literal
+
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -39,6 +41,9 @@ class IncomeCreate(BaseModel):
     amount: Decimal
     source: str = "Gaji"
     allocations: list[AllocationItem] = []
+    # Klien hanya boleh menyatakan pemasukan biasa atau top-up amplop; transfer dan
+    # penyesuaian ditulis server lewat jalurnya sendiri (fund_shift, balance_check).
+    kind: Literal["pemasukan", "top-up"] = "pemasukan"
 
 
 class IncomeResponse(BaseModel):
@@ -47,6 +52,7 @@ class IncomeResponse(BaseModel):
     source: str
     allocations: list[dict] = []
     unallocated: Decimal = Decimal("0")
+    kind: str = "pemasukan"
 
 
 async def _get_hid(user: User, db: AsyncSession):
@@ -119,6 +125,7 @@ async def create_income(
         user_id=user.id,
         amount=req.amount,
         description=req.source,
+        kind=req.kind,
     )
     db.add(income)
     await db.flush()
@@ -156,6 +163,7 @@ async def create_income(
         source=income.description,
         allocations=alloc_details,
         unallocated=Decimal("0"),  # always 0 now — remainder goes to Tabungan
+        kind=income.kind,
     )
 
 
@@ -210,5 +218,6 @@ async def list_incomes(
             "allocations": allocs,
             "transfer": parse_transfer(allocs) if is_transfer else None,
             "is_adjustment": getattr(inc, "balance_check_id", None) is not None,
+            "kind": inc.kind,
         })
     return output

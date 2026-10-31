@@ -12,7 +12,7 @@ menghitung saldo: POST /envelopes/transfer, POST /advisor/execute, geser dana di
 """
 from decimal import Decimal
 
-from app.models.models import Allocation, Income
+from app.models.models import Allocation, Income, IncomeKind
 
 # Berapa banyak amplop sumber yang ditawarkan sebagai tombol di Telegram.
 MAX_SOURCES = 4
@@ -98,6 +98,7 @@ def record_transfer(db, household_id, user_id, from_env, to_env, amount: Decimal
         user_id=user_id,
         amount=Decimal("0"),  # net nol — bukan pemasukan
         description=f"Transfer: {from_env.name} → {to_env.name}",
+        kind=IncomeKind.TRANSFER,
     )
     db.add(income)
     db.add(Allocation(income_id=income.id, envelope_id=from_env.id, amount=-amount))
@@ -121,6 +122,7 @@ def record_topup(db, household_id, user_id, env, amount: Decimal) -> Income:
         user_id=user_id,
         amount=Decimal(amount),
         description=topup_description(env),
+        kind=IncomeKind.TOPUP,
     )
     db.add(income)
     db.add(Allocation(income_id=income.id, envelope_id=env.id, amount=Decimal(amount)))

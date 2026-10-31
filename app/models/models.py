@@ -37,6 +37,28 @@ class PurposeType(str, enum.Enum):
     debt = "debt"
 
 
+# Nilai kolom String (bukan SAEnum, supaya nilai baru tidak butuh migrasi enum).
+class HouseholdType:
+    """`households.type` — ruang keluarga atau ruang usaha (ADR-P1, docs/plugin)."""
+    RUMAH_TANGGA = "rumah_tangga"
+    USAHA = "usaha"
+    ALL = (RUMAH_TANGGA, USAHA)
+
+
+class IncomeKind:
+    """`incomes.kind` — membedakan pemasukan sungguhan dari gerakan internal.
+
+    transfer: geser dana antar-amplop (nominal 0); top-up: pemasukan baru yang
+    langsung mengisi satu amplop; penyesuaian: cocokkan saldo (`balance_check_id`).
+    Jenis usaha (penjualan, modal, pinjaman) milik plugin Buku Usaha, bukan inti.
+    """
+    PEMASUKAN = "pemasukan"
+    TRANSFER = "transfer"
+    TOPUP = "top-up"
+    PENYESUAIAN = "penyesuaian"
+    ALL = (PEMASUKAN, TRANSFER, TOPUP, PENYESUAIAN)
+
+
 # --- Mixins ---
 
 class TimestampMixin:
@@ -121,6 +143,11 @@ class Household(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(100))
     currency: Mapped[str] = mapped_column(String(10), default="IDR")
     invite_code: Mapped[str | None] = mapped_column(String(20), unique=True)
+    # Kolom aditif (Plugin R1): juga ditambahkan RUANG_DDL di lifespan.
+    type: Mapped[str] = mapped_column(
+        String(20), default=HouseholdType.RUMAH_TANGGA,
+        server_default=text("'rumah_tangga'"),
+    )
 
     # Relationships
     members: Mapped[list["HouseholdMember"]] = relationship(
@@ -137,6 +164,11 @@ class Household(TimestampMixin, Base):
 
 class HouseholdMember(TimestampMixin, Base):
     __tablename__ = "household_members"
+    # Satu user boleh anggota beberapa household (ruang keluarga + ruang usaha),
+    # tapi hanya sekali per household (Plugin R1).
+    __table_args__ = (
+        UniqueConstraint("user_id", "household_id", name="uq_household_members_user_household"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4
@@ -261,6 +293,10 @@ class Income(TimestampMixin, Base):
     # Terisi = income penyesuaian "cocokkan saldo" (bukan pemasukan sungguhan).
     balance_check_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("balance_checks.id"), nullable=True, index=True, default=None
+    )
+    # IncomeKind; kolom aditif (Plugin R1), juga ditambahkan RUANG_DDL di lifespan.
+    kind: Mapped[str] = mapped_column(
+        String(20), default=IncomeKind.PEMASUKAN, server_default=text("'pemasukan'"),
     )
 
     # Relationships
