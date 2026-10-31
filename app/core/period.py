@@ -57,6 +57,12 @@ def get_budget_period(payday_day: int, today: date | None = None) -> tuple[date,
     return period_start, period_end
 
 
+def get_period_for_month(payday_day: int, year: int, month: int) -> tuple[date, date]:
+    """Periode yang dimulai pada tanggal gajian bulan (year, month), dengan tanggal gajian dijepit ke akhir bulan
+    (31 Jan → 28 Feb). Setara dengan get_budget_period(payday_day, _safe_date(year, month, payday_day))."""
+    return get_budget_period(payday_day, _safe_date(year, month, payday_day))
+
+
 def document_date_kind(doc_date: date | None, *, payday_day: int, today: date) -> str | None:
     """Tanggal dokumen (struk/bukti bayar) terhadap periode anggaran berjalan user: None (tanpa tanggal), "past"
     (sebelum awal periode berjalan), "future" (sesudah hari ini), atau "current". Bot menanyakan tanggal catat hanya

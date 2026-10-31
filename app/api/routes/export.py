@@ -11,7 +11,7 @@ from sqlalchemy import select, func, or_
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.core.period import get_budget_period, _safe_date
+from app.core.period import get_budget_period, get_period_for_month
 from app.models.models import (
     User,
     Transaction,
@@ -62,8 +62,7 @@ def _resolve_period(
         return p_start, p_end
     payday_day = getattr(user, "payday_day", 1) or 1
     if y and m:
-        target_date = _safe_date(y, m, payday_day)
-        return get_budget_period(payday_day, target_date)
+        return get_period_for_month(payday_day, y, m)
     return get_budget_period(payday_day)
 
 
