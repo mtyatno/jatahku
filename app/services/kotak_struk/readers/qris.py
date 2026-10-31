@@ -13,8 +13,10 @@ from app.services.kotak_struk.readers.profiles import detect_issuer
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
 
-# "PAN Merchant" dan "ID Terminal": urutan kata di Jago Syariah (A14).
-QRIS_MARKERS = ["qris", "nmid", "merchant pan", "pan merchant", "terminal id", "id terminal", "acquirer", "penerbit"]
+# "PAN Merchant" dan "ID Terminal": urutan kata di Jago Syariah (A14). "Nama Pengakuisisi", "PAN Pelanggan": istilah QRIS
+# berbahasa Indonesia (ShopeePay, A14 r3).
+QRIS_MARKERS = ["qris", "nmid", "merchant pan", "pan merchant", "terminal id", "id terminal", "acquirer", "penerbit",
+                "pengakuisisi", "pan pelanggan"]
 STRONG, WITH_OUTCOME, WEAK = 0.95, 0.9, 0.7
 
 

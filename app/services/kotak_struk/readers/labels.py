@@ -78,7 +78,9 @@ _MONTHS = {name: number for number, names in enumerate(_MONTH_NAMES, 1) for name
 # Tahun dibatasi 20xx supaya nomor referensi dan nominal tidak terbaca sebagai tanggal.
 _ISO = re.compile(r"(?<!\d)(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)")
 _DMY_NUM = re.compile(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})(?!\d)")
-_DMY_NAME = re.compile(r"(?<!\d)(\d{1,2})(?:st|nd|rd|th)?[\s.\-/]*([A-Za-z]{3,10})\.?[\s.,\-/]*(20\d{2})(?!\d)")
+# Nama bulan boleh memuat angka 0 sebagai huruf O hasil OCR ("31 0kt 2026", "1 N0v 2026"; ShopeePay A14 r3): hanya nama bulan
+# yang dikenal (`_MONTHS`) yang diterima, jadi "Rp100.000 2026" tetap bukan tanggal.
+_DMY_NAME = re.compile(r"(?<!\d)(\d{1,2})(?:st|nd|rd|th)?[\s.\-/]*([A-Za-z0]{3,10})\.?[\s.,\-/]*(20\d{2})(?!\d)")
 _MDY_NAME = re.compile(r"(?<![A-Za-z])([A-Za-z]{3,10})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})(?!\d)")
 _TIME = re.compile(r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?(?!\d)(?:\s*([AaPp][Mm])(?![A-Za-z]))?")
 
@@ -90,7 +92,7 @@ def _find_date(text: str):
         for m in rx.finditer(text):
             parts = dict(zip(order, m.groups()))
             month = parts.get("M")
-            month = _MONTHS.get((month or "").lower()) if month is not None else int(parts["m"])
+            month = _MONTHS.get((month or "").lower().replace("0", "o")) if month is not None else int(parts["m"])
             if not month:
                 continue
             try:

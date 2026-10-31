@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk import checks as cross_checks
-from app.services.kotak_struk.config import READER_THRESHOLD
+from app.services.kotak_struk.config import PROOF_TYPES, READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
 from app.services.kotak_struk.readers.proof_common import (
-    clean_lines, has_header_status_title, has_status_title, is_app_receipt, looks_like_store_receipt,
+    clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
+    looks_like_store_receipt, read_labelled_failure,
 )
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
@@ -77,6 +78,22 @@ def looks_like_proof(doc: TextDoc) -> bool:
     return not looks_like_store_receipt(normalized)
 
 
+def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
+    """Bukti bayar yang dibaca pembaca struk belanja/tidak dikenali (saklar mati, atau tidak dikenali pembaca bukti) dengan
+    status BERLABEL gagal/pending ("Status Gagal", GoPay "Status" lalu "Gagal transfer uang ke penerima") diblokir/
+    diperingatkan seperti judul status. Hanya untuk teks yang tampak bukti (`looks_like_proof`), tanpa baris barang, dan tanpa
+    judul sukses di mana pun ("Pembayaran Berhasil" mengalahkan label); hanya label status pembayaran (`payment_status_value`:
+    bukan "Status Member/Poin/Pengiriman/Pesanan/Refund/Settlement"). Struk belanja biasa tidak terpengaruh."""
+    d = parsed.doc
+    if d.doc_type in PROOF_TYPES or d.status == "gagal" or has_item_lines(doc.lines) or has_success_title(doc.lines) \
+            or not looks_like_proof(doc):
+        return
+    labelled = read_labelled_failure(doc.lines)
+    if labelled == "gagal" or (labelled == "pending" and d.status != "pending"):
+        d.status = labelled
+        d.evidence.append(f"Bukti menyebut status {labelled}")
+
+
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
     reader: DocReader | None = None
     best = 0.0
@@ -87,6 +104,7 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
     reader = reader or _UNKNOWN
 
     parsed = await reader.parse(doc, ctx)
+    _apply_labelled_failure(parsed, doc)
     cross_checks.apply_flow(parsed, ctx)
     found = [*reader.checks(parsed, ctx), *cross_checks.common_checks(parsed, ctx)]
     parsed.doc.checks = [c.as_dict() for c in found]
