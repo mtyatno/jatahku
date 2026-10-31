@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User, PaymentOrder, PromoCode, AppSetting, Notification, NotificationType
+from app.services.image_upload import PAYMENT_PROOF_MAX_BYTES, read_image_upload, save_upload
 
 router = APIRouter()
 
@@ -163,16 +164,9 @@ async def upload_proof(
     if order.status != 'pending':
         raise HTTPException(400, "Order sudah diproses")
 
-    import os
-    data = await file.read()
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
-    fname = f"proof_{order_id}.{ext}"
-    upload_dir = "/home/jatahku/web/jatahku.com/public_html/uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-    with open(f"{upload_dir}/{fname}", "wb") as f:
-        f.write(data)
-
-    order.proof_url = f"/uploads/{fname}"
+    # Jenis dari isi file, nama file dari server: nama dan content-type kiriman klien tidak dipakai (lihat image_upload).
+    data, ext = await read_image_upload(file, PAYMENT_PROOF_MAX_BYTES)
+    order.proof_url = save_upload(f"proof_{order_id}", ext, data)
     order.status = "waiting_confirmation"
 
     # Notify all admins

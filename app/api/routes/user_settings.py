@@ -1,4 +1,3 @@
-import os
 import json
 import hashlib
 from uuid import UUID
@@ -19,6 +18,7 @@ from app.services import account_deletion, auth_sessions
 from app.services.email_service import (
     send_account_deleted_email, send_account_deletion_email, send_password_changed_email,
 )
+from app.services.image_upload import PROFILE_PIC_MAX_BYTES, read_image_upload, save_upload
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
@@ -236,18 +236,9 @@ async def upload_profile_pic(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(400, "File harus gambar")
-    if file.size and file.size > 2_000_000:
-        raise HTTPException(400, "Max 2MB")
-    data = await file.read()
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
-    fname = f"{user.id}.{ext}"
-    upload_dir = "/home/jatahku/web/jatahku.com/public_html/uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-    with open(f"{upload_dir}/{fname}", "wb") as f:
-        f.write(data)
-    user.profile_pic = f"/uploads/{fname}"
+    # Jenis dari isi file, nama file dari server: nama dan content-type kiriman klien tidak dipakai (lihat image_upload).
+    data, ext = await read_image_upload(file, PROFILE_PIC_MAX_BYTES)
+    user.profile_pic = save_upload(str(user.id), ext, data)
     await db.commit()
     return {"url": user.profile_pic}
 
