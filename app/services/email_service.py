@@ -6,26 +6,40 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from email.utils import formatdate, make_msgid
 
+from app.core.config import get_settings
+
 logger = logging.getLogger("jatahku.email")
 
-SMTP_HOST = "localhost"
-SMTP_PORT = 587
-SMTP_USER = "noreply@jatahku.com"
-SMTP_PASS = "Jatahku2026!"
-SMTP_FROM = "noreply@jatahku.com"
-SMTP_FROM_NAME = "Jatahku"
+
+
+def _from_header() -> str:
+    s = get_settings()
+    return f"{s.SMTP_FROM_NAME} <{s.SMTP_FROM}>"
+
+
+def _deliver(to_email: str, msg) -> None:
+    """Kirim lewat SMTP terautentikasi. Kredensial dari .env (SMTP_*, app/core/config.py);
+    tanpa SMTP_PASSWORD tidak pernah menyambung ke server."""
+    s = get_settings()
+    if not s.SMTP_PASSWORD:
+        raise RuntimeError("SMTP_PASSWORD kosong di .env, email tidak dikirim")
+    with smtplib.SMTP(s.SMTP_HOST, s.SMTP_PORT) as server:
+        server.ehlo()
+        server.starttls()
+        server.login(s.SMTP_USER, s.SMTP_PASSWORD)
+        server.sendmail(s.SMTP_FROM, to_email, msg.as_string())
 
 
 def send_email(to_email: str, subject: str, html_body: str, text_body: str = None):
     """Send email via authenticated SMTP (exim4)."""
     try:
         msg = MIMEMultipart("alternative")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
+        msg["From"] = _from_header()
         msg["To"] = to_email
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid(domain="jatahku.com")
-        msg["List-Unsubscribe"] = "<mailto:noreply@jatahku.com?subject=unsubscribe>"
+        msg["List-Unsubscribe"] = f"<mailto:{get_settings().SMTP_FROM}?subject=unsubscribe>"
         msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
         # Always attach plain text (improves deliverability)
@@ -33,11 +47,7 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         msg.attach(MIMEText(plain, "plain"))
         msg.attach(MIMEText(html_body, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        _deliver(to_email, msg)
 
         logger.info(f"Email sent to {to_email}: {subject}")
         return True
@@ -147,7 +157,7 @@ def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) 
     """Send backup JSON as attachment before a data reset."""
     try:
         msg = MIMEMultipart("mixed")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM}>"
+        msg["From"] = _from_header()
         msg["To"] = to_email
         msg["Subject"] = "Backup data Jatahku kamu sebelum reset"
         msg["Date"] = formatdate(localtime=True)
@@ -170,11 +180,7 @@ def send_data_backup_email(to_email: str, name: str, data: dict, filename: str) 
         attachment.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(attachment)
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        _deliver(to_email, msg)
 
         logger.info(f"Backup email sent to {to_email}: {filename}")
         return True
