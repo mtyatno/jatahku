@@ -228,6 +228,11 @@ _AMOUNT_RE = re.compile(r"(?:RP\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{2})
 # Sambungan token sesudah angka: huruf/digit yang menempel, atau sesudah satu "-" ("2610264RL9", "261026-4RL9").
 _TOKEN_TAIL = re.compile(r"(-?)([A-Za-z0-9]+)")
 _QTY_TAIL = re.compile(r"[xX]\d+")   # "3.500x12": pengali jumlah, bukan kode
+# Angka tersamar: ekor nomor rekening/HP/kartu yang dicetak aplikasi atau korpus ("…4321", "Bank Mandiri-…4321",
+# "****1234", "•• 4567"): deret angka tanpa pemisah ribuan. "…" harus menempel; deret >= 2 tanda samaran boleh diikuti
+# satu spasi. Satu tanda saja ("KOPI *15.000", "Total • Rp52.500") bukan samaran, dan nominal berpemisah ribuan sesudah
+# titik penuntun ("TOTAL…27.000", "TOTAL ••• 27.000") tetap nominal.
+_MASKED_BEFORE = re.compile(r"(?:…|[*•●]{2,}\s?)$")
 
 
 def _id_digits(raw: str, rest: str) -> bool:
@@ -255,6 +260,8 @@ def amounts_in(line: str) -> list[int]:
             continue  # bagian tanggal/jam/kode: 14.10.26-19:21/3.0.27/THTV-363626
         if _id_digits(raw, line[m.end():]):
             continue  # ID transaksi: 261026-4RL9-PVRERW, 2610264RL9
+        if not re.search(r"[.,]", raw) and _MASKED_BEFORE.search(line[:m.start()]):
+            continue  # ekor nomor tersamar: …4321, ****1234 (berpemisah ribuan = nominal: "TOTAL…27.000")
         value = int(re.sub(r"[.,]", "", raw))
         if value < MIN_AMOUNT or value > MAX_AMOUNT:
             continue  # < Rp100 biasanya qty/kode

@@ -13,7 +13,10 @@ from app.services.kotak_struk.readers.profiles import detect_issuer
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
 
-QRIS_MARKERS = ["qris", "nmid", "merchant pan", "terminal id", "acquirer", "penerbit"]
+# "PAN Merchant" dan "ID Terminal": urutan kata di Jago Syariah (A14). "Nama Pengakuisisi", "PAN Pelanggan": istilah QRIS
+# berbahasa Indonesia (ShopeePay, A14 r3).
+QRIS_MARKERS = ["qris", "nmid", "merchant pan", "pan merchant", "terminal id", "id terminal", "acquirer", "penerbit",
+                "pengakuisisi", "pan pelanggan"]
 STRONG, WITH_OUTCOME, WEAK = 0.95, 0.9, 0.7
 
 
@@ -41,10 +44,13 @@ class QrisReader:
         body = pc.body_lines(lines)
         profile = detect_issuer(lines)
         amounts, total_confidence = pc.read_amounts(body, profile)
-        status = pc.read_status(body, profile)
+        status = pc.read_proof_status(body, profile)
         paid_at, paid_confidence = pc.read_paid_at(body, profile)
         name = pc.read_name(body, profile, "merchant")     # nomor panjang (NMID, telepon) dibuang dari nama
         city = pc.read_city(body, profile)
+        if not city and not pc.read_text(body, pc.labels_for(profile, "merchant"), profile):
+            party = pc.read_header_party(body, profile)      # tata letak "nama di bawah logo": kota di bawah nama
+            city = party.city if party else None
         nmid = pc.read_nmid(body, profile)
         refs = pc.read_refs(body, profile)
 

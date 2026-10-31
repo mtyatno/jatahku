@@ -27,7 +27,7 @@ async def read(lines, ctx=CTX, enabled=True):
 
 class SyntheticCorpusTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_sample_matches_expectation(self):
-        for s in CORPUS:
+        for s in (s for s in CORPUS if not s["real"]):     # sampel nyata: test_kotak_kalibrasi
             with self.subTest(s["id"]):
                 d = (await read(s["lines"])).parsed.doc
                 e = s["expect"]
@@ -176,7 +176,7 @@ class ProfileTests(unittest.TestCase):
 
 class ClassificationDetailTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_corpus_sample_picks_its_own_reader(self):
-        names = {"qris": "qris.umum", "transfer": "transfer.umum"}
+        names = {"qris": "qris.umum", "transfer": "transfer.umum", "tidak_dikenali": "tidak_dikenali"}
         for s in CORPUS:
             with self.subTest(s["id"]):
                 self.assertEqual((await read(s["lines"])).reader, names[s["expect"]["doc_type"]])
@@ -273,7 +273,7 @@ class SecretsAndMaskingTests(unittest.IsolatedAsyncioTestCase):
                 res = await read(s["lines"])
                 blob, secrets = blob_of(res), res.parsed.secrets
                 raw = [*secrets.ref_values, secrets.nmid, (secrets.account_number or "").replace(" ", "")]
-                for value in filter(None, raw):
+                for value in (v for v in raw if v and "…" not in v):     # sampel nyata: nomornya sudah tersamar di korpus
                     self.assertNotIn(value, blob)
                 self.assertEqual(res.parsed.extra, {})        # tidak ada baris OCR mentah yang ikut tersimpan
 
@@ -580,7 +580,8 @@ class CommonChecksTests(unittest.IsolatedAsyncioTestCase):
             if s["id"] == "sint-transfer-gagal":
                 continue
             with self.subTest(s["id"]):
-                res = await read(s["lines"])
+                ctx = ParseContext(today=date.fromisoformat(s["today"]), user_name=s.get("user_name")) if s.get("today") else CTX
+                res = await read(s["lines"], ctx)
                 self.assertEqual((res.checks, res.parsed.doc.checks), ([], []))
 
     async def test_messages_and_levels_are_exact(self):

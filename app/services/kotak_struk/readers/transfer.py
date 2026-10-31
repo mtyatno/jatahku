@@ -6,17 +6,23 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from app.services.kotak_struk.checks import may_be_user, same_person
 from app.services.kotak_struk.document import Counterparty, DokumenBayar, Ref
 from app.services.kotak_struk.merchants import mask_digits
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer
+from app.services.kotak_struk.readers.profiles import detect_issuer, is_money_provider
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
 
 TRANSFER_MARKERS = ["transfer", "rekening tujuan", "bank tujuan", "bi-fast", "berita", "penerima"]
+# ShopeePay (A14 r3): label "Jumlah Kirim Uang" di awal baris dihitung satu penanda; "kirim uang" di tengah kalimat tidak
+# ("Silakan kirim uang ke rekening BCA …" di faktur). "Kirim Ke"/"Dikirim Dari" hanya dihitung bersama label itu; sendirian
+# kata biasa ("Kirim ke: Jl. Merdeka" di faktur belanja online). Kata utuh: "Dikirim ke" tidak cocok dengan "kirim ke".
+_SEND_AMOUNT = re.compile(r"^\s*jumlah\s+kirim\s+uang(?=$|[\s:：])", re.IGNORECASE)
+_SEND_LABELS = ["kirim ke", "dikirim dari"]
 STRONG, OTHER_FLOW_CORROBORATED, OTHER_FLOW = 0.9, 0.9, 0.85
 
 _TOP_UP = re.compile(r"(?<!\w)(top[\s-]?up|isi\s+saldo)(?!\w)", re.IGNORECASE)
@@ -52,9 +58,13 @@ class TransferReader:
         lines = pc.clean_lines(doc.lines)
         if not lines or pc.looks_like_store_receipt(lines):
             return 0.0
-        markers = count_markers(lines, TRANSFER_MARKERS)
-        if markers >= 2:
+        send_amount = any(_SEND_AMOUNT.match(line) for line in lines)
+        markers = count_markers(lines, TRANSFER_MARKERS) + send_amount
+        if markers >= 2 or (send_amount and count_markers(lines, _SEND_LABELS)):
             return STRONG
+        party = pc.read_header_party(lines, detect_issuer(lines))
+        if party and is_money_provider(party.provider):
+            return STRONG       # nama penerima lalu "GoPay · 0812…" / "Mandiri · 123…" di bawah logo (Jago Syariah)
         status = pc.read_status(lines)
         if _other_flow(lines, status) and pc.has_amount(lines):
             return OTHER_FLOW_CORROBORATED if markers or status != pc.TIDAK_DIKETAHUI else OTHER_FLOW
@@ -64,16 +74,37 @@ class TransferReader:
         lines = pc.clean_lines(doc.lines)
         body = pc.body_lines(lines)
         profile = detect_issuer(lines)
-        status = pc.read_status(body, profile)
+        status = pc.read_proof_status(body, profile)
         flow = _other_flow(body, status) or "keluar"
         if flow == "masuk" and status == pc.TIDAK_DIKETAHUI:
             status = pc.BERHASIL            # uang yang tercatat masuk sudah sampai
         amounts, total_confidence = pc.read_amounts(body, profile)
         paid_at, paid_confidence = pc.read_paid_at(body, profile)
-        numbers: list[str] = []        # deret angka panjang yang tercetak di nama/bank: tidak boleh bertahan di sana
-        name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant", numbers=numbers)
-        bank_code = pc.read_bank(body, profile, numbers=numbers)
-        account = pc.read_account(body, profile) or pc.account_from(numbers)     # tanpa label rekening: dari angka yang ditemukan
+        block = pc.read_side_block(body, profile) if flow == "keluar" else None
+        if block:                                            # ShopeePay "Kirim Ke": nama, lalu "Bank Jago Syariah: 1234…"
+            name, bank_code, account = block.name, pc.normalize_bank(block.provider), block.number
+        else:
+            numbers: list[str] = []    # deret angka panjang yang tercetak di nama/bank: tidak boleh bertahan di sana
+            name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant", numbers=numbers)
+            bank_code = pc.read_bank(body, profile, numbers=numbers)
+            account = pc.read_account(body, profile) or pc.account_from(numbers)   # tanpa label rekening: dari angka yang ditemukan
+            party = pc.read_header_party(body, profile)
+            if party and is_money_provider(party.provider):      # "Mandiri·…4321" di bawah nama penerima
+                bank_code = bank_code or pc.normalize_bank(party.provider)
+                account = account or party.number
+            below = pc.read_party_account(body, profile, "sender" if flow == "masuk" else "merchant")
+            if below:                                            # "Ditransfer ke BUDI" lalu "Mandiri 1234…" (GoPay)
+                bank_code = bank_code or pc.normalize_bank(below[0])
+                account = account or below[1]
+        sender = None
+        if flow == "keluar" and same_person(ctx.user_name, name):
+            # Penerimanya user. Pengirim yang tercetak dan jelas orang lain -> uang masuk dari pengirim itu (bukti dibagikan
+            # pengirim); rekening yang terbaca milik user sendiri, jadi tidak dipakai. Pengirim yang bisa jadi user ("ANDI
+            # ********"), yang juga mirip user (nama resmi lebih panjang "ANDI PRATAMA BIN SUPARDI", gelar "IR ANDI PRATAMA";
+            # `same_person`), atau tidak tercetak: antar rekening sendiri (`checks.apply_flow`).
+            sender = pc.read_sender_name(body, profile)
+            if sender and not may_be_user(ctx.user_name, sender) and not same_person(ctx.user_name, sender):
+                flow, name, bank_code, account = "masuk", sender, None, None
         refs = pc.read_refs(body, profile)
 
         confidence = {}
@@ -90,6 +121,8 @@ class TransferReader:
             evidence.append(f"Status {status}")
         if flow != "keluar":
             evidence.append({"top_up": "Top-up saldo", "masuk": "Uang masuk"}[flow])
+        if flow == "masuk" and sender == name:
+            evidence.append("Penerima mirip nama akun kamu, pengirimnya orang lain")
 
         doc_out = DokumenBayar(
             doc_type=self.doc_type,

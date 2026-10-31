@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar, Line
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.readers.proof_common import read_body_failure_title, read_header_status
+from app.services.kotak_struk.readers.proof_common import is_app_receipt, read_body_failure_title, read_header_status
 from app.services.receipt_parser import (
     NOT_TOTAL, TOTAL_INCL_TAX, ReceiptParse, amounts_in, merchant_key, normalize_line, parse_receipt, reconcile,
 )
@@ -151,6 +151,8 @@ class StrukBelanjaReader:
     name = "struk_belanja"
 
     def detect(self, doc: TextDoc) -> float:
+        if is_app_receipt(doc.lines):
+            return 0.2          # resi aplikasi bank (tagihan, pulsa, bukti bayar): bukan struk belanja
         has_total = False
         item_lines = 0
         for line in doc.lines:

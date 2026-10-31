@@ -79,19 +79,78 @@ yang terdaftar lebih dulu (QRIS, transfer, struk belanja). Tidak ada yang lolos 
 
 | Pembaca | Jenis | Dasar |
 |---|---|---|
-| `qris.umum` | `qris` | ≥ 2 penanda (`QRIS`, `NMID`, `Merchant PAN`, `Terminal ID`, `Acquirer`, `Penerbit`) → skor 0,95; hanya kata `QRIS` plus label merchant atau nominal → 0,7 (0,9 bila ada kata status) |
-| `transfer.umum` | `transfer` | ≥ 2 penanda (`transfer`, `rekening tujuan`, `bank tujuan`, `BI-FAST`, `berita`, `penerima`) → 0,9; top-up atau uang masuk yang ada nominalnya → 0,85 (0,9 bila ada penanda lain atau kata status) |
-| `struk_belanja` | `struk_belanja` | Membungkus `parse_receipt` beserta data belajarnya (logika tidak diubah); fallback LLM tetap seperti dulu |
-| cadangan | `tidak_dikenali` | Nominal Rp terbesar (keyakinan `rendah`), atau tebakan scan lama untuk teks tanpa baris Rp; boleh tanpa nominal |
+| `qris.umum` | `qris` | ≥ 2 penanda (`QRIS`, `NMID`, `Merchant PAN`/`PAN Merchant`, `Terminal ID`/`ID Terminal`, `Acquirer`, `Penerbit`) → skor 0,95; hanya kata `QRIS` plus label merchant atau nominal → 0,7 (0,9 bila ada kata status) |
+| `transfer.umum` | `transfer` | ≥ 2 penanda (`transfer`, `rekening tujuan`, `bank tujuan`, `BI-FAST`, `berita`, `penerima`) → 0,9; nama penerima di bawah logo dengan baris "bank/e-wallet · nomor" (profil berstempel `party_on_top`, mis. Jago) → 0,9; top-up atau uang masuk yang ada nominalnya → 0,85 (0,9 bila ada penanda lain atau kata status) |
+| `struk_belanja` | `struk_belanja` | Membungkus `parse_receipt` beserta data belajarnya (logika tidak diubah); fallback LLM tetap seperti dulu. Resi aplikasi bank (`is_app_receipt`: baris logo di 2 baris pertama, yaitu baris yang hanya berisi nama aplikasi plus "Syariah"/"by"/"Mobile"/"Bank" (`logo_profile`; "TOKO MANDIRI JAYA", "JAGO COFFEE" bukan logo), dan label rekening sumber "Sumber akun"/"Sumber Dana"/"Rekening Sumber") → 0,2: tagihan, pulsa, dan bukti bayar bukan struk belanja |
+| cadangan | `tidak_dikenali` | Resi aplikasi bank: label total ("Total Bayar", "Total") atau nominal utama di bawah nama pihak lawan (keyakinan `sedang`). Selain itu nominal Rp terbesar (keyakinan `rendah`), atau tebakan scan lama untuk teks tanpa baris Rp; boleh tanpa nominal |
 
-Kedua pembaca bukti bayar memberi skor 0 pada pola struk belanja (KEMBALI/TUNAI, ≥ 3 barang). Struk belanja yang mencantumkan kata "QRIS" (mis. "Non Tunai (QRIS)") tetap `struk_belanja`. LLM tidak dipanggil
+Kedua pembaca bukti bayar memberi skor 0 pada pola struk belanja (KEMBALI/TUNAI, ≥ 3 barang). Tagihan dan pulsa
+dari aplikasi bank (PLN prabayar, paket data) berpola struk ("PPj", "Materai", "Admin Bank" di atas "Total Bayar") tetapi
+dibaca `tidak_dikenali` dengan total yang didebet (jenis `tagihan` di FS-2): satu baris "Belanja" di form Catat dan bot,
+tanpa baris barang, tanpa data belajar struk. Struk belanja yang mencantumkan kata "QRIS" (mis. "Non Tunai (QRIS)") tetap `struk_belanja`. LLM tidak dipanggil
 untuk QRIS/transfer yang dikenali; hanya jalur struk belanja/tidak dikenali yang memakainya (seperti scan lama),
 dan itu mati kecuali `RECEIPT_LLM_ENABLED`.
 
-**Profil aplikasi** (`readers/profiles.py`) adalah data, bukan kode: kata pengenal aplikasi (`issuer`) dan sinonim
-label. Saat ini 8 bank (BCA mobile, Livin' by Mandiri, BRImo, BNI/wondr, BSI, Jago, SeaBank, blu) dan 4 e-wallet
-(GoPay, OVO, DANA, ShopeePay); label khusus per aplikasi masih kosong sampai kalibrasi A14. Menambah aplikasi
-biasanya cukup satu entri `AppProfile`.
+**Profil aplikasi** (`readers/profiles.py`) adalah data, bukan kode: kata pengenal aplikasi (`issuer`), sinonim
+label, dan tata letak. Saat ini 8 bank (BCA mobile, Livin' by Mandiri, BRImo, BNI/wondr, BSI, Jago, SeaBank, blu) dan 4
+e-wallet (GoPay, OVO, DANA, ShopeePay). Menambah aplikasi biasanya cukup satu entri `AppProfile`. Field profil:
+
+- `labels`: sinonim label khusus aplikasi (didahulukan dari label umum);
+- `party_on_top`: pihak lawan dicetak tanpa label sebagai baris pertama di bawah logo, sebelum nominal besar
+  (`read_header_party`). Nama = baris pertama; bila inisial avatar menempel di ujung baris ("SITI AMINAH SA", juga di
+  baris kedua nama yang terbelah: "ANDI" / "PRATAMA AP"), nama = baris sampai di situ tanpa inisialnya (inisial harus
+  huruf awal kata pertama dan terakhir). Baris "Penyedia · nomor" di bawahnya: bank/e-wallet (`MONEY_PROVIDERS` dan
+  penanda profil; "GoPay", "Mandiri") berarti transfer, dengan bank dan rekening tujuan dari baris itu; penyedia lain
+  ("PLN Prepaid", "Indosat") berarti tagihan/pulsa, bukan transfer. Baris huruf sesudah nama = kota (QRIS). Nominal besar
+  di bawahnya = total (keyakinan `sedang`);
+- `done_phrases`: kalimat yang aplikasi cetak pada resi transaksi selesai; dibaca `berhasil` hanya bila status lain tidak
+  terbaca sama sekali dan tidak ada kata status (gagal, pending, diproses, ...) atau kata "belum selesai" (batal,
+  ditolak, tertunda, menunggu, dikembalikan, refund, kedaluwarsa, ...) di baris mana pun (`read_proof_status`). Pembaca
+  QRIS dan transfer juga membaca judul gagal/pending di badan (`read_body_failure_title`, seperti jalur struk/tidak
+  dikenali: "Transaksi gagal, dana dikembalikan ke saldo kamu", "Transaksi kamu sedang diproses bank tujuan"); judul
+  itu hanya boleh memperburuk status. Jadi kalimat resi tidak pernah menjadikan bukti gagal/pending bisa dicatat tanpa
+  blokir/peringatan. Baris logo (`logo_profile`) harus berisi nama aplikasi saja, dan judul status atau baris berisi kata
+  status/jenis bukti saja di bawah logo ("Transfer Sedang Diproses", "Berhasil") bukan nama pihak lawan.
+
+**Dikalibrasi (A14 ronde 1, 7 bukti asli: Jago Syariah 5, BYOND by BSI 1, Livin' 1).** Jago Syariah: `party_on_top`,
+`done_phrases` "Resi ini merupakan bukti transaksi yang sah", ID Transaksi didahulukan dari Nomor Referensi. Aturan umum
+yang ikut: label rekening sumber (`source`: "Sumber akun", "Sumber Dana", "Rekening Sumber", ...) adalah label, bukan nama
+atau barang; baris "Penyedia · nomor" bukan penanda aplikasi (bank tujuan "Mandiri·…" pada resi Jago); kata status di
+samping ID ("…1A2B Sukses") tidak ikut nomor referensi; nama rata kanan yang terbelah dua baris dengan baris pertamanya di
+atas label ("ANDI" / "Nama Penerima PRATAMA", BYOND) digabung bila baris itu yatim (1-3 kata huruf besar, bukan label,
+nilai label lain, kata status/jenis bukti, atau nama bank), supaya cek rekening sendiri berlaku; angka tersamar
+("…4321", "Bank Mandiri-…4321", "****1234", "•• 4567") bukan nominal (`amounts_in`, juga jalur struk belanja); nominal
+berpemisah ribuan sesudah titik penuntun ("TOTAL…27.000", "TOTAL ••• 27.000") tetap nominal.
+
+**Dikalibrasi (A14 ronde 2, 4 bukti asli GoPay: transfer ke ShopeePay orang lain, QRIS Indomaret, transfer ke bank orang
+lain, transfer ke rekening sendiri).** Tanpa field profil baru; semua label umum: jam di baris berlabel sendiri, terpisah
+dari tanggal (`time`: "Waktu 9:31", "Jam", "Pukul", "Time"; hanya bila nilainya jam saja dan sah) melengkapi tanggal tanpa
+jam di mana pun di bukti; nilai label status "Selesai"/"Completed"/"Done" (nilai utuh; "Belum selesai"
+bukan) = `berhasil`, tetapi paling lemah: kata status lain atau kata "belum selesai" (dibatalkan, dikembalikan, refund,
+kedaluwarsa, ...) di bukti mencegahnya; harga coret di baris biaya ("Biaya admin Rp2.000 Rp1.000" = 1.000, "Rp2.000
+Gratis!" = 0; hanya baris biaya, bukan diskon/pajak; nominal terakhir hanya bila tepat dua nominal dan yang terakhir lebih
+kecil, dan "Gratis" hanya bila itu nilai barisnya: "Biaya Admin Rp2.500 Total Rp52.500" = 2.500, "Rp2.500 (gratis
+25x/bulan)" = 2.500), jadi cek nominal + biaya = total tetap berlaku; "Ditransfer ke"/"Dikirim ke" = label
+penerima, dan baris "bank/e-wallet nomor" tepat di bawah nama sebaris ("Mandiri 1234…", "ShopeePay …", "Tabungan by Jago …")
+memberi bank dan rekening tujuan dan bukan penanda aplikasi; "Merchant Name" didahulukan dari "Merchant", "Merchant
+Location" = kota. QRIS GoPay di Indomaret tetap `qris` (pola struk belanja tidak terpenuhi).
+
+**Dikalibrasi (A14 ronde 3, 3 bukti asli ShopeePay: QRIS, kirim ke GoPay sendiri, kirim ke rekening Jago orang lain;
+bukti ketiga dicatat dua kali, oleh pengirim dan oleh penerima).** Profil ShopeePay: label penerima "Kirim Ke" dan nomor
+referensi "Transaksi SN"/"Order SN" (hanya di ShopeePay: di tempat lain "Kirim ke" kata biasa, "Kirim ke alamat pembeli").
+Aturan umum: nama bulan yang huruf O-nya terbaca angka 0 oleh OCR ("31 0kt 2026", "1 N0v 2026"; hanya nama bulan yang
+dikenal); seri penanda aplikasi dimenangkan logo di baris pertama ("ShopeePay" mengalahkan "Nama Pengakuisisi Gopay" dan
+penerima "GOPAY TOPU-…"), kecuali baris kedua logo aplikasi lain yang juga seri (["BRImo", "BCA"] tetap urutan daftar);
+penanda QRIS "Pengakuisisi" dan "PAN Pelanggan"; penanda transfer label "Jumlah Kirim Uang" di awal baris ("Silakan kirim
+uang ke rekening BCA …" di faktur bukan), dan "Kirim Ke"/"Dikirim Dari" hanya bersama label itu; "Dikirim Dari" = label
+pengirim; baris "Penyedia: nomor" (titik dua) di bawah nama berlabel = bank dan
+rekening pihak lawan; nominal `Rp` yang berdiri sendiri tepat di bawah baris logo = total `sedang` (ShopeePay mencetak
+nominal di atas statusnya). Blok "Kirim Ke" ShopeePay (`read_side_block`): nama, lalu "Bank Jago Syariah: 1234…" / "GoPay:
+0812…", rata kanan dan berpusat pada label, sehingga OCR menaruh baris nama di atas baris label; blok ini hanya dikenali
+dari baris "Penyedia:" yang hanya berisi nama bank/e-wallet (ikon di depannya boleh terbaca satu huruf), dan baris di
+atasnya hanya dipakai bila berbentuk nama (1-3 kata huruf besar atau samaran "Axxxxxxx"), bukan label, kata status, atau
+nama bank saja. Biaya coret "Rp2.500 Gratis" = 0; kaki "Cashback Saldo s.d Rp100.000", NPWP, dan alamat PT Airpay bukan
+nominal.
 
 **Dokumen Bayar** (kolom `document`, JSON berversi `schema: 1`, `services/kotak_struk/document.py`): `doc_type`,
 `issuer`, `status` (`berhasil` | `gagal` | `pending` | `tidak_diketahui`), `flow` (`keluar` | `masuk` | `top_up` |
@@ -121,11 +180,45 @@ diperingatkan sama seperti di jalur bukti. Hanya judul: kalimat biasa ("Cetak ul
 ("Info untuk transaksi gagal: 14017", "Jika transaksi gagal hubungi …", "Transaksi gagal? Hubungi kami"), dan judul
 sukses dari baris nama tidak dihitung; judul status yang **pertama** menentukan, seperti `read_status`: judul sukses di
 atasnya ("Transfer Berhasil", atau "Transaksi Berhasil" di badan) membuat kalimat gagal sesudahnya dianggap kaki bukti.
-Pada struk belanja, kaki "Transaksi gagal - struk ini tidak sah" (struk batal) ikut memblokir dan "Pembayaran pending
+Teks yang tampak bukti (`looks_like_proof`) yang dibaca jalur struk/tidak dikenali juga membaca status BERLABEL gagal/pending
+(`read_labelled_failure`: "Status Gagal", "Status: Pending", atau label "Status" lalu bloknya di paling banyak 4 baris bawah
+sampai label berikutnya, dan yang menentukan baris berstatus pertama blok itu, mis. GoPay "Gagal transfer uang ke
+penerima"), tetapi tidak bila teksnya memuat baris barang atau judul sukses di mana pun ("Pembayaran Berhasil"). Hanya label
+status PEMBAYARAN yang dihitung, di jalur ini maupun di `read_status` (saklar menyala): "Status" saja atau "Status
+Transaksi/Pembayaran/Transfer", dan kata status di mana saja dalam nilainya berlaku ("Status Gagal", "Status: Uang gagal
+dikirim", "Status: Dalam antrian (pending)"); label berkualifikasi lain ("Status Member", "Status Poin", "Status Pengiriman",
+"Status Pesanan", "Status Refund", "STATUS SETTLEMENT") dan nilai yang diawali kata benda hal lain ("Status: Pesanan
+Diproses", "Status Member Gold") bukan status pembayaran dan tidak pernah memblokir/memperingatkan, kecuali nilainya juga
+menyebut pembayarannya ("Order gagal dibayar", "Akun tujuan tidak aktif, transaksi gagal"); akun, kartu, dan pelanggan
+adalah sarana pembayaran, bukan "hal lain". Negasi dibaca sebelum kata sukses, di semua jalur: "Tidak sukses", "Not
+successful", "Unsuccessful", "Tidak terkirim", "Dana tidak terkirim" = gagal; "Belum berhasil", "Belum diterima", "Belum
+terkirim", "Dana belum masuk", "Not yet", "Tidak dibayar", "Not paid" = pending (belum dibayar bukan gagal; "Belum lunas"
+sengaja tidak: status tagihan/kredit di struk). Negasi kata sukses ("Tidak sukses karena saldo kurang") berlaku di mana
+saja; negasi kata tiba (masuk/diterima/terkirim, juga dibayar/paid) hanya bila menutup klausa ("Transaksi tidak masuk
+poin", "Transfer tidak diterima di kasir", "Dana belum terkirim ke penerima" tidak dihitung). Di luar nilai label status
+pembayaran, negasi masuk/diterima/terkirim juga butuh subjek uang lebih dulu di klausa yang sama (dana, uang, saldo,
+transfer, pembayaran, transaksi, payment; klausa dipisah . , ; ! ? | atau tanda pisah berspasi, tetapi titik/koma di dalam
+nominal "Rp50.000" bukan batas): "Poin belum masuk", "Kembalian tidak diterima", "Transaksi Berhasil - Poin belum masuk"
+bukan status. Di teks berbaris barang (struk belanja) bentuk "tidak …"-nya tidak pernah status, walau bersubjek uang:
+"Transfer tidak diterima", "Pembayaran non tunai tidak diterima" adalah pemberitahuan toko, dan struk belanja tidak boleh
+diblokir oleh kakinya; "belum …" bersubjek uang tetap memperingatkan ("Pembayaran belum diterima, harap tunggu"). Klausa yang
+menyebut imbalan (poin, point, cashback, voucher, kupon, stamp, hadiah) tentang imbalan itu, bukan uangnya ("Poin transaksi
+ini belum masuk", "Saldo poin belum masuk"), dan klausa juga dipisah "dan"/"tetapi"/"tapi"/"namun" ("Transaksi berhasil
+dan poin belum masuk"; "Transaksi berhasil tetapi dana belum masuk" tetap memperingatkan; A14 r3). Kata yang
+diabaikan tetap dihitung sebagai kata baris (batas 8/5 kata tidak berubah). Nilai label status ("Status: Belum diterima",
+"Status: Tidak terkirim") tidak dibatasi. Kalimat
+bersyarat atau tanya ("Jika transaksi tidak berhasil, hubungi …", "Belum berhasil? Coba lagi") tetap tidak dihitung. Struk belanja biasa tidak terpengaruh. Pada struk belanja, kaki "Transaksi gagal - struk ini tidak sah" (struk batal) ikut memblokir dan "Pembayaran pending
 akan diproses otomatis" hanya memperingatkan. Arah uang: `top_up`, `masuk`, dan `antar_rekening_sendiri` mengisi `flags.skip_suggestion`; bot dan web
 menawarkan "bukan pengeluaran", **tidak pernah otomatis**, dan user tetap bisa memilih "Tetap catat" (kecuali
 `blocked`). `antar_rekening_sendiri` hanya untuk transfer keluar yang nama penerimanya sama dengan nama akun, atau
-yang minimal 2 katanya ada di nama akun (`apply_flow`).
+yang minimal 2 katanya ada di nama akun (`apply_flow`). Bila penerimanya mirip nama akun tetapi bukti mencetak pengirim
+yang jelas orang lain, itu uang masuk (`masuk`, pihak lawan = pengirim, rekening yang terbaca tidak dipakai karena milik
+user): bukti yang dibagikan pengirimnya (A14 r3). Pengirim dibaca dari label pengirim ("Pengirim", "Dari", "Dikirim Dari"),
+lalu label rekening/akun sumber ("Sumber akun", "Rekening Sumber"), hanya bila nilainya berbentuk nama orang (kalimat kaki
+"Dikirim dari app GoPay…" dan sumber dana "Saldo ShopeePay" bukan). Nama yang disamarkan aplikasi ("ANDI ********", OCR
+membaca bintangnya "水水水"; "Axxx Pxxxxxx") dianggap bisa nama user bila bagian yang terlihat cocok, begitu juga pengirim yang
+mirip nama akun seperti penerimanya (nama resmi lebih panjang "ANDI PRATAMA BIN SUPARDI", gelar "IR ANDI PRATAMA"); pengirim
+seperti itu tetap `antar_rekening_sendiri`. Tanpa nama akun: `keluar`.
 
 ## Duplikat: tidak pernah tercatat dua kali
 
@@ -711,8 +804,11 @@ ditinjau, dan baru benar-benar berjalan setelah itu. Butir spec §7c yang bergan
 sungguhan saat saklar dinyalakan (langkah terakhir "Menyalakan saklar"); butir server lain (tidak pernah tercatat dua
 kali, transfer gagal tidak bisa dicatat) dicakup tes otomatis.
 
-**Kalibrasi A14 menunggu sampel nyata** dari pemilik produk (bukti QRIS dan transfer dari 8 bank dan 4 e-wallet).
-Di sana juga diselesaikan titik yang diparkir di "Batasan yang diketahui" dan label per aplikasi di `profiles.py`.
+**Kalibrasi A14 berjalan per ronde** dengan sampel nyata dari pemilik produk. Ronde 1 (30 Okt 2026): 7 sampel
+`real-*` di korpus (Jago Syariah 5, BYOND by BSI 1, Livin' 1), disamarkan tangan dengan nama samaran, `"reviewed": false`
+sampai pemilik meninjaunya. Cakupan spec §7a (8 bank, 4 e-wallet, ≥ 3 contoh per aplikasi per jenis, contoh negatif)
+masih jauh; gerbang `--real-only` belum boleh dianggap lulus walau angkanya lulus. Ronde 2 (31 Okt 2026): 4 sampel GoPay
+(`real-gopay-*`), juga `"reviewed": false`.
 
 ## Menyalakan saklar
 
@@ -812,16 +908,44 @@ Catatan:
 
 - **Status gagal yang belum terbaca.** Judul dari baris nama ("Tujuan Transfer CV SUKSES JAYA") tidak lagi menutupi
   kegagalan di bawahnya, di jalur bukti maupun jalur struk/tidak dikenali (lihat "Cek silang"). Yang belum: di jalur
-  struk/tidak dikenali, kata status tunggal di badan ("Gagal") dan status berlabel ("Status: Gagal") tidak dibaca
-  (hanya judul status, paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
-  ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi "Pembayaran Gagal" di bawahnya; kaki bantuan berbentuk
-  judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur. Dikalibrasi di
-  A14 dengan sampel nyata.
+  struk/tidak dikenali, kata status tunggal di badan ("Gagal") tidak dibaca, dan status berlabel ("Status: Gagal")
+  hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
+  ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi kata status tunggal di bawahnya ("Gagal"; judul status
+  seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata "belum selesai" di luar kosakata status
+  ("Dibatalkan", "Ditolak") terbaca `tidak_diketahui`, bukan `gagal` (tidak diblokir); kaki bantuan berbentuk
+  judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur; negasi kata
+  tiba di tengah kalimat ("Transfer belum diterima bank tujuan.") atau tanpa subjek uang di luar label status (judul
+  "Belum diterima" atau "Tidak terkirim" saja) tidak dibaca, jadi bukti seperti itu tidak diblokir dan tidak
+  diperingatkan, seperti di main (saklar mati bisa membacanya `berhasil`). Sebaliknya "belum …" kata tiba yang
+  klausanya menyebut uang di mana saja sebelum negasinya memperingatkan walau uang itu bukan subjeknya ("Poin transaksi
+  ini belum masuk", "Transaksi berhasil dan poin belum masuk" di kaki struk belanja), dan baris "Not paid"/"Belum
+  dibayar" di judul struk kecil memperingatkan (pending). Dikalibrasi di A14 dengan sampel nyata.
 - **Alat korpus tidak mendeteksi semua nomor panjang.** `PERIKSA` tidak menandai nomor rekening/RRN yang terbaca
   OCR sebagai dua nominal bertitik ("614.534 681.544") atau terpotong tanda lain di tengahnya ("703.123|…6700"),
   nomor yang terpotong ke dua baris, dan referensi campuran huruf dan angka pendek. Tinjauan manusia sebelum
-  `reviewed: true` satu-satunya penjaga di sana. Dikerjakan di A14.
-- **Profil aplikasi belum dikalibrasi.** Label khusus per aplikasi kosong; pembaca memakai label umum. Sampai A14,
+  `reviewed: true` satu-satunya penjaga di sana. Ronde 1 A14 menemukan dua bentuk lagi yang harus disamarkan tangan:
+  ID campuran huruf yang hanya sebagian tersamar atau tidak tersamar sama sekali (ID heksadesimal panjang, referensi
+  huruf-angka pendek seperti "a1b2c3d4e5"), dan nomor HP yang tergabung dengan angka ikon di sebelahnya ("GoPay·0812…  6"
+  menjadi satu ekor tersamar yang memuat angka ikon). Aturan berlabel (m-g/m-h) belum dikerjakan.
+- **Profil aplikasi baru sebagian dikalibrasi.** Cakupan sampel nyata: Jago Syariah 5 (QRIS 1, transfer 2, PLN 1,
+  pulsa 1), GoPay 4 (transfer 3, QRIS 1), ShopeePay 3 (+1 varian: QRIS 1, transfer 2, satu dicatat juga sebagai uang
+  masuk), BYOND by BSI 1 (transfer), Livin' 1 (QRIS). Saklar mati: bukti GoPay dan ShopeePay (QRIS, kirim ke GoPay) masih
+  dibaca `struk_belanja` (tanpa label rekening sumber) dengan total benar dan diperlakukan sebagai bukti (teks dan rincian
+  tidak disimpan); kirim ShopeePay ke bank ("Sumber Dana") `tidak_dikenali`. Top-up GoPay sendiri dari ShopeePay tercetak
+  "Kirim Ke GOPAY TOPU-… GoPay: 0812…" tanpa kata "top up": terbaca transfer `keluar`, bukan `top_up` (tidak ditebak dari
+  satu sampel). Uang masuk dari pengirim lain hanya terbaca bila nama akun user diisi. Bukti QRIS ShopeePay yang
+  nominal besarnya hilang di OCR: saklar menyala tanpa total, saklar mati jalur struk mengambil "Rp100.000" dari kaki
+  cashback (keyakinan `rendah`, user mengonfirmasi). Seri penanda aplikasi hanya dimenangkan logo di baris pertama:
+  tangkapan layar dengan baris status bar dulu ("10:57" lalu "ShopeePay") memakai urutan daftar (bisa terbaca `gopay` bila
+  "Nama Pengakuisisi Gopay" ikut seri); saldo `Rp` yang berdiri sendiri di bawah logo tanpa nominal transaksi kini
+  berkeyakinan `sedang`, bukan `rendah` (nilainya sama); saklar mati, bukti ShopeePay tidak bertanggal ("31 0kt 2026" hanya
+  dibaca pembaca bukti, bukan jalur struk), seperti di main. Aplikasi lain dan jenis lain (top-up, uang masuk, transfer gagal,
+  VA) belum punya sampel nyata, dan pembaca memakai label umum. Yang diasumsikan dari sedikit sampel: kalimat resi Jago
+  hanya tercetak pada transaksi selesai (belum ada contoh Jago gagal/pending), inisial avatar Jago = huruf awal kata
+  pertama dan terakhir, dan nomor di baris "Penyedia · nomor" adalah rekening/HP tujuan. Tagihan dan pulsa dibaca
+  `tidak_dikenali` tanpa nama ("Belanja") sampai jenis `tagihan` (FS-2). Saklar mati: bukti bayar resi aplikasi
+  (logo + rekening sumber, mis. BYOND, Livin') kini `tidak_dikenali` (dulu `struk_belanja`), dengan status
+  `tidak_diketahui` (gagal/pending tetap dari judul). Sampai dikalibrasi,
   bukti dari aplikasi dengan tata letak tidak biasa bisa terbaca `tidak_dikenali` atau dengan keyakinan `rendah`
   (user tetap mengonfirmasi dan mengoreksi nominal). Contohnya, transfer yang hanya punya satu penanda
   (DANA "Kirim Uang") bisa terbaca `struk_belanja`, dan struk berisi 1–2 barang dengan harga polos plus satu baris

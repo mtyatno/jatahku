@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk import checks as cross_checks
-from app.services.kotak_struk.config import READER_THRESHOLD
+from app.services.kotak_struk.config import PROOF_TYPES, READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
 from app.services.kotak_struk.readers.proof_common import (
-    clean_lines, has_header_status_title, has_status_title, looks_like_store_receipt,
+    clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
+    looks_like_store_receipt, read_labelled_failure,
 )
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
@@ -56,7 +57,8 @@ def readers_for(proofs_enabled: bool) -> list[DocReader]:
 def looks_like_proof(doc: TextDoc) -> bool:
     """Apakah teks ini tampak bukti bayar (QRIS/transfer), apa pun saklar fiturnya? Ya bila salah satu pembaca bukti
     mengenalinya, bila 4 baris pertamanya memuat judul status ("Transfer Berhasil", "Pembayaran Gagal";
-    `has_header_status_title`), atau bila judul status ada di baris mana pun dan teksnya tidak berpola struk belanja
+    `has_header_status_title`), bila teksnya resi aplikasi bank/e-wallet (`is_app_receipt`: logo aplikasi dan label rekening
+    sumber; juga tagihan dan pulsa, yang memuat nomor meter/HP dan token), atau bila judul status ada di baris mana pun dan teksnya tidak berpola struk belanja
     (`has_status_title`, `looks_like_store_receipt` pada baris yang dinormalkan seperti `parse_receipt`): bukti dengan satu
     penanda saja tidak dikenali pembaca bukti, dan bukti sering mencetak judulnya di bawah rincian atau di bawah baris status
     bar dan nama aplikasi. Struk belanja yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
@@ -65,7 +67,8 @@ def looks_like_proof(doc: TextDoc) -> bool:
     Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
     nomor rekening/referensi dan nama pihak ketiga, jadi teks, rincian baris, dan nama merchant-nya tidak boleh
     disimpan atau masuk peta merchant."""
-    if any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines):
+    if any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines) \
+            or is_app_receipt(doc.lines):
         return True
     if not has_status_title(doc.lines):
         return False
@@ -73,6 +76,22 @@ def looks_like_proof(doc: TextDoc) -> bool:
     # belanja ber-OCR buruk yang mencetak judul status di kakinya tetap struk dan rinciannya tetap tersimpan.
     normalized = [line for line in (normalize_line(text) for text in clean_lines(doc.lines)) if line]
     return not looks_like_store_receipt(normalized)
+
+
+def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
+    """Bukti bayar yang dibaca pembaca struk belanja/tidak dikenali (saklar mati, atau tidak dikenali pembaca bukti) dengan
+    status BERLABEL gagal/pending ("Status Gagal", GoPay "Status" lalu "Gagal transfer uang ke penerima") diblokir/
+    diperingatkan seperti judul status. Hanya untuk teks yang tampak bukti (`looks_like_proof`), tanpa baris barang, dan tanpa
+    judul sukses di mana pun ("Pembayaran Berhasil" mengalahkan label); hanya label status pembayaran (`payment_status_value`:
+    bukan "Status Member/Poin/Pengiriman/Pesanan/Refund/Settlement"). Struk belanja biasa tidak terpengaruh."""
+    d = parsed.doc
+    if d.doc_type in PROOF_TYPES or d.status == "gagal" or has_item_lines(doc.lines) or has_success_title(doc.lines) \
+            or not looks_like_proof(doc):
+        return
+    labelled = read_labelled_failure(doc.lines)
+    if labelled == "gagal" or (labelled == "pending" and d.status != "pending"):
+        d.status = labelled
+        d.evidence.append(f"Bukti menyebut status {labelled}")
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
@@ -85,6 +104,7 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
     reader = reader or _UNKNOWN
 
     parsed = await reader.parse(doc, ctx)
+    _apply_labelled_failure(parsed, doc)
     cross_checks.apply_flow(parsed, ctx)
     found = [*reader.checks(parsed, ctx), *cross_checks.common_checks(parsed, ctx)]
     parsed.doc.checks = [c.as_dict() for c in found]
