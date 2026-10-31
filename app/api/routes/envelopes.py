@@ -429,11 +429,12 @@ async def delete_envelope(
     goals_before = await goal_snapshot(db, hid) if remaining > 0 else {}
 
     if remaining != 0:
-        from app.models.models import Income
+        from app.models.models import Income, IncomeKind
         label = "Refund" if remaining > 0 else "Tutup minus"
         transfer = Income(
             household_id=hid, user_id=user.id, amount=Decimal("0"),
             description=f"{label}: hapus amplop {envelope.name}",
+            kind=IncomeKind.TRANSFER,
         )
         db.add(transfer)
         await db.flush()

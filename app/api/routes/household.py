@@ -28,6 +28,7 @@ class HouseholdResponse(BaseModel):
     name: str
     currency: str
     member_count: int
+    type: str = "rumah_tangga"  # HouseholdType (Plugin R1)
 
 
 class MemberResponse(BaseModel):
@@ -71,7 +72,7 @@ async def get_household(
 
     return HouseholdResponse(
         id=household.id, name=household.name,
-        currency=household.currency, member_count=count,
+        currency=household.currency, member_count=count, type=household.type,
     )
 
 

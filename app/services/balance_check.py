@@ -12,6 +12,7 @@ from sqlalchemy import select, func, update, delete
 from app.core.period import get_budget_period
 from app.models.models import (
     BalanceCheck, Transaction, Income, Allocation, Household, HouseholdMember, TransactionSource,
+    IncomeKind,
 )
 from app.services.envelope_balance import compute_envelope_summaries, get_household_id
 
@@ -254,7 +255,7 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
         envelope_id, amount = lines[0]
         income = Income(household_id=hid, user_id=user.id, amount=amount,
                         description=ADJ_INCOME_DESC, income_date=today,
-                        balance_check_id=check.id)
+                        balance_check_id=check.id, kind=IncomeKind.PENYESUAIAN)
         db.add(income)
         await db.flush()
         db.add(Allocation(income_id=income.id, envelope_id=envelope_id, amount=amount))

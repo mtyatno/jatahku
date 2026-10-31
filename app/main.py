@@ -78,6 +78,11 @@ async def lifespan(app: FastAPI):
             from app.services.kotak_struk.schema import KOTAK_DDL
             for stmt in KOTAK_DDL:
                 await conn.execute(text(stmt))
+            # Plugin R1 (model ruang): households.type, incomes.kind. Backfill dan
+            # constraint unik keanggotaan hanya di migrasi 1c7e5a9d3b20.
+            from app.services.ruang_schema import RUANG_DDL
+            for stmt in RUANG_DDL:
+                await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
     from app.services import email_service
     email_service.check_configured()
