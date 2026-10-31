@@ -11,11 +11,14 @@ service ini, supaya cermin tidak menyimpang.
 Fungsi yang menerima `db: AsyncSession` tidak `commit` sendiri; pemanggil yang commit (pola repo). Ada dua
 pengecualian: `heal`, yang dipanggil job harian tanpa pemanggil lain yang menyimpan, dan `set_household_payday`,
 yang harus menyimpan perubahan sebelum recompute karena recompute membaca lewat sesi sendiri. `recompute_history`
-(lewat `_current_payday`) dan `notification_service.kirim` juga memakai sesi sendiri dan commit di sana.
+membaca tanggal lewat sesi sendiri yang HANYA-BACA (`_current_payday`: tidak assign, flush, maupun commit), jadi
+pemanggil yang baru mengubah atau mengisi `households.payday_day` di sesinya harus commit dulu. Hanya
+`notification_service.kirim` yang memakai sesi sendiri dan commit di sana.
 
 Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan cermin semua anggota dalam
 satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per household, tanggal dibaca
-di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dicatat dan tidak membatalkan perubahan.
+di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dan gagal recompute dicatat dan tidak
+membatalkan perubahan yang sudah di-commit.
 """
 import asyncio
 import logging
@@ -211,17 +214,20 @@ def _lock_for(household_id) -> asyncio.Lock:
 
 
 async def _current_payday(household_id) -> int:
-    """Tanggal gajian household yang paling baru di DB, dibaca lewat sesi sendiri.
+    """Tanggal gajian household yang paling baru di DB, dibaca lewat sesi sendiri. HANYA-BACA.
 
     Sesi pemanggil bisa memegang household versi lama (sesi tidak kedaluwarsa saat commit), padahal perubahan lain
-    mungkin sudah tersimpan. NULL (belum dimigrasi) diisi `household_payday` dan di-commit di sesi ini."""
+    mungkin sudah tersimpan. NULL (belum dimigrasi) diturunkan dari anggota dengan `pick_payday`, tanpa menulis
+    apa pun: mengisinya lewat koneksi kedua ini bisa menunggu selamanya pada kunci baris yang dipegang transaksi
+    pemanggil (yang sudah `flush` pengisian yang sama lewat `household_payday` dan belum commit), padahal kunci
+    recompute sedang dipegang."""
     async with AsyncSessionLocal() as db:
         household = (await db.execute(
             select(Household).where(Household.id == household_id)
         )).scalar_one()
-        day = await household_payday(db, household)
-        await db.commit()
-        return day
+        if household.payday_day is not None:
+            return household.payday_day
+        return pick_payday(await member_rows(db, household_id))
 
 
 async def recompute_history(household_id, periods: int) -> list[dict]:
@@ -230,6 +236,10 @@ async def recompute_history(household_id, periods: int) -> list[dict]:
     Dua perubahan tanggal beruntun (mengetik "2" lalu "25") bisa menjalankan dua recompute bersamaan dengan jendela
     berbeda, dan yang selesai terakhir menang, belum tentu tanggal terakhir. Maka tanggal dibaca DI DALAM kunci:
     yang menunggu kunci memakai tanggal yang tersimpan setelah recompute di depannya selesai.
+
+    Tanggal dibaca lewat sesi lain dan hanya-baca (`_current_payday`): pemanggil yang baru mengubah atau mengisi
+    `households.payday_day` di sesinya sendiri harus commit sebelum memanggil ini, kalau tidak yang terbaca nilai
+    lama (atau, bila NULL, yang diturunkan dari anggota).
 
     Mengembalikan satu dict per periode (bentuk `rollover.recompute_household`). Error per amplop di dalam periode
     dicatat sebagai error log dan tidak membatalkan apa pun: daftar penuh tetap dikembalikan, pemanggil memutuskan."""
@@ -246,19 +256,20 @@ async def recompute_history(household_id, periods: int) -> list[dict]:
 
 
 async def notify_payday_changed(
-    users, *, household_name: str, day: int, changed_by: str | None, periods: int
+    users, *, household_name: str, day: int, changed_by: str | None, periods: int, history_recomputed: bool = True
 ) -> int:
     """Beri tahu `users` bahwa siklus anggaran rumah mereka berubah; mengembalikan jumlah yang berhasil dikirimi.
 
     `changed_by` terisi (nama yang mengubah) → pesan perubahan oleh owner; None → pesan skrip migrasi, yang tidak
-    punya pelaku. Judul dan pesan tidak dikirim sebagai `telegram_html`: `kirim` yang meng-escape, jadi nama rumah
+    punya pelaku. `history_recomputed=False` (recompute gagal, dipakai `set_household_payday`) membuang kalimat
+    "Riwayat ... dihitung ulang" dari pesan owner supaya tidak mengklaim yang tidak terjadi; varian skrip tidak
+    memakainya. Judul dan pesan tidak dikirim sebagai `telegram_html`: `kirim` yang meng-escape, jadi nama rumah
     atau orang yang berisi `<` atau `&` aman. Tiap kirim dibungkus tersendiri: yang gagal dicatat dan tidak
     menghentikan yang lain, apalagi membatalkan perubahan tanggalnya."""
     if changed_by:
-        message = (
-            f"Tanggal gajian {household_name} kini tanggal {day} (diubah {changed_by}). "
-            f"Riwayat {periods} periode terakhir dihitung ulang."
-        )
+        message = f"Tanggal gajian {household_name} kini tanggal {day} (diubah {changed_by})."
+        if history_recomputed:
+            message += f" Riwayat {periods} periode terakhir dihitung ulang."
     else:
         message = (
             f"Siklus anggaranmu kini mengikuti {household_name}: tanggal {day}. "
@@ -285,8 +296,11 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
     advisor household dihapus, 12 periode terakhir dihitung ulang, dan anggota selain `actor` diberi tahu.
     Hasil: `{"changed": True, "members": n, "recomputed": k}`.
 
-    Exception dari recompute (bukan error per amplop, yang hanya dicatat) merambat ke pemanggil setelah perubahan
-    tersimpan, dan notifikasi "dihitung ulang" tidak terkirim. Pemulihannya recompute ulang oleh owner/admin."""
+    Recompute yang gagal (exception; error per amplop hanya dicatat oleh `recompute_history`) tidak membatalkan
+    perubahan yang sudah di-commit dan tidak membuat pemanggil gagal: dicatat dengan `logger.exception`, hasilnya
+    `recomputed: 0`, dan anggota tetap diberi tahu, tanpa klaim bahwa riwayat dihitung ulang. Riwayat bisa
+    tertinggal separuh jadi. Mengulang tanggal yang sama tidak memperbaikinya (no-op); pemulihannya dijalankan
+    operator: skrip migrasi (`--apply`) atau endpoint `POST /snapshots/recompute`."""
     if not 1 <= day <= 31:
         raise ValueError("payday_day harus antara 1 dan 31")
     if day == await household_payday(db, household):
@@ -299,12 +313,18 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
     await db.commit()
 
     await advisor_cache.invalidate(household.id)
-    results = await recompute_history(household.id, RECOMPUTE_PERIODS_ON_CHANGE)
+    try:
+        results = await recompute_history(household.id, RECOMPUTE_PERIODS_ON_CHANGE)
+        history_recomputed = True
+    except Exception:
+        logger.exception("recompute riwayat household %s (payday %s) gagal", household.id, day)
+        results, history_recomputed = [], False
     await notify_payday_changed(
         [user for user in members if user.id != actor.id],
         household_name=household.name,
         day=day,
         changed_by=actor.name,
         periods=RECOMPUTE_PERIODS_ON_CHANGE,
+        history_recomputed=history_recomputed,
     )
     return {"changed": True, "members": len(members), "recomputed": len(results)}

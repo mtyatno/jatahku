@@ -2,10 +2,10 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import date
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
-from app.core.period import get_closed_periods
+from app.core.period import get_budget_period, get_closed_periods
 from app.models.models import Envelope, Transaction, Allocation, MonthlySnapshot, Household, Income
 
 logger = logging.getLogger("jatahku.rollover")
@@ -191,13 +191,36 @@ async def recompute_household(
     yang baru dihitung). Mengembalikan satu dict per periode: `{"period": "{awal} → {akhir}", **hasil}` (bentuk
     respons endpoint /snapshots/recompute).
 
+    Snapshot hanya boleh ada untuk periode tertutup, jadi setelah itu snapshot household ini pada kunci periode
+    berjalan menurut `payday_day` (bulan AWAL periode berjalan) dan sesudahnya dibuang. Kunci snapshot hanya
+    (tahun, bulan awal periode), tanpa jendela tanggalnya, dan job harian tidak menimpa kunci yang sudah ada. Contoh:
+    payday 1 → 25 pada 10 Nov 2026. Kunci 2026-10 ditulis job 1 Nov dengan angka 1–31 Okt, padahal di bawah payday 25
+    kunci itu periode berjalan 25 Okt–24 Nov; dibiarkan, job 25 Nov melewatinya (sudah ada) dan rollover yang salah
+    terbawa selamanya ke periode berikutnya. Dibuang, job membuatnya lagi dengan benar saat periodenya tutup.
+
     Tidak ada lock di sini: hanya dipanggil lewat `household_cycle.recompute_history`, yang menserialkan per household."""
+    today = today or date.today()
     out = []
-    for period_start, period_end in get_closed_periods(payday_day, today or date.today(), periods):
+    for period_start, period_end in get_closed_periods(payday_day, today, periods):
         result = await create_monthly_snapshots(
             period_start, period_end, force=True, household_ids=[household_id]
         )
         out.append({"period": f"{period_start} → {period_end}", **result})
+
+    open_start, _ = get_budget_period(payday_day, today)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            delete(MonthlySnapshot)
+            .where(
+                MonthlySnapshot.envelope_id.in_(select(Envelope.id).where(Envelope.household_id == household_id)),
+                or_(
+                    MonthlySnapshot.year > open_start.year,
+                    and_(MonthlySnapshot.year == open_start.year, MonthlySnapshot.month >= open_start.month),
+                ),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
     return out
 
 

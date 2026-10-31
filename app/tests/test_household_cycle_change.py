@@ -195,6 +195,30 @@ class SetHouseholdPaydayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(str(ani.id), logs.output[0])  # siapa yang gagal diberi tahu
         self.assertIn("telegram mati", logs.output[0])  # dan sebabnya
 
+    async def test_recompute_failure_keeps_change_and_notifies_without_history(self):
+        # Recompute yang gagal setelah commit tidak boleh membuat route 500 untuk perubahan yang sudah tersimpan,
+        # dan anggota tetap diberi tahu, tetapi tanpa klaim bahwa riwayat dihitung ulang.
+        household, budi, ani, db = rumah_budi(payday=1)
+        self.recompute.side_effect = RuntimeError("db mati")
+        with self.assertLogs("jatahku.household_cycle", "ERROR") as logs:
+            result = await hc.set_household_payday(db, household, 25, actor=budi)
+        self.assertEqual(result, {"changed": True, "members": 2, "recomputed": 0})
+        self.assertEqual((household.payday_day, budi.payday_day, ani.payday_day), (25, 25, 25))
+        db.commit.assert_awaited_once()
+        self.invalidate.assert_awaited_once_with(household.id)
+        self.recompute.assert_awaited_once_with(household.id, 12)
+        self.assertEqual(len(logs.records), 1)  # satu record ERROR yang menyebut household dan tanggalnya
+        self.assertEqual(logs.records[0].getMessage(), f"recompute riwayat household {household.id} (payday 25) gagal")
+        self.assertIn("db mati", logs.output[0])  # traceback ikut tercatat
+        self.kirim.assert_awaited_once()  # tetap diberi tahu: Ani saja, dengan pesan yang lebih pendek
+        call = self.kirim.await_args
+        self.assertIs(call.args[0], ani)
+        self.assertEqual(
+            call.args[1:],
+            (NotificationType.system, TITLE, "Tanggal gajian Rumah Budi kini tanggal 25 (diubah Budi)."),
+        )
+        self.assertEqual(call.kwargs, {"link": "/settings"})
+
 
 class NotifyPaydayChangedTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -220,6 +244,25 @@ class NotifyPaydayChangedTests(unittest.IsolatedAsyncioTestCase):
             self.kirim.await_args.args[3],
             "Tanggal gajian Rumah Ani kini tanggal 5 (diubah Budi). Riwayat 6 periode terakhir dihitung ulang.",
         )
+
+    async def test_notify_payday_changed_without_history_claim(self):
+        # history_recomputed=False (recompute gagal): pesan tidak boleh menyebut riwayat dihitung ulang.
+        sent = await hc.notify_payday_changed(
+            [person("Ani")], household_name="Rumah Budi", day=25, changed_by="Budi", periods=12,
+            history_recomputed=False,
+        )
+        self.assertEqual(sent, 1)
+        self.assertEqual(
+            self.kirim.await_args.args[3], "Tanggal gajian Rumah Budi kini tanggal 25 (diubah Budi)."
+        )
+
+    async def test_notify_payday_changed_script_message_ignores_history_flag(self):
+        # Varian skrip (tanpa pelaku) tidak memakai flag itu: teksnya tetap.
+        await hc.notify_payday_changed(
+            [person("Ani")], household_name="Rumah Ani", day=25, changed_by=None, periods=12,
+            history_recomputed=False,
+        )
+        self.assertEqual(self.kirim.await_args.args[3], SCRIPT_MESSAGE)
 
     async def test_notify_payday_changed_counts_successes_and_continues_after_failure(self):
         first, second, third = person("A"), person("B"), person("C")
@@ -325,29 +368,42 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CurrentPaydayTests(unittest.IsolatedAsyncioTestCase):
-    async def test_current_payday_reads_in_own_session_and_commits(self):
+    """`_current_payday` HANYA-BACA: ia membaca lewat koneksi kedua, dan UPDATE dari koneksi itu pada baris household
+    yang sudah di-flush (belum di-commit) oleh transaksi pemanggil akan menunggu selamanya pada kunci baris pemanggil,
+    sementara kunci recompute sedang dipegang. Jadi tidak ada assign, flush, maupun commit di sini."""
+
+    async def test_current_payday_returns_stored_value_without_writing(self):
         hid = uuid.uuid4()
         household = SimpleNamespace(id=hid, name="Rumah Ani", payday_day=25)
         db = db_with(FakeResult(household))
         with patch.object(hc, "AsyncSessionLocal", new=lambda: FakeSession(db)):
             self.assertEqual(await hc._current_payday(hid), 25)
-        (stmt,) = executed_sql(db)
+        (stmt,) = executed_sql(db)  # satu kueri: household saja, anggota tidak dimuat
         self.assertTrue(norm(stmt).endswith("FROM households WHERE households.id = %(id_1)s::UUID"))
-        db.flush.assert_not_awaited()  # terisi: dikembalikan apa adanya
-        db.commit.assert_awaited_once()
+        self.assertEqual(household.payday_day, 25)
+        db.flush.assert_not_awaited()
+        db.commit.assert_not_awaited()
 
-    async def test_current_payday_fills_null_and_commits(self):
+    async def test_current_payday_derives_null_from_members_without_writing(self):
+        # Household belum dimigrasi: owner (25) menang atas member yang lebih tua (7), tetapi hasilnya TIDAK ditulis.
         hid = uuid.uuid4()
         household = SimpleNamespace(id=hid, name="Rumah Ani", payday_day=None)
+        older = datetime(2025, 1, 1, tzinfo=timezone.utc)
         db = db_with(
             FakeResult(household),
-            FakeResult(rows=[(HouseholdRole.owner, OWNER_ROW_DATE, uuid.uuid4(), "Ani", 25)]),
+            FakeResult(rows=[
+                (HouseholdRole.member, older, uuid.uuid4(), "Budi", 7),
+                (HouseholdRole.owner, OWNER_ROW_DATE, uuid.uuid4(), "Ani", 25),
+            ]),
         )
         with patch.object(hc, "AsyncSessionLocal", new=lambda: FakeSession(db)):
             self.assertEqual(await hc._current_payday(hid), 25)
-        self.assertEqual(household.payday_day, 25)
-        db.flush.assert_awaited_once()
-        db.commit.assert_awaited_once()  # sesi ini yang menyimpan pengisian NULL
+        households_sql, members_sql = executed_sql(db)  # household, lalu anggotanya
+        self.assertTrue(norm(households_sql).endswith("FROM households WHERE households.id = %(id_1)s::UUID"))
+        self.assertIn("FROM household_members JOIN users ON users.id = household_members.user_id", norm(members_sql))
+        self.assertIsNone(household.payday_day)  # tidak di-assign
+        db.flush.assert_not_awaited()
+        db.commit.assert_not_awaited()
 
 
 if __name__ == "__main__":
