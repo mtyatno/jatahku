@@ -120,44 +120,97 @@ Endpoint yang ada tetap; field baru hanya bertambah. Ruang dari header (membaca)
 }
 ```
 
-## 4. Beranda (B1, B2)
+## 4. Beranda (B1, B2) — **v1 (B1, PR menyusul)**
+
+Implementasi: `app/api/routes/dashboard.py`, `app/services/dashboard/`. Ruang = household user, ditentukan server dari keanggotaan (R2 menggantinya dengan `ruang_aktif`); body yang membawa `ruang_id` atau `household_id` diabaikan. User tanpa household → 404 `ruang_tidak_ada` di semua endpoint di bawah.
 
 ```jsonc
 // GET /dashboard/layout?surface=beranda → tata letak efektif (01-kajian, "Tata letak efektif dihitung server")
 {
-  "surface": "beranda", "schema_version": 1, "version": 7,
+  "surface": "beranda", "schema_version": 1, "version": 0,
   "items": [
-    {"id": "a1", "card": "core.kpi.jatah", "size": "S", "hidden": false, "devices": "all", "visible": true},
-    {"id": "a4", "card": "buku_usaha.omzet", "size": "S", "devices": "all", "visible": false, "alasan": "plugin_dijeda"}
+    {"id": "a1", "card": "core.kpi.jatah", "size": "S", "hidden": false, "devices": "all", "settings": {}, "visible": true}
   ],
   "parked": []
 }
-// Belum tersimpan → template bawaan untuk jenis ruang dan peran (Karyawan: R6). size: S | M | L | XL (ADR-P8).
-// devices: all | wide (≥1024 px) | narrow (<1024 px). Instans visible:false tetap dikirim dan wajib dikirim balik.
+// Belum tersimpan → template bawaan dengan version 0 (GET tidak menyimpan apa pun). Template ruang keluarga =
+// Beranda sekarang, 14 kartu a1–a14 (registry.TEMPLATE_BERANDA); Papan disiplin hanya di katalog.
+// size: S | M | L | XL (ADR-P8). devices: all | wide (≥1024 px) | narrow (<1024 px).
+// Instans yang definisinya tidak ada lagi (mis. kartu plugin yang dicopot) pindah ke parked dan tidak perlu
+// dikirim balik; posisinya kembali bila kartunya ada lagi. Instans visible:false (H1 ke atas) tetap dikirim
+// dan wajib dikirim balik. "alasan" hanya ada bila visible:false.
 
-// PUT /dashboard/layout {"surface", "if_version": 7, "items": [...], "removed": ["a9"]}
-// → 200 {layout, "version": 8} · 409 versi_beda (muat ulang, terapkan ulang) · 422 instans_hilang (instans hilang tanpa disebut di removed)
+// PUT /dashboard/layout {"surface": "beranda", "if_version": 0, "items": [...], "removed": ["a9"]}
+// → 200 {"layout": <tata letak efektif>, "version": 1}
+// if_version 0 = membuat dokumen pertama dari template. Item: id ^[A-Za-z0-9_-]{1,40}$, card terdaftar,
+// size dari sizes kartu, devices, hidden (bool), settings sesuai skema kartu. Maks. 40 item.
+// 409 versi_beda (muat ulang, terapkan ulang) · 422 instans_hilang (instans hilang tanpa disebut di removed)
+// · 422 kartu_tidak_dikenal · ukuran_tidak_sah · kartu_ganda (kartu multi_instance:false dua kali)
+// · pengaturan_tidak_sah · instans_tidak_sah (id/devices/hidden tidak sah, id ganda) · terlalu_banyak
 
 // GET /dashboard/cards → katalog kartu untuk user, ruang, peran, dan platform ini
 [{"key": "core.kpi.jatah", "judul": "Jatah hari ini", "deskripsi": "…", "asal": "inti", "sizes": ["S", "M"],
-  "size_bawaan": "S", "shape": "kpi", "hak": "ok", "baru": false}]
-// asal: inti | <plugin_id>. hak: ok | butuh_plugin | butuh_paket. Kartu laporan tidak tercantum untuk peran member.
+  "size_bawaan": "S", "shape": "kpi", "supports_period": true, "multi_instance": false,
+  "refresh_on": ["jatahku:txn-added", "…"], "hak": "ok", "baru": false}]
+// asal: inti | <plugin_id>. hak: ok | butuh_plugin | butuh_paket (H1). Kartu laporan usaha tidak tercantum
+// untuk peran member (U4). refresh_on: event window yang membuat kartu dimuat ulang (B2).
 
-// POST /dashboard/data {"periode": "2026-10" | null, "items": [{"id": "a1", "card": "core.kpi.jatah", "settings": {}}]}
+// POST /dashboard/data {"periode": "2026-10-01" | null, "items": [{"id": "a1", "card": "core.kpi.jatah", "settings": {}}]}
 {
-  "generated_at": "2026-10-31T08:05:00+07:00",
+  "generated_at": "2026-11-01T08:05:00+07:00",
+  "periode": {"start": "2026-11-01", "end": "2026-11-30", "berjalan": true},
   "data": {
-    "a1": {"shape": "kpi", "value": 165100, "unit": "rp", "suffix": "hari ini", "tone": "ok", "footer": "…", "chip": null},
-    "a4": {"error": {"kode": "khusus_admin", "detail": "…"}}
+    "a1": {"shape": "kpi", "value": 35000, "unit": "rp", "sumber": {"advisor": {…}, "harian": […], "prediksi": {…}}},
+    "a4": {"error": {"kode": "kartu_tidak_dikenal", "detail": "Kartu ini tidak tersedia."}}
   }
 }
-// Satu snapshot per permintaan; galat satu penyedia hanya mengisi kartunya. Anggaran: p95 ≤ 500 ms, penyedia plugin ≤ 150 ms.
-// Penyedia kartu inti memanggil metrics.py, snapshot.py, envelope_balance.py, recurring_status.py tanpa rumus baru (B1).
+// periode = period_start salah satu periode dari GET /analytics/periods (24 terakhir), atau null = periode
+// berjalan. Rentang bebas tidak diterima: 422 periode_tidak_dikenal. 1–40 item, id unik (422 instans_tidak_sah).
+// Satu snapshot per permintaan; galat satu penyedia hanya mengisi kartunya:
+//   kartu_tidak_dikenal · pengaturan_tidak_sah · gagal_memuat (sumber datanya gagal; coba lagi).
+// Anggaran: p95 ≤ 500 ms, penyedia ≤ 150 ms; yang lewat dicatat log "jatahku.dashboard".
 
-// GET /dashboard/data/{instance_id}?periode= → satu instans, bentuk sama dengan satu entri "data"
+// GET /dashboard/data/{instance_id}?surface=beranda&periode= → satu instans dari tata letak user sendiri
+// (kartu dan settings dibaca dari dokumen tersimpan, bukan dari klien). Bentuk = satu entri "data".
+// 404 instans_tidak_ada.
 ```
 
-Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk data deklaratif untuk kartu"):
+**Kartu inti dan `sumber` (B1).** Penyedia kartu inti tidak menghitung apa pun: `sumber` berisi respons endpoint lama yang dipanggil `Dashboard.jsx` sekarang, persis sama (dikunci tes paritas di `app/tests/test_dashboard_registry.py`), dimuat sekali per permintaan dan dipakai bersama antar kartu. B2 menggambar komponen yang sama dari `sumber`, jadi tampilan tidak berubah. Field deklaratif kartu inti hanya `shape`, dan untuk KPI `value` + `unit` bila angkanya sudah utuh di respons server (total Tabungan masih dijumlah frontend, jadi `value: null`). Teks KPI (footer, sufiks) tetap dirakit frontend sampai dipindah ke templat server.
+
+| Nama di `sumber` | Endpoint lama | Ikut periode | Periode lalu |
+| --- | --- | --- | --- |
+| `ringkasan_amplop` | `GET /envelopes/summary` | ya | ada |
+| `harian` | `GET /analytics/daily-spending` | ya | ada |
+| `rincian` | `GET /analytics/envelope-breakdown` | ya | ada |
+| `transaksi` | `GET /transactions/?limit=&start_date=&end_date=` (rentang periode) | ya | ada |
+| `prediksi` | `GET /analytics/prediction` | berjalan | `null` |
+| `tagihan` | `GET /recurring/summary/period` | berjalan | `null` |
+| `advisor` | `GET /advisor/dashboard` (KPI: potongan `{enabled, generated_at, metrics tanpa harian, kpi: <chip kartu itu>, redam_chip}`; Pengeluaran harian: `{enabled, generated_at, metrics: {harian}, grafik}`; kartu AI Advisor: utuh) | berjalan | `null` |
+| `insights`, `pemasukan` | `GET /advisor/insights`, `GET /incomes/` (hanya kartu AI Advisor saat flag advisor mati: UI Perlu perhatian) | berjalan | `null` |
+| `target` | `GET /goals/` | — | ada |
+| `langganan` | `GET /recurring/` | — | ada |
+| `saldo_cek` | `GET /balance-check/status` | — | ada |
+| `papan` | `GET /household/leaderboard` | — | ada |
+
+| Kartu | `shape` | `value` | `sumber` | Pengaturan |
+| --- | --- | --- | --- | --- |
+| `core.kpi.jatah` | kpi | `metrics.belanja_hari_ini` | advisor, harian, prediksi | — |
+| `core.kpi.sisa_bebas` | kpi | `metrics.sisa_bebas_harian` (atau `sisa_bebas`) | advisor, ringkasan_amplop, prediksi | — |
+| `core.kpi.terpakai` | kpi | `metrics.terpakai` | advisor, ringkasan_amplop, prediksi | — |
+| `core.kpi.income` | kpi | `metrics.pemasukan_rumah_tangga` (advisor mati: `prediksi.total_income`) | advisor, prediksi | — |
+| `core.kpi.tagihan` | kpi | `tagihan.amount_due` | advisor, tagihan | — |
+| `core.kpi.tabungan` | kpi | `null` | advisor, ringkasan_amplop, target | — |
+| `core.cocokkan_saldo` | inti | — | saldo_cek | — |
+| `core.pengeluaran_harian` | series | — | advisor, harian, prediksi | — |
+| `core.advisor` | inti | — | advisor (+ insights, ringkasan_amplop, langganan, pemasukan, prediksi bila flag mati) | — |
+| `core.ke_mana_uangmu` | inti | — | rincian | — |
+| `core.amplop_pengeluaran` | inti | — | ringkasan_amplop | — |
+| `core.target_tabungan` | progress | — | ringkasan_amplop, target | — |
+| `core.transaksi_terbaru` | list | — | transaksi, ringkasan_amplop | `{"limit": 1–50}`, bawaan 10 |
+| `core.langganan` | list | — | langganan | — |
+| `core.papan_disiplin` | list | — | papan | — |
+
+Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk data deklaratif untuk kartu"). `inti` = kartu inti dengan komponen sendiri yang membaca `sumber` (tidak dipakai plugin):
 
 | `shape` | Field |
 | --- | --- |
@@ -167,8 +220,9 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 | `table` | `columns`, `rows` (maks. 10) |
 | `series` | `x` (label), `series` (1–3: `[{"nama", "values"}]`), `acuan` (opsional) |
 | `alert` | `tone`, `judul`, `isi`, `aksi` |
+| `inti` | `sumber` saja |
 
-`aksi` hanya menunjuk aksi terdaftar: `{"kind": "route", "payload": {"to": "/p/buku_usaha/laba-rugi"}}`, `{"kind": "form", …}`, atau alur `/advisor/plan` untuk pemindahan dana.
+`aksi` hanya menunjuk aksi terdaftar: `{"kind": "route", "payload": {"to": "/p/buku_usaha/laba-rugi"}}`, `{"kind": "form", …}`, atau alur `/advisor/plan` untuk pemindahan dana. Kartu plugin (H2, U4) wajib mengisi field bentuknya sendiri; kartu inti boleh hanya membawa `sumber` sampai teksnya dipindah ke templat server.
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
@@ -255,6 +309,13 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `plugin_tidak_aktif` | 404 | Plugin tidak terpasang atau dijeda di ruang ini |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
+| `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`) |
+| `kartu_tidak_dikenal` | 422 / per kartu | Kartu tidak terdaftar (`PUT /dashboard/layout`; di `POST /dashboard/data` sebagai galat kartu) |
+| `ukuran_tidak_sah`, `kartu_ganda`, `instans_tidak_sah`, `terlalu_banyak` | 422 | Validasi tata letak atau permintaan data (§4) |
+| `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu |
+| `periode_tidak_dikenal` | 422 | `periode` bukan `period_start` dari `GET /analytics/periods` |
+| `instans_tidak_ada` | 404 | `GET /dashboard/data/{id}` untuk instans yang tidak ada di tata letak user |
+| `gagal_memuat` | per kartu | Sumber data kartu gagal dimuat; kartu lain tetap terisi |
 | `alokasi_bukan_100` | 422 | Total persen alokasi omzet ≠ 100 |
 
 Batasan member juga berlaku di `POST /transactions/batch` (antrean offline) dan untuk kiriman ulang dengan `client_ref` yang sama: item yang ditolak kembali dengan `kode` di hasil per item, dan tetap disimpan klien (`AGENTS.md`, "Service Worker", antrean offline).

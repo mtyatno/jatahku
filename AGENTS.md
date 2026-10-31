@@ -233,6 +233,22 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin B1: `dashboard_layouts` (b1d4a7c2e9f0)
+Menambah tabel `dashboard_layouts` (tata letak Beranda per user per ruang, ADR-P8) dan endpoint baru
+`/dashboard/*`. Migrasi **idempoten** (`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat
+API restart, dan tidak ada model lama yang memetakan kolom baru, jadi tidak ada jendela 500. Migrasinya tetap
+harus dijalankan, kalau tidak `deploy.sh` berakhir exit 2. Frontend belum memanggil `/dashboard/*` (B2, di balik
+flag `beranda_registry_users`), jadi tidak ada perubahan tampilan. Tanpa paket baru.
+1. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru.
+2. `ls /opt/jatahku/app/alembic/versions/ | grep b1d4a7c2e9f0`; `alembic current` harus `1c7e5a9d3b20` (R1) sebelum upgrade; bila belum, jalankan checklist R1 dulu.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
+   milik `postgres`, jalankan sebagai postgres; cek pemiliknya dengan query di checklist Kotak Struk); `alembic current`
+   harus `b1d4a7c2e9f0`.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d dashboard_layouts'` (unik `uq_dashboard_layout`), lalu dengan
+   token user sendiri: `GET https://api.jatahku.com/dashboard/layout` → `version: 0` dan 14 kartu;
+   `POST /dashboard/data` dengan `{"items":[{"id":"a1","card":"core.kpi.jatah"}]}` → `data.a1.shape = "kpi"`.
+   Lihat log `jatahku.dashboard` untuk peringatan anggaran (`journalctl -u jatahku | grep "dashboard batch"`).
+
 ## Deploy Checklist — Kredensial SMTP dari `.env` (langkah 1–2 wajib SEBELUM merge)
 `app/services/email_service.py` tidak lagi memuat kredensial; semuanya dibaca dari `/opt/jatahku/.env`
 (`app/core/config.py`, `SMTP_*`). Tanpa `SMTP_PASSWORD`, **semua email berhenti** (reset password, konfirmasi hapus
