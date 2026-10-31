@@ -26,6 +26,9 @@ Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu house
 semua anggota dalam satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per
 household, tanggal dibaca di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dan gagal recompute
 dicatat dan tidak membatalkan perubahan yang sudah di-commit.
+
+Kunci per household itu publik (`household_lock`): `recompute_history` dan job snapshot harian
+(`scheduler.payday_snapshot_job`) sama-sama memegangnya, karena keduanya menulis kunci snapshot yang sama.
 """
 import asyncio
 import logging
@@ -226,15 +229,22 @@ async def heal(db: AsyncSession, household) -> list[User]:
 
 
 # ── mengubah tanggal gajian ─────────────────────────────────────────────────
-# Satu kunci per household. Kunci dalam proses sudah cukup: app berjalan sebagai satu proses uvicorn, scheduler di
-# dalam proses yang sama (spec, penyesuaian 2). Dict ini tumbuh satu entri per household yang pernah di-recompute
-# (kecil, dibiarkan). `asyncio.Lock` terikat ke event loop tempat ia pertama kali diperebutkan, jadi tes yang
-# berebut kunci memakai id household baru per tes.
+# Satu kunci per household, dipegang semua penulis kunci snapshot `(envelope_id, year, month)` di proses ini:
+# `recompute_history` dan job harian `scheduler.payday_snapshot_job`. Kunci dalam proses sudah cukup: app berjalan
+# sebagai satu proses uvicorn, scheduler di dalam proses yang sama (spec, penyesuaian 2). Dict ini tumbuh satu entri
+# per household yang pernah di-recompute atau di-snapshot job (kecil, dibiarkan). `asyncio.Lock` terikat ke event loop
+# tempat ia pertama kali diperebutkan, jadi tes yang berebut kunci memakai id household baru per tes.
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
-def _lock_for(household_id) -> asyncio.Lock:
-    """Kunci recompute milik household ini; dibuat saat pertama diminta."""
+def household_lock(household_id) -> asyncio.Lock:
+    """Kunci snapshot milik household ini (satu per household); dibuat saat pertama diminta. Pemakaian:
+    `async with household_lock(hid):`. Pemegangnya tidak berjalan bersamaan dengan pemegang lain pada household yang
+    sama: `recompute_history` dan job snapshot harian.
+
+    Recompute menghapus lalu menyisipkan ulang kunci snapshot yang juga ditulis job harian, dan kunci unik
+    `(envelope_id, year, month)` bisa bertabrakan bila keduanya berjalan sekaligus. Tidak re-entrant: pemegang tidak
+    boleh meminta kunci household yang sama lagi (`recompute_history` dan job tidak saling memanggil)."""
     lock = _locks.get(household_id)
     if lock is None:
         lock = _locks[household_id] = asyncio.Lock()
@@ -259,7 +269,8 @@ async def _current_payday(household_id) -> int:
 
 
 async def recompute_history(household_id, periods: int) -> list[dict]:
-    """Hitung ulang snapshot `periods` periode tertutup terakhir household, satu recompute pada satu waktu.
+    """Hitung ulang snapshot `periods` periode tertutup terakhir household, satu recompute pada satu waktu dan tidak
+    bersamaan dengan job snapshot harian household yang sama (kunci yang sama: `household_lock`).
 
     Dua perubahan tanggal beruntun (mengetik "2" lalu "25") bisa menjalankan dua recompute bersamaan dengan jendela
     berbeda, dan yang selesai terakhir menang, belum tentu tanggal terakhir. Maka tanggal dibaca DI DALAM kunci:
@@ -271,7 +282,7 @@ async def recompute_history(household_id, periods: int) -> list[dict]:
 
     Mengembalikan satu dict per periode (bentuk `rollover.recompute_household`). Error per amplop di dalam periode
     dicatat sebagai error log dan tidak membatalkan apa pun: daftar penuh tetap dikembalikan, pemanggil memutuskan."""
-    async with _lock_for(household_id):
+    async with household_lock(household_id):
         payday = await _current_payday(household_id)
         results = await rollover.recompute_household(household_id, payday, periods)
     for period in results:
