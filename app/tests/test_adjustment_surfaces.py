@@ -113,7 +113,9 @@ class ProfileUsageTests(unittest.IsolatedAsyncioTestCase):
             default_cooling_threshold=None, default_daily_limit=None, default_is_locked=False,
             last_login=None, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
-        await get_profile(user=user, db=db)
+        # Siklus rumah (payday_context) bukan urusan tes ini dan db tiruan menjawab semua kueri dengan FakeResult(0).
+        with patch("app.api.routes.user_settings.payday_context", new=AsyncMock(return_value=None)):
+            await get_profile(user=user, db=db)
         first = executed_sql(db)[0]
         self.assertIn("count(transactions.id)", first)
         self.assertIn(NOT_ADJ_TXN, first)
