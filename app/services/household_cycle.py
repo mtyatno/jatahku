@@ -8,9 +8,16 @@ Aturan: atribut `payday_day` (user maupun household) hanya di-assign di modul in
 `household_cycle_schema.py`. Jalur lain membaca lewat `household_payday` / `payday_context` dan mengubah lewat
 service ini, supaya cermin tidak menyimpang.
 
-Semua fungsi menerima `db: AsyncSession` dan tidak `commit` sendiri; pemanggil yang commit (pola repo). Satu-satunya
-pengecualian adalah `heal`, yang dipanggil job harian tanpa pemanggil lain yang menyimpan.
+Fungsi yang menerima `db: AsyncSession` tidak `commit` sendiri; pemanggil yang commit (pola repo). Ada dua
+pengecualian: `heal`, yang dipanggil job harian tanpa pemanggil lain yang menyimpan, dan `set_household_payday`,
+yang harus menyimpan perubahan sebelum recompute karena recompute membaca lewat sesi sendiri. `recompute_history`
+(lewat `_current_payday`) dan `notification_service.kirim` juga memakai sesi sendiri dan commit di sana.
+
+Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan cermin semua anggota dalam
+satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per household, tanggal dibaca
+di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dicatat dan tidak membatalkan perubahan.
 """
+import asyncio
 import logging
 import uuid
 from collections.abc import Sequence
@@ -20,9 +27,15 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Household, HouseholdMember, HouseholdRole, User
+from app.core.database import AsyncSessionLocal
+from app.models.models import Household, HouseholdMember, HouseholdRole, NotificationType, User
+from app.services import notification_service, rollover
+from app.services.advisor import advisor_cache
 
 logger = logging.getLogger("jatahku.household_cycle")
+
+# Berapa periode tertutup terakhir yang dihitung ulang saat tanggal gajian household berubah (spec keputusan 7).
+RECOMPUTE_PERIODS_ON_CHANGE = 12
 
 # Peringkat siapa yang menentukan siklus saat household belum punya tanggal: owner, lalu admin, lalu yang lain.
 # Urutan yang sama dengan backfill SQL di household_cycle_schema.py.
@@ -147,6 +160,17 @@ async def adopt_household_payday(db: AsyncSession, user, household) -> int:
     return day
 
 
+async def _member_users(db: AsyncSession, household) -> Sequence[User]:
+    """`User` semua anggota household dalam satu kueri; dipakai `heal` dan `set_household_payday`, yang meng-assign
+    cermin `payday_day` pada objek-objek ini."""
+    result = await db.execute(
+        select(User)
+        .join(HouseholdMember, HouseholdMember.user_id == User.id)
+        .where(HouseholdMember.household_id == household.id)
+    )
+    return result.scalars().all()
+
+
 async def heal(db: AsyncSession, household) -> list[User]:
     """Samakan `users.payday_day` anggota yang menyimpang dari `households.payday_day`.
 
@@ -157,11 +181,7 @@ async def heal(db: AsyncSession, household) -> list[User]:
     target = household.payday_day
     if target is None:
         return []
-    users = (await db.execute(
-        select(User)
-        .join(HouseholdMember, HouseholdMember.user_id == User.id)
-        .where(HouseholdMember.household_id == household.id)
-    )).scalars().all()
+    users = await _member_users(db, household)
     fixed: list[User] = []
     for user in users:
         if user.payday_day != target:
@@ -172,3 +192,119 @@ async def heal(db: AsyncSession, household) -> list[User]:
     if fixed:
         await db.commit()
     return fixed
+
+
+# ── mengubah tanggal gajian ─────────────────────────────────────────────────
+# Satu kunci per household. Kunci dalam proses sudah cukup: app berjalan sebagai satu proses uvicorn, scheduler di
+# dalam proses yang sama (spec, penyesuaian 2). Dict ini tumbuh satu entri per household yang pernah di-recompute
+# (kecil, dibiarkan). `asyncio.Lock` terikat ke event loop tempat ia pertama kali diperebutkan, jadi tes yang
+# berebut kunci memakai id household baru per tes.
+_locks: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+def _lock_for(household_id) -> asyncio.Lock:
+    """Kunci recompute milik household ini; dibuat saat pertama diminta."""
+    lock = _locks.get(household_id)
+    if lock is None:
+        lock = _locks[household_id] = asyncio.Lock()
+    return lock
+
+
+async def _current_payday(household_id) -> int:
+    """Tanggal gajian household yang paling baru di DB, dibaca lewat sesi sendiri.
+
+    Sesi pemanggil bisa memegang household versi lama (sesi tidak kedaluwarsa saat commit), padahal perubahan lain
+    mungkin sudah tersimpan. NULL (belum dimigrasi) diisi `household_payday` dan di-commit di sesi ini."""
+    async with AsyncSessionLocal() as db:
+        household = (await db.execute(
+            select(Household).where(Household.id == household_id)
+        )).scalar_one()
+        day = await household_payday(db, household)
+        await db.commit()
+        return day
+
+
+async def recompute_history(household_id, periods: int) -> list[dict]:
+    """Hitung ulang snapshot `periods` periode tertutup terakhir household, satu recompute pada satu waktu.
+
+    Dua perubahan tanggal beruntun (mengetik "2" lalu "25") bisa menjalankan dua recompute bersamaan dengan jendela
+    berbeda, dan yang selesai terakhir menang, belum tentu tanggal terakhir. Maka tanggal dibaca DI DALAM kunci:
+    yang menunggu kunci memakai tanggal yang tersimpan setelah recompute di depannya selesai.
+
+    Mengembalikan satu dict per periode (bentuk `rollover.recompute_household`). Error per amplop di dalam periode
+    dicatat sebagai error log dan tidak membatalkan apa pun: daftar penuh tetap dikembalikan, pemanggil memutuskan."""
+    async with _lock_for(household_id):
+        payday = await _current_payday(household_id)
+        results = await rollover.recompute_household(household_id, payday, periods)
+    for period in results:
+        if period.get("errors"):
+            logger.error(
+                "recompute household %s periode %s punya error: %s",
+                household_id, period.get("period"), period["errors"],
+            )
+    return results
+
+
+async def notify_payday_changed(
+    users, *, household_name: str, day: int, changed_by: str | None, periods: int
+) -> int:
+    """Beri tahu `users` bahwa siklus anggaran rumah mereka berubah; mengembalikan jumlah yang berhasil dikirimi.
+
+    `changed_by` terisi (nama yang mengubah) → pesan perubahan oleh owner; None → pesan skrip migrasi, yang tidak
+    punya pelaku. Judul dan pesan tidak dikirim sebagai `telegram_html`: `kirim` yang meng-escape, jadi nama rumah
+    atau orang yang berisi `<` atau `&` aman. Tiap kirim dibungkus tersendiri: yang gagal dicatat dan tidak
+    menghentikan yang lain, apalagi membatalkan perubahan tanggalnya."""
+    if changed_by:
+        message = (
+            f"Tanggal gajian {household_name} kini tanggal {day} (diubah {changed_by}). "
+            f"Riwayat {periods} periode terakhir dihitung ulang."
+        )
+    else:
+        message = (
+            f"Siklus anggaranmu kini mengikuti {household_name}: tanggal {day}. "
+            f"Riwayat {periods} periode terakhir dihitung ulang."
+        )
+    sent = 0
+    for user in users:
+        try:
+            await notification_service.kirim(
+                user, NotificationType.system, "Siklus anggaran rumah berubah", message, link="/settings"
+            )
+            sent += 1
+        except Exception:
+            logger.error("notifikasi perubahan siklus ke %s gagal", user.id, exc_info=True)
+    return sent
+
+
+async def set_household_payday(db: AsyncSession, household, day: int, *, actor) -> dict:
+    """Ubah tanggal gajian household atas nama `actor` (spec bagian 2). Izin dicek route, bukan di sini.
+
+    `ValueError` bila `day` di luar 1–31 (route: 400); tanggal yang sama dengan sekarang → `{"changed": False}`
+    tanpa recompute dan tanpa notifikasi. Selain itu household dan cermin semua anggota di-assign dalam satu
+    transaksi lalu di-commit (recompute membaca lewat sesi lain, jadi perubahan harus sudah tersimpan), cache
+    advisor household dihapus, 12 periode terakhir dihitung ulang, dan anggota selain `actor` diberi tahu.
+    Hasil: `{"changed": True, "members": n, "recomputed": k}`.
+
+    Exception dari recompute (bukan error per amplop, yang hanya dicatat) merambat ke pemanggil setelah perubahan
+    tersimpan, dan notifikasi "dihitung ulang" tidak terkirim. Pemulihannya recompute ulang oleh owner/admin."""
+    if not 1 <= day <= 31:
+        raise ValueError("payday_day harus antara 1 dan 31")
+    if day == await household_payday(db, household):
+        return {"changed": False}
+
+    members = await _member_users(db, household)
+    household.payday_day = day
+    for user in members:
+        user.payday_day = day
+    await db.commit()
+
+    await advisor_cache.invalidate(household.id)
+    results = await recompute_history(household.id, RECOMPUTE_PERIODS_ON_CHANGE)
+    await notify_payday_changed(
+        [user for user in members if user.id != actor.id],
+        household_name=household.name,
+        day=day,
+        changed_by=actor.name,
+        periods=RECOMPUTE_PERIODS_ON_CHANGE,
+    )
+    return {"changed": True, "members": len(members), "recomputed": len(results)}
