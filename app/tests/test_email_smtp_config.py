@@ -68,6 +68,24 @@ class SmtpSettingsTests(unittest.TestCase):
             self.assertFalse(hasattr(email_service, name), name)
 
 
+class StartupWarningTests(unittest.TestCase):
+    def test_warns_at_startup_when_password_missing(self):
+        with patch.object(email_service, "get_settings", return_value=_settings(SMTP_PASSWORD="")), \
+                self.assertLogs("jatahku.email", level="WARNING") as logs:
+            self.assertFalse(email_service.check_configured())
+        self.assertTrue(any("SMTP_PASSWORD" in line for line in logs.output))
+
+    def test_silent_when_configured(self):
+        with patch.object(email_service, "get_settings", return_value=_settings()):
+            with self.assertNoLogs("jatahku.email", level="WARNING"):
+                self.assertTrue(email_service.check_configured())
+
+    def test_lifespan_calls_check(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text()
+        self.assertIn("email_service.check_configured()", src)
+
+
 class SmtpSettingsDefaultsTests(unittest.TestCase):
     def test_password_has_no_default(self):
         from app.core.config import Settings

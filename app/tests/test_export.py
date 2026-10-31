@@ -432,9 +432,8 @@ class ExportHtmlInjectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_report_forbids_scripts_and_remote_loads(self):
         # Pertahanan lapis kedua: berlaku juga saat berkas HTML yang tersimpan dibuka langsung.
         html = await self._report_html(env_name="Makan", emoji="🍜", description="Bakso")
-        self.assertIn('<meta http-equiv="Content-Security-Policy"', html)
-        self.assertIn("default-src 'none'", html)
-        self.assertNotIn("script-src", html)
+        self.assertIn('<meta http-equiv="Content-Security-Policy" content="'
+                      "default-src 'none'; style-src 'unsafe-inline'; img-src data:\">", html)
 
 
 class ExportCsvInjectionTests(unittest.IsolatedAsyncioTestCase):

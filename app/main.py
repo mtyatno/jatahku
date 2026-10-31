@@ -79,6 +79,8 @@ async def lifespan(app: FastAPI):
             for stmt in KOTAK_DDL:
                 await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
+    from app.services import email_service
+    email_service.check_configured()
     # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
     from app.services.advisor import advisor_cache
     advisor_cache.install()

@@ -210,23 +210,31 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
-## Deploy Checklist — Kredensial SMTP dari `.env` (wajib SEBELUM merge)
+## Deploy Checklist — Kredensial SMTP dari `.env` (langkah 1–2 wajib SEBELUM merge)
 `app/services/email_service.py` tidak lagi memuat kredensial; semuanya dibaca dari `/opt/jatahku/.env`
-(`app/core/config.py`). Tanpa `SMTP_PASSWORD`, **semua email berhenti** (reset password, konfirmasi hapus akun,
-backup, peringatan) dan log mencatat "SMTP_PASSWORD kosong". `Settings` memakai `extra="ignore"`, jadi variabel
-ini aman diisi sebelum merge, saat kode lama masih berjalan. Tanpa migrasi, tanpa paket baru.
-1. **Ganti password** akun mail `noreply@jatahku.com` di HestiaCP (password lama pernah ter-commit di repo
-   publik dan tetap ada di riwayat git, jadi harus dianggap bocor).
-2. Isi di `/opt/jatahku/.env` (nilai lain sudah sama dengan default):
+(`app/core/config.py`, `SMTP_*`). Tanpa `SMTP_PASSWORD`, **semua email berhenti** (reset password, konfirmasi hapus
+akun, backup, peringatan): startup mencatat peringatan "SMTP_PASSWORD kosong" dan tiap kiriman gagal di log.
+`Settings` memakai `extra="ignore"`, jadi variabel ini aman diisi sebelum merge, saat kode lama masih berjalan.
+Tanpa migrasi, tanpa paket baru. Urutan di bawah dibuat supaya email tidak pernah mati: kode lama memakai
+password yang tertanam di kode, jadi password **belum** boleh diganti sebelum kode baru tayang.
+1. Isi di `/opt/jatahku/.env` dengan password yang **sekarang** dipakai (nilai lain sudah sama dengan default):
    ```
-   SMTP_PASSWORD=<password baru>
+   SMTP_PASSWORD=<password saat ini>
    ```
-   Opsional bila berbeda dari default: `SMTP_HOST` (localhost), `SMTP_PORT` (587), `SMTP_USER` / `SMTP_FROM`
-   (noreply@jatahku.com), `SMTP_FROM_NAME` (Jatahku). Cek: `sudo grep -c '^SMTP_PASSWORD=.' /opt/jatahku/.env` → 1.
-3. Merge, tunggu deploy (`api.jatahku.com/health` → `commit` baru).
-4. Uji: "Lupa password?" di halaman login dengan email sendiri → email reset masuk. Bila tidak:
+   Hanya bila berbeda dari default, tambahkan juga `SMTP_HOST` (localhost), `SMTP_PORT` (587), `SMTP_USER` /
+   `SMTP_FROM` (noreply@jatahku.com), `SMTP_FROM_NAME` (Jatahku). Kunci yang tidak dipakai **dihapus, bukan
+   dikosongkan** (`SMTP_PORT=` kosong membuat startup gagal). Cek: `sudo grep -c '^SMTP_PASSWORD=.' /opt/jatahku/.env` → 1.
+2. Pastikan tidak ada peringatan saat proses membaca `.env`: `sudo -u jatahku env -i $(sudo cat /opt/jatahku/.env | grep -v '^#' | xargs) \
+   /opt/jatahku/venv/bin/python -c "from app.core.config import get_settings; print(bool(get_settings().SMTP_PASSWORD))"`
+   dari `/opt/jatahku/app` → `True`.
+3. Merge, tunggu deploy (`api.jatahku.com/health` → `commit` baru). Log startup tidak boleh memuat
+   "SMTP_PASSWORD kosong": `sudo journalctl -u jatahku --since "5 min ago" | grep -c "SMTP_PASSWORD kosong"` → 0.
+4. **Ganti password** akun mail `noreply@jatahku.com` di HestiaCP (password lama pernah ter-commit di repo publik
+   dan tetap ada di riwayat git, jadi harus dianggap bocor), tulis password baru ke `SMTP_PASSWORD` di `.env`, lalu
+   `sudo systemctl restart jatahku`. Jeda antara ganti password dan restart = satu-satunya jendela email gagal.
+5. Uji: "Lupa password?" di halaman login dengan email sendiri → email reset masuk. Bila tidak:
    `sudo journalctl -u jatahku --since "10 min ago" | grep -i "email failed"`.
-5. Jangan pernah menulis kredensial di kode atau dokumen repo; repo ini publik.
+6. Jangan pernah menulis kredensial di kode atau dokumen repo; repo ini publik.
 
 ## Deploy Checklist — Bagikan ke Jatahku, Bagian B (web)
 Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terpasang, batas unggah dicek). Tanpa migrasi dan tanpa paket baru (Python maupun npm): merge → deploy otomatis. Saklar

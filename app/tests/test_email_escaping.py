@@ -104,16 +104,52 @@ class NotificationEmailTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(html.count(EVIL_ESC), 2)
 
 
-class AdminPaymentEmailTests(unittest.TestCase):
-    def test_payment_and_admin_emails_escape_user_name(self):
+def _one_row_db(*rows):
+    """db.execute() mengembalikan baris-baris ini berurutan (scalar_one_or_none)."""
+    results = []
+    for row in rows:
+        r = MagicMock()
+        r.scalar_one_or_none = MagicMock(return_value=row)
+        results.append(r)
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=results)
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    return db
+
+
+class AdminEmailRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_direct_email_escapes_user_name_but_keeps_admin_html_body(self):
+        from app.api.routes.admin import DirectEmailRequest, send_email_to_user
+        target = SimpleNamespace(id=uuid4(), name=EVIL, email="t@b.test", telegram_id=None)
+        req = DirectEmailRequest(user_id=target.id, subject="Info", body="<p><b>Isi dari admin</b></p>")
+        with patch.object(email_service, "send_email", return_value=True) as send:
+            out = await send_email_to_user(req, admin=SimpleNamespace(id=uuid4()), db=_one_row_db(target))
+        self.assertEqual(out["results"]["email"], "sent")
+        html = _captured(send)
+        self.assertNotIn('<a href="https://phish.test', html)
+        self.assertIn(f"Hai {EVIL_ESC},", html)
+        self.assertIn("<p><b>Isi dari admin</b></p>", html)
+
+    async def test_approve_payment_escapes_user_name(self):
+        from app.api.routes.admin import approve_payment
+        order = SimpleNamespace(id=uuid4(), user_id=uuid4(), status="waiting_confirmation")
+        u = SimpleNamespace(id=order.user_id, name=EVIL, email="t@b.test", plan="basic")
+        with patch.object(email_service, "send_email", return_value=True) as send:
+            await approve_payment(order.id, admin=SimpleNamespace(id=uuid4()), db=_one_row_db(order, u))
+        html = _captured(send)
+        self.assertNotIn('<a href="https://phish.test', html)
+        self.assertIn(f"Hai {EVIL_ESC},", html)
+
+
+class PaymentProofEmailTests(unittest.TestCase):
+    def test_upload_proof_source_escapes_user_name_and_email(self):
+        # upload_proof menulis berkas ke disk, jadi dicek di sumbernya: interpolasi nama/email
+        # ke HTML email admin harus lewat h(). Baris persis ini yang dipakai di payment.py.
         import pathlib
-        root = pathlib.Path(__file__).resolve().parents[1]
-        payment = (root / "api/routes/payment.py").read_text()
-        admin = (root / "api/routes/admin.py").read_text()
-        # Nama/email user masuk ke HTML email lewat _h(); tidak ada interpolasi mentah tersisa.
-        self.assertNotIn("<strong>{user.name}</strong> ({user.email})", payment)
-        self.assertNotIn('"<p>Hai " + u.name + ",</p>', admin)
-        self.assertNotIn('f"<p>Hai {u.name},</p>"', admin)
+        src = (pathlib.Path(__file__).resolve().parents[1] / "api/routes/payment.py").read_text()
+        self.assertIn('f"<p><strong>{h(user.name)}</strong> ({h(user.email)}) baru saja upload bukti transfer.</p>"', src)
+        self.assertNotIn("{user.name}</strong>", src)
 
 
 if __name__ == "__main__":

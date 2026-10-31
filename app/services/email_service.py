@@ -24,6 +24,16 @@ def _from_header() -> str:
     return f"{s.SMTP_FROM_NAME} <{s.SMTP_FROM}>"
 
 
+def check_configured() -> bool:
+    """Dipanggil saat startup (app/main.py): tanpa SMTP_PASSWORD semua email akan gagal, jadi
+    peringatkan sekali di log, bukan hanya per kiriman yang gagal diam-diam di background task."""
+    if get_settings().SMTP_PASSWORD:
+        return True
+    logger.warning("SMTP_PASSWORD kosong di /opt/jatahku/.env — semua email (reset password, hapus akun, "
+                   "backup, peringatan) akan gagal sampai diisi")
+    return False
+
+
 def _deliver(to_email: str, msg) -> None:
     """Kirim lewat SMTP terautentikasi. Kredensial dari .env (SMTP_*, app/core/config.py);
     tanpa SMTP_PASSWORD tidak pernah menyambung ke server."""
