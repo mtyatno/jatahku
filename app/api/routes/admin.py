@@ -593,10 +593,10 @@ async def send_email_to_user(
 
     # Send email
     if u.email and not u.email.startswith("deleted_") and not u.email.startswith("banned_"):
-        from app.services.email_service import send_email, email_template
+        from app.services.email_service import send_email, email_template, h
         html = email_template(
             req.subject,
-            f"<p>Hai {u.name},</p>" + req.body,
+            f"<p>Hai {h(u.name)},</p>" + req.body,
             req.cta_text or None,
             req.cta_url or None,
         )
@@ -733,10 +733,10 @@ async def approve_payment(
         db.add(notif)
         # Send email
         try:
-            from app.services.email_service import send_email, email_template
+            from app.services.email_service import send_email, email_template, h
             html = email_template(
                 "Upgrade Pro Berhasil!",
-                "<p>Hai " + u.name + ",</p><p>Pembayaran kamu sudah dikonfirmasi. Semua fitur Pro sudah aktif!</p>",
+                "<p>Hai " + h(u.name) + ",</p><p>Pembayaran kamu sudah dikonfirmasi. Semua fitur Pro sudah aktif!</p>",
                 "Buka Jatahku", "https://jatahku.com"
             )
             send_email(u.email, "Upgrade Pro Berhasil!", html)
@@ -943,14 +943,14 @@ async def broadcast_article(
 
     sent = 0
     failed = 0
-    from app.services.email_service import send_email, email_template
+    from app.services.email_service import send_email, email_template, h
 
     for u in users:
         if u.email and not u.email.startswith("deleted_") and not u.email.startswith("banned_"):
             try:
                 html = email_template(
                     req.subject,
-                    f"<p>Hai {u.name},</p>" + req.body,
+                    f"<p>Hai {h(u.name)},</p>" + req.body,
                     req.cta_text or None,
                     req.cta_url or None,
                 )

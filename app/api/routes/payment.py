@@ -189,10 +189,10 @@ async def upload_proof(
         db.add(notif)
         # Email admin
         try:
-            from app.services.email_service import send_email, email_template
+            from app.services.email_service import send_email, email_template, h
             html = email_template(
                 "Bukti Pembayaran Baru",
-                f"<p><strong>{user.name}</strong> ({user.email}) baru saja upload bukti transfer.</p>"
+                f"<p><strong>{h(user.name)}</strong> ({h(user.email)}) baru saja upload bukti transfer.</p>"
                 f"<p>Jumlah: <strong>Rp{int(order.amount):,}</strong></p>"
                 f"<p>Segera verifikasi di Admin panel.</p>".replace(",", "."),
                 "Buka Admin", "https://jatahku.com/admin"
