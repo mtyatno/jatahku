@@ -18,9 +18,10 @@ service ini, supaya cermin tidak menyimpang.
 Fungsi yang menerima `db: AsyncSession` tidak `commit` sendiri; pemanggil yang commit (pola repo). Ada dua
 pengecualian: `heal`, yang dipanggil job harian tanpa pemanggil lain yang menyimpan, dan `set_household_payday`,
 yang harus menyimpan perubahan sebelum recompute karena recompute membaca lewat sesi sendiri. `recompute_history`
-membaca tanggal lewat sesi sendiri yang HANYA-BACA (`_current_payday`: tidak assign, flush, maupun commit), jadi
-pemanggil yang baru mengubah atau mengisi `households.payday_day` di sesinya harus commit dulu. Hanya
-`notification_service.kirim` yang memakai sesi sendiri dan commit di sana.
+dan job harian membaca tanggal lewat sesi sendiri yang HANYA-BACA (`current_payday`: tidak assign, flush, maupun
+commit; None bila household-nya sudah dihapus), jadi pemanggil yang baru mengubah atau mengisi
+`households.payday_day` di sesinya harus commit dulu. Hanya `notification_service.kirim` yang memakai sesi sendiri
+dan commit di sana.
 
 Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan (untuk ruang keluarga) cermin
 semua anggota dalam satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per
@@ -28,7 +29,9 @@ household, tanggal dibaca di dalam kunci), dan notifikasi ke anggota lain. Gagal
 dicatat dan tidak membatalkan perubahan yang sudah di-commit.
 
 Kunci per household itu publik (`household_lock`): `recompute_history` dan job snapshot harian
-(`scheduler.payday_snapshot_job`) sama-sama memegangnya, karena keduanya menulis kunci snapshot yang sama.
+(`scheduler.payday_snapshot_job`) sama-sama memegangnya, karena keduanya menulis kunci snapshot yang sama. Keduanya
+membaca tanggal gajian (`current_payday`) SETELAH memegang kunci, bukan sebelumnya: tanggal yang dibaca di luar kunci
+bisa basi saat gilirannya tiba, dan jendela basi menulis kunci periode berjalan yang baru dibuang recompute.
 """
 import asyncio
 import logging
@@ -251,18 +254,26 @@ def household_lock(household_id) -> asyncio.Lock:
     return lock
 
 
-async def _current_payday(household_id) -> int:
-    """Tanggal gajian household yang paling baru di DB, dibaca lewat sesi sendiri. HANYA-BACA.
+async def current_payday(household_id) -> int | None:
+    """Tanggal gajian household yang paling baru di DB, dibaca lewat sesi sendiri, atau None bila household-nya sudah
+    tidak ada (dihapus lewat merge atau penghapusan akun). HANYA-BACA.
 
     Sesi pemanggil bisa memegang household versi lama (sesi tidak kedaluwarsa saat commit), padahal perubahan lain
     mungkin sudah tersimpan. NULL (belum dimigrasi) diturunkan dari anggota dengan `pick_payday`, tanpa menulis
     apa pun: mengisinya lewat koneksi kedua ini bisa menunggu selamanya pada kunci baris yang dipegang transaksi
     pemanggil (yang sudah `flush` pengisian yang sama lewat `household_payday` dan belum commit), padahal kunci
-    recompute sedang dipegang."""
+    recompute sedang dipegang.
+
+    Pemakainya (`recompute_history`, job snapshot harian) membacanya SETELAH memegang `household_lock`. Perubahan
+    tanggal yang sudah di-commit saat kunci dipegang pasti terbaca (`set_household_payday` commit sebelum recompute-nya
+    meminta kunci), dan yang di-commit sesudahnya diikuti recompute-nya sendiri yang menunggu kunci ini. Jadi jendela
+    snapshot tidak pernah lebih tua dari recompute terakhir yang sudah selesai."""
     async with AsyncSessionLocal() as db:
         household = (await db.execute(
             select(Household).where(Household.id == household_id)
-        )).scalar_one()
+        )).scalar_one_or_none()
+        if household is None:
+            return None
         if household.payday_day is not None:
             return household.payday_day
         return pick_payday(await member_rows(db, household_id))
@@ -276,14 +287,18 @@ async def recompute_history(household_id, periods: int) -> list[dict]:
     berbeda, dan yang selesai terakhir menang, belum tentu tanggal terakhir. Maka tanggal dibaca DI DALAM kunci:
     yang menunggu kunci memakai tanggal yang tersimpan setelah recompute di depannya selesai.
 
-    Tanggal dibaca lewat sesi lain dan hanya-baca (`_current_payday`): pemanggil yang baru mengubah atau mengisi
+    Tanggal dibaca lewat sesi lain dan hanya-baca (`current_payday`): pemanggil yang baru mengubah atau mengisi
     `households.payday_day` di sesinya sendiri harus commit sebelum memanggil ini, kalau tidak yang terbaca nilai
-    lama (atau, bila NULL, yang diturunkan dari anggota).
+    lama (atau, bila NULL, yang diturunkan dari anggota). Household yang sudah tidak ada (dihapus lewat merge atau
+    penghapusan akun) tidak dihitung: hasilnya `[]` dan satu peringatan, bukan error.
 
     Mengembalikan satu dict per periode (bentuk `rollover.recompute_household`). Error per amplop di dalam periode
     dicatat sebagai error log dan tidak membatalkan apa pun: daftar penuh tetap dikembalikan, pemanggil memutuskan."""
     async with household_lock(household_id):
-        payday = await _current_payday(household_id)
+        payday = await current_payday(household_id)
+        if payday is None:
+            logger.warning("recompute household %s dilewati: household sudah tidak ada", household_id)
+            return []
         results = await rollover.recompute_household(household_id, payday, periods)
     for period in results:
         if period.get("errors"):

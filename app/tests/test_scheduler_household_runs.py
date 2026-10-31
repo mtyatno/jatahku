@@ -1,11 +1,13 @@
 """Siklus household, Task 9: job snapshot harian per household (`scheduler.payday_snapshot_job`) dan fungsi murni
 `household_runs`.
 
-Tanpa Postgres: `db_with(...)` / `FakeResult` dari app/tests/fakes.py; household memakai SimpleNamespace. IO di sekeliling
-di-patch di tempat namanya terikat: `scheduler.create_monthly_snapshots` dan `scheduler.date` (impor tingkat modul),
-sedangkan nama yang diimpor di dalam fungsi job di-patch pada modul sumbernya (`app.core.database.AsyncSessionLocal`,
-`household_cycle.household_payday`, `household_cycle.heal`). Kunci household terikat ke event loop tempat ia pertama kali
-diperebutkan, jadi tiap tes yang berebut kunci memakai id household baru.
+Tanpa Postgres: `db_with(...)` / `FakeResult` dari app/tests/fakes.py; household memakai SimpleNamespace. IO di
+sekeliling di-patch di tempat namanya terikat: `scheduler.create_monthly_snapshots` dan `scheduler.date` (impor tingkat
+modul), sedangkan nama yang diimpor di dalam fungsi job di-patch pada modul sumbernya
+(`app.core.database.AsyncSessionLocal`, `household_cycle.household_payday`, `household_cycle.heal`,
+`household_cycle.current_payday`). `current_payday` (bacaan tanggal di dalam kunci, R16) membaca `self.stored`, kamus
+yang meniru `households.payday_day` dan yang boleh diubah tes selagi job berjalan. Kunci household terikat ke event
+loop tempat ia pertama kali diperebutkan, jadi tiap tes yang berebut kunci memakai id household baru.
 Run: python -m unittest app.tests.test_scheduler_household_runs -v
 """
 import os
@@ -33,6 +35,14 @@ PERIODS_PAYDAY_25 = [
     (date(2026, 7, 25), date(2026, 8, 24)),
     (date(2026, 8, 25), date(2026, 9, 24)),
     (date(2026, 9, 25), date(2026, 10, 24)),
+]
+# 10 Nov 2026: payday 25 masih di periode yang mulai 25 Okt (jadi PERIODS_PAYDAY_25 berlaku juga hari ini), sedangkan
+# payday 1 sudah menutup Oktober: kunci snapshot 2026-10 adalah periode BERJALAN menurut payday 25.
+RACE_DAY = date(2026, 11, 10)
+PERIODS_PAYDAY_1_ON_RACE_DAY = [
+    (date(2026, 8, 1), date(2026, 8, 31)),
+    (date(2026, 9, 1), date(2026, 9, 30)),
+    (date(2026, 10, 1), date(2026, 10, 31)),
 ]
 NOTHING_CREATED = {"processed": 2, "snapshots_created": 0, "errors": []}
 
@@ -85,21 +95,41 @@ class FakeSession:
 
 
 class JobTestCase(unittest.IsolatedAsyncioTestCase):
-    """Dasar tes job. Semua IO tiruan (`AsyncMock`) dan tidak pernah menunda, jadi satu-satunya hal yang bisa membuat job
-    menunggu adalah kunci household."""
+    """Dasar tes job. Semua IO tiruan (`AsyncMock`) dan tidak pernah menunda, jadi satu-satunya hal yang bisa
+    membuat job menunggu adalah kunci household."""
 
-    def setup_job(self, households, *, payday, heal=None, create=None, on_close=None):
-        """`payday`/`heal`/`create`: `side_effect` (daftar atau fungsi) untuk `household_payday`, `heal`,
-        `create_monthly_snapshots`; `heal` bawaannya tidak memperbaiki apa pun, `create` bawaannya tidak membuat apa pun."""
+    def setup_job(self, households, *, payday, fresh=None, heal=None, create=None, on_close=None, today=TODAY):
+        """`payday`/`heal`/`create`: `side_effect` (daftar atau fungsi) untuk `household_payday` (bacaan tahap pertama,
+        satu sesi), `heal`, `create_monthly_snapshots`; `heal` bawaannya tidak memperbaiki apa pun, `create` bawaannya
+        tidak membuat apa pun.
+
+        `current_payday` (bacaan di dalam kunci, R16) mengembalikan `self.stored[id]`. Bawaannya sama dengan bacaan
+        tahap pertama; `fresh` ({id household: tanggal atau None}) menggantinya per household (None = household sudah
+        dihapus), dan tes boleh mengubah `self.stored` selagi job berjalan untuk meniru perubahan tanggal yang
+        di-commit. `self.read_under_lock` mencatat, untuk tiap bacaan itu, apakah kunci household-nya dipegang."""
         self.db = db_with(FakeResult(rows=households))
         self.household_payday = AsyncMock(side_effect=payday)
         self.heal = AsyncMock(return_value=[]) if heal is None else AsyncMock(side_effect=heal)
         self.create = AsyncMock(return_value=NOTHING_CREATED) if create is None else AsyncMock(side_effect=create)
+        self.stored = dict(fresh or {})
+        self.read_under_lock = []
+
+        async def first_read(db, household):
+            value = await self.household_payday(db, household)
+            self.stored.setdefault(household.id, value)
+            return value
+
+        async def read_inside_lock(household_id):
+            self.read_under_lock.append(household_cycle.household_lock(household_id).locked())
+            return self.stored[household_id]
+
+        self.current_payday = AsyncMock(side_effect=read_inside_lock)
         self.enterContext(patch("app.core.database.AsyncSessionLocal", lambda: FakeSession(self.db, on_close)))
-        self.enterContext(patch.object(household_cycle, "household_payday", self.household_payday))
+        self.enterContext(patch.object(household_cycle, "household_payday", first_read))
         self.enterContext(patch.object(household_cycle, "heal", self.heal))
+        self.enterContext(patch.object(household_cycle, "current_payday", self.current_payday))
         self.enterContext(patch.object(scheduler, "create_monthly_snapshots", self.create))
-        self.enterContext(patch.object(scheduler, "date", fixed_date(TODAY)))
+        self.enterContext(patch.object(scheduler, "date", fixed_date(today)))
 
     async def yield_to_job(self):
         """Beri task job giliran berjalan sampai ia selesai atau tertahan sesuatu (kunci, event)."""
@@ -150,10 +180,10 @@ class PaydaySnapshotJobTests(JobTestCase):
         self.create.assert_not_awaited()
 
     async def test_job_commits_and_closes_the_session_before_snapshotting(self):
-        # `household_payday` mengisi tanggal rumah yang NULL (flush) dan `heal` memperbaiki cermin di sesi job, sedangkan
-        # `create_monthly_snapshots` bekerja lewat sesinya sendiri: simpan dulu (satu commit), tutup sesi, baru snapshot
-        # (kontrak yang sama dengan `recompute_history` dan `POST /snapshots/run`). `household_payday` harus lebih dulu
-        # dari `heal`, yang melewati household yang tanggalnya masih NULL.
+        # `household_payday` mengisi tanggal rumah yang NULL (flush) dan `heal` memperbaiki cermin di sesi job,
+        # sedangkan `create_monthly_snapshots` bekerja lewat sesinya sendiri: simpan dulu (satu commit), tutup sesi,
+        # baru snapshot (kontrak yang sama dengan `recompute_history` dan `POST /snapshots/run`). `household_payday`
+        # harus lebih dulu dari `heal`, yang melewati household yang tanggalnya masih NULL.
         h1, h2 = make_household(), make_household()
         log = []
         paydays = iter([1, 25])
@@ -276,7 +306,6 @@ class JobLockTests(JobTestCase):
             return []
 
         self.setup_job([h], payday=[1], create=create)
-        self.enterContext(patch.object(household_cycle, "_current_payday", AsyncMock(return_value=1)))
         self.enterContext(patch.object(household_cycle.rollover, "recompute_household", recompute_household))
 
         job = asyncio.create_task(scheduler.payday_snapshot_job())
@@ -290,6 +319,119 @@ class JobLockTests(JobTestCase):
         # Satu kali pegang untuk seluruh loop household: recompute baru masuk setelah ketiga periode job selesai,
         # bukan di sela-selanya.
         self.assertEqual(log, ["job: mulai periode", "job: selesai periode"] * 3 + ["recompute"])
+
+
+class JobPaydayReadTests(JobTestCase):
+    """R16: tanggal gajian untuk jendela snapshot dibaca ulang DI DALAM kunci household (`current_payday`), bukan
+    dipakai dari bacaan tahap pertama yang bisa basi. Pemilik bisa mengubah tanggal kapan saja; `set_household_payday`
+    commit dulu, lalu `recompute_history` (di bawah kunci yang sama) menulis ulang riwayat dan membuang kunci periode
+    berjalan menurut tanggal baru. Jendela basi yang ditulis sesudahnya membuat snapshot untuk periode yang masih
+    berjalan, dan tidak ada yang menimpanya lagi (job tanpa `force` melewati kunci yang sudah ada), jadi rollover salah
+    terbawa terus."""
+
+    async def test_job_builds_windows_from_the_payday_read_inside_the_lock(self):
+        h = make_household()
+        built = {"processed": 3, "snapshots_created": 3, "errors": []}
+        # Tahap pertama membaca 1, tetapi saat job memegang kunci tanggal yang tersimpan sudah 25.
+        self.setup_job([h], payday=[1], fresh={h.id: 25}, create=[built, NOTHING_CREATED, NOTHING_CREATED])
+
+        with self.assertLogs("jatahku.scheduler", "INFO") as logs:
+            await scheduler.payday_snapshot_job()
+
+        self.assertEqual(self.household_payday.await_args_list, [call(self.db, h)])  # tahap pertama tetap jalan
+        self.assertEqual(self.current_payday.await_args_list, [call(h.id)])
+        self.assertEqual(
+            self.create.await_args_list, [call(s, e, household_ids=[h.id]) for s, e in PERIODS_PAYDAY_25]
+        )
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(f"household={h.id} payday=25", logs.records[0].getMessage())  # tanggal yang dipakai, bukan 1
+
+    async def test_job_reads_the_payday_after_taking_the_lock(self):
+        # Dibaca sebelum kunci (atau semua di muka) berarti tanggalnya bisa basi lagi selagi menunggu giliran.
+        h1, h2 = make_household(), make_household()
+        self.setup_job([h1, h2], payday=[1, 25])
+
+        await scheduler.payday_snapshot_job()
+
+        self.assertEqual(self.current_payday.await_args_list, [call(h1.id), call(h2.id)])
+        self.assertEqual(self.read_under_lock, [True, True])
+
+    async def test_job_skips_a_household_that_vanished_before_its_lock(self):
+        # Household dihapus (merge / penghapusan akun) setelah tahap pertama: dilewati dengan peringatan, yang lain
+        # tetap diproses, dan kuncinya dilepas.
+        h1, h2 = make_household(), make_household()
+        self.setup_job([h1, h2], payday=[1, 25], fresh={h1.id: None})
+
+        with self.assertLogs("jatahku.scheduler", "WARNING") as logs:
+            await scheduler.payday_snapshot_job()
+
+        self.assertEqual(
+            self.create.await_args_list, [call(s, e, household_ids=[h2.id]) for s, e in PERIODS_PAYDAY_25]
+        )
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(str(h1.id), logs.records[0].getMessage())
+        self.assertFalse(household_cycle.household_lock(h1.id).locked())
+
+    async def run_with_payday_change(self, *, rebuild_done_before_job_arrives):
+        """Balapan dari review, 10 Nov 2026. Household B terbaca payday 1 di tahap pertama; selagi job sibuk dengan
+        household A (dua household, A lebih dulu), pemilik B mengubahnya jadi 25: tanggal di-commit, lalu
+        `recompute_history` (asli) memegang kunci B dan membangun ulang (`rollover.recompute_household` palsu yang
+        tertahan sampai dilepas). `rebuild_done_before_job_arrives`: rebuild sudah selesai sebelum job sampai ke B, atau
+        masih memegang kunci B saat job datang dan harus ditunggu. Mengembalikan household (a, b)."""
+        a, b = make_household(), make_household()
+        release_a, release_rebuild = asyncio.Event(), asyncio.Event()
+        rebuilds = []
+
+        async def create(start, end, **kwargs):
+            if kwargs["household_ids"] == [a.id]:
+                await release_a.wait()  # A "lambat": B baru diproses sesudahnya
+            return dict(NOTHING_CREATED)
+
+        async def rebuild(household_id, payday, periods):
+            rebuilds.append((household_id, payday))
+            await release_rebuild.wait()
+            return []
+
+        self.setup_job([a, b], payday=[1, 1], create=create, today=RACE_DAY)
+        self.enterContext(patch.object(household_cycle.rollover, "recompute_household", rebuild))
+
+        job = asyncio.create_task(scheduler.payday_snapshot_job())
+        await self.yield_to_job()  # tahap pertama selesai (B terbaca 1); job di dalam kunci A, tertahan di pekerjaannya
+        self.stored[b.id] = 25
+        recompute = asyncio.create_task(household_cycle.recompute_history(b.id, 12))
+        await self.yield_to_job()
+        self.assertEqual(rebuilds, [(b.id, 25)])  # recompute memegang kunci B dengan tanggal baru
+
+        if rebuild_done_before_job_arrives:
+            release_rebuild.set()
+            await asyncio.wait_for(recompute, timeout=1)
+        release_a.set()  # job lanjut ke B
+        await self.yield_to_job()
+        if not rebuild_done_before_job_arrives:
+            self.assertFalse(job.done())  # kunci B masih dipegang rebuild: job menunggu
+            release_rebuild.set()
+        await asyncio.wait_for(asyncio.gather(job, recompute), timeout=1)
+        return a, b
+
+    def windows_for(self, household):
+        calls = [c for c in self.create.await_args_list if c.kwargs["household_ids"] == [household.id]]
+        return [(c.args[0], c.args[1]) for c in calls]
+
+    async def test_payday_change_while_job_waits_for_the_rebuild_never_recreates_the_open_period_key(self):
+        a, b = await self.run_with_payday_change(rebuild_done_before_job_arrives=False)
+
+        self.assertEqual(self.windows_for(b), PERIODS_PAYDAY_25)
+        # Oktober (1-31 Okt) adalah kunci 2026-10 = periode BERJALAN B menurut payday 25 (25 Okt-24 Nov), yang baru saja
+        # dibuang rebuild: tidak boleh ditulis ulang dengan angka 1-31 Okt.
+        self.assertNotIn((date(2026, 10, 1), date(2026, 10, 31)), self.windows_for(b))
+        self.assertEqual(self.windows_for(a), PERIODS_PAYDAY_1_ON_RACE_DAY)  # A tidak berubah
+
+    async def test_payday_change_done_before_the_job_arrives_never_recreates_the_open_period_key(self):
+        a, b = await self.run_with_payday_change(rebuild_done_before_job_arrives=True)
+
+        self.assertEqual(self.windows_for(b), PERIODS_PAYDAY_25)
+        self.assertNotIn((date(2026, 10, 1), date(2026, 10, 31)), self.windows_for(b))
+        self.assertEqual(self.windows_for(a), PERIODS_PAYDAY_1_ON_RACE_DAY)
 
 
 if __name__ == "__main__":

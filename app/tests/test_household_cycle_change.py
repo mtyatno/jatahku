@@ -2,7 +2,7 @@
 `notify_payday_changed`.
 
 Tanpa Postgres: `db_with(...)` / `FakeResult` dari app/tests/fakes.py; user/household memakai SimpleNamespace; IO di
-sekeliling (`recompute_history`, `advisor_cache.invalidate`, `notification_service.kirim`, `_current_payday`,
+sekeliling (`recompute_history`, `advisor_cache.invalidate`, `notification_service.kirim`, `current_payday`,
 `rollover.recompute_household`, `AsyncSessionLocal`) di-patch. Kunci recompute terikat ke event loop pertama yang
 memperebutkannya, jadi tiap tes yang berebut kunci memakai id household baru.
 Run: python -m unittest app.tests.test_household_cycle_change -v
@@ -17,6 +17,8 @@ import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+from sqlalchemy.exc import NoResultFound
 
 from app.models.models import HouseholdRole, NotificationType
 from app.services import household_cycle as hc
@@ -283,7 +285,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
         periods = [{"period": "2026-09-25 → 2026-10-24", "processed": 3, "snapshots_created": 3, "errors": []}]
         current = AsyncMock(return_value=25)
         recompute = AsyncMock(return_value=periods)
-        with patch.object(hc, "_current_payday", current), patch.object(hc.rollover, "recompute_household", recompute):
+        with patch.object(hc, "current_payday", current), patch.object(hc.rollover, "recompute_household", recompute):
             with self.assertNoLogs("jatahku.household_cycle", "ERROR"):  # periode tanpa error tidak dicatat
                 result = await hc.recompute_history(hid, 12)
         current.assert_awaited_once_with(hid)
@@ -300,7 +302,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
             log.append(("end", payday))
             return []
 
-        with patch.object(hc, "_current_payday", AsyncMock(side_effect=[2, 25])), \
+        with patch.object(hc, "current_payday", AsyncMock(side_effect=[2, 25])), \
                 patch.object(hc.rollover, "recompute_household", fake_recompute):
             await asyncio.gather(hc.recompute_history(hid, 12), hc.recompute_history(hid, 12))
         self.assertEqual(log, [("start", 2), ("end", 2), ("start", 25), ("end", 25)])
@@ -320,7 +322,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
             log.append("end")
             return []
 
-        with patch.object(hc, "_current_payday", read_payday), \
+        with patch.object(hc, "current_payday", read_payday), \
                 patch.object(hc.rollover, "recompute_household", fake_recompute):
             await asyncio.gather(hc.recompute_history(hid, 12), hc.recompute_history(hid, 12))
         self.assertEqual(log, ["read", "start", "end", "read", "start", "end"])
@@ -335,7 +337,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
             log.append("end")
             return []
 
-        with patch.object(hc, "_current_payday", AsyncMock(return_value=25)), \
+        with patch.object(hc, "current_payday", AsyncMock(return_value=25)), \
                 patch.object(hc.rollover, "recompute_household", fake_recompute):
             await asyncio.gather(hc.recompute_history(first, 12), hc.recompute_history(second, 12))
         self.assertEqual(log, ["start", "start", "end", "end"])  # berjalan bersamaan: kunci per household
@@ -343,12 +345,27 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_recompute_history_releases_lock_after_failure(self):
         hid = uuid.uuid4()
         recompute = AsyncMock(side_effect=[RuntimeError("db mati"), []])
-        with patch.object(hc, "_current_payday", AsyncMock(return_value=25)), \
+        with patch.object(hc, "current_payday", AsyncMock(return_value=25)), \
                 patch.object(hc.rollover, "recompute_household", recompute):
             with self.assertRaises(RuntimeError):
                 await hc.recompute_history(hid, 12)
             # Kunci yang tertahan membuat panggilan kedua menggantung; timeout mengubahnya jadi kegagalan tes.
             self.assertEqual(await asyncio.wait_for(hc.recompute_history(hid, 12), timeout=1), [])
+
+    async def test_recompute_history_skips_a_household_that_no_longer_exists(self):
+        # Household dihapus (merge / penghapusan akun) sebelum recompute sempat jalan: tidak ada yang dihitung dan tidak
+        # ada error, hanya peringatan yang menyebut household-nya.
+        hid = uuid.uuid4()
+        recompute = AsyncMock()
+        with patch.object(hc, "current_payday", AsyncMock(return_value=None)), \
+                patch.object(hc.rollover, "recompute_household", recompute):
+            with self.assertLogs("jatahku.household_cycle", "WARNING") as logs:
+                result = await hc.recompute_history(hid, 12)
+        self.assertEqual(result, [])
+        recompute.assert_not_awaited()
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].levelname, "WARNING")
+        self.assertIn(str(hid), logs.records[0].getMessage())
 
     async def test_recompute_history_logs_period_errors(self):
         hid = uuid.uuid4()
@@ -356,7 +373,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
             {"period": "2026-08-25 → 2026-09-24", "processed": 2, "snapshots_created": 1, "errors": ["Makan: boom"]},
             {"period": "2026-09-25 → 2026-10-24", "processed": 2, "snapshots_created": 2, "errors": []},
         ]
-        with patch.object(hc, "_current_payday", AsyncMock(return_value=25)), \
+        with patch.object(hc, "current_payday", AsyncMock(return_value=25)), \
                 patch.object(hc.rollover, "recompute_household", AsyncMock(return_value=results)):
             with self.assertLogs("jatahku.household_cycle", "ERROR") as logs:
                 returned = await hc.recompute_history(hid, 12)
@@ -368,7 +385,7 @@ class RecomputeHistoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CurrentPaydayTests(unittest.IsolatedAsyncioTestCase):
-    """`_current_payday` HANYA-BACA: ia membaca lewat koneksi kedua, dan UPDATE dari koneksi itu pada baris household
+    """`current_payday` HANYA-BACA: ia membaca lewat koneksi kedua, dan UPDATE dari koneksi itu pada baris household
     yang sudah di-flush (belum di-commit) oleh transaksi pemanggil akan menunggu selamanya pada kunci baris pemanggil,
     sementara kunci recompute sedang dipegang. Jadi tidak ada assign, flush, maupun commit di sini."""
 
@@ -377,7 +394,7 @@ class CurrentPaydayTests(unittest.IsolatedAsyncioTestCase):
         household = SimpleNamespace(id=hid, name="Rumah Ani", payday_day=25)
         db = db_with(FakeResult(household))
         with patch.object(hc, "AsyncSessionLocal", new=lambda: FakeSession(db)):
-            self.assertEqual(await hc._current_payday(hid), 25)
+            self.assertEqual(await hc.current_payday(hid), 25)
         (stmt,) = executed_sql(db)  # satu kueri: household saja, anggota tidak dimuat
         self.assertTrue(norm(stmt).endswith("FROM households WHERE households.id = %(id_1)s::UUID"))
         self.assertEqual(household.payday_day, 25)
@@ -397,11 +414,28 @@ class CurrentPaydayTests(unittest.IsolatedAsyncioTestCase):
             ]),
         )
         with patch.object(hc, "AsyncSessionLocal", new=lambda: FakeSession(db)):
-            self.assertEqual(await hc._current_payday(hid), 25)
+            self.assertEqual(await hc.current_payday(hid), 25)
         households_sql, members_sql = executed_sql(db)  # household, lalu anggotanya
         self.assertTrue(norm(households_sql).endswith("FROM households WHERE households.id = %(id_1)s::UUID"))
         self.assertIn("FROM household_members JOIN users ON users.id = household_members.user_id", norm(members_sql))
         self.assertIsNone(household.payday_day)  # tidak di-assign
+        db.flush.assert_not_awaited()
+        db.commit.assert_not_awaited()
+
+    async def test_current_payday_is_none_for_a_household_that_no_longer_exists(self):
+        # Household dihapus (merge / penghapusan akun): tidak ada barisnya. Bukan error, tidak diturunkan dari anggota
+        # (tidak ada kueri kedua), dan tidak menulis apa pun. `FakeResult.scalar_one()` mengembalikan None, sedangkan
+        # SQLAlchemy melempar `NoResultFound`: hasil tiruan ini melempar seperti aslinya, supaya `scalar_one()` tidak
+        # lolos sebagai pengganti `scalar_one_or_none()`.
+        class NoRow(FakeResult):
+            def scalar_one(self):
+                raise NoResultFound("No row was found when one was required")
+
+        hid = uuid.uuid4()
+        db = db_with(NoRow(None))
+        with patch.object(hc, "AsyncSessionLocal", new=lambda: FakeSession(db)):
+            self.assertIsNone(await hc.current_payday(hid))
+        self.assertEqual(db.execute.await_count, 1)
         db.flush.assert_not_awaited()
         db.commit.assert_not_awaited()
 
