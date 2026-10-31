@@ -36,7 +36,7 @@
 - Redis key prefix: `link:webapp:{code}`, `txn:{key}`, `sub:{key}`
 - Scheduler: hourly per-user timezone-aware dispatch
 - DMARC: `none` (not quarantine) for inbox delivery
-- SMTP: localhost:587 with auth (noreply@jatahku.com)
+- SMTP: localhost:587 with auth (noreply@jatahku.com); kredensial hanya di `/opt/jatahku/.env` (`SMTP_*`, lihat `app/core/config.py`), tidak pernah di kode — repo ini publik
 
 ## Pricing
 - Basic: 6 envelopes, 50 txn/month, 5 subscriptions, household enabled

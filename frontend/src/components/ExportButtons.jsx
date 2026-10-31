@@ -7,6 +7,7 @@ import {
   getExportFilename,
   getExportButtonLabel,
   resolveActivePeriod,
+  reportFrameSandbox,
 } from '../lib/exportPeriod';
 
 // compact: satu tombol "Laporan" berisi menu (dipakai di top bar layar lebar).
@@ -22,6 +23,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
+  const [reportSandbox, setReportSandbox] = useState(reportFrameSandbox(null));
   const [modalPeriodIdx, setModalPeriodIdx] = useState(null);
   const iframeRef = useRef(null);
   const pdfBlobRef = useRef(null);
@@ -69,6 +71,7 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
         const blobUrl = URL.createObjectURL(blob);
         if (pdfUrl) URL.revokeObjectURL(pdfUrl);
         pdfBlobRef.current = blob;
+        setReportSandbox(reportFrameSandbox(blob.type));
         setPdfUrl(blobUrl);
         if (idx !== null) {
           setModalPeriodIdx(idx);
@@ -256,8 +259,11 @@ export default function ExportButtons({ periodStart, periodEnd, periodLabel, com
           </div>
 
           {/* PDF Viewer */}
+          {/* key: iframe baru per laporan, jadi sandbox sudah terpasang sebelum isinya dimuat. */}
           <iframe
+            key={pdfUrl}
             ref={iframeRef}
+            sandbox={reportSandbox ?? undefined}
             src={pdfUrl}
             className="flex-1 w-full border-0"
             title="Laporan Keuangan"

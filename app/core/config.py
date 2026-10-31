@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     ADMIN_SECRET: str = ""
     ADMIN_TELEGRAM_ID: str = ""
 
+    # Email (SMTP terautentikasi, exim4 di VPS). Password HANYA dari /opt/jatahku/.env;
+    # kosong = email tidak dikirim (dicatat di log), tidak pernah ada default di kode.
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = "noreply@jatahku.com"
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@jatahku.com"
+    SMTP_FROM_NAME: str = "Jatahku"
+
     # Google Sign-In — kosong = tombol Google disembunyikan
     GOOGLE_CLIENT_ID: str = ""
 

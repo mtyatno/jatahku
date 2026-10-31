@@ -1,5 +1,6 @@
 import io
 import csv
+from html import escape
 from decimal import Decimal
 from datetime import date, timedelta
 from uuid import UUID
@@ -23,6 +24,25 @@ from app.models.models import (
 from app.services.visibility import masked_description
 
 router = APIRouter()
+
+# Laporan HTML tidak boleh memuat skrip atau sumber luar apa pun, juga saat berkasnya dibuka langsung.
+REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
+# Awalan yang membuat Excel/LibreOffice/Sheets membaca sel sebagai rumus (OWASP "CSV injection").
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _h(value) -> str:
+    """Teks bebas (nama amplop, emoji, deskripsi, nama anggota) → aman di HTML laporan."""
+    return escape("" if value is None else str(value), quote=True)
+
+
+def _csv_text(value):
+    """Sel teks CSV yang diawali karakter rumus diberi awalan kutip supaya dibaca sebagai teks.
+    Angka (int) dibiarkan, jadi sisa minus tetap angka."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
 
 
 def _resolve_period(
@@ -187,7 +207,7 @@ async def export_csv(
     total_spent = Decimal("0")
     for s in summaries:
         pct = f"{int(s['spent'] / s['budget'] * 100)}%" if s['budget'] > 0 else "0%"
-        writer.writerow([s['name'], int(s['budget']), int(s['spent']), int(s['remaining']), pct])
+        writer.writerow([_csv_text(s['name']), int(s['budget']), int(s['spent']), int(s['remaining']), pct])
         total_budget += s['budget']
         total_spent += s['spent']
     writer.writerow(["TOTAL", int(total_budget), int(total_spent), int(total_budget - total_spent),
@@ -201,11 +221,11 @@ async def export_csv(
         env = env_map.get(str(txn.envelope_id))
         writer.writerow([
             txn.transaction_date.strftime("%Y-%m-%d"),
-            env.name if env else "-",
-            masked_description(user.id, txn),
+            _csv_text(env.name) if env else "-",
+            _csv_text(masked_description(user.id, txn)),
             int(txn.amount),
             txn.source.value,
-            user_name,
+            _csv_text(user_name),
         ])
 
     output.seek(0)
@@ -239,6 +259,7 @@ async def export_pdf(
     # Generate HTML → PDF using simple HTML
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="{REPORT_CSP}">
 <style>
 body {{ font-family: 'Helvetica', sans-serif; color: #2C2C2A; padding: 40px; font-size: 12px; }}
 h1 {{ color: #0F6E56; font-size: 24px; margin-bottom: 4px; }}
@@ -261,7 +282,7 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
 
     for s in summaries:
         pct = int(s['spent'] / s['budget'] * 100) if s['budget'] > 0 else 0
-        html += f"""<tr><td>{s['emoji']} {s['name']}</td><td class="amount">Rp{int(s['budget']):,}</td><td class="amount">Rp{int(s['spent']):,}</td><td class="amount">Rp{int(s['remaining']):,}</td><td class="right">{pct}%</td></tr>"""
+        html += f"""<tr><td>{_h(s['emoji'])} {_h(s['name'])}</td><td class="amount">Rp{int(s['budget']):,}</td><td class="amount">Rp{int(s['spent']):,}</td><td class="amount">Rp{int(s['remaining']):,}</td><td class="right">{pct}%</td></tr>"""
 
     total_pct = int(total_spent / total_budget * 100) if total_budget > 0 else 0
     html += f"""<tr class="total"><td>TOTAL</td><td class="amount">Rp{int(total_budget):,}</td><td class="amount">Rp{int(total_spent):,}</td><td class="amount">Rp{int(total_budget - total_spent):,}</td><td class="right">{total_pct}%</td></tr></table>
@@ -273,7 +294,7 @@ td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0ea; }}
     for txn, user_name in transactions:
         env = env_map.get(str(txn.envelope_id))
         src = "📱 TG" if txn.source.value == "telegram" else "🌐 Web"
-        html += f"""<tr><td>{txn.transaction_date.strftime("%d %b")}</td><td>{env.name if env else '-'}</td><td>{masked_description(user.id, txn)}</td><td class="amount">Rp{int(txn.amount):,}</td><td>{src}</td></tr>"""
+        html += f"""<tr><td>{txn.transaction_date.strftime("%d %b")}</td><td>{_h(env.name) if env else '-'}</td><td>{_h(masked_description(user.id, txn))}</td><td class="amount">Rp{int(txn.amount):,}</td><td>{src}</td></tr>"""
 
     html += f"""</table>
 <p class="footer">Digenerate oleh Jatahku — Setiap rupiah ada jatahnya.<br>{date.today().strftime("%d %B %Y")}</p>
