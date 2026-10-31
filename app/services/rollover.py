@@ -1,9 +1,11 @@
 import logging
+from dataclasses import dataclass
 from decimal import Decimal
 from datetime import date
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
+from app.core.period import get_closed_periods
 from app.models.models import Envelope, Transaction, Allocation, MonthlySnapshot, Household, Income
 
 logger = logging.getLogger("jatahku.rollover")
@@ -62,6 +64,34 @@ async def get_previous_rollover(env_id, year, month, db: AsyncSession) -> Decima
     return rollover if rollover is not None else Decimal("0")
 
 
+@dataclass(frozen=True)
+class SnapshotValues:
+    """Angka satu snapshot (satu amplop, satu periode). Selalu berlaku:
+    `opening - allocated` = rollover yang dibawa masuk, dan `closing = opening - spent`."""
+    opening: Decimal
+    closing: Decimal
+    rollover: Decimal
+    allocated: Decimal
+    spent: Decimal
+
+
+def snapshot_values(
+    prev_rollover: Decimal, allocated: Decimal, spent: Decimal, is_rollover: bool
+) -> SnapshotValues:
+    """Hitung angka snapshot dari rollover periode sebelumnya, alokasi, dan pengeluaran periode itu (murni, tanpa IO).
+
+    - opening = alokasi pemasukan nyata periode itu + rollover yang dibawa masuk
+    - closing = opening - spent
+    - rollover (ke periode berikutnya) = closing penuh, positif maupun negatif, bila amplop is_rollover;
+      selain itu 0 (reset)."""
+    opening = allocated + prev_rollover
+    closing = opening - spent
+    rollover = closing if is_rollover else Decimal("0")
+    return SnapshotValues(
+        opening=opening, closing=closing, rollover=rollover, allocated=allocated, spent=spent
+    )
+
+
 async def create_monthly_snapshots(
     period_start: date,
     period_end: date,
@@ -72,7 +102,8 @@ async def create_monthly_snapshots(
     Snapshot is keyed by period_start.year and period_start.month.
     Set force=True to overwrite an existing snapshot.
     Pass household_ids to restrict to specific households (e.g. only those
-    whose owner's payday_day matches this period)."""
+    whose owner's payday_day matches this period).
+    Each snapshot also stores the period's allocated_amount and spent_amount."""
     target_year = period_start.year
     target_month = period_start.month
 
@@ -121,28 +152,19 @@ async def create_monthly_snapshots(
                     balance = await calculate_envelope_balance(
                         env.id, period_start, period_end, db
                     )
-                    spent = balance["spent"]
-                    allocated = balance["allocated"]
-
-                    # Opening balance = actual income allocated + rollover carried in
-                    opening = allocated + prev_rollover
-
-                    # Closing balance = opening - spent
-                    closing = opening - spent
-
-                    # Rollover to next period
-                    if env.is_rollover:
-                        rollover = closing  # Carry full balance (positive or negative)
-                    else:
-                        rollover = Decimal("0")  # Reset
+                    v = snapshot_values(
+                        prev_rollover, balance["allocated"], balance["spent"], env.is_rollover
+                    )
 
                     snapshot = MonthlySnapshot(
                         envelope_id=env.id,
                         year=target_year,
                         month=target_month,
-                        opening_balance=opening,
-                        closing_balance=closing,
-                        rollover_amount=rollover,
+                        opening_balance=v.opening,
+                        closing_balance=v.closing,
+                        rollover_amount=v.rollover,
+                        allocated_amount=v.allocated,
+                        spent_amount=v.spent,
                     )
                     db.add(snapshot)
                     results["snapshots_created"] += 1
@@ -159,6 +181,24 @@ async def create_monthly_snapshots(
             f"{results['snapshots_created']} created, {len(results['errors'])} errors"
         )
         return results
+
+
+async def recompute_household(
+    household_id, payday_day: int, periods: int, today: date | None = None
+) -> list[dict]:
+    """Hitung ulang riwayat snapshot SATU household: `periods` periode tertutup terakhir menurut `payday_day`,
+    oldest-first dan force=True, supaya rantai rollover terbangun ulang berurutan (tiap periode melihat pendahulunya
+    yang baru dihitung). Mengembalikan satu dict per periode: `{"period": "{awal} → {akhir}", **hasil}` (bentuk
+    respons endpoint /snapshots/recompute).
+
+    Tidak ada lock di sini: hanya dipanggil lewat `household_cycle.recompute_history`, yang menserialkan per household."""
+    out = []
+    for period_start, period_end in get_closed_periods(payday_day, today or date.today(), periods):
+        result = await create_monthly_snapshots(
+            period_start, period_end, force=True, household_ids=[household_id]
+        )
+        out.append({"period": f"{period_start} → {period_end}", **result})
+    return out
 
 
 async def get_effective_budget(env_id, period_start: date, period_end: date, db: AsyncSession) -> Decimal:
