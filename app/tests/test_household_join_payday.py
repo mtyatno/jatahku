@@ -36,7 +36,8 @@ CODE = "ABC12DEF"
 
 
 def household_row(payday_day=None):
-    return SimpleNamespace(id=HOUSEHOLD_ID, name="Rumah Ani", currency="IDR", payday_day=payday_day)
+    return SimpleNamespace(id=HOUSEHOLD_ID, name="Rumah Ani", currency="IDR", type="rumah_tangga",
+                           payday_day=payday_day)
 
 
 def user_row():
@@ -174,7 +175,8 @@ class GetHouseholdTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         # Field lama tetap dengan arti yang sama; `payday_day` hanya bertambah.
         self.assertEqual(res.json(), {
-            "id": str(HOUSEHOLD_ID), "name": "Rumah Ani", "currency": "IDR", "member_count": 3, "payday_day": 25,
+            "id": str(HOUSEHOLD_ID), "name": "Rumah Ani", "currency": "IDR", "member_count": 3,
+            "type": "rumah_tangga", "payday_day": 25,
         })
         payday.assert_awaited_once_with(db, hh)
 
