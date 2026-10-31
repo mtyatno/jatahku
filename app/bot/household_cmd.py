@@ -6,6 +6,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.models import User, HouseholdMember, Household, HouseholdRole
 from sqlalchemy import select, func
 from app.bot.handlers import get_or_create_user, get_household_id, format_currency
+from app.services.household_cycle import adopt_household_payday
 
 settings = get_settings()
 
@@ -86,10 +87,13 @@ async def cmd_join(update, context):
             household_id=UUID(household_id),
             role=HouseholdRole.member,
         ))
-        await db.commit()
 
+        # Siklus anggaran ikut household (owner yang memutuskan). Diadopsi sebelum commit: keanggotaan dan tanggal
+        # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama".
         h = await db.execute(select(Household).where(Household.id == UUID(household_id)))
         household = h.scalar_one()
+        payday = await adopt_household_payday(db, user, household)
+        await db.commit()
 
         count = await db.execute(
             select(func.count(HouseholdMember.id)).where(
@@ -105,7 +109,8 @@ async def cmd_join(update, context):
     await update.message.reply_text(
         f"✅ Bergabung ke *{household.name}*!\n\n"
         f"Sekarang ada {member_count} anggota.\n"
-        f"Semua amplop dan transaksi sekarang shared.\n\n"
+        f"Semua amplop dan transaksi sekarang shared.\n"
+        f"Siklus anggaranmu sekarang mengikuti rumah ini: tanggal {payday}.\n\n"
         f"Ketik /status untuk lihat budget bersama.",
         parse_mode="Markdown",
     )
