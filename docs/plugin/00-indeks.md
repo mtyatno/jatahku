@@ -26,7 +26,7 @@ Diisi sesi yang membuatnya. Rencana dari `01-kajian.md`, "Lampiran teknis":
 
 | Bagian | Lokasi | Sesi |
 |---|---|---|
-| Registry kartu dan data batch | `app/services/dashboard/`, `app/api/routes/dashboard.py`, `frontend/src/cards/core/` | B1, B2 |
+| Registry kartu dan data batch | `app/services/dashboard/` (`registry.py` definisi + template, `providers.py` penyedia kartu inti, `sources.py` endpoint lama sekali per permintaan, `batch.py`, `layout.py`), `app/api/routes/dashboard.py`, model `DashboardLayout` (migrasi `b1d4a7c2e9f0`), tes `app/tests/test_dashboard_registry.py`; frontend `frontend/src/cards/core/` (B2) | B1 (backend), B2 |
 | Resolver ruang | `ruang_aktif(user, request)`, `ruang_keluarga(user)` (menggantikan dua `get_household_id`) | R2 |
 | Host plugin dan SDK | `app/plugins/host/`, `app/plugins/sdk/` (`PluginContext`) | H1, H2 |
 | Buku Usaha | `app/plugins/buku_usaha/` (manifest, `metrics.py`, kartu, aturan BU-*), `frontend/src/plugins/buku_usaha/` | U1–U6 |

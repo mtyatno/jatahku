@@ -688,3 +688,27 @@ class MerchantEnvelopeMap(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- Beranda registry (Plugin B1, docs/plugin/04-kontrak-api.md §4, ADR-P8) ---
+
+class DashboardLayout(Base):
+    """Tata letak Beranda: satu dokumen per user per ruang per permukaan (ADR-P8, model
+    urutan + ukuran). Dokumen dibaca dan ditulis utuh; `version` = penanda konkurensi
+    optimistis (PUT dengan `if_version` beda → 409). `household_id` = ruang (`ruang_id` di API)."""
+    __tablename__ = "dashboard_layouts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "household_id", "surface", name="uq_dashboard_layout"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    surface: Mapped[str] = mapped_column(String(30), default="beranda", server_default="beranda")
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    items: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    parked: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
