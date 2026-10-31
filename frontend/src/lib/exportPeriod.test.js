@@ -11,6 +11,7 @@ import {
   canGoNext,
   getPrevPeriodIndex,
   getNextPeriodIndex,
+  reportFrameSandbox,
 } from './exportPeriod.js';
 
 // ── buildExportCsvUrl & buildExportPdfUrl ────────────────────────
@@ -141,4 +142,27 @@ test('modal navigation helpers: canGoPrev, canGoNext, getPrevPeriodIndex, getNex
   assert.equal(canGoNext(-1, total), false);
   assert.equal(canGoPrev(null), false);
   assert.equal(canGoNext(null, total), false);
+});
+
+// ── reportFrameSandbox ───────────────────────────────────────────
+// Laporan HTML memuat teks dari anggota household lain, jadi iframe-nya tidak boleh menjalankan skrip.
+// allow-same-origin tetap ada supaya tombol Cetak bisa memanggil print() dari halaman; allow-modals supaya
+// dialog cetak tidak diblokir. Kombinasi berbahaya allow-scripts + allow-same-origin tidak pernah dipakai.
+test('reportFrameSandbox: laporan HTML disandbox tanpa skrip', () => {
+  for (const type of ['text/html', 'text/html; charset=utf-8', 'TEXT/HTML']) {
+    const sandbox = reportFrameSandbox(type);
+    assert.equal(sandbox, 'allow-same-origin allow-modals');
+    assert.ok(!sandbox.includes('allow-scripts'));
+  }
+});
+
+test('reportFrameSandbox: tipe tak dikenal atau kosong tetap disandbox (fail closed)', () => {
+  for (const type of ['', undefined, null, 'application/octet-stream', 'image/svg+xml']) {
+    assert.equal(reportFrameSandbox(type), 'allow-same-origin allow-modals');
+  }
+});
+
+test('reportFrameSandbox: PDF asli tanpa sandbox (penampil PDF browser menolak iframe bersandbox)', () => {
+  assert.equal(reportFrameSandbox('application/pdf'), null);
+  assert.equal(reportFrameSandbox('Application/PDF'), null);
 });

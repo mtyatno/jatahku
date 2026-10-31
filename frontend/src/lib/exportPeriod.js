@@ -106,3 +106,14 @@ export function getNextPeriodIndex(currentIndex, totalPeriods) {
   if (typeof currentIndex !== 'number' || typeof totalPeriods !== 'number' || totalPeriods <= 0) return -1;
   return Math.min(totalPeriods - 1, currentIndex + 1);
 }
+
+// Laporan dari /export/pdf saat ini berupa HTML (server tanpa weasyprint) dan memuat teks yang bisa ditulis anggota
+// household lain, jadi iframe-nya disandbox tanpa allow-scripts. allow-same-origin dipertahankan supaya native.print
+// bisa memanggil print() pada iframe; allow-modals supaya dialog cetak tidak diblokir. Hanya PDF asli yang tanpa
+// sandbox, karena penampil PDF browser menolak tampil di iframe bersandbox. Tipe lain (termasuk kosong) = sandbox.
+const REPORT_SANDBOX = 'allow-same-origin allow-modals';
+
+export function reportFrameSandbox(contentType) {
+  const type = String(contentType || '').split(';')[0].trim().toLowerCase();
+  return type === 'application/pdf' ? null : REPORT_SANDBOX;
+}
