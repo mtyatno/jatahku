@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.models.models import User, Household, HouseholdMember, HouseholdRole, UserStreak
-from app.services.household_cycle import adopt_household_payday, household_payday
+from app.services.household_cycle import adopt_household_payday, household_payday, mirrors_users
 
 settings = get_settings()
 router = APIRouter()
@@ -195,7 +195,8 @@ async def join_household(
     db: AsyncSession = Depends(get_db),
 ):
     """Gabung ke household lewat kode invite: query `?code=` atau body JSON `{"code": ...}` (query didahulukan).
-    Anggota baru mengikuti tanggal gajian household."""
+    Anggota baru ruang keluarga mengikuti tanggal gajian household; ruang usaha punya siklus sendiri dan tidak
+    mencerminkannya ke user. `payday_day` di respons selalu tanggal household yang dimasuki."""
     # Settings.jsx mengirim kode di body JSON; dulu hanya query yang diterima, jadi join dari web selalu 422.
     # Query kosong (atau hanya spasi) → body. Dinormalkan seperti di bot: strip().upper().
     invite = ""
@@ -239,12 +240,17 @@ async def join_household(
     db.add(new_member)
 
     # Siklus anggaran ikut household (owner yang memutuskan). Diadopsi sebelum commit: keanggotaan dan tanggal
-    # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama".
+    # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama". Hanya ruang keluarga
+    # yang mencerminkan siklusnya ke user; ruang usaha punya siklus sendiri, jadi cermin user dibiarkan dan responsnya
+    # membawa tanggal ruang itu.
     result = await db.execute(
         select(Household).where(Household.id == UUID(household_id))
     )
     household = result.scalar_one()
-    payday = await adopt_household_payday(db, user, household)
+    if mirrors_users(household):
+        payday = await adopt_household_payday(db, user, household)
+    else:
+        payday = await household_payday(db, household)
     await db.commit()
 
     # Delete used invite code

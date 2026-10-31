@@ -6,7 +6,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.models import User, HouseholdMember, Household, HouseholdRole
 from sqlalchemy import select, func
 from app.bot.handlers import get_or_create_user, get_household_id, format_currency
-from app.services.household_cycle import adopt_household_payday
+from app.services.household_cycle import adopt_household_payday, mirrors_users
 
 settings = get_settings()
 
@@ -89,10 +89,12 @@ async def cmd_join(update, context):
         ))
 
         # Siklus anggaran ikut household (owner yang memutuskan). Diadopsi sebelum commit: keanggotaan dan tanggal
-        # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama".
+        # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama". Hanya ruang
+        # keluarga yang mencerminkan siklusnya ke user; ruang usaha punya siklus sendiri, jadi cermin user dibiarkan
+        # dan balasan tidak menyebut siklus (`payday` None).
         h = await db.execute(select(Household).where(Household.id == UUID(household_id)))
         household = h.scalar_one()
-        payday = await adopt_household_payday(db, user, household)
+        payday = await adopt_household_payday(db, user, household) if mirrors_users(household) else None
         await db.commit()
 
         count = await db.execute(
@@ -106,11 +108,12 @@ async def cmd_join(update, context):
     await r.delete(f"invite:{code}")
     await r.close()
 
+    cycle_line = "" if payday is None else f"Siklus anggaranmu sekarang mengikuti rumah ini: tanggal {payday}.\n"
     await update.message.reply_text(
         f"✅ Bergabung ke *{household.name}*!\n\n"
         f"Sekarang ada {member_count} anggota.\n"
         f"Semua amplop dan transaksi sekarang shared.\n"
-        f"Siklus anggaranmu sekarang mengikuti rumah ini: tanggal {payday}.\n\n"
+        f"{cycle_line}\n"
         f"Ketik /status untuk lihat budget bersama.",
         parse_mode="Markdown",
     )

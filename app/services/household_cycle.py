@@ -4,6 +4,13 @@
 `users.payday_day` hanya cermin. NULL pada kolom household berarti "belum dimigrasi": nilainya diturunkan
 dari anggota saat pertama dibaca (`household_payday`).
 
+Ruang keluarga vs ruang usaha (Plugin R1, spec bagian 10): `users.payday_day` adalah cermin siklus RUANG KELUARGA
+user (household `rumah_tangga`; satu user paling banyak punya satu). Ruang usaha (`usaha`) punya siklusnya sendiri di
+`households.payday_day` dan tidak pernah dicerminkan ke user. `mirrors_users` memutuskannya: `set_household_payday`
+dan `heal` mengikutinya, dan join web/bot memanggil `adopt_household_payday` hanya untuk ruang keluarga.
+`membership` mengembalikan keanggotaan ruang keluarga saja, sehingga `payday_context` (profil, recompute) selalu
+bekerja pada ruang keluarga.
+
 Aturan: atribut `payday_day` (user maupun household) hanya di-assign di modul ini, dan SQL pengisinya hanya di
 `household_cycle_schema.py`. Jalur lain membaca lewat `household_payday` / `payday_context` dan mengubah lewat
 service ini, supaya cermin tidak menyimpang.
@@ -15,10 +22,10 @@ membaca tanggal lewat sesi sendiri yang HANYA-BACA (`_current_payday`: tidak ass
 pemanggil yang baru mengubah atau mengisi `households.payday_day` di sesinya harus commit dulu. Hanya
 `notification_service.kirim` yang memakai sesi sendiri dan commit di sana.
 
-Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan cermin semua anggota dalam
-satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per household, tanggal dibaca
-di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dan gagal recompute dicatat dan tidak
-membatalkan perubahan yang sudah di-commit.
+Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan (untuk ruang keluarga) cermin
+semua anggota dalam satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per
+household, tanggal dibaca di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dan gagal recompute
+dicatat dan tidak membatalkan perubahan yang sudah di-commit.
 """
 import asyncio
 import logging
@@ -31,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
-from app.models.models import Household, HouseholdMember, HouseholdRole, NotificationType, User
+from app.models.models import Household, HouseholdMember, HouseholdRole, HouseholdType, NotificationType, User
 from app.services import notification_service, rollover
 from app.services.advisor import advisor_cache
 
@@ -73,12 +80,17 @@ def _role_value(role) -> str:
 
 
 async def membership(db: AsyncSession, user) -> HouseholdMember | None:
-    """Keanggotaan household milik `user`, atau None.
+    """Keanggotaan `user` di ruang keluarganya (household `rumah_tangga`), atau None.
 
-    Satu-satunya kueri keanggotaan di modul ini: kelak diganti resolver ruang aktif (spec bagian 10)
-    cukup dengan mengubah fungsi ini.
+    Satu user paling banyak punya satu ruang keluarga. Keanggotaan ruang usaha (Plugin R1: satu user boleh anggota
+    beberapa household) tidak ikut terpilih dan tidak membuat `scalar_one_or_none` melempar. Satu-satunya kueri
+    keanggotaan di modul ini: kelak diganti resolver ruang aktif (spec bagian 10) cukup dengan mengubah fungsi ini.
     """
-    result = await db.execute(select(HouseholdMember).where(HouseholdMember.user_id == user.id))
+    result = await db.execute(
+        select(HouseholdMember)
+        .join(Household, Household.id == HouseholdMember.household_id)
+        .where(HouseholdMember.user_id == user.id, Household.type == HouseholdType.RUMAH_TANGGA)
+    )
     return result.scalar_one_or_none()
 
 
@@ -113,6 +125,15 @@ def can_change_payday(role, member_count: int) -> bool:
     return value == "member" and member_count == 1
 
 
+def mirrors_users(household) -> bool:
+    """Apakah siklus `household` dicerminkan ke `users.payday_day` anggotanya: hanya ruang keluarga (spec bagian 10).
+
+    Ruang usaha punya siklusnya sendiri di `households.payday_day`; cermin user tetap milik ruang keluarganya.
+    Murni (tanpa IO). Objek yang `type`-nya kosong atau tidak ada (stub tes lama, atau `Household` yang belum di-flush
+    sehingga bawaan kolomnya belum terisi) dihitung ruang keluarga, sama dengan bawaan kolom."""
+    return str(getattr(household, "type", None) or HouseholdType.RUMAH_TANGGA) == HouseholdType.RUMAH_TANGGA
+
+
 async def household_payday(db: AsyncSession, household, rows: list[MemberRow] | None = None) -> int:
     """Tanggal gajian household.
 
@@ -131,7 +152,8 @@ async def household_payday(db: AsyncSession, household, rows: list[MemberRow] | 
 
 
 async def payday_context(db: AsyncSession, user) -> PaydayContext | None:
-    """Konteks siklus untuk `user`, atau None bila belum punya keanggotaan.
+    """Konteks siklus ruang keluarga `user`, atau None bila belum punya keanggotaan di ruang keluarga (keanggotaan
+    ruang usaha tidak dihitung: lihat `membership`).
 
     Tiga kueri berurutan (keanggotaan, household, anggota); tanggal diturunkan dari baris anggota yang sama,
     tanpa kueri tambahan."""
@@ -157,7 +179,9 @@ async def payday_context(db: AsyncSession, user) -> PaydayContext | None:
 async def adopt_household_payday(db: AsyncSession, user, household) -> int:
     """Samakan `user` dengan siklus household yang akan dimasukinya; mengembalikan tanggalnya.
 
-    Dipanggil join web dan bot sebelum commit keanggotaan baru, dalam transaksi yang sama. Tidak commit."""
+    Dipanggil join web dan bot sebelum commit keanggotaan baru, dalam transaksi yang sama, dan hanya untuk ruang
+    keluarga (`mirrors_users`): cermin `users.payday_day` bukan milik ruang usaha, jadi pemanggil yang memasukkan user
+    ke ruang usaha membaca tanggalnya lewat `household_payday` dan tidak memanggil fungsi ini. Tidak commit."""
     day = await household_payday(db, household)
     user.payday_day = day
     return day
@@ -177,10 +201,14 @@ async def _member_users(db: AsyncSession, household) -> Sequence[User]:
 async def heal(db: AsyncSession, household) -> list[User]:
     """Samakan `users.payday_day` anggota yang menyimpang dari `households.payday_day`.
 
-    Household yang belum punya tanggal dilewati (belum dimigrasi). Tiap anggota yang diperbaiki dicatat sebagai
-    warning, `commit` hanya bila ada yang berubah, dan user yang diperbaiki dikembalikan (skrip migrasi memberi
-    tahu mereka). Tidak menghitung ulang riwayat: penyimpangan hanya bisa datang dari jalur yang lupa memakai
-    service ini, dan job harian menghitung snapshot dengan tanggal household."""
+    Ruang usaha dilewati tanpa kueri apa pun (`mirrors_users`): cermin anggota adalah siklus ruang keluarga mereka,
+    jadi selisihnya dengan tanggal ruang usaha memang benar. Household yang belum punya tanggal juga dilewati (belum
+    dimigrasi). Tiap anggota yang diperbaiki dicatat sebagai warning, `commit` hanya bila ada yang berubah, dan user
+    yang diperbaiki dikembalikan (skrip migrasi memberi tahu mereka). Tidak menghitung ulang riwayat: penyimpangan
+    hanya bisa datang dari jalur yang lupa memakai service ini, dan job harian menghitung snapshot dengan tanggal
+    household."""
+    if not mirrors_users(household):
+        return []
     target = household.payday_day
     if target is None:
         return []
@@ -291,9 +319,11 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
     """Ubah tanggal gajian household atas nama `actor` (spec bagian 2). Izin dicek route, bukan di sini.
 
     `ValueError` bila `day` di luar 1–31 (route: 400); tanggal yang sama dengan sekarang → `{"changed": False}`
-    tanpa recompute dan tanpa notifikasi. Selain itu household dan cermin semua anggota di-assign dalam satu
-    transaksi lalu di-commit (recompute membaca lewat sesi lain, jadi perubahan harus sudah tersimpan), cache
-    advisor household dihapus, 12 periode terakhir dihitung ulang, dan anggota selain `actor` diberi tahu.
+    tanpa recompute dan tanpa notifikasi. Selain itu household dan, untuk ruang keluarga (`mirrors_users`), cermin
+    semua anggota di-assign dalam satu transaksi lalu di-commit (recompute membaca lewat sesi lain, jadi perubahan
+    harus sudah tersimpan), cache advisor household dihapus, 12 periode terakhir dihitung ulang, dan anggota selain
+    `actor` diberi tahu. Ruang usaha menempuh langkah yang sama kecuali cermin: `users.payday_day` anggotanya
+    tidak disentuh (itu siklus ruang keluarga mereka), dan `members` tetap menghitung anggota ruang itu.
     Hasil: `{"changed": True, "members": n, "recomputed": k}`.
 
     Recompute yang gagal (exception; error per amplop hanya dicatat oleh `recompute_history`) tidak membatalkan
@@ -308,8 +338,9 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
 
     members = await _member_users(db, household)
     household.payday_day = day
-    for user in members:
-        user.payday_day = day
+    if mirrors_users(household):
+        for user in members:
+            user.payday_day = day
     await db.commit()
 
     await advisor_cache.invalidate(household.id)
