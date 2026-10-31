@@ -86,6 +86,7 @@
 - `ALTER TABLE ADD COLUMN IF NOT EXISTS` is safe
 - `ALTER TABLE ALTER COLUMN TYPE` to force column type migration
 - `create_all` creates new tables/types but never alters existing
+- **Workflow "Migrasi"** (`.github/workflows/migrasi.yml`) berjalan di setiap PR yang menyentuh `app/models/**`, `alembic/**`, `alembic.ini`, `app/core/database.py`, atau `requirements.txt`: skema awal dibuat seperti produksi (`create_all` dari model commit dasar PR + `alembic stamp head`), lalu `alembic upgrade head`, `alembic check`, `alembic downgrade` ke head dasar, dan `upgrade head` lagi. **Model yang berubah tanpa migrasi gagal di `alembic check`**, begitu juga migrasi yang tidak cocok dengan model atau `downgrade()` yang rusak; lebih dari satu head juga gagal. Jalankan lokal di database PostgreSQL kosong: `DATABASE_URL=postgresql+asyncpg://… JWT_SECRET=x .github/scripts/cek-migrasi.sh origin/main` (butuh `psycopg2-binary`). `alembic upgrade head` dari database kosong memang gagal: migrasi awal hanya membuat 11 tabel, sisanya dibuat `create_all`.
 
 ## Service Worker (PWA)
 - Service worker at `frontend/src/sw.js`
@@ -286,3 +287,17 @@ Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). B
 9. **Identitas tidak pernah berubah.** ID aplikasi `com.jatahku.app`, origin/skema Capacitor, dan kunci penandatanganan (ADR-M3–M5) hanya berubah dengan keputusan tertulis pemilik produk.
 10. **Paritas diuji, bukan diasumsikan.** Daftar periksa paritas (`01-kajian.md`, lampiran WBS) dijalankan di perangkat nyata sebelum setiap rilis toko, termasuk satu Android kelas bawah.
 11. **Struk tidak pernah tercatat diam-diam atau dua kali.** Dokumen dari share, unggahan, atau Telegram selalu menunggu konfirmasi user; hash file, nomor referensi, dan `client_ref` mencegah pencatatan ganda; transfer gagal tidak bisa dicatat.
+
+## Plugin dan ruang (WAJIB untuk semua sesi plugin)
+Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, bentuk API di `04-kontrak-api.md`). Buka sesi dengan `/sesi-plugin <kode>`, tutup dengan `/tutup-sesi-plugin`. Satu sesi = satu branch `plugin/<kode>-<slug>` = satu PR berjudul `Plugin <kode>: <nama>`; status di `docs/plugin/PROGRESS.md`, serah-terima di `docs/plugin/SESI-LOG.md`. PR berlabel `review-keamanan` direview sesi Claude Code terpisah sebelum merge, dan temuan keamanan dikerjakan sebelum fitur dilanjutkan.
+1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif(user, request)` (header `X-Jatahku-Ruang`); menulis menentukan ruang dari objek yang ditulis, lalu memeriksa keanggotaan. `ruang_id` dari body atau query tidak pernah dipercaya.
+2. **Chat selalu ruang keluarga.** Handler bot memakai `ruang_keluarga(user)`. Tidak ada transaksi ruang usaha atau Fitur Tambahan lewat chat; perintah plugin hanya membaca dan menyatakan `audience` (data keuangan usaha hanya untuk pemilik dan admin).
+3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan.
+4. **Plugin hanya lewat `PluginContext`.** Kode di `app/plugins/<id>/` tidak mengimpor model atau route inti dan tidak menulis ke tabel inti secara langsung.
+5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
+6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
+7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
+8. **Tidak ada kueri lintas ruang** selain Prive. Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
+9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
+- **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1); saklar darurat plugin (H1). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
+- **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.
