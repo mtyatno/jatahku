@@ -1,7 +1,17 @@
 # Siklus anggaran per household — desain
 
 **Tanggal:** 31 Okt 2026
-**Status:** desain disetujui pemilik produk di chat, bagian 1–9 (31 Okt 2026). Belum diimplementasikan.
+**Status:** desain disetujui pemilik produk di chat, bagian 1–9 (31 Okt 2026); spec tertulis disetujui 31 Okt 2026. Belum diimplementasikan. Rencana: `docs/superpowers/plans/2026-10-31-siklus-household.md`.
+
+## Penyesuaian saat menyusun rencana implementasi (31 Okt 2026)
+
+Membaca kode lebih dalam menghasilkan penyesuaian berikut; bagian di bawah sudah diperbarui.
+
+1. **Join web rusak hari ini.** `POST /household/join` membaca `code` dari query, sedangkan `Settings.jsx` mengirimnya di body JSON → 422 (direproduksi dengan TestClient). Route menerima keduanya (bagian 3).
+2. **Recompute diserialkan per household dan membaca payday terbaru.** Dua perubahan payday beruntun (mis. mengetik "2" lalu "25") bisa menjalankan dua recompute bersamaan dengan jendela berbeda; yang selesai terakhir menang, dan itu belum tentu payday terakhir. `household_cycle.recompute_history(hid, periods)` memegang `asyncio.Lock` per household dan membaca `households.payday_day` **di dalam** kunci. App berjalan satu proses uvicorn (scheduler APScheduler di dalam proses API; dua proses sudah menggandakan setiap job), jadi kunci dalam proses cukup. Settings menunda simpan payday 600 ms (debounce) untuk household sendirian.
+3. **Signature dirapikan:** `can_change_payday(role, member_count)`, `set_household_payday(db, household, day, *, actor)`, `PaydayContext` + `payday_context(db, user)` sebagai satu titik baca untuk route, dan `pick_payday(rows)` murni untuk resolver dan dry-run skrip.
+4. **Profil membawa `household_name` dan `household_member_count`** juga, supaya Settings bisa menyusun teks konfirmasi tanpa permintaan tambahan.
+5. **Kompatibilitas dengan ruang usaha** (rencana Buku Usaha R1/R2 dari sesi lain) ditambahkan sebagai bagian 10.
 **Klasifikasi:** arsitektural. Mengubah invarian yang dibaca ±25 call site (snapshot, rollover, advisor, analitik, langganan, struk), menyentuh web dan bot, dan butuh migrasi skema + data.
 **Spec lanjutan:** laporan berkala (bulanan, kuartalan, tahunan) ditulis sebagai spec terpisah **setelah** fase ini tayang. Spec ini adalah fondasinya.
 
@@ -68,28 +78,31 @@ Setelah fase ini, untuk household mana pun berlaku: semua anggota memakai satu `
 Semua fungsi menerima `db: AsyncSession` dan **tidak** `commit` sendiri kecuali disebut; pemanggil yang commit (pola repo).
 
 - `async def household_payday(db, household) -> int`: kembalikan `household.payday_day`; bila NULL, turunkan dari anggota dengan urutan owner → admin → anggota tertua (`HouseholdMember.created_at`) → 1, tulis ke `household.payday_day`, `flush`, kembalikan.
-- `def can_change_payday(membership, member_count: int) -> bool`: `role in (owner, admin)` → True; `member` → True hanya bila `member_count == 1`; selain itu False.
-- `async def set_household_payday(db, household_id, day: int, *, actor) -> dict`:
+- `def pick_payday(rows) -> int` (murni): `rows` = `(role, created_at, payday_day)` anggota; urutan owner → admin → member, lalu `created_at` tertua; tanpa anggota → 1. Dipakai `household_payday` dan dry-run skrip.
+- `def can_change_payday(role, member_count: int) -> bool`: `role in (owner, admin)` → True; `member` → True hanya bila `member_count == 1`; selain itu False. `role` boleh enum atau string (`str(role)` / `.value`, aturan enum vs string di `AGENTS.md`).
+- `@dataclass PaydayContext(household, role, payday_day, member_count, can_change, owner_name)` dan `async def payday_context(db, user) -> PaydayContext | None` (None bila tanpa keanggotaan): satu titik baca untuk route profil, recompute, dan household. Kueri keanggotaan household di modul ini lewat satu helper `membership(db, user)`, supaya refactor `ruang_aktif` (bagian 10) cukup mengubah satu tempat.
+- `async def recompute_history(household_id, periods: int) -> list[dict]`: memegang `asyncio.Lock` per household, membaca `households.payday_day` terbaru di dalam kunci (sesi sendiri), lalu `rollover.recompute_household(hid, payday, periods)`. Dipakai endpoint `recompute`, `set_household_payday`, dan skrip migrasi.
+- `async def set_household_payday(db, household, day: int, *, actor) -> dict`:
   1. validasi `1 <= day <= 31` (`ValueError` → 400 di route);
-  2. muat household; bila `day == household_payday(...)` → no-op, kembalikan `{"changed": False}` (tanpa recompute, tanpa notifikasi);
-  3. `household.payday_day = day`; `UPDATE users SET payday_day = :day WHERE id IN (SELECT user_id FROM household_members WHERE household_id = :hid)`; `commit`;
-  4. `advisor_cache.invalidate(hid)`;
-  5. `await rollover.recompute_household(hid, day, periods=RECOMPUTE_PERIODS_ON_CHANGE)` dengan `RECOMPUTE_PERIODS_ON_CHANGE = 12`;
+  2. bila `day == await household_payday(db, household)` → no-op, kembalikan `{"changed": False}` (tanpa recompute, tanpa notifikasi);
+  3. `household.payday_day = day`; `payday_day` setiap anggota (dimuat lewat `User` ⨝ `HouseholdMember`) di-assign `day`; `commit`;
+  4. `advisor_cache.invalidate(household.id)`;
+  5. `await recompute_history(household.id, RECOMPUTE_PERIODS_ON_CHANGE)` dengan `RECOMPUTE_PERIODS_ON_CHANGE = 12`;
   6. notifikasi ke setiap anggota **selain actor** lewat `notification_service.kirim(user, NotificationType.system, title, message, link="/settings", telegram_html=…)`. Judul `"Siklus anggaran rumah berubah"`, pesan `"Tanggal gajian {nama rumah} kini tanggal {day} (diubah {actor.name}). Riwayat 12 periode terakhir dihitung ulang."`. Gagal kirim dicatat, tidak membatalkan perubahan;
   7. kembalikan `{"changed": True, "members": n, "recomputed": k}`.
 - `async def adopt_household_payday(db, user, household) -> int`: `user.payday_day = await household_payday(db, household)`; kembalikan nilainya. Dipanggil join web dan bot **sebelum** commit keanggotaan baru, dalam transaksi yang sama.
-- `async def heal(db, household) -> list[uuid]`: untuk household dengan `payday_day` terisi, samakan `users.payday_day` anggota yang berbeda, `commit`, catat `logger.warning("payday anggota %s menyimpang (%s → %s)")`, kembalikan id yang diperbaiki. Dipanggil job harian (bagian 4). Tidak memanggil recompute: penyimpangan hanya mungkin terjadi lewat jalur yang lupa memakai service ini, dan job yang sama menghitung snapshot dengan payday household.
+- `async def heal(db, household) -> list[User]`: untuk household dengan `payday_day` terisi, samakan `users.payday_day` anggota yang berbeda, `commit` (hanya bila ada yang berubah), catat `logger.warning("payday anggota %s menyimpang (%s → %s)")`, kembalikan user yang diperbaiki (skrip migrasi memberi tahu mereka). Dipanggil job harian (bagian 4). Tidak memanggil recompute: penyimpangan hanya mungkin terjadi lewat jalur yang lupa memakai service ini, dan job yang sama menghitung snapshot dengan payday household.
 - **Penulis tunggal, dikunci tes:** atribut `payday_day` hanya boleh di-assign di `app/services/household_cycle.py` (dan deklarasi kolom di `app/models/models.py`, backfill DDL di `app/main.py`). `user_settings.py:171` (`user.payday_day = req.payday_day`) diganti pemanggilan service; skrip migrasi (bagian 7) memakai service. Tes `test_household_cycle_sole_writer` memindai `app/**/*.py` (kecuali `app/tests`) dengan regex `\.payday_day\s*=(?!=)` (assignment atribut; argumen kata kunci `payday_day=` tidak ikut) dan `(?i)\bset\s+payday_day` (SQL), dan gagal bila ada file di luar daftar itu.
 - `household_payday` boleh dipanggil dari handler GET (mengisi NULL saat dibaca); bila sesi GET tidak di-commit, nilainya tetap benar di respons dan job harian yang menyimpannya.
 
 ## 3. API (aditif; satu 403 baru)
 
 - `GET /user/profile` +
-  `household_payday_day` (int), `payday_locked` (bool: `not can_change_payday(...)`), `payday_owner_name` (nama owner, `null` bila pemanggil owner-nya). `payday_day` yang sudah ada tetap dikembalikan (= cermin).
+  `household_payday_day` (int), `payday_locked` (bool: `not can_change_payday(...)`), `payday_owner_name` (nama owner, `null` bila pemanggil owner-nya), `household_name` (str | null), `household_member_count` (int). Tanpa keanggotaan: `household_payday_day = payday_day`, `payday_locked = false`, dua field nama `null`, `household_member_count = 1`. `payday_day` yang sudah ada tetap dikembalikan (= cermin).
 - `PUT /user/profile` dengan `payday_day`: cek izin dilakukan **paling awal**, sebelum perubahan apa pun: bila `can_change_payday` → lanjut memproses field lain lalu `set_household_payday`; bila tidak → `403` detail `"Tanggal gajian mengikuti rumah tangga ({nama rumah}, tanggal {N}). Minta owner yang mengubahnya."` tanpa menyimpan apa pun. Tanpa keanggotaan household (seharusnya tidak terjadi) → `400 "Belum punya household"`, seperti `incomes.py`. UI tidak pernah mengirim `payday_day` saat terkunci.
 - `GET /household/` (`HouseholdResponse`) + `payday_day`.
-- `POST /household/join` response + `payday_day`. **Verifikasi saat implementasi:** route menerima `code` sebagai query (`code: str`) sedangkan `Settings.jsx:498` mengirim body JSON `{code}`. Kalau ini 422 di produksi, terima keduanya (query atau body) tanpa mengubah arti.
-- `POST /snapshots/recompute`: hanya `can_change_payday` (owner/admin; member hanya bila sendirian) → selain itu 403; periode dari `household_payday`, bukan `user.payday_day`. Parameter `periods` tetap (default 6, maks 36).
+- `POST /household/join` response + `payday_day`. Route menerima `code` dari query **atau** body JSON `{"code": ...}` (hari ini hanya query, sedangkan `Settings.jsx:498` mengirim body → 422; terverifikasi). Keduanya kosong → 400 `"Kode invite wajib diisi"`. Kode di-`strip().upper()` seperti bot.
+- `POST /snapshots/recompute`: tanpa keanggotaan → `{"recomputed": 0, "periods": []}` (perilaku lama); hanya `can_change_payday` (owner/admin; member hanya bila sendirian) → selain itu 403 `"Hanya owner atau admin rumah tangga yang bisa menghitung ulang riwayat."`; lewat `recompute_history` (payday household, bukan `user.payday_day`). Parameter `periods` tetap (default 6, maks 36).
 - `POST /snapshots/run` (admin): untuk tiap household, `period = get_period_for_month(household_payday, year, month)` lalu `create_monthly_snapshots(..., household_ids=[hid], force=force)`. Respons: ringkasan per household.
 - Semua perubahan lolos `python -m app.scripts.openapi_cek`.
 
@@ -118,7 +131,7 @@ for household in households:
 - Perilaku lain (key `(tahun, bulan awal periode)`, `get_previous_rollover` dengan bulan−1, hanya amplop `is_active`) tidak berubah.
 
 ### 4c. `recompute_household(hid, payday, periods) -> list[dict]` (`rollover.py`)
-`get_closed_periods(payday, today, periods)` oldest-first, tiap periode `create_monthly_snapshots(ps, pe, force=True, household_ids=[hid])`. Dipakai endpoint `recompute`, `set_household_payday`, dan skrip migrasi (bagian 7). Deterministik, aman diulang.
+`get_closed_periods(payday, today, periods)` oldest-first, tiap periode `create_monthly_snapshots(ps, pe, force=True, household_ids=[hid])`. Dipanggil hanya lewat `household_cycle.recompute_history` (kunci per household + payday terbaru), yang dipakai endpoint `recompute`, `set_household_payday`, dan skrip migrasi (bagian 7). Deterministik, aman diulang.
 
 ## 5. `app/core/period.py`
 
@@ -130,8 +143,8 @@ for household in households:
 
 ### 6a. Settings (`frontend/src/pages/Settings.jsx`, kartu "📅 Tanggal Gajian")
 - Bila `payday_locked`: input diganti teks read-only `"Mengikuti siklus rumah tangga: tanggal {N} (diatur {payday_owner_name})."` dan `payday_day` tidak pernah dikirim.
-- Bila boleh mengubah dan `member_count > 1`: input tidak lagi menyimpan saat diketik; ada tombol Simpan yang membuka dialog konfirmasi in-app (pola dialog reset data di halaman yang sama, bukan `window.confirm`): `"Mengubah tanggal gajian berlaku untuk semua anggota {nama rumah}, dan 12 periode terakhir dihitung ulang. Lanjutkan?"`. Household sendirian: perilaku sekarang (simpan langsung saat berubah).
-- Logika keputusan di `lib/paydayLock.js` (`paydayLockState(profile, household) -> {locked, note, needsConfirm}`) supaya bisa diuji `node --test`.
+- Bila boleh mengubah dan `member_count > 1`: input tidak lagi menyimpan saat diketik; ada tombol Simpan yang membuka dialog konfirmasi in-app (pola dialog reset data di halaman yang sama, bukan `window.confirm`): `"Mengubah tanggal gajian berlaku untuk semua anggota {nama rumah}, dan 12 periode terakhir dihitung ulang. Lanjutkan?"`. Household sendirian: tetap simpan saat berubah, ditunda 600 ms (debounce) supaya mengetik "25" tidak menyimpan "2" dulu.
+- Logika keputusan di `lib/paydayLock.js` (`paydayLockState(profile) -> {locked, note, needsConfirm, confirmText}` dan `joinSuccessMessage(householdName, paydayDay)`) supaya bisa diuji `node --test`.
 
 ### 6b. Join
 - Web (`Settings.jsx` `joinHousehold`): flash `"Berhasil bergabung ke {rumah}! Siklus anggaranmu sekarang mengikuti rumah ini: tanggal {payday_day}."`, lalu `load()` memuat profil baru.
@@ -149,7 +162,7 @@ Lewat `notification_service.kirim` dengan `NotificationType.system` (tanpa enum 
 
 Dijalankan admin di VPS setelah deploy (pola `app/scripts/kotak_corpus.py`, `argparse`, `python -m`):
 - `--dry-run` (default): per household cetak id, nama, jumlah anggota, payday tiap anggota, payday household yang akan dipakai, dan tanda **campuran** bila `COUNT(DISTINCT users.payday_day) > 1`. Tidak menulis apa pun.
-- `--apply [--periods 12]`: untuk tiap household: `household_payday` (mengisi NULL), `heal` (menyamakan anggota), `recompute_household(hid, payday, periods)` untuk **semua** household (mengisi `allocated_amount`/`spent_amount`; household non-campuran menghasilkan angka identik), lalu notifikasi (bagian 6d, tanpa `actor`) ke anggota yang payday-nya berubah, dengan pesan `"Siklus anggaranmu kini mengikuti {rumah}: tanggal {N}. Riwayat {periods} periode terakhir dihitung ulang."`.
+- `--apply [--periods 12]`: untuk tiap household: `household_payday` (mengisi NULL), `heal` (menyamakan anggota), `recompute_history(hid, periods)` untuk **semua** household (mengisi `allocated_amount`/`spent_amount`; household non-campuran menghasilkan angka identik), lalu notifikasi (bagian 6d, tanpa `actor`) ke anggota yang payday-nya berubah, dengan pesan `"Siklus anggaranmu kini mengikuti {rumah}: tanggal {N}. Riwayat {periods} periode terakhir dihitung ulang."`.
 - Idempoten: menjalankan `--apply` dua kali menghasilkan DB yang sama dan tidak mengirim notifikasi kedua (tidak ada anggota yang berubah lagi).
 - Keluaran akhir: jumlah household, jumlah campuran, jumlah snapshot ditulis, anggota yang diberi tahu.
 
@@ -158,12 +171,12 @@ Dijalankan admin di VPS setelah deploy (pola `app/scripts/kotak_corpus.py`, `arg
 | Area | Tes |
 |---|---|
 | `period.py` | `get_period_for_month` untuk payday 1, 25, 31 (Jan 31–Feb 27, Feb 28–Mar 30, Mar 31–Apr 29 di 2026); setara dengan `_resolve_period(year, month)` lama. |
-| `household_cycle` | `can_change_payday` (owner, admin, member sendirian, member berdua); `household_payday` mengisi NULL dari owner → admin → tertua; `set_household_payday` menulis household + semua anggota, no-op bila sama, memanggil `recompute_household(…, 12)` dan `advisor_cache.invalidate`, notifikasi ke anggota selain actor; `adopt_household_payday`; `heal` memperbaiki dan mencatat warning; `test_household_cycle_sole_writer`. |
+| `household_cycle` | `pick_payday`; `can_change_payday` (owner, admin, member sendirian, member berdua, enum maupun string); `payday_context`; `recompute_history` serial per household dan memakai payday terbaru; `household_payday` mengisi NULL dari owner → admin → tertua; `set_household_payday` menulis household + semua anggota, no-op bila sama, memanggil `recompute_history(…, 12)` dan `advisor_cache.invalidate`, notifikasi ke anggota selain actor; `adopt_household_payday`; `heal` memperbaiki dan mencatat warning; `test_household_cycle_sole_writer`. |
 | `rollover` | `snapshot_values`: `opening − allocated == prev_rollover`; rollover vs non-rollover; closing negatif → rollover 0; `create_monthly_snapshots` menyimpan dua kolom baru (mock session). |
 | `scheduler` | `household_runs` menghasilkan tepat satu jendela per household untuk household campuran (payday 1 dan 25), 3 periode tertutup. |
 | rute | `PUT /user/profile`: owner → service dipanggil; member → 403 dan field lain tetap tersimpan; `GET /user/profile` field baru; `recompute` 403 untuk member, memakai payday household; `snapshots/run` per household; `household/join` web mengadopsi payday dan response berisi `payday_day`. |
 | bot | `cmd_join` memanggil `adopt_household_payday` dan pesannya menyebut tanggal. |
-| skrip | `--dry-run` tidak menulis; `--apply` memanggil heal + recompute per household dan notifikasi hanya untuk yang berubah; idempoten pada panggilan kedua. |
+| skrip | `--dry-run` tidak menulis; household tanpa anggota dilewati; `--apply` memanggil heal + recompute per household dan notifikasi hanya untuk yang berubah; idempoten pada panggilan kedua. |
 | frontend | `paydayLockState`, `nonRolloverWarning` (`node --test`); `npm run build`. |
 | API | `python -m app.scripts.openapi_cek` → tidak ada yang memutus. |
 
@@ -178,6 +191,15 @@ Semua tes ditulis lebih dulu (TDD), per tugas di rencana implementasi.
 5. Verifikasi: `GET /user/profile` dua anggota satu household → `household_payday_day` sama; esok harinya `journalctl -u jatahku | grep menyimpang` kosong; bila ada household campuran, dashboard anggota yang berubah dicek sisa amplopnya masuk akal.
 6. Dokumentasi: `docs/siklus-household.md` (perilaku final, seperti `docs/kotak-struk.md`), satu baris di `CLAUDE.md` "Key Decisions" ("Siklus anggaran milik household: `households.payday_day`, `users.payday_day` cermin; penulis tunggal `services/household_cycle.py`").
 
+## 10. Kompatibilitas dengan ruang usaha (rencana Buku Usaha, sesi lain)
+
+`claude/buku-usaha-rencana-development.md` merencanakan R1 (`households.type` = `rumah_tangga` | `usaha`, satu user boleh anggota beberapa household) dan R2 (`ruang_aktif` menggantikan kueri keanggotaan di 31 file). Fase ini dirancang supaya cocok:
+- `households.payday_day` berlaku **per ruang**: ruang usaha punya siklusnya sendiri, job snapshot (per household) langsung benar untuk ruang usaha.
+- `users.payday_day` adalah cermin siklus **ruang keluarga** user. Sampai R1 tayang, setiap household adalah ruang keluarga. Saat R1 tayang, `set_household_payday` dan `heal` hanya mencerminkan ke `users.payday_day` untuk household `rumah_tangga`, dan `adopt_household_payday` hanya dipanggil saat bergabung ke ruang keluarga.
+- Setelah R2, call site sebaiknya membaca `ruang.payday_day` dari ruang aktif, bukan `user.payday_day`; cermin bisa dipensiunkan saat itu.
+- Kueri keanggotaan di `household_cycle.py` lewat satu helper `membership(db, user)`.
+- Revisi alembic fase ini kemungkinan tayang lebih dulu; R1 merevisi dari head yang ada saat itu.
+
 ## Di luar cakupan
 
 - Desain laporan berkala (PDF, email berpassword, halaman analitik, notifikasi rilis) — spec berikutnya. Yang bisa diasumsikan spec itu dari fase ini: satu jendela per household, `get_period_for_month`, snapshot berisi `allocated_amount`/`spent_amount`, `recompute_household`.
@@ -190,7 +212,7 @@ Semua tes ditulis lebih dulu (TDD), per tugas di rencana implementasi.
 
 - **Jendela nilai salah saat migrasi.** Dihindari dengan kolom NULL + backfill dalam DDL startup, sebelum job pertama berjalan.
 - **Jalur baru lupa memakai service** → invarian bocor. Mitigasi: tes penulis tunggal + `heal` harian; akibat terburuk satu hari penyimpangan, bukan rantai rollover rusak.
-- **Owner mengganti payday berulang** memicu recompute 12 periode tiap kali. Skala sekarang (29 user) hitungan detik; bila nanti membesar, pindahkan ke tugas latar (`asyncio.create_task`) dengan kunci per household. Dua recompute bersamaan: penulis terakhir menang, hasilnya tetap deterministik.
+- **Owner mengganti payday berulang** memicu recompute 12 periode tiap kali. Skala sekarang (29 user) hitungan detik; bila nanti membesar, pindahkan ke tugas latar (`asyncio.create_task`). Recompute bersamaan untuk satu household diserialkan dan selalu memakai payday terbaru (penyesuaian 2), jadi hasil akhir mengikuti perubahan terakhir.
 - **Riwayat anggota berubah** saat payday household berubah atau saat migrasi: itu memang konsekuensi keputusan #7, dan dikomunikasikan lewat notifikasi.
 - **Konflik dengan sesi pengembangan lain:** perubahan dijaga lokal; `models.py`, `main.py` hanya baris aditif; `AGENTS.md` hanya tambah satu bagian; revisi alembic dibuat terakhir; rebase sebelum PR.
 
