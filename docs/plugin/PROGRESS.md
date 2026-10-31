@@ -13,7 +13,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | B1 (migrasi) | #138 | Registry kartu dan data batch | 1 Beranda registry | 3,5 | F0 | belum | | | | |
 | B2 | #139 | Beranda dari registry | 1 Beranda registry | 3,5 | B1 | belum | | | | |
 | B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | belum | | | | |
-| R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | berjalan | Pemilik produk + Claude | | 2026-11-01 | |
+| R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | review | Pemilik produk + Claude | #161 | 2026-11-01 | |
 | R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | belum | | | | |
 | R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | belum | | | | |
 | R4 | #144 | Membuat dan berpindah ruang | 2 Ruang usaha | 3,5 | R3 | belum | | | | |
