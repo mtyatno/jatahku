@@ -28,7 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import AppSetting, Entitlement, PluginAuditLog, PluginInstallation
+from app.models.models import AppSetting, Entitlement, Household, PluginAuditLog, PluginInstallation
 from app.plugins.host.manifest import Manifest
 from app.plugins.host.registry import registry
 from app.services.advisor.dashboard import flag_aktif
@@ -69,7 +69,7 @@ async def _setting(db: AsyncSession, key: str) -> str | None:
 async def saklar_mati(db: AsyncSession) -> set[str]:
     """Id plugin yang sedang dimatikan server lewat saklar darurat."""
     raw = await _setting(db, SAKLAR_KEY) or ""
-    return {x.strip() for x in raw.split(",") if x.strip()}
+    return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
 
 async def boleh_dilihat(db: AsyncSession, m: Manifest, user_id) -> bool:
@@ -164,15 +164,29 @@ async def aktif_di_ruang(db: AsyncSession, household_id: UUID, user_id) -> list[
 
 
 # ── tulis ───────────────────────────────────────────────────────────────
+async def _kunci_ruang(db: AsyncSession, household_id: UUID) -> None:
+    """Serialkan semua perubahan plugin di satu ruang (review keamanan PR #176, temuan 1).
+
+    `requires`, `conflicts`, dan `dibutuhkan_plugin_lain` membaca baris plugin LAIN di ruang yang sama; kunci baris
+    plugin itu sendiri tidak cukup (saat pasang pertama barisnya belum ada). Tanpa ini, `pasang a` bersamaan dengan
+    `pasang b` yang bentrok, atau `jeda a` bersamaan dengan `pasang` plugin yang butuh `a`, bisa sama-sama lolos.
+    Kunci baris `households` berlaku sampai commit; di SQLite (tes) `FOR UPDATE` diabaikan."""
+    await db.execute(select(Household.id).where(Household.id == household_id).with_for_update())
+
+
 def _audit(db: AsyncSession, household_id, plugin_id, actor_id, aksi: str, **detail):
     db.add(PluginAuditLog(household_id=household_id, plugin_id=plugin_id, actor_id=actor_id,
                           action=aksi, detail=detail))
 
 
+def _plugin_tidak_ada() -> GalatPlugin:
+    return _galat(404, "plugin_tidak_ada", "Fitur Tambahan ini tidak ditemukan.")
+
+
 def manifest_atau_404(plugin_id: str) -> Manifest:
     m = registry().get(plugin_id)
     if m is None:
-        raise _galat(404, "plugin_tidak_ada", "Fitur Tambahan ini tidak ditemukan.")
+        raise _plugin_tidak_ada()
     return m
 
 
@@ -200,11 +214,12 @@ async def pasang(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m
     if pengaturan:
         # Form pengaturan dari JSON Schema + validasi server adalah titik `settings` (H2/U1).
         raise _galat(422, "pengaturan_tidak_sah", "Pengaturan Fitur Tambahan belum bisa diisi saat memasang.")
+    await _kunci_ruang(db, household_id)
     inst = await instalasi(db, household_id, m.id, kunci=True)
     if inst is not None and inst.status != UNINSTALLED:
         return inst
     if not await boleh_dilihat(db, m, user.id):
-        raise _galat(404, "plugin_tidak_ada", "Fitur Tambahan ini tidak ditemukan.")
+        raise _plugin_tidak_ada()
     await _cek_boleh_menyala(db, household_id, jenis_ruang, m)
 
     tujuan = INSTALLED if m.contributes.setup else ACTIVE
@@ -236,17 +251,25 @@ async def pasang(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m
     return inst
 
 
-def _404_tidak_aktif(m: Manifest) -> GalatPlugin:
+async def _tidak_terpasang(db: AsyncSession, user, m: Manifest) -> GalatPlugin:
+    """404 untuk lanjut/jeda/copot tanpa instalasi. Plugin di luar flag user dijawab sama dengan plugin yang tidak
+    ada, supaya nama plugin yang belum dirilis tidak bisa ditebak (review PR #176, temuan 4)."""
+    if not await boleh_dilihat(db, m, user.id):
+        return _plugin_tidak_ada()
     return _galat(404, "plugin_tidak_aktif", f"{m.name} belum terpasang di ruang ini.")
 
 
 async def lanjut(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m: Manifest) -> PluginInstallation:
-    """installed (wizard selesai/dilewati) atau paused → active."""
+    """installed (wizard selesai/dilewati) atau paused → active. Butuh flag rollout user, sama seperti pasang
+    (review PR #176, temuan 3): hanya jeda dan copot yang bebas flag, supaya plugin selalu bisa dimatikan."""
+    await _kunci_ruang(db, household_id)
     inst = await instalasi(db, household_id, m.id, kunci=True)
     if inst is None or inst.status == UNINSTALLED:
-        raise _404_tidak_aktif(m)
+        raise await _tidak_terpasang(db, user, m)
     if inst.status == ACTIVE:
         return inst
+    if not await boleh_dilihat(db, m, user.id):
+        raise _plugin_tidak_ada()
     await _cek_boleh_menyala(db, household_id, jenis_ruang, m)
     dari, inst.status, inst.disabled_reason = inst.status, ACTIVE, None
     _audit(db, household_id, m.id, user.id, "lanjut", dari=dari, ke=ACTIVE)
@@ -262,9 +285,10 @@ async def _pemakai(db: AsyncSession, household_id: UUID, m: Manifest, status: tu
 
 async def jeda(db: AsyncSession, user, household_id: UUID, m: Manifest) -> PluginInstallation:
     """installed atau active → paused. Data tetap, kontribusi hilang."""
+    await _kunci_ruang(db, household_id)
     inst = await instalasi(db, household_id, m.id, kunci=True)
     if inst is None or inst.status == UNINSTALLED:
-        raise _404_tidak_aktif(m)
+        raise await _tidak_terpasang(db, user, m)
     if inst.status == PAUSED:
         return inst
     pemakai = await _pemakai(db, household_id, m, (ACTIVE, INSTALLED))
@@ -280,9 +304,10 @@ async def jeda(db: AsyncSession, user, household_id: UUID, m: Manifest) -> Plugi
 async def copot(db: AsyncSession, user, household_id: UUID, m: Manifest) -> PluginInstallation:
     """installed, active, atau paused → uninstalled (arsip 90 hari). Data inti (transaksi, pemasukan) tidak
     pernah ikut terhapus; data `p_<id>_*` dihapus job pembersih setelah `purge_after` (ADR-P15)."""
+    await _kunci_ruang(db, household_id)
     inst = await instalasi(db, household_id, m.id, kunci=True)
     if inst is None:
-        raise _404_tidak_aktif(m)
+        raise await _tidak_terpasang(db, user, m)
     if inst.status == UNINSTALLED:
         return inst
     pemakai = await _pemakai(db, household_id, m, (ACTIVE, INSTALLED, PAUSED))

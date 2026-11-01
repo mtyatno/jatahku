@@ -290,11 +290,12 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
 | `copot` | terpasang, aktif, dijeda | arsip (+90 hari) | Data inti tidak pernah ikut terhapus (ADR-P15) |
 
 - **Idempoten:** aksi yang diulang pada status tujuannya menjawab 200 dengan status sekarang dan tidak menambah audit. Perpindahan lain yang tidak sah → 404 `plugin_tidak_aktif` (lanjut/jeda pada plugin yang belum terpasang atau arsip).
-- Pasang/pulihkan/lanjut ditolak bila: saklar darurat menyala (503 `plugin_diperbaiki`), jenis ruang tidak didukung (422 `jenis_ruang_tidak_cocok`), plugin di `butuh` belum aktif (409 `butuh_plugin`), atau bentrok dengan plugin terpasang (409 `bentrok_plugin`, dua arah). Pasang juga butuh flag rollout user (selain itu 404 `plugin_tidak_ada`); jeda dan copot tidak, supaya plugin selalu bisa dimatikan.
+- Pasang/pulihkan/lanjut ditolak bila: saklar darurat menyala (503 `plugin_diperbaiki`), jenis ruang tidak didukung (422 `jenis_ruang_tidak_cocok`), plugin di `butuh` belum aktif (409 `butuh_plugin`), atau bentrok dengan plugin terpasang (409 `bentrok_plugin`, dua arah). Pasang dan lanjut juga butuh flag rollout user (selain itu 404 `plugin_tidak_ada`); jeda dan copot tidak, supaya plugin selalu bisa dimatikan. Lanjut/jeda/copot tanpa instalasi menjawab `plugin_tidak_ada` (bukan `plugin_tidak_aktif`) bila plugin di luar flag user, supaya nama plugin yang belum dirilis tidak bisa ditebak.
+- Perubahan plugin di satu ruang diserialkan (kunci baris `households` sampai commit), jadi `requires`, `conflicts`, dan `dibutuhkan_plugin_lain` tetap benar walau dua permintaan datang bersamaan.
 - Jeda/copot ditolak bila plugin lain di ruang ini masih membutuhkannya (409 `dibutuhkan_plugin_lain`): jeda bila pemakainya terpasang/aktif, copot bila pemakainya belum dicopot.
 - `pengaturan` yang tidak kosong → 422 `pengaturan_tidak_sah` sampai titik `settings` (form dari JSON Schema + validasi server) ada di H2/U1. Pilihan kartu Beranda saat pasang (`kartu` di v0) dihapus dari body: klien menambah kartu lewat `PUT /dashboard/layout` (H3).
 - `ekspor` bernilai `null` sampai endpoint `GET /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json` ada (U1, bersama data plugin pertama; escape dan anti formula-injection dari PR #136).
-- Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
+- Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (tidak peka huruf besar-kecil) (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
 
 ```jsonc
 // GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3, masih v0)

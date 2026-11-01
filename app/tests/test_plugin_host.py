@@ -115,6 +115,23 @@ class ManifestTests(unittest.TestCase):
         self._gagal(extra_field=1)                                             # kunci asing ditolak
         self._gagal("dirinya", requires=["uji"])
 
+    def test_tidak_menumpang_bot_dan_flag_inti(self):
+        """Review PR #176, temuan 2: perintah, prefix callback, dan flag milik inti ditolak."""
+        self._gagal("bot inti", contributes={"bot_commands": [
+            {"command": "start", "help": "h", "kind": "read", "audience": "admin"}]})
+        for prefix in ("lock_", "kn_", "ky_", "batch_"):
+            self._gagal("pola bot inti", contributes={"bot_callbacks": [{"prefix": prefix}]})
+        self._gagal("plugin_<nama>_users", flag="ruang_usaha_users")
+        self._gagal("plugin_<nama>_users", flag="plugin_saklar_darurat")
+        self.assertEqual(manifest(flag="plugin_uji_beta_users").flag_key, "plugin_uji_beta_users")
+
+    def test_daftar_bot_inti_sama_dengan_handlers(self):
+        """Konstanta di manifest.py harus mengikuti bot inti; tambah perintah/callback inti = perbarui keduanya."""
+        from app.bot.handlers import bot_callbacks, bot_commands
+        from app.plugins.host.manifest import PERINTAH_INTI, POLA_CALLBACK_INTI
+        self.assertEqual(set(bot_commands()), set(PERINTAH_INTI))
+        self.assertEqual([p for p, _ in bot_callbacks()], list(POLA_CALLBACK_INTI))
+
     def test_rentang_plugin_api(self):
         self.assertTrue(cocok_rentang(">=1.0 <2.0", (1, 4, 0)))
         self.assertFalse(cocok_rentang(">=1.0 <2.0", (2, 0, 0)))
@@ -432,6 +449,25 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.aksi("copot")).json()["status"], "arsip")
         self.galat(await self.aksi("pasang"), 404, "plugin_tidak_ada")                 # tapi tidak bisa dipulihkan
 
+    async def test_lanjut_butuh_flag(self):
+        """Review PR #176, temuan 3: flag rollout dicabut → dijeda tidak bisa dilanjutkan, tetap bisa dicopot."""
+        await self.aksi("pasang")
+        await self.aksi("jeda")
+        await self.set_setting("plugin_uji_users", "")
+        self.galat(await self.aksi("lanjut"), 404, "plugin_tidak_ada")
+        async with self.Session() as db:
+            self.assertEqual((await siklus.instalasi(db, self.usaha, "uji")).status, "paused")
+        self.assertEqual((await self.aksi("copot")).json()["status"], "arsip")
+
+    async def test_plugin_tersembunyi_tidak_bisa_ditebak(self):
+        """Review PR #176, temuan 4: plugin di luar flag dijawab sama dengan plugin yang tidak ada."""
+        for aksi in ("lanjut", "jeda", "copot"):
+            tersembunyi = await self.aksi(aksi, "uji_rahasia")
+            tidak_ada = await self.aksi(aksi, "zzz_tidak_ada")
+            self.assertEqual((tersembunyi.status_code, tersembunyi.json()),
+                             (tidak_ada.status_code, tidak_ada.json()))
+        self.galat(await self.aksi("jeda"), 404, "plugin_tidak_aktif")              # di flag: pesan biasa
+
     async def test_jenis_ruang(self):
         self.galat(await self.aksi("pasang", "uji_kel"), 422, "jenis_ruang_tidak_cocok")
         self.galat(await self.aksi("pasang", "uji", ruang_id=self.rumah), 422, "jenis_ruang_tidak_cocok")
@@ -484,6 +520,11 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
 
         await self.set_setting("plugin_saklar_darurat", "")
         self.assertEqual((await self.aksi("pasang")).json()["status"], "aktif")
+        await self.set_setting("plugin_saklar_darurat", " UJI ")                       # huruf besar dan spasi
+        await self.aksi("jeda")
+        self.galat(await self.aksi("lanjut"), 503, "plugin_diperbaiki")
+        async with self.Session() as db:
+            self.assertEqual(await siklus.saklar_mati(db), {"uji"})
 
     async def test_aktif_di_ruang_hanya_status_aktif_dan_flag_user(self):
         await self.aksi("pasang")

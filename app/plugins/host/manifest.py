@@ -46,6 +46,20 @@ IZIN: dict[str, str] = {
 }
 IZIN_TERLARANG_T1 = ("ai:analyze", "network:")   # ADR-P14; network:<domain> butuh ADR baru
 
+# Perintah dan pola callback bot inti (`app/bot/handlers.py` `bot_commands()`/`bot_callbacks()`). Disalin sebagai
+# konstanta supaya validator tidak mengimpor bot; `test_plugin_host` gagal bila keduanya berbeda. Plugin tidak boleh
+# menimpa perintah inti atau memakai prefix callback yang ditangkap pola inti (mis. `lock_` = aksi tulis kunci amplop).
+PERINTAH_INTI = frozenset({
+    "amplop", "amplop_baru", "batal", "controls", "hapus_langganan", "help", "invite", "join", "langganan", "link",
+    "lock", "pending", "setcooling", "setlimit", "start", "status", "tagihan", "tambah_langganan", "tanya", "target",
+    "template", "unlink", "webapp",
+})
+POLA_CALLBACK_INTI = (
+    r"^lock_", r"^delrec_", r"^recpay_", r"^recskip_", r"^recstop_", r"^addsub_", r"^merge_", r"^unlink_", r"^cool_",
+    r"^checkin_", r"^tpl_", r"^k[nxdo]_", r"^kt_", r"^t_", r"^ky_", r"^batch_", r"^bshift_", r"^blimit_", r"^struk_",
+    r"^intentlearn:", r"^dlimit:", r"^fshift:", r"^sim:", r"^tanya:",
+)
+
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,29}$")
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _SYARAT = re.compile(r"^(>=|<=|>|<|==)\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
@@ -144,6 +158,8 @@ class PerintahBot(_Ketat):
     def _cmd(cls, v):
         if not _PERINTAH.match(v):
             raise ValueError(f"perintah '{v}' tidak sah")
+        if v in PERINTAH_INTI:
+            raise ValueError(f"perintah '/{v}' milik bot inti")
         return v
 
 
@@ -156,6 +172,9 @@ class CallbackBot(_Ketat):
         # Data callback Telegram maksimal 64 byte: prefix pendek, diakhiri garis bawah.
         if not _PREFIX_CB.match(v):
             raise ValueError(f"prefix callback '{v}' harus 2–6 huruf/angka diakhiri '_' (mis. 'bu_')")
+        bentrok = [p for p in POLA_CALLBACK_INTI if re.match(p, v + "0")]
+        if bentrok:
+            raise ValueError(f"prefix callback '{v}' ditangkap pola bot inti {bentrok[0]}")
         return v
 
 
@@ -216,6 +235,14 @@ class Manifest(_Ketat):
     def _id(cls, v):
         if not _ID.match(v) or v in ID_DICADANGKAN:
             raise ValueError(f"id '{v}' harus huruf kecil/angka/garis bawah, 2–30 karakter, bukan nama cadangan")
+        return v
+
+    @field_validator("flag")
+    @classmethod
+    def _flag(cls, v):
+        # Hanya kunci rollout milik plugin: tidak boleh menumpang flag atau saklar inti (mis. ruang_usaha_users).
+        if v is not None and not re.match(r"^plugin_[a-z0-9_]+_users$", v):
+            raise ValueError(f"flag '{v}' harus berbentuk plugin_<nama>_users")
         return v
 
     @field_validator("version")

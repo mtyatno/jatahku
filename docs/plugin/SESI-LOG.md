@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## H1 · Host inti · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review, PR #176, issue #149; menunggu review keamanan terpisah)
+**Selesai** (status review, PR #176, issue #149; review keamanan terpisah lulus 2 Nov, temuan 1–5 dikerjakan di branch ini)
 - `app/plugins/host/manifest.py`: skema manifest (pydantic, kunci asing ditolak) dengan aturan T1: penerbit "Jatahku" (ADR-P9); izin dari `IZIN`, `ai:analyze`/`network:*` ditolak (ADR-P14); cakupan `ruang` saja (ADR-P11); awalan `p_<id>_` untuk tabel dan `<id>.` untuk kartu/aksi/notifikasi; perintah bot `kind: read` + `audience` wajib; aksi cepat ≤ 2; copot = `archive_90_days` (ADR-P15); `engines.plugin_api` dicocokkan dengan `PLUGIN_API_VERSION` 1.0.0.
 - `registry.py`: muat `app/plugins/<id>/manifest.json` (folder `host`, `sdk`, `_*` dilewati); aturan antarplugin (folder = id, `requires` ada/tidak melingkar/mendukung jenis ruang, `conflicts` ada, prefix callback/perintah bot/aturan advisor/flag unik). Mode ketat (CI, tes) vs mode start (lewati yang rusak dan pemakainya, `log.error`). `muat_saat_start()` di lifespan mencetak `🧩 plugin dimuat: …`.
 - `validator.py` + langkah "Validator manifest plugin" di workflow "Tes".
@@ -18,7 +18,15 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Merge `main` (R4 #174) di branch: konflik `main.py`, `AGENTS.md`, `00-indeks.md`, `PROGRESS.md`.
 - Tes: unittest 2426 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, sama dengan `main`) · node --test 628 (`src/lib`; 653 dengan `src/native`) · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · `openapi_cek` tanpa perubahan memutus.
 
+- **Review keamanan terpisah (2 Nov):** semua gerbang H1 lulus, tidak ada temuan yang memblokir. Temuan yang dikerjakan di branch ini:
+  1. **Sedang:** race `requires`/`conflicts` (`pasang a` ∥ `pasang b` yang bentrok, `jeda`/`copot a` ∥ `pasang` plugin yang butuh `a`) lolos 13–15/20 di PostgreSQL. Sekarang `_kunci_ruang` (FOR UPDATE baris `households`) di awal pasang/lanjut/jeda/copot: 0/20.
+  2. **Rendah:** validator menerima perintah bot inti (`/start`, `/lock`), prefix callback yang ditangkap pola inti (`lock_`, `kn_`, `ky_`, `batch_`), dan `flag` berupa kunci AppSetting inti. Sekarang ditolak lewat `PERINTAH_INTI`, `POLA_CALLBACK_INTI`, dan pola `plugin_<nama>_users`; tes memastikan konstanta itu sama dengan `bot_commands()`/`bot_callbacks()`.
+  3. **Rendah:** `lanjut` mengabaikan flag rollout. Sekarang 404 `plugin_tidak_ada` seperti pasang.
+  4. **Info:** nama plugin tersembunyi bisa ditebak dari beda `plugin_tidak_aktif` vs `plugin_tidak_ada`. Sekarang seragam.
+  5. **Info:** saklar darurat kini tidak peka huruf besar-kecil.
+
 **Digantung**
+- Dari review (info, sengaja tidak dikerjakan di H1): persetujuan izin belum terikat ke daftar izin yang ditampilkan (klien bisa mengirim versi manifest, server 409 bila beda; bersama layar izin H3); toggle saklar dan flag tidak tercatat di `plugin_audit_log` (hanya lewat `PUT /admin/settings` yang tidak diaudit); FK CASCADE ke `households` ikut menghapus hak berbayar dan jejak audit saat ruang dihapus (keputusan sadar di V1); jalur `IntegrityError` di `pasang` memakai `rollback` penuh, aman sekarang (kunci ruang membuatnya hampir tak terjangkau di PostgreSQL), pertimbangkan savepoint di H2.
 - **Urutan migrasi dengan R5 (#175):** H1 `a7e3c1f5d9b2` dan R5 `c5r5a8e2d417` sama-sama menginduk ke `2d51b9031a6b`. PR yang di-merge kedua memindahkan `down_revision`-nya ke yang pertama (dan memperbarui langkah 2 checklist-nya) sebelum merge; cek `alembic heads` satu baris.
 - Job pembersih arsip belum dijadwalkan: ADR-P15 butuh pemberitahuan 7 hari sebelumnya dan hook hapus data `p_*` per plugin (H2 `notifications`/`jobs`, U1). Baru relevan ≥ 90 hari setelah copot pertama.
 - Endpoint ekspor (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`) di U1; `copot` menjawab `ekspor: null` sampai itu.
@@ -44,7 +52,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Saklar darurat tidak memblokir jeda dan copot.
 
 **Cara melanjutkan**
-- Review keamanan: sesi terpisah, "review PR #176 terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
+- Review keamanan sudah lulus (2 Nov). Merge ditahan sampai pemilik bisa menjalankan migrasi di VPS pada jam yang sama.
 - Sebelum merge: cek apakah R5 (#175) sudah di-merge; bila ya, pindahkan `down_revision` H1 ke `c5r5a8e2d417`. Lalu "Urutan merge PR bermigrasi" dan checklist "Plugin H1" di `AGENTS.md`.
 - Berikutnya `/sesi-plugin H2` (PluginContext dan titik ekstensi server; butuh H1 selesai), atau R5/R8 di jalur ruang usaha.
 
