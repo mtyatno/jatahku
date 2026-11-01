@@ -187,8 +187,10 @@ class BuildLayoutTests(unittest.TestCase):
     def test_long_digit_line_is_dropped_even_without_secrets(self):
         lines = ["DANA", "Kirim Uang Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp1.500.000"]
         lay = build_layout(lines, transfer_doc(name="SITI", issuer="dana"), Secrets(), user_name=None)
-        self.assertEqual([e["i"] for e in lay["lines"]], [3, 4])
-        self.assertEqual(lay["lines"][1]["amount"], 1500000)
+        # L6c: "Kirim Uang Berhasil" kini judul status (kata dari TITLE_WORDS saja).
+        self.assertEqual([e["i"] for e in lay["lines"]], [1, 3, 4])
+        self.assertEqual(lay["lines"][0], {"i": 1, "label": None, "kind": "judul", "words": ["kirim", "uang", "berhasil"]})
+        self.assertEqual(lay["lines"][2]["amount"], 1500000)
 
     def test_masked_number_lines_are_dropped(self):
         # Ekor rekening/PAN/referensi tersamar bukan nominal: "…4821" tidak boleh tersimpan sebagai amount 4821.

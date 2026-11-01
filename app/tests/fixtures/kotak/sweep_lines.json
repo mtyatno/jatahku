@@ -1501,7 +1501,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "C2 (plan L6c): \"Kirim Uang Berhasil\" tidak tampak bukti; dibaca struk belanja dengan merchant \"Dana\"."
+  "note": "C2 (plan L6c): \"Kirim Uang Berhasil\" tidak tampak bukti; dibaca struk belanja dengan merchant \"Dana\". L6c: ditutup, \"Kirim Uang Berhasil\" judul status: tampak bukti di kedua saklar (tanpa teks OCR, rincian, merchant \"Dana\")."
  },
  {
   "id": "probe-c3-satu-barang",
@@ -8826,5 +8826,90 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6c-kirim-dana",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "DANA",
+   "Kirim Dana Berhasil",
+   "Ke SITI 0812 3456 7890",
+   "Nominal Rp50.000",
+   "Total Rp50.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py KirimUangTitleTests (L6c)"
+ },
+ {
+  "id": "l6c-kirim-uang-di-badan",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "DANA",
+   "26/10/2026 08:12",
+   "Ke SITI 0812 3456 7890",
+   "Nominal Rp50.000",
+   "Total Rp50.000",
+   "Kirim Uang Berhasil"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py KirimUangTitleTests (L6c)"
+ },
+ {
+  "id": "l6c-kirim-uang-dibatalkan",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "DANA",
+   "Kirim Uang Dibatalkan",
+   "Ke SITI",
+   "Nominal Rp50.000",
+   "Total Rp50.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py KirimUangTitleTests (L6c)"
+ },
+ {
+  "id": "l6c-faktur-kirim-uang",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO ONLINE MAJU",
+   "Kaos 1 x 75.000 75.000",
+   "Total Rp75.000",
+   "Penerima: Budi",
+   "Silakan kirim uang ke rekening BCA 1234567890"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py test_kirim_uang_counts_only_as_the_amount_label / KirimUangTitleTests (L6c)"
+ },
+ {
+  "id": "l6c-struk-kaki-kirim-uang",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Kirim uang berhasil? Cek riwayat transaksi"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py KirimUangTitleTests (L6c)"
  }
 ]

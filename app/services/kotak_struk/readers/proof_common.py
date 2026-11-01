@@ -791,9 +791,10 @@ def _status_part(text: str) -> str:
 # bebas yang ditulis user, bukan status, kecuali judul status gagal/pending.
 _NAME_FIELDS = ("merchant", "sender", "note")
 # Kata benda transaksi di awal judul status (dipakai `_STATUS_TITLE` dan `_CANCEL_TITLE`: satu daftar). "dana"/"saldo" sengaja
-# tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI").
-_TITLE_NOUN = (r"(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|"
-               r"setoran|pembelian|purchase|withdrawal|deposit)")
+# tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI"). "Kirim uang"/"kirim dana"/"transfer dana" (L6c, C2: DANA "Kirim
+# Uang Berhasil") hanya sebagai frasa utuh; "bayar" tidak (terlalu umum di struk). Penanda pembaca transfer tidak berubah.
+_TITLE_NOUN = (r"(?:transaksi|transfer(?:\s+dana)?|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|"
+               r"penarikan|setoran|pembelian|purchase|withdrawal|deposit|kirim\s+uang|kirim\s+dana)")
 # Judul status: kata benda transaksi, paling banyak 3 kata lain, lalu kata status ("Transfer Gagal", "Transaksi Anda Gagal",
 # "Payment failed", "Top Up Gagal", "rekening gagal didebet"). Nama seperti "TOKO GAGAL MANIA" atau "BUDI GAGAL" tidak.
 _STATUS_TITLE = re.compile(r"(?<!\w)" + _TITLE_NOUN + r"(?!\w)\s+(?:\S+\s+){0,3}" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)

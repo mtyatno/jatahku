@@ -5,7 +5,7 @@ gambar aslinya tidak pernah di-commit."""
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-import json, unittest
+import json, re, unittest
 from datetime import date
 from pathlib import Path
 from app.scripts.kotak_corpus import evaluate, gate_failures, receipt_samples, sample_context
@@ -1841,3 +1841,80 @@ class InfoAndRefundFootersTests(unittest.IsolatedAsyncioTestCase):
                      "Pembayaran berhasil akan diproses"):
             with self.subTest(text):
                 self.assertTrue(pc._status_lines([text], pc.HEADER_WORDS))
+
+
+async def stored(lines, enabled):
+    """Yang akan disimpan worker untuk teks ini (`worker._outcome`): kolom, dan apakah teksnya bukti bayar tak terbaca."""
+    from app.services.kotak_struk import worker
+    doc = textdoc(lines)
+    res = await read_document(doc, CTX, proofs_enabled=enabled)
+    return res, worker._outcome(res, doc)
+
+
+def assert_kept_as_proof(case, res, out, total):
+    """Teks bukti bayar: tanpa teks OCR, rincian, merchant, kunci pihak, dan baris peta merchant; nominal tetap."""
+    cols = out.columns
+    case.assertTrue(out.unread_proof or res.parsed.doc.doc_type in ("qris", "transfer"))
+    case.assertIsNone(cols["ocr_lines"])
+    case.assertEqual(cols["document"]["lines"], [])
+    case.assertNotIn("receipt", cols["document"])
+    if out.unread_proof:
+        case.assertEqual((cols["merchant"], cols["merchant_key"], cols["counterparty_key"], cols["total_label"]),
+                         (None, None, None, None))
+    case.assertEqual(int(cols["parsed_total"]), total)
+
+
+C2_SLIPS = {
+    "kirim uang": ["DANA", "Kirim Uang Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000",
+                   "26/10/2026 08:12"],
+    "kirim dana": ["DANA", "Kirim Dana Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000"],
+    "kirim uang di badan": ["DANA", "26/10/2026 08:12", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000",
+                            "Kirim Uang Berhasil"],
+}
+
+
+class KirimUangTitleTests(unittest.IsolatedAsyncioTestCase):
+    """L6c (C2): "Kirim Uang Berhasil", "Kirim Dana Berhasil" adalah judul status (kata benda kirim uang/kirim dana/transfer
+    dana): teksnya tampak bukti, jadi nomor HP di baris "Ke SITI 0812 …" tidak tersimpan sebagai teks OCR, rincian, atau
+    merchant "Dana". Instruksi bayar di faktur ("Silakan kirim uang ke rekening BCA …") tetap bukan bukti."""
+
+    async def test_kirim_uang_slips_are_kept_as_proofs(self):
+        for name, lines in C2_SLIPS.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual(res.parsed.doc.status, "berhasil")
+                    assert_kept_as_proof(self, res, out, 50000)
+                    self.assertNotIn("081234567890", "".join(re.sub(r"\D", "", json.dumps(out.columns["document"]))))
+
+    async def test_kirim_uang_failure_titles_block(self):
+        for title in ("Kirim Uang Gagal", "Kirim Uang Dibatalkan"):
+            lines = ["DANA", title, "Ke SITI", "Nominal Rp50.000", "Total Rp50.000"]
+            for enabled in (True, False):
+                with self.subTest(title, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_invoices_and_store_receipts_are_unchanged(self):
+        for lines in (["TOKO ONLINE MAJU", "Kaos 1 x 75.000 75.000", "Total Rp75.000", "Penerima: Budi",
+                       "Silakan kirim uang ke rekening BCA 1234567890"],
+                      ["INVOICE", "Jasa desain 500.000", "Total Rp500.000", "Kirim uang ke BCA 1234567890 a.n. BUDI"],
+                      store_receipt("Kirim uang berhasil? Cek riwayat transaksi")):
+            with self.subTest(lines[0]):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, status_levels(res)), ("struk_belanja", "berhasil", {}))
+                    self.assertTrue(res.parsed.doc.lines)
+
+    def test_title_nouns(self):
+        for text in ("Kirim Uang Berhasil", "Kirim Dana Berhasil", "Transfer Dana Berhasil", "KIRIM UANG SUKSES"):
+            with self.subTest(text):
+                self.assertTrue(pc._is_status_title(text))
+        for text in ("Silakan kirim uang ke rekening BCA", "Kirim ke SITI Berhasil", "Uang Berhasil",
+                     "Bayar Berhasil"):          # "bayar" sengaja bukan kata benda judul (terlalu umum di struk)
+            with self.subTest(text):
+                self.assertFalse(pc._is_status_title(text))

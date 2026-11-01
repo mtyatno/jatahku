@@ -990,8 +990,8 @@ Catatan:
   (DANA "Kirim Uang") bisa terbaca `struk_belanja`, dan struk berisi 1–2 barang dengan harga polos plus satu baris
   QRIS dan NMID bisa terbaca `qris` tanpa status. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
   rincian, dan nama; lihat "Privasi") bila memuat judul status berkata benda transaksi ("Transfer Berhasil",
-  "Pembayaran Gagal") di 4 baris pertama, atau di baris mana pun bila teksnya tidak berpola struk belanja. Belum
-  dikenali: judul tanpa kata itu ("Kirim Uang Berhasil"), status berlabel atau kata status saja ("Status: Berhasil",
+  "Pembayaran Gagal", dan sejak L6c "Kirim Uang Berhasil", "Kirim Dana Berhasil") di 4 baris pertama, atau di baris mana
+  pun bila teksnya tidak berpola struk belanja. Belum dikenali: judul tanpa kata itu ("Bayar Berhasil"), status berlabel atau kata status saja ("Status: Berhasil",
   "BERHASIL"), dan bukti tanpa status sama sekali; untuk teks seperti itu pembaca struk masih bisa menyimpan nomor
   berkelompok sebagai rincian ("Ke BUDI 1234", 5678, 9012). Bukti satu penanda yang sama sekali tidak memuat judul
   status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris

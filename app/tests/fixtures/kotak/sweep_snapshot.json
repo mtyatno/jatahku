@@ -8430,6 +8430,150 @@
    "unread_proof": true
   }
  },
+ "l6c-faktur-kirim-uang": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Online Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Online Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 75000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Online Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Online Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 75000,
+   "unread_proof": false
+  }
+ },
+ "l6c-kirim-dana": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l6c-kirim-uang-di-badan": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l6c-kirim-uang-dibatalkan": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l6c-struk-kaki-kirim-uang": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  }
+ },
  "pending-kalibrasi-001": {
   "off": {
    "checks": {
@@ -9515,29 +9659,29 @@
  "probe-c2-kirim-uang": {
   "off": {
    "checks": {},
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-c3-dua-barang-nmid": {
@@ -9829,29 +9973,29 @@
  "probe-n4c-dana-refund": {
   "off": {
    "checks": {},
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": null,
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": null,
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "proof-n1-berhasil": {
