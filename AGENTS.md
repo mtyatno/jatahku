@@ -252,7 +252,24 @@ klien yang memanggil endpoint ini (H3), jadi tidak ada perubahan perilaku. Tanpa
   (token admin). Berlaku pada permintaan berikutnya, tanpa restart; status per ruang tidak berubah. Matikan dengan
   `value=` kosong.
 
-## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi)
+## Deploy Checklist — Plugin R4: membuat dan berpindah ruang (tanpa migrasi, flag `ruang_usaha_users`)
+`GET`/`POST /ruang`, pemilih ruang di sidebar dan header HP, dan header `X-Jatahku-Ruang` dari web dan aplikasi. Selama
+flag `ruang_usaha_users` belum diisi, `GET /ruang` hanya berisi ruang keluarga, pemilih tidak tampil, dan klien tidak
+mengirim header: tampilan dan data semua user tidak berubah. Tanpa migrasi, paket, atau `.env`.
+1. Merge, tunggu deploy hijau (`api.jatahku.com/health` dan `jatahku.com/version.json` → commit baru).
+2. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0.
+3. **Buka untuk pemilik saja:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
+   ('ruang_usaha_users', '<user_id kamu>') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"`. Muat ulang
+   Jatahku: pemilih ruang muncul di bawah logo (HP: menggantikan logo). Buat ruang usaha uji, pindah ke sana: Amplop,
+   Transaksi, dan Beranda kosong; catat satu pengeluaran ke amplop baru di ruang itu; pindah ke ruang keluarga: angka
+   tidak berubah dan catatan ruang usaha tidak tampil. Chat berlabel "Ruang keluarga" dan tetap mencatat ke ruang keluarga.
+4. **Jangan isi `*`** sampai R5 (peran dan batasan) dan V1: undangan ruang usaha belum ada, dan Paket Usaha belum dipasang.
+5. **Menutup lagi** kapan saja: value `''`. Ruang usaha yang sudah dibuat tetap di database, tetapi tidak tampil, tidak
+   bisa dibuka lewat header (403, klien kembali ke ruang keluarga), dan objeknya tidak bisa ditulis.
+
+## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi) — sudah jalan 2026-11-01
+`ruang_paritas` di VPS sesudah deploy: 105 user · ok 105 · beda 0 · crash 0 · tanpa household 0. Uji manual (catat web dan
+bot, tambah amplop, geser dana, bayar langganan, antrean offline di HP) oleh pemilik.
 Penulisan menentukan ruang dari objeknya; objek baru tanpa induk dari header (tanpa header = ruang keluarga); kuota
 Basic hanya di ruang keluarga. Tanpa migrasi, paket, `.env`, atau perubahan tampilan: belum ada klien yang mengirim
 `X-Jatahku-Ruang` dan belum ada user dengan ruang kedua, jadi semua penulisan tetap jatuh ke ruang keluarga.

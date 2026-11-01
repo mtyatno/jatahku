@@ -251,7 +251,8 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
                 HouseholdMember(user_id=orang.id, household_id=asing.id, role=HouseholdRole.owner),
             ])
             for key in ("plugin_uji_users", "plugin_uji_wizard_users", "plugin_uji_dep_users",
-                        "plugin_uji_kel_users", "plugin_uji_bentrok_users"):
+                        "plugin_uji_kel_users", "plugin_uji_bentrok_users",
+                        "ruang_usaha_users"):                                  # R4: ruang usaha di balik flag
                 db.add(AppSetting(key=key, value="*"))
             await db.commit()
         self.pemilik, self.admin, self.karyawan, self.orang = pemilik, admin, karyawan, orang
@@ -386,6 +387,15 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
         self.galat(await self.aksi("pasang", ruang_id="00000000-0000-0000-0000-000000000000"), 404, "ruang_tidak_ada")
         self.assertEqual(await self.jumlah_instalasi(), 0)
         self.assertEqual(await self.audit(), [])
+
+    async def test_ruang_usaha_tertutup_flag_r4(self):
+        """Selama `ruang_usaha_users` tidak memuat user, ruang usaha diperlakukan seperti tidak ada."""
+        await self.set_setting("ruang_usaha_users", "")
+        self.galat(await self.aksi("pasang"), 404, "ruang_tidak_ada")
+        self.assertEqual(await self.jumlah_instalasi(), 0)
+        r = await self.client.get("/plugins", headers={"X-Jatahku-Ruang": str(self.usaha)})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(sorted(await self.katalog(self.rumah)), ["uji_kel"])         # ruang keluarga tetap
 
     async def test_karyawan_403_admin_boleh(self):
         self.current = self.karyawan
