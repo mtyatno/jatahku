@@ -701,6 +701,28 @@ class ApiClient {
   // AI Advisor v2 — pipa CTA (S8). Kontrak: docs/ai-advisor/04-kontrak-api.md.
   // GET /advisor/dashboard (S3). {"enabled": false} → user di luar flag; null bila gagal.
   // Keduanya membuat Beranda memakai UI lama.
+  // Beranda registry (Plugin B1/B2, docs/plugin/04-kontrak-api.md §4). Gagal → null; pemanggil
+  // memakai cache lokal atau Beranda lama.
+  async getDashboardLayout(surface = 'beranda') {
+    try {
+      const res = await this.request(`/dashboard/layout?surface=${encodeURIComponent(surface)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  async getDashboardData(items, periode = null) {
+    try {
+      const res = await this.request('/dashboard/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periode, items }),
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
   async getAdvisorDashboard() {
     try {
       const res = await this.request('/advisor/dashboard');

@@ -21,6 +21,16 @@ from app.services.envelope_balance import get_household_id
 
 router = APIRouter()
 
+FLAG_KEY = "beranda_registry_users"   # AppSetting: daftar user_id dipisah koma, atau `*` (B2–B3)
+
+
+async def _flag_aktif(db, user_id) -> bool:
+    from sqlalchemy import select
+    from app.models.models import AppSetting
+    from app.services.advisor.dashboard import flag_aktif
+    value = (await db.execute(select(AppSetting.value).where(AppSetting.key == FLAG_KEY))).scalar_one_or_none()
+    return flag_aktif(value, user_id)
+
 Surface = Literal["beranda"]
 
 
@@ -59,7 +69,9 @@ async def get_layout(
     hid = await get_household_id(user, db)
     if not hid:
         return _tanpa_ruang()
-    return await layout.ambil(db, user.id, hid, surface)
+    doc = await layout.ambil(db, user.id, hid, surface)
+    # Beranda web memakai registry hanya bila user ada di flag (B2); selain itu tetap Beranda lama.
+    return {**doc, "enabled": await _flag_aktif(db, user.id)}
 
 
 @router.put("/layout")

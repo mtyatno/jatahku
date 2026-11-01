@@ -362,6 +362,20 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
         basi2 = await self.client.put("/dashboard/layout", json={"if_version": 5, "items": items})
         self.assertEqual(basi2.status_code, 409)
 
+    async def test_layout_flag_beranda_registry(self):
+        # B2: field `enabled` = user ada di AppSetting beranda_registry_users (daftar id atau `*`).
+        self.assertFalse((await self.client.get("/dashboard/layout")).json()["enabled"])
+        async with self.Session() as db:
+            db.add(AppSetting(key="beranda_registry_users", value=f" {self.me.id} ,x"))
+            await db.commit()
+        self.assertTrue((await self.client.get("/dashboard/layout")).json()["enabled"])
+        self.current = self.rina
+        self.assertFalse((await self.client.get("/dashboard/layout")).json()["enabled"])
+        async with self.Session() as db:
+            (await db.get(AppSetting, "beranda_registry_users")).value = "*"
+            await db.commit()
+        self.assertTrue((await self.client.get("/dashboard/layout")).json()["enabled"])
+
     async def test_layout_instans_hilang_dan_removed(self):
         doc = (await self.client.get("/dashboard/layout")).json()
         kurang = doc["items"][1:]

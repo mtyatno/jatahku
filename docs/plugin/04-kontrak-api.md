@@ -120,7 +120,7 @@ Endpoint yang ada tetap; field baru hanya bertambah. Ruang dari header (membaca)
 }
 ```
 
-## 4. Beranda (B1, B2) — **v1 (B1, PR menyusul)**
+## 4. Beranda (B1, B2) — **v1 (B1 #162; `enabled` B2)**
 
 Implementasi: `app/api/routes/dashboard.py`, `app/services/dashboard/`. Ruang = household user, ditentukan server dari keanggotaan (R2 menggantinya dengan `ruang_aktif`); body yang membawa `ruang_id` atau `household_id` diabaikan. User tanpa household → 404 `ruang_tidak_ada` di semua endpoint di bawah.
 
@@ -131,8 +131,11 @@ Implementasi: `app/api/routes/dashboard.py`, `app/services/dashboard/`. Ruang = 
   "items": [
     {"id": "a1", "card": "core.kpi.jatah", "size": "S", "hidden": false, "devices": "all", "settings": {}, "visible": true}
   ],
-  "parked": []
+  "parked": [],
+  "enabled": false
 }
+// enabled (B2, aditif): user ada di AppSetting `beranda_registry_users` (daftar user_id atau `*`). true → web
+// menggambar Beranda dari registry (`BerandaRegistry.jsx`); false → Beranda lama. Hanya di GET, bukan di PUT.
 // Belum tersimpan → template bawaan dengan version 0 (GET tidak menyimpan apa pun). Template ruang keluarga =
 // Beranda sekarang, 14 kartu a1–a14 (registry.TEMPLATE_BERANDA); Papan disiplin hanya di katalog.
 // size: S | M | L | XL (ADR-P8). devices: all | wide (≥1024 px) | narrow (<1024 px).

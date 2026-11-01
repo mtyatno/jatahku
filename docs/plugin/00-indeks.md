@@ -2,7 +2,7 @@
 
 Sistem **Fitur Tambahan** (plugin) untuk Jatahku, dengan **Buku Usaha** sebagai plugin pertama (ADR-P7). Uang usaha dipisah dari uang keluarga lewat **ruang**: ruang usaha adalah household kedua bertipe `usaha`, dengan banyak anggota, peran, dan batasan dari admin (ADR-P1, P4). Kartu Beranda menjadi registry dengan data batch, supaya plugin bisa menyumbang kartu. Chat (Telegram dan chat web) tetap hanya untuk ruang keluarga (ADR-P2).
 
-**Fase sekarang:** Fase 0 — Persiapan. O1 selesai 31 Okt 2026 (dua belas rekomendasi disetujui menjadi ADR-P8–P19). F0 (#137) membuka folder ini, aturan di `AGENTS.md`, perintah `/sesi-plugin` dan `/tutup-sesi-plugin`, workflow "Migrasi", serta issue #137–#158. Belum ada kode plugin. Berikutnya B1 (#138) dan R1 (#141), dua jalur yang bisa paralel; bila dikerjakan sendiri, B1 dulu. Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 (Beranda registry) dan Fase 2 (ruang usaha) berjalan paralel. F0, R1 (#161), dan B1 (#162) sudah tayang 1 Nov 2026. B2 (#139) menggambar Beranda dari registry di balik flag `beranda_registry_users`; berikutnya B3 (verifikasi dan rilis) dan R2 (`ruang_aktif`, review keamanan). Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 
@@ -26,7 +26,7 @@ Diisi sesi yang membuatnya. Rencana dari `01-kajian.md`, "Lampiran teknis":
 
 | Bagian | Lokasi | Sesi |
 |---|---|---|
-| Registry kartu dan data batch | `app/services/dashboard/` (`registry.py` definisi + template, `providers.py` penyedia kartu inti, `sources.py` endpoint lama sekali per permintaan, `batch.py`, `layout.py`), `app/api/routes/dashboard.py`, model `DashboardLayout` (migrasi `b1d4a7c2e9f0`), tes `app/tests/test_dashboard_registry.py`; frontend `frontend/src/cards/core/` (B2) | B1 (backend), B2 |
+| Registry kartu dan data batch | `app/services/dashboard/` (`registry.py` definisi + template, `providers.py` penyedia kartu inti, `sources.py` endpoint lama sekali per permintaan, `batch.py`, `layout.py`), `app/api/routes/dashboard.py`, model `DashboardLayout` (migrasi `b1d4a7c2e9f0`), tes `app/tests/test_dashboard_registry.py`; frontend: `src/pages/Dashboard.jsx` (pemilih lewat `enabled`), `BerandaRegistry.jsx`, `BerandaLama.jsx`, `src/cards/` (`CardRegistry.js`, `DashboardGrid.jsx`, `CardFrame.jsx`, `core/index.jsx`), bersama: `lib/berandaModel.js`, `lib/dashboardRegistry.js`, `components/BerandaKpi.jsx`, `components/BerandaHeader.jsx`, `hooks/useBerandaShell.js` | B1 (backend), B2 (frontend) |
 | Resolver ruang | `ruang_aktif(user, request)`, `ruang_keluarga(user)` (menggantikan dua `get_household_id`) | R2 |
 | Host plugin dan SDK | `app/plugins/host/`, `app/plugins/sdk/` (`PluginContext`) | H1, H2 |
 | Buku Usaha | `app/plugins/buku_usaha/` (manifest, `metrics.py`, kartu, aturan BU-*), `frontend/src/plugins/buku_usaha/` | U1–U6 |
