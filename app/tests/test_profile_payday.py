@@ -73,6 +73,31 @@ class UpdateProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.detail, LOCKED_403)
         self.assert_nothing_saved(db, user)
 
+    async def test_locked_member_repeating_the_household_payday_saves_other_fields(self):
+        # Ruling R22: klien lama atau ber-cache (Onboarding sebelum fase ini mengirim {payday_day, income_type}) yang
+        # mengulang tanggal rumah tidak mengubah apa pun: payday diabaikan tanpa 403 dan tanpa service, field lain
+        # tersimpan. Tanggal yang berbeda tetap 403 (test_member_of_two_gets_403_and_nothing_saved).
+        user, db = make_user(income_type="monthly"), db_with()
+        self.stub_service(rumah_ani(can_change=False, payday=25))
+
+        result = await user_settings.update_profile(
+            UpdateProfile(payday_day=25, income_type="weekly"), user=user, db=db
+        )
+
+        self.assertEqual(result, {"status": "updated"})
+        self.assertEqual(user.income_type, "weekly")
+        self.set_payday.assert_not_awaited()
+        db.commit.assert_awaited_once()
+        self.assertEqual(user.payday_day, 1)  # cermin tidak disentuh rute
+
+    async def test_locked_member_repeating_the_payday_still_gets_400_for_other_bad_fields(self):
+        user, db = make_user(), db_with()
+        self.stub_service(rumah_ani(can_change=False, payday=25))
+        with self.assertRaises(HTTPException) as caught:
+            await user_settings.update_profile(UpdateProfile(payday_day=25, income_type="hourly"), user=user, db=db)
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assert_nothing_saved(db, user)
+
     async def test_owner_change_goes_through_service(self):
         user, db = make_user(), db_with()
         context = rumah_ani(can_change=True, role=HouseholdRole.owner, owner_name=None)

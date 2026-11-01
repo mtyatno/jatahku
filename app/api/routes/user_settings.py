@@ -172,11 +172,16 @@ async def update_profile(
         if not (1 <= req.payday_day <= 31):
             raise HTTPException(400, "payday_day harus antara 1 dan 31")
         if not ctx.can_change:
-            raise HTTPException(
-                403,
-                f"Tanggal gajian mengikuti rumah tangga ({ctx.household.name}, tanggal {ctx.payday_day}). "
-                "Minta owner yang mengubahnya.",
-            )
+            if req.payday_day != ctx.payday_day:
+                raise HTTPException(
+                    403,
+                    f"Tanggal gajian mengikuti rumah tangga ({ctx.household.name}, tanggal {ctx.payday_day}). "
+                    "Minta owner yang mengubahnya.",
+                )
+            # Anggota terkunci yang mengulang tanggal rumah (klien lama atau ber-cache; Onboarding sebelum fase ini
+            # mengirim {payday_day, income_type}) tidak mengubah apa pun: payday diabaikan, tanpa 403 dan tanpa service,
+            # dan field lain disimpan seperti biasa.
+            ctx = None
     if req.name is not None:
         user.name = req.name
     if req.timezone is not None:

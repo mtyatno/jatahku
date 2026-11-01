@@ -34,7 +34,9 @@ class HouseholdResponse(BaseModel):
 
 
 class JoinRequest(BaseModel):
-    code: str
+    # Opsional: body tanpa kode (`{}`, `{"code": null}`) jatuh ke pesan 400 route ("Kode invite wajib diisi"), bukan 422
+    # validasi, dan `?code=X` dengan body `{}` tetap diterima (query didahulukan).
+    code: str | None = None
 
 
 class MemberResponse(BaseModel):

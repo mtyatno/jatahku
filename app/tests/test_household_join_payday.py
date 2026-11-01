@@ -128,6 +128,21 @@ class JoinRouteTests(unittest.TestCase):
                 self.assert_rejected(self.client.post("/household/join", **request), "Kode invite wajib diisi")
         self.redis.get.assert_not_awaited()  # ditolak sebelum menyentuh redis
 
+    def test_join_json_body_without_code_is_400_not_422(self):
+        # `JoinRequest.code` opsional: body JSON tanpa kode sama dengan tanpa kode (400 dengan pesan yang dipahami
+        # klien), bukan 422 validasi.
+        for body in ({}, {"code": None}):
+            with self.subTest(body=body):
+                self.assert_rejected(self.client.post("/household/join", json=body), "Kode invite wajib diisi")
+        self.redis.get.assert_not_awaited()
+
+    def test_join_query_code_with_an_empty_json_body(self):
+        # Klien yang mengirim `?code=X` dengan body `{}` (200 sebelum fase ini): query didahulukan.
+        res = self.client.post("/household/join?code=ABC12DEF", json={})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["payday_day"], 25)
+        self.redis.get.assert_awaited_once_with("invite:ABC12DEF")
+
     def test_join_code_is_stripped_and_uppercased_and_query_wins(self):
         for request, expected in (
             ({"params": {"code": " abc12def "}}, "invite:ABC12DEF"),
