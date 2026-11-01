@@ -66,7 +66,7 @@ class TransferReader:
         bila ada penanda transfer lain atau kata status, supaya bukti top-up ber-Nominal/Biaya/Total tidak
         kalah dari pembaca struk belanja (0.9; seri: bukti menang). Pola struk belanja: 0."""
         lines = pc.clean_lines(doc.lines)
-        if not lines or pc.looks_like_store_receipt(lines):
+        if not lines or pc.looks_like_store_text(lines):   # baris dinormalkan, seperti registry.looks_like_proof (L6d)
             return 0.0
         send_amount = any(_SEND_AMOUNT.match(line) for line in lines)
         markers = count_markers(lines, TRANSFER_MARKERS) + send_amount

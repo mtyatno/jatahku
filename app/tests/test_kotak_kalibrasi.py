@@ -1918,3 +1918,68 @@ class KirimUangTitleTests(unittest.IsolatedAsyncioTestCase):
                      "Bayar Berhasil"):          # "bayar" sengaja bukan kata benda judul (terlalu umum di struk)
             with self.subTest(text):
                 self.assertFalse(pc._is_status_title(text))
+
+
+C3_RECEIPTS = {   # nama: (baris, nama toko yang tersimpan)
+    "satu barang": (["TOKO SUKSES MAKMUR", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"], 15000),
+    "dua barang nmid": (["TOKO MAJU", "KOPI 15.000", "ROTI 10.000", "TOTAL 25.000", "QRIS 25.000", "NMID ID1020304050607"],
+                        25000),
+    # Re-review 3 L5 m14: "Order #12345" bukan barang; dua barang + QRIS bernominal sama tetap struk.
+    "order nomor": (["KEDAI KOPI", "Order #12345", "KOPI SUSU 25.000", "ROTI 15.000", "TOTAL 40.000", "QRIS 40.000",
+                     "NMID ID1020304050607"], 40000),
+    "ocr buruk": (["TOKO MAJU", "KOPI 15.OOO", "T0TAL 15.000", "QRIS 15.000"], 15000),
+    "debit": (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "DEBIT BCA 15.000"], 15000),
+    # Penjaga struk detektor QRIS/transfer membaca baris yang dinormalkan ("T0TAL", "TUNAL"), seperti looks_like_proof.
+    "ocr buruk nmid": (["TOKO MAJU", "KOPI 15.OOO", "T0TAL 15.000", "QRIS 15.000", "NMID ID1020304050607"], 15000),
+    "ocr buruk penanda transfer": (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "TUNAL 20.000",
+                                    "Transfer ke penerima tidak dilayani"], 15000),
+}
+
+
+class SmallQrisStoreReceiptTests(unittest.IsolatedAsyncioTestCase):
+    """L6d (C3): struk 1–2 barang tanpa kuantitas yang dibayar QRIS/debit (baris cara bayar sesudah TOTAL bernominal sama
+    dengan total, tanpa label bukti di atas TOTAL) adalah struk belanja di kedua saklar: rincian dan merchant tersimpan.
+    Penjaga struk di detektor bukti membaca baris yang dinormalkan, seperti `registry.looks_like_proof`."""
+
+    async def test_small_receipts_paid_by_qris_stay_store_receipts(self):
+        for name, (lines, total) in C3_RECEIPTS.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    d = res.parsed.doc
+                    self.assertEqual((res.reader, d.doc_type, d.status, status_levels(res)),
+                                     ("struk_belanja", "struk_belanja", "berhasil", {}))
+                    self.assertFalse(out.unread_proof)
+                    self.assertTrue(out.columns["document"]["lines"])
+                    self.assertTrue(out.columns["merchant"])
+                    self.assertEqual(int(out.columns["parsed_total"]), total)
+
+    async def test_qris_proofs_stay_qris(self):
+        for sample in ("sint-qris-1", "sint-qris-2", "real-gopay-qris-01", "real-jago-qris-01", "real-livin-qris-01",
+                       "real-shopeepay-qris-01"):
+            with self.subTest(sample):
+                self.assertEqual((await read(lines_of(sample))).reader, "qris.umum")
+        # Teks dengan label bukti di atas TOTAL lalu baris cara bayar bernominal sama: tetap bukti (tidak disimpan sebagai
+        # struk), di kedua saklar.
+        for lines in (["QRIS", "Merchant TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["QRIS", "NMID ID1020304050607", "Kopi 15.000", "Total Rp15.000", "QRIS Rp15.000"],
+                      ["Pembayaran Berhasil", "QRIS", "Nominal Rp15.000", "Kopi 15.000", "Total Rp15.000", "QRIS 15.000"]):
+            with self.subTest(lines[1]):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[1], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    assert_kept_as_proof(self, res, out, 15000)
+
+    def test_store_pattern(self):
+        self.assertTrue(pc.looks_like_store_receipt(["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"]))
+        for lines in (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 16.000"],      # nominal lain: RRN/sisa saldo
+                      ["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS"],             # tanpa nominal
+                      ["TOKO MAJU", "TOTAL 15.000", "QRIS 15.000"],                     # tanpa barang
+                      ["TOKO MAJU", "KOPI 15.000", "QRIS 15.000"],                      # tanpa TOTAL
+                      ["Penerima TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Nominal Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"]):
+            with self.subTest(lines):
+                self.assertFalse(pc.looks_like_store_receipt(lines))

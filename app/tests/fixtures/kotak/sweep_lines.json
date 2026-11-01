@@ -1507,8 +1507,7 @@
   "id": "probe-c3-satu-barang",
   "tags": [
    "probe",
-   "store",
-   "known_c3"
+   "store"
   ],
   "lines": [
    "TOKO SUKSES MAKMUR",
@@ -1518,26 +1517,13 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6a: sesudah \"TOKO SUKSES MAKMUR\" tidak lagi dibaca sebagai status, saklar menyala QRIS hanya 0.7 dan kalah dari pembaca struk (tetap dianggap bukti bayar, tanpa rincian/merchant).",
-  "known": {
-   "off": [
-    "dianggap bukti bayar",
-    "tanpa rincian",
-    "tanpa merchant"
-   ],
-   "on": [
-    "dianggap bukti bayar",
-    "tanpa rincian",
-    "tanpa merchant"
-   ]
-  }
+  "note": "C3 (pre-flight §9.1, plan L6d): ditutup L6d — barang tanpa kuantitas sebelum TOTAL + baris cara bayar bernominal sama, tanpa label bukti di atas TOTAL = pola struk; struk_belanja dengan rincian dan merchant di kedua saklar."
  },
  {
   "id": "probe-c3-dua-barang-nmid",
   "tags": [
    "probe",
-   "store",
-   "known_c3"
+   "store"
   ],
   "lines": [
    "TOKO MAJU",
@@ -1549,20 +1535,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
-  "known": {
-   "off": [
-    "dianggap bukti bayar",
-    "tanpa rincian",
-    "tanpa merchant"
-   ],
-   "on": [
-    "doc_type qris",
-    "status tidak_diketahui",
-    "tanpa rincian",
-    "tanpa merchant"
-   ]
-  }
+  "note": "C3 (pre-flight §9.1, plan L6d): ditutup L6d — barang tanpa kuantitas sebelum TOTAL + baris cara bayar bernominal sama, tanpa label bukti di atas TOTAL = pola struk; struk_belanja dengan rincian dan merchant di kedua saklar."
  },
  {
   "id": "probe-n1-tanpa-status",
@@ -2424,7 +2397,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py small_qris_receipt (SMALL_AS_ON_MAIN)",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2455,7 +2428,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py small_qris_receipt (SMALL_AS_ON_MAIN)",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2486,7 +2459,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py small_qris_receipt (SMALL_AS_ON_MAIN)",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2517,7 +2490,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py small_qris_receipt (SMALL_AS_ON_MAIN)",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2548,7 +2521,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['C2']",
-  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Debit BCA\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2578,7 +2551,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['C2_two_items']",
-  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2607,7 +2580,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['C3']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS NMID ID123456789\" tanpa nominal yang sama dengan total (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2638,7 +2611,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['N']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Non Tunai (QRIS)\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2667,7 +2640,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['B2']",
-  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: tanpa baris cara bayar sesudah total (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2698,7 +2671,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['A']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2729,7 +2702,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['A2']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2760,7 +2733,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['B']",
-  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (struk 1-2 barang, plan L6d), bentuk berjudul sukses: di KEDUA saklar dibaca struk_belanja/berhasil tetapi dianggap bukti bayar (unread_proof: judul \"Transaksi/Pembayaran Berhasil\" + teks tanpa pola struk), jadi rincian dan merchant hilang; bukan qris.umum. Perbaikan L6d yang direncanakan (penjaga detektor QRIS/transfer + baris bayar bernominal sama dengan total) kemungkinan tidak menutupnya: C2 bayar \"Debit BCA\" tanpa nominal, B/B2 tanpa baris bayar. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: tanpa baris cara bayar sesudah total (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2790,7 +2763,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['H']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"Bayar QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -2822,7 +2795,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py NOT_PAYMENT_STATUS['G']",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6d tidak menutupnya: baris cara bayar \"QRIS\" tanpa nominal (aturan L6d butuh baris cara bayar bernominal sama dengan total).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -8911,5 +8884,147 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py KirimUangTitleTests (L6c)"
+ },
+ {
+  "id": "l6d-m14-order-nomor",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "KEDAI KOPI",
+   "Order #12345",
+   "KOPI SUSU 25.000",
+   "ROTI 15.000",
+   "TOTAL 40.000",
+   "QRIS 40.000",
+   "NMID ID1020304050607"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d, re-review 3 L5 m14)"
+ },
+ {
+  "id": "l6d-ocr-buruk",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "KOPI 15.OOO",
+   "T0TAL 15.000",
+   "QRIS 15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-debit",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "KOPI 15.000",
+   "TOTAL 15.000",
+   "DEBIT BCA 15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-label-merchant",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "QRIS",
+   "Merchant TOKO MAJU",
+   "KOPI 15.000",
+   "TOTAL 15.000",
+   "QRIS 15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-label-nmid",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "QRIS",
+   "NMID ID1020304050607",
+   "Kopi 15.000",
+   "Total Rp15.000",
+   "QRIS Rp15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-label-nominal",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "Pembayaran Berhasil",
+   "QRIS",
+   "Nominal Rp15.000",
+   "Kopi 15.000",
+   "Total Rp15.000",
+   "QRIS 15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-gagal-kecil",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Pembayaran Gagal",
+   "WARUNG X",
+   "Kopi 15.000",
+   "Total Rp15.000",
+   "QRIS Rp15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)",
+  "note": "L6d: teks berpola struk kecil dengan judul gagal tetap diblokir (jalur struk membaca judul)."
+ },
+ {
+  "id": "l6d-ocr-buruk-nmid",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "KOPI 15.OOO",
+   "T0TAL 15.000",
+   "QRIS 15.000",
+   "NMID ID1020304050607"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6d-ocr-buruk-penanda-transfer",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "KOPI 15.000",
+   "TOTAL 15.000",
+   "TUNAL 20.000",
+   "Transfer ke penerima tidak dilayani"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
  }
 ]

@@ -15,13 +15,12 @@ from app.services.kotak_struk.config import PROOF_TYPES, READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
 from app.services.kotak_struk.readers.proof_common import (
     clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
-    looks_like_store_receipt, read_labelled_failure,
+    looks_like_store_text, read_labelled_failure,
 )
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
 from app.services.kotak_struk.readers.unknown import UnknownReader
-from app.services.receipt_parser import normalize_line
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -74,8 +73,7 @@ def looks_like_proof(doc: TextDoc) -> bool:
         return False
     # Pola struk dibaca dari baris yang dinormalkan seperti `parse_receipt` ("TUNAL 50.000" = "TUNAI 50.000"), supaya struk
     # belanja ber-OCR buruk yang mencetak judul status di kakinya tetap struk dan rinciannya tetap tersimpan.
-    normalized = [line for line in (normalize_line(text) for text in clean_lines(doc.lines)) if line]
-    return not looks_like_store_receipt(normalized)
+    return not looks_like_store_text(doc.lines)
 
 
 def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:

@@ -19,7 +19,7 @@ from app.services.kotak_struk.readers.profiles import (
     GENERIC_LABELS, PARTY_ACCOUNT_LINE, PROVIDER_LINE, AppProfile, is_money_provider, is_provider_only, labels_for,
     logo_profile,
 )
-from app.services.receipt_parser import amounts_in
+from app.services.receipt_parser import amounts_in, normalize_line
 
 NAME_MAX = 100          # kolom raw_name di peta merchant
 NOTE_MAX = 200
@@ -1224,6 +1224,9 @@ _NUMBER_ONLY = re.compile(r"(?:Rp\.?\s*)?[\d.,]+", re.IGNORECASE)
 _QTY = re.compile(r"\d{1,2}(?:[.,]\d{1,3})?")          # kuantitas: 1-2 angka (boleh desimal "0,5"); kelompok 3-4 angka = nomor rekening
 _PRICE = re.compile(r"(?:Rp\.?\s*)?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|Rp\.?\s*\d+", re.IGNORECASE)   # harga: ada pemisah ribuan atau awalan Rp
 MIN_STORE_ITEMS = 3        # barang tanpa kuantitas sebelum total
+# Label bukti bayar di atas TOTAL (L6d): teks seperti ini bukan struk kecil walau baris "KOPI 15.000" lalu "QRIS 15.000".
+_PROOF_LABEL_FIELDS = ("merchant", "sender", "nmid", "account")
+_AMOUNT_LABEL = re.compile(r"^\W*(?:nominal|jumlah|amount)(?![A-Za-z])", re.IGNORECASE)
 MIN_QTY_ITEMS = 2          # baris "NAMA QTY HARGA" (bukti bayar tidak pernah memakai bentuk ini)
 
 
@@ -1291,7 +1294,10 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     - baris tunai/kembalian berangka;
     - >= 3 baris barang sebelum baris total;
     - >= 2 baris "NAMA QTY HARGA" di mana saja;
-    - >= 1 baris "NAMA QTY HARGA" sebelum baris total dan sesudahnya baris cara bayar ("QRIS 40.000") bernominal sama dengan total.
+    - >= 1 baris "NAMA QTY HARGA" sebelum baris total dan sesudahnya baris cara bayar ("QRIS 40.000") bernominal sama dengan total;
+    - >= 1 baris barang tanpa kuantitas ("KOPI 15.000") sebelum baris total, sesudahnya baris cara bayar bernominal sama
+      dengan total, dan tidak ada label bukti (Merchant/Penerima/NMID/Rekening/Pengirim berlabel, Nominal/Jumlah) di atas
+      baris total (L6d, C3: struk 1-2 barang dibayar QRIS).
     Baris berlabel bukti (Subtotal, Harga, Tip, Top Up, Nominal, ...) tidak pernah dihitung barang.
     Struk toko kecil (1-2 barang) yang dibayar QRIS dan mencetak NMID/Terminal ID masuk pola ini."""
     if any(_is_cash_line(line) for line in lines):
@@ -1302,11 +1308,22 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     if items >= MIN_STORE_ITEMS or sum(_is_qty_item_line(line) for line in lines) >= MIN_QTY_ITEMS:
         return True
     # Baris "NAMA harga" tak berkuantitas bisa saja biaya tambahan bukti ("Donasi Rp2.000", "Layanan Rp1.000"), jadi
-    # untuk aturan baris-cara-bayar hanya baris berkuantitas yang dihitung barang.
-    if total_at is None or not any(_is_qty_item_line(line) for line in before):
+    # untuk aturan baris-cara-bayar baris itu hanya dihitung barang bila tidak ada label bukti di atas baris total.
+    if total_at is None or not items:
+        return False
+    if not any(_is_qty_item_line(line) for line in before) and any(
+            is_label_line(line, fields=_PROOF_LABEL_FIELDS) or _AMOUNT_LABEL.match(line) for line in before):
         return False
     totals = _total_amounts(lines, total_at)
     return any(_is_payment_line_for(line, totals) for line in lines[total_at + 1:])
+
+
+def looks_like_store_text(lines: list[str]) -> bool:
+    """`looks_like_store_receipt` pada baris yang dinormalkan seperti `parse_receipt` ("T0TAL" = "TOTAL", "TUNAL 50.000" =
+    "TUNAI 50.000"): penjaga struk di detektor bukti (QRIS, transfer) dan `registry.looks_like_proof` membaca baris yang
+    sama dengan pembaca struk belanja (L6d)."""
+    normalized = [line for line in (normalize_line(text) for text in clean_lines(lines)) if line]
+    return looks_like_store_receipt(normalized)
 
 
 # Nama publik untuk modul lain (kotak_struk/kerangka.py, tes impornya di test_kotak_kerangka): jangan dihapus atau

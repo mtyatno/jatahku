@@ -987,8 +987,11 @@ Catatan:
   `tidak_diketahui` (gagal/pending tetap dari judul). Sampai dikalibrasi,
   bukti dari aplikasi dengan tata letak tidak biasa bisa terbaca `tidak_dikenali` atau dengan keyakinan `rendah`
   (user tetap mengonfirmasi dan mengoreksi nominal). Contohnya, transfer yang hanya punya satu penanda
-  (DANA "Kirim Uang") bisa terbaca `struk_belanja`, dan struk berisi 1–2 barang dengan harga polos plus satu baris
-  QRIS dan NMID bisa terbaca `qris` tanpa status. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
+  (DANA "Kirim Uang") bisa terbaca `struk_belanja`. Struk berisi 1–2 barang dengan harga polos lalu TOTAL dan baris
+  cara bayar bernominal sama ("QRIS 15.000", "DEBIT BCA 15.000"), tanpa label bukti (Merchant, Penerima, NMID, Nominal)
+  di atas TOTAL, kini struk belanja dengan rincian dan merchant di kedua saklar (L6d); baris cara bayar tanpa nominal
+  ("Bayar QRIS", "QRIS", "Non Tunai (QRIS)") atau tanpa baris cara bayar belum, jadi struk seperti itu masih bisa terbaca
+  `qris` (saklar menyala) atau diperlakukan sebagai bukti tanpa rincian. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
   rincian, dan nama; lihat "Privasi") bila memuat judul status berkata benda transaksi ("Transfer Berhasil",
   "Pembayaran Gagal", dan sejak L6c "Kirim Uang Berhasil", "Kirim Dana Berhasil") di 4 baris pertama, atau di baris mana
   pun bila teksnya tidak berpola struk belanja. Belum dikenali: judul tanpa kata itu ("Bayar Berhasil"), status berlabel atau kata status saja ("Status: Berhasil",

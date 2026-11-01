@@ -32,7 +32,7 @@ class QrisReader:
         bukti ber-Nominal/Biaya/Total bisa dinilai 0.9 oleh pembaca struk belanja (seri: bukti menang).
         Pola struk belanja (KEMBALI/TUNAI, >= 3 barang): 0."""
         lines = pc.clean_lines(doc.lines)
-        if not lines or pc.looks_like_store_receipt(lines):
+        if not lines or pc.looks_like_store_text(lines):   # baris dinormalkan, seperti registry.looks_like_proof (L6d)
             return 0.0
         if count_markers(lines, QRIS_MARKERS) >= 2:
             return STRONG

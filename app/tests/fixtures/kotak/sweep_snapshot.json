@@ -8574,6 +8574,262 @@
    "unread_proof": false
   }
  },
+ "l6d-debit": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6d-gagal-kecil": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 15000,
+   "unread_proof": true
+  }
+ },
+ "l6d-label-merchant": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  }
+ },
+ "l6d-label-nmid": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "qris.umum",
+   "status": "tidak_diketahui",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6d-label-nominal": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6d-m14-order-nomor": {
+  "off": {
+   "checks": {},
+   "counterparty": "Kedai Kopi",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 2,
+   "merchant": "Kedai Kopi",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 40000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Kedai Kopi",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 2,
+   "merchant": "Kedai Kopi",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 40000,
+   "unread_proof": false
+  }
+ },
+ "l6d-ocr-buruk": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6d-ocr-buruk-nmid": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6d-ocr-buruk-penanda-transfer": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Toko Maju",
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": false
+  }
+ },
  "pending-kalibrasi-001": {
   "off": {
    "checks": {
@@ -9687,27 +9943,27 @@
  "probe-c3-dua-barang-nmid": {
   "off": {
    "checks": {},
-   "counterparty": null,
+   "counterparty": "Toko Maju",
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 0,
-   "merchant": null,
+   "lines": 2,
+   "merchant": "Toko Maju",
    "paid_date": null,
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 25000,
-   "unread_proof": true
+   "unread_proof": false
   },
   "on": {
    "checks": {},
-   "counterparty": null,
-   "doc_type": "qris",
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 0,
-   "merchant": null,
+   "lines": 2,
+   "merchant": "Toko Maju",
    "paid_date": null,
-   "reader": "qris.umum",
-   "status": "tidak_diketahui",
+   "reader": "struk_belanja",
+   "status": "berhasil",
    "total": 25000,
    "unread_proof": false
   }
@@ -9715,29 +9971,29 @@
  "probe-c3-satu-barang": {
   "off": {
    "checks": {},
-   "counterparty": null,
+   "counterparty": "Toko Sukses Makmur",
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 0,
-   "merchant": null,
+   "lines": 1,
+   "merchant": "Toko Sukses Makmur",
    "paid_date": null,
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 15000,
-   "unread_proof": true
+   "unread_proof": false
   },
   "on": {
    "checks": {},
-   "counterparty": null,
+   "counterparty": "Toko Sukses Makmur",
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 0,
-   "merchant": null,
+   "lines": 1,
+   "merchant": "Toko Sukses Makmur",
    "paid_date": null,
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 15000,
-   "unread_proof": true
+   "unread_proof": false
   }
  },
  "probe-n1-berhasil": {
