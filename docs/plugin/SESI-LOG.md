@@ -4,6 +4,34 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## B3 · Verifikasi dan rilis Beranda registry · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status berjalan: alat di PR #PR, issue #140 tetap terbuka sampai flag `*`)
+- `app/scripts/beranda_paritas.py` (di VPS, hanya membaca): semua user atau `--user`, periode berjalan dan lalu, template Beranda lewat `batch.jalankan`: tanpa crash/kartu error; setiap sumber di setiap kartu = endpoint lama dihitung ulang di sesi terpisah; `value` KPI = sumbernya; nama amplop pribadi anggota lain tidak muncul; p95 batch ≤ 500 ms (satu user pemanasan tidak dihitung). Cache AI Advisor tidak dibaca dan tidak ditulis (dihitung segar). Keluaran tanpa nama/nominal. Kode keluar 1 bila gagal. Tes `test_beranda_paritas_script.py` (7).
+- `scripts/banding_beranda.py` (di laptop): screenshot `/?beranda=lama` vs `/?beranda=registry` di 390/820/1100/1440 px, gelap dan terang, banding per piksel, gambar selisih bila beda. Token dari env, tidak ditulis ke disk.
+- `Dashboard.jsx`: `?beranda=lama|registry` memaksa salah satu Beranda (banding dan uji di HP sungguhan); `pilihBeranda`/`paksaDariUrl` murni + tes.
+- `AGENTS.md` "Rilis Beranda registry": paritas di VPS, banding tampilan, flag bertahap (SQL dicoba di PostgreSQL lokal), pantau log, kembali ke Beranda lama dengan value kosong.
+- Uji lokal (PostgreSQL + Redis): paritas 2 user `ok`, p95 49 ms, tidak ada kunci cache dashboard tertulis; banding tampilan 8/8 identik. Tes: unittest 2117 (1 gagal = #164, juga di `main`) · node --test 609 · build ok · `openapi_cek` ok.
+
+**Digantung (pemilik produk, butuh akses produksi)**
+- Jalankan `beranda_paritas` di VPS dan `banding_beranda.py` di laptop; tempel dua baris terakhir keduanya di #140. Lalu flag `beranda_registry_users` = id sendiri sehari, lalu `*`. Setelah itu Gerbang B dan B3 ditandai lulus/selesai (bisa di PR sesi berikutnya).
+- Hapus `BerandaLama.jsx` dan jalur `?beranda=lama` setelah `*` stabil (sesi kecil terpisah, sesudah beta tidak wajib).
+
+**Jebakan**
+- Proses skrip baru membayar impor tertunda dan koneksi pertama (~500 ms) di user pertama; tanpa pemanasan p95 tampak gagal di data kecil.
+- Token akses lokal kedaluwarsa cepat; alat banding berhenti dengan pesan jelas bila dialihkan ke `/login`.
+
+**Keputusan kecil**
+- Paritas membandingkan sumber per kartu (bukan per nama sumber saja), supaya penyedia satu kartu yang menyimpang ketahuan.
+- Banding tampilan memakai `?beranda=` di akun sendiri, bukan flag, supaya bisa dijalankan sebelum flag menyala dan tanpa mengubah produksi.
+- PR B3 tidak menutup #140: issue itu ditutup saat flag `*` dan Gerbang B lulus.
+
+**Cara melanjutkan**
+- Pemilik produk: langkah 1–5 "Rilis Beranda registry" di `AGENTS.md`.
+- Sesi berikutnya: `/sesi-plugin R2` (jalur ruang, review keamanan). H1 butuh B1 dan R3.
+
+---
+
 ## B2 · Beranda dari registry · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #165, issue #139)
