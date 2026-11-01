@@ -11,7 +11,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | O1 | — | Keputusan pemilik produk yang tersisa (12 rekomendasi menjadi ADR-P8–P19) | 0 Persiapan | — | — | selesai | Pemilik produk + Claude | — | 2026-10-31 | 2026-10-31 |
 | F0 | #137 | Bootstrap repo dan CI migrasi | 0 Persiapan | 2 | O1 | selesai | Pemilik produk + Claude | #159 | 2026-10-31 | 2026-10-31 |
 | B1 (migrasi) | #138 | Registry kartu dan data batch | 1 Beranda registry | 3,5 | F0 | selesai | Pemilik produk + Claude | #162 | 2026-11-01 | 2026-11-01 |
-| B2 | #139 | Beranda dari registry | 1 Beranda registry | 3,5 | B1 | review | Pemilik produk + Claude | #PR | 2026-11-01 | |
+| B2 | #139 | Beranda dari registry | 1 Beranda registry | 3,5 | B1 | review | Pemilik produk + Claude | #165 | 2026-11-01 | |
 | B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | belum | | | | |
 | R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | selesai | Pemilik produk + Claude | #161 | 2026-11-01 | 2026-11-01 |
 | R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | belum | | | | |
