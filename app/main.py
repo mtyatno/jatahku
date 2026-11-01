@@ -88,9 +88,18 @@ async def lifespan(app: FastAPI):
             from app.services.household_cycle_schema import HOUSEHOLD_CYCLE_DDL
             for stmt in HOUSEHOLD_CYCLE_DDL:
                 await conn.execute(text(stmt))
+            # Laporan berkala (spec 2026-11-01): users.email_verified_at; tabel reports dan
+            # report_settings dibuat create_all di atas.
+            from app.services.laporan.schema import LAPORAN_DDL
+            for stmt in LAPORAN_DDL:
+                await conn.execute(text(stmt))
     print(f"🚀 {settings.APP_NAME} starting...")
     from app.services import email_service
     email_service.check_configured()
+    # Laporan berkala: tanpa REPORT_SECRET_KEY yang valid, kata sandi dan PDF laporan nonaktif
+    # (API tetap jalan); cukup peringatan di log.
+    from app.services.laporan import rahasia
+    rahasia.check_configured()
     # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
     from app.services.advisor import advisor_cache
     advisor_cache.install()

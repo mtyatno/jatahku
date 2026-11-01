@@ -38,3 +38,9 @@ onnxruntime==1.31.0
 
 # Bukti PDF (Kotak Struk): lapisan teks dan render halaman; dijalankan di proses anak.
 pypdfium2==5.13.0
+
+# Laporan berkala: PDF ber-AES-256 (fpdf2, EncryptionMethod.AES_256) dan Fernet untuk kata sandi
+# laporan. cryptography ditulis eksplisit (dulu hanya ikut python-jose[cryptography]); deploy tidak
+# menjalankan pip install, jadi pasang manual di venv server sebelum merge.
+fpdf2==2.8.9
+cryptography==50.0.2
