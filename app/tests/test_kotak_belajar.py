@@ -23,7 +23,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.core.database import Base
 from app.models.models import Household, HouseholdMember, HouseholdRole, ProofRule, ProofRuleVote, User
-from app.services.kotak_struk import belajar, merchants
+from app.services.kotak_struk import belajar, maintenance, merchants
 from app.services.kotak_struk.belajar import (
     Final, Vote, forget_user, learn_from_correction, next_status, record_votes, recount, votes_for,
 )
@@ -233,6 +233,73 @@ class VotesForTests(_Quiet):
                      {"i": 3, "label": "tanggal", "kind": "tanggal", "date": "bukan tanggal"})
         self.assertEqual(votes_for(lay, {"amounts": None, "paid_at": "x"}, None, final(12500, date(2026, 10, 2))),
                          [Vote("label_total", "jago", "total bayar")])
+
+
+class ReviewFixVotesTests(_Quiet):
+    """Review L2 putaran 1: label penerima saja (I-1), kunci profil saja (M-1), nominal tanpa biaya bukan suara (M-4),
+    nama panjang (M-3)."""
+
+    PARTY = ("ke", "kirim ke", "ditransfer ke", "penerima", "nama", "nama penerima", "nama merchant", "toko", "tujuan",
+             "recipient", "transfer to", "dibayar ke")
+    NOT_PARTY = ("keterangan", "berita", "catatan", "sumber akun", "sumber dana", "dikirim dari", "dari", "status",
+                 "status transaksi", "metode pembayaran", "nama pengirim", "lokasi merchant", "merchant location",
+                 "id", "rekening sumber", "harga", "uang", "saldo")
+
+    def test_name_vote_only_for_recipient_labels(self):
+        for label in self.PARTY + self.NOT_PARTY:
+            with self.subTest(label=label):
+                lay = layout(nama(4, label, "SITI RAHAYU"), key="gopay")
+                self.assertTrue(belajar._votable(label), label)   # label kosakata yang sah: hanya jenisnya yang menolak
+                votes = votes_for(lay, doc(name="BUDI"), None, final(description="arisan Siti Rahayu"))
+                self.assertEqual(votes, [Vote("label_pihak", "gopay", label)] if label in self.PARTY else [])
+
+    def test_transfer_note_typed_as_description_is_not_a_name_correction(self):
+        # Kasus review: keterangan/berita transfer diketik ulang sebagai deskripsi.
+        lay = layout(nama(3, "ditransfer ke", "BUDI SANTOSO"), nama(8, "keterangan", "Arisan Bulanan"),
+                     nama(9, "sumber akun", "ANDI PRATAMA"), key="gopay")
+        for description in ("Arisan bulanan", "Andi Pratama", "arisan bulanan (Budi Santoso)"):
+            with self.subTest(description=description):
+                self.assertEqual(votes_for(lay, doc(name="BUDI SANTOSO"), None, final(description=description)), [])
+
+    def test_logo_keys_never_vote(self):
+        # Kunci logo bisa nama orang ("logo:wahyu nugroho"): tahap 1 hanya kunci profil (M-1).
+        for key in ("logo:wahyu nugroho", "logo:gopay", "logo:byond", "wahyu", "GOPAY"):
+            with self.subTest(key=key):
+                lay = layout(nominal(2, "nominal", 50000), nama(3, "penerima", "SITI"), key=key)
+                self.assertEqual(votes_for(lay, doc(total=52000), None, final(50000, description="ke Siti")), [])
+
+    def test_amount_without_the_fee_is_not_a_vote(self):
+        gopay = layout(nominal(5, "jumlah kirim uang", 10000), nominal(6, "biaya layanan", 1000),
+                       nominal(7, "total bayar", 11000), key="gopay")
+        # Total terbaca benar; user mencatat tanpa biaya: pilihan, bukan salah baca.
+        self.assertEqual(votes_for(gopay, doc(total=11000), None, final(10000)), [])
+        # Salah baca sebaliknya (total diambil dari sub-nominal), user mencatat total: suara.
+        self.assertEqual(votes_for(gopay, doc(total=10000), None, final(11000)),
+                         [Vote("label_total", "gopay", "total bayar")])
+        # Tanpa baris biaya berlabel, label sub-nominal tetap suara.
+        no_fee = layout(nominal(5, "jumlah kirim uang", 10000), nominal(7, "total bayar", 11000), key="gopay")
+        self.assertEqual(votes_for(no_fee, doc(total=11000), None, final(10000)),
+                         [Vote("label_total", "gopay", "jumlah kirim uang")])
+        # Label sub-nominal yang juga "total" bukan nominal tanpa biaya.
+        total_amount = layout(nominal(5, "total nominal", 10000), nominal(6, "biaya admin", 1000), key="gopay")
+        self.assertEqual(votes_for(total_amount, doc(total=11000), None, final(10000)),
+                         [Vote("label_total", "gopay", "total nominal")])
+
+    def test_fee_discount_or_balance_label_is_never_a_total(self):
+        for label in ("biaya admin", "biaya transaksi", "admin", "diskon", "potongan", "cashback", "pajak", "saldo"):
+            with self.subTest(label=label):
+                lay = layout(nominal(3, label, 2500), nominal(5, "total", 52500), key="bsi")
+                self.assertEqual(votes_for(lay, doc(total=52500), None, final(2500)), [])
+
+    def test_names_of_three_to_six_words_vote(self):
+        for name in ("M ANDI SAPUTRA", "MUHAMMAD RIZKI ANDI SAPUTRA WIJAYA KUSUMA"):
+            with self.subTest(name=name):
+                lay = layout(nama(3, "penerima", name), key="dana")
+                self.assertEqual(votes_for(lay, doc(name="BUDI"), None, final(description=f"arisan {name.title()}")),
+                                 [Vote("label_pihak", "dana", "penerima")])
+                # Potongan nama (bukan nama lengkap yang tercetak) tidak cocok.
+                partial = " ".join(name.split()[1:])
+                self.assertEqual(votes_for(lay, doc(name="BUDI"), None, final(description=partial)), [])
 
 
 class TransitionTests(unittest.TestCase):
@@ -465,6 +532,52 @@ class DecideTests(DbBase):
         self.assertEqual((await self.decide(rule.id, "setujui")).status, "disetujui")
 
 
+class ReconcileTests(DbBase):
+    """Review L2 M-2: dua suara bersamaan bisa tidak membuat aturan atau menyimpan hitungan lama; rekonsiliasi tiap jam
+    menyamakan semuanya dari tabel suara."""
+
+    async def add_votes(self, *rows):
+        async with self.Session() as db:   # suara mentah tanpa recount (seperti dua transaksi yang tumpang tindih)
+            db.add_all([ProofRuleVote(kind=V.kind, rule_key=V.rule_key, value=V.value, user_id=u.id,
+                                      household_id=h.id if h else None) for u, h in rows])
+            await db.commit()
+
+    async def reconcile(self):
+        async with self.Session() as db:
+            return await maintenance.reconcile_proof_rules(db)   # meng-commit sendiri
+
+    async def test_two_first_votes_without_a_rule_get_their_rule(self):
+        await self.add_votes((self.users[0], self.hh[0]), (self.users[1], self.hh[1]))
+        self.assertEqual(await self.rules(), [])
+        self.assertEqual(await self.reconcile(), 1)
+        [rule] = await self.rules()
+        self.assertEqual((rule.users, rule.households, rule.status), (2, 2, "menunggu"))
+        self.assertEqual(await self.reconcile(), 0)   # idempoten
+
+    async def test_stale_count_from_concurrent_creation_is_corrected_without_touching_status(self):
+        await self.add_votes((self.users[0], self.hh[0]), (self.users[1], self.hh[0]), (self.users[2], self.hh[1]))
+        async with self.Session() as db:
+            db.add(ProofRule(kind=V.kind, rule_key=V.rule_key, value=V.value, users=2, households=1,
+                             status="disetujui"))
+            await db.commit()
+        self.assertEqual(await self.reconcile(), 1)
+        [rule] = await self.rules()
+        self.assertEqual((rule.users, rule.households, rule.status), (3, 2, "disetujui"))
+        self.assertEqual(await self.reconcile(), 0)
+
+    async def test_single_votes_stay_votes_and_rules_without_votes_drop_to_zero(self):
+        other = Vote("label_pihak", "dana", "penerima")
+        await self.add_votes((self.users[0], self.hh[0]))
+        async with self.Session() as db:
+            db.add(ProofRule(kind=other.kind, rule_key=other.rule_key, value=other.value, users=2, households=2,
+                             status="ditolak"))
+            await db.commit()
+        self.assertEqual(await self.reconcile(), 1)
+        [rule] = await self.rules()   # hanya aturan lama; satu suara tidak membuat aturan
+        self.assertEqual((rule.value, rule.users, rule.households, rule.status), ("penerima", 0, 0, "ditolak"))
+        self.assertEqual(await self.reconcile(), 0)
+
+
 class ForgetUserTests(DbBase):
     async def test_forget_user_recounts(self):
         other = Vote("label_pihak", "dana", "penerima")
@@ -575,7 +688,11 @@ class PrivacyTests(DbBase):
                 for text in (row.kind, row.rule_key, row.value):
                     self.assertNotRegex(text, r"\d")
                     self.assertNotIn("#", text)
-                self.assertTrue(row.rule_key in PROFILE_KEYS or row.rule_key.startswith("logo:"), row.rule_key)
+                self.assertIn(row.rule_key, PROFILE_KEYS)   # tahap 1: tidak pernah kunci `logo:` (review L2 M-1)
+                if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1)
+                    self.assertTrue(belajar._party_label(row.value), row.value)
+                if row.kind == "label_total":
+                    self.assertFalse(set(row.value.split()) & belajar.NOT_TOTAL_WORDS, row.value)
                 self.assertTrue(all(w in LABEL_WORDS for w in re.findall(r"[^\s]+", row.value)
                                     if w.strip(".,:;()'&/-")), row.value)
                 self.assertLessEqual(len(row.value), 40)

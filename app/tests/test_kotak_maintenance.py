@@ -298,13 +298,33 @@ class _FakeSession:
 
 
 class SchedulerJobTests(unittest.IsolatedAsyncioTestCase):
-    def patches(self, *, expire, orphans, layouts=None):
+    def patches(self, *, expire, orphans, layouts=None, rules=None):
         stack = contextlib.ExitStack()
         stack.enter_context(patch("app.core.database.AsyncSessionLocal", lambda: _FakeSession()))
         stack.enter_context(patch.object(maintenance, "expire_items", expire))
         stack.enter_context(patch.object(maintenance, "delete_orphan_files", orphans))
         stack.enter_context(patch.object(maintenance, "purge_layouts", layouts or AsyncMock(return_value=0)))
+        stack.enter_context(patch.object(maintenance, "reconcile_proof_rules", rules or AsyncMock(return_value=0)))
         return stack
+
+    async def test_rule_reconcile_runs_as_its_own_step(self):
+        # Langkah 4 (review L2 M-2): aturan belajar disamakan dengan suaranya tiap jam, walau langkah lain gagal, dan
+        # galatnya tidak menghentikan job.
+        rules = AsyncMock(return_value=2)
+        with self.patches(expire=AsyncMock(side_effect=RuntimeError("db mati")), orphans=AsyncMock(side_effect=OSError("disk")),
+                          layouts=AsyncMock(side_effect=RuntimeError("db mati")), rules=rules), \
+                self.assertLogs("jatahku.scheduler", level="INFO") as logs:
+            await scheduler_mod.kotak_maintenance()
+        rules.assert_awaited_once()
+        self.assertTrue(any(r.levelname == "INFO" and "2 aturan belajar" in r.getMessage() for r in logs.records))
+
+        layouts = AsyncMock(return_value=0)
+        with self.patches(expire=AsyncMock(return_value=0), orphans=AsyncMock(return_value=0), layouts=layouts,
+                          rules=AsyncMock(side_effect=RuntimeError("db mati"))), \
+                self.assertLogs("jatahku.scheduler", level="ERROR") as logs:
+            await scheduler_mod.kotak_maintenance()
+        layouts.assert_awaited_once()
+        self.assertTrue(any("reconcile_proof_rules" in r.getMessage() for r in logs.records))
 
     async def test_layout_purge_runs_as_its_own_step(self):
         # Langkah 3 (kerangka tata letak) berjalan walau dua langkah lain gagal, dan galatnya tidak menghentikan job.

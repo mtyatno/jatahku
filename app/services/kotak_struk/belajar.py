@@ -8,16 +8,22 @@ kotak_struk/kerangka.py) -> paling banyak satu suara per jenis (`proof_rule_vote
 `proof_rules` dihitung ulang; mulai RULE_MIN_USERS (2) user berbeda aturan dibuat berstatus `menunggu`, dan hanya
 keputusan pemilik di Admin (`decide`) yang mengubah statusnya.
 
-Jenis aturan tahap 1 (K7): `label_total`, `label_pihak`, `label_tanggal`. Kunci aturan = kunci kerangka (`gopay`,
-`logo:<kata>`). Nilai aturan = label kosakata dari kerangka: hanya baris BERLABEL, tanpa `#` (digit tersamar), lolos
-`kerangka.safe_label` lagi. Nama, nomor, nominal, dan tanggal tidak pernah masuk tabel; nama hanya dicocokkan lewat HMAC.
+Jenis aturan tahap 1 (K7): `label_total`, `label_pihak`, `label_tanggal`. Kunci aturan = kunci kerangka, tahap 1 hanya
+kunci profil aplikasi yang dikenal (`gopay`, `jago`, ...); kunci `logo:<kata>` ditolak di sini juga (bisa nama orang;
+tahap 2 M2 membukanya bersama pemeriksaannya). Nilai aturan = label kosakata dari kerangka: hanya baris BERLABEL, tanpa
+`#` (digit tersamar), lolos `kerangka.safe_label` lagi. Nama, nomor, nominal, dan tanggal tidak pernah masuk tabel; nama
+hanya dicocokkan lewat HMAC.
 
 - `label_total`: nominal akhir berbeda dari total terbaca (juga bila total tidak terbaca) dan tercetak di baris
-  `nominal` berlabel. Tepat satu label -> suara; beberapa -> label berkata awal "total" bila tepat satu; selain itu
-  tanpa suara (G3). Nominal ketikan yang tidak tercetak tidak bisa dipelajari.
-- `label_pihak`: keterangan akhir memuat nama (n-gram 1-6 kata, HMAC) yang tercetak di baris `nama` berlabel, dan nama
-  itu bukan nama yang terbaca (juga bukan potongan nama terbaca: "Budi" dari "BUDI SANTOSO") (K5). Nama panggilan yang
-  tidak tercetak tidak pernah cocok.
+  `nominal` berlabel. Label biaya/potongan/saldo (`NOT_TOTAL_WORDS`) tidak pernah menjadi label total. Tepat satu label
+  -> suara; beberapa -> label berkata awal "total" bila tepat satu; selain itu tanpa suara (G3). Nominal ketikan yang
+  tidak tercetak tidak bisa dipelajari. Bukan suara juga (review L2 M-4): label sub-nominal (jumlah/nominal/amount tanpa
+  "total") pada bukti yang punya baris biaya berlabel: user memilih mencatat tanpa biaya, bukan pembacaan yang salah.
+- `label_pihak`: keterangan akhir memuat nama (n-gram 1-6 kata, HMAC) yang tercetak di baris `nama` berlabel PENERIMA
+  (`_party_label`: ada kata penerima seperti penerima/ke/tujuan/merchant/toko/nama, dan tanpa kata bukan-penerima seperti
+  keterangan/berita/status/metode/sumber/dari/pengirim; review L2 I-1: keterangan transfer yang diketik ulang sebagai
+  deskripsi bukan koreksi nama), dan nama itu bukan nama yang terbaca (juga bukan potongan nama terbaca: "Budi" dari
+  "BUDI SANTOSO") (K5). Nama panggilan yang tidak tercetak tidak pernah cocok.
 - `label_tanggal`: tanggal akhir bukan tanggal bukti (WIB dari `paid_at`) dan bukan hari ini, tercetak di baris
   `tanggal` berlabel (K9; dalam praktik hanya dari form Catat).
 
@@ -25,11 +31,19 @@ Belajar itu bonus: `learn_from_correction` tidak pernah melempar (galat -> log +
 tidak meng-commit, dan tidak menyentuh item maupun transaksi. Status item, `check_recordable`, klaim, dan dedup tidak
 pernah membaca tabel ini. Hapus akun dan gabung akun memanggil `forget_user` (suara dihapus, aturan dihitung ulang).
 Rumah tangga suara = `item.household_id` (layanan ini tidak menanyakan keanggotaan household sendiri).
+
+Hitungan `recount` dibaca di snapshot transaksi pemanggil: dua suara pertama dalam transaksi yang tumpang tindih bisa
+sama-sama melihat 1 user (aturan tidak dibuat), dan dua pembuat bersamaan bisa menyimpan hitungan lama (review L2 M-2).
+`reconcile_rules` menghitung ulang semuanya dari tabel suara dan dijalankan tiap jam oleh `kotak_maintenance`.
+
+Untuk API Admin (L4a): catatan keputusan dibatasi 200 karakter di model permintaan (`note` String(200); `decide` tidak
+memotongnya), `RuleNotFound` -> 404 dan `RuleConflict` -> 409 dengan teks pengecualiannya (MSG_RULE_*), dan sesudah
+`decide` pemanggil meng-commit LALU memanggil `invalidate_rules_cache()` (L3), supaya pembaca tidak memuat ulang cache
+dari status lama.
 """
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -72,7 +86,17 @@ KEY_MAX = 60                 # panjang kolom rule_key / value
 NAME_NGRAM_MAX = 6           # kata nama terpanjang (sama dengan kerangka.NAME_MAX_WORDS)
 DESCRIPTION_WORDS_MAX = 40   # kata keterangan yang dicocokkan (keterangan transaksi pendek)
 _PROFILE_KEYS = frozenset(p.key for p in PROFILES)
-_LOGO_KEY = re.compile(r"logo:[a-z]+(?: [a-z]+)?")   # kerangka.rule_key: 1-2 kata huruf
+
+# `label_pihak` hanya untuk label yang menamai penerima (review L2 I-1). Kata label sudah huruf kecil (`safe_label`).
+PARTY_WORDS = frozenset({"penerima", "ke", "kepada", "tujuan", "merchant", "toko", "nama", "name", "recipient", "to",
+                         "payee"})
+NOT_PARTY_WORDS = frozenset({"status", "keterangan", "catatan", "berita", "pesan", "deskripsi", "metode", "sumber",
+                             "dari", "pengirim", "from", "sender", "lokasi", "location", "alamat", "id", "ref", "kode",
+                             "cabang"})
+# `label_total`: label biaya/potongan/saldo tidak pernah label total; label sub-nominal + baris biaya = tanpa biaya.
+NOT_TOTAL_WORDS = frozenset({"biaya", "admin", "fee", "diskon", "potongan", "cashback", "pajak", "saldo"})
+SUB_AMOUNT_WORDS = frozenset({"jumlah", "nominal", "amount"})
+FEE_WORDS = frozenset({"biaya", "admin", "fee"})
 
 
 @dataclass(frozen=True)
@@ -114,7 +138,28 @@ def _votable(label) -> bool:
 
 
 def _valid_key(key) -> bool:
-    return isinstance(key, str) and len(key) <= KEY_MAX and (key in _PROFILE_KEYS or bool(_LOGO_KEY.fullmatch(key)))
+    """Tahap 1: hanya kunci profil aplikasi (review L2 M-1). Kunci `logo:<kata>` bisa memuat nama orang; M2 membukanya
+    lagi bersama pemeriksaan logo di sini."""
+    return isinstance(key, str) and len(key) <= KEY_MAX and key in _PROFILE_KEYS
+
+
+def _words(label: str) -> set[str]:
+    return set(label.split())
+
+
+def _party_label(label: str) -> bool:
+    """Label yang menamai penerima: ada kata PARTY_WORDS dan tanpa kata NOT_PARTY_WORDS."""
+    words = _words(label)
+    return bool(words & PARTY_WORDS) and not words & NOT_PARTY_WORDS
+
+
+def _fee_dropped(label: str, layout: dict) -> bool:
+    """Label sub-nominal (jumlah/nominal/amount tanpa "total") pada bukti dengan baris biaya berlabel: nominal itu
+    dipilih user tanpa biaya, bukan total yang salah baca (review L2 M-4)."""
+    words = _words(label)
+    if not words & SUB_AMOUNT_WORDS or "total" in words:
+        return False
+    return any(_words(e["label"]) & FEE_WORDS for e in _entries(layout, "nominal"))
 
 
 def _entries(layout: dict, kind: str) -> Iterator[dict]:
@@ -165,9 +210,10 @@ def votes_for(layout: dict | None, document: dict | None, merchant: str | None, 
 
     amounts = document.get("amounts") if isinstance(document.get("amounts"), dict) else {}
     if final.amount is not None and final.amount != amounts.get("total"):
-        label = _one_label({e["label"] for e in _entries(layout, "nominal") if e.get("amount") == final.amount},
+        label = _one_label({e["label"] for e in _entries(layout, "nominal")
+                            if e.get("amount") == final.amount and not _words(e["label"]) & NOT_TOTAL_WORDS},
                            prefer_total=True)
-        if label:
+        if label and not _fee_dropped(label, layout):
             votes.append(Vote(KIND_TOTAL, key, label))
 
     words = normalize_name(final.description).split()[:DESCRIPTION_WORDS_MAX]
@@ -177,7 +223,8 @@ def votes_for(layout: dict | None, document: dict | None, merchant: str | None, 
         # Nama terbaca dan setiap potongannya bukan koreksi (baris yang mencetak nama terbaca tidak pernah cocok).
         read_grams = set(_ngrams(read_words, len(read_words)))
         typed = {hmac_hex(gram) for gram in _ngrams(words, NAME_NGRAM_MAX) if gram not in read_grams}
-        label = _one_label({e["label"] for e in _entries(layout, "nama") if e.get("h") in typed})
+        label = _one_label({e["label"] for e in _entries(layout, "nama")
+                            if e.get("h") in typed and _party_label(e["label"])})
         if label:
             votes.append(Vote(KIND_PIHAK, key, label))
 
@@ -252,6 +299,28 @@ async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id
     except Exception:
         log.warning("suara koreksi untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
         return 0
+
+
+async def reconcile_rules(db: AsyncSession) -> int:
+    """Samakan `proof_rules` dengan tabel suara (review L2 M-2): aturan yang hitungannya beda dihitung ulang, dan suara
+    >= RULE_MIN_USERS user tanpa baris aturan mendapat aturan `menunggu` (`recount`). Status tidak pernah diubah, baris
+    tidak pernah dihapus. Idempoten; jumlah aturan yang dibuat/diperbaiki. Tidak meng-commit (pemanggil: pemeliharaan
+    tiap jam, `maintenance.reconcile_proof_rules`)."""
+    counted = {(kind, rule_key, value): (users, households) for kind, rule_key, value, users, households in (
+        await db.execute(
+            select(ProofRuleVote.kind, ProofRuleVote.rule_key, ProofRuleVote.value, func.count(),
+                   func.count(distinct(ProofRuleVote.household_id)))
+            .group_by(ProofRuleVote.kind, ProofRuleVote.rule_key, ProofRuleVote.value)
+        )).all()}
+    stored = {(kind, rule_key, value): (users, households) for kind, rule_key, value, users, households in (
+        await db.execute(select(ProofRule.kind, ProofRule.rule_key, ProofRule.value, ProofRule.users,
+                                ProofRule.households))).all()}
+    fixes = sorted(key for key in counted.keys() | stored.keys()
+                   if counted.get(key, (0, 0)) != stored.get(key)
+                   and (key in stored or counted[key][0] >= RULE_MIN_USERS))
+    for key in fixes:
+        await recount(db, *key)
+    return len(fixes)
 
 
 async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:

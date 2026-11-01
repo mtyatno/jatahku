@@ -7,6 +7,8 @@
 - `purge_layouts`: kerangka tata letak (`layout`, belajar lintas user) item selesai (`tercatat`/`dilewati`/`kedaluwarsa`)
   dihapus 24 jam (LAYOUT_TTL) sejak dibaca (`processed_at`); tidak pernah sebelum item selesai, karena belajar dari
   koreksi terjadi saat item selesai. Item kedaluwarsa juga kehilangan kerangkanya di `expire_items`.
+- `reconcile_proof_rules`: aturan belajar (`proof_rules`) disamakan dengan tabel suara (`belajar.reconcile_rules`):
+  hitungan yang tertinggal karena dua suara bersamaan diperbaiki dan aturan yang terlewat dibuat (review L2 M-2).
 - `delete_orphan_files`: berkas di folder sementara yang lebih tua dari ORPHAN_FILE_AGE dan bukan milik item
   yang belum dibaca (`diterima`/`diproses`). Biasanya berkas sudah dihapus worker begitu item selesai; ini
   menyapu sisa (proses mati di tengah jalan, baris item terhapus bersama akun).
@@ -25,6 +27,7 @@ from sqlalchemy import null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ReceiptScan
+from app.services.kotak_struk import belajar
 from app.services.kotak_struk.config import (
     LAYOUT_TTL, ORPHAN_FILE_AGE, ST_DILEWATI, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
 )
@@ -65,6 +68,13 @@ async def purge_layouts(db: AsyncSession, *, now: datetime) -> int:
     )
     await db.commit()
     return res.rowcount or 0
+
+
+async def reconcile_proof_rules(db: AsyncSession) -> int:
+    """`belajar.reconcile_rules` lalu commit; mengembalikan jumlah aturan yang dibuat/diperbaiki."""
+    n = await belajar.reconcile_rules(db)
+    await db.commit()
+    return n
 
 
 def _old_candidates(kotak_dir: str, cutoff: datetime) -> list[tuple[uuid.UUID, str]]:
