@@ -1704,3 +1704,48 @@ class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
                              ("Status: Berhasil (tidak bisa dibatalkan)", None)):
             with self.subTest(line):
                 self.assertEqual(pc.read_labelled_failure([line]), status)
+
+
+# ── Task L6a–L6e: titik wajib review akhir Bagian A (spec §9.1) ─────────────
+
+def status_levels(res):
+    return {c.code: c.level for c in res.checks if c.code.startswith("status_")}
+
+
+N2_BARE = ["QRIS", "TOKO SUKSES MAKMUR", "Rp25.000", "26/10/2026 08:12", "NMID ID1234567890", "Gagal"]
+
+
+class StatusWordInAShopNameTests(unittest.IsolatedAsyncioTestCase):
+    """L6a (N2 sisa): kata status di baris nama toko ("TOKO SUKSES MAKMUR") bukan status. `berhasil` hanya dari judul
+    status, baris berstatus saja (paling banyak satu kata lain), atau nilai label status; baris berbentuk nama tidak
+    menyumbang apa pun, sehingga "Gagal" tunggal di badan terbaca."""
+
+    async def test_bare_failure_below_a_shop_name_blocks(self):
+        res = await read(N2_BARE)
+        self.assertEqual((res.reader, res.parsed.doc.status), ("qris.umum", "gagal"))
+        self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_shop_name_alone_is_not_success(self):
+        res = await read(N2_BARE[:-1])
+        self.assertEqual((res.reader, res.parsed.doc.status), ("qris.umum", "tidak_diketahui"))
+        self.assertEqual(status_levels(res), {})
+
+    async def test_real_titles_still_decide(self):
+        for lines, status in (([*N2_BARE[:2], "Pembayaran Berhasil", *N2_BARE[2:5], "Gagal? Hubungi kami"], "berhasil"),
+                              (["QRIS", "Berhasil", *N2_BARE[1:5]], "berhasil"),
+                              (["QRIS", "TOKO SUKSES MAKMUR", "Rp25.000", "26/10/2026 08:12", "Pembayaran Gagal"], "gagal"),
+                              ([*N2_BARE[:5], "Status: Berhasil"], "berhasil"),
+                              ([*N2_BARE[:5], "Pending"], "pending")):
+            with self.subTest(lines[-1], second=lines[1]):
+                res = await read(lines)
+                self.assertEqual(res.parsed.doc.status, status)
+
+    def test_read_status_skips_name_shaped_success_lines(self):
+        self.assertEqual(pc.read_status(N2_BARE), pc.GAGAL)
+        self.assertEqual(pc.read_status(N2_BARE[:-1]), pc.TIDAK_DIKETAHUI)
+        for line, status in (("Berhasil", pc.BERHASIL), ("Pembayaran Sukses!", pc.BERHASIL), ("Berhasil dikirim", pc.BERHASIL),
+                             ("Status Berhasil", pc.BERHASIL), ("Status : Berhasil", pc.BERHASIL),
+                             ("Transaksi Anda Berhasil", pc.BERHASIL), ("CV BERHASIL JAYA ABADI", pc.TIDAK_DIKETAHUI),
+                             ("TOKO SUKSES MAKMUR", pc.TIDAK_DIKETAHUI)):
+            with self.subTest(line):
+                self.assertEqual(pc.read_status(["QRIS", line, "Rp25.000", "26/10/2026 08:12"]), status)

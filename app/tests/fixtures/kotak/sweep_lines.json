@@ -1411,7 +1411,7 @@
    "probe",
    "proof",
    "failed",
-   "known_n2"
+   "known_flagoff"
   ],
   "lines": [
    "QRIS",
@@ -1423,13 +1423,10 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N2 sisa (pre-flight §9.1, plan L6a): \"TOKO SUKSES MAKMUR\" di judul dibaca sebagai berhasil sehingga \"Gagal\" lepas di badan tidak dibaca; saklar menyala qris.umum/berhasil tanpa blokir, saklar mati tidak_dikenali/tidak_diketahui. Gagal invarian blokir di pohon dasar 3e8e53f.",
+  "note": "N2 sisa (pre-flight §9.1, plan L6a): saklar menyala ditutup L6a (baris nama \"TOKO SUKSES MAKMUR\" tidak lagi menyumbang berhasil; \"Gagal\" di badan terbaca, qris.umum/gagal/block). Saklar mati tetap tidak_dikenali/tidak_diketahui: kata status lepas di badan tidak dibaca jalur tidak dikenali (seperti known_flagoff lain; kolom mati = keadaan rollback).",
   "known": {
    "off": [
     "status tidak_diketahui, cek {}"
-   ],
-   "on": [
-    "status berhasil, cek {}"
    ]
   }
  },
@@ -1521,7 +1518,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f.",
+  "note": "C3 (pre-flight §9.1, plan L6d): struk 1-2 barang tanpa pola struk. Saklar mati: dianggap bukti bayar (tanpa rincian/merchant, arah aman A14); saklar menyala: dibaca qris.umum. Gagal invarian store di pohon dasar 3e8e53f. L6a: sesudah \"TOKO SUKSES MAKMUR\" tidak lagi dibaca sebagai status, saklar menyala QRIS hanya 0.7 dan kalah dari pembaca struk (tetap dianggap bukti bayar, tanpa rincian/merchant).",
   "known": {
    "off": [
     "dianggap bukti bayar",
@@ -1529,7 +1526,7 @@
     "tanpa merchant"
    ],
    "on": [
-    "doc_type qris",
+    "dianggap bukti bayar",
     "tanpa rincian",
     "tanpa merchant"
    ]
@@ -8434,5 +8431,65 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5 fix 3)"
+ },
+ {
+  "id": "l6a-n2-nama-saja",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "QRIS",
+   "TOKO SUKSES MAKMUR",
+   "Rp25.000",
+   "26/10/2026 08:12",
+   "NMID ID1234567890"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py StatusWordInAShopNameTests (L6a)",
+  "note": "L6a: nama toko berkata sukses tanpa status lain: saklar menyala tidak_diketahui (bukan berhasil), tanpa blokir."
+ },
+ {
+  "id": "l6a-n2-judul-berhasil-kaki-tanya",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "QRIS",
+   "TOKO SUKSES MAKMUR",
+   "Pembayaran Berhasil",
+   "Rp25.000",
+   "26/10/2026 08:12",
+   "NMID ID1234567890",
+   "Gagal? Hubungi kami"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py StatusWordInAShopNameTests (L6a)"
+ },
+ {
+  "id": "l6a-n2-pending",
+  "tags": [
+   "probe",
+   "proof",
+   "pending",
+   "known_flagoff"
+  ],
+  "lines": [
+   "QRIS",
+   "TOKO SUKSES MAKMUR",
+   "Rp25.000",
+   "26/10/2026 08:12",
+   "NMID ID1234567890",
+   "Pending"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py StatusWordInAShopNameTests (L6a)",
+  "note": "L6a: \"Pending\" tunggal di badan di bawah nama toko berkata sukses: saklar menyala status_pending: warn. Saklar mati tidak dibaca (known_flagoff).",
+  "known": {
+   "off": [
+    "status tidak_diketahui, cek {}"
+   ]
+  }
  }
 ]

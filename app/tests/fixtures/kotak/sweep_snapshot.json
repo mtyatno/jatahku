@@ -7782,6 +7782,92 @@
    "unread_proof": false
   }
  },
+ "l6a-n2-judul-berhasil-kaki-tanya": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
+ "l6a-n2-nama-saja": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
+ "l6a-n2-pending": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_pending": "warn"
+   },
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "pending",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
  "pending-kalibrasi-001": {
   "off": {
    "checks": {
@@ -8937,15 +9023,15 @@
   "on": {
    "checks": {},
    "counterparty": null,
-   "doc_type": "qris",
+   "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
    "merchant": null,
    "paid_date": null,
-   "reader": "qris.umum",
+   "reader": "struk_belanja",
    "status": "berhasil",
    "total": 15000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n1-berhasil": {
@@ -9075,7 +9161,9 @@
    "unread_proof": true
   },
   "on": {
-   "checks": {},
+   "checks": {
+    "status_gagal": "block"
+   },
    "counterparty": null,
    "doc_type": "qris",
    "issuer": null,
@@ -9083,7 +9171,7 @@
    "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "qris.umum",
-   "status": "berhasil",
+   "status": "gagal",
    "total": 25000,
    "unread_proof": false
   }

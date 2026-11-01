@@ -966,6 +966,22 @@ def _status_lines(texts: list[str], max_words: int, *, store: bool = False, head
     return out
 
 
+def _is_name_shaped_success(part: str) -> bool:
+    """Bagian status `berhasil` yang berbentuk nama ("TOKO SUKSES MAKMUR", "CV BERHASIL JAYA ABADI"): bukan judul status,
+    dan sesudah kata statusnya dibuang tersisa lebih dari satu kata lain. Baris berstatus saja ("Berhasil", "Berhasil
+    dikirim", "Status : Berhasil") dan judul status ("Pembayaran Sukses!") bukan (L6a, sisa N2). Nilai label status
+    pembayaran dibaca `read_status` sebelum baris-baris ini, jadi tidak pernah sampai ke sini sebagai penentu."""
+    if _classify(part) != BERHASIL or _is_status_title(part):
+        return False
+    return len([w for w in _ANY_STATUS.sub(" ", part).split() if re.search(r"[^\W_]", w)]) > 1
+
+
+def _status_reading(texts: list[str]) -> list[str]:
+    """Bagian status untuk `read_status`: tanpa baris nama berkata sukses, yang tidak menyumbang apa pun (supaya
+    "Gagal" tunggal di badan tidak tertutup oleh nama toko di judul)."""
+    return [part for part in texts if not _is_name_shaped_success(part)]
+
+
 def _strongest(texts: list[str]) -> str | None:
     found = {c for c in map(_classify, texts) if c}
     return next((s for s in (GAGAL, PENDING, BERHASIL) if s in found), None)
@@ -1095,8 +1111,8 @@ def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
     labelled = read_payment_status(lines)
     store = has_item_lines(lines)
     status = (_classify(_cancel_as_failed(labelled, value=True)) if labelled else None) \
-        or _strongest(_status_lines(lines[:HEADER_LINES], HEADER_WORDS, store=store, header=True)) \
-        or _first(_status_lines(lines, BODY_WORDS, store=store))
+        or _strongest(_status_reading(_status_lines(lines[:HEADER_LINES], HEADER_WORDS, store=store, header=True))) \
+        or _first(_status_reading(_status_lines(lines, BODY_WORDS, store=store)))
     if status is None and labelled and _DONE_VALUE.fullmatch(labelled) \
             and not any(_NOT_DONE.search(line) or _GAGAL.search(line) or _PENDING.search(line) for line in lines):
         status = BERHASIL                # "Status: Selesai" (GoPay), "Status: Completed": paling lemah, kata status lain menang

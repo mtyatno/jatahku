@@ -913,9 +913,11 @@ Catatan:
 - **Status gagal yang belum terbaca.** Judul dari baris nama ("Tujuan Transfer CV SUKSES JAYA") tidak lagi menutupi
   kegagalan di bawahnya, di jalur bukti maupun jalur struk/tidak dikenali (lihat "Cek silang"). Yang belum: di jalur
   struk/tidak dikenali, kata status tunggal di badan ("Gagal") tidak dibaca, dan status berlabel ("Status: Gagal")
-  hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
-  ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi kata status tunggal di bawahnya ("Gagal"; judul status
-  seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata batal ("dibatalkan", "ditolak", "batal", "rejected",
+  hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, nama tanpa label yang memuat
+  kata sukses ("TOKO SUKSES MAKMUR") tidak lagi terbaca berhasil (L6a: `berhasil` hanya dari judul status, baris
+  berstatus saja dengan paling banyak satu kata lain, atau nilai label status), jadi kata status tunggal di bawahnya
+  ("Gagal", "Pending") dibaca dan nama itu sendiri tanpa status lain `tidak_diketahui`; nama dengan satu kata lain saja
+  ("Warung Sukses") masih terbaca seperti baris berstatus ("Berhasil dikirim") dan menutupinya; kata batal ("dibatalkan", "ditolak", "batal", "rejected",
   "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di tiga posisi: judul status yang
   kata batalnya menutup klausa ("Transfer Dibatalkan", "Payment rejected", "Transaksi Batal"; sesudahnya boleh satu kata
   pelaku/cara, boleh dengan satu penjelas dari daftar tertutup (tujuan, penerima, pengirim, penerbit, issuer, pusat,
