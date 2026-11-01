@@ -1,8 +1,9 @@
 """Beranda berbasis registry (Plugin B1): `/dashboard/*`, kontrak di docs/plugin/04-kontrak-api.md §4.
 
-Semua endpoint baru (API hanya bertambah). Ruang = household user, ditentukan server dari
-keanggotaan (`get_household_id`; R2 menggantinya dengan `ruang_aktif`). Body tidak pernah
-membawa ruang. Galat memakai `detail` teks siap tampil + `kode` untuk mesin (§7).
+Semua endpoint baru (API hanya bertambah). Ruang = `ruang_aktif` (header `X-Jatahku-Ruang`, tanpa
+header ruang keluarga; R2). Tata letak adalah dokumen milik user per ruang, jadi `PUT /layout` juga
+memakai ruang aktif (keanggotaan sudah diperiksa resolver). Body tidak pernah membawa ruang.
+Galat memakai `detail` teks siap tampil + `kode` untuk mesin (§7).
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
 from app.services.dashboard import batch, layout, registry
-from app.services.envelope_balance import get_household_id
+from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
@@ -65,8 +66,9 @@ async def get_layout(
     surface: Surface = Query("beranda"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await get_household_id(user, db)
     if not hid:
         return _tanpa_ruang()
     doc = await layout.ambil(db, user.id, hid, surface)
@@ -79,9 +81,10 @@ async def put_layout(
     req: LayoutPut,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     user_id = user.id
-    hid = await get_household_id(user, db)
     if not hid:
         return _tanpa_ruang()
     try:
@@ -102,17 +105,19 @@ async def post_data(
     req: DataRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,  # POST yang hanya membaca
 ):
     ids = [i.id for i in req.items]
     if len(set(ids)) != len(ids):
         return _galat(422, "instans_tidak_sah", "Ada ID kartu ganda.")
-    if not await get_household_id(user, db):
+    if not hid:
         return _tanpa_ruang()
     try:
         periode = await batch.tentukan_periode(user, req.periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items])
+    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items], household_id=hid)
 
 
 @router.get("/data/{instance_id}")
@@ -122,10 +127,11 @@ async def get_data_instance(
     periode: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Satu instans dari tata letak user sendiri (kartu dan pengaturannya diambil dari dokumen
     tersimpan, bukan dari klien). Bentuk sama dengan satu entri `data` di `POST /dashboard/data`."""
-    hid = await get_household_id(user, db)
     if not hid:
         return _tanpa_ruang()
     doc = await layout.ambil(db, user.id, hid, surface)
@@ -136,5 +142,5 @@ async def get_data_instance(
         p = await batch.tentukan_periode(user, periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    hasil = await batch.jalankan(user, db, p, [item])
+    hasil = await batch.jalankan(user, db, p, [item], household_id=hid)
     return hasil["data"][instance_id]

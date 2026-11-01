@@ -3,9 +3,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.models.models import User, HouseholdMember, Household, HouseholdRole
+from app.models.models import User, HouseholdMember, Household, HouseholdRole, HouseholdType
 from sqlalchemy import select, func
-from app.bot.handlers import get_or_create_user, get_household_id, format_currency
+from app.bot.handlers import get_or_create_user, ruang_keluarga, format_currency
+from app.services.ruang import keanggotaan_keluarga
 
 settings = get_settings()
 
@@ -13,10 +14,7 @@ async def cmd_invite(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        membership = await db.execute(
-            select(HouseholdMember).where(HouseholdMember.user_id == user.id)
-        )
-        member = membership.scalar_one_or_none()
+        member = await keanggotaan_keluarga(db, user.id)  # chat = ruang keluarga (ADR-P2)
         if not member:
             await update.message.reply_text("Ketik /start dulu.")
             return
@@ -64,6 +62,11 @@ async def cmd_join(update, context):
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
 
         from uuid import UUID
+        # Undangan lewat chat hanya untuk ruang keluarga (ADR-P2; undangan ruang usaha di R5).
+        tujuan = await db.get(Household, UUID(household_id))
+        if tujuan is None or str(tujuan.type) != HouseholdType.RUMAH_TANGGA:
+            await update.message.reply_text("❌ Kode invite tidak valid atau sudah expired.")
+            return
         existing = await db.execute(
             select(HouseholdMember).where(
                 HouseholdMember.user_id == user.id,
@@ -74,10 +77,7 @@ async def cmd_join(update, context):
             await update.message.reply_text("Kamu sudah bergabung di household ini.")
             return
 
-        old = await db.execute(
-            select(HouseholdMember).where(HouseholdMember.user_id == user.id)
-        )
-        old_member = old.scalar_one_or_none()
+        old_member = await keanggotaan_keluarga(db, user.id)  # ruang usaha tidak ikut pindah
         if old_member:
             await db.delete(old_member)
 

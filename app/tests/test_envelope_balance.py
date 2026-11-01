@@ -37,7 +37,6 @@ REC = SimpleNamespace(frequency=SimpleNamespace(value="monthly"),
 
 def fake_db():
     return db_with(
-        FakeResult(HID),                                          # household id
         FakeResult([ENV_A, ENV_B]),                               # envelopes
         FakeResult([(G1, "Kebutuhan")]),                          # groups
         FakeResult(D("300000")),                                  # A spent
@@ -54,7 +53,7 @@ def fake_db():
 class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_route_output(self):
         from app.api.routes.envelopes import envelope_summary
-        a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db())
+        a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db(), hid=HID)
         self.assertEqual((a.allocated, a.rollover, a.spent), (D("1000000"), D("50000"), D("300000")))
         self.assertEqual((a.remaining, a.reserved, a.free), (D("750000"), D("100000"), D("650000")))
         self.assertEqual(a.group_name, "Kebutuhan")
@@ -69,7 +68,7 @@ class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_bill_already_recorded_as_expense_is_not_reserved_again(self):
         # Tagihan Rp100rb sudah dicatat sebagai pengeluaran biasa, next_run tidak maju.
         db = db_with(
-            FakeResult(HID), FakeResult([ENV_A]), FakeResult([]),
+            FakeResult([ENV_A]), FakeResult([]),
             FakeResult(D("100000")),                                  # spent (termasuk tagihan)
             FakeResult(D("1000000")),                                 # allocated
             FakeResult(None),                                         # snapshot
@@ -77,19 +76,19 @@ class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
             FakeResult([D("100000")]),                                # transaksi periode ini
         )
         from app.services.envelope_balance import compute_envelope_summaries
-        [row] = await compute_envelope_summaries(USER, db, PS, PE)
+        [row] = await compute_envelope_summaries(USER, db, PS, PE, household_id=HID)
         self.assertEqual(row["remaining"], D("900000"))
         self.assertEqual(row["reserved"], D("0"))
         self.assertEqual(row["free"], D("900000"))
 
     async def test_route_without_household_returns_empty(self):
         from app.api.routes.envelopes import envelope_summary
-        out = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=db_with(FakeResult(None)))
+        out = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=db_with(), hid=None)
         self.assertEqual(out, [])
 
     async def test_service_returns_same_numbers_as_dicts(self):
         from app.services.envelope_balance import compute_envelope_summaries
-        rows = await compute_envelope_summaries(USER, fake_db(), PS, PE)
+        rows = await compute_envelope_summaries(USER, fake_db(), PS, PE, household_id=HID)
         self.assertEqual([r["remaining"] for r in rows], [D("750000"), D("100000")])
         self.assertEqual([r["free"] for r in rows], [D("650000"), D("100000")])
         self.assertEqual(rows[0]["purpose"], "expense")
@@ -100,13 +99,13 @@ class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
         # dan filter aktif hidup di SATU query amplop ini — kunci teks WHERE-nya.
         from app.services.envelope_balance import compute_envelope_summaries
         db = fake_db()
-        await compute_envelope_summaries(USER, db, PS, PE)
-        stmts = executed_sql(db)  # [0] = household id, [1] = amplop
-        self.assertIn("FROM household_members", stmts[0])
-        self.assertIn("FROM envelopes", stmts[1])
-        self.assertIn("envelopes.household_id = ", stmts[1])
-        self.assertIn("envelopes.is_active = true", stmts[1])
-        self.assertIn("envelopes.owner_id IS NULL OR envelopes.owner_id = ", stmts[1])
+        await compute_envelope_summaries(USER, db, PS, PE, household_id=HID)
+        stmts = executed_sql(db)  # [0] = amplop (ruang dari pemanggil, tanpa kueri keanggotaan)
+        self.assertNotIn("household_members", " ".join(stmts))
+        self.assertIn("FROM envelopes", stmts[0])
+        self.assertIn("envelopes.household_id = ", stmts[0])
+        self.assertIn("envelopes.is_active = true", stmts[0])
+        self.assertIn("envelopes.owner_id IS NULL OR envelopes.owner_id = ", stmts[0])
 
 
 if __name__ == "__main__":

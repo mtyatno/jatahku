@@ -25,13 +25,13 @@ class PayAdvancesAndRecordsTests(unittest.IsolatedAsyncioTestCase):
         # first execute → hid; second → (rec join envelope)
         hid_res = MagicMock(); hid_res.scalar_one_or_none = MagicMock(return_value="h1")
         rec_res = MagicMock(); rec_res.scalar_one_or_none = MagicMock(return_value=rec)
-        db.execute = AsyncMock(side_effect=[hid_res, rec_res])
+        db.execute = AsyncMock(side_effect=[rec_res])
 
         import app.api.routes.recurring as mod
         orig = mod._next_date
         mod._next_date = lambda cur, freq: date(2026, 8, 3)
         try:
-            out = await pay_recurring("r1", PayRequest(amount=None), user=user, db=db)
+            out = await pay_recurring("r1", PayRequest(amount=None), user=user, db=db, hid="h1")
         finally:
             mod._next_date = orig
 
@@ -50,11 +50,11 @@ class PayAdvancesAndRecordsTests(unittest.IsolatedAsyncioTestCase):
         db = MagicMock(); db.add = MagicMock(); db.commit = AsyncMock(); db.refresh = AsyncMock()
         hid_res = MagicMock(); hid_res.scalar_one_or_none = MagicMock(return_value="h1")
         rec_res = MagicMock(); rec_res.scalar_one_or_none = MagicMock(return_value=rec)
-        db.execute = AsyncMock(side_effect=[hid_res, rec_res])
+        db.execute = AsyncMock(side_effect=[rec_res])
         import app.api.routes.recurring as mod
         orig = mod._next_date; mod._next_date = lambda cur, freq: date(2026, 8, 3)
         try:
-            await pay_recurring("r1", PayRequest(amount=Decimal("250000")), user=user, db=db)
+            await pay_recurring("r1", PayRequest(amount=Decimal("250000")), user=user, db=db, hid="h1")
         finally:
             mod._next_date = orig
         self.assertEqual(db.add.call_args[0][0].amount, Decimal("250000"))
@@ -67,7 +67,7 @@ class MarkPaidTests(unittest.IsolatedAsyncioTestCase):
         db = MagicMock(); db.add = MagicMock(); db.commit = AsyncMock()
         hid_res = MagicMock(); hid_res.scalar_one_or_none = MagicMock(return_value="h1")
         rec_res = MagicMock(); rec_res.scalar_one_or_none = MagicMock(return_value=rec)
-        db.execute = AsyncMock(side_effect=[hid_res, rec_res])
+        db.execute = AsyncMock(side_effect=[rec_res])
         return db
 
     async def test_mark_paid_advances_without_txn(self):
@@ -77,7 +77,7 @@ class MarkPaidTests(unittest.IsolatedAsyncioTestCase):
         rec = SimpleNamespace(id="r1", envelope_id="e1", amount=Decimal("110000"), description="Listrik",
                               frequency=RecurringFrequency.monthly, next_run=today)
         db = self._db(rec)
-        out = await mark_recurring_paid("r1", user=SimpleNamespace(id="u1", payday_day=1), db=db)
+        out = await mark_recurring_paid("r1", user=SimpleNamespace(id="u1", payday_day=1), db=db, hid="h1")
         self.assertEqual(out["prev_next_run"], today)
         self.assertGreater(rec.next_run, today)
         self.assertEqual(out["next_run"], rec.next_run)
@@ -93,7 +93,7 @@ class MarkPaidTests(unittest.IsolatedAsyncioTestCase):
                               frequency=RecurringFrequency.monthly, next_run=nanti)
         db = self._db(rec)
         with self.assertRaises(HTTPException) as cm:
-            await mark_recurring_paid("r1", user=SimpleNamespace(id="u1", payday_day=1), db=db)
+            await mark_recurring_paid("r1", user=SimpleNamespace(id="u1", payday_day=1), db=db, hid="h1")
         self.assertEqual(cm.exception.status_code, 409)
         self.assertEqual(rec.next_run, nanti)
         db.commit.assert_not_awaited()

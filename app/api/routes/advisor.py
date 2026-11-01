@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
+from app.services.ruang import RuangAktif, RuangTulis
 from app.services.advisor import (
     build_advisor_insights,
     build_allocation_recommendation,
@@ -28,8 +29,10 @@ class AllocationRecommendationRequest(BaseModel):
 async def advisor_insights(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    return await build_advisor_insights(user, db)
+    return await build_advisor_insights(user, db, household_id=hid)
 
 
 @router.post("/allocation-recommendation")
@@ -37,28 +40,34 @@ async def allocation_recommendation(
     req: AllocationRecommendationRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     if req.income_amount <= 0:
         raise HTTPException(status_code=400, detail="Income amount must be positive")
-    return await build_allocation_recommendation(user, req.income_amount, db)
+    return await build_allocation_recommendation(user, req.income_amount, db, household_id=hid)
 
 
 @router.get("/page/alokasi")
 async def alokasi_page(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Halaman Alokasi (S14): INC-04/INC-03 di atas form + amplop penerima sisa income."""
     from app.services.advisor.allocation import build_alokasi_page
-    return await build_alokasi_page(user, db)
+    return await build_alokasi_page(user, db, household_id=hid)
 
 
 @router.get("/sinking-funds")
 async def sinking_fund_advice(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    return await build_sinking_fund_advice(user, db)
+    return await build_sinking_fund_advice(user, db, household_id=hid)
 
 
 # ── AI Advisor v2: perencana dana (S5, 02-aturan.md §8, 04-kontrak-api.md) ──
@@ -113,12 +122,15 @@ async def advisor_plan(
     req: PlanRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from app.services.advisor.execute import PlanError, build_plan
     try:
         return await build_plan(
             user, db, [k.model_dump(mode="json") for k in req.kebutuhan],
             kecuali=[str(x) for x in req.kecuali], sertakan=[str(x) for x in req.sertakan],
+            household_id=hid,
         )
     except PlanError as exc:
         return _plan_error(exc)
@@ -129,10 +141,12 @@ async def advisor_execute(
     req: ExecuteRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from app.services.advisor.execute import PlanError, execute_plan
     try:
-        return await execute_plan(user, db, req.model_dump(mode="json"))
+        return await execute_plan(user, db, req.model_dump(mode="json"), household_id=hid)
     except PlanError as exc:
         return _plan_error(exc)
 
@@ -142,19 +156,23 @@ async def advisor_execute(
 async def advisor_dashboard(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     from app.services.advisor.dashboard import get_dashboard
-    return await get_dashboard(user, db)
+    return await get_dashboard(user, db, household_id=hid)
 
 
 @router.get("/page/amplop")
 async def advisor_page_amplop(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Strip AI per kartu di halaman Amplop (S11, 02-aturan.md §7 "Halaman lain")."""
     from app.services.advisor.halaman import get_halaman_amplop
-    return await get_halaman_amplop(user, db)
+    return await get_halaman_amplop(user, db, household_id=hid)
 
 
 @router.get("/page/transaksi")
@@ -163,30 +181,37 @@ async def advisor_page_transaksi(
     amplop: UUID | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Banner & penanda baris halaman Transaksi (S13, 02-aturan.md §7)."""
     from app.services.advisor.page_transaksi import get_halaman_transaksi
-    return await get_halaman_transaksi(user, db, tanggal=tanggal, amplop=str(amplop) if amplop else None)
+    return await get_halaman_transaksi(user, db, tanggal=tanggal, amplop=str(amplop) if amplop else None,
+                                       household_id=hid)
 
 
 @router.get("/page/langganan")
 async def advisor_page_langganan(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Halaman Langganan (S12, 02-aturan.md §7): TAG-* per baris + ringkasan K4."""
     from app.services.advisor.halaman import get_page_langganan
-    return await get_page_langganan(user, db)
+    return await get_page_langganan(user, db, household_id=hid)
 
 
 @router.get("/page/analitik")
 async def advisor_page_analitik(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Halaman Analitik (S15, 02-aturan.md §7): ringkasan 3 poin + deret grafik metrik."""
     from app.services.advisor.page_analitik import get_halaman_analitik
-    return await get_halaman_analitik(user, db)
+    return await get_halaman_analitik(user, db, household_id=hid)
 
 
 class DismissRequest(BaseModel):
@@ -209,9 +234,11 @@ async def advisor_dismiss(
     req: DismissRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     from app.services.advisor.dashboard import dismiss
-    await dismiss(user, db, req.kunci, req.pilihan)
+    await dismiss(user, db, req.kunci, req.pilihan, household_id=hid)
     return Response(status_code=204)
 
 
@@ -220,10 +247,12 @@ async def advisor_batal_dismiss(
     kunci: str = Query(min_length=3, max_length=200),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Urungkan / Munculkan lagi (§9, #91). Idempoten: 204 walau tidak ada yang disembunyikan;
     503 bila penyimpanan dismiss gagal (insight mungkin masih tersembunyi)."""
     from app.services.advisor.dashboard import batal_dismiss
-    if await batal_dismiss(user, db, kunci) is None:
+    if await batal_dismiss(user, db, kunci, household_id=hid) is None:
         raise HTTPException(503, "Gagal memunculkan lagi, coba sebentar lagi")
     return Response(status_code=204)

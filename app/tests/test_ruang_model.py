@@ -164,7 +164,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 with patch(f"{notif}.goal_snapshot", AsyncMock(return_value={})), \
                      patch(f"{notif}.notify_goals_reached", AsyncMock()):
-                    out = await incomes_routes.create_income(req, user=self.user, db=db)
+                    out = await incomes_routes.create_income(req, user=self.user, db=db, hid=self.hh.id)
             self.assertEqual(out.kind, req.kind)
         self.assertEqual(await self._kinds(), {"Gaji": "pemasukan", "Uang saku": "top-up"})
 
@@ -175,7 +175,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             rows = await incomes_routes.list_incomes(
                 period_start=date(2026, 10, 1), period_end=date(2026, 10, 31),
-                user=self.user, db=db)
+                user=self.user, db=db, hid=self.hh.id)
         self.assertEqual(rows[0]["kind"], "pemasukan")
         self.assertEqual(rows[0]["type"], "income")  # field lama tetap
 
@@ -191,7 +191,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             with patch(f"{notif}.goal_snapshot", AsyncMock(return_value={})), \
                  patch(f"{notif}.notify_goals_reached", AsyncMock()):
-                await envelopes_routes.delete_envelope(self.jajan.id, user=self.user, db=db)
+                await envelopes_routes.delete_envelope(self.jajan.id, user=self.user, db=db, hid=self.hh.id)
         kinds = await self._kinds()
         self.assertEqual(kinds["Gaji"], "pemasukan")
         self.assertEqual(kinds["Refund: hapus amplop Jajan"], "transfer")
@@ -201,7 +201,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await apply_balance_check(self.user, db, actual_amount=D("15000"),
                                       expected_app_amount=D("0"),
-                                      lines=[(self.makan.id, D("15000"))])
+                                      lines=[(self.makan.id, D("15000"))], household_id=self.hh.id)
         async with self.Session() as db:
             row = (await db.execute(select(Income))).scalar_one()
         self.assertIsNotNone(row.balance_check_id)
@@ -209,7 +209,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_get_household_menyertakan_type(self):
         async with self.Session() as db:
-            out = await household_routes.get_household(user=self.user, db=db)
+            out = await household_routes.get_household(user=self.user, db=db, hid=self.hh.id)
         self.assertEqual(out.type, "rumah_tangga")
 
     # ── backfill data lama ──────────────────────────────────────────────────

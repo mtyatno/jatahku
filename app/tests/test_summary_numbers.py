@@ -125,11 +125,11 @@ class SenderIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                    transaction_date=date.today())
 
     def make_db(self):
-        hid = uuid.uuid4()
+        hid = self.hid = uuid.uuid4()
         db = MagicMock()
         db.execute = AsyncMock(side_effect=[
             FakeResult(rows=[self.user]),     # users ter-link
-            FakeResult(hid),                  # household_id
+            FakeResult(hid),                  # ruang keluarga (ruang_keluarga)
             FakeResult(rows=[self.txn]),      # transaksi hari ini / minggu ini
         ])
         db.get = AsyncMock(return_value=None)  # get_streak → tanpa streak
@@ -148,7 +148,7 @@ class SenderIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(summary.logger, "error") as log_error:
             await sender(user_id=self.user.id)
         log_error.assert_not_called()
-        compute.assert_awaited_once_with(self.user, db)
+        compute.assert_awaited_once_with(self.user, db, household_id=self.hid)
         self.assertEqual(db.execute.await_count, 3)
         self.assertIn("FROM users", executed_sql(db)[0])
         send = bot_cls.return_value.send_message

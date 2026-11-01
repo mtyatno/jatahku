@@ -22,10 +22,11 @@ from app.services.image_upload import PROFILE_PIC_MAX_BYTES, read_image_upload, 
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
-    HouseholdMember, Household,
+    HouseholdMember, Household, HouseholdType,
     Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
     UserStreak, BalanceCheck,
 )
+from app.services.ruang import RuangAktif, RuangTulis, ruang_keluarga_id
 
 router = APIRouter()
 
@@ -98,18 +99,18 @@ async def get_profile(
     )
     monthly_txns = txn_count.scalar()
 
+    # Pemakaian kuota = ruang keluarga, sama dengan plan_limits (kuota per ruang menyusul di R3).
+    kuota_hid = await ruang_keluarga_id(db, user.id)
     env_count = await db.execute(
         select(func.count(Envelope.id))
-        .join(HouseholdMember, HouseholdMember.household_id == Envelope.household_id)
-        .where(HouseholdMember.user_id == user.id, Envelope.is_active == True)
+        .where(Envelope.household_id == kuota_hid, Envelope.is_active == True)
     )
     total_envelopes = env_count.scalar()
 
     rec_count = await db.execute(
         select(func.count(RecurringTransaction.id))
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
-        .join(HouseholdMember, HouseholdMember.household_id == Envelope.household_id)
-        .where(HouseholdMember.user_id == user.id, RecurringTransaction.is_active == True)
+        .where(Envelope.household_id == kuota_hid, RecurringTransaction.is_active == True)
     )
     total_recurring = rec_count.scalar()
 
@@ -247,12 +248,24 @@ async def upload_profile_pic(
 async def export_data(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    """Export all user data as JSON."""
-    hid_result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_result.scalar_one_or_none()
+    """Export all user data as JSON.
+
+    Ruang (R2): amplop dan langganan dari ruang aktif. Transaksi dan pemasukan milik user: di ruang
+    usaha hanya catatan ruang itu; di ruang keluarga semua catatan user di luar ruang usaha mana pun
+    (termasuk household lama yang sudah ditinggalkan, seperti sebelumnya). Tidak ada data ruang
+    usaha di ekspor ruang keluarga, dan sebaliknya (AGENTS.md "Plugin dan ruang" aturan 8).
+    """
+    ruang = await db.get(Household, hid) if hid else None
+    if ruang is not None and str(ruang.type) == HouseholdType.USAHA:
+        txn_ruang = Transaction.envelope_id.in_(select(Envelope.id).where(Envelope.household_id == hid))
+        inc_ruang = Income.household_id == hid
+    else:
+        usaha = select(Household.id).where(Household.type == HouseholdType.USAHA)
+        txn_ruang = Transaction.envelope_id.not_in(select(Envelope.id).where(Envelope.household_id.in_(usaha)))
+        inc_ruang = Income.household_id.not_in(usaha)
 
     # Envelopes
     env_result = await db.execute(
@@ -266,7 +279,7 @@ async def export_data(
 
     # Transactions
     txn_result = await db.execute(
-        select(Transaction).where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+        select(Transaction).where(Transaction.user_id == user.id, Transaction.is_deleted == False, txn_ruang)
         .order_by(Transaction.created_at)
     )
     transactions = [
@@ -276,7 +289,7 @@ async def export_data(
 
     # Incomes
     inc_result = await db.execute(
-        select(Income).where(Income.user_id == user.id).order_by(Income.created_at)
+        select(Income).where(Income.user_id == user.id, inc_ruang).order_by(Income.created_at)
     )
     incomes = [{"date": str(i.income_date), "amount": str(i.amount), "source": getattr(i, "source", None)} for i in inc_result.scalars().all()]
 
@@ -399,6 +412,8 @@ async def reset_data(
     req: ResetDataRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from datetime import date as _date
     from app.services.email_service import send_data_backup_email
@@ -412,12 +427,6 @@ async def reset_data(
             raise HTTPException(400, "Email sudah digunakan")
         user.email = req.email
         await db.flush()
-
-    # Resolve household id
-    hid_result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_result.scalar_one_or_none()
 
     # Guard: fail early if household not found
     if not hid:
@@ -450,7 +459,8 @@ async def reset_data(
 
     txn_result = await db.execute(
         select(Transaction)
-        .where(Transaction.user_id == user.id, Transaction.is_deleted == False)
+        .where(Transaction.user_id == user.id, Transaction.is_deleted == False,
+               Transaction.envelope_id.in_(env_ids))  # cadangan = yang ikut dihapus, ruang ini saja
         .order_by(Transaction.created_at)
     )
     transactions_data = [
@@ -459,7 +469,7 @@ async def reset_data(
     ]
 
     inc_result = await db.execute(
-        select(Income).where(Income.user_id == user.id).order_by(Income.created_at)
+        select(Income).where(Income.user_id == user.id, Income.household_id == hid).order_by(Income.created_at)
     )
     incomes_data = [
         {"date": str(i.income_date), "amount": str(i.amount), "description": i.description}
@@ -503,11 +513,15 @@ async def reset_data(
         await db.execute(delete(UserEnvelopeKeyword).where(UserEnvelopeKeyword.envelope_id.in_(env_ids)))
         await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
-    inc_ids_result = await db.execute(select(Income.id).where(Income.user_id == user.id))
+    # Hanya pemasukan user di ruang yang di-reset. Dulu semua pemasukan user di household mana pun
+    # ikut terhapus, termasuk household lama yang masih dipakai anggota lain (saldonya rusak) dan,
+    # sejak R1, ruang usaha (AGENTS.md "Plugin dan ruang" aturan 8).
+    inc_scope = (Income.user_id == user.id, Income.household_id == hid)
+    inc_ids_result = await db.execute(select(Income.id).where(*inc_scope))
     inc_ids = [row[0] for row in inc_ids_result.all()]
     if inc_ids:
         await db.execute(delete(Allocation).where(Allocation.income_id.in_(inc_ids)))
-    await db.execute(delete(Income).where(Income.user_id == user.id))
+    await db.execute(delete(Income).where(*inc_scope))
 
     # Log cocokkan saldo household ikut dihapus — kecuali yang masih dirujuk
     # income penyesuaian milik anggota lain (income mereka tidak ikut di-reset).

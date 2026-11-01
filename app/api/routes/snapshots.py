@@ -7,8 +7,9 @@ from sqlalchemy import select, or_
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
-from app.models.models import User, MonthlySnapshot, Envelope, HouseholdMember
+from app.models.models import User, MonthlySnapshot, Envelope
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -29,16 +30,14 @@ async def list_snapshots(
     month: int = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """List monthly snapshots for user's household."""
     now = date.today()
     y = year or now.year
     m = month or now.month
 
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid:
         return []
 
@@ -100,14 +99,12 @@ async def recompute_snapshots(
     periods: int = Query(6, ge=1, le=36),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     """Rebuild the last N closed snapshots for the caller's household, oldest-first
     and with force=True, so the rollover chain is recomputed correctly end-to-end.
     Repairs chains corrupted by missed snapshot runs."""
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid:
         return {"recomputed": 0, "periods": []}
 

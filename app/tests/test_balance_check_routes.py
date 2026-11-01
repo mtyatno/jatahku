@@ -20,52 +20,53 @@ from app.services import balance_check as svc
 
 USER = SimpleNamespace(id=uuid.uuid4(), payday_day=1)
 DB = object()
+HID = uuid.uuid4()
 
 
 class RouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_preview_rejects_negative(self):
         with self.assertRaises(HTTPException) as ctx:
-            await route.balance_check_preview(route.PreviewRequest(actual_amount=D("-1")), user=USER, db=DB)
+            await route.balance_check_preview(route.PreviewRequest(actual_amount=D("-1")), user=USER, db=DB, hid=HID)
         self.assertEqual(ctx.exception.status_code, 400)
 
     async def test_preview_maps_service_error(self):
         err = svc.BalanceCheckError(400, "Nominal uang riil tidak valid")
         with patch.object(svc, "build_preview", new=AsyncMock(side_effect=err)):
             with self.assertRaises(HTTPException) as ctx:
-                await route.balance_check_preview(route.PreviewRequest(actual_amount=D("5")), user=USER, db=DB)
+                await route.balance_check_preview(route.PreviewRequest(actual_amount=D("5")), user=USER, db=DB, hid=HID)
         self.assertEqual((ctx.exception.status_code, ctx.exception.detail), (400, "Nominal uang riil tidak valid"))
 
     async def test_preview_delegates(self):
         with patch.object(svc, "build_preview", new=AsyncMock(return_value={"direction": "match"})) as m:
-            out = await route.balance_check_preview(route.PreviewRequest(actual_amount=D("5")), user=USER, db=DB)
+            out = await route.balance_check_preview(route.PreviewRequest(actual_amount=D("5")), user=USER, db=DB, hid=HID)
         self.assertEqual(out, {"direction": "match"})
-        m.assert_awaited_once_with(USER, DB, D("5"))
+        m.assert_awaited_once_with(USER, DB, D("5"), household_id=HID)
 
     async def test_apply_passes_lines_as_tuples(self):
         eid = uuid.uuid4()
         req = route.ApplyRequest(actual_amount=D("1"), expected_app_amount=D("2"),
                                  lines=[{"envelope_id": str(eid), "amount": "1"}])
         with patch.object(svc, "apply_balance_check", new=AsyncMock(return_value={"id": "x"})) as m:
-            await route.balance_check_apply(req, user=USER, db=DB)
-        m.assert_awaited_once_with(USER, DB, D("1"), D("2"), [(eid, D("1"))])
+            await route.balance_check_apply(req, user=USER, db=DB, hid=HID)
+        m.assert_awaited_once_with(USER, DB, D("1"), D("2"), [(eid, D("1"))], household_id=HID)
 
     async def test_apply_maps_service_error(self):
         req = route.ApplyRequest(actual_amount=D("1"), expected_app_amount=D("2"))
         err = svc.BalanceCheckError(409, "Data berubah, cek ulang selisihnya")
         with patch.object(svc, "apply_balance_check", new=AsyncMock(side_effect=err)):
             with self.assertRaises(HTTPException) as ctx:
-                await route.balance_check_apply(req, user=USER, db=DB)
+                await route.balance_check_apply(req, user=USER, db=DB, hid=HID)
         self.assertEqual((ctx.exception.status_code, ctx.exception.detail), (409, "Data berubah, cek ulang selisihnya"))
 
     async def test_undo_maps_service_error(self):
         with patch.object(svc, "undo_balance_check", new=AsyncMock(side_effect=svc.BalanceCheckError(403, "x"))):
             with self.assertRaises(HTTPException) as ctx:
-                await route.balance_check_undo(uuid.uuid4(), user=USER, db=DB)
+                await route.balance_check_undo(uuid.uuid4(), user=USER, db=DB, hid=HID)
         self.assertEqual(ctx.exception.status_code, 403)
 
     async def test_status_delegates(self):
         with patch.object(svc, "get_status", new=AsyncMock(return_value={"member_count": 1})):
-            self.assertEqual(await route.balance_check_status(user=USER, db=DB), {"member_count": 1})
+            self.assertEqual(await route.balance_check_status(user=USER, db=DB, hid=HID), {"member_count": 1})
 
 
 class ApplyLineTests(unittest.TestCase):

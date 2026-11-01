@@ -20,6 +20,7 @@ from app.models.models import (
 )
 from app.services.behavior import check_behavior, confirm_pending, cancel_pending, get_user_pending
 from app.services.visibility import masked_description
+from app.services.ruang import ruang_keluarga  # chat selalu ruang keluarga (ADR-P2, Plugin R2)
 from app.services.expense_rules import (
     FUNDS_BLOCKS, PAST_PERIOD_IGNORED, after_expense_recorded, check_expense, is_spendable,
 )
@@ -242,10 +243,6 @@ async def get_or_create_user(telegram_id, name, db):
     await db.refresh(user)
     return user
 
-async def get_household_id(user, db):
-    result = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
-    return result.scalar_one_or_none()
-
 def _streak_text(res) -> str:
     """Baris streak untuk balasan chat dari hasil record_activity (boleh None)."""
     try:
@@ -364,7 +361,7 @@ async def get_envelopes_with_spent(household_id, db, user_id=None, payday_day: i
 async def _is_setup_complete(user, db):
     """Siap dipakai lewat bot = punya household dengan minimal satu amplop aktif.
     Email tidak disyaratkan: akun dari /start onboarding lewat login sekali ketuk."""
-    hid = await get_household_id(user, db)
+    hid = await ruang_keluarga(user, db)
     if not hid:
         return False, "no_household"
     env_count = await db.execute(
@@ -797,7 +794,7 @@ async def handle_fund_shift_callback(update, context):
         if guard.error:
             await query.edit_message_text(guard.error)
             return
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         payday_day = getattr(user, "payday_day", 1) or 1
         if not topup and hid:
             # Kunci household yang sama dengan POST /envelopes/transfer dan /advisor/execute
@@ -909,7 +906,7 @@ async def cmd_status(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         if not hid:
             await update.message.reply_text("Ketik /start dulu.")
             return
@@ -1004,7 +1001,7 @@ async def cmd_amplop(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         payday_day = getattr(user, 'payday_day', 1) or 1
         envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     if not envelopes:
@@ -1035,7 +1032,7 @@ async def cmd_amplop_baru(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         from app.services.plan_limits import check_envelope_limit
         allowed, limit_msg = await check_envelope_limit(user, db)
         if not allowed:
@@ -1067,7 +1064,7 @@ async def cmd_template(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         existing = await _visible_envelopes(db, hid, user.id)
 
     if existing:
@@ -1106,7 +1103,7 @@ async def handle_template_callback(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         # Tombol template bisa ditekan dua kali / setelah amplop dibuat di tempat lain.
         if await _visible_envelopes(db, hid, user.id):
             await query.edit_message_text("✅ Amplop sudah ada — template tidak dibuat lagi. Cek /status.")
@@ -1276,7 +1273,7 @@ async def handle_message(update, context):
             if not setup_ok:
                 await reply_setup_needed(update, user)
                 return
-            hid = await get_household_id(user, db)
+            hid = await ruang_keluarga(user, db)
             from sqlalchemy import or_ as sql_or
             env_result = await db.execute(
                 select(Envelope).where(Envelope.household_id == hid, Envelope.is_active == True,
@@ -1336,7 +1333,7 @@ async def handle_message(update, context):
             await reply_setup_needed(update, user)
             return
 
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         payday_day = getattr(user, 'payday_day', 1) or 1
         envelope, confident = await find_best_envelope(description, hid, db, user_id=user.id)
         if not envelope:
@@ -1512,7 +1509,7 @@ async def _handle_txn_callback(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         payday_day = getattr(user, 'payday_day', 1) or 1
         if past_period:   # payday bisa berubah sejak pertanyaan: hanya tanggal yang masih periode lalu yang dilewati
             from app.core.period import document_date_kind

@@ -100,13 +100,13 @@ def susun_halaman_amplop(snap, *, now_local: datetime, dismiss: dict | None = No
             "amplop": susun_amplop(ctx, sel)}
 
 
-async def get_halaman_amplop(user, db, now: datetime | None = None) -> dict:
+async def get_halaman_amplop(user, db, now: datetime | None = None, *, household_id) -> dict:
     pengaturan = await muat_pengaturan(db)
     if not flag_aktif(pengaturan.get(FLAG_KEY), user.id):
         return {"enabled": False}
     from app.services.advisor.snapshot import load_snapshot
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
-    snap = await load_snapshot(user, db, today=now_local.date())
+    snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))
     dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
     return susun_halaman_amplop(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
@@ -157,13 +157,13 @@ def susun_langganan(ctx, sel, *, now_local: datetime, dismiss: dict | None = Non
     }
 
 
-async def get_page_langganan(user, db, now: datetime | None = None) -> dict:
+async def get_page_langganan(user, db, now: datetime | None = None, *, household_id) -> dict:
     from app.services.advisor.snapshot import load_snapshot
     pengaturan = await muat_pengaturan(db)
     if not flag_aktif(pengaturan.get(FLAG_KEY), user.id):
         return {"enabled": False}
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
-    snap = await load_snapshot(user, db, today=now_local.date())
+    snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))
     dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
     ctx, sel = analisa(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)

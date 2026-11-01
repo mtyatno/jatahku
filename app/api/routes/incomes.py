@@ -13,9 +13,9 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period
 from app.models.models import (
-    User, Income, Allocation, Envelope, HouseholdMember,
-)
+    User, Income, Allocation, Envelope, )
 from app.services.income_history import parse_transfer
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -55,13 +55,6 @@ class IncomeResponse(BaseModel):
     kind: str = "pemasukan"
 
 
-async def _get_hid(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
-
-
 async def _get_or_create_tabungan(hid: UUID, db: AsyncSession) -> Envelope:
     """Get or create the Tabungan envelope for auto-allocation of remainder."""
     result = await db.execute(
@@ -90,8 +83,9 @@ async def create_income(
     req: IncomeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
 
@@ -173,8 +167,9 @@ async def list_incomes(
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         return []
 

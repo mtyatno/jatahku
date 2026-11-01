@@ -186,11 +186,11 @@ def sinking_actions(rec_id: str, rec_type: str, frequency: str, *, envelope_id: 
                     "payload": {"kunci": kunci_sinking(rec_id), "pilihan": "tidak_relevan"}}]
 
 
-async def build_sinking_fund_advice(user, db) -> dict:
+async def build_sinking_fund_advice(user, db, *, household_id) -> dict:
     from sqlalchemy import select
     from app.models.models import Envelope, RecurringTransaction, Transaction
 
-    context = await load_advisor_context(user, db, periods_count=12)
+    context = await load_advisor_context(user, db, periods_count=12, household_id=household_id)
     household_id = context.get("household_id")
     envelopes = context.get("envelopes", [])
     periods = context.get("periods", [])

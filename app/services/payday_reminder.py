@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.period import get_budget_period, payday_reminder_day_index
-from app.models.models import HouseholdMember, Income
+from app.services.ruang import ruang_keluarga_id
+from app.models.models import Income
 
 logger = logging.getLogger("jatahku.payday_reminder")
 settings = get_settings()
@@ -22,9 +23,7 @@ def _fmt(d) -> str:
 
 async def _has_allocated_this_period(user, period_start, period_end, db: AsyncSession) -> bool:
     """True if the user's household already has a positive income in this period."""
-    hid = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )).scalar_one_or_none()
+    hid = await ruang_keluarga_id(db, user.id)  # pengingat gajian = ruang keluarga
     if not hid:
         return False
     cnt = (await db.execute(

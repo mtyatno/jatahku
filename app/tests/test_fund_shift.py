@@ -240,7 +240,7 @@ class CallbackTests(unittest.IsolatedAsyncioTestCase):
         return [
             patch("redis.asyncio.from_url", return_value=self.redis),
             patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(self.db)),
-            patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)),
+            patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=HID)),
             patch.object(handlers, "get_envelopes_with_spent", new=AsyncMock(side_effect=[before, after])),
             patch.object(handlers, "check_expense", new=AsyncMock(return_value=check or BehaviorCheckResult.ok())),
             patch.object(handlers, "after_expense_recorded", new=AsyncMock(return_value=None)),
@@ -357,7 +357,7 @@ class WiringTests(unittest.IsolatedAsyncioTestCase):
              patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(fake_db())), \
              patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)), \
              patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))), \
-             patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)), \
+             patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=HID)), \
              patch.object(handlers, "find_best_envelope", new=AsyncMock(return_value=(target, True))), \
              patch.object(handlers, "check_expense", new=AsyncMock(return_value=check)), \
              patch.object(handlers, "_send_fund_shift_offer", new=offer):
@@ -387,7 +387,7 @@ class WiringTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(db)), \
                  patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)), \
                  patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))), \
-                 patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)), \
+                 patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=HID)), \
                  patch.object(handlers, "find_best_envelope", new=AsyncMock(return_value=(env("Tabungan"), True))), \
                  patch.object(handlers, "check_expense",
                               new=AsyncMock(return_value=BehaviorCheckResult.blocked(check_type, "ditolak"))), \

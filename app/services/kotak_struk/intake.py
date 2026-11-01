@@ -18,7 +18,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models.models import HouseholdMember, ReceiptScan, User
+from app.services.ruang import ruang_keluarga_id
+from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import dedup
 from app.services.kotak_struk.config import (
     IMAGE_MAX_BYTES, MAX_PENDING, PDF_MAX_BYTES, RATE_PER_HOUR, SOURCES, ST_DIPROSES, ST_DITERIMA,
@@ -185,9 +186,8 @@ async def create_item(db: AsyncSession, req: IntakeRequest, *, redis=None, kotak
 
     # 8. buat item + tulis file. Satu SAVEPOINT: balapan upload_id (indeks unik) atau gagal tulis
     # file membatalkan barisnya saja, tanpa meng-expire objek lain di sesi pemanggil.
-    household_id = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user_id).limit(1)
-    )).scalars().first()
+    # Bukti dari chat dan dari web sama-sama dicatat ke ruang keluarga sampai R3 (ruang dari objek).
+    household_id = await ruang_keluarga_id(db, user_id)
     kotak_dir = kotak_dir or get_settings().KOTAK_DIR
     item = ReceiptScan(
         user_id=user_id, status=ST_DITERIMA, source=req.source, upload_id=upload_id,

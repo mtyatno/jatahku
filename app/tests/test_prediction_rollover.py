@@ -26,7 +26,6 @@ class PredictionRolloverTests(unittest.IsolatedAsyncioTestCase):
         from app.api.routes.analytics import spending_prediction
         eid = uuid.uuid4()
         db = db_with(
-            FakeResult(uuid.uuid4()),        # household id
             FakeResult(D("0")),              # alokasi periode ini
             FakeResult(D("5095174")),        # terpakai
             FakeResult(D("11290000")),       # rollover dari periode lalu
@@ -35,7 +34,7 @@ class PredictionRolloverTests(unittest.IsolatedAsyncioTestCase):
             FakeResult([]),                  # transaksi amplop itu (tak ada yang cocok)
             FakeResult(rows=[]),             # pemasukan periode ini (_income_totals)
         )
-        out = await spending_prediction(period_start=PS, period_end=PE, user=USER, db=db)
+        out = await spending_prediction(period_start=PS, period_end=PE, user=USER, db=db, hid=uuid.uuid4())
         self.assertEqual(out["total_rollover"], 11290000.0)
         self.assertEqual(out["total_available"], 11290000.0)
         self.assertAlmostEqual(out["remaining"], 11290000 - 5095174)

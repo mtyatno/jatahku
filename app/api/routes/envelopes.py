@@ -12,12 +12,13 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
-    User, Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, MonthlySnapshot,
+    User, Envelope, EnvelopeGroup, Transaction, Allocation, MonthlySnapshot,
     RecurringTransaction, PurposeType,
 )
 from app.services.reserved import recurring_monthly_reserve
 from app.services.envelope_balance import compute_envelope_summaries
 from app.services.advisor.metrics import SAVING_PURPOSES, is_emergency_name
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -117,19 +118,13 @@ def _resolve_is_emergency(requested: bool | None, purpose: str, name: str, curre
     return current
 
 
-async def _get_hid(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
-
-
 @router.get("/", response_model=list[EnvelopeResponse])
 async def list_envelopes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         return []
     result = await db.execute(
@@ -150,9 +145,11 @@ async def envelope_summary(
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     # Rumus tinggal di satu tempat (dipakai juga oleh cocokkan saldo).
-    rows = await compute_envelope_summaries(user, db, period_start, period_end)
+    rows = await compute_envelope_summaries(user, db, period_start, period_end, household_id=hid)
     return [EnvelopeSummary(**r) for r in rows]
 
 
@@ -160,8 +157,9 @@ async def envelope_summary(
 async def list_groups(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         return []
     result = await db.execute(
@@ -177,8 +175,9 @@ async def create_group(
     req: EnvelopeGroupCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
     name = req.name.strip()
@@ -202,10 +201,11 @@ async def update_group(
     req: EnvelopeGroupUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     """Ganti nama dan/atau jenis grup (field yang tidak dikirim tidak diubah; `"jenis": null`
     mengembalikan ke otomatis). Jenis mengubah jatah harian AI Advisor → cache household dihapus."""
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
     )
@@ -233,9 +233,10 @@ async def delete_group(
     group_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from sqlalchemy import update
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
     )
@@ -254,8 +255,9 @@ async def create_envelope(
     req: EnvelopeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     # Check plan limits
     from app.services.plan_limits import check_envelope_limit
     allowed, limit_msg = await check_envelope_limit(user, db)
@@ -315,8 +317,9 @@ async def update_envelope(
     req: EnvelopeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -371,8 +374,9 @@ async def delete_envelope(
     envelope_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -421,7 +425,7 @@ async def delete_envelope(
     # Sisa sebenarnya = rumus dashboard (alokasi + rollover − terpakai). Bisa
     # negatif bila amplop minus: defisit itu ikut dipindah agar total uang di
     # app tetap sama dengan uang riil.
-    rows = await compute_envelope_summaries(user, db)
+    rows = await compute_envelope_summaries(user, db, household_id=hid)
     row = next((r for r in rows if r["id"] == envelope.id), None)
     remaining = row["remaining"] if row else Decimal("0")
 
@@ -457,6 +461,8 @@ async def transfer_between_envelopes(
     amount: Decimal,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     """Transfer allocated funds from one envelope to another.
 
@@ -466,12 +472,11 @@ async def transfer_between_envelopes(
     from app.services.fund_shift import lock_household
     from app.services.fund_shift import record_transfer, transfer_error
 
-    hid = await _get_hid(user, db)
     # Kunci household yang sama dengan POST /advisor/execute (02-aturan.md §14): dua transfer
     # bersamaan tidak boleh sama-sama lolos cek sisa sumber lalu sama-sama commit.
     if hid:
         await lock_household(db, hid)
-    rows = {str(r["id"]): r for r in await compute_envelope_summaries(user, db)}
+    rows = {str(r["id"]): r for r in await compute_envelope_summaries(user, db, household_id=hid)}
     source_row, target_row = rows.get(str(from_id)), rows.get(str(to_id))
     error = transfer_error(source_row, target_row, amount)
     if error:

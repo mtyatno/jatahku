@@ -3,8 +3,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from sqlalchemy import select, func
 from app.core.database import AsyncSessionLocal
-from app.models.models import Envelope, HouseholdMember
-from app.bot.handlers import get_or_create_user, get_household_id, format_currency
+from app.models.models import Envelope
+from app.bot.handlers import get_or_create_user, ruang_keluarga, format_currency
 from app.bot.tglogin_cmd import reply_setup_needed
 
 
@@ -49,7 +49,7 @@ async def cmd_lock(update, context):
         tg_user = update.effective_user
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            hid = await get_household_id(user, db)
+            hid = await ruang_keluarga(user, db)
             envs = await _list_envelopes_names(hid, user.id, db)
         if not envs:
             await update.message.reply_text("Belum ada amplop.")
@@ -71,7 +71,7 @@ async def cmd_lock(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         envelope = await _get_envelope_by_name(name, hid, user.id, db)
 
         if not envelope:
@@ -96,7 +96,7 @@ async def cmd_setlimit(update, context):
         tg_user = update.effective_user
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            hid = await get_household_id(user, db)
+            hid = await ruang_keluarga(user, db)
             envs = await _list_envelopes_names(hid, user.id, db)
         if not envs:
             await update.message.reply_text("Belum ada amplop.")
@@ -130,7 +130,7 @@ async def cmd_setlimit(update, context):
 
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         envelope = await _get_envelope_by_name(name, hid, user.id, db)
 
         if not envelope:
@@ -162,7 +162,7 @@ async def cmd_setcooling(update, context):
         tg_user = update.effective_user
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            hid = await get_household_id(user, db)
+            hid = await ruang_keluarga(user, db)
             envs = await _list_envelopes_names(hid, user.id, db)
         if not envs:
             await update.message.reply_text("Belum ada amplop.")
@@ -194,7 +194,7 @@ async def cmd_setcooling(update, context):
 
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         envelope = await _get_envelope_by_name(name, hid, user.id, db)
 
         if not envelope:
@@ -222,7 +222,7 @@ async def cmd_controls(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         envs = await _list_envelopes_names(hid, user.id, db)
 
     if not envs:
@@ -288,7 +288,7 @@ async def handle_lock_callback(update, context):
         # Hanya amplop di household user yang terlihat olehnya (shared / miliknya).
         tg_user = query.from_user
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         result = await db.execute(select(Envelope).where(
             Envelope.id == envelope_id, Envelope.household_id == hid,
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
