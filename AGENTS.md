@@ -241,7 +241,10 @@ berubah, jadi tidak ada jendela 500. Belum ada plugin di `app/plugins/` (yang pe
 klien yang memanggil endpoint ini (H3), jadi tidak ada perubahan perilaku. Tanpa paket atau `.env` baru.
 1. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru.
 2. `ls /opt/jatahku/app/alembic/versions/ | grep a7e3c1f5d9b2`; `alembic current` harus `2d51b9031a6b` (siklus
-   household) sebelum upgrade; bila belum, jalankan checklist itu dulu.
+   household) sebelum upgrade; bila belum, jalankan checklist itu dulu. **Bila R5 (`c5r5a8e2d417`, PR #175) di-merge
+   lebih dulu**, PR ini harus diperbarui sebelum merge: `down_revision` H1 menjadi `c5r5a8e2d417` dan `alembic current`
+   di langkah ini menjadi `c5r5a8e2d417` (keduanya menginduk ke `2d51b9031a6b`; tanpa itu `alembic heads` berisi dua
+   head dan `upgrade head` gagal). Cek: `alembic heads` di branch harus satu baris.
 3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
    milik `postgres`, jalankan sebagai postgres); `alembic current` harus `a7e3c1f5d9b2`.
 4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d plugin_installations'` (indeks parsial
