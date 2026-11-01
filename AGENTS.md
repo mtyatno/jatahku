@@ -233,6 +233,25 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin H1: host plugin (a7e3c1f5d9b2)
+Menambah tabel `plugin_installations`, `entitlements`, `plugin_audit_log` dan endpoint `GET /plugins`,
+`POST /ruang/{id}/plugins/{plugin_id}/pasang|lanjut|jeda|copot` (04-kontrak-api.md §5). Migrasi **idempoten**
+(`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat API restart, dan tidak ada tabel lama yang
+berubah, jadi tidak ada jendela 500. Belum ada plugin di `app/plugins/` (yang pertama datang di U1) dan belum ada
+klien yang memanggil endpoint ini (H3), jadi tidak ada perubahan perilaku. Tanpa paket atau `.env` baru.
+1. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru.
+2. `ls /opt/jatahku/app/alembic/versions/ | grep a7e3c1f5d9b2`; `alembic current` harus `2d51b9031a6b` (siklus
+   household) sebelum upgrade; bila belum, jalankan checklist itu dulu.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
+   milik `postgres`, jalankan sebagai postgres); `alembic current` harus `a7e3c1f5d9b2`.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d plugin_installations'` (indeks parsial
+   `uq_plugin_installation_ruang ... WHERE owner_id IS NULL`); `journalctl -u jatahku --since "<waktu deploy>" | grep
+   "plugin dimuat"` → `plugin dimuat: (tidak ada)` tanpa baris `plugin tidak dimuat`; dengan token sendiri
+   `GET https://api.jatahku.com/plugins` → `[]`.
+- **Saklar darurat** (insiden pada plugin tertentu): `PUT /admin/settings/plugin_saklar_darurat?value=<id>[,<id>]`
+  (token admin). Berlaku pada permintaan berikutnya, tanpa restart; status per ruang tidak berubah. Matikan dengan
+  `value=` kosong.
+
 ## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi)
 Penulisan menentukan ruang dari objeknya; objek baru tanpa induk dari header (tanpa header = ruang keluarga); kuota
 Basic hanya di ruang keluarga. Tanpa migrasi, paket, `.env`, atau perubahan tampilan: belum ada klien yang mengirim
@@ -443,5 +462,5 @@ Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, be
 7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
 8. **Tidak ada kueri lintas ruang** selain Prive. Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
 9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
-- **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1); saklar darurat plugin (H1). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
+- **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1; umumnya `plugin_<id>_users`, dibaca host); saklar darurat `plugin_saklar_darurat` (H1, daftar id plugin). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
 - **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.

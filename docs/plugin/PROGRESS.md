@@ -15,13 +15,13 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | selesai | Pemilik produk + Claude | #167, #168, #172 | 2026-11-01 | 2026-11-01 |
 | R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | selesai | Pemilik produk + Claude | #161 | 2026-11-01 | 2026-11-01 |
 | R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | selesai | Pemilik produk + Claude | #166 | 2026-11-01 | 2026-11-01 |
-| R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | review | Pemilik produk + Claude | #171 | 2026-11-01 | |
+| R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | selesai | Pemilik produk + Claude | #171 | 2026-11-01 | 2026-11-01 |
 | R4 | #144 | Membuat dan berpindah ruang | 2 Ruang usaha | 3,5 | R3 | belum | | | | |
 | R5 (migrasi, review) | #145 | Peran, batasan, persetujuan di server | 2 Ruang usaha | 4 | R3 | belum | | | | |
 | R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | belum | | | | |
 | R7 (migrasi, review) | #147 | Catat cepat dan kamus per ruang | 2 Ruang usaha | 4 | R3, R6 | belum | | | | |
 | R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | belum | | | | |
-| H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | belum | | | | |
+| H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | berjalan | Pemilik produk + Claude | | 2026-11-01 | |
 | H2 (review) | #150 | PluginContext dan titik ekstensi server | 3 Host plugin | 4 | H1 | belum | | | | |
 | H3 | #151 | Host di frontend dan halaman Fitur Tambahan | 3 Host plugin | 3,5 | H2, B2, R4 | belum | | | | |
 | U1 (migrasi, review) | #152 | Kerangka Buku Usaha dan Kontak | 4 Buku Usaha | 3,5 | H3, R5 | belum | | | | |

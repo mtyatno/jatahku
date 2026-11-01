@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard, plugins
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
@@ -94,6 +94,10 @@ async def lifespan(app: FastAPI):
     # AI Advisor v2: commit yang mengubah data keuangan menghapus cache dashboard household itu.
     from app.services.advisor import advisor_cache
     advisor_cache.install()
+    # Plugin H1: manifest Fitur Tambahan dimuat sekali per proses. Manifest tidak sah dilewati dengan log
+    # galat (CI sudah menolaknya lebih dulu, lihat app/plugins/host/validator.py), tidak menjatuhkan API.
+    from app.plugins.host.registry import muat_saat_start
+    muat_saat_start()
     start_scheduler()
     # Kotak Struk (spec 2026-10-26): worker pembaca bukti berjalan sebagai tugas asyncio di
     # proses API, di samping scheduler. Gagal menyalakannya tidak boleh menjatuhkan API.
@@ -158,6 +162,8 @@ app.include_router(bot_chat.router, prefix="/bot/chat", tags=["bot-chat"])
 app.include_router(app_config.router, prefix="/app", tags=["app"])
 app.include_router(kotak_struk.router, prefix="/kotak-struk", tags=["kotak-struk"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
+app.include_router(plugins.router, prefix="/plugins", tags=["plugins"])
+app.include_router(plugins.ruang_router, prefix="/ruang", tags=["plugins"])
 
 
 from starlette.middleware.base import BaseHTTPMiddleware

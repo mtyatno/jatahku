@@ -132,6 +132,11 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/recurring/{rec_id}/skip"),
             ("POST", "/transactions/"), ("POST", "/transactions/batch"), ("DELETE", "/transactions/{txn_id}"),
             ("POST", "/incomes/"),   # juga `aktif`: dengan alokasi = ruang amplop, tanpa alokasi = header
+            # H1: ruang dari path (`_ruang_kelola` → `ruang_objek`, lalu peran owner/admin).
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/pasang"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/jeda"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/copot"),
         }
         tulis = {("POST", "/household/invite")}
         # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,

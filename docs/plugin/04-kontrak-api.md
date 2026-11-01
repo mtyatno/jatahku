@@ -241,25 +241,50 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H3)
+## 5. Fitur Tambahan / plugin (H1, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti)**; `contributions` masih v0 (H3)
 
-Pasang, jeda, lanjut, dan copot hanya untuk owner dan admin ruang (ADR-P11). Ruang dari path; peran diperiksa server.
+Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, atau id bukan UUID → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
 ```jsonc
-// GET /plugins → katalog untuk ruang aktif
-[{"id": "buku_usaha", "nama": "Buku Usaha", "versi": "1.0.0", "deskripsi": "…", "jenis_ruang": ["usaha"],
-  "status": "tersedia",              // tersedia | terpasang | dijeda | dicopot | arsip
-  "izin": [{"kode": "incomes:write", "teks": "Mencatat penjualan sebagai pemasukan"}],
+// GET /plugins → katalog untuk ruang aktif (header). Semua anggota boleh melihat.
+// Berisi plugin yang cocok dengan jenis ruang dan flag rollout user (`plugin_<id>_users`), ditambah plugin yang
+// sudah punya baris instalasi di ruang ini (supaya tetap bisa dijeda/dicopot walau flag dicabut).
+[{"id": "buku_usaha", "nama": "Buku Usaha", "versi": "1.0.0", "deskripsi": "…", "ikon": "book", "kategori": "usaha",
+  "jenis_ruang": ["usaha"],
+  "status": "tersedia",              // tersedia | terpasang | aktif | dijeda | arsip
+  "arsip_sampai": null,              // "YYYY-MM-DD" bila arsip (dicopot, dihapus permanen setelah tanggal ini)
+  "izin_diberikan": [],              // izin yang disetujui saat pasang/pulihkan; [] bila tersedia atau arsip
+  "izin": [{"kode": "incomes:write", "teks": "Mencatat pemasukan"}],   // dari manifest versi sekarang
   "kartu": [{"key": "buku_usaha.omzet", "judul": "Omzet", "bawaan": true}],
-  "hak": {"status": "uji_coba", "sampai": "2026-12-31"},
-  "arsip_sampai": null}]
+  "hak": {"status": "uji_coba", "sampai": null},   // gratis | uji_coba | aktif; belum menolak apa pun selama beta (ADR-P13)
+  "butuh": [],                       // id plugin yang harus aktif lebih dulu
+  "diperbaiki": false,               // saklar darurat menyala: tampilkan "Sedang diperbaiki"
+  "boleh_kelola": true}]             // owner/admin; tombol pasang/jeda/copot hanya tampilan, server tetap memeriksa
 
-// POST /ruang/{id}/plugins/{plugin_id}/pasang {"kartu": ["buku_usaha.omzet", …], "pengaturan": {…}} → instalasi
-// POST /ruang/{id}/plugins/{plugin_id}/jeda | /lanjut → instalasi
-// POST /ruang/{id}/plugins/{plugin_id}/copot → {"status": "arsip", "arsip_sampai": "2027-01-29", "ekspor": "/ruang/{id}/plugins/{plugin_id}/ekspor"}
-// GET  /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json   — escape dan anti formula-injection dari PR #136 (ADR-P15)
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang   body opsional {"pengaturan": {}}
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/lanjut | /jeda
+// → {"plugin": "buku_usaha", "status": "aktif", "arsip_sampai": null, "izin_diberikan": ["incomes:read", …]}
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/copot
+// → {"plugin": "buku_usaha", "status": "arsip", "arsip_sampai": "2027-01-30", "izin_diberikan": [], "ekspor": null}
+```
 
-// GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3)
+| Aksi | Dari | Ke | Catatan |
+| --- | --- | --- | --- |
+| `pasang` | tersedia | aktif, atau terpasang bila manifest punya wizard (`contributes.setup`) | Izin manifest saat itu dicatat sebagai `izin_diberikan` |
+| `pasang` | arsip | aktif / terpasang (**pulihkan**) | Baris dan data arsip yang sama kembali; izin disetujui ulang |
+| `lanjut` | terpasang, dijeda | aktif | Wizard selesai/dilewati, atau melanjutkan |
+| `jeda` | terpasang, aktif | dijeda | Data tetap, kontribusi hilang |
+| `copot` | terpasang, aktif, dijeda | arsip (+90 hari) | Data inti tidak pernah ikut terhapus (ADR-P15) |
+
+- **Idempoten:** aksi yang diulang pada status tujuannya menjawab 200 dengan status sekarang dan tidak menambah audit. Perpindahan lain yang tidak sah → 404 `plugin_tidak_aktif` (lanjut/jeda pada plugin yang belum terpasang atau arsip).
+- Pasang/pulihkan/lanjut ditolak bila: saklar darurat menyala (503 `plugin_diperbaiki`), jenis ruang tidak didukung (422 `jenis_ruang_tidak_cocok`), plugin di `butuh` belum aktif (409 `butuh_plugin`), atau bentrok dengan plugin terpasang (409 `bentrok_plugin`, dua arah). Pasang juga butuh flag rollout user (selain itu 404 `plugin_tidak_ada`); jeda dan copot tidak, supaya plugin selalu bisa dimatikan.
+- Jeda/copot ditolak bila plugin lain di ruang ini masih membutuhkannya (409 `dibutuhkan_plugin_lain`): jeda bila pemakainya terpasang/aktif, copot bila pemakainya belum dicopot.
+- `pengaturan` yang tidak kosong → 422 `pengaturan_tidak_sah` sampai titik `settings` (form dari JSON Schema + validasi server) ada di H2/U1. Pilihan kartu Beranda saat pasang (`kartu` di v0) dihapus dari body: klien menambah kartu lewat `PUT /dashboard/layout` (H3).
+- `ekspor` bernilai `null` sampai endpoint `GET /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json` ada (U1, bersama data plugin pertama; escape dan anti formula-injection dari PR #136).
+- Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
+
+```jsonc
+// GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3, masih v0)
 {
   "nav": [{"plugin": "buku_usaha", "grup": "usaha", "label": "Buku Usaha", "route": "/p/buku_usaha", "ikon": "book"}],
   "quick_actions": [{"plugin": "buku_usaha", "key": "buku_usaha.penjualan", "label": "Penjualan", "form": "penjualan"}],
@@ -267,7 +292,8 @@ Pasang, jeda, lanjut, dan copot hanya untuk owner dan admin ruang (ADR-P11). Rua
   "cards": ["buku_usaha.omzet", "…"],
   "form_fields": [{"plugin": "buku_usaha", "target": "transaction", "key": "kontak_id", "type": "reference", "label": "Pemasok"}]
 }
-// Plugin dijeda atau dicopot → tidak ada kontribusinya sama sekali. Saklar darurat (AppSetting) berlaku dalam satu siklus muat ulang.
+// Sumbernya `siklus.aktif_di_ruang()` (H1): hanya plugin berstatus aktif, tanpa saklar darurat, dengan flag user aktif.
+// Plugin dijeda, dicopot, atau dimatikan server → tidak ada kontribusinya sama sekali.
 ```
 
 ## 6. Buku Usaha (U1–U4)
@@ -315,7 +341,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `ruang_tidak_diizinkan` | 403 | Header ruang bukan ruang user |
 | `lintas_ruang` | 400 | Satu permintaan tulis menyentuh dua ruang (R3); prive menyusul di R8 |
 | `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota |
-| `khusus_admin` | 403 | Peran member meminta data laporan atau aksi admin |
+| `khusus_admin` | 403 | Peran member meminta data laporan atau aksi admin (termasuk mengatur Fitur Tambahan, H1) |
 | `amplop_tidak_diizinkan` | 403 | Amplop tidak termasuk batasan anggota |
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |
@@ -323,12 +349,18 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `jendela_ubah_lewat` | 403 | Mengubah atau menghapus catatan di luar jendela |
 | `butuh_paket_usaha` | 402 | Ruang usaha tanpa hak Paket Usaha (ADR-P13) |
 | `plugin_tidak_aktif` | 404 | Plugin tidak terpasang atau dijeda di ruang ini |
+| `plugin_tidak_ada` | 404 | `plugin_id` tidak dikenal, atau flag rollout user belum aktif saat memasang (H1) |
+| `plugin_diperbaiki` | 503 | Saklar darurat menyala: pasang dan lanjut ditolak, jeda dan copot tetap boleh (H1) |
+| `jenis_ruang_tidak_cocok` | 422 | Plugin tidak mendukung jenis ruang ini (H1) |
+| `butuh_plugin` | 409 | Plugin yang dibutuhkan belum aktif di ruang ini (H1) |
+| `bentrok_plugin` | 409 | Bentrok dengan plugin yang terpasang (H1) |
+| `dibutuhkan_plugin_lain` | 409 | Plugin lain di ruang ini masih membutuhkannya (H1) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
-| `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`) |
+| `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |
 | `kartu_tidak_dikenal` | 422 / per kartu | Kartu tidak terdaftar (`PUT /dashboard/layout`; di `POST /dashboard/data` sebagai galat kartu) |
 | `ukuran_tidak_sah`, `kartu_ganda`, `instans_tidak_sah`, `terlalu_banyak` | 422 | Validasi tata letak atau permintaan data (§4) |
-| `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu |
+| `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu; pengaturan plugin saat pasang (H1, sampai titik `settings`) |
 | `periode_tidak_dikenal` | 422 | `periode` bukan `period_start` dari `GET /analytics/periods` |
 | `instans_tidak_ada` | 404 | `GET /dashboard/data/{id}` untuk instans yang tidak ada di tata letak user |
 | `gagal_memuat` | per kartu | Sumber data kartu gagal dimuat; kartu lain tetap terisi |
