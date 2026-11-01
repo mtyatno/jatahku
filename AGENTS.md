@@ -276,8 +276,10 @@ Tanpa migrasi dan tanpa paket baru. Merge PR B3 → deploy otomatis; tampilan be
 3. **Nyalakan bertahap:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
    ('beranda_registry_users', '<user_id kamu>') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"`, pakai
    sehari, lalu ulangi dengan value `*`. Tiap user pindah ke Beranda registry pada muatan Beranda berikutnya.
-4. **Pantau:** `journalctl -u jatahku --since today | grep -E "dashboard (batch|penyedia|sumber)"` — peringatan
-   anggaran (> 500 ms batch, > 150 ms penyedia) atau sumber yang gagal.
+4. **Pantau:** `journalctl -u jatahku --since today | grep -E "dashboard (batch|penyedia|sumber)"` — `dashboard batch`
+   = satu Beranda > 500 ms (baris itu menyebut tiga sumber terlama); `dashboard sumber … gagal` = endpoint lama gagal.
+   `dashboard penyedia` hanya untuk kartu plugin (> 150 ms); kartu inti tidak diperingatkan per kartu, karena kartu
+   inti pertama ikut menanggung muat sumber bersama.
 5. **Kembali ke Beranda lama** kapan saja: value `''` (kosong). Klien membaca `enabled` di setiap muatan Beranda,
    jadi tidak perlu deploy. `BerandaLama.jsx` baru dihapus setelah `*` stabil (sesi terpisah).
 

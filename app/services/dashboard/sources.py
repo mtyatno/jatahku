@@ -18,6 +18,7 @@ dipanggil lewat HTTP). Tidak ada parameter ruang dari body klien yang diteruskan
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -68,11 +69,13 @@ class Sumber:
     periode: Periode
     hid: Any = None
     _cache: dict = field(default_factory=dict)
+    waktu: dict = field(default_factory=dict)   # nama sumber → ms memuat (untuk log batch lambat)
 
     async def _muat(self, nama: str, router, handler, **kwargs) -> Any:
         if nama in self._cache:
             hasil = self._cache[nama]
         else:
+            mulai = time.perf_counter()
             try:
                 hasil = _serialisasi(router, handler, await handler(user=self.user, db=self.db, hid=self.hid,
                                                                     **kwargs))
@@ -82,6 +85,7 @@ class Sumber:
             except Exception:
                 logger.exception("dashboard sumber %s gagal", nama)
                 hasil = SumberGagal(nama)
+            self.waktu[nama] = (time.perf_counter() - mulai) * 1000
             self._cache[nama] = hasil
         if isinstance(hasil, SumberGagal):
             raise hasil
