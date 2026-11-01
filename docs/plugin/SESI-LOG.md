@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R8 · Prive dua sisi · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review; issue #148; **wajib review keamanan terpisah sebelum merge** atas keputusan pemilik 1 Nov, walau di rencana tidak bertanda "review": ini satu-satunya jalur tulis lintas ruang dan bagian gerbang "Ruang keluarga tetap pribadi")
+**Selesai** (status review, PR #177; issue #148; **wajib review keamanan terpisah sebelum merge** atas keputusan pemilik 1 Nov, walau di rencana tidak bertanda "review": ini satu-satunya jalur tulis lintas ruang dan bagian gerbang "Ruang keluarga tetap pribadi")
 - Keputusan pemilik produk (1 Nov): **A** — prive tanpa migrasi. Kedua sisi di `incomes` dengan `kind = "prive"` (nilai baru di kolom String): keluar di ruang usaha = Income bernilai 0 + alokasi `-jumlah` di amplop asal; masuk di ruang keluarga pemilik = pemasukan sungguhan ke Tabungan. Prive tidak pernah menjadi transaksi pengeluaran, jadi tidak menjadi beban dan tidak mengurangi laba (U3).
 - `POST /prive` (`app/api/routes/prive.py`): ruang asal dari amplop (`ruang_amplop`, ikut saklar flag `ruang_usaha_users` dari R4 → 404 di luar flag); hanya `owner` ruang usaha (403 `prive_hanya_pemilik`); amplop ruang keluarga 400 `bukan_ruang_usaha`; ruang tujuan = ruang keluarga pemanggil dari server (`ruang_keluarga_id`), header tidak dipakai; tanpa ruang keluarga 400 `tanpa_ruang_keluarga`; sisi masuk tidak boleh melebihi sisa amplop; tanggal bawaan hari ini (zona user), masa depan ditolak; kunci kedua household dalam urutan tetap; satu commit; idempoten `client_ref` di namespace Redis `txnref:{user}:prive:{ref}`; notifikasi target ruang keluarga sesudah commit.
 - `fund_shift.record_prive` + `prive_descriptions`; `IncomeKind.PRIVE`; docstring `LintasRuang`/`ruang.py`.
@@ -35,7 +35,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Kirim ulang `client_ref` mengembalikan jawaban tersimpan tanpa memeriksa ulang peran (sama dengan `advisor/execute`); kunci Redis per user, jadi user lain tidak bisa memakainya.
 
 **Cara melanjutkan**
-- Review keamanan dengan sesi Claude Code terpisah: "review PR #N terhadap 03-workflow.md bagian keamanan" (gerbang "Ruang tidak pernah dari body", "Batasan ditegakkan di server", "Ruang keluarga tetap pribadi"). Temuan dikerjakan di branch ini sebelum merge.
+- Review keamanan dengan sesi Claude Code terpisah: "review PR #177 terhadap 03-workflow.md bagian keamanan" (gerbang "Ruang tidak pernah dari body", "Batasan ditegakkan di server", "Ruang keluarga tetap pribadi"). Temuan dikerjakan di branch ini sebelum merge.
 - Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu Gerbang R bisa dinilai lulus (R2, R3, R8).
 - Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan; migrasi, review) atau `/sesi-plugin H1`.
 

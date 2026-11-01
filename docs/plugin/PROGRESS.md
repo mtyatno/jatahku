@@ -20,7 +20,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | R5 (migrasi, review) | #145 | Peran, batasan, persetujuan di server | 2 Ruang usaha | 4 | R3 | belum | | | | |
 | R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | belum | | | | |
 | R7 (migrasi, review) | #147 | Catat cepat dan kamus per ruang | 2 Ruang usaha | 4 | R3, R6 | belum | | | | |
-| R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | review | Pemilik produk + Claude | | 2026-11-01 | |
+| R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | review | Pemilik produk + Claude | #177 | 2026-11-01 | |
 | H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | belum | | | | |
 | H2 (review) | #150 | PluginContext dan titik ekstensi server | 3 Host plugin | 4 | H1 | belum | | | | |
 | H3 | #151 | Host di frontend dan halaman Fitur Tambahan | 3 Host plugin | 3,5 | H2, B2, R4 | belum | | | | |
