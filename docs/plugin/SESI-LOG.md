@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R3 · Ruang dari objek saat menulis · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review, menunggu review keamanan terpisah, issue #143)
+**Selesai** (status review, PR #171, menunggu review keamanan terpisah, issue #143)
 - Keputusan pemilik produk (1 Nov): **A** objek baru tanpa induk memakai ruang dari header yang sah (`ruang_aktif`; tanpa header = ruang keluarga); **B** hak Paket Usaha (kode `butuh_paket_usaha` 402) baru dipasang di H1/V1, ruang usaha belum dibatasi selama beta.
 - `app/services/ruang.py`: `ruang_objek` (ruang objek bila user anggota, selain itu None), `ruang_amplop`, `ruang_amplop_satu` (semua amplop satu ruang; dua ruang milik user → `LintasRuang` 400 `lintas_ruang`), `ruang_jenis`; `RuangDitolak` menerima status. Docstring modul menjelaskan aturan R3.
 - Route tulis dari objek, lalu keanggotaan: `PUT`/`DELETE /envelopes/{id}`, `PATCH`/`DELETE /envelopes/groups/{id}`, `POST /envelopes/transfer`, `POST`/`DELETE /transactions`, `POST /goals/` + `PUT`/`DELETE /goals/{id}`, `POST /recurring/` + ubah/hapus/bayar/lewati/tandai, `POST /incomes/` dengan alokasi, `POST /balance-check/{id}/undo` (`svc.ruang_cek`), `PUT /kotak-struk/merchants/{id}`. Objek ruang lain → 404 dengan pesan "tidak ditemukan" biasa.
@@ -38,7 +38,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Saran amplop (`suggest-envelope(s)`) memakai ruang header (siap untuk lembar Catat cepat di R7).
 
 **Cara melanjutkan**
-- Review keamanan terpisah: sesi Claude Code baru dengan "review PR #<n> terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
+- Review keamanan terpisah: sesi Claude Code baru dengan "review PR #171 terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
 - Merge: tanpa migrasi; checklist "Plugin R3" di `AGENTS.md` (`ruang_paritas` sesudah deploy, uji catat/geser/bayar/antrean offline).
 - Berikutnya `/sesi-plugin R4` (membuat dan berpindah ruang, flag `ruang_usaha_users`; merge dulu PR terbuka yang menyentuh `Layout.jsx`/`api.js`), atau R5 / R8 / H1 (semuanya butuh R3).
 
