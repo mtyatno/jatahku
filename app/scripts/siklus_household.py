@@ -10,10 +10,10 @@ jumlah anggota, payday tiap anggota, payday household yang akan dipakai, dan tan
 punya payday berbeda. Ruang usaha ditandai [usaha] dan tidak pernah CAMPURAN: payday pribadi anggotanya memang boleh
 berbeda (itu siklus ruang keluarga mereka). Tidak menulis apa pun.
 
---apply, per household: mengisi payday household yang masih kosong, menyamakan payday anggota ruang keluarga dengannya,
-menyimpan, menghitung ulang riwayat snapshot --periods periode terakhir (bawaan 12; mengisi kolom allocated/spent), lalu
-memberi tahu (lonceng web, dan Telegram bila tertaut) anggota yang payday-nya berubah. Aman diulang: dijalankan ulang,
-hasilnya sama dan tidak ada notifikasi kedua, karena tidak ada anggota yang berubah lagi.
+--apply, per household: mengisi payday household yang masih kosong, menyimpan, menghitung ulang riwayat snapshot
+--periods periode terakhir (bawaan 12; mengisi kolom allocated/spent), menyamakan payday anggota ruang keluarga
+dengannya, lalu memberi tahu (lonceng web, dan Telegram bila tertaut) anggota yang payday-nya berubah. Aman diulang:
+dijalankan ulang, hasilnya sama dan tidak ada notifikasi kedua, karena tidak ada anggota yang berubah lagi.
 
 Jalankan di jam sepi dan jangan di sekitar job snapshot harian pukul 00:05 (waktu server). Skrip ini berjalan di
 proses terpisah, jadi kunci per household milik aplikasi (`household_lock`) hanya berlaku di dalam proses uvicorn
@@ -21,8 +21,8 @@ dan tidak menyerialkannya dengan web maupun job itu. Recompute menghapus lalu me
 ditulis job harian; bila berjalan bersamaan, keduanya bisa bertabrakan di kunci unik (envelope_id, year, month).
 
 Kode keluar 0 bila selesai. Kegagalan (database, recompute) tidak ditangkap: traceback dan kode keluar 1. Household yang
-sudah diproses tersimpan, dan --apply berikutnya melanjutkannya. Satu pengecualian: bila recompute gagal sesudah anggota
-disamakan, anggota itu tidak mendapat notifikasi, dan menjalankan ulang tidak mengirimnya (tidak ada yang berubah lagi).
+sudah diproses tersimpan, dan run yang gagal cukup dijalankan ulang: --apply berikutnya melanjutkannya, termasuk
+menyamakan dan memberi tahu anggota household yang gagal.
 Konfigurasi dibaca dari /opt/jatahku/.env seperti aplikasinya; skrip ini tidak mengarang nilai bawaan.
 """
 from __future__ import annotations
@@ -118,27 +118,31 @@ def format_survey(surveys: list[HouseholdSurvey]) -> str:
 
 
 async def apply(db: AsyncSession, surveys: list[HouseholdSurvey], periods: int) -> dict:
-    """Terapkan migrasi per household: isi payday (`household_payday`), samakan anggota (`heal`), simpan, hitung ulang
-    `periods` periode terakhir (`recompute_history`, untuk SEMUA household: mengisi allocated/spent, dan household yang
-    tidak campuran menghasilkan angka yang sama), lalu beri tahu anggota yang payday-nya berubah (tanpa pelaku: pesan
+    """Terapkan migrasi per household: isi payday (`household_payday`), simpan, hitung ulang `periods` periode terakhir
+    (`recompute_history`, untuk SEMUA household: mengisi allocated/spent, dan household yang tidak campuran menghasilkan
+    angka yang sama), samakan anggota (`heal`), lalu beri tahu anggota yang payday-nya berubah (tanpa pelaku: pesan
     skrip). Mengembalikan `{"households", "mixed", "snapshots", "notified"}`.
 
     `commit` di sini, untuk tiap household dan sebelum recompute (kontrak di docstring `household_cycle`):
-    `recompute_history` membaca payday lewat sesinya sendiri, sedangkan `household_payday` hanya `flush` pengisian NULL
-    dan `heal` commit hanya bila ada anggota yang berubah. Notifikasi baru sesudah recompute karena pesannya
-    menyatakan riwayat sudah dihitung ulang: recompute yang gagal (exception) menghentikan semuanya tanpa notifikasi,
-    dan yang sudah di-commit tetap tersimpan. Aman diulang: run kedua tidak menemukan anggota yang berubah, jadi tidak
-    ada notifikasi kedua."""
+    `recompute_history` membaca payday lewat sesinya sendiri, sedangkan `household_payday` hanya `flush` pengisian NULL.
+
+    `heal` dan notifikasi SESUDAH recompute: recompute hanya membaca `households.payday_day` (yang sudah terisi dan
+    tersimpan), tidak pernah cermin `users.payday_day` anggota, jadi urutan ini tidak mengubah hasilnya. Recompute yang
+    gagal (exception) menghentikan semuanya sebelum anggota disamakan, jadi `heal` run berikutnya masih menemukan
+    mereka dan memberi tahu mereka; `heal` yang jalan lebih dulu akan menyamakan mereka dan membuat run ulang tidak
+    menemukan siapa pun untuk diberi tahu. Pesan "Riwayat ... dihitung ulang" juga benar saat dikirim. Yang sudah
+    di-commit tetap tersimpan. Aman diulang: run kedua tidak menemukan anggota yang berubah, jadi tidak ada notifikasi
+    kedua."""
     from app.services.household_cycle import heal, household_payday, notify_payday_changed, recompute_history
 
     snapshots = notified = 0
     for item in surveys:
         household = item.household
         payday = await household_payday(db, household, item.members)
-        changed = await heal(db, household)
         await db.commit()
         results = await recompute_history(household.id, periods)
         snapshots += sum(period["snapshots_created"] for period in results)
+        changed = await heal(db, household)
         if changed:
             notified += await notify_payday_changed(
                 changed, household_name=household.name, day=payday, changed_by=None, periods=periods,

@@ -297,9 +297,10 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_apply_commits_the_session_before_every_recompute(self):
         # Kontrak `recompute_history` (docstring `household_cycle`, ruling R7): ia membaca state yang sudah tersimpan
-        # lewat sesinya sendiri. `household_payday` hanya flush pengisian NULL dan `heal` commit hanya bila ada anggota
-        # yang berubah, jadi `apply` commit sendiri untuk TIAP household sebelum recompute (juga saat heal tidak
-        # mengubah apa pun). Notifikasi baru sesudah recompute.
+        # lewat sesinya sendiri, sedangkan `household_payday` hanya flush pengisian NULL. Maka `apply` commit sendiri
+        # untuk TIAP household sebelum recompute. Urutan per household (ruling R17): payday, commit, recompute, lalu
+        # `heal` dan notifikasi: recompute hanya membaca `households.payday_day`, jadi cermin anggota boleh disamakan
+        # sesudahnya, dan pesan "Riwayat ... dihitung ulang" benar saat dikirim.
         null_home, set_home = household("Rumah Budi", None), household("Rumah Ani", 10)
         items = [
             surveyed(null_home, [member("Budi", HouseholdRole.owner, 25)], 25),
@@ -335,23 +336,35 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.notify.side_effect = notified
         await script.apply(db, items, 12)
         self.assertEqual(events, [
-            "flush", "heal:Rumah Budi", "commit", "recompute:Rumah Budi", "notify:Rumah Budi",  # NULL diisi, di-flush
-            "heal:Rumah Ani", "commit", "recompute:Rumah Ani",  # heal tidak mengubah apa pun, tetap commit dulu
+            "flush", "commit", "recompute:Rumah Budi", "heal:Rumah Budi", "notify:Rumah Budi",  # NULL diisi, di-flush
+            "commit", "recompute:Rumah Ani", "heal:Rumah Ani",  # payday sudah terisi: tanpa flush, heal tanpa perubahan
         ])
         self.assertEqual(filled_at_commit[0], 25)  # pengisian NULL sudah terjadi saat commit pertama
         db.execute.assert_not_called()  # anggota survei dipakai ulang: tidak ada kueri anggota kedua
         self.assertEqual(self.notify.await_args.kwargs["day"], 25)  # tanggal yang diisi dipakai di notifikasi
 
-    async def test_apply_does_not_notify_when_recompute_fails(self):
-        # Pesan skrip menyatakan "Riwayat ... dihitung ulang": tidak boleh terkirim bila recompute-nya gagal.
+    async def test_failed_recompute_leaves_the_members_for_the_rerun_to_heal_and_notify(self):
+        # Ruling R17: `heal` dan notifikasi SESUDAH recompute. Recompute yang gagal tidak boleh sudah menyamakan
+        # anggota: `heal` run ulang hanya menemukan anggota yang masih menyimpang, jadi yang sudah disamakan tidak
+        # pernah diberi tahu. Pesan skrip ("Riwayat ... dihitung ulang") juga hanya benar sesudah recompute berhasil.
         home = household("Rumah Budi", 25)
+        budi = person("Budi", 1)
+        people = [member("Budi", HouseholdRole.owner, 25), member("Ani", HouseholdRole.member, 1)]
+        item = surveyed(home, people, 25, mixed=True)
         db = db_with()
-        self.heal.return_value = [person("Budi", 1)]
-        self.recompute.side_effect = RuntimeError("db mati")
+        self.recompute.side_effect = [RuntimeError("db mati"), periods_result(3)]
+        self.heal.return_value = [budi]
+        self.notify.return_value = 1
         with self.assertRaisesRegex(RuntimeError, "db mati"):
-            await script.apply(db, [surveyed(home, [member("Budi", HouseholdRole.owner, 25)], 25)], 12)
+            await script.apply(db, [item], 12)
+        self.heal.assert_not_awaited()  # anggota belum disamakan: run ulang masih menemukan mereka
         self.notify.assert_not_awaited()
-        db.commit.assert_awaited_once()  # perubahan heal sudah tersimpan; dijalankan ulang, `--apply` melanjutkan
+        db.commit.assert_awaited_once()  # payday household sudah tersimpan sebelum recompute (kontrak R7)
+
+        result = await script.apply(db, [item], 12)  # run ulang: recompute kini berhasil
+        self.heal.assert_awaited_once_with(db, home)
+        self.notify.assert_awaited_once_with([budi], household_name="Rumah Budi", day=25, changed_by=None, periods=12)
+        self.assertEqual(result, {"households": 1, "mixed": 1, "snapshots": 3, "notified": 1})
 
     async def test_apply_counts_only_surveyed_mixed_households(self):
         items = [
