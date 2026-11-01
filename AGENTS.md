@@ -347,7 +347,7 @@ Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terp
    PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
    sini.
 
-## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b)
+## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b) — sudah jalan 2026-11-01
 Menambah `households.payday_day` (siklus milik rumah; NULL = belum dimigrasi), `monthly_snapshots.allocated_amount` dan
 `spent_amount`, beserta backfill `households.payday_day` dari anggota (owner, lalu admin, lalu yang tertua). Migrasi
 **idempoten**: `lifespan` (`HOUSEHOLD_CYCLE_DDL` di `app/services/household_cycle_schema.py`) menjalankan DDL dan backfill
