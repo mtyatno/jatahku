@@ -19,44 +19,47 @@ def known(entry: dict) -> list[str]:
     return [t for t in entry["tags"] if t.startswith("known_")]
 
 
-def store_problems(got: dict) -> list[str]:
-    """Penyimpangan struk belanja dari "tidak berubah": jenis, status, cek, rincian, merchant (per saklar)."""
+def checks_text(checks: dict) -> str:
+    return json.dumps(checks, sort_keys=True, ensure_ascii=False)
+
+
+def store_problems(e: dict) -> list[str]:
+    """Penyimpangan struk belanja dari "tidak berubah" pada satu saklar: jenis, status, cek, rincian, merchant."""
     out = []
-    for sw in SWITCHES:
-        e = got[sw]
-        if e["doc_type"] != "struk_belanja":
-            out.append(f"{sw}: doc_type {e['doc_type']}")
-        if e["status"] != "berhasil":
-            out.append(f"{sw}: status {e['status']}")
-        if e["checks"]:
-            out.append(f"{sw}: cek {e['checks']}")
-        if e["unread_proof"] is not False:
-            out.append(f"{sw}: dianggap bukti bayar")
-        if not e["lines"] > 0:
-            out.append(f"{sw}: tanpa rincian")
-        if not e["merchant"]:
-            out.append(f"{sw}: tanpa merchant")
+    if e["doc_type"] != "struk_belanja":
+        out.append(f"doc_type {e['doc_type']}")
+    if e["status"] != "berhasil":
+        out.append(f"status {e['status']}")
+    if e["checks"]:
+        out.append(f"cek {checks_text(e['checks'])}")
+    if e["unread_proof"] is not False:
+        out.append("dianggap bukti bayar")
+    if not e["lines"] > 0:
+        out.append("tanpa rincian")
+    if not e["merchant"]:
+        out.append("tanpa merchant")
     return out
 
 
-def block_problems(got: dict, tags: list[str]) -> list[str]:
-    """Bukti gagal harus `status_gagal: block`; bukti pending `status_pending: warn` (atau block bila juga gagal)."""
+def block_problems(e: dict, tags: list[str]) -> list[str]:
+    """Pada satu saklar: bukti gagal harus `status_gagal: block`; bukti pending `status_pending: warn` (atau block bila
+    juga gagal)."""
     out = []
-    for sw in SWITCHES:
-        checks = got[sw]["checks"]
-        if "failed" in tags and checks.get("status_gagal") != "block":
-            out.append(f"{sw}: status_gagal {checks.get('status_gagal')} (status {got[sw]['status']})")
-        if "pending" in tags:
-            level = checks.get("status_pending")
-            allowed = ("warn", "block") if "failed" in tags else ("warn",)
-            if level not in allowed:
-                out.append(f"{sw}: status_pending {level} (status {got[sw]['status']})")
+    checks = e["checks"]
+    if "failed" in tags and checks.get("status_gagal") != "block":
+        out.append(f"status {e['status']}, cek {checks_text(checks)}")
+    if "pending" in tags:
+        allowed = ("warn", "block") if "failed" in tags else ("warn",)
+        if checks.get("status_pending") not in allowed:
+            out.append(f"status {e['status']}, cek {checks_text(checks)}")
     return out
 
 
 class SweepFixtureTests(unittest.TestCase):
     def test_fixture_shape(self):
-        """Sapuan memuat >= 120 daftar dengan id unik dan tag yang dikenal; setiap `known_<item>` punya alasan tertulis."""
+        """Sapuan memuat >= 120 daftar dengan id unik dan tag yang dikenal. `known_<item>` hanya pada daftar yang dibaca
+        invarian (`store`, `failed`, `pending`), dengan alasan di `note` dan `known` = {saklar: penyimpangan persis}
+        untuk saklar yang menyimpang saja."""
         self.assertGreaterEqual(len(SWEEP), 120)
         ids = [e["id"] for e in SWEEP]
         self.assertEqual(len(ids), len(set(ids)))
@@ -64,12 +67,38 @@ class SweepFixtureTests(unittest.TestCase):
             with self.subTest(e["id"]):
                 self.assertTrue(e["lines"] and all(isinstance(x, str) for x in e["lines"]))
                 self.assertTrue(e["tags"])
-                for tag in e["tags"]:
-                    self.assertTrue(tag in TAGS or re.fullmatch(r"known_[a-z0-9]+", tag), tag)
+                tags = set(e["tags"])
+                for tag in tags:
+                    self.assertTrue(tag in TAGS or re.fullmatch(r"known_[a-z0-9_]+", tag), tag)
+                # struk yang memang gagal/pending bertag store_void/store_pending, bukan store
+                self.assertFalse("store" in tags and {"failed", "pending"} & tags)
                 if known(e):
+                    self.assertTrue({"store", "failed", "pending"} & tags, "known_* tanpa invarian yang membacanya")
                     self.assertTrue((e.get("note") or "").strip(), "known_* butuh alasan tertulis di `note`")
+                    deviations = e.get("known")
+                    self.assertIsInstance(deviations, dict)
+                    self.assertTrue(deviations and set(deviations) <= set(SWITCHES), deviations)
+                    for sw, items in deviations.items():
+                        self.assertTrue(items and all(isinstance(x, str) and x for x in items), (sw, items))
+                else:
+                    self.assertNotIn("known", e)
         for tag in ("store", "store_void", "store_pending", "proof", "failed", "pending", "probe"):
             self.assertTrue(any(tag in e["tags"] for e in SWEEP), tag)
+
+
+def check_switches(case: unittest.TestCase, entry: dict, got: dict, problems) -> None:
+    """Saklar tanpa `known`: invarian penuh (tanpa penyimpangan). Saklar dengan `known`: penyimpangannya harus persis
+    yang tertulis — sudah lolos berarti tag `known_*` dihapus, penyimpangan lain berarti perubahan yang harus ditinjau."""
+    deviations = entry.get("known") or {}
+    for sw in SWITCHES:
+        with case.subTest(entry["id"], saklar=sw):
+            found = problems(got[sw])
+            if sw not in deviations:
+                case.assertEqual(found, [])
+            elif not found:
+                case.fail(f"{entry['id']} {sw}: sudah lolos, hapus {known(entry)} / known.{sw}")
+            else:
+                case.assertEqual(found, deviations[sw], f"{entry['id']} {sw}: penyimpangan berubah")
 
 
 class SweepTests(unittest.IsolatedAsyncioTestCase):
@@ -88,30 +117,18 @@ class SweepTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_store_receipts_unchanged_by_sweep(self):
         """Independen dari snapshot: setiap daftar `store`, kedua saklar, tetap struk belanja berhasil tanpa cek, dengan
-        rincian dan merchant. `known_<item>` = temuan terbuka (alasan di fixture) yang dilewati; selama tag itu ada,
-        daftarnya memang masih menyimpang (tag dihapus saat perbaikannya mendarat)."""
+        rincian dan merchant. `known` (per saklar) = temuan terbuka yang penyimpangannya dipin persis; saklar lain tetap
+        diperiksa penuh."""
         for e in SWEEP:
-            if "store" not in e["tags"]:
-                continue
-            with self.subTest(e["id"]):
-                problems = store_problems(self.got[e["id"]])
-                if known(e):
-                    self.assertTrue(problems, f"{e['id']}: sudah lolos, hapus {known(e)}")
-                else:
-                    self.assertEqual(problems, [])
+            if "store" in e["tags"]:
+                check_switches(self, e, self.got[e["id"]], store_problems)
 
     async def test_failed_proofs_stay_blocked(self):
         """Setiap `failed`: `status_gagal: block` di kedua saklar; setiap `pending`: `status_pending: warn` (atau block
-        bila juga gagal). `known_<item>` dilewati seperti di atas."""
+        bila juga gagal). `known` per saklar seperti di atas."""
         for e in SWEEP:
-            if not {"failed", "pending"} & set(e["tags"]):
-                continue
-            with self.subTest(e["id"]):
-                problems = block_problems(self.got[e["id"]], e["tags"])
-                if known(e):
-                    self.assertTrue(problems, f"{e['id']}: sudah lolos, hapus {known(e)}")
-                else:
-                    self.assertEqual(problems, [])
+            if {"failed", "pending"} & set(e["tags"]):
+                check_switches(self, e, self.got[e["id"]], lambda got, tags=e["tags"]: block_problems(got, tags))
 
 
 if __name__ == "__main__":

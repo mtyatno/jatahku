@@ -193,6 +193,19 @@ class ParserTest(unittest.TestCase):
         code, _ = self.parse_error(["--lebih-lama-dari", "sehari"])
         self.assertEqual(code, 2)
 
+    def test_cli_caps_hours_at_ten_years(self):
+        """Batas 10 tahun (24 x 3650 jam): angka raksasa ditolak argparse, bukan OverflowError saat menghitung batas waktu."""
+        script = _script()
+        self.assertEqual(script.MAX_HOURS, 24 * 3650)
+        args = script._parser().parse_args(["--lebih-lama-dari", str(script.MAX_HOURS)])
+        self.assertEqual(args.lebih_lama_dari, script.MAX_HOURS)
+        for value in (str(script.MAX_HOURS + 1), "20000000"):
+            with self.subTest(value):
+                code, err = self.parse_error(["--lebih-lama-dari", value])
+                self.assertEqual(code, 2)
+                self.assertIn("--lebih-lama-dari", err)
+                self.assertNotIn("Traceback", err)
+
     def test_cli_defaults_and_zero(self):
         parser = _script()._parser()
         args = parser.parse_args([])

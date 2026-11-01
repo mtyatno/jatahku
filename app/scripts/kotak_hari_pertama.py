@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 # memuat konfigurasi server saat diimpor, jadi `--help` dan argumen yang salah tidak boleh membutuhkan DATABASE_URL.
 
 DEFAULT_HOURS = 24  # pre-flight K8: simpanan form Catat yang masih di antrean offline tidak ikut ditolak
+MAX_HOURS = 24 * 3650  # 10 tahun: batas waktu tetap dalam jangkauan datetime (angka raksasa ditolak argparse)
 SOURCE = "web_form"
 REASON = "batal"
 NO_TYPE = "tanpa_jenis"  # label hitungan untuk item tanpa `doc_type` (tidak diharapkan pada item `siap`)
@@ -118,13 +119,15 @@ def format_summary(summary: Summary, hours: int, applied: bool) -> str:
 
 
 def _hours(text: str) -> int:
-    """`--lebih-lama-dari`: bilangan bulat 0 atau lebih; negatif ditolak argparse."""
+    """`--lebih-lama-dari`: bilangan bulat 0 sampai MAX_HOURS; di luar itu ditolak argparse."""
     try:
         value = int(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"bukan bilangan bulat: {text!r}") from None
     if value < 0:
         raise argparse.ArgumentTypeError("harus 0 atau lebih")
+    if value > MAX_HOURS:
+        raise argparse.ArgumentTypeError(f"paling banyak {MAX_HOURS} (10 tahun)")
     return value
 
 
