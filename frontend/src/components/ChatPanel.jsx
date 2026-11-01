@@ -211,7 +211,8 @@ function Welcome({ name, onExample }) {
 // draft: { text, chips, send, nonce } dari CTA "Tanya di chat" (open-action kind `chat`).
 // Teks diisikan ke kotak ketik (atau langsung dikirim bila send), chip tampil
 // paling depan di baris pertanyaan cepat.
-export default function ChatPanel({ open, onClose, draft = null }) {
+// `ruangLabel` (Plugin R4, ADR-P16): saat ruang usaha dibuka, chat tetap mencatat ke ruang keluarga dan diberi label itu.
+export default function ChatPanel({ open, onClose, draft = null, ruangLabel = null }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -676,7 +677,7 @@ export default function ChatPanel({ open, onClose, draft = null }) {
             <Icon name="chat" size={20} weight="fill" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-display font-bold text-[15px] leading-tight">Chat Jatahku</p>
+            <p className="font-display font-bold text-[15px] leading-tight">Chat Jatahku{ruangLabel ? ` · ${ruangLabel}` : ''}</p>
             <p className="text-[11.5px] text-gray-400 leading-tight truncate">
               {pending === 'message' ? 'mengetik…' : pending === 'photo' ? 'membaca struk…' : 'Catat & cek jatah, sama seperti di Telegram'}
             </p>

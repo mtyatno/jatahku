@@ -20,6 +20,11 @@ meneruskan `household_id` secara eksplisit ke services:
 
 Header yang tidak sah (bukan UUID, ruang orang lain, ruang terhapus) → 403
 `ruang_tidak_diizinkan`. Tidak pernah ada fallback ke ruang lain.
+
+Flag `ruang_usaha_users` (R4, AppSetting: daftar user_id atau `*`) adalah saklar ruang usaha sampai
+rilis: di luar flag, ruang usaha tidak tampil di `GET /ruang`, tidak bisa dibuat, tidak bisa dibuka
+lewat header (403 `ruang_tidak_diizinkan`), dan objeknya tidak bisa ditulis (404 seperti objek asing).
+Ruang keluarga tidak pernah terpengaruh flag.
 """
 from typing import Annotated
 from uuid import UUID
@@ -82,6 +87,34 @@ async def keanggotaan_keluarga(db: AsyncSession, user_id) -> HouseholdMember | N
     )).scalar_one_or_none()
 
 
+FLAG_RUANG_USAHA = "ruang_usaha_users"
+
+
+async def ruang_usaha_dibuka(db: AsyncSession, user_id) -> bool:
+    """Apakah ruang usaha sudah dibuka untuk user ini (flag `ruang_usaha_users`, R4)."""
+    from app.models.models import AppSetting
+    from app.services.advisor.dashboard import flag_aktif
+    value = (await db.execute(
+        select(AppSetting.value).where(AppSetting.key == FLAG_RUANG_USAHA)
+    )).scalar_one_or_none()
+    return flag_aktif(value, user_id)
+
+
+async def _anggota_ruang_terbuka(db: AsyncSession, user_id, household_id) -> bool:
+    """User anggota `household_id`, dan bila itu ruang usaha, flag-nya terbuka untuk user ini."""
+    if household_id is None:
+        return False
+    jenis = (await db.execute(
+        select(Household.type)
+        .join(HouseholdMember, HouseholdMember.household_id == Household.id)
+        .where(HouseholdMember.user_id == user_id, Household.id == household_id)
+        .limit(1)
+    )).scalar_one_or_none()
+    if jenis is None:
+        return False
+    return jenis != HouseholdType.USAHA or await ruang_usaha_dibuka(db, user_id)
+
+
 async def keanggotaan(db: AsyncSession, user_id, household_id) -> HouseholdMember | None:
     """Keanggotaan user di satu ruang (peran ada di `.role`), atau None."""
     if household_id is None:
@@ -101,7 +134,7 @@ async def _ruang_dari_header(header: str | None, user, db: AsyncSession) -> UUID
         hid = UUID(raw)
     except ValueError:
         raise RuangDitolak()
-    if await keanggotaan(db, user.id, hid) is None:
+    if not await _anggota_ruang_terbuka(db, user.id, hid):
         raise RuangDitolak()
     return hid
 
@@ -155,8 +188,9 @@ class LintasRuang(RuangDitolak):
 
 async def ruang_objek(db: AsyncSession, user, household_id) -> UUID | None:
     """Ruang objek yang ditulis, hanya bila user anggota ruang itu. None = bukan milik user;
-    route menjawab seperti objek tidak ada (404), supaya keberadaan objek tidak bocor."""
-    if household_id is None or await keanggotaan(db, user.id, household_id) is None:
+    route menjawab seperti objek tidak ada (404), supaya keberadaan objek tidak bocor.
+    Objek ruang usaha di luar flag `ruang_usaha_users` juga None (R4)."""
+    if not await _anggota_ruang_terbuka(db, user.id, household_id):
         return None
     return household_id
 
@@ -183,7 +217,7 @@ async def ruang_amplop_satu(db: AsyncSession, user, envelope_ids) -> UUID | None
     )).scalars())
     milik = set()
     for hid in ruang_ids:
-        if await keanggotaan(db, user.id, hid) is not None:
+        if await _anggota_ruang_terbuka(db, user.id, hid):
             milik.add(hid)
     if len(milik) > 1:
         raise LintasRuang()

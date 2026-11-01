@@ -165,10 +165,12 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         await db.flush()
         return {"env": env.id, "tab": tab.id, "grp": grp.id, "txn": txn.id, "goal": goal.id, "rec": rec.id}
 
-    async def _beri_ruang_usaha(self):
+    async def _beri_ruang_usaha(self, bukakan=True):
         async with self.Session() as db:
             usaha = Household(name="Dapur Nusa", type=HouseholdType.USAHA)
             db.add(usaha)
+            if bukakan:   # R4: ruang usaha hanya terbuka untuk user di flag `ruang_usaha_users`
+                db.add(AppSetting(key=ruang.FLAG_RUANG_USAHA, value=str(self.me.id)))
             await db.flush()
             # Lebih tua dari keanggotaan keluarga: urutan tidak boleh menentukan ruang keluarga.
             db.add(HouseholdMember(user_id=self.me.id, household_id=usaha.id, role=HouseholdRole.owner,

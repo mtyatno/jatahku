@@ -4,6 +4,42 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## R4 · Membuat dan berpindah ruang · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #174, issue #144; tanpa tanda review/migrasi)
+- `app/api/routes/ruang.py`: `GET /ruang` (daftar untuk pemilih: ruang keluarga dulu, lalu urut bergabung; `paket` dan `jam_kerja` null sampai H1/V1 dan R5; field tambahan `boleh_buat_usaha`) dan `POST /ruang` (ruang usaha, pembuat owner, nama 1–60 huruf, batas 3 ruang usaha per pemilik dengan kunci baris user, 403 `ruang_usaha_belum_dibuka` di luar flag, 409 `batas_ruang_usaha`).
+- Flag `ruang_usaha_users` jadi saklar di `app/services/ruang.py` (`ruang_usaha_dibuka`, `_anggota_ruang_terbuka`): di luar flag, ruang usaha tidak tampil, tidak bisa dibuka lewat header (403), dan objeknya tidak bisa ditulis (`ruang_objek`/`ruang_amplop*` → None → 404). Ruang keluarga tidak terpengaruh.
+- `household_cycle.init_ruang_usaha`: ruang usaha baru `payday_day = 1` (bulan kalender, desain A2 butir 9); tanpa ini `household_payday` menurunkan siklus dari gajian owner.
+- Frontend: `lib/ruangAktif.js` (pilihan di perangkat, hanya id ruang selain ruang keluarga; header; akhiran cache offline per ruang; ADR-P16), `components/RuangPicker.jsx` (sidebar di bawah logo; HP menggantikan logo; buat ruang usaha), `lib/api.js` (header di `request` dan `uploadForm`, `daftarRuang`, `buatRuang`, 403 `ruang_tidak_diizinkan` → kembali ke ruang keluarga + Beranda, dikosongkan saat logout), `Layout.jsx` (chat berlabel "Ruang keluarga" untuk pemilik/admin di ruang usaha, disembunyikan untuk member), `ChatPanel.jsx` (label di judul), ikon `home`/`store`.
+- Tes: `app/tests/test_ruang_r4.py` (9: daftar tanpa/dengan flag, buat, validasi nama, batas, undangan dari ruang usaha ditolak, flag dicabut menutup baca dan tulis, hapus akun menghapus ruang usaha miliknya; uji mutasi saklar flag → gagal); fixture ruang usaha di `test_ruang_gerbang.py` dan `test_ruang_resolver.py` diberi flag; pagar: `POST /ruang` di kelompok tanpa ruang, kueri keanggotaan `routes/ruang.py` (2) dan `services/ruang.py` (4). `src/lib/ruangAktif.test.js` (9).
+- Diperiksa di browser (Playwright, API dipalsukan): pemilih desktop dan HP, terang dan gelap, form buat ruang; header terkirim hanya saat ruang usaha dipilih dan tidak pernah ke `/ruang`; 403 ruang → pilihan dihapus, kembali ke `/`, permintaan berikutnya tanpa header.
+- Dokumen: kontrak §1 (klien mengirim header sejak R4), §2 v1 (+ saklar flag, perilaku klien), §7 (2 kode baru); `AGENTS.md` checklist R4 + R3 sudah jalan; `00-indeks.md` (fase, peta kode); `PROGRESS.md` (R3 selesai, R4 review, Gerbang R).
+- Tes: unittest 2393 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, juga gagal di `main`) · node --test 628 lulus · build ok · Migrasi: tidak berlaku · `openapi_cek` tanpa perubahan memutus.
+
+**Digantung**
+- Menu yang hanya bermakna di ruang keluarga (Telegram, Pengaturan household, Pikir-Pikir) belum disaring per ruang: menu inti sama di semua ruang (ADR-P1); penyaringan per peran di R6, grup menu Usaha di H3.
+- Bottom nav 6 item / "Lainnya" (pertanyaan A4) belum diputuskan: R4 tidak menambah item menu, jadi ditunda ke H3.
+- Kotak Struk dan foto struk di ruang usaha tetap ruang keluarga untuk bukti baru (R7); mencatat ke amplop ruang usaha masuk ruang amplop itu (R3).
+- Tutup/ganti nama/hapus ruang usaha belum ada (R5/R6 bersama halaman Anggota).
+- `test_basic_quota_bot_fund_shift_finishes_started_input` masih gagal di `main`; perlu PR kecil terpisah.
+
+**Jebakan**
+- `npm run build` mengubah `frontend/dist/index.html` yang ter-track: kembalikan dengan `git checkout -- frontend/dist` sebelum commit.
+- Fixture ruang usaha di tes lama perlu `AppSetting(ruang_usaha_users)`; tanpa itu header ruang usaha kini 403 dan objeknya 404.
+- Tema di Playwright: kunci `jatahku_theme` berisi JSON `{color: hijau|laut|senja, mode}`.
+
+**Keputusan kecil**
+- Pindah ruang = muat ulang penuh ke `/` (bukan remount sebagian): tidak ada state, cache, atau chat ruang lama yang tertinggal. Pindah ruang jarang, jadi biaya muat ulang dapat diterima.
+- 403 `ruang_tidak_diizinkan` tidak diulang tanpa header, karena permintaan tulis bisa masuk ruang yang salah.
+- Batas 3 ruang usaha per pemilik selama beta (menahan ruang kosong menumpuk); bisa ditinjau di V1 bersama Paket Usaha.
+- Flag juga menutup tulis dari objek (bukan hanya header), supaya mencabut flag benar-benar menutup ruang usaha.
+
+**Cara melanjutkan**
+- Merge (tanpa review terpisah, tanpa migrasi), lalu checklist "Plugin R4" di `AGENTS.md`: `ruang_paritas`, buka flag hanya untuk pemilik, uji buat/pindah/catat, jangan `*` sebelum R5 dan V1.
+- Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan, undangan ruang usaha; migrasi + review) atau R8 / H1.
+
+---
+
 ## R3 · Ruang dari objek saat menulis · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #171; review keamanan terpisah lulus 1 Nov, temuan 1–5 dikerjakan di branch ini; issue #143)

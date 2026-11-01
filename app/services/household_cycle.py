@@ -141,6 +141,15 @@ def mirrors_users(household) -> bool:
     return str(getattr(household, "type", None) or HouseholdType.RUMAH_TANGGA) == HouseholdType.RUMAH_TANGGA
 
 
+USAHA_PAYDAY = 1  # ruang usaha: periode bulan kalender (desain A2 butir 9)
+
+
+def init_ruang_usaha(household) -> None:
+    """Siklus ruang usaha baru (Plugin R4): bulan kalender, bukan tanggal gajian pemiliknya. Diisi saat dibuat,
+    supaya `household_payday` tidak menurunkannya dari `users.payday_day` owner (cermin ruang keluarga)."""
+    household.payday_day = USAHA_PAYDAY
+
+
 async def household_payday(db: AsyncSession, household, rows: list[MemberRow] | None = None) -> int:
     """Tanggal gajian household.
 
