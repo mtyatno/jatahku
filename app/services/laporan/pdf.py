@@ -26,7 +26,8 @@ Empat kehati-hatian soal fpdf2 2.8.9:
   dikosongkan di akhir `output()` yang sukses. Render yang gagal di tengah akan membocorkannya di proses API yang
   berumur panjang, maka cache dikosongkan di `finally`.
 - Kata sandi non-ASCII mengikuti ISO 32000-2 (SASLprep lalu UTF-8): terbuka di pembaca yang patuh (juga pdfium untuk
-  teks NFC biasa). Teks yang berubah oleh SASLprep (bentuk NFD, spasi non-ASCII) tidak terbuka di pdfium.
+  teks NFC biasa). Teks yang berubah oleh SASLprep (spasi non-ASCII, tanda hubung lunak, huruf lebar penuh) tidak
+  terbuka di pdfium; `periksa_kata_sandi` menolaknya, jadi PDF selalu terkunci dengan UTF-8 dari bentuk NFC.
 
 Logger proyek (`jatahku.laporan`) tidak dipakai di sini: tidak ada yang layak dicatat dari pembuatan satu PDF, dan nama
 amplop atau keterangan tidak boleh masuk log.
@@ -105,27 +106,57 @@ def _tinggi_tabel(n_baris: int) -> float:
 
 
 class KataSandiPdfTidakValid(ValueError):
-    """Kata sandi yang tidak bisa dipakai sebagai kata sandi PDF AES-256: kosong (juga setelah SASLprep), memuat
-    karakter yang dilarang standar PDF (karakter kontrol, dua arah bercampur), atau lebih dari 127 byte UTF-8.
-    Pesannya tidak pernah memuat kata sandinya."""
+    """Kata sandi yang tidak bisa dipakai sebagai kata sandi PDF AES-256 dengan benar: kosong (juga setelah SASLprep),
+    memuat karakter yang dilarang standar PDF (karakter kontrol, dua arah bercampur), lebih dari 127 byte UTF-8, atau
+    diubah SASLprep sehingga hanya terbuka di sebagian pembaca PDF (lihat `periksa_kata_sandi`).
+
+    Pesannya kalimat siap tampil ke user (PUT kata sandi laporan menjadikannya `detail` 422) dan tidak pernah memuat
+    kata sandinya; `__context__` juga kosong, karena pesan galat fpdf2 menyebut kata sandinya."""
 
 
 def periksa_kata_sandi(kata_sandi: str) -> None:
     """Menolak (`KataSandiPdfTidakValid`) kata sandi yang `render_pdf` tidak bisa pakai dengan benar. Dipakai
-    `render_pdf` sebelum membuat apa pun, dan bisa dipakai PUT kata sandi laporan supaya yang tak terpakai tidak
-    pernah tersimpan. Sengaja memakai `StandardSecurityHandler.prepare_string` milik fpdf2 (SASLprep): hasilnya
-    adalah byte yang benar-benar menjadi dasar kata sandi di berkas."""
+    `render_pdf` sebelum membuat apa pun, dan oleh PUT kata sandi laporan supaya yang tak terpakai tidak pernah
+    tersimpan. Sengaja memakai `StandardSecurityHandler.prepare_string` milik fpdf2 (SASLprep): hasilnya adalah byte
+    yang benar-benar menjadi dasar kata sandi di berkas.
+
+    Kata sandi diterima hanya bila byte itu persis UTF-8 dari bentuk NFC-nya. ISO 32000-2 mewajibkan pembaca
+    menjalankan SASLprep, tetapi pembaca berbasis pdfium (Chrome, pypdfium2) memakai teks yang diketik apa adanya,
+    jadi kata sandi yang berubah oleh SASLprep (spasi non-ASCII, karakter yang "dipetakan ke nol" seperti tanda hubung
+    lunak, bentuk kompatibilitas seperti huruf lebar penuh dan ligatur) hanya terbuka di sebagian pembaca. Huruf
+    bertanda dalam bentuk NFD tidak berubah secara diam-diam (SASLprep dan NFC sama-sama menggabungkannya), jadi
+    diterima; PUT kata sandi laporan menyimpan bentuk NFC."""
     if not kata_sandi:
-        raise KataSandiPdfTidakValid("kata sandi PDF kosong")
+        raise KataSandiPdfTidakValid("Kata sandi tidak boleh kosong.")
+    terlarang = False
     try:
         byte_kata_sandi = StandardSecurityHandler.prepare_string(kata_sandi)
     except FPDFException:
-        # `from None`: pesan fpdf2 memuat kata sandinya, dan rantai pengecualian ikut tercetak di log.
-        raise KataSandiPdfTidakValid("kata sandi PDF memuat karakter yang dilarang standar PDF") from None
+        # Dilempar di luar blok ini: pesan fpdf2 memuat kata sandinya, dan di dalam `except` ia tertinggal di
+        # `__context__` walau `from None` menyembunyikannya dari cetakan jejak.
+        terlarang = True
+    if terlarang:
+        raise KataSandiPdfTidakValid(
+            "Kata sandi memuat karakter yang tidak boleh dipakai di PDF "
+            "(karakter kontrol, atau huruf Arab/Ibrani bercampur huruf lain)."
+        )
     if not byte_kata_sandi:
-        raise KataSandiPdfTidakValid("kata sandi PDF kosong setelah normalisasi")
-    if len(byte_kata_sandi) > _MAKS_BYTE_KATA_SANDI:
-        raise KataSandiPdfTidakValid(f"kata sandi PDF lebih dari {_MAKS_BYTE_KATA_SANDI} byte (UTF-8)")
+        raise KataSandiPdfTidakValid(
+            "Kata sandi hanya berisi karakter tak kasatmata. Pakai huruf, angka, atau simbol biasa."
+        )
+    byte_nfc = unicodedata.normalize("NFC", kata_sandi).encode("utf-8")
+    # Kedua bentuk diukur: `prepare_string` memotong per karakter (bukan per byte) dan diam-diam, jadi kata sandi ASCII
+    # panjang lolos pengukuran bentuk SASLprep saja.
+    if max(len(byte_kata_sandi), len(byte_nfc)) > _MAKS_BYTE_KATA_SANDI:
+        raise KataSandiPdfTidakValid(
+            "Kata sandi terlalu panjang untuk PDF. Pakai yang lebih pendek "
+            "(huruf non-Latin dan emoji memakan lebih banyak ruang)."
+        )
+    if byte_kata_sandi != byte_nfc:
+        raise KataSandiPdfTidakValid(
+            "Kata sandi memuat spasi lebar, karakter tak kasatmata, atau huruf bentuk khusus yang diubah standar PDF, "
+            "sehingga PDF hanya terbuka di sebagian aplikasi. Pakai huruf, angka, dan simbol biasa."
+        )
 
 
 @functools.lru_cache(maxsize=1)

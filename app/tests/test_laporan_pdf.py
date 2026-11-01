@@ -672,6 +672,10 @@ class KataSandiTests(unittest.TestCase):
             ("NUL", "abc\x00def-rahasia"),
             ("Arab dicampur Latin", "abc" + ALEF + BEH + "def-rahasia"),
             ("lebih dari 127 byte UTF-8", "中" * 43),
+            ("lebih dari 127 byte, ASCII", "abc-rahasia-" + "x" * 130),
+            ("spasi tak terputus", "abc\N{NO-BREAK SPACE}def-rahasia"),
+            ("tanda hubung lunak", "abc\N{SOFT HYPHEN}def-rahasia"),
+            ("huruf lebar penuh", "abc\N{FULLWIDTH LATIN SMALL LETTER D}ef-rahasia"),
         ]:
             with self.subTest(nama):
                 with self.assertRaises(pdf.KataSandiPdfTidakValid) as ctx:
@@ -681,6 +685,55 @@ class KataSandiTests(unittest.TestCase):
                 self.assertNotIn("rahasia", jejak)
                 self.assertNotIn("abc", jejak)
                 self.assertNotIn("中", jejak)
+                # Pengecualian fpdf2 (yang pesannya memuat kata sandi) juga tidak boleh tertinggal di rantai:
+                # kode yang menelusuri `__context__` sendiri (pelapor galat) tidak akan menemukannya.
+                self.assertIsNone(ctx.exception.__context__)
+                self.assertIsNone(ctx.exception.__cause__)
+                # Pesannya siap tampil ke user (PUT kata sandi laporan menjadikannya `detail` 422).
+                pesan = str(ctx.exception)
+                self.assertTrue(pesan.startswith("Kata sandi"), pesan)
+                self.assertTrue(pesan.endswith("."), pesan)
+
+    def test_periksa_kata_sandi_menolak_yang_diubah_saslprep(self):
+        # SASLprep (ISO 32000-2) mengubah spasi non-ASCII, karakter yang "dipetakan ke nol", dan bentuk
+        # kompatibilitas (NFKC); pembaca berbasis pdfium (Chrome, pypdfium2) tidak melakukannya. Kata sandi seperti
+        # itu hanya terbuka di sebagian pembaca, jadi ditolak di muka, bukan setelah PDF sampai ke pemiliknya.
+        for nama, sandi in [
+            ("spasi tak terputus", "kopi\N{NO-BREAK SPACE}susu-123"),
+            ("spasi ideografis", "kopi\N{IDEOGRAPHIC SPACE}susu-123"),
+            ("tanda hubung lunak di tengah", "kopi\N{SOFT HYPHEN}susu-123"),
+            ("penyambung lebar nol di tengah", "kopi\N{ZERO WIDTH JOINER}susu-123"),
+            ("huruf lebar penuh", "\N{FULLWIDTH LATIN SMALL LETTER K}opi-susu-123"),
+            ("angka berlingkar", "kopi-susu-\N{CIRCLED DIGIT ONE}"),
+            ("ligatur", "\N{LATIN SMALL LIGATURE FI}le-susu-123"),
+            ("pangkat", "kopi-susu-x\N{SUPERSCRIPT TWO}"),
+        ]:
+            with self.subTest(nama):
+                with self.assertRaises(pdf.KataSandiPdfTidakValid):
+                    pdf.periksa_kata_sandi(sandi)
+                with self.assertRaises(pdf.KataSandiPdfTidakValid):
+                    pdf.render_pdf(DATA, sandi)
+
+    def test_periksa_kata_sandi_bentuk_gabungan_sama_dengan_nfc_diterima(self):
+        # Huruf + tanda gabung (NFD) menjadi huruf utuh baik oleh SASLprep maupun NFC, jadi tidak ada yang berubah
+        # secara diam-diam; PUT kata sandi laporan toh menyimpan bentuk NFC. PDF-nya terkunci dengan bentuk NFC.
+        nfd = "cafe\N{COMBINING ACUTE ACCENT}-123"
+        nfc = "caf\N{LATIN SMALL LETTER E WITH ACUTE}-123"
+        self.assertIsNone(pdf.periksa_kata_sandi(nfd))
+        isi = pdf.render_pdf(DATA, nfd)
+        self.assertIn("Ringkasan", teks_per_halaman(isi, nfc)[0])
+
+    def test_periksa_kata_sandi_batas_127_byte_berlaku_untuk_ascii_juga(self):
+        # fpdf2 memotong kata sandi per karakter (bukan per byte) dan diam-diam; kata sandi yang lebih panjang dari
+        # 127 byte ditolak, apa pun huruf-hurufnya, bukan dipotong tanpa kabar.
+        # Pesannya harus "terlalu panjang" (yang bisa ditindaklanjuti pengguna), bukan pesan bentuk-berubah: potongan
+        # diam-diam fpdf2 membuat bentuk SASLprep ASCII panjang berbeda dari NFC-nya, jadi tanpa pengukuran bentuk NFC
+        # penolakannya tetap terjadi tetapi dengan alasan yang salah.
+        self.assertIsNone(pdf.periksa_kata_sandi("a" * 127))
+        self.assertIsNone(pdf.periksa_kata_sandi("é" * 63 + "a"))   # tepat 127 byte
+        for nama, sandi in [("ASCII 128", "a" * 128), ("ASCII 200", "a" * 200), ("é 64 (128 byte)", "é" * 64)]:
+            with self.subTest(nama), self.assertRaisesRegex(pdf.KataSandiPdfTidakValid, "terlalu panjang"):
+                pdf.periksa_kata_sandi(sandi)
 
     def test_kata_sandi_tak_valid_ditolak_sebelum_font_dibaca(self):
         # fpdf2 menolak kata sandi terlarang baru di output(), setelah font dibaca (dan fpdf2 menyebut kata sandinya di
