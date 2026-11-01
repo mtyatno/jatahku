@@ -622,6 +622,12 @@ class ReceiptScan(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transaction_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    # Kerangka tata letak bukti bayar untuk belajar lintas user (kotak_struk/kerangka.py): label tersamar, jenis nilai,
+    # nominal/tanggal, HMAC nama; tanpa nomor dan nama polos. Tidak pernah dikirim ke klien (bukan bagian `document`);
+    # dihapus `maintenance.purge_layouts` 24 jam sejak dibaca untuk item selesai, dan saat kedaluwarsa. `none_as_null`:
+    # None ditulis sebagai SQL NULL (bukan JSON 'null'), supaya `layout IS NOT NULL` hanya menemukan kerangka sungguhan.
+    layout: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
 
     # Satu unggahan (upload_id dari klien) hanya satu item per user. Nama sama dengan di
     # KOTAK_DDL, jadi DDL startup tidak membuat indeks ganda di basis data baru.

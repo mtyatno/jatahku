@@ -42,3 +42,13 @@ PROOF_TYPES = {"qris", "transfer"}
 
 # source (nanti: web_upload, android, ios, email)
 SOURCES = {"telegram", "web_chat", "web_form", "pwa_share"}
+
+# --- Belajar lintas user (spec docs/superpowers/specs/2026-11-01-kotak-belajar-lintas-user-design.md) ---
+LAYOUT_MAX_LINES = 60                     # entri kerangka tata letak per item
+LAYOUT_LABEL_MAX = 40                     # karakter label kerangka
+LAYOUT_LABEL_WORDS = 5                    # kata label kerangka
+LAYOUT_TTL = timedelta(hours=24)          # kerangka item selesai dihapus sejak dibaca (processed_at)
+RULE_MIN_USERS = 2                        # user berbeda sebelum suara menjadi aturan `menunggu`
+RULE_CACHE_S = 300                        # cache aturan `disetujui` di worker (detik)
+FIX_TTL_S = 300                           # bot menunggu nominal pengganti sesudah "Nominal salah" (detik)
+LAYOUT_TYPES = {"qris", "transfer", "tidak_dikenali"}   # doc_type yang mendapat kerangka (struk belanja tidak)

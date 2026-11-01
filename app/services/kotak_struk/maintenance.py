@@ -4,6 +4,9 @@
 - `expire_items`: item `siap`/`gagal` yang tidak dikonfirmasi sampai `expires_at` (ITEM_EXPIRY) -> `kedaluwarsa`,
   teks OCR dibuang. Barisnya tetap disimpan (hash file, ref_hash, counterparty_key, transaction_ids, outcome
   tidak disentuh), supaya bukti yang sama tetap bisa dikenali.
+- `purge_layouts`: kerangka tata letak (`layout`, belajar lintas user) item selesai (`tercatat`/`dilewati`/`kedaluwarsa`)
+  dihapus 24 jam (LAYOUT_TTL) sejak dibaca (`processed_at`); tidak pernah sebelum item selesai, karena belajar dari
+  koreksi terjadi saat item selesai. Item kedaluwarsa juga kehilangan kerangkanya di `expire_items`.
 - `delete_orphan_files`: berkas di folder sementara yang lebih tua dari ORPHAN_FILE_AGE dan bukan milik item
   yang belum dibaca (`diterima`/`diproses`). Biasanya berkas sudah dihapus worker begitu item selesai; ini
   menyapu sisa (proses mati di tengah jalan, baris item terhapus bersama akun).
@@ -18,12 +21,12 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ReceiptScan
 from app.services.kotak_struk.config import (
-    ORPHAN_FILE_AGE, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP,
+    LAYOUT_TTL, ORPHAN_FILE_AGE, ST_DILEWATI, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
 )
 
 log = logging.getLogger(__name__)
@@ -37,12 +40,27 @@ def _utc(dt: datetime) -> datetime:
 
 
 async def expire_items(db: AsyncSession, *, now: datetime) -> int:
-    """Satu UPDATE bersyarat: `siap`/`gagal` dengan `expires_at < now` -> `kedaluwarsa`, `ocr_lines` NULL.
+    """Satu UPDATE bersyarat: `siap`/`gagal` dengan `expires_at < now` -> `kedaluwarsa`, `ocr_lines` dan `layout` NULL.
     Status lain dan `expires_at` NULL tidak pernah disentuh. Commit sendiri; mengembalikan jumlah baris."""
     res = await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)), ReceiptScan.expires_at < _utc(now))
-        .values(status=ST_KEDALUWARSA, ocr_lines=None)
+        .values(status=ST_KEDALUWARSA, ocr_lines=None, layout=null())
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    return res.rowcount or 0
+
+
+async def purge_layouts(db: AsyncSession, *, now: datetime) -> int:
+    """Satu UPDATE: `layout` NULL untuk item `tercatat`/`dilewati`/`kedaluwarsa` yang masih punya kerangka dan dibaca
+    lebih dari LAYOUT_TTL lalu (`processed_at < now - LAYOUT_TTL`, atau tanpa `processed_at`). Item terbuka/gagal tidak
+    disentuh. Commit sendiri; mengembalikan jumlah baris."""
+    res = await db.execute(
+        update(ReceiptScan)
+        .where(ReceiptScan.status.in_((ST_TERCATAT, ST_DILEWATI, ST_KEDALUWARSA)), ReceiptScan.layout.is_not(None),
+               or_(ReceiptScan.processed_at.is_(None), ReceiptScan.processed_at < _utc(now) - LAYOUT_TTL))
+        .values(layout=null())   # SQL NULL, bukan JSON 'null'
         .execution_options(synchronize_session=False)
     )
     await db.commit()

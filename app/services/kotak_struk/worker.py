@@ -29,6 +29,7 @@ from app.services.kotak_struk.config import (
     ITEM_EXPIRY, MAX_ATTEMPTS, PROOF_TYPES, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
 )
 from app.services.kotak_struk.extract import ExtractError, TextDoc, extract_text
+from app.services.kotak_struk.kerangka import build_layout
 from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, upsert_household_merchant
 from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB
@@ -185,11 +186,23 @@ def _plain_evidence(evidence: list[str]) -> list[str]:
     return [e for e in evidence if '"' not in e and not any(c.isdigit() for c in e)]
 
 
-def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
+def _layout(text: TextDoc, doc, secrets, user_name: str | None) -> dict | None:
+    """Kerangka tata letak (kolom `layout`, belajar lintas user) dari baris OCR dan hasil baca SEBELUM disamarkan. Galat
+    apa pun -> None + peringatan berisi jenis galatnya saja (pesannya bisa mengutip isi bukti); item tetap `siap`."""
+    try:
+        return build_layout(text.lines, doc, secrets, user_name=user_name)
+    except Exception as exc:
+        log.warning("kerangka tata letak Kotak Struk tidak dibuat (%s)", type(exc).__name__)
+        return None
+
+
+def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None) -> _Outcome:
     """Hasil baca -> nilai kolom `receipt_scans`. Nomor rekening, NMID, dan nomor referensi hanya
-    masuk sebagai kunci/HMAC; Dokumen Bayar hanya memuat versi tersamarnya."""
+    masuk sebagai kunci/HMAC; Dokumen Bayar hanya memuat versi tersamarnya. `user_name` (nama user) hanya dipakai
+    supaya kerangka tata letak tidak memuat namanya."""
     parsed = res.parsed
     doc, extra, secrets = parsed.doc, parsed.extra, parsed.secrets
+    layout = _layout(text, doc, secrets, user_name)
     # Cabang berdasarkan jenis dokumen, bukan nama pembaca: penyelamatan LLM berpembaca
     # "tidak_dikenali" tetap struk belanja.
     store_receipt = doc.doc_type == "struk_belanja"
@@ -236,6 +249,7 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         "ref_hash": hmac_hex(secrets.ref_values[0]) if secrets.ref_values else None,
         "paid_at": paid_at,
         "pages": text.pages,
+        "layout": layout,
     }
     return _Outcome(columns, cp.name, cp.city, unread_proof)
 
@@ -350,7 +364,7 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
             llm=try_llm_fallback if image else None,
         )
         res = await read_document(text, ctx, proofs_enabled=proofs_enabled)
-        return await _store(factory, item_id, _outcome(res, text), now)
+        return await _store(factory, item_id, _outcome(res, text, user_name=getattr(user, "name", None)), now)
     except ExtractError as exc:
         return await _fail(factory, item_id, exc.user_message, now)
     except Exception:
