@@ -318,7 +318,13 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   cek dengan {struk|bukti}. Sudah benar?" dengan **✅ Ya, catat ke {emoji} {amplop}** (`ky_{key}_{idx}`, jalur catat
   yang sama: cek bukti, cek dana/geser dana, limit harian, aturan periode lalu), **✏️ Nominal salah** (`struk_fix_`,
   ketik manual; nominal ketikan dicatat tanpa pertanyaan lagi; untuk QRIS/transfer contohnya netral "`bakso 25000`",
-  tanpa teks scan struk), dan **❌ Batal** (`struk_no_`). Pertanyaan tanggal
+  tanpa teks scan struk), dan **❌ Batal** (`struk_no_`). Nominal ketikan itu juga menjadi suara koreksi (Task
+  L2b): `struk_fix_` yang melewati item QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item
+  (Redis, TTL `FIX_TTL_S` 300 dtk; struk belanja tidak); ketikan berikutnya user itu mengambil kuncinya sekali
+  (`receipt_cmd.note_fix_amount`, sesudah `capture_note`) dan, bila berisi tepat satu pengeluaran ber-nominal (bukan
+  beberapa barang, bukan teks bukti), memberi suara `label_total` untuk item itu lewat
+  `belajar.learn_from_correction` (item milik user itu dan berkerangka). Ketikannya tetap ke NLP dan dicatat persis
+  seperti biasa, tidak tertaut ke item; Redis mati atau galat → tanpa suara, pencatatan tetap jalan. Pertanyaan tanggal
   datang lebih dulu, pertanyaan nominal saat amplop diketuk. Bot tidak memecah struk per barang, jadi satu
   pertanyaan sebelum satu-satunya pencatatan. `tinggi`/`sedang` tetap satu ketukan.
 - Payload Redis `txn:{key}` yang sudah ada diperluas dengan `kind: "proof"`, `item_id`, `note`, `confidence`

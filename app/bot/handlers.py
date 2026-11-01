@@ -1154,12 +1154,14 @@ async def handle_message(update, context):
     if text.startswith("/"):
         return
 
-    # Kotak Struk, sebelum batas panjang dan NLP: catatan yang ditunggu tombol "✏️ Tambah catatan", lalu teks
-    # bukti bayar yang ditempel (ketikan biasa tidak memenuhi syaratnya dan tetap ke NLP).
-    from app.bot.receipt_cmd import capture_note, handle_proof_text, looks_like_proof_text
+    # Kotak Struk, sebelum batas panjang dan NLP: catatan yang ditunggu tombol "✏️ Tambah catatan", nominal ketikan
+    # sesudah "✏️ Nominal salah" (hanya suara koreksi, teksnya tetap lanjut), lalu teks bukti bayar yang ditempel
+    # (ketikan biasa tidak memenuhi syaratnya dan tetap ke NLP).
+    from app.bot.receipt_cmd import capture_note, handle_proof_text, looks_like_proof_text, note_fix_amount
     from app.services.kotak_struk.config import TEXT_MAX_CHARS
     if await capture_note(update, context):
         return
+    await note_fix_amount(update, text)
     if looks_like_proof_text(text) and len(text) <= TEXT_MAX_CHARS:
         await handle_proof_text(update, context, text)
         return
