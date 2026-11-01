@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R2 · Resolver `ruang_aktif` · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review, menunggu review keamanan terpisah, issue #142). Direncanakan 2 sesi; selesai dalam satu sesi, termasuk route, skrip paritas, dan dokumen yang semula untuk sesi 2.
+**Selesai** (status review, PR #166, menunggu review keamanan terpisah, issue #142). Direncanakan 2 sesi; selesai dalam satu sesi, termasuk route, skrip paritas, dan dokumen yang semula untuk sesi 2.
 - `app/services/ruang.py`: `ruang_aktif` (membaca; header `X-Jatahku-Ruang`, kosong/tanpa header = ruang keluarga), `ruang_tulis` (menulis; ruang keluarga sampai R3, header ruang lain → 403), `ruang_keluarga` / `ruang_keluarga_id` (household `rumah_tangga`, keanggotaan tertua bila ganda), `keanggotaan`, `keanggotaan_keluarga`, `RuangDitolak` + `install()` (403 `{detail, kode: ruang_tidak_diizinkan}`, dipasang di `main.py`). Header tercantum di OpenAPI.
 - Route: parameter keyword-only `*, hid: RuangAktif` / `hid: RuangTulis` di semua route ber-ruang (envelopes, transactions, incomes, goals, recurring, analytics, snapshots, export, balance-check, advisor, dashboard, household, user, kotak-struk). GET dan POST yang hanya membaca (`/dashboard/data`, `/balance-check/preview`, `/advisor/allocation-recommendation`) = aktif; `PUT /dashboard/layout` dan dismiss advisor = aktif (status per user/viewer); `/advisor/plan` = tulis (sepasang dengan execute); lainnya = tulis.
 - Services menerima `household_id` eksplisit: `compute_envelope_summaries`, `balance_check.*`, `advisor` (`load_snapshot`, `load_advisor_context`, `chat.muat`, `get_dashboard`, `dismiss`, `batal_dismiss`, halaman, alokasi, sinking, `build_plan`/`execute_plan`), `dashboard.batch.jalankan` (`Sumber.hid` diteruskan ke handler), `export._get_export_data`. Helper `get_household_id` (×2), `_get_hid` (×5), `_household_id`, `_get_household_id`, `_get_membership` dihapus.
@@ -40,7 +40,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Skrip paritas tidak bisa dijalankan sebelum merge (file baru); checklist memakai kueri psql untuk keanggotaan ganda sebelum merge dan skrip sesudah deploy.
 
 **Cara melanjutkan**
-- Review keamanan terpisah: sesi Claude Code baru dengan "review PR #<n> terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
+- Review keamanan terpisah: sesi Claude Code baru dengan "review PR #166 terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
 - Merge: tanpa migrasi; ikuti checklist "Plugin R2" di `AGENTS.md` (psql keanggotaan ganda = 0 sebelum merge, `python -m app.scripts.ruang_paritas` sesudah deploy).
 - Berikutnya `/sesi-plugin R3` (ruang dari objek saat menulis, kuota per ruang; hapus `DIIZINKAN_BEDA_SAMPAI_R3`), atau `/sesi-plugin B3`. R5 dan R8 juga hanya butuh R3.
 
