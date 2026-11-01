@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## B3 (lanjutan) · Rilis Beranda registry ke pemilik · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status jeda; PR #167, #168 di-merge dan tayang; issue #140 tetap terbuka sampai `*`)
+**Selesai** (status **selesai** per keputusan pemilik 1 Nov 14:08; PR #167, #168, #172; issue #140 ditutup)
 - `beranda_paritas` di VPS (data produksi): **105 user · ok 105 · beda 0 · crash 0 · lewati 0 · batch p95 231 ms → Gerbang B (angka): LULUS**.
 - Flag `beranda_registry_users` = user_id pemilik. Beranda registry jalan di akun pemilik (`POST /dashboard/data` 200, ±7 kB untuk 14 kartu).
 - Log produksi pertama: `dashboard penyedia core.kpi.jatah/sisa_bebas 154–220 ms` di setiap muat, tanpa `dashboard batch` (batch < 500 ms). Penyebab: kartu inti pertama menanggung muat sumber bersama. #168: peringatan per penyedia hanya untuk kartu plugin; `Sumber` mencatat waktu muat per sumber; `dashboard batch` menyebut tiga sumber terlama. Tes baru di `test_dashboard_registry.py`. Deploy `774c294` terverifikasi.
@@ -21,7 +21,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - `scripts/banding_beranda.py` butuh Python dengan Playwright + Chrome: jalankan di laptop, bukan VPS produksi.
 
 **Keputusan kecil**
-- Status B3 `jeda` (bukan `berjalan`): tidak ada pekerjaan kode tersisa; menunggu waktu pakai dan keputusan pemilik menyalakan `*`.
+- B3 ditandai `selesai` dan Gerbang B `lulus` atas keputusan pemilik, dengan dasar paritas produksi (angka dan p95). Banding tampilan otomatis tidak dijalankan; perluasan flag ke `*` dan pemantauan log dilakukan pemilik mengikuti `AGENTS.md` "Rilis Beranda registry" langkah 3–5.
 - Anggaran 150 ms per penyedia hanya untuk kartu plugin, sesuai 01-kajian.md; kartu inti dinilai dari total batch.
 
 **Cara melanjutkan**
