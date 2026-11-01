@@ -37,12 +37,14 @@ from sqlalchemy import event, func, select, update
 from sqlalchemy.orm import configure_mappers
 
 from app.api.routes import auth as auth_route, laporan as laporan_route
-from app.api.routes.transactions import transcribe_key_func
 from app.core.database import Base, get_db
 from app.core.deps import get_current_user
+from app.core.rate_limit import kunci_per_user
+from app.core.security import create_access_token
 from app.models.models import (
     JENIS_BULANAN, Household, HouseholdMember, HouseholdRole, Report, ReportSettings, User,
 )
+from app.services import auth_sessions
 from app.services.laporan import rahasia
 from app.services.laporan.susun import susun_bulanan
 from app.tests.test_laporan_susun import bahan
@@ -80,9 +82,11 @@ def _kunci_palsu(kunci: str):
     return patch.object(rahasia, "get_settings", return_value=SimpleNamespace(REPORT_SECRET_KEY=kunci))
 
 
-def masuk(token: str) -> dict:
-    """Header yang menjadi kunci batas frekuensi (`transcribe_key_func` mencincang header Authorization)."""
-    return {"Authorization": f"Bearer {token}"}
+def masuk(token: str, skema: str = "Bearer", sisa: str = "") -> dict:
+    """Header Authorization untuk `token` asli (`create_access_token`). `skema` dan `sisa` membuat varian yang tetap
+    lolos autentikasi: HTTPBearer menerima huruf besar-kecil apa pun pada skema, dan PyJWT mengabaikan karakter di
+    luar abjad base64url di ujung token."""
+    return {"Authorization": f"{skema} {token}{sisa}"}
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
@@ -184,11 +188,11 @@ class ApiDasar(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return (await db.execute(select(func.count()).select_from(ReportSettings))).scalar()
 
-    async def atur_sandi(self, sandi=SANDI, user=None):
+    async def atur_sandi(self, sandi=SANDI, user=None, headers=None):
         """Atur kata sandi lewat PUT yang asli."""
         if user is not None:
             self.current = user
-        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": sandi})
+        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": sandi}, headers=headers)
         self.assertEqual(r.status_code, 200, r.text)
 
     async def unduh(self, id_laporan, headers=None):
@@ -738,27 +742,51 @@ class PengaturanTests(ApiDasar):
 
 
 class BatasFrekuensiTests(ApiDasar):
+    """Batas frekuensi lewat `get_current_user` yang ASLI dan token asli (ruling R11): kunci batas adalah user yang
+    terautentikasi (klaim `sub`), bukan teks header. Hanya `get_db` yang diganti."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.app.dependency_overrides.pop(get_current_user)
+        self.token_ani = create_access_token(str(self.ani.id))
+        self.token_budi = create_access_token(str(self.budi.id))
+        self.h_ani, self.h_budi = masuk(self.token_ani), masuk(self.token_budi)
+
     def nyalakan_limiter(self):
         auth_route.limiter.reset()
         auth_route.limiter.enabled = True
 
+    async def varian_header(self, user, token) -> dict:
+        """Semua bentuk header yang lolos autentikasi sebagai `user` yang sama: skema berbeda huruf, karakter di ujung
+        yang diabaikan PyJWT, dan token dari login ulang (sesi dan token baru)."""
+        async with self.Session() as db:
+            login_ulang = (await auth_sessions.start_session(db, user)).access_token
+        self.assertNotEqual(login_ulang, token)
+        return {
+            "skema kecil": masuk(token, skema="bearer"),
+            "skema besar": masuk(token, skema="BEARER"),
+            "skema campur": masuk(token, skema="BeArEr"),
+            "sisa karakter yang diabaikan PyJWT": masuk(token, sisa="!!!!"),
+            "token dari login ulang": masuk(login_ulang),
+            "login ulang, skema besar dan sisa": masuk(login_ulang, skema="BEARER", sisa="!!"),
+        }
+
     async def test_batas_frekuensi_pdf(self):
         id_laporan = await self.buat_laporan(self.ani, OKT)
-        await self.atur_sandi()
+        await self.atur_sandi(headers=self.h_ani)
         self.nyalakan_limiter()
         with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock(return_value=b"%PDF-1.7 palsu")):
             for n in range(10):
-                r = await self.unduh(id_laporan, headers=masuk("token-ani"))
+                r = await self.unduh(id_laporan, headers=self.h_ani)
                 self.assertEqual(r.status_code, 200, f"panggilan ke-{n + 1}: {r.text}")
-            r = await self.unduh(id_laporan, headers=masuk("token-ani"))
+            r = await self.unduh(id_laporan, headers=self.h_ani)
             self.assertEqual(r.status_code, 429, r.text)
             self.assertNotIn("%PDF", r.text)
 
-            # Batasnya per user (kunci = token pemanggil): Budi dengan tokennya sendiri tidak ikut terkena.
-            self.current = self.budi
+            # Batasnya per user: Budi dengan tokennya sendiri tidak ikut terkena.
             punya_budi = await self.buat_laporan(self.budi, OKT)
-            await self.atur_sandi("sandi-milik-budi-2", user=self.budi)
-            r = await self.unduh(punya_budi, headers=masuk("token-budi"))
+            await self.atur_sandi("sandi-milik-budi-2", headers=self.h_budi)
+            r = await self.unduh(punya_budi, headers=self.h_budi)
             self.assertEqual(r.status_code, 200, r.text)
 
     async def test_batas_frekuensi_pdf_berlaku_untuk_semua_laporan_satu_user(self):
@@ -768,53 +796,132 @@ class BatasFrekuensiTests(ApiDasar):
         for bulan in range(1, 12):   # Januari sampai November 2026: sebelas laporan berbeda
             akhir = date(2026, bulan + 1, 1) - timedelta(days=1)
             ids.append(await self.buat_laporan(self.ani, (date(2026, bulan, 1), akhir)))
-        await self.atur_sandi()
+        await self.atur_sandi(headers=self.h_ani)
         self.nyalakan_limiter()
         with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock(return_value=b"%PDF-1.7 palsu")):
             for n, id_laporan in enumerate(ids[:10]):
-                r = await self.unduh(id_laporan, headers=masuk("token-ani"))
+                r = await self.unduh(id_laporan, headers=self.h_ani)
                 self.assertEqual(r.status_code, 200, f"laporan ke-{n + 1}: {r.text}")
             for id_laporan in (ids[10], ids[0]):   # laporan baru maupun yang sudah pernah diunduh
-                r = await self.unduh(id_laporan, headers=masuk("token-ani"))
+                r = await self.unduh(id_laporan, headers=self.h_ani)
                 self.assertEqual(r.status_code, 429, r.text)
+
+    async def test_batas_frekuensi_pdf_tidak_bisa_dihindari_dengan_varian_header(self):
+        # Yang dilaporkan review: setelah 10 unduhan, mengganti huruf skema, menambah karakter di ujung token, atau
+        # login ulang memberi ember baru. Kunci batasnya user, jadi semuanya tetap ditolak.
+        id_laporan = await self.buat_laporan(self.ani, OKT)
+        await self.atur_sandi(headers=self.h_ani)
+        varian = await self.varian_header(self.ani, self.token_ani)
+        for nama, header in varian.items():   # premis: setiap varian lolos autentikasi sebagai Ani (404 = id acak)
+            with self.subTest("lolos autentikasi", varian=nama):
+                self.assertEqual((await self.unduh(uuid.uuid4(), headers=header)).status_code, 404)
+        self.nyalakan_limiter()
+        with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock(return_value=b"%PDF-1.7 palsu")):
+            for n in range(10):
+                r = await self.unduh(id_laporan, headers=self.h_ani)
+                self.assertEqual(r.status_code, 200, f"panggilan ke-{n + 1}: {r.text}")
+            for nama, header in varian.items():
+                with self.subTest(varian=nama):
+                    r = await self.unduh(id_laporan, headers=header)
+                    self.assertEqual(r.status_code, 429, r.text)
+
+    async def test_batas_frekuensi_pdf_menghitung_semua_bentuk_header_dalam_satu_ember(self):
+        # Sepuluh unduhan yang bergantian memakai semua bentuk header (dan dua token) menghabiskan satu ember; yang
+        # ke-11, bentuk apa pun, ditolak. Bila tiap bentuk punya ember sendiri, jumlah ini tidak akan pernah tercapai.
+        id_laporan = await self.buat_laporan(self.ani, OKT)
+        await self.atur_sandi(headers=self.h_ani)
+        bentuk = [self.h_ani, *(await self.varian_header(self.ani, self.token_ani)).values()]
+        self.nyalakan_limiter()
+        with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock(return_value=b"%PDF-1.7 palsu")):
+            for n in range(10):
+                r = await self.unduh(id_laporan, headers=bentuk[n % len(bentuk)])
+                self.assertEqual(r.status_code, 200, f"panggilan ke-{n + 1}: {r.text}")
+            for n, header in enumerate(bentuk):
+                r = await self.unduh(id_laporan, headers=header)
+                self.assertEqual(r.status_code, 429, f"bentuk ke-{n + 1}: {r.text}")
 
     async def test_batas_frekuensi_pdf_juga_untuk_404(self):
         # Menebak id tetap dihitung: tidak ada jalur gratis untuk menyapu id (atau menahan koneksi tanpa batas).
         self.nyalakan_limiter()
         for n in range(10):
-            r = await self.unduh(uuid.uuid4(), headers=masuk("token-ani"))
+            r = await self.unduh(uuid.uuid4(), headers=self.h_ani)
             self.assertEqual(r.status_code, 404, f"panggilan ke-{n + 1}")
-        self.assertEqual((await self.unduh(uuid.uuid4(), headers=masuk("token-ani"))).status_code, 429)
+        self.assertEqual((await self.unduh(uuid.uuid4(), headers=self.h_ani)).status_code, 429)
 
     async def test_batas_frekuensi_pdf_tidak_dibagi_dengan_simpan_kata_sandi(self):
         # Dua rute, dua ember: menghabiskan jatah unduhan tidak menutup pengaturan kata sandi (dan sebaliknya).
         self.nyalakan_limiter()
         for _ in range(10):
-            await self.unduh(uuid.uuid4(), headers=masuk("token-ani"))
-        self.assertEqual((await self.unduh(uuid.uuid4(), headers=masuk("token-ani"))).status_code, 429)
-        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": SANDI}, headers=masuk("token-ani"))
+            await self.unduh(uuid.uuid4(), headers=self.h_ani)
+        self.assertEqual((await self.unduh(uuid.uuid4(), headers=self.h_ani)).status_code, 429)
+        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": SANDI}, headers=self.h_ani)
         self.assertEqual(r.status_code, 200, r.text)
 
     async def test_batas_frekuensi_simpan_kata_sandi(self):
         self.nyalakan_limiter()
         for n in range(5):
             r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": f"sandi-ke-{n}-xx"},
-                                     headers=masuk("token-ani"))
+                                     headers=self.h_ani)
             self.assertEqual(r.status_code, 200, f"simpan ke-{n + 1}: {r.text}")
         r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": "sandi-ke-6-xx"},
-                                 headers=masuk("token-ani"))
+                                 headers=self.h_ani)
         self.assertEqual(r.status_code, 429, r.text)
         self.assertEqual(rahasia.dekripsi((await self.baris_pengaturan(self.ani)).kata_sandi_enc), "sandi-ke-4-xx")
         # Membaca status tidak dibatasi.
-        r = await self.klien.get("/user/laporan-pengaturan", headers=masuk("token-ani"))
+        r = await self.klien.get("/user/laporan-pengaturan", headers=self.h_ani)
         self.assertEqual(r.status_code, 200)
+
+    async def test_batas_frekuensi_simpan_tidak_bisa_dihindari_dengan_varian_header(self):
+        varian = await self.varian_header(self.ani, self.token_ani)
+        for nama, header in varian.items():   # premis: setiap varian lolos autentikasi (batas belum menyala)
+            with self.subTest("lolos autentikasi", varian=nama):
+                await self.atur_sandi(headers=header)
+        self.nyalakan_limiter()
+        for n in range(5):
+            await self.atur_sandi(f"sandi-ke-{n}-xx", headers=self.h_ani)
+        for nama, header in varian.items():
+            with self.subTest(varian=nama):
+                r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": "sandi-lain-yy"},
+                                         headers=header)
+                self.assertEqual(r.status_code, 429, r.text)
+        self.assertEqual(rahasia.dekripsi((await self.baris_pengaturan(self.ani)).kata_sandi_enc), "sandi-ke-4-xx")
+
+    async def test_batas_frekuensi_simpan_per_user(self):
+        self.nyalakan_limiter()
+        for n in range(5):
+            await self.atur_sandi(f"sandi-ke-{n}-xx", headers=self.h_ani)
+        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": "sandi-ke-6-xx"}, headers=self.h_ani)
+        self.assertEqual(r.status_code, 429, r.text)
+        await self.atur_sandi("sandi-milik-budi-2", headers=self.h_budi)   # ember Budi sendiri (menegaskan 200)
+
+    async def test_tanpa_token_sah_kunci_jatuh_ke_ip(self):
+        # Di jalur nyata permintaan tanpa token sah ditolak 401 sebelum batas diperiksa. Bila sampai (di sini
+        # autentikasinya diganti), satu-satunya identitas adalah alamat IP: pemanggil dari alamat yang sama berbagi
+        # ember, apa pun isi header-nya.
+        self.app.dependency_overrides[get_current_user] = lambda: self.current
+        id_laporan = await self.buat_laporan(self.ani, OKT)
+        await self.atur_sandi(user=self.ani)
+        self.nyalakan_limiter()
+        with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock(return_value=b"%PDF-1.7 palsu")):
+            for n in range(10):
+                r = await self.unduh(id_laporan)   # tanpa header
+                self.assertEqual(r.status_code, 200, f"panggilan ke-{n + 1}: {r.text}")
+            self.current = self.budi
+            for nama, header in {
+                "tanpa header": None,
+                "token tak sah": {"Authorization": "Bearer bukan-token"},
+                "skema lain": masuk("x", skema="Basic"),
+            }.items():
+                with self.subTest(nama):
+                    r = await self.unduh(uuid.uuid4(), headers=header)
+                    self.assertEqual(r.status_code, 429, r.text)
 
     async def test_daftar_dan_detail_tidak_dibatasi_seperti_pdf(self):
         id_laporan = await self.buat_laporan(self.ani, OKT)
         self.nyalakan_limiter()
         for _ in range(15):
             for jalur in ("/laporan", f"/laporan/{id_laporan}"):
-                r = await self.klien.get(jalur, headers=masuk("token-ani"))
+                r = await self.klien.get(jalur, headers=self.h_ani)
                 self.assertEqual(r.status_code, 200, jalur)
 
 
@@ -879,7 +986,7 @@ class PemasanganTests(unittest.TestCase):
         # path, jadi URL-nya satu dan ember per user sudah terjadi dengan sendirinya.
         self.assertEqual([b.scope for b in pdf_batas], [laporan_route.SCOPE_BATAS_PDF])
         for b in (*pdf_batas, *simpan_batas):
-            self.assertIs(b.key_func, transcribe_key_func)
+            self.assertIs(b.key_func, kunci_per_user)
         for nama in ("daftar_laporan", "detail_laporan", "ambil_pengaturan_laporan"):
             self.assertNotIn(f"{laporan_route.__name__}.{nama}", batas)
 

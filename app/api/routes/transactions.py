@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from uuid import UUID
 from decimal import Decimal
@@ -12,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import document_date_kind
+from app.core.rate_limit import kunci_per_user
 from app.models.models import (
     User, Transaction, Envelope, HouseholdType, TransactionSource
 )
@@ -500,11 +500,10 @@ async def batch_create_transactions(
 
 
 def transcribe_key_func(request: Request) -> str:
-    """Rate limit per-user: hash header Authorization; fallback ke IP."""
-    auth = request.headers.get("authorization", "")
-    if auth:
-        return hashlib.sha256(auth.encode()).hexdigest()[:16]
-    return get_remote_address(request)
+    """Rate limit per user (ruling R11): `app.core.rate_limit.kunci_per_user`, yaitu user yang terautentikasi (klaim
+    `sub` access token yang sah), bukan teks header Authorization; tanpa token yang sah, alamat IP. Nama dipertahankan:
+    dipakai batas `/transcribe` dan `receipt_key_func`."""
+    return kunci_per_user(request)
 
 
 async def _transcribe_request(audio: UploadFile) -> str:

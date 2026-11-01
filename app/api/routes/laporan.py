@@ -12,8 +12,9 @@ Yang dijaga di sini (tes: app/tests/test_laporan_api.py):
   FastAPI memantulkan nilai yang ditolak), dan log hanya berisi teks tetap dan id user. Setiap 422 yang bisa dipicu
   formulir kata sandi (panjang, karakter yang tak bisa dipakai di PDF) membawa `detail` berupa kalimat siap tampil.
 - PDF dibuat saat diminta, hanya di memori, dengan `Cache-Control: no-store`. Koneksi database dilepas sebelum render.
-- Batas frekuensi per user (`transcribe_key_func`, limiter slowapi bersama seperti `user_settings.py`): unduh PDF
-  10/menit untuk semua laporannya sekaligus (lihat `SCOPE_BATAS_PDF`), simpan kata sandi 5/jam.
+- Batas frekuensi per user yang terautentikasi (`kunci_per_user`, ruling R11: klaim `sub` access token, bukan teks
+  header; limiter slowapi bersama seperti `user_settings.py`): unduh PDF 10/menit untuk semua laporannya sekaligus
+  (lihat `SCOPE_BATAS_PDF`), simpan kata sandi 5/jam.
 
 Galat yang membawa `kode` untuk mesin (badan persis, Global Constraints): 409 `kata_sandi_belum_diatur` (belum diatur,
 atau yang tersimpan tidak terbaca atau tidak lagi bisa dipakai) dan 503 `kunci_belum_diatur` (REPORT_SECRET_KEY kosong
@@ -33,9 +34,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.auth import limiter
-from app.api.routes.transactions import transcribe_key_func
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.rate_limit import kunci_per_user
 from app.models.models import Report, ReportSettings, User
 from app.services.laporan import hitung, pdf, rahasia
 
@@ -239,7 +240,7 @@ async def detail_laporan(
         503: {"model": GalatKode, "description": "Kunci server belum diatur (kode `kunci_belum_diatur`)."},
     },
 )
-@limiter.shared_limit("10/minute", scope=SCOPE_BATAS_PDF, key_func=transcribe_key_func)
+@limiter.shared_limit("10/minute", scope=SCOPE_BATAS_PDF, key_func=kunci_per_user)
 async def unduh_pdf_laporan(
     request: Request,
     report_id: UUID,
@@ -304,7 +305,7 @@ async def ambil_pengaturan_laporan(
     response_model=PengaturanLaporan,
     responses={503: {"model": GalatKode, "description": "Kunci server belum diatur (kode `kunci_belum_diatur`)."}},
 )
-@limiter.limit("5/hour", key_func=transcribe_key_func)
+@limiter.limit("5/hour", key_func=kunci_per_user)
 async def simpan_pengaturan_laporan(
     request: Request,
     body: KataSandiLaporanIn,
