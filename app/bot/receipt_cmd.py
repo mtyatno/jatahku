@@ -7,7 +7,8 @@ paling lama `WAIT_BOT_S` → pesan hasil yang menggantikan "🧾 Membaca bukti..
   "🚫 Bukan pengeluaran", dan "❌ Batal"; atau tawaran lewati (top-up, uang masuk, rekening sendiri, duplikat lunak);
   atau pemberitahuan saja (transaksi gagal, sudah tercatat).
 - Struk belanja dan tidak dikenali: pesan struk yang lama (rincian, cocok/selisih), tanpa baris kuota scan.
-- Lewat batas tunggu: Telegram dikabari worker lewat `send_ready_message`; chat web melihatnya di "Bukti menunggu".
+- Lewat batas tunggu: Telegram dikabari worker lewat `send_ready_message`; chat web menanyakan hasilnya sendiri
+  (gelembung "Masih dibaca" membawa id item; panel memanggil `web_adapter.run_bukti` → `reply_item_result`).
 
 Pencatatan memakai callback `t_{key}_{idx}` yang sudah ada (handle_txn_callback) dengan payload Redis `txn:{key}`:
 "date" (tanggal struk/bayar) dan "scan_id" (id item), ditambah untuk bukti bayar "kind": "proof", "item_id", "note".
@@ -41,7 +42,8 @@ from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import intake, record, view, waiter
 from app.services.kotak_struk.config import (
-    IMAGE_MAX_BYTES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_SIAP, WAIT_BOT_S,
+    IMAGE_MAX_BYTES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI, ST_DIPROSES, ST_DITERIMA, ST_GAGAL,
+    ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
 )
 from app.services.kotak_struk.merchants import display_name
 from app.services.kotak_struk.readers.labels import WIB
@@ -54,10 +56,12 @@ WAITING = (ST_DITERIMA, ST_DIPROSES)
 
 MSG_READING = "🧾 Membaca bukti..."
 MSG_WAIT_TELEGRAM = "⏳ Masih dibaca, nanti kukabari."
-MSG_WAIT_WEB = "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti."
+MSG_WAIT_WEB = "⏳ Masih dibaca, nanti kukabari di sini."
 MSG_SAME_TELEGRAM = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di pesan sebelumnya."
-MSG_SAME_WEB = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti."
+MSG_SAME_WEB = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di sini."
 MSG_UNREADABLE = "😕 Bukti tidak bisa dibaca. Coba kirim ulang."
+MSG_GONE_WEB = "😕 Bukti ini sudah tidak ada. Kirim ulang fotonya."   # /bot/chat/bukti: item hilang atau bukan milik user
+MSG_EXPIRED = f"⚠️ {record.MSG_EXPIRED}."                             # bukti bayar kedaluwarsa (struk tetap bisa dicatat)
 MSG_SEND_FILE = "📄 Kirim bukti sebagai foto (JPG/PNG) atau PDF."
 MSG_FAILED_TXN = "⚠️ Transaksi ini gagal di bank, jadi tidak dicatat."
 MSG_ALREADY_RECORDED = "✅ Bukti ini sudah tercatat."
@@ -559,13 +563,19 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
 
 async def _result_reply(db, user, item, *, key=None, note=None, ready=False) -> tuple[str, InlineKeyboardMarkup | None]:
     """Pesan hasil untuk item yang sudah selesai dibaca. `ready`: langsung tombol amplop (tanpa tawaran lewati);
-    `key`/`note`: sesi tombol yang sudah ada dan catatan user."""
+    `key`/`note`: sesi tombol yang sudah ada dan catatan user. Item yang sudah selesai di tempat lain (dilewati di
+    web, kedaluwarsa) hanya dikabari tanpa tombol catat — dirender ulang chat web (`reply_item_result`); kirim ulang
+    file yang sama di bot membuka item baru, jadi jalur bot tidak pernah sampai ke sini dengan status itu."""
     if item is None:
         return MSG_UNREADABLE, None
     if item.status in WAITING:
         return (MSG_WAIT_WEB if is_web() else MSG_WAIT_TELEGRAM), None
     if item.status == ST_GAGAL:
         return f"😕 {item.error or 'Bukti tidak bisa dibaca. Coba kirim ulang.'}", None
+    if item.status == ST_DILEWATI:
+        return MSG_SKIPPED, None
+    if item.status == ST_KEDALUWARSA and not record.late_recordable(item):
+        return MSG_EXPIRED, None
     detail = await view.item_detail(db, item, user, note=note)
     if ready:
         detail = _ready_only(detail)
@@ -630,14 +640,25 @@ async def _promise_notification(status, item, meta: dict) -> bool:
 
 def _answered_elsewhere(old_meta: dict | None, meta: dict) -> bool:
     """Item lama yang masih dibaca sudah punya pesan yang akan menerima hasilnya: di chat web selalu dianggap begitu
-    (hasilnya di "Bukti menunggu"); di Telegram bila pesan sebelumnya di chat yang sama (masih menunggu, atau sudah
-    dijanjikan kabar) atau kabar sudah dijanjikan ke pesan lain. Selain itu (mis. item dari form web atau PWA) pesan
-    baru ini yang dijanjikan kabar seperti biasa."""
+    (gelembung chat web menanyakan hasilnya sendiri, tanpa janji worker); di Telegram bila pesan sebelumnya di chat
+    yang sama (masih menunggu, atau sudah dijanjikan kabar) atau kabar sudah dijanjikan ke pesan lain. Selain itu
+    (mis. item dari form web atau PWA) pesan baru ini yang dijanjikan kabar seperti biasa."""
     if is_web():
         return True
     old_meta = old_meta or {}
     return bool(old_meta.get("notify")) or (old_meta.get("chat_id") is not None
                                             and old_meta.get("chat_id") == meta.get("chat_id"))
+
+
+def _web_tags(item_id, *, pending: bool = False) -> dict:
+    """Kwarg tambahan `edit_text` untuk gelembung bukti di chat web (`WebMessage.edit_text`: op membawa `item` dan
+    `pending`, lihat web_adapter). Di Telegram kosong — `telegram.Message.edit_text` tidak mengenalnya."""
+    if not is_web():
+        return {}
+    tags = {"kotak_item": str(item_id)}
+    if pending:
+        tags["kotak_pending"] = True
+    return tags
 
 
 async def _take_in(update, **upload) -> None:
@@ -668,19 +689,22 @@ async def _take_in(update, **upload) -> None:
             again = not created and item.status in WAITING and _answered_elsewhere(item.channel_meta, meta)
             await db.commit()   # item lama dikembalikan dengan transaksi baca terbuka: jangan ditahan selama menunggu
         if again:   # bukti yang sama selagi dibaca: janji pesan pertama tetap, `channel_meta` tidak diambil alih
-            await status.edit_text(MSG_SAME_WEB if is_web() else MSG_SAME_TELEGRAM)
+            if is_web():   # gelembung ini pun menanyakan hasilnya sendiri (pesan pertama bisa ada di perangkat lain)
+                await status.edit_text(MSG_SAME_WEB, **_web_tags(item_id, pending=True))
+            else:
+                await status.edit_text(MSG_SAME_TELEGRAM)
             return
 
         item = await waiter.wait_for_item(item_id, WAIT_BOT_S)
         if item is not None and item.status in WAITING:
-            if is_web():
-                await status.edit_text(MSG_WAIT_WEB)
+            if is_web():   # tanpa `notify`: panel chat menanyakan hasilnya lewat /bot/chat/bukti (`reply_item_result`)
+                await status.edit_text(MSG_WAIT_WEB, **_web_tags(item_id, pending=True))
                 return
             if await _promise_notification(status, item, meta):
                 return
         async with AsyncSessionLocal() as db:
             text, markup = await _result_reply(db, await db.get(User, user_id), await db.get(ReceiptScan, item_id))
-        await status.edit_text(text, reply_markup=markup)
+        await status.edit_text(text, reply_markup=markup, **_web_tags(item_id))
     except Exception:
         logger.exception("bukti dari bot gagal diproses")
         try:   # pesan "Membaca bukti..." tidak boleh menggantung
@@ -737,6 +761,28 @@ async def send_ready_message(item_id) -> None:
     except Exception as exc:
         logger.warning("pesan status bukti %s tidak bisa diedit (%s); dikirim pesan baru", item_id, exc)
         await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+# ── hasil untuk chat web yang ditanyakan panel (padanan send_ready_message) ──
+
+async def reply_item_result(message, user_id, item_id) -> bool:
+    """Chat web (`web_adapter.run_bukti`): ganti `message` (gelembung "Masih dibaca" di riwayat lokal panel) dengan
+    pesan hasil item `item_id` milik user `user_id` — teks dan tombol yang sama dengan Telegram (`_result_reply`,
+    sesi tombol `txn:{key}` baru). Mengembalikan True bila item masih dibaca (pesan tidak disentuh, panel bertanya
+    lagi nanti). Item yang tidak ada atau bukan milik user (termasuk anggota rumah tangga yang sama) dijawab
+    MSG_GONE_WEB tanpa `item`, supaya panel berhenti bertanya. Dipanggil ulang untuk pesan yang sudah berhasil pun
+    aman: hasilnya dirender lagi dari status item saat ini (tercatat, dilewati, kedaluwarsa dikabari tanpa tombol)."""
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+        item = await _own_item(db, item_id, user) if user is not None else None
+        if item is None:
+            await message.edit_text(MSG_GONE_WEB)
+            return False
+        if item.status in WAITING:
+            return True
+        text, markup = await _result_reply(db, user, item)
+    await message.edit_text(text, reply_markup=markup, **_web_tags(item_id))
+    return False
 
 
 # ── tombol ──────────────────────────────────────────────────────────────────

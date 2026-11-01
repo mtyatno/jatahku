@@ -4,15 +4,17 @@ Pesan dan tombol diproses oleh handler bot Telegram yang sama lewat
 `app/bot/web_adapter.py`, jadi perilaku chat di web = perilaku @JatahkuBot.
 """
 import hashlib
+import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from app.bot.web_adapter import run_action, run_message, run_photo
+from app.bot.web_adapter import run_action, run_bukti, run_message, run_photo
 from app.core.deps import get_current_user
 from app.models.models import User
+from app.services.kotak_struk.config import MAX_PENDING
 
 router = APIRouter()
 
@@ -40,6 +42,16 @@ class ChatActionIn(BaseModel):
     data: str = Field(min_length=1, max_length=64)  # batas callback_data Telegram
 
 
+class ChatBuktiItem(BaseModel):
+    item_id: uuid.UUID                       # id item Kotak Struk dari op `item` gelembung "Masih dibaca"
+    message_id: str = Field(min_length=1, max_length=32, pattern=r"^[0-9a-f]+$")   # pesan bot yang akan diganti
+
+
+class ChatBuktiIn(BaseModel):
+    # Paling banyak MAX_PENDING: lebih dari itu intake pun menolak bukti baru.
+    items: list[ChatBuktiItem] = Field(min_length=1, max_length=MAX_PENDING)
+
+
 @router.post("/message")
 @limiter.limit("60/minute", key_func=chat_key_func)
 async def chat_message(request: Request, body: ChatMessageIn, user: User = Depends(get_current_user)):
@@ -65,6 +77,15 @@ async def chat_photo(
     from app.api.routes.transactions import _read_receipt_upload
     data, mime = await _read_receipt_upload(image, allow_pdf=False)
     return {"ops": await run_photo(user, data, mime, client_id)}
+
+
+@router.post("/bukti")
+@limiter.limit("60/minute", key_func=chat_key_func)
+async def chat_bukti(request: Request, body: ChatBuktiIn, user: User = Depends(get_current_user)):
+    """Hasil bukti yang dibaca lewat batas tunggu chat (gelembung "Masih dibaca" membawa `item`, `pending`): panel
+    menanyakannya selagi terbuka, dan pesan yang sama diganti hasil + tombol amplop. `pending` = id item yang masih
+    dibaca (tanya lagi nanti). Lihat `docs/chat-bot-web.md` bagian "Foto struk"."""
+    return await run_bukti(user, [(i.item_id, i.message_id) for i in body.items])
 
 
 @router.post("/proaktif")

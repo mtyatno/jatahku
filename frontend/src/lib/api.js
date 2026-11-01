@@ -977,6 +977,12 @@ class ApiClient {
     return this._chat('/bot/chat/proaktif', {});
   }
 
+  // Hasil bukti chat yang dibaca lewat batas tunggu (lib/chatPending.js): items = [{item_id, message_id}].
+  // `pending` = id item yang masih dibaca (tanya lagi nanti).
+  async chatBukti(items) {
+    return this._chat('/bot/chat/bukti', { items });
+  }
+
   // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Foto/Galeri di form Catat).
   async chatPhoto(blob, clientId, { onProgress, onUploaded } = {}) {
     try {
@@ -1010,7 +1016,7 @@ class ApiClient {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
-        return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
+        return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [], pending: Array.isArray(d.pending) ? d.pending : [] };
       }
       if (res.status === 429) return { ok: false, error: 'Terlalu banyak pesan. Tunggu sebentar, ya.' };
       return { ok: false, error: 'Bot sedang tidak bisa dihubungi. Coba lagi.' };

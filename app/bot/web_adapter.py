@@ -15,6 +15,12 @@ JSON yang dirender webapp:
 
 Foto struk dari webapp diproses `handle_non_text` yang sama dengan foto di
 Telegram (→ app/bot/receipt_cmd.py), lewat pengganti `PhotoSize`/`Document`.
+Op "edit" untuk gelembung bukti itu membawa `item` (id item Kotak Struk) dan,
+selagi bukti masih dibaca lewat batas tunggu bot, `pending: true`: panel chat
+menyimpan keduanya di riwayat lokal dan menanyakan hasilnya lewat `run_bukti`
+(`POST /bot/chat/bukti`) sampai pesan yang sama diganti hasilnya — padanan
+`send_ready_message` Telegram, tetapi ditarik klien, bukan didorong worker
+(riwayat chat web hanya ada di perangkat user, server tidak menyimpannya).
 
 `format` = "html" | "markdown" | "plain" (parse_mode Telegram apa adanya);
 `buttons` = baris tombol `[[{"text", "data"} | {"text", "url"}]]`.
@@ -124,13 +130,19 @@ class Outbox:
         self.buttons[msg_id] = button_data(buttons)
         return msg_id
 
-    def edit(self, msg_id, text, parse_mode=None, reply_markup=None):
-        # Seperti Telegram: edit tanpa reply_markup menghapus tombol.
+    def edit(self, msg_id, text, parse_mode=None, reply_markup=None, *, kotak_item=None, kotak_pending=False):
+        # Seperti Telegram: edit tanpa reply_markup menghapus tombol. `kotak_item`/`kotak_pending`: gelembung bukti
+        # Kotak Struk (lihat docstring modul); tanpa keduanya op tidak memuat `item`/`pending`.
         buttons = serialize_markup(reply_markup)
-        self.ops.append({
+        op = {
             "type": "edit", "id": msg_id, "text": str(text),
             "format": message_format(parse_mode), "buttons": buttons,
-        })
+        }
+        if kotak_item is not None:
+            op["item"] = str(kotak_item)
+            if kotak_pending:
+                op["pending"] = True
+        self.ops.append(op)
         self.buttons[msg_id] = button_data(buttons)
 
     def set_buttons(self, msg_id, reply_markup=None):
@@ -228,8 +240,11 @@ class WebMessage:
         msg_id = self._outbox.send(text, parse_mode, reply_markup)
         return WebMessage(self._outbox, text=text, message_id=msg_id, from_user=self.from_user)
 
-    async def edit_text(self, text, parse_mode=None, reply_markup=None, **_):
-        self._outbox.edit(self.message_id, text, parse_mode, reply_markup)
+    async def edit_text(self, text, parse_mode=None, reply_markup=None, *, kotak_item=None, kotak_pending=False, **_):
+        # `kotak_item`/`kotak_pending` hanya dikirim receipt_cmd di kanal web (telegram.Message.edit_text tidak
+        # mengenalnya): gelembung bukti yang bisa ditanyakan ulang lewat /bot/chat/bukti.
+        self._outbox.edit(self.message_id, text, parse_mode, reply_markup,
+                          kotak_item=kotak_item, kotak_pending=kotak_pending)
         return self
 
     async def delete(self, *_, **__):
@@ -459,6 +474,30 @@ async def run_photo(user, data: bytes, mime: str, client_id: str | None = None) 
         await handle_non_text(WebUpdate(tg_user, message=message), WebContext())
 
     return await _run_user_message(user, client_id, dispatch)
+
+
+async def run_bukti(user, items: list[tuple]) -> dict:
+    """Hasil bukti chat web yang dibaca lewat batas tunggu bot: untuk tiap `(item_id, message_id)` dari riwayat
+    lokal panel, pesan `message_id` diganti pesan hasil item itu (teks dan tombol yang sama dengan Telegram,
+    `receipt_cmd.reply_item_result`), atau dibiarkan bila masih dibaca. Mengembalikan `{"ops", "pending"}`:
+    `pending` = id item yang masih dibaca (klien bertanya lagi nanti). Galat merender satu item dicatat dan item itu
+    dianggap masih dibaca, supaya hasilnya tidak hilang dari chat; item lain tetap dijawab."""
+    from app.bot.receipt_cmd import reply_item_result
+
+    outbox = Outbox()
+    tg_user = WebChatUser(user)
+    pending: list[str] = []
+    with web_channel():
+        for item_id, message_id in items:
+            message = WebMessage(outbox, message_id=message_id, from_user=tg_user)
+            try:
+                still_reading = await reply_item_result(message, user.id, item_id)
+            except Exception:
+                logger.exception("webchat: gagal memuat hasil bukti %s", item_id)
+                still_reading = True
+            if still_reading:
+                pending.append(str(item_id))
+    return {"ops": await _finish(outbox, user.id), "pending": pending}
 
 
 async def run_action(user, message_id: str, data: str) -> list[dict]:

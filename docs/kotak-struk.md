@@ -299,8 +299,12 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
   ditambahkan." Catatan yang sempat menunggu tidak pernah diproses NLP.
 - **Lewat batas tunggu**: Telegram membalas "⏳ Masih dibaca, nanti kukabari." lalu worker mengedit pesan itu
   menjadi hasil (atau gagal) lewat `send_ready_message`; pesan terhapus → pesan baru. Chat web membalas "⏳ Masih
-  dibaca. Cek Bukti menunggu di beranda nanti." (banner itu hanya tampil saat saklar menyala, lihat "Batasan yang
-  diketahui"). Bukti yang sama dikirim lagi selagi dibaca tidak merebut janji pesan pertama.
+  dibaca, nanti kukabari di sini." dengan id item di gelembungnya (op `item`, `pending`), lalu panel chat menanyakan
+  hasilnya sendiri lewat `POST /bot/chat/bukti` → `web_adapter.run_bukti` → `reply_item_result` sampai gelembung yang
+  sama diganti pesan hasil (teks dan tombol yang sama dengan Telegram); tanpa `notify`, worker tidak mengabari kanal
+  web. Detail (jeda tanya ulang, tombol basi disegarkan, status selesai tanpa tombol) di
+  [`chat-bot-web.md`](chat-bot-web.md) bagian "Foto struk". Bukti yang sama dikirim lagi selagi dibaca tidak merebut
+  janji pesan pertama (chat web: pesan kedua ikut menanyakan hasilnya).
 - **Tanggal di luar periode berjalan** (struk dan bukti; `period.document_date_kind`): tanggal struk/bayar sebelum
   awal periode anggaran user → sebelum tombol amplop bot bertanya "📅 Tanggal di {struk|bukti}: {tgl} — di luar
   periode sekarang ({periode}). Catat untuk tanggal berapa?" dengan **📅 Hari ini** dan **📅 {tgl}** (`kt_{key}_h` /
@@ -958,9 +962,11 @@ Catatan:
   status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris
   tunai dan tanpa kolom jumlah barang) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap
   terbaca).
-- **Saklar mati: janji chat web tanpa banner.** Bukti yang belum selesai dibaca dalam 10 dtk di chat web dijawab "⏳
-  Masih dibaca. Cek Bukti menunggu di beranda nanti.", tetapi banner "Bukti menunggu" hanya tampil saat saklar
-  menyala. Diterima (jarang).
+- **Hasil bukti chat web saat panel tertutup.** Bukti chat web yang selesai dibaca lewat batas tunggu diambil panel
+  chat sendiri (`/bot/chat/bukti`), jadi tidak lagi bergantung pada banner "Bukti menunggu" (dulu: "Cek Bukti
+  menunggu di beranda nanti." tanpa banner selama saklar mati — hasilnya tidak pernah sampai ke chat). Yang belum:
+  hasil yang selesai saat panel tertutup baru terlihat saat chat dibuka lagi; tidak ada lencana atau notifikasi
+  dalam aplikasi untuk itu.
 - **Form lintas situs ke `/bagikan`.** Situs mana pun bisa mengirim form `POST` ke `/bagikan` lewat navigasi lintas
   situs, dan service worker menyimpannya seperti share. Saat saklar menyala, halaman `/bagikan` mengunggahnya ke kotak
   user yang sedang login sebagai item sampah. Dibatasi batas intake (30 bukti/jam, 20 item belum selesai), file di
