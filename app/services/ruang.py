@@ -1,16 +1,20 @@
-"""Penentu ruang (Plugin R2, docs/plugin/04-kontrak-api.md §1, ADR-P1, P2).
+"""Penentu ruang (Plugin R2, R3; docs/plugin/04-kontrak-api.md §1, ADR-P1, P2).
 
 Ruang = household. Satu user boleh anggota beberapa ruang (R1): ruang keluarga
 (`households.type = rumah_tangga`) dan ruang usaha. Semua kode yang dulu mencari
 "household milik user" lewat keanggotaan memakai salah satu fungsi di sini, dan
 meneruskan `household_id` secara eksplisit ke services:
 
-- `ruang_aktif` (dependency FastAPI) — untuk **membaca**. Header `X-Jatahku-Ruang`
-  memilih ruang tempat user menjadi anggota; tanpa header → ruang keluarga, jadi
-  klien lama dan user satu ruang tidak berubah perilakunya.
-- `ruang_tulis` (dependency FastAPI) — untuk **menulis** sampai R3. Selalu ruang
-  keluarga; header yang menunjuk ruang lain ditolak supaya tulis tidak pernah jatuh
-  diam-diam ke ruang yang salah. R3 menggantinya dengan ruang dari objek yang ditulis.
+- `ruang_aktif` (dependency FastAPI) — untuk **membaca**, dan sejak R3 untuk membuat objek
+  baru tanpa induk (amplop, grup, pemasukan tanpa alokasi, reset, cocokkan saldo, rencana
+  dana). Header `X-Jatahku-Ruang` memilih ruang tempat user menjadi anggota; tanpa header →
+  ruang keluarga, jadi klien lama dan user satu ruang tidak berubah perilakunya.
+- **Menulis objek yang sudah ada atau objek dengan induk (R3)**: ruang diambil dari objeknya
+  (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek`), lalu keanggotaan dicek; header tidak
+  menentukan ruang. Objek di ruang yang bukan milik user → None (route menjawab 404); satu
+  permintaan yang menyentuh dua ruang milik user → `LintasRuang` (400 `lintas_ruang`).
+- `ruang_tulis` (dependency FastAPI) — hanya untuk undangan anggota: selalu ruang keluarga,
+  header ruang lain ditolak (undangan ruang usaha dibuat di R5).
 - `ruang_keluarga(user, db)` — bot (Telegram dan chat web), job terjadwal, dan
   pekerjaan latar. Chat selalu ruang keluarga (ADR-P2).
 
@@ -37,8 +41,8 @@ PESAN_DITOLAK = "Ruang ini tidak bisa dibuka dari akunmu. Muat ulang Jatahku lal
 class RuangDitolak(HTTPException):
     """403 dengan `detail` teks siap tampil; `install()` menambah field `kode` (§7)."""
 
-    def __init__(self, kode: str = KODE_DITOLAK, detail: str = PESAN_DITOLAK):
-        super().__init__(status_code=403, detail=detail)
+    def __init__(self, kode: str = KODE_DITOLAK, detail: str = PESAN_DITOLAK, status_code: int = 403):
+        super().__init__(status_code=status_code, detail=detail)
         self.kode = kode
 
 
@@ -135,3 +139,59 @@ async def ruang_tulis(
 # bukan diam-diam meneruskan objek Depends sebagai id ruang.
 RuangAktif = Annotated[UUID | None, Depends(ruang_aktif)]
 RuangTulis = Annotated[UUID | None, Depends(ruang_tulis)]
+
+
+# ── R3: ruang dari objek saat menulis ────────────────────────────────────
+KODE_LINTAS = "lintas_ruang"
+PESAN_LINTAS = "Catatan ini menyentuh dua ruang sekaligus. Catat terpisah di masing-masing ruang."
+
+
+class LintasRuang(RuangDitolak):
+    """400: satu permintaan tulis menyentuh lebih dari satu ruang (prive dua sisi menyusul di R8)."""
+
+    def __init__(self):
+        super().__init__(kode=KODE_LINTAS, detail=PESAN_LINTAS, status_code=400)
+
+
+async def ruang_objek(db: AsyncSession, user, household_id) -> UUID | None:
+    """Ruang objek yang ditulis, hanya bila user anggota ruang itu. None = bukan milik user;
+    route menjawab seperti objek tidak ada (404), supaya keberadaan objek tidak bocor."""
+    if household_id is None or await keanggotaan(db, user.id, household_id) is None:
+        return None
+    return household_id
+
+
+async def ruang_amplop(db: AsyncSession, user, envelope_id) -> UUID | None:
+    """Ruang amplop `envelope_id` bila user anggotanya (lihat `ruang_objek`)."""
+    from app.models.models import Envelope
+    if envelope_id is None:
+        return None
+    hid = (await db.execute(select(Envelope.household_id).where(Envelope.id == envelope_id))).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
+
+
+async def ruang_amplop_satu(db: AsyncSession, user, envelope_ids) -> UUID | None:
+    """Satu ruang untuk sekumpulan amplop dalam satu permintaan tulis (transfer, alokasi pemasukan).
+    Amplop di ruang yang bukan milik user diabaikan di sini (route menjawab 404 untuknya, tanpa
+    membocorkan ruang lain); amplop milik user di lebih dari satu ruang → `LintasRuang` (400)."""
+    from app.models.models import Envelope
+    ids = [e for e in envelope_ids if e is not None]
+    if not ids:
+        return None
+    ruang_ids = set((await db.execute(
+        select(Envelope.household_id).where(Envelope.id.in_(ids)).distinct()
+    )).scalars())
+    milik = set()
+    for hid in ruang_ids:
+        if await keanggotaan(db, user.id, hid) is not None:
+            milik.add(hid)
+    if len(milik) > 1:
+        raise LintasRuang()
+    return next(iter(milik), None)
+
+
+async def ruang_jenis(db: AsyncSession, household_id) -> str | None:
+    """`households.type` untuk aturan per ruang (mis. kuota Basic hanya di ruang keluarga, ADR-P13)."""
+    if household_id is None:
+        return None
+    return (await db.execute(select(Household.type).where(Household.id == household_id))).scalar_one_or_none()

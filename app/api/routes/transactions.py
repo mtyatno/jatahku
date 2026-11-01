@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import document_date_kind
 from app.models.models import (
-    User, Transaction, Envelope, TransactionSource
+    User, Transaction, Envelope, HouseholdType, TransactionSource
 )
 from app.services.behavior import BehaviorCheckResult, check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable
@@ -25,7 +25,7 @@ from app.services.plan_limits import check_transaction_limit, has_txn_limit, quo
 from app.services import quota_pass
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif, ruang_amplop, ruang_jenis, ruang_objek
 
 router = APIRouter()
 log = logging.getLogger("jatahku.transactions")
@@ -153,13 +153,14 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db, after=None) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None, *, household_id) -> TransactionCreateResponse:
     """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
-    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu)."""
+    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu),
+    untuk ruang transaksinya (`household_id`): catatan di ruang usaha tidak memakai kuota Basic (ADR-P13)."""
     out = TransactionCreateResponse.model_validate(txn)
     if after is not None:
         await after()
-    out.quota_notice = await quota_notice_after_input(user, db)
+    out.quota_notice = await quota_notice_after_input(user, db, household_id=household_id)
     return out
 
 
@@ -216,9 +217,8 @@ async def create_transaction(
     req: TransactionCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await ruang_amplop(db, user, req.envelope_id)
     from app.services import idempotency
     existing_ref = await idempotency.lookup(user.id, req.client_ref)
     if existing_ref == idempotency.PENDING:
@@ -230,14 +230,16 @@ async def create_transaction(
             if req.receipt_item_id:
                 async def heal():
                     await heal_recorded(db, user, req.receipt_item_id, existing.id, existing.envelope_id)
-            return await _created(existing, user, db, after=heal)  # sudah tercatat sebelumnya (kirim ulang)
+            return await _created(existing, user, db, after=heal, household_id=hid)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
         if receipt_error:
             raise HTTPException(status_code=409, detail=receipt_error)
-    # Verify envelope belongs to user's household
-
+    # Verify envelope belongs to user's household. Urutan tetap (spec 5d): idempotensi -> struk -> amplop, jadi
+    # 404 amplop asing/tanpa ruang dicek di sini, eksplisit, bukan lewat `household_id IS NULL` (review PR #171).
+    if not hid:
+        raise HTTPException(status_code=404, detail="Envelope not found")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == req.envelope_id,
@@ -254,7 +256,7 @@ async def create_transaction(
         raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
     # Kuota Basic dicek di awal input; bagian dari input yang dimulai saat kuota
     # masih ada (client_ref berizin) tetap boleh — lihat app/services/quota_pass.py.
-    limit_ok, limit_msg = await check_transaction_limit(user, db)
+    limit_ok, limit_msg = await check_transaction_limit(user, db, household_id=hid)
     if not limit_ok and not await quota_pass.held(user.id, [req.client_ref]):
         raise HTTPException(status_code=403, detail=limit_msg)
 
@@ -310,7 +312,16 @@ async def create_transaction(
     async def after():
         await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
                            description=txn.description)
-    return await _created(txn, user, db, after=after)
+    return await _created(txn, user, db, after=after, household_id=hid)
+
+
+async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID):
+    """Ruang transaksi yang ditulis (lewat amplopnya), hanya bila user anggotanya (R3)."""
+    hid = (await db.execute(
+        select(Envelope.household_id).join(Transaction, Transaction.envelope_id == Envelope.id)
+        .where(Transaction.id == txn_id)
+    )).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
 
 
 @router.post("/suggest-envelope")
@@ -319,7 +330,7 @@ async def suggest_envelope(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     from app.services.txn_nlp import find_best_envelope
     if not hid or not req.description.strip():
@@ -336,7 +347,7 @@ async def suggest_envelopes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     from app.services.txn_nlp import find_best_envelope
     if not hid:
@@ -360,15 +371,18 @@ async def batch_create_transactions(
     req: BatchTransactionCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
 
     from app.services import idempotency
+    # R3: ruang tiap baris = ruang amplopnya (antrean offline tidak menyimpan ruang); baris ke amplop di
+    # ruang yang bukan milik user ditolak per baris. Kuota Basic hanya untuk baris di luar ruang usaha.
+    ruang_baris = [await ruang_amplop(db, user, it.envelope_id) for it in req.items]
+    usaha = {h for h in set(ruang_baris) if h and str(await ruang_jenis(db, h)) == HouseholdType.USAHA}
+    kena_kuota = [h not in usaha for h in ruang_baris]
     # Satu kiriman = satu input. Kuota Basic dicek SEKALI di awal: bila masih ada,
     # seluruh kiriman diselesaikan walau melewati batas, dan client_ref-nya diberi
     # izin supaya kirim ulang bagian yang gagal juga boleh (quota_pass).
-    quota_ok, quota_msg = await check_transaction_limit(user, db)
+    quota_ok, quota_msg = (await check_transaction_limit(user, db)) if any(kena_kuota) else (True, "")
     refs = [it.client_ref for it in req.items if it.client_ref]
     if quota_ok:
         if has_txn_limit(user):  # Pro tanpa batas → tidak perlu izin
@@ -390,8 +404,9 @@ async def batch_create_transactions(
                     await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
+        hid = ruang_baris[i]
         if not hid:
-            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Household not found"))
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
             continue
         if item.receipt_item_id:
             receipt_error = await _receipt_item_error(db, user, item.receipt_item_id)
@@ -414,7 +429,7 @@ async def batch_create_transactions(
         if not is_spendable(envelope):
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=NOT_SPENDABLE_MSG))
             continue
-        if allowed_refs is not None and item.client_ref not in allowed_refs:
+        if kena_kuota[i] and allowed_refs is not None and item.client_ref not in allowed_refs:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=quota_msg))
             continue
 
@@ -476,7 +491,7 @@ async def batch_create_transactions(
 
         results.append(BatchTransactionResult(index=i, ok=True, id=txn_id, description=item.description))
 
-    if any(r.ok for r in results):
+    if any(r.ok and kena_kuota[r.index] for r in results):
         notice = await quota_notice_after_input(user, db)
         if notice:
             for r in results:
@@ -681,11 +696,10 @@ async def delete_transaction(
     txn_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_transaksi(db, user, txn_id)
     if not hid:
-        raise HTTPException(status_code=404, detail="Household not found")
+        raise HTTPException(status_code=404, detail="Transaction not found")
 
     result = await db.execute(
         select(Transaction)

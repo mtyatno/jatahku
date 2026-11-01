@@ -18,7 +18,7 @@ from app.services.recurring_status import (
     compute_recurring_status, take_paid_in_period, payable_from, payment_window_error,
 )
 from app.services.bills_summary import summarize_bills
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif, ruang_amplop, ruang_objek
 
 router = APIRouter()
 
@@ -69,6 +69,16 @@ async def _paid_in_period(db: AsyncSession, recs, period_start: date, period_end
     return take_paid_in_period(recs, pools, period_start, period_end)
 
 
+async def _ruang_langganan(db: AsyncSession, user: User, rec_id: UUID):
+    """Ruang langganan yang ditulis (lewat amplopnya), hanya bila user anggotanya (R3)."""
+    hid = (await db.execute(
+        select(Envelope.household_id)
+        .join(RecurringTransaction, RecurringTransaction.envelope_id == Envelope.id)
+        .where(RecurringTransaction.id == rec_id)
+    )).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
+
+
 @router.get("/", response_model=list[RecurringResponse])
 async def list_recurring(
     user: User = Depends(get_current_user),
@@ -117,9 +127,10 @@ async def create_recurring(
     req: RecurringCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await ruang_amplop(db, user, req.envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     env_result = await db.execute(
         select(Envelope).where(
             Envelope.id == req.envelope_id,
@@ -163,9 +174,10 @@ async def update_recurring(
     req: RecurringCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Tidak ditemukan")
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
@@ -238,9 +250,10 @@ async def pay_recurring(
     req: PayRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
@@ -262,9 +275,10 @@ async def skip_recurring(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     rec.next_run = _next_date(rec.next_run, rec.frequency)
@@ -277,11 +291,12 @@ async def mark_recurring_paid(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
     """Tandai lunas (AI Advisor DAT-06): tagihan sudah dibayar lewat catat biasa, jadi
     `next_run` dimajukan tanpa transaksi baru. Jendela bayar sama dengan Bayar/Lewati."""
+    hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
@@ -337,9 +352,10 @@ async def delete_recurring(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Tidak ditemukan")
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)

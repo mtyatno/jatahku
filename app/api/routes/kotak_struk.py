@@ -21,7 +21,7 @@ from app.services.kotak_struk.merchants import NICKNAME_MAX, display_name, set_d
 from app.services.kotak_struk.record import MSG_CANNOT_SKIP, MSG_NOT_FOUND
 from app.services.kotak_struk.view import item_detail
 from app.services.kotak_struk.waiter import wait_for_item
-from app.services.ruang import RuangTulis
+from app.services.ruang import ruang_objek
 
 router = APIRouter()
 
@@ -153,9 +153,12 @@ async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_curren
 
 @router.put("/merchants/{merchant_id}")
 async def rename_merchant(merchant_id: UUID, body: MerchantNameIn, user: User = Depends(get_current_user),
-                          db: AsyncSession = Depends(get_db), *, household_id: RuangTulis):
+                          db: AsyncSession = Depends(get_db)):
     """Nama panggilan merchant untuk seluruh rumah tangga (dibersihkan; kosong menghapusnya). Hanya anggota
-    rumah tangga merchant itu."""
+    rumah tangga merchant itu (R3: ruang dari baris merchant, lalu keanggotaan dicek)."""
+    from app.models.models import HouseholdMerchant
+    merchant = await db.get(HouseholdMerchant, merchant_id)
+    household_id = await ruang_objek(db, user, merchant.household_id if merchant else None)
     row = await set_display_name(db, merchant_id, household_id, body.display_name) if household_id else None
     if row is None:
         raise HTTPException(status_code=404, detail=MSG_MERCHANT_NOT_FOUND)

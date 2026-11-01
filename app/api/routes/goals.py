@@ -15,7 +15,7 @@ from app.models.models import (
     User, Envelope, Goal, Transaction, Allocation, Income,
 )
 from app.services.advisor import envelope_lifetime_balance
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif, ruang_amplop, ruang_objek
 
 router = APIRouter()
 
@@ -90,6 +90,14 @@ async def _compute_goal_response(goal: Goal, user: User, db: AsyncSession) -> di
     }
 
 
+async def _ruang_goal(db: AsyncSession, user: User, goal_id: UUID):
+    """Ruang target yang ditulis (lewat amplopnya), hanya bila user anggotanya (R3)."""
+    hid = (await db.execute(
+        select(Envelope.household_id).join(Goal, Goal.envelope_id == Envelope.id).where(Goal.id == goal_id)
+    )).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
+
+
 @router.get("/", response_model=list[GoalResponse])
 async def list_goals(
     user: User = Depends(get_current_user),
@@ -121,11 +129,10 @@ async def create_goal(
     req: GoalCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await ruang_amplop(db, user, req.envelope_id)
     if not hid:
-        raise HTTPException(status_code=404, detail="Household not found")
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
 
     # Verify envelope belongs to household
     result = await db.execute(
@@ -195,11 +202,10 @@ async def update_goal(
     req: GoalUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_goal(db, user, goal_id)
     if not hid:
-        raise HTTPException(status_code=404, detail="Household not found")
+        raise HTTPException(status_code=404, detail="Target tidak ditemukan")
 
     result = await db.execute(
         select(Goal)
@@ -229,11 +235,10 @@ async def delete_goal(
     goal_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_goal(db, user, goal_id)
     if not hid:
-        raise HTTPException(status_code=404, detail="Household not found")
+        raise HTTPException(status_code=404, detail="Target tidak ditemukan")
 
     result = await db.execute(
         select(Goal)

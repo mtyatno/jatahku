@@ -270,6 +270,13 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
     }
 
 
+async def ruang_cek(db, user, check_id):
+    """Ruang cek saldo yang dibatalkan (R3: dari objeknya), hanya bila user anggota ruang itu."""
+    from app.services.ruang import ruang_objek
+    hid = (await db.execute(select(BalanceCheck.household_id).where(BalanceCheck.id == check_id))).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
+
+
 async def undo_balance_check(user, db, check_id, *, household_id) -> dict:
     """Batalkan cek TERAKHIR household (hanya oleh pembuatnya)."""
     hid = household_id

@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
 from app.services import balance_check as svc
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
@@ -65,7 +65,7 @@ async def balance_check_apply(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     try:
         return await svc.apply_balance_check(
@@ -81,9 +81,10 @@ async def balance_check_undo(
     check_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await svc.ruang_cek(db, user, check_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Penyesuaian tidak ditemukan")
     try:
         return await svc.undo_balance_check(user, db, check_id, household_id=hid)
     except svc.BalanceCheckError as e:

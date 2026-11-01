@@ -59,9 +59,10 @@ class RouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((ctx.exception.status_code, ctx.exception.detail), (409, "Data berubah, cek ulang selisihnya"))
 
     async def test_undo_maps_service_error(self):
-        with patch.object(svc, "undo_balance_check", new=AsyncMock(side_effect=svc.BalanceCheckError(403, "x"))):
+        with patch.object(svc, "undo_balance_check", new=AsyncMock(side_effect=svc.BalanceCheckError(403, "x"))), \
+                patch.object(svc, "ruang_cek", new=AsyncMock(return_value=HID)):
             with self.assertRaises(HTTPException) as ctx:
-                await route.balance_check_undo(uuid.uuid4(), user=USER, db=DB, hid=HID)
+                await route.balance_check_undo(uuid.uuid4(), user=USER, db=DB)
         self.assertEqual(ctx.exception.status_code, 403)
 
     async def test_status_delegates(self):

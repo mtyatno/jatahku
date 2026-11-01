@@ -53,7 +53,7 @@ async def check_expense(envelope, user, amount: Decimal, db, *,
         return BehaviorCheckResult.blocked(
             "not_spendable", NOT_SPENDABLE_MSG, envelope_name=envelope.name)
     if not skip_plan_limit:
-        ok, msg = await check_transaction_limit(user, db)
+        ok, msg = await check_transaction_limit(user, db, household_id=getattr(envelope, "household_id", None))
         if not ok:
             return BehaviorCheckResult.blocked("plan_limit", msg)
     return await check_behavior(envelope.id, user.id, Decimal(amount), db)

@@ -18,7 +18,7 @@ from app.models.models import (
 from app.services.reserved import recurring_monthly_reserve
 from app.services.envelope_balance import compute_envelope_summaries
 from app.services.advisor.metrics import SAVING_PURPOSES, is_emergency_name
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif, ruang_amplop, ruang_amplop_satu, ruang_objek
 
 router = APIRouter()
 
@@ -118,6 +118,12 @@ def _resolve_is_emergency(requested: bool | None, purpose: str, name: str, curre
     return current
 
 
+async def _ruang_grup(db: AsyncSession, user: User, group_id: UUID):
+    """Ruang grup amplop yang ditulis (R3), hanya bila user anggotanya; selain itu None → 404."""
+    hid = (await db.execute(select(EnvelopeGroup.household_id).where(EnvelopeGroup.id == group_id))).scalar_one_or_none()
+    return await ruang_objek(db, user, hid)
+
+
 @router.get("/", response_model=list[EnvelopeResponse])
 async def list_envelopes(
     user: User = Depends(get_current_user),
@@ -176,7 +182,7 @@ async def create_group(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
@@ -201,11 +207,12 @@ async def update_group(
     req: EnvelopeGroupUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
     """Ganti nama dan/atau jenis grup (field yang tidak dikirim tidak diubah; `"jenis": null`
     mengembalikan ke otomatis). Jenis mengubah jatah harian AI Advisor → cache household dihapus."""
+    hid = await _ruang_grup(db, user, group_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
     )
@@ -233,9 +240,10 @@ async def delete_group(
     group_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await _ruang_grup(db, user, group_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
     from sqlalchemy import update
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
@@ -256,11 +264,11 @@ async def create_envelope(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     # Check plan limits
     from app.services.plan_limits import check_envelope_limit
-    allowed, limit_msg = await check_envelope_limit(user, db)
+    allowed, limit_msg = await check_envelope_limit(user, db, household_id=hid)
     if not allowed:
         raise HTTPException(status_code=403, detail=limit_msg)
 
@@ -317,9 +325,10 @@ async def update_envelope(
     req: EnvelopeCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await ruang_amplop(db, user, envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -374,9 +383,10 @@ async def delete_envelope(
     envelope_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
+    hid = await ruang_amplop(db, user, envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -461,13 +471,14 @@ async def transfer_between_envelopes(
     amount: Decimal,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    *,
-    hid: RuangTulis,
 ):
     """Transfer allocated funds from one envelope to another.
 
     Aturan (amplop aktif yang boleh diakses, jumlah ≤ sisa sumber) dan bentuk
     datanya dari app/services/fund_shift.py — sama dengan geser dana di bot."""
+    hid = await ruang_amplop_satu(db, user, [from_id, to_id])
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     from app.services.envelope_balance import compute_envelope_summaries
     from app.services.fund_shift import lock_household
     from app.services.fund_shift import record_transfer, transfer_error

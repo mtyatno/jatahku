@@ -76,22 +76,6 @@ def _normal(body):
     return json.loads(_WAKTU.sub("<waktu>", json.dumps(body, ensure_ascii=False, sort_keys=True)))
 
 
-# Satu-satunya selisih yang diizinkan: kuota transaksi Basic masih dihitung per user lintas ruang
-# (`plan_limits.monthly_txn_usage`). R3 memindahkannya ke kuota per ruang (03-workflow.md baris R3)
-# dan harus menghapus pengecualian ini.
-DIIZINKAN_BEDA_SAMPAI_R3 = {"/user/profile": (("usage", "txn_this_month"),)}
-
-
-def _tanpa_pengecualian(path, body):
-    for kunci in DIIZINKAN_BEDA_SAMPAI_R3.get(path, ()):
-        node = body
-        for k in kunci[:-1]:
-            node = node.get(k, {}) if isinstance(node, dict) else {}
-        if isinstance(node, dict):
-            node.pop(kunci[-1], None)
-    return body
-
-
 # Penanda data ruang usaha: tidak boleh muncul di jawaban mana pun tanpa header.
 PENANDA_USAHA = ("Bahan Baku Nusa", "terigu nusa", "Omzet Nusa", "Sewa Kios Nusa", "Mixer Nusa")
 PENANDA_KELUARGA = ("Makan Rumah", "kopi rumah")
@@ -126,7 +110,7 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
                 HouseholdMember(user_id=rina.id, household_id=rumah.id, role=HouseholdRole.member),
                 HouseholdMember(user_id=orang.id, household_id=asing.id, role=HouseholdRole.owner),
             ])
-            await self._isi_ruang(db, rumah.id, me.id, today, "Makan Rumah", "kopi rumah", "Gaji Rumah",
+            self.id_rumah = await self._isi_ruang(db, rumah.id, me.id, today, "Makan Rumah", "kopi rumah", "Gaji Rumah",
                                   "Internet Rumah", "Liburan Rumah")
             self.id_asing = await self._isi_ruang(db, asing.id, orang.id, today, "Makan Orang", "kopi orang", "Gaji Orang",
                                   "Internet Orang", "Liburan Orang")
@@ -223,9 +207,7 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         for user, sebelum in ((self.me, sebelum_me), (self.rina, sebelum_rina)):
             sesudah = await self._potret(user)
             for p, jawaban in sebelum.items():
-                self.assertEqual(_tanpa_pengecualian(p, sesudah[p][1]), _tanpa_pengecualian(p, jawaban[1]),
-                                 f"{p} berubah untuk {user.name} setelah ruang kedua ada")
-                self.assertEqual(sesudah[p][0], jawaban[0], p)
+                self.assertEqual(sesudah[p], jawaban, f"{p} berubah untuk {user.name} setelah ruang kedua ada")
                 teks = json.dumps(sesudah[p][1], ensure_ascii=False)
                 for penanda in PENANDA_USAHA:
                     self.assertNotIn(penanda, teks, f"data ruang usaha bocor di {p}")
@@ -260,11 +242,24 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(sisa_env), ["Bahan Baku Nusa", "Mixer Nusa"])
         self.assertEqual(n_txn, 1)
 
-    async def test_reset_dengan_header_ruang_lain_ditolak(self):
+    async def test_reset_dengan_header_ruang_orang_lain_ditolak(self):
+        await self._beri_ruang_usaha()
+        self.current = self.me
+        r = await self.client.post("/user/reset", json={}, headers={ruang.RUANG_HEADER: str(self.asing_id)})
+        self.assertEqual((r.status_code, r.json().get("kode")), (403, "ruang_tidak_diizinkan"))
+
+    async def test_reset_dengan_header_ruang_usaha_hanya_menghapus_ruang_usaha(self):
+        # R3 (keputusan A): objek tanpa induk, termasuk reset, memakai ruang dari header yang sah.
+        from sqlalchemy import select
         await self._beri_ruang_usaha()
         self.current = self.me
         r = await self.client.post("/user/reset", json={}, headers={ruang.RUANG_HEADER: str(self.usaha_id)})
-        self.assertEqual((r.status_code, r.json().get("kode")), (403, "ruang_tidak_diizinkan"))
+        self.assertEqual(r.status_code, 200, r.text)
+        async with self.Session() as db:
+            sisa_inc = (await db.execute(select(Income.description).where(Income.user_id == self.me.id))).scalars().all()
+            sisa_usaha = (await db.execute(select(Envelope.id).where(Envelope.household_id == self.usaha_id))).all()
+        self.assertEqual(sisa_inc, ["Gaji Rumah"])
+        self.assertEqual(sisa_usaha, [])
 
     async def _idor(self, ids, headers=None):
         """Setiap endpoint ber-ID dicoba terhadap objek `ids`; jawabannya tidak boleh 2xx."""
@@ -284,6 +279,13 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
             ("get", f"/goals/{ids['goal']}", None), ("put", f"/goals/{ids['goal']}", {"name": "Dibajak"}),
             ("delete", f"/goals/{ids['goal']}", None),
             ("post", "/envelopes/transfer", None),
+            # R3: objek baru yang induknya amplop household lain
+            ("post", "/transactions/", {"envelope_id": str(ids["env"]), "amount": "1000", "description": "Dibajak"}),
+            ("post", "/goals/", {"envelope_id": str(ids["tab"]), "name": "Dibajak", "target_amount": "1000"}),
+            ("post", "/recurring/", {"envelope_id": str(ids["env"]), "amount": "1000", "description": "Dibajak",
+                                     "next_run": str(self.today)}),
+            ("post", "/incomes/", {"amount": "1000", "source": "Dibajak",
+                                   "allocations": [{"envelope_id": str(ids["env"]), "amount": "1000"}]}),
         ]
         for method, path, body in coba:
             kw = {"headers": headers}
@@ -292,8 +294,9 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
             elif body is not None:
                 kw["json"] = body
             r = await self.client.request(method.upper(), path, **kw)
+            # Kontrak §1: objek di ruang orang lain = 404 biasa, tanpa membocorkan keberadaannya (review PR #171).
             # 422 berarti permintaan tidak sampai ke pemeriksaan ruang: tesnya yang salah, bukan bukti aman.
-            self.assertIn(r.status_code, (400, 403, 404), f"{method} {path} {headers}: {r.status_code} {r.text[:200]}")
+            self.assertEqual(r.status_code, 404, f"{method} {path} {headers}: {r.status_code} {r.text[:200]}")
 
     async def _utuh(self, ids, amplop):
         from sqlalchemy import select
@@ -310,7 +313,12 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(rec.is_active)
         self.assertEqual(rec.amount, D("150000"))
         self.assertTrue(grp.name.startswith("Grup "))
-        self.assertEqual(n_alloc, 1, "transfer menyentuh amplop ruang lain")
+        self.assertEqual(n_alloc, 1, "transfer/pemasukan menyentuh amplop ruang lain")
+        async with self.Session() as db:
+            for model, kolom in ((Transaction, Transaction.description), (Goal, Goal.name),
+                                 (RecurringTransaction, RecurringTransaction.description), (Income, Income.description)):
+                n = len((await db.execute(select(model).where(kolom == "Dibajak"))).all())
+                self.assertEqual(n, 0, f"{model.__name__} dibuat di household orang lain")
 
     async def test_idor_objek_household_orang_lain(self):
         await self._beri_ruang_usaha()
@@ -318,12 +326,129 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         await self._idor(self.id_asing, {ruang.RUANG_HEADER: str(self.usaha_id)})
         await self._utuh(self.id_asing, "Makan Orang")
 
-    async def test_tulis_ke_ruang_usaha_sendiri_ditolak_sampai_r3(self):
-        # Sampai R3 penulisan hanya ke ruang keluarga: objek ruang usaha sendiri tidak bisa diubah, dengan atau
-        # tanpa header ruang usaha (yang ditolak 403). GET /goals/{id} ruang usaha tanpa header juga 404.
+    # ── R3: ruang dari objek saat menulis ──────────────────────────────
+    async def _req(self, method, path, json=None, params=None, header=None, user=None):
+        self.current = user or self.me
+        headers = {ruang.RUANG_HEADER: str(header)} if header else {}
+        return await self.client.request(method, path, json=json, params=params, headers=headers)
+
+    async def test_tulis_objek_ruang_usaha_sendiri_dari_objek(self):
+        """Tanpa header (atau dengan header ruang keluarga), objek ruang usaha milik user bisa diubah: ruang
+        ditentukan objeknya, bukan header."""
+        from sqlalchemy import select
         await self._beri_ruang_usaha()
-        await self._idor(self.id_usaha)
-        await self._utuh(self.id_usaha, "Bahan Baku Nusa")
+        u = self.id_usaha
+        for header in (None, self.rumah_id):
+            r = await self._req("PUT", f"/goals/{u['goal']}", {"name": "Mixer Baru"}, header=header)
+            self.assertEqual(r.status_code, 200, r.text)
+        cek = [
+            ("PATCH", f"/envelopes/groups/{u['grp']}", {"name": "Grup Usaha"}, None, 200),
+            ("PUT", f"/envelopes/{u['env']}", {"name": "Bahan Baku Nusa", "budget_amount": "5"}, None, 200),
+            ("PUT", f"/recurring/{u['rec']}", {"envelope_id": str(u["env"]), "amount": "175000",
+                                               "description": "Sewa Kios Nusa", "next_run": str(self.today)}, None, 200),
+            ("POST", f"/recurring/{u['rec']}/skip", None, None, 200),
+            ("POST", "/envelopes/transfer", None, {"from_id": str(u["env"]), "to_id": str(u["tab"]), "amount": "1000"}, 200),
+            ("DELETE", f"/transactions/{u['txn']}", None, None, 204),
+        ]
+        for method, path, body, params, status in cek:
+            r = await self._req(method, path, body, params)
+            self.assertEqual(r.status_code, status, f"{method} {path}: {r.text[:200]}")
+        r = await self._req("POST", "/transactions/", {"envelope_id": str(u["env"]), "amount": "1000",
+                                                      "description": "gula nusa"})
+        self.assertEqual(r.status_code, 201, r.text)
+        async with self.Session() as db:
+            txn = (await db.execute(select(Transaction).where(Transaction.description == "gula nusa"))).scalar_one()
+            env = await db.get(Envelope, txn.envelope_id)
+        self.assertEqual(env.household_id, self.usaha_id)
+
+    async def test_objek_baru_tanpa_induk_ke_ruang_header(self):
+        from sqlalchemy import select
+        await self._beri_ruang_usaha()
+        r = await self._req("POST", "/envelopes/", {"name": "Kemasan", "budget_amount": "100000"}, header=self.usaha_id)
+        self.assertEqual(r.status_code, 201, r.text)
+        r = await self._req("POST", "/envelopes/", {"name": "Jajan Anak", "budget_amount": "100000"})
+        self.assertEqual(r.status_code, 201, r.text)
+        r = await self._req("POST", "/envelopes/groups", {"name": "Operasional"}, header=self.usaha_id)
+        self.assertEqual(r.status_code, 201, r.text)
+        r = await self._req("POST", "/incomes/", {"amount": "250000", "source": "Penjualan pagi"}, header=self.usaha_id)
+        self.assertEqual(r.status_code, 201, r.text)
+        async with self.Session() as db:
+            def hh(model, kolom, nilai):
+                return select(model.household_id).where(kolom == nilai)
+            self.assertEqual((await db.execute(hh(Envelope, Envelope.name, "Kemasan"))).scalar_one(), self.usaha_id)
+            self.assertEqual((await db.execute(hh(Envelope, Envelope.name, "Jajan Anak"))).scalar_one(), self.rumah_id)
+            self.assertEqual((await db.execute(hh(EnvelopeGroup, EnvelopeGroup.name, "Operasional"))).scalar_one(),
+                             self.usaha_id)
+            self.assertEqual((await db.execute(hh(Income, Income.description, "Penjualan pagi"))).scalar_one(),
+                             self.usaha_id)
+        r = await self._req("POST", "/envelopes/", {"name": "Bajakan", "budget_amount": "100000"}, header=self.asing_id)
+        self.assertEqual((r.status_code, r.json().get("kode")), (403, "ruang_tidak_diizinkan"))
+
+    async def test_permintaan_lintas_ruang_ditolak(self):
+        from sqlalchemy import func, select
+        await self._beri_ruang_usaha()
+        k, u = self.id_rumah, self.id_usaha
+        r = await self._req("POST", "/envelopes/transfer", params={"from_id": str(k["env"]), "to_id": str(u["env"]),
+                                                                    "amount": "1000"})
+        self.assertEqual((r.status_code, r.json().get("kode")), (400, "lintas_ruang"), r.text)
+        r = await self._req("POST", "/incomes/", {"amount": "2000", "source": "Campur", "allocations": [
+            {"envelope_id": str(k["env"]), "amount": "1000"}, {"envelope_id": str(u["env"]), "amount": "1000"}]})
+        self.assertEqual((r.status_code, r.json().get("kode")), (400, "lintas_ruang"), r.text)
+        # Langganan ruang keluarga tidak bisa dipindah ke amplop ruang usaha.
+        r = await self._req("PUT", f"/recurring/{k['rec']}", {"envelope_id": str(u["env"]), "amount": "150000",
+                                                             "description": "Internet Rumah", "next_run": str(self.today)})
+        self.assertIn(r.status_code, (400, 404), r.text)
+        async with self.Session() as db:
+            n_inc = (await db.execute(select(func.count(Income.id)).where(Income.description == "Campur"))).scalar()
+            rec = await db.get(RecurringTransaction, k["rec"])
+        self.assertEqual(n_inc, 0)
+        self.assertEqual(rec.envelope_id, k["env"])
+
+    async def test_antrean_offline_per_item_ke_ruang_amplopnya(self):
+        from sqlalchemy import select
+        await self._beri_ruang_usaha()
+        k, u, a = self.id_rumah, self.id_usaha, self.id_asing
+        r = await self._req("POST", "/transactions/batch", {"items": [
+            {"envelope_id": str(k["env"]), "amount": "1000", "description": "offline rumah", "client_ref": "off-1"},
+            {"envelope_id": str(u["env"]), "amount": "1000", "description": "offline nusa", "client_ref": "off-2"},
+            {"envelope_id": str(a["env"]), "amount": "1000", "description": "offline orang", "client_ref": "off-3"},
+        ]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([x["ok"] for x in sorted(r.json(), key=lambda x: x["index"])], [True, True, False])
+        async with self.Session() as db:
+            rows = (await db.execute(select(Transaction.description, Envelope.household_id)
+                                     .join(Envelope, Envelope.id == Transaction.envelope_id)
+                                     .where(Transaction.description.like("offline %")))).all()
+        self.assertEqual(dict(rows), {"offline rumah": self.rumah_id, "offline nusa": self.usaha_id})
+
+    async def test_kuota_basic_hanya_ruang_keluarga(self):
+        from datetime import date as _date
+        from sqlalchemy import update
+        await self._beri_ruang_usaha()
+        async with self.Session() as db:
+            await db.execute(update(User).where(User.id == self.me.id).values(plan="basic"))
+            for i in range(48):              # + 1 kopi rumah dari fixture = 49
+                db.add(Transaction(envelope_id=self.id_rumah["env"], user_id=self.me.id, amount=D("1"),
+                                   description=f"isi {i}", transaction_date=_date.today()))
+            await db.commit()
+            self.me = await db.get(User, self.me.id)
+        r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_rumah["env"]), "amount": "1",
+                                                      "description": "isi terakhir"})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertTrue(r.json().get("quota_notice"), r.text)      # input ke-50 ruang keluarga: kuota kini habis
+        r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_rumah["env"]), "amount": "1",
+                                                      "description": "lewat kuota"})
+        self.assertEqual(r.status_code, 403, r.text)               # kuota Basic ruang keluarga habis
+        r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_usaha["env"]), "amount": "1",
+                                                      "description": "jualan"})
+        self.assertEqual(r.status_code, 201, r.text)               # ruang usaha tidak memakai kuota Basic
+        self.assertIsNone(r.json().get("quota_notice"), r.text)    # ...dan tidak diberi peringatan kuota (review #171)
+        for i in range(6):                                         # batas 6 amplop Basic tidak berlaku di ruang usaha
+            r = await self._req("POST", "/envelopes/", {"name": f"Usaha {i}", "budget_amount": "100000"},
+                                header=self.usaha_id)
+            self.assertEqual(r.status_code, 201, r.text)
+        prof = (await self._req("GET", "/user/profile")).json()
+        self.assertEqual(prof["usage"]["txn_this_month"], 50)      # 48 isi + kopi rumah + isi terakhir; usaha tidak dihitung
 
     # ── gabung akun: ruang yang dipertahankan tidak boleh dari body sembarang (review PR #166) ──
     async def _akun_bot(self):
@@ -386,7 +511,7 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_join_bot_ke_ruang_usaha_ditolak(self):
         from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
         from app.bot import household_cmd
         await self._beri_ruang_usaha()
         async with self.Session() as db:

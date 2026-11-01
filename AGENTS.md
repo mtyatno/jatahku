@@ -233,7 +233,15 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
-## Deploy Checklist — Plugin R2: resolver ruang (tanpa migrasi)
+## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi)
+Penulisan menentukan ruang dari objeknya; objek baru tanpa induk dari header (tanpa header = ruang keluarga); kuota
+Basic hanya di ruang keluarga. Tanpa migrasi, paket, `.env`, atau perubahan tampilan: belum ada klien yang mengirim
+`X-Jatahku-Ruang` dan belum ada user dengan ruang kedua, jadi semua penulisan tetap jatuh ke ruang keluarga.
+1. Merge, tunggu deploy hijau (`api.jatahku.com/health` → commit baru).
+2. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0.
+   Cek catat transaksi (web dan bot), tambah amplop, geser dana, bayar langganan, dan antrean offline di HP.
+
+## Deploy Checklist — Plugin R2: resolver ruang (tanpa migrasi) — sudah jalan 2026-11-01
 Mengganti setiap pencarian "household milik user" dengan `app/services/ruang.py`. Tanpa migrasi, paket, atau `.env`
 baru, dan tanpa perubahan tampilan: belum ada klien yang mengirim `X-Jatahku-Ruang` dan belum ada user dengan ruang
 kedua. Satu perubahan perilaku yang disengaja: `POST /user/reset` hanya menghapus pemasukan user di household yang
@@ -426,7 +434,7 @@ Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). B
 
 ## Plugin dan ruang (WAJIB untuk semua sesi plugin)
 Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, bentuk API di `04-kontrak-api.md`). Buka sesi dengan `/sesi-plugin <kode>`, tutup dengan `/tutup-sesi-plugin`. Satu sesi = satu branch `plugin/<kode>-<slug>` = satu PR berjudul `Plugin <kode>: <nama>`; status di `docs/plugin/PROGRESS.md`, serah-terima di `docs/plugin/SESI-LOG.md`. PR berlabel `review-keamanan` direview sesi Claude Code terpisah sebelum merge, dan temuan keamanan dikerjakan sebelum fitur dilanjutkan.
-1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif` (header `X-Jatahku-Ruang`); menulis menentukan ruang dari objek yang ditulis, lalu memeriksa keanggotaan (sampai R3: `ruang_tulis`, selalu ruang keluarga). `ruang_id` dari body atau query tidak pernah dipercaya. Route menerima ruang sebagai parameter keyword-only `*, hid: RuangAktif` / `hid: RuangTulis` (`app/services/ruang.py`) dan meneruskannya ke services sebagai `household_id`; services tidak pernah mencari household dari keanggotaan sendiri. Kueri `HouseholdMember.user_id == …` baru dijaga `app/tests/test_ruang_pagar.py`.
+1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif` (header `X-Jatahku-Ruang`). Menulis objek yang sudah ada atau yang punya induk menentukan ruang dari objek itu (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek` di `app/services/ruang.py`), lalu memeriksa keanggotaan; objek ruang lain = 404, dua ruang dalam satu permintaan = 400 `lintas_ruang`. Objek baru tanpa induk memakai ruang dari header yang sah (`ruang_aktif`). `ruang_id` dari body atau query tidak pernah dipercaya. Route menerima ruang header sebagai parameter keyword-only `*, hid: RuangAktif` dan meneruskannya ke services sebagai `household_id`; services tidak pernah mencari household dari keanggotaan sendiri. Kueri `HouseholdMember.user_id == …` baru dan route non-GET baru yang memakai `ruang_aktif` dijaga `app/tests/test_ruang_pagar.py`.
 2. **Chat selalu ruang keluarga.** Handler bot memakai `ruang_keluarga(user)`. Tidak ada transaksi ruang usaha atau Fitur Tambahan lewat chat; perintah plugin hanya membaca dan menyatakan `audience` (data keuangan usaha hanya untuk pemilik dan admin).
 3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan.
 4. **Plugin hanya lewat `PluginContext`.** Kode di `app/plugins/<id>/` tidak mengimpor model atau route inti dan tidak menulis ke tabel inti secara langsung.

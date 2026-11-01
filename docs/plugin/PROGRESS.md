@@ -14,8 +14,8 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | B2 | #139 | Beranda dari registry | 1 Beranda registry | 3,5 | B1 | selesai | Pemilik produk + Claude | #165 | 2026-11-01 | 2026-11-01 |
 | B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | selesai | Pemilik produk + Claude | #167, #168, #172 | 2026-11-01 | 2026-11-01 |
 | R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | selesai | Pemilik produk + Claude | #161 | 2026-11-01 | 2026-11-01 |
-| R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | review | Pemilik produk + Claude | #166 | 2026-11-01 | |
-| R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | belum | | | | |
+| R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | selesai | Pemilik produk + Claude | #166 | 2026-11-01 | 2026-11-01 |
+| R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | review | Pemilik produk + Claude | #171 | 2026-11-01 | |
 | R4 | #144 | Membuat dan berpindah ruang | 2 Ruang usaha | 3,5 | R3 | belum | | | | |
 | R5 (migrasi, review) | #145 | Peran, batasan, persetujuan di server | 2 Ruang usaha | 4 | R3 | belum | | | | |
 | R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | belum | | | | |
@@ -37,7 +37,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | Gerbang | Syarat lulus | Diuji di | Status |
 |---|---|---|---|
 | B | Angka dan tampilan Beranda sama untuk semua user; `POST /dashboard/data` p95 ≤ 500 ms | B3 | lulus 1 Nov (keputusan pemilik): paritas produksi 105 user ok, 0 beda/crash, p95 231 ms; Beranda registry menyala untuk pemilik; perluasan flag ke `*` oleh pemilik; banding tampilan otomatis tidak dijalankan |
-| R | Angka user lama identik sebelum dan sesudah refactor; nol kebocoran antar-ruang (tes IDOR); chat tetap ruang keluarga | R2, R3, R8 | sebagian: bagian R2 lulus di tes (paritas tanpa header untuk 40 endpoint GET, IDOR baca/tulis, bot ruang keluarga); produksi `ruang_paritas` setelah merge; R3, R8 menyusul |
+| R | Angka user lama identik sebelum dan sesudah refactor; nol kebocoran antar-ruang (tes IDOR); chat tetap ruang keluarga | R2, R3, R8 | sebagian: R2 lulus (tes paritas 40 endpoint GET, IDOR, bot ruang keluarga; produksi `ruang_paritas` 105/105 ok, 1 Nov); R3 di tes (tulis dari objek, IDOR tulis + buat, lintas ruang, antrean offline, kuota per ruang); R8 menyusul |
 | H | Buku Usaha bisa dipasang, dijeda, dilanjutkan, dicopot, dan dipulihkan bersih; tes isolasi lulus | U1 | belum |
 | Rilis | Review keamanan terpisah lulus; angka ruang keluarga tetap identik; flag per ruang siap | V1 | belum |
 | Beta | 10 UMKM aktif selama 4 minggu tanpa insiden data | V1 + 4 minggu | belum |

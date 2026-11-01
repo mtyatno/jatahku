@@ -2,7 +2,7 @@
 
 Sistem **Fitur Tambahan** (plugin) untuk Jatahku, dengan **Buku Usaha** sebagai plugin pertama (ADR-P7). Uang usaha dipisah dari uang keluarga lewat **ruang**: ruang usaha adalah household kedua bertipe `usaha`, dengan banyak anggota, peran, dan batasan dari admin (ADR-P1, P4). Kartu Beranda menjadi registry dengan data batch, supaya plugin bisa menyumbang kartu. Chat (Telegram dan chat web) tetap hanya untuk ruang keluarga (ADR-P2).
 
-**Fase sekarang:** Fase 1 (Beranda registry) selesai 1 Nov 2026: B1 #162, B2 #165, B3 #167/#168 (Gerbang B lulus, paritas produksi 105 user, p95 231 ms; flag `beranda_registry_users` dinyalakan bertahap oleh pemilik). Fase 2 (ruang usaha) berjalan: R1 #161 dan R2 #166 tayang, berikutnya R3. Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 (Beranda registry) selesai 1 Nov 2026: B1 #162, B2 #165, B3 #167/#168 (Gerbang B lulus, paritas produksi 105 user, p95 231 ms; flag `beranda_registry_users` dinyalakan bertahap oleh pemilik). Fase 2 (ruang usaha) berjalan: R1 #161 dan R2 #166 tayang. Ruang ditentukan `app/services/ruang.py`: membaca dari `ruang_aktif` (header `X-Jatahku-Ruang`, tanpa header = ruang keluarga); sejak R3 (#143) menulis dari objek yang ditulis, objek baru tanpa induk dari header, dan kuota Basic hanya di ruang keluarga; bot dan job selalu ruang keluarga. Berikutnya R4 (membuat dan berpindah ruang, flag `ruang_usaha_users`), R5, R8, dan H1. Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 
@@ -27,7 +27,7 @@ Diisi sesi yang membuatnya. Rencana dari `01-kajian.md`, "Lampiran teknis":
 | Bagian | Lokasi | Sesi |
 |---|---|---|
 | Registry kartu dan data batch | `app/services/dashboard/` (`registry.py` definisi + template, `providers.py` penyedia kartu inti, `sources.py` endpoint lama sekali per permintaan, `batch.py`, `layout.py`), `app/api/routes/dashboard.py`, model `DashboardLayout` (migrasi `b1d4a7c2e9f0`), tes `app/tests/test_dashboard_registry.py`; frontend: `src/pages/Dashboard.jsx` (pemilih lewat `enabled`), `BerandaRegistry.jsx`, `BerandaLama.jsx`, `src/cards/` (`CardRegistry.js`, `DashboardGrid.jsx`, `CardFrame.jsx`, `core/index.jsx`), bersama: `lib/berandaModel.js`, `lib/dashboardRegistry.js`, `components/BerandaKpi.jsx`, `components/BerandaHeader.jsx`, `hooks/useBerandaShell.js` | B1 (backend), B2 (frontend) |
-| Resolver ruang | `app/services/ruang.py`: `ruang_aktif` / `ruang_tulis` (dependency route, parameter `hid: RuangAktif` / `RuangTulis`), `ruang_keluarga(user, db)` (bot, job), `keanggotaan`; skrip `app/scripts/ruang_paritas.py`; pagar `app/tests/test_ruang_pagar.py` | R2 |
+| Resolver ruang | `app/services/ruang.py`: `ruang_aktif` (dependency route, parameter `hid: RuangAktif`), ruang dari objek `ruang_amplop` / `ruang_amplop_satu` / `ruang_objek` (R3), `ruang_tulis` (undangan, ruang keluarga), `ruang_keluarga(user, db)` (bot, job), `keanggotaan`; kuota per ruang di `plan_limits.py`; skrip `app/scripts/ruang_paritas.py`; pagar `app/tests/test_ruang_pagar.py` | R2, R3 |
 | Host plugin dan SDK | `app/plugins/host/`, `app/plugins/sdk/` (`PluginContext`) | H1, H2 |
 | Buku Usaha | `app/plugins/buku_usaha/` (manifest, `metrics.py`, kartu, aturan BU-*), `frontend/src/plugins/buku_usaha/` | U1–U6 |
 | Cek migrasi | `.github/workflows/migrasi.yml`, `.github/scripts/cek-migrasi.sh` | F0 |

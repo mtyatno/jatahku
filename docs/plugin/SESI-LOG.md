@@ -4,6 +4,47 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## R3 · Ruang dari objek saat menulis · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #171; review keamanan terpisah lulus 1 Nov, temuan 1–5 dikerjakan di branch ini; issue #143)
+- Keputusan pemilik produk (1 Nov): **A** objek baru tanpa induk memakai ruang dari header yang sah (`ruang_aktif`; tanpa header = ruang keluarga); **B** hak Paket Usaha (kode `butuh_paket_usaha` 402) baru dipasang di H1/V1, ruang usaha belum dibatasi selama beta.
+- `app/services/ruang.py`: `ruang_objek` (ruang objek bila user anggota, selain itu None), `ruang_amplop`, `ruang_amplop_satu` (semua amplop satu ruang; dua ruang milik user → `LintasRuang` 400 `lintas_ruang`), `ruang_jenis`; `RuangDitolak` menerima status. Docstring modul menjelaskan aturan R3.
+- Route tulis dari objek, lalu keanggotaan: `PUT`/`DELETE /envelopes/{id}`, `PATCH`/`DELETE /envelopes/groups/{id}`, `POST /envelopes/transfer`, `POST`/`DELETE /transactions`, `POST /goals/` + `PUT`/`DELETE /goals/{id}`, `POST /recurring/` + ubah/hapus/bayar/lewati/tandai, `POST /incomes/` dengan alokasi, `POST /balance-check/{id}/undo` (`svc.ruang_cek`), `PUT /kotak-struk/merchants/{id}`. Objek ruang lain → 404 dengan pesan "tidak ditemukan" biasa.
+- `POST /transactions/batch`: ruang per baris dari amplopnya; baris asing ditolak per baris; kuota Basic hanya untuk baris di luar ruang usaha.
+- Objek baru tanpa induk (`ruang_aktif`): `POST /envelopes/`, `/envelopes/groups`, `/incomes/` tanpa alokasi, `/user/reset`, `/snapshots/recompute`, `/balance-check/apply`, `/advisor/plan` + `/execute`, `/transactions/suggest-envelope(s)`. `ruang_tulis` tinggal di `POST /household/invite`.
+- Kuota per ruang (`plan_limits.py`): `check_transaction_limit` / `quota_notice_after_input` / `check_envelope_limit` / `check_recurring_limit` menerima `household_id`; ruang usaha tanpa kuota Basic; `monthly_txn_usage` dan `usage.txn_this_month` di `/user/profile` menghitung transaksi di luar ruang usaha (`di_luar_ruang_usaha`). `check_expense` (bot + web) memakai ruang amplop. Pengecualian `DIIZINKAN_BEDA_SAMPAI_R3` dihapus dari tes gerbang.
+- Tes: gerbang +6 (tulis objek ruang usaha sendiri tanpa header, objek baru ke ruang header, lintas ruang, antrean offline per baris, kuota per ruang, reset dengan header ruang usaha); IDOR +4 aksi buat (transaksi, target, langganan, pemasukan ke amplop household lain) + cek tidak ada baris terbentuk; pagar: daftar route non-GET dengan `ruang_aktif` diperbarui. Tes lama disesuaikan (hapus `hid=` dari pemanggilan langsung handler tulis; patch `ruang_amplop` / `_ruang_langganan` / `ruang_cek` di tes mock).
+- Dokumen: kontrak §1 (baris tulis R3, kuota per ruang) dan §7 (`lintas_ruang`); `AGENTS.md` aturan 1, checklist R3, checklist R2 sudah jalan; `00-indeks.md`; `PROGRESS.md` (R2 selesai, Gerbang R).
+- Tes: unittest 2159 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, gagal juga di `main`) · node --test 584 lulus · build ok · Migrasi: tidak berlaku · `openapi_cek` tanpa perubahan memutus.
+
+- Review keamanan PR #171 (sesi terpisah): lulus semua gerbang 03-workflow.md. Temuan yang dikerjakan: (1) pagar tes `test_setiap_route_tulis_punya_sumber_ruang`: setiap route non-GET wajib tercatat sebagai ruang dari objek (badan fungsi memanggil helper `ruang_*`), `RuangAktif`/`RuangTulis`, atau tanpa ruang; (2) 404 eksplisit tepat setelah helper ruang, tidak lagi bergantung pada `household_id IS NULL`; (3) `POST /incomes/` dengan amplop orang lain → 404; (4) pemberitahuan kuota `POST /transactions/` memakai ruang transaksinya; (5) docstring pagar. Tes IDOR kini menuntut 404 persis.
+- Tes sesudah review dan merge `main` (#169, #172, #173): lihat PR #171.
+
+**Digantung**
+- Batasan per peran (anggota/karyawan hanya amplop tertentu, batas nominal, persetujuan) di R5: sekarang setiap anggota ruang boleh menulis ke semua objek ruang itu, sama seperti household hari ini.
+- Kotak Struk: bukti baru dan saran amplopnya masih ruang keluarga (R7). Mencatat bukti ke amplop ruang usaha masuk ruang amplop itu.
+- Prive dua sisi (pengecualian `lintas_ruang`) di R8.
+- Bot: `check_envelope_limit` di bot tetap ruang keluarga (chat hanya ruang keluarga, ADR-P2).
+- Catatan review untuk R4/R5: sampai R5 semua anggota ruang boleh menulis ke seluruh isi ruang (`balance-check/apply`, `advisor/execute`, amplop baru lewat header). Aman karena ruang usaha belum bisa mengundang anggota: undangan ruang usaha harus aktif di PR yang sama dengan penegakan peran R5; R4 tidak membuka undangan.
+- Catatan review untuk R5: `POST /user/reset` di ruang usaha hanya owner, tetapi menghapus transaksi semua anggota sementara email cadangan hanya berisi transaksi owner (sudah begitu sejak sebelum R3). Dengan karyawan, catatan karyawan hilang tanpa jejak → masuk cakupan log audit R5.
+- `test_basic_quota_bot_fund_shift_finishes_started_input` masih gagal di `main` (tanggal struk tetap `2026-10-10`); perlu PR kecil terpisah.
+
+**Jebakan**
+- Pembantu pengubah tanda tangan route sempat menghapus seluruh badan fungsi (slice yang salah); hasil dicek lewat pyflakes dan diff sebelum lanjut. Pembantu di scratchpad, bukan di repo.
+- Handler tulis tidak lagi punya parameter `hid`; tes yang memanggil handler langsung cukup tanpa `hid=` (integrasi SQLite) atau mem-patch pembantu ruang objek (tes mock).
+- `Envelope.budget_amount` wajib > 0 untuk amplop belanja: tes membuat amplop harus memberi budget.
+- `main` bergerak dua kali (#168, #170); rebase bersih. Sesudah review, `main` bergerak lagi (#169 siklus household, #172, #173): di-merge ke branch, konflik hanya di dokumen plugin.
+- `POST /transactions/`: 404 amplop eksplisit harus sesudah cek idempotensi dan cek struk (spec 5d, `test_receipt_check_runs_after_idempotency_and_before_envelope_checks`), bukan tepat sesudah helper ruang.
+
+**Keputusan kecil**
+- `POST /incomes/` dengan alokasi: ruang dari amplop alokasi menang atas header (pemasukan mengikuti amplopnya).
+- Transfer/alokasi yang melibatkan amplop household orang lain → 404 (amplop "tidak ditemukan"), bukan `lintas_ruang`, supaya keberadaan ruang lain tidak bocor; `lintas_ruang` hanya bila kedua ruang milik user.
+- Kuota transaksi Basic tetap per user (bukan per ruang keluarga tertentu): semua catatan di luar ruang usaha, termasuk household lama yang ditinggalkan, seperti sebelum R3.
+- Saran amplop (`suggest-envelope(s)`) memakai ruang header (siap untuk lembar Catat cepat di R7).
+
+**Cara melanjutkan**
+- Merge: tanpa migrasi; checklist "Plugin R3" di `AGENTS.md` (`ruang_paritas` sesudah deploy, uji catat/geser/bayar/antrean offline).
+- Berikutnya `/sesi-plugin R4` (membuat dan berpindah ruang, flag `ruang_usaha_users`; merge dulu PR terbuka yang menyentuh `Layout.jsx`/`api.js`), atau R5 / R8 / H1 (semuanya butuh R3).
 ## B3 (lanjutan) · Rilis Beranda registry ke pemilik · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status **selesai** per keputusan pemilik 1 Nov 14:08; PR #167, #168, #172; issue #140 ditutup)

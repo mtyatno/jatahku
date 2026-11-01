@@ -264,7 +264,7 @@ class GroupJenisRouteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(snap.envelopes[0].jenis, "harian")             # grup tanpa jenis → otomatis
         self.redis.store[advisor_cache.kunci_dashboard(self.hid, self.me.id)] = "{}"
         async with self.Session() as db:
-            g2 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis="bulanan"), user=self.me, db=db, hid=self.hid)
+            g2 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis="bulanan"), user=self.me, db=db)
             self.assertEqual((g2.name, g2.jenis), ("Pengeluaran bulanan", "bulanan"))
         self.assertNotIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)  # cache dihapus
         async with self.Session() as db:
@@ -273,9 +273,9 @@ class GroupJenisRouteTests(unittest.IsolatedAsyncioTestCase):
             rows = await routes.list_groups(user=self.me, db=db, hid=self.hid)
             self.assertEqual([(r.name, r.jenis) for r in rows], [("Pengeluaran bulanan", "bulanan")])
         async with self.Session() as db:   # ganti nama saja: jenis tidak berubah; jenis=null → otomatis lagi
-            g3 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(name="Bulanan"), user=self.me, db=db, hid=self.hid)
+            g3 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(name="Bulanan"), user=self.me, db=db)
             self.assertEqual((g3.name, g3.jenis), ("Bulanan", "bulanan"))
-            g4 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis=None), user=self.me, db=db, hid=self.hid)
+            g4 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis=None), user=self.me, db=db)
             self.assertIsNone(g4.jenis)
 
     async def test_jenis_tidak_dikenal_ditolak(self):

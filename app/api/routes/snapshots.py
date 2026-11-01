@@ -14,7 +14,7 @@ from app.services.household_cycle import (
     current_payday, household_lock, household_payday, payday_context, recompute_history,
 )
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif
 
 logger = logging.getLogger("jatahku.snapshots")
 router = APIRouter()
@@ -168,7 +168,7 @@ async def recompute_snapshots(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     """Hitung ulang riwayat snapshot household pemanggil, oldest-first dan force=True, dengan tanggal gajian rumah
     (bukan tanggal si pemanggil), supaya rantai rollover terbangun ulang dari ujung ke ujung. `periods` adalah batas

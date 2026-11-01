@@ -5,9 +5,12 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
-    User, Envelope, Transaction, RecurringTransaction,
+    User, Envelope, Household, HouseholdType, Transaction, RecurringTransaction,
 )
-from app.services.ruang import ruang_keluarga_id
+from app.services.ruang import ruang_jenis, ruang_keluarga_id
+
+# Kuota per ruang (Plugin R3, ADR-P13): kuota Basic hanya berlaku di ruang keluarga. Ruang usaha tidak
+# memakai kuota Basic; haknya diatur Paket Usaha (tabel hak di H1, uji coba gratis selama beta).
 
 PLAN_LIMITS = {
     "basic": {"envelopes": 6, "txn_per_month": 50, "recurring": 5},
@@ -15,15 +18,26 @@ PLAN_LIMITS = {
 }
 
 
-async def check_envelope_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
-    """Check if user can create more envelopes."""
+async def _ruang_usaha(db: AsyncSession, household_id) -> bool:
+    return household_id is not None and str(await ruang_jenis(db, household_id)) == HouseholdType.USAHA
+
+
+def di_luar_ruang_usaha():
+    """Transaksi yang dihitung kuota Basic: semua catatan user di luar ruang usaha mana pun (ruang keluarga
+    sekarang dan household lama yang sudah ditinggalkan, seperti sebelum R3)."""
+    usaha = select(Household.id).where(Household.type == HouseholdType.USAHA)
+    return Transaction.envelope_id.not_in(select(Envelope.id).where(Envelope.household_id.in_(usaha)))
+
+
+async def check_envelope_limit(user: User, db: AsyncSession, household_id=None) -> tuple[bool, str]:
+    """Boleh membuat amplop baru di ruang `household_id` (bawaan: ruang keluarga)?"""
     plan = getattr(user, 'plan', 'basic') or 'basic'
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["basic"])
     if limits["envelopes"] == -1:
         return True, ""
 
-    hid = await ruang_keluarga_id(db, user.id)  # kuota per ruang menyusul di R3
-    if not hid:
+    hid = household_id or await ruang_keluarga_id(db, user.id)
+    if not hid or await _ruang_usaha(db, hid):
         return True, ""
 
     count = (await db.execute(
@@ -79,18 +93,23 @@ async def monthly_txn_usage(user: User, db: AsyncSession) -> tuple[int, int] | N
             Transaction.balance_check_id.is_(None),  # penyesuaian cocokkan saldo tidak dihitung
             func.extract("year", Transaction.transaction_date) == now.year,
             func.extract("month", Transaction.transaction_date) == now.month,
+            di_luar_ruang_usaha(),                   # kuota Basic = ruang keluarga (R3)
         )
     )).scalar()
     return int(count or 0), limits["txn_per_month"]
 
 
-async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
+async def check_transaction_limit(user: User, db: AsyncSession, household_id=None) -> tuple[bool, str]:
     """Boleh MEMULAI input pengeluaran baru? (Basic: < 50 transaksi bulan ini.)
 
     Aturan pemilik produk (15 Okt 2026): input yang dimulai saat kuota masih ada
     diselesaikan utuh walau di tengah jalan melewati batas — jadi cek ini dipakai
     sekali di awal input, bukan per transaksi (lihat app/services/quota_pass.py).
-    Sesudah input selesai, quota_notice_after_input memberi tahu bila kuota habis."""
+    Sesudah input selesai, quota_notice_after_input memberi tahu bila kuota habis.
+
+    `household_id`: ruang tujuan input. Ruang usaha tidak memakai kuota Basic (R3, ADR-P13)."""
+    if not has_txn_limit(user) or await _ruang_usaha(db, household_id):
+        return True, ""
     usage = await monthly_txn_usage(user, db)
     if usage is None:
         return True, ""
@@ -100,8 +119,11 @@ async def check_transaction_limit(user: User, db: AsyncSession) -> tuple[bool, s
     return True, ""
 
 
-async def quota_notice_after_input(user: User, db: AsyncSession) -> str | None:
-    """Pemberitahuan sesudah satu input selesai, bila kuota bulan ini kini habis."""
+async def quota_notice_after_input(user: User, db: AsyncSession, household_id=None) -> str | None:
+    """Pemberitahuan sesudah satu input selesai, bila kuota bulan ini kini habis (bukan untuk input
+    yang seluruhnya di ruang usaha, yang tidak memakai kuota Basic)."""
+    if not has_txn_limit(user) or await _ruang_usaha(db, household_id):
+        return None
     usage = await monthly_txn_usage(user, db)
     if usage is None:
         return None
@@ -112,15 +134,15 @@ async def quota_notice_after_input(user: User, db: AsyncSession) -> str | None:
             f"Input berikutnya bisa lagi mulai {_reset_text()}, atau upgrade ke Pro untuk tanpa batas.")
 
 
-async def check_recurring_limit(user: User, db: AsyncSession) -> tuple[bool, str]:
-    """Check if user can create more recurring transactions."""
+async def check_recurring_limit(user: User, db: AsyncSession, household_id=None) -> tuple[bool, str]:
+    """Boleh membuat langganan baru di ruang `household_id` (bawaan: ruang keluarga)?"""
     plan = getattr(user, 'plan', 'basic') or 'basic'
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["basic"])
     if limits["recurring"] == -1:
         return True, ""
 
-    hid = await ruang_keluarga_id(db, user.id)  # kuota per ruang menyusul di R3
-    if not hid:
+    hid = household_id or await ruang_keluarga_id(db, user.id)
+    if not hid or await _ruang_usaha(db, hid):
         return True, ""
 
     count = (await db.execute(
