@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
 import { openAction, parseAllocateQuery } from '../lib/advisorAction';
 import { formEnvelopes, reasonsById, recommendationAllocations } from '../lib/allocationAdvice';
+import { nonRolloverWarning } from '../lib/nonRolloverWarning';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { EnvelopeIcon, Icon, SAVING } from '../components/Icon';
 import StatCard from '../components/StatCard';
@@ -110,6 +111,8 @@ export default function Allocate() {
   const tabunganEnv = sisaKe?.envelope_id ? envelopes.find(e => String(e.id) === String(sisaKe.envelope_id)) : null;
   const reasons = reasonsById(advisorRecommendation);
   const tabunganGoal = goals?.find(g => g.envelope_id === tabunganEnv?.id);
+  // Income dicatat untuk hari ini, jadi yang relevan periode berjalan (item terakhir), bukan periode yang dipilih di riwayat.
+  const currentPeriodEnd = periods[periods.length - 1]?.period_end;
 
   const distributeByBudget = () => {
     if (envelopes.length === 0 || incomeNum <= 0) return;
@@ -411,6 +414,7 @@ export default function Allocate() {
                   const val = allocations[env.id] || 0;
                   const pct = incomeNum > 0 ? Math.round(Number(val) / incomeNum * 100) : 0;
                   const envReserved = Number(env.reserved || 0);
+                  const resetWarning = nonRolloverWarning(env, currentPeriodEnd, new Date(), val);
                   const why = reasons[String(env.id)];
                   return (
                     <div key={env.id} className="flex items-center gap-3">
@@ -421,6 +425,7 @@ export default function Allocate() {
                           <span className="text-xs text-gray-400">{pct}%</span>
                         </div>
                         {envReserved > 0 && <p className="text-xs text-amber-500">🔄 Min: {formatShort(envReserved)} (langganan)</p>}
+                        {resetWarning && <p className="text-xs text-amber-600">{resetWarning}</p>}
                         {why?.alasan.map((t, i) => <p key={i} className="text-xs text-gray-500">✦ {t}</p>)}
                         {why?.keyakinan && (why.alasan.length > 0 || Number(val) > 0) && (
                           <p className="text-[11px] text-gray-400">Keyakinan {confidenceLabel(why.keyakinan).toLowerCase()}</p>
