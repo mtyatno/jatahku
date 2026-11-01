@@ -13,6 +13,7 @@ nasibnya di laporan Ani:
     F   Pulsa         bersama, ditutup, tanpa snapshot Okt, hanya alokasi (sisa dipindah) -> baris ditutup
     CB  Kado Budi     pribadi Budi, ditutup, transaksi dan alokasi di jendela            -> tak pernah terlihat Ani
     N   Baru          bersama, aktif, dibuat 1 Nov, transaksi bertanggal 30 Okt, tanpa snapshot -> bukan baris
+    K   Kas kecil     bersama, aktif, dibuat Jan, tanpa snapshot (mis. refresh gagal), transaksi Okt -> bukan baris
     U   Modal         ruang usaha Ani (household lain), snapshot dan transaksi Okt      -> tidak ikut
 
 Snapshot Oktober konsisten dengan transaksi dan alokasinya (diturunkan tangan di `_isi`), jadi tes konsistensi
@@ -185,6 +186,7 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
         f = amplop("Pulsa", "📱", (2026, 1, 7), aktif=False)
         cb = amplop("Kado Budi", "🎁", (2026, 1, 8), pemilik=b.id, aktif=False)
         n = amplop("Baru", "🆕", (2026, 11, 1))
+        k = amplop("Kas kecil", "💵", (2026, 1, 10))
         u = amplop("Modal", "💼", (2026, 1, 9), rumah=h2)
         await db.flush()
 
@@ -262,6 +264,7 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
         keluar("t18", d, a, okt(11), 66_000, "Arisan batal", hapus=True)
         keluar("t19", e, a, date(2026, 8, 15), 10_000, "Lama sekali")
         keluar("t20", n, a, okt(30), 30_000, "Cat tembok", dicatat=pukul(date(2026, 11, 1)))
+        keluar("t23", k, a, okt(18), 7_000, "Fotokopi")
         keluar("t21", cb, b, okt(6), 50_000, "Kado ulang tahun Ani", privat=True)
         keluar("t22", u, a, okt(10), 1_000_000, "Bahan baku")
 
@@ -325,6 +328,37 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((cb.pribadi, cb.ditutup, cb.awal, cb.alokasi, cb.terpakai, cb.akhir, cb.rollover),
                          (True, True, D(50_000), D(-6_000), D(50_000), D(0), D(0)))
         self.assertEqual((bahan.penerima_nama, bahan.rumah_nama), ("Budi", "Rumah Ani"))
+
+    async def test_amplop_yang_dibuat_setelah_periode_tidak_ikut(self):
+        """Ruling R8: refresh paksa snapshot sebelum laporan dibangun (Task 5) memberi snapshot nol pada amplop yang
+        dibuat sesudah periode tutup. Amplop yang tanggal UTC `created_at`-nya sesudah akhir periode tidak jadi baris,
+        jadi transaksi, tagihan, dan targetnya juga tidak ikut; yang dibuat pada hari terakhir periode tetap baris."""
+        async with self.Session() as db:
+            # 23.30 UTC = 1 Nov 06.30 WIB, tetapi tanggal UTC-nya 31 Okt: masih di dalam periode.
+            akhir_okt = Envelope(household_id=self.H, name="Akhir Oktober", emoji="🌙",
+                                 created_at=datetime(2026, 10, 31, 23, 30, tzinfo=UTC))
+            telat = Envelope(household_id=self.H, name="Dibuat lalu ditutup", emoji="🗑", is_active=False,
+                             created_at=datetime(2026, 11, 2, tzinfo=UTC))
+            db.add_all([akhir_okt, telat])
+            await db.flush()
+            for env_id in (self.N, akhir_okt.id):  # snapshot nol seperti hasil refresh paksa
+                db.add(MonthlySnapshot(envelope_id=env_id, year=2026, month=10, opening_balance=D(0),
+                                       closing_balance=D(0), rollover_amount=D(0), allocated_amount=D(0),
+                                       spent_amount=D(0)))
+            # Amplop ditutup tanpa snapshot, dibuat 2 Nov, dengan transaksi bertanggal mundur di jendela.
+            db.add(Transaction(envelope_id=telat.id, user_id=self.A, amount=D(5_000), description="Mundur",
+                               transaction_date=okt(15), created_at=pukul(date(2026, 11, 2))))
+            await db.commit()
+        bahan = await self.muat("a")
+        self.assertEqual([a.nama for a in bahan.amplop],
+                         ["Kebutuhan", "Tabungan Ani", "Liburan", "Pulsa", "Akhir Oktober"])
+        # N (dibuat 1 Nov): transaksi 30 Okt, tagihan "Iuran RT", dan target "Renovasi" tidak ikut.
+        self.assertNotIn(str(self.N), {t.amplop_id for t in bahan.transaksi})
+        self.assertNotIn("Iuran RT", [b.nama for b in bahan.tagihan_berikut])
+        self.assertNotIn("Renovasi", [g.nama for g in bahan.target])
+        self.assertNotIn("Mundur", [t.keterangan for t in bahan.transaksi])
+        self.periksa_konsisten(bahan)
+        susun_bulanan(bahan)
 
     async def test_deskripsi_privat_anggota_lain_tersamar(self):
         ani = {t.id: t for t in (await self.muat("a")).transaksi}

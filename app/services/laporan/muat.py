@@ -21,7 +21,9 @@ Baris amplop:
   untuk amplop yang aktif saat periode tutup, jadi amplop itu baru ditutup sesudah periodenya;
 - amplop lingkup nonaktif tanpa snapshot itu yang punya transaksi (tidak terhapus) atau alokasi di jendela,
   `ditutup=True`;
-- amplop aktif tanpa snapshot (dibuat sesudah periode) tidak ikut.
+- amplop aktif tanpa snapshot (dibuat sesudah periode) tidak ikut;
+- amplop yang tanggal UTC `created_at`-nya sesudah akhir periode tidak pernah jadi baris, walau punya snapshot kunci
+  itu (Ruling R8: refresh paksa snapshot sebelum laporan dibangun memberinya snapshot nol).
 Transaksi, alokasi per hari, tagihan periode berikutnya, dan target hanya untuk amplop baris (`susun` menolak
 transaksi dan target yang menunjuk amplop di luar baris). `terpakai_lalu_total` sebaliknya meliputi SEMUA amplop
 lingkup yang punya angka periode itu, termasuk yang bukan baris.
@@ -34,7 +36,7 @@ dan pemasukan menurut tanggal lalu waktu dicatat, tagihan menurut `next_run`, ta
 memutus seri.
 """
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
@@ -132,12 +134,23 @@ def _total_terpakai(semua_snapshot, kunci: tuple[int, int]) -> Decimal | None:
     return sum(nilai, _NOL) if nilai else None
 
 
+def _tanggal_dibuat(env) -> date:
+    """Tanggal UTC `created_at` amplop (asyncpg memberi datetime berzona; SQLite tanpa zona, sudah UTC)."""
+    dibuat = env.created_at
+    if dibuat.tzinfo is not None:
+        dibuat = dibuat.astimezone(timezone.utc)
+    return dibuat.date()
+
+
 async def _baris(db, lingkup, snapshot: dict, kunci: tuple[int, int], ps: date, pe: date) -> list[tuple]:
-    """(amplop, angka `SnapshotValues`, ditutup) untuk setiap baris amplop, dalam urutan `lingkup`."""
-    calon_ditutup = [env.id for env in lingkup if not env.is_active and (env.id, *kunci) not in snapshot]
+    """(amplop, angka `SnapshotValues`, ditutup) untuk setiap baris amplop, dalam urutan `lingkup`. Amplop yang
+    dibuat sesudah `pe` (tanggal UTC `created_at`) tidak pernah jadi baris, walau punya snapshot kunci itu (Ruling
+    R8): refresh paksa snapshot sebelum laporan dibangun memberinya snapshot nol."""
+    calon = [env for env in lingkup if _tanggal_dibuat(env) <= pe]
+    calon_ditutup = [env.id for env in calon if not env.is_active and (env.id, *kunci) not in snapshot]
     beraktivitas = await _beraktivitas(db, calon_ditutup, ps, pe)
     baris = []
-    for env in lingkup:
+    for env in calon:
         s = snapshot.get((env.id, *kunci))
         if s is not None:
             baris.append((env, await _angka_snapshot(db, env.id, s, ps, pe), False))
