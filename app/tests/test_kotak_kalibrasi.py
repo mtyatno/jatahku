@@ -1409,6 +1409,20 @@ CANCELLED_PROOFS = {
     "sudah ditolak saja": ["DANA", "Sudah ditolak", "Ke SITI", "Nominal Rp50.000", D_L5],
     "has been cancelled saja": ["DANA", "Has been cancelled", "Ke SITI", "Nominal Rp50.000", D_L5],
     "was rejected saja": ["DANA", "Was rejected", "Ke SITI", "Nominal Rp50.000", D_L5],
+    # Fix round 2 (re-review I3, m8): satu kata pelaku/cara, nominal Rp, #id, tanggal tanpa tahun, "on"/"•" + tanggal, ":".
+    "judul ditolak bank": ["GoPay", "Pembayaran Ditolak Bank", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul ditolak sistem": ["GoPay", "Transfer Ditolak Sistem", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul penerbit kartu": ["GoPay", "Pembayaran Ditolak Penerbit Kartu", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul otomatis": ["GoPay", "Transaksi Dibatalkan Otomatis", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul nominal": ["GoPay", "Transfer Dibatalkan Rp50.000", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul id": ["GoPay", "Transaksi Dibatalkan #12345", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul on tanggal": ["GoPay", "Transaction Cancelled on 31 Oct 2026", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul tanpa tahun": ["GoPay", "Transfer dibatalkan 31/10 09:00", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul titik dua": ["GoPay", "Transfer Dibatalkan: rekening tidak aktif", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "kata saja tanpa tahun": ["DANA", "Dibatalkan 31/10 09:00", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja otomatis": ["DANA", "Dibatalkan otomatis", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja bank": ["DANA", "Ditolak bank", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja titik tengah": ["DANA", "Dibatalkan • 31 Okt 2026", "Ke SITI", "Nominal Rp50.000", D_L5],
 }
 # Label status dengan nilai dibatalkan/ditolak pada tata letak transfer dan QRIS GoPay (kedua saklar).
 CANCELLED_VALUES = ("Dibatalkan", "Ditolak", "Batal", "Void", "Rejected", "Cancelled", "Canceled", "Kartu ditolak",
@@ -1417,7 +1431,8 @@ CANCELLED_VALUES = ("Dibatalkan", "Ditolak", "Batal", "Void", "Rejected", "Cance
                     "Saldo tidak cukup, transaksi ditolak", "Rekening tujuan tidak aktif, transfer dibatalkan",
                     "Dibatalkan (jika saldo terpotong akan dikembalikan)", "Ditolak, jika saldo terpotong hubungi 14017",
                     "Pembayaran yang kamu lakukan ditolak", "Payment to merchant rejected", "Ditolak oleh bank tujuan",
-                    "Saldo tidak cukup, ditolak", "Akun tujuan tidak aktif; dibatalkan")      # tanpa judul: hanya nilai label
+                    "Saldo tidak cukup, ditolak", "Akun tujuan tidak aktif; dibatalkan",      # tanpa judul: hanya nilai label
+                    "Saldo tidak cukup (ditolak)")                                          # fix round 2 (m8): "(" batas klausa
 # Kaki bersyarat/kebijakan/tanya: bukan status, tidak pernah menghitung kata dibatalkan/ditolak.
 CANCEL_FOOTERS = ("Jika transaksi dibatalkan, dana kembali dalam 3 hari",
                   "Barang yang sudah dibeli tidak dapat dibatalkan",
@@ -1436,7 +1451,12 @@ CANCEL_FOOTERS = ("Jika transaksi dibatalkan, dana kembali dalam 3 hari",
                   "Pembayaran dibatalkan otomatis dalam 15 menit",
                   "Pembelian dibatalkan tidak dapat direfund",
                   "Transaksi batal tidak dapat diuangkan",
-                  "Dana transaksi dibatalkan dikembalikan dalam 3 hari kerja")
+                  "Dana transaksi dibatalkan dikembalikan dalam 3 hari kerja",
+                  # Fix round 2 (re-review m7, I3): modal sesudah pelaku/sebab di klausa yang sama; angka polos bukan ekor.
+                  "Transaksi dibatalkan oleh pembeli tidak dapat direfund",
+                  "Transaksi dibatalkan karena barang rusak dapat ditukar",
+                  "TRANSAKSI VOID 15.000",
+                  "Transaksi Batal 2")
 # Bukti sukses yang statusnya hanya label (tanpa judul; dibaca jalur struk di kedua saklar), untuk kaki di atas.
 def success_label_proof(footer):
     return ["BCA mobile", "30/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000", "Status : Berhasil", "Total Rp150.000", footer]
@@ -1582,8 +1602,18 @@ class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
                              ("Pembelian dibatalkan tidak dapat direfund", None),
                              ("Transaksi dibatalkan 24 jam", None), ("Total transaksi dibatalkan 3", None),
                              ("Daftar transaksi yang dibatalkan", None),
-                             # Akibat aturan klausa: kata sesudah kata itu yang bukan pelaku/sebab/tanggal tidak dibaca.
-                             ("Pembayaran Ditolak Bank", None)):
+                             # Fix round 2 (I3): satu kata pelaku/cara, lalu nominal Rp/#id/tanggal (juga tanpa tahun).
+                             ("Pembayaran Ditolak Bank", pc.GAGAL), ("Transaksi Dibatalkan Otomatis", pc.GAGAL),
+                             ("Pembayaran Ditolak Penerbit Kartu", pc.GAGAL), ("Transfer Dibatalkan Rp50.000", pc.GAGAL),
+                             ("Transaksi Dibatalkan #12345", pc.GAGAL), ("Transaction Cancelled on 31 Oct 2026", pc.GAGAL),
+                             ("Transfer dibatalkan 31/10 09:00", pc.GAGAL), ("Transaksi Dibatalkan 31 Okt", pc.GAGAL),
+                             ("Transaksi Ditolak Bank Rp50.000", pc.GAGAL), ("Transfer Dibatalkan: rekening tidak aktif", pc.GAGAL),
+                             ("TRANSAKSI VOID 15.000", None), ("Transaksi Batal 2", None),
+                             ("Transaksi Ditolak Bank Tujuan", None), ("Transaksi Dibatalkan Otomatis Sistem", None),
+                             # m7: modal sesudah pelaku/sebab di klausa yang sama = kebijakan; "tidak" saja bukan modal.
+                             ("Transaksi dibatalkan oleh pembeli tidak dapat direfund", None),
+                             ("Transaksi dibatalkan karena barang rusak dapat ditukar", None),
+                             ("Transaksi dibatalkan oleh sistem, dana akan dikembalikan", pc.GAGAL)):
             with self.subTest(text):
                 self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), status)
         self.assertTrue(pc._is_status_title("Transfer Dibatalkan"))
@@ -1595,6 +1625,8 @@ class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
         for word, status in (("Telah dibatalkan", pc.GAGAL), ("Sudah ditolak", pc.GAGAL), ("Has been cancelled", pc.GAGAL),
                              ("Was rejected", pc.GAGAL), ("Dibatalkan 26/10/2026 08:12", pc.GAGAL),
                              ("Ditolak oleh bank", pc.GAGAL), ("Dibatalkan otomatis dalam 15 menit", pc.TIDAK_DIKETAHUI),
+                             ("Ditolak bank", pc.GAGAL), ("Dibatalkan 31/10 09:00", pc.GAGAL),
+                             ("Dibatalkan • 31 Okt 2026", pc.GAGAL), ("Dibatalkan 15", pc.TIDAK_DIKETAHUI),
                              ("Dibatalkan jika tidak dibayar", pc.TIDAK_DIKETAHUI), ("Telah batal", pc.TIDAK_DIKETAHUI)):
             with self.subTest("judul", word=word):
                 self.assertEqual(pc.read_status([lines[0], word, *lines[1:5]]), status)
@@ -1618,6 +1650,9 @@ class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
                              ("Status: Saldo cukup, tidak dapat dibatalkan", None),
                              ("Status: Saldo tidak cukup, ditolak", "gagal"),
                              ("Status: Dibatalkan kecuali dibayar hari ini", None),
-                             ("Status: Cancelled unless paid today", None)):
+                             ("Status: Cancelled unless paid today", None),
+                             # Fix round 2 (m8): "(" memutus klausa penjaga nilai label.
+                             ("Status: Saldo tidak cukup (ditolak)", "gagal"),
+                             ("Status: Berhasil (tidak bisa dibatalkan)", None)):
             with self.subTest(line):
                 self.assertEqual(pc.read_labelled_failure([line]), status)

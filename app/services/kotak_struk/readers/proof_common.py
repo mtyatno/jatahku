@@ -798,9 +798,13 @@ _STATUS_TITLE = re.compile(r"(?<!\w)" + _TITLE_NOUN + r"(?!\w)\s+(?:\S+\s+){0,3}
 #   sebelum kata itu, jadi "Saldo tidak cukup, transaksi ditolak" tetap dihitung;
 # - kata bersyarat tepat sesudah kata itu (paling banyak satu kata di antaranya: "dibatalkan jika ...", "dibatalkan otomatis
 #   bila ..."); kata bersyarat sesudah tanda baca ("Ditolak, jika saldo terpotong hubungi 14017") = ajakan, tetap dihitung;
-# - di judul dan baris (c): kata itu harus menutup klausanya, boleh diikuti tanggal/jam, atau diikuti oleh/karena/pada/
-#   sejak/by/due ("Transaksi Dibatalkan oleh sistem"); "Transaksi dibatalkan maks 1x24 jam", "Pembelian dibatalkan tidak
-#   dapat direfund" tidak. "TRANSAKSI VOID" (slip EDC void) dihitung.
+# - di judul dan baris (c): kata itu harus menutup klausanya. Sesudahnya boleh: satu kata pelaku/cara ("Ditolak Bank",
+#   "Dibatalkan Otomatis", "Ditolak Penerbit Kartu"), lalu nominal Rp, #id, atau tanggal/jam (juga tanpa tahun: "31/10
+#   09:00", "31 Okt"), boleh didahului "on"/"•" ("Cancelled on 31 Oct 2026", "Dibatalkan • 31 Okt 2026"); angka polos
+#   tidak ("TRANSAKSI VOID 15.000", "Transaksi Batal 2"). Atau diikuti oleh/karena/pada/sejak/by/due ("Transaksi Dibatalkan
+#   oleh sistem"), asal klausa itu tidak memuat modal sesudahnya ("Transaksi dibatalkan oleh pembeli tidak dapat
+#   direfund", "… karena barang rusak dapat ditukar": kebijakan). "Transaksi dibatalkan maks 1x24 jam", "Pembelian
+#   dibatalkan tidak dapat direfund" tidak dihitung. "TRANSAKSI VOID" (slip EDC void) dihitung.
 # Di posisi lain kata ini hanya mencegah `berhasil` (`_NOT_DONE`).
 _CANCEL_WORD = r"(?:dibatalkan|ditolak|batal|rejected|cancell?ed|void)"
 _CANCEL = re.compile(r"(?<!\w)" + _CANCEL_WORD + r"(?!\w)", re.IGNORECASE)
@@ -818,6 +822,16 @@ _CANCEL_CLAUSE = re.compile(r"[.,](?!\d)|[;:!?|()]|\s[-–—]+\s")
 _IF_NEXT = re.compile(r"\s+(?:[^\s.,;:!?|()]+\s+)?(?:jika|bila|apabila|kalau|if|unless|kecuali)(?!\w)", re.IGNORECASE)
 _CLAUSE_START = re.compile(r"\s*(?:[.,;:!?|()]|[-–—](?:\s|$))")
 _AGENT_NEXT = re.compile(r"\s+(?:oleh|karena|pada|sejak|by|due)(?!\w)", re.IGNORECASE)
+_LATER_MODAL = re.compile(r"(?<!\w)(?:dapat|bisa|boleh|akan|harus|can|may|will)(?!\w)", re.IGNORECASE)
+# Satu kata pelaku/cara tepat sesudah kata batal ("Pembayaran Ditolak Bank", "Transaksi Dibatalkan Otomatis").
+_ACTOR_NEXT = re.compile(r"\s+(?:bank|sistem|system|otomatis|automatically|penerbit(?:\s+kartu)?|issuer|merchant|penjual|"
+                         r"pengguna|user|kamu)(?!\w)", re.IGNORECASE)
+_TAIL_SEP = re.compile(r"\s*(?:on(?!\w)|[•·])", re.IGNORECASE)
+_MONTH = r"(?:jan|feb|mar|apr|mei|may|jun|jul|agu|agt|aug|sep|okt|oct|nov|des|dec)[a-z]*"
+# Nominal Rp, #id, tanggal tanpa tahun ("31/10", "31 Okt"), jam. Angka polos tidak pernah ("15.000", "2").
+_TAIL_TOKEN = re.compile(
+    r"[\s,]+(?:(?:Rp\.?|IDR)\s*\d[\d.,]*|#[A-Za-z0-9\-]+|\d{1,2}/\d{1,2}(?![\d/])|\d{1,2}\s+" + _MONTH +
+    r"|\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?![\d.:])|wib|wita|wit|pukul)(?!\w)", re.IGNORECASE)
 _DATE_TOKEN = (r"(?:\d{1,4}(?:[/.\-:]\d{1,4})*|jan\w*|feb\w*|mar\w*|apr\w*|mei|may|jun\w*|jul\w*|agu\w*|agt|aug\w*|"
                r"sep\w*|okt\w*|oct\w*|nov\w*|des\w*|dec\w*|wib|wita|wit|pukul)")
 _DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
@@ -825,15 +839,27 @@ _DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
 
 def _cancel_ends_clause(text: str, end: int) -> bool:
     """Kata batal yang berakhir di `end` menutup klausanya: akhir baris, tanda baca, atau sisa tanpa huruf/angka, boleh
-    sesudah tanggal/jam ("Dibatalkan 26/10/2026 08:12"), atau diikuti pelaku/sebab ("oleh sistem", "karena saldo")."""
+    sesudah satu kata pelaku/cara lalu nominal Rp, #id, atau tanggal/jam ("Ditolak Bank", "Dibatalkan 31/10 09:00",
+    "Dibatalkan Rp50.000"), atau diikuti pelaku/sebab ("oleh sistem", "karena saldo tidak cukup") tanpa modal sesudahnya
+    di klausa itu ("oleh pembeli tidak dapat direfund" bukan status)."""
     rest = text[end:]
-    if _AGENT_NEXT.match(rest):
-        return True
-    m = _DATE_TAIL.match(rest)
-    if m:
-        part = m.group(0).strip(" ,")
-        if parse_datetime_id(part) or _TIME_ONLY.fullmatch(part):
+    agent = _AGENT_NEXT.match(rest)
+    if agent:
+        clause = _CANCEL_CLAUSE.split(rest[agent.end():], maxsplit=1)[0]
+        return not _LATER_MODAL.search(clause)
+    for pattern in (_ACTOR_NEXT, _TAIL_SEP):
+        m = pattern.match(rest)
+        if m:
             rest = rest[m.end():]
+    while True:
+        m = _DATE_TAIL.match(rest)
+        if m and (parse_datetime_id(part := m.group(0).strip(" ,")) or _TIME_ONLY.fullmatch(part)):
+            rest = rest[m.end():]
+            continue
+        m = _TAIL_TOKEN.match(rest)
+        if not m:
+            break
+        rest = rest[m.end():]
     return not re.search(r"[^\W_]", rest) or bool(_CLAUSE_START.match(rest))   # sisa tanpa huruf/angka: "*** CANCELLED ***"
 
 

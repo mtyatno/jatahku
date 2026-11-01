@@ -5694,6 +5694,934 @@
    "unread_proof": false
   }
  },
+ "l5f2-failed-judul-bank": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-id": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-nominal": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-on-tanggal": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-31",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-31",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-otomatis": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-penerbit": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-sistem": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-tanpa-tahun": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-judul-titik-dua": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l5f2-failed-label-gopay-qris-kurung": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 64900,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": "Indomaret",
+   "doc_type": "qris",
+   "issuer": "gopay",
+   "lines": 0,
+   "merchant": "Indomaret",
+   "paid_date": "2026-10-30",
+   "reader": "qris.umum",
+   "status": "gagal",
+   "total": 64900,
+   "unread_proof": false
+  }
+ },
+ "l5f2-failed-label-transfer-kurung": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": "BUDI",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI",
+   "paid_date": "2026-10-30",
+   "reader": "transfer.umum",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-failed-saja-bank": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-failed-saja-otomatis": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-failed-saja-tanpa-tahun": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-failed-saja-titik-tengah": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": "Dana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "Dana",
+   "paid_date": "2026-10-31",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": "Dana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "Dana",
+   "paid_date": "2026-10-31",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-judul-kaki-01": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "BUDI",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI",
+   "paid_date": "2026-10-30",
+   "reader": "transfer.umum",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-judul-kaki-02": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "BUDI",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI",
+   "paid_date": "2026-10-30",
+   "reader": "transfer.umum",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-judul-kaki-03": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "BUDI",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI",
+   "paid_date": "2026-10-30",
+   "reader": "transfer.umum",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-judul-kaki-04": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "BUDI",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI",
+   "paid_date": "2026-10-30",
+   "reader": "transfer.umum",
+   "status": "berhasil",
+   "total": 50000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-label-kaki-01": {
+  "off": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-label-kaki-02": {
+  "off": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-label-kaki-03": {
+  "off": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-proof-label-kaki-04": {
+  "off": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Bca Mobile",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 1,
+   "merchant": "Bca Mobile",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-kaki-01": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-kaki-02": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-kaki-03": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-kaki-04": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 55000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-qris-kaki-01": {
+  "off": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-qris-kaki-02": {
+  "off": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-qris-kaki-03": {
+  "off": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  }
+ },
+ "l5f2-store-qris-kaki-04": {
+  "off": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Warung Sederhana",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Warung Sederhana",
+   "paid_date": "2026-10-30",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 33000,
+   "unread_proof": false
+  }
+ },
  "pending-kalibrasi-001": {
   "off": {
    "checks": {
