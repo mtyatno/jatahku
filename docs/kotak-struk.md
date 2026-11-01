@@ -925,9 +925,10 @@ Catatan:
   sesudah "on"/"•": "Pembayaran Ditolak Bank", "Transaksi Ditolak Bank Tujuan", "Transaksi Dibatalkan Otomatis",
   "Transfer Dibatalkan Rp50.000", "Transfer dibatalkan 31/10 09:00", "Transaction Cancelled on 31 Oct 2026"; atau
   oleh/karena/sebab/pada/sejak/by/due/because tanpa modal kebijakan di klausa itu: sebelum kata alasan modal apa pun,
-  sesudahnya hanya modal tanpa negasi, jadi "Transaksi Dibatalkan oleh sistem" dan "Transaksi Ditolak karena kartu tidak
-  dapat digunakan" diblokir, "Transaksi dibatalkan oleh pembeli tidak dapat direfund" dan "… karena barang rusak dapat
-  ditukar" tidak; angka polos, "Rp0", dan nama barang sesudah jumlah bukan ekor: "TRANSAKSI VOID 15.000", "Transaksi Batal
+  sesudahnya modal tanpa negasi atau modal bernegasi yang diikuti kata tukar/refund (ditukar, direfund, dikembalikan,
+  diuangkan, diganti, refunded, exchanged, returned; L6b), jadi "Transaksi Dibatalkan oleh sistem" dan "Transaksi Ditolak
+  karena kartu tidak dapat digunakan" diblokir, "Transaksi dibatalkan oleh pembeli tidak dapat direfund", "… karena
+  barang rusak dapat ditukar" dan "… karena barang rusak tidak dapat ditukar" tidak; angka polos, "Rp0", dan nama barang sesudah jumlah bukan ekor: "TRANSAKSI VOID 15.000", "Transaksi Batal
   2", "Transaksi batal Rp0", "TRANSAKSI VOID 1 MARLBORO" tidak diblokir; "#" + angka saja ("Transaksi Batal #2") menutup
   klausa hanya di teks tanpa baris barang; slip EDC "TRANSAKSI VOID" diblokir), nilai
   label status pembayaran ("Status: Ditolak", "Status: Saldo tidak cukup, transaksi ditolak") dan baris di empat baris
@@ -947,8 +948,11 @@ Catatan:
   menerima dana", seperti "gagal"), lebih dari 3 kata di antara kata benda dan kata batal
   ("Payment to TOKO A was rejected"), kata benda di luar daftar ("Pesanan Dibatalkan"), OCR terpisah ("Di batalkan") dan
   "declined" tidak dibaca; nama toko berbentuk judul ("KEDAI TRANSAKSI BATAL") memblokir seperti "KEDAI TRANSAKSI GAGAL";
-  kaki bantuan berbentuk
-  judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur; negasi kata
+  kaki bantuan "Info/Informasi transaksi gagal …", kalimat informasi "… gagal akan dikembalikan/di-refund/diproses"
+  ("Pembayaran gagal akan di-refund otomatis"), dan catatan user ("Catatan arisan gagal kemarin") tidak lagi memblokir
+  (L6b); label "Info:" lalu judul gagal ("Info: Transaksi Gagal") tetap gagal, dan nilai label status berhasil atau
+  "BERHASIL" di judul tidak menutupi judul gagal di badan (seperti slip EDC "TRANSAKSI VOID"); "Pembayaran pending akan
+  diproses otomatis" tetap pending; negasi kata
   tiba di tengah kalimat ("Transfer belum diterima bank tujuan.") atau tanpa subjek uang di luar label status (judul
   "Belum diterima" atau "Tidak terkirim" saja) tidak dibaca, jadi bukti seperti itu tidak diblokir dan tidak
   diperingatkan, seperti di main (saklar mati bisa membacanya `berhasil`). Sebaliknya "belum …" kata tiba yang

@@ -1446,7 +1446,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N4a (plan L6b): kaki \"Info transaksi pending/gagal\" memblokir slip tanpa status; diharapkan tidak diblokir sesudah L6b."
+  "note": "N4a (plan L6b): kaki \"Info transaksi pending/gagal\" memblokir slip tanpa status; diharapkan tidak diblokir sesudah L6b. L6b: tidak lagi diblokir di kedua saklar (kaki info/refund bukan status). Teksnya kini tidak tampak bukti (tanpa judul status): bentuk N1/C2 yang ditutup L6c/L6e."
  },
  {
   "id": "probe-n4b-refund",
@@ -1465,7 +1465,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N4b (plan L6b): status berlabel berhasil + kaki refund \"akan dikembalikan\" diblokir; diharapkan tidak diblokir sesudah L6b."
+  "note": "N4b (plan L6b): status berlabel berhasil + kaki refund \"akan dikembalikan\" diblokir; diharapkan tidak diblokir sesudah L6b. L6b: tidak lagi diblokir di kedua saklar (kaki info/refund bukan status). Teksnya kini tidak tampak bukti (tanpa judul status): bentuk N1/C2 yang ditutup L6c/L6e."
  },
  {
   "id": "probe-n4c-dana-refund",
@@ -1483,7 +1483,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N4c (plan L6b): judul tanpa kata benda + kaki refund diblokir; diharapkan tidak diblokir sesudah L6b."
+  "note": "N4c (plan L6b): judul tanpa kata benda + kaki refund diblokir; diharapkan tidak diblokir sesudah L6b. L6b: tidak lagi diblokir di kedua saklar (kaki info/refund bukan status). Teksnya kini tidak tampak bukti (tanpa judul status): bentuk N1/C2 yang ditutup L6c/L6e."
  },
  {
   "id": "probe-c2-kirim-uang",
@@ -4549,7 +4549,7 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py FlagOffLabelledFailureTests.test_status_block_stops_at_the_next_label",
-  "note": "Bukan bukti gagal: sumber (test_kotak_kalibrasi.py test_status_block_stops_at_the_next_label) menegaskan \"Catatan arisan gagal kemarin\" = nilai catatan, bukan status (cek kosong). Saklar menyala hari ini memblokir palsu (transfer.umum/gagal, status_gagal: block): judul netral \"Transfer uang ke penerima\" + catatan <= 5 kata berkata gagal dibaca tier badan. Keluarga N4 (blokir palsu), dilaporkan untuk L6b; tag `proof` agar perbaikannya tidak terbaca sebagai \"blokir hilang\"."
+  "note": "Bukan bukti gagal: sumber (test_kotak_kalibrasi.py test_status_block_stops_at_the_next_label) menegaskan \"Catatan arisan gagal kemarin\" = nilai catatan, bukan status (cek kosong). Saklar menyala hari ini memblokir palsu (transfer.umum/gagal, status_gagal: block): judul netral \"Transfer uang ke penerima\" + catatan <= 5 kata berkata gagal dibaca tier badan. Keluarga N4 (blokir palsu), dilaporkan untuk L6b; tag `proof` agar perbaikannya tidak terbaca sebagai \"blokir hilang\". L6b: ditutup (baris catatan dibaca seperti baris nama: hanya judul gagal/pending), saklar menyala tidak lagi memblokir."
  },
  {
   "id": "failed-kalibrasi-005",
@@ -8491,5 +8491,340 @@
     "status tidak_diketahui, cek {}"
    ]
   }
+ },
+ {
+  "id": "l6b-informasi",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Informasi transaksi gagal hubungi 14017"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-gagal-akan-diproses",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Transaksi gagal akan diproses ulang"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-m13-tunai-01",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi dibatalkan karena barang rusak tidak dapat ditukar"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-qris-01",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "WARUNG SEDERHANA",
+   "30/10/2026 15:10",
+   "Nasi Goreng 25.000",
+   "Es Teh 5.000",
+   "Kerupuk 3.000",
+   "TOTAL 33.000",
+   "QRIS 33.000",
+   "Transaksi dibatalkan karena barang rusak tidak dapat ditukar"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-label-01",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "BCA mobile",
+   "30/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Status : Berhasil",
+   "Total Rp150.000",
+   "Transaksi dibatalkan karena barang rusak tidak dapat ditukar"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-tunai-02",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi dibatalkan sebab apapun tidak bisa diuangkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-qris-02",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "WARUNG SEDERHANA",
+   "30/10/2026 15:10",
+   "Nasi Goreng 25.000",
+   "Es Teh 5.000",
+   "Kerupuk 3.000",
+   "TOTAL 33.000",
+   "QRIS 33.000",
+   "Transaksi dibatalkan sebab apapun tidak bisa diuangkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-label-02",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "BCA mobile",
+   "30/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Status : Berhasil",
+   "Total Rp150.000",
+   "Transaksi dibatalkan sebab apapun tidak bisa diuangkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-tunai-03",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi dibatalkan karena alasan pribadi tidak dapat dikembalikan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-qris-03",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "WARUNG SEDERHANA",
+   "30/10/2026 15:10",
+   "Nasi Goreng 25.000",
+   "Es Teh 5.000",
+   "Kerupuk 3.000",
+   "TOTAL 33.000",
+   "QRIS 33.000",
+   "Transaksi dibatalkan karena alasan pribadi tidak dapat dikembalikan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m13-label-03",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "BCA mobile",
+   "30/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Status : Berhasil",
+   "Total Rp150.000",
+   "Transaksi dibatalkan karena alasan pribadi tidak dapat dikembalikan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m13)"
+ },
+ {
+  "id": "l6b-m15-01",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Transaksi Ditolak sebab kartu tidak dapat digunakan",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m15)"
+ },
+ {
+  "id": "l6b-m15-02",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Transaksi Ditolak karena kartu belum bisa digunakan",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b, re-review 3 L5 m15)"
+ },
+ {
+  "id": "l6b-tetap-judul-gagal-badan",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Transaksi Gagal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-tetap-gagal-sudah-dikembalikan",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Transaksi gagal, dana dikembalikan ke saldo kamu"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-tetap-info-berlabel",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Info: Transaksi Gagal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-tetap-catatan-judul-gagal",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Catatan: Transfer Gagal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-tetap-label-berhasil-judul-gagal",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Status Berhasil",
+   "Info: Transaksi Gagal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
+ },
+ {
+  "id": "l6b-tetap-berhasil-judul-lalu-gagal",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "BERHASIL",
+   "26/10/2026 14:22",
+   "Ke BUDI",
+   "Nominal Rp150.000",
+   "Total Rp150.000",
+   "Transaksi Gagal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py InfoAndRefundFootersTests (L6b)"
  }
 ]

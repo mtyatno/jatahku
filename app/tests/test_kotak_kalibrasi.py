@@ -1749,3 +1749,95 @@ class StatusWordInAShopNameTests(unittest.IsolatedAsyncioTestCase):
                              ("TOKO SUKSES MAKMUR", pc.TIDAK_DIKETAHUI)):
             with self.subTest(line):
                 self.assertEqual(pc.read_status(["QRIS", line, "Rp25.000", "26/10/2026 08:12"]), status)
+
+
+N4_BASE = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000", "Total Rp150.000"]
+N4_FALSE_BLOCKS = {
+    "a info": [*N4_BASE, "Info transaksi pending/gagal: 14017"],
+    "b refund": [*N4_BASE, "Status Berhasil", "Transaksi gagal akan dikembalikan"],
+    "c dana refund": ["DANA", "Kirim Uang Berhasil", "Ke SITI", "Nominal Rp50.000", "Total Rp50.000",
+                      "Pembayaran gagal akan di-refund otomatis"],
+    "informasi": [*N4_BASE, "Informasi transaksi gagal hubungi 14017"],
+    "akan diproses": [*N4_BASE, "Transaksi gagal akan diproses ulang"],
+    "catatan": ["gopay", "Rp10.000", "Ditransfer ke Rina Wulandari", "BCA …1234", "Chat dengan CS", "Status",
+                "Transfer uang ke penerima", "Catatan arisan gagal kemarin", "Rincian transaksi", "Status  Selesai",
+                "Waktu  9:31", "Tanggal  28 Okt 2026", "Jumlah  Rp10.000", "Total  Rp10.000"],
+}
+N4_REAL_FAILURES = {
+    "judul gagal di badan": [*N4_BASE, "Transaksi Gagal"],
+    "sudah dikembalikan": [*N4_BASE, "Transaksi gagal, dana dikembalikan ke saldo kamu"],
+    # Keputusan L6b: label "Info" lalu judul gagal = status (tidak ada kata jenis transaksi sesudah "Info").
+    "info berlabel": [*N4_BASE, "Info: Transaksi Gagal"],
+    "catatan judul gagal": [*N4_BASE, "Catatan: Transfer Gagal"],
+    "BERHASIL di badan bukan judul": [*N4_BASE, "BERHASIL", "Transaksi Gagal"],
+    # Nilai label status berhasil dan "BERHASIL" di judul bukan judul status: judul gagal di badan tetap memblokir (seperti
+    # slip EDC "TRANSAKSI VOID" di bawah "Status : Berhasil", keputusan L5; deviasi L6b dari langkah ketiga rencana).
+    "label berhasil lalu judul gagal": [*N4_BASE, "Status Berhasil", "Info: Transaksi Gagal"],
+    "BERHASIL di judul": ["BCA mobile", "BERHASIL", *N4_BASE[1:], "Transaksi Gagal"],
+}
+# Re-review 3 L5 m13: modal bernegasi lalu kata tukar/refund sesudah kata alasan = kebijakan, bukan kegagalan.
+REFUND_POLICY_FOOTERS = ("Transaksi dibatalkan karena barang rusak tidak dapat ditukar",
+                         "Transaksi dibatalkan sebab apapun tidak bisa diuangkan",
+                         "Transaksi dibatalkan karena alasan pribadi tidak dapat dikembalikan",
+                         "Transaksi dibatalkan karena promo tidak bisa direfund",
+                         "Transaksi dibatalkan karena salah pilih tidak dapat diganti",
+                         "Payment cancelled because goods can't be returned")
+QRIS_STORE = ["WARUNG SEDERHANA", "30/10/2026 15:10", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "TOTAL 33.000",
+              "QRIS 33.000"]
+
+
+class InfoAndRefundFootersTests(unittest.IsolatedAsyncioTestCase):
+    """L6b (N4): kaki bantuan "Info/Informasi transaksi gagal …", kalimat "… gagal akan dikembalikan/di-refund/diproses",
+    dan catatan user ("Catatan arisan gagal kemarin") tidak memblokir bukti berhasil. Judul gagal sungguhan di badan tetap
+    memblokir, juga di bawah nilai label status berhasil."""
+
+    async def test_false_blocks_are_gone_in_both_modes(self):
+        for name, lines in N4_FALSE_BLOCKS.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertNotEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual(status_levels(res), {})
+
+    async def test_real_failures_still_block(self):
+        for name, lines in N4_REAL_FAILURES.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_refund_policy_footers_after_a_reason_do_not_block(self):
+        for footer in REFUND_POLICY_FOOTERS:
+            for layout, lines in (("tunai", store_receipt(footer)), ("qris", [*QRIS_STORE, footer]),
+                                  ("label saja", success_label_proof(footer))):
+                for enabled in (True, False):
+                    with self.subTest(footer, layout=layout, enabled=enabled):
+                        res = await read(lines, enabled=enabled)
+                        self.assertNotEqual(res.parsed.doc.status, "gagal")
+                        self.assertEqual(status_levels(res), {})
+
+    def test_failure_reasons_with_a_negated_modal_still_block(self):
+        """m13: kata kerja kegagalan sesudah modal bernegasi tetap alasan gagal. m15: "sebab" memisah alasan, "belum"
+        menegasi modal."""
+        for text in ("Transaksi Ditolak karena kartu tidak dapat digunakan",
+                     "Transaksi dibatalkan karena tidak bisa diproses",
+                     "Transaksi Ditolak sebab kartu tidak dapat digunakan",
+                     "Transaksi Ditolak karena kartu belum bisa digunakan",
+                     "Payment rejected because card can't be used"):
+            with self.subTest(text):
+                self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), pc.GAGAL)
+        for text in REFUND_POLICY_FOOTERS:
+            with self.subTest(text):
+                self.assertIsNone(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)))
+
+    def test_help_and_refund_phrases(self):
+        for text in ("Info transaksi pending/gagal: 14017", "Informasi pembayaran gagal hubungi 14017",
+                     "Transaksi gagal akan dikembalikan", "Pembayaran gagal akan di-refund otomatis",
+                     "Dana transaksi gagal akan direfund", "Transfer gagal akan diproses ulang"):
+            with self.subTest(text):
+                self.assertEqual(pc._status_lines([text], pc.HEADER_WORDS), [])
+        for text in ("Info: Transaksi Gagal", "Transaksi Gagal", "Transaksi gagal, dana dikembalikan",
+                     "Pembayaran berhasil akan diproses"):
+            with self.subTest(text):
+                self.assertTrue(pc._status_lines([text], pc.HEADER_WORDS))

@@ -714,12 +714,24 @@ _LEADING_UNTUK = re.compile(r"^\W*untuk(?!\w)", re.IGNORECASE)
 # "failed or pending".
 _STATUS_LIST = _STATUS_WORD + r"(?:[\s/,&\-–]+(?:(?:atau|ataupun|maupun|dan|serta|or|and)\s+)?(?:yang\s+)?" + _STATUS_WORD + r")*"
 # Frasa bantuan yang menyebut JENIS transaksi, bukan status bukti ini ("Info untuk transaksi gagal: 14017", "Bantuan untuk
-# transaksi gagal", "Pengaduan transaksi pending/gagal: 14017", "Biaya transfer untuk transaksi gagal dikembalikan", "For failed
-# or pending transactions call 14017"): dibuang sebelum status dibaca. "untuk" + nama/tagihan tetap status ("Pembayaran untuk
-# Tagihan PLN Gagal").
+# transaksi gagal", "Pengaduan transaksi pending/gagal: 14017", "Info transaksi pending/gagal: 14017", "Biaya transfer untuk
+# transaksi gagal dikembalikan", "For failed or pending transactions call 14017"): dibuang sebelum status dibaca. "untuk" +
+# nama/tagihan tetap status ("Pembayaran untuk Tagihan PLN Gagal"); label "Info:" lalu judul ("Info: Transaksi Gagal") juga
+# tetap status (L6b: tanda ":" memisahkan label dari judulnya, tidak ada kata jenis transaksi sesudah "Info").
+# Kalimat informasi tentang transaksi gagal/pending pada umumnya: "… gagal akan dikembalikan/di-refund/diproses"
+# ("Transaksi gagal akan dikembalikan", "Pembayaran gagal akan di-refund otomatis"; L6b, N4). Yang sudah terjadi bukan
+# informasi ("Transaksi gagal, dana dikembalikan ke saldo kamu" tetap gagal).
+# Daftar itu harus memuat kata gagal: "Pembayaran pending akan diproses otomatis" tetap status pending (A14: struk belanja
+# dengan kaki itu diperingatkan).
+_LIST_SEP = r"[\s/,&\-–]+(?:(?:atau|ataupun|maupun|dan|serta|or|and)\s+)?(?:yang\s+)?"
+_FAIL_LIST = (r"(?:pending" + _LIST_SEP + r")?(?:gagal|failed|tidak\s+berhasil)"
+              r"(?:" + _LIST_SEP + r"(?:gagal|failed|tidak\s+berhasil|pending))*")
 _HELP_PHRASE = re.compile(
-    r"(?<!\w)(?:untuk|pengaduan|bantuan|keluhan)\s+(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?" + _STATUS_LIST + r"(?!\w)"
-    r"|(?<!\w)for\s+" + _STATUS_LIST + r"\s+(?:transactions?|payments?|transfers?)(?!\w)",
+    r"(?<!\w)(?:untuk|pengaduan|bantuan|keluhan|info|informasi)\s+(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?"
+    + _STATUS_LIST + r"(?!\w)"
+    r"|(?<!\w)for\s+" + _STATUS_LIST + r"\s+(?:transactions?|payments?|transfers?)(?!\w)"
+    r"|(?<!\w)(?:(?:transaksi|pembayaran|transfer)\s+(?:yang\s+)?)?" + _FAIL_LIST
+    + r"\s+akan\s+(?:dikembalikan|di-?refund|diproses)(?!\w)",
     re.IGNORECASE)
 
 
@@ -775,7 +787,9 @@ def _status_part(text: str) -> str:
 # atau "Dari rekening gagal didebet" diawali kata yang kebetulan label nama. Judul dari baris nama hanya boleh menyumbang
 # gagal/pending, tidak pernah berhasil: "Tujuan Transfer CV SUKSES JAYA" juga berbentuk judul, dan "berhasil" palsu di judul
 # akan menutupi kegagalan di bawah baris 4.
-_NAME_FIELDS = ("merchant", "sender")
+# Baris catatan user ("Catatan arisan gagal kemarin", "Berita: transfer gagal kemarin"; L6b, keluarga N4) dibaca sama: teks
+# bebas yang ditulis user, bukan status, kecuali judul status gagal/pending.
+_NAME_FIELDS = ("merchant", "sender", "note")
 # Kata benda transaksi di awal judul status (dipakai `_STATUS_TITLE` dan `_CANCEL_TITLE`: satu daftar). "dana"/"saldo" sengaja
 # tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI").
 _TITLE_NOUN = (r"(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|"
@@ -831,6 +845,11 @@ _REASON_WORD = re.compile(r"(?<!\w)(?:karena|sebab|due|because)(?!\w)", re.IGNOR
 _LATER_MODAL = re.compile(r"(?<!\w)(?:dapat|bisa|boleh|akan|harus|can|may|will)(?!\w)", re.IGNORECASE)
 _NEGATION_BEFORE = re.compile(r"(?<!\w)(?:tidak|tak|gak|nggak|ga|belum|not)\s+$", re.IGNORECASE)
 _NEGATION_AFTER = re.compile(r"['’]t(?!\w)|\s+not(?!\w)", re.IGNORECASE)   # "can't", "may not" ("cannot" bukan modal)
+# Kata kerja tukar/refund tepat sesudah modal bernegasi (re-review 3 L5 m13, L6b): "karena barang rusak tidak dapat ditukar",
+# "sebab apapun tidak bisa diuangkan", "can't be returned" = kebijakan toko; kata kerja lain ("digunakan", "diproses",
+# "diverifikasi") = alasan kegagalan itu sendiri.
+_REFUND_AFTER_MODAL = re.compile(r"(?:['’]t|\s+not)?\s+(?:be\s+)?(?:ditukar|direfund|di-refund|dikembalikan|diuangkan|diganti|"
+                                 r"refund(?:ed)?|exchanged|returned)(?!\w)", re.IGNORECASE)
 # Satu kata pelaku/cara tepat sesudah kata batal ("Pembayaran Ditolak Bank", "Transaksi Dibatalkan Otomatis"), boleh
 # diikuti satu kata penjelas dari daftar tertutup ("Ditolak Bank Tujuan", "Dibatalkan Sistem Otomatis").
 _ACTOR_NEXT = re.compile(r"\s+(?:bank|sistem|system|otomatis|automatically|penerbit(?:\s+kartu)?|issuer|merchant|penjual|"
@@ -852,13 +871,15 @@ _DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
 
 def _policy_modal(clause: str) -> bool:
     """Modal kebijakan di klausa pelaku/sebab: sebelum kata alasan (karena/sebab/due/because) modal apa pun ("oleh pembeli
-    tidak dapat direfund"); sesudahnya hanya modal tanpa negasi ("karena barang rusak dapat ditukar"; bukan "karena kartu
+    tidak dapat direfund"); sesudahnya modal tanpa negasi ("karena barang rusak dapat ditukar"), atau modal bernegasi yang
+    diikuti kata kerja tukar/refund ("karena barang rusak tidak dapat ditukar", `_REFUND_AFTER_MODAL`); bukan "karena kartu
     tidak dapat digunakan", "due to card cannot be used")."""
     reason = _REASON_WORD.search(clause)
     before, after = (clause[:reason.start()], clause[reason.start():]) if reason else (clause, "")
     if _LATER_MODAL.search(before):
         return True
-    return any(not _NEGATION_BEFORE.search(after[:m.start()]) and not _NEGATION_AFTER.match(after, m.end())
+    return any((not _NEGATION_BEFORE.search(after[:m.start()]) and not _NEGATION_AFTER.match(after, m.end()))
+               or _REFUND_AFTER_MODAL.match(after, m.end())
                for m in _LATER_MODAL.finditer(after))
 
 
@@ -1028,7 +1049,9 @@ def read_body_failure_title(lines: list[str]) -> str | None:
     gagal? Hubungi kami"), dan judul sukses dari baris nama tidak dihitung. Yang menentukan judul status PERTAMA menurut
     urutan dokumen, seperti badan di `read_status`: judul sukses di 4 baris pertama ("Transfer Berhasil") atau di badan
     ("Transaksi Berhasil") berarti kalimat gagal sesudahnya kaki bukti ("Info transaksi pending/gagal: 14017",
-    "Dana transaksi gagal akan dikembalikan"), bukan status bukti ini. `berhasil` tidak pernah dikembalikan."""
+    "Dana transaksi gagal akan dikembalikan"), bukan status bukti ini. Nilai label status berhasil ("Status : Berhasil")
+    dan baris "BERHASIL" bukan judul, jadi tidak menutupi judul gagal di badan (slip EDC "TRANSAKSI VOID" di bawah
+    "Status : Berhasil" tetap diblokir, keputusan L5). `berhasil` tidak pernah dikembalikan."""
     cleaned = clean_lines(lines)
     if has_header_status_title(cleaned):   # judul status di 4 baris pertama yang menentukan (gagal/pending: read_header_status)
         return None
