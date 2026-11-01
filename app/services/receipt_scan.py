@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.models import (
-    ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, Transaction, User,
+    ProofRule, ReceiptLearnVote, ReceiptMerchantAlias, ReceiptScan, ReceiptTotalLabel, Transaction, User,
 )
 from app.services.kotak_struk.config import ST_TERCATAT
 from app.services.receipt_ocr import OcrBusy, OcrFailed
@@ -309,7 +309,8 @@ async def purge_stale_ocr_text(db: AsyncSession) -> int:
 
 async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dict:
     """Untuk Admin: berapa scan yang diterima tanpa koreksi. Ditambah rincian Kotak Struk (`by_doc_type`,
-    `by_issuer`, `unrecognized`); kunci lama dan cara hitungnya tidak berubah."""
+    `by_issuer`, `unrecognized`) dan `rules_pending` (aturan belajar yang menunggu keputusan pemilik, semua waktu;
+    lencana "Aturan belajar", pre-flight G10); kunci lama dan cara hitungnya tidak berubah."""
     since = since or _month_start()  # zona waktu default app
     rows = (await db.execute(
         select(ReceiptScan.outcome, ReceiptScan.engine, func.count(ReceiptScan.id))
@@ -331,6 +332,10 @@ async def accuracy_stats(db: AsyncSession, since: datetime | None = None) -> dic
     )).all()
     out["most_corrected"] = [{"merchant_key": k or "(tidak dikenal)", "count": n} for k, n in worst]
     out.update(await _kotak_breakdown(db, since))
+    from app.services.kotak_struk.belajar import ST_MENUNGGU
+    out["rules_pending"] = (await db.execute(
+        select(func.count(ProofRule.id)).where(ProofRule.status == ST_MENUNGGU)
+    )).scalar_one()
     return out
 
 

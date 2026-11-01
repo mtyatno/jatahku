@@ -421,7 +421,7 @@ class StatsTests(MaintenanceBase):
         self.assertEqual(old, {"total": 6, "accepted": 1, "corrected": 2, "discarded": 1, "expired": 1, "pending": 1,
                                "llm": 1, "accuracy_pct": 33.3,
                                "most_corrected": [{"merchant_key": "ALFAMART", "count": 2}]})
-        self.assertEqual(set(s) - set(old), {"by_doc_type", "by_issuer", "unrecognized"})
+        self.assertEqual(set(s) - set(old), {"by_doc_type", "by_issuer", "unrecognized", "rules_pending"})
 
     async def recorded(self, issuer, *, parsed_total, paid_at, txns, doc_type="qris", **cols):
         """Item tercatat dengan `transaction_ids` = txns (id transaksi, atau UUID acak untuk yang tidak ada)."""
