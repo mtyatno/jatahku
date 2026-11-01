@@ -92,7 +92,6 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
         snap_res.scalar_one_or_none = MagicMock(return_value=Decimal("100000"))
 
         db.execute = AsyncMock(side_effect=[
-            hid_res,
             env_res,
             txn_res,
             spent_res,
@@ -102,7 +101,7 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
 
         p_start = date(2026, 3, 1)
         p_end = date(2026, 3, 31)
-        txns, summaries, env_map = await _get_export_data(user, db, p_start, p_end)
+        txns, summaries, env_map = await _get_export_data(user, db, p_start, p_end, household_id="h1")
 
         self.assertEqual(len(txns), 1)
         self.assertEqual(len(summaries), 1)
@@ -144,7 +143,6 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
         alloc_res.scalar = MagicMock(return_value=Decimal("0"))
 
         db.execute = AsyncMock(side_effect=[
-            hid_res,
             env_res,
             txn_res,
             spent_res,
@@ -153,7 +151,7 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
 
         p_start = date(2026, 3, 1)
         p_end = date(2026, 3, 31)
-        txns, summaries, env_map = await _get_export_data(user, db, p_start, p_end)
+        txns, summaries, env_map = await _get_export_data(user, db, p_start, p_end, household_id="h1")
 
         self.assertEqual(len(summaries), 1)
         s = summaries[0]
@@ -201,7 +199,6 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
         alloc_res.scalar = MagicMock(return_value=Decimal("500000"))
 
         db.execute = AsyncMock(side_effect=[
-            hid_res,
             env_res,
             txn_res,
             spent_res,
@@ -212,7 +209,7 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
             period_start=date(2026, 3, 1),
             period_end=date(2026, 3, 31),
             user=user,
-            db=db,
+            db=db, hid="h1",
         )
 
         content = ""
@@ -264,7 +261,6 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
         alloc_res.scalar = MagicMock(return_value=Decimal("500000"))
 
         db.execute = AsyncMock(side_effect=[
-            hid_res,
             env_res,
             txn_res,
             spent_res,
@@ -275,7 +271,7 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
             period_start=date(2026, 3, 1),
             period_end=date(2026, 3, 31),
             user=user,
-            db=db,
+            db=db, hid="h1",
         )
 
         content = ""
@@ -341,7 +337,6 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
         alloc_res.scalar = MagicMock(return_value=Decimal("1000000"))
 
         db.execute = AsyncMock(side_effect=[
-            hid_res,
             env_res,
             txn_res,
             spent_res,
@@ -352,7 +347,7 @@ class ExportPeriodTests(unittest.IsolatedAsyncioTestCase):
             period_start=date(2026, 3, 1),
             period_end=date(2026, 3, 31),
             user=user,
-            db=db,
+            db=db, hid="h1",
         )
 
         content = ""
@@ -400,7 +395,7 @@ def _hostile_export_db(*, env_name=XSS_ENV_NAME, emoji=XSS_EMOJI, description=XS
     spent_res.scalar = MagicMock(return_value=spent)
     alloc_res = MagicMock()
     alloc_res.scalar = MagicMock(return_value=Decimal("500000"))
-    db.execute = AsyncMock(side_effect=[hid_res, env_res, txn_res, spent_res, alloc_res])
+    db.execute = AsyncMock(side_effect=[env_res, txn_res, spent_res, alloc_res])
     return user, db
 
 
@@ -414,7 +409,7 @@ async def _body(response) -> str:
 class ExportHtmlInjectionTests(unittest.IsolatedAsyncioTestCase):
     async def _report_html(self, **kwargs) -> str:
         user, db = _hostile_export_db(**kwargs)
-        response = await export_pdf(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db)
+        response = await export_pdf(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db, hid="h1")
         return await _body(response)
 
     async def test_envelope_name_and_emoji_are_escaped(self):
@@ -439,7 +434,7 @@ class ExportHtmlInjectionTests(unittest.IsolatedAsyncioTestCase):
 class ExportCsvInjectionTests(unittest.IsolatedAsyncioTestCase):
     async def _csv(self, **kwargs) -> str:
         user, db = _hostile_export_db(**kwargs)
-        response = await export_csv(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db)
+        response = await export_csv(period_start=date(2026, 3, 1), period_end=date(2026, 3, 31), user=user, db=db, hid="h1")
         return await _body(response)
 
     async def test_formula_in_description_is_neutralised(self):

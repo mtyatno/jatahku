@@ -24,19 +24,24 @@ Hanya bertambah; field lama tidak berubah arti. Belum ada perilaku ruang: semua 
 
 Pemasukan lama diberi `kind` oleh migrasi `1c7e5a9d3b20`: `balance_check_id` terisi → `penyesuaian`; nominal 0 → `transfer`; keterangan `Top-up` atau diawali `Top-up ` → `top-up`; selain itu `pemasukan`. Jenis usaha (penjualan, modal pemilik, pinjaman, lain-lain) disimpan Buku Usaha di tabelnya sendiri (U1–U2), bukan di kolom ini.
 
-## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3)
+## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3) — **v1 (R2, PR plugin/r2-ruang-aktif)**
 
-Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`).
+Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`). Sampai R4 belum ada klien yang mengirimnya, dan belum ada user yang punya ruang kedua. Header tercantum di OpenAPI sebagai header opsional pada setiap endpoint ber-ruang.
+
+Implementasi: `app/services/ruang.py`. Route menerima ruang sebagai parameter keyword-only `hid: RuangAktif` (membaca) atau `hid: RuangTulis` (menulis) dan meneruskannya ke services sebagai `household_id`; tidak ada service yang mencari household dari keanggotaan sendiri.
 
 | Kasus | Perilaku server |
 | --- | --- |
-| Header tidak dikirim | Ruang keluarga utama user (`ruang_keluarga(user)`). User dengan satu ruang dan aplikasi lama tidak berubah perilakunya |
-| UUID ruang tempat user menjadi anggota | Ruang itu dipakai untuk membaca |
-| UUID ruang yang bukan milik user, ruang terhapus, atau bukan UUID | 403 `ruang_tidak_diizinkan`. Tidak pernah jatuh diam-diam ke ruang lain |
-| Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `di_luar_jam_kerja`, dengan `buka_lagi` (waktu) di body |
-| Endpoint tulis | Header tidak menentukan ruang. Ruang diambil dari objek; bila objek ada di ruang yang bukan milik user → 404 (tidak membocorkan keberadaan objek) |
+| Header tidak dikirim, atau kosong | Ruang keluarga user: household `rumah_tangga` tempat user menjadi anggota (bila lebih dari satu, keanggotaan tertua). User dengan satu ruang dan aplikasi lama tidak berubah perilakunya |
+| UUID ruang tempat user menjadi anggota | Ruang itu dipakai untuk membaca (semua `GET`, plus `POST` yang hanya membaca: `/dashboard/data`, `/balance-check/preview`, `/advisor/allocation-recommendation`) |
+| UUID ruang yang bukan milik user, ruang terhapus, atau bukan UUID | 403 `{"detail": "<teks>", "kode": "ruang_tidak_diizinkan"}`. Tidak pernah jatuh diam-diam ke ruang lain |
+| Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `di_luar_jam_kerja`, dengan `buka_lagi` (waktu) di body (R5) |
+| Endpoint tulis, **R2 sampai R3** | Selalu ruang keluarga. Header yang menunjuk ruang lain (atau tidak sah) → 403 `ruang_tidak_diizinkan`, supaya catatan tidak masuk ruang yang salah. Header yang menunjuk ruang keluarga sendiri diterima |
+| Endpoint tulis, **sejak R3** | Header tidak menentukan ruang. Ruang diambil dari objek; bila objek ada di ruang yang bukan milik user → 404 (tidak membocorkan keberadaan objek) |
 
-Bot (Telegram dan chat web) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
+Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per ruang, jadi keduanya memakai ruang aktif. Dismiss AI Advisor (`POST`/`DELETE /advisor/dismiss`) juga memakai ruang aktif (status per viewer, tidak mengubah data keuangan). Rencana dana (`POST /advisor/plan`) memakai ruang tulis supaya selalu sepasang dengan `POST /advisor/execute`.
+
+Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringatan proaktif), kuota paket (sampai R3), dan Kotak Struk (bukti baru dicatat ke ruang keluarga sampai R3) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
 
 ## 2. Ruang (R4, R5, R6, R7, R8)
 

@@ -51,9 +51,9 @@ class MergeUsersTests(unittest.IsolatedAsyncioTestCase):
 
 class ResetDataTests(unittest.IsolatedAsyncioTestCase):
     async def test_reset_deletes_household_balance_checks_after_incomes(self):
-        db = scripted_db(FakeResult(uuid.uuid4()), FakeResult("owner"))  # household id, role
+        db = scripted_db(FakeResult("owner"))  # peran (ruang dari ruang_tulis)
         user = SimpleNamespace(id=uuid.uuid4(), email=None, name="U")
-        out = await reset_data(ResetDataRequest(), user=user, db=db)
+        out = await reset_data(ResetDataRequest(), user=user, db=db, hid=uuid.uuid4())
         self.assertTrue(out["success"])
         stmts = executed_sql(db)
         i_bc = index_of(stmts, "DELETE FROM balance_checks")

@@ -25,7 +25,7 @@ class AllocationResponsePurposeTests(unittest.TestCase):
             "app.services.advisor.allocation.load_advisor_context",
             new=AsyncMock(return_value=fake_context),
         ):
-            result = asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), Decimal("1000000"), db=None))
+            result = asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), Decimal("1000000"), db=None, household_id="h1"))
         self.assertTrue(result["items"])
         self.assertEqual(result["items"][0]["purpose"], "expense")
         self.assertIn("confidence", result)

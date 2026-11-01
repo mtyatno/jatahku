@@ -125,6 +125,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Plugin R2: 403 ruang_tidak_diizinkan membawa field `kode` (docs/plugin/04-kontrak-api.md §7)
+from app.services import ruang as _ruang
+_ruang.install(app)
 # Routes
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])

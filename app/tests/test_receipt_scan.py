@@ -900,7 +900,7 @@ class TestBotReceipt(unittest.IsolatedAsyncioTestCase):
              patch.object(receipt_cmd, "AsyncSessionLocal", return_value=session), \
              patch("app.bot.handlers.get_or_create_user", AsyncMock(return_value=user)), \
              patch("app.bot.handlers._is_setup_complete", AsyncMock(return_value=(True, ""))), \
-             patch("app.bot.handlers.get_household_id", AsyncMock(return_value=uuid4())), \
+             patch("app.bot.handlers.ruang_keluarga", AsyncMock(return_value=uuid4())), \
              patch("app.bot.handlers.get_envelopes_with_spent", AsyncMock(return_value=[
                  {"envelope": env_a}, {"envelope": env_save}, {"envelope": env_b}])), \
              patch.object(intake, "create_item", create), \

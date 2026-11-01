@@ -313,7 +313,8 @@ def ringkasan_mingguan(a: Analisa, minggu: dict) -> str:
 
 
 # ── DB + flag ───────────────────────────────────────────────────────────
-async def muat(user, db, now: datetime | None = None, pengaturan: dict | None = None) -> Analisa | None:
+async def muat(user, db, now: datetime | None = None, pengaturan: dict | None = None, *,
+               household_id) -> Analisa | None:
     """Analisa viewer `user`, atau None bila flag `advisor_v2_users` tidak memuat user ini
     (atau belum ada amplop) → pemanggil memakai jawaban lama."""
     from app.services.advisor import advisor_cache
@@ -325,7 +326,7 @@ async def muat(user, db, now: datetime | None = None, pengaturan: dict | None = 
     if not flag_aktif(pengaturan.get(FLAG_KEY), user.id):
         return None
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
-    snap = await load_snapshot(user, db, today=now_local.date())
+    snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
     if not snap.household_id or not snap.envelopes:
         return None
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))

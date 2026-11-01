@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import document_date_kind
 from app.models.models import (
-    User, Transaction, Envelope, HouseholdMember, TransactionSource
+    User, Transaction, Envelope, TransactionSource
 )
 from app.services.behavior import BehaviorCheckResult, check_behavior
 from app.services.expense_rules import NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable
@@ -25,6 +25,7 @@ from app.services.plan_limits import check_transaction_limit, has_txn_limit, quo
 from app.services import quota_pass
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 log = logging.getLogger("jatahku.transactions")
@@ -215,6 +216,8 @@ async def create_transaction(
     req: TransactionCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from app.services import idempotency
     existing_ref = await idempotency.lookup(user.id, req.client_ref)
@@ -234,10 +237,6 @@ async def create_transaction(
         if receipt_error:
             raise HTTPException(status_code=409, detail=receipt_error)
     # Verify envelope belongs to user's household
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
 
     result = await db.execute(
         select(Envelope).where(
@@ -319,12 +318,10 @@ async def suggest_envelope(
     req: SuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from app.services.txn_nlp import find_best_envelope
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid or not req.description.strip():
         return {"envelope_id": None, "envelope_name": None, "confident": False}
     envelope, confident = await find_best_envelope(req.description, hid, db, user.id)
@@ -338,12 +335,10 @@ async def suggest_envelopes(
     req: BatchSuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     from app.services.txn_nlp import find_best_envelope
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid:
         return {"results": [{"index": i, "envelope_id": None, "envelope_name": None, "confident": False} for i in range(len(req.descriptions))]}
 
@@ -365,11 +360,9 @@ async def batch_create_transactions(
     req: BatchTransactionCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
 
     from app.services import idempotency
     # Satu kiriman = satu input. Kuota Basic dicek SEKALI di awal: bila masih ada,
@@ -643,11 +636,9 @@ async def list_transactions(
     offset: int = Query(0),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
 
     query = (
         select(Transaction)
@@ -690,11 +681,9 @@ async def delete_transaction(
     txn_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
 

@@ -31,9 +31,9 @@ def txn(balance_check_id):
 class AdjustmentFlagTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_transactions_flags_adjustments(self):
         from app.api.routes.transactions import list_transactions
-        db = db_with(FakeResult(HID), FakeResult(rows=[txn(uuid.uuid4()), txn(None)]))
+        db = db_with(FakeResult(rows=[txn(uuid.uuid4()), txn(None)]))
         out = await list_transactions(envelope_id=None, start_date=None, end_date=None,
-                                      limit=20, offset=0, user=USER, db=db)
+                                      limit=20, offset=0, user=USER, db=db, hid=HID)
         self.assertEqual([t.is_adjustment for t in out], [True, False])
 
     def test_present_transaction_flags_adjustment(self):
@@ -46,8 +46,8 @@ class AdjustmentFlagTests(unittest.IsolatedAsyncioTestCase):
         inc = SimpleNamespace(id=uuid.uuid4(), amount=D("200000"), description="Penyesuaian saldo",
                               income_date=date(2026, 9, 30), created_at=NOW, balance_check_id=uuid.uuid4(),
                               kind="penyesuaian")
-        db = db_with(FakeResult(HID), FakeResult(rows=[inc]), FakeResult(rows=[]))
-        out = await list_incomes(period_start=date(2026, 9, 1), period_end=date(2026, 9, 30), user=USER, db=db)
+        db = db_with(FakeResult(rows=[inc]), FakeResult(rows=[]))
+        out = await list_incomes(period_start=date(2026, 9, 1), period_end=date(2026, 9, 30), user=USER, db=db, hid=HID)
         self.assertTrue(out[0]["is_adjustment"])
         self.assertEqual(out[0]["kind"], "penyesuaian")
 

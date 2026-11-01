@@ -136,27 +136,27 @@ def susun_dashboard(snap, *, now_local: datetime, dismiss: dict | None = None,
 
 
 # ── DB + Redis ──────────────────────────────────────────────────────────
-async def _hitung(user, db, now_local: datetime, pengaturan: dict) -> tuple[dict, dict, object]:
+async def _hitung(user, db, now_local: datetime, pengaturan: dict, *, household_id) -> tuple[dict, dict, object]:
     from app.services.advisor.snapshot import load_snapshot
-    snap = await load_snapshot(user, db, today=now_local.date())
+    snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))
     dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
     payload, meta = susun_dashboard(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
     return payload, meta, snap
 
 
-async def get_dashboard(user, db, now: datetime | None = None) -> dict:
+async def get_dashboard(user, db, now: datetime | None = None, *, household_id) -> dict:
     pengaturan = await muat_pengaturan(db)
     if not flag_aktif(pengaturan.get(FLAG_KEY), user.id):
         return {"enabled": False}
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
-    hid = await _household_id(user, db)
+    hid = _sid(household_id)
     if hid:
         cached = await advisor_cache.ambil(hid, user.id)
         if cached and cached.get("payload", {}).get("generated_at", "")[:10] == now_local.date().isoformat():
             return cached["payload"]
     sebelum = set(await advisor_cache.muat_dismiss(user.id)) if hid else set()
-    payload, meta, snap = await _hitung(user, db, now_local, pengaturan)
+    payload, meta, snap = await _hitung(user, db, now_local, pengaturan, household_id=household_id)
     # Dismiss/Urungkan yang terjadi selama menghitung (#91): jangan simpan payload basi ke cache,
     # nanti invalidate dari batal_dismiss terlewat dan insight tetap tersembunyi sampai 90 detik.
     if hid and set(await advisor_cache.muat_dismiss(user.id)) == sebelum:
@@ -165,28 +165,24 @@ async def get_dashboard(user, db, now: datetime | None = None) -> dict:
     return payload
 
 
-async def _household_id(user, db) -> str | None:
-    from sqlalchemy import select
-    from app.models.models import HouseholdMember
-    hid = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )).scalar_one_or_none()
-    return str(hid) if hid else None
+def _sid(household_id) -> str | None:
+    """Kunci cache advisor memakai id ruang sebagai teks."""
+    return str(household_id) if household_id else None
 
 
-async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = None) -> None:
+async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = None, *, household_id) -> None:
     """Simpan dismiss (§9). Tone & rupiah saat disembunyikan diambil dari dashboard terakhir,
     supaya insight bisa muncul lagi bila tone naik atau rupiah naik ≥ 50% (juga untuk
     `bukan_dobel` yang permanen: transaksi kembar baru masuk grup yang sama). Kecocokan
     pilihan khusus dengan kunci dicek di route (`advisor_cache.pilihan_sah`)."""
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
-    hid = await _household_id(user, db)
+    hid = _sid(household_id)
     cached = await advisor_cache.ambil(hid, user.id) if hid else None
     if cached and "meta" in cached:
         meta, pe = cached["meta"], cached.get("period_end")
         period_end = date.fromisoformat(pe) if pe else now_local.date()
     else:
-        _, meta, snap = await _hitung(user, db, now_local, await muat_pengaturan(db))
+        _, meta, snap = await _hitung(user, db, now_local, await muat_pengaturan(db), household_id=household_id)
         period_end = snap.periods[-1][1]
     info = meta.get(kunci) or {}
     ttl = advisor_cache.ttl_dismiss(pilihan, now_local, period_end)
@@ -198,13 +194,13 @@ async def dismiss(user, db, kunci: str, pilihan: str, now: datetime | None = Non
         await advisor_cache.invalidate_viewer(hid, user.id)
 
 
-async def batal_dismiss(user, db, kunci: str) -> bool | None:
+async def batal_dismiss(user, db, kunci: str, *, household_id) -> bool | None:
     """Munculkan lagi insight yang disembunyikan viewer (§9, #91): hapus status dismiss-nya
     lalu cache dashboard viewer, supaya muatan berikutnya langsung menampilkannya.
     None = Redis gagal (route membalas 503)."""
     ada = await advisor_cache.hapus_dismiss(user.id, kunci)
     logger.info("advisor batal_dismiss user=%s kunci=%s ada=%s", user.id, kunci, ada)
-    hid = await _household_id(user, db)
+    hid = _sid(household_id)
     if hid:
         await advisor_cache.invalidate_viewer(hid, user.id)
     return ada

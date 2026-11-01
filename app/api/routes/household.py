@@ -9,6 +9,7 @@ import redis.asyncio as aioredis
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
+from app.services.ruang import RuangAktif, RuangTulis, keanggotaan, keanggotaan_keluarga
 from app.models.models import User, Household, HouseholdMember, HouseholdRole, UserStreak
 
 settings = get_settings()
@@ -42,19 +43,19 @@ async def _redis():
     return aioredis.from_url(settings.REDIS_URL)
 
 
-async def _get_membership(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
+async def _get_membership(user: User, db: AsyncSession, hid):
+    """Keanggotaan user di ruang `hid` (dari ruang_aktif / ruang_tulis)."""
+    return await keanggotaan(db, user.id, hid)
 
 
 @router.get("/", response_model=HouseholdResponse)
 async def get_household(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -80,8 +81,10 @@ async def get_household(
 async def list_members(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -116,12 +119,14 @@ class LeaderboardEntry(BaseModel):
 async def streak_leaderboard(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Rank household members by their current logging streak."""
     from datetime import timedelta
     from app.services.streak import user_today
 
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -158,8 +163,10 @@ async def streak_leaderboard(
 async def create_invite(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -204,8 +211,8 @@ async def join_household(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Kamu sudah bergabung di household ini")
 
-    # Remove from old household
-    old_membership = await _get_membership(user, db)
+    # Pindah ruang keluarga: keanggotaan ruang keluarga lama dihapus, ruang usaha tetap.
+    old_membership = await keanggotaan_keluarga(db, user.id)
     if old_membership:
         await db.delete(old_membership)
 

@@ -9,11 +9,12 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period, get_last_n_periods, get_period_info
 from app.models.models import (
-    User, Envelope, Transaction, HouseholdMember, Allocation, Income,
+    User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, EnvelopeGroup, MonthlySnapshot,
 )
 from app.services.advisor import build_allocation_distribution, build_envelope_distribution
 from app.services.reserved import envelope_reserved
+from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
@@ -21,11 +22,6 @@ _ID_MONTHS = [
     "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
     "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ]
-
-
-async def _get_hid(user, db):
-    r = await db.execute(select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id))
-    return r.scalar_one_or_none()
 
 
 def _payday(user) -> int:
@@ -56,13 +52,14 @@ async def daily_spending(
     period_start: date | None = Query(None),
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Daily spending for a budget period — for bar/line chart.
 
     Hanya amplop yang terlihat viewer (bersama + pribadi miliknya), seperti snapshot advisor;
     amplop pribadi anggota lain tidak ikut terhitung (S15). Periode berjalan untuk user di flag
     `advisor_v2_users` memakai deret metrik dari `GET /advisor/page/analitik`."""
-    hid = await _get_hid(user, db)
     if not hid:
         return []
     if not period_start or not period_end:
@@ -94,9 +91,10 @@ async def envelope_breakdown(
     period_start: date | None = Query(None),
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Spending breakdown by envelope for a budget period — for pie chart."""
-    hid = await _get_hid(user, db)
     if not hid:
         return []
     if not period_start or not period_end:
@@ -199,9 +197,10 @@ async def allocation_summary(
     period_start: date | None = Query(None),
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Income + allocation summary for a budget period — for the Alokasi header."""
-    hid = await _get_hid(user, db)
     if not hid:
         return {
             "period_label": "", "total_income": 0, "income_count": 0,
@@ -246,9 +245,10 @@ async def allocation_summary(
 @router.get("/monthly-trend")
 async def monthly_trend(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Last 6 budget periods spending + allocated — for comparison chart."""
-    hid = await _get_hid(user, db)
     if not hid:
         return []
     payday_day = _payday(user)
@@ -291,9 +291,10 @@ async def spending_prediction(
     period_start: date | None = Query(None),
     period_end: date | None = Query(None),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Will budget last until next payday? Prediction based on daily average."""
-    hid = await _get_hid(user, db)
     if not hid:
         return {}
 

@@ -254,27 +254,28 @@ class GroupJenisRouteTests(unittest.IsolatedAsyncioTestCase):
         from app.services.advisor.snapshot import load_snapshot
         from sqlalchemy import select, update
         async with self.Session() as db:
-            g = await routes.create_group(routes.EnvelopeGroupCreate(name="Pengeluaran bulanan"), user=self.me, db=db)
+            g = await routes.create_group(routes.EnvelopeGroupCreate(name="Pengeluaran bulanan"), user=self.me, db=db,
+                                          hid=self.hid)
             self.assertIsNone(g.jenis)
             await db.execute(update(Envelope).where(Envelope.household_id == self.hid).values(group_id=g.id))
             await db.commit()
         async with self.Session() as db:
-            snap = await load_snapshot(self.me, db, today=TODAY)
+            snap = await load_snapshot(self.me, db, today=TODAY, household_id=self.hid)
             self.assertEqual(snap.envelopes[0].jenis, "harian")             # grup tanpa jenis → otomatis
         self.redis.store[advisor_cache.kunci_dashboard(self.hid, self.me.id)] = "{}"
         async with self.Session() as db:
-            g2 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis="bulanan"), user=self.me, db=db)
+            g2 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis="bulanan"), user=self.me, db=db, hid=self.hid)
             self.assertEqual((g2.name, g2.jenis), ("Pengeluaran bulanan", "bulanan"))
         self.assertNotIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)  # cache dihapus
         async with self.Session() as db:
-            snap = await load_snapshot(self.me, db, today=TODAY)
+            snap = await load_snapshot(self.me, db, today=TODAY, household_id=self.hid)
             self.assertEqual(snap.envelopes[0].jenis, "bulanan")
-            rows = await routes.list_groups(user=self.me, db=db)
+            rows = await routes.list_groups(user=self.me, db=db, hid=self.hid)
             self.assertEqual([(r.name, r.jenis) for r in rows], [("Pengeluaran bulanan", "bulanan")])
         async with self.Session() as db:   # ganti nama saja: jenis tidak berubah; jenis=null → otomatis lagi
-            g3 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(name="Bulanan"), user=self.me, db=db)
+            g3 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(name="Bulanan"), user=self.me, db=db, hid=self.hid)
             self.assertEqual((g3.name, g3.jenis), ("Bulanan", "bulanan"))
-            g4 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis=None), user=self.me, db=db)
+            g4 = await routes.update_group(g.id, routes.EnvelopeGroupUpdate(jenis=None), user=self.me, db=db, hid=self.hid)
             self.assertIsNone(g4.jenis)
 
     async def test_jenis_tidak_dikenal_ditolak(self):

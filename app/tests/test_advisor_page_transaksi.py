@@ -149,6 +149,7 @@ class HalamanIntegrationTests(unittest.IsolatedAsyncioTestCase):
             hh = Household(name="Rumah")
             db.add_all([me, rina, hh])
             await db.flush()
+            self.hid = hh.id
             db.add_all([HouseholdMember(user_id=me.id, household_id=hh.id, role=HouseholdRole.owner),
                         HouseholdMember(user_id=rina.id, household_id=hh.id, role=HouseholdRole.member)])
             makan = Envelope(household_id=hh.id, name="Makan", classification="needs", budget_amount=D("0"))
@@ -174,7 +175,7 @@ class HalamanIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def page(self, user, **kw):
         from app.api.routes import advisor as advisor_routes
         async with self.Session() as db:
-            return await advisor_routes.advisor_page_transaksi(user=user, db=db, **kw)
+            return await advisor_routes.advisor_page_transaksi(user=user, db=db, hid=self.hid, **kw)
 
     async def test_flag_mati(self):
         self.assertEqual(await self.page(self.rina), {"enabled": False})

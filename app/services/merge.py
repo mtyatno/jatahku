@@ -10,6 +10,8 @@ from app.models.models import (
     PendingTransaction, PaymentOrder,
 )
 
+from app.services.ruang import keanggotaan_keluarga, ruang_keluarga_id
+
 logger = logging.getLogger("jatahku.merge")
 
 
@@ -20,9 +22,7 @@ async def is_empty_bot_account(user: User, db: AsyncSession) -> bool:
     if user.email:
         return False
 
-    hid = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )).scalar_one_or_none()
+    hid = await ruang_keluarga_id(db, user.id)
     if hid is not None:
         members = (await db.execute(
             select(func.count(HouseholdMember.id)).where(HouseholdMember.household_id == hid)
@@ -62,17 +62,9 @@ async def get_merge_preview(source_user_id: UUID, target_user_id: UUID, db: Asyn
     if not target:
         return {"error": "Target user not found"}
 
-    # Source household
-    src_member = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == source_user_id)
-    )
-    src_membership = src_member.scalar_one_or_none()
-
-    # Target household
-    tgt_member = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == target_user_id)
-    )
-    tgt_membership = tgt_member.scalar_one_or_none()
+    # Ruang keluarga kedua akun (gabung akun hanya menyangkut ruang keluarga; ruang usaha tidak digabung)
+    src_membership = await keanggotaan_keluarga(db, source_user_id)
+    tgt_membership = await keanggotaan_keluarga(db, target_user_id)
 
     source_hh = None
     target_hh = None
@@ -163,16 +155,9 @@ async def merge_users(
     if not target_user:
         return {"error": "Target user not found"}
 
-    # Get both memberships
-    src_mem = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == source_user_id)
-    )
-    src_membership = src_mem.scalar_one_or_none()
-
-    tgt_mem = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == target_user_id)
-    )
-    tgt_membership = tgt_mem.scalar_one_or_none()
+    # Keanggotaan ruang keluarga kedua akun (ruang usaha target tidak disentuh)
+    src_membership = await keanggotaan_keluarga(db, source_user_id)
+    tgt_membership = await keanggotaan_keluarga(db, target_user_id)
 
     src_hh_id = src_membership.household_id if src_membership else None
     tgt_hh_id = tgt_membership.household_id if tgt_membership else None
@@ -239,10 +224,14 @@ async def merge_users(
             )
         )
         if not existing.scalar_one_or_none():
-            # Remove old membership
-            await db.execute(
-                delete(HouseholdMember).where(HouseholdMember.user_id == target_user_id)
-            )
+            # Ganti keanggotaan ruang keluarga lama target saja; keanggotaan ruang usaha tetap.
+            if tgt_hh_id is not None:
+                await db.execute(
+                    delete(HouseholdMember).where(
+                        HouseholdMember.user_id == target_user_id,
+                        HouseholdMember.household_id == tgt_hh_id,
+                    )
+                )
             db.add(HouseholdMember(
                 user_id=target_user_id,
                 household_id=keep_household_id,

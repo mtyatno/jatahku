@@ -4,7 +4,7 @@ from app.bot import advisor_cmd
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
-    get_or_create_user, get_household_id, _is_setup_complete, format_currency,
+    get_or_create_user, ruang_keluarga, _is_setup_complete, format_currency,
 )
 
 # Trigger patterns: "aman gak", "cukup ga", "kalau beli", "masuk budget", etc.
@@ -57,7 +57,7 @@ async def handle_whatif(update, context):
             await reply_setup_needed(update, user)
             return
 
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         envelope, confident = await find_best_envelope(item_text or description, hid, db, user.id)
         # Periode gajian user (dulu bulan kalender: payday_day tidak dikirim).
         payday_day = getattr(user, "payday_day", 1) or 1

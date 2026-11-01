@@ -40,7 +40,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from app.bot.handlers import (
     AsyncSessionLocal, _esc, _is_setup_complete, _spendable_rows, _streak_text,
     find_best_envelope, format_currency,
-    get_envelopes_with_spent, get_household_id, get_or_create_user, settings,
+    get_envelopes_with_spent, ruang_keluarga, get_or_create_user, settings,
 )
 from app.bot.channel import find_chat_user, txn_source
 from app.bot.tglogin_cmd import reply_setup_needed
@@ -374,7 +374,7 @@ async def _run_callback(update, expected_stage, step):
                 user = await find_chat_user(query.from_user.id, db)
                 if not user or str(user.id) != str(data.get("user_id")):
                     return  # bukan pemilik antrean ini
-                hid = await get_household_id(user, db)
+                hid = await ruang_keluarga(user, db)
                 flash = await step(db, user, hid, data, choice)
                 text, markup, done = await render_step(key, data, user, hid, db, flash=flash)
 
@@ -416,7 +416,7 @@ async def handle_multi_expense(update, context, items):
         if not setup_ok:
             await reply_setup_needed(update, user)
             return
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         payday_day = getattr(user, "payday_day", 1) or 1
 
         env_data = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)

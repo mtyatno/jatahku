@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.core.security import hash_password
-from app.models.models import User, HouseholdMember
+from app.models.models import User
 from app.services import auth_sessions
 from app.services.merge import get_merge_preview, merge_users, is_empty_bot_account
 
@@ -81,9 +81,8 @@ async def link_telegram_account(
             target = result.scalar_one_or_none()
             if not target:
                 raise HTTPException(status_code=404, detail="User tidak ditemukan")
-            keep = (await db.execute(
-                select(HouseholdMember.household_id).where(HouseholdMember.user_id == target.id)
-            )).scalar_one_or_none()
+            from app.services.ruang import ruang_keluarga_id
+            keep = await ruang_keluarga_id(db, target.id)  # gabung akun = ruang keluarga
             merged = await merge_users(
                 source_user_id=existing_user.id,
                 target_user_id=target.id,
