@@ -20,9 +20,9 @@ hanya dicocokkan lewat HMAC.
   tidak tercetak tidak bisa dipelajari. Bukan suara juga (review L2 M-4): label sub-nominal (jumlah/nominal/amount tanpa
   "total") pada bukti yang punya baris biaya berlabel: user memilih mencatat tanpa biaya, bukan pembacaan yang salah.
 - `label_pihak`: keterangan akhir memuat nama (n-gram 1-6 kata, HMAC) yang tercetak di baris `nama` berlabel PENERIMA
-  (`_party_label`: ada kata penerima seperti penerima/ke/tujuan/merchant/toko/nama, dan tanpa kata bukan-penerima seperti
-  keterangan/berita/status/metode/sumber/dari/pengirim; review L2 I-1: keterangan transfer yang diketik ulang sebagai
-  deskripsi bukan koreksi nama), dan nama itu bukan nama yang terbaca (juga bukan potongan nama terbaca: "Budi" dari
+  (`_party_label`: ada kata penerima seperti penerima/ke/tujuan/merchant/toko, "nama" hanya bersama kata penerima lain
+  (R-1), dan tanpa kata bukan-penerima seperti keterangan/berita/status/metode/sumber/dari/pengirim; review L2 I-1:
+  keterangan transfer yang diketik ulang sebagai deskripsi bukan koreksi nama), dan nama itu bukan nama yang terbaca (juga bukan potongan nama terbaca: "Budi" dari
   "BUDI SANTOSO") (K5). Nama panggilan yang tidak tercetak tidak pernah cocok.
 - `label_tanggal`: tanggal akhir bukan tanggal bukti (WIB dari `paid_at`) dan bukan hari ini, tercetak di baris
   `tanggal` berlabel (K9; dalam praktik hanya dari form Catat).
@@ -95,6 +95,10 @@ _PROFILE_KEYS = frozenset(p.key for p in PROFILES)
 # `label_pihak` hanya untuk label yang menamai penerima (review L2 I-1). Kata label sudah huruf kecil (`safe_label`).
 PARTY_WORDS = frozenset({"penerima", "ke", "kepada", "tujuan", "merchant", "toko", "nama", "name", "recipient", "to",
                          "payee"})
+# "nama"/"name" saja bukan label penerima (review L2 R-1): Jago PLN "NAMA:" = pemilik meter (sering user sendiri),
+# "Nama Acquirer"/"Nama Pengakuisisi" = bank penerbit. Hanya bersama kata penerima lain (nama penerima, nama merchant,
+# nama toko, nama tujuan, recipient name).
+WEAK_PARTY_WORDS = frozenset({"nama", "name"})
 NOT_PARTY_WORDS = frozenset({"status", "keterangan", "catatan", "berita", "pesan", "deskripsi", "metode", "sumber",
                              "dari", "pengirim", "from", "sender", "lokasi", "location", "alamat", "id", "ref", "kode",
                              "cabang"})
@@ -153,9 +157,10 @@ def _words(label: str) -> set[str]:
 
 
 def _party_label(label: str) -> bool:
-    """Label yang menamai penerima: ada kata PARTY_WORDS dan tanpa kata NOT_PARTY_WORDS."""
+    """Label yang menamai penerima: ada kata PARTY_WORDS selain "nama"/"name" (WEAK_PARTY_WORDS) dan tanpa kata
+    NOT_PARTY_WORDS."""
     words = _words(label)
-    return bool(words & PARTY_WORDS) and not words & NOT_PARTY_WORDS
+    return bool(words & (PARTY_WORDS - WEAK_PARTY_WORDS)) and not words & NOT_PARTY_WORDS
 
 
 def _fee_dropped(label: str, layout: dict) -> bool:

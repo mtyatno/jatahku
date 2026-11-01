@@ -239,11 +239,12 @@ class ReviewFixVotesTests(_Quiet):
     """Review L2 putaran 1: label penerima saja (I-1), kunci profil saja (M-1), nominal tanpa biaya bukan suara (M-4),
     nama panjang (M-3)."""
 
-    PARTY = ("ke", "kirim ke", "ditransfer ke", "penerima", "nama", "nama penerima", "nama merchant", "toko", "tujuan",
-             "recipient", "transfer to", "dibayar ke")
+    PARTY = ("ke", "kirim ke", "ditransfer ke", "penerima", "nama penerima", "nama merchant", "nama toko",
+             "nama tujuan", "merchant name", "recipient name", "toko", "tujuan", "recipient", "transfer to", "dibayar ke")
     NOT_PARTY = ("keterangan", "berita", "catatan", "sumber akun", "sumber dana", "dikirim dari", "dari", "status",
                  "status transaksi", "metode pembayaran", "nama pengirim", "lokasi merchant", "merchant location",
-                 "id", "rekening sumber", "harga", "uang", "saldo")
+                 "id", "rekening sumber", "harga", "uang", "saldo",
+                 "nama", "name")   # review L2 R-1: "nama" saja = pemilik meter PLN, "Nama Acquirer"/"Pengakuisisi"
 
     def test_name_vote_only_for_recipient_labels(self):
         for label in self.PARTY + self.NOT_PARTY:
@@ -252,6 +253,17 @@ class ReviewFixVotesTests(_Quiet):
                 self.assertTrue(belajar._votable(label), label)   # label kosakata yang sah: hanya jenisnya yang menolak
                 votes = votes_for(lay, doc(name="BUDI"), None, final(description="arisan Siti Rahayu"))
                 self.assertEqual(votes, [Vote("label_pihak", "gopay", label)] if label in self.PARTY else [])
+
+    def test_lone_nama_label_is_not_a_recipient(self):
+        # Review L2 R-1: Jago PLN "NAMA: PT CONTOH DAYA" (pemilik meter, sering user sendiri) dan "Nama Acquirer" /
+        # "Nama Pengakuisisi Gopay" (kerangka memecahnya menjadi label "nama" + nilai) tidak pernah suara penerima.
+        for value in ("PT CONTOH DAYA", "Acquirer", "Pengakuisisi Gopay"):
+            with self.subTest(value=value):
+                lay = layout(nama(9, "nama", value), key="jago")
+                self.assertEqual(votes_for(lay, doc(name=None), None, final(description=f"listrik {value}")), [])
+        lay = layout(nama(9, "nama", "PT CONTOH DAYA"), nama(4, "nama merchant", "RM AJO PIAMAN"), key="jago")
+        self.assertEqual(votes_for(lay, doc(name="BUDI"), None, final(description="RM Ajo Piaman (PT Contoh Daya)")),
+                         [Vote("label_pihak", "jago", "nama merchant")])
 
     def test_transfer_note_typed_as_description_is_not_a_name_correction(self):
         # Kasus review: keterangan/berita transfer diketik ulang sebagai deskripsi.
@@ -689,8 +701,9 @@ class PrivacyTests(DbBase):
                     self.assertNotRegex(text, r"\d")
                     self.assertNotIn("#", text)
                 self.assertIn(row.rule_key, PROFILE_KEYS)   # tahap 1: tidak pernah kunci `logo:` (review L2 M-1)
-                if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1)
+                if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1, R-1)
                     self.assertTrue(belajar._party_label(row.value), row.value)
+                    self.assertNotIn(row.value, {"nama", "name"})
                 if row.kind == "label_total":
                     self.assertFalse(set(row.value.split()) & belajar.NOT_TOTAL_WORDS, row.value)
                 self.assertTrue(all(w in LABEL_WORDS for w in re.findall(r"[^\s]+", row.value)
