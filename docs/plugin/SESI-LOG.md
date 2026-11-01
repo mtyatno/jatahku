@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R4 · Membuat dan berpindah ruang · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review, PR PR_R4, issue #144; tanpa tanda review/migrasi)
+**Selesai** (status review, PR #174, issue #144; tanpa tanda review/migrasi)
 - `app/api/routes/ruang.py`: `GET /ruang` (daftar untuk pemilih: ruang keluarga dulu, lalu urut bergabung; `paket` dan `jam_kerja` null sampai H1/V1 dan R5; field tambahan `boleh_buat_usaha`) dan `POST /ruang` (ruang usaha, pembuat owner, nama 1–60 huruf, batas 3 ruang usaha per pemilik dengan kunci baris user, 403 `ruang_usaha_belum_dibuka` di luar flag, 409 `batas_ruang_usaha`).
 - Flag `ruang_usaha_users` jadi saklar di `app/services/ruang.py` (`ruang_usaha_dibuka`, `_anggota_ruang_terbuka`): di luar flag, ruang usaha tidak tampil, tidak bisa dibuka lewat header (403), dan objeknya tidak bisa ditulis (`ruang_objek`/`ruang_amplop*` → None → 404). Ruang keluarga tidak terpengaruh.
 - `household_cycle.init_ruang_usaha`: ruang usaha baru `payday_day = 1` (bulan kalender, desain A2 butir 9); tanpa ini `household_payday` menurunkan siklus dari gajian owner.
