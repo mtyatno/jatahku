@@ -166,10 +166,10 @@ async def _anonymize_leftovers(db: AsyncSession, user_id) -> None:
             await db.delete(inc)
             continue
         allocated = Decimal(str(allocated or 0))
-        if allocated > 0:
-            inc.amount = min(inc.amount, allocated)
         # allocated <= 0 (geser dana): nominal dibiarkan apa adanya (0). Riwayat mengenali transfer dari
         # amount == 0 dan total pemasukan hanya menghitung amount > 0; nominal negatif merusak keduanya.
+        if allocated > 0:
+            inc.amount = min(inc.amount, allocated)
         inc.user_id = former
         inc.description = ANON_INCOME_DESC
 
