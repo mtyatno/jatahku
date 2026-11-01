@@ -43,10 +43,11 @@ if HAS_AIOSQLITE:
         kotak_struk, notifications, recurring, snapshots, transactions, user_settings,
     )
     from app.api.routes import ruang as ruang_routes
+    from app.api.routes import ruang_kelola
     from app.core.database import Base, get_db
     from app.core.deps import get_current_user
     from app.models.models import (
-        Allocation, Envelope, EnvelopeGroup, Goal, Household, HouseholdMember, HouseholdRole, HouseholdType, Income,
+        Allocation, AppSetting, Envelope, EnvelopeGroup, Goal, Household, HouseholdMember, HouseholdRole, HouseholdType, Income,
         PurposeType, RecurringTransaction, RuangAudit, RuangBatasan, RuangDraf, RuangUndangan, Transaction, User,
     )
     from app.services import ruang
@@ -157,6 +158,8 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
             db.add(inc)
             await db.flush()
             db.add(Allocation(income_id=inc.id, envelope_id=op.id, amount=D("2000000")))
+            self.flag = AppSetting(key=ruang.FLAG_RUANG_USAHA, value="*")   # R4: ruang usaha dibuka untuk semua
+            db.add(self.flag)
             await db.commit()
         self.rumah_id, self.rumah_dewi_id, self.nusa_id, self.op_id = rumah.id, rumah_dewi.id, nusa.id, op.id
 
@@ -165,7 +168,8 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         ruang.install(app)
         for mod, prefix in ROUTERS:
             app.include_router(mod.router, prefix=prefix)
-        app.include_router(ruang_routes.router)
+        app.include_router(ruang_routes.router, prefix="/ruang")
+        app.include_router(ruang_kelola.router)
         self.app = app
 
         async def _db():
@@ -655,6 +659,29 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 422, r.text)
         self.assertEqual(await self._hitung(Income, Income.description == "geser diam-diam"), 0)
         self.assertEqual(await self._hitung(RuangDraf), 0)
+
+    async def test_ikut_flag_ruang_usaha_dan_jam_kerja_di_daftar_ruang(self):
+        """Gabungan R4 × R5: di luar flag `ruang_usaha_users` route kelola dan undangan tertutup; `GET /ruang`
+        memuat jadwal karyawan."""
+        jk = {"mulai": "07:00", "selesai": "15:00", "hari": [1, 2, 3, 4, 5]}
+        await self._batasan(jam_kerja=jk)
+        r = await self._req("GET", "/ruang", user=self.dewi)
+        nusa = next(i for i in r.json()["items"] if i["id"] == str(self.nusa_id))
+        self.assertEqual((nusa["peran"], nusa["jam_kerja"]["mulai"]), ("member", "07:00"))
+        r = await self._req("GET", "/ruang", user=self.ani)
+        self.assertIsNone(next(i for i in r.json()["items"] if i["id"] == str(self.nusa_id))["jam_kerja"])
+        kode = (await self._req("POST", f"/ruang/{self.nusa_id}/undangan", {}, user=self.me)).json()["kode"]
+        async with self.Session() as db:
+            flag = await db.get(AppSetting, ruang.FLAG_RUANG_USAHA)
+            flag.value = str(self.me.id)   # hanya owner
+            await db.commit()
+        r = await self._req("GET", f"/ruang/{self.nusa_id}/anggota", user=self.ani)
+        self.assertEqual(r.status_code, 404)
+        r = await self._req("POST", "/ruang/gabung", {"kode": kode}, user=self.orang)
+        self.assertEqual(self._kode(r), (403, "ruang_usaha_belum_dibuka"))
+        r = await self._req("GET", f"/ruang/{self.nusa_id}/anggota", user=self.me)
+        self.assertEqual(r.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,7 +26,7 @@ Pemasukan lama diberi `kind` oleh migrasi `1c7e5a9d3b20`: `balance_check_id` ter
 
 ## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3) — **v1 (R2 #166, penulisan R3)**
 
-Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`). Sampai R4 belum ada klien yang mengirimnya, dan belum ada user yang punya ruang kedua. Header tercantum di OpenAPI sebagai header opsional pada setiap endpoint ber-ruang.
+Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`, `lib/ruangAktif.js`), hanya bila user memilih ruang selain ruang keluarga. Ruang kedua hanya bisa dibuat user di flag `ruang_usaha_users` (§2). Header tercantum di OpenAPI sebagai header opsional pada setiap endpoint ber-ruang.
 
 Implementasi: `app/services/ruang.py`. Route menerima ruang sebagai parameter keyword-only `hid: RuangAktif` (membaca) atau `hid: RuangTulis` (menulis) dan meneruskannya ke services sebagai `household_id`; tidak ada service yang mencari household dari keanggotaan sendiri.
 
@@ -50,27 +50,40 @@ Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringa
 
 Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluarga (review keamanan PR #166): `POST /auth/link/merge` hanya menerima `keep_household_id` yang merupakan ruang keluarga salah satu dari kedua akun (selain itu 400, tanpa perubahan data); `POST /household/join` (dan `/join` di bot) menolak kode undangan yang menunjuk household selain `rumah_tangga` (400 "Kode invite tidak valid"). Undangan ruang usaha terpisah (R5, §2).
 
-## 2. Ruang (R4, R5, R6, R7, R8)
+## 2. Ruang (R4, R5, R6, R7, R8) — **`GET`/`POST /ruang` v1 (R4)**
 
 ```jsonc
-// GET /ruang — semua ruang user, untuk pemilih ruang
+// GET /ruang — semua ruang user, untuk pemilih ruang. Tidak membaca header ruang.
 {
-  "bawaan": "<uuid ruang keluarga>",
-  "items": [
-    {"id": "…", "nama": "Keluarga yatno", "jenis": "rumah_tangga", "peran": "owner", "jumlah_anggota": 2},
+  "bawaan": "<uuid ruang keluarga>",          // null bila user belum punya household
+  "items": [                                  // ruang keluarga dulu, lalu ruang lain urut bergabung
+    {"id": "…", "nama": "Keluarga yatno", "jenis": "rumah_tangga", "peran": "owner", "jumlah_anggota": 2,
+     "paket": null, "jam_kerja": null},
     {"id": "…", "nama": "Dapur Nusa", "jenis": "usaha", "peran": "owner", "jumlah_anggota": 3,
-     "paket": {"status": "uji_coba", "sampai": "2026-12-31"},   // ADR-P12, P13; null di ruang keluarga
-     "jam_kerja": null}                                          // untuk member: jadwalnya sendiri bila diatur admin
-  ]
+     "paket": null,       // ADR-P12, P13: {"status": "uji_coba", "sampai": "2026-12-31"} mulai H1/V1; null sampai saat itu
+     "jam_kerja": null}   // R5: untuk member, jadwalnya sendiri bila diatur admin
+  ],
+  "boleh_buat_usaha": true                    // flag terbuka untuk user ini dan belum mencapai batas (R4)
 }
 // jenis: rumah_tangga | usaha. peran: owner | admin | member (UI: Pemilik, Admin, Karyawan).
 // Ruang usaha hanya muncul untuk user di flag ruang_usaha_users (AppSetting) sampai rilis.
 
-// POST /ruang {"nama": "Dapur Nusa"} → 201 {ruang}
-// Selalu membuat ruang berjenis usaha; pembuat menjadi owner. 403 di luar flag.
+// POST /ruang {"nama": "Dapur Nusa"} → 201 {ruang}   (item seperti di atas, jumlah_anggota 1)
+// Selalu membuat ruang berjenis usaha; pembuat menjadi owner. Nama 1–60 huruf (spasi dirapikan), selain itu 422.
+// 403 `ruang_usaha_belum_dibuka` di luar flag; 409 `batas_ruang_usaha` bila user sudah memiliki 3 ruang usaha.
+// Ruang baru: siklus bulan kalender (payday_day 1, desain A2 butir 9), tanpa kode undangan (undangan ruang usaha di R5).
 ```
 
-Anggota, undangan, batasan, persetujuan, audit — **v1 (R5, PR plugin/r5-peran-batasan)**. Implementasi: `app/api/routes/ruang.py`, `app/services/peran.py`.
+**Flag `ruang_usaha_users` sebagai saklar (R4).** Di luar flag, ruang usaha milik user tidak tampil di `GET /ruang`,
+tidak bisa dibuka lewat header (403 `ruang_tidak_diizinkan`, §1), dan objeknya tidak bisa ditulis (404 seperti objek
+asing). Ruang keluarga tidak pernah terpengaruh. Klien (`frontend/src/lib/ruangAktif.js`) menyimpan id ruang terpilih di
+perangkat (hanya ruang selain ruang keluarga; dihapus saat logout), mengirimnya di setiap permintaan, memisah cache offline
+per ruang, dan bila server menjawab 403 `ruang_tidak_diizinkan` untuk header itu, kembali ke ruang keluarga dan memuat
+ulang Beranda. Permintaan yang ditolak tidak diulang tanpa header, supaya catatan tidak masuk ruang yang salah. Berpindah
+ruang memuat ulang aplikasi di Beranda. Chat tetap ruang keluarga: di ruang usaha tombolnya berlabel "Ruang keluarga"
+untuk pemilik dan admin, dan disembunyikan untuk karyawan (ADR-P16).
+
+Anggota, undangan, batasan, persetujuan, audit — **v1 (R5, PR plugin/r5-peran-batasan)**. Implementasi: `app/api/routes/ruang_kelola.py`, `app/services/peran.py`. Ikut flag `ruang_usaha_users` (R4): di luar flag route ini 404, dan `/ruang/gabung` 403 `ruang_usaha_belum_dibuka`.
 
 Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat `/household`) dan hanya owner dan admin ruang itu: bukan anggota atau ruang keluarga → 404 "Ruang tidak ditemukan"; karyawan → 403 `khusus_admin`. Admin tidak bisa mengubah atau mengeluarkan owner (403 `khusus_admin`). Setiap perubahan tercatat di log audit ruang.
 
@@ -133,7 +146,8 @@ Antrean persetujuan — **v1 (R5)**, ADR-P18. Draf disimpan terpisah (`ruang_dra
 //                                 "ada_foto", "status", "alasan", "hasil_id", "dibuat"}]   (status menunggu)
 // GET  /persetujuan/saya → draf milik user di ruang aktif: menunggu + yang diputus 14 hari terakhir (bentuk sama)
 // POST /ruang/{id}/persetujuan/{draf_id}/setujui → {"transaction_id" | "income_id", "draf_id", "status": "disetujui"}
-//      aturan pencatatan gagal (mis. dana tidak cukup) → galat jalur pencatatan, draf kembali "menunggu";
+//      aturan pencatatan gagal (mis. dana tidak cukup, limit harian amplop terlewati — persetujuan tidak menaikkan
+//      limit) → 403 dengan pesan lengkap untuk admin, draf kembali "menunggu";
 //      sudah diputus → 409; pencatat sudah keluar → 409
 // POST /ruang/{id}/persetujuan/{draf_id}/tolak {"alasan"?} → {"draf_id", "status": "ditolak"}
 // status draf: menunggu | diproses | disetujui | ditolak | dibatalkan
@@ -350,8 +364,11 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | --- | --- | --- |
 | `ruang_tidak_diizinkan` | 403 | Header ruang bukan ruang user |
 | `lintas_ruang` | 400 | Satu permintaan tulis menyentuh dua ruang (R3); prive menyusul di R8 |
+| `ruang_usaha_belum_dibuka` | 403 | `POST /ruang` oleh user di luar flag `ruang_usaha_users` (R4) |
+| `batas_ruang_usaha` | 409 | `POST /ruang` saat user sudah memiliki 3 ruang usaha (R4) |
 | `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota; body juga berisi `buka_lagi` (R5) |
 | `khusus_admin` | 403 | Karyawan di ruang usaha memakai route di luar `KARYAWAN_BOLEH`, atau aksi admin lain (mengubah owner) (R5) |
+| `nominal_tidak_sah` | per baris | Baris antrean offline bernominal nol atau negatif (R5; jalur tunggal dan pemasukan: 422 validasi) |
 | `amplop_tidak_diizinkan` | 403 | Amplop tidak termasuk batasan anggota |
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |

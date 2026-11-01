@@ -25,7 +25,7 @@ if HAS_AIOSQLITE:
 
     from app.core.database import Base, get_db
     from app.core.deps import get_current_user
-    from app.models.models import Household, HouseholdMember, HouseholdRole, HouseholdType, User
+    from app.models.models import AppSetting, Household, HouseholdMember, HouseholdRole, HouseholdType, User
     from app.services import ruang
 
 
@@ -56,6 +56,8 @@ class RuangResolverTests(unittest.IsolatedAsyncioTestCase):
                 HouseholdMember(user_id=self.me.id, household_id=self.rumah.id, role=HouseholdRole.owner),
                 HouseholdMember(user_id=self.orang.id, household_id=self.asing.id, role=HouseholdRole.owner),
             ])
+            # R4: ruang usaha hanya terbuka untuk user di flag (saklar diuji di test_ruang_r4.py).
+            db.add(AppSetting(key=ruang.FLAG_RUANG_USAHA, value=str(self.me.id)))
             await db.commit()
 
         self.current = self.me

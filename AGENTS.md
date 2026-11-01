@@ -237,9 +237,10 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
 Menambah empat tabel baru (`ruang_batasan`, `ruang_undangan`, `ruang_draf`, `ruang_audit`) dan route `/ruang/{id}/…`,
 `/ruang/gabung`, `/persetujuan/saya`. **Tidak ada kolom baru di tabel lama**, jadi tidak ada jendela 500: `lifespan`
 (`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten (`if_not_exists`). Perilaku baru hanya
-untuk peran `member` di ruang **usaha**; belum ada user dengan ruang usaha (pembuatannya di R4), jadi tidak ada yang
-berubah untuk user hari ini. Tanpa paket baru, `.env`, atau perubahan tampilan.
-1. Sebelum merge: checklist "Plugin R3" sudah jalan, dan `alembic current` di VPS = `2d51b9031a6b` (siklus household).
+untuk peran `member` di ruang **usaha**, dan ruang usaha hanya terbuka bagi user di flag `ruang_usaha_users` (R4), jadi
+tidak ada yang berubah untuk user lain. Karyawan yang diundang juga harus masuk flag itu (`/ruang/gabung` di luar flag →
+403 `ruang_usaha_belum_dibuka`). Tanpa paket baru, `.env`, atau perubahan tampilan.
+1. Sebelum merge: checklist "Plugin R3" dan "Plugin R4" sudah jalan, dan `alembic current` di VPS = `2d51b9031a6b` (siklus household).
    Bila belum, jalankan checklist siklus household dulu.
 2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
    `ls /opt/jatahku/app/alembic/versions/ | grep c5r5a8e2d417`.
@@ -249,9 +250,29 @@ berubah untuk user hari ini. Tanpa paket baru, `.env`, atau perubahan tampilan.
    deploy yang gagal.
 4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d ruang_draf'` (indeks unik parsial `uq_ruang_draf_client_ref`),
    lalu dengan token sendiri: `GET https://api.jatahku.com/ruang/<id ruang keluarga>/anggota` → 404 (route hanya untuk
-   ruang usaha); catat transaksi di web dan bot seperti biasa → 201; `ruang_paritas` kode keluar 0.
+   ruang usaha); catat transaksi di web dan bot seperti biasa → 201; `ruang_paritas` kode keluar 0. Di ruang usaha uji
+   (flag pemilik): undang akun kedua sebagai karyawan (akun itu ditambahkan ke flag), atur batas nominal kecil, catat di
+   atasnya dari akun karyawan → "menunggu persetujuan", setujui dari akun pemilik.
+5. Flag `*` tetap menunggu V1 (Paket Usaha dan uji beta), seperti catatan checklist R4.
 
-## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi)
+## Deploy Checklist — Plugin R4: membuat dan berpindah ruang (tanpa migrasi, flag `ruang_usaha_users`)
+`GET`/`POST /ruang`, pemilih ruang di sidebar dan header HP, dan header `X-Jatahku-Ruang` dari web dan aplikasi. Selama
+flag `ruang_usaha_users` belum diisi, `GET /ruang` hanya berisi ruang keluarga, pemilih tidak tampil, dan klien tidak
+mengirim header: tampilan dan data semua user tidak berubah. Tanpa migrasi, paket, atau `.env`.
+1. Merge, tunggu deploy hijau (`api.jatahku.com/health` dan `jatahku.com/version.json` → commit baru).
+2. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0.
+3. **Buka untuk pemilik saja:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
+   ('ruang_usaha_users', '<user_id kamu>') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"`. Muat ulang
+   Jatahku: pemilih ruang muncul di bawah logo (HP: menggantikan logo). Buat ruang usaha uji, pindah ke sana: Amplop,
+   Transaksi, dan Beranda kosong; catat satu pengeluaran ke amplop baru di ruang itu; pindah ke ruang keluarga: angka
+   tidak berubah dan catatan ruang usaha tidak tampil. Chat berlabel "Ruang keluarga" dan tetap mencatat ke ruang keluarga.
+4. **Jangan isi `*`** sampai R5 (peran dan batasan) dan V1: undangan ruang usaha belum ada, dan Paket Usaha belum dipasang.
+5. **Menutup lagi** kapan saja: value `''`. Ruang usaha yang sudah dibuat tetap di database, tetapi tidak tampil, tidak
+   bisa dibuka lewat header (403, klien kembali ke ruang keluarga), dan objeknya tidak bisa ditulis.
+
+## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi) — sudah jalan 2026-11-01
+`ruang_paritas` di VPS sesudah deploy: 105 user · ok 105 · beda 0 · crash 0 · tanpa household 0. Uji manual (catat web dan
+bot, tambah amplop, geser dana, bayar langganan, antrean offline di HP) oleh pemilik.
 Penulisan menentukan ruang dari objeknya; objek baru tanpa induk dari header (tanpa header = ruang keluarga); kuota
 Basic hanya di ruang keluarga. Tanpa migrasi, paket, `.env`, atau perubahan tampilan: belum ada klien yang mengirim
 `X-Jatahku-Ruang` dan belum ada user dengan ruang kedua, jadi semua penulisan tetap jatuh ke ruang keluarga.

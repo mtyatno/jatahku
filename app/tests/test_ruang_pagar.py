@@ -26,7 +26,7 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 
 # berkas → jumlah kemunculan `HouseholdMember.user_id ==` yang diizinkan, dan alasannya.
 DIIZINKAN = {
-    "services/ruang.py": 3,              # penentu ruang itu sendiri
+    "services/ruang.py": 4,              # penentu ruang itu sendiri (+ saklar flag ruang usaha, R4)
     "services/peran.py": 2,              # peran user di ruang tertentu (R5, batasan karyawan) + owner ruang tertentu (join)
     "services/merge.py": 3,              # gabung akun: keanggotaan per user (ruang keluarga + hapus akun sumber)
     "services/account_deletion.py": 1,   # hapus akun: semua keanggotaan user
@@ -34,8 +34,9 @@ DIIZINKAN = {
     "services/recurring_processor.py": 1,  # anggota household amplop tertentu (join)
     "services/advisor/snapshot.py": 1,   # nama anggota household tertentu (join)
     "services/household_cycle.py": 1,    # anggota household tertentu (join): cermin payday di heal/set_household_payday
-    "api/routes/household.py": 3,
-    "api/routes/ruang.py": 1,            # satu anggota tertentu di ruang tertentu (R5, kelola anggota)        # daftar anggota (join) + cek sudah anggota household tujuan
+    "api/routes/ruang.py": 2,            # daftar ruang milik user + hitung ruang usaha miliknya (R4)
+    "api/routes/ruang_kelola.py": 1,     # satu anggota tertentu di ruang tertentu (R5, kelola anggota)
+    "api/routes/household.py": 3,        # daftar anggota (join) + cek sudah anggota household tujuan
     "api/routes/admin.py": 1,            # panel admin: ruang keluarga user (filter type)
     "api/routes/user_settings.py": 1,    # peran user di ruang yang di-reset
     "bot/household_cmd.py": 1,           # cek sudah anggota household tujuan
@@ -146,6 +147,7 @@ class PagarSumberTests(unittest.TestCase):
                         "/webhook/")
         tanpa = {
             ("POST", "/household/join"),                       # kode undangan; hanya ruang keluarga (review #166)
+            ("POST", "/ruang"),                                # membuat ruang usaha baru (R4): pembuatnya owner
             ("POST", "/ruang/gabung"),                         # kode undangan ruang usaha (R5): ruang dari kodenya
             ("POST", "/kotak-struk/"),                         # unggah bukti: ruang keluarga di intake (R7)
             ("POST", "/kotak-struk/{item_id}/saran"),          # item milik user (`_owned_item`)

@@ -13,7 +13,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - **Tolak-bawaan** di `app/services/ruang.py`: `ruang_aktif` dengan header ruang usaha menolak karyawan (403 `khusus_admin`) kecuali `KARYAWAN_BOLEH` (7 route), dan di luar jam kerja (403 `di_luar_jam_kerja` + `buka_lagi`). Pembantu ruang objek menerima `karyawan=True` hanya di jalur pencatatan; selain itu karyawan → 403. `RuangDitolak.extra` untuk field tambahan.
 - Jalur tulis: `POST /transactions` (dipecah menjadi `catat_transaksi`), `/batch` (galat per baris dengan `kode`, `draf_id`), `DELETE /transactions/{id}` (jendela ubah), `POST /incomes` (`catat_pemasukan`, jenis penjualan). Di atas batas nominal → 202 draf; kirim ulang → draf yang sama; sesudah disetujui → 201 transaksi yang sama.
 - Baca untuk karyawan: `/envelopes/` hanya amplop yang diizinkan (anggaran 0 tanpa `lihat_saldo`), `/envelopes/summary` 403 tanpa `lihat_saldo`, `/transactions/` hanya miliknya, saran amplop tidak menyarankan amplop terlarang.
-- Route baru `app/api/routes/ruang.py`: anggota (daftar, ubah peran/jabatan, keluarkan/keluar), batasan, undangan + `/ruang/gabung`, persetujuan (daftar, setujui, tolak), `/persetujuan/saya`, `/ruang/{id}/audit`. Hanya ruang usaha; admin tidak bisa menyentuh owner; persetujuan diklaim atomik (menunggu → diproses), gagal → kembali menunggu.
+- Route baru `app/api/routes/ruang_kelola.py` (semula `ruang.py`, dipindah saat merge R4): anggota (daftar, ubah peran/jabatan, keluarkan/keluar), batasan, undangan + `/ruang/gabung`, persetujuan (daftar, setujui, tolak), `/persetujuan/saya`, `/ruang/{id}/audit`. Hanya ruang usaha; admin tidak bisa menyentuh owner; persetujuan diklaim atomik (menunggu → diproses), gagal → kembali menunggu.
 - `POST /user/reset` di ruang usaha: audit `reset_ruang` (jumlah catatan per pencatat, tanpa nominal) dan draf menunggu dibatalkan (catatan review R3).
 - Tes: `app/tests/test_ruang_peran.py` (19: aturan murni, tolak-bawaan semua route `ruang_aktif`, tulis objek, batasan, draf→setujui/tolak, penjualan, jam kerja, jendela ubah, anggota/undangan, keluar, reset, ruang keluarga tidak berubah); pagar diperbarui (route R5, delegasi `catat_transaksi`, kueri keanggotaan `peran.py`/`routes/ruang.py`); dua tes fake-DB mem-patch `batasan_karyawan`.
 - Dokumen: kontrak §1, §2 (v1 R5), §7; `AGENTS.md` aturan 3 + checklist R5; `00-indeks.md`; `PROGRESS.md` (R3 selesai, R5 review).
@@ -21,6 +21,9 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 - **Review keamanan PR #175** (sesi terpisah, 1 Nov): Request Changes, tiga temuan menahan merge. Semua dikerjakan di branch ini dengan tes di `test_ruang_peran.py` (+5 tes, total 24): (1) pesan dana/limit tanpa angka untuk karyawan tanpa `lihat_saldo` (`peran.pesan_cek_karyawan`, jalur tunggal dan batch); (2) `raise_daily_limit` diabaikan untuk karyawan (`peran.boleh_naikkan_limit`); (3) penjualan karyawan wajib dialokasikan penuh, 422 `alokasi_tidak_penuh`, supaya sisa tidak jatuh ke atau membuat Tabungan. Ikut di PR ini: (4) notifikasi target dari penjualan karyawan ke owner (`peran.owner_ruang`), juga saat draf disetujui; (5) validasi alokasi sebelum cabang draf; (6) `client_ref` aditif di `POST /incomes` untuk idempotensi draf penjualan; (7) audit `catatan_dihapus`; (9 sebagian) `@limiter.limit("10/minute")` di `/ruang/gabung`.
 - Tes sesudah review: unittest 2408 (1 gagal yang sama dengan `main`) · `openapi_cek` tanpa perubahan memutus.
+- **Review ulang** (1 Nov, terhadap `f740996`): temuan 1–3 tuntas, tetapi satu temuan baru menahan merge: nominal negatif (sudah ada sebelum PR). Pengeluaran −Rp3 jt menambah saldo dan melewati batas nominal/foto; penjualan Rp0 dengan alokasi +5 jt/−5 jt lolos syarat alokasi penuh. Perbaikan: `TransactionCreate.amount` dan `IncomeCreate.amount` `Field(gt=0)`, `AllocationItem.amount` `Field(ge=0)` (berlaku untuk semua peran); batch menolak per baris (`kode: nominal_tidak_sah`) supaya satu baris buruk tidak menahan seluruh antrean offline. Tes `test_nominal_negatif_ditolak`.
+- **Merge `main` (R4, #174):** route R4 tetap di `routes/ruang.py` (prefix `/ruang`); route R5 dipindah ke `routes/ruang_kelola.py` (tanpa prefix, karena `/persetujuan/saya`). Route R5 ikut flag `ruang_usaha_users`: di luar flag `/ruang/{id}/…` 404 dan `/ruang/gabung` 403 `ruang_usaha_belum_dibuka`, jadi karyawan yang diundang juga harus masuk flag selama beta. `GET /ruang` kini mengisi `jam_kerja` untuk karyawan. Tes R5 menyalakan flag; tes baru `test_ikut_flag_ruang_usaha_dan_jam_kerja_di_daftar_ruang`.
+- Tes sesudah merge: unittest 2419 (1 gagal yang sama dengan `main`) · node --test 653 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · `openapi_cek` tanpa perubahan memutus.
 
 **Digantung**
 - Notifikasi ke admin saat draf baru dan ke karyawan saat diputus belum ada (`Notification.type` masih SAEnum; perlu migrasi enum atau kolom `kind`): masuk U6 (notifikasi admin) dan R6 (tampilan karyawan).
@@ -48,9 +51,45 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Batch: baris draf dikembalikan `ok: false` + `kode: perlu_persetujuan`, supaya klien lama menyimpan barisnya; kiriman ulangnya idempoten.
 
 **Cara melanjutkan**
-- Review keamanan pertama selesai (Request Changes, temuan 1–7 dikerjakan). Minta review ulang terhadap commit tindak lanjut: "review ulang PR #175 terhadap 03-workflow.md bagian keamanan, fokus temuan 1–3".
+- Review ulang kedua yang singkat: "review ulang PR #175 terhadap 03-workflow.md bagian keamanan, fokus validasi nominal (temuan baru) dan gabungan dengan R4 (flag `ruang_usaha_users`, `ruang_kelola.py`)".
 - Merge: label `migrasi`; checklist "Plugin R5" di `AGENTS.md`, mengikuti "Urutan merge PR bermigrasi".
-- Berikutnya `/sesi-plugin R4` (membuat dan berpindah ruang; R5 tidak menyentuh `Layout.jsx`/`api.js`), lalu R6 (butuh R4, R5, B2).
+- Berikutnya R6 (butuh R4, R5, B2), R8, atau H1.
+
+---
+
+## R4 · Membuat dan berpindah ruang · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #174, issue #144; tanpa tanda review/migrasi)
+- `app/api/routes/ruang.py`: `GET /ruang` (daftar untuk pemilih: ruang keluarga dulu, lalu urut bergabung; `paket` dan `jam_kerja` null sampai H1/V1 dan R5; field tambahan `boleh_buat_usaha`) dan `POST /ruang` (ruang usaha, pembuat owner, nama 1–60 huruf, batas 3 ruang usaha per pemilik dengan kunci baris user, 403 `ruang_usaha_belum_dibuka` di luar flag, 409 `batas_ruang_usaha`).
+- Flag `ruang_usaha_users` jadi saklar di `app/services/ruang.py` (`ruang_usaha_dibuka`, `_anggota_ruang_terbuka`): di luar flag, ruang usaha tidak tampil, tidak bisa dibuka lewat header (403), dan objeknya tidak bisa ditulis (`ruang_objek`/`ruang_amplop*` → None → 404). Ruang keluarga tidak terpengaruh.
+- `household_cycle.init_ruang_usaha`: ruang usaha baru `payday_day = 1` (bulan kalender, desain A2 butir 9); tanpa ini `household_payday` menurunkan siklus dari gajian owner.
+- Frontend: `lib/ruangAktif.js` (pilihan di perangkat, hanya id ruang selain ruang keluarga; header; akhiran cache offline per ruang; ADR-P16), `components/RuangPicker.jsx` (sidebar di bawah logo; HP menggantikan logo; buat ruang usaha), `lib/api.js` (header di `request` dan `uploadForm`, `daftarRuang`, `buatRuang`, 403 `ruang_tidak_diizinkan` → kembali ke ruang keluarga + Beranda, dikosongkan saat logout), `Layout.jsx` (chat berlabel "Ruang keluarga" untuk pemilik/admin di ruang usaha, disembunyikan untuk member), `ChatPanel.jsx` (label di judul), ikon `home`/`store`.
+- Tes: `app/tests/test_ruang_r4.py` (9: daftar tanpa/dengan flag, buat, validasi nama, batas, undangan dari ruang usaha ditolak, flag dicabut menutup baca dan tulis, hapus akun menghapus ruang usaha miliknya; uji mutasi saklar flag → gagal); fixture ruang usaha di `test_ruang_gerbang.py` dan `test_ruang_resolver.py` diberi flag; pagar: `POST /ruang` di kelompok tanpa ruang, kueri keanggotaan `routes/ruang.py` (2) dan `services/ruang.py` (4). `src/lib/ruangAktif.test.js` (9).
+- Diperiksa di browser (Playwright, API dipalsukan): pemilih desktop dan HP, terang dan gelap, form buat ruang; header terkirim hanya saat ruang usaha dipilih dan tidak pernah ke `/ruang`; 403 ruang → pilihan dihapus, kembali ke `/`, permintaan berikutnya tanpa header.
+- Dokumen: kontrak §1 (klien mengirim header sejak R4), §2 v1 (+ saklar flag, perilaku klien), §7 (2 kode baru); `AGENTS.md` checklist R4 + R3 sudah jalan; `00-indeks.md` (fase, peta kode); `PROGRESS.md` (R3 selesai, R4 review, Gerbang R).
+- Tes: unittest 2393 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, juga gagal di `main`) · node --test 628 lulus · build ok · Migrasi: tidak berlaku · `openapi_cek` tanpa perubahan memutus.
+
+**Digantung**
+- Menu yang hanya bermakna di ruang keluarga (Telegram, Pengaturan household, Pikir-Pikir) belum disaring per ruang: menu inti sama di semua ruang (ADR-P1); penyaringan per peran di R6, grup menu Usaha di H3.
+- Bottom nav 6 item / "Lainnya" (pertanyaan A4) belum diputuskan: R4 tidak menambah item menu, jadi ditunda ke H3.
+- Kotak Struk dan foto struk di ruang usaha tetap ruang keluarga untuk bukti baru (R7); mencatat ke amplop ruang usaha masuk ruang amplop itu (R3).
+- Tutup/ganti nama/hapus ruang usaha belum ada (R5/R6 bersama halaman Anggota).
+- `test_basic_quota_bot_fund_shift_finishes_started_input` masih gagal di `main`; perlu PR kecil terpisah.
+
+**Jebakan**
+- `npm run build` mengubah `frontend/dist/index.html` yang ter-track: kembalikan dengan `git checkout -- frontend/dist` sebelum commit.
+- Fixture ruang usaha di tes lama perlu `AppSetting(ruang_usaha_users)`; tanpa itu header ruang usaha kini 403 dan objeknya 404.
+- Tema di Playwright: kunci `jatahku_theme` berisi JSON `{color: hijau|laut|senja, mode}`.
+
+**Keputusan kecil**
+- Pindah ruang = muat ulang penuh ke `/` (bukan remount sebagian): tidak ada state, cache, atau chat ruang lama yang tertinggal. Pindah ruang jarang, jadi biaya muat ulang dapat diterima.
+- 403 `ruang_tidak_diizinkan` tidak diulang tanpa header, karena permintaan tulis bisa masuk ruang yang salah.
+- Batas 3 ruang usaha per pemilik selama beta (menahan ruang kosong menumpuk); bisa ditinjau di V1 bersama Paket Usaha.
+- Flag juga menutup tulis dari objek (bukan hanya header), supaya mencabut flag benar-benar menutup ruang usaha.
+
+**Cara melanjutkan**
+- Merge (tanpa review terpisah, tanpa migrasi), lalu checklist "Plugin R4" di `AGENTS.md`: `ruang_paritas`, buka flag hanya untuk pemilik, uji buat/pindah/catat, jangan `*` sebelum R5 dan V1.
+- Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan, undangan ruang usaha; migrasi + review) atau R8 / H1.
 
 ---
 

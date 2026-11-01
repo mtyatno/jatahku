@@ -5,6 +5,7 @@ import { withClientHeader } from './clientInfo';
 import { xhrUpload, sendWithRefresh } from './xhrUpload';
 import { clearSharesOnLogout } from './shareInbox';
 import { pendingCountOf } from './pendingProofs';
+import { isRuangDitolak, setRuangAktif, withRuangHeader, RUANG_HEADER } from './ruangAktif';
 import { native } from '../native';
 
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
@@ -35,31 +36,65 @@ class ApiClient {
 
   async request(path, options = {}) {
     const isFormData = options.body instanceof FormData;
-    const headers = isFormData
+    // Ruang yang sedang dibuka (Plugin R4): header dikirim di setiap permintaan; server yang memutuskan.
+    const headers = withRuangHeader(isFormData
       ? { ...options.headers }
-      : { 'Content-Type': 'application/json', ...options.headers };
+      : { 'Content-Type': 'application/json', ...options.headers });
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const res = await apiFetch(`${API_URL}${path}`, { ...options, headers });
+    let res = await apiFetch(`${API_URL}${path}`, { ...options, headers });
 
     if (res.status === 401 && this.getRefreshToken()) {
       const refreshed = await this.refresh();
       if (refreshed) {
         headers['Authorization'] = `Bearer ${this.token}`;
-        return apiFetch(`${API_URL}${path}`, { ...options, headers });
+        res = await apiFetch(`${API_URL}${path}`, { ...options, headers });
       }
     }
 
+    if (res.status === 403 && headers[RUANG_HEADER]) await this.ruangDitolak(res);
     return res;
+  }
+
+  // Ruang tersimpan ditolak server (dihapus, dikeluarkan, flag dicabut): kembali ke ruang keluarga dan muat ulang
+  // Beranda. Permintaan yang ditolak TIDAK diulang tanpa header: permintaan tulis bisa masuk ruang yang salah.
+  async ruangDitolak(res) {
+    const body = await res.clone().json().catch(() => null);
+    if (!isRuangDitolak(res.status, body)) return;
+    setRuangAktif(null);
+    window.location.assign('/');
+  }
+
+  // Ruang (Plugin R4, 04-kontrak-api.md §2). Tanpa header ruang: daftar ini milik user.
+  async daftarRuang() {
+    try {
+      const res = await apiFetch(`${API_URL}/ruang`, {
+        headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+      });
+      if (res.status === 401 && this.getRefreshToken() && await this.refresh()) return this.daftarRuang();
+      return { ok: res.ok, data: await res.json().catch(() => null) };
+    } catch {
+      return { ok: false, data: null };
+    }
+  }
+
+  async buatRuang(nama) {
+    try {
+      const res = await this.request('/ruang', { method: 'POST', body: JSON.stringify({ nama }) });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    } catch {
+      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
   }
 
   // Unggah FormData lewat XHR supaya progres unggah terlapor (fetch tidak bisa).
   // Token + header klien dirakit ulang di setiap kirim: setelah refresh, kirim ulang memakai token baru.
   async uploadForm(path, formData, { onProgress, onUploaded, timeoutMs } = {}) {
     const send = () => {
-      const headers = withClientHeader(this.token ? { Authorization: `Bearer ${this.token}` } : {});
+      const headers = withClientHeader(withRuangHeader(this.token ? { Authorization: `Bearer ${this.token}` } : {}));
       return xhrUpload({ url: `${API_URL}${path}`, body: formData, headers, timeoutMs, onProgress, onUploaded });
     };
     const { status, data, timedOut } = await sendWithRefresh(send, {
@@ -93,6 +128,7 @@ class ApiClient {
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
     clearAllCache(); // cache offline (profil, amplop, transaksi, Beranda) — jangan terbaca akun berikutnya
+    setRuangAktif(null); // ruang yang dibuka milik akun ini; akun berikutnya mulai dari ruang keluarganya
     // Bukti yang dibagikan tapi belum terkirim: dikosongkan hanya saat user sendiri keluar (revoke), dan pindah ke
     // /login menunggu penghapusannya (maks 2 dtk; tanpa ditunggu, navigasi memutusnya). Refresh ditolak
     // (revoke:false): bukti tetap aman sampai login lagi (spec 5b), langsung ke /login. Tidak pernah melempar.
