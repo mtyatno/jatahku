@@ -11,7 +11,7 @@ Idempoten: startup app (main.py lifespan) juga menjalankan create_all, jadi migr
 sebelum ATAU sesudah deploy. Tidak ada tabel lama yang berubah. Bentuk API: docs/plugin/04-kontrak-api.md §5.
 
 Revision ID: a7e3c1f5d9b2
-Revises: 2d51b9031a6b
+Revises: c5r5a8e2d417
 Create Date: 2026-11-01
 """
 from typing import Sequence, Union
@@ -21,7 +21,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'a7e3c1f5d9b2'
-down_revision: Union[str, None] = '2d51b9031a6b'
+down_revision: Union[str, None] = 'c5r5a8e2d417'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

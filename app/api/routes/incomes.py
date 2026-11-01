@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -15,7 +15,8 @@ from app.core.period import get_budget_period
 from app.models.models import (
     User, Income, Allocation, Envelope, )
 from app.services.income_history import parse_transfer
-from app.services.ruang import RuangAktif, ruang_amplop_satu
+from app.services.ruang import RuangAktif, RuangDitolak, ruang_amplop_satu
+from app.services import peran
 
 router = APIRouter()
 
@@ -34,16 +35,19 @@ def _fmt_time(dt, tz) -> str:
 
 class AllocationItem(BaseModel):
     envelope_id: UUID
-    amount: Decimal
+    # ≥ 0: alokasi negatif bisa menyeimbangkan alokasi positif dan memindahkan uang tanpa batas/draf (review PR #175).
+    amount: Decimal = Field(ge=0)
 
 
 class IncomeCreate(BaseModel):
-    amount: Decimal
+    amount: Decimal = Field(gt=0)   # > 0 (review keamanan PR #175); transfer/penyesuaian ditulis server sendiri
     source: str = "Gaji"
     allocations: list[AllocationItem] = []
     # Klien hanya boleh menyatakan pemasukan biasa atau top-up amplop; transfer dan
     # penyesuaian ditulis server lewat jalurnya sendiri (fund_shift, balance_check).
     kind: Literal["pemasukan", "top-up"] = "pemasukan"
+    # R5 (aditif): kunci idempotensi draf penjualan karyawan; kiriman ulang mendapat draf yang sama.
+    client_ref: str | None = Field(default=None, max_length=64)
 
 
 class IncomeResponse(BaseModel):
@@ -78,7 +82,8 @@ async def _get_or_create_tabungan(hid: UUID, db: AsyncSession) -> Envelope:
     return tabungan
 
 
-@router.post("/", response_model=IncomeResponse, status_code=201)
+@router.post("/", response_model=IncomeResponse, status_code=201,
+             responses={202: {"description": "Karyawan di atas batas nominal: draf menunggu persetujuan"}})
 async def create_income(
     req: IncomeCreate,
     user: User = Depends(get_current_user),
@@ -90,12 +95,16 @@ async def create_income(
     # semua amplop di ruang orang lain = 404, sama dengan objek asing lain, kontrak §1);
     # pemasukan tanpa alokasi = objek baru tanpa induk → ruang dari header (`ruang_aktif`, keanggotaan dicek).
     if req.allocations:
-        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations])
+        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations], karyawan=True)
         if not hid:
             raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
+    return await catat_pemasukan(req, user, db, hid)
 
+
+async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: UUID):
+    """Jalur pencatatan pemasukan (route di atas, dan persetujuan draf R5 di dalam `peran.atas_izin_pengelola`)."""
     # Validate allocations don't exceed income
     total_allocated = sum(a.amount for a in req.allocations)
     if total_allocated > req.amount:
@@ -115,6 +124,33 @@ async def create_income(
         )
         if not env_check.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=f"Amplop {alloc.envelope_id} tidak ditemukan")
+
+    # R5: karyawan di ruang usaha mencatat penjualan dalam batasan; di atas batas nominal → draf. Validasi di atas
+    # jalan lebih dulu, supaya draf tidak pernah berisi alokasi yang tidak sah (review PR #175, temuan 5).
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is not None:
+        draf = await peran.draf_dari_ref(db, user.id, req.client_ref)
+        if draf is not None:   # kiriman ulang (temuan 6): status draf terbaru, tanpa draf atau pemasukan kedua
+            from app.api.routes.transactions import jawaban_draf
+            return jawaban_draf(draf)
+    try:
+        perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENJUALAN,
+                                amplop_ids=[a.envelope_id for a in req.allocations], jumlah=req.amount, ada_foto=True)
+        if batasan is not None and total_allocated != req.amount:
+            # Sisa pemasukan otomatis masuk (atau membuat) amplop Tabungan, di luar amplop yang diizinkan (temuan 3).
+            raise peran.PeranDitolak(
+                "alokasi_tidak_penuh", "Bagikan seluruh penjualan ke amplop yang diizinkan untukmu.", status_code=422)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+    if perlu:
+        from app.api.routes.transactions import jawaban_draf
+        draf = await peran.buat_draf(
+            db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENJUALAN, amount=req.amount,
+            description=req.source, envelope_id=req.allocations[0].envelope_id if req.allocations else None,
+            client_ref=req.client_ref,
+            rincian={"kind": req.kind, "allocations": [
+                {"envelope_id": str(a.envelope_id), "amount": str(a.amount)} for a in req.allocations]})
+        return jawaban_draf(draf, peran.pesan_persetujuan(batasan))
 
     # Goal yang baru tercapai karena pemasukan ini dinotifikasi (app/services/goal_notify.py)
     from app.services.goal_notify import goal_snapshot, notify_goals_reached
@@ -156,7 +192,14 @@ async def create_income(
         alloc_details.append({"envelope": "Tabungan", "emoji": "💰", "amount": str(remainder), "auto": True})
 
     await db.commit()
-    await notify_goals_reached(db, user, goals_before)
+    # Notifikasi target (berisi angka) untuk pemilik ruang bila pencatatnya karyawan, juga saat draf disetujui
+    # (review PR #175, temuan 4). Peran dibaca langsung, karena `batasan` None di dalam persetujuan.
+    penerima = user
+    role, jenis = await peran.peran_di_ruang(db, user.id, hid)
+    if role == "member" and jenis == "usaha":
+        penerima = await peran.owner_ruang(db, hid)
+    if penerima is not None:
+        await notify_goals_reached(db, penerima, goals_before)
 
     return IncomeResponse(
         id=income.id,

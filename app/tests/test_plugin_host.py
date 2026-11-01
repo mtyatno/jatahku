@@ -265,6 +265,7 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
                 HouseholdMember(user_id=admin.id, household_id=usaha.id, role=HouseholdRole.admin),
                 HouseholdMember(user_id=karyawan.id, household_id=usaha.id, role=HouseholdRole.member),
                 HouseholdMember(user_id=pemilik.id, household_id=rumah.id, role=HouseholdRole.owner),
+                HouseholdMember(user_id=admin.id, household_id=rumah.id, role=HouseholdRole.member),  # anggota biasa
                 HouseholdMember(user_id=orang.id, household_id=asing.id, role=HouseholdRole.owner),
             ])
             for key in ("plugin_uji_users", "plugin_uji_wizard_users", "plugin_uji_dep_users",
@@ -335,8 +336,13 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(k["uji_wizard"]["hak"], {"status": "gratis", "sampai": None})
         self.assertFalse(p["diperbaiki"])
         self.assertTrue(p["boleh_kelola"])
+        # R5: karyawan di ruang usaha ditolak bawaan di luar `KARYAWAN_BOLEH`; katalog (izin, hak) bagian admin.
         self.current = self.karyawan
-        self.assertFalse((await self.katalog())["uji"]["boleh_kelola"])
+        r = await self.client.get("/plugins", headers={"X-Jatahku-Ruang": str(self.usaha)})
+        self.galat(r, 403, "khusus_admin")
+        # Anggota biasa ruang keluarga boleh melihat katalog, tanpa tombol kelola.
+        self.current = self.admin
+        self.assertFalse((await self.katalog(self.rumah))["uji_kel"]["boleh_kelola"])
 
     async def test_katalog_ruang_keluarga_dan_header_asing(self):
         self.assertEqual(sorted(await self.katalog(self.rumah)), ["uji_kel"])
@@ -423,7 +429,8 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.aksi("pasang")).json()["status"], "aktif")
         self.current = self.karyawan
         self.galat(await self.aksi("copot"), 403, "khusus_admin")                     # karyawan tidak bisa mencopot
-        self.assertEqual((await self.katalog())["uji"]["status"], "aktif")
+        async with self.Session() as db:
+            self.assertEqual((await siklus.instalasi(db, self.usaha, "uji")).status, "active")
 
     async def test_header_tidak_menentukan_ruang_tulis(self):
         """Ruang tulis hanya dari path: header ruang lain diabaikan untuk pasang."""

@@ -1,6 +1,7 @@
 """Fitur Tambahan / plugin (Plugin H1; docs/plugin/04-kontrak-api.md §5).
 
-- `GET /plugins` — katalog untuk ruang aktif (header `X-Jatahku-Ruang`, membaca). Semua anggota boleh melihat.
+- `GET /plugins` — katalog untuk ruang aktif (header `X-Jatahku-Ruang`, membaca). Di ruang usaha, karyawan ditolak
+  gerbang R5 (403 `khusus_admin`, route ini tidak di `KARYAWAN_BOLEH`); di ruang keluarga semua anggota boleh melihat.
 - `POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang | lanjut | jeda | copot` — ruang dari **path**, lalu
   keanggotaan (bukan anggota → 404 seperti ruang tidak ada, supaya keberadaan ruang orang lain tidak bocor),
   lalu peran owner/admin (selain itu 403 `khusus_admin`, ADR-P11). Aturan plugin di `app/plugins/host/siklus.py`.

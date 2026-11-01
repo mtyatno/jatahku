@@ -405,12 +405,30 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.text(), "😕 PDF terkunci kata sandi")
         self.assertEqual(self.keyboard(), [])
 
-    async def test_slow_item_on_web_points_to_waiting_list_without_notify(self):
+    async def test_slow_item_on_web_tags_the_message_with_its_item_without_notify(self):
+        # Chat web tidak dikabari worker: gelembungnya membawa id item (`kotak_item`, `kotak_pending`) dan panel
+        # chat menanyakan hasilnya sendiri lewat /bot/chat/bukti.
         with channel.web_channel():
             await self.send_photo(detail=DETAIL_PENDING)
-        self.assertEqual(self.text(), "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti.")
+        self.assertEqual(self.text(), "⏳ Masih dibaca, nanti kukabari di sini.")
+        self.assertEqual(self.status.edit_text.call_args.kwargs,
+                         {"kotak_item": DETAIL_PENDING["id"], "kotak_pending": True})
         self.assertEqual(self.created_request().source, "web_chat")
         self.assertEqual(self.db.executed, [])   # tanpa `notify`
+
+    async def test_ready_item_on_web_tags_the_result_message_with_its_item(self):
+        with channel.web_channel():
+            await self.send_photo(detail=DETAIL_QRIS)
+        self.assertEqual(self.text(), proof_message(DETAIL_QRIS))
+        kwargs = self.status.edit_text.call_args.kwargs
+        self.assertEqual(kwargs["kotak_item"], DETAIL_QRIS["id"])
+        self.assertNotIn("kotak_pending", kwargs)
+
+    async def test_telegram_messages_carry_no_web_tags(self):
+        await self.send_photo(detail=DETAIL_QRIS)
+        self.assertEqual(set(self.status.edit_text.call_args.kwargs), {"reply_markup"})
+        await self.send_photo(detail=DETAIL_PENDING)
+        self.assertEqual(self.status.edit_text.call_args.kwargs, {})
 
     async def test_item_finished_before_notify_update_is_rendered_directly(self):
         self.db.rowcount = 0   # UPDATE bersyarat tidak mengenai baris: item sudah selesai
@@ -1249,14 +1267,87 @@ class KotakBotDbTests(TxnBase):
         hook.assert_not_awaited()
         self.assertNotIn("notify", (await self.get(self.items[-1])).channel_meta)
 
-    async def test_web_chat_slow_item_has_no_notify(self):
+    async def test_web_chat_slow_item_has_no_notify_and_is_fetched_by_the_panel(self):
+        # Chat web: "Masih dibaca" membawa id item tanpa `notify`; panel menanyakan hasilnya lewat `run_bukti`
+        # (POST /bot/chat/bukti) sampai worker selesai, lalu pesan yang sama diganti hasil + tombol amplop.
         user = SimpleNamespace(id=self.a.id, name="Ani")
         with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
             ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
-        self.assertEqual(ops[-1]["text"], "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti.")
-        item = await self.get(self.items[-1])
+        msg_id, item_id = ops[0]["id"], self.items[-1]
+        self.assertEqual(ops[-1]["text"], "⏳ Masih dibaca, nanti kukabari di sini.")
+        self.assertEqual((ops[-1]["id"], ops[-1]["item"], ops[-1]["pending"]), (msg_id, str(item_id), True))
+        item = await self.get(item_id)
         self.assertEqual(item.source, "web_chat")
         self.assertNotIn("notify", item.channel_meta)
+
+        still = await web_adapter.run_bukti(user, [(item_id, msg_id)])   # worker belum selesai
+        self.assertEqual(still, {"ops": [], "pending": [str(item_id)]})
+
+        self.assertEqual(await process_item(item_id, session_factory=self.Session,
+                                            extract=fake_extract(CORPUS[0]["lines"]), now=NOW,
+                                            proofs_enabled=True), "siap")
+        await self.set(item_id, paid_at=PAID)
+        done = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+        self.assertEqual(done["pending"], [])
+        [op] = done["ops"]
+        self.assertEqual((op["type"], op["id"], op["item"]), ("edit", msg_id, str(item_id)))
+        self.assertNotIn("pending", op)
+        self.assertTrue(op["text"].startswith("QRIS · Siti Aminah"), op["text"])
+        makan = next(b["data"] for row in op["buttons"] for b in row if "Makan" in b["text"])
+        self.assertTrue(makan.startswith("t_"))
+        # Tombolnya tercatat untuk pesan itu (jaminan tombol chat web), jadi bisa ditekan dan mencatat sebagai webapp.
+        self.assertIn(makan, json.loads(self.redis.store[web_adapter.buttons_key(user.id, msg_id)]))
+        ops = await web_adapter.run_action(user, msg_id, makan)
+        self.assertIn("Masuk ke", ops[0]["text"])
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, str(txn.source)), (D("25000"), "TransactionSource.webapp"))
+        self.assertEqual((await self.get(item_id)).status, "tercatat")
+
+    async def test_run_bukti_renders_finished_states_without_record_buttons(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        msg_id, item_id = ops[0]["id"], self.items[-1]
+        await process_item(item_id, session_factory=self.Session, extract=fake_extract(CORPUS[0]["lines"]), now=NOW,
+                           proofs_enabled=True)
+        await self.set(item_id, paid_at=PAID)
+        for status, expect in [("dilewati", "❌ Dilewati."),
+                               ("kedaluwarsa", "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya."),
+                               ("tercatat", "✅ Bukti ini sudah tercatat.")]:
+            with self.subTest(status):
+                await self.set(item_id, status=status)
+                res = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+                [op] = res["ops"]
+                self.assertEqual((res["pending"], op["id"], op["text"], op["buttons"]), ([], msg_id, expect, []))
+        # Gagal dibaca: galatnya, tanpa tombol.
+        await self.set(item_id, status="gagal", error="PDF terkunci kata sandi")
+        res = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+        self.assertEqual((res["ops"][0]["text"], res["ops"][0]["buttons"]), ("😕 PDF terkunci kata sandi", []))
+
+    async def test_run_bukti_hides_other_users_items_and_unknown_ids(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        stranger = SimpleNamespace(id=self.b.id, name="Budi")
+        for who, iid in ((stranger, item_id), (user, uuid4())):
+            res = await web_adapter.run_bukti(who, [(iid, "m9")])
+            self.assertEqual(res["pending"], [])
+            [op] = res["ops"]
+            self.assertEqual((op["id"], op["text"], op["buttons"]),
+                             ("m9", "😕 Bukti ini sudah tidak ada. Kirim ulang fotonya.", []))
+            self.assertNotIn("item", op)
+        self.assertEqual((await self.get(item_id)).status, "siap")
+
+    async def test_run_bukti_keeps_an_item_pending_when_rendering_fails(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        with patch.object(receipt_cmd, "_result_reply", new=AsyncMock(side_effect=RuntimeError("db"))), \
+             self.assertLogs("jatahku.webchat", "ERROR"):
+            res = await web_adapter.run_bukti(user, [(item_id, "m1")])
+        self.assertEqual(res, {"ops": [], "pending": [str(item_id)]})   # klien bertanya lagi nanti
 
     # --- C5: "sudah tercatat {tgl} di {amplop}" -------------------------------
 
@@ -1445,14 +1536,16 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual((await self.get(item.id)).channel_meta,
                          {"chat_id": 4242, "status_message_id": 503, "notify": True})
 
-    async def test_web_chat_same_proof_while_waiting_points_to_the_waiting_list(self):
+    async def test_web_chat_same_proof_while_waiting_waits_on_its_own_message(self):
+        # Pesan kedua di chat web juga membawa id item: gelembungnya menanyakan hasilnya sendiri (riwayat chat web
+        # per perangkat, pesan pertama bisa ada di HP lain), tanpa merebut janji Telegram pesan pertama.
         photo = JPG + uuid4().bytes
         await self.send(lines=None, data=photo, message_id=501)
         user = SimpleNamespace(id=self.a.id, name="Ani")
         with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
             ops = await web_adapter.run_photo(user, photo, "image/jpeg")
-        self.assertEqual(ops[-1]["text"],
-                         "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti.")
+        self.assertEqual(ops[-1]["text"], "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di sini.")
+        self.assertEqual((ops[-1]["item"], ops[-1]["pending"]), (str(self.items[0]), True))
         self.assertEqual((await self.get(self.items[0])).channel_meta,
                          {"chat_id": 4242, "status_message_id": 501, "notify": True})
 

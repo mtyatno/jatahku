@@ -27,7 +27,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 **Digantung**
 - Dari review (info, sengaja tidak dikerjakan di H1): persetujuan izin belum terikat ke daftar izin yang ditampilkan (klien bisa mengirim versi manifest, server 409 bila beda; bersama layar izin H3); toggle saklar dan flag tidak tercatat di `plugin_audit_log` (hanya lewat `PUT /admin/settings` yang tidak diaudit); FK CASCADE ke `households` ikut menghapus hak berbayar dan jejak audit saat ruang dihapus (keputusan sadar di V1); jalur `IntegrityError` di `pasang` memakai `rollback` penuh, aman sekarang (kunci ruang membuatnya hampir tak terjangkau di PostgreSQL), pertimbangkan savepoint di H2.
-- **Urutan migrasi dengan R5 (#175):** H1 `a7e3c1f5d9b2` dan R5 `c5r5a8e2d417` sama-sama menginduk ke `2d51b9031a6b`. PR yang di-merge kedua memindahkan `down_revision`-nya ke yang pertama (dan memperbarui langkah 2 checklist-nya) sebelum merge; cek `alembic heads` satu baris.
+- Urutan migrasi dengan R5 (#175): **beres 2 Nov**. R5 di-merge lebih dulu; `main` di-merge ke branch dan `down_revision` H1 dipindah ke `c5r5a8e2d417`. Checklist H1 langkah 2 kini mensyaratkan `alembic current` = `c5r5a8e2d417`.
 - Job pembersih arsip belum dijadwalkan: ADR-P15 butuh pemberitahuan 7 hari sebelumnya dan hook hapus data `p_*` per plugin (H2 `notifications`/`jobs`, U1). Baru relevan ≥ 90 hari setelah copot pertama.
 - Endpoint ekspor (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`) di U1; `copot` menjawab `ekspor: null` sampai itu.
 - Titik `settings` (form dari JSON Schema + validasi server): `pasang` menolak `pengaturan` tidak kosong (422). `jsonschema` bukan dependensi produksi: pilih pustaka atau validator sendiri di H2/U1.
@@ -53,8 +53,61 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 **Cara melanjutkan**
 - Review keamanan sudah lulus (2 Nov). Merge ditahan sampai pemilik bisa menjalankan migrasi di VPS pada jam yang sama.
-- Sebelum merge: cek apakah R5 (#175) sudah di-merge; bila ya, pindahkan `down_revision` H1 ke `c5r5a8e2d417`. Lalu "Urutan merge PR bermigrasi" dan checklist "Plugin H1" di `AGENTS.md`.
+- Sebelum merge: checklist "Plugin R5" sudah jalan di VPS (`alembic current` = `c5r5a8e2d417`), lalu "Urutan merge PR bermigrasi" dan checklist "Plugin H1" di `AGENTS.md`.
 - Berikutnya `/sesi-plugin H2` (PluginContext dan titik ekstensi server; butuh H1 selesai), atau R5/R8 di jalur ruang usaha.
+
+---
+
+## R5 · Peran, batasan, persetujuan di server · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #175, menunggu review keamanan terpisah; issue #145)
+- Keputusan pemilik produk (1 Nov, "lanjut" atas dua usulan pembukaan sesi): **(1)** tafsiran `05-desain-buku-usaha.md` B1 dikonfirmasi: ruang usaha dan adminnya tidak punya akses apa pun ke ruang keluarga anggota; fitur household yang sekarang tetap. **(2)** R5 menegakkan batasan tulis, antrean persetujuan, audit, dan pagar baca berupa tolak-bawaan; Beranda template "Karyawan" dan penyaringan per kartu di R6.
+- Migrasi `c5r5a8e2d417`: hanya tabel baru `ruang_batasan` (jabatan + batasan per anggota), `ruang_undangan` (kode sekali pakai, berperan, 7 hari), `ruang_draf` (antrean; unik parsial `user_id, client_ref`), `ruang_audit`. Tidak ada kolom baru di tabel lama, jadi tanpa jendela 500; idempoten seperti B1.
+- `app/services/peran.py`: `batasan_karyawan` (None untuk ruang keluarga, owner, admin), `cek_catat` (jenis → amplop → foto → nominal), jam kerja (`validasi_jam_kerja`, `buka_lagi`, sif lewat tengah malam), `cek_jendela_ubah`, `buat_draf` (idempoten per `client_ref`), `batalkan_draf_anggota`, `audit`, `atas_izin_pengelola()` (ContextVar untuk persetujuan).
+- **Tolak-bawaan** di `app/services/ruang.py`: `ruang_aktif` dengan header ruang usaha menolak karyawan (403 `khusus_admin`) kecuali `KARYAWAN_BOLEH` (7 route), dan di luar jam kerja (403 `di_luar_jam_kerja` + `buka_lagi`). Pembantu ruang objek menerima `karyawan=True` hanya di jalur pencatatan; selain itu karyawan → 403. `RuangDitolak.extra` untuk field tambahan.
+- Jalur tulis: `POST /transactions` (dipecah menjadi `catat_transaksi`), `/batch` (galat per baris dengan `kode`, `draf_id`), `DELETE /transactions/{id}` (jendela ubah), `POST /incomes` (`catat_pemasukan`, jenis penjualan). Di atas batas nominal → 202 draf; kirim ulang → draf yang sama; sesudah disetujui → 201 transaksi yang sama.
+- Baca untuk karyawan: `/envelopes/` hanya amplop yang diizinkan (anggaran 0 tanpa `lihat_saldo`), `/envelopes/summary` 403 tanpa `lihat_saldo`, `/transactions/` hanya miliknya, saran amplop tidak menyarankan amplop terlarang.
+- Route baru `app/api/routes/ruang_kelola.py` (semula `ruang.py`, dipindah saat merge R4): anggota (daftar, ubah peran/jabatan, keluarkan/keluar), batasan, undangan + `/ruang/gabung`, persetujuan (daftar, setujui, tolak), `/persetujuan/saya`, `/ruang/{id}/audit`. Hanya ruang usaha; admin tidak bisa menyentuh owner; persetujuan diklaim atomik (menunggu → diproses), gagal → kembali menunggu.
+- `POST /user/reset` di ruang usaha: audit `reset_ruang` (jumlah catatan per pencatat, tanpa nominal) dan draf menunggu dibatalkan (catatan review R3).
+- Tes: `app/tests/test_ruang_peran.py` (19: aturan murni, tolak-bawaan semua route `ruang_aktif`, tulis objek, batasan, draf→setujui/tolak, penjualan, jam kerja, jendela ubah, anggota/undangan, keluar, reset, ruang keluarga tidak berubah); pagar diperbarui (route R5, delegasi `catat_transaksi`, kueri keanggotaan `peran.py`/`routes/ruang.py`); dua tes fake-DB mem-patch `batasan_karyawan`.
+- Dokumen: kontrak §1, §2 (v1 R5), §7; `AGENTS.md` aturan 3 + checklist R5; `00-indeks.md`; `PROGRESS.md` (R3 selesai, R5 review).
+- Tes: unittest 2403 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, sama dengan `main`) · node --test 644 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok, plus urutan produksi (`create_all` model baru → stamp → upgrade) ok · `openapi_cek` tanpa perubahan memutus.
+
+- **Review keamanan PR #175** (sesi terpisah, 1 Nov): Request Changes, tiga temuan menahan merge. Semua dikerjakan di branch ini dengan tes di `test_ruang_peran.py` (+5 tes, total 24): (1) pesan dana/limit tanpa angka untuk karyawan tanpa `lihat_saldo` (`peran.pesan_cek_karyawan`, jalur tunggal dan batch); (2) `raise_daily_limit` diabaikan untuk karyawan (`peran.boleh_naikkan_limit`); (3) penjualan karyawan wajib dialokasikan penuh, 422 `alokasi_tidak_penuh`, supaya sisa tidak jatuh ke atau membuat Tabungan. Ikut di PR ini: (4) notifikasi target dari penjualan karyawan ke owner (`peran.owner_ruang`), juga saat draf disetujui; (5) validasi alokasi sebelum cabang draf; (6) `client_ref` aditif di `POST /incomes` untuk idempotensi draf penjualan; (7) audit `catatan_dihapus`; (9 sebagian) `@limiter.limit("10/minute")` di `/ruang/gabung`.
+- Tes sesudah review: unittest 2408 (1 gagal yang sama dengan `main`) · `openapi_cek` tanpa perubahan memutus.
+- **Review ulang** (1 Nov, terhadap `f740996`): temuan 1–3 tuntas, tetapi satu temuan baru menahan merge: nominal negatif (sudah ada sebelum PR). Pengeluaran −Rp3 jt menambah saldo dan melewati batas nominal/foto; penjualan Rp0 dengan alokasi +5 jt/−5 jt lolos syarat alokasi penuh. Perbaikan: `TransactionCreate.amount` dan `IncomeCreate.amount` `Field(gt=0)`, `AllocationItem.amount` `Field(ge=0)` (berlaku untuk semua peran); batch menolak per baris (`kode: nominal_tidak_sah`) supaya satu baris buruk tidak menahan seluruh antrean offline. Tes `test_nominal_negatif_ditolak`.
+- **Merge `main` (R4, #174):** route R4 tetap di `routes/ruang.py` (prefix `/ruang`); route R5 dipindah ke `routes/ruang_kelola.py` (tanpa prefix, karena `/persetujuan/saya`). Route R5 ikut flag `ruang_usaha_users`: di luar flag `/ruang/{id}/…` 404 dan `/ruang/gabung` 403 `ruang_usaha_belum_dibuka`, jadi karyawan yang diundang juga harus masuk flag selama beta. `GET /ruang` kini mengisi `jam_kerja` untuk karyawan. Tes R5 menyalakan flag; tes baru `test_ikut_flag_ruang_usaha_dan_jam_kerja_di_daftar_ruang`.
+- Tes sesudah merge: unittest 2419 (1 gagal yang sama dengan `main`) · node --test 653 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · `openapi_cek` tanpa perubahan memutus.
+
+**Digantung**
+- Notifikasi ke admin saat draf baru dan ke karyawan saat diputus belum ada (`Notification.type` masih SAEnum; perlu migrasi enum atau kolom `kind`): masuk U6 (notifikasi admin) dan R6 (tampilan karyawan).
+- Daftar dan pencabutan undangan (`dicabut_at` sudah ada di tabel) belum punya endpoint: R6 bersama halaman Anggota.
+- `client_ref` pemasukan baru dipakai untuk draf karyawan; idempotensi pemasukan biasa (owner/admin) belum ada, sama seperti sebelum R5. Perlu sebelum form penjualan U2.
+- **Butuh keputusan pemilik produk (review #8, #10):** (8) admin sekarang boleh membuat undangan berperan admin, menaikkan anggota menjadi admin, dan menurunkan atau mengeluarkan admin lain; ADR-P4 hanya melindungi owner. Bila disengaja, tulis di ADR; bila tidak, batasi aksi atas admin ke owner. (10) batas nominal berlaku per catatan, jadi satu belanja bisa dipecah; apakah perlu batas kumulatif harian per karyawan?
+- Pencabutan undangan (review #9, `dicabut_at` sudah ada) masuk R6 bersama daftar undangan.
+- Beranda template "Karyawan" dan penyaringan per kartu (`/dashboard/*` sekarang 403 untuk karyawan): R6. Kotak Struk untuk karyawan (unggah bukti ke ruang usaha): R7.
+- Draf yang macet di status `diproses` (proses mati di antara klaim dan pencatatan) tidak bisa disetujui ulang dari UI; transaksi ganda tetap tercegah `client_ref`. Bila muncul: ubah status ke `menunggu` di DB.
+- Anggota yang keluar lalu diundang lagi mendapat batasan bawaan (tanpa batas nominal); admin perlu mengatur ulang. Pertimbangkan bawaan yang lebih ketat di R6.
+
+**Jebakan**
+- `request.scope["endpoint"]` dipakai `ruang_aktif` untuk mengenali route (`modul.nama_fungsi`); mengganti nama handler di `KARYAWAN_BOLEH` membuatnya tertolak untuk karyawan (aman, tapi tes `test_karyawan_hanya_route_pencatatan_lewat_header` menangkapnya).
+- Tes dengan fake DB berskrip (`app/tests/fakes.py`) yang memanggil handler baca langsung harus mem-patch `app.services.peran.batasan_karyawan`, karena kueri peran memakan satu hasil skrip.
+- `catat_transaksi` dipanggil juga dari persetujuan: jangan menambah cek yang bergantung pada user yang login di sana; pakai `peran.izin_pengelola_aktif()` bila perlu membedakan.
+- PostgreSQL lokal: `initdb`/`pg_ctl` sebagai user `claude` di `/home/claude/pg` (socket `-k`, port 5433).
+
+**Keputusan kecil**
+- Batasan bawaan (admin belum mengatur): dua jenis, semua amplop, tanpa batas nominal dan foto, `hari_sama`, `lihat_saldo` false, tanpa jam kerja — sama dengan contoh kontrak, dengan saldo tertutup sebagai bawaan yang aman.
+- "Foto nota" = `receipt_item_id` (item Kotak Struk); pemasukan tidak dicek foto.
+- Pemasukan karyawan = jenis `penjualan`; amplop alokasinya ikut `amplop_ids`.
+- Zona jam kerja = zona admin yang menyimpan (disimpan di `jam_kerja.zona`); jendela ubah memakai zona yang sama, bawaan WIB.
+- Undangan sekali pakai (satu kode per orang) dan admin boleh mengundang admin; tidak ada transfer kepemilikan.
+- Draf dibuat sesudah cek amplop dan "bisa dibelanjakan", tetapi sebelum cek dana dan limit harian; cek itu dijalankan saat persetujuan, karena saldo bisa berubah sampai admin memutus.
+- Batch: baris draf dikembalikan `ok: false` + `kode: perlu_persetujuan`, supaya klien lama menyimpan barisnya; kiriman ulangnya idempoten.
+
+**Cara melanjutkan**
+- Review ulang kedua yang singkat: "review ulang PR #175 terhadap 03-workflow.md bagian keamanan, fokus validasi nominal (temuan baru) dan gabungan dengan R4 (flag `ruang_usaha_users`, `ruang_kelola.py`)".
+- Merge: label `migrasi`; checklist "Plugin R5" di `AGENTS.md`, mengikuti "Urutan merge PR bermigrasi".
+- Berikutnya R6 (butuh R4, R5, B2), R8, atau H1.
 
 ---
 
