@@ -224,7 +224,7 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_transfer_manual_tetap_jalan_dengan_kunci(self):
         async with self.Session() as db:
             res = await env_routes.transfer_between_envelopes(
-                _uuid(self.ids["Hobi"]), _uuid(self.ids["Makan"]), D("1000"), self.me, db, hid=self.hid)
+                _uuid(self.ids["Hobi"]), _uuid(self.ids["Makan"]), D("1000"), self.me, db)
         self.assertEqual(res["status"], "transferred")
 
 

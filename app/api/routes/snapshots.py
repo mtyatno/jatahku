@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
 from app.models.models import User, MonthlySnapshot, Envelope
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
@@ -100,7 +100,7 @@ async def recompute_snapshots(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     """Rebuild the last N closed snapshots for the caller's household, oldest-first
     and with force=True, so the rollover chain is recomputed correctly end-to-end.

@@ -57,10 +57,16 @@ def summary_rows(remaining):
 
 
 class DeleteEnvelopeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # R3: ruang amplop dari objeknya (keanggotaan dicek di ruang_amplop; diuji di test_ruang_gerbang)
+        p = patch.object(route, "ruang_amplop", new=AsyncMock(return_value=HID))
+        p.start()
+        self.addCleanup(p.stop)
+
     async def run_delete(self, db, remaining):
         with patch.object(route, "compute_envelope_summaries",
                           new=AsyncMock(return_value=summary_rows(remaining))):
-            await route.delete_envelope(ENV_ID, user=USER, db=db, hid=HID)
+            await route.delete_envelope(ENV_ID, user=USER, db=db)
 
     def allocations(self, db):
         return {a.envelope_id: a.amount for a in db.added if isinstance(a, Allocation)}
@@ -102,7 +108,7 @@ class DeleteEnvelopeTests(unittest.IsolatedAsyncioTestCase):
             return summary_rows("900000")
 
         with patch.object(route, "compute_envelope_summaries", new=summaries):
-            await route.delete_envelope(ENV_ID, user=USER, db=db, hid=HID)
+            await route.delete_envelope(ENV_ID, user=USER, db=db)
         locks = [s for s in at_summary if "FOR NO KEY UPDATE" in s]
         self.assertEqual(len(locks), 1)
         self.assertIn("FROM households", locks[0])

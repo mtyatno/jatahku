@@ -26,7 +26,8 @@ from app.models.models import (
     Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
     UserStreak, BalanceCheck,
 )
-from app.services.ruang import RuangAktif, RuangTulis, ruang_keluarga_id
+from app.services.plan_limits import di_luar_ruang_usaha
+from app.services.ruang import RuangAktif, ruang_keluarga_id
 
 router = APIRouter()
 
@@ -95,6 +96,7 @@ async def get_profile(
             Transaction.balance_check_id.is_(None),  # sama dgn limit Basic (plan_limits)
             Transaction.transaction_date >= period_start,
             Transaction.transaction_date <= period_end,
+            di_luar_ruang_usaha(),                   # kuota Basic = ruang keluarga (R3)
         )
     )
     monthly_txns = txn_count.scalar()
@@ -413,7 +415,7 @@ async def reset_data(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     from datetime import date as _date
     from app.services.email_service import send_data_backup_email

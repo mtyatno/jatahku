@@ -202,7 +202,7 @@ class IsEmergencyRouteTests(unittest.IsolatedAsyncioTestCase):
         body = {"name": env.name, "budget_amount": D("0"), "purpose": env.purpose, **kw}
         async with self.Session() as db:
             return await env_routes.update_envelope(env.id, env_routes.EnvelopeCreate(**body),
-                                                    user=self.user, db=db, hid=self.user_hid)
+                                                    user=self.user, db=db)
 
     async def test_buat_ditebak_dari_nama(self):
         self.assertTrue((await self.create(name="Dana Darurat")).is_emergency)

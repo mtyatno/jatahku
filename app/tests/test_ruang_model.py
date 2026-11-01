@@ -191,7 +191,7 @@ class RuangIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             with patch(f"{notif}.goal_snapshot", AsyncMock(return_value={})), \
                  patch(f"{notif}.notify_goals_reached", AsyncMock()):
-                await envelopes_routes.delete_envelope(self.jajan.id, user=self.user, db=db, hid=self.hh.id)
+                await envelopes_routes.delete_envelope(self.jajan.id, user=self.user, db=db)
         kinds = await self._kinds()
         self.assertEqual(kinds["Gaji"], "pemasukan")
         self.assertEqual(kinds["Refund: hapus amplop Jajan"], "transfer")

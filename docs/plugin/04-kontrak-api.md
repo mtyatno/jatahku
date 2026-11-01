@@ -24,7 +24,7 @@ Hanya bertambah; field lama tidak berubah arti. Belum ada perilaku ruang: semua 
 
 Pemasukan lama diberi `kind` oleh migrasi `1c7e5a9d3b20`: `balance_check_id` terisi → `penyesuaian`; nominal 0 → `transfer`; keterangan `Top-up` atau diawali `Top-up ` → `top-up`; selain itu `pemasukan`. Jenis usaha (penjualan, modal pemilik, pinjaman, lain-lain) disimpan Buku Usaha di tabelnya sendiri (U1–U2), bukan di kolom ini.
 
-## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3) — **v1 (R2, PR plugin/r2-ruang-aktif)**
+## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3) — **v1 (R2 #166, penulisan R3)**
 
 Web dan aplikasi mengirim header ini di setiap permintaan sejak R4 (`frontend/src/lib/api.js`). Sampai R4 belum ada klien yang mengirimnya, dan belum ada user yang punya ruang kedua. Header tercantum di OpenAPI sebagai header opsional pada setiap endpoint ber-ruang.
 
@@ -36,12 +36,17 @@ Implementasi: `app/services/ruang.py`. Route menerima ruang sebagai parameter ke
 | UUID ruang tempat user menjadi anggota | Ruang itu dipakai untuk membaca (semua `GET`, plus `POST` yang hanya membaca: `/dashboard/data`, `/balance-check/preview`, `/advisor/allocation-recommendation`) |
 | UUID ruang yang bukan milik user, ruang terhapus, atau bukan UUID | 403 `{"detail": "<teks>", "kode": "ruang_tidak_diizinkan"}`. Tidak pernah jatuh diam-diam ke ruang lain |
 | Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `di_luar_jam_kerja`, dengan `buka_lagi` (waktu) di body (R5) |
-| Endpoint tulis, **R2 sampai R3** | Selalu ruang keluarga. Header yang menunjuk ruang lain (atau tidak sah) → 403 `ruang_tidak_diizinkan`, supaya catatan tidak masuk ruang yang salah. Header yang menunjuk ruang keluarga sendiri diterima |
-| Endpoint tulis, **sejak R3** | Header tidak menentukan ruang. Ruang diambil dari objek; bila objek ada di ruang yang bukan milik user → 404 (tidak membocorkan keberadaan objek) |
+| Endpoint tulis untuk objek yang sudah ada atau yang punya induk (R3) | Header tidak menentukan ruang. Ruang diambil dari objeknya: amplop (`PUT`/`DELETE /envelopes/{id}`, `POST /transactions/`, `POST /goals/`, `POST /recurring/`), transaksi, target, langganan (termasuk bayar/lewati/tandai), grup, cek saldo (`/balance-check/{id}/undo`), merchant Kotak Struk. Objek di ruang yang bukan milik user → 404 dengan pesan "tidak ditemukan" biasa (tidak membocorkan keberadaan objek). Mengubah langganan ke amplop ruang lain → 404 |
+| Satu permintaan tulis yang menyentuh dua ruang milik user (R3) | 400 `{"detail": "<teks>", "kode": "lintas_ruang"}`: `POST /envelopes/transfer` antar-ruang, `POST /incomes/` dengan alokasi ke dua ruang. Prive dua sisi menyusul di R8 |
+| Antrean offline `POST /transactions/batch` (R3) | Ruang per baris = ruang amplopnya (antrean tidak menyimpan ruang). Baris ke amplop di ruang yang bukan milik user ditolak per baris (`ok: false`, "Envelope not found"); baris lain tetap dicatat. Kirim ulang dengan `client_ref` yang sama mengembalikan transaksi user sendiri |
+| Objek baru tanpa induk (R3, keputusan pemilik produk 1 Nov) | Ruang dari header yang sah (`ruang_aktif`), tanpa header = ruang keluarga: `POST /envelopes/`, `POST /envelopes/groups`, `POST /incomes/` tanpa alokasi, `POST /user/reset`, `POST /snapshots/recompute`, `POST /balance-check/apply` (cocokkan saldo seluruh ruang; baris harus amplop ruang itu), `POST /advisor/plan` + `/execute`, saran amplop `POST /transactions/suggest-envelope(s)`. Header ruang orang lain → 403 |
+| Undangan anggota (`POST /household/invite`) | Tetap ruang keluarga (`ruang_tulis`); header ruang lain → 403. Undangan ruang usaha dibuat di R5 |
 
-Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per ruang, jadi keduanya memakai ruang aktif. Dismiss AI Advisor (`POST`/`DELETE /advisor/dismiss`) juga memakai ruang aktif (status per viewer, tidak mengubah data keuangan). Rencana dana (`POST /advisor/plan`) memakai ruang tulis supaya selalu sepasang dengan `POST /advisor/execute`.
+Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per ruang, jadi keduanya memakai ruang aktif. Dismiss AI Advisor (`POST`/`DELETE /advisor/dismiss`) juga memakai ruang aktif (status per viewer, tidak mengubah data keuangan). Rencana dana dan eksekusinya sama-sama memakai ruang aktif. Daftar lengkap route non-GET yang memakai ruang aktif dijaga `app/tests/test_ruang_pagar.py`.
 
-Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringatan proaktif), kuota paket (sampai R3), dan Kotak Struk (bukti baru dicatat ke ruang keluarga sampai R3) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
+**Kuota per ruang (R3, ADR-P13).** Kuota Basic (50 transaksi per bulan, 6 amplop, 5 langganan) hanya berlaku di ruang keluarga: transaksi dihitung dari semua catatan user di luar ruang usaha, amplop dan langganan dari ruang tujuan. Ruang usaha tidak memakai kuota Basic; haknya diatur Paket Usaha (tabel hak di H1, kode `butuh_paket_usaha` dipasang di H1/V1, uji coba gratis selama beta). `usage` di `GET /user/profile` mengikuti aturan yang sama.
+
+Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringatan proaktif), dan Kotak Struk (bukti baru dan saran amplopnya dicatat ke ruang keluarga sampai R7; mencatat bukti ke amplop ruang usaha tetap masuk ruang amplop itu) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
 
 Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluarga (review keamanan PR #166): `POST /auth/link/merge` hanya menerima `keep_household_id` yang merupakan ruang keluarga salah satu dari kedua akun (selain itu 400, tanpa perubahan data); `POST /household/join` (dan `/join` di bot) menolak kode undangan yang menunjuk household selain `rumah_tangga` (400 "Kode invite tidak valid"). Undangan ruang usaha dibuat terpisah di R5.
 
@@ -308,6 +313,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `kode` | HTTP | Arti |
 | --- | --- | --- |
 | `ruang_tidak_diizinkan` | 403 | Header ruang bukan ruang user |
+| `lintas_ruang` | 400 | Satu permintaan tulis menyentuh dua ruang (R3); prive menyusul di R8 |
 | `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota |
 | `khusus_admin` | 403 | Peran member meminta data laporan atau aksi admin |
 | `amplop_tidak_diizinkan` | 403 | Amplop tidak termasuk batasan anggota |

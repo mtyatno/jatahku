@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif
 from app.services.advisor import (
     build_advisor_insights,
     build_allocation_recommendation,
@@ -123,7 +123,7 @@ async def advisor_plan(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     from app.services.advisor.execute import PlanError, build_plan
     try:
@@ -142,7 +142,7 @@ async def advisor_execute(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
     from app.services.advisor.execute import PlanError, execute_plan
     try:

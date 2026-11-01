@@ -85,6 +85,13 @@ class PagarSumberTests(unittest.TestCase):
             ("PUT", "/dashboard/layout"),                     # tata letak milik user per ruang
             ("POST", "/advisor/dismiss"),                     # status per viewer (Redis), bukan data ruang
             ("DELETE", "/advisor/dismiss"),                   # idem
+            # R3, keputusan A: objek baru tanpa induk → ruang dari header yang sah (tanpa header = keluarga).
+            ("POST", "/envelopes/"), ("POST", "/envelopes/groups"),
+            ("POST", "/incomes/"),                            # tanpa alokasi; dengan alokasi = ruang amplopnya
+            ("POST", "/user/reset"), ("POST", "/snapshots/recompute"),
+            ("POST", "/balance-check/apply"),                 # cocokkan saldo seluruh ruang
+            ("POST", "/advisor/plan"), ("POST", "/advisor/execute"),  # rencana atas amplop satu ruang
+            ("POST", "/transactions/suggest-envelope"), ("POST", "/transactions/suggest-envelopes"),  # saran, R7
         }
 
         def pakai(dependant, fn):

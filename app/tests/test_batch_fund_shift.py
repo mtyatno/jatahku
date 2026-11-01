@@ -142,7 +142,7 @@ class World:
     async def raise_limit(self, user_id, envelope_id):
         self.bypass.add(envelope_id)
 
-    async def plan_check(self, user, db):
+    async def plan_check(self, user, db, household_id=None):
         if self.plan_cap is not None and len(self.of(Transaction)) >= self.plan_cap:
             return False, f"Kuota {self.plan_cap} transaksi bulan ini sudah habis."
         return True, ""

@@ -231,7 +231,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 with self.assertRaises(HTTPException) as ctx:
                     await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("20000"), description="kopi"),
-                                             await self.web_user(db), db, hid=self.hid)
+                                             await self.web_user(db), db)
             self.assertEqual(ctx.exception.status_code, 403)
             self.assertEqual(ctx.exception.detail,
                              "Melebihi limit harian Jajan: limit Rp10.000/hari, terpakai Rp0, diminta Rp20.000.")
@@ -239,11 +239,11 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
             async with self.Session() as db:
                 await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("20000"), description="kopi",
-                                                           raise_daily_limit=True), await self.web_user(db), db, hid=self.hid)
+                                                           raise_daily_limit=True), await self.web_user(db), db)
             self.assertIn(f"dlimit_temp:{self.user_id}:{jajan}", self.redis.store)  # kunci yang sama dengan bot
             async with self.Session() as db:  # sisa hari ini limitnya sudah dinaikkan — sama dengan bot
                 await create_transaction(TransactionCreate(envelope_id=jajan, amount=D("5000"), description="es"),
-                                         await self.web_user(db), db, hid=self.hid)
+                                         await self.web_user(db), db)
         self.assertEqual(await self.count(Transaction), 2)
 
     async def test_web_raise_daily_limit_batch(self):
@@ -254,14 +254,14 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 out = await batch_create_transactions(BatchTransactionCreate(items=[
                     BatchTransactionItem(envelope_id=jajan, amount=D("20000"), description="kopi"),
-                ]), await self.web_user(db), db, hid=self.hid)
+                ]), await self.web_user(db), db)
             self.assertFalse(out[0].ok)
             self.assertIn("limit harian Jajan", out[0].error)
             async with self.Session() as db:
                 out = await batch_create_transactions(BatchTransactionCreate(items=[
                     BatchTransactionItem(envelope_id=jajan, amount=D("20000"), description="kopi",
                                          raise_daily_limit=True),
-                ]), await self.web_user(db), db, hid=self.hid)
+                ]), await self.web_user(db), db)
         self.assertTrue(out[0].ok)
         self.assertEqual(await self.count(Transaction), 1)
 
@@ -457,11 +457,11 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         mk, tr = self.env["Makan"].id, self.env["Transport"].id
         async with self.Session() as db:
             with self.assertRaises(HTTPException) as ctx:
-                await transfer_between_envelopes(tr, mk, D("200001"), await self.web_user(db), db, hid=self.hid)
+                await transfer_between_envelopes(tr, mk, D("200001"), await self.web_user(db), db)
             self.assertEqual(ctx.exception.status_code, 400)
             self.assertIn("Maksimal transfer dari Transport", ctx.exception.detail)
         async with self.Session() as db:
-            out = await transfer_between_envelopes(tr, mk, D("200000"), await self.web_user(db), db, hid=self.hid)
+            out = await transfer_between_envelopes(tr, mk, D("200000"), await self.web_user(db), db)
         self.assertEqual(out["status"], "transferred")
         self.assertEqual(await self.remaining("Transport"), D("0"))
         self.assertEqual(await self.remaining("Makan"), D("210000"))
@@ -472,14 +472,14 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             req = TransactionCreate(envelope_id=self.env["Tabungan"].id, amount=D("1000"), description="x")
             with self.assertRaises(HTTPException) as ctx:
-                await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                await create_transaction(req, await self.web_user(db), db)
             self.assertIn("Amplop tabungan", ctx.exception.detail)
         with patch("app.api.routes.transactions.check_transaction_limit",
                    new=AsyncMock(return_value=(False, "Limit 50 transaksi/bulan tercapai."))):
             async with self.Session() as db:
                 req = TransactionCreate(envelope_id=self.env["Transport"].id, amount=D("1000"), description="x")
                 with self.assertRaises(HTTPException) as ctx:
-                    await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                    await create_transaction(req, await self.web_user(db), db)
                 self.assertIn("Limit 50", ctx.exception.detail)
         self.assertEqual(await self.count(Transaction), 0)
 
@@ -489,7 +489,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 req = TransactionCreate(envelope_id=self.env["Transport"].id, amount=D("1000"),
                                         description="ojek kantor")
-                await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                await create_transaction(req, await self.web_user(db), db)
         from app.models.models import UserEnvelopeKeyword, UserStreak
         self.assertGreater(await self.count(UserEnvelopeKeyword), 0)
         self.assertEqual(await self.count(UserStreak), 1)
@@ -504,7 +504,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return await batch_create_transactions(
                 BatchTransactionCreate(items=[BatchTransactionItem(**it) for it in items]),
-                await self.web_user(db), db, hid=self.hid)
+                await self.web_user(db), db)
 
     async def test_web_create_same_client_ref_records_once(self):
         from app.api.routes.transactions import TransactionCreate, create_transaction
@@ -512,9 +512,9 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                 description="ojek", client_ref="ref-ojek")
         with patch("redis.asyncio.from_url", return_value=self.redis):
             async with self.Session() as db:
-                first = await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                first = await create_transaction(req, await self.web_user(db), db)
             async with self.Session() as db:
-                again = await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                again = await create_transaction(req, await self.web_user(db), db)
         self.assertEqual(again.id, first.id)
         self.assertEqual(await self.count(Transaction), 1)
         self.assertEqual(self.redis.store[self.ref_key("ref-ojek")], str(first.id))
@@ -542,7 +542,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(HTTPException) as cm:
                     await create_transaction(TransactionCreate(envelope_id=t, amount=D("1000"),
                                                                description="x", client_ref="busy"),
-                                             await self.web_user(db), db, hid=self.hid)
+                                             await self.web_user(db), db)
             out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "x",
                                          "client_ref": "busy"}])
         self.assertEqual(cm.exception.status_code, 409)
@@ -558,12 +558,12 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with patch("redis.asyncio.from_url", return_value=self.redis):
             async with self.Session() as db:
                 with self.assertRaises(HTTPException) as cm:
-                    await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                    await create_transaction(req, await self.web_user(db), db)
             self.assertEqual(cm.exception.status_code, 403)
             self.assertNotIn(self.ref_key("ref-makan"), self.redis.store)
             await self.income("Makan", 50000)
             async with self.Session() as db:
-                await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                await create_transaction(req, await self.web_user(db), db)
             out = await self.web_batch([{"envelope_id": self.env["Makan"].id, "amount": D("50000"),
                                          "description": "makan", "client_ref": "ref-makan"}])
         self.assertTrue(out[0].ok)
@@ -585,7 +585,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(HTTPException) as cm:
                     await create_transaction(TransactionCreate(envelope_id=t, amount=D("1000"),
                                                                description="x", client_ref="race"),
-                                             await self.web_user(db), db, hid=self.hid)
+                                             await self.web_user(db), db)
             out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "x",
                                          "client_ref": "race"}])
         self.assertEqual(cm.exception.status_code, 409)
@@ -602,12 +602,12 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     raise RuntimeError("koneksi DB putus")
                 db.commit = boom
                 with self.assertRaises(RuntimeError):
-                    await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                    await create_transaction(req, await self.web_user(db), db)
             self.assertNotIn(self.ref_key("ref-crash"), self.redis.store)
             async with self.Session() as db:
-                await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                await create_transaction(req, await self.web_user(db), db)
             async with self.Session() as db:
-                await create_transaction(req, await self.web_user(db), db, hid=self.hid)
+                await create_transaction(req, await self.web_user(db), db)
         self.assertEqual(await self.count(Transaction), 1)
 
     async def test_receipt_items_teach_per_item_envelope_suggestions(self):
@@ -656,7 +656,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 with self.assertRaises(HTTPException) as cm:
                     await create_transaction(TransactionCreate(envelope_id=t, amount=D("1000"), description="satu"),
-                                             await self.web_user(db), db, hid=self.hid)
+                                             await self.web_user(db), db)
         self.assertFalse(nxt[0].ok)                            # input berikutnya ditolak
         self.assertIn("Kuota 50 transaksi bulan ini sudah habis", nxt[0].error)
         self.assertEqual(cm.exception.status_code, 403)
@@ -761,7 +761,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 single = await create_transaction(
                     TransactionCreate(envelope_id=t, amount=D("1000"), description="a" * 700),
-                    await self.web_user(db), db, hid=self.hid)
+                    await self.web_user(db), db)
             out = await self.web_batch([{"envelope_id": t, "amount": D("1000"), "description": "b" * 501}])
         self.assertEqual(len(single.description), 500)
         self.assertTrue(out[0].ok)
@@ -801,7 +801,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:      # pengeluaran tidak pernah memicu notifikasi goal
                 await create_transaction(TransactionCreate(envelope_id=self.env["Transport"].id,
                                                            amount=D("1000"), description="ojek"),
-                                         await self.web_user(db), db, hid=self.hid)
+                                         await self.web_user(db), db)
         self.assertEqual(await self.goal_notifs(), 1)
 
     async def test_goal_notified_via_web_transfer_and_bot_topup(self):
@@ -809,7 +809,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.add_goal("Makan", 50000)  # saldo awal 10rb
         async with self.Session() as db:
             await transfer_between_envelopes(self.env["Transport"].id, self.env["Makan"].id, D("50000"),
-                                             await self.web_user(db), db, hid=self.hid)
+                                             await self.web_user(db), db)
         self.assertEqual(await self.goal_notifs(), 1)
 
         await self.add_goal("Jajan", 1)  # saldo 0
@@ -860,13 +860,13 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:  # web, satu item
                 txn = await create_transaction(
                     TransactionCreate(envelope_id=tr, amount=D("50000"), description="servis motor"),
-                    await self.web_user(db), db, hid=self.hid)
+                    await self.web_user(db), db)
             self.assertEqual(txn.amount, D("50000"))
             async with self.Session() as db:  # web, multi-item
                 out = await batch_create_transactions(BatchTransactionCreate(items=[
                     BatchTransactionItem(envelope_id=tr, amount=D("40000"), description="ban"),
                     BatchTransactionItem(envelope_id=mk, amount=D("5000"), description="nasi"),
-                ]), await self.web_user(db), db, hid=self.hid)
+                ]), await self.web_user(db), db)
             self.assertEqual([(r.ok, r.error) for r in out], [(True, None), (True, None)])
 
         # bot, multi-item

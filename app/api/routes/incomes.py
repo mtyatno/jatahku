@@ -15,7 +15,7 @@ from app.core.period import get_budget_period
 from app.models.models import (
     User, Income, Allocation, Envelope, )
 from app.services.income_history import parse_transfer
-from app.services.ruang import RuangAktif, RuangTulis
+from app.services.ruang import RuangAktif, ruang_amplop_satu
 
 router = APIRouter()
 
@@ -84,8 +84,12 @@ async def create_income(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
-    hid: RuangTulis,
+    hid: RuangAktif,
 ):
+    # R3: ruang pemasukan = ruang amplop alokasinya (semua harus satu ruang, selain itu 400 lintas_ruang);
+    # pemasukan tanpa alokasi = objek baru tanpa induk → ruang dari header (`ruang_aktif`, keanggotaan dicek).
+    if req.allocations:
+        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations]) or hid
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
 
