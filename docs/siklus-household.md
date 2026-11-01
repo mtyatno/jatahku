@@ -325,7 +325,12 @@ Yang masih harus dikerjakan rencana ruang usaha:
   `household_id`) hanya menjangkau ruang keluarga. `POST /snapshots/recompute` mengikuti ruang tulis R2 (sampai R3 ruang
   keluarga, sesudahnya ruang yang ditulis) dengan izin untuk household itu. `set_household_payday` dan
   `recompute_history` sudah bekerja untuk ruang usaha (tanpa cermin ke user), tetapi izin (`can_change_payday`)
-  diputuskan pemanggil.
+  diputuskan pemanggil. Hari ini `PUT /user/profile` mengabaikan header `X-Jatahku-Ruang`, tidak seperti kontrak tulis
+  R2 yang menolak header ruang lain. Sebelum klien mengirim header di setiap permintaan (R4), putuskan: `PUT` yang
+  membawa `payday_day` dengan header ruang selain ruang keluarga ditolak 403 `ruang_tidak_diizinkan`, atau tanggal ruang
+  usaha punya endpoint sendiri. Tanpa itu, owner yang sedang membuka ruang usaha lalu mengubah tanggal gajian akan
+  mengubah siklus ruang keluarga (recompute dan notifikasi ke semua anggota keluarga).
+  `test_household_cycle_r1.py` mengunci perilaku hari ini dan ikut berubah bersama keputusan itu.
 - **R5 — bergabung ke ruang usaha.** Hari ini join web dan `cmd_join` menolak undangan ke household selain ruang keluarga
   sebelum mengubah apa pun (Plugin R2), dan pindah ruang keluarga hanya menghapus keanggotaan ruang keluarga lama, bukan
   keanggotaan ruang usaha. Jalur undangan ruang usaha di R5 tidak boleh memanggil `adopt_household_payday` (fungsinya
