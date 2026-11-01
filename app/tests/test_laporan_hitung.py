@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 from app.services.laporan import hitung
 from app.services.laporan.hitung import (
-    BLN, BULAN, adalah_bulan_kalender, beruntun_terpanjang, judul_bulanan, nama_file_pdf,
+    BLN, BULAN, adalah_bulan_kalender, adalah_tabungan, beruntun_terpanjang, judul_bulanan, nama_file_pdf,
     pernah_lewat_batas, persen, persen_perubahan, rata_rata, status_amplop, teks_sorotan, uang,
 )
 
@@ -149,6 +149,24 @@ class NamaFileTests(unittest.TestCase):
             with self.subTest(jenis):
                 with self.assertRaises(ValueError):
                     nama_file_pdf(jenis, date(2026, 10, 1), date(2026, 10, 31))
+
+
+class AdalahTabunganTests(unittest.TestCase):
+    def test_hanya_saving_dan_sinking_fund_adalah_tabungan(self):
+        # Keempat nilai `PurposeType` di models.py.
+        kasus = [("saving", True), ("sinking_fund", True), ("expense", False), ("debt", False)]
+        for tujuan, diharapkan in kasus:
+            with self.subTest(tujuan):
+                self.assertIs(adalah_tabungan(tujuan), diharapkan)
+
+    def test_status_amplop_dan_adalah_tabungan_memakai_satu_daftar(self):
+        # `status_amplop` dan penyusun `data` (persen terpakai tanpa tabungan) harus sepakat tentang apa itu tabungan,
+        # jadi daftar tujuannya satu, di modul ini. Daftar itu diganti sementara: keduanya ikut.
+        with patch.object(hitung, "_TUJUAN_TABUNGAN", ("goal",)):
+            self.assertIs(adalah_tabungan("goal"), True)
+            self.assertIs(adalah_tabungan("saving"), False)
+            self.assertEqual(status_amplop("goal", D(100), D(0), D(100)), "tabungan")
+            self.assertEqual(status_amplop("saving", D(100), D(0), D(100)), "aman")
 
 
 class StatusAmplopTests(unittest.TestCase):

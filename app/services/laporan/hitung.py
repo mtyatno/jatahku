@@ -58,11 +58,18 @@ def nama_file_pdf(jenis: str, ps: date, pe: date) -> str:
     return f"jatahku-laporan-{ps.isoformat()}.pdf"
 
 
+def adalah_tabungan(tujuan: str) -> bool:
+    """True bila `tujuan` amplop adalah tabungan (`saving` atau `sinking_fund`): saldonya sengaja ditumpuk, bukan
+    jatah yang dihabiskan. Satu-satunya daftar tujuan tabungan di paket laporan: `status_amplop` dan penyusun `data`
+    (persen terpakai tanpa tabungan) sama-sama memakainya."""
+    return tujuan in _TUJUAN_TABUNGAN
+
+
 def status_amplop(tujuan: str, awal: Decimal, terpakai: Decimal, akhir: Decimal) -> str:
     """Status satu amplop di akhir periode; aturan dicek berurutan dan yang pertama cocok menang:
-    tabungan (`saving`/`sinking_fund`), lewat_batas (akhir < 0), kosong (awal <= 0),
+    tabungan (`adalah_tabungan`: `saving`/`sinking_fund`), lewat_batas (akhir < 0), kosong (awal <= 0),
     hampir_habis (terpakai >= AMBANG_HAMPIR_HABIS * awal), selain itu aman."""
-    if tujuan in _TUJUAN_TABUNGAN:
+    if adalah_tabungan(tujuan):
         return "tabungan"
     if akhir < 0:
         return "lewat_batas"

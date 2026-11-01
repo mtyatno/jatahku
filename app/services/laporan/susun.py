@@ -19,12 +19,21 @@ Syarat bahan (pemuat yang menjamin; di sini hanya dicek yang bila salah membuat 
 Pelanggaran syarat `terpakai_lalu`, `terpakai_lalu_total`, atau syarat amplop transaksi dan target adalah bug
 pemuat: `ValueError`, tidak ditambal, karena laporan yang terbit tidak pernah diubah lagi.
 
-Bentuk keluaran: uang teks dua desimal (`uang()`), tanggal ISO, persen `int`, tanpa float. Bisa `null`:
-`ringkasan.persen_terpakai` (tanpa saldo awal), `banding.terpakai_lalu`/`terpakai_rata3` (lingkup tanpa angka di
-periode itu) dan isi `banding.amplop[]` (amplop tanpa angka), `banding.persen_perubahan` (periode lalu tanpa angka
-atau nol), `hari_terboros` (tak ada hari di atas nol), `mutasi[].amplop` (baris `masuk`),
-`langganan.jatuh_tempo[].amplop` (amplop di luar bahan), `sorotan.target[].persen` (target nol),
-`email.persen_terpakai`, `email.tren_persen`.
+Bentuk keluaran: uang teks dua desimal (`uang()`), tanggal ISO, persen `int`, tanpa float. Jumlah uang di
+`ringkasan` meliputi semua baris, tetapi `ringkasan.persen_terpakai` (dan `email.persen_terpakai`) hanya atas amplop
+selain tabungan (`hitung.adalah_tabungan`), di pembilang dan penyebut. `sorotan.amplop_aman` berisi nama amplop yang
+statusnya bukan tabungan, kosong, atau lewat_batas dan saldo hariannya tak pernah di bawah nol; `email.amplop_aman`
+hanya hitungan amplop berstatus `aman`.
+Bisa `null`:
+- `ringkasan.persen_terpakai`, `email.persen_terpakai`: jumlah saldo awal amplop selain tabungan nol atau negatif
+  (juga bila tak ada amplop selain tabungan);
+- `banding.terpakai_lalu`: bila `terpakai_lalu_total` periode p-1 `None`; `banding.terpakai_rata3`: hanya bila ketiga
+  total `None` (total `None` dilewati dan tidak masuk pembagi, nol adalah angka dan ikut dihitung);
+- `banding.persen_perubahan`, `email.tren_persen`: bila total p-1 `None`, nol, atau negatif;
+- `banding.amplop[].terpakai_lalu`: bila baris itu tanpa angka p-1; `banding.amplop[].terpakai_rata3`: hanya bila
+  ketiga angka baris itu `None`;
+- `hari_terboros` (tak ada hari di atas nol), `mutasi[].amplop` (baris `masuk`), `langganan.jatuh_tempo[].amplop`
+  (amplop di luar bahan), `sorotan.target[].persen` (target nol).
 Urutan: `amplop` dan `banding.amplop` menurut bahan; `harian` menurut tanggal; `terbesar` menurut jumlah;
 `terbayar`, `jatuh_tempo`, dan `mutasi` menurut tanggal. Seri selalu menurut urutan masukan (pengurutan stabil);
 di hari yang sama baris `masuk` mendahului baris `keluar` di `mutasi`.
@@ -35,8 +44,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.services.laporan.hitung import (
-    beruntun_terpanjang, judul_bulanan, pernah_lewat_batas, persen, persen_perubahan, rata_rata, status_amplop,
-    teks_sorotan, uang,
+    adalah_tabungan, beruntun_terpanjang, judul_bulanan, pernah_lewat_batas, persen, persen_perubahan, rata_rata,
+    status_amplop, teks_sorotan, uang,
 )
 
 VERSI = 1
@@ -49,7 +58,7 @@ JUMLAH_PERIODE_BANDING = 3
 PENANDA_TAGIHAN = "🔄 "
 
 _NOL = Decimal(0)
-_STATUS_BUKAN_AMAN = ("tabungan", "kosong")
+_STATUS_BUKAN_AMAN = ("tabungan", "kosong", "lewat_batas")
 
 
 @dataclass(frozen=True)
@@ -228,14 +237,18 @@ def _belanja_per_amplop_hari(transaksi: list[TransaksiPeriode]) -> dict[str, dic
 
 
 def _ringkasan(bahan: BahanLaporan, total_terpakai: Decimal) -> dict:
+    """Jumlah uang (`pemasukan`, `dialokasikan`, `terpakai`, `sisa`, `dibawa`) atas semua baris. `persen_terpakai`
+    hanya atas amplop selain tabungan, di pembilang dan penyebut: saldo tabungan yang besar dan tak dibelanjakan
+    bukan jatah yang dihabiskan, dan tanpa pengecualian ini ia menenggelamkan persen amplop belanja."""
     amplop = bahan.amplop
+    belanja = [a for a in amplop if not adalah_tabungan(a.tujuan)]
     return {
         "pemasukan": uang(_jumlah(p.jumlah for p in bahan.pemasukan)),
         "dialokasikan": uang(_jumlah(a.alokasi for a in amplop)),
         "terpakai": uang(total_terpakai),
         "sisa": uang(_jumlah(a.akhir for a in amplop)),
         "dibawa": uang(_jumlah(a.rollover for a in amplop)),
-        "persen_terpakai": persen(total_terpakai, _jumlah(a.awal for a in amplop)),
+        "persen_terpakai": persen(_jumlah(a.terpakai for a in belanja), _jumlah(a.awal for a in belanja)),
     }
 
 
@@ -352,7 +365,9 @@ def _langganan(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> dict:
 
 def _sorotan(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode], status: list[str], lewat: list[bool]) -> dict:
     """Hari mencatat dan beruntun dihitung dari catatan penerima sendiri (bukan anggota lain, bukan penyesuaian).
-    `amplop_aman`: nama amplop yang bukan tabungan atau kosong dan saldo hariannya tak pernah di bawah nol."""
+    `amplop_aman`: nama amplop yang statusnya bukan tabungan, kosong, atau lewat_batas dan saldo hariannya tak
+    pernah di bawah nol. Status lewat_batas dikeluarkan juga walau saldo hariannya tak pernah negatif: itu hanya
+    terjadi pada bahan yang tidak konsisten, dan amplop yang berakhir negatif tak boleh dipuji."""
     catatan = [t.tanggal for t in bahan.transaksi if t.milik_penerima and not t.penyesuaian]
     return {
         "hari_mencatat": len(set(catatan)),

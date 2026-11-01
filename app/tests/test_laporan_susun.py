@@ -19,8 +19,9 @@ import re
 import unittest
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
-from app.services.laporan import susun
+from app.services.laporan import hitung, susun
 from app.services.laporan.susun import (
     AmplopPeriode, BahanLaporan, PemasukanPeriode, TagihanBerikut, TargetTabungan, TransaksiPeriode,
     ada_aktivitas, susun_bulanan,
@@ -150,7 +151,9 @@ def semua_uang(nilai, kecuali: str | None = None) -> list[str]:
 # ---------------------------------------------------------------------------------------------------------------
 # Harapan tulis tangan untuk bahan dasar (angka diturunkan di atas kertas, bukan dari kode):
 #   Σ awal 1.800.000; Σ alokasi 1.350.000; Σ terpakai 840.000; Σ akhir 960.000; Σ dibawa 900.000;
-#   persen terpakai 840/1800 = 46,67 -> 47. Terpakai periode lalu (Jul, Agu, Sep) per amplop:
+#   persen terpakai hanya atas amplop selain tabungan (Dana darurat, saving, keluar dari pembilang dan penyebut):
+#   Σ terpakai 840.000 / Σ awal (1.000.000 + 300.000) = 64,6 -> 65 (bila tabungan ikut: 840/1800 = 46,67 -> 47).
+#   Terpakai periode lalu (Jul, Agu, Sep) per amplop:
 #   Kebutuhan 400/500/700 rb, Jajan -/200/300 rb, Dana darurat 0/0/0. Total lingkup (`terpakai_lalu_total`) 400, 700,
 #   1.000 rb: sama dengan jumlah baris karena seluruh lingkup bahan dasar adalah baris;
 #   rata-rata 3 periode = (400 + 700 + 1000)/3 = 700 rb; 840 vs 1.000 -> -16%.
@@ -178,7 +181,7 @@ def data_dasar() -> dict:
         "penerima": {"nama": "Ani", "rumah": "Rumah Ani"},
         "ringkasan": {
             "pemasukan": "5500000.00", "dialokasikan": "1350000.00", "terpakai": "840000.00",
-            "sisa": "960000.00", "dibawa": "900000.00", "persen_terpakai": 47,
+            "sisa": "960000.00", "dibawa": "900000.00", "persen_terpakai": 65,
         },
         "amplop": [
             {"id": "env-s", "nama": "Kebutuhan", "emoji": "🍜", "jenis": "bersama", "tujuan": "expense",
@@ -239,7 +242,7 @@ def data_dasar() -> dict:
             _mutasi("2026-10-31", "keluar", "Kebutuhan", "Makan malam", "50000.00", "Budi"),
         ],
         "email": {
-            "persen_terpakai": 47, "amplop_aman": 1, "amplop_lewat_batas": 0, "tren_persen": -16,
+            "persen_terpakai": 65, "amplop_aman": 1, "amplop_lewat_batas": 0, "tren_persen": -16,
             "sorotan": "2 amplop tidak pernah lewat batas",
         },
     }
@@ -381,7 +384,7 @@ class RingkasanTests(unittest.TestCase):
         # Ditambatkan ke literal tulis tangan supaya dua sisi yang salah bersama tidak lolos.
         self.assertEqual(ringkasan, {
             "pemasukan": "5500000.00", "dialokasikan": "1350000.00", "terpakai": "840000.00",
-            "sisa": "960000.00", "dibawa": "900000.00", "persen_terpakai": 47,
+            "sisa": "960000.00", "dibawa": "900000.00", "persen_terpakai": 65,
         })
 
     def test_sisa_dan_dibawa_berbeda_bila_ada_amplop_tidak_berguling(self):
@@ -409,6 +412,64 @@ class RingkasanTests(unittest.TestCase):
                 data = susun_bulanan(isi)
                 self.assertEqual(data["ringkasan"]["persen_terpakai"], diharapkan)
                 self.assertEqual(data["email"]["persen_terpakai"], diharapkan)
+
+    def test_persen_terpakai_tidak_menghitung_amplop_tabungan(self):
+        # Ruling R5: amplop tabungan (saving, sinking_fund) keluar dari pembilang DAN penyebut. Saldo tabungan yang
+        # besar tidak boleh menenggelamkan persen amplop belanja; utang dan pengeluaran biasa tetap dihitung.
+        tabungan = amplop_kecil("t", "Dana", 10_000_000, 0, tujuan="saving")
+        belanja = amplop_kecil("s", "Belanja", 1_000, 650)
+        kasus = [
+            ("saving besar di samping amplop belanja", [tabungan, belanja], 65),
+            ("urutan baris tidak berpengaruh", [belanja, tabungan], 65),
+            ("sinking_fund juga tabungan",
+             [amplop_kecil("f", "Servis", 10_000_000, 0, tujuan="sinking_fund"), belanja], 65),
+            ("pengeluaran dari tabungan tidak masuk pembilang",
+             [amplop_kecil("t", "Dana", 10_000_000, 2_000_000, tujuan="saving"), belanja], 65),
+            ("utang bukan tabungan", [tabungan, amplop_kecil("u", "Cicilan", 1_000, 650, tujuan="debt")], 65),
+            ("dua tabungan dan dua amplop belanja",
+             [amplop_kecil("t", "Dana", 5_000_000, 100, tujuan="saving"),
+              amplop_kecil("f", "Servis", 5_000_000, 0, tujuan="sinking_fund"),
+              amplop_kecil("a", "A", 400, 100), amplop_kecil("b", "B", 600, 550)], 65),
+            ("semua tabungan: tanpa dasar",
+             [amplop_kecil("t", "Dana", 100, 0, tujuan="saving"),
+              amplop_kecil("f", "Servis", 50, 20, tujuan="sinking_fund")], None),
+            ("saldo awal amplop belanja nol walau tabungan besar",
+             [amplop_kecil("t", "Dana", 1_000_000, 0, tujuan="saving"), amplop_kecil("k", "Kosong", 0, 0)], None),
+        ]
+        for nama, baris, diharapkan in kasus:
+            with self.subTest(nama):
+                data = susun_bulanan(bahan_kosong(amplop=baris))
+                self.assertEqual(data["ringkasan"]["persen_terpakai"], diharapkan)
+                self.assertEqual(data["email"]["persen_terpakai"], diharapkan)
+
+    def test_jumlah_uang_ringkasan_tetap_atas_semua_baris_termasuk_tabungan(self):
+        # R5 hanya mengubah persen_terpakai. Tabungan 10.000.000 (terpakai 2.000.000) tetap masuk semua jumlah uang.
+        isi = bahan_kosong(
+            amplop=[amplop_kecil("t", "Dana", 10_000_000, 2_000_000, tujuan="saving"),
+                    amplop_kecil("s", "Belanja", 1_000, 650)],
+            pemasukan=[PemasukanPeriode(d(1), D(500), "Gaji")],
+        )
+        self.assertEqual(susun_bulanan(isi)["ringkasan"], {
+            "pemasukan": "500.00", "dialokasikan": "10001000.00", "terpakai": "2000650.00",
+            "sisa": "8000350.00", "dibawa": "8000350.00", "persen_terpakai": 65,
+        })
+
+    def test_tabungan_ditentukan_oleh_satu_daftar_tujuan_di_hitung(self):
+        # Penyusun tidak punya daftar tujuan tabungan sendiri: ia memakai `hitung.adalah_tabungan`, yang juga dipakai
+        # `status_amplop`. Daftar di hitung diganti sementara; status dan persen terpakai harus ikut berubah bersama.
+        baris = [
+            amplop_kecil("g", "Tujuan", 10_000, 0, tujuan="goal"),
+            amplop_kecil("s", "Simpanan", 1_000, 650, tujuan="saving"),
+        ]
+        with self.subTest("daftar asli: saving tabungan, goal bukan"):
+            data = susun_bulanan(bahan_kosong(amplop=baris))
+            self.assertEqual([a["status"] for a in data["amplop"]], ["aman", "tabungan"])
+            self.assertEqual(data["ringkasan"]["persen_terpakai"], 0)
+        with self.subTest("daftar diganti: goal tabungan, saving bukan"):
+            with patch.object(hitung, "_TUJUAN_TABUNGAN", ("goal",)):
+                data = susun_bulanan(bahan_kosong(amplop=baris))
+            self.assertEqual([a["status"] for a in data["amplop"]], ["tabungan", "aman"])
+            self.assertEqual(data["ringkasan"]["persen_terpakai"], 65)
 
     def test_pemasukan_dijumlahkan_dari_pemasukan_bukan_dari_alokasi(self):
         isi = bahan(pemasukan=[
@@ -632,6 +693,21 @@ class BandingTests(unittest.TestCase):
                 self.assertEqual(data["banding"]["terpakai_rata3"], diharapkan_rata)
                 self.assertEqual(data["banding"]["persen_perubahan"], diharapkan_persen)
                 self.assertEqual(data["email"]["tren_persen"], diharapkan_persen)
+
+    def test_angka_per_amplop_null_menurut_periodenya_sendiri(self):
+        # Kontrak null di docstring modul: terpakai_lalu baris null bila p-1 baris itu kosong; terpakai_rata3 baris null
+        # hanya bila ketiga angkanya kosong (nol adalah angka). Tidak bergantung pada terpakai_lalu_total.
+        kasus = [
+            ("semua None", [None, None, None], None, None),
+            ("hanya p-3", [D(300), None, None], None, "300.00"),
+            ("hanya p-1", [None, None, D(300)], "300.00", "300.00"),
+            ("nol adalah angka", [None, None, D(0)], "0.00", "0.00"),
+        ]
+        for nama, lalu, diharapkan_lalu, diharapkan_rata in kasus:
+            with self.subTest(nama):
+                isi = bahan_kosong(amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=lalu)])
+                baris = susun_bulanan(isi)["banding"]["amplop"][0]
+                self.assertEqual((baris["terpakai_lalu"], baris["terpakai_rata3"]), (diharapkan_lalu, diharapkan_rata))
 
     def test_terpakai_lalu_total_tanpa_angka_membuat_semua_total_null_walau_baris_punya_angka(self):
         # Total tidak pernah diisi dari baris: tanpa satu pun snapshot di lingkup untuk ketiga periode, ketiga total
@@ -1027,6 +1103,27 @@ class EmailTests(unittest.TestCase):
         self.assertEqual(data["email"]["amplop_lewat_batas"], 0)    # pernah lewat batas bukan status lewat_batas
         self.assertEqual(data["sorotan"]["amplop_aman"], [])
 
+    def test_amplop_berstatus_lewat_batas_bukan_amplop_aman_walau_saldo_harian_tak_pernah_negatif(self):
+        # Ruling R6, penjagaan atas bahan yang tidak konsisten: akhir -10 padahal alokasi 100 tiba di hari pertama dan
+        # tak ada belanja, jadi tak ada hari bersaldo negatif. Pemuat yang benar tidak menghasilkannya, tetapi amplop
+        # berstatus lewat_batas tidak boleh dipuji "tidak pernah lewat batas" di sorotan maupun kalimat email.
+        lewat = amplop(id="l", nama="Lewat", awal=D(100), alokasi=D(100), terpakai=D(50), akhir=D(-10),
+                       rollover=D(-10), alokasi_per_hari={d(1): D(100)})
+        kasus = [
+            ("sendirian", [lewat], [], "Siap untuk periode berikutnya", (0, 1)),
+            ("bersama amplop yang aman", [lewat, amplop_kecil("a", "Aman", 100, 10)], ["Aman"],
+             "1 amplop tidak pernah lewat batas", (1, 1)),
+        ]
+        for nama, baris, diharapkan, kalimat, (aman, lewat_batas) in kasus:
+            with self.subTest(nama):
+                data = susun_bulanan(bahan_kosong(amplop=baris))
+                self.assertEqual(data["amplop"][0]["status"], "lewat_batas")
+                self.assertIs(data["amplop"][0]["pernah_lewat_batas"], False)
+                self.assertEqual(data["sorotan"]["amplop_aman"], diharapkan)
+                self.assertEqual(data["email"]["sorotan"], kalimat)
+                self.assertEqual((data["email"]["amplop_aman"], data["email"]["amplop_lewat_batas"]),
+                                 (aman, lewat_batas))
+
     def test_sorotan_email_memakai_beruntun_amplop_aman_dan_hari_mencatat(self):
         tujuh_hari = [txn(id=str(n), tanggal=d(n)) for n in range(1, 8)]
         kasus = [
@@ -1165,6 +1262,7 @@ class KonsistensiAcakTests(unittest.TestCase):
                 terpakai=terpakai, akhir=awal - terpakai, rollover=acak.choice([D(0), awal - terpakai]),
                 alokasi_per_hari={ps + timedelta(days=acak.randrange(jumlah_hari)): alokasi},
                 terpakai_lalu=[acak.choice([None, D(acak.randrange(0, 90_000)) / 100]) for _ in range(3)],
+                tujuan=acak.choice(["expense", "debt", "saving", "sinking_fund"]),
             ))
         pemasukan = [PemasukanPeriode(ps, D(acak.randrange(0, 90_000)) / 100, "Gaji")]
         # Total lingkup p-3..p-1 bebas dari baris (lingkup lebih luas dari baris): None, nol, atau nominal.
@@ -1226,6 +1324,29 @@ class KonsistensiAcakTests(unittest.TestCase):
             terpanjang = max(terpanjang, beruntun)
         self.assertEqual(data["sorotan"]["hari_mencatat"], len(dicatat))
         self.assertEqual(data["sorotan"]["beruntun_terpanjang"], terpanjang)
+
+        # Persen terpakai (Ruling R5): hanya amplop selain tabungan, pembilang dan penyebut; daftar tujuan tabungan
+        # ditulis ulang di sini, bukan dibaca dari hitung. Bilangan bulat sen; penyebut nol atau negatif: None.
+        belanja = [a for a in isi.amplop if a.tujuan not in ("saving", "sinking_fund")]
+        penyebut = sum(self._sen(a.awal) for a in belanja)
+        pembilang = sum(self._sen(a.terpakai) for a in belanja)
+        persen_diharapkan = None if penyebut <= 0 else (200 * pembilang + penyebut) // (2 * penyebut)
+        self.assertEqual(data["ringkasan"]["persen_terpakai"], persen_diharapkan)
+        self.assertEqual(data["email"]["persen_terpakai"], persen_diharapkan)
+
+        # Amplop aman di sorotan (Ruling R6): bukan tabungan, akhir tidak negatif, saldo awal positif, dan saldo
+        # harian tak pernah di bawah nol (dipindai hari demi hari, bukan lewat hitung.pernah_lewat_batas).
+        aman = []
+        for a in isi.amplop:
+            saldo, negatif = a.awal - a.alokasi, False
+            for n in range(jumlah_hari):
+                hari = ps + timedelta(days=n)
+                belanja_hari = sum((t.jumlah for t in isi.transaksi if t.amplop_id == a.id and t.tanggal == hari), D(0))
+                saldo += a.alokasi_per_hari.get(hari, D(0)) - belanja_hari
+                negatif = negatif or saldo < 0
+            if a.tujuan not in ("saving", "sinking_fund") and a.akhir >= 0 and a.awal > 0 and not negatif:
+                aman.append(a.nama)
+        self.assertEqual(data["sorotan"]["amplop_aman"], aman)
 
         # Pembanding: total dari `terpakai_lalu_total` (bukan jumlah baris), per amplop dari barisnya; dihitung dengan
         # bilangan bulat sen, bebas dari Decimal dan ROUND_HALF_UP milik kode yang diuji.
