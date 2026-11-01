@@ -39,7 +39,7 @@ class KonstantaTests(unittest.TestCase):
         self.assertEqual(HouseholdType.ALL, ("rumah_tangga", "usaha"))
 
     def test_nilai_kind_income(self):
-        self.assertEqual(IncomeKind.ALL, ("pemasukan", "transfer", "top-up", "penyesuaian"))
+        self.assertEqual(IncomeKind.ALL, ("pemasukan", "transfer", "top-up", "penyesuaian", "prive"))  # prive: R8
 
     def test_ddl_hanya_aditif_dan_idempoten(self):
         for stmt in RUANG_DDL:

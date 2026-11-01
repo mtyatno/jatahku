@@ -37,7 +37,7 @@ Implementasi: `app/services/ruang.py`. Route menerima ruang sebagai parameter ke
 | UUID ruang yang bukan milik user, ruang terhapus, atau bukan UUID | 403 `{"detail": "<teks>", "kode": "ruang_tidak_diizinkan"}`. Tidak pernah jatuh diam-diam ke ruang lain |
 | Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `di_luar_jam_kerja`, dengan `buka_lagi` (waktu) di body (R5) |
 | Endpoint tulis untuk objek yang sudah ada atau yang punya induk (R3) | Header tidak menentukan ruang. Ruang diambil dari objeknya: amplop (`PUT`/`DELETE /envelopes/{id}`, `POST /transactions/`, `POST /goals/`, `POST /recurring/`), transaksi, target, langganan (termasuk bayar/lewati/tandai), grup, cek saldo (`/balance-check/{id}/undo`), merchant Kotak Struk. Objek di ruang yang bukan milik user → 404 dengan pesan "tidak ditemukan" biasa (tidak membocorkan keberadaan objek). Mengubah langganan ke amplop ruang lain → 404 |
-| Satu permintaan tulis yang menyentuh dua ruang milik user (R3) | 400 `{"detail": "<teks>", "kode": "lintas_ruang"}`: `POST /envelopes/transfer` antar-ruang, `POST /incomes/` dengan alokasi ke dua ruang. Prive dua sisi menyusul di R8 |
+| Satu permintaan tulis yang menyentuh dua ruang milik user (R3) | 400 `{"detail": "<teks>", "kode": "lintas_ruang"}`: `POST /envelopes/transfer` antar-ruang, `POST /incomes/` dengan alokasi ke dua ruang. Satu-satunya pengecualian: `POST /prive` (R8), yang menentukan kedua ruangnya sendiri di server |
 | Antrean offline `POST /transactions/batch` (R3) | Ruang per baris = ruang amplopnya (antrean tidak menyimpan ruang). Baris ke amplop di ruang yang bukan milik user ditolak per baris (`ok: false`, "Envelope not found"); baris lain tetap dicatat. Kirim ulang dengan `client_ref` yang sama mengembalikan transaksi user sendiri |
 | Objek baru tanpa induk (R3, keputusan pemilik produk 1 Nov) | Ruang dari header yang sah (`ruang_aktif`), tanpa header = ruang keluarga: `POST /envelopes/`, `POST /envelopes/groups`, `POST /incomes/` tanpa alokasi, `POST /user/reset`, `POST /snapshots/recompute`, `POST /balance-check/apply` (cocokkan saldo seluruh ruang; baris harus amplop ruang itu), `POST /advisor/plan` + `/execute`, saran amplop `POST /transactions/suggest-envelope(s)`. Header ruang orang lain → 403 |
 | Undangan anggota (`POST /household/invite`) | Tetap ruang keluarga (`ruang_tulis`); header ruang lain → 403. Undangan ruang usaha dibuat di R5 |
@@ -122,10 +122,21 @@ Kamus ruang (R7) dan Prive (R8):
 // GET    /ruang/{id}/kamus → [{"kata", "amplop_id", "diajarkan_oleh", "dipakai"}]   (owner, admin)
 // DELETE /ruang/{id}/kamus/{kata}
 
-// POST /prive {"dari_amplop_id", "jumlah", "tanggal", "catatan"?, "client_ref"}
-// Hanya owner ruang usaha asal (ruang dari amplop). Tujuan selalu ruang keluarga owner itu, ditentukan server.
-// → 201 {"keluar": {"transaction_id"}, "masuk": {"income_id"}}   — dua sisi dalam satu transaksi database
+// POST /prive {"dari_amplop_id", "jumlah", "tanggal"?, "catatan"?, "client_ref"?}     (v1, R8)
+// Hanya owner ruang usaha asal (ruang dari amplop). Tujuan selalu ruang keluarga pemanggil, ditentukan server;
+// header X-Jatahku-Ruang tidak dipakai. tanggal bawaan hari ini (zona waktu user), tidak boleh di masa depan;
+// catatan maks. 200 karakter; client_ref maks. 64 (kirim ulang → jawaban yang sama, tanpa catatan ganda).
+// → 201 {
+//   "keluar": {"income_id", "ruang_id", "amplop"},   // ruang usaha: pemasukan bernilai 0 + alokasi -jumlah di amplop asal
+//   "masuk":  {"income_id", "ruang_id", "amplop": "Tabungan"},  // ruang keluarga: pemasukan sungguhan ke Tabungan
+//   "jumlah": "250000", "tanggal": "2026-11-01"
+// }   — dua sisi dalam satu transaksi database
+// Galat: 404 amplop tidak ada / ruang orang lain / pribadi anggota lain / nonaktif · 400 `bukan_ruang_usaha`
+// · 403 `prive_hanya_pemilik` · 400 `tanpa_ruang_keluarga` · 400 melebihi sisa amplop ("Maksimal prive dari …")
+// · 400 tanggal masa depan · 409 client_ref masih diproses · 422 jumlah ≤ 0
 ```
+
+Kedua sisi tersimpan di `incomes` dengan `kind = "prive"` (v0 menulis `keluar.transaction_id`; diubah di R8 supaya prive tidak pernah menjadi transaksi pengeluaran). Akibatnya: prive tidak dihitung sebagai beban dan tidak mengurangi laba (U3 menghitung beban dari transaksi); `GET /incomes/` di ruang usaha menampilkan sisi keluar sebagai `type: "transfer"`, `transfer: null`, `kind: "prive"` (riwayat web sekarang melewatinya), dan di ruang keluarga sisi masuk sebagai `type: "income"`, `kind: "prive"`. Hapus atau batalkan prive belum ada.
 
 ## 3. Catat cepat (R7, U5)
 
@@ -326,7 +337,10 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `kode` | HTTP | Arti |
 | --- | --- | --- |
 | `ruang_tidak_diizinkan` | 403 | Header ruang bukan ruang user |
-| `lintas_ruang` | 400 | Satu permintaan tulis menyentuh dua ruang (R3); prive menyusul di R8 |
+| `lintas_ruang` | 400 | Satu permintaan tulis menyentuh dua ruang (R3); prive (R8) adalah satu-satunya pengecualian |
+| `bukan_ruang_usaha` | 400 | Prive dari amplop yang bukan ruang usaha (R8) |
+| `prive_hanya_pemilik` | 403 | Admin atau karyawan mencatat prive (R8) |
+| `tanpa_ruang_keluarga` | 400 | Pemilik usaha belum punya ruang keluarga sebagai tujuan prive (R8) |
 | `ruang_usaha_belum_dibuka` | 403 | `POST /ruang` oleh user di luar flag `ruang_usaha_users` (R4) |
 | `batas_ruang_usaha` | 409 | `POST /ruang` saat user sudah memiliki 3 ruang usaha (R4) |
 | `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota |

@@ -106,6 +106,45 @@ def record_transfer(db, household_id, user_id, from_env, to_env, amount: Decimal
     return income
 
 
+PRIVE_KELUAR = "Prive ke Rumah tangga"
+CATATAN_MAKS = 200
+
+
+def prive_descriptions(nama_ruang_usaha: str, catatan: str | None = None) -> tuple[str, str]:
+    """Keterangan dua sisi prive: (keluar di ruang usaha, masuk di ruang keluarga)."""
+    tambahan = f": {catatan.strip()[:CATATAN_MAKS]}" if catatan and catatan.strip() else ""
+    return PRIVE_KELUAR + tambahan, f"Prive dari {nama_ruang_usaha}{tambahan}"
+
+
+def record_prive(db, *, user_id, ruang_usaha_id, nama_ruang_usaha, dari_env, ruang_keluarga_id, tabungan,
+                 amount: Decimal, tanggal, catatan: str | None = None) -> tuple[Income, Income]:
+    """Prive dua sisi (Plugin R8, docs/plugin/04-kontrak-api.md §2). Belum di-commit/flush,
+    supaya pemanggil meng-commit kedua sisi sekaligus atau membatalkannya bersama.
+
+    - Keluar, di ruang usaha: Income bernilai 0 + alokasi negatif di amplop asal — bentuk
+      setengah transfer. Bukan transaksi pengeluaran, jadi tidak pernah menjadi beban dan
+      tidak mengurangi laba (U3 menghitung beban dari transaksi).
+    - Masuk, di ruang keluarga pemilik: pemasukan sungguhan ke Tabungan, seperti
+      POST /incomes tanpa alokasi.
+    Kedua baris ber-`kind` prive. Pemeriksaan (pemilik, jenis ruang, sisa amplop) di route.
+    """
+    import uuid
+    amount = Decimal(amount)
+    ket_keluar, ket_masuk = prive_descriptions(nama_ruang_usaha, catatan)
+    keluar = Income(
+        id=uuid.uuid4(), household_id=ruang_usaha_id, user_id=user_id, amount=Decimal("0"),
+        description=ket_keluar, income_date=tanggal, kind=IncomeKind.PRIVE,
+    )
+    masuk = Income(
+        id=uuid.uuid4(), household_id=ruang_keluarga_id, user_id=user_id, amount=amount,
+        description=ket_masuk, income_date=tanggal, kind=IncomeKind.PRIVE,
+    )
+    db.add_all([keluar, masuk])
+    db.add(Allocation(income_id=keluar.id, envelope_id=dari_env.id, amount=-amount))
+    db.add(Allocation(income_id=masuk.id, envelope_id=tabungan.id, amount=amount))
+    return keluar, masuk
+
+
 def topup_description(env) -> str:
     """Keterangan bawaan tab Top-up Pemasukan di modal web."""
     return f"Top-up {env.name}"

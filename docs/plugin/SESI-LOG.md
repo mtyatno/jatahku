@@ -4,6 +4,41 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## R8 · Prive dua sisi · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #177; issue #148; **wajib review keamanan terpisah sebelum merge** atas keputusan pemilik 1 Nov, walau di rencana tidak bertanda "review": ini satu-satunya jalur tulis lintas ruang dan bagian gerbang "Ruang keluarga tetap pribadi")
+- Keputusan pemilik produk (1 Nov): **A** — prive tanpa migrasi. Kedua sisi di `incomes` dengan `kind = "prive"` (nilai baru di kolom String): keluar di ruang usaha = Income bernilai 0 + alokasi `-jumlah` di amplop asal; masuk di ruang keluarga pemilik = pemasukan sungguhan ke Tabungan. Prive tidak pernah menjadi transaksi pengeluaran, jadi tidak menjadi beban dan tidak mengurangi laba (U3).
+- `POST /prive` (`app/api/routes/prive.py`): ruang asal dari amplop (`ruang_amplop`, ikut saklar flag `ruang_usaha_users` dari R4 → 404 di luar flag); hanya `owner` ruang usaha (403 `prive_hanya_pemilik`); amplop ruang keluarga 400 `bukan_ruang_usaha`; ruang tujuan = ruang keluarga pemanggil dari server (`ruang_keluarga_id`), header tidak dipakai; tanpa ruang keluarga 400 `tanpa_ruang_keluarga`; sisi masuk tidak boleh melebihi sisa amplop; tanggal bawaan hari ini (zona user), masa depan ditolak; kunci kedua household dalam urutan tetap; satu commit; idempoten `client_ref` di namespace Redis `txnref:{user}:prive:{ref}`; notifikasi target ruang keluarga sesudah commit.
+- `fund_shift.record_prive` + `prive_descriptions`; `IncomeKind.PRIVE`; docstring `LintasRuang`/`ruang.py`.
+- Tes `app/tests/test_prive.py` (23): dua sisi + saldo + tanpa transaksi, header tidak mengubah tujuan, riwayat per ruang, Tabungan dipakai ulang, admin/karyawan, flag tertutup, amplop keluarga/orang lain/pribadi anggota/nonaktif/tidak ada, melebihi sisa, jumlah tidak sah, tanggal, tanpa ruang keluarga, ruang orang lain tak tersentuh, kirim ulang, ref tidak tertukar dengan transaksi, gagal di tengah tanpa sisa + ref bisa dicoba lagi, pagar chat tanpa jalur prive. Pagar ruang: `POST /prive` di kelompok "objek". `test_ruang_model`: konstanta `IncomeKind.ALL`.
+- Dokumen: kontrak §1, §2 (Prive v1), §7 (3 kode baru); `AGENTS.md` aturan 8 + checklist R8; `00-indeks.md`; `PROGRESS.md` (R3 dan R4 `selesai`, R8 `review`, Gerbang R).
+- Tes: unittest 2416 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, gagal juga di `main`) · node --test 628 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16: ok · `openapi_cek`: tanpa perubahan memutus.
+- Deploy R4 (#174, `2125226`): terverifikasi tayang (run 41295031430).
+
+**Digantung**
+- **Review keamanan terpisah** belum dijalankan (lihat "Cara melanjutkan").
+- UI prive (menu Catat ▾ "Prive ke Rumah tangga", FAB di HP) belum ada; R8 hanya server. Riwayat pemasukan web melewati sisi keluar (`type: "transfer"`, `transfer: null`) — tampilkan saat UI ruang usaha digarap.
+- Hapus/batalkan prive belum ada (tidak ada endpoint hapus pemasukan sama sekali). Bila ditambah: hapus kedua sisi bersama; penghubung dua baris belum ada (hanya tanggal, nominal, keterangan).
+- Sisi masuk dihitung `Income.amount > 0`, jadi ikut meredam pengingat gajian (`payday_reminder.py`) dan masuk total pemasukan analitik ruang keluarga. Dianggap benar (prive = gaji pemilik), tetapi belum diputuskan pemilik produk.
+- AI Advisor BU-02 (prive melebihi laba) dan `di_luar_laba_rugi.prive` di U3 membaca `incomes.kind = prive` di ruang usaha.
+- `test_basic_quota_bot_fund_shift_finishes_started_input` masih gagal di `main`.
+
+**Jebakan**
+- `main` bergerak (R4 #174) saat sesi: konflik di `app/main.py` dan dokumen plugin. Sesudah rebase, semua tes prive 404 karena R4 menutup ruang usaha di luar flag `ruang_usaha_users`: tes ruang usaha baru harus mengisi `AppSetting(ruang.FLAG_RUANG_USAHA, "*")`.
+- Income bernilai 0 dianggap transfer di banyak tempat (`incomes.py`, `advisor/metrics.py`, `account_deletion.py`, analitik menyaring `amount > 0`). Sisi keluar prive tidak berpasangan seperti transfer (alokasi net negatif): `parse_transfer` mengembalikan None.
+- `idempotency` memakai kunci `txnref:{user}:{ref}` bersama transaksi; prive memberi awalan `prive:` supaya `client_ref` tidak tertukar.
+
+**Keputusan kecil**
+- Sisi masuk selalu ke Tabungan ruang keluarga (seperti `POST /incomes/` tanpa alokasi); pemilik menggeser sendiri bila perlu. Tidak ada `ke_amplop_id` di v1.
+- Jawaban 201 berisi `keluar`/`masuk` dengan `income_id`, `ruang_id`, `amplop`, plus `jumlah`, `tanggal` (kontrak v0 menyebut `keluar.transaction_id`).
+- Keterangan: "Prive ke Rumah tangga" / "Prive dari <nama ruang usaha>", ditambah `: <catatan>` (maks. 200).
+- Kirim ulang `client_ref` mengembalikan jawaban tersimpan tanpa memeriksa ulang peran (sama dengan `advisor/execute`); kunci Redis per user, jadi user lain tidak bisa memakainya.
+
+**Cara melanjutkan**
+- Review keamanan dengan sesi Claude Code terpisah: "review PR #177 terhadap 03-workflow.md bagian keamanan" (gerbang "Ruang tidak pernah dari body", "Batasan ditegakkan di server", "Ruang keluarga tetap pribadi"). Temuan dikerjakan di branch ini sebelum merge.
+- Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu Gerbang R bisa dinilai lulus (R2, R3, R8).
+- Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan; migrasi, review) atau `/sesi-plugin H1`.
+
 ## R4 · Membuat dan berpindah ruang · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #174, issue #144; tanpa tanda review/migrasi)
