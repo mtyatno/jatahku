@@ -4,6 +4,7 @@ from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,8 @@ from app.services.plan_limits import check_transaction_limit, has_txn_limit, quo
 from app.services import quota_pass
 from app.services.transcription import transcribe_audio, TranscriptionError
 from app.services.visibility import masked_description
-from app.services.ruang import RuangAktif, ruang_amplop, ruang_jenis, ruang_objek
+from app.services.ruang import RuangAktif, RuangDitolak, ruang_amplop, ruang_jenis, ruang_objek
+from app.services import peran
 
 router = APIRouter()
 log = logging.getLogger("jatahku.transactions")
@@ -146,6 +148,10 @@ class BatchTransactionResult(BaseModel):
     id: UUID | None = None
     description: str
     error: str | None = None
+    # R5: kode galat ruang per baris (§7), mis. `amplop_tidak_diizinkan`, `di_luar_jam_kerja`, `perlu_persetujuan`.
+    # `perlu_persetujuan` = draf dibuat (`draf_id`), belum menjadi transaksi; kiriman ulang mendapat draf yang sama.
+    kode: str | None = None
+    draf_id: UUID | None = None
     # True = kiriman lain dengan client_ref yang sama masih diproses; hasil
     # belum pasti (klien jangan menganggapnya gagal permanen).
     pending: bool = False
@@ -212,13 +218,30 @@ async def _check_row(db, user, row) -> tuple[date | None, BehaviorCheckResult]:
     return txn_date, check
 
 
-@router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED)
+def jawaban_draf(draf, detail: str | None = None) -> JSONResponse:
+    """202 untuk catatan karyawan di atas batas nominal (04-kontrak-api.md §2): draf, belum transaksi."""
+    return JSONResponse(status_code=202, content={
+        "draf_id": str(draf.id), "kode": "perlu_persetujuan", "status": draf.status,
+        "detail": detail or "Catatan ini menunggu persetujuan admin.",
+    })
+
+
+_DRAF_202 = {202: {"description": "Karyawan di atas batas nominal: draf menunggu persetujuan "
+                                  "(`{draf_id, kode: perlu_persetujuan, status, detail}`)"}}
+
+
+@router.post("/", response_model=TransactionCreateResponse, status_code=status.HTTP_201_CREATED, responses=_DRAF_202)
 async def create_transaction(
     req: TransactionCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await ruang_amplop(db, user, req.envelope_id)
+    return await catat_transaksi(req, user, db)
+
+
+async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
+    """Jalur pencatatan transaksi web (route di atas, dan persetujuan draf R5 di dalam `peran.atas_izin_pengelola`)."""
+    hid = await ruang_amplop(db, user, req.envelope_id, karyawan=True)
     from app.services import idempotency
     existing_ref = await idempotency.lookup(user.id, req.client_ref)
     if existing_ref == idempotency.PENDING:
@@ -232,6 +255,10 @@ async def create_transaction(
                     await heal_recorded(db, user, req.receipt_item_id, existing.id, existing.envelope_id)
             return await _created(existing, user, db, after=heal, household_id=hid)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
+    if not peran.izin_pengelola_aktif():
+        draf = await peran.draf_dari_ref(db, user.id, req.client_ref)   # kiriman ulang catatan yang menjadi draf
+        if draf is not None and draf.status != peran.ST_DISETUJUI:
+            return jawaban_draf(draf)
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
         if receipt_error:
@@ -254,6 +281,20 @@ async def create_transaction(
     # Aturan bersama web + Telegram (app/services/expense_rules.py)
     if not is_spendable(envelope):
         raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
+    # R5: batasan karyawan di ruang usaha (jenis, amplop, foto nota); di atas batas nominal → draf, bukan transaksi.
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    try:
+        perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENGELUARAN, amplop_ids=[envelope.id],
+                                jumlah=req.amount, ada_foto=bool(req.receipt_item_id))
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+    if perlu:
+        draf = await peran.buat_draf(
+            db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENGELUARAN, amount=req.amount,
+            description=req.description, envelope_id=envelope.id, tanggal=req.transaction_date,
+            source=req.source.value, is_private=req.is_private, receipt_item_id=req.receipt_item_id,
+            client_ref=req.client_ref)
+        return jawaban_draf(draf, peran.pesan_persetujuan(batasan))
     # Kuota Basic dicek di awal input; bagian dari input yang dimulai saat kuota
     # masih ada (client_ref berizin) tetap boleh — lihat app/services/quota_pass.py.
     limit_ok, limit_msg = await check_transaction_limit(user, db, household_id=hid)
@@ -315,13 +356,13 @@ async def create_transaction(
     return await _created(txn, user, db, after=after, household_id=hid)
 
 
-async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID):
+async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID, *, karyawan: bool = False):
     """Ruang transaksi yang ditulis (lewat amplopnya), hanya bila user anggotanya (R3)."""
     hid = (await db.execute(
         select(Envelope.household_id).join(Transaction, Transaction.envelope_id == Envelope.id)
         .where(Transaction.id == txn_id)
     )).scalar_one_or_none()
-    return await ruang_objek(db, user, hid)
+    return await ruang_objek(db, user, hid, karyawan=karyawan)
 
 
 @router.post("/suggest-envelope")
@@ -336,7 +377,8 @@ async def suggest_envelope(
     if not hid or not req.description.strip():
         return {"envelope_id": None, "envelope_name": None, "confident": False}
     envelope, confident = await find_best_envelope(req.description, hid, db, user.id)
-    if not envelope:
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if not envelope or (batasan is not None and not batasan.boleh_amplop(envelope.id)):
         return {"envelope_id": None, "envelope_name": None, "confident": False}
     return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)}
 
@@ -353,13 +395,14 @@ async def suggest_envelopes(
     if not hid:
         return {"results": [{"index": i, "envelope_id": None, "envelope_name": None, "confident": False} for i in range(len(req.descriptions))]}
 
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
     results = []
     for i, desc in enumerate(req.descriptions):
         if not desc or not desc.strip():
             results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
             continue
         envelope, confident = await find_best_envelope(desc, hid, db, user.id)
-        if envelope:
+        if envelope and (batasan is None or batasan.boleh_amplop(envelope.id)):
             results.append({"index": i, "envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)})
         else:
             results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
@@ -376,7 +419,14 @@ async def batch_create_transactions(
     from app.services import idempotency
     # R3: ruang tiap baris = ruang amplopnya (antrean offline tidak menyimpan ruang); baris ke amplop di
     # ruang yang bukan milik user ditolak per baris. Kuota Basic hanya untuk baris di luar ruang usaha.
-    ruang_baris = [await ruang_amplop(db, user, it.envelope_id) for it in req.items]
+    # R5: karyawan di ruang usaha — jam kerja per baris (galat baris, bukan seluruh kiriman), lalu batasan per baris.
+    ruang_baris, galat_baris = [], {}
+    for i, it in enumerate(req.items):
+        try:
+            ruang_baris.append(await ruang_amplop(db, user, it.envelope_id, karyawan=True))
+        except RuangDitolak as exc:
+            ruang_baris.append(None)
+            galat_baris[i] = exc
     usaha = {h for h in set(ruang_baris) if h and str(await ruang_jenis(db, h)) == HouseholdType.USAHA}
     kena_kuota = [h not in usaha for h in ruang_baris]
     # Satu kiriman = satu input. Kuota Basic dicek SEKALI di awal: bila masih ada,
@@ -404,6 +454,17 @@ async def batch_create_transactions(
                     await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
+        draf = await peran.draf_dari_ref(db, user.id, item.client_ref)
+        if draf is not None and draf.status != peran.ST_DISETUJUI:   # kiriman ulang catatan yang menjadi draf
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                  error="Catatan ini menunggu persetujuan admin.",
+                                                  kode="perlu_persetujuan", draf_id=draf.id))
+            continue
+        if i in galat_baris:
+            exc = galat_baris[i]
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=exc.detail,
+                                                  kode=exc.kode))
+            continue
         hid = ruang_baris[i]
         if not hid:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
@@ -428,6 +489,24 @@ async def batch_create_transactions(
 
         if not is_spendable(envelope):
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=NOT_SPENDABLE_MSG))
+            continue
+        batasan = await peran.batasan_karyawan(db, user.id, hid)
+        try:
+            perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENGELUARAN, amplop_ids=[envelope.id],
+                                    jumlah=item.amount, ada_foto=bool(item.receipt_item_id))
+        except peran.PeranDitolak as exc:
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=exc.detail,
+                                                  kode=exc.kode))
+            continue
+        if perlu:
+            draf = await peran.buat_draf(
+                db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENGELUARAN, amount=item.amount,
+                description=item.description, envelope_id=envelope.id, tanggal=item.transaction_date,
+                source=item.source.value, is_private=item.is_private, receipt_item_id=item.receipt_item_id,
+                client_ref=item.client_ref)
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                  error=peran.pesan_persetujuan(batasan),
+                                                  kode="perlu_persetujuan", draf_id=draf.id))
             continue
         if kena_kuota[i] and allowed_refs is not None and item.client_ref not in allowed_refs:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=quota_msg))
@@ -664,6 +743,8 @@ async def list_transactions(
             or_(Envelope.owner_id == None, Envelope.owner_id == user.id),
         )
     )
+    if await peran.batasan_karyawan(db, user.id, hid) is not None:
+        query = query.where(Transaction.user_id == user.id)   # R5: karyawan hanya melihat catatannya sendiri
     if envelope_id:
         query = query.where(Transaction.envelope_id == envelope_id)
     if start_date:
@@ -697,7 +778,7 @@ async def delete_transaction(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    hid = await _ruang_transaksi(db, user, txn_id)
+    hid = await _ruang_transaksi(db, user, txn_id, karyawan=True)
     if not hid:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
@@ -713,6 +794,11 @@ async def delete_transaction(
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    try:   # R5: karyawan hanya menghapus catatannya sendiri, dalam jendela ubah dari admin
+        peran.cek_jendela_ubah(await peran.batasan_karyawan(db, user.id, hid),
+                               milik_sendiri=txn.user_id == user.id, dibuat=txn.created_at)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
 
     txn.is_deleted = True
     await db.commit()

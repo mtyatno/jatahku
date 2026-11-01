@@ -15,7 +15,8 @@ from app.core.period import get_budget_period
 from app.models.models import (
     User, Income, Allocation, Envelope, )
 from app.services.income_history import parse_transfer
-from app.services.ruang import RuangAktif, ruang_amplop_satu
+from app.services.ruang import RuangAktif, RuangDitolak, ruang_amplop_satu
+from app.services import peran
 
 router = APIRouter()
 
@@ -78,7 +79,8 @@ async def _get_or_create_tabungan(hid: UUID, db: AsyncSession) -> Envelope:
     return tabungan
 
 
-@router.post("/", response_model=IncomeResponse, status_code=201)
+@router.post("/", response_model=IncomeResponse, status_code=201,
+             responses={202: {"description": "Karyawan di atas batas nominal: draf menunggu persetujuan"}})
 async def create_income(
     req: IncomeCreate,
     user: User = Depends(get_current_user),
@@ -90,11 +92,31 @@ async def create_income(
     # semua amplop di ruang orang lain = 404, sama dengan objek asing lain, kontrak §1);
     # pemasukan tanpa alokasi = objek baru tanpa induk → ruang dari header (`ruang_aktif`, keanggotaan dicek).
     if req.allocations:
-        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations])
+        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations], karyawan=True)
         if not hid:
             raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
+    return await catat_pemasukan(req, user, db, hid)
+
+
+async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: UUID):
+    """Jalur pencatatan pemasukan (route di atas, dan persetujuan draf R5 di dalam `peran.atas_izin_pengelola`)."""
+    # R5: karyawan di ruang usaha mencatat penjualan dalam batasan; di atas batas nominal → draf.
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    try:
+        perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENJUALAN,
+                                amplop_ids=[a.envelope_id for a in req.allocations], jumlah=req.amount, ada_foto=True)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+    if perlu:
+        from app.api.routes.transactions import jawaban_draf
+        draf = await peran.buat_draf(
+            db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENJUALAN, amount=req.amount,
+            description=req.source, envelope_id=req.allocations[0].envelope_id if req.allocations else None,
+            rincian={"kind": req.kind, "allocations": [
+                {"envelope_id": str(a.envelope_id), "amount": str(a.amount)} for a in req.allocations]})
+        return jawaban_draf(draf, peran.pesan_persetujuan(batasan))
 
     # Validate allocations don't exceed income
     total_allocated = sum(a.amount for a in req.allocations)

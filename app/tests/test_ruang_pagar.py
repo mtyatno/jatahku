@@ -27,13 +27,15 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 # berkas → jumlah kemunculan `HouseholdMember.user_id ==` yang diizinkan, dan alasannya.
 DIIZINKAN = {
     "services/ruang.py": 3,              # penentu ruang itu sendiri
+    "services/peran.py": 1,              # peran user di ruang tertentu (R5, batasan karyawan)
     "services/merge.py": 3,              # gabung akun: keanggotaan per user (ruang keluarga + hapus akun sumber)
     "services/account_deletion.py": 1,   # hapus akun: semua keanggotaan user
     "services/kotak_struk/view.py": 1,   # cek user masih anggota household item tertentu
     "services/recurring_processor.py": 1,  # anggota household amplop tertentu (join)
     "services/advisor/snapshot.py": 1,   # nama anggota household tertentu (join)
     "services/household_cycle.py": 1,    # anggota household tertentu (join): cermin payday di heal/set_household_payday
-    "api/routes/household.py": 3,        # daftar anggota (join) + cek sudah anggota household tujuan
+    "api/routes/household.py": 3,
+    "api/routes/ruang.py": 1,            # satu anggota tertentu di ruang tertentu (R5, kelola anggota)        # daftar anggota (join) + cek sudah anggota household tujuan
     "api/routes/admin.py": 1,            # panel admin: ruang keluarga user (filter type)
     "api/routes/user_settings.py": 1,    # peran user di ruang yang di-reset
     "bot/household_cmd.py": 1,           # cek sudah anggota household tujuan
@@ -132,6 +134,10 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/recurring/{rec_id}/skip"),
             ("POST", "/transactions/"), ("POST", "/transactions/batch"), ("DELETE", "/transactions/{txn_id}"),
             ("POST", "/incomes/"),   # juga `aktif`: dengan alokasi = ruang amplop, tanpa alokasi = header
+            # R5: ruang dari path, peran owner/admin dari baris keanggotaan (`_ruang_kelola`).
+            ("PATCH", "/ruang/{rid}/anggota/{uid}"), ("DELETE", "/ruang/{rid}/anggota/{uid}"),
+            ("PUT", "/ruang/{rid}/anggota/{uid}/batasan"), ("POST", "/ruang/{rid}/undangan"),
+            ("POST", "/ruang/{rid}/persetujuan/{draf_id}/setujui"), ("POST", "/ruang/{rid}/persetujuan/{draf_id}/tolak"),
         }
         tulis = {("POST", "/household/invite")}
         # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,
@@ -140,6 +146,7 @@ class PagarSumberTests(unittest.TestCase):
                         "/webhook/")
         tanpa = {
             ("POST", "/household/join"),                       # kode undangan; hanya ruang keluarga (review #166)
+            ("POST", "/ruang/gabung"),                         # kode undangan ruang usaha (R5): ruang dari kodenya
             ("POST", "/kotak-struk/"),                         # unggah bukti: ruang keluarga di intake (R7)
             ("POST", "/kotak-struk/{item_id}/saran"),          # item milik user (`_owned_item`)
             ("POST", "/kotak-struk/{item_id}/lewati"),         # item milik user (`_owned_item`)
@@ -161,7 +168,10 @@ class PagarSumberTests(unittest.TestCase):
             for m in r.methods - {"GET", "HEAD"}:
                 kunci = (m, r.path)
                 if kunci in objek:
-                    if not pembantu.search(inspect.getsource(r.endpoint)):
+                    # Route yang mendelegasikan ke jalur pencatatan bersama (R5: dipakai juga persetujuan draf).
+                    delegasi = {("POST", "/transactions/"): "catat_transaksi"}.get(kunci)
+                    fn = getattr(inspect.getmodule(r.endpoint), delegasi) if delegasi else r.endpoint
+                    if not pembantu.search(inspect.getsource(fn)):
                         objek_tanpa_pembantu.append(kunci)
                     continue
                 if pakai(r.dependant, ruang.ruang_aktif) or pakai(r.dependant, ruang.ruang_tulis):

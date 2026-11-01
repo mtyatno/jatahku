@@ -30,10 +30,12 @@ def txn(balance_check_id):
 
 class AdjustmentFlagTests(unittest.IsolatedAsyncioTestCase):
     async def test_list_transactions_flags_adjustments(self):
+        from unittest.mock import AsyncMock, patch
         from app.api.routes.transactions import list_transactions
         db = db_with(FakeResult(rows=[txn(uuid.uuid4()), txn(None)]))
-        out = await list_transactions(envelope_id=None, start_date=None, end_date=None,
-                                      limit=20, offset=0, user=USER, db=db, hid=HID)
+        with patch("app.services.peran.batasan_karyawan", AsyncMock(return_value=None)):   # bukan karyawan (R5)
+            out = await list_transactions(envelope_id=None, start_date=None, end_date=None,
+                                          limit=20, offset=0, user=USER, db=db, hid=HID)
         self.assertEqual([t.is_adjustment for t in out], [True, False])
 
     def test_present_transaction_flags_adjustment(self):

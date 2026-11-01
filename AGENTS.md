@@ -233,6 +233,24 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin R5: peran, batasan, persetujuan (c5r5a8e2d417)
+Menambah empat tabel baru (`ruang_batasan`, `ruang_undangan`, `ruang_draf`, `ruang_audit`) dan route `/ruang/{id}/…`,
+`/ruang/gabung`, `/persetujuan/saya`. **Tidak ada kolom baru di tabel lama**, jadi tidak ada jendela 500: `lifespan`
+(`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten (`if_not_exists`). Perilaku baru hanya
+untuk peran `member` di ruang **usaha**; belum ada user dengan ruang usaha (pembuatannya di R4), jadi tidak ada yang
+berubah untuk user hari ini. Tanpa paket baru, `.env`, atau perubahan tampilan.
+1. Sebelum merge: checklist "Plugin R3" sudah jalan, dan `alembic current` di VPS = `2d51b9031a6b` (siklus household).
+   Bila belum, jalankan checklist siklus household dulu.
+2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
+   `ls /opt/jatahku/app/alembic/versions/ | grep c5r5a8e2d417`.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
+   milik `postgres`, FK ke sana butuh hak REFERENCES: jalankan sebagai postgres; cek pemiliknya dengan query di checklist
+   Kotak Struk); `alembic current` harus `c5r5a8e2d417`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job
+   deploy yang gagal.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d ruang_draf'` (indeks unik parsial `uq_ruang_draf_client_ref`),
+   lalu dengan token sendiri: `GET https://api.jatahku.com/ruang/<id ruang keluarga>/anggota` → 404 (route hanya untuk
+   ruang usaha); catat transaksi di web dan bot seperti biasa → 201; `ruang_paritas` kode keluar 0.
+
 ## Deploy Checklist — Plugin R3: ruang dari objek saat menulis (tanpa migrasi)
 Penulisan menentukan ruang dari objeknya; objek baru tanpa induk dari header (tanpa header = ruang keluarga); kuota
 Basic hanya di ruang keluarga. Tanpa migrasi, paket, `.env`, atau perubahan tampilan: belum ada klien yang mengirim
@@ -436,7 +454,7 @@ Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). B
 Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, bentuk API di `04-kontrak-api.md`). Buka sesi dengan `/sesi-plugin <kode>`, tutup dengan `/tutup-sesi-plugin`. Satu sesi = satu branch `plugin/<kode>-<slug>` = satu PR berjudul `Plugin <kode>: <nama>`; status di `docs/plugin/PROGRESS.md`, serah-terima di `docs/plugin/SESI-LOG.md`. PR berlabel `review-keamanan` direview sesi Claude Code terpisah sebelum merge, dan temuan keamanan dikerjakan sebelum fitur dilanjutkan.
 1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif` (header `X-Jatahku-Ruang`). Menulis objek yang sudah ada atau yang punya induk menentukan ruang dari objek itu (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek` di `app/services/ruang.py`), lalu memeriksa keanggotaan; objek ruang lain = 404, dua ruang dalam satu permintaan = 400 `lintas_ruang`. Objek baru tanpa induk memakai ruang dari header yang sah (`ruang_aktif`). `ruang_id` dari body atau query tidak pernah dipercaya. Route menerima ruang header sebagai parameter keyword-only `*, hid: RuangAktif` dan meneruskannya ke services sebagai `household_id`; services tidak pernah mencari household dari keanggotaan sendiri. Kueri `HouseholdMember.user_id == …` baru dan route non-GET baru yang memakai `ruang_aktif` dijaga `app/tests/test_ruang_pagar.py`.
 2. **Chat selalu ruang keluarga.** Handler bot memakai `ruang_keluarga(user)`. Tidak ada transaksi ruang usaha atau Fitur Tambahan lewat chat; perintah plugin hanya membaca dan menyatakan `audience` (data keuangan usaha hanya untuk pemilik dan admin).
-3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan.
+3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan. Karyawan (peran `member` di ruang usaha) memakai **tolak-bawaan** (R5): `ruang_aktif` hanya mengizinkan route di `KARYAWAN_BOLEH`, dan pembantu ruang objek (`ruang_objek`, `ruang_amplop`, `ruang_amplop_satu`) menolak karyawan kecuali dipanggil dengan `karyawan=True` (hanya jalur pencatatan: catat/hapus transaksi, pemasukan). Route baru otomatis tertolak untuk karyawan; membukanya butuh alasan dan tes di `app/tests/test_ruang_peran.py`. Batasan per catatan, jam kerja, jendela ubah, dan draf persetujuan hanya di `app/services/peran.py`.
 4. **Plugin hanya lewat `PluginContext`.** Kode di `app/plugins/<id>/` tidak mengimpor model atau route inti dan tidak menulis ke tabel inti secara langsung.
 5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
 6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
