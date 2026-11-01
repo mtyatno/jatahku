@@ -36,6 +36,10 @@ Hitungan `recount` dibaca di snapshot transaksi pemanggil: dua suara pertama dal
 sama-sama melihat 1 user (aturan tidak dibuat), dan dua pembuat bersamaan bisa menyimpan hitungan lama (review L2 M-2).
 `reconcile_rules` menghitung ulang semuanya dari tabel suara dan dijalankan tiap jam oleh `kotak_maintenance`.
 
+Pembaca (L3): worker memuat aturan `disetujui` lewat `approved_rules` (cache modul RULE_CACHE_S detik) ke
+`ParseContext.rules`; pembaca QRIS/transfer/tidak dikenali mengambil labelnya dengan `learned_for` (= `profiles.learned_for`,
+di modul pembaca supaya pembaca tidak mengimpor modul database ini).
+
 Untuk API Admin (L4a): catatan keputusan dibatasi 200 karakter di model permintaan (`note` String(200); `decide` tidak
 memotongnya), `RuleNotFound` -> 404 dan `RuleConflict` -> 409 dengan teks pengecualiannya (MSG_RULE_*), dan sesudah
 `decide` pemanggil meng-commit LALU memanggil `invalidate_rules_cache()` (L3), supaya pembaca tidak memuat ulang cache
@@ -44,6 +48,7 @@ dari status lama.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -54,11 +59,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ProofRule, ProofRuleVote
-from app.services.kotak_struk.config import LAYOUT_LABEL_MAX, LAYOUT_TYPES, RULE_MIN_USERS
+from app.services.kotak_struk.config import LAYOUT_LABEL_MAX, LAYOUT_TYPES, RULE_CACHE_S, RULE_MIN_USERS
 from app.services.kotak_struk.kerangka import safe_label
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.readers.profiles import PROFILES
+from app.services.kotak_struk.readers.profiles import PROFILES, Learned, learned_for  # noqa: F401 (diekspor ulang, L3)
 
 log = logging.getLogger(__name__)
 
@@ -363,3 +368,50 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
     if (await db.execute(select(ProofRule.id).where(ProofRule.id == rule_id))).scalar_one_or_none() is None:
         raise RuleNotFound(MSG_RULE_NOT_FOUND)
     raise RuleConflict(MSG_RULE_CONFLICT)
+
+
+# ── aturan yang disetujui untuk pembaca (L3) ────────────────────────────────
+
+_clock = time.monotonic          # diganti tes
+_rules_cache: tuple[float, dict] | None = None   # (waktu muat, aturan)
+_rules_generation = 0            # naik tiap invalidate: muatan yang dimulai sebelumnya tidak disimpan
+
+
+def invalidate_rules_cache() -> None:
+    """Buang cache aturan (API Admin memanggilnya SESUDAH commit keputusan): pembacaan berikutnya memuat ulang."""
+    global _rules_cache, _rules_generation
+    _rules_cache = None
+    _rules_generation += 1
+
+
+def _copy_rules(rules: dict) -> dict[str, dict[str, list[str]]]:
+    return {key: {kind: list(values) for kind, values in kinds.items()} for key, kinds in rules.items()}
+
+
+async def approved_rules(db: AsyncSession) -> dict[str, dict[str, list[str]]]:
+    """Aturan berstatus `disetujui` untuk pembaca: `{rule_key: {"label_total": [...], "label_pihak": [...],
+    "label_tanggal": [...]}}`, label urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui (`decided_at`),
+    lalu teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database:
+    log peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba lagi), kueri di
+    SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
+    global _rules_cache
+    cached = _rules_cache
+    if cached is not None and _clock() - cached[0] < RULE_CACHE_S:
+        return _copy_rules(cached[1])
+    generation = _rules_generation
+    try:
+        async with db.begin_nested():
+            rows = (await db.execute(
+                select(ProofRule.rule_key, ProofRule.kind, ProofRule.value)
+                .where(ProofRule.status == ST_DISETUJUI, ProofRule.kind.in_(KINDS))
+                .order_by(ProofRule.users.desc(), ProofRule.decided_at.asc(), ProofRule.value.asc())
+            )).all()
+    except Exception:
+        log.warning("aturan belajar Kotak Struk tidak bisa dimuat; bukti dibaca tanpa aturan", exc_info=True)
+        return {}
+    rules: dict[str, dict[str, list[str]]] = {}
+    for rule_key, kind, value in rows:
+        rules.setdefault(rule_key, {k: [] for k in KINDS})[kind].append(value)
+    if generation == _rules_generation:
+        _rules_cache = (_clock(), rules)
+    return _copy_rules(rules)

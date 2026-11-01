@@ -24,7 +24,7 @@ from sqlalchemy import or_, select, update
 from app.models.models import ReceiptScan, User
 from app.services import receipt_scan
 from app.services.app_config import feature_enabled
-from app.services.kotak_struk import waiter
+from app.services.kotak_struk import belajar, waiter
 from app.services.kotak_struk.config import (
     ITEM_EXPIRY, MAX_ATTEMPTS, PROOF_TYPES, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
 )
@@ -325,7 +325,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
     `siap` (hasil tersimpan), `gagal` (bukti tidak bisa dibaca; pesan di `error`), `diterima` (galat tak
     terduga, akan dicoba lagi selama `attempts` < MAX_ATTEMPTS), status lama bila item bukan lagi
     `diterima`/`diproses` (tidak disentuh), atau "hilang" bila itemnya sudah tidak ada.
-    `proofs_enabled=None`: ikuti saklar fitur `receipt_inbox` (web)."""
+    `proofs_enabled=None`: ikuti saklar fitur `receipt_inbox` (web). Saklar menyala: aturan belajar yang disetujui
+    (`belajar.approved_rules`, cache 5 menit, galat = tanpa aturan) dimuat di sesi yang sama ke `ParseContext.rules`."""
     factory = session_factory or _default_factory()
     extract = extract or extract_text
     now = _aware(now or _utcnow())
@@ -342,6 +343,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
         aliases, profiles = await receipt_scan._load_learning(db)
         if proofs_enabled is None:
             proofs_enabled = await feature_enabled(db, "receipt_inbox", "web")
+        # Aturan belajar yang disetujui (cache 5 menit; galat -> tanpa aturan). Saklar bukti mati = perilaku lama.
+        rules = await belajar.approved_rules(db) if proofs_enabled else {}
     plan = str(getattr(user, "plan", None) or "basic")
 
     try:
@@ -362,6 +365,7 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
             image=data if image else None, content_type=content_type if image else None,
             user_id=user_id, plan=plan,
             llm=try_llm_fallback if image else None,
+            rules=rules,
         )
         res = await read_document(text, ctx, proofs_enabled=proofs_enabled)
         return await _store(factory, item_id, _outcome(res, text, user_name=getattr(user, "name", None)), now)

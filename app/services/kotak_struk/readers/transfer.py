@@ -12,7 +12,9 @@ from app.services.kotak_struk.merchants import mask_digits
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer, is_money_provider
+from app.services.kotak_struk.readers.profiles import (
+    detect_issuer, is_money_provider, learned_paid_at, learned_profile, learned_total,
+)
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -74,25 +76,29 @@ class TransferReader:
         lines = pc.clean_lines(doc.lines)
         body = pc.body_lines(lines)
         profile = detect_issuer(lines)
+        # Status dan arah uang hanya dari profil asli dan baris bukti: aturan belajar tidak pernah menyentuhnya (spec §1.3).
         status = pc.read_proof_status(body, profile)
         flow = _other_flow(body, status) or "keluar"
         if flow == "masuk" and status == pc.TIDAK_DIKETAHUI:
             status = pc.BERHASIL            # uang yang tercatat masuk sudah sampai
-        amounts, total_confidence = pc.read_amounts(body, profile)
-        paid_at, paid_confidence = pc.read_paid_at(body, profile)
-        block = pc.read_side_block(body, profile) if flow == "keluar" else None
+        # Aturan belajar yang disetujui (spec §5): `lp` membaca label (penerima aturan didahulukan).
+        learned, lp = learned_profile(lines, profile, ctx.rules)
+        amounts, total_confidence = pc.read_amounts(body, lp)
+        amounts, total_confidence = learned_total(amounts, total_confidence, body, learned.total)
+        paid_at, paid_confidence = learned_paid_at(body, learned.date) or pc.read_paid_at(body, lp)
+        block = pc.read_side_block(body, lp) if flow == "keluar" else None
         if block:                                            # ShopeePay "Kirim Ke": nama, lalu "Bank Jago Syariah: 1234…"
             name, bank_code, account = block.name, pc.normalize_bank(block.provider), block.number
         else:
             numbers: list[str] = []    # deret angka panjang yang tercetak di nama/bank: tidak boleh bertahan di sana
-            name = pc.read_name(body, profile, "sender" if flow == "masuk" else "merchant", numbers=numbers)
-            bank_code = pc.read_bank(body, profile, numbers=numbers)
-            account = pc.read_account(body, profile) or pc.account_from(numbers)   # tanpa label rekening: dari angka yang ditemukan
-            party = pc.read_header_party(body, profile)
+            name = pc.read_name(body, lp, "sender" if flow == "masuk" else "merchant", numbers=numbers)
+            bank_code = pc.read_bank(body, lp, numbers=numbers)
+            account = pc.read_account(body, lp) or pc.account_from(numbers)   # tanpa label rekening: dari angka yang ditemukan
+            party = pc.read_header_party(body, lp)
             if party and is_money_provider(party.provider):      # "Mandiri·…4321" di bawah nama penerima
                 bank_code = bank_code or pc.normalize_bank(party.provider)
                 account = account or party.number
-            below = pc.read_party_account(body, profile, "sender" if flow == "masuk" else "merchant")
+            below = pc.read_party_account(body, lp, "sender" if flow == "masuk" else "merchant")
             if below:                                            # "Ditransfer ke BUDI" lalu "Mandiri 1234…" (GoPay)
                 bank_code = bank_code or pc.normalize_bank(below[0])
                 account = account or below[1]
@@ -102,10 +108,10 @@ class TransferReader:
             # pengirim); rekening yang terbaca milik user sendiri, jadi tidak dipakai. Pengirim yang bisa jadi user ("ANDI
             # ********"), yang juga mirip user (nama resmi lebih panjang "ANDI PRATAMA BIN SUPARDI", gelar "IR ANDI PRATAMA";
             # `same_person`), atau tidak tercetak: antar rekening sendiri (`checks.apply_flow`).
-            sender = pc.read_sender_name(body, profile)
+            sender = pc.read_sender_name(body, lp)
             if sender and not may_be_user(ctx.user_name, sender) and not same_person(ctx.user_name, sender):
                 flow, name, bank_code, account = "masuk", sender, None, None
-        refs = pc.read_refs(body, profile)
+        refs = pc.read_refs(body, lp)
 
         confidence = {}
         if amounts.total is not None:
@@ -139,7 +145,7 @@ class TransferReader:
             ),
             amounts=amounts,
             refs=[Ref(kind=kind, masked=pc.mask_ref(value)) for kind, value in refs],
-            note=pc.scrub_note(pc.read_note(body, profile), [account or "", *(value for _, value in refs)]),
+            note=pc.scrub_note(pc.read_note(body, lp), [account or "", *(value for _, value in refs)]),
             confidence=confidence,
             evidence=evidence,
         )

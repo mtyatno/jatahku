@@ -4,9 +4,10 @@ cukup menambah satu entri di PROFILES; label dan tata letak khusus aplikasi diis
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from app.services.kotak_struk.readers.labels import count_markers
+from app.services.kotak_struk.config import LAYOUT_LABEL_MAX
+from app.services.kotak_struk.readers.labels import count_markers, learned_amount, learned_datetime
 
 
 @dataclass
@@ -174,7 +175,9 @@ def detect_issuer(lines: list[str]) -> AppProfile | None:
 
 
 def labels_for(profile: AppProfile | None, field: str) -> list[str]:
-    """Sinonim label untuk `field`: label profil dulu, lalu generik (tanpa duplikat)."""
+    """Sinonim label untuk `field`: label profil dulu, lalu generik (tanpa duplikat). Pada profil dari `with_learned`
+    label aturan belajar yang disetujui ada di depan label profil, jadi didahulukan; label profil dan generik tetap
+    dipakai bila label aturan tidak menemukan nilai. Field `paid_at` hanya ada di profil seperti itu (GENERIC kosong)."""
     own = profile.labels.get(field, []) if profile else []
     seen: set[str] = set()
     out = []
@@ -183,3 +186,94 @@ def labels_for(profile: AppProfile | None, field: str) -> list[str]:
             seen.add(label.lower())
             out.append(label)
     return out
+
+
+# ── Aturan belajar yang disetujui (spec 2026-11-01 §5; plan Task L3) ─────────
+
+RULE_TOTAL, RULE_PARTY, RULE_DATE = "label_total", "label_pihak", "label_tanggal"
+
+
+@dataclass(frozen=True)
+class Learned:
+    """Label dari aturan belajar yang disetujui untuk satu kunci aplikasi, urut prioritas (pendukung terbanyak dulu):
+    `total` (`label_total`), `party` (`label_pihak`, label penerima), `date` (`label_tanggal`). Kosong = tanpa aturan."""
+    total: list[str] = field(default_factory=list)
+    party: list[str] = field(default_factory=list)
+    date: list[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.total or self.party or self.date)
+
+
+def _rule_labels(values) -> list[str]:
+    """Label aturan yang dipakai pembaca: teks, huruf kecil, spasi dirapatkan, tidak kosong, <= LAYOUT_LABEL_MAX karakter
+    (bentuk nilai `proof_rules`: `kerangka.safe_label`), tanpa duplikat, urutan tetap. Selain itu dilewati."""
+    if not isinstance(values, (list, tuple)):
+        return []
+    out: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        label = " ".join(value.lower().split())
+        if label and len(label) <= LAYOUT_LABEL_MAX and label not in out:
+            out.append(label)
+    return out
+
+
+def learned_for(rules: dict | None, key: str | None) -> Learned:
+    """Label aturan untuk kunci aturan `key` (`kerangka.rule_key`) dari `ParseContext.rules`; `Learned()` bila tanpa
+    aturan, tanpa kunci, atau bentuknya rusak. Aturan kunci lain tidak pernah dibaca."""
+    if not key or not isinstance(rules, dict):
+        return Learned()
+    found = rules.get(key)
+    if not isinstance(found, dict):
+        return Learned()
+    return Learned(total=_rule_labels(found.get(RULE_TOTAL)), party=_rule_labels(found.get(RULE_PARTY)),
+                   date=_rule_labels(found.get(RULE_DATE)))
+
+
+def with_learned(profile: AppProfile | None, learned: Learned) -> AppProfile | None:
+    """Profil untuk membaca label dengan aturan belajar: `profile` apa adanya bila `learned` kosong. Selain itu salinan
+    (profil None -> profil kosong tanpa penanda) dengan label penerima aturan di depan `labels["merchant"]` dan label
+    tanggal aturan di `labels["paid_at"]`. Label pengirim (`sender`) tidak diubah: aturan `label_pihak` hanya label
+    PENERIMA (belajar._party_label), dan label penerima sebagai label pengirim akan membaca user sebagai pengirim. Label
+    total tidak masuk `labels["amount"]` (di sana label selain "total*" = subtotal; K6): pembaca membacanya sendiri
+    (`labels.learned_amount`). `doc.issuer`, status, dan penanda tetap dari profil asli."""
+    if not learned:
+        return profile
+    base = profile if profile is not None else AppProfile(key="", label="", markers=[])
+    labels = dict(base.labels)
+    if learned.party:
+        labels["merchant"] = [*learned.party, *labels.get("merchant", [])]
+    if learned.date:
+        labels["paid_at"] = list(learned.date)
+    return replace(base, labels=labels)
+
+
+def learned_profile(lines: list[str], profile: AppProfile | None, rules: dict | None) -> tuple[Learned, AppProfile | None]:
+    """(label aturan, profil baca) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (tahap 1: kunci profil), lalu
+    `learned_for` dan `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun."""
+    if not rules:
+        return Learned(), profile
+    # Impor di sini: kerangka mengimpor modul pembaca (impor melingkar bila di tingkat modul).
+    from app.services.kotak_struk.kerangka import rule_key
+    learned = learned_for(rules, rule_key(lines, profile, forbidden_words=set()))
+    return learned, with_learned(profile, learned)
+
+
+def learned_total(amounts, confidence: str | None, body: list[str], labels: list[str]):
+    """(nominal, keyakinan total) sesudah label aturan `label_total` (K6), yang dibaca LEBIH DULU dari label biasa: bila
+    labelnya menemukan nominal (`labels.learned_amount`), itu total dengan keyakinan `tinggi`; subtotal, biaya, pajak,
+    dan diskon tetap hasil baca biasa, jadi cek `selisih_nominal` tetap jalan. Selain itu `amounts`/`confidence` apa
+    adanya (objek yang sama)."""
+    total = learned_amount(body, labels)
+    if total is None:
+        return amounts, confidence
+    return replace(amounts, total=total), "tinggi"
+
+
+def learned_paid_at(body: list[str], labels: list[str]):
+    """(waktu bayar, "tinggi") dari label aturan `label_tanggal` (keyakinan aturan yang disetujui = tinggi, spec §5), atau
+    None: pembaca memakai `proof_common.read_paid_at` seperti biasa."""
+    paid_at = learned_datetime(body, labels)
+    return (paid_at, "tinggi") if paid_at is not None else None

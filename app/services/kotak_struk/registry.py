@@ -7,7 +7,7 @@ tanpa bergantung pada siapa yang mengimpor modul pembaca (modul pembaca tidak me
 jadi tidak ada impor melingkar)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk import checks as cross_checks
@@ -95,6 +95,10 @@ def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
+    """Baca `doc` dengan pembaca terbaik, lalu status berlabel, arah uang, dan cek silang. Aturan belajar
+    (`ctx.rules`, spec 2026-11-01 §5) hanya sampai ke `parse` pembaca bukti (QRIS, transfer) dan pembaca tidak dikenali,
+    dan hanya bila saklar bukti bayar menyala (saklar mati = perilaku lama). Pembaca struk belanja, arah uang, dan cek
+    silang (status gagal/pending, nominal, tanggal) selalu menerima konteks TANPA aturan."""
     reader: DocReader | None = None
     best = 0.0
     for candidate in readers_for(proofs_enabled):
@@ -103,10 +107,11 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
             reader, best = candidate, score
     reader = reader or _UNKNOWN
 
-    parsed = await reader.parse(doc, ctx)
+    plain = replace(ctx, rules={}) if ctx.rules else ctx
+    parsed = await reader.parse(doc, ctx if proofs_enabled and reader is not _STRUK_BELANJA else plain)
     _apply_labelled_failure(parsed, doc)
-    cross_checks.apply_flow(parsed, ctx)
-    found = [*reader.checks(parsed, ctx), *cross_checks.common_checks(parsed, ctx)]
+    cross_checks.apply_flow(parsed, plain)
+    found = [*reader.checks(parsed, plain), *cross_checks.common_checks(parsed, plain)]
     parsed.doc.checks = [c.as_dict() for c in found]
     return ReadResult(parsed=parsed, checks=found, reader=reader.name)
 

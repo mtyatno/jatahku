@@ -137,5 +137,60 @@ def find_datetime(lines: list[str]) -> datetime | None:
     return None
 
 
+# ── Label aturan belajar (spec 2026-11-01 §5; plan Task L3) ────────────────
+
+# Tanda baca di depan baris yang bukan bagian label ("• Total Bayar", "- Waktu Selesai"); sama dengan pinggiran yang
+# dibuang `kerangka.safe_label`, jadi label aturan (dari kerangka) cocok dengan baris yang sama.
+_LEAD = " \t:：;,.|·•-–—_/\\"
+_AMOUNT_START = re.compile(r"(?:Rp|IDR)\.?\s*\d|\d", re.IGNORECASE)
+
+
+def _learned_values(lines: list[str], labels: list[str], starts) -> str | None:
+    """Teks nilai label aturan yang PERSIS (bukan awalan label lain): sisa baris sesudah label (dan titik dua) bila
+    `starts(sisa)`, atau, bila label berdiri sendiri, baris berikutnya bila `starts(baris itu)`. Label lebih awal
+    diutamakan, lalu baris lebih atas. Sama dengan cara kerangka memberi label: teks sebelum nilai di baris yang sama,
+    atau baris label di atas nilai yang berdiri sendiri."""
+    for label in labels:
+        rx = _label_re(label)
+        for i, line in enumerate(lines):
+            m = rx.match(line.lstrip(_LEAD))
+            if not m:
+                continue
+            rest = m.group(1)
+            if rest:
+                if starts(rest):
+                    return rest
+                continue
+            following = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            if following and starts(following):
+                return following
+    return None
+
+
+def learned_amount(lines: list[str], labels: list[str]) -> int | None:
+    """Nominal di label aturan `label_total` (K6: dibaca sebagai TOTAL, bukan subtotal): nilai harus diawali nominal
+    ("Rp12.500", "12.500"), jadi label aturan "total" tidak membaca baris "Total Bayar Rp11.000" dan "jumlah" tidak
+    membaca "Jumlah Kirim Uang". None bila tidak ketemu (pembaca memakai logika biasa)."""
+    if not labels:
+        return None
+    value = _learned_values(lines, labels, lambda text: bool(_AMOUNT_START.match(text)))
+    amounts = amounts_in(value) if value else []
+    return amounts[0] if amounts else None
+
+
+def learned_datetime(lines: list[str], labels: list[str]) -> datetime | None:
+    """Waktu bayar di label aturan `label_tanggal`: nilai harus diawali tanggal (label aturan "waktu" tidak membaca
+    "Waktu Selesai 26 Okt 2026"). None bila tidak ketemu (pembaca memakai logika biasa)."""
+    if not labels:
+        return None
+
+    def starts_with_date(text: str) -> bool:
+        found = _find_date(text)
+        return bool(found) and not text[:found[0]].strip(_LEAD)
+
+    value = _learned_values(lines, labels, starts_with_date)
+    return parse_datetime_id(value) if value else None
+
+
 # Nama publik untuk modul lain (kotak_struk/kerangka.py): jangan dihapus atau diganti nama tanpa memperbarui pemakainya.
 find_date = _find_date
