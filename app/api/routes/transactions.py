@@ -46,7 +46,9 @@ MAX_DESCRIPTION = 500
 
 class TransactionCreate(BaseModel):
     envelope_id: UUID
-    amount: Decimal
+    # > 0: nominal negatif menambah saldo dan melewati batas nominal/foto karyawan (review keamanan PR #175).
+    # Gerakan bernominal nol/negatif (transfer, penyesuaian) ditulis server lewat jalurnya sendiri.
+    amount: Decimal = Field(gt=0)
     description: str
     source: TransactionSource = TransactionSource.webapp
     transaction_date: date | None = None
@@ -103,6 +105,8 @@ class BatchSuggestEnvelopeResult(BaseModel):
 
 class BatchTransactionItem(BaseModel):
     envelope_id: UUID
+    # Dicek per baris di route (`kode: nominal_tidak_sah`), bukan Field(gt=0): galat validasi model menolak seluruh
+    # kiriman, sehingga satu baris buruk di antrean offline menahan baris lain selamanya.
     amount: Decimal
     description: str
     source: TransactionSource = TransactionSource.webapp
@@ -463,6 +467,10 @@ async def batch_create_transactions(
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
                                                   error="Catatan ini menunggu persetujuan admin.",
                                                   kode="perlu_persetujuan", draf_id=draf.id))
+            continue
+        if item.amount <= 0:   # review keamanan PR #175: nominal harus positif
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                  error="Nominal harus lebih dari nol.", kode="nominal_tidak_sah"))
             continue
         if i in galat_baris:
             exc = galat_baris[i]

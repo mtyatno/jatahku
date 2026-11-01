@@ -630,5 +630,31 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(penerima, [self.me.id, self.me.id, self.ani.id])
 
 
+    async def test_nominal_negatif_ditolak(self):
+        """Review ulang PR #175: nominal negatif/nol tidak bisa dipakai untuk menambah saldo atau melewati batas
+        nominal, foto nota, dan alokasi penuh — di jalur tunggal, antrean offline, dan pemasukan."""
+        await self._batasan(batas_nominal=500000, foto_nota_di_atas=100000)
+        for amount in ("-3000000", "0"):
+            r = await self._req("POST", "/transactions/", {"envelope_id": str(self.u["env"]), "amount": amount,
+                                                          "description": "negatif"}, user=self.dewi)
+            self.assertEqual(r.status_code, 422, r.text)
+        r = await self._req("POST", "/transactions/batch", {"items": [
+            {"envelope_id": str(self.u["env"]), "amount": "-3000000", "description": "negatif", "client_ref": "n-1"},
+            {"envelope_id": str(self.u["env"]), "amount": "1000", "description": "positif", "client_ref": "n-2"},
+        ]}, user=self.dewi)
+        self.assertEqual(r.status_code, 200, r.text)
+        hasil = sorted(r.json(), key=lambda x: x["index"])
+        self.assertEqual([(x["ok"], x["kode"]) for x in hasil], [(False, "nominal_tidak_sah"), (True, None)])
+        self.assertEqual(await self._hitung(Transaction, Transaction.description == "negatif"), 0)
+        r = await self._req("POST", "/incomes/", {"amount": "0", "source": "geser diam-diam", "allocations": [
+            {"envelope_id": str(self.u["env"]), "amount": "5000000"},
+            {"envelope_id": str(self.u["env"]), "amount": "-5000000"}]}, user=self.dewi)
+        self.assertEqual(r.status_code, 422, r.text)
+        r = await self._req("POST", "/incomes/", {"amount": "-100", "source": "geser diam-diam"},
+                            header=self.nusa_id, user=self.ani)                 # berlaku untuk semua peran
+        self.assertEqual(r.status_code, 422, r.text)
+        self.assertEqual(await self._hitung(Income, Income.description == "geser diam-diam"), 0)
+        self.assertEqual(await self._hitung(RuangDraf), 0)
+
 if __name__ == "__main__":
     unittest.main()

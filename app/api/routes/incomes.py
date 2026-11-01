@@ -35,11 +35,12 @@ def _fmt_time(dt, tz) -> str:
 
 class AllocationItem(BaseModel):
     envelope_id: UUID
-    amount: Decimal
+    # ≥ 0: alokasi negatif bisa menyeimbangkan alokasi positif dan memindahkan uang tanpa batas/draf (review PR #175).
+    amount: Decimal = Field(ge=0)
 
 
 class IncomeCreate(BaseModel):
-    amount: Decimal
+    amount: Decimal = Field(gt=0)   # > 0 (review keamanan PR #175); transfer/penyesuaian ditulis server sendiri
     source: str = "Gaji"
     allocations: list[AllocationItem] = []
     # Klien hanya boleh menyatakan pemasukan biasa atau top-up amplop; transfer dan
