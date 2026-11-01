@@ -13,8 +13,11 @@ meneruskan `household_id` secara eksplisit ke services:
   (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek`), lalu keanggotaan dicek; header tidak
   menentukan ruang. Objek di ruang yang bukan milik user → None (route menjawab 404); satu
   permintaan yang menyentuh dua ruang milik user → `LintasRuang` (400 `lintas_ruang`).
-- `ruang_tulis` (dependency FastAPI) — hanya untuk undangan anggota: selalu ruang keluarga,
-  header ruang lain ditolak (undangan ruang usaha dibuat di R5).
+- `ruang_tulis` (dependency FastAPI) — hanya untuk undangan anggota ruang keluarga: selalu ruang
+  keluarga, header ruang lain ditolak. Undangan ruang usaha: `POST /ruang/{id}/undangan` (R5).
+- **Karyawan di ruang usaha (R5)**: `ruang_aktif` dan pembantu ruang objek menolak semua route kecuali
+  pencatatan (`KARYAWAN_BOLEH`, `karyawan=True`) dengan 403 `khusus_admin`, dan ruang usaha di luar jam
+  kerja dengan 403 `di_luar_jam_kerja`. Batasan per catatan ada di `app/services/peran.py`.
 - `ruang_keluarga(user, db)` — bot (Telegram dan chat web), job terjadwal, dan
   pekerjaan latar. Chat selalu ruang keluarga (ADR-P2).
 
@@ -46,16 +49,23 @@ PESAN_DITOLAK = "Ruang ini tidak bisa dibuka dari akunmu. Muat ulang Jatahku lal
 class RuangDitolak(HTTPException):
     """403 dengan `detail` teks siap tampil; `install()` menambah field `kode` (§7)."""
 
-    def __init__(self, kode: str = KODE_DITOLAK, detail: str = PESAN_DITOLAK, status_code: int = 403):
+    def __init__(self, kode: str = KODE_DITOLAK, detail: str = PESAN_DITOLAK, status_code: int = 403,
+                 extra: dict | None = None):
         super().__init__(status_code=status_code, detail=detail)
         self.kode = kode
+        self.extra = extra or {}   # field tambahan di body, mis. `buka_lagi` (di_luar_jam_kerja)
+
+    @classmethod
+    def dari_peran(cls, exc) -> "RuangDitolak":
+        """`app.services.peran.PeranDitolak` → jawaban HTTP dengan `kode` yang sama."""
+        return cls(kode=exc.kode, detail=exc.detail, status_code=exc.status_code, extra=exc.extra)
 
 
 def install(app: FastAPI) -> None:
     """Pasang handler yang menambah `kode` ke jawaban `RuangDitolak`."""
 
     async def _handler(request: Request, exc: RuangDitolak):
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "kode": exc.kode})
+        return JSONResponse(status_code=exc.status_code, content={**exc.extra, "detail": exc.detail, "kode": exc.kode})
 
     app.add_exception_handler(RuangDitolak, _handler)
 
@@ -142,15 +152,53 @@ async def _ruang_dari_header(header: str | None, user, db: AsyncSession) -> UUID
 _HEADER = Header(None, alias=RUANG_HEADER, description="ID ruang yang sedang dibuka (opsional; tanpa header = ruang keluarga)")
 
 
+# R5: route yang boleh dibuka karyawan (peran member) di ruang usaha lewat `ruang_aktif`. Semua route lain menjawab
+# 403 `khusus_admin` untuk karyawan, termasuk route baru (tolak-bawaan). Route di sini menyaring sendiri sesuai
+# batasan (`app/services/peran.py`); menambah baris butuh alasan dan tes di `test_ruang_peran.py`.
+KARYAWAN_BOLEH = {
+    "app.api.routes.envelopes.list_envelopes",         # hanya amplop yang diizinkan; anggaran disembunyikan
+    "app.api.routes.envelopes.envelope_summary",       # hanya bila `lihat_saldo`, amplop yang diizinkan
+    "app.api.routes.transactions.list_transactions",   # hanya catatan miliknya
+    "app.api.routes.transactions.suggest_envelope",    # saran amplop untuk catatan (amplop yang diizinkan)
+    "app.api.routes.transactions.suggest_envelopes",
+    "app.api.routes.incomes.create_income",            # penjualan: batasan di `cek_catat`
+    "app.api.routes.ruang_kelola.persetujuan_saya",           # draf miliknya (Beranda karyawan)
+}
+
+
+def _nama_endpoint(request: Request | None) -> str | None:
+    fn = (request.scope.get("endpoint") if request is not None else None)
+    return f"{fn.__module__}.{fn.__name__}" if fn is not None else None
+
+
+async def _gerbang_karyawan(db: AsyncSession, user, hid, endpoint: str | None) -> None:
+    """Lapis 1 R5: karyawan di ruang usaha hanya route yang diizinkan, dan hanya di jam kerjanya."""
+    from app.services import peran
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is None:
+        return
+    try:
+        peran.cek_jam_kerja(batasan)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+    if endpoint not in KARYAWAN_BOLEH:
+        raise RuangDitolak.dari_peran(peran.PeranDitolak("khusus_admin"))
+
+
 async def ruang_aktif(
+    request: Request,
     x_jatahku_ruang: str | None = _HEADER,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> UUID | None:
     """Ruang untuk membaca: dari header bila ada (dan sah), selain itu ruang keluarga.
-    None = user belum punya household; route menangani seperti sebelumnya."""
+    None = user belum punya household; route menangani seperti sebelumnya.
+    Karyawan di ruang usaha: hanya route `KARYAWAN_BOLEH`, di jam kerjanya (R5)."""
     hid = await _ruang_dari_header(x_jatahku_ruang, user, db)
-    return hid if hid is not None else await ruang_keluarga_id(db, user.id)
+    if hid is not None:
+        await _gerbang_karyawan(db, user, hid, _nama_endpoint(request))
+        return hid
+    return await ruang_keluarga_id(db, user.id)
 
 
 async def ruang_tulis(
@@ -186,25 +234,42 @@ class LintasRuang(RuangDitolak):
         super().__init__(kode=KODE_LINTAS, detail=PESAN_LINTAS, status_code=400)
 
 
-async def ruang_objek(db: AsyncSession, user, household_id) -> UUID | None:
+async def _gerbang_objek(db: AsyncSession, user, hid, karyawan: bool) -> None:
+    """Lapis 1 R5 untuk tulis dari objek: karyawan di ruang usaha → 403 `khusus_admin` kecuali route pencatatan
+    (`karyawan=True`: catat/hapus transaksi, pemasukan), yang tetap dibatasi jam kerja."""
+    from app.services import peran
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is None:
+        return
+    try:
+        if not karyawan:
+            raise peran.PeranDitolak("khusus_admin")
+        peran.cek_jam_kerja(batasan)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+
+
+async def ruang_objek(db: AsyncSession, user, household_id, *, karyawan: bool = False) -> UUID | None:
     """Ruang objek yang ditulis, hanya bila user anggota ruang itu. None = bukan milik user;
     route menjawab seperti objek tidak ada (404), supaya keberadaan objek tidak bocor.
-    Objek ruang usaha di luar flag `ruang_usaha_users` juga None (R4)."""
+    Objek ruang usaha di luar flag `ruang_usaha_users` juga None (R4).
+    Karyawan di ruang usaha: 403 `khusus_admin`, kecuali pemanggil pencatatan (`karyawan=True`, R5)."""
     if not await _anggota_ruang_terbuka(db, user.id, household_id):
         return None
+    await _gerbang_objek(db, user, household_id, karyawan)
     return household_id
 
 
-async def ruang_amplop(db: AsyncSession, user, envelope_id) -> UUID | None:
+async def ruang_amplop(db: AsyncSession, user, envelope_id, *, karyawan: bool = False) -> UUID | None:
     """Ruang amplop `envelope_id` bila user anggotanya (lihat `ruang_objek`)."""
     from app.models.models import Envelope
     if envelope_id is None:
         return None
     hid = (await db.execute(select(Envelope.household_id).where(Envelope.id == envelope_id))).scalar_one_or_none()
-    return await ruang_objek(db, user, hid)
+    return await ruang_objek(db, user, hid, karyawan=karyawan)
 
 
-async def ruang_amplop_satu(db: AsyncSession, user, envelope_ids) -> UUID | None:
+async def ruang_amplop_satu(db: AsyncSession, user, envelope_ids, *, karyawan: bool = False) -> UUID | None:
     """Satu ruang untuk sekumpulan amplop dalam satu permintaan tulis (transfer, alokasi pemasukan).
     Amplop di ruang yang bukan milik user diabaikan di sini (route menjawab 404 untuknya, tanpa
     membocorkan ruang lain); amplop milik user di lebih dari satu ruang → `LintasRuang` (400)."""
@@ -221,7 +286,10 @@ async def ruang_amplop_satu(db: AsyncSession, user, envelope_ids) -> UUID | None
             milik.add(hid)
     if len(milik) > 1:
         raise LintasRuang()
-    return next(iter(milik), None)
+    hid = next(iter(milik), None)
+    if hid is not None:
+        await _gerbang_objek(db, user, hid, karyawan)
+    return hid
 
 
 async def ruang_jenis(db: AsyncSession, household_id) -> str | None:
