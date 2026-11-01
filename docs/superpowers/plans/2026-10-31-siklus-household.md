@@ -309,6 +309,38 @@ class PeriodForMonthTests(unittest.TestCase):
 
 ---
 
+### Task 8b: Kompatibilitas dengan Plugin R1 (ruang keluarga vs ruang usaha)
+
+Added to this plan after Plugin R1 (#161) landed on main during implementation and the branch was rebased onto it. Spec authority: section "## 10. Kompatibilitas dengan ruang usaha" of `docs/superpowers/specs/2026-10-31-siklus-household-design.md` — "Saat R1 tayang, `set_household_payday` dan `heal` hanya mencerminkan ke `users.payday_day` untuk household `rumah_tangga`, dan `adopt_household_payday` hanya dipanggil saat bergabung ke ruang keluarga." R1 is now live.
+
+What R1 added (already on the branch): `households.type` VARCHAR(20) NOT NULL DEFAULT 'rumah_tangga' (`Household.type`, constants `HouseholdType.RUMAH_TANGGA = "rumah_tangga"`, `HouseholdType.USAHA = "usaha"` in `app/models/models.py`), unique `(user_id, household_id)` on `household_members` — one user may now belong to several households, at most once each. Today every household is `rumah_tangga` (creating a business space comes later), so these changes must not alter any behaviour for existing data.
+
+**Files:**
+- Modify: `app/services/household_cycle.py`
+- Modify: `app/api/routes/household.py` (`join_household`), `app/bot/household_cmd.py` (`cmd_join`)
+- Test: `app/tests/test_household_cycle_r1.py` (new); update existing assertions in `app/tests/test_household_cycle.py`, `app/tests/test_household_cycle_change.py`, `app/tests/test_household_join_payday.py` only where the changed query/behaviour requires it.
+
+**Interfaces:**
+- `membership(db, user)` returns the user's membership in their **ruang keluarga**: `select(HouseholdMember).join(Household, Household.id == HouseholdMember.household_id).where(HouseholdMember.user_id == user.id, Household.type == HouseholdType.RUMAH_TANGGA)`; `scalar_one_or_none()`. (A user has at most one family household; business-space memberships must not make this raise or return the business space.) `payday_context` keeps using it, so profile/recompute act on the family household.
+- `def mirrors_users(household) -> bool` (pure): `str(getattr(household, "type", None) or HouseholdType.RUMAH_TANGGA) == HouseholdType.RUMAH_TANGGA` (a household object without `type` — older tests' stubs — counts as family).
+- `set_household_payday(db, household, day, *, actor)`: unchanged, except member `users.payday_day` are assigned only when `mirrors_users(household)`; `households.payday_day`, commit, cache invalidation, recompute and notifications are unchanged for both types. Return `"members"` still counts the household's members.
+- `heal(db, household)`: when `not mirrors_users(household)` → return `[]` without any query (a business space never changes users' mirrors).
+- `join_household` (web) and `cmd_join` (bot): call `adopt_household_payday` only when `mirrors_users(household)`; for a business space keep the join itself and respond with `payday_day` = `await household_payday(db, household)` (web JSON) and omit the "Siklus anggaranmu …" line (bot). (Joining a business space via these invite routes is not possible yet; this keeps the rule correct when it becomes possible.)
+
+- [ ] **Step 1: Tulis tes yang gagal** (`app/tests/test_household_cycle_r1.py`)
+  - `test_membership_selects_family_household_only`: compiled SQL of the membership query contains a join to `households` and a `households.type` condition bound to `rumah_tangga` (assert via the statement's compiled params, e.g. `stmt.compile(dialect=postgresql.dialect()).params` contains the value `"rumah_tangga"`).
+  - `test_mirrors_users`: `rumah_tangga` → True; `usaha` → False; object without `type` → True; `type=None` → True.
+  - `test_set_payday_on_business_space_does_not_touch_users`: household `type="usaha"`, payday 1 → set 25: `household.payday_day == 25`, both member users keep payday 1, commit awaited, `recompute_history` awaited with `(household.id, 12)`.
+  - `test_heal_skips_business_space`: `type="usaha"`, payday 25 → `[]`, `db.execute` not called, `db.commit` not awaited.
+  - `test_web_join_business_space_does_not_adopt`: TestClient join (pattern of `app/tests/test_household_join_payday.py`) into a household stub with `type="usaha"` → 200, `adopt_household_payday` not awaited, `household_payday` awaited, response `payday_day` = its value, user payday unchanged.
+  - `test_bot_join_business_space_does_not_adopt`: same for `cmd_join`; reply has no "Siklus anggaranmu" line.
+- [ ] **Step 2: Jalankan, pastikan gagal.**
+- [ ] **Step 3: Implementasikan.**
+- [ ] **Step 4: Jalankan** the new file + `test_household_cycle`, `test_household_cycle_change`, `test_household_join_payday`, `test_profile_payday`, `test_snapshots_household`, `test_ruang_model` → PASS; `python3 -m app.scripts.openapi_cek` → no breaking change; full backend suite once.
+- [ ] **Step 5: Commit** — pesan `feat(siklus): siklus hanya dicerminkan ke user untuk ruang keluarga (kompatibel Plugin R1)`.
+
+---
+
 ### Task 9: Job snapshot harian per household
 
 **Files:**
