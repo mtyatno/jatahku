@@ -31,6 +31,7 @@ Diisi sesi yang membuatnya. Rencana dari `01-kajian.md`, "Lampiran teknis":
 | Host plugin dan SDK | `app/plugins/host/`, `app/plugins/sdk/` (`PluginContext`) | H1, H2 |
 | Buku Usaha | `app/plugins/buku_usaha/` (manifest, `metrics.py`, kartu, aturan BU-*), `frontend/src/plugins/buku_usaha/` | U1–U6 |
 | Cek migrasi | `.github/workflows/migrasi.yml`, `.github/scripts/cek-migrasi.sh` | F0 |
+| Verifikasi Beranda registry (Gerbang B) | `app/scripts/beranda_paritas.py` (paritas angka semua user, di VPS), `scripts/banding_beranda.py` (banding tampilan di laptop), `?beranda=lama\|registry` di `Dashboard.jsx`; langkah rilis di `AGENTS.md` "Rilis Beranda registry" | B3 |
 
 ## Sumber di luar repo
 

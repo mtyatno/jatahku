@@ -249,6 +249,25 @@ flag `beranda_registry_users`), jadi tidak ada perubahan tampilan. Tanpa paket b
    `POST /dashboard/data` dengan `{"items":[{"id":"a1","card":"core.kpi.jatah"}]}` → `data.a1.shape = "kpi"`.
    Lihat log `jatahku.dashboard` untuk peringatan anggaran (`journalctl -u jatahku | grep "dashboard batch"`).
 
+## Rilis Beranda registry — Plugin B3 (Gerbang B, flag `beranda_registry_users`)
+Tanpa migrasi dan tanpa paket baru. Merge PR B3 → deploy otomatis; tampilan belum berubah sampai flag diisi.
+1. **Paritas angka di VPS** (hanya membaca; tidak menulis DB atau cache):
+   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.beranda_paritas`
+   → kode keluar 0 dan baris terakhir `Gerbang B: LULUS` (semua user `ok`/`lewati`, p95 batch ≤ 500 ms).
+   Keluaran tanpa nama amplop atau nominal: tempel dua baris terakhirnya di issue #140.
+   Bila `beda`/`crash`: jangan lanjut; jalankan ulang untuk user itu (`--user <id>`) dan laporkan barisnya.
+2. **Banding tampilan** di laptop, akun sendiri (Chrome + `pip install playwright pillow`):
+   `JATAHKU_TOKEN=<localStorage jatahku_token dari jatahku.com> python scripts/banding_beranda.py --out /tmp/banding`
+   → `Tampilan: SAMA di semua lebar dan tema` (390/820/1100/1440 px, gelap dan terang).
+   Di HP sungguhan: buka `jatahku.com/?beranda=lama` lalu `jatahku.com/?beranda=registry`; keduanya harus sama.
+3. **Nyalakan bertahap:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
+   ('beranda_registry_users', '<user_id kamu>') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"`, pakai
+   sehari, lalu ulangi dengan value `*`. Tiap user pindah ke Beranda registry pada muatan Beranda berikutnya.
+4. **Pantau:** `journalctl -u jatahku --since today | grep -E "dashboard (batch|penyedia|sumber)"` — peringatan
+   anggaran (> 500 ms batch, > 150 ms penyedia) atau sumber yang gagal.
+5. **Kembali ke Beranda lama** kapan saja: value `''` (kosong). Klien membaca `enabled` di setiap muatan Beranda,
+   jadi tidak perlu deploy. `BerandaLama.jsx` baru dihapus setelah `*` stabil (sesi terpisah).
+
 ## Deploy Checklist — Kredensial SMTP dari `.env` (langkah 1–2 wajib SEBELUM merge)
 `app/services/email_service.py` tidak lagi memuat kredensial; semuanya dibaca dari `/opt/jatahku/.env`
 (`app/core/config.py`, `SMTP_*`). Tanpa `SMTP_PASSWORD`, **semua email berhenti** (reset password, konfirmasi hapus

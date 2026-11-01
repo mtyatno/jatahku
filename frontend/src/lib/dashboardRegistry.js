@@ -122,3 +122,24 @@ export function sumberPertama(data, nama) {
 
 export const cacheKeyLayout = (userId) => `beranda_layout:${userId}`;
 export const cacheKeyData = (userId) => `beranda_data:${userId}`;
+
+/**
+ * Beranda mana yang digambar (Plugin B3). `paksa` dari query `?beranda=lama|registry` dipakai untuk
+ * membandingkan kedua Beranda di akun sendiri (alat banding tampilan, uji di perangkat); data dan izin
+ * tetap dari server. Tanpa `paksa`: field `enabled` dari GET /dashboard/layout (flag beranda_registry_users).
+ * @returns {'lama' | 'registry' | 'memuat'}
+ */
+export function pilihBeranda(layout, paksa) {
+  if (paksa === 'lama') return 'lama';
+  if (paksa === 'registry') return layout ? 'registry' : 'memuat';
+  return layout?.enabled ? 'registry' : 'lama';
+}
+
+export function paksaDariUrl(search) {
+  try {
+    const v = new URLSearchParams(search || '').get('beranda');
+    return v === 'lama' || v === 'registry' ? v : null;
+  } catch {
+    return null;
+  }
+}
