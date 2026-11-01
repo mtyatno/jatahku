@@ -1,7 +1,8 @@
 # Laporan berkala — desain
 
 **Tanggal:** 1 Nov 2026
-**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis menunggu review.
+**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026.
+Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
 **Dasar:** `main` setelah siklus household (#169) dan penandaan checklist-nya (#173). Siklus anggaran milik household
 (`households.payday_day`, penulis tunggal `app/services/household_cycle.py`, lihat `docs/siklus-household.md`), dan
 `monthly_snapshots.allocated_amount`/`spent_amount` terisi untuk seluruh riwayat.
