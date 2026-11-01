@@ -16,6 +16,9 @@ Yang dijaga di sini (tes: app/tests/test_laporan_api.py):
   header; limiter slowapi bersama seperti `user_settings.py`): unduh PDF 10/menit untuk semua laporannya sekaligus
   (lihat `SCOPE_BATAS_PDF`), simpan kata sandi 5/jam.
 
+`GET /user/laporan-pengaturan` menjawab `kata_sandi_diatur: false` bila kata sandi tersimpan tak terbaca atau kini
+ditolak, sama dengan jalur unduh PDF yang menjawab 409; tanpa kunci server tetap seperti ada tidaknya token.
+
 Galat yang membawa `kode` untuk mesin (badan persis, Global Constraints): 409 `kata_sandi_belum_diatur` (belum diatur,
 atau yang tersimpan tidak terbaca atau tidak lagi bisa dipakai) dan 503 `kunci_belum_diatur` (REPORT_SECRET_KEY kosong
 atau tidak valid di server).
@@ -44,7 +47,7 @@ logger = logging.getLogger("jatahku.laporan")
 
 MIN_KATA_SANDI = 6
 MAKS_KATA_SANDI = 64
-MAKS_OFFSET = 100_000   # batas wajar; di atas bigint, Postgres menolak parameternya (500)
+MAKS_OFFSET = 100_000   # batas wajar; asyncpg mengikat OFFSET sebagai INTEGER (32-bit), lebih dari itu galat 500
 # Limiter bersama bawaan slowapi (`key_style="url"`) menghitung `limit()` per URL persis, jadi di
 # `/laporan/{report_id}/pdf` batas 10/menit berlaku per laporan, bukan per user: laporan yang berbeda tidak pernah
 # saling membatasi. `shared_limit` dengan `scope` tetap menghitung semua laporan satu user dalam satu ember.
@@ -52,6 +55,14 @@ SCOPE_BATAS_PDF = "laporan_pdf"
 MSG_TIDAK_DITEMUKAN = "Laporan tidak ditemukan"
 MSG_PANJANG = f"Kata sandi laporan harus {MIN_KATA_SANDI}–{MAKS_KATA_SANDI} karakter."
 _GALAT_PANJANG = {"string_too_short", "string_too_long"}   # jenis galat pydantic untuk `Field(min_length, max_length)`
+# Peringatan untuk kata sandi tersimpan yang tak bisa dipakai (jalur unduh PDF dan GET status): teks tetap dan id user.
+LOG_TOKEN_TAK_TERBACA = (
+    "Kata sandi laporan user %s tersimpan tetapi tidak terbaca (kunci diganti atau data rusak); "
+    "diperlakukan seperti belum diatur"
+)
+LOG_KATA_SANDI_TAK_VALID = (
+    "Kata sandi laporan user %s tersimpan tetapi tidak bisa dipakai untuk PDF; diperlakukan seperti belum diatur"
+)
 # Isi GET tanpa baris `report_settings`. Harus sama dengan bawaan kolom ReportSettings (dijaga tes).
 BAWAAN_PENGATURAN = {"email_on": True, "kuartalan_on": True, "tahunan_on": True}
 
@@ -87,6 +98,18 @@ class KataSandiLaporanIn(BaseModel):
 class GalatKode(BaseModel):
     detail: str
     kode: str
+
+
+class GalatValidasiItem(BaseModel):
+    type: str
+    loc: list[str | int]
+    msg: str
+
+
+class GalatValidasi(BaseModel):
+    """Isi 422 di `PUT /user/laporan-pengaturan`: `detail` berupa kalimat siap tampil untuk yang bisa dipicu formulir
+    (panjang, karakter yang tak bisa dipakai di PDF), atau daftar `{type, loc, msg}` untuk badan yang salah bentuk."""
+    detail: str | list[GalatValidasiItem]
 
 
 class _RuteTanpaGemaMasukan(APIRoute):
@@ -163,6 +186,26 @@ def _bentuk_pengaturan(user: User, pengaturan: ReportSettings | None) -> dict:
         **nilai,
         "pro": user.plan == "pro",
     }
+
+
+def _token_masih_terpakai(user_id: UUID, token: str) -> bool:
+    """Apakah token tersimpan masih bisa membuka PDF: terbaca dengan kunci server sekarang dan kata sandinya masih
+    lolos `periksa_kata_sandi`. Sama dengan syarat jalur unduh PDF (409 bila tidak). Tanpa kunci server pemeriksaan
+    tidak mungkin, jadi dianggap masih terpakai (jalur unduh menjawab 503 untuk itu). Hanya teks tetap dan id user yang
+    dicatat."""
+    try:
+        kata_sandi = rahasia.dekripsi(token)
+    except rahasia.KunciLaporanTidakAda:
+        return True
+    except ValueError:
+        logger.warning(LOG_TOKEN_TAK_TERBACA, user_id)
+        return False
+    try:
+        pdf.periksa_kata_sandi(kata_sandi)
+    except pdf.KataSandiPdfTidakValid:
+        logger.warning(LOG_KATA_SANDI_TAK_VALID, user_id)
+        return False
+    return True
 
 
 def _kunci_user(user_id: UUID):
@@ -268,18 +311,12 @@ async def unduh_pdf_laporan(
     except rahasia.KunciLaporanTidakAda:
         return _kunci_belum_diatur()
     except ValueError:
-        logger.warning(
-            "Kata sandi laporan user %s tersimpan tetapi tidak terbaca (kunci diganti atau data rusak); "
-            "diperlakukan seperti belum diatur", user_id,
-        )
+        logger.warning(LOG_TOKEN_TAK_TERBACA, user_id)
         return _kata_sandi_belum_diatur()
     try:
         isi = await pdf.buat_pdf(data, kata_sandi)
     except pdf.KataSandiPdfTidakValid:   # subkelas ValueError: tidak lewat penanganan ValueError umum
-        logger.warning(
-            "Kata sandi laporan user %s tersimpan tetapi tidak bisa dipakai untuk PDF; "
-            "diperlakukan seperti belum diatur", user_id,
-        )
+        logger.warning(LOG_KATA_SANDI_TAK_VALID, user_id)
         return _kata_sandi_belum_diatur()
     return Response(
         content=isi,
@@ -296,14 +333,27 @@ async def ambil_pengaturan_laporan(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Status pengaturan laporan. Tanpa baris `report_settings`: bawaan, dan tidak ada baris yang dibuat."""
-    return _bentuk_pengaturan(user, await db.get(ReportSettings, user.id))
+    """Status pengaturan laporan. Tanpa baris `report_settings`: bawaan, dan tidak ada baris yang dibuat.
+    `kata_sandi_diatur` true hanya bila kata sandi tersimpan benar-benar bisa dipakai (`_token_masih_terpakai`): token
+    yang tak terbaca atau kata sandi yang kini ditolak berarti false, sama dengan jalur unduh yang menjawab 409."""
+    pengaturan = await db.get(ReportSettings, user.id)
+    bentuk = _bentuk_pengaturan(user, pengaturan)
+    if bentuk["kata_sandi_diatur"] and not _token_masih_terpakai(user.id, pengaturan.kata_sandi_enc):
+        bentuk["kata_sandi_diatur"] = False
+    return bentuk
 
 
 @pengaturan_router.put(
     "/laporan-pengaturan",
     response_model=PengaturanLaporan,
-    responses={503: {"model": GalatKode, "description": "Kunci server belum diatur (kode `kunci_belum_diatur`)."}},
+    responses={
+        422: {
+            "model": GalatValidasi,
+            "description": "Kata sandi ditolak: `detail` kalimat siap tampil (panjang 6-64 karakter, karakter yang tak "
+                           "bisa dipakai di PDF), atau daftar `{type, loc, msg}` bila badan permintaan salah bentuk.",
+        },
+        503: {"model": GalatKode, "description": "Kunci server belum diatur (kode `kunci_belum_diatur`)."},
+    },
 )
 @limiter.limit("5/hour", key_func=kunci_per_user)
 async def simpan_pengaturan_laporan(

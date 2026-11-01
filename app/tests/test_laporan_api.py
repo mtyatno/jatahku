@@ -89,6 +89,26 @@ def masuk(token: str, skema: str = "Bearer", sisa: str = "") -> dict:
     return {"Authorization": f"{skema} {token}{sisa}"}
 
 
+# Kata sandi yang sudah tersimpan tetapi kini ditolak `periksa_kata_sandi` (mis. aturan diperketat setelah tersimpan).
+SANDI_KINI_DITOLAK = [
+    ("karakter kontrol", "abc\x07def-rahasia"),
+    ("spasi tak terputus", "abc\N{NO-BREAK SPACE}def-rahasia"),
+    ("hanya karakter tak kasatmata", "\N{SOFT HYPHEN}" * 8),
+]
+
+
+def token_tak_terbaca() -> list[tuple[str, str]]:
+    """Token tersimpan yang tak bisa dibuka dengan kunci server sekarang (kunci diganti atau data rusak). Dipanggil di
+    dalam tes: `rahasia.enkripsi` memakai kunci yang ditambal `ApiDasar`."""
+    asli = rahasia.enkripsi("sandi-lama-rahasia")
+    return [
+        ("dari kunci lain", Fernet(KUNCI_LAIN.encode()).encrypt(b"sandi-lama-rahasia").decode()),
+        ("bukan token Fernet", "bukan-token-fernet"),
+        ("terpotong", asli[:-8]),
+        ("bukan ASCII", "token-é-rusak"),
+    ]
+
+
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
 class ApiDasar(unittest.IsolatedAsyncioTestCase):
     """Database, aplikasi, klien, dan pembantu bersama (tanpa tes sendiri). Ani dan Budi satu household, Cici di
@@ -277,6 +297,20 @@ class DaftarDanDetailTests(ApiDasar):
             with self.subTest(query):
                 self.assertEqual((await self.klien.get("/laporan", params=query)).status_code, 422)
 
+    async def test_offset_dibatasi_pada_batas_wajar(self):
+        r = await self.klien.get("/laporan", params={"offset": laporan_route.MAKS_OFFSET})
+        self.assertEqual((r.status_code, r.json()), (200, []))
+        r = await self.klien.get("/laporan", params={"offset": laporan_route.MAKS_OFFSET + 1})
+        self.assertEqual(r.status_code, 422)
+
+    def test_batas_offset_muat_di_integer_32_bit_milik_asyncpg(self):
+        # asyncpg mengikat OFFSET sebagai INTEGER (32-bit, bukan bigint): di atas 2.147.483.647 Postgres menolak
+        # parameternya (500). Dasar komentar `MAKS_OFFSET`; bila ikatannya berubah, tes ini yang memberi tahu.
+        from sqlalchemy.dialects.postgresql import asyncpg
+        sql = str(select(Report.id).offset(5).compile(dialect=asyncpg.dialect()))
+        self.assertIn("OFFSET $1::INTEGER", sql)
+        self.assertLess(laporan_route.MAKS_OFFSET, 2**31)
+
     async def test_daftar_tidak_memuat_kolom_data_utuh(self):
         # `data` bisa ratusan baris mutasi; daftar hanya butuh `judul`, jadi hanya kunci itu yang dibaca database.
         await self.buat_laporan(self.ani, OKT)
@@ -384,13 +418,7 @@ class UnduhPdfTests(ApiDasar):
 
     async def test_pdf_token_tak_terbaca_409(self):
         id_laporan = await self.buat_laporan(self.ani, OKT)
-        asli = rahasia.enkripsi("sandi-lama-rahasia")
-        for nama, token in [
-            ("dari kunci lain", Fernet(KUNCI_LAIN.encode()).encrypt(b"sandi-lama-rahasia").decode()),
-            ("bukan token Fernet", "bukan-token-fernet"),
-            ("terpotong", asli[:-8]),
-            ("bukan ASCII", "token-é-rusak"),
-        ]:
+        for nama, token in token_tak_terbaca():
             with self.subTest(nama):
                 await self.simpan_token(self.ani, token)
                 with patch.object(laporan_route.pdf, "buat_pdf", AsyncMock()) as buat, \
@@ -407,11 +435,7 @@ class UnduhPdfTests(ApiDasar):
         # Kata sandi yang kini ditolak `periksa_kata_sandi` (mis. aturan diperketat setelah tersimpan) tidak boleh
         # menjadi 500 dan tidak boleh menghasilkan PDF tanpa kata sandi: 409, seperti belum diatur.
         id_laporan = await self.buat_laporan(self.ani, OKT)
-        for nama, sandi in [
-            ("karakter kontrol", "abc\x07def-rahasia"),
-            ("spasi tak terputus", "abc\N{NO-BREAK SPACE}def-rahasia"),
-            ("hanya karakter tak kasatmata", "\N{SOFT HYPHEN}" * 8),
-        ]:
+        for nama, sandi in SANDI_KINI_DITOLAK:
             with self.subTest(nama):
                 await self.simpan_token(self.ani, rahasia.enkripsi(sandi))
                 with self.assertLogs("jatahku.laporan", level="WARNING") as tangkap:
@@ -558,6 +582,81 @@ class PengaturanTests(ApiDasar):
             "email_on": False, "kuartalan_on": False, "tahunan_on": False, "pro": False,
         })
 
+    async def test_get_kata_sandi_diatur_false_bila_token_tersimpan_tak_terbaca(self):
+        # Sama dengan jalur unduh PDF (409 "Atur kata sandi laporan dulu"): status tidak boleh menjawab sudah diatur
+        # padahal tidak ada yang bisa dibuka; UI lalu menawarkan mengatur ulang.
+        for nama, token in token_tak_terbaca():
+            with self.subTest(nama):
+                await self.simpan_token(self.ani, token)
+                with self.assertLogs("jatahku.laporan", level="WARNING") as tangkap:
+                    r = await self.klien.get("/user/laporan-pengaturan")
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertFalse(r.json()["kata_sandi_diatur"])
+                self.assertEqual(set(r.json()), BENTUK_PENGATURAN)
+                catatan = "\n".join(tangkap.output)
+                self.assertIn(str(self.ani.id), catatan)   # operator tahu siapa yang perlu mengatur ulang
+                for rahasia_ in (token, "sandi-lama-rahasia", KUNCI, KUNCI_LAIN):
+                    self.assertNotIn(rahasia_, catatan)
+                    self.assertNotIn(rahasia_, r.text)
+
+    async def test_get_kata_sandi_diatur_false_bila_kata_sandi_tersimpan_kini_ditolak(self):
+        for nama, sandi in SANDI_KINI_DITOLAK:
+            with self.subTest(nama):
+                await self.simpan_token(self.ani, rahasia.enkripsi(sandi))
+                with self.assertLogs("jatahku.laporan", level="WARNING") as tangkap:
+                    r = await self.klien.get("/user/laporan-pengaturan")
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertFalse(r.json()["kata_sandi_diatur"])
+                catatan = "\n".join(tangkap.output)
+                self.assertIn(str(self.ani.id), catatan)
+                self.assertNotIn("rahasia", catatan)     # isi kata sandinya tidak masuk log
+                self.assertNotIn("rahasia", r.text)
+
+    async def test_get_kata_sandi_diatur_true_dan_tanpa_peringatan_bila_masih_bisa_dipakai(self):
+        await self.atur_sandi()
+        with self.assertNoLogs("jatahku.laporan", level="WARNING"):
+            r = await self.klien.get("/user/laporan-pengaturan")
+        self.assertTrue(r.json()["kata_sandi_diatur"])
+
+    async def test_get_kata_sandi_diatur_tetap_true_bila_kunci_server_hilang(self):
+        # Tanpa kunci server token tidak bisa diperiksa: jawabannya tetap seperti sebelumnya (ada token = diatur), dan
+        # jalur unduh PDF yang menjawab 503.
+        await self.atur_sandi()
+        for nama, kunci in [("kosong", ""), ("bukan kunci Fernet", "bukan-kunci")]:
+            with self.subTest(nama), _kunci_palsu(kunci), self.assertNoLogs("jatahku.laporan", level="WARNING"):
+                r = await self.klien.get("/user/laporan-pengaturan")
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertTrue(r.json()["kata_sandi_diatur"])
+
+    async def test_get_dan_unduh_pdf_sepakat_tentang_kata_sandi(self):
+        # Satu kebenaran: `kata_sandi_diatur` false persis ketika unduh PDF menjawab 409 (belum diatur), pada setiap
+        # keadaan penyimpanan, dan true persis ketika PDF-nya bisa dibuat.
+        id_laporan = await self.buat_laporan(self.ani, OKT)
+
+        async def periksa(nama, diatur_diharapkan):
+            # `buat_pdf` asli, tidak ditambal: pemeriksaan kata sandi di dalam `render_pdf` ikut menentukan jawaban.
+            r_get = await self.klien.get("/user/laporan-pengaturan")
+            r_pdf = await self.unduh(id_laporan)
+            self.assertEqual(r_get.json()["kata_sandi_diatur"], diatur_diharapkan, nama)
+            if diatur_diharapkan:
+                self.assertEqual(r_pdf.status_code, 200, nama)
+                self.assertTrue(r_pdf.content.startswith(b"%PDF"), nama)
+            else:
+                self.assertEqual((r_pdf.status_code, r_pdf.json()), (409, GALAT_409), nama)
+
+        await periksa("belum ada baris", False)
+        await self.simpan_token(self.ani, None)
+        await periksa("baris tanpa kata sandi", False)
+        with self.assertLogs("jatahku.laporan", level="WARNING"):   # keadaan rusak dicatat
+            for nama, token in token_tak_terbaca():
+                await self.simpan_token(self.ani, token)
+                await periksa(f"token tak terbaca: {nama}", False)
+            for nama, sandi in SANDI_KINI_DITOLAK:
+                await self.simpan_token(self.ani, rahasia.enkripsi(sandi))
+                await periksa(f"kata sandi kini ditolak: {nama}", False)
+        await self.atur_sandi()
+        await periksa("tersimpan dan bisa dipakai", True)
+
     async def test_pengaturan_bawaan_sama_dengan_bawaan_kolom(self):
         # Tanpa baris, GET menjawab bawaan route; dengan baris baru, bawaan kolom. Keduanya harus sama.
         kolom = ReportSettings.__table__.c
@@ -676,6 +775,26 @@ class PengaturanTests(ApiDasar):
                 self.assertTrue(galat)
                 for satu in galat:   # tetap berguna: jenis, lokasi, dan pesan galatnya ada
                     self.assertEqual(set(satu), {"type", "loc", "msg"})
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+
+    async def test_put_422_sama_dengan_skema_yang_dijanjikan_openapi(self):
+        # Yang tertulis di OpenAPI (`GalatValidasi`) adalah yang benar-benar dikirim: kalimat siap tampil untuk aturan
+        # kata sandi, daftar `{type, loc, msg}` untuk badan salah bentuk (JSON rusak: `loc` memuat posisi bilangan).
+        json_rusak = {"content": b'{"kata_sandi": "rhs-rusak', "headers": {"content-type": "application/json"}}
+        kiriman = [
+            ("terlalu pendek", {"json": {"kata_sandi": "rhs-1"}}, str),
+            ("tak bisa dipakai di PDF", {"json": {"kata_sandi": "abc\x07def-rhs"}}, str),
+            ("bukan teks", {"json": {"kata_sandi": 123456789}}, list),
+            ("kolom lain saja", {"json": {"sandi": "rhs-salah-kolom"}}, list),
+            ("JSON rusak", json_rusak, list),
+        ]
+        for nama, kirim, jenis_detail in kiriman:
+            with self.subTest(nama):
+                r = await self.klien.put("/user/laporan-pengaturan", **kirim)
+                self.assertEqual(r.status_code, 422, r.text)
+                self.assertEqual(set(r.json()), {"detail"})
+                isi = laporan_route.GalatValidasi.model_validate(r.json())   # tidak melempar bila bentuknya sama
+                self.assertIsInstance(isi.detail, jenis_detail)
         self.assertEqual(await self.jumlah_pengaturan(), 0)
 
     async def test_put_tanpa_kunci_503(self):
@@ -974,6 +1093,19 @@ class PemasanganTests(unittest.TestCase):
             with self.subTest(harapan):
                 self.assertIn(harapan, terdaftar)
                 self.assertIn("laporan", terdaftar[harapan].tags)
+
+    def test_openapi_menjelaskan_422_put_kata_sandi(self):
+        # `detail` bisa kalimat siap tampil (aturan kata sandi) atau daftar galat (badan salah bentuk): dua-duanya
+        # tertulis, jadi klien yang dibuat dari skema tidak terkejut oleh bentuk teks.
+        from app.main import app
+        spec = app.openapi()
+        respons = spec["paths"]["/user/laporan-pengaturan"]["put"]["responses"]
+        self.assertIn("503", respons)
+        ref = respons["422"]["content"]["application/json"]["schema"]["$ref"]
+        skema = spec["components"]["schemas"][ref.rsplit("/", 1)[1]]
+        jenis = sorted(bagian.get("type") for bagian in skema["properties"]["detail"]["anyOf"])
+        self.assertEqual(jenis, ["array", "string"])
+        self.assertIn("detail", skema["required"])
 
     def test_batas_frekuensi_terpasang_di_dua_rute_yang_tepat(self):
         # Batas dipasang di fungsi route (slowapi mendaftarkannya menurut modul dan nama fungsi).
