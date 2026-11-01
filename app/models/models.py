@@ -148,6 +148,10 @@ class Household(TimestampMixin, Base):
         String(20), default=HouseholdType.RUMAH_TANGGA,
         server_default=text("'rumah_tangga'"),
     )
+    # Siklus anggaran (spec 2026-10-31-siklus-household): sumber kebenaran tanggal gajian
+    # semua anggota. NULL = belum dimigrasi (diturunkan dari owner saat pertama dibaca),
+    # jadi sengaja tanpa default.
+    payday_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Relationships
     members: Mapped[list["HouseholdMember"]] = relationship(
@@ -493,6 +497,10 @@ class MonthlySnapshot(TimestampMixin, Base):
     rollover_amount: Mapped[Decimal] = mapped_column(
         Numeric(15, 2), default=Decimal("0")
     )
+    # Alokasi dan pengeluaran periode itu (siklus household). NULL = snapshot lama yang
+    # belum dihitung ulang, bukan nol.
+    allocated_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    spent_amount: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("envelope_id", "year", "month", name="uq_snapshot_envelope_period"),

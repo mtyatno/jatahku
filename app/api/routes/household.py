@@ -1,6 +1,6 @@
 import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.services.ruang import RuangAktif, RuangTulis, keanggotaan, keanggotaan_keluarga
 from app.models.models import User, Household, HouseholdMember, HouseholdRole, HouseholdType, UserStreak
+from app.services.household_cycle import adopt_household_payday, household_payday
 
 settings = get_settings()
 router = APIRouter()
@@ -30,6 +31,13 @@ class HouseholdResponse(BaseModel):
     currency: str
     member_count: int
     type: str = "rumah_tangga"  # HouseholdType (Plugin R1)
+    payday_day: int
+
+
+class JoinRequest(BaseModel):
+    # Opsional: body tanpa kode (`{}`, `{"code": null}`) jatuh ke pesan 400 route ("Kode invite wajib diisi"), bukan 422
+    # validasi, dan `?code=X` dengan body `{}` tetap diterima (query didahulukan).
+    code: str | None = None
 
 
 class MemberResponse(BaseModel):
@@ -70,10 +78,12 @@ async def get_household(
         )
     )
     count = count_result.scalar()
+    payday = await household_payday(db, household)
 
     return HouseholdResponse(
         id=household.id, name=household.name,
         currency=household.currency, member_count=count, type=household.type,
+        payday_day=payday,
     )
 
 
@@ -188,12 +198,26 @@ async def create_invite(
 
 @router.post("/join")
 async def join_household(
-    code: str,
+    code: str | None = Query(None),
+    body: JoinRequest | None = Body(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Gabung ke household lewat kode invite: query `?code=` atau body JSON `{"code": ...}` (query didahulukan).
+    Hanya undangan ruang keluarga yang diterima (Plugin R2; undangan ruang usaha menyusul di R5). Anggota baru
+    mengikuti tanggal gajian household; `payday_day` di respons = tanggal household yang dimasuki."""
+    # Settings.jsx mengirim kode di body JSON; dulu hanya query yang diterima, jadi join dari web selalu 422.
+    # Query kosong (atau hanya spasi) → body. Dinormalkan seperti di bot: strip().upper().
+    invite = ""
+    for candidate in (code, body.code if body else None):
+        invite = (candidate or "").strip().upper()
+        if invite:
+            break
+    if not invite:
+        raise HTTPException(status_code=400, detail="Kode invite wajib diisi")
+
     r = await _redis()
-    household_id = await r.get(f"invite:{code}")
+    household_id = await r.get(f"invite:{invite}")
     await r.close()
 
     if not household_id:
@@ -229,16 +253,21 @@ async def join_household(
         role=HouseholdRole.member,
     )
     db.add(new_member)
-    await db.commit()
 
+    # Siklus anggaran ikut household (owner yang memutuskan). Diadopsi sebelum commit: keanggotaan dan tanggal
+    # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama". Jalur ini hanya
+    # menerima ruang keluarga (cek undangan di atas), yang siklusnya dicerminkan ke `users.payday_day`; jalur yang
+    # kelak memasukkan user ke ruang usaha (R5) membaca tanggalnya lewat `household_payday`, bukan mengadopsinya.
     result = await db.execute(
         select(Household).where(Household.id == UUID(household_id))
     )
     household = result.scalar_one()
+    payday = await adopt_household_payday(db, user, household)
+    await db.commit()
 
     # Delete used invite code
     r = await _redis()
-    await r.delete(f"invite:{code}")
+    await r.delete(f"invite:{invite}")
     await r.close()
 
-    return {"status": "joined", "household_name": household.name}
+    return {"status": "joined", "household_name": household.name, "payday_day": payday}
