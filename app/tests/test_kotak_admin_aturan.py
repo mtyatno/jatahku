@@ -121,9 +121,10 @@ class AdminRulesBase(unittest.IsolatedAsyncioTestCase):
 
 class ListRulesTests(AdminRulesBase):
     async def test_default_lists_pending_with_counts_over_all_statuses(self):
-        a = await self.rule("total bayar", users=2, created_at=T0)
-        b = await self.rule("jumlah", users=3, created_at=T0 + timedelta(hours=2))
-        c = await self.rule("total", users=2, created_at=T0 - timedelta(hours=1))
+        # id tetap, urutannya kebalikan created_at: urutan id saja tidak lolos (review L4a m-7).
+        a = await self.rule("total bayar", users=2, created_at=T0, id=uuid.UUID(int=1))
+        b = await self.rule("jumlah", users=3, created_at=T0 + timedelta(hours=2), id=uuid.UUID(int=3))
+        c = await self.rule("total", users=2, created_at=T0 - timedelta(hours=1), id=uuid.UUID(int=2))
         await self.rule("ke", kind="label_pihak", status="disetujui", decided_at=T0, decided_by=self.admin.id)
         await self.rule("tanggal", kind="label_tanggal", status="ditolak")
         await self.rule("penerima", kind="label_pihak", status="ditolak")
@@ -179,17 +180,24 @@ class ListRulesTests(AdminRulesBase):
                                 "label_total": "Total bayar Rp##.###"})
         self.assertFalse(any(ch.isdigit() for ex in rows.values() for ch in ex))
 
-    async def test_warning_for_status_or_method_words(self):
-        for value, kind in [("status", "label_pihak"), ("metode pembayaran", "label_total"),
-                            ("sumber dana", "label_pihak"), ("transaksi berhasil", "label_total"),
-                            ("total bayar", "label_total"), ("penerima", "label_pihak"),
-                            ("tanggal", "label_tanggal"), ("total pembayaran", "label_total"),
-                            ("total spending", "label_total")]:   # kata utuh: "spending" bukan "pending"
-            await self.rule(value, kind=kind)
+    async def test_warning_for_status_method_or_free_text_words(self):
+        expected = {
+            # kata status/metode/teks bebas -> peringatan
+            "status": True, "metode pembayaran": True, "sumber dana": True, "transaksi berhasil": True,
+            "keterangan": True, "catatan": True, "berita transfer": True, "pesan": True, "deskripsi": True,
+            "ref": True, "nomor referensi": True, "kode bayar": True, "transaksi gagal": True, "pending": True,
+            "dibatalkan": True, "batal": True,
+            # tanda baca dilepas seperti `safe_label` (review L4a m-4)
+            "(status) bayar": True, "status, bayar": True, "keterangan:": True,
+            # label wajar -> tanpa peringatan
+            "total bayar": False, "penerima": False, "tanggal": False, "total pembayaran": False,
+            "waktu selesai": False,     # label tanggal sungguhan (review L4a m-5)
+            "total spending": False,    # kata utuh: "spending" bukan "pending"
+        }
+        for value in expected:
+            await self.rule(value)
         rows = {x["value"]: x["warning"] for x in (await self.c.get("/admin/kotak/rules")).json()["rules"]}
-        self.assertEqual(rows, {"status": True, "metode pembayaran": True, "sumber dana": True,
-                                "transaksi berhasil": True, "total bayar": False, "penerima": False,
-                                "tanggal": False, "total pembayaran": False, "total spending": False})
+        self.assertEqual(rows, expected)
 
     async def test_list_never_writes(self):
         await self.rule("total bayar")
@@ -260,6 +268,22 @@ class DecisionTests(AdminRulesBase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual((await self.get_rule(r.id)).note, "x" * 200)
 
+    async def test_note_with_control_characters_is_422(self):
+        r = await self.rule("total bayar")
+        for note in ("a\x00b", "\x00", "baris\nbaru", "tab\tdi tengah", "bel\x07", "del\x7f", "c1\x85x"):
+            res = await self.act(r.id, "setujui", {"note": note})
+            self.assertEqual(res.status_code, 422, repr(note))
+        stored = await self.get_rule(r.id)
+        self.assertEqual((stored.status, stored.note), ("menunggu", None))
+        # spasi/baris baru di tepi dirapikan, bukan ditolak
+        res = await self.act(r.id, "setujui", {"note": "\n  cocok  \t"})
+        self.assertEqual((res.status_code, res.json()["note"]), (200, "cocok"))
+
+    async def test_note_is_trimmed_before_the_length_check(self):
+        r = await self.rule("total bayar")
+        res = await self.act(r.id, "setujui", {"note": "a" * 195 + " " * 10})
+        self.assertEqual((res.status_code, res.json()["note"]), (200, "a" * 195))
+
     async def test_blank_or_missing_note_is_null(self):
         a = await self.rule("total a")
         b = await self.rule("total b")
@@ -283,6 +307,141 @@ class DecisionTests(AdminRulesBase):
         self.assertEqual((await self.c.post("/admin/kotak/rules/bukan-uuid/setujui")).status_code, 422)
 
 
+class FromStatusTests(AdminRulesBase):
+    """Prasyarat status (review L4a m-2): `from_status` = status yang dilihat admin; UPDATE bersyarat status itu."""
+
+    async def test_concurrent_reject_then_approve_second_is_409(self):
+        r = await self.rule("total bayar")
+        first = await self.act(r.id, "tolak", {"note": "satu", "from_status": "menunggu"})
+        self.assertEqual(first.status_code, 200)
+        second = await self.act(r.id, "setujui", {"note": "dua", "from_status": "menunggu"})
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.json()["detail"], "Aturan ini tidak bisa diubah ke status itu")
+        stored = await self.get_rule(r.id)
+        self.assertEqual((stored.status, stored.note, stored.decided_by), ("ditolak", "satu", self.admin.id))
+
+    async def test_matching_from_status_succeeds_for_every_legal_source(self):
+        for i, (start, action, end) in enumerate([("menunggu", "setujui", "disetujui"), ("ditolak", "setujui",
+                                                  "disetujui"), ("dicabut", "setujui", "disetujui"),
+                                                 ("menunggu", "tolak", "ditolak"), ("disetujui", "cabut", "dicabut")]):
+            r = await self.rule(f"total {i}", status=start)
+            res = await self.act(r.id, action, {"from_status": start})
+            self.assertEqual((res.status_code, res.json()["status"]), (200, end), (start, action))
+
+    async def test_stale_or_illegal_from_status_is_409_and_changes_nothing(self):
+        cases = [("dicabut", "setujui", "ditolak"),     # sah untuk setujui, tetapi bukan status sekarang
+                 ("ditolak", "setujui", "menunggu"),
+                 ("menunggu", "cabut", "menunggu"),     # status cocok, transisi tidak sah
+                 ("disetujui", "tolak", "disetujui")]
+        for i, (start, action, seen) in enumerate(cases):
+            r = await self.rule(f"total {i}", status=start)
+            res = await self.act(r.id, action, {"from_status": seen, "note": "x"})
+            self.assertEqual(res.status_code, 409, (start, action, seen))
+            stored = await self.get_rule(r.id)
+            self.assertEqual((stored.status, stored.note), (start, None))
+
+    async def test_unknown_from_status_is_422(self):
+        r = await self.rule("total bayar")
+        for bad in ("semua", "apa", ""):
+            self.assertEqual((await self.act(r.id, "setujui", {"from_status": bad})).status_code, 422, bad)
+        self.assertEqual((await self.get_rule(r.id)).status, "menunggu")
+
+    async def test_from_status_on_unknown_id_is_404(self):
+        res = await self.act(uuid.uuid4(), "setujui", {"from_status": "menunggu"})
+        self.assertEqual(res.status_code, 404)
+
+    async def test_decide_with_expected_status(self):
+        r = await self.rule("total bayar", status="ditolak")
+        async with self.Session() as db:
+            with self.assertRaises(belajar.RuleConflict):
+                await belajar.decide(db, r.id, "setujui", by=self.admin.id, note=None, now=T0,
+                                     from_status="dicabut")
+            done = await belajar.decide(db, r.id, "setujui", by=self.admin.id, note=None, now=T0,
+                                        from_status="ditolak")
+            self.assertEqual(done.status, "disetujui")
+
+
+class ThresholdTests(AdminRulesBase):
+    """Aturan di bawah ambang (review L4a m-6): tidak bisa disetujui; `menunggu` diturunkan oleh rekonsiliasi."""
+
+    async def test_approve_below_threshold_is_409(self):
+        for i, start in enumerate(("menunggu", "ditolak", "dicabut")):
+            r = await self.rule(f"total {i}", status=start, users=1)
+            for body in (None, {"from_status": start}):
+                res = await self.act(r.id, "setujui", body)
+                self.assertEqual(res.status_code, 409, start)
+                self.assertEqual(res.json()["detail"], "Aturan belum didukung 2 user")
+            self.assertEqual((await self.get_rule(r.id)).status, start)
+
+    async def test_reject_and_revoke_below_threshold_still_allowed(self):
+        a = await self.rule("total a", users=1)
+        b = await self.rule("total b", status="disetujui", users=0)
+        self.assertEqual((await self.act(a.id, "tolak")).json()["status"], "ditolak")
+        self.assertEqual((await self.act(b.id, "cabut")).json()["status"], "dicabut")
+
+    async def test_stale_status_wins_over_threshold_message(self):
+        r = await self.rule("total a", status="disetujui", users=1)
+        res = await self.act(r.id, "setujui")
+        self.assertEqual(res.json()["detail"], "Aturan ini tidak bisa diubah ke status itu")
+
+    async def test_no_invalidate_when_below_threshold(self):
+        r = await self.rule("total a", users=1)
+        with patch.object(belajar, "invalidate_rules_cache") as inv:
+            self.assertEqual((await self.act(r.id, "setujui")).status_code, 409)
+        inv.assert_not_called()
+
+    async def test_reconcile_demotes_pending_rules_below_threshold(self):
+        # menunggu dengan 1 user (sesudah forget_user) -> baris dihapus, suara tetap
+        lone = await self.rule("total bayar", users=1, households=0)
+        await self.vote("total bayar", self.user)
+        # menunggu dengan hitungan basi 2 tetapi suara tinggal 1 -> dihitung ulang lalu dihapus
+        stale = await self.rule("jumlah", users=2)
+        await self.vote("jumlah", self.user2)
+        # menunggu tanpa suara -> dihapus
+        await self.rule("nominal", users=0, households=0)
+        # tetap: menunggu dengan 2 user, dan status keputusan di bawah ambang
+        keep = await self.rule("total", users=2, households=0)
+        await self.vote("total", self.user)
+        await self.vote("total", self.user2)
+        approved = await self.rule("ke", kind="label_pihak", status="disetujui", users=1, households=0)
+        await self.vote("ke", self.user, kind="label_pihak")
+        rejected = await self.rule("penerima", kind="label_pihak", status="ditolak", users=0, households=0)
+        dropped = await self.rule("tujuan", kind="label_pihak", status="dicabut", users=0, households=0)
+        async with self.Session() as db:
+            n = await belajar.reconcile_rules(db)
+            await db.commit()
+        self.assertEqual(n, 4)   # 1 hitung ulang (jumlah) + 3 dihapus (total bayar, jumlah, nominal)
+        async with self.Session() as db:
+            left = {r.id: (r.status, r.users) for r in (await db.execute(select(ProofRule))).scalars()}
+            votes = (await db.execute(select(ProofRuleVote.value))).scalars().all()
+        self.assertEqual(left, {keep.id: ("menunggu", 2), approved.id: ("disetujui", 1),
+                                rejected.id: ("ditolak", 0), dropped.id: ("dicabut", 0)})
+        self.assertNotIn(lone.id, left)
+        self.assertNotIn(stale.id, left)
+        self.assertEqual(sorted(votes), ["jumlah", "ke", "total", "total", "total bayar"])
+        async with self.Session() as db:
+            self.assertEqual(await belajar.reconcile_rules(db), 0)     # idempoten
+        # suara kedua -> aturan menunggu dibuat lagi oleh rekonsiliasi
+        await self.vote("total bayar", self.user2)
+        async with self.Session() as db:
+            self.assertEqual(await belajar.reconcile_rules(db), 1)
+            await db.commit()
+        async with self.Session() as db:
+            again = (await db.execute(select(ProofRule).where(ProofRule.value == "total bayar"))).scalar_one()
+        self.assertEqual((again.status, again.users), ("menunggu", 2))
+
+    async def test_pending_count_drops_after_demotion(self):
+        from app.services.receipt_scan import accuracy_stats
+        await self.rule("total bayar", users=1)
+        await self.vote("total bayar", self.user)
+        async with self.Session() as db:
+            self.assertEqual((await accuracy_stats(db))["rules_pending"], 1)
+            await belajar.reconcile_rules(db)
+            await db.commit()
+        async with self.Session() as db:
+            self.assertEqual((await accuracy_stats(db))["rules_pending"], 0)
+
+
 class CacheTests(AdminRulesBase):
     async def test_invalidate_runs_after_commit(self):
         """Commit LALU invalidate (L3): pembacaan yang dimulai sebelum commit tidak boleh menyimpan status lama."""
@@ -302,6 +461,25 @@ class CacheTests(AdminRulesBase):
         self.assertEqual(inv.call_count, 1)
         self.assertEqual(seen, ["commit", "invalidate"])
         self.assertEqual((await self.get_rule(r.id)).status, "disetujui")
+
+    async def test_invalidate_even_when_the_commit_reply_is_lost(self):
+        """COMMIT sampai ke database lalu klien melihat galat (review L4a m-1): cache tetap dibuang."""
+        from sqlalchemy.ext.asyncio import AsyncSession
+        r = await self.rule("total bayar", status="disetujui")
+        async with self.Session() as db:
+            self.assertEqual((await belajar.approved_rules(db))["gopay"]["label_total"], ["total bayar"])
+        original_commit = AsyncSession.commit
+
+        async def lost_reply(session):
+            await original_commit(session)
+            raise ConnectionResetError("balasan COMMIT hilang")
+
+        with patch.object(AsyncSession, "commit", lost_reply):
+            with self.assertRaises(ConnectionResetError):
+                await self.act(r.id, "cabut")
+        self.assertEqual((await self.get_rule(r.id)).status, "dicabut")
+        async with self.Session() as db:
+            self.assertEqual(await belajar.approved_rules(db), {})
 
     async def test_no_invalidate_on_404_or_409(self):
         r = await self.rule("total bayar", status="ditolak")

@@ -689,7 +689,8 @@ class ProofRuleVote(Base):
 class ProofRule(Base):
     """Aturan belajar bukti bayar: suara yang didukung >= RULE_MIN_USERS user berbeda, menunggu keputusan pemilik di
     Admin. `users`/`households` = pendukung berbeda, dihitung ulang tiap suara (dan saat user dilupakan); status
-    menunggu | disetujui | ditolak | dicabut, hanya diubah keputusan admin. Baris tidak pernah dihapus."""
+    menunggu | disetujui | ditolak | dicabut, hanya diubah keputusan admin. Baris yang sudah diputuskan tidak pernah
+    dihapus; baris `menunggu` di bawah ambang dihapus oleh rekonsiliasi tiap jam (suaranya tetap)."""
     __tablename__ = "proof_rules"
     __table_args__ = (
         UniqueConstraint("kind", "rule_key", "value", name="uq_proof_rule"),

@@ -34,7 +34,9 @@ Rumah tangga suara = `item.household_id` (layanan ini tidak menanyakan keanggota
 
 Hitungan `recount` dibaca di snapshot transaksi pemanggil: dua suara pertama dalam transaksi yang tumpang tindih bisa
 sama-sama melihat 1 user (aturan tidak dibuat), dan dua pembuat bersamaan bisa menyimpan hitungan lama (review L2 M-2).
-`reconcile_rules` menghitung ulang semuanya dari tabel suara dan dijalankan tiap jam oleh `kotak_maintenance`.
+`reconcile_rules` menghitung ulang semuanya dari tabel suara dan dijalankan tiap jam oleh `kotak_maintenance`; di sana
+aturan `menunggu` yang turun di bawah ambang (user dilupakan) dihapus lagi (suaranya tetap), dan `decide` tidak pernah
+menyetujui aturan di bawah ambang (review L4a m-6).
 
 Pembaca (L3): worker memuat aturan `disetujui` lewat `approved_rules` (cache modul RULE_CACHE_S detik) ke
 `ParseContext.rules`; pembaca QRIS/transfer/tidak dikenali mengambil labelnya dengan `learned_for` (= `profiles.learned_for`,
@@ -86,6 +88,7 @@ DECISIONS: dict[str, tuple[str, frozenset[str]]] = {
 }
 MSG_RULE_NOT_FOUND = "Aturan tidak ditemukan"
 MSG_RULE_CONFLICT = "Aturan ini tidak bisa diubah ke status itu"
+MSG_RULE_BELOW_THRESHOLD = f"Aturan belum didukung {RULE_MIN_USERS} user"
 
 KEY_MAX = 60                 # panjang kolom rule_key / value
 NAME_NGRAM_MAX = 6           # kata nama terpanjang (sama dengan kerangka.NAME_MAX_WORDS)
@@ -130,6 +133,10 @@ class RuleNotFound(LookupError):
 
 class RuleConflict(ValueError):
     """Aksi tidak sah untuk status aturan saat ini (409)."""
+
+
+class RuleBelowThreshold(RuleConflict):
+    """Setujui aturan yang pendukungnya kurang dari RULE_MIN_USERS (review L4a m-6) -> 409."""
 
 
 def today_wib() -> date:
@@ -313,9 +320,11 @@ async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id
 
 async def reconcile_rules(db: AsyncSession) -> int:
     """Samakan `proof_rules` dengan tabel suara (review L2 M-2): aturan yang hitungannya beda dihitung ulang, dan suara
-    >= RULE_MIN_USERS user tanpa baris aturan mendapat aturan `menunggu` (`recount`). Status tidak pernah diubah, baris
-    tidak pernah dihapus. Idempoten; jumlah aturan yang dibuat/diperbaiki. Tidak meng-commit (pemanggil: pemeliharaan
-    tiap jam, `maintenance.reconcile_proof_rules`)."""
+    >= RULE_MIN_USERS user tanpa baris aturan mendapat aturan `menunggu` (`recount`). Lalu aturan `menunggu` dengan
+    pendukung < RULE_MIN_USERS dihapus (review L4a m-6: belum pernah diputuskan, suaranya tetap, suara baru membuatnya
+    lagi); aturan yang sudah diputuskan tidak pernah dihapus dan statusnya tidak pernah diubah. Idempoten; jumlah aturan
+    yang dibuat/diperbaiki ditambah jumlah aturan yang dihapus. Tidak meng-commit (pemanggil: pemeliharaan tiap jam,
+    `maintenance.reconcile_proof_rules`)."""
     counted = {(kind, rule_key, value): (users, households) for kind, rule_key, value, users, households in (
         await db.execute(
             select(ProofRuleVote.kind, ProofRuleVote.rule_key, ProofRuleVote.value, func.count(),
@@ -330,7 +339,11 @@ async def reconcile_rules(db: AsyncSession) -> int:
                    and (key in stored or counted[key][0] >= RULE_MIN_USERS))
     for key in fixes:
         await recount(db, *key)
-    return len(fixes)
+    demoted = await db.execute(
+        delete(ProofRule).where(ProofRule.status == ST_MENUNGGU, ProofRule.users < RULE_MIN_USERS)
+        .execution_options(synchronize_session=False)
+    )
+    return len(fixes) + (demoted.rowcount or 0)
 
 
 async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:
@@ -355,23 +368,36 @@ def next_status(current: str | None, action: str) -> str | None:
 
 
 async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.UUID | None, note: str | None,
-                 now: datetime) -> ProofRule:
+                 now: datetime, from_status: str | None = None) -> ProofRule:
     """Keputusan admin atas satu aturan: UPDATE bersyarat (status asal yang sah, G5), jadi dua keputusan bersamaan
-    tidak saling menimpa diam-diam. Mengisi `decided_at`, `decided_by`, `note`. `RuleNotFound` bila id tidak ada,
+    tidak saling menimpa diam-diam. `from_status` (status yang dilihat admin, review L4a m-2) mempersempit syaratnya ke
+    status itu saja: tolak lalu setujui bersamaan dari `menunggu` -> yang kedua gagal, walaupun `ditolak` -> setujui
+    sah. Setujui juga mensyaratkan `users >= RULE_MIN_USERS` (review L4a m-6). Mengisi `decided_at`, `decided_by`,
+    `note`. `RuleNotFound` bila id tidak ada, `RuleBelowThreshold` bila status sah tetapi pendukung kurang,
     `RuleConflict` bila transisinya tidak sah. Tidak meng-commit; pemanggil juga membatalkan cache aturan."""
     decision = DECISIONS.get(action)
     if decision is not None:
         status, allowed = decision
-        done = await db.execute(
-            update(ProofRule).where(ProofRule.id == rule_id, ProofRule.status.in_(allowed))
-            .values(status=status, decided_at=now, decided_by=by, note=note)
-            .execution_options(synchronize_session=False)
-        )
-        if done.rowcount == 1:
-            return (await db.execute(select(ProofRule).where(ProofRule.id == rule_id)
-                                     .execution_options(populate_existing=True))).scalar_one()
-    if (await db.execute(select(ProofRule.id).where(ProofRule.id == rule_id))).scalar_one_or_none() is None:
+        if from_status is not None:
+            allowed = allowed & {from_status}
+        conditions = [ProofRule.id == rule_id, ProofRule.status.in_(sorted(allowed))]
+        if status == ST_DISETUJUI:
+            conditions.append(ProofRule.users >= RULE_MIN_USERS)
+        if allowed:
+            done = await db.execute(
+                update(ProofRule).where(*conditions)
+                .values(status=status, decided_at=now, decided_by=by, note=note)
+                .execution_options(synchronize_session=False)
+            )
+            if done.rowcount == 1:
+                return (await db.execute(select(ProofRule).where(ProofRule.id == rule_id)
+                                         .execution_options(populate_existing=True))).scalar_one()
+    current = (await db.execute(select(ProofRule.status, ProofRule.users).where(ProofRule.id == rule_id))).one_or_none()
+    if current is None:
         raise RuleNotFound(MSG_RULE_NOT_FOUND)
+    if decision is not None and decision[0] == ST_DISETUJUI and current.status in allowed \
+            and current.users < RULE_MIN_USERS:
+        raise RuleBelowThreshold(MSG_RULE_BELOW_THRESHOLD)
     raise RuleConflict(MSG_RULE_CONFLICT)
 
 

@@ -4,14 +4,19 @@
   membawa contoh SINTETIS (label + "Rp##.###", tanpa data user) dan `warning` bila label memuat kata status/metode
   (aturan seperti itu tidak bisa melewati blokir status, tetapi bisa membuat nama/nominal yang salah tampak yakin).
 - `POST /admin/kotak/rules/{id}/setujui|tolak|cabut` — keputusan pemilik (transisi G5 di `belajar.DECISIONS`;
-  selain itu 409, id tidak ada 404). Body hanya `note` (≤ 200 karakter): teks, jenis, kunci, dan status aturan tidak
-  pernah diambil dari klien, karena pembaca mempercayai bahwa nilai aturan adalah label aman dari suara. Commit LALU
-  `invalidate_rules_cache()` (L3), supaya pembaca memakai keputusan baru tanpa menunggu cache 5 menit.
+  selain itu 409, id tidak ada 404; setujui aturan dengan < 2 user juga 409). Body hanya `note` (≤ 200 karakter
+  sesudah dirapikan, tanpa karakter kontrol) dan `from_status` opsional (status yang dilihat admin; keputusan hanya
+  berlaku bila aturan masih berstatus itu, jadi dua keputusan bersamaan tidak saling menimpa). Teks, jenis, kunci, dan
+  hitungan aturan tidak pernah diambil dari klien, karena pembaca mempercayai bahwa nilai aturan adalah label aman dari
+  suara. Commit LALU `invalidate_rules_cache()` (L3), supaya pembaca memakai keputusan baru tanpa menunggu cache
+  5 menit; juga bila balasan commit gagal (commit bisa saja sudah sampai), karena memuat ulang hanya membaca isi
+  database.
 - `GET /admin/kotak/votes` — angka suara per (aplikasi, jenis): jumlah user berbeda dan jumlah label berbeda, termasuk
   pola satu user, TANPA teks label (G6: ambang 2 user ada untuk menyembunyikan data satu user).
 
 Daftar dibaca langsung dari tabel, bukan dari cache pembaca `approved_rules` (hanya yang disetujui, tanpa hitungan).
 """
+import unicodedata
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
@@ -25,17 +30,20 @@ from app.core.database import get_db
 from app.core.deps import require_admin
 from app.models.models import ProofRule, ProofRuleVote, User
 from app.services.kotak_struk import belajar
+from app.services.kotak_struk.kerangka import _words as label_words   # normalisasi kata yang sama dengan safe_label
 
 router = APIRouter()
 
 NOTE_MAX = 200   # = kolom proof_rules.note String(200); `decide` tidak memotong
 
-# Kata status dan metode/sumber dana: label seperti "status" atau "metode pembayaran" hampir pasti bukan label
-# nominal/penerima/tanggal (review L2, catatan L3). Hanya peringatan untuk pemilik, bukan gerbang.
+# Kata status, metode/sumber dana, dan label teks bebas (keterangan transfer user, nomor referensi): label seperti
+# "status", "metode pembayaran", atau "keterangan" hampir pasti bukan label nominal/penerima/tanggal (review L2,
+# catatan L3, review L4a m-5). Hanya peringatan untuk pemilik, bukan gerbang. "selesai" sengaja tidak: "waktu selesai"
+# label tanggal sungguhan.
 WARNING_WORDS = frozenset({
-    "status", "berhasil", "sukses", "success", "successful", "gagal", "failed", "pending", "diproses", "processing",
-    "selesai", "completed", "dibatalkan", "ditolak", "batal", "rejected", "cancelled", "canceled", "void",
-    "metode", "method", "sumber", "source",
+    "status", "berhasil", "gagal", "pending", "dibatalkan", "batal",
+    "metode", "sumber",
+    "keterangan", "catatan", "berita", "pesan", "deskripsi", "ref", "referensi", "kode",
 })
 
 # Contoh sintetis per jenis: hanya label aturan + nilai tersamar.
@@ -82,14 +90,25 @@ class RuleDecisionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     note: Optional[str] = Field(default=None, max_length=NOTE_MAX)
+    # Status yang dilihat admin (review L4a m-2). Tanpa field ini: syaratnya semua status asal yang sah (G5).
+    from_status: Optional[Literal["menunggu", "disetujui", "ditolak", "dicabut"]] = None
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        """Dirapikan SEBELUM batas panjang; kosong -> null."""
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
 
     @field_validator("note")
     @classmethod
-    def _blank_is_none(cls, v):
-        if v is None:
-            return None
-        v = v.strip()
-        return v or None
+    def _no_control_chars(cls, v):
+        """NUL dan karakter kontrol lain (baris baru, tab, C1) -> 422, bukan galat database (review L4a m-3)."""
+        if v is not None and any(unicodedata.category(ch) == "Cc" for ch in v):
+            raise ValueError("Catatan tidak boleh memuat karakter kontrol")
+        return v
 
 
 class ProofVoteRow(BaseModel):
@@ -110,14 +129,15 @@ def synthetic_example(kind: str, value: str) -> str:
 
 
 def has_warning(value: str) -> bool:
-    return bool(set(value.lower().split()) & WARNING_WORDS)
+    """Kata utuh, tanda baca di tepi kata dilepas seperti `safe_label` ("(status) bayar", "keterangan:")."""
+    return bool(set(label_words(value)) & WARNING_WORDS)
 
 
 def _rule_out(rule: ProofRule, decided_by_name: str | None) -> ProofRuleOut:
     return ProofRuleOut(
         id=rule.id, kind=rule.kind, rule_key=rule.rule_key, value=rule.value, users=rule.users,
         households=rule.households, status=rule.status, created_at=rule.created_at, decided_at=rule.decided_at,
-        decided_by=rule.decided_by, decided_by_name=decided_by_name if rule.decided_by is not None else None,
+        decided_by=rule.decided_by, decided_by_name=decided_by_name,
         note=rule.note, example=synthetic_example(rule.kind, rule.value), warning=has_warning(rule.value),
     )
 
@@ -142,16 +162,20 @@ async def list_rules(
 
 
 async def _decide(action: str, rule_id: UUID, body: RuleDecisionIn | None, admin: User, db: AsyncSession) -> ProofRuleOut:
-    note = body.note if body is not None else None
+    body = body or RuleDecisionIn()
     try:
-        rule = await belajar.decide(db, rule_id, action, by=admin.id, note=note, now=datetime.now(timezone.utc))
+        rule = await belajar.decide(db, rule_id, action, by=admin.id, note=body.note, now=datetime.now(timezone.utc),
+                                    from_status=body.from_status)
     except belajar.RuleNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except belajar.RuleConflict as e:
+    except belajar.RuleConflict as e:          # juga RuleBelowThreshold
         raise HTTPException(status_code=409, detail=str(e))
     out = _rule_out(rule, admin.name)
-    await db.commit()
-    belajar.invalidate_rules_cache()   # SESUDAH commit (L3)
+    try:
+        await db.commit()
+    finally:
+        # SESUDAH percobaan commit (L3; review L4a m-1): bila balasan COMMIT hilang, keputusan mungkin sudah tersimpan.
+        belajar.invalidate_rules_cache()
     return out
 
 
