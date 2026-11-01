@@ -139,6 +139,11 @@ class PagarSumberTests(unittest.TestCase):
             ("PATCH", "/ruang/{rid}/anggota/{uid}"), ("DELETE", "/ruang/{rid}/anggota/{uid}"),
             ("PUT", "/ruang/{rid}/anggota/{uid}/batasan"), ("POST", "/ruang/{rid}/undangan"),
             ("POST", "/ruang/{rid}/persetujuan/{draf_id}/setujui"), ("POST", "/ruang/{rid}/persetujuan/{draf_id}/tolak"),
+            # H1: ruang dari path (`_ruang_kelola` → `ruang_objek`, lalu peran owner/admin).
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/pasang"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/jeda"),
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/copot"),
         }
         tulis = {("POST", "/household/invite")}
         # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,

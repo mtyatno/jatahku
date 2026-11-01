@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
-    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text
+    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -808,4 +808,87 @@ class RuangAudit(Base):
     aksi: Mapped[str] = mapped_column(String(40))
     target_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     rincian: Mapped[dict] = mapped_column(_JSON_R5, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- Plugin H1: host plugin (docs/plugin/01-kajian.md "Tabel pengelola", ADR-P9, P11, P15) ---
+
+class PluginInstallation(Base):
+    """Status satu plugin di satu ruang. `status` = installed | active | paused | uninstalled
+    (`app/plugins/host/siklus.py` satu-satunya penulis). Dicopot = arsip: baris tetap ada sampai
+    `purge_after`, lalu job pembersih menghapusnya bersama data `p_<id>_*` (ADR-P15).
+
+    Saklar darurat sengaja TIDAK disimpan di sini (AppSetting `plugin_saklar_darurat`), supaya
+    status asli tiap ruang utuh saat saklar dimatikan lagi. `owner_id` terisi hanya untuk plugin
+    bercakupan pribadi (belum ada; ADR-P11), jadi keunikan ruang memakai indeks parsial: NULL
+    tidak pernah dianggap sama oleh UNIQUE biasa."""
+    __tablename__ = "plugin_installations"
+    __table_args__ = (
+        Index("uq_plugin_installation_ruang", "household_id", "plugin_id", unique=True,
+              postgresql_where=text("owner_id IS NULL"), sqlite_where=text("owner_id IS NULL")),
+        Index("uq_plugin_installation_pribadi", "household_id", "plugin_id", "owner_id", unique=True,
+              postgresql_where=text("owner_id IS NOT NULL"), sqlite_where=text("owner_id IS NOT NULL")),
+        Index("ix_plugin_installations_household_status", "household_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    plugin_id: Mapped[str] = mapped_column(String(40))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20))
+    installed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_permissions: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    settings: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
+    data_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    disabled_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    uninstalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Entitlement(Base):
+    """Hak atas SKU (`pro`, `plugin.<id>`, `bundle.usaha`) per user ATAU per ruang (ADR-P12:
+    Paket Usaha per ruang). H1 hanya membuat tabel dan pembacanya; belum ada yang ditolak
+    karena hak selama beta (ADR-P13, keputusan R3 B). Pro yang ada tetap di `users.plan`."""
+    __tablename__ = "entitlements"
+    __table_args__ = (
+        CheckConstraint("user_id IS NOT NULL OR household_id IS NOT NULL", name="ck_entitlement_pemilik"),
+        UniqueConstraint("source", "external_ref", name="uq_entitlement_sumber_rujukan"),
+        Index("ix_entitlements_household_sku", "household_id", "sku"),
+        Index("ix_entitlements_user_sku", "user_id", "sku"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    household_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=True)
+    sku: Mapped[str] = mapped_column(String(60))
+    source: Mapped[str] = mapped_column(String(20))        # transfer | promo | play | appstore | gateway | beta
+    status: Mapped[str] = mapped_column(String(20), default="aktif", server_default="aktif")  # aktif | berakhir | dicabut
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PluginAuditLog(Base):
+    """Jejak siapa memasang, memulihkan, melanjutkan, menjeda, mencopot, atau membersihkan
+    plugin di ruang mana (H1), dan akses data sensitif oleh plugin (H2, `PluginContext`).
+    Hanya ditambah, tidak pernah diubah."""
+    __tablename__ = "plugin_audit_log"
+    __table_args__ = (
+        Index("ix_plugin_audit_log_household_created", "household_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    plugin_id: Mapped[str] = mapped_column(String(40))
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(30))
+    detail: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

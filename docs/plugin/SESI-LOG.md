@@ -4,6 +4,60 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## H1 · Host inti · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #176, issue #149; review keamanan terpisah lulus 2 Nov, temuan 1–5 dikerjakan di branch ini)
+- `app/plugins/host/manifest.py`: skema manifest (pydantic, kunci asing ditolak) dengan aturan T1: penerbit "Jatahku" (ADR-P9); izin dari `IZIN`, `ai:analyze`/`network:*` ditolak (ADR-P14); cakupan `ruang` saja (ADR-P11); awalan `p_<id>_` untuk tabel dan `<id>.` untuk kartu/aksi/notifikasi; perintah bot `kind: read` + `audience` wajib; aksi cepat ≤ 2; copot = `archive_90_days` (ADR-P15); `engines.plugin_api` dicocokkan dengan `PLUGIN_API_VERSION` 1.0.0.
+- `registry.py`: muat `app/plugins/<id>/manifest.json` (folder `host`, `sdk`, `_*` dilewati); aturan antarplugin (folder = id, `requires` ada/tidak melingkar/mendukung jenis ruang, `conflicts` ada, prefix callback/perintah bot/aturan advisor/flag unik). Mode ketat (CI, tes) vs mode start (lewati yang rusak dan pemakainya, `log.error`). `muat_saat_start()` di lifespan mencetak `🧩 plugin dimuat: …`.
+- `validator.py` + langkah "Validator manifest plugin" di workflow "Tes".
+- `siklus.py` (satu-satunya penulis `plugin_installations`/`plugin_audit_log`): pasang (tanpa wizard → active, dengan `contributes.setup` → installed), lanjut, jeda, copot (`purge_after` +90 hari), pulihkan (pasang pada arsip = baris yang sama); idempoten tanpa audit ganda; jenis ruang, requires, conflicts dua arah, `dibutuhkan_plugin_lain`; flag `plugin_<id>_users` (pasang butuh flag, jeda/copot tidak); saklar darurat `plugin_saklar_darurat` (pasang/lanjut 503, jeda/copot boleh, status per ruang utuh); hak dari `entitlements` hanya ditampilkan; `aktif_di_ruang()` untuk H2/H3; `bersihkan_kedaluwarsa()`.
+- Model + migrasi `a7e3c1f5d9b2`: `plugin_installations` (indeks unik parsial `owner_id IS NULL` / `IS NOT NULL`), `entitlements` (cek pemilik user atau ruang, unik `source`+`external_ref`), `plugin_audit_log`.
+- `app/api/routes/plugins.py`: `GET /plugins` (`RuangAktif`), `POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang|lanjut|jeda|copot` (ruang dari path lewat `ruang_objek`, lalu owner/admin).
+- Tes `app/tests/test_plugin_host.py` (33): manifest, registry, validator, HTTP (siklus, IDOR, peran, header tidak menentukan ruang tulis, flag R4, requires/conflicts, saklar, flag dicabut, pembersih, keunikan). Pagar `test_ruang_pagar`: empat route tulis baru di kelompok `objek`.
+- Dokumen: kontrak §5 v1 (katalog + siklus; `contributions` tetap v0 untuk H3) dan §7 (6 kode baru); checklist deploy H1 di `AGENTS.md` (+ saklar darurat, urutan migrasi dengan R5); `00-indeks.md`; `PROGRESS.md` (R3, R4 selesai).
+- Merge `main` (R4 #174) di branch: konflik `main.py`, `AGENTS.md`, `00-indeks.md`, `PROGRESS.md`.
+- Tes: unittest 2426 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, sama dengan `main`) · node --test 628 (`src/lib`; 653 dengan `src/native`) · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · `openapi_cek` tanpa perubahan memutus.
+
+- **Review keamanan terpisah (2 Nov):** semua gerbang H1 lulus, tidak ada temuan yang memblokir. Temuan yang dikerjakan di branch ini:
+  1. **Sedang:** race `requires`/`conflicts` (`pasang a` ∥ `pasang b` yang bentrok, `jeda`/`copot a` ∥ `pasang` plugin yang butuh `a`) lolos 13–15/20 di PostgreSQL. Sekarang `_kunci_ruang` (FOR UPDATE baris `households`) di awal pasang/lanjut/jeda/copot: 0/20.
+  2. **Rendah:** validator menerima perintah bot inti (`/start`, `/lock`), prefix callback yang ditangkap pola inti (`lock_`, `kn_`, `ky_`, `batch_`), dan `flag` berupa kunci AppSetting inti. Sekarang ditolak lewat `PERINTAH_INTI`, `POLA_CALLBACK_INTI`, dan pola `plugin_<nama>_users`; tes memastikan konstanta itu sama dengan `bot_commands()`/`bot_callbacks()`.
+  3. **Rendah:** `lanjut` mengabaikan flag rollout. Sekarang 404 `plugin_tidak_ada` seperti pasang.
+  4. **Info:** nama plugin tersembunyi bisa ditebak dari beda `plugin_tidak_aktif` vs `plugin_tidak_ada`. Sekarang seragam.
+  5. **Info:** saklar darurat kini tidak peka huruf besar-kecil.
+
+**Digantung**
+- Dari review (info, sengaja tidak dikerjakan di H1): persetujuan izin belum terikat ke daftar izin yang ditampilkan (klien bisa mengirim versi manifest, server 409 bila beda; bersama layar izin H3); toggle saklar dan flag tidak tercatat di `plugin_audit_log` (hanya lewat `PUT /admin/settings` yang tidak diaudit); FK CASCADE ke `households` ikut menghapus hak berbayar dan jejak audit saat ruang dihapus (keputusan sadar di V1); jalur `IntegrityError` di `pasang` memakai `rollback` penuh, aman sekarang (kunci ruang membuatnya hampir tak terjangkau di PostgreSQL), pertimbangkan savepoint di H2.
+- Urutan migrasi dengan R5 (#175): **beres 2 Nov**. R5 di-merge lebih dulu; `main` di-merge ke branch dan `down_revision` H1 dipindah ke `c5r5a8e2d417`. Checklist H1 langkah 2 kini mensyaratkan `alembic current` = `c5r5a8e2d417`.
+- Job pembersih arsip belum dijadwalkan: ADR-P15 butuh pemberitahuan 7 hari sebelumnya dan hook hapus data `p_*` per plugin (H2 `notifications`/`jobs`, U1). Baru relevan ≥ 90 hari setelah copot pertama.
+- Endpoint ekspor (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`) di U1; `copot` menjawab `ekspor: null` sampai itu.
+- Titik `settings` (form dari JSON Schema + validasi server): `pasang` menolak `pengaturan` tidak kosong (422). `jsonschema` bukan dependensi produksi: pilih pustaka atau validator sendiri di H2/U1.
+- Validator: tabrakan prefix callback plugin dengan callback bot inti, dan pemeriksaan pemanggilan `PluginContext` terhadap izin, di H2.
+- Izin yang bertambah di manifest versi baru belum memicu persetujuan ulang untuk instalasi yang sudah aktif (`granted_permissions` hanya diperbarui saat pasang/pulihkan). `PluginContext` (H2) harus memeriksa `granted_permissions`, bukan izin manifest.
+- `butuh_paket_usaha` (402) belum ditegakkan (V1).
+- Hapus akun/ruang: FK `plugin_installations` dan `plugin_audit_log` ke `households` CASCADE, ke `users` SET NULL (`installed_by`, `actor_id`) atau CASCADE (`owner_id`); `account_deletion.py` belum perlu diubah selama tabel `p_*` belum ada.
+
+**Jebakan**
+- Sejak R4, `ruang_objek` juga menolak ruang usaha di luar flag `ruang_usaha_users`. Tes yang memakai ruang usaha harus mengisi flag itu (`AppSetting ruang_usaha_users`), kalau tidak semua aksi 404.
+- `logging` tidak dikonfigurasi di API: `log.info` tidak sampai ke journal. Ringkasan start memakai `print` seperti baris start lain; galat per plugin tetap `log.error`.
+- UNIQUE biasa pada `(household_id, plugin_id, owner_id)` tidak mencegah dua baris saat `owner_id` NULL; pakai indeks parsial (model dan migrasi harus identik, dicek `alembic check`).
+- `npm run build` mengubah `frontend/dist/index.html` yang ter-track: `git checkout -- frontend/dist` sebelum commit.
+- `pyflakes app/main.py` gagal karena dua import lama yang tidak terpakai (sudah di `main`); jangan dijadikan syarat di rantai `&&`.
+
+**Keputusan kecil**
+- Status API: `tersedia | terpasang | aktif | dijeda | arsip` (v0 tanpa `aktif`, dengan `dicopot`). `lanjut` juga menjadi "wizard selesai" (installed → active).
+- Bukan anggota, ruang tidak ada, atau ID bukan UUID → 404 `ruang_tidak_ada`; member → 403 `khusus_admin`; plugin tidak dikenal atau di luar flag saat pasang → 404 `plugin_tidak_ada`.
+- Pulihkan memakai baris yang sama dan menyetujui ulang izin manifest versi sekarang.
+- Katalog tetap menampilkan plugin yang punya baris instalasi walau flag dicabut, supaya bisa dijeda/dicopot.
+- `hak` tanpa baris entitlement = `uji_coba` (beta, ADR-P13); tanpa SKU di manifest = `gratis`.
+- Saklar darurat tidak memblokir jeda dan copot.
+
+**Cara melanjutkan**
+- Review keamanan sudah lulus (2 Nov). Merge ditahan sampai pemilik bisa menjalankan migrasi di VPS pada jam yang sama.
+- Sebelum merge: checklist "Plugin R5" sudah jalan di VPS (`alembic current` = `c5r5a8e2d417`), lalu "Urutan merge PR bermigrasi" dan checklist "Plugin H1" di `AGENTS.md`.
+- Berikutnya `/sesi-plugin H2` (PluginContext dan titik ekstensi server; butuh H1 selesai), atau R5/R8 di jalur ruang usaha.
+
+---
+
 ## R5 · Peran, batasan, persetujuan di server · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #175, menunggu review keamanan terpisah; issue #145)

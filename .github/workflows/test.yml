@@ -28,6 +28,11 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
           JWT_SECRET: test-secret
         run: python -m unittest discover -s app/tests -t .
+      - name: Validator manifest plugin
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+          JWT_SECRET: test-secret
+        run: python -m app.plugins.host.validator
 
   frontend:
     runs-on: ubuntu-latest
