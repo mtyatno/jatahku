@@ -5117,5 +5117,892 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py StatusLineUnderTheLogoTests.test_status_title_is_not_the_name"
+ },
+ {
+  "id": "l5-failed-dibatalkan-judul",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Transfer Dibatalkan",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-ditolak-label",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "Status: Ditolak",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-cancelled-judul-qris",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "QRIS",
+   "Payment cancelled",
+   "Merchant TOKO A",
+   "Amount Rp25.000",
+   "NMID ID1024358806544",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-batal-judul",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transaksi Batal",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-ditolak-judul-qris",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Pembayaran Ditolak",
+   "QRIS",
+   "Merchant TOKO A",
+   "Rp 25.000",
+   "NMID ID1024358806544",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-rejected-judul",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Payment rejected",
+   "Recipient BUDI",
+   "Bank BCA",
+   "Amount Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-canceled-judul",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transaction canceled",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-void-judul",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transaksi Void",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-dibatalkan-judul-telah",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transaksi Anda telah dibatalkan",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-dibatalkan-saja",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "DANA",
+   "Dibatalkan",
+   "Ke SITI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-ditolak-saja",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "DANA",
+   "Ditolak",
+   "Ke SITI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-rejected-saja",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "DANA",
+   "Rejected",
+   "Ke SITI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-cancelled-saja",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "DANA",
+   "Cancelled!",
+   "Ke SITI",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-ditolak-label-sebaris",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "BCA mobile",
+   "26/10/2026 08:12",
+   "Ke BUDI",
+   "Status Transaksi Ditolak",
+   "Nominal Rp150.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-batal-label",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "Status: Batal",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-void-label",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "Status: VOID",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-dibatalkan-judul-badan",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "26/10/2026 08:12",
+   "No. Ref 2026102612345678",
+   "Transfer Dibatalkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-transfer-rejected",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transfer",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Status: Rejected"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-gopay-qris-rejected",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp64.900",
+   "Indomaret",
+   "Rincian transaksi",
+   "Status  Rejected",
+   "Waktu  15:10",
+   "Tanggal  30 Okt 2026",
+   "Acquirer Name  gopay",
+   "Merchant Name  Indomaret",
+   "Merchant PAN  …6860",
+   "Terminal ID  A01",
+   "Total  Rp64.900"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-transfer-canceled",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transfer",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Status: Canceled"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-gopay-qris-canceled",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp64.900",
+   "Indomaret",
+   "Rincian transaksi",
+   "Status  Canceled",
+   "Waktu  15:10",
+   "Tanggal  30 Okt 2026",
+   "Acquirer Name  gopay",
+   "Merchant Name  Indomaret",
+   "Merchant PAN  …6860",
+   "Terminal ID  A01",
+   "Total  Rp64.900"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-transfer-kartu-ditolak",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "Transfer",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Status: Kartu ditolak"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-label-gopay-qris-kartu-ditolak",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp64.900",
+   "Indomaret",
+   "Rincian transaksi",
+   "Status  Kartu ditolak",
+   "Waktu  15:10",
+   "Tanggal  30 Okt 2026",
+   "Acquirer Name  gopay",
+   "Merchant Name  Indomaret",
+   "Merchant PAN  …6860",
+   "Terminal ID  A01",
+   "Total  Rp64.900"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-failed-gopay-blok-dibatalkan",
+  "tags": [
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Transfer ke penerima dibatalkan",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-01",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Jika transaksi dibatalkan, dana kembali dalam 3 hari"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-01",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Jika transaksi dibatalkan, dana kembali dalam 3 hari"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-02",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Barang yang sudah dibeli tidak dapat dibatalkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-02",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Barang yang sudah dibeli tidak dapat dibatalkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-03",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi tidak dapat dibatalkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-03",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Transaksi tidak dapat dibatalkan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-04",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi yang dibatalkan tidak dapat dikembalikan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-04",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Transaksi yang dibatalkan tidak dapat dikembalikan"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-05",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Pembayaran akan dibatalkan otomatis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-05",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Pembayaran akan dibatalkan otomatis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-06",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi dibatalkan otomatis jika tidak dibayar"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-06",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Transaksi dibatalkan otomatis jika tidak dibayar"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-07",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Transaksi dibatalkan? Hubungi 14017"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-07",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Transaksi dibatalkan? Hubungi 14017"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-08",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Pengaduan transaksi dibatalkan: 14017"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-08",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Pengaduan transaksi dibatalkan: 14017"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-09",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Payment cannot be cancelled"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-09",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Payment cannot be cancelled"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-10",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "Batal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-10",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "Batal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-kaki-11",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "Jl. Merdeka 1",
+   "30/10/2026 15:10",
+   "ROTI 1 x 15.000 15.000",
+   "SUSU 2 x 6.000 12.000",
+   "TELUR 1 x 28.000 28.000",
+   "TOTAL 55.000",
+   "TUNAI 60.000",
+   "KEMBALI 5.000",
+   "VOID"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-proof-kaki-11",
+  "tags": [
+   "proof"
+  ],
+  "lines": [
+   "Transfer Berhasil",
+   "Penerima BUDI",
+   "Bank Tujuan BCA",
+   "Nominal Rp50.000",
+   "30 Okt 2026 09:31",
+   "VOID"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-store-void-baris",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "01-10-2026 08:15",
+   "KOPI 1 15.000",
+   "VOID 1 KOPI 15.000",
+   "ROTI 1 10.000",
+   "SUSU 1 5.000",
+   "TOTAL 15.000",
+   "TUNAI 15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-probe-tombol-batal-1",
+  "tags": [
+   "probe"
+  ],
+  "lines": [
+   "QRIS",
+   "Menunggu pembayaran",
+   "Merchant TOKO A",
+   "Total Rp25.000",
+   "NMID ID1024358806544",
+   "26/10/2026 08:12",
+   "Batal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-probe-tombol-batal-2",
+  "tags": [
+   "probe"
+  ],
+  "lines": [
+   "QRIS",
+   "Batal",
+   "Menunggu pembayaran",
+   "Merchant TOKO A",
+   "Total Rp25.000",
+   "NMID ID1024358806544"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
+ },
+ {
+  "id": "l5-probe-tombol-batal-3",
+  "tags": [
+   "probe"
+  ],
+  "lines": [
+   "Menunggu pembayaran",
+   "Transfer ke BUDI",
+   "Nominal Rp50.000",
+   "Bayar",
+   "Batal"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py CancelledVocabularyTests (L5)"
  }
 ]

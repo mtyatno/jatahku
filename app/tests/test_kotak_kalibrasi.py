@@ -909,9 +909,10 @@ class NegatedSuccessAndPaymentNounTests(unittest.IsolatedAsyncioTestCase):
                         res = await read(make(value), enabled=enabled)
                         self.assertEqual(res.parsed.doc.status, status)
                         self.assertIn(check, [c.code for c in res.checks])
-        # Dua baris probes9 lainnya: tidak memblokir/memperingatkan seperti di main (saklar mati), dan saklar menyala tidak
-        # pernah membacanya berhasil (gagal atau tidak_diketahui: keputusan pemilik / nilai ambigu, tidak dikunci di sini).
-        for value in ("Kartu ditolak", "Refund gagal"):
+        # Baris probes9 lainnya: tidak memblokir/memperingatkan seperti di main (saklar mati), dan saklar menyala tidak
+        # pernah membacanya berhasil (gagal atau tidak_diketahui: nilai ambigu, tidak dikunci di sini). "Kartu ditolak"
+        # sejak Task L5 (keputusan pemilik 3) = gagal di kedua saklar: `CancelledVocabularyTests`.
+        for value in ("Refund gagal",):
             for name, make in (("transfer", transfer_with_status), ("qris", gopay_qris_with_status)):
                 for enabled in (True, False):
                     with self.subTest(value, layout=name, enabled=enabled):
@@ -1365,3 +1366,179 @@ class RewardFooterTests(unittest.IsolatedAsyncioTestCase):
                              ("Pembayaran belum diterima, harap tunggu", "pending"), ("Dana belum masuk", "pending")):
             with self.subTest(text):
                 self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), status)
+
+
+# ── Tahap 1 Kotak Belajar, Task L5: kosakata "dibatalkan/ditolak" → gagal (spec §7) ─────────────
+
+D_L5 = "26/10/2026 08:12"
+# Bukti dibatalkan/ditolak yang diblokir seperti gagal di kedua saklar (nama dan nomor rekaan).
+CANCELLED_PROOFS = {
+    "judul transfer": ["GoPay", "Transfer Dibatalkan", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "label status": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: Ditolak", D_L5],
+    "payment cancelled": ["QRIS", "Payment cancelled", "Merchant TOKO A", "Amount Rp25.000", "NMID ID1024358806544", D_L5],
+    "transaksi batal": ["Transaksi Batal", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "pembayaran ditolak": ["Pembayaran Ditolak", "QRIS", "Merchant TOKO A", "Rp 25.000", "NMID ID1024358806544", D_L5],
+    "payment rejected": ["Payment rejected", "Recipient BUDI", "Bank BCA", "Amount Rp50.000", D_L5],
+    "transaction canceled": ["Transaction canceled", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "transaksi void": ["Transaksi Void", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "telah dibatalkan": ["Transaksi Anda telah dibatalkan", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "kata saja dibatalkan": ["DANA", "Dibatalkan", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja ditolak": ["DANA", "Ditolak", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja rejected": ["DANA", "Rejected", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja cancelled": ["DANA", "Cancelled!", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "status transaksi ditolak": ["BCA mobile", D_L5, "Ke BUDI", "Status Transaksi Ditolak", "Nominal Rp150.000"],
+    "status batal": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: Batal", D_L5],
+    "status void": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: VOID", D_L5],
+    "judul di badan": ["Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5, "No. Ref 2026102612345678",
+                       "Transfer Dibatalkan"],
+}
+# Label status dengan nilai dibatalkan/ditolak pada tata letak transfer dan QRIS GoPay (kedua saklar).
+CANCELLED_VALUES = ("Dibatalkan", "Ditolak", "Batal", "Void", "Rejected", "Cancelled", "Canceled", "Kartu ditolak",
+                    "Transaksi dibatalkan")
+# Kaki bersyarat/kebijakan/tanya: bukan status, tidak pernah menghitung kata dibatalkan/ditolak.
+CANCEL_FOOTERS = ("Jika transaksi dibatalkan, dana kembali dalam 3 hari",
+                  "Barang yang sudah dibeli tidak dapat dibatalkan",
+                  "Transaksi tidak dapat dibatalkan",
+                  "Transaksi yang dibatalkan tidak dapat dikembalikan",
+                  "Pembayaran akan dibatalkan otomatis",
+                  "Transaksi dibatalkan otomatis jika tidak dibayar",
+                  "Transaksi dibatalkan? Hubungi 14017",
+                  "Pengaduan transaksi dibatalkan: 14017",
+                  "Payment cannot be cancelled",
+                  "Batal",
+                  "VOID")
+
+
+class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
+    """Task L5 (spec §7, keputusan pemilik 3): "dibatalkan", "ditolak", "batal", "rejected", "cancelled"/"canceled", "void"
+    = gagal, hanya di judul status (kata benda transaksi + kata itu), nilai label status pembayaran, dan baris berstatus saja
+    di 4 baris pertama (bukan "Batal"/"Void" tanpa kata benda: tombol, baris VOID struk). Baris badan pendek tidak membacanya;
+    kaki bersyarat/tanya/bantuan dan negasi/modal ("tidak dapat dibatalkan", "akan dibatalkan") tidak dihitung."""
+
+    async def test_cancelled_or_rejected_proofs_are_blocked_in_both_modes(self):
+        for name, lines in CANCELLED_PROOFS.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual([(c.code, c.level) for c in res.checks if c.code == "status_gagal"],
+                                     [("status_gagal", "block")])
+
+    async def test_cancelled_values_in_both_layouts_and_both_modes(self):
+        for value in CANCELLED_VALUES:
+            for name, make in (("transfer", transfer_with_status), ("qris", gopay_qris_with_status)):
+                for enabled in (True, False):
+                    with self.subTest(value, layout=name, enabled=enabled):
+                        res = await read(make(value), enabled=enabled)
+                        self.assertEqual(res.parsed.doc.status, "gagal")
+                        self.assertIn("status_gagal", [c.code for c in res.checks])
+
+    async def test_gopay_status_block_with_a_cancelled_value(self):
+        for value in ("Transfer ke penerima dibatalkan", "Transfer uang ke penerima ditolak"):
+            lines = gopay_transfer()
+            lines[6] = value                         # di bawah "Status"; "Status  Selesai" tetap di rincian
+            for enabled in (True, False):
+                with self.subTest(value, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertIn("status_gagal", [c.code for c in res.checks])
+        # Kata saja di bawah "Status" dibaca persis seperti "Gagal" di posisi itu (tanpa penanda transfer, teks ini tidak
+        # dikenali sebagai bukti: titik terbuka N1/L6e, bukan kosakata).
+        for enabled in (True, False):
+            got = {}
+            for value in ("Gagal", "Dibatalkan", "Ditolak"):
+                lines = gopay_transfer()
+                lines[6] = value
+                res = await read(lines, enabled=enabled)
+                got[value] = (res.reader, res.parsed.doc.status, [c.code for c in res.checks])
+            with self.subTest(enabled=enabled):
+                self.assertEqual(got["Dibatalkan"], got["Gagal"])
+                self.assertEqual(got["Ditolak"], got["Gagal"])
+
+    async def test_batal_button_does_not_block(self):
+        for lines in (["QRIS", "Menunggu pembayaran", "Merchant TOKO A", "Total Rp25.000", "NMID ID1024358806544", D_L5, "Batal"],
+                      ["QRIS", "Batal", "Menunggu pembayaran", "Merchant TOKO A", "Total Rp25.000", "NMID ID1024358806544"],
+                      ["Menunggu pembayaran", "Transfer ke BUDI", "Nominal Rp50.000", "Bayar", "Batal"]):
+            for enabled in (True, False):
+                with self.subTest(lines[1], enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertNotEqual(res.parsed.doc.status, "gagal")
+                    self.assertNotIn("status_gagal", [c.code for c in res.checks])
+        # Blok di bawah "Status" (saklar mati, `read_labelled_failure`): hanya baris tepat di bawah label adalah nilainya;
+        # tombol "Batal" di bawah langkah-langkah bukan status.
+        lines = gopay_transfer()
+        lines[6:8] = ["Menunggu transfer ke penerima", "Batal"]
+        self.assertIsNone(pc.read_labelled_failure(lines))
+        for enabled in (True, False):
+            with self.subTest("blok status", enabled=enabled):
+                self.assertNotIn("status_gagal", [c.code for c in (await read(lines, enabled=enabled)).checks])
+
+    async def test_store_receipts_with_void_or_cancel_footers_are_unchanged(self):
+        void_line = ["TOKO MAJU", "01-10-2026 08:15", "KOPI 1 15.000", "VOID 1 KOPI 15.000", "ROTI 1 10.000", "SUSU 1 5.000",
+                     "TOTAL 15.000", "TUNAI 15.000"]
+        receipts = {"void": void_line, **{f: store_receipt(f) for f in CANCEL_FOOTERS}}
+        for name, lines in receipts.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("struk_belanja", "berhasil", []))
+                    self.assertFalse(looks_like_proof(textdoc(lines)))
+
+    async def test_conditional_policy_and_question_footers_stay_success_on_proofs(self):
+        for footer in CANCEL_FOOTERS:
+            for enabled in (True, False):
+                with self.subTest(footer, enabled=enabled):
+                    lines = ["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", "30 Okt 2026 09:31",
+                             footer]
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "berhasil")
+                    self.assertEqual(status_checks(res), [])
+
+    async def test_selesai_with_a_cancel_word_anywhere_is_never_berhasil(self):
+        """Jalur bukti (saklar menyala): "Status Selesai" + kata itu di baris mana pun bukan berhasil (`_NOT_DONE` tetap);
+        di judul kata saja itu gagal."""
+        base = lines_of("real-gopay-qris-01")
+        for at in (1, 5, len(base)):
+            for word in ("Dibatalkan", "Ditolak", "Batal", "Rejected", "Cancelled"):
+                lines = base[:at] + [word] + base[at:]
+                with self.subTest(word, at=at):
+                    status = (await read(lines)).parsed.doc.status
+                    self.assertNotEqual(status, "berhasil")
+                    if at == 1 and word != "Batal":
+                        self.assertEqual(status, "gagal")
+
+    def test_positions(self):
+        lines = ["QRIS", "Merchant TOKO A", "Jumlah Rp5.000", "NMID ID1024358806544", D_L5, "Dibatalkan"]
+        # Kata saja di badan (sesudah 4 baris pertama) tidak dibaca; di judul dibaca.
+        self.assertEqual(pc.read_status(lines), pc.TIDAK_DIKETAHUI)
+        self.assertEqual(pc.read_status([lines[0], "Dibatalkan", *lines[1:5]]), pc.GAGAL)
+        # "Batal"/"Void" tanpa kata benda tidak pernah dibaca, juga di judul.
+        for word in ("Batal", "VOID", "Batal!"):
+            with self.subTest(word):
+                self.assertEqual(pc.read_status([lines[0], word, *lines[1:5]]), pc.TIDAK_DIKETAHUI)
+        for text, status in (("Transfer Dibatalkan", pc.GAGAL), ("Pembayaran Ditolak", pc.GAGAL), ("Transaksi Batal", pc.GAGAL),
+                             ("Payment rejected", pc.GAGAL), ("Payment cancelled", pc.GAGAL), ("Transaksi VOID", pc.GAGAL),
+                             ("Transaksi telah dibatalkan oleh bank", pc.GAGAL),
+                             ("Transaksi Dibatalkan, silakan coba lagi", pc.GAGAL),
+                             ("Transaksi tidak dapat dibatalkan", None), ("Transaksi bisa dibatalkan", None),
+                             ("Transaksi yang dibatalkan tidak dapat dikembalikan", None),
+                             ("Pembayaran akan dibatalkan otomatis", None), ("Payment will be cancelled", None),
+                             ("Transaksi dibatalkan jika tidak dibayar", None), ("Jika transaksi dibatalkan, dana kembali", None),
+                             ("Transaksi dibatalkan?", None), ("Untuk transaksi yang dibatalkan hubungi 14017", None),
+                             ("Pembatalan transaksi", None), ("TOKO BATAL JAYA", None), ("Kartu ditolak", None)):
+            with self.subTest(text):
+                self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), status)
+        self.assertTrue(pc._is_status_title("Transfer Dibatalkan"))
+        self.assertFalse(pc._is_status_title("Transaksi tidak dapat dibatalkan"))
+        # Label "Status" berdiri sendiri, nilainya di baris bawah (di badan): dibaca dari tingkat label, bukan baris badan.
+        below = ["Transfer", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", "30 Okt 2026 09:31", "Status"]
+        for word in ("Dibatalkan", "Ditolak", "Batal", "Void"):
+            with self.subTest("label di atas", word=word):
+                self.assertEqual(pc.read_status([*below, word]), pc.GAGAL)
+                self.assertEqual(pc.read_status([*below[:-1], word]), pc.TIDAK_DIKETAHUI)   # tanpa label: baris badan
+        # Nilai label status: kata itu di mana saja di nilainya, kecuali sesudah negasi/modal.
+        for line, status in (("Status: Dibatalkan", "gagal"), ("Status Transaksi Ditolak", "gagal"), ("Status: Batal", "gagal"),
+                             ("Status: Void", "gagal"), ("Status: Kartu ditolak", "gagal"),
+                             ("Status: Tidak dapat dibatalkan", None)):
+            with self.subTest(line):
+                self.assertEqual(pc.read_labelled_failure([line]), status)

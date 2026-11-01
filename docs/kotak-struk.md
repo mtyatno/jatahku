@@ -915,8 +915,14 @@ Catatan:
   struk/tidak dikenali, kata status tunggal di badan ("Gagal") tidak dibaca, dan status berlabel ("Status: Gagal")
   hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
   ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi kata status tunggal di bawahnya ("Gagal"; judul status
-  seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata "belum selesai" di luar kosakata status
-  ("Dibatalkan", "Ditolak") terbaca `tidak_diketahui`, bukan `gagal` (tidak diblokir); kaki bantuan berbentuk
+  seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata batal ("dibatalkan", "ditolak", "batal", "rejected",
+  "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di judul status ("Transfer
+  Dibatalkan", "Payment rejected", "Transaksi Batal"), nilai label status pembayaran ("Status: Ditolak", "Status" lalu
+  "Dibatalkan" di baris bawahnya) dan baris berstatus saja di empat baris pertama ("Dibatalkan", "Rejected"; "Batal" dan
+  "Void" saja tidak pernah: tombol, baris VOID struk); kata itu saja di badan ("Dibatalkan" di bawah rincian) dan kata
+  "belum selesai" lainnya ("Dikembalikan", "Menunggu") tetap `tidak_diketahui` (tidak diblokir, hanya mencegah
+  `berhasil`), dan kalimat kebijakan/bersyarat ("Transaksi tidak dapat dibatalkan", "akan dibatalkan", "dibatalkan jika
+  tidak dibayar", "Transaksi yang dibatalkan …") tidak dihitung; kaki bantuan berbentuk
   judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur; negasi kata
   tiba di tengah kalimat ("Transfer belum diterima bank tujuan.") atau tanpa subjek uang di luar label status (judul
   "Belum diterima" atau "Tidak terkirim" saja) tidak dibaca, jadi bukti seperti itu tidak diblokir dan tidak

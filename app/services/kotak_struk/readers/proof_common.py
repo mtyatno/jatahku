@@ -784,8 +784,62 @@ _STATUS_TITLE = re.compile(
     r"pembelian|purchase|withdrawal|deposit)(?!\w)\s+(?:\S+\s+){0,3}" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
 
 
+# Kata status "batal" (keputusan pemilik 3, spec §7): dibatalkan, ditolak, batal, rejected, cancelled/canceled, void = gagal,
+# tetapi HANYA di (a) judul status (kata benda transaksi, paling banyak 3 kata lain, lalu kata itu: "Transfer Dibatalkan",
+# "Pembayaran Ditolak", "Transaksi Batal", "Payment rejected"), (b) nilai label status pembayaran ("Status: Dibatalkan",
+# "Status Transaksi Ditolak"), dan (c) baris berstatus saja di 4 baris pertama ("Dibatalkan", "Ditolak", "Rejected",
+# "Cancelled"; "Batal" dan "Void" saja tidak pernah: tombol "Batal", baris "VOID" di struk). Baris badan pendek tidak
+# membacanya. Di posisi itu kata ini diganti "gagal" (`_cancel_as_failed`), sehingga aturan kata gagal yang ada (kaki
+# bersyarat/tanya/bantuan, baris nama, batas kata) tetap berlaku. Tidak dihitung: kata itu sesudah negasi/modal/kata
+# penghubung ("tidak dapat dibatalkan", "akan dibatalkan", "Payment cannot be cancelled", "Transaksi yang dibatalkan tidak
+# dapat dikembalikan": kebijakan, bukan status) atau diikuti kata bersyarat ("Transaksi dibatalkan jika tidak dibayar").
+# Di posisi lain kata ini hanya mencegah `berhasil` (`_NOT_DONE`).
+_CANCEL_WORD = r"(?:dibatalkan|ditolak|batal|rejected|cancell?ed|void)"
+_CANCEL = re.compile(r"(?<!\w)" + _CANCEL_WORD + r"(?!\w)", re.IGNORECASE)
+_CANCEL_GUARD = (r"(?:tidak|tak|gak|nggak|ga|belum|bukan|dapat|bisa|boleh|akan|harus|perlu|mau|ingin|yang|"
+                 r"not|cannot|can|will|could|may|might|must|to|be|which|that)")
+_CANCEL_GUARD_WORD = re.compile(r"(?<!\w)" + _CANCEL_GUARD + r"(?!\w)", re.IGNORECASE)
+_CANCEL_TITLE = re.compile(
+    r"(?<!\w)(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|setoran|"
+    r"pembelian|purchase|withdrawal|deposit)(?!\w)\s+(?:(?!" + _CANCEL_GUARD + r"(?!\w))\S+\s+){0,3}"
+    r"(?P<word>" + _CANCEL_WORD + r")(?!\w)", re.IGNORECASE)
+# Baris berstatus saja (hanya di judul): "Dibatalkan", "Telah ditolak", "Cancelled!". Bukan "Batal"/"Void".
+_CANCEL_ALONE = re.compile(r"\W*(?:(?:telah|sudah|has\s+been|was)\s+)?(?P<word>dibatalkan|ditolak|rejected|cancell?ed)\W*",
+                           re.IGNORECASE)
+_IF_WORD = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|unless|kecuali)(?!\w)", re.IGNORECASE)
+
+
+def _cancel_counts(text: str, m: re.Match) -> bool:
+    """Kata batal di `m` dihitung bila tidak diikuti kata bersyarat ("dibatalkan jika tidak dibayar")."""
+    return not _IF_WORD.search(text, m.end())
+
+
+def _cancel_as_failed(text: str, *, value: bool = False, header: bool = False) -> str:
+    """`text` dengan kata batal yang dihitung diganti "gagal" (lihat `_CANCEL_WORD`): selalu di judul status; di mana saja
+    bila `value` (nilai label status pembayaran), kecuali sesudah negasi/modal; seluruh baris bila `header` dan baris itu
+    berstatus saja. Selain itu teks dikembalikan apa adanya."""
+    if not _CANCEL.search(text or ""):
+        return text
+    if header:
+        m = _CANCEL_ALONE.fullmatch(text)
+        if m:
+            return text[:m.start("word")] + "gagal" + text[m.end("word"):]
+    spans = []
+    if value:
+        for m in _CANCEL.finditer(text):
+            if not _CANCEL_GUARD_WORD.search(text[:m.start()]) and _cancel_counts(text, m):
+                spans.append((m.start(), m.end()))
+    else:
+        for m in _CANCEL_TITLE.finditer(text):
+            if _cancel_counts(text, m):
+                spans.append((m.start("word"), m.end("word")))
+    for start, end in reversed(spans):
+        text = text[:start] + "gagal" + text[end:]
+    return text
+
+
 def _is_status_title(text: str) -> bool:
-    return bool(_STATUS_TITLE.search(text))
+    return bool(_STATUS_TITLE.search(text) or _STATUS_TITLE.search(_cancel_as_failed(text)))
 
 
 def _name_label_end(text: str) -> int | None:
@@ -794,12 +848,14 @@ def _name_label_end(text: str) -> int | None:
     return m.end() if m else None
 
 
-def _status_lines(texts: list[str], max_words: int, *, store: bool = False) -> list[str]:
+def _status_lines(texts: list[str], max_words: int, *, store: bool = False, header: bool = False) -> list[str]:
     """Bagian status dari baris yang cukup pendek. Baris nama pihak lawan (dan nilai di bawah label nama yang berdiri
     sendiri) dilewati, kecuali yang berupa judul status gagal/pending. Frasa bantuan (`_HELP_PHRASE`) dibuang sebelum status dibaca, dan
     pembuangan itu hanya boleh MENGURANGI status: baris yang sejak awal bukan kalimat status ("Untuk transaksi pending atau
     gagal hubungi 14017" dibuka "Untuk") tetap dilewati walau sisa frasanya memuat kata status. Di luar nilai label status
-    pembayaran negasi kata tiba dibatasi (`_mask_arrival`; `store`: teks berbaris barang, `has_item_lines`)."""
+    pembayaran negasi kata tiba dibatasi (`_mask_arrival`; `store`: teks berbaris barang, `has_item_lines`). Kata batal
+    (`_CANCEL_WORD`) dibaca sebagai gagal di judul status, nilai label status pembayaran, dan, bila `header` (4 baris
+    pertama), baris berstatus saja (`_cancel_as_failed`)."""
     out, name_below = [], False
     for text in texts:
         value = payment_status_value(text)
@@ -809,6 +865,7 @@ def _status_lines(texts: list[str], max_words: int, *, store: bool = False) -> l
         is_name, name_below = name_below, False
         if value is None:
             text = _mask_arrival(text, store=store)
+        text = _cancel_as_failed(text, value=value is not None, header=header)
         label_end = _name_label_end(text)
         if label_end is not None:
             text = text[label_end:].strip(" :：")
@@ -843,7 +900,7 @@ def read_header_status(lines: list[str]) -> str | None:
     supaya bukti yang salah rute tetap ketahuan gagalnya; kalimat di badan dan kaki tidak dihitung (judul status
     gagal/pending di badan: `read_body_failure_title`)."""
     cleaned = clean_lines(lines)
-    return _strongest(_status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned)))
+    return _strongest(_status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned), header=True))
 
 
 def has_header_status_title(lines: list[str]) -> bool:
@@ -853,7 +910,7 @@ def has_header_status_title(lines: list[str]) -> bool:
     sebagai `berhasil`, tetapi bukan judul status, jadi struk belanja biasa tidak memenuhinya."""
     cleaned = clean_lines(lines)
     return any(_is_status_title(part)
-               for part in _status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned)))
+               for part in _status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned), header=True))
 
 
 def has_status_title(lines: list[str]) -> bool:
@@ -957,8 +1014,8 @@ def read_status(lines: list[str], profile: AppProfile | None = None) -> str:
     lihat `read_proof_status`)."""
     labelled = read_payment_status(lines)
     store = has_item_lines(lines)
-    status = (_classify(labelled) if labelled else None) \
-        or _strongest(_status_lines(lines[:HEADER_LINES], HEADER_WORDS, store=store)) \
+    status = (_classify(_cancel_as_failed(labelled, value=True)) if labelled else None) \
+        or _strongest(_status_lines(lines[:HEADER_LINES], HEADER_WORDS, store=store, header=True)) \
         or _first(_status_lines(lines, BODY_WORDS, store=store))
     if status is None and labelled and _DONE_VALUE.fullmatch(labelled) \
             and not any(_NOT_DONE.search(line) or _GAGAL.search(line) or _PENDING.search(line) for line in lines):
@@ -989,8 +1046,11 @@ def read_labelled_failure(lines: list[str]) -> str | None:
             continue
         # Tanpa nilai sebaris: blok status di bawahnya (GoPay: judul lalu langkah-langkah), sampai baris label berikutnya;
         # yang menentukan baris berstatus PERTAMA di blok itu (judulnya), bukan langkah atau kaki sesudahnya.
+        # Kata batal dibaca di nilai sebaris dan di baris tepat di bawah label (nilainya); baris blok berikutnya hanya
+        # sebagai judul status ("Batal" sebagai tombol di bawah langkah-langkah bukan status).
         values = [inline] if inline else list(itertools.takewhile(lambda v: not is_label_line(v), cleaned[i + 1:i + 1 + STATUS_BLOCK]))
-        for value in values:
+        for k, value in enumerate(values):
+            value = _cancel_as_failed(value, value=k == 0)
             if len(value.split()) <= HEADER_WORDS and _is_status_sentence(value):
                 found.add(_classify(_status_part(value)))
                 break
