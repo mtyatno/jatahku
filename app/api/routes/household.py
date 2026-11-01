@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
 from app.services.ruang import RuangAktif, RuangTulis, keanggotaan, keanggotaan_keluarga
-from app.models.models import User, Household, HouseholdMember, HouseholdRole, UserStreak
+from app.models.models import User, Household, HouseholdMember, HouseholdRole, HouseholdType, UserStreak
 
 settings = get_settings()
 router = APIRouter()
@@ -200,6 +200,12 @@ async def join_household(
         raise HTTPException(status_code=400, detail="Kode invite tidak valid atau expired")
 
     household_id = household_id.decode()
+
+    # Undangan lewat jalur ini hanya untuk ruang keluarga: bergabung menghapus keanggotaan ruang keluarga
+    # lama. Undangan ruang usaha punya jalurnya sendiri (R5).
+    tujuan = await db.get(Household, UUID(household_id))
+    if tujuan is None or str(tujuan.type) != HouseholdType.RUMAH_TANGGA:
+        raise HTTPException(status_code=400, detail="Kode invite tidak valid atau expired")
 
     # Check user not already in this household
     existing = await db.execute(

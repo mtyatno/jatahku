@@ -157,10 +157,15 @@ async def execute_merge(
     source_id = UUID(data["source_id"])
     target_id = UUID(data["target_id"])
 
+    try:
+        keep = UUID(req.keep_household_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Household yang dipilih bukan milik salah satu akun")
+    # merge_users menolak keep yang bukan ruang keluarga salah satu akun (bukan dari body sembarang).
     result = await merge_users(
         source_user_id=source_id,
         target_user_id=target_id,
-        keep_household_id=UUID(req.keep_household_id),
+        keep_household_id=keep,
         db=db,
     )
 

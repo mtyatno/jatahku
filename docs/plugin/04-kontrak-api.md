@@ -43,6 +43,8 @@ Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per
 
 Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringatan proaktif), kuota paket (sampai R3), dan Kotak Struk (bukti baru dicatat ke ruang keluarga sampai R3) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
 
+Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluarga (review keamanan PR #166): `POST /auth/link/merge` hanya menerima `keep_household_id` yang merupakan ruang keluarga salah satu dari kedua akun (selain itu 400, tanpa perubahan data); `POST /household/join` (dan `/join` di bot) menolak kode undangan yang menunjuk household selain `rumah_tangga` (400 "Kode invite tidak valid"). Undangan ruang usaha dibuat terpisah di R5.
+
 ## 2. Ruang (R4, R5, R6, R7, R8)
 
 ```jsonc

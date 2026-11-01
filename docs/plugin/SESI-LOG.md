@@ -17,6 +17,12 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Dokumen: `04-kontrak-api.md` §1 v1; `00-indeks.md` (fase, peta kode); `AGENTS.md` aturan 1, checklist "Plugin R2", checklist R1 dan B1 ditandai sudah jalan.
 - Tes: unittest 2134 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, gagal juga di `main`) · node --test 583 lulus · build ok · Migrasi: tidak berlaku (tanpa model/migrasi) · `openapi_cek` tanpa perubahan memutus.
 
+**Review keamanan PR #166 (1 Nov, sesi terpisah) — temuan dikerjakan di branch ini**
+- Wajib: `POST /auth/link/merge` (tanpa login, cukup kode gabung) meneruskan `keep_household_id` dari body ke `merge_users` tanpa cek. Dengan UUID household orang lain, amplop/pemasukan household yang dibuang pindah ke sana dan akun target menjadi anggotanya (bug lama, sebelum R2). Diperbaiki di `merge_users`: hanya ruang keluarga salah satu akun, selain itu `{"error": …}` sebelum ada perubahan; route menolak UUID tidak sah dengan 400. Tes: household orang lain, ruang usaha target, dan `bukan-uuid` → 400 tanpa perubahan data; ruang keluarga sah tetap jalan, ruang usaha target tidak tersentuh.
+- Disarankan, ikut dikerjakan: join web dan `/join` bot menolak undangan ke household selain `rumah_tangga` (sebelum R5 memakai kunci Redis yang sama untuk undangan ruang usaha). Tes web dan bot (tes bot terbukti gagal tanpa perbaikan).
+- Disarankan, ikut dikerjakan: `test_ruang_pagar.py` mencatat pengecualian eksplisit route non-GET yang memakai `ruang_aktif` (3 POST yang hanya membaca, `PUT /dashboard/layout`, dismiss advisor); route tulis baru dengan `ruang_aktif` gagal tes.
+- Catatan untuk R5 dari review: semua endpoint baca `ruang_aktif` (termasuk `/export`, `/user/export-data`, `/analytics/*`, `/dashboard/data`, halaman advisor) terbuka untuk setiap anggota ruang; itu daftar yang harus disaring di gerbang "Karyawan tidak melihat laporan".
+
 **Digantung**
 - Kuota transaksi Basic masih per user lintas ruang (`plan_limits.monthly_txn_usage`, `usage.txn_this_month` di `/user/profile`). Ditandai `DIIZINKAN_BEDA_SAMPAI_R3` di `test_ruang_gerbang.py`; R3 wajib menghapusnya. Kuota amplop/langganan sudah ruang keluarga.
 - Penulisan sampai R3 = ruang keluarga (`ruang_tulis`). R3 menggantinya dengan ruang dari objek (amplop, transaksi, goal, …) dan mengubah header ruang lain di endpoint tulis dari 403 menjadi "ditentukan objek".

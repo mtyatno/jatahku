@@ -39,7 +39,7 @@ if HAS_AIOSQLITE:
 
     from app.api.routes import (
         advisor, analytics, balance_check, dashboard, envelopes, export, goals, household, incomes,
-        kotak_struk, notifications, recurring, snapshots, transactions, user_settings,
+        kotak_struk, link, notifications, recurring, snapshots, transactions, user_settings,
     )
     from app.core.database import Base, get_db
     from app.core.deps import get_current_user
@@ -57,6 +57,16 @@ if HAS_AIOSQLITE:
         (notifications, "/notifications"), (recurring, "/recurring"), (snapshots, "/snapshots"),
         (transactions, "/transactions"), (user_settings, "/user"),
     )
+
+if HAS_AIOSQLITE:
+    class _Redis(FakeRedis):
+        """FakeRedis + close/aclose untuk route lama (link, household) yang menutup klien sendiri."""
+        async def close(self):
+            pass
+
+        async def aclose(self):
+            pass
+
 
 # Waktu pembuatan jawaban (generated_at, exported_at, …) berbeda per detik; disamakan sebelum dibandingkan.
 _WAKTU = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?")
@@ -98,7 +108,8 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-        p = patch("redis.asyncio.from_url", return_value=FakeRedis())
+        self.redis = _Redis()
+        p = patch("redis.asyncio.from_url", return_value=self.redis)
         p.start()
         self.addCleanup(p.stop)
 
@@ -130,6 +141,7 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         ruang.install(app)
         for mod, prefix in ROUTERS:
             app.include_router(mod.router, prefix=prefix)
+        app.include_router(link.router, prefix="/auth")  # gabung akun (POST saja, tidak ikut potret GET)
         self.paths = sorted({
             r.path for r in app.routes
             if isinstance(r, APIRoute) and "GET" in r.methods and "{" not in r.path
@@ -312,6 +324,82 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         await self._beri_ruang_usaha()
         await self._idor(self.id_usaha)
         await self._utuh(self.id_usaha, "Bahan Baku Nusa")
+
+    # ── gabung akun: ruang yang dipertahankan tidak boleh dari body sembarang (review PR #166) ──
+    async def _akun_bot(self):
+        """Akun bot (sumber gabung) dengan ruang keluarga sendiri berisi satu amplop."""
+        async with self.Session() as db:
+            bot = User(name="Bot", telegram_id="5151", payday_day=1, timezone="Asia/Jakarta")
+            hh = Household(name="Rumah bot")
+            db.add_all([bot, hh])
+            await db.flush()
+            db.add(HouseholdMember(user_id=bot.id, household_id=hh.id, role=HouseholdRole.owner))
+            db.add(Envelope(household_id=hh.id, name="Amplop Bot", budget_amount=D("0")))
+            await db.commit()
+        return bot, hh.id
+
+    async def _gabung(self, bot_id, keep):
+        import json as _json
+        kode = "GABUNG01"
+        await self.redis.set(f"merge:{kode}", _json.dumps(
+            {"source_id": str(bot_id), "target_id": str(self.me.id), "telegram_id": "5151"}))
+        return await self.client.post("/auth/link/merge", json={"code": kode, "keep_household_id": keep})
+
+    async def _anggota(self, user_id):
+        from sqlalchemy import select
+        async with self.Session() as db:
+            return set((await db.execute(select(HouseholdMember.household_id)
+                                         .where(HouseholdMember.user_id == user_id))).scalars())
+
+    async def test_gabung_akun_menolak_household_orang_lain_dan_ruang_usaha(self):
+        from sqlalchemy import func, select
+        await self._beri_ruang_usaha()
+        bot, hh_bot = await self._akun_bot()
+        for keep in (str(self.asing_id), str(self.usaha_id), "bukan-uuid"):
+            r = await self._gabung(bot.id, keep)
+            self.assertEqual(r.status_code, 400, f"{keep}: {r.text}")
+        self.assertEqual(await self._anggota(self.me.id), {self.rumah_id, self.usaha_id})
+        async with self.Session() as db:
+            n_asing = (await db.execute(select(func.count(Envelope.id))
+                                        .where(Envelope.household_id == self.asing_id))).scalar()
+            bot_masih = await db.get(User, bot.id)
+        self.assertEqual(n_asing, 2, "amplop dipindah ke household orang lain")
+        self.assertIsNotNone(bot_masih, "akun sumber terhapus walau gabung ditolak")
+
+    async def test_gabung_akun_dengan_ruang_keluarga_sah_tetap_jalan(self):
+        await self._beri_ruang_usaha()
+        bot, hh_bot = await self._akun_bot()
+        r = await self._gabung(bot.id, str(self.rumah_id))
+        self.assertEqual(r.status_code, 200, r.text)
+        # Ruang keluarga target dipertahankan, ruang usaha target tidak tersentuh.
+        self.assertEqual(await self._anggota(self.me.id), {self.rumah_id, self.usaha_id})
+
+    async def test_gabung_ke_ruang_usaha_lewat_undangan_ditolak(self):
+        # Sampai R5 undangan hanya ruang keluarga; kode yang menunjuk ruang usaha tidak boleh
+        # menghapus keanggotaan ruang keluarga user.
+        await self._beri_ruang_usaha()
+        await self.redis.set("invite:USAHA01", str(self.usaha_id))
+        self.current = self.rina
+        r = await self.client.post("/household/join", params={"code": "USAHA01"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(await self._anggota(self.rina.id), {self.rumah_id})
+
+    async def test_join_bot_ke_ruang_usaha_ditolak(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from app.bot import household_cmd
+        await self._beri_ruang_usaha()
+        async with self.Session() as db:
+            self.rina.telegram_id = "7272"
+            await db.merge(self.rina)
+            await db.commit()
+        await self.redis.set("invite:USAHA02", str(self.usaha_id))
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=7272, first_name="Rina"),
+                                 message=SimpleNamespace(reply_text=AsyncMock()))
+        with patch.object(household_cmd, "AsyncSessionLocal", self.Session):
+            await household_cmd.cmd_join(update, SimpleNamespace(args=["usaha02"]))
+        self.assertIn("tidak valid", update.message.reply_text.await_args.args[0])
+        self.assertEqual(await self._anggota(self.rina.id), {self.rumah_id})
 
     async def test_header_ruang_orang_lain_403(self):
         await self._beri_ruang_usaha()

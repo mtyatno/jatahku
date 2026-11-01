@@ -161,6 +161,11 @@ async def merge_users(
 
     src_hh_id = src_membership.household_id if src_membership else None
     tgt_hh_id = tgt_membership.household_id if tgt_membership else None
+    # Ruang yang dipertahankan datang dari klien (POST /link/merge, tanpa login selain kode gabung):
+    # hanya boleh ruang keluarga salah satu dari kedua akun. Selain itu household orang lain atau ruang
+    # usaha bisa menerima amplop/pemasukan dan anggota baru (review keamanan PR #166).
+    if keep_household_id is not None and str(keep_household_id) not in {str(h) for h in (src_hh_id, tgt_hh_id) if h}:
+        return {"error": "Household yang dipilih bukan milik salah satu akun"}
     discard_hh_id = tgt_hh_id if keep_household_id == src_hh_id else src_hh_id
 
     # 1. Reassign source's transactions → target

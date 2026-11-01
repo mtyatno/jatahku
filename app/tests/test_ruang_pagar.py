@@ -70,6 +70,35 @@ class PagarSumberTests(unittest.TestCase):
                 for nama in ("ruang_aktif", "ruang_tulis", "RuangAktif", "RuangTulis", "X-Jatahku-Ruang"):
                     self.assertNotIn(nama, teks, f"{rel}: chat selalu ruang keluarga (ADR-P2)")
 
+    def test_tulis_dengan_ruang_aktif_hanya_pengecualian_tercatat(self):
+        """Route non-GET memakai `ruang_tulis` (AGENTS.md aturan 1). `ruang_aktif` di route non-GET hanya
+        boleh untuk POST yang sekadar membaca, atau data milik user/viewer sendiri per ruang — bukan data
+        bersama ruang. Menambah baris di sini butuh alasan (review keamanan PR #166)."""
+        from fastapi.routing import APIRoute
+        from app.main import app
+        from app.services import ruang
+
+        diizinkan = {
+            ("POST", "/dashboard/data"),                      # hanya membaca
+            ("POST", "/balance-check/preview"),               # hanya membaca
+            ("POST", "/advisor/allocation-recommendation"),   # hanya membaca
+            ("PUT", "/dashboard/layout"),                     # tata letak milik user per ruang
+            ("POST", "/advisor/dismiss"),                     # status per viewer (Redis), bukan data ruang
+            ("DELETE", "/advisor/dismiss"),                   # idem
+        }
+
+        def pakai(dependant, fn):
+            return any(d.call is fn or pakai(d, fn) for d in dependant.dependencies)
+
+        ditemukan = set()
+        for r in app.routes:
+            if not isinstance(r, APIRoute):
+                continue
+            for m in r.methods - {"GET", "HEAD"}:
+                if pakai(r.dependant, ruang.ruang_aktif):
+                    ditemukan.add((m, r.path))
+        self.assertEqual(ditemukan, diizinkan)
+
     def test_route_ber_ruang_memakai_parameter_keyword_only(self):
         # `hid=Depends(...)` dengan nilai bawaan membuat pemanggil langsung meneruskan objek Depends.
         for rel, teks in _sumber():
