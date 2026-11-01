@@ -76,7 +76,10 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
         logger.exception("dashboard penyedia %s gagal", definisi.key)
         data = _galat("gagal_memuat")
     ms = (time.perf_counter() - mulai) * 1000
-    if ms > ANGGARAN_PENYEDIA_MS:
+    # Anggaran 150 ms per penyedia berlaku untuk kartu plugin (01-kajian.md). Kartu inti memuat sumber
+    # bersama sekali per permintaan, jadi kartu inti pertama ikut menanggung waktu muat itu: bukan
+    # peringatan. Waktu sumber bersama tercatat di log batch bila batch lewat anggaran.
+    if ms > ANGGARAN_PENYEDIA_MS and definisi.asal != "inti":
         logger.warning("dashboard penyedia %s %.0f ms (anggaran %d ms)", definisi.key, ms, ANGGARAN_PENYEDIA_MS)
     return data
 
@@ -87,8 +90,9 @@ async def jalankan(user, db, periode: Periode, items: list[dict], *, household_i
     data = {item["id"]: await satu_kartu(sumber, item) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:
-        logger.warning("dashboard batch %d kartu %.0f ms (anggaran %d ms) user=%s",
-                       len(items), ms, ANGGARAN_BATCH_MS, user.id)
+        terlama = ", ".join(f"{n} {t:.0f}" for n, t in sorted(sumber.waktu.items(), key=lambda x: -x[1])[:3])
+        logger.warning("dashboard batch %d kartu %.0f ms (anggaran %d ms) user=%s sumber terlama: %s",
+                       len(items), ms, ANGGARAN_BATCH_MS, user.id, terlama or "-")
     return {
         "generated_at": datetime.now(_tz(user)).isoformat(timespec="seconds"),
         "periode": {"start": periode.start.isoformat(), "end": periode.end.isoformat(),

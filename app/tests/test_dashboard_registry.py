@@ -446,6 +446,32 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(punya_rina), 3)   # dua bersama + amplop pribadinya sendiri
 
     # ── anggaran ─────────────────────────────────────────────────────────
+    async def test_log_anggaran_hanya_kartu_plugin_dan_batch(self):
+        # Kartu inti pertama menanggung muat sumber bersama: bukan peringatan per penyedia (log produksi
+        # 1 Nov: core.kpi.* 154–220 ms padahal batch di bawah 500 ms). Batch lambat mencatat sumber terlama.
+        from app.services.dashboard import batch as batch_mod
+        with patch.object(batch_mod, "ANGGARAN_PENYEDIA_MS", 0), \
+                self.assertLogs("jatahku.dashboard", level="WARNING") as log:
+            batch_mod.logger.warning("penanda")      # assertLogs butuh minimal satu baris
+            await self.batch()
+        self.assertFalse([l for l in log.output if "dashboard penyedia" in l], log.output)
+
+        with patch.object(batch_mod, "ANGGARAN_BATCH_MS", 0), \
+                self.assertLogs("jatahku.dashboard", level="WARNING") as log:
+            await self.batch()
+        baris = [l for l in log.output if "dashboard batch" in l]
+        self.assertEqual(len(baris), 1, log.output)
+        self.assertRegex(baris[0], r"sumber terlama: \w+ \d+")
+
+        # Kartu plugin (asal bukan inti) tetap diperingatkan per penyedia.
+        from dataclasses import replace
+        plugin = replace(registry.REGISTRY["core.langganan"], asal="buku_usaha")
+        with patch.dict(registry.REGISTRY, {"core.langganan": plugin}), \
+                patch.object(batch_mod, "ANGGARAN_PENYEDIA_MS", 0), \
+                self.assertLogs("jatahku.dashboard", level="WARNING") as log:
+            await self.batch([{"id": "x", "card": "core.langganan"}])
+        self.assertTrue([l for l in log.output if "dashboard penyedia core.langganan" in l], log.output)
+
     async def test_anggaran_p95(self):
         await self.batch()  # pemanasan (impor tertunda, cache advisor)
         durasi = []
