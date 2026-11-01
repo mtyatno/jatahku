@@ -35,9 +35,8 @@ export function paydayLockState(profile) {
     locked,
     note: locked ? `Mengikuti siklus rumah tangga: tanggal ${householdPayday(p)}${owner}.` : null,
     needsConfirm,
-    // "12" = RECOMPUTE_PERIODS_ON_CHANGE di app/services/household_cycle.py
     confirmText: needsConfirm
-      ? `Mengubah tanggal gajian berlaku untuk semua anggota ${p.household_name || 'rumah tangga'}, dan 12 periode terakhir dihitung ulang. Lanjutkan?`
+      ? `Mengubah tanggal gajian berlaku untuk semua anggota ${p.household_name || 'rumah tangga'}, dan riwayat anggarannya dihitung ulang. Lanjutkan?`
       : null,
   };
 }
@@ -49,10 +48,15 @@ export function joinSuccessMessage(householdName, paydayDay) {
   return paydayDay ? `${base} Siklus anggaranmu sekarang mengikuti rumah ini: tanggal ${paydayDay}.` : base;
 }
 
-// Body PUT /user/profile di akhir Onboarding. Untuk anggota yang tanggalnya dikunci household, PUT yang membawa
-// payday_day ditolak 403 dan tidak menyimpan apa pun, income_type ikut hilang: kirim income_type saja.
+// Body PUT /user/profile di akhir Onboarding: payday_day hanya untuk household sendirian, selain itu income_type saja.
+// - Anggota yang tanggalnya dikunci household: PUT yang membawa tanggal lain ditolak 403 dan tidak menyimpan apa pun,
+//   income_type ikut hilang.
+// - Owner/admin household berisi lebih dari satu orang (needsConfirm): mengubah tanggal rumah menghitung ulang riwayat
+//   dan memberi tahu semua anggota, dan Onboarding tidak punya dialog konfirmasi; pekerja harian/mingguan akan
+//   mengirim tanggal 1 tanpa sadar. Tanggal rumah diubah lewat Settings (Simpan + konfirmasi).
 export function onboardingProfileBody(profile, { paydayDay, incomeType }) {
-  return paydayLockState(profile).locked
+  const { locked, needsConfirm } = paydayLockState(profile);
+  return locked || needsConfirm
     ? { income_type: incomeType }
     : { payday_day: paydayDay, income_type: incomeType };
 }

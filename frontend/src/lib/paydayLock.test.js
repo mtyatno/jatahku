@@ -10,7 +10,7 @@ import {
 } from './paydayLock.js';
 
 const CONFIRM_RUMAH_ANI =
-  'Mengubah tanggal gajian berlaku untuk semua anggota Rumah Ani, dan 12 periode terakhir dihitung ulang. Lanjutkan?';
+  'Mengubah tanggal gajian berlaku untuk semua anggota Rumah Ani, dan riwayat anggarannya dihitung ulang. Lanjutkan?';
 
 test('locked member shows owner note', () => {
   const s = paydayLockState({ payday_locked: true, household_payday_day: 25, payday_owner_name: 'Ani' });
@@ -49,7 +49,7 @@ test('confirm text never prints a missing household name', () => {
   assert.equal(s.needsConfirm, true);
   assert.equal(
     s.confirmText,
-    'Mengubah tanggal gajian berlaku untuk semua anggota rumah tangga, dan 12 periode terakhir dihitung ulang. Lanjutkan?',
+    'Mengubah tanggal gajian berlaku untuk semua anggota rumah tangga, dan riwayat anggarannya dihitung ulang. Lanjutkan?',
   );
 });
 
@@ -127,6 +127,27 @@ test('onboarding omits payday_day for a locked member so income_type still saves
   );
   assert.deepEqual(body, { income_type: 'weekly' });
   assert.equal('payday_day' in body, false);
+});
+
+test('onboarding omits payday_day for an owner or admin of a household with more members', () => {
+  // Onboarding tidak punya dialog konfirmasi; mengubah tanggal rumah berisi >1 anggota menghitung ulang riwayatnya dan
+  // memberi tahu semua anggota, jadi itu hanya lewat Settings (Simpan + konfirmasi).
+  for (const profile of [
+    { payday_locked: false, household_member_count: 2, household_name: 'Rumah Ani', household_payday_day: 25 },
+    { payday_locked: false, household_member_count: 5 },
+  ]) {
+    const body = onboardingProfileBody(profile, { paydayDay: 1, incomeType: 'daily' });
+    assert.deepEqual(body, { income_type: 'daily' });
+    assert.equal('payday_day' in body, false);
+  }
+});
+
+test('onboarding still sends payday_day for a solo household', () => {
+  const body = onboardingProfileBody(
+    { payday_locked: false, household_member_count: 1, household_name: 'Rumah Ani' },
+    { paydayDay: 25, incomeType: 'monthly' },
+  );
+  assert.deepEqual(body, { payday_day: 25, income_type: 'monthly' });
 });
 
 test('onboarding keeps the old body when the profile is unknown or old', () => {
