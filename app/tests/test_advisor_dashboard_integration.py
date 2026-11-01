@@ -108,10 +108,11 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
             db.add(AppSetting(key="advisor_v2_users", value=str(me.id)))
             await db.commit()
             self.me, self.rina, self.hid, self.makan = me, rina, str(hh.id), makan
+            self.hh_id = hh.id
 
     async def dashboard(self, user=None):
         async with self.Session() as db:
-            return await advisor_routes.advisor_dashboard(user=user or self.me, db=db)
+            return await advisor_routes.advisor_dashboard(user=user or self.me, db=db, hid=self.hh_id)
 
     async def test_flag(self):
         self.assertEqual(await self.dashboard(self.rina), {"enabled": False})
@@ -190,7 +191,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.skipTest("hari ini tidak memicu HAR-01 di daftar (awal/akhir periode)")
         async with self.Session() as db:
             resp = await advisor_routes.advisor_dismiss(
-                advisor_routes.DismissRequest(kunci=item["id"], pilihan="nanti"), user=self.me, db=db)
+                advisor_routes.DismissRequest(kunci=item["id"], pilihan="nanti"), user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(resp.status_code, 204)
         stored = self.redis.store[advisor_cache.kunci_dismiss(self.me.id, item["id"])]
         self.assertIn('"tone": "danger"', stored)
@@ -199,7 +200,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dismiss_tanpa_cache(self):
         async with self.Session() as db:
-            await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT))
+            await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT), household_id=self.hh_id)
         self.assertIn(advisor_cache.kunci_dismiss(self.me.id, "PER-05:x"), self.redis.store)
 
     async def test_batal_dismiss_memunculkan_lagi(self):
@@ -210,7 +211,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["advisor"]["disembunyikan"], [])
         async with self.Session() as db:
             await advisor_routes.advisor_dismiss(
-                advisor_routes.DismissRequest(kunci=kunci, pilihan="nanti"), user=self.me, db=db)
+                advisor_routes.DismissRequest(kunci=kunci, pilihan="nanti"), user=self.me, db=db, hid=self.hh_id)
         data = await self.dashboard()
         self.assertNotEqual((data["kpi"]["jatah"] or {}).get("id"), chip["id"])
         sembunyi = data["advisor"]["disembunyikan"]
@@ -220,7 +221,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.redis.store[advisor_cache.kunci_dismiss(self.rina.id, kunci)] = '{"pilihan": "nanti"}'
         async with self.Session() as db:
-            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db)
+            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(resp.status_code, 204)
         self.assertNotIn(advisor_cache.kunci_dismiss(self.me.id, kunci), self.redis.store)
         self.assertNotIn(advisor_cache.kunci_dashboard(self.hid, self.me.id), self.redis.store)
@@ -231,12 +232,12 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_batal_dismiss_idempoten(self):
         async with self.Session() as db:
-            resp = await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db)
+            resp = await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(resp.status_code, 204)
         async with self.Session() as db:
-            self.assertFalse(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x"))
-            await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT))
-            self.assertTrue(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x"))
+            self.assertFalse(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x", household_id=self.hh_id))
+            await do_dismiss(self.me, db, "PER-05:x", "periode", now=datetime.now(JKT), household_id=self.hh_id)
+            self.assertTrue(await advisor_dashboard_svc.batal_dismiss(self.me, db, "PER-05:x", household_id=self.hh_id))
 
     async def test_batal_dismiss_redis_gagal_503(self):
         from fastapi import HTTPException
@@ -245,7 +246,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.redis, "delete", rusak):
             async with self.Session() as db:
                 with self.assertRaises(HTTPException) as cm:
-                    await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db)
+                    await advisor_routes.advisor_batal_dismiss(kunci="PER-05:x", user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(cm.exception.status_code, 503)
 
     async def test_dismiss_berubah_saat_menghitung_tidak_disimpan_ke_cache(self):
@@ -275,7 +276,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(kunci)
         async with self.Session() as db:
             resp = await advisor_routes.advisor_dismiss(
-                advisor_routes.DismissRequest(kunci=kunci, pilihan="bukan_dobel"), user=self.me, db=db)
+                advisor_routes.DismissRequest(kunci=kunci, pilihan="bukan_dobel"), user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(resp.status_code, 204)
         key = advisor_cache.kunci_dismiss(self.me.id, kunci)
         self.assertIsNone(self.redis.ttl[key])                                  # permanen
@@ -285,7 +286,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn((kunci, "bukan_dobel"), [(d["kunci"], d["pilihan"]) for d in data["advisor"]["disembunyikan"]])
 
         async with self.Session() as db:
-            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db)
+            resp = await advisor_routes.advisor_batal_dismiss(kunci=kunci, user=self.me, db=db, hid=self.hh_id)
         self.assertEqual(resp.status_code, 204)
         self.assertNotIn(key, self.redis.store)
         self.assertIn(kunci, ids(await self.dashboard()))
@@ -295,7 +296,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         from app.core.period import get_budget_period
         now = datetime.now(JKT)
         async with self.Session() as db:
-            await do_dismiss(self.me, db, "DAT-06:listrik", "bukan_tagihan", now=now)
+            await do_dismiss(self.me, db, "DAT-06:listrik", "bukan_tagihan", now=now, household_id=self.hh_id)
         key = advisor_cache.kunci_dismiss(self.me.id, "DAT-06:listrik")
         pe = get_budget_period(self.me.payday_day, now.date())[1]
         self.assertEqual(self.redis.ttl[key], advisor_cache.ttl_dismiss("periode", now, pe))
@@ -306,7 +307,7 @@ class DashboardIntegrationTests(unittest.IsolatedAsyncioTestCase):
         key = advisor_cache.kunci_dashboard(self.hid, self.me.id)
         besok = datetime.now(JKT) + timedelta(days=1)
         async with self.Session() as db:
-            data = await get_dashboard(self.me, db, now=besok)
+            data = await get_dashboard(self.me, db, now=besok, household_id=self.hh_id)
         self.assertTrue(data["generated_at"].startswith(besok.date().isoformat()))
         self.assertIn(key, self.redis.store)
 
@@ -330,6 +331,8 @@ class DismissHttpTests(unittest.TestCase):
         app.include_router(advisor_routes.router, prefix="/advisor")
         app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
         app.dependency_overrides[get_db] = tanpa_db
+        from app.services.ruang import ruang_aktif
+        app.dependency_overrides[ruang_aktif] = lambda: uuid.uuid4()  # tanpa database
         self.dismiss = AsyncMock()
         p = patch.object(advisor_dashboard_svc, "dismiss", self.dismiss)
         p.start()

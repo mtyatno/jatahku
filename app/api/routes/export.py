@@ -16,12 +16,12 @@ from app.models.models import (
     User,
     Transaction,
     Envelope,
-    HouseholdMember,
     Allocation,
     Income,
     MonthlySnapshot,
 )
 from app.services.visibility import masked_description
+from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
@@ -73,12 +73,11 @@ async def _get_export_data(
     period_start: date,
     period_end: date,
     envelope_id: str | None = None,
+    *,
+    household_id,
 ):
-    """Get transactions + envelope summaries for export."""
-    hid_result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_result.scalar_one_or_none()
+    """Get transactions + envelope summaries for export (ruang dari pemanggil)."""
+    hid = household_id
     if not hid:
         return [], [], {}
 
@@ -186,11 +185,14 @@ async def export_csv(
     envelope_id: str | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     p_start, p_end = _resolve_period(user, period_start, period_end, year, month)
     env_id = str(envelope_id) if isinstance(envelope_id, (str, UUID)) else None
 
-    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id)
+    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id,
+                                                             household_id=hid)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -247,11 +249,14 @@ async def export_pdf(
     envelope_id: str | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     p_start, p_end = _resolve_period(user, period_start, period_end, year, month)
     env_id = str(envelope_id) if isinstance(envelope_id, (str, UUID)) else None
 
-    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id)
+    transactions, summaries, env_map = await _get_export_data(user, db, p_start, p_end, env_id,
+                                                             household_id=hid)
 
     total_budget = sum((s['budget'] for s in summaries), Decimal("0"))
     total_spent = sum((s['spent'] for s in summaries), Decimal("0"))

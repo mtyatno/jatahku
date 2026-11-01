@@ -66,11 +66,13 @@ async def periksa(user, db, now: datetime | None = None, pengaturan: dict | None
     now_local = (now or datetime.now(_tz(user))).astimezone(_tz(user))
     mulai = time.perf_counter()
     try:
-        payload, _meta, snap = await _hitung(user, db, now_local, paksa)
+        from app.services.ruang import ruang_keluarga
+        hid = await ruang_keluarga(user, db)  # Beranda tanpa header dan chat = ruang keluarga
+        payload, _meta, snap = await _hitung(user, db, now_local, paksa, household_id=hid)
         ms = (time.perf_counter() - mulai) * 1000
         if not snap.household_id or not snap.envelopes:
             return {"status": "lewati", "ms": ms, "beda": [], "pesan": "belum ada household/amplop"}
-        a = await chat.muat(user, db, now=now_local, pengaturan=paksa)
+        a = await chat.muat(user, db, now=now_local, pengaturan=paksa, household_id=hid)
         if a is None:
             return {"status": "beda", "ms": ms, "beda": ["chat.muat None padahal dashboard terisi"], "pesan": ""}
         teks = {"sisa": chat.jawab_sisa(a), "status": chat.jawab_status(a), "ringkasan": chat.ringkasan_harian(a)}

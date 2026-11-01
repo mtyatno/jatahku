@@ -10,9 +10,10 @@ from telegram import Bot
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
-from app.models.models import User, HouseholdMember, Envelope, Transaction
+from app.models.models import User, Envelope, Transaction
 from app.bot.handlers import format_currency
 from app.services.envelope_balance import compute_envelope_summaries
+from app.services.ruang import ruang_keluarga
 
 settings = get_settings()
 logger = logging.getLogger("jatahku.summary")
@@ -171,7 +172,8 @@ async def _analisa_v2(user, pengaturan: dict):
         return None
     try:
         async with AsyncSessionLocal() as adb:
-            return await chat.muat(user, adb, pengaturan=pengaturan)
+            hid = await ruang_keluarga(user, adb)  # ringkasan chat: ruang keluarga (ADR-P2)
+            return await chat.muat(user, adb, pengaturan=pengaturan, household_id=hid)
     except Exception as e:
         logger.error(f"Advisor summary failed for user {user.id}: {e}")
         return None
@@ -247,10 +249,7 @@ async def send_daily_summary(user_id=None, telegram: bool = True, web: bool = Fa
 
         for user in users:
             try:
-                hid_result = await db.execute(
-                    select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-                )
-                hid = hid_result.scalar_one_or_none()
+                hid = await ruang_keluarga(user, db)  # ringkasan chat: selalu ruang keluarga (ADR-P2)
                 if not hid:
                     continue
 
@@ -278,7 +277,7 @@ async def send_daily_summary(user_id=None, telegram: bool = True, web: bool = Fa
 
                 # Per-envelope period stats — sumber yang sama dengan dashboard
                 # (GET /envelopes/summary): termasuk rollover & cadangan langganan.
-                rows = await compute_envelope_summaries(user, db)
+                rows = await compute_envelope_summaries(user, db, household_id=hid)
                 envs = _env_lookup(rows)
                 dana, terpakai, sisa_bebas = _period_totals(rows)
 
@@ -348,10 +347,7 @@ async def send_weekly_summary(user_id=None, telegram: bool = True, web: bool = F
 
         for user in users:
             try:
-                hid_result = await db.execute(
-                    select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-                )
-                hid = hid_result.scalar_one_or_none()
+                hid = await ruang_keluarga(user, db)  # ringkasan chat: selalu ruang keluarga (ADR-P2)
                 if not hid:
                     continue
 
@@ -388,7 +384,7 @@ async def send_weekly_summary(user_id=None, telegram: bool = True, web: bool = F
 
                 # Period totals — sumber & definisi sama dengan dashboard
                 # (dana termasuk rollover; Sisa = KPI "Sisa bebas").
-                rows = await compute_envelope_summaries(user, db)
+                rows = await compute_envelope_summaries(user, db, household_id=hid)
                 envs = _env_lookup(rows)
                 total_budget, total_spent, total_remaining = _period_totals(rows)
 

@@ -19,10 +19,10 @@ class MonthlyTrendTests(unittest.IsolatedAsyncioTestCase):
         scalar_res.scalar = MagicMock(return_value=Decimal("100000"))
         income_res = MagicMock()
         income_res.all = MagicMock(return_value=[(Decimal("500000"),), (Decimal("-200000"),)])
-        # 1st execute -> hid; then 3 per period (spent + allocated + income) x 6 periods
-        db.execute = AsyncMock(side_effect=[hid_res] + [scalar_res, scalar_res, income_res] * 6)
+        # ruang dari ruang_aktif; 3 per period (spent + allocated + income) x 6 periods
+        db.execute = AsyncMock(side_effect=[scalar_res, scalar_res, income_res] * 6)
 
-        out = await monthly_trend(user=user, db=db)
+        out = await monthly_trend(user=user, db=db, hid="h1")
 
         self.assertEqual(len(out), 6)
         for row in out:

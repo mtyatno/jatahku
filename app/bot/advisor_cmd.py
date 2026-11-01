@@ -37,9 +37,10 @@ INTENT = {
 async def analisa(user):
     """Analisa v2 untuk `user`, atau None (di luar flag / belum ada amplop / gagal)."""
     from app.core.database import AsyncSessionLocal
+    from app.services.ruang import ruang_keluarga
     try:
         async with AsyncSessionLocal() as db:
-            return await chat.muat(user, db)
+            return await chat.muat(user, db, household_id=await ruang_keluarga(user, db))  # ADR-P2
     except Exception:
         logger.exception("advisor chat: gagal memuat analisa user=%s", getattr(user, "id", None))
         return None

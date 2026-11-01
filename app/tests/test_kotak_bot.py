@@ -222,7 +222,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
             patch.object(handlers, "AsyncSessionLocal", new=lambda: self.db),
             patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)),
             patch.object(handlers, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))),
-            patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)),
+            patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=HID)),
             patch.object(handlers, "get_envelopes_with_spent", new=AsyncMock(return_value=envs)),
             patch("redis.asyncio.from_url", return_value=self.redis),
             patch.object(intake, "create_item", new=self.create),
@@ -868,7 +868,7 @@ class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
                   patch.object(receipt_cmd, "AsyncSessionLocal", new=lambda: self.db),
                   patch("telegram.Bot", new=self.bot_cls),
                   patch("redis.asyncio.from_url", return_value=ChatRedis()),
-                  patch.object(handlers, "get_household_id", new=AsyncMock(return_value=HID)),
+                  patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=HID)),
                   patch.object(handlers, "get_envelopes_with_spent",
                                new=AsyncMock(return_value=[{"envelope": MAKAN}, {"envelope": JAJAN}])),
                   patch.object(view, "item_detail", new=AsyncMock(return_value=DETAIL_QRIS))):

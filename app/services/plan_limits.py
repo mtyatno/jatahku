@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
     User, Envelope, Transaction, RecurringTransaction,
-    HouseholdMember,
 )
+from app.services.ruang import ruang_keluarga_id
 
 PLAN_LIMITS = {
     "basic": {"envelopes": 6, "txn_per_month": 50, "recurring": 5},
@@ -22,10 +22,7 @@ async def check_envelope_limit(user: User, db: AsyncSession) -> tuple[bool, str]
     if limits["envelopes"] == -1:
         return True, ""
 
-    hid_r = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_r.scalar_one_or_none()
+    hid = await ruang_keluarga_id(db, user.id)  # kuota per ruang menyusul di R3
     if not hid:
         return True, ""
 
@@ -122,10 +119,7 @@ async def check_recurring_limit(user: User, db: AsyncSession) -> tuple[bool, str
     if limits["recurring"] == -1:
         return True, ""
 
-    hid_r = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = hid_r.scalar_one_or_none()
+    hid = await ruang_keluarga_id(db, user.id)  # kuota per ruang menyusul di R3
     if not hid:
         return True, ""
 

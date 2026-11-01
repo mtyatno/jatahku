@@ -93,13 +93,14 @@ async def periksa(user, Session) -> dict:
     """Satu user → {"status": ok|beda|lewati|crash, "ms": [per periode], "beda": [...], "pesan"}."""
     from app.services.dashboard import batch, registry
     from app.services.dashboard.sources import Periode, Sumber
-    from app.services.envelope_balance import get_household_id
+    from app.services.ruang import ruang_keluarga
 
     items = [{"id": i["id"], "card": i["card"], "settings": {}} for i in registry.template("beranda")]
     beda, ms = [], []
     try:
         async with Session() as db:
-            hid = await get_household_id(user, db)
+            # Beranda tanpa header X-Jatahku-Ruang = ruang keluarga (R2, ruang_aktif tanpa header).
+            hid = await ruang_keluarga(user, db)
             if not hid:
                 return {"status": "lewati", "ms": [], "beda": [], "pesan": "belum ada household"}
             rahasia = await nama_amplop_pribadi_lain(user, db, hid)
@@ -110,7 +111,7 @@ async def periksa(user, Session) -> dict:
             async with Session() as db:
                 p = await batch.tentukan_periode(user, kode)
                 mulai = time.perf_counter()
-                hasil = await batch.jalankan(user, db, p, items)
+                hasil = await batch.jalankan(user, db, p, items, household_id=hid)
                 ms.append((time.perf_counter() - mulai) * 1000)
             data = hasil["data"]
             for item in items:
@@ -134,7 +135,7 @@ async def periksa(user, Session) -> dict:
                     if nama not in ref_cache:
                         async with Session() as db2:
                             ref_cache[nama] = await METODE[nama](
-                                Sumber(user=user, db=db2, periode=Periode(p.start, p.end, p.berjalan)))
+                                Sumber(user=user, db=db2, periode=Periode(p.start, p.end, p.berjalan), hid=hid))
                     ref = ref_cache[nama]
                     if nama == "advisor" and isi and ref:
                         # generated_at berbeda detik; bandingkan isinya.

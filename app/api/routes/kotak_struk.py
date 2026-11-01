@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.models.models import HouseholdMember, ReceiptScan, User
+from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import record
 from app.services.kotak_struk.config import PDF_MAX_BYTES, ST_SIAP, WAIT_FORM_S
 from app.services.kotak_struk.intake import IntakeRejected, IntakeRequest, create_item
@@ -21,6 +21,7 @@ from app.services.kotak_struk.merchants import NICKNAME_MAX, display_name, set_d
 from app.services.kotak_struk.record import MSG_CANNOT_SKIP, MSG_NOT_FOUND
 from app.services.kotak_struk.view import item_detail
 from app.services.kotak_struk.waiter import wait_for_item
+from app.services.ruang import RuangTulis
 
 router = APIRouter()
 
@@ -152,12 +153,9 @@ async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_curren
 
 @router.put("/merchants/{merchant_id}")
 async def rename_merchant(merchant_id: UUID, body: MerchantNameIn, user: User = Depends(get_current_user),
-                          db: AsyncSession = Depends(get_db)):
+                          db: AsyncSession = Depends(get_db), *, household_id: RuangTulis):
     """Nama panggilan merchant untuk seluruh rumah tangga (dibersihkan; kosong menghapusnya). Hanya anggota
     rumah tangga merchant itu."""
-    household_id = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id).limit(1)
-    )).scalars().first()
     row = await set_display_name(db, merchant_id, household_id, body.display_name) if household_id else None
     if row is None:
         raise HTTPException(status_code=404, detail=MSG_MERCHANT_NOT_FOUND)

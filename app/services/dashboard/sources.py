@@ -11,8 +11,9 @@ satu muatan AI Advisor dan satu ringkasan amplop. Handler diimpor tertunda supay
 membuat impor melingkar dengan `app.api.routes`. Memindahkan rumus dari route ke services adalah
 refactor terpisah, bukan bagian B1.
 
-Ruang: handler lama menentukan household dari keanggotaan user di server (R2 menggantinya dengan
-`ruang_aktif`). Tidak ada parameter ruang dari klien yang diteruskan ke sini.
+Ruang (R2): `Sumber.hid` adalah ruang dari `ruang_aktif` di route `/dashboard/*`, diteruskan ke setiap
+handler sebagai parameter `hid` (handler yang sama menerimanya dari `Depends(ruang_aktif)` bila
+dipanggil lewat HTTP). Tidak ada parameter ruang dari body klien yang diteruskan ke sini.
 """
 from __future__ import annotations
 
@@ -65,6 +66,7 @@ class Sumber:
     user: Any
     db: Any
     periode: Periode
+    hid: Any = None
     _cache: dict = field(default_factory=dict)
 
     async def _muat(self, nama: str, router, handler, **kwargs) -> Any:
@@ -72,7 +74,8 @@ class Sumber:
             hasil = self._cache[nama]
         else:
             try:
-                hasil = _serialisasi(router, handler, await handler(user=self.user, db=self.db, **kwargs))
+                hasil = _serialisasi(router, handler, await handler(user=self.user, db=self.db, hid=self.hid,
+                                                                    **kwargs))
             except HTTPException as exc:
                 logger.warning("dashboard sumber %s gagal: %s %s", nama, exc.status_code, exc.detail)
                 hasil = SumberGagal(nama)

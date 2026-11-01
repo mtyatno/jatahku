@@ -81,9 +81,9 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     return data
 
 
-async def jalankan(user, db, periode: Periode, items: list[dict]) -> dict:
+async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
     mulai = time.perf_counter()
-    sumber = Sumber(user=user, db=db, periode=periode)
+    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id)
     data = {item["id"]: await satu_kartu(sumber, item) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:

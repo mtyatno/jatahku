@@ -463,7 +463,7 @@ async def _dated_reply(key: str, payload: dict, payday_day: int, reading: str, l
 async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarkup | None]:
     """Pesan struk yang lama (struk belanja dan tidak dikenali), tanpa baris kuota scan; tanggal struk di luar periode
     berjalan lewat `_dated_reply`."""
-    from app.bot.handlers import get_envelopes_with_spent, get_household_id
+    from app.bot.handlers import get_envelopes_with_spent, ruang_keluarga
     from app.services.kotak_struk.document import scan_receipt_response
     from app.services.txn_nlp import find_best_envelope
 
@@ -476,7 +476,7 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
                 "Tips: foto tegak lurus, terang, tanpa bayangan. Atau ketik manual, misalnya:\n"
                 f"{merchant.lower()} 45rb"), None
 
-    hid = await get_household_id(user, db)
+    hid = await ruang_keluarga(user, db)
     payday_day = getattr(user, "payday_day", 1) or 1
     envs = [e for e in await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
             if str(getattr(e["envelope"], "purpose", "expense")) not in ("saving", "sinking_fund")]
@@ -514,12 +514,12 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
 async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) -> tuple[str, InlineKeyboardMarkup | None]:
     """Pesan bukti bayar + tombolnya; payload `txn:{key}` (baru, atau yang sudah ada bila `key`, dengan jawaban
     tanggalnya) diperbarui. Tombol amplop lewat `_dated_reply`."""
-    from app.bot.handlers import _spendable_rows, get_envelopes_with_spent, get_household_id
+    from app.bot.handlers import _spendable_rows, get_envelopes_with_spent, ruang_keluarga
 
     prompt = _prompt(detail)
     if prompt == "blocked":
         return proof_message(detail, recorded=recorded, note=note), None
-    hid = await get_household_id(user, db)
+    hid = await ruang_keluarga(user, db)
     payday_day = getattr(user, "payday_day", 1) or 1
     envs = _spendable_rows(await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day))
     if not envs:

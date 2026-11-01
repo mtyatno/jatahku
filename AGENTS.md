@@ -211,7 +211,7 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
    "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
 
-## Deploy Checklist — Plugin R1: model ruang (1c7e5a9d3b20)
+## Deploy Checklist — Plugin R1: model ruang (1c7e5a9d3b20) — sudah jalan 2026-11-01
 Menambah `households.type` (bawaan `rumah_tangga`), `incomes.kind` (bawaan `pemasukan`) beserta backfill, dan unik
 `(user_id, household_id)` di `household_members`. Kolom **idempoten**: `lifespan` (`RUANG_DDL` di
 `app/services/ruang_schema.py`) menambahkannya saat restart pertama, jadi tidak ada jendela 500; backfill `kind` dan
@@ -233,7 +233,20 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
-## Deploy Checklist — Plugin B1: `dashboard_layouts` (b1d4a7c2e9f0)
+## Deploy Checklist — Plugin R2: resolver ruang (tanpa migrasi)
+Mengganti setiap pencarian "household milik user" dengan `app/services/ruang.py`. Tanpa migrasi, paket, atau `.env`
+baru, dan tanpa perubahan tampilan: belum ada klien yang mengirim `X-Jatahku-Ruang` dan belum ada user dengan ruang
+kedua. Satu perubahan perilaku yang disengaja: `POST /user/reset` hanya menghapus pemasukan user di household yang
+di-reset (dulu pemasukannya di household lama yang masih dipakai anggota lain ikut terhapus).
+1. Sebelum merge: tidak ada user dengan lebih dari satu keanggotaan (kode lama galat untuk user itu, kode baru memilih
+   ruang keluarga): `sudo -u postgres psql jatahku_db -c "SELECT user_id, COUNT(*) FROM household_members GROUP BY 1 HAVING COUNT(*) > 1"`
+   → 0 baris.
+2. Merge, tunggu deploy hijau (`api.jatahku.com/health` → commit baru), lalu
+   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0,
+   semua user `ok` atau `tanpa household`. Hasil `beda` atau `crash` = laporkan. Cek Beranda, daftar transaksi, geser
+   dana di bot, dan `/sisa` di Telegram.
+
+## Deploy Checklist — Plugin B1: `dashboard_layouts` (b1d4a7c2e9f0) — sudah jalan 2026-11-01
 Menambah tabel `dashboard_layouts` (tata letak Beranda per user per ruang, ADR-P8) dan endpoint baru
 `/dashboard/*`. Migrasi **idempoten** (`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat
 API restart, dan tidak ada model lama yang memetakan kolom baru, jadi tidak ada jendela 500. Migrasinya tetap
@@ -347,7 +360,7 @@ Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). B
 
 ## Plugin dan ruang (WAJIB untuk semua sesi plugin)
 Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, bentuk API di `04-kontrak-api.md`). Buka sesi dengan `/sesi-plugin <kode>`, tutup dengan `/tutup-sesi-plugin`. Satu sesi = satu branch `plugin/<kode>-<slug>` = satu PR berjudul `Plugin <kode>: <nama>`; status di `docs/plugin/PROGRESS.md`, serah-terima di `docs/plugin/SESI-LOG.md`. PR berlabel `review-keamanan` direview sesi Claude Code terpisah sebelum merge, dan temuan keamanan dikerjakan sebelum fitur dilanjutkan.
-1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif(user, request)` (header `X-Jatahku-Ruang`); menulis menentukan ruang dari objek yang ditulis, lalu memeriksa keanggotaan. `ruang_id` dari body atau query tidak pernah dipercaya.
+1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif` (header `X-Jatahku-Ruang`); menulis menentukan ruang dari objek yang ditulis, lalu memeriksa keanggotaan (sampai R3: `ruang_tulis`, selalu ruang keluarga). `ruang_id` dari body atau query tidak pernah dipercaya. Route menerima ruang sebagai parameter keyword-only `*, hid: RuangAktif` / `hid: RuangTulis` (`app/services/ruang.py`) dan meneruskannya ke services sebagai `household_id`; services tidak pernah mencari household dari keanggotaan sendiri. Kueri `HouseholdMember.user_id == …` baru dijaga `app/tests/test_ruang_pagar.py`.
 2. **Chat selalu ruang keluarga.** Handler bot memakai `ruang_keluarga(user)`. Tidak ada transaksi ruang usaha atau Fitur Tambahan lewat chat; perintah plugin hanya membaca dan menyatakan `audience` (data keuangan usaha hanya untuk pemilik dan admin).
 3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan.
 4. **Plugin hanya lewat `PluginContext`.** Kode di `app/plugins/<id>/` tidak mengimpor model atau route inti dan tidak menulis ke tabel inti secara langsung.

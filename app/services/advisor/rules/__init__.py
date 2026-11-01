@@ -58,10 +58,10 @@ def _fail_fast() -> bool:
     return "unittest" in sys.modules
 
 
-async def build_advisor_insights(user, db) -> dict:
+async def build_advisor_insights(user, db, *, household_id) -> dict:
     from app.core.period import get_period_info
 
-    context = await load_advisor_context(user, db)
+    context = await load_advisor_context(user, db, household_id=household_id)
     envelopes = context.get("envelopes", [])
     stats = context.get("stats", {})
     if not envelopes:

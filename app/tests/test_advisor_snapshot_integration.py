@@ -106,7 +106,7 @@ class SnapshotLoaderTests(unittest.IsolatedAsyncioTestCase):
 
     async def snapshot(self):
         async with self.Session() as db:
-            return await load_snapshot(self.me, db, today=TODAY)
+            return await load_snapshot(self.me, db, today=TODAY, household_id=self.hid)
 
     async def test_amplop_pribadi_anggota_lain_tidak_dimuat(self):
         snap = await self.snapshot()
@@ -169,7 +169,7 @@ class SnapshotLoaderTests(unittest.IsolatedAsyncioTestCase):
             loner = User(name="Sendiri")
             db.add(loner)
             await db.commit()
-            snap = await load_snapshot(loner, db, today=TODAY)
+            snap = await load_snapshot(loner, db, today=TODAY, household_id=None)
         self.assertIsNone(snap.household_id)
         self.assertEqual(compute_metrics(snap).sisa_bebas, D("0"))
 
@@ -190,18 +190,19 @@ class IsEmergencyRouteTests(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             db.add(HouseholdMember(user_id=user.id, household_id=hh.id, role=HouseholdRole.owner))
             await db.commit()
-            self.user = user
+            self.user, self.user_hid = user, hh.id
 
     async def create(self, **kw):
         body = {"name": "Amplop", "budget_amount": D("0"), "purpose": "saving", **kw}
         async with self.Session() as db:
-            return await env_routes.create_envelope(env_routes.EnvelopeCreate(**body), user=self.user, db=db)
+            return await env_routes.create_envelope(env_routes.EnvelopeCreate(**body), user=self.user, db=db,
+                                                    hid=self.user_hid)
 
     async def update(self, env, **kw):
         body = {"name": env.name, "budget_amount": D("0"), "purpose": env.purpose, **kw}
         async with self.Session() as db:
             return await env_routes.update_envelope(env.id, env_routes.EnvelopeCreate(**body),
-                                                    user=self.user, db=db)
+                                                    user=self.user, db=db, hid=self.user_hid)
 
     async def test_buat_ditebak_dari_nama(self):
         self.assertTrue((await self.create(name="Dana Darurat")).is_emergency)

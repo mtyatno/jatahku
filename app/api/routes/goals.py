@@ -12,9 +12,10 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period
 from app.models.models import (
-    User, Envelope, HouseholdMember, Goal, Transaction, Allocation, Income,
+    User, Envelope, Goal, Transaction, Allocation, Income,
 )
 from app.services.advisor import envelope_lifetime_balance
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -49,13 +50,6 @@ class GoalResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
-
-
-async def _get_hid(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
 
 
 async def _compute_goal_response(goal: Goal, user: User, db: AsyncSession) -> dict:
@@ -100,8 +94,9 @@ async def _compute_goal_response(goal: Goal, user: User, db: AsyncSession) -> di
 async def list_goals(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         return []
 
@@ -126,8 +121,9 @@ async def create_goal(
     req: GoalCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
 
@@ -174,8 +170,9 @@ async def get_goal(
     goal_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
 
@@ -198,8 +195,9 @@ async def update_goal(
     req: GoalUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
 
@@ -231,8 +229,9 @@ async def delete_goal(
     goal_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         raise HTTPException(status_code=404, detail="Household not found")
 

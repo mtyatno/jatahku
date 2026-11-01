@@ -159,7 +159,7 @@ class World:
             patch.object(batch_cmd, "AsyncSessionLocal", new=lambda: FakeSession(self.db)),
             patch.object(batch_cmd, "get_or_create_user", new=AsyncMock(return_value=USER)),
             patch.object(batch_cmd, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))),
-            patch.object(batch_cmd, "get_household_id", new=AsyncMock(return_value=HID)),
+            patch.object(batch_cmd, "ruang_keluarga", new=AsyncMock(return_value=HID)),
             patch.object(batch_cmd, "get_envelopes_with_spent", new=self.envs_with_spent),
             # check_expense asli (aturan bersama web + TG); hanya lapisan di bawahnya disimulasikan
             patch.object(expense_rules, "check_behavior", new=self.check),

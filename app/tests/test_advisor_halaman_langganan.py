@@ -144,6 +144,7 @@ class EndpointLanggananTests(unittest.IsolatedAsyncioTestCase):
             hh = Household(name="Rumah")
             db.add_all([me, lain, hh])
             await db.flush()
+            self.hid = hh.id
             db.add_all([HouseholdMember(user_id=me.id, household_id=hh.id, role=HouseholdRole.owner),
                         HouseholdMember(user_id=lain.id, household_id=hh.id, role=HouseholdRole.member)])
             env = Envelope(household_id=hh.id, name="Tagihan", classification="needs", budget_amount=D("0"))
@@ -164,7 +165,7 @@ class EndpointLanggananTests(unittest.IsolatedAsyncioTestCase):
     async def page(self, user):
         from app.api.routes import advisor as advisor_routes
         async with self.Session() as db:
-            return await advisor_routes.advisor_page_langganan(user=user, db=db)
+            return await advisor_routes.advisor_page_langganan(user=user, db=db, hid=self.hid)
 
     async def test_flag(self):
         self.assertEqual(await self.page(self.lain), {"enabled": False})

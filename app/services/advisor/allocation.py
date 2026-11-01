@@ -202,7 +202,7 @@ def sisa_ke(envelopes) -> dict:
     return {"envelope_id": str(env.id) if env else None, "name": SISA_KE}
 
 
-async def analisa_alokasi(user, db):
+async def analisa_alokasi(user, db, *, household_id):
     """(Konteks, Seleksi) v2 untuk halaman Alokasi, atau None bila flag mati / gagal
     (rekomendasi lama tetap jalan)."""
     from datetime import datetime
@@ -213,7 +213,7 @@ async def analisa_alokasi(user, db):
         if not dashboard.flag_aktif(pengaturan.get(dashboard.FLAG_KEY), user.id):
             return None
         now_local = datetime.now(dashboard._tz(user))
-        snap = await load_snapshot(user, db, today=now_local.date())
+        snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
         km, ks, ka = dashboard.bangun_konstanta(pengaturan.get(dashboard.KONSTANTA_KEY))
         dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
         return dashboard.analisa(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
@@ -234,18 +234,18 @@ def banner_alokasi(ctx, sel) -> list[dict]:
     return [render_insight(i, ctx) for i in items]
 
 
-async def build_alokasi_page(user, db) -> dict:
+async def build_alokasi_page(user, db, *, household_id) -> dict:
     """`GET /advisor/page/alokasi`: banner di atas form + amplop penerima sisa."""
-    hasil = await analisa_alokasi(user, db)
+    hasil = await analisa_alokasi(user, db, household_id=household_id)
     if hasil is None:
-        context = await load_advisor_context(user, db)
+        context = await load_advisor_context(user, db, household_id=household_id)
         return {"enabled": False, "banner": [], "sisa_ke": sisa_ke(context.get("envelopes", []))}
     ctx, sel = hasil
     return {"enabled": True, "banner": banner_alokasi(ctx, sel), "sisa_ke": sisa_ke(ctx.snap.envelopes)}
 
 
-async def build_allocation_recommendation(user, income_amount: Decimal, db) -> dict:
-    context = await load_advisor_context(user, db)
+async def build_allocation_recommendation(user, income_amount: Decimal, db, *, household_id) -> dict:
+    context = await load_advisor_context(user, db, household_id=household_id)
     envelopes = context.get("envelopes", [])
     stats = context.get("stats", {})
 
@@ -327,7 +327,7 @@ async def build_allocation_recommendation(user, income_amount: Decimal, db) -> d
             "keyakinan": assess_confidence(historical_spends)["level"],
         }
 
-    hasil = await analisa_alokasi(user, db)
+    hasil = await analisa_alokasi(user, db, household_id=household_id)
     alasan_v2: dict[str, list] = {}
     if hasil is not None:
         ctx, sel = hasil

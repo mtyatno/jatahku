@@ -14,7 +14,7 @@ from app.models.models import (
     BalanceCheck, Transaction, Income, Allocation, Household, HouseholdMember, TransactionSource,
     IncomeKind,
 )
-from app.services.envelope_balance import compute_envelope_summaries, get_household_id
+from app.services.envelope_balance import compute_envelope_summaries
 
 UNIT = Decimal("1000")
 ZERO = Decimal("0")
@@ -171,11 +171,11 @@ async def load_expense_weights(envelope_ids, db, today: date) -> dict:
     return {str(eid): Decimal(str(total)) for eid, total in result.all()}
 
 
-async def build_preview(user, db, actual_amount: Decimal, today: date | None = None) -> dict:
+async def build_preview(user, db, actual_amount: Decimal, today: date | None = None, *, household_id) -> dict:
     """Hitung selisih + saran pembagian. TIDAK menulis apa pun."""
     actual_amount = _money(actual_amount, "Nominal uang riil tidak valid")
     today = today or date.today()
-    rows = await compute_envelope_summaries(user, db)
+    rows = await compute_envelope_summaries(user, db, household_id=household_id)
     app_amount = _app_amount(rows)
     gap = actual_amount - app_amount
     direction = classify_gap(gap)
@@ -206,14 +206,14 @@ async def build_preview(user, db, actual_amount: Decimal, today: date | None = N
 
 
 async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amount: Decimal,
-                              lines: list, today: date | None = None) -> dict:
+                              lines: list, today: date | None = None, *, household_id) -> dict:
     """Validasi ulang di server lalu tulis log + penyesuaian dalam satu commit."""
     today = today or date.today()
     actual_amount = _money(actual_amount, "Nominal uang riil tidak valid")
     expected_app_amount = Decimal(expected_app_amount)
     if not expected_app_amount.is_finite() or abs(expected_app_amount) >= MAX_AMOUNT:  # boleh negatif
         raise BalanceCheckError(400, "Data selisih tidak valid, cek ulang")
-    hid = await get_household_id(user, db)
+    hid = household_id
     if not hid:
         raise BalanceCheckError(400, "Belum punya household")
 
@@ -225,7 +225,7 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
     # insert ber-FK ke household (income, amplop) selama apply berjalan.
     await db.execute(select(Household.id).where(Household.id == hid).with_for_update(key_share=True))
 
-    rows = await compute_envelope_summaries(user, db)
+    rows = await compute_envelope_summaries(user, db, household_id=hid)
     app_amount = _app_amount(rows)
     if app_amount.quantize(CENT) != expected_app_amount.quantize(CENT):
         raise BalanceCheckError(409, "Data berubah, cek ulang selisihnya")
@@ -270,9 +270,9 @@ async def apply_balance_check(user, db, actual_amount: Decimal, expected_app_amo
     }
 
 
-async def undo_balance_check(user, db, check_id) -> dict:
+async def undo_balance_check(user, db, check_id, *, household_id) -> dict:
     """Batalkan cek TERAKHIR household (hanya oleh pembuatnya)."""
-    hid = await get_household_id(user, db)
+    hid = household_id
     if not hid:
         raise BalanceCheckError(404, "Penyesuaian tidak ditemukan")
     # Kunci yang sama dengan apply_balance_check: undo tak boleh menyalip apply yang sedang jalan
@@ -303,8 +303,8 @@ async def undo_balance_check(user, db, check_id) -> dict:
     return {"status": "undone", "id": latest.id}
 
 
-async def get_status(user, db) -> dict:
-    hid = await get_household_id(user, db)
+async def get_status(user, db, *, household_id) -> dict:
+    hid = household_id
     if not hid:
         return {"last_checked_at": None, "last_gap": None, "undo_check_id": None, "member_count": 0}
     latest = (await db.execute(_latest_check_query(hid))).scalar_one_or_none()

@@ -8,16 +8,6 @@ def _payday(user) -> int:
     return getattr(user, "payday_day", 1) or 1
 
 
-async def _get_household_id(user, db):
-    from sqlalchemy import select
-    from app.models.models import HouseholdMember
-
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
-
-
 async def _load_visible_envelopes(user, household_id, db):
     from sqlalchemy import or_, select
     from app.models.models import Envelope
@@ -92,10 +82,10 @@ async def envelope_lifetime_balance(envelope_id, db) -> Decimal:
     return _to_decimal(alloc.scalar()) - _to_decimal(spent.scalar())
 
 
-async def load_advisor_context(user, db, periods_count: int = 6) -> dict:
+async def load_advisor_context(user, db, periods_count: int = 6, *, household_id) -> dict:
+    """Konteks advisor v1 untuk ruang `household_id` (ditentukan pemanggil, app/services/ruang.py)."""
     from app.core.period import get_last_n_periods
 
-    household_id = await _get_household_id(user, db)
     if not household_id:
         return {
             "household_id": None, "periods": [], "envelopes": [], "stats": {},
