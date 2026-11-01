@@ -1,7 +1,7 @@
 # Siklus anggaran per household — desain
 
 **Tanggal:** 31 Okt 2026 (diperbarui 1 Nov 2026 sesudah implementasi)
-**Status:** desain disetujui pemilik produk di chat, bagian 1–9 (31 Okt 2026); spec tertulis disetujui 31 Okt 2026. **Diimplementasikan** di branch `feat/siklus-household` (1 Nov 2026, di atas main setelah Plugin R2 (#166) dan B3 (#167/#168)): revisi alembic `2d51b9031a6b`, PR berlabel `migrasi` menunggu merge. Perilaku final: `docs/siklus-household.md`. Yang berubah dari desain awal tercatat di "Penyesuaian saat implementasi" (butir 6–23) dan ditandai dengan nomornya di bagian yang bersangkutan; keputusan produk 1–8 tidak berubah, kecuali cara keputusan 7 dijalankan (penyesuaian 15). Rencana: `docs/superpowers/plans/2026-10-31-siklus-household.md`.
+**Status:** desain disetujui pemilik produk di chat, bagian 1–9 (31 Okt 2026); spec tertulis disetujui 31 Okt 2026. **Diimplementasikan** di branch `feat/siklus-household` (1 Nov 2026, di atas main setelah Plugin R2 (#166) dan B3 (#167/#168)): revisi alembic `2d51b9031a6b`. **Tayang 1 Nov 2026:** PR #169 (squash `e3453ce`), migrasi skema dan `siklus_household --apply` dijalankan pemilik tanpa error; recompute seluruh riwayat (penyesuaian 15) dikonfirmasi pemilik. Perilaku final: `docs/siklus-household.md`. Yang berubah dari desain awal tercatat di "Penyesuaian saat implementasi" (butir 6–23) dan ditandai dengan nomornya di bagian yang bersangkutan; keputusan produk 1–8 tidak berubah, kecuali cara keputusan 7 dijalankan (penyesuaian 15). Rencana: `docs/superpowers/plans/2026-10-31-siklus-household.md`.
 
 ## Penyesuaian saat menyusun rencana implementasi (31 Okt 2026)
 
