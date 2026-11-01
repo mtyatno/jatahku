@@ -798,13 +798,16 @@ _STATUS_TITLE = re.compile(r"(?<!\w)" + _TITLE_NOUN + r"(?!\w)\s+(?:\S+\s+){0,3}
 #   sebelum kata itu, jadi "Saldo tidak cukup, transaksi ditolak" tetap dihitung;
 # - kata bersyarat tepat sesudah kata itu (paling banyak satu kata di antaranya: "dibatalkan jika ...", "dibatalkan otomatis
 #   bila ..."); kata bersyarat sesudah tanda baca ("Ditolak, jika saldo terpotong hubungi 14017") = ajakan, tetap dihitung;
-# - di judul dan baris (c): kata itu harus menutup klausanya. Sesudahnya boleh: satu kata pelaku/cara ("Ditolak Bank",
-#   "Dibatalkan Otomatis", "Ditolak Penerbit Kartu"), lalu nominal Rp, #id, atau tanggal/jam (juga tanpa tahun: "31/10
-#   09:00", "31 Okt"), boleh didahului "on"/"•" ("Cancelled on 31 Oct 2026", "Dibatalkan • 31 Okt 2026"); angka polos
-#   tidak ("TRANSAKSI VOID 15.000", "Transaksi Batal 2"). Atau diikuti oleh/karena/pada/sejak/by/due ("Transaksi Dibatalkan
-#   oleh sistem"), asal klausa itu tidak memuat modal sesudahnya ("Transaksi dibatalkan oleh pembeli tidak dapat
-#   direfund", "… karena barang rusak dapat ditukar": kebijakan). "Transaksi dibatalkan maks 1x24 jam", "Pembelian
-#   dibatalkan tidak dapat direfund" tidak dihitung. "TRANSAKSI VOID" (slip EDC void) dihitung.
+# - di judul dan baris (c): kata itu harus menutup klausanya. Sesudahnya boleh: satu kata pelaku/cara, boleh dengan satu
+#   penjelas dari daftar tertutup ("Ditolak Bank", "Ditolak Bank Tujuan", "Dibatalkan Otomatis", "Ditolak Penerbit
+#   Kartu"), lalu nominal Rp bukan nol, #id, atau tanggal/jam dengan nama bulan utuh (juga tanpa tahun: "31/10 09:00",
+#   "31 Okt"), boleh didahului "on"/"•" ("Cancelled on 31 Oct 2026", "Dibatalkan • 31 Okt 2026"); angka polos, "Rp0", dan
+#   nama barang tidak ("TRANSAKSI VOID 15.000", "Transaksi Batal 2", "TRANSAKSI VOID 1 MARLBORO"); "#" + angka saja hanya
+#   di teks tanpa baris barang. Atau diikuti oleh/karena/sebab/pada/sejak/by/due/because ("Transaksi Dibatalkan oleh
+#   sistem"), asal klausa itu tidak memuat modal kebijakan (`_policy_modal`: "Transaksi dibatalkan oleh pembeli tidak
+#   dapat direfund", "… karena barang rusak dapat ditukar"; bukan alasan bernegasi "karena kartu tidak dapat digunakan").
+#   "Transaksi dibatalkan maks 1x24 jam", "Pembelian dibatalkan tidak dapat direfund" tidak dihitung. "TRANSAKSI VOID"
+#   (slip EDC void) dihitung.
 # Di posisi lain kata ini hanya mencegah `berhasil` (`_NOT_DONE`).
 _CANCEL_WORD = r"(?:dibatalkan|ditolak|batal|rejected|cancell?ed|void)"
 _CANCEL = re.compile(r"(?<!\w)" + _CANCEL_WORD + r"(?!\w)", re.IGNORECASE)
@@ -821,32 +824,53 @@ _YANG_BEFORE = re.compile(r"(?<!\w)yang\s+$", re.IGNORECASE)
 _CANCEL_CLAUSE = re.compile(r"[.,](?!\d)|[;:!?|()]|\s[-–—]+\s")
 _IF_NEXT = re.compile(r"\s+(?:[^\s.,;:!?|()]+\s+)?(?:jika|bila|apabila|kalau|if|unless|kecuali)(?!\w)", re.IGNORECASE)
 _CLAUSE_START = re.compile(r"\s*(?:[.,;:!?|()]|[-–—](?:\s|$))")
-_AGENT_NEXT = re.compile(r"\s+(?:oleh|karena|pada|sejak|by|due)(?!\w)", re.IGNORECASE)
+_AGENT_NEXT = re.compile(r"\s+(?:oleh|karena|sebab|pada|sejak|by|due|because)(?!\w)", re.IGNORECASE)
+# Kata alasan: sebelum kata ini (frasa oleh/by/pada/sejak) modal apa pun = kebijakan; sesudahnya hanya modal TANPA negasi
+# ("karena barang rusak dapat ditukar"), sebab "karena kartu tidak dapat digunakan" adalah alasan kegagalan itu sendiri.
+_REASON_WORD = re.compile(r"(?<!\w)(?:karena|sebab|due|because)(?!\w)", re.IGNORECASE)
 _LATER_MODAL = re.compile(r"(?<!\w)(?:dapat|bisa|boleh|akan|harus|can|may|will)(?!\w)", re.IGNORECASE)
-# Satu kata pelaku/cara tepat sesudah kata batal ("Pembayaran Ditolak Bank", "Transaksi Dibatalkan Otomatis").
+_NEGATION_BEFORE = re.compile(r"(?<!\w)(?:tidak|tak|gak|nggak|ga|belum|not)\s+$", re.IGNORECASE)
+_NEGATION_AFTER = re.compile(r"['’]t(?!\w)|\s+not(?!\w)", re.IGNORECASE)   # "can't", "may not" ("cannot" bukan modal)
+# Satu kata pelaku/cara tepat sesudah kata batal ("Pembayaran Ditolak Bank", "Transaksi Dibatalkan Otomatis"), boleh
+# diikuti satu kata penjelas dari daftar tertutup ("Ditolak Bank Tujuan", "Dibatalkan Sistem Otomatis").
 _ACTOR_NEXT = re.compile(r"\s+(?:bank|sistem|system|otomatis|automatically|penerbit(?:\s+kartu)?|issuer|merchant|penjual|"
-                         r"pengguna|user|kamu)(?!\w)", re.IGNORECASE)
+                         r"pengguna|user|kamu)(?:\s+(?:tujuan|penerima|pengirim|penerbit|issuer|pusat|otomatis|sistem|bank))?"
+                         r"(?!\w)", re.IGNORECASE)
 _TAIL_SEP = re.compile(r"\s*(?:on(?!\w)|[•·])", re.IGNORECASE)
-_MONTH = r"(?:jan|feb|mar|apr|mei|may|jun|jul|agu|agt|aug|sep|okt|oct|nov|des|dec)[a-z]*"
-# Nominal Rp, #id, tanggal tanpa tahun ("31/10", "31 Okt"), jam. Angka polos tidak pernah ("15.000", "2").
+# Nama bulan utuh (boleh disingkat baku, boleh bertitik), bukan awalan kata: "1 MARLBORO", "1 SEPATU", "2 DESSERT" bukan tanggal.
+_MONTH = (r"(?:jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:et|ch)?|apr(?:il)?|mei|may|jun[ie]?|jul[iy]?|agu(?:stus)?|agt|"
+          r"aug(?:ust)?|sep(?:t|tember)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|des(?:ember)?|dec(?:ember)?)\.?")
+# Nominal Rp bukan nol, #id, tanggal tanpa tahun ("31/10", "31 Okt"), jam. Angka polos tidak pernah ("15.000", "2"), juga
+# "Rp0" (nominal nol tidak menutup apa pun). "#" + angka saja hanya di teks tanpa baris barang (`_TAIL_NUMBER_ID`).
 _TAIL_TOKEN = re.compile(
-    r"[\s,]+(?:(?:Rp\.?|IDR)\s*\d[\d.,]*|#[A-Za-z0-9\-]+|\d{1,2}/\d{1,2}(?![\d/])|\d{1,2}\s+" + _MONTH +
-    r"|\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?![\d.:])|wib|wita|wit|pukul)(?!\w)", re.IGNORECASE)
-_DATE_TOKEN = (r"(?:\d{1,4}(?:[/.\-:]\d{1,4})*|jan\w*|feb\w*|mar\w*|apr\w*|mei|may|jun\w*|jul\w*|agu\w*|agt|aug\w*|"
-               r"sep\w*|okt\w*|oct\w*|nov\w*|des\w*|dec\w*|wib|wita|wit|pukul)")
+    r"[\s,]+(?:(?:Rp\.?|IDR)\s*(?![0.,]+(?!\d))\d[\d.,]*|#(?=[A-Za-z0-9\-]*[A-Za-z])[A-Za-z0-9\-]+|\d{1,2}/\d{1,2}(?![\d/])|"
+    r"\d{1,2}\s+" + _MONTH + r"|\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?![\d.:])|wib|wita|wit|pukul)(?![\w.])", re.IGNORECASE)
+_TAIL_NUMBER_ID = re.compile(r"[\s,]+#\d+(?!\w)")
+_DATE_TOKEN = r"(?:\d{1,4}(?:[/.\-:]\d{1,4})*|" + _MONTH + r"|wib|wita|wit|pukul)"
 _DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
 
 
-def _cancel_ends_clause(text: str, end: int) -> bool:
+def _policy_modal(clause: str) -> bool:
+    """Modal kebijakan di klausa pelaku/sebab: sebelum kata alasan (karena/sebab/due/because) modal apa pun ("oleh pembeli
+    tidak dapat direfund"); sesudahnya hanya modal tanpa negasi ("karena barang rusak dapat ditukar"; bukan "karena kartu
+    tidak dapat digunakan", "due to card cannot be used")."""
+    reason = _REASON_WORD.search(clause)
+    before, after = (clause[:reason.start()], clause[reason.start():]) if reason else (clause, "")
+    if _LATER_MODAL.search(before):
+        return True
+    return any(not _NEGATION_BEFORE.search(after[:m.start()]) and not _NEGATION_AFTER.match(after, m.end())
+               for m in _LATER_MODAL.finditer(after))
+
+
+def _cancel_ends_clause(text: str, end: int, *, store: bool = False) -> bool:
     """Kata batal yang berakhir di `end` menutup klausanya: akhir baris, tanda baca, atau sisa tanpa huruf/angka, boleh
-    sesudah satu kata pelaku/cara lalu nominal Rp, #id, atau tanggal/jam ("Ditolak Bank", "Dibatalkan 31/10 09:00",
-    "Dibatalkan Rp50.000"), atau diikuti pelaku/sebab ("oleh sistem", "karena saldo tidak cukup") tanpa modal sesudahnya
-    di klausa itu ("oleh pembeli tidak dapat direfund" bukan status)."""
+    sesudah satu kata pelaku/cara (+ satu penjelas) lalu nominal Rp, #id, atau tanggal/jam ("Ditolak Bank Tujuan",
+    "Dibatalkan 31/10 09:00", "Dibatalkan Rp50.000"; "#" + angka saja hanya bila bukan teks berbaris barang, `store`), atau
+    diikuti pelaku/sebab ("oleh sistem", "karena saldo tidak cukup") tanpa modal kebijakan di klausa itu (`_policy_modal`)."""
     rest = text[end:]
     agent = _AGENT_NEXT.match(rest)
     if agent:
-        clause = _CANCEL_CLAUSE.split(rest[agent.end():], maxsplit=1)[0]
-        return not _LATER_MODAL.search(clause)
+        return not _policy_modal(_CANCEL_CLAUSE.split(rest, maxsplit=1)[0])
     for pattern in (_ACTOR_NEXT, _TAIL_SEP):
         m = pattern.match(rest)
         if m:
@@ -856,7 +880,7 @@ def _cancel_ends_clause(text: str, end: int) -> bool:
         if m and (parse_datetime_id(part := m.group(0).strip(" ,")) or _TIME_ONLY.fullmatch(part)):
             rest = rest[m.end():]
             continue
-        m = _TAIL_TOKEN.match(rest)
+        m = _TAIL_TOKEN.match(rest) or (None if store else _TAIL_NUMBER_ID.match(rest))
         if not m:
             break
         rest = rest[m.end():]
@@ -869,16 +893,17 @@ def _cancel_counts(text: str, m: re.Match, word: str = "word") -> bool:
     return not _IF_NEXT.match(text, m.end(word)) and not _YANG_BEFORE.search(text[:m.start(word)])
 
 
-def _cancel_as_failed(text: str, *, value: bool = False, header: bool = False) -> str:
+def _cancel_as_failed(text: str, *, value: bool = False, header: bool = False, store: bool = False) -> str:
     """`text` dengan kata batal yang dihitung diganti "gagal" (lihat `_CANCEL_WORD`): judul status yang kata batalnya menutup
     klausa; bila `value` (nilai label status pembayaran) di mana saja tanpa negasi/modal di klausanya; bila `header` (4 baris
-    pertama) baris yang diawali kata itu dan kata itu menutup klausanya. Selain itu teks dikembalikan apa adanya."""
+    pertama) baris yang diawali kata itu dan kata itu menutup klausanya. `store`: teks berbaris barang ("#2" bukan penutup).
+    Selain itu teks dikembalikan apa adanya."""
     if not _CANCEL.search(text or ""):
         return text
     spans = []
     if header:
         m = _CANCEL_ALONE.match(text)
-        if m and _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word")):
+        if m and _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word"), store=store):
             spans.append((m.start("word"), m.end("word")))
     if value:
         for m in _CANCEL.finditer(text):
@@ -886,7 +911,7 @@ def _cancel_as_failed(text: str, *, value: bool = False, header: bool = False) -
             if not _CANCEL_GUARD_WORD.search(clause) and _cancel_counts(text, m, 0):
                 spans.append((m.start(), m.end()))
     for m in _CANCEL_TITLE.finditer(text):
-        if _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word")):
+        if _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word"), store=store):
             spans.append((m.start("word"), m.end("word")))
     for start, end in sorted(set(spans), reverse=True):
         text = text[:start] + "gagal" + text[end:]
@@ -920,7 +945,7 @@ def _status_lines(texts: list[str], max_words: int, *, store: bool = False, head
         is_name, name_below = name_below, False
         if value is None:
             text = _mask_arrival(text, store=store)
-        text = _cancel_as_failed(text, value=value is not None, header=header)
+        text = _cancel_as_failed(text, value=value is not None, header=header, store=store)
         label_end = _name_label_end(text)
         if label_end is not None:
             text = text[label_end:].strip(" :：")
@@ -1168,7 +1193,7 @@ def _is_item_line(line: str) -> bool:
     if is_label_line(line) or _NON_ITEM_HEAD.match(line) or parse_datetime_id(line):
         return False
     tokens = line.split()
-    if len(tokens) < 2 or not amounts_in(tokens[-1]):
+    if len(tokens) < 2 or tokens[-1].startswith("#") or not amounts_in(tokens[-1]):   # "#12345" = nomor, bukan harga
         return False
     name = re.sub(r"\bRP\b", " ", " ".join(tokens[:-1]).upper())
     return sum(c.isalpha() for c in name) >= 3

@@ -918,11 +918,16 @@ Catatan:
   seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata batal ("dibatalkan", "ditolak", "batal", "rejected",
   "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di tiga posisi: judul status yang
   kata batalnya menutup klausa ("Transfer Dibatalkan", "Payment rejected", "Transaksi Batal"; sesudahnya boleh satu kata
-  pelaku/cara lalu nominal Rp, #id, atau tanggal/jam, juga tanpa tahun dan sesudah "on"/"•": "Pembayaran Ditolak Bank",
-  "Transaksi Dibatalkan Otomatis", "Transfer Dibatalkan Rp50.000", "Transfer dibatalkan 31/10 09:00", "Transaction
-  Cancelled on 31 Oct 2026"; atau oleh/karena/pada/sejak/by/due tanpa modal sesudahnya di klausa itu: "Transaksi
-  Dibatalkan oleh sistem" diblokir, "Transaksi dibatalkan oleh pembeli tidak dapat direfund" tidak; angka polos bukan ekor:
-  "TRANSAKSI VOID 15.000", "Transaksi Batal 2" tidak diblokir; slip EDC "TRANSAKSI VOID" diblokir), nilai
+  pelaku/cara, boleh dengan satu penjelas dari daftar tertutup (tujuan, penerima, pengirim, penerbit, issuer, pusat,
+  otomatis, sistem, bank), lalu nominal Rp bukan nol, #id, atau tanggal/jam dengan nama bulan utuh, juga tanpa tahun dan
+  sesudah "on"/"•": "Pembayaran Ditolak Bank", "Transaksi Ditolak Bank Tujuan", "Transaksi Dibatalkan Otomatis",
+  "Transfer Dibatalkan Rp50.000", "Transfer dibatalkan 31/10 09:00", "Transaction Cancelled on 31 Oct 2026"; atau
+  oleh/karena/sebab/pada/sejak/by/due/because tanpa modal kebijakan di klausa itu: sebelum kata alasan modal apa pun,
+  sesudahnya hanya modal tanpa negasi, jadi "Transaksi Dibatalkan oleh sistem" dan "Transaksi Ditolak karena kartu tidak
+  dapat digunakan" diblokir, "Transaksi dibatalkan oleh pembeli tidak dapat direfund" dan "… karena barang rusak dapat
+  ditukar" tidak; angka polos, "Rp0", dan nama barang sesudah jumlah bukan ekor: "TRANSAKSI VOID 15.000", "Transaksi Batal
+  2", "Transaksi batal Rp0", "TRANSAKSI VOID 1 MARLBORO" tidak diblokir; "#" + angka saja ("Transaksi Batal #2") menutup
+  klausa hanya di teks tanpa baris barang; slip EDC "TRANSAKSI VOID" diblokir), nilai
   label status pembayaran ("Status: Ditolak", "Status: Saldo tidak cukup, transaksi ditolak") dan baris di empat baris
   pertama yang diawali kata itu, dengan ekor yang sama ("Dibatalkan", "Telah ditolak", "Ditolak bank", "Dibatalkan 31/10
   09:00", "Dibatalkan • 31 Okt 2026"; "Batal" dan "Void" saja
@@ -935,8 +940,9 @@ Catatan:
   kamu") dibaca jalur struk dan tidak diblokir, persis seperti "Gagal" di posisi itu (titik terbuka N1, L6e); kata itu
   saja di badan ("Dibatalkan" di bawah rincian, juga di jalur struk dengan saklar mati) dan kata "belum selesai" lainnya
   ("Dikembalikan", "Menunggu") tetap `tidak_diketahui` (tidak diblokir, hanya mencegah `berhasil`); judul yang kata
-  batalnya diikuti lebih dari satu kata lain ("Transaksi Ditolak Bank Tujuan"; "oleh Bank Tujuan" dibaca), lebih dari 3
-  kata di antara kata benda dan kata batal
+  batalnya diikuti kata bebas ("Transaksi Ditolak Bank Mandiri"; "oleh Bank Mandiri" dibaca), bulan sebelum tanggal
+  ("Transaction cancelled on Oct 31"), kalimat lebih dari 8 kata ("Transfer dibatalkan karena rekening tujuan tidak dapat
+  menerima dana", seperti "gagal"), lebih dari 3 kata di antara kata benda dan kata batal
   ("Payment to TOKO A was rejected"), kata benda di luar daftar ("Pesanan Dibatalkan"), OCR terpisah ("Di batalkan") dan
   "declined" tidak dibaca; nama toko berbentuk judul ("KEDAI TRANSAKSI BATAL") memblokir seperti "KEDAI TRANSAKSI GAGAL";
   kaki bantuan berbentuk
