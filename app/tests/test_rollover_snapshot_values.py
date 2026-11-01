@@ -1,6 +1,8 @@
 """Siklus household, Task 3: nilai snapshot murni (`snapshot_values`), alokasi/pengeluaran ikut tersimpan di
-`MonthlySnapshot`, dan `recompute_household` (riwayat satu household dihitung ulang oldest-first dengan force, lalu
-snapshot periode berjalan dan sesudahnya dibuang karena snapshot hanya boleh ada untuk periode tertutup).
+`MonthlySnapshot`, kabel buku besar `create_monthly_snapshots` (flag rollover per amplop, cabang `force` mengganti baris
+kunci yang sama, tanpa `force` melewatinya), `first_activity_date`, dan `recompute_household` (snapshot periode
+berjalan dan sesudahnya dibuang LEBIH DULU karena snapshot hanya boleh ada untuk periode tertutup, lalu riwayat satu
+household dihitung ulang oldest-first dengan force, mundur sampai aktivitas pertamanya).
 
 Run: python -m unittest app.tests.test_rollover_snapshot_values -v
 """
@@ -14,7 +16,7 @@ import uuid
 from datetime import date
 from decimal import Decimal as D
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from sqlalchemy.dialects import postgresql
 
@@ -34,6 +36,15 @@ class FakeSession:
 
     async def __aexit__(self, *exc):
         return False
+
+
+def record_calls(db, *names):
+    """Lampirkan method `names` milik db tiruan ke satu manajer; hasilnya fungsi yang mengembalikan urutan
+    panggilannya."""
+    manager = MagicMock()
+    for name in names:
+        manager.attach_mock(getattr(db, name), name)
+    return lambda: [name for name, _args, _kwargs in manager.mock_calls]
 
 
 def compiled(statement) -> tuple[str, dict]:
@@ -70,6 +81,17 @@ class SnapshotValuesTests(unittest.TestCase):
         self.assertEqual(v.closing, D(-200000))
         self.assertEqual(v.rollover, D(0))
 
+    def test_rollover_carries_deficit(self):
+        # Amplop rollover yang terpakai melebihi opening membawa defisitnya PENUH (negatif) ke periode berikutnya,
+        # bukan 0; amplop non-rollover dengan angka yang sama me-reset.
+        carried = rollover.snapshot_values(D(50000), D(300000), D(500000), True)
+        self.assertEqual(carried.opening, D(350000))
+        self.assertEqual(carried.closing, D(-150000))
+        self.assertEqual(carried.rollover, D(-150000))
+        reset = rollover.snapshot_values(D(50000), D(300000), D(500000), False)
+        self.assertEqual(reset.closing, D(-150000))
+        self.assertEqual(reset.rollover, D(0))
+
 
 class CreateMonthlySnapshotsTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_monthly_snapshots_stores_allocated_and_spent(self):
@@ -95,6 +117,73 @@ class CreateMonthlySnapshotsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap.opening_balance, D(600000))
         self.assertEqual(snap.closing_balance, D(200000))
         self.assertEqual(snap.rollover_amount, D(200000))
+
+
+    async def test_create_monthly_snapshots_passes_each_envelopes_rollover_flag(self):
+        # Kabel buku besar: yang diteruskan ke `snapshot_values` adalah `env.is_rollover` amplop itu sendiri. Dua amplop
+        # aktif dengan angka sama (closing 200.000): yang rollover menyimpan rollover = closing, yang lain 0.
+        household = SimpleNamespace(id=uuid.uuid4())
+        keep = SimpleNamespace(id=uuid.uuid4(), name="Tabungan", is_rollover=True)
+        reset = SimpleNamespace(id=uuid.uuid4(), name="Makan", is_rollover=False)
+        per_envelope = (FakeResult(None), FakeResult(D(0)), FakeResult(D(300000)), FakeResult(D(500000)))
+        db = db_with(FakeResult(rows=[household]), FakeResult(rows=[keep, reset]), *per_envelope, *per_envelope)
+        with patch.object(rollover, "AsyncSessionLocal", new=lambda: FakeSession(db)):
+            result = await rollover.create_monthly_snapshots(date(2026, 9, 25), date(2026, 10, 24))
+
+        self.assertEqual(result, {"processed": 2, "snapshots_created": 2, "errors": []})
+        stored = {snap.envelope_id: snap for snap in (c.args[0] for c in db.add.call_args_list)}
+        self.assertEqual(
+            (stored[keep.id].closing_balance, stored[keep.id].rollover_amount), (D(200000), D(200000))
+        )
+        self.assertEqual((stored[reset.id].closing_balance, stored[reset.id].rollover_amount), (D(200000), D(0)))
+
+    def _one_envelope_with_existing_snapshot(self, *more):
+        """db tiruan: satu household, satu amplop rollover, dan snapshot lama pada kunci 2026-09 (lalu `more`)."""
+        household = SimpleNamespace(id=uuid.uuid4())
+        env = SimpleNamespace(id=uuid.uuid4(), name="Makan", is_rollover=True)
+        existing = SimpleNamespace(envelope_id=env.id, year=2026, month=9)
+        db = db_with(FakeResult(rows=[household]), FakeResult(rows=[env]), FakeResult(existing), *more)
+        db.delete = AsyncMock()
+        return db, env, existing
+
+    async def test_create_monthly_snapshots_force_replaces_the_existing_row(self):
+        # Cabang yang dipakai recompute: snapshot lama pada kunci yang sama dihapus (dan di-flush, supaya kunci unik
+        # tidak bentrok) SEBELUM yang baru ditambahkan, dengan angka yang dihitung ulang.
+        db, env, existing = self._one_envelope_with_existing_snapshot(
+            FakeResult(D(100000)), FakeResult(D(400000)), FakeResult(D(500000))
+        )
+        order = record_calls(db, "delete", "flush", "add")
+        with patch.object(rollover, "AsyncSessionLocal", new=lambda: FakeSession(db)):
+            result = await rollover.create_monthly_snapshots(date(2026, 9, 25), date(2026, 10, 24), force=True)
+
+        self.assertEqual(result, {"processed": 1, "snapshots_created": 1, "errors": []})
+        db.delete.assert_awaited_once_with(existing)
+        self.assertEqual(order(), ["delete", "flush", "add"])
+        snap = db.add.call_args.args[0]
+        self.assertEqual((snap.envelope_id, snap.year, snap.month), (env.id, 2026, 9))
+        self.assertEqual(
+            (snap.opening_balance, snap.closing_balance, snap.rollover_amount),
+            (D(600000), D(200000), D(200000)),
+        )
+        self.assertEqual(
+            (snap.allocated_amount, snap.spent_amount),
+            (D(500000), D(400000)),
+        )
+        _, params = compiled(db.execute.await_args_list[2].args[0])  # cek kunci: amplop ini, (2026, 9)
+        self.assertEqual(params, {"envelope_id_1": env.id, "year_1": 2026, "month_1": 9})
+        db.commit.assert_awaited_once()
+
+    async def test_create_monthly_snapshots_without_force_skips_the_existing_row(self):
+        # Job harian (tanpa force): kunci yang sudah ada tidak disentuh dan tidak dihitung ulang.
+        db, _, _ = self._one_envelope_with_existing_snapshot()
+        with patch.object(rollover, "AsyncSessionLocal", new=lambda: FakeSession(db)):
+            result = await rollover.create_monthly_snapshots(date(2026, 9, 25), date(2026, 10, 24))
+
+        self.assertEqual(result, {"processed": 1, "snapshots_created": 0, "errors": []})
+        db.delete.assert_not_awaited()
+        db.add.assert_not_called()
+        self.assertEqual(db.execute.await_count, 3)  # household, amplop, cek kunci; tanpa kueri rollover/saldo
+        db.commit.assert_awaited_once()
 
 
 class RecomputeHouseholdTests(unittest.IsolatedAsyncioTestCase):
