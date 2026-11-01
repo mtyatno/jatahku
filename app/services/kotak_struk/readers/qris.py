@@ -8,7 +8,9 @@ from app.services.kotak_struk.document import Counterparty, DokumenBayar, Ref
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed, Secrets
 from app.services.kotak_struk.readers.labels import count_markers
-from app.services.kotak_struk.readers.profiles import detect_issuer, learned_paid_at, learned_profile, learned_total
+from app.services.kotak_struk.readers.profiles import (
+    detect_issuer, learned_paid_at, learned_party, learned_profile, learned_total,
+)
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -43,20 +45,23 @@ class QrisReader:
         lines = pc.clean_lines(doc.lines)
         body = pc.body_lines(lines)
         profile = detect_issuer(lines)
-        # Aturan belajar yang disetujui (spec §5): `lp` membaca label (penerima aturan didahulukan); status hanya dari
-        # profil asli, jadi aturan tidak pernah menyentuhnya.
-        learned, lp = learned_profile(lines, profile, ctx.rules)
-        amounts, total_confidence = pc.read_amounts(body, lp)
+        # Aturan belajar yang disetujui (spec §5) hanya mengubah total, tanggal, dan nama penerima; status dan nilai lain
+        # dibaca dengan profil asli.
+        learned, _ = learned_profile(lines, profile, ctx.rules)
+        amounts, total_confidence = pc.read_amounts(body, profile)
         amounts, total_confidence = learned_total(amounts, total_confidence, body, learned.total)
         status = pc.read_proof_status(body, profile)
-        paid_at, paid_confidence = learned_paid_at(body, learned.date) or pc.read_paid_at(body, lp)
-        name = pc.read_name(body, lp, "merchant")     # nomor panjang (NMID, telepon) dibuang dari nama
-        city = pc.read_city(body, lp)
-        if not city and not pc.read_text(body, pc.labels_for(lp, "merchant"), lp):
-            party = pc.read_header_party(body, lp)      # tata letak "nama di bawah logo": kota di bawah nama
+        paid_at, paid_confidence = learned_paid_at(body, learned.date) or pc.read_paid_at(body, profile)
+        name = pc.read_name(body, profile, "merchant")     # nomor panjang (NMID, telepon) dibuang dari nama
+        found = learned_party(body, profile, learned.party)
+        if found:     # label penerima aturan yang cocok persis dengan satu baris didahulukan
+            name = pc.read_name(found[0], found[1], "merchant") or name
+        city = pc.read_city(body, profile)
+        if not city and not pc.read_text(body, pc.labels_for(profile, "merchant"), profile):
+            party = pc.read_header_party(body, profile)      # tata letak "nama di bawah logo": kota di bawah nama
             city = party.city if party else None
-        nmid = pc.read_nmid(body, lp)
-        refs = pc.read_refs(body, lp)
+        nmid = pc.read_nmid(body, profile)
+        refs = pc.read_refs(body, profile)
 
         confidence = {}
         if amounts.total is not None:
@@ -93,4 +98,3 @@ class QrisReader:
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []   # cek silang bersama (nominal, status, tanggal) ada di checks.common_checks
-

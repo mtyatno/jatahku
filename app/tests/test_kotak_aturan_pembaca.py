@@ -10,12 +10,10 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import asyncio
-import contextlib
 import importlib.util
 import json
 import unittest
 import uuid
-from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,7 +31,7 @@ from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers import profiles
 from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB, learned_amount, learned_datetime
-from app.services.kotak_struk.readers.profiles import PROFILES, AppProfile, Learned, detect_issuer, learned_for, with_learned
+from app.services.kotak_struk.readers.profiles import PROFILES, Learned, detect_issuer, learned_for, with_learned
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.registry import read_document
 
@@ -65,6 +63,9 @@ GOPAY_FEE = ["GoPay", "Transfer Berhasil", "Penerima", "BUDI SANTOSO", "Nominal 
              "Dibayar Rp12.000", "Tanggal 26 Okt 2026 08:12"]
 GOPAY_TRANSFER = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Jumlah Kirim Uang", "Rp10.000",
                   "Biaya Layanan Rp1.000", "Total Bayar Rp11.000", "Tanggal 26 Okt 2026 08:12"]
+# BSI ke rekening sendiri (review L3 I-1): tanpa aturan `antar_rekening_sendiri` untuk user RINA WULANDARI.
+BSI_SELF = ["BYOND", "by BSI", "Transaksi Berhasil", "29 Okt 2026 23:30", "Nama Penerima RINA WULANDARI", "Bank Jago",
+            "Tujuan Transfer Lainnya", "Nominal Transaksi Rp 50.000", "Total Rp 50.000"]
 # Label jahat (Review Focus 2): kata status, label status, label total/nama/tanggal umum.
 HOSTILE_BASE = ["status", "status transaksi", "status pembayaran", "transaksi", "gagal", "pending", "berhasil",
                 "total", "total bayar", "jumlah", "nominal", "dibayar", "keterangan", "ke", "penerima", "tanggal",
@@ -113,11 +114,29 @@ def hostile_rules(lines, keys=PROFILE_KEYS) -> dict:
 
 
 def status_view(res) -> tuple:
-    """Yang tidak boleh diubah aturan: status, cek status, semua cek blokir, dan arah uang selain keluar."""
+    """Yang tidak boleh diubah aturan: status, cek status, semua cek blokir, arah uang selain keluar, dan nomor
+    referensi (bahan cek duplikat)."""
     doc = res.parsed.doc
     levels = {c.code: c.level for c in res.checks}
     return (doc.doc_type, doc.status, {k: v for k, v in levels.items() if k.startswith("status_")},
-            sorted(k for k, v in levels.items() if v == "block"), doc.flow if doc.flow != "keluar" else None)
+            sorted(k for k, v in levels.items() if v == "block"), doc.flow if doc.flow != "keluar" else None,
+            list(res.parsed.secrets.ref_values))
+
+
+# Label realistis untuk sapuan arah uang: lolos `kerangka.safe_label` (bentuk nilai aturan), tanpa `#`.
+DIRECTION_EXTRA = ["tujuan", "tujuan transfer", "bank tujuan", "rekening tujuan", "nama penerima", "penerima", "ke",
+                   "kepada", "ditransfer ke", "dikirim ke", "nama", "nama merchant", "merchant", "toko", "nama toko",
+                   "recipient", "to", "name", "transfer ke", "transfer ke penerima", "dari", "pengirim", "sumber dana",
+                   "keterangan", "berita", "status", "tanggal", "waktu", "total", "jumlah", "nominal"]
+
+
+def realistic_labels(lines) -> list[str]:
+    out = list(DIRECTION_EXTRA)
+    for line in pc.clean_lines(lines):
+        words = line.split()
+        out += [" ".join(words[:n]) for n in range(1, min(len(words), 5) + 1)]
+    safe = (kerangka.safe_label(label, forbidden_words=set()) for label in out)
+    return list(dict.fromkeys(label for label in safe if label and "#" not in label))
 
 
 async def recordable(document: dict) -> str:
@@ -331,6 +350,25 @@ class LearnedReadingTests(_Loop):
         d = (await read(lines, {"gopay": rule([], ["kepada penerima"])})).parsed.doc
         self.assertEqual((d.flow, d.counterparty.name), ("keluar", "SITI AMINAH"))
 
+    async def test_refs_and_other_values_never_read_with_rule_labels(self):
+        """Aturan hanya mengubah total, tanggal, dan nama penerima: nomor referensi (bahan cek duplikat), NMID, kota,
+        bank, dan rekening dibaca dengan profil asli dan baris utuh, walau label penerima aturan mengosongkan baris
+        "No Referensi …" (awalan "no") untuk bacaan nama."""
+        qris = [*GOPAY_QRIS, "Lokasi BANDUNG", "No Referensi 612345678812"]
+        transfer = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Kepada Penerima SITI AMINAH",
+                    "Bank Tujuan BRI", "No Rekening 012301001234567", "Jumlah Kirim Uang", "Rp10.000",
+                    "Total Bayar Rp10.000", "No Referensi 612345678812", "Tanggal 26 Okt 2026 08:12"]
+        for lines, party in ((qris, "nama toko"), (transfer, "kepada penerima")):
+            plain = await read(lines)
+            got = await read(lines, {"gopay": rule([], [party, "no"], [])})
+            p, g = plain.parsed, got.parsed
+            self.assertNotEqual(g.doc.counterparty.name, p.doc.counterparty.name)   # aturan penerima dipakai
+            self.assertTrue(p.secrets.ref_values)
+            self.assertEqual((g.secrets.ref_values, g.secrets.nmid, g.secrets.account_number, g.doc.refs),
+                             (p.secrets.ref_values, p.secrets.nmid, p.secrets.account_number, p.doc.refs))
+            self.assertEqual((g.doc.counterparty.city, g.doc.amounts, g.doc.paid_at),
+                             (p.doc.counterparty.city, p.doc.amounts, p.doc.paid_at))
+
     async def test_rule_for_one_profile_never_affects_another(self):
         self.assertEqual(full(await read(GOPAY_MISREAD, {"dana": rule(["jumlah kirim uang"])})), full(await read(GOPAY_MISREAD)))
         self.assertEqual(full(await read(GOPAY_QRIS, {k: rule(["dibayar"], ["nama toko"], ["waktu selesai"])
@@ -370,6 +408,40 @@ class LearnedReadingTests(_Loop):
 # ── Review Focus 2: aturan tidak pernah melewati blokir ─────────────────────
 
 class StatusBlockTests(_Loop):
+    async def test_direction_never_loosened_by_rules(self):
+        """Review L3 I-1 (spec §1.3): arah uang diputuskan dari bacaan tanpa aturan. Setiap bukti transfer di sapuan
+        yang punya kunci aturan, saklar menyala, dengan user = penerima yang terbaca tanpa aturan (supaya cek "antar
+        rekening sendiri" menyala) dan dengan user daftar itu sendiri; setiap label realistis (lolos `safe_label`) sebagai
+        aturan semua jenis: arah selain `keluar` (antar rekening sendiri, uang masuk, top-up) tidak pernah berubah."""
+        rules = {"bsi": rule([], ["tujuan"])}
+        for labels in (["tujuan"], ["tujuan transfer"], ["bank tujuan"]):
+            got = (await read(BSI_SELF, {"bsi": rule([], labels)})).parsed.doc
+            self.assertEqual((got.doc_type, got.status, got.flow, got.counterparty.name),
+                             ("transfer", "berhasil", "antar_rekening_sendiri", "RINA WULANDARI"), labels)
+        plain = (await read(BSI_SELF, rules, user_name="BUDI SANTOSO")).parsed.doc   # bukan user: aturan boleh
+        self.assertEqual(plain.flow, "keluar")
+        reads, guarded = 0, 0
+        for entry in SWEEP:
+            key = own_key(entry["lines"])
+            if key is None:
+                continue
+            first = (await read(entry["lines"], user_name=entry.get("user_name"))).parsed.doc
+            if first.doc_type != "transfer":
+                continue
+            labels = realistic_labels(entry["lines"])
+            for user in dict.fromkeys((entry.get("user_name"), first.counterparty.name)):
+                base = (await read(entry["lines"], user_name=user)).parsed.doc
+                if base.flow == "keluar":
+                    continue
+                guarded += 1
+                for label in labels:
+                    got = (await read(entry["lines"], {key: rule([label], [label], [label])}, user_name=user)).parsed.doc
+                    reads += 1
+                    with self.subTest(entry["id"], user=user, label=label):
+                        self.assertEqual(got.flow, base.flow)
+        self.assertGreater(guarded, 40)
+        self.assertGreater(reads, 1500)
+
     async def test_rules_never_bypass_status_blocks(self):
         """Setiap daftar gagal/pending di sapuan (termasuk bentuk §9.1 pre-flight), kedua saklar, dengan aturan SEMUA
         jenis untuk SEMUA aplikasi, termasuk aturan jahat (label "status", label = teks baris gagal, kata status): status,
@@ -494,6 +566,35 @@ class LearnedShapeTests(unittest.TestCase):
         self.assertIsNone(learned_datetime(lines, ["waktu selesai"]))   # baris di bawahnya bukan tanggal
         self.assertEqual(learned_datetime(lines, ["status"]), datetime(2026, 10, 26, tzinfo=WIB))
         self.assertIsNone(learned_datetime(lines, []))
+        # Nominal PERTAMA di nilai (seperti suara kerangka), bukan yang terbesar.
+        self.assertEqual(learned_amount(["Dibayar Rp15.000 Rp20.000"], ["dibayar"]), 15000)
+        # Jam di baris sesudah tanggal (sama dengan read_paid_at); baris lain sesudahnya bukan jam.
+        self.assertEqual(learned_datetime(["Waktu Selesai 26 Okt 2026", "00:01 WIB"], ["waktu selesai"]),
+                         datetime(2026, 10, 26, 0, 1, tzinfo=WIB))
+        self.assertEqual(learned_datetime(["Waktu Selesai", "26 Okt 2026", "09.31"], ["waktu selesai"]),
+                         datetime(2026, 10, 26, 9, 31, tzinfo=WIB))
+        self.assertEqual(learned_datetime(["Waktu Selesai 26 Okt 2026 08:00", "09:31"], ["waktu selesai"]),
+                         datetime(2026, 10, 26, 8, 0, tzinfo=WIB))
+        self.assertEqual(learned_datetime(["Waktu Selesai 26 Okt 2026", "Rp10.000", "25:00"], ["waktu selesai"]),
+                         datetime(2026, 10, 26, tzinfo=WIB))
+        self.assertEqual(learned_datetime(["Waktu Selesai 26 Okt 2026", "25:00"], ["waktu selesai"]),
+                         datetime(2026, 10, 26, tzinfo=WIB))
+
+    def test_learned_party_label_must_be_the_whole_label(self):
+        """Review L3 m-2: label penerima aturan hanya membaca baris yang labelnya persis label itu."""
+        gopay = next(p for p in PROFILES if p.key == "gopay")
+        lines = ["Tujuan Transfer Lainnya", "Tujuan BUDI SANTOSO", "Tujuan: Transfer Ke Teman", "Tujuan:Toko Maju",
+                 "Ke TOKO MAJU", "Ke Rekening BCA", "Tujuan", "SITI AMINAH"]
+        masked, whole = profiles.mask_partial_labels(lines, ["tujuan", "ke"], kerangka.LABEL_WORDS)
+        self.assertTrue(whole)
+        self.assertEqual(masked, ["", "Tujuan BUDI SANTOSO", "Tujuan: Transfer Ke Teman", "Tujuan:Toko Maju",
+                                  "Ke TOKO MAJU", "", "Tujuan", "SITI AMINAH"])
+        self.assertIsNone(profiles.learned_party(["Tujuan Transfer Lainnya", "Ke Rekening BCA"], gopay, ["tujuan", "ke"]))
+        self.assertIsNone(profiles.learned_party(lines, gopay, []))
+        got = profiles.learned_party(["Tujuan Transfer Lainnya", "Tujuan BUDI SANTOSO"], gopay, ["tujuan"])
+        self.assertEqual(got[0], ["", "Tujuan BUDI SANTOSO"])
+        self.assertEqual((got[1].key, profiles.labels_for(got[1], "merchant")[0], "paid_at" in got[1].labels),
+                         ("gopay", "tujuan", False))
 
 
 # ── cache aturan yang disetujui ─────────────────────────────────────────────
@@ -533,12 +634,14 @@ class ApprovedRulesCacheTests(DbBase):
         await self.add("label_total", "gopay", "total kirim", users=3, minutes=1)
         await self.add("label_pihak", "jago", "nama toko", users=2)
         await self.add("label_tanggal", "jago", "waktu selesai", users=4)
+        await self.add("label_pihak", "jago", "penerima", users=2)      # sama users dan waktu: urut teks
+        await self.add("label_pihak", "jago", "kepada", users=2)
         for status in ("menunggu", "ditolak", "dicabut"):
             await self.add("label_total", "dana", f"total {status}", status=status)
         await self.add("arah", "gopay", "top up")   # jenis tahap 2: tidak dimuat
         self.assertEqual(await self.approved(), {
             "gopay": rule(["total kirim", "jumlah kirim uang", "dibayar"]),
-            "jago": rule([], ["nama toko"], ["waktu selesai"]),
+            "jago": rule([], ["kepada", "nama toko", "penerima"], ["waktu selesai"]),
         })
 
     async def test_rule_cache_expires_and_invalidates(self):

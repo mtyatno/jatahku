@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 from app.services.kotak_struk.config import LAYOUT_LABEL_MAX
-from app.services.kotak_struk.readers.labels import count_markers, learned_amount, learned_datetime
+from app.services.kotak_struk.readers.labels import count_markers, learned_amount, learned_datetime, mask_partial_labels
 
 
 @dataclass
@@ -251,8 +251,10 @@ def with_learned(profile: AppProfile | None, learned: Learned) -> AppProfile | N
 
 
 def learned_profile(lines: list[str], profile: AppProfile | None, rules: dict | None) -> tuple[Learned, AppProfile | None]:
-    """(label aturan, profil baca) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (tahap 1: kunci profil), lalu
-    `learned_for` dan `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun."""
+    """(label aturan, profil berlabel aturan) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (tahap 1: kunci
+    profil), lalu `learned_for` dan `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun.
+    Pembaca hanya memakai label aturannya: total (`learned_total`), tanggal (`learned_paid_at`), dan nama penerima
+    (`learned_party`); nilai lain dan status dibaca dengan profil asli (review L3 I-1)."""
     if not rules:
         return Learned(), profile
     # Impor di sini: kerangka mengimpor modul pembaca (impor melingkar bila di tingkat modul).
@@ -277,3 +279,18 @@ def learned_paid_at(body: list[str], labels: list[str]):
     None: pembaca memakai `proof_common.read_paid_at` seperti biasa."""
     paid_at = learned_datetime(body, labels)
     return (paid_at, "tinggi") if paid_at is not None else None
+
+
+def learned_party(body: list[str], profile: AppProfile | None, labels: list[str]):
+    """(baris, profil) untuk membaca pihak lawan dengan label penerima aturan (`label_pihak`), atau None bila tidak ada
+    label aturan yang cocok PERSIS dengan satu baris (review L3 m-2: "tujuan" tidak membaca "Tujuan Transfer Lainnya").
+    Baris yang hanya diawali label aturan dikosongkan (`labels.mask_partial_labels`); profilnya hanya membawa label
+    penerima aturan (tanpa label tanggal), di depan label penerima profil."""
+    if not labels:
+        return None
+    # Impor di sini: kerangka mengimpor modul pembaca (impor melingkar bila di tingkat modul).
+    from app.services.kotak_struk.kerangka import LABEL_WORDS
+    masked, whole = mask_partial_labels(body, labels, LABEL_WORDS)
+    if not whole:
+        return None
+    return masked, with_learned(profile, Learned(party=list(labels)))
