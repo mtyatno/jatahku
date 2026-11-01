@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 from uuid import UUID
 from decimal import Decimal
@@ -9,9 +10,12 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
 from app.core.period import get_period_for_month
 from app.models.models import User, MonthlySnapshot, Envelope, Household, HouseholdMember
-from app.services.household_cycle import household_payday, payday_context, recompute_history
+from app.services.household_cycle import (
+    current_payday, household_lock, household_payday, payday_context, recompute_history,
+)
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
 
+logger = logging.getLogger("jatahku.snapshots")
 router = APIRouter()
 
 
@@ -81,37 +85,77 @@ async def run_monthly_snapshot(
 ):
     """Manually trigger snapshot for a budget period (admin/debug).
     year/month refer to period_start year/month. Setiap household yang punya anggota dihitung dengan tanggal gajian
-    rumahnya sendiri (bukan tanggal si pemanggil), jadi periode tiap household bisa berbeda."""
-    now = date.today()
-    y = year or now.year
-    m = month or now.month
+    rumahnya sendiri (bukan tanggal si pemanggil), jadi periode tiap household bisa berbeda.
+
+    Hanya periode yang sudah TERTUTUP yang ditulis (hari terakhirnya sebelum hari ini). Periode yang sedang berjalan
+    atau belum mulai dilewati dengan entri `"skipped": "periode belum tertutup"`: job harian (tanpa `force`) tidak
+    pernah menimpa kunci yang sudah ada, jadi snapshot berisi angka setengah jalan, atau yang dibuat sebelum
+    pendahulunya ada, membawa rollover yang salah ke semua periode sesudahnya. Tanpa year/month (bulan berjalan)
+    karenanya tidak ada yang ditulis: periode yang mulai bulan ini belum pernah tertutup.
+
+    Tiap household diproses di dalam `household_lock` (kunci yang sama dengan recompute dan job harian) dengan tanggal
+    gajian yang dibaca ULANG di dalam kunci (`current_payday`), bukan tanggal yang dibaca sebelum menunggu kunci.
+    Household yang sudah dihapus dilewati (`"skipped": "household tidak ada"`), dan kegagalan satu household dicatat
+    (entri `"errors": ["gagal: <kelas exception>"]`) tanpa menghentikan yang lain.
+
+    `force=true` pada periode tertutup yang lampau menulis ulang SATU mata rantai saja: periode sesudahnya tetap membawa
+    rollover lama. Untuk memperbaiki rantai, pakai `POST /snapshots/recompute` (owner/admin rumah itu) atau skrip
+    `app.scripts.siklus_household --apply`, yang membangun ulang seluruh riwayat oldest-first."""
+    today = date.today()
+    y = year or today.year
+    m = month or today.month
 
     households = (await db.execute(
         select(Household).where(Household.id.in_(select(HouseholdMember.household_id)))
     )).scalars().all()
 
-    # Semua tanggal dihitung dulu, lalu pengisian tanggal rumah yang NULL (`household_payday` flush di sesi ini)
-    # di-commit sebelum snapshot dibuat: `create_monthly_snapshots` bekerja lewat sesinya sendiri dan tidak boleh
-    # berhadapan dengan UPDATE yang belum di-commit (kontrak yang sama dengan `household_cycle.recompute_history`).
-    plan = []
+    # Tahap pertama: tanggal rumah yang NULL diisi (`household_payday` flush di sesi ini) dan di-commit sebelum tahap
+    # kedua: `current_payday` dan `create_monthly_snapshots` bekerja lewat sesinya sendiri dan tidak boleh berhadapan
+    # dengan UPDATE yang belum di-commit (kontrak yang sama dengan `household_cycle.recompute_history`). Nilainya
+    # sengaja tidak dipakai untuk jendela: tanggal dibaca ulang di dalam kunci.
+    household_ids = []
     for h in households:
-        payday = await household_payday(db, h)
-        period_start, period_end = get_period_for_month(payday, y, m)
-        plan.append((h.id, period_start, period_end))
+        await household_payday(db, h)
+        household_ids.append(h.id)
     await db.commit()
 
-    out = []
-    for household_id, period_start, period_end in plan:
-        r = await create_monthly_snapshots(
-            period_start, period_end, force=force, household_ids=[household_id]
-        )
-        out.append({"household_id": str(household_id), "period": f"{period_start} → {period_end}", **r})
+    out = [await _run_household(household_id, y, m, force, today) for household_id in household_ids]
     return {
         "households": out,
         "processed": sum(e["processed"] for e in out),
         "snapshots_created": sum(e["snapshots_created"] for e in out),
         "errors": [err for e in out for err in e["errors"]],
     }
+
+
+async def _run_household(household_id, year: int, month: int, force: bool, today: date) -> dict:
+    """Satu household untuk `POST /snapshots/run`: di dalam `household_lock`, tanggal dibaca di dalam kunci, dan hanya
+    periode tertutup yang ditulis. Selalu mengembalikan entri dengan `household_id`, `period` (`"awal → akhir"`, None
+    bila household-nya sudah tidak ada atau gagal sebelum jendelanya diketahui), `processed`, `snapshots_created`, dan
+    `errors`, ditambah `skipped` (alasan) bila dilewati. Exception dicatat dan menjadi entri gagal."""
+    entry = {"household_id": str(household_id), "period": None}
+    try:
+        async with household_lock(household_id):
+            payday = await current_payday(household_id)
+            if payday is None:
+                return {**entry, **_nothing_done(), "skipped": "household tidak ada"}
+            period_start, period_end = get_period_for_month(payday, year, month)
+            entry["period"] = f"{period_start} → {period_end}"
+            if period_end >= today:
+                return {**entry, **_nothing_done(), "skipped": "periode belum tertutup"}
+            result = await create_monthly_snapshots(
+                period_start, period_end, force=force, household_ids=[household_id]
+            )
+        return {**entry, **result}
+    except Exception as e:
+        logger.exception("snapshot run household %s gagal", household_id)
+        return {**entry, **_nothing_done(), "errors": [f"gagal: {type(e).__name__}"]}
+
+
+def _nothing_done() -> dict:
+    """Angka entri household yang tidak menulis apa pun (daftar `errors` baru tiap kali)."""
+    return {"processed": 0, "snapshots_created": 0, "errors": []}
+
 
 @router.post("/recompute")
 async def recompute_snapshots(
