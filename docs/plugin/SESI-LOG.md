@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R5 · Peran, batasan, persetujuan di server · 2026-11-01 · pemilik produk + Claude
 
-**Selesai** (status review, menunggu review keamanan terpisah; issue #145)
+**Selesai** (status review, PR #175, menunggu review keamanan terpisah; issue #145)
 - Keputusan pemilik produk (1 Nov, "lanjut" atas dua usulan pembukaan sesi): **(1)** tafsiran `05-desain-buku-usaha.md` B1 dikonfirmasi: ruang usaha dan adminnya tidak punya akses apa pun ke ruang keluarga anggota; fitur household yang sekarang tetap. **(2)** R5 menegakkan batasan tulis, antrean persetujuan, audit, dan pagar baca berupa tolak-bawaan; Beranda template "Karyawan" dan penyaringan per kartu di R6.
 - Migrasi `c5r5a8e2d417`: hanya tabel baru `ruang_batasan` (jabatan + batasan per anggota), `ruang_undangan` (kode sekali pakai, berperan, 7 hari), `ruang_draf` (antrean; unik parsial `user_id, client_ref`), `ruang_audit`. Tidak ada kolom baru di tabel lama, jadi tanpa jendela 500; idempoten seperti B1.
 - `app/services/peran.py`: `batasan_karyawan` (None untuk ruang keluarga, owner, admin), `cek_catat` (jenis → amplop → foto → nominal), jam kerja (`validasi_jam_kerja`, `buka_lagi`, sif lewat tengah malam), `cek_jendela_ubah`, `buat_draf` (idempoten per `client_ref`), `batalkan_draf_anggota`, `audit`, `atas_izin_pengelola()` (ContextVar untuk persetujuan).
@@ -44,7 +44,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Batch: baris draf dikembalikan `ok: false` + `kode: perlu_persetujuan`, supaya klien lama menyimpan barisnya; kiriman ulangnya idempoten.
 
 **Cara melanjutkan**
-- Review keamanan terpisah: "review PR #N terhadap 03-workflow.md bagian keamanan" (gerbang "Batasan ditegakkan di server" dan "Karyawan tidak melihat laporan"). Temuan dikerjakan di branch ini.
+- Review keamanan terpisah: "review PR #175 terhadap 03-workflow.md bagian keamanan" (gerbang "Batasan ditegakkan di server" dan "Karyawan tidak melihat laporan"). Temuan dikerjakan di branch ini.
 - Merge: label `migrasi`; checklist "Plugin R5" di `AGENTS.md`, mengikuti "Urutan merge PR bermigrasi".
 - Berikutnya `/sesi-plugin R4` (membuat dan berpindah ruang; R5 tidak menyentuh `Layout.jsx`/`api.js`), lalu R6 (butuh R4, R5, B2).
 
