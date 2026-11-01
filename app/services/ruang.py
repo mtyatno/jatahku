@@ -12,7 +12,8 @@ meneruskan `household_id` secara eksplisit ke services:
 - **Menulis objek yang sudah ada atau objek dengan induk (R3)**: ruang diambil dari objeknya
   (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek`), lalu keanggotaan dicek; header tidak
   menentukan ruang. Objek di ruang yang bukan milik user → None (route menjawab 404); satu
-  permintaan yang menyentuh dua ruang milik user → `LintasRuang` (400 `lintas_ruang`).
+  permintaan yang menyentuh dua ruang milik user → `LintasRuang` (400 `lintas_ruang`), kecuali prive
+  (`app/api/routes/prive.py`, R8): ruang usaha dari amplop, ruang keluarga pemanggil dari server.
 - `ruang_tulis` (dependency FastAPI) — hanya untuk undangan anggota: selalu ruang keluarga,
   header ruang lain ditolak (undangan ruang usaha dibuat di R5).
 - `ruang_keluarga(user, db)` — bot (Telegram dan chat web), job terjadwal, dan
@@ -180,7 +181,8 @@ PESAN_LINTAS = "Catatan ini menyentuh dua ruang sekaligus. Catat terpisah di mas
 
 
 class LintasRuang(RuangDitolak):
-    """400: satu permintaan tulis menyentuh lebih dari satu ruang (prive dua sisi menyusul di R8)."""
+    """400: satu permintaan tulis menyentuh lebih dari satu ruang. Satu-satunya pengecualian: prive dua sisi
+    (`POST /prive`, R8), yang menentukan kedua ruangnya sendiri di server."""
 
     def __init__(self):
         super().__init__(kode=KODE_LINTAS, detail=PESAN_LINTAS, status_code=400)

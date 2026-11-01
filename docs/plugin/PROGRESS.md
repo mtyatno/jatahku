@@ -20,7 +20,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | R5 (migrasi, review) | #145 | Peran, batasan, persetujuan di server | 2 Ruang usaha | 4 | R3 | belum | | | | |
 | R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | belum | | | | |
 | R7 (migrasi, review) | #147 | Catat cepat dan kamus per ruang | 2 Ruang usaha | 4 | R3, R6 | belum | | | | |
-| R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | belum | | | | |
+| R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | berjalan | Pemilik produk + Claude | | 2026-11-01 | |
 | H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | belum | | | | |
 | H2 (review) | #150 | PluginContext dan titik ekstensi server | 3 Host plugin | 4 | H1 | belum | | | | |
 | H3 | #151 | Host di frontend dan halaman Fitur Tambahan | 3 Host plugin | 3,5 | H2, B2, R4 | belum | | | | |
@@ -37,7 +37,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | Gerbang | Syarat lulus | Diuji di | Status |
 |---|---|---|---|
 | B | Angka dan tampilan Beranda sama untuk semua user; `POST /dashboard/data` p95 ≤ 500 ms | B3 | lulus 1 Nov (keputusan pemilik): paritas produksi 105 user ok, 0 beda/crash, p95 231 ms; Beranda registry menyala untuk pemilik; perluasan flag ke `*` oleh pemilik; banding tampilan otomatis tidak dijalankan |
-| R | Angka user lama identik sebelum dan sesudah refactor; nol kebocoran antar-ruang (tes IDOR); chat tetap ruang keluarga | R2, R3, R8 | sebagian: R2 lulus (tes paritas 40 endpoint GET, IDOR, bot ruang keluarga; produksi `ruang_paritas` 105/105 ok, 1 Nov); R3 lulus (tulis dari objek, IDOR tulis + buat dengan 404 persis, lintas ruang, antrean offline, kuota per ruang; review keamanan #171; produksi `ruang_paritas` 105/105 ok sesudah deploy, 1 Nov); R4 menambah saklar flag ruang usaha (tes `test_ruang_r4.py`); R8 menyusul |
+| R | Angka user lama identik sebelum dan sesudah refactor; nol kebocoran antar-ruang (tes IDOR); chat tetap ruang keluarga | R2, R3, R8 | sebagian: R2 lulus (tes paritas 40 endpoint GET, IDOR, bot ruang keluarga; produksi `ruang_paritas` 105/105 ok, 1 Nov); R3 lulus (tulis dari objek, IDOR tulis + buat dengan 404 persis, lintas ruang, antrean offline, kuota per ruang; review keamanan #171; produksi `ruang_paritas` 105/105 ok sesudah deploy, 1 Nov); R4 menambah saklar flag ruang usaha (tes `test_ruang_r4.py`); R8 di tes (prive hanya owner, tujuan ruang keluarga dari server, ruang orang lain 404, satu commit, idempoten); paritas produksi sesudah deploy R8 |
 | H | Buku Usaha bisa dipasang, dijeda, dilanjutkan, dicopot, dan dipulihkan bersih; tes isolasi lulus | U1 | belum |
 | Rilis | Review keamanan terpisah lulus; angka ruang keluarga tetap identik; flag per ruang siap | V1 | belum |
 | Beta | 10 UMKM aktif selama 4 minggu tanpa insiden data | V1 + 4 minggu | belum |
