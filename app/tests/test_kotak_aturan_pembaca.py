@@ -420,6 +420,15 @@ class StatusBlockTests(_Loop):
                              ("transfer", "berhasil", "antar_rekening_sendiri", "RINA WULANDARI"), labels)
         plain = (await read(BSI_SELF, rules, user_name="BUDI SANTOSO")).parsed.doc   # bukan user: aturan boleh
         self.assertEqual(plain.flow, "keluar")
+        # Review L3 m-5: nama tercetak lebih panjang dari nama akun user ("RINA WULANDARI SUPARDI" untuk "RINA WULANDARI"):
+        # penjaga memakai `same_person` (bukan `may_be_user`), jadi label penerima aturan ("Tujuan: TOKO MAJU") tidak
+        # mengubah arah antar rekening sendiri menjadi keluar.
+        longer = [*BSI_SELF[:4], "Nama Penerima RINA WULANDARI SUPARDI", "Bank Jago", "Tujuan Transfer Lainnya",
+                  "Tujuan: TOKO MAJU", *BSI_SELF[7:]]
+        for given in (None, rules):
+            got = (await read(longer, given, user_name="RINA WULANDARI")).parsed.doc
+            self.assertEqual((got.flow, got.counterparty.name), ("antar_rekening_sendiri", "RINA WULANDARI SUPARDI"),
+                             given)
         reads, guarded = 0, 0
         for entry in SWEEP:
             key = own_key(entry["lines"])
