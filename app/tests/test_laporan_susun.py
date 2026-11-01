@@ -109,7 +109,9 @@ def bahan(**ubah) -> BahanLaporan:
         Dana darurat (saving)  awal   500.000  terpakai       0  akhir 500.000  dibawa 500.000  -> tabungan
 
     Sembilan transaksi yang jumlahnya persis sama dengan `terpakai` tiap amplop (termasuk satu penyesuaian saldo
-    130.000 di Jajan), dua pemasukan, dua tagihan periode berikut, satu target tabungan, streak 3.
+    130.000 di Jajan), dua pemasukan, dua tagihan periode berikut, satu target tabungan, streak 3, dan total
+    lingkup periode lalu `terpakai_lalu_total` 400.000, 700.000, 1.000.000 (= jumlah `terpakai_lalu` ketiga baris,
+    karena seluruh lingkup bahan dasar adalah baris; tes pembanding mengisinya sendiri).
     """
     nilai = dict(
         penerima_nama="Ani", rumah_nama="Rumah Ani", periode_mulai=PS, periode_akhir=PE, payday=1,
@@ -122,14 +124,18 @@ def bahan(**ubah) -> BahanLaporan:
         ],
         target=[TargetTabungan("Darurat 6 bulan", "env-t", D(1_000_000))],
         streak_saat_ini=3,
+        terpakai_lalu_total=[D(400_000), D(700_000), D(1_000_000)],
     )
     nilai.update(ubah)
     return BahanLaporan(**nilai)
 
 
 def bahan_kosong(**ubah) -> BahanLaporan:
-    """Bahan tanpa amplop, transaksi, pemasukan, tagihan, dan target."""
-    return bahan(**{**dict(amplop=[], transaksi=[], pemasukan=[], tagihan_berikut=[], target=[]), **ubah})
+    """Bahan tanpa amplop, transaksi, pemasukan, tagihan, dan target, dan tanpa angka periode lalu di lingkup."""
+    kosong = dict(
+        amplop=[], transaksi=[], pemasukan=[], tagihan_berikut=[], target=[], terpakai_lalu_total=[None, None, None],
+    )
+    return bahan(**{**kosong, **ubah})
 
 
 def semua_uang(nilai, kecuali: str | None = None) -> list[str]:
@@ -145,7 +151,8 @@ def semua_uang(nilai, kecuali: str | None = None) -> list[str]:
 # Harapan tulis tangan untuk bahan dasar (angka diturunkan di atas kertas, bukan dari kode):
 #   Σ awal 1.800.000; Σ alokasi 1.350.000; Σ terpakai 840.000; Σ akhir 960.000; Σ dibawa 900.000;
 #   persen terpakai 840/1800 = 46,67 -> 47. Terpakai periode lalu (Jul, Agu, Sep) per amplop:
-#   Kebutuhan 400/500/700 rb, Jajan -/200/300 rb, Dana darurat 0/0/0 -> total 400, 700, 1.000 rb;
+#   Kebutuhan 400/500/700 rb, Jajan -/200/300 rb, Dana darurat 0/0/0. Total lingkup (`terpakai_lalu_total`) 400, 700,
+#   1.000 rb: sama dengan jumlah baris karena seluruh lingkup bahan dasar adalah baris;
 #   rata-rata 3 periode = (400 + 700 + 1000)/3 = 700 rb; 840 vs 1.000 -> -16%.
 # ---------------------------------------------------------------------------------------------------------------
 HARIAN_DASAR = {
@@ -532,8 +539,14 @@ class AmplopTests(unittest.TestCase):
 
 
 class BandingTests(unittest.TestCase):
+    """Total pembanding berasal dari `terpakai_lalu_total` (semua amplop lingkup yang punya snapshot periode itu,
+    juga yang bukan baris, Ruling R3); angka per amplop tetap dari `terpakai_lalu` tiap baris."""
+
     def test_banding_dan_tren(self):
-        isi = bahan_kosong(amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=[None, None, D(100)])])
+        isi = bahan_kosong(
+            amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=[None, None, D(100)])],
+            terpakai_lalu_total=[None, None, D(100)],
+        )
         data = susun_bulanan(isi)
         self.assertEqual(data["banding"], {
             "terpakai_lalu": "100.00", "terpakai_rata3": "100.00", "persen_perubahan": -12,
@@ -542,19 +555,57 @@ class BandingTests(unittest.TestCase):
         self.assertEqual(data["email"]["tren_persen"], -12)
 
     def test_naik_dan_tetap(self):
-        kasus = [("naik 50 persen", D(150), 50), ("tetap", D(100), 0), ("turun total", D(0), -100)]
+        kasus = [
+            ("naik 50 persen", D(150), 50), ("tetap", D(100), 0), ("turun separuh", D(50), -50),
+            ("turun total", D(0), -100),
+        ]
         for nama, sekarang, diharapkan in kasus:
             with self.subTest(nama):
+                # Baris membawa angka p-1 lain (700.000, bawaan `amplop`): yang dipakai tren hanya total lingkup 100.
                 isi = bahan_kosong(
-                    amplop=[amplop_kecil("env-s", "Kebutuhan", 200, sekarang, terpakai_lalu=[None, None, D(100)])]
+                    amplop=[amplop_kecil("env-s", "Kebutuhan", 200, sekarang)],
+                    terpakai_lalu_total=[None, None, D(100)],
                 )
                 data = susun_bulanan(isi)
                 self.assertEqual(data["banding"]["persen_perubahan"], diharapkan)
                 self.assertEqual(data["email"]["tren_persen"], diharapkan)
 
-    def test_total_dari_penjumlahan_per_periode_dan_rata_rata_dari_total(self):
-        # Kasus dasar: total periode 400, 700, 1000 (ribu); Jajan tidak punya angka Jul tapi dua periode lain ada.
-        # Rata-rata total = 700.000; jumlah rata-rata per amplop (533.333,33 + 250.000 + 0) akan salah: 783.333,33.
+    def test_total_dari_terpakai_lalu_total_bukan_dari_jumlah_baris(self):
+        # Baris hanyalah sebagian lingkup: periode lalu juga punya amplop yang sudah ditutup atau bukan baris lagi.
+        # p-1 baris berjumlah 100 (60 + 40) tetapi total lingkup 150; terpakai sekarang 70 + 50 = 120.
+        #   dari total:         (120 - 150) / 150 = -20%
+        #   dari jumlah baris:  (120 - 100) / 100 = +20%   <- salah
+        # Rata-rata tiga periode juga dari total: (100 + 200 + 150) / 3 = 150 (dari jumlah baris: 66,67).
+        isi = bahan_kosong(
+            amplop=[
+                amplop_kecil("a", "A", 500, 70, terpakai_lalu=[D(10), D(20), D(60)]),
+                amplop_kecil("b", "B", 500, 50, terpakai_lalu=[D(30), D(40), D(40)]),
+            ],
+            terpakai_lalu_total=[D(100), D(200), D("150")],
+        )
+        data = susun_bulanan(isi)
+        self.assertEqual(data["banding"]["terpakai_lalu"], "150.00")
+        self.assertEqual(data["banding"]["terpakai_rata3"], "150.00")
+        self.assertEqual(data["banding"]["persen_perubahan"], -20)
+        self.assertEqual(data["email"]["tren_persen"], -20)
+        # Per amplop tetap dari baris masing-masing: A 60 dan (10 + 20 + 60) / 3 = 30; B 40 dan 110 / 3 = 36,67.
+        self.assertEqual(data["banding"]["amplop"], [
+            {"id": "a", "terpakai_lalu": "60.00", "terpakai_rata3": "30.00"},
+            {"id": "b", "terpakai_lalu": "40.00", "terpakai_rata3": "36.67"},
+        ])
+
+    def test_lingkup_tanpa_baris_tetap_punya_total(self):
+        # Seluruh belanja periode lalu terjadi di amplop yang bukan baris lagi: total tetap dilaporkan, sekarang 0
+        # (tanpa baris), jadi turun 100%; tidak ada baris per amplop.
+        isi = bahan_kosong(terpakai_lalu_total=[D(10), D(20), D(30)])
+        banding = susun_bulanan(isi)["banding"]
+        self.assertEqual(banding, {
+            "terpakai_lalu": "30.00", "terpakai_rata3": "20.00", "persen_perubahan": -100, "amplop": [],
+        })
+
+    def test_rata_rata_dari_tiga_total_bukan_jumlah_rata_rata_per_amplop(self):
+        # Bahan dasar: total lingkup 400.000, 700.000, 1.000.000 (Jajan tidak punya angka Jul tetapi dua periode lain
+        # ada). Rata-rata = 700.000; jumlah rata-rata per amplop (533.333,33 + 250.000 + 0) akan salah: 783.333,33.
         banding = susun_bulanan(bahan())["banding"]
         self.assertEqual(banding["terpakai_rata3"], "700000.00")
         self.assertEqual(banding["terpakai_lalu"], "1000000.00")
@@ -568,26 +619,47 @@ class BandingTests(unittest.TestCase):
             ("semua None", [None, None, None], None, None, None),
             ("hanya periode tertua", [D(300), None, None], None, "300.00", None),
             ("hanya periode terakhir", [None, None, D(300)], "300.00", "300.00", -67),
+            ("periode tengah kosong tidak masuk pembagi", [D(100), None, D(300)], "300.00", "200.00", -67),
         ]
-        for nama, lalu, diharapkan_lalu, diharapkan_rata, diharapkan_persen in kasus:
+        for nama, total, diharapkan_lalu, diharapkan_rata, diharapkan_persen in kasus:
             with self.subTest(nama):
-                isi = bahan_kosong(amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 100, terpakai_lalu=lalu)])
+                isi = bahan_kosong(
+                    amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 100, terpakai_lalu=[None, None, None])],
+                    terpakai_lalu_total=total,
+                )
                 data = susun_bulanan(isi)
                 self.assertEqual(data["banding"]["terpakai_lalu"], diharapkan_lalu)
                 self.assertEqual(data["banding"]["terpakai_rata3"], diharapkan_rata)
                 self.assertEqual(data["banding"]["persen_perubahan"], diharapkan_persen)
                 self.assertEqual(data["email"]["tren_persen"], diharapkan_persen)
 
+    def test_terpakai_lalu_total_tanpa_angka_membuat_semua_total_null_walau_baris_punya_angka(self):
+        # Total tidak pernah diisi dari baris: tanpa satu pun snapshot di lingkup untuk ketiga periode, ketiga total
+        # null dan tren null, sedangkan angka per amplop tetap dari barisnya.
+        isi = bahan_kosong(
+            amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=[D(10), D(20), D(30)])],
+            terpakai_lalu_total=[None, None, None],
+        )
+        data = susun_bulanan(isi)
+        self.assertEqual(data["banding"], {
+            "terpakai_lalu": None, "terpakai_rata3": None, "persen_perubahan": None,
+            "amplop": [{"id": "env-s", "terpakai_lalu": "30.00", "terpakai_rata3": "20.00"}],
+        })
+        self.assertIsNone(data["email"]["tren_persen"])
+
     def test_periode_lalu_nol_tanpa_persen_dan_tanpa_galat(self):
-        # Permintaan peninjau Task 2: total periode lalu Decimal("0.00") adalah angka nyata (uang "0.00") tetapi
-        # tidak bisa jadi dasar persen; persen_perubahan dan email.tren_persen None, bukan pengecualian.
+        # Permintaan peninjau Task 2: total periode lalu Decimal("0.00") adalah angka nyata (uang "0.00") tetapi tidak
+        # bisa jadi dasar persen; persen_perubahan dan email.tren_persen None, bukan pengecualian. Yang mengisinya
+        # `terpakai_lalu_total[2]` (baris tanpa angka p-1; amplop lain di lingkup yang belanjanya nol).
         for nama, lalu in [("0.00", D("0.00")), ("0", D(0))]:
             with self.subTest(nama):
                 isi = bahan_kosong(
-                    amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=[None, None, lalu])]
+                    amplop=[amplop_kecil("env-s", "Kebutuhan", 200, 88, terpakai_lalu=[None, None, None])],
+                    terpakai_lalu_total=[None, None, lalu],
                 )
                 data = susun_bulanan(isi)
                 self.assertEqual(data["banding"]["terpakai_lalu"], "0.00")
+                self.assertEqual(data["banding"]["terpakai_rata3"], "0.00")
                 self.assertIsNone(data["banding"]["persen_perubahan"])
                 self.assertIsNone(data["email"]["tren_persen"])
 
@@ -598,6 +670,14 @@ class BandingTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as konteks:
                     susun_bulanan(isi)
                 self.assertIn("env-s", str(konteks.exception))
+
+    def test_terpakai_lalu_total_harus_tiga_periode(self):
+        for panjang in (0, 1, 2, 4):
+            with self.subTest(panjang):
+                isi = bahan_kosong(terpakai_lalu_total=[D(1)] * panjang)
+                with self.assertRaises(ValueError) as konteks:
+                    susun_bulanan(isi)
+                self.assertIn("terpakai_lalu_total", str(konteks.exception))
 
 
 class HarianTests(unittest.TestCase):
@@ -1016,8 +1096,18 @@ class KontrakBahanTests(unittest.TestCase):
         self.assertEqual(nama(TargetTabungan), ["nama", "amplop_id", "target"])
         self.assertEqual(nama(BahanLaporan), [
             "penerima_nama", "rumah_nama", "periode_mulai", "periode_akhir", "payday", "angka_per", "amplop",
-            "transaksi", "pemasukan", "tagihan_berikut", "target", "streak_saat_ini",
+            "transaksi", "pemasukan", "tagihan_berikut", "target", "streak_saat_ini", "terpakai_lalu_total",
         ])
+
+    def test_terpakai_lalu_total_wajib_tanpa_nilai_bawaan(self):
+        # Ruling R3: pemuat harus mengisinya (bukan bawaan [None, None, None] yang diam-diam menghapus pembanding).
+        isi = bahan()
+        kolom = {f.name: f for f in dataclasses.fields(BahanLaporan)}["terpakai_lalu_total"]
+        self.assertIs(kolom.default, dataclasses.MISSING)
+        self.assertIs(kolom.default_factory, dataclasses.MISSING)
+        tanpa_total = {f.name: getattr(isi, f.name) for f in dataclasses.fields(isi) if f.name != "terpakai_lalu_total"}
+        with self.assertRaises(TypeError):
+            BahanLaporan(**tanpa_total)
 
     def test_tidak_mengubah_bahan_dan_hasilnya_deterministik(self):
         isi = bahan()
@@ -1049,7 +1139,7 @@ class KontrakBahanTests(unittest.TestCase):
 class KonsistensiAcakTests(unittest.TestCase):
     """Bahan konsisten acak (benih tetap): invarian spec bagian 10 berlaku di segala bentuk jendela dan transaksi.
     Pembanding dihitung dari bahan masukan dengan cara lain dari kode yang diuji (kunci urut negatif, pindai hari
-    kalender), bukan dengan menyalin rumusnya."""
+    kalender, bilangan bulat sen), bukan dengan menyalin rumusnya."""
 
     @staticmethod
     def _bahan_acak(acak: random.Random, putaran: int):
@@ -1077,8 +1167,10 @@ class KonsistensiAcakTests(unittest.TestCase):
                 terpakai_lalu=[acak.choice([None, D(acak.randrange(0, 90_000)) / 100]) for _ in range(3)],
             ))
         pemasukan = [PemasukanPeriode(ps, D(acak.randrange(0, 90_000)) / 100, "Gaji")]
+        # Total lingkup p-3..p-1 bebas dari baris (lingkup lebih luas dari baris): None, nol, atau nominal.
+        total_lalu = [acak.choice([None, D("0.00"), D(acak.randrange(1, 5_000_000)) / 100]) for _ in range(3)]
         isi = bahan(periode_mulai=ps, periode_akhir=pe, amplop=baris, transaksi=transaksi, pemasukan=pemasukan,
-                    tagihan_berikut=[], target=[])
+                    tagihan_berikut=[], target=[], terpakai_lalu_total=total_lalu)
         return isi, jumlah_hari
 
     def test_invarian_di_banyak_bentuk_bahan(self):
@@ -1134,6 +1226,48 @@ class KonsistensiAcakTests(unittest.TestCase):
             terpanjang = max(terpanjang, beruntun)
         self.assertEqual(data["sorotan"]["hari_mencatat"], len(dicatat))
         self.assertEqual(data["sorotan"]["beruntun_terpanjang"], terpanjang)
+
+        # Pembanding: total dari `terpakai_lalu_total` (bukan jumlah baris), per amplop dari barisnya; dihitung dengan
+        # bilangan bulat sen, bebas dari Decimal dan ROUND_HALF_UP milik kode yang diuji.
+        total = isi.terpakai_lalu_total
+        lalu = None if total[-1] is None else self._sen(total[-1])
+        sekarang = sum(self._sen(a.terpakai) for a in isi.amplop)
+        banding = data["banding"]
+        self.assertEqual(banding["terpakai_lalu"], self._teks_sen(lalu))
+        self.assertEqual(banding["terpakai_rata3"], self._teks_sen(self._rata_sen(total)))
+        self.assertEqual(banding["persen_perubahan"], self._persen_ubah(sekarang, lalu))
+        self.assertEqual(data["email"]["tren_persen"], banding["persen_perubahan"])
+        self.assertEqual([b["id"] for b in banding["amplop"]], [a.id for a in isi.amplop])
+        for a, baris in zip(isi.amplop, banding["amplop"]):
+            p1 = a.terpakai_lalu[-1]
+            self.assertEqual(baris["terpakai_lalu"], None if p1 is None else self._teks_sen(self._sen(p1)))
+            self.assertEqual(baris["terpakai_rata3"], self._teks_sen(self._rata_sen(a.terpakai_lalu)))
+
+    @staticmethod
+    def _sen(nilai: Decimal) -> int:
+        """Nominal kelipatan 0,01 sebagai bilangan bulat sen (kali 100 eksak, tanpa pembagian atau pembulatan)."""
+        return int(nilai * 100)
+
+    @staticmethod
+    def _teks_sen(sen: int | None) -> str | None:
+        if sen is None:
+            return None
+        return f"{'-' if sen < 0 else ''}{abs(sen) // 100}.{abs(sen) % 100:02d}"
+
+    @classmethod
+    def _rata_sen(cls, nilai) -> int | None:
+        """Rata-rata nilai yang ada (None dilewati), setengah ke atas ke sen; nilai tidak negatif."""
+        ada = [cls._sen(n) for n in nilai if n is not None]
+        return (2 * sum(ada) + len(ada)) // (2 * len(ada)) if ada else None
+
+    @staticmethod
+    def _persen_ubah(sekarang_sen: int, lalu_sen: int | None) -> int | None:
+        """Perubahan persen bulat, setengah menjauhi nol; None tanpa pembanding yang berarti (None, nol, negatif)."""
+        if lalu_sen is None or lalu_sen <= 0:
+            return None
+        pembilang = (sekarang_sen - lalu_sen) * 100
+        hasil = (2 * abs(pembilang) + lalu_sen) // (2 * lalu_sen)
+        return hasil if pembilang >= 0 else -hasil
 
 
 if __name__ == "__main__":

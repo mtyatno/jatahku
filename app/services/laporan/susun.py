@@ -10,16 +10,21 @@ Syarat bahan (pemuat yang menjamin; di sini hanya dicek yang bila salah membuat 
   (`visibility.masked_description`), amplop terbatas pada lingkup penerima;
 - uang selalu `Decimal` (`uang()` menolak int) dan `tujuan` nilai mentahnya (`"saving"`, bukan `str(enum)`);
 - `terpakai_lalu` tiap amplop berisi tepat tiga nilai (terlama dulu), `None` untuk periode tanpa snapshot;
+- `terpakai_lalu_total` berisi tepat tiga nilai (terlama dulu): total terpakai semua amplop lingkup penerima yang
+  punya snapshot periode itu, juga yang bukan baris di `amplop` (sudah ditutup atau dihapus); `None` bila tak satu
+  pun punya. Total pembanding di `banding` berasal dari sini, tidak dijumlahkan dari baris; angka per amplop di
+  `banding.amplop[]` tetap dari `terpakai_lalu` baris masing-masing;
 - setiap transaksi dan target menunjuk amplop yang ada di `bahan.amplop`; tagihan periode berikut boleh menunjuk
   amplop di luar bahan (amplop yang dibuat sesudah periode tidak punya baris), namanya lalu `null`.
-Pelanggaran syarat `terpakai_lalu` atau syarat amplop transaksi dan target adalah bug pemuat: `ValueError`, tidak
-ditambal, karena laporan yang terbit tidak pernah diubah lagi.
+Pelanggaran syarat `terpakai_lalu`, `terpakai_lalu_total`, atau syarat amplop transaksi dan target adalah bug
+pemuat: `ValueError`, tidak ditambal, karena laporan yang terbit tidak pernah diubah lagi.
 
 Bentuk keluaran: uang teks dua desimal (`uang()`), tanggal ISO, persen `int`, tanpa float. Bisa `null`:
-`ringkasan.persen_terpakai` (tanpa saldo awal), `banding.terpakai_lalu`/`terpakai_rata3` dan isi
-`banding.amplop[]` (periode tanpa angka), `banding.persen_perubahan` (periode lalu tanpa angka atau nol),
-`hari_terboros` (tak ada hari di atas nol), `mutasi[].amplop` (baris `masuk`), `langganan.jatuh_tempo[].amplop`
-(amplop di luar bahan), `sorotan.target[].persen` (target nol), `email.persen_terpakai`, `email.tren_persen`.
+`ringkasan.persen_terpakai` (tanpa saldo awal), `banding.terpakai_lalu`/`terpakai_rata3` (lingkup tanpa angka di
+periode itu) dan isi `banding.amplop[]` (amplop tanpa angka), `banding.persen_perubahan` (periode lalu tanpa angka
+atau nol), `hari_terboros` (tak ada hari di atas nol), `mutasi[].amplop` (baris `masuk`),
+`langganan.jatuh_tempo[].amplop` (amplop di luar bahan), `sorotan.target[].persen` (target nol),
+`email.persen_terpakai`, `email.tren_persen`.
 Urutan: `amplop` dan `banding.amplop` menurut bahan; `harian` menurut tanggal; `terbesar` menurut jumlah;
 `terbayar`, `jatuh_tempo`, dan `mutasi` menurut tanggal. Seri selalu menurut urutan masukan (pengurutan stabil);
 di hari yang sama baris `masuk` mendahului baris `keluar` di `mutasi`.
@@ -110,7 +115,10 @@ class TargetTabungan:
 
 @dataclass(frozen=True)
 class BahanLaporan:
-    """Semua masukan `susun_bulanan` untuk satu penerima dan satu periode; `angka_per` = tanggal terbit."""
+    """Semua masukan `susun_bulanan` untuk satu penerima dan satu periode; `angka_per` = tanggal terbit.
+    `terpakai_lalu_total`: total terpakai tiga periode sebelumnya, terlama dulu (p-3, p-2, p-1), atas SEMUA amplop
+    lingkup penerima yang punya snapshot periode itu, termasuk amplop yang bukan baris di `amplop` (sudah ditutup
+    atau dihapus); `None` bila tak satu pun amplop lingkup punya snapshot periode itu. Wajib, tanpa nilai bawaan."""
     penerima_nama: str
     rumah_nama: str
     periode_mulai: date
@@ -123,6 +131,7 @@ class BahanLaporan:
     tagihan_berikut: list[TagihanBerikut]
     target: list[TargetTabungan]
     streak_saat_ini: int
+    terpakai_lalu_total: list[Decimal | None]
 
 
 def ada_aktivitas(bahan: BahanLaporan) -> bool:
@@ -145,7 +154,7 @@ def susun_bulanan(bahan: BahanLaporan) -> dict:
     ]
     total_terpakai = _jumlah(a.terpakai for a in bahan.amplop)
     ringkasan = _ringkasan(bahan, total_terpakai)
-    banding = _banding(bahan.amplop, total_terpakai)
+    banding = _banding(bahan.amplop, bahan.terpakai_lalu_total, total_terpakai)
     harian, hari_terboros = _harian(bahan)
     sorotan = _sorotan(bahan, per_id, status, lewat)
     return {
@@ -180,6 +189,11 @@ def _periksa(bahan: BahanLaporan) -> dict[str, AmplopPeriode]:
     """Memeriksa syarat bahan yang bila dilanggar membuat `data` keliru tanpa terlihat (periode pembanding
     bergeser) atau gagal dengan `KeyError` yang tidak menjelaskan apa-apa; mengembalikan amplop menurut id."""
     per_id = {a.id: a for a in bahan.amplop}
+    if len(bahan.terpakai_lalu_total) != JUMLAH_PERIODE_BANDING:
+        raise ValueError(
+            f"terpakai_lalu_total harus berisi {JUMLAH_PERIODE_BANDING} periode, "
+            f"bukan {len(bahan.terpakai_lalu_total)}"
+        )
     for a in bahan.amplop:
         if len(a.terpakai_lalu) != JUMLAH_PERIODE_BANDING:
             raise ValueError(
@@ -243,18 +257,16 @@ def _baris_amplop(a: AmplopPeriode, status: str, lewat: bool) -> dict:
     }
 
 
-def _banding(amplop: list[AmplopPeriode], terpakai_sekarang: Decimal) -> dict:
-    """Pembanding dengan periode lalu (p-1) dan rata-rata tiga periode. Total per periode = jumlah amplop yang
-    punya angka di periode itu (tidak ada satu pun: None); rata-rata total = rata-rata ketiga total itu, bukan
-    jumlah rata-rata per amplop."""
-    total: list[Decimal | None] = []
-    for i in range(JUMLAH_PERIODE_BANDING):
-        ada = [a.terpakai_lalu[i] for a in amplop if a.terpakai_lalu[i] is not None]
-        total.append(_jumlah(ada) if ada else None)
-    lalu = total[-1]
+def _banding(amplop: list[AmplopPeriode], total_lalu: list[Decimal | None], terpakai_sekarang: Decimal) -> dict:
+    """Pembanding dengan periode lalu (p-1) dan rata-rata tiga periode. Total (`terpakai_lalu`, `terpakai_rata3`,
+    dasar `persen_perubahan`) dari `total_lalu` = `bahan.terpakai_lalu_total`, yang meliputi semua amplop lingkup
+    dan bukan hanya baris; rata-rata = rata-rata ketiga total itu (periode `None` tidak masuk pembagi), bukan
+    jumlah rata-rata per amplop. `terpakai_sekarang` = jumlah `terpakai` baris. Angka per amplop dari
+    `terpakai_lalu` barisnya sendiri."""
+    lalu = total_lalu[-1]
     return {
         "terpakai_lalu": _uang_atau_none(lalu),
-        "terpakai_rata3": _uang_atau_none(rata_rata(total)),
+        "terpakai_rata3": _uang_atau_none(rata_rata(total_lalu)),
         "persen_perubahan": persen_perubahan(terpakai_sekarang, lalu),
         "amplop": [
             {
