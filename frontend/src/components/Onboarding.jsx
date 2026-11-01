@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency } from '../lib/utils';
+import { onboardingProfileBody } from '../lib/paydayLock';
 import { EnvelopeIcon } from './Icon';
 
 const EMOJI_OPTIONS = ['🍜','🚗','🏠','📱','🎬','📚','👶','🏥','💊','🎁','👕','🐾','🏋️','✈️','🛒','💡','📦','🔧'];
@@ -184,9 +185,13 @@ export default function Onboarding({ onDone }) {
     try {
       // 1. Save payday_day & income_type: payday 1 for daily/weekly, or chosen paydayDay for monthly
       const finalPayday = incomeType === 'monthly' ? paydayDay : 1;
+      // Anggota household yang tanggal gajiannya dikunci: PUT yang membawa payday_day ditolak 403 dan tidak menyimpan
+      // apa pun, jadi profil dibaca dulu dan payday_day dilewati (income_type tetap tersimpan).
+      const profileRes = await api.request('/user/profile');
+      const profile = profileRes.ok ? await profileRes.json() : null;
       await api.request('/user/profile', {
         method: 'PUT',
-        body: JSON.stringify({ payday_day: finalPayday, income_type: incomeType }),
+        body: JSON.stringify(onboardingProfileBody(profile, { paydayDay: finalPayday, incomeType })),
       });
 
       // 2. Create envelopes with target monthly budget_amount
