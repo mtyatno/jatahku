@@ -46,6 +46,23 @@ class ConstantsTests(unittest.TestCase):
                 self.assertIn(col, ReceiptScan.__table__.c)
         self.assertIn("WHERE upload_id IS NOT NULL", ddl)
 
+class LearningTablesTests(unittest.TestCase):
+    def test_learning_tables_shape(self):
+        from app.models.models import ProofRule, ProofRuleVote
+        votes, rules = ProofRuleVote.__table__, ProofRule.__table__
+        self.assertEqual([c.name for c in votes.primary_key.columns], ["kind", "rule_key", "value", "user_id"])
+        [fk] = votes.c.user_id.foreign_keys
+        self.assertEqual((fk.target_fullname, fk.ondelete), ("users.id", "CASCADE"))
+        self.assertEqual((votes.c.household_id.nullable, votes.c.household_id.foreign_keys), (True, set()))
+        [fk] = rules.c.decided_by.foreign_keys
+        self.assertEqual((fk.target_fullname, fk.ondelete), ("users.id", "SET NULL"))
+        self.assertIn("uq_proof_rule", {c.name for c in rules.constraints})
+        self.assertIn("ix_proof_rules_status", {i.name for i in rules.indexes})
+        self.assertEqual((votes.c.kind.type.length, votes.c.rule_key.type.length, votes.c.value.type.length),
+                         (20, 60, 60))
+        self.assertEqual((rules.c.status.type.length, rules.c.note.type.length), (12, 200))
+
+
 class _OpRecorder:
     """Pengganti `alembic.op`: mencatat pernyataan, tanpa basis data."""
     def __init__(self):
@@ -86,11 +103,51 @@ class MigrationTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(name.startswith("create_"), name)
                 self.assertIs(kwargs.get("if_not_exists"), True)
+        # L2: dua tabel belajar dan indeks status, sekali per upgrade.
+        self.assertEqual([(name, args[0]) for name, args, _kw in first.calls],
+                         [("create_table", "proof_rule_votes"), ("create_table", "proof_rules"),
+                          ("create_index", "ix_proof_rules_status")])
+        self.assertEqual(len(second.calls), len(first.calls))
         down = self.run_with(mod, "downgrade")
         self.assertIn("ALTER TABLE receipt_scans DROP COLUMN IF EXISTS layout", down.statements)
+        self.assertEqual([(name, args[0]) for name, args, _kw in down.calls],
+                         [("drop_index", "ix_proof_rules_status"), ("drop_table", "proof_rules"),
+                          ("drop_table", "proof_rule_votes")])
         for name, _args, kwargs in down.calls:
             with self.subTest(name):
                 self.assertIs(kwargs.get("if_exists"), True)
+
+    def test_migration_tables_match_the_models(self):
+        """Pengganti lokal `alembic check` (CI "Migrasi" menjalankannya di Postgres): tabel yang dibuat migrasi sama
+        dengan model: kolom, tipe Postgres, nullable, kunci primer, FK + ondelete, unik, dan indeks."""
+        import sqlalchemy as sa
+        from sqlalchemy.dialects import postgresql
+        from app.models.models import ProofRule, ProofRuleVote
+        calls = self.run_with(self.load(), "upgrade").calls
+        md = sa.MetaData()
+        sa.Table("users", md, sa.Column("id", sa.Uuid(), primary_key=True))
+        for name, args, kwargs in calls:
+            if name == "create_table":
+                sa.Table(args[0], md, *args[1:])
+        indexes = {(args[0], args[1], tuple(args[2]), bool(kwargs.get("unique"))) for name, args, kwargs in calls
+                   if name == "create_index"}
+        pg = postgresql.dialect()
+
+        def shape(table):
+            return {
+                "cols": {c.name: (c.type.compile(dialect=pg), c.nullable, c.server_default is not None)
+                         for c in table.columns},
+                "pk": [c.name for c in table.primary_key.columns],
+                "fks": {(fk.parent.name, fk.target_fullname, fk.ondelete) for fk in table.foreign_keys},
+                "uniques": {(u.name, tuple(c.name for c in u.columns)) for u in table.constraints
+                            if isinstance(u, sa.UniqueConstraint)},
+            }
+        for model in (ProofRuleVote, ProofRule):
+            with self.subTest(model.__tablename__):
+                self.assertEqual(shape(md.tables[model.__tablename__]), shape(model.__table__))
+                self.assertEqual({(i.name, tuple(c.name for c in i.columns), bool(i.unique))
+                                  for i in model.__table__.indexes},
+                                 {(n, c, u) for (n, t, c, u) in indexes if t == model.__tablename__})
 
     def test_single_head_after_siklus_household(self):
         children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")

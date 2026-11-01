@@ -1097,6 +1097,41 @@ class KotakBotDbTests(TxnBase):
         self.assertIn("bakso", learned)
         self.assertFalse({"siti", "aminah"} & learned)
 
+    async def test_bot_record_path_learns_through_mark_recorded(self):
+        """Jalur catat bot (`_receipt_feedback_saved` -> `record.mark_recorded`) belajar dari nilai akhir transaksi,
+        sekali: pembaca memilih "Nama Penerima", user menulis nama di baris "Ditransfer ke" lewat catatan."""
+        from app.models.models import ProofRuleVote
+        from app.services.kotak_struk import belajar
+        lines = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Nama Penerima", "SITI RAHAYU",
+                 "Jumlah Rp10.000", "Tanggal 26 Okt 2026 08:12"]
+        await self.send(lines)
+        item_id = self.items[-1]
+        self.assertEqual((await self.get(item_id)).layout["key"], "gopay")
+        key = self.button("Makan").split("_")[1]
+        await self.tap(f"kn_{key}")
+        note = SimpleNamespace(photo=None, document=None, text="titip Budi Santoso", reply_text=AsyncMock())
+        update_ = SimpleNamespace(message=note, effective_user=SimpleNamespace(id=42, first_name="Ani"),
+                                  effective_chat=SimpleNamespace(id=4242))
+        await handlers.handle_message(update_, SimpleNamespace(bot=self.bot))
+        makan = next(b.callback_data for row in keyboard_of(self.bot.edit_message_text.call_args) for b in row
+                     if "Makan" in b.text)
+        spy = AsyncMock(side_effect=belajar.learn_from_correction)
+        with patch.object(belajar, "learn_from_correction", spy):
+            await self.tap(makan)
+            await self.tap(makan)   # ketukan kedua: sesi habis, tidak mencatat dan tidak belajar lagi
+        [txn] = await self.txns()
+        self.assertEqual(txn.description, "titip Budi Santoso (Siti Rahayu)")
+        item = await self.get(item_id)
+        self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+        self.assertEqual(spy.await_count, 1)
+        final = spy.await_args.args[2]
+        self.assertEqual((final.amount, final.txn_date, final.description),
+                         (10000, txn.transaction_date, txn.description))
+        async with self.Session() as db:
+            votes = [(v.kind, v.rule_key, v.value, v.user_id, v.household_id)
+                     for v in (await db.execute(select(ProofRuleVote))).scalars().all()]
+        self.assertEqual(votes, [("label_pihak", "gopay", "ditransfer ke", self.a.id, self.hh.id)])
+
     async def test_pdf_and_proof_text_become_kotak_items(self):
         await self.send(CORPUS[2]["lines"], data=b"%PDF-1.4\n%x\n", mime="application/pdf")
         self.assertTrue(self.texts()[-1].startswith("Transfer · Budi Santoso\nRp 152.500 · "))

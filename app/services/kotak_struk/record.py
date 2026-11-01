@@ -27,8 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, Transaction, User
 from app.services.expense_rules import after_expense_recorded
-from app.services.kotak_struk import dedup
-from app.services.kotak_struk.config import PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT
+from app.services.kotak_struk import belajar, dedup
+from app.services.kotak_struk.config import (
+    LAYOUT_TYPES, PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
+)
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import _find_merchant, learnable_text, merchant_for_item, upsert_household_merchant
 
@@ -153,6 +155,8 @@ async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, re
     if done.rowcount != 1:
         return False
     await db.commit()
+    # Kait belajar dari "bukan pengeluaran" (suara `arah`, alasan top-up/uang masuk/rekening sendiri) menyusul di
+    # tahap 2 (plan 2026-11-01 M3, pre-flight K7); tahap 1 tidak memberi suara dari melewati item.
     return True
 
 
@@ -203,18 +207,54 @@ async def _learn(db: AsyncSession, item: ReceiptScan, user_id: uuid.UUID, envelo
     await _bump_map(db, merchant.id, envelope_id, user_id, now)
 
 
+def _whole(amount) -> int | None:
+    """Nominal transaksi (Decimal) sebagai rupiah bulat; pecahan tidak pernah sama dengan nominal kerangka."""
+    if amount is None or amount != int(amount):
+        return None
+    return int(amount)
+
+
+async def _learn_correction(db: AsyncSession, item: ReceiptScan, user_id: uuid.UUID,
+                            transaction_id: uuid.UUID) -> None:
+    """Belajar lintas user dari koreksi (kotak_struk/belajar.py): nilai akhir dimuat dari baris transaksinya (satu
+    sumber: nominal, tanggal, keterangan yang benar-benar tercatat, juga sesudah `_check_row` mengubah tanggal). Hanya
+    item berkerangka (QRIS, transfer, tidak dikenali). Bacaan di SAVEPOINT (galat database tidak merusak sesi);
+    `learn_from_correction` menulis di savepoint sendiri dan menelan galatnya."""
+    if item.doc_type not in LAYOUT_TYPES or not item.layout:
+        return
+    async with db.begin_nested():
+        row = (await db.execute(
+            select(Transaction.amount, Transaction.transaction_date, Transaction.description)
+            .where(Transaction.id == transaction_id)
+        )).first()
+    if row is None:
+        return
+    final = belajar.Final(amount=_whole(row.amount), txn_date=row.transaction_date, description=row.description,
+                          today=belajar.today_wib())
+    await belajar.learn_from_correction(db, item, final, user_id=user_id)
+
+
 async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.UUID, transaction_id: uuid.UUID,
                         envelope_id: uuid.UUID) -> bool:
     """Tandai item `tercatat` setelah transaksinya dibuat: id transaksi ditambahkan ke `transaction_ids`, dan untuk
     bukti bayar QRIS/transfer (`PROOF_TYPES`) peta merchant rumah tangga belajar (amplop terpilih +1). Struk belanja
-    dan tidak dikenali: `ocr_lines` dibiarkan (umpan balik lama yang menghapusnya), peta tidak disentuh. Idempoten per `transaction_id`: id yang sudah ada di
-    `transaction_ids` tidak ditambah dan peta tidak dinaikkan lagi. Boleh dipanggil setelah `claim_for_recording`
-    (status sudah `tercatat`). False bila item tidak ada. Meng-commit sendiri."""
+    dan tidak dikenali: `ocr_lines` dibiarkan (umpan balik lama yang menghapusnya), peta tidak disentuh. Item
+    berkerangka (QRIS, transfer, tidak dikenali) juga memberi suara koreksi lintas user (`_learn_correction`); semua
+    pencatatan pertama lewat sini (web, batch, bot, kirim ulang). Idempoten per `transaction_id`: id yang sudah ada di
+    `transaction_ids` tidak ditambah, peta tidak dinaikkan lagi, dan tidak ada suara lagi. Boleh dipanggil setelah
+    `claim_for_recording` (status sudah `tercatat`). False bila item tidak ada. Meng-commit sendiri."""
     item = await db.get(ReceiptScan, item_id)
     if item is None:
         return False
     if str(transaction_id) in (item.transaction_ids or []):
         return True
+    # Belajar dari koreksi: hanya di jalur transaksi BARU (sekali per transaksi; kirim ulang dan penyembuhan yang sudah
+    # tercatat berhenti di atas), sebelum item diubah supaya savepoint-nya tidak ikut mem-flush penandaan item. Suaranya
+    # di-commit bersama penandaan di bawah; galatnya tidak pernah membiarkan item tetap `siap`.
+    try:
+        await _learn_correction(db, item, user_id, transaction_id)
+    except Exception:
+        log.warning("belajar dari koreksi untuk item Kotak Struk %s dilewati", item_id, exc_info=True)
     item.transaction_ids = list(item.transaction_ids or []) + [str(transaction_id)]  # daftar baru: perubahan terdeteksi
     item.status = ST_TERCATAT
     if item.doc_type in PROOF_TYPES and item.household_id is not None and item.counterparty_key:

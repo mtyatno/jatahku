@@ -34,6 +34,8 @@ def make_db():
             return first.pop(0)
         if sql(stmt).startswith("SELECT household_members"):
             return FakeResult(tgt_mem)  # target sudah anggota household yang dipertahankan
+        if sql(stmt).startswith("SELECT proof_rule_votes"):
+            return FakeResult(rows=[])  # source belum pernah memberi suara koreksi Kotak Struk
         return FakeResult()
 
     db = MagicMock()
@@ -74,6 +76,12 @@ class MergeUsersCleanupTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_source_streak_deleted_before_user(self):
         self.assert_before_user_delete("DELETE FROM user_streaks", {SRC_ID})
+
+    async def test_source_learning_votes_forgotten_before_user(self):
+        # Kotak Struk (G7): suara dihapus lewat belajar.forget_user (hitung ulang aturan), bukan CASCADE diam-diam.
+        self.assert_before_user_delete("SELECT proof_rule_votes", {SRC_ID})
+        self.assert_before_user_delete("DELETE FROM proof_rule_votes", {SRC_ID})
+        self.assert_before_user_delete("UPDATE proof_rules SET decided_by", {SRC_ID, TGT_ID})
 
     async def test_source_notification_preferences_deleted_before_user(self):
         self.assert_before_user_delete("DELETE FROM notification_preferences", {SRC_ID})
