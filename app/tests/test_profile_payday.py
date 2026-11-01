@@ -202,12 +202,14 @@ class UpdateProfileTests(unittest.IsolatedAsyncioTestCase):
 
 class GetProfileTests(unittest.IsolatedAsyncioTestCase):
     async def profile(self, user, context):
-        # Tiga kueri hitung lama (transaksi, amplop, berulang); `payday_context` di-patch, jadi tidak menambah kueri.
-        db = db_with(FakeResult(0), FakeResult(0), FakeResult(0))
+        # Empat kueri lama: hitung transaksi, ruang keluarga untuk kuota (Plugin R2, `ruang_keluarga_id`), hitung amplop,
+        # hitung berulang. `payday_context` di-patch, jadi tidak menambah kueri, dan dipanggil tanpa `household_id`:
+        # profil selalu ruang keluarga, apa pun ruang yang dibuka (cermin `users.payday_day` milik ruang keluarga).
+        db = db_with(FakeResult(0), FakeResult(None), FakeResult(0), FakeResult(0))
         stub = AsyncMock(return_value=context)
         with patch.object(user_settings, "payday_context", stub):
             result = await user_settings.get_profile(user=user, db=db)
-        self.assertEqual(db.execute.await_count, 3)
+        self.assertEqual(db.execute.await_count, 4)
         stub.assert_awaited_once_with(db, user)
         return result
 

@@ -179,9 +179,11 @@ async def _analisa(user, now_local: datetime):
     """Analisa viewer dengan sesi DB sendiri (gagal → None, pemanggil tidak ikut rusak)."""
     from app.core.database import AsyncSessionLocal
     from app.services.advisor import chat
+    from app.services.ruang import ruang_keluarga
     try:
         async with AsyncSessionLocal() as adb:
-            return await chat.muat(user, adb, now=now_local)
+            # Peringatan proaktif dikirim ke chat → selalu ruang keluarga (ADR-P2).
+            return await chat.muat(user, adb, now=now_local, household_id=await ruang_keluarga(user, adb))
     except Exception as exc:
         logger.error("analisa proaktif gagal untuk %s: %s", user.id, exc)
         return None

@@ -55,9 +55,9 @@ class SummaryTests(unittest.TestCase):
 class AnalyticsTests(unittest.IsolatedAsyncioTestCase):
     async def test_daily_spending_chart(self):
         from app.api.routes.analytics import daily_spending
-        db = db_with(FakeResult(HID), FakeResult(rows=[]))
-        await daily_spending(period_start=PS, period_end=PE, user=USER, db=db)
-        self.assertIn(NOT_ADJ_TXN, sql(db.execute.call_args_list[1].args[0]))
+        db = db_with(FakeResult(rows=[]))
+        await daily_spending(period_start=PS, period_end=PE, user=USER, db=db, hid=HID)
+        self.assertIn(NOT_ADJ_TXN, sql(db.execute.call_args_list[0].args[0]))
 
     async def test_income_totals(self):
         from app.api.routes.analytics import _income_totals
@@ -80,8 +80,8 @@ class AnalyticsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_monthly_trend_allocations(self):
         from app.api.routes.analytics import monthly_trend
-        db = db_first_then(FakeResult(HID), lambda: FakeResult(0, rows=[]))
-        await monthly_trend(user=USER, db=db)
+        db = db_first_then(FakeResult(0, rows=[]), lambda: FakeResult(0, rows=[]))
+        await monthly_trend(user=USER, db=db, hid=HID)
         alloc_sqls = [s for s in executed_sql(db) if "FROM allocations" in s]
         self.assertEqual(len(alloc_sqls), 6)
         for s in alloc_sqls:

@@ -7,6 +7,11 @@ transaksi.
 
 Baris `payday_day=None` pada household tiruan disengaja: household yang belum dimigrasi menyimpan NULL, dan `adopt` /
 `household_payday` yang menurunkannya. Respons yang membaca atribut mentah akan gagal di sini.
+
+Sejak Plugin R2, join web dan bot lebih dulu memuat household tujuan undangan (`db.get`) dan menolak yang bukan ruang
+keluarga sebelum mengubah apa pun; tiruan `db.get` di sini mengembalikan household ruang keluarga (penolakan ruang usaha
+dikunci test_household_cycle_r1 dan test_ruang_gerbang). `GET /household/` membaca ruang dari dependency
+`ruang_aktif`, yang di sini diganti household tiruan.
 Run: python -m unittest app.tests.test_household_join_payday -v
 """
 import os
@@ -26,6 +31,7 @@ from app.api.routes import household
 from app.bot import household_cmd
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.services import ruang
 from app.tests.fakes import FakeResult, db_with
 
 # Konfigurasi mapper pertama (~50ms) jangan jatuh di dalam event loop test (HouseholdMember dibuat sungguhan di rute).
@@ -60,11 +66,12 @@ def record_order(**mocks):
 
 
 def client_for(db, user):
-    """Rute asli household di aplikasi mini; login dan sesi DB diganti tiruan."""
+    """Rute asli household di aplikasi mini; login, sesi DB, dan ruang aktif (Plugin R2) diganti tiruan."""
     app = FastAPI()
     app.include_router(household.router, prefix="/household")
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[ruang.ruang_aktif] = lambda: HOUSEHOLD_ID
     return TestClient(app)
 
 
@@ -85,8 +92,10 @@ class JoinRouteTests(unittest.TestCase):
         self.household = household_row()
         self.redis = fake_redis()
         self.adopt = AsyncMock(return_value=25)
-        # Urutan kueri route: sudah anggota household itu? (belum) → keanggotaan lama (tidak ada) → muat household.
+        # Urutan route: household tujuan (`db.get`, cek ruang keluarga Plugin R2) → sudah anggota household itu?
+        # (belum) → keanggotaan ruang keluarga lama (tidak ada) → muat household.
         self.db = db_with(FakeResult(None), FakeResult(None), FakeResult(self.household))
+        self.db.get = AsyncMock(return_value=self.household)
         for patcher in (
             patch.object(household, "_redis", new=AsyncMock(return_value=self.redis)),
             patch.object(household, "adopt_household_payday", new=self.adopt),
@@ -202,9 +211,10 @@ class BotJoinTests(unittest.IsolatedAsyncioTestCase):
         self.household = household_row()
         self.redis = fake_redis()
         self.adopt = AsyncMock(return_value=25)
-        # Urutan kueri cmd_join: sudah anggota household itu? (belum) → keanggotaan lama (tidak ada) → muat household
-        # → hitung anggota (setelah commit).
+        # Urutan cmd_join: household tujuan (`db.get`, cek ruang keluarga Plugin R2) → sudah anggota household itu?
+        # (belum) → keanggotaan ruang keluarga lama (tidak ada) → muat household → hitung anggota (setelah commit).
         self.db = db_with(FakeResult(None), FakeResult(None), FakeResult(self.household), FakeResult(2))
+        self.db.get = AsyncMock(return_value=self.household)
         for patcher in (
             patch.object(household_cmd, "AsyncSessionLocal", new=lambda: FakeSession(self.db)),
             patch.object(household_cmd, "get_or_create_user", new=AsyncMock(return_value=self.user)),

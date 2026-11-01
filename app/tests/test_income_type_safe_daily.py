@@ -38,7 +38,6 @@ class IncomeTypeSafeDailyTests(unittest.IsolatedAsyncioTestCase):
 
         user = SimpleNamespace(id=uuid.uuid4(), payday_day=payday_day, income_type=income_type)
         db = db_with(
-            FakeResult(uuid.uuid4()),           # household_id
             FakeResult(D(allocated)),           # total_allocated
             FakeResult(D(spent)),               # total_spent
             FakeResult(D("0")),                 # total_rollover
@@ -46,7 +45,8 @@ class IncomeTypeSafeDailyTests(unittest.IsolatedAsyncioTestCase):
             FakeResult([]),                     # reserved (no bills)
             FakeResult(rows=[]),                # pemasukan periode ini (_income_totals)
         )
-        return await spending_prediction(period_start=period[0], period_end=period[1], user=user, db=db)
+        return await spending_prediction(period_start=period[0], period_end=period[1], user=user, db=db,
+                                         hid=uuid.uuid4())
 
     def assertSafe(self, out, safe_daily, safe_days, income_type):
         self.assertEqual((out["safe_daily"], out["safe_days"], out["income_type"]),

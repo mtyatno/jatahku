@@ -14,6 +14,7 @@ from app.services.household_cycle import (
     current_payday, household_lock, household_payday, payday_context, recompute_history,
 )
 from app.services.rollover import create_monthly_snapshots, get_previous_rollover
+from app.services.ruang import RuangAktif, RuangTulis
 
 logger = logging.getLogger("jatahku.snapshots")
 router = APIRouter()
@@ -35,16 +36,14 @@ async def list_snapshots(
     month: int = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """List monthly snapshots for user's household."""
     now = date.today()
     y = year or now.year
     m = month or now.month
 
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    hid = result.scalar_one_or_none()
     if not hid:
         return []
 
@@ -168,6 +167,8 @@ async def recompute_snapshots(
     ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     """Hitung ulang riwayat snapshot household pemanggil, oldest-first dan force=True, dengan tanggal gajian rumah
     (bukan tanggal si pemanggil), supaya rantai rollover terbangun ulang dari ujung ke ujung. `periods` adalah batas
@@ -176,8 +177,10 @@ async def recompute_snapshots(
     yang gagal), dan rantai hanya utuh bila dibangun dari awal riwayat.
 
     Siklus milik rumah, jadi hanya yang boleh mengubahnya (owner/admin, atau member yang sendirian) yang boleh
-    menghitung ulang riwayat; member lain mendapat 403. Tanpa household tidak ada yang dihitung."""
-    ctx = await payday_context(db, user)
+    menghitung ulang riwayat; member lain mendapat 403. Household-nya ruang tulis R2 (`hid`; sampai R3 selalu ruang
+    keluarga), dan izin dihitung untuk household itu juga (`payday_context(..., household_id=hid)`), jadi sejak R3
+    recompute dan izinnya ikut ruang yang ditulis. Tanpa household, atau bukan anggotanya, tidak ada yang dihitung."""
+    ctx = await payday_context(db, user, household_id=hid) if hid is not None else None
     if ctx is None:
         return {"recomputed": 0, "periods": []}
     if not ctx.can_change:
@@ -189,7 +192,7 @@ async def recompute_snapshots(
     # di-commit: `payday_context` bisa mengisi tanggal rumah yang NULL (flush). Commit dulu (lihat docstring
     # `household_cycle.recompute_history`).
     await db.commit()
-    out = await recompute_history(ctx.household.id, periods)
+    out = await recompute_history(hid, periods)
     return {"recomputed": len(out), "periods": out}
 
 

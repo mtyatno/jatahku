@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.period import get_budget_period
 from app.models.models import (
-    User, Envelope, HouseholdMember, RecurringTransaction, RecurringFrequency,
+    User, Envelope, RecurringTransaction, RecurringFrequency,
     Transaction, TransactionSource,
 )
 from app.services.recurring_processor import _next_date
@@ -18,6 +18,7 @@ from app.services.recurring_status import (
     compute_recurring_status, take_paid_in_period, payable_from, payment_window_error,
 )
 from app.services.bills_summary import summarize_bills
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -47,13 +48,6 @@ class RecurringResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _get_hid(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
-
-
 async def _paid_in_period(db: AsyncSession, recs, period_start: date, period_end: date) -> dict:
     """{rec.id: nominal} langganan bulanan yang dibayar di periode ini (lihat take_paid_in_period)."""
     env_ids = {r.envelope_id for r in recs}
@@ -79,8 +73,9 @@ async def _paid_in_period(db: AsyncSession, recs, period_start: date, period_end
 async def list_recurring(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    hid = await _get_hid(user, db)
     if not hid:
         return []
 
@@ -122,8 +117,9 @@ async def create_recurring(
     req: RecurringCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     env_result = await db.execute(
         select(Envelope).where(
             Envelope.id == req.envelope_id,
@@ -167,8 +163,9 @@ async def update_recurring(
     req: RecurringCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
@@ -213,8 +210,7 @@ class PayRequest(BaseModel):
     amount: Decimal | None = None
 
 
-async def _resolve_rec(rec_id, user, db):
-    hid = await _get_hid(user, db)
+async def _resolve_rec(rec_id, user, db, hid):
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
@@ -242,8 +238,10 @@ async def pay_recurring(
     req: PayRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    rec = await _resolve_rec(rec_id, user, db)
+    rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
     amount = req.amount if req.amount is not None else rec.amount
@@ -264,8 +262,10 @@ async def skip_recurring(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    rec = await _resolve_rec(rec_id, user, db)
+    rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     rec.next_run = _next_date(rec.next_run, rec.frequency)
     await db.commit()
@@ -277,10 +277,12 @@ async def mark_recurring_paid(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     """Tandai lunas (AI Advisor DAT-06): tagihan sudah dibayar lewat catat biasa, jadi
     `next_run` dimajukan tanpa transaksi baru. Jendela bayar sama dengan Bayar/Lewati."""
-    rec = await _resolve_rec(rec_id, user, db)
+    rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
     rec.next_run = _next_date(rec.next_run, rec.frequency)
@@ -292,9 +294,10 @@ async def mark_recurring_paid(
 async def recurring_period_summary(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Ringkasan tagihan bulanan periode berjalan untuk kartu KPI Dashboard."""
-    hid = await _get_hid(user, db)
     if not hid:
         return {"amount_due": 0, "count_due": 0, "count_total": 0, "amount_paid": 0, "has_overdue": False}
 
@@ -334,8 +337,9 @@ async def delete_recurring(
     rec_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    hid = await _get_hid(user, db)
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)

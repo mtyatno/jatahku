@@ -11,12 +11,14 @@ satu muatan AI Advisor dan satu ringkasan amplop. Handler diimpor tertunda supay
 membuat impor melingkar dengan `app.api.routes`. Memindahkan rumus dari route ke services adalah
 refactor terpisah, bukan bagian B1.
 
-Ruang: handler lama menentukan household dari keanggotaan user di server (R2 menggantinya dengan
-`ruang_aktif`). Tidak ada parameter ruang dari klien yang diteruskan ke sini.
+Ruang (R2): `Sumber.hid` adalah ruang dari `ruang_aktif` di route `/dashboard/*`, diteruskan ke setiap
+handler sebagai parameter `hid` (handler yang sama menerimanya dari `Depends(ruang_aktif)` bila
+dipanggil lewat HTTP). Tidak ada parameter ruang dari body klien yang diteruskan ke sini.
 """
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -65,20 +67,25 @@ class Sumber:
     user: Any
     db: Any
     periode: Periode
+    hid: Any = None
     _cache: dict = field(default_factory=dict)
+    waktu: dict = field(default_factory=dict)   # nama sumber → ms memuat (untuk log batch lambat)
 
     async def _muat(self, nama: str, router, handler, **kwargs) -> Any:
         if nama in self._cache:
             hasil = self._cache[nama]
         else:
+            mulai = time.perf_counter()
             try:
-                hasil = _serialisasi(router, handler, await handler(user=self.user, db=self.db, **kwargs))
+                hasil = _serialisasi(router, handler, await handler(user=self.user, db=self.db, hid=self.hid,
+                                                                    **kwargs))
             except HTTPException as exc:
                 logger.warning("dashboard sumber %s gagal: %s %s", nama, exc.status_code, exc.detail)
                 hasil = SumberGagal(nama)
             except Exception:
                 logger.exception("dashboard sumber %s gagal", nama)
                 hasil = SumberGagal(nama)
+            self.waktu[nama] = (time.perf_counter() - mulai) * 1000
             self._cache[nama] = hasil
         if isinstance(hasil, SumberGagal):
             raise hasil

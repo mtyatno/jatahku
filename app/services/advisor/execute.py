@@ -53,8 +53,9 @@ def _plan(snap, m, kebutuhan, kecuali, sertakan) -> dict:
     return rencana.to_api(saldo_versi(snap, m))
 
 
-async def build_plan(user, db, kebutuhan: list[dict], kecuali=None, sertakan=None, today=None) -> dict:
-    snap = await load_snapshot(user, db, today=today)
+async def build_plan(user, db, kebutuhan: list[dict], kecuali=None, sertakan=None, today=None, *,
+                     household_id) -> dict:
+    snap = await load_snapshot(user, db, today=today, household_id=household_id)
     if snap.household_id is None:
         raise PlanError(400, "Belum punya household")
     return _plan(snap, compute_metrics(snap), kebutuhan, kecuali, sertakan)
@@ -123,7 +124,7 @@ def _validasi(snap, m, rencana: list[dict], bayar: list[dict]):
     return moves, tagihan
 
 
-async def execute_plan(user, db, body: dict, today=None) -> dict:
+async def execute_plan(user, db, body: dict, today=None, *, household_id) -> dict:
     """body = {"rencana", "bayar", "saldo_versi", "client_ref", "kebutuhan"?, "kecuali"?, "sertakan"?}."""
     from app.services import idempotency
 
@@ -140,7 +141,7 @@ async def execute_plan(user, db, body: dict, today=None) -> dict:
         raise PlanError(409, "Rencana ini sedang diproses")
 
     try:
-        result, goals_before = await _execute_locked(user, db, body, today)
+        result, goals_before = await _execute_locked(user, db, body, today, household_id)
     except BaseException:
         await db.rollback()
         await idempotency.release(user.id, ref)
@@ -154,23 +155,21 @@ async def execute_plan(user, db, body: dict, today=None) -> dict:
     return result
 
 
-async def _execute_locked(user, db, body: dict, today) -> dict:
+async def _execute_locked(user, db, body: dict, today, household_id) -> dict:
     from sqlalchemy import select
     from app.models.models import (
-        Envelope, HouseholdMember, RecurringFrequency, RecurringTransaction, Transaction, TransactionSource,
+        Envelope, RecurringFrequency, RecurringTransaction, Transaction, TransactionSource,
     )
     from app.services.fund_shift import record_transfer
     from app.services.goal_notify import goal_snapshot
     from app.services.recurring_processor import _next_date
 
-    hid = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )).scalar_one_or_none()
+    hid = household_id
     if not hid:
         raise PlanError(400, "Belum punya household")
     await lock_household(db, hid)
 
-    snap = await load_snapshot(user, db, today=today)
+    snap = await load_snapshot(user, db, today=today, household_id=hid)
     m = compute_metrics(snap)
     rencana = body.get("rencana") or []
     bayar = body.get("bayar") or []

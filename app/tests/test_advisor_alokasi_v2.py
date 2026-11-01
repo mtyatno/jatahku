@@ -114,7 +114,7 @@ class TestAlokasiFixture(unittest.TestCase):
         with patch.object(allocation, "load_advisor_context", new=AsyncMock(return_value={"envelopes": envs,
                                                                                           "stats": stats})), \
              patch.object(allocation, "analisa_alokasi", new=AsyncMock(return_value=hasil)):
-            return asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), D(income), db=None))
+            return asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), D(income), db=None, household_id="h1"))
 
     def test_amp05_menaikkan_rekomendasi_dengan_alasan(self):
         out = self._rekomendasi(self._riwayat(4_000_000, 3_000_000), 5_000_000)
@@ -150,7 +150,7 @@ class TestAlokasiFixture(unittest.TestCase):
         with patch.object(allocation, "load_advisor_context", new=AsyncMock(return_value={
                 "envelopes": envs, "stats": {"makan": []}})), \
              patch.object(allocation, "analisa_alokasi", new=AsyncMock(return_value=None)):
-            out = asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), D(2_000_000), db=None))
+            out = asyncio.run(build_allocation_recommendation(SimpleNamespace(id="u1"), D(2_000_000), db=None, household_id="h1"))
         self.assertEqual(out["items"][0]["recommended_amount"], 1_000_000)
         self.assertEqual(out["items"][0]["alasan"], [])
         self.assertEqual(out["banner"], [])

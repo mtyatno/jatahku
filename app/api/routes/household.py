@@ -9,8 +9,9 @@ import redis.asyncio as aioredis
 from app.core.database import get_db
 from app.core.config import get_settings
 from app.core.deps import get_current_user
-from app.models.models import User, Household, HouseholdMember, HouseholdRole, UserStreak
-from app.services.household_cycle import adopt_household_payday, household_payday, mirrors_users
+from app.services.ruang import RuangAktif, RuangTulis, keanggotaan, keanggotaan_keluarga
+from app.models.models import User, Household, HouseholdMember, HouseholdRole, HouseholdType, UserStreak
+from app.services.household_cycle import adopt_household_payday, household_payday
 
 settings = get_settings()
 router = APIRouter()
@@ -50,19 +51,19 @@ async def _redis():
     return aioredis.from_url(settings.REDIS_URL)
 
 
-async def _get_membership(user: User, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
+async def _get_membership(user: User, db: AsyncSession, hid):
+    """Keanggotaan user di ruang `hid` (dari ruang_aktif / ruang_tulis)."""
+    return await keanggotaan(db, user.id, hid)
 
 
 @router.get("/", response_model=HouseholdResponse)
 async def get_household(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -90,8 +91,10 @@ async def get_household(
 async def list_members(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -126,12 +129,14 @@ class LeaderboardEntry(BaseModel):
 async def streak_leaderboard(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
     """Rank household members by their current logging streak."""
     from datetime import timedelta
     from app.services.streak import user_today
 
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -168,8 +173,10 @@ async def streak_leaderboard(
 async def create_invite(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
-    membership = await _get_membership(user, db)
+    membership = await _get_membership(user, db, hid)
     if not membership:
         raise HTTPException(status_code=404, detail="No household found")
 
@@ -197,8 +204,8 @@ async def join_household(
     db: AsyncSession = Depends(get_db),
 ):
     """Gabung ke household lewat kode invite: query `?code=` atau body JSON `{"code": ...}` (query didahulukan).
-    Anggota baru ruang keluarga mengikuti tanggal gajian household; ruang usaha punya siklus sendiri dan tidak
-    mencerminkannya ke user. `payday_day` di respons selalu tanggal household yang dimasuki."""
+    Hanya undangan ruang keluarga yang diterima (Plugin R2; undangan ruang usaha menyusul di R5). Anggota baru
+    mengikuti tanggal gajian household; `payday_day` di respons = tanggal household yang dimasuki."""
     # Settings.jsx mengirim kode di body JSON; dulu hanya query yang diterima, jadi join dari web selalu 422.
     # Query kosong (atau hanya spasi) → body. Dinormalkan seperti di bot: strip().upper().
     invite = ""
@@ -218,6 +225,12 @@ async def join_household(
 
     household_id = household_id.decode()
 
+    # Undangan lewat jalur ini hanya untuk ruang keluarga: bergabung menghapus keanggotaan ruang keluarga
+    # lama. Undangan ruang usaha punya jalurnya sendiri (R5).
+    tujuan = await db.get(Household, UUID(household_id))
+    if tujuan is None or str(tujuan.type) != HouseholdType.RUMAH_TANGGA:
+        raise HTTPException(status_code=400, detail="Kode invite tidak valid atau expired")
+
     # Check user not already in this household
     existing = await db.execute(
         select(HouseholdMember).where(
@@ -228,8 +241,8 @@ async def join_household(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Kamu sudah bergabung di household ini")
 
-    # Remove from old household
-    old_membership = await _get_membership(user, db)
+    # Pindah ruang keluarga: keanggotaan ruang keluarga lama dihapus, ruang usaha tetap.
+    old_membership = await keanggotaan_keluarga(db, user.id)
     if old_membership:
         await db.delete(old_membership)
 
@@ -242,17 +255,14 @@ async def join_household(
     db.add(new_member)
 
     # Siklus anggaran ikut household (owner yang memutuskan). Diadopsi sebelum commit: keanggotaan dan tanggal
-    # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama". Hanya ruang keluarga
-    # yang mencerminkan siklusnya ke user; ruang usaha punya siklus sendiri, jadi cermin user dibiarkan dan responsnya
-    # membawa tanggal ruang itu.
+    # gajian anggota baru tersimpan bersama, tanpa jeda "sudah anggota tapi masih siklus lama". Jalur ini hanya
+    # menerima ruang keluarga (cek undangan di atas), yang siklusnya dicerminkan ke `users.payday_day`; jalur yang
+    # kelak memasukkan user ke ruang usaha (R5) membaca tanggalnya lewat `household_payday`, bukan mengadopsinya.
     result = await db.execute(
         select(Household).where(Household.id == UUID(household_id))
     )
     household = result.scalar_one()
-    if mirrors_users(household):
-        payday = await adopt_household_payday(db, user, household)
-    else:
-        payday = await household_payday(db, household)
+    payday = await adopt_household_payday(db, user, household)
     await db.commit()
 
     # Delete used invite code

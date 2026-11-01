@@ -315,8 +315,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_muat_none_bila_flag_mati(self):
         db = MagicMock()
-        self.assertIsNone(await chat.muat(USER, db, pengaturan={"advisor_v2_users": "orang-lain"}))
-        self.assertIsNone(await chat.muat(USER, db, pengaturan={}))
+        self.assertIsNone(await chat.muat(USER, db, pengaturan={"advisor_v2_users": "orang-lain"}, household_id=None))
+        self.assertIsNone(await chat.muat(USER, db, pengaturan={}, household_id=None))
 
     async def test_handle_sisa_memakai_v2(self):
         update = fake_update("sisa berapa")
@@ -334,7 +334,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         env = {"envelope": SimpleNamespace(id=uuid.uuid4()), "allocated": D(1), "spent": D(0), "free": D(1)}
         with patch.object(handlers, "AsyncSessionLocal", new=lambda: FakeSession(MagicMock())), \
                 patch.object(handlers, "get_or_create_user", new=AsyncMock(return_value=USER)), \
-                patch.object(handlers, "get_household_id", new=AsyncMock(return_value=uuid.uuid4())), \
+                patch.object(handlers, "ruang_keluarga", new=AsyncMock(return_value=uuid.uuid4())), \
                 patch.object(handlers, "get_envelopes_with_spent", new=AsyncMock(return_value=[env])), \
                 patch.object(handlers, "_status_streak_lines", new=AsyncMock(return_value=["🔥 Streak <b>3 hari</b>"])), \
                 patch.object(advisor_cmd, "analisa", new=AsyncMock(return_value=self.a)):
@@ -352,7 +352,7 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.core.database.AsyncSessionLocal", new=lambda: FakeSession(MagicMock())), \
                 patch.object(checkin_cmd, "get_or_create_user", new=AsyncMock(return_value=USER)), \
                 patch.object(checkin_cmd, "_is_setup_complete", new=AsyncMock(return_value=(True, "ok"))), \
-                patch.object(checkin_cmd, "get_household_id", new=AsyncMock(return_value=uuid.uuid4())), \
+                patch.object(checkin_cmd, "ruang_keluarga", new=AsyncMock(return_value=uuid.uuid4())), \
                 patch.object(checkin_cmd, "find_best_envelope", new=AsyncMock(return_value=(envelope, False))), \
                 patch.object(checkin_cmd, "get_envelopes_with_spent", new=get_envs), \
                 patch.object(advisor_cmd, "jawab", new=jawab):
@@ -507,10 +507,12 @@ class ParitasDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_angka_identik(self):
         from app.api.routes import advisor as advisor_routes
+        from app.services.ruang import ruang_keluarga
         async with self.Session() as db:
-            web = await advisor_routes.advisor_dashboard(user=self.me, db=db)
+            hid = await ruang_keluarga(self.me, db)
+            web = await advisor_routes.advisor_dashboard(user=self.me, db=db, hid=hid)
         async with self.Session() as db:
-            a = await chat.muat(self.me, db)
+            a = await chat.muat(self.me, db, household_id=hid)
         self.assertIsNotNone(a)
         m = web["metrics"]
         teks = {"sisa": chat.jawab_sisa(a), "status": chat.jawab_status(a), "ringkasan": chat.ringkasan_harian(a)}

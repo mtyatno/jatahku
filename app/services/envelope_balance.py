@@ -13,17 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.period import get_budget_period, get_previous_period
 from app.models.models import (
-    Envelope, EnvelopeGroup, HouseholdMember, Transaction, Allocation, Income,
+    Envelope, EnvelopeGroup, Transaction, Allocation, Income,
     MonthlySnapshot,
 )
 from app.services.reserved import envelope_reserved
-
-
-async def get_household_id(user, db: AsyncSession):
-    result = await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )
-    return result.scalar_one_or_none()
 
 
 async def compute_envelope_summaries(
@@ -31,10 +24,13 @@ async def compute_envelope_summaries(
     db: AsyncSession,
     period_start: date | None = None,
     period_end: date | None = None,
+    *,
+    household_id,
 ) -> list[dict]:
-    """Saldo tiap amplop aktif yang terlihat user (shared + personal miliknya).
+    """Saldo tiap amplop aktif yang terlihat user (shared + personal miliknya) di
+    ruang `household_id` (dari `app/services/ruang.py`; pemanggil yang menentukan).
     Tanpa period_start/period_end → periode berjalan (payday user)."""
-    hid = await get_household_id(user, db)
+    hid = household_id
     if not hid:
         return []
 

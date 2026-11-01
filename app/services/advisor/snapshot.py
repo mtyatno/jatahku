@@ -173,8 +173,9 @@ def _sid(value) -> str | None:
 
 
 async def load_snapshot(user, db, today: date | None = None,
-                        periods_count: int = PERIODS_COUNT) -> Snapshot:
-    """Muat snapshot viewer `user` untuk `today` (default: hari ini di zona waktu user)."""
+                        periods_count: int = PERIODS_COUNT, *, household_id) -> Snapshot:
+    """Muat snapshot viewer `user` di ruang `household_id` untuk `today` (default: hari ini di
+    zona waktu user). Ruang ditentukan pemanggil (`app/services/ruang.py`)."""
     from sqlalchemy import func, or_, select
     from app.core.period import get_last_n_periods
     from app.models.models import (
@@ -194,10 +195,8 @@ async def load_snapshot(user, db, today: date | None = None,
                     payday_day=payday_day, income_type=income_type, periods=periods,
                     now=datetime.now(timezone.utc))
 
-    # 1. household
-    hid = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id)
-    )).scalar_one_or_none()
+    # 1. household (ruang)
+    hid = household_id
     if not hid:
         return snap
     snap.household_id = str(hid)

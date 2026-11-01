@@ -9,8 +9,8 @@ riwayat. Desain dan keputusan produk: `docs/superpowers/specs/2026-10-31-siklus-
 `docs/superpowers/plans/2026-10-31-siklus-household.md`. Catatan "(penyesuaian N)" di bawah menunjuk butir N di
 bagian "Penyesuaian saat implementasi" spec itu, yang memuat alasan tiap perubahan dari desain awal.
 
-**Status (1 Nov 2026).** Selesai di kode di branch `feat/siklus-household`, di atas main setelah Plugin B2 (#165); PR
-berlabel `migrasi` menunggu merge; revisi alembic `2d51b9031a6b`. Tanpa saklar fitur: begitu tayang, setiap household
+**Status (1 Nov 2026).** Selesai di kode di branch `feat/siklus-household`, di atas main setelah Plugin R2 (#166) dan B3
+(#167/#168); PR berlabel `migrasi` menunggu merge; revisi alembic `2d51b9031a6b`. Tanpa saklar fitur: begitu tayang, setiap household
 memakai satu siklus. Langkah merge dan migrasi data ada di `AGENTS.md`, "Deploy Checklist — Siklus anggaran per
 household (2d51b9031a6b)". Perbarui bagian ini saat status berubah.
 
@@ -49,9 +49,9 @@ tes dengan `\.payday_day\s*=(?!=)` dan `(?i)\bset\s+payday_day` (argumen kata ku
 | `pick_payday(rows: Sequence[MemberRow])` | Murni. Owner, lalu admin, lalu yang lain; sesama peran `created_at` tertua; tanggal kosong → 1; tanpa anggota → 1. |
 | `can_change_payday(role, member_count)` | Owner/admin → ya; member → ya hanya bila `member_count == 1`. Peran enum atau string (`str(getattr(role, "value", role))`). |
 | `mirrors_users(household)` | Murni. Hanya ruang keluarga (`type` `rumah_tangga`; `type` kosong dihitung ruang keluarga) dicerminkan ke `users.payday_day`. |
-| `membership(db, user)` | Satu-satunya kueri keanggotaan di modul ini: ruang keluarga user saja. Plugin R1 mengizinkan satu user di beberapa household, jadi keanggotaan ruang usaha tidak ikut terpilih dan `scalar_one_or_none` tidak melempar. |
-| `payday_context(db, user)` | `PaydayContext(household, role, payday_day, member_count, can_change, owner_name)` atau None (tanpa ruang keluarga). Satu titik baca untuk route profil dan recompute (`GET /household/` memakai `_get_membership` + `household_payday`); `owner_name` None bila pemanggil sendiri owner-nya. |
-| `adopt_household_payday(db, user, household)` | `user.payday_day = household_payday(...)`. Dipanggil join web dan bot sebelum commit keanggotaan; pemanggil menjaganya dengan `mirrors_users`. Tidak commit. |
+| `membership(db, user)` | Keanggotaan ruang keluarga user: diteruskan ke `ruang.keanggotaan_keluarga` (resolver Plugin R2), tanpa kueri sendiri, jadi seluruh aplikasi memakai satu definisi. Keanggotaan ruang usaha tidak ikut terpilih; dua ruang keluarga (tidak semestinya) → yang tertua, tanpa galat (penyesuaian 23). |
+| `payday_context(db, user, *, household_id=None)` | `PaydayContext(household, role, payday_day, member_count, can_change, owner_name)` atau None (bukan anggota). Tanpa `household_id`: ruang keluarga (`membership`), dipakai route profil. Dengan `household_id`: keanggotaan di household itu (`ruang.keanggotaan`), dipakai `POST /snapshots/recompute` untuk ruang tulis R2 (penyesuaian 23). `GET /household/` memakai `_get_membership` + `household_payday`. `owner_name` None bila pemanggil sendiri owner-nya. |
+| `adopt_household_payday(db, user, household)` | `user.payday_day = household_payday(...)`. Dipanggil join web dan bot sebelum commit keanggotaan; keduanya hanya menerima undangan ruang keluarga (Plugin R2), dan fungsinya sendiri tidak memeriksa tipe. Tidak commit. |
 | `heal(db, household)` | Samakan `users.payday_day` anggota yang menyimpang dari household. Ruang usaha dan household bertanggal NULL dilewati. Mencatat warning `payday anggota <id> menyimpang (a → b)`, commit hanya bila ada yang berubah, mengembalikan user yang diperbaiki. Tidak menghitung ulang riwayat. |
 | `set_household_payday(db, household, day, *, actor)` | Ubah tanggal (bagian "Mengubah tanggal"). |
 | `household_lock`, `current_payday`, `recompute_history` | Bagian "Recompute dan kunci". |
@@ -85,7 +85,9 @@ Join web (`POST /household/join`), bot Telegram (`/join`), dan chat web (handler
 anggota tapi masih siklus lama". Tidak ada yang dihitung ulang; amplop dan transaksi lama anggota tinggal di household
 lamanya. Respons web membawa `payday_day`, dan Settings menampilkan "Berhasil bergabung ke {rumah}! Siklus anggaranmu
 sekarang mengikuti rumah ini: tanggal {N}."; bot menambah baris "Siklus anggaranmu sekarang mengikuti rumah ini: tanggal
-{N}." Ruang usaha tidak diadopsi (web: respons membawa tanggal ruang itu; bot: tanpa baris siklus). Route web menerima
+{N}." Undangan ke household selain ruang keluarga ditolak lebih dulu, sebelum keanggotaan apa pun berubah (Plugin R2: web
+400 "Kode invite tidak valid atau expired", bot "❌ Kode invite tidak valid atau sudah expired."), jadi yang diadopsi
+selalu siklus ruang keluarga (penyesuaian 23); undangan ruang usaha menyusul di R5. Route web menerima
 kode dari query `?code=` atau body JSON `{"code": …}` (query didahulukan, `strip().upper()`, kosong → 400 "Kode invite
 wajib diisi"); sebelumnya join dari Settings selalu 422 karena kodenya dikirim di body. `code` di body opsional
 (penyesuaian 19): `{}` atau `{"code": null}` → 400 yang sama, dan `?code=X` dengan body `{}` diterima.
@@ -223,17 +225,21 @@ baru yang menolak adalah 403 di `PUT /user/profile` dan `POST /snapshots/recompu
 
 - **`GET /user/profile`** +: `household_payday_day`, `payday_locked`, `payday_owner_name` (null bila pemanggil owner-nya),
   `household_name`, `household_member_count`. Tanpa ruang keluarga: `household_payday_day = payday_day`, `payday_locked =
-  false`, dua nama null, `household_member_count = 1`. `payday_day` tetap = cermin.
+  false`, dua nama null, `household_member_count = 1`. `payday_day` tetap = cermin. Profil (`GET` dan `PUT`) selalu
+  ruang keluarga dan tidak membaca header `X-Jatahku-Ruang` (penyesuaian 23).
 - **`PUT /user/profile`** dengan `payday_day`: 400 "Belum punya household"; 400 "payday_day harus antara 1 dan 31"; 403
   "Tanggal gajian mengikuti rumah tangga ({rumah}, tanggal {N}). Minta owner yang mengubahnya." Semuanya sebelum field apa
   pun diubah. Member terkunci yang mengirim tanggal yang sama dengan tanggal rumah: `payday_day` diabaikan, field lain
   tersimpan, 200 (penyesuaian 18).
-- **`GET /household/`** + `payday_day`. **`POST /household/join`** + `payday_day`, kode di query atau body; `code` di body
-  opsional, jadi `{}` / `{"code": null}` → 400 "Kode invite wajib diisi" dan `?code=X` dengan body `{}` → 200 (penyesuaian
-  19).
-- **`POST /snapshots/recompute?periods=6`** (default 6, maks 36): tanpa ruang keluarga `{"recomputed": 0, "periods": []}`;
-  bukan yang boleh mengubah → 403 "Hanya owner atau admin rumah tangga yang bisa menghitung ulang riwayat."; selain itu
-  `recompute_history` dengan tanggal RUMAH (bukan `user.payday_day`). `periods` hanya batas bawah: recompute selalu
+- **`GET /household/`** + `payday_day` (household ruang aktif, Plugin R2). **`POST /household/join`** + `payday_day`, kode
+  di query atau body; `code` di body opsional, jadi `{}` / `{"code": null}` → 400 "Kode invite wajib diisi" dan `?code=X`
+  dengan body `{}` → 200 (penyesuaian 19). Undangan ke household selain ruang keluarga → 400 "Kode invite tidak valid atau
+  expired" tanpa perubahan apa pun (Plugin R2).
+- **`POST /snapshots/recompute?periods=6`** (default 6, maks 36): household-nya ruang tulis R2 (`hid: RuangTulis`; sampai
+  R3 selalu ruang keluarga), dan izin dihitung untuk household itu juga (`payday_context(db, user, household_id=hid)`,
+  penyesuaian 23). Tanpa household atau bukan anggotanya `{"recomputed": 0, "periods": []}`; bukan yang boleh mengubah →
+  403 "Hanya owner atau admin rumah tangga yang bisa menghitung ulang riwayat."; selain itu commit lalu
+  `recompute_history(hid, periods)` dengan tanggal RUMAH (bukan `user.payday_day`). `periods` hanya batas bawah: recompute selalu
   mundur sampai aktivitas pertama household (penyesuaian 15), karena endpoint ini alat pemulihan dan rantai hanya utuh
   bila dibangun dari awal. `recomputed` = jumlah periode yang benar-benar dihitung ulang.
 - **`POST /snapshots/run?year&month&force`** (admin/debug, penyesuaian 17): tahap pertama mengisi tanggal rumah yang NULL
@@ -297,26 +303,36 @@ ia harus dikerjakan.
 Plugin R1 sudah di `main` (`households.type`, satu user boleh di beberapa household), dan fase ini sudah mengikutinya:
 `mirrors_users` membatasi cermin ke ruang keluarga, `membership` hanya ruang keluarga, `set_household_payday` dan `heal`
 tidak menyentuh `users.payday_day` untuk ruang usaha, dan job harian serta `/snapshots/run` sudah benar per household.
+Plugin R2 (#166) juga sudah di `main`, dan fase ini digabung di atasnya (penyesuaian 23):
+
+- **R2 — kueri keanggotaan per `user_id` saja: selesai.** Resolver `app/services/ruang.py` menggantikannya di join web,
+  `POST /household/invite`, `GET /household/`, `/household/members`, `/household/leaderboard`, `cmd_join`, dan
+  `cmd_invite`. `membership` di modul siklus kini diteruskan ke `ruang.keanggotaan_keluarga`, tanpa kueri sendiri;
+  `POST /snapshots/recompute` memakai ruang tulis R2 dan menghitung izinnya untuk household itu; profil tetap ruang
+  keluarga.
+- **Terbuka (sesudah R2, sebelum ruang usaha bisa dibuka di R4) — call site masih membaca `user.payday_day`.** R2
+  meneruskan `household_id` ruang aktif ke services, tetapi jendela periode (ringkasan amplop, analitik, export) masih
+  dihitung dari `user.payday_day`, cermin ruang KELUARGA, juga saat header membuka ruang lain. Bacalah
+  `households.payday_day` ruang aktif (`household_payday`); sesudahnya cermin `users.payday_day` bisa dipensiunkan.
+  Hari ini laten: belum ada klien yang mengirim header dan belum ada ruang usaha.
+
 Yang masih harus dikerjakan rencana ruang usaha:
 
-- **R2 — kueri keanggotaan per `user_id` saja** masih ada di `join_household` (web, `_get_membership`),
-  `POST /household/invite`, `GET /household/`, `/household/members`, `/household/leaderboard`, serta `cmd_join` dan
-  `cmd_invite` di bot. `scalar_one_or_none` melempar `MultipleResultsFound` begitu user ada di dua ruang. Ganti dengan
-  resolver ruang (`ruang_aktif`) sebelum ruang usaha bisa diikuti.
 - **R4 — pembuatan ruang usaha harus mengisi `households.payday_day` secara eksplisit.** NULL diturunkan dari anggota
   (`household_payday`, `current_payday`, `pick_payday`) memakai `users.payday_day` mereka, yaitu siklus ruang KELUARGA
   mereka, bukan siklus usaha.
-- **R4 — mengubah tanggal ruang usaha** butuh pintu masuk sendiri: `payday_context` dan `POST /snapshots/recompute` hanya
-  menjangkau ruang keluarga. `set_household_payday` dan `recompute_history` sudah bekerja untuk ruang usaha (tanpa cermin
-  ke user), tetapi izin (`can_change_payday`) diputuskan pemanggil.
-- **R5 — bergabung ke ruang usaha.** `adopt_household_payday` tidak menjaga tipe household; pemanggil yang menjaganya lewat
-  `mirrors_users` (join web dan `cmd_join`), dan jalur baru yang memasukkan user ke ruang usaha tidak boleh memanggilnya
-  (pakai `household_payday`). Join ke ruang usaha tidak boleh menghapus keanggotaan ruang keluarga user: jalur
-  "keanggotaan lama" di join web dan `cmd_join` hari ini menghapusnya. Judul dan pesan notifikasi perubahan siklus
-  ("Siklus anggaran rumah berubah", "Tanggal gajian {rumah} kini tanggal …") juga terkirim untuk ruang usaha, karena
-  `set_household_payday` memberi tahu semua anggota ruang itu; ganti kata "rumah" per tipe.
-- **R2 — sesudahnya** call site membaca `ruang.payday_day` dari ruang aktif dan cermin `users.payday_day` bisa
-  dipensiunkan.
+- **R4 — mengubah tanggal ruang usaha** butuh pintu masuk sendiri: `PUT /user/profile` (dan `payday_context` tanpa
+  `household_id`) hanya menjangkau ruang keluarga. `POST /snapshots/recompute` mengikuti ruang tulis R2 (sampai R3 ruang
+  keluarga, sesudahnya ruang yang ditulis) dengan izin untuk household itu. `set_household_payday` dan
+  `recompute_history` sudah bekerja untuk ruang usaha (tanpa cermin ke user), tetapi izin (`can_change_payday`)
+  diputuskan pemanggil.
+- **R5 — bergabung ke ruang usaha.** Hari ini join web dan `cmd_join` menolak undangan ke household selain ruang keluarga
+  sebelum mengubah apa pun (Plugin R2), dan pindah ruang keluarga hanya menghapus keanggotaan ruang keluarga lama, bukan
+  keanggotaan ruang usaha. Jalur undangan ruang usaha di R5 tidak boleh memanggil `adopt_household_payday` (fungsinya
+  tidak memeriksa tipe; pakai `household_payday`) dan tidak boleh menghapus keanggotaan ruang keluarga user. Judul dan
+  pesan notifikasi perubahan siklus ("Siklus anggaran rumah berubah", "Tanggal gajian {rumah} kini tanggal …") juga
+  terkirim untuk ruang usaha, karena `set_household_payday` memberi tahu semua anggota ruang itu; ganti kata "rumah" per
+  tipe.
 
 ## Batasan yang diketahui
 

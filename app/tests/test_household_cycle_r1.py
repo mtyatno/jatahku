@@ -2,11 +2,13 @@
 
 R1 menambah `households.type` (`rumah_tangga` | `usaha`) dan membolehkan satu user menjadi anggota beberapa household.
 `users.payday_day` adalah cermin siklus RUANG KELUARGA user (spec siklus-household, bagian 10), jadi:
-- `membership` hanya mengembalikan keanggotaan ruang keluarga (keanggotaan ruang usaha tidak membuatnya melempar atau
-  terpilih), dan `payday_context` (profil, recompute) ikut bekerja pada ruang keluarga;
+- `membership` (sejak Plugin R2 = `ruang.keanggotaan_keluarga`) hanya mengembalikan keanggotaan ruang keluarga
+  (keanggotaan ruang usaha tidak membuatnya melempar atau terpilih), dan `payday_context` untuk profil ikut bekerja pada
+  ruang keluarga; dengan `household_id` (recompute, ruang tulis R2) ia bekerja pada household itu;
 - `set_household_payday` mengubah `households.payday_day` untuk kedua jenis ruang, tetapi hanya meng-assign cermin
   `users.payday_day` untuk ruang keluarga; `heal` tidak menyentuh anggota ruang usaha (tanpa kueri);
-- join web dan bot memanggil `adopt_household_payday` hanya untuk ruang keluarga.
+- join web dan bot hanya menerima undangan ruang keluarga (Plugin R2 menolak yang lain sebelum mengubah apa pun), jadi
+  `adopt_household_payday` hanya pernah dipanggil untuk ruang keluarga.
 
 Semua household yang ada sekarang `rumah_tangga` (membuat ruang usaha menyusul), jadi tes di sini juga mengunci bahwa
 perilaku ruang keluarga tidak berubah. Stub tes lama tanpa atribut `type` dihitung ruang keluarga.
@@ -23,6 +25,7 @@ import importlib.util
 import re
 import unittest
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,6 +40,7 @@ from app.core.database import Base, get_db
 from app.core.deps import get_current_user
 from app.models.models import Household, HouseholdMember, HouseholdRole, HouseholdType, NotificationType, User
 from app.services import household_cycle as hc
+from app.services import ruang
 from app.tests.fakes import FakeResult, db_with
 
 # Konfigurasi mapper pertama (~50ms) jangan jatuh di dalam event loop test (HouseholdMember dibuat sungguhan di rute).
@@ -77,6 +81,75 @@ class MembershipQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(bound, statement)
         self.assertEqual(compiled.params[bound.group(1)], "rumah_tangga")
         self.assertEqual(compiled.params["user_id_1"], user.id)
+
+    async def test_membership_is_ruang_keanggotaan_keluarga(self):
+        # Satu definisi "keanggotaan ruang keluarga" (Plugin R2): `membership` meneruskan ke
+        # `ruang.keanggotaan_keluarga` dan tidak punya kueri sendiri.
+        user = SimpleNamespace(id=uuid.uuid4())
+        row = SimpleNamespace(household_id=uuid.uuid4(), role=HouseholdRole.member)
+        db = db_with()
+        family = AsyncMock(return_value=row)
+        with patch.object(ruang, "keanggotaan_keluarga", family):
+            self.assertIs(await hc.membership(db, user), row)
+        family.assert_awaited_once_with(db, user.id)
+        db.execute.assert_not_awaited()
+
+
+class PaydayContextForHouseholdTests(unittest.IsolatedAsyncioTestCase):
+    """`payday_context(db, user, household_id=…)`: konteks dan izin dihitung untuk household yang diminta (ruang tulis R2
+    di `POST /snapshots/recompute`) lewat `ruang.keanggotaan`, bukan lewat keanggotaan ruang keluarga. Tiruan keduanya
+    sengaja berbeda: di ruang keluarga Budi member di rumah berdua (tidak boleh mengubah), di household yang diminta ia
+    owner (boleh)."""
+
+    def setUp(self):
+        self.user = SimpleNamespace(id=uuid.uuid4())
+        self.family_member = SimpleNamespace(household_id=uuid.uuid4(), role=HouseholdRole.member)
+        self.target_id = uuid.uuid4()
+        self.target_member = SimpleNamespace(household_id=self.target_id, role=HouseholdRole.owner)
+        self.family = AsyncMock(return_value=self.family_member)
+        self.one = AsyncMock(return_value=self.target_member)
+        self.enterContext(patch.object(ruang, "keanggotaan_keluarga", self.family))
+        self.enterContext(patch.object(ruang, "keanggotaan", self.one))
+
+    @staticmethod
+    def rows(*members):
+        """Baris `member_rows` (role, created_at, user_id, name, payday_day), urut bergabung."""
+        return [(role, datetime(2026, 1, i + 1, tzinfo=timezone.utc), uid, name, 1)
+                for i, (role, uid, name) in enumerate(members)]
+
+    async def test_household_id_uses_the_membership_in_that_household(self):
+        target = SimpleNamespace(id=self.target_id, name="Dapur Nusa", type="usaha", payday_day=10)
+        db = db_with(FakeResult(target), FakeResult(rows=self.rows(
+            (HouseholdRole.owner, self.user.id, "Budi"), (HouseholdRole.member, uuid.uuid4(), "Cici"),
+        )))
+        ctx = await hc.payday_context(db, self.user, household_id=self.target_id)
+        self.one.assert_awaited_once_with(db, self.user.id, self.target_id)
+        self.family.assert_not_awaited()
+        self.assertIs(ctx.household, target)
+        self.assertEqual(ctx.role, HouseholdRole.owner)
+        self.assertEqual(ctx.payday_day, 10)
+        self.assertEqual(ctx.member_count, 2)
+        self.assertIs(ctx.can_change, True)
+        self.assertIsNone(ctx.owner_name)
+
+    async def test_without_household_id_it_is_the_family_space(self):
+        home = SimpleNamespace(id=self.family_member.household_id, name="Rumah Ani", payday_day=25)
+        db = db_with(FakeResult(home), FakeResult(rows=self.rows(
+            (HouseholdRole.owner, uuid.uuid4(), "Ani"), (HouseholdRole.member, self.user.id, "Budi"),
+        )))
+        ctx = await hc.payday_context(db, self.user)
+        self.family.assert_awaited_once_with(db, self.user.id)
+        self.one.assert_not_awaited()
+        self.assertIs(ctx.household, home)
+        self.assertIs(ctx.can_change, False)
+        self.assertEqual(ctx.owner_name, "Ani")
+
+    async def test_not_a_member_of_that_household_is_none(self):
+        self.one.return_value = None
+        db = db_with()
+        self.assertIsNone(await hc.payday_context(db, self.user, household_id=self.target_id))
+        self.family.assert_not_awaited()  # tidak jatuh ke ruang keluarga
+        db.execute.assert_not_awaited()
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
@@ -127,6 +200,53 @@ class MembershipIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.household.type, HouseholdType.RUMAH_TANGGA)
         self.assertEqual(ctx.role, HouseholdRole.member)
         self.assertEqual(ctx.member_count, 1)
+
+    async def test_payday_context_for_a_given_household_uses_that_membership(self):
+        # `household_id` (ruang tulis R2 di `POST /snapshots/recompute`): konteks household itu dengan peran user di
+        # sana, lewat kueri R2 sungguhan.
+        async with self.Session() as db:
+            ctx = await hc.payday_context(db, self.budi, household_id=self.business.id)
+            self.assertEqual(ctx.household.id, self.business.id)
+            self.assertEqual(ctx.role, HouseholdRole.owner)
+            self.assertEqual(ctx.member_count, 2)
+            self.assertIs(ctx.can_change, True)
+            # Bukan anggota household itu → None (tidak jatuh ke ruang lain).
+            self.assertIsNone(await hc.payday_context(db, self.cici, household_id=self.family.id))
+
+    async def test_profile_stays_on_the_family_space_whichever_space_is_open(self):
+        # `GET`/`PUT /user/profile` tidak membaca header ruang (Plugin R2): cermin `users.payday_day` milik ruang
+        # keluarga, jadi siklus yang ditampilkan dan diubah lewat profil selalu milik ruang keluarga, juga saat ruang
+        # usaha sedang dibuka. Ruang usaha di sini sengaja berbeda (nama, dua anggota).
+        import httpx
+        from fastapi import Depends
+        from app.api.routes import user_settings
+
+        app = FastAPI()
+        ruang.install(app)
+        app.include_router(user_settings.router, prefix="/user")
+
+        async def _db():
+            async with self.Session() as db:
+                yield db
+
+        async def _user(db=Depends(get_db)):  # dimuat di sesi request (created_at dari server)
+            return await db.get(User, self.budi.id)
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_current_user] = _user
+        business_open = {ruang.RUANG_HEADER: str(self.business.id)}
+        set_payday = AsyncMock(return_value={"changed": True, "members": 1, "recomputed": 0})
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            res = await client.get("/user/profile", headers=business_open)
+            self.assertEqual(res.status_code, 200, res.text)
+            self.assertEqual((res.json()["household_name"], res.json()["household_member_count"]), ("Rumah Budi", 1))
+            self.assertIs(res.json()["payday_locked"], False)
+            with patch.object(user_settings, "set_household_payday", set_payday):
+                res = await client.put("/user/profile", json={"payday_day": 7}, headers=business_open)
+        self.assertEqual(res.status_code, 200, res.text)
+        set_payday.assert_awaited_once()
+        _db_arg, changed, day = set_payday.await_args.args
+        self.assertEqual((changed.id, day), (self.family.id, 7))
 
 
 # ── mirrors_users ───────────────────────────────────────────────────────────
@@ -273,11 +393,16 @@ class FakeSession:
 
 
 class WebJoinByTypeTests(unittest.TestCase):
+    """Join web per jenis ruang. Sejak Plugin R2 route menolak undangan ke household selain ruang keluarga (400 "Kode
+    invite tidak valid atau expired") SEBELUM mengubah apa pun, jadi `adopt_household_payday` hanya pernah sampai ke ruang
+    keluarga. Tes ruang usaha di sini dulu (Task 8b) mengharapkan 200 tanpa adopsi; premis itu gugur oleh aturan keamanan
+    R2, dan kini tes itu mengunci penolakannya dari sisi siklus: tanpa adopsi, cermin user utuh, tanpa commit."""
+
     def setUp(self):
         self.user = user_row()
         self.redis = fake_redis()
         self.adopt = real_adopt()
-        self.payday = AsyncMock(return_value=10)  # `household_payday` yang dibaca rute untuk ruang usaha
+        self.payday = AsyncMock(return_value=10)  # `household_payday`: undangan yang ditolak tidak membaca tanggal
         for patcher in (
             patch.object(household, "_redis", new=AsyncMock(return_value=self.redis)),
             patch.object(household, "adopt_household_payday", new=self.adopt),
@@ -287,31 +412,30 @@ class WebJoinByTypeTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def client_for(self, joined):
-        """Rute asli di aplikasi mini; login dan sesi DB diganti tiruan. Urutan kueri route: sudah anggota household
-        itu? (belum) → keanggotaan lama (tidak ada) → muat household yang dimasuki."""
+        """Rute asli di aplikasi mini; login dan sesi DB diganti tiruan. Urutan route: household tujuan (`db.get`, cek
+        ruang keluarga Plugin R2) → sudah anggota household itu? (belum) → keanggotaan ruang keluarga lama (tidak ada) →
+        muat household yang dimasuki."""
         self.db = db_with(FakeResult(None), FakeResult(None), FakeResult(joined))
+        self.db.get = AsyncMock(return_value=joined)
+        self.db.delete = AsyncMock()
         app = FastAPI()
         app.include_router(household.router, prefix="/household")
         app.dependency_overrides[get_current_user] = lambda: self.user
         app.dependency_overrides[get_db] = lambda: self.db
         return TestClient(app)
 
-    def test_web_join_business_space_does_not_adopt(self):
-        business = business_row(payday_day=10)
-        client = self.client_for(business)
-        order = record_order(add=self.db.add, payday=self.payday, commit=self.db.commit)
+    def test_web_join_business_space_is_rejected_before_any_change(self):
+        client = self.client_for(business_row(payday_day=10))
         res = client.post("/household/join", json={"code": CODE})
-        self.assertEqual(res.status_code, 200, res.text)
-        self.assertEqual(res.json(), {"status": "joined", "household_name": "Dapur Nusa", "payday_day": 10})
+        self.assertEqual(res.status_code, 400, res.text)
+        self.assertEqual(res.json()["detail"], "Kode invite tidak valid atau expired")
         self.adopt.assert_not_awaited()
-        self.payday.assert_awaited_once_with(self.db, business)
+        self.payday.assert_not_awaited()
         self.assertEqual(self.user.payday_day, 1)  # cermin ruang keluarga user tidak berubah
-        # Join-nya sendiri tetap berjalan, dalam satu transaksi: keanggotaan ditambah, tanggal dibaca, lalu satu commit.
-        names = order()
-        self.assertLess(names.index("add"), names.index("payday"))
-        self.assertLess(names.index("payday"), names.index("commit"))
-        self.db.commit.assert_awaited_once()
-        self.redis.delete.assert_awaited_once_with(f"invite:{CODE}")  # kode pakai-sekali tetap dihapus
+        # Tidak ada keanggotaan yang ditambah atau dihapus, dan tidak ada yang disimpan.
+        self.db.add.assert_not_called()
+        self.db.delete.assert_not_awaited()
+        self.db.commit.assert_not_awaited()
 
     def test_web_join_family_space_still_adopts(self):
         family = family_row(payday_day=25)
@@ -325,6 +449,8 @@ class WebJoinByTypeTests(unittest.TestCase):
 
 
 class BotJoinByTypeTests(unittest.IsolatedAsyncioTestCase):
+    """`/join` di bot (dan chat web) per jenis ruang; penolakan undangan ruang usaha dari Plugin R2, seperti join web."""
+
     def setUp(self):
         self.user = user_row()
         self.redis = fake_redis()
@@ -340,34 +466,26 @@ class BotJoinByTypeTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(patcher.stop)
 
     async def join(self, joined):
-        """Jalankan `cmd_join`; mengembalikan `reply_text`. Urutan kueri: sudah anggota household itu? (belum) →
-        keanggotaan lama (tidak ada) → muat household → hitung anggota (setelah commit)."""
+        """Jalankan `cmd_join`; mengembalikan `reply_text`. Urutan: household tujuan (`db.get`, cek ruang keluarga
+        Plugin R2) → sudah anggota household itu? (belum) → keanggotaan ruang keluarga lama (tidak ada) → muat household
+        → hitung anggota (setelah commit)."""
         self.db = db_with(FakeResult(None), FakeResult(None), FakeResult(joined), FakeResult(2))
+        self.db.get = AsyncMock(return_value=joined)
+        self.db.delete = AsyncMock()
         update = MagicMock()
         update.effective_user = SimpleNamespace(id=123, first_name="Tes")
         update.message.reply_text = AsyncMock()
         await household_cmd.cmd_join(update, SimpleNamespace(args=[CODE]))
         return update.message.reply_text
 
-    async def test_bot_join_business_space_does_not_adopt(self):
+    async def test_bot_join_business_space_is_rejected_before_any_change(self):
         reply = await self.join(business_row(payday_day=10))
-        reply.assert_awaited_once()
-        text = reply.await_args.args[0]
-        self.assertNotIn("Siklus anggaranmu", text)
-        # Baris lain tetap, dengan satu baris kosong sebelum /status (tanpa baris kosong ganda).
-        self.assertEqual(
-            text,
-            "✅ Bergabung ke *Dapur Nusa*!\n\n"
-            "Sekarang ada 2 anggota.\n"
-            "Semua amplop dan transaksi sekarang shared.\n\n"
-            "Ketik /status untuk lihat budget bersama.",
-        )
-        self.assertEqual(reply.await_args.kwargs["parse_mode"], "Markdown")
+        reply.assert_awaited_once_with("❌ Kode invite tidak valid atau sudah expired.")
         self.adopt.assert_not_awaited()
         self.assertEqual(self.user.payday_day, 1)  # cermin ruang keluarga user tidak berubah
-        self.db.add.assert_called_once()  # join-nya sendiri tetap berjalan
-        self.db.commit.assert_awaited_once()
-        self.redis.delete.assert_awaited_once_with(f"invite:{CODE}")
+        self.db.add.assert_not_called()
+        self.db.delete.assert_not_awaited()
+        self.db.commit.assert_not_awaited()
 
     async def test_bot_join_family_space_reply_is_unchanged(self):
         family = family_row(payday_day=25)

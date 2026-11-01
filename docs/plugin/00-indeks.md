@@ -2,7 +2,7 @@
 
 Sistem **Fitur Tambahan** (plugin) untuk Jatahku, dengan **Buku Usaha** sebagai plugin pertama (ADR-P7). Uang usaha dipisah dari uang keluarga lewat **ruang**: ruang usaha adalah household kedua bertipe `usaha`, dengan banyak anggota, peran, dan batasan dari admin (ADR-P1, P4). Kartu Beranda menjadi registry dengan data batch, supaya plugin bisa menyumbang kartu. Chat (Telegram dan chat web) tetap hanya untuk ruang keluarga (ADR-P2).
 
-**Fase sekarang:** Fase 1 (Beranda registry) dan Fase 2 (ruang usaha) berjalan paralel. F0, R1 (#161), dan B1 (#162) sudah tayang 1 Nov 2026. B2 (#139) menggambar Beranda dari registry di balik flag `beranda_registry_users`; berikutnya B3 (verifikasi dan rilis) dan R2 (`ruang_aktif`, review keamanan). Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 (Beranda registry) dan Fase 2 (ruang usaha) berjalan paralel. F0, R1 (#161), dan B1 (#162) sudah tayang 1 Nov 2026. B2 (#139) menggambar Beranda dari registry di balik flag `beranda_registry_users`. R2 (#142) mengganti setiap pencarian "household milik user" dengan `app/services/ruang.py`: route membaca dari `ruang_aktif` (header `X-Jatahku-Ruang`, tanpa header = ruang keluarga), menulis ke ruang keluarga sampai R3, bot dan job selalu ruang keluarga. Berikutnya B3 (verifikasi dan rilis) dan R3 (ruang dari objek saat menulis, kuota per ruang). Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 
@@ -27,10 +27,11 @@ Diisi sesi yang membuatnya. Rencana dari `01-kajian.md`, "Lampiran teknis":
 | Bagian | Lokasi | Sesi |
 |---|---|---|
 | Registry kartu dan data batch | `app/services/dashboard/` (`registry.py` definisi + template, `providers.py` penyedia kartu inti, `sources.py` endpoint lama sekali per permintaan, `batch.py`, `layout.py`), `app/api/routes/dashboard.py`, model `DashboardLayout` (migrasi `b1d4a7c2e9f0`), tes `app/tests/test_dashboard_registry.py`; frontend: `src/pages/Dashboard.jsx` (pemilih lewat `enabled`), `BerandaRegistry.jsx`, `BerandaLama.jsx`, `src/cards/` (`CardRegistry.js`, `DashboardGrid.jsx`, `CardFrame.jsx`, `core/index.jsx`), bersama: `lib/berandaModel.js`, `lib/dashboardRegistry.js`, `components/BerandaKpi.jsx`, `components/BerandaHeader.jsx`, `hooks/useBerandaShell.js` | B1 (backend), B2 (frontend) |
-| Resolver ruang | `ruang_aktif(user, request)`, `ruang_keluarga(user)` (menggantikan dua `get_household_id`) | R2 |
+| Resolver ruang | `app/services/ruang.py`: `ruang_aktif` / `ruang_tulis` (dependency route, parameter `hid: RuangAktif` / `RuangTulis`), `ruang_keluarga(user, db)` (bot, job), `keanggotaan`; skrip `app/scripts/ruang_paritas.py`; pagar `app/tests/test_ruang_pagar.py` | R2 |
 | Host plugin dan SDK | `app/plugins/host/`, `app/plugins/sdk/` (`PluginContext`) | H1, H2 |
 | Buku Usaha | `app/plugins/buku_usaha/` (manifest, `metrics.py`, kartu, aturan BU-*), `frontend/src/plugins/buku_usaha/` | U1–U6 |
 | Cek migrasi | `.github/workflows/migrasi.yml`, `.github/scripts/cek-migrasi.sh` | F0 |
+| Verifikasi Beranda registry (Gerbang B) | `app/scripts/beranda_paritas.py` (paritas angka semua user, di VPS), `scripts/banding_beranda.py` (banding tampilan di laptop), `?beranda=lama\|registry` di `Dashboard.jsx`; langkah rilis di `AGENTS.md` "Rilis Beranda registry" | B3 |
 
 ## Sumber di luar repo
 

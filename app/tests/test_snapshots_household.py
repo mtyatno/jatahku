@@ -17,7 +17,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import asyncio
 import unittest
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
@@ -25,7 +25,7 @@ from fastapi import HTTPException
 
 from app.api.routes import snapshots
 from app.models.models import HouseholdRole
-from app.services import household_cycle
+from app.services import household_cycle, ruang
 from app.services.household_cycle import PaydayContext
 from app.tests.fakes import FakeResult, db_with, executed_sql, fixed_date
 
@@ -54,7 +54,16 @@ def make_household():
     return SimpleNamespace(id=uuid.uuid4(), name="Rumah", payday_day=None)
 
 
+def datetime_at(day: int) -> datetime:
+    """`created_at` keanggotaan seperti dari DB (timestamptz)."""
+    return datetime(2026, 1, day, tzinfo=timezone.utc)
+
+
 class RecomputeTests(unittest.IsolatedAsyncioTestCase):
+    """`POST /snapshots/recompute` menerima ruang tulis R2 (`hid: RuangTulis`, sampai R3 selalu ruang keluarga) dan
+    menghitung izin untuk household itu: `payday_context(db, user, household_id=hid)`, lalu `recompute_history(hid, …)`.
+    Handler dipanggil langsung, jadi `hid` diteruskan sendiri (parameter keyword-only R2 tanpa nilai bawaan)."""
+
     def stub_service(self, context, history=None):
         """Ganti `payday_context` (mengembalikan `context`) dan `recompute_history` di modul route.
         `create_monthly_snapshots` ikut di-patch: rute tidak boleh lagi menghitung sendiri per periode, semuanya
@@ -68,9 +77,10 @@ class RecomputeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_recompute_member_of_two_403(self):
         user, db = make_user(), db_with()
-        self.stub_service(rumah_ani(can_change=False))
+        context = rumah_ani(can_change=False)
+        self.stub_service(context)
         with self.assertRaises(HTTPException) as caught:
-            await snapshots.recompute_snapshots(periods=6, user=user, db=db)
+            await snapshots.recompute_snapshots(periods=6, user=user, db=db, hid=context.household.id)
         self.assertEqual(caught.exception.status_code, 403)
         self.assertEqual(caught.exception.detail, RECOMPUTE_403)
         # Yang ditolak tidak menghitung apa pun dan tidak menyimpan apa pun (commit baru sesudah cek izin).
@@ -81,16 +91,18 @@ class RecomputeTests(unittest.IsolatedAsyncioTestCase):
     async def test_recompute_owner_uses_household_history(self):
         user, db = make_user(), db_with()
         context = rumah_ani(can_change=True, role=HouseholdRole.owner, owner_name=None)
+        hid = context.household.id
         out = [
             {"period": "2026-07-25 → 2026-08-24", "processed": 3, "snapshots_created": 3, "errors": []},
             {"period": "2026-08-25 → 2026-09-24", "processed": 3, "snapshots_created": 2, "errors": ["Makan: x"]},
         ]
         self.stub_service(context, out)
 
-        result = await snapshots.recompute_snapshots(periods=6, user=user, db=db)
+        result = await snapshots.recompute_snapshots(periods=6, user=user, db=db, hid=hid)
 
-        self.payday_context.assert_awaited_once_with(db, user)
-        self.history.assert_awaited_once_with(context.household.id, 6)
+        # Izin dihitung untuk ruang tulis (`hid`), dan riwayat household itu yang dihitung ulang.
+        self.payday_context.assert_awaited_once_with(db, user, household_id=hid)
+        self.history.assert_awaited_once_with(hid, 6)
         self.create.assert_not_awaited()
         # `recomputed` = jumlah periode yang dikembalikan service (2), bukan `periods` yang diminta (6).
         self.assertEqual(result, {"recomputed": 2, "periods": out})
@@ -100,19 +112,35 @@ class RecomputeTests(unittest.IsolatedAsyncioTestCase):
         context = rumah_ani(can_change=True, role=HouseholdRole.admin, owner_name="Ani")
         self.stub_service(context)
 
-        await snapshots.recompute_snapshots(periods=24, user=user, db=db)
+        await snapshots.recompute_snapshots(periods=24, user=user, db=db, hid=context.household.id)
 
         self.history.assert_awaited_once_with(context.household.id, 24)
 
     async def test_recompute_without_household(self):
+        # `ruang_tulis` None = user tanpa ruang keluarga: tidak ada yang dihitung, konteks pun tidak dibaca.
         user, db = make_user(), db_with()
         self.stub_service(None)
 
-        result = await snapshots.recompute_snapshots(periods=6, user=user, db=db)
+        result = await snapshots.recompute_snapshots(periods=6, user=user, db=db, hid=None)
 
         self.assertEqual(result, {"recomputed": 0, "periods": []})
+        self.payday_context.assert_not_awaited()
         self.history.assert_not_awaited()
         self.create.assert_not_awaited()
+        db.commit.assert_not_awaited()
+
+    async def test_recompute_not_a_member_of_the_write_space(self):
+        # Konteks None untuk `hid` (bukan anggotanya): sama dengan tanpa household, tidak jatuh ke ruang lain.
+        user, db = make_user(), db_with()
+        self.stub_service(None)
+        hid = uuid.uuid4()
+
+        result = await snapshots.recompute_snapshots(periods=6, user=user, db=db, hid=hid)
+
+        self.assertEqual(result, {"recomputed": 0, "periods": []})
+        self.payday_context.assert_awaited_once_with(db, user, household_id=hid)
+        self.history.assert_not_awaited()
+        db.commit.assert_not_awaited()
 
     async def test_recompute_commits_before_history(self):
         # R7: `recompute_history` membaca lewat sesinya sendiri dan tidak boleh berhadapan dengan tulisan sesi request
@@ -123,7 +151,7 @@ class RecomputeTests(unittest.IsolatedAsyncioTestCase):
         self.stub_service(context)
         order = []
 
-        async def get_context(_db, _user):
+        async def get_context(_db, _user, *, household_id=None):
             order.append("payday_context")
             return context
 
@@ -135,9 +163,62 @@ class RecomputeTests(unittest.IsolatedAsyncioTestCase):
         self.history.side_effect = history
         db.commit.side_effect = lambda: order.append("commit")
 
-        await snapshots.recompute_snapshots(periods=6, user=user, db=db)
+        await snapshots.recompute_snapshots(periods=6, user=user, db=db, hid=context.household.id)
 
         self.assertEqual(order, ["payday_context", "commit", "recompute_history"])
+
+
+class RecomputeWriteSpaceTests(unittest.IsolatedAsyncioTestCase):
+    """Izin recompute dihitung untuk ruang tulis R2 (`hid`), dengan `payday_context` ASLI. Keanggotaan ruang keluarga
+    (`ruang.keanggotaan_keluarga`) dan keanggotaan di `hid` (`ruang.keanggotaan`) sengaja berbeda, jadi hanya izin yang
+    dihitung untuk `hid` yang lolos. Sampai R3 `ruang_tulis` selalu ruang keluarga (keduanya sama); sejak R3 recompute
+    dan izinnya mengikuti ruang yang ditulis."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.hid = uuid.uuid4()
+        self.history = AsyncMock(return_value=[])
+        self.enterContext(patch.object(snapshots, "recompute_history", self.history))
+
+    def memberships(self, *, family_role, role_in_hid):
+        """Keanggotaan tiruan: ruang keluarga di household lain, dan `role_in_hid` di `hid`."""
+        self.family = AsyncMock(return_value=SimpleNamespace(household_id=uuid.uuid4(), role=family_role))
+        self.one = AsyncMock(return_value=SimpleNamespace(household_id=self.hid, role=role_in_hid))
+        self.enterContext(patch.object(ruang, "keanggotaan_keluarga", self.family))
+        self.enterContext(patch.object(ruang, "keanggotaan", self.one))
+
+    def db_for_hid(self, role_in_hid):
+        """Household `hid` beranggota dua (pemanggil dengan `role_in_hid`, dan Cici), tanggal rumah 25."""
+        household = SimpleNamespace(id=self.hid, name="Rumah Ani", payday_day=25)
+        other = HouseholdRole.member if role_in_hid == HouseholdRole.owner else HouseholdRole.owner
+        return db_with(FakeResult(household), FakeResult(rows=[
+            (role_in_hid, datetime_at(1), self.user.id, "Budi", 25),
+            (other, datetime_at(2), uuid.uuid4(), "Cici", 25),
+        ]))
+
+    async def test_owner_in_hid_recomputes_although_locked_in_the_family_space(self):
+        self.memberships(family_role=HouseholdRole.member, role_in_hid=HouseholdRole.owner)
+        db = self.db_for_hid(HouseholdRole.owner)
+
+        result = await snapshots.recompute_snapshots(periods=6, user=self.user, db=db, hid=self.hid)
+
+        self.assertEqual(result, {"recomputed": 0, "periods": []})
+        self.one.assert_awaited_once_with(db, self.user.id, self.hid)
+        self.family.assert_not_awaited()
+        db.commit.assert_awaited_once()
+        self.history.assert_awaited_once_with(self.hid, 6)
+
+    async def test_locked_member_in_hid_gets_403_although_owner_in_the_family_space(self):
+        self.memberships(family_role=HouseholdRole.owner, role_in_hid=HouseholdRole.member)
+        db = self.db_for_hid(HouseholdRole.member)
+
+        with self.assertRaises(HTTPException) as caught:
+            await snapshots.recompute_snapshots(periods=6, user=self.user, db=db, hid=self.hid)
+
+        self.assertEqual((caught.exception.status_code, caught.exception.detail), (403, RECOMPUTE_403))
+        self.family.assert_not_awaited()
+        db.commit.assert_not_awaited()
+        self.history.assert_not_awaited()
 
 
 # `POST /snapshots/run` memutuskan periode mana yang sudah tertutup dengan tanggal hari ini; tes mematoknya.

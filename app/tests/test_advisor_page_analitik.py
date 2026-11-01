@@ -235,6 +235,7 @@ class RouteIntegrationTests(unittest.IsolatedAsyncioTestCase):
             hh = Household(name="Rumah")
             db.add_all([me, rina, hh])
             await db.flush()
+            self.hid = hh.id
             db.add_all([HouseholdMember(user_id=me.id, household_id=hh.id, role=HouseholdRole.owner),
                         HouseholdMember(user_id=rina.id, household_id=hh.id, role=HouseholdRole.member)])
             makan = Envelope(household_id=hh.id, name="Makan", classification="needs", budget_amount=D("0"))
@@ -260,8 +261,8 @@ class RouteIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_flag_dan_privasi(self):
         from app.api.routes import advisor as advisor_routes
         async with self.Session() as db:
-            self.assertEqual(await advisor_routes.advisor_page_analitik(user=self.rina, db=db), {"enabled": False})
-            data = await advisor_routes.advisor_page_analitik(user=self.me, db=db)
+            self.assertEqual(await advisor_routes.advisor_page_analitik(user=self.rina, db=db, hid=self.hid), {"enabled": False})
+            data = await advisor_routes.advisor_page_analitik(user=self.me, db=db, hid=self.hid)
         self.assertTrue(data["enabled"])
         self.assertEqual(data["harian"][-1]["variabel"], 50000)            # kado Rina tidak ikut
         self.assertNotIn("Hadiah Kejutan", str(data))
@@ -269,8 +270,8 @@ class RouteIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_daily_spending_tanpa_amplop_pribadi_anggota_lain(self):
         from app.api.routes import analytics
         async with self.Session() as db:
-            saya = await analytics.daily_spending(period_start=self.today, period_end=self.today, user=self.me, db=db)
-            rina = await analytics.daily_spending(period_start=self.today, period_end=self.today, user=self.rina, db=db)
+            saya = await analytics.daily_spending(period_start=self.today, period_end=self.today, user=self.me, db=db, hid=self.hid)
+            rina = await analytics.daily_spending(period_start=self.today, period_end=self.today, user=self.rina, db=db, hid=self.hid)
         self.assertEqual(saya, [{"date": str(self.today), "total": 50000.0, "count": 1}])
         self.assertEqual(rina, [{"date": str(self.today), "total": 750000.0, "count": 2}])
 

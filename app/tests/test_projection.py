@@ -92,7 +92,7 @@ class OverspendExpenseOnlyReserveTests(unittest.TestCase):
 
 class ContextShapeTests(unittest.TestCase):
     def test_no_household_returns_empty_txn_maps(self):
-        # _get_household_id returns None -> early return must still carry the new keys.
+        # Tanpa ruang (household_id None) -> early return must still carry the new keys.
         from types import SimpleNamespace
         user = SimpleNamespace(id="u1", payday_day=1)
 
@@ -102,7 +102,7 @@ class ContextShapeTests(unittest.TestCase):
                     def scalar_one_or_none(self_inner): return None
                 return _R()
 
-        ctx = asyncio.run(load_advisor_context(user, _DB()))
+        ctx = asyncio.run(load_advisor_context(user, _DB(), household_id=None))
         self.assertEqual(ctx.get("current_txns_by_env", "MISSING"), {})
         self.assertEqual(ctx.get("recurring_by_env", "MISSING"), {})
 

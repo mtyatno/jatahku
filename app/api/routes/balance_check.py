@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
 from app.services import balance_check as svc
+from app.services.ruang import RuangAktif, RuangTulis
 
 router = APIRouter()
 
@@ -38,8 +39,10 @@ def _http(e: svc.BalanceCheckError) -> HTTPException:
 async def balance_check_status(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
 ):
-    return await svc.get_status(user, db)
+    return await svc.get_status(user, db, household_id=hid)
 
 
 @router.post("/preview")
@@ -47,9 +50,11 @@ async def balance_check_preview(
     req: PreviewRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,  # hanya membaca
 ):
     try:
-        return await svc.build_preview(user, db, req.actual_amount)
+        return await svc.build_preview(user, db, req.actual_amount, household_id=hid)
     except svc.BalanceCheckError as e:
         raise _http(e)
 
@@ -59,11 +64,13 @@ async def balance_check_apply(
     req: ApplyRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     try:
         return await svc.apply_balance_check(
             user, db, req.actual_amount, req.expected_app_amount,
-            [(line.envelope_id, line.amount) for line in req.lines],
+            [(line.envelope_id, line.amount) for line in req.lines], household_id=hid,
         )
     except svc.BalanceCheckError as e:
         raise _http(e)
@@ -74,8 +81,10 @@ async def balance_check_undo(
     check_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangTulis,
 ):
     try:
-        return await svc.undo_balance_check(user, db, check_id)
+        return await svc.undo_balance_check(user, db, check_id, household_id=hid)
     except svc.BalanceCheckError as e:
         raise _http(e)

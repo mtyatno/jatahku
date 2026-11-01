@@ -191,9 +191,11 @@ class PaydayContextTests(unittest.IsolatedAsyncioTestCase):
         # Tiga kueri persis, urutan: keanggotaan, household, anggota (payday tanpa kueri tambahan).
         first, second, third = executed_sql(db)
         # Keanggotaan hanya di ruang keluarga (Plugin R1): digabung ke households, difilter type = 'rumah_tangga'.
+        # Kuerinya milik resolver ruang (Plugin R2, `ruang.keanggotaan_keluarga`): yang tertua menang, bukan galat.
         self.assertTrue(norm(first).endswith(
             "FROM household_members JOIN households ON households.id = household_members.household_id "
-            "WHERE household_members.user_id = %(user_id_1)s::UUID AND households.type = %(type_1)s"
+            "WHERE household_members.user_id = %(user_id_1)s::UUID AND households.type = %(type_1)s "
+            "ORDER BY household_members.created_at, household_members.id LIMIT %(param_1)s"
         ))
         self.assertIn("household_members.household_id, household_members.role", norm(first))  # select(HouseholdMember)
         self.assertTrue(norm(second).endswith("FROM households WHERE households.id = %(id_1)s::UUID"))

@@ -7,9 +7,10 @@ dari anggota saat pertama dibaca (`household_payday`).
 Ruang keluarga vs ruang usaha (Plugin R1, spec bagian 10): `users.payday_day` adalah cermin siklus RUANG KELUARGA
 user (household `rumah_tangga`; satu user paling banyak punya satu). Ruang usaha (`usaha`) punya siklusnya sendiri di
 `households.payday_day` dan tidak pernah dicerminkan ke user. `mirrors_users` memutuskannya: `set_household_payday`
-dan `heal` mengikutinya, dan join web/bot memanggil `adopt_household_payday` hanya untuk ruang keluarga.
-`membership` mengembalikan keanggotaan ruang keluarga saja, sehingga `payday_context` (profil, recompute) selalu
-bekerja pada ruang keluarga.
+dan `heal` mengikutinya; join web/bot hanya menerima undangan ruang keluarga (Plugin R2), jadi `adopt_household_payday`
+hanya pernah dipanggil untuk ruang keluarga. Keanggotaan dibaca lewat resolver ruang (`app/services/ruang.py`, Plugin
+R2): `membership` = `ruang.keanggotaan_keluarga`, jadi `payday_context` untuk profil selalu bekerja pada ruang
+keluarga, dan `payday_context(..., household_id=…)` (recompute, ruang tulis R2) pada household yang diminta.
 
 Aturan: atribut `payday_day` (user maupun household) hanya di-assign di modul ini, dan SQL pengisinya hanya di
 `household_cycle_schema.py`. Jalur lain membaca lewat `household_payday` / `payday_context` dan mengubah lewat
@@ -48,7 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.models.models import Household, HouseholdMember, HouseholdRole, HouseholdType, NotificationType, User
-from app.services import notification_service, rollover
+from app.services import notification_service, rollover, ruang
 from app.services.advisor import advisor_cache
 
 logger = logging.getLogger("jatahku.household_cycle")
@@ -94,16 +95,10 @@ def _role_value(role) -> str:
 async def membership(db: AsyncSession, user) -> HouseholdMember | None:
     """Keanggotaan `user` di ruang keluarganya (household `rumah_tangga`), atau None.
 
-    Satu user paling banyak punya satu ruang keluarga. Keanggotaan ruang usaha (Plugin R1: satu user boleh anggota
-    beberapa household) tidak ikut terpilih dan tidak membuat `scalar_one_or_none` melempar. Satu-satunya kueri
-    keanggotaan di modul ini: kelak diganti resolver ruang aktif (spec bagian 10) cukup dengan mengubah fungsi ini.
-    """
-    result = await db.execute(
-        select(HouseholdMember)
-        .join(Household, Household.id == HouseholdMember.household_id)
-        .where(HouseholdMember.user_id == user.id, Household.type == HouseholdType.RUMAH_TANGGA)
-    )
-    return result.scalar_one_or_none()
+    Satu definisi untuk seluruh aplikasi: diteruskan ke resolver ruang (`ruang.keanggotaan_keluarga`, Plugin R2), tanpa
+    kueri sendiri. Keanggotaan ruang usaha (Plugin R1: satu user boleh anggota beberapa household) tidak ikut terpilih;
+    bila (tidak semestinya) ada dua ruang keluarga, keanggotaan tertua yang dipakai, tanpa galat."""
+    return await ruang.keanggotaan_keluarga(db, user.id)
 
 
 async def member_rows(db: AsyncSession, household_id) -> list[MemberRow]:
@@ -163,13 +158,20 @@ async def household_payday(db: AsyncSession, household, rows: list[MemberRow] | 
     return day
 
 
-async def payday_context(db: AsyncSession, user) -> PaydayContext | None:
-    """Konteks siklus ruang keluarga `user`, atau None bila belum punya keanggotaan di ruang keluarga (keanggotaan
-    ruang usaha tidak dihitung: lihat `membership`).
+async def payday_context(db: AsyncSession, user, *, household_id=None) -> PaydayContext | None:
+    """Konteks siklus satu household untuk `user` (peran, izin ubah, tanggal), atau None bila `user` bukan anggotanya.
+
+    Tanpa `household_id`: ruang keluarga user (`membership`; keanggotaan ruang usaha tidak dihitung). Profil memakainya,
+    karena cermin `users.payday_day` hanya milik ruang keluarga, apa pun ruang yang sedang dibuka. Dengan
+    `household_id`: keanggotaan user di household itu (`ruang.keanggotaan`), tanpa jatuh ke ruang lain.
+    `POST /snapshots/recompute` memakainya untuk ruang tulis R2, jadi izin dihitung untuk household yang dihitung ulang.
 
     Tiga kueri berurutan (keanggotaan, household, anggota); tanggal diturunkan dari baris anggota yang sama,
     tanpa kueri tambahan."""
-    member = await membership(db, user)
+    if household_id is None:
+        member = await membership(db, user)
+    else:
+        member = await ruang.keanggotaan(db, user.id, household_id)
     if member is None:
         return None
     household = (await db.execute(
@@ -192,8 +194,10 @@ async def adopt_household_payday(db: AsyncSession, user, household) -> int:
     """Samakan `user` dengan siklus household yang akan dimasukinya; mengembalikan tanggalnya.
 
     Dipanggil join web dan bot sebelum commit keanggotaan baru, dalam transaksi yang sama, dan hanya untuk ruang
-    keluarga (`mirrors_users`): cermin `users.payday_day` bukan milik ruang usaha, jadi pemanggil yang memasukkan user
-    ke ruang usaha membaca tanggalnya lewat `household_payday` dan tidak memanggil fungsi ini. Tidak commit."""
+    keluarga: keduanya menolak undangan ke household selain `rumah_tangga` sebelum mengubah apa pun (Plugin R2). Fungsi
+    ini sendiri tidak memeriksa tipe. Cermin `users.payday_day` bukan milik ruang usaha, jadi jalur yang kelak
+    memasukkan user ke ruang usaha (R5) membaca tanggalnya lewat `household_payday` dan tidak memanggil fungsi ini.
+    Tidak commit."""
     day = await household_payday(db, household)
     user.payday_day = day
     return day

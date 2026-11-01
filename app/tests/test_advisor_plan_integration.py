@@ -118,14 +118,14 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def plan(self, **kw):
         async with self.Session() as db:
-            return await build_plan(self.me, db, self.kebutuhan, **kw)
+            return await build_plan(self.me, db, self.kebutuhan, household_id=self.hid, **kw)
 
     async def execute(self, plan, ref="ref-1", **override):
         body = {"rencana": [r for r in plan["rencana"] if r["tercentang"]], "bayar": plan["bayar"],
                 "saldo_versi": plan["saldo_versi"], "client_ref": ref, "kebutuhan": plan["kebutuhan"]}
         body.update(override)
         async with self.Session() as db:
-            return await execute_plan(self.me, db, json.loads(json.dumps(body)))
+            return await execute_plan(self.me, db, json.loads(json.dumps(body)), household_id=self.hid)
 
     # ── plan ─────────────────────────────────────────────────────────────
     async def test_plan_hanya_sumber_sah(self):
@@ -143,7 +143,7 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
         req = advisor_routes.PlanRequest(kebutuhan=[{"tujuan_id": self.ids["Rahasia"], "jumlah": 1000}])
         async with self.Session() as db:
             with self.assertRaises(Exception) as ctx:
-                await advisor_routes.advisor_plan(req, self.me, db)
+                await advisor_routes.advisor_plan(req, self.me, db, hid=self.hid)
         self.assertEqual(getattr(ctx.exception, "status_code", None), 400)
 
     # ── execute ──────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
             rencana=plan["rencana"], bayar=plan["bayar"], saldo_versi=plan["saldo_versi"],
             client_ref="ref-409", kebutuhan=plan["kebutuhan"])
         async with self.Session() as db:
-            resp = await advisor_routes.advisor_execute(req, self.me, db)
+            resp = await advisor_routes.advisor_execute(req, self.me, db, hid=self.hid)
         self.assertEqual(resp.status_code, 409)
         body = json.loads(resp.body)
         self.assertEqual(body["detail"], "Saldo berubah")
@@ -224,7 +224,7 @@ class PlanExecuteIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_transfer_manual_tetap_jalan_dengan_kunci(self):
         async with self.Session() as db:
             res = await env_routes.transfer_between_envelopes(
-                _uuid(self.ids["Hobi"]), _uuid(self.ids["Makan"]), D("1000"), self.me, db)
+                _uuid(self.ids["Hobi"]), _uuid(self.ids["Makan"]), D("1000"), self.me, db, hid=self.hid)
         self.assertEqual(res["status"], "transferred")
 
 

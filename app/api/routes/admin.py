@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, require_admin
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
-    HouseholdMember, Household, RecurringTransaction,
+    HouseholdMember, Household, HouseholdType, RecurringTransaction,
     Notification, NotificationType,
 )
 
@@ -211,15 +211,17 @@ async def list_users(
     )
     month_spent_map = {row.user_id: float(row.month_spent) for row in month_spent_res.all()}
 
-    # 3. Active envelopes count per user (via household membership)
+    # 3. Active envelopes count per user (ruang keluarga, seperti sebelum ada ruang usaha)
     env_count_res = await db.execute(
         select(
             HouseholdMember.user_id,
             func.count(Envelope.id).label("env_count"),
         )
         .join(Envelope, Envelope.household_id == HouseholdMember.household_id)
+        .join(Household, Household.id == HouseholdMember.household_id)
         .where(
             HouseholdMember.user_id.in_(user_ids),
+            Household.type == HouseholdType.RUMAH_TANGGA,
             Envelope.is_active == True,
         )
         .group_by(HouseholdMember.user_id)
@@ -331,11 +333,12 @@ async def get_user_detail(
     )
     month_spent = float(month_spent_res.scalar() or 0)
 
-    # 3. Household & Envelopes
+    # 3. Household & Envelopes (ruang keluarga)
     hm_res = await db.execute(
         select(HouseholdMember, Household)
         .join(Household, Household.id == HouseholdMember.household_id)
-        .where(HouseholdMember.user_id == u.id)
+        .where(HouseholdMember.user_id == u.id, Household.type == HouseholdType.RUMAH_TANGGA)
+        .order_by(HouseholdMember.created_at, HouseholdMember.id)
     )
     hm_row = hm_res.first()
     household_data = None

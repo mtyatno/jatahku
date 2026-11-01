@@ -4,6 +4,82 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## B3 · Verifikasi dan rilis Beranda registry · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status berjalan: alat di PR #167, issue #140 tetap terbuka sampai flag `*`)
+- `app/scripts/beranda_paritas.py` (di VPS, hanya membaca): semua user atau `--user`, periode berjalan dan lalu, template Beranda lewat `batch.jalankan`: tanpa crash/kartu error; setiap sumber di setiap kartu = endpoint lama dihitung ulang di sesi terpisah; `value` KPI = sumbernya; nama amplop pribadi anggota lain tidak muncul; p95 batch ≤ 500 ms (satu user pemanasan tidak dihitung). Cache AI Advisor tidak dibaca dan tidak ditulis (dihitung segar). Keluaran tanpa nama/nominal. Kode keluar 1 bila gagal. Tes `test_beranda_paritas_script.py` (7).
+- `scripts/banding_beranda.py` (di laptop): screenshot `/?beranda=lama` vs `/?beranda=registry` di 390/820/1100/1440 px, gelap dan terang, banding per piksel, gambar selisih bila beda. Token dari env, tidak ditulis ke disk.
+- `Dashboard.jsx`: `?beranda=lama|registry` memaksa salah satu Beranda (banding dan uji di HP sungguhan); `pilihBeranda`/`paksaDariUrl` murni + tes.
+- `AGENTS.md` "Rilis Beranda registry": paritas di VPS, banding tampilan, flag bertahap (SQL dicoba di PostgreSQL lokal), pantau log, kembali ke Beranda lama dengan value kosong.
+- Uji lokal (PostgreSQL + Redis): paritas 2 user `ok`, p95 49 ms, tidak ada kunci cache dashboard tertulis; banding tampilan 8/8 identik. Tes: unittest 2117 (1 gagal = #164, juga di `main`) · node --test 609 · build ok · `openapi_cek` ok.
+
+**Digantung (pemilik produk, butuh akses produksi)**
+- Jalankan `beranda_paritas` di VPS dan `banding_beranda.py` di laptop; tempel dua baris terakhir keduanya di #140. Lalu flag `beranda_registry_users` = id sendiri sehari, lalu `*`. Setelah itu Gerbang B dan B3 ditandai lulus/selesai (bisa di PR sesi berikutnya).
+- Hapus `BerandaLama.jsx` dan jalur `?beranda=lama` setelah `*` stabil (sesi kecil terpisah, sesudah beta tidak wajib).
+
+**Jebakan**
+- Proses skrip baru membayar impor tertunda dan koneksi pertama (~500 ms) di user pertama; tanpa pemanasan p95 tampak gagal di data kecil.
+- Token akses lokal kedaluwarsa cepat; alat banding berhenti dengan pesan jelas bila dialihkan ke `/login`.
+
+**Keputusan kecil**
+- Paritas membandingkan sumber per kartu (bukan per nama sumber saja), supaya penyedia satu kartu yang menyimpang ketahuan.
+- Banding tampilan memakai `?beranda=` di akun sendiri, bukan flag, supaya bisa dijalankan sebelum flag menyala dan tanpa mengubah produksi.
+- PR B3 tidak menutup #140: issue itu ditutup saat flag `*` dan Gerbang B lulus.
+
+**Cara melanjutkan**
+- Pemilik produk: langkah 1–5 "Rilis Beranda registry" di `AGENTS.md`.
+- Sesi berikutnya: `/sesi-plugin R3` di jalur ruang (R2 #166 di-merge saat sesi ini berjalan; branch B3 menggabungkan `main` dan skrip paritas memakai `ruang_keluarga` + `household_id` dari R2). H1 butuh B1 dan R3.
+
+---
+
+## R2 · Resolver `ruang_aktif` · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status review, PR #166, menunggu review keamanan terpisah, issue #142). Direncanakan 2 sesi; selesai dalam satu sesi, termasuk route, skrip paritas, dan dokumen yang semula untuk sesi 2.
+- `app/services/ruang.py`: `ruang_aktif` (membaca; header `X-Jatahku-Ruang`, kosong/tanpa header = ruang keluarga), `ruang_tulis` (menulis; ruang keluarga sampai R3, header ruang lain → 403), `ruang_keluarga` / `ruang_keluarga_id` (household `rumah_tangga`, keanggotaan tertua bila ganda), `keanggotaan`, `keanggotaan_keluarga`, `RuangDitolak` + `install()` (403 `{detail, kode: ruang_tidak_diizinkan}`, dipasang di `main.py`). Header tercantum di OpenAPI.
+- Route: parameter keyword-only `*, hid: RuangAktif` / `hid: RuangTulis` di semua route ber-ruang (envelopes, transactions, incomes, goals, recurring, analytics, snapshots, export, balance-check, advisor, dashboard, household, user, kotak-struk). GET dan POST yang hanya membaca (`/dashboard/data`, `/balance-check/preview`, `/advisor/allocation-recommendation`) = aktif; `PUT /dashboard/layout` dan dismiss advisor = aktif (status per user/viewer); `/advisor/plan` = tulis (sepasang dengan execute); lainnya = tulis.
+- Services menerima `household_id` eksplisit: `compute_envelope_summaries`, `balance_check.*`, `advisor` (`load_snapshot`, `load_advisor_context`, `chat.muat`, `get_dashboard`, `dismiss`, `batal_dismiss`, halaman, alokasi, sinking, `build_plan`/`execute_plan`), `dashboard.batch.jalankan` (`Sumber.hid` diteruskan ke handler), `export._get_export_data`. Helper `get_household_id` (×2), `_get_hid` (×5), `_household_id`, `_get_household_id`, `_get_membership` dihapus.
+- Bot (`handlers` dan semua `*_cmd.py`), ringkasan harian/mingguan, pengingat gajian, proaktif, kuota (`plan_limits`, `/user/profile`), Kotak Struk (intake, saran): `ruang_keluarga`. Gabung akun (`merge.py`, `link.py`) dan pindah household (web + bot) hanya menyentuh keanggotaan ruang keluarga; admin menampilkan ruang keluarga.
+- Perbaikan data (ditemukan saat refactor, dikerjakan lebih dulu): `POST /user/reset` hanya menghapus pemasukan user di household yang di-reset (dulu semua household, termasuk household lama yang masih dipakai anggota lain → saldo mereka rusak); cadangan email reset juga hanya isi ruang itu. `/user/export-data`: ruang keluarga = semua catatan user di luar ruang usaha (perilaku lama untuk user sekarang), ruang usaha = catatan ruang itu saja.
+- Tes baru: `test_ruang_resolver.py` (12), `test_ruang_gerbang.py` (7: 40 endpoint GET identik sebelum/sesudah user diberi ruang usaha, untuk dia dan anggota lain; header ruang usaha membaca usaha; header asing 403; IDOR 14 aksi ber-ID terhadap household orang lain dan ruang usaha sendiri; reset tidak menyentuh ruang lain), `test_ruang_pagar.py` (pagar sumber + skrip paritas). ±250 tes lama disesuaikan (patch `get_household_id` → `ruang_keluarga`, hasil `FakeResult(HID)` pertama dihapus, `hid=`/`household_id=` eksplisit).
+- `app/scripts/ruang_paritas.py` (baca saja): household lama vs `ruang_keluarga_id` per user + uji asap ringkasan amplop dan snapshot.
+- Dokumen: `04-kontrak-api.md` §1 v1; `00-indeks.md` (fase, peta kode); `AGENTS.md` aturan 1, checklist "Plugin R2", checklist R1 dan B1 ditandai sudah jalan.
+- Tes: unittest 2134 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, gagal juga di `main`) · node --test 583 lulus · build ok · Migrasi: tidak berlaku (tanpa model/migrasi) · `openapi_cek` tanpa perubahan memutus.
+
+**Review keamanan PR #166 (1 Nov, sesi terpisah) — temuan dikerjakan di branch ini**
+- Wajib: `POST /auth/link/merge` (tanpa login, cukup kode gabung) meneruskan `keep_household_id` dari body ke `merge_users` tanpa cek. Dengan UUID household orang lain, amplop/pemasukan household yang dibuang pindah ke sana dan akun target menjadi anggotanya (bug lama, sebelum R2). Diperbaiki di `merge_users`: hanya ruang keluarga salah satu akun, selain itu `{"error": …}` sebelum ada perubahan; route menolak UUID tidak sah dengan 400. Tes: household orang lain, ruang usaha target, dan `bukan-uuid` → 400 tanpa perubahan data; ruang keluarga sah tetap jalan, ruang usaha target tidak tersentuh.
+- Disarankan, ikut dikerjakan: join web dan `/join` bot menolak undangan ke household selain `rumah_tangga` (sebelum R5 memakai kunci Redis yang sama untuk undangan ruang usaha). Tes web dan bot (tes bot terbukti gagal tanpa perbaikan).
+- Disarankan, ikut dikerjakan: `test_ruang_pagar.py` mencatat pengecualian eksplisit route non-GET yang memakai `ruang_aktif` (3 POST yang hanya membaca, `PUT /dashboard/layout`, dismiss advisor); route tulis baru dengan `ruang_aktif` gagal tes.
+- Catatan untuk R5 dari review: semua endpoint baca `ruang_aktif` (termasuk `/export`, `/user/export-data`, `/analytics/*`, `/dashboard/data`, halaman advisor) terbuka untuk setiap anggota ruang; itu daftar yang harus disaring di gerbang "Karyawan tidak melihat laporan".
+
+**Digantung**
+- Kuota transaksi Basic masih per user lintas ruang (`plan_limits.monthly_txn_usage`, `usage.txn_this_month` di `/user/profile`). Ditandai `DIIZINKAN_BEDA_SAMPAI_R3` di `test_ruang_gerbang.py`; R3 wajib menghapusnya. Kuota amplop/langganan sudah ruang keluarga.
+- Penulisan sampai R3 = ruang keluarga (`ruang_tulis`). R3 menggantinya dengan ruang dari objek (amplop, transaksi, goal, …) dan mengubah header ruang lain di endpoint tulis dari 403 menjadi "ditentukan objek".
+- Saran amplop Kotak Struk dan kamus NLP masih ruang keluarga (R7). Bukti baru Kotak Struk dicatat ke ruang keluarga (R3).
+- Job snapshot bulanan (`scheduler.py`) memproses semua household anggota user dengan payday user, termasuk ruang usaha bila ada. Tidak galat; perlu dicek ulang bersama rencana siklus household (`households.payday_day`).
+- Gabung akun: keanggotaan ruang usaha akun **sumber** (akun bot yang dihapus) ikut terhapus. Akun bot-only praktis tidak punya ruang usaha; dinilai ulang di R5 (undangan ruang usaha).
+- `/user/export-data` dan cadangan reset belum mencakup semua ruang sekaligus (ekspor per ruang). Hak akses data pribadi lintas ruang (UU PDP) dibahas sebelum beta.
+- `test_basic_quota_bot_fund_shift_finishes_started_input` gagal di `main` juga (dua tes kuota lain pulih setelah 07:00 WIB); perlu dibuat tidak bergantung tanggal.
+
+**Jebakan**
+- Parameter route `hid=Depends(...)` dengan nilai bawaan membuat pemanggil langsung (Sumber Beranda, tes) meneruskan objek `Depends` sebagai id ruang tanpa galat. Karena itu `*, hid: RuangAktif` (Annotated, tanpa default); pagar menolak pola lama.
+- Pemecah route per `@router` ikut menyapu fungsi pembantu di antara dua route (`_resolve_rec` di `recurring.py` sempat kehilangan `hid`); pyflakes "undefined name" menangkapnya.
+- Tes HTTP yang mengganti `get_db` dengan `None` (mis. `DismissHttpTests`) harus juga mengganti `ruang_aktif` lewat `dependency_overrides`, karena resolver membaca database.
+- `create_all` + `HouseholdMember(created_at=…)` bisa diatur di tes untuk membuktikan ruang keluarga tidak ditentukan urutan keanggotaan.
+- `main` bergerak (B2 #165) selama sesi; rebase hanya bentrok di `00-indeks.md`.
+
+**Keputusan kecil**
+- Header kosong = tanpa header (ruang keluarga), bukan 403.
+- Endpoint tulis dengan header ruang keluarga sendiri diterima; header ruang lain ditolak, bukan diabaikan.
+- Selisih yang diizinkan di gerbang hanya satu kunci (`usage.txn_this_month`), dengan nama konstanta yang memaksa R3 menghapusnya.
+- Skrip paritas tidak bisa dijalankan sebelum merge (file baru); checklist memakai kueri psql untuk keanggotaan ganda sebelum merge dan skrip sesudah deploy.
+
+**Cara melanjutkan**
+- Review keamanan terpisah: sesi Claude Code baru dengan "review PR #166 terhadap 03-workflow.md bagian keamanan". Temuan dikerjakan di branch ini sebelum merge.
+- Merge: tanpa migrasi; ikuti checklist "Plugin R2" di `AGENTS.md` (psql keanggotaan ganda = 0 sebelum merge, `python -m app.scripts.ruang_paritas` sesudah deploy).
+- Berikutnya `/sesi-plugin R3` (ruang dari objek saat menulis, kuota per ruang; hapus `DIIZINKAN_BEDA_SAMPAI_R3`), atau `/sesi-plugin B3`. R5 dan R8 juga hanya butuh R3.
+
+---
+
 ## B2 · Beranda dari registry · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #165, issue #139)

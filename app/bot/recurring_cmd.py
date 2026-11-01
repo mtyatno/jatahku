@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 from sqlalchemy import select, or_
 from app.core.database import AsyncSessionLocal
 from app.models.models import Envelope, RecurringTransaction, RecurringFrequency
-from app.bot.handlers import get_or_create_user, get_household_id, format_currency, parse_amount
+from app.bot.handlers import get_or_create_user, ruang_keluarga, format_currency, parse_amount
 from app.bot.channel import txn_source
 from app.services.recurring_status import payment_window_error
 
@@ -26,7 +26,7 @@ async def _visible_rec(query, db):
         return None, None
     tg_user = query.from_user
     user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-    hid = await get_household_id(user, db)
+    hid = await ruang_keluarga(user, db)
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
@@ -40,7 +40,7 @@ async def cmd_langganan(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
         if not hid:
             await update.message.reply_text("Ketik /start dulu.")
             return
@@ -94,7 +94,7 @@ async def cmd_tambah_langganan(update, context):
         tg_user = update.effective_user
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            hid = await get_household_id(user, db)
+            hid = await ruang_keluarga(user, db)
             env_result = await db.execute(
                 select(Envelope).where(
                     Envelope.household_id == hid, Envelope.is_active == True,
@@ -126,7 +126,7 @@ async def cmd_tambah_langganan(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
 
         from sqlalchemy import func as sqlfunc
         env_result = await db.execute(
@@ -174,7 +174,7 @@ async def cmd_hapus_langganan(update, context):
     tg_user = update.effective_user
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-        hid = await get_household_id(user, db)
+        hid = await ruang_keluarga(user, db)
 
         result = await db.execute(
             select(RecurringTransaction, Envelope.emoji)

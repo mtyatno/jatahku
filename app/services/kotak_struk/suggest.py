@@ -11,7 +11,8 @@ from fractions import Fraction
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Envelope, HouseholdMember, MerchantEnvelopeMap, ReceiptScan, User
+from app.services.ruang import ruang_keluarga_id
+from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, User
 from app.services.kotak_struk.config import CONFIDENT_SHARE
 from app.services.kotak_struk.merchants import merchant_for_item
 from app.services.txn_nlp import find_best_envelope
@@ -35,9 +36,7 @@ def _suggestion(env: Envelope | None, confident: bool, source: str) -> dict:
 
 async def suggest_for_item(db: AsyncSession, item: ReceiptScan, user: User, *, note: str | None = None) -> dict:
     """`{envelope_id, envelope_name, confident, source: note|merchant|keyword|none}` untuk item `item` milik `user`."""
-    household_id = (await db.execute(
-        select(HouseholdMember.household_id).where(HouseholdMember.user_id == user.id).limit(1)
-    )).scalars().first()
+    household_id = await ruang_keluarga_id(db, user.id)  # saran amplop per ruang menyusul di R7
     if household_id is None:
         return _suggestion(None, False, "none")
 

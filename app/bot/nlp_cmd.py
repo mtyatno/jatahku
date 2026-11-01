@@ -9,7 +9,7 @@ from app.bot import advisor_cmd
 from app.bot.tglogin_cmd import reply_setup_needed
 from app.bot.handlers import (
     parse_amount, find_best_envelope, get_envelopes_with_spent,
-    get_or_create_user, get_household_id, _is_setup_complete, format_currency,
+    get_or_create_user, ruang_keluarga, _is_setup_complete, format_currency,
 )
 
 # ── Detection patterns ────────────────────────────────────────────────────────
@@ -486,7 +486,7 @@ async def _get_user_envelopes(tg_user, db):
     setup_ok, _ = await _is_setup_complete(user, db)
     if not setup_ok:
         return user, None, None
-    hid = await get_household_id(user, db)
+    hid = await ruang_keluarga(user, db)
     payday_day = getattr(user, 'payday_day', 1) or 1
     envelopes = await get_envelopes_with_spent(hid, db, user.id, payday_day=payday_day)
     return user, hid, envelopes
