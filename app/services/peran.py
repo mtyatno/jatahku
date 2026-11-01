@@ -254,6 +254,37 @@ def cek_jendela_ubah(batasan: Batasan | None, *, milik_sendiri: bool, dibuat: da
         raise PeranDitolak("jendela_ubah_lewat")
 
 
+# ── Pesan galat pencatatan untuk karyawan (review keamanan PR #175, temuan 1) ─────
+_PESAN_TANPA_ANGKA = {
+    "insufficient": "Dana amplop ini tidak cukup untuk catatan ini. Minta admin mengisi amplopnya.",
+    "not_funded": "Amplop ini belum diisi. Minta admin mengisi amplopnya.",
+    "daily_limit": "Catatan ini melebihi batas harian amplop. Minta admin bila perlu.",
+}
+
+
+def pesan_cek_karyawan(batasan: "Batasan | None", check_type: str | None) -> str | None:
+    """Pesan pengganti tanpa angka (sisa dana, limit, terpakai) untuk karyawan yang tidak boleh melihat saldo, supaya
+    saldo tidak bisa dibaca lewat percobaan nominal. None = pakai pesan biasa."""
+    if batasan is None or batasan.lihat_saldo:
+        return None
+    return _PESAN_TANPA_ANGKA.get(check_type or "")
+
+
+def boleh_naikkan_limit(batasan: "Batasan | None") -> bool:
+    """Karyawan tidak bisa menaikkan limit harian yang dipasang admin (temuan 2); `raise_daily_limit` diabaikan."""
+    return batasan is None
+
+
+async def owner_ruang(db: AsyncSession, household_id):
+    """User pemilik ruang (penerima notifikasi pengganti karyawan, temuan 4)."""
+    from app.models.models import User
+    return (await db.execute(
+        select(User).join(HouseholdMember, HouseholdMember.user_id == User.id)
+        .where(HouseholdMember.household_id == household_id, HouseholdMember.role == HouseholdRole.owner)
+        .order_by(HouseholdMember.created_at).limit(1)
+    )).scalar_one_or_none()
+
+
 # ── Draf ───────────────────────────────────────────────────────────────────
 async def draf_dari_ref(db: AsyncSession, user_id, client_ref: str | None) -> RuangDraf | None:
     if not client_ref:

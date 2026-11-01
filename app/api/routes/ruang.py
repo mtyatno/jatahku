@@ -15,7 +15,9 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +32,7 @@ from app.services import peran
 from app.services.ruang import RuangAktif, RuangDitolak
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)   # pola sama dengan auth.py (in-memory per instance)
 
 UNDANGAN_HARI = 7
 TIDAK_ADA = "Ruang tidak ditemukan"
@@ -221,7 +224,9 @@ PESAN_KODE = "Kode undangan tidak valid atau sudah tidak berlaku."
 
 
 @router.post("/ruang/gabung")
-async def gabung_ruang(req: GabungBody, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def gabung_ruang(request: Request, req: GabungBody, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
     """Bergabung ke ruang usaha lewat kode undangan. Tidak menyentuh ruang keluarga user (ADR-P4)."""
     kode = req.kode.strip().upper()
     now = datetime.now(timezone.utc)

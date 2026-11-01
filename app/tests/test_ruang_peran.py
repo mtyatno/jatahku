@@ -53,6 +53,13 @@ if HAS_AIOSQLITE:
     from app.tests.test_ruang_gerbang import ROUTERS, _Redis
 
 
+if HAS_AIOSQLITE:
+    class _RedisSetex(_Redis):
+        """+ setex untuk `raise_daily_limit_today` (kunci bypass limit harian)."""
+        async def setex(self, k, ttl, v):
+            return await self.set(k, v, ex=ttl)
+
+
 # ── Unit: aturan murni ─────────────────────────────────────────────────────
 class AturanMurniTests(unittest.TestCase):
     def test_jam_kerja_biasa_dan_lewat_tengah_malam(self):
@@ -117,7 +124,7 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-        self.redis = _Redis()
+        self.redis = _RedisSetex()
         p = patch("redis.asyncio.from_url", return_value=self.redis)
         p.start()
         self.addCleanup(p.stop)
@@ -434,6 +441,9 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._kode(r), (403, "jendela_ubah_lewat"))
         r = await self._req("DELETE", f"/transactions/{sendiri.id}", user=self.dewi)
         self.assertEqual(r.status_code, 204, r.text)
+        # Review PR #175 temuan 7: hapus oleh karyawan meninggalkan jejak untuk admin.
+        self.assertEqual(await self._hitung(RuangAudit, RuangAudit.aksi == "catatan_dihapus",
+                                            RuangAudit.actor_id == self.dewi.id), 1)
         r = await self._req("DELETE", f"/transactions/{kemarin.id}", user=self.ani)       # admin boleh
         self.assertEqual(r.status_code, 204, r.text)
 
@@ -525,6 +535,99 @@ class RuangPeranTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._hitung(RuangDraf, RuangDraf.status == "menunggu"), 0)
         r = await self._req("GET", f"/ruang/{self.nusa_id}/audit", user=self.ani)
         self.assertIn("reset_ruang", [a["aksi"] for a in r.json()])
+
+    # 6. Tindak lanjut review keamanan PR #175 -----------------------------
+    async def test_pesan_galat_tidak_membocorkan_saldo(self):
+        """Temuan 1: tanpa `lihat_saldo`, pesan dana/limit tidak berisi angka (saldo tidak bisa ditebak)."""
+        await self._batasan()
+        body = {"envelope_id": str(self.u["env"]), "amount": "9000000", "description": "kebanyakan"}
+        r = await self._req("POST", "/transactions/", body, user=self.dewi)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertNotRegex(r.json()["detail"], r"\d")
+        r = await self._req("POST", "/transactions/batch", {"items": [{**body, "client_ref": "bocor-1"}]},
+                            user=self.dewi)
+        self.assertNotRegex(r.json()[0]["error"], r"\d")
+        await self._batasan(lihat_saldo=True)
+        r = await self._req("POST", "/transactions/", body, user=self.dewi)
+        self.assertIn("Sisa", r.json()["detail"])
+        r = await self._req("POST", "/transactions/", body, user=self.ani)        # admin: pesan biasa
+        self.assertIn("Sisa", r.json()["detail"])
+
+    async def test_karyawan_tidak_bisa_menaikkan_limit_harian(self):
+        """Temuan 2: `raise_daily_limit` diabaikan untuk karyawan, di jalur tunggal dan antrean offline."""
+        async with self.Session() as db:
+            env = await db.get(Envelope, self.u["env"])
+            env.daily_limit = D("50000")
+            await db.commit()
+        await self._batasan()
+        body = {"envelope_id": str(self.u["env"]), "amount": "60000", "description": "lewat limit",
+                "raise_daily_limit": True}
+        r = await self._req("POST", "/transactions/", body, user=self.dewi)
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertNotRegex(r.json()["detail"], r"\d")
+        r = await self._req("POST", "/transactions/batch", {"items": [{**body, "client_ref": "lim-1"}]},
+                            user=self.dewi)
+        self.assertFalse(r.json()[0]["ok"])
+        self.assertEqual(await self._hitung(Transaction, Transaction.description == "lewat limit"), 0)
+        r = await self._req("POST", "/transactions/", body, user=self.ani)         # admin tetap boleh menaikkan
+        self.assertEqual(r.status_code, 201, r.text)
+
+    async def test_penjualan_karyawan_harus_dialokasikan_penuh(self):
+        """Temuan 3: sisa penjualan tidak boleh jatuh ke (atau membuat) Tabungan di luar amplop yang diizinkan."""
+        await self._batasan(amplop_ids=[str(self.u["env"])])
+        n_amplop = await self._hitung(Envelope, Envelope.household_id == self.nusa_id)
+        for body in ({"amount": "100000", "source": "jual sisa", "allocations": [
+                          {"envelope_id": str(self.u["env"]), "amount": "10000"}]},
+                     {"amount": "100000", "source": "jual sisa"}):
+            r = await self._req("POST", "/incomes/", body, header=self.nusa_id, user=self.dewi)
+            self.assertEqual(self._kode(r), (422, "alokasi_tidak_penuh"), r.text)
+        self.assertEqual(await self._hitung(Income, Income.description == "jual sisa"), 0)
+        self.assertEqual(await self._hitung(Envelope, Envelope.household_id == self.nusa_id), n_amplop)
+        r = await self._req("POST", "/incomes/", {"amount": "100000", "source": "jual penuh", "allocations": [
+            {"envelope_id": str(self.u["env"]), "amount": "100000"}]}, user=self.dewi)
+        self.assertEqual(r.status_code, 201, r.text)
+        r = await self._req("POST", "/incomes/", {"amount": "100000", "source": "owner sisa", "allocations": [
+            {"envelope_id": str(self.u["env"]), "amount": "10000"}]}, user=self.me)   # owner: sisa ke Tabungan
+        self.assertEqual(r.status_code, 201, r.text)
+
+    async def test_draf_penjualan_divalidasi_dan_idempoten(self):
+        """Temuan 5 dan 6: alokasi tidak sah ditolak sebelum menjadi draf; kiriman ulang `client_ref` → draf sama."""
+        await self._batasan(batas_nominal=500000)
+        r = await self._req("POST", "/incomes/", {"amount": "900000", "source": "salah amplop", "allocations": [
+            {"envelope_id": str(self.op_id), "amount": "900000"},
+            {"envelope_id": str(self.k["env"]), "amount": "0"}]}, user=self.dewi)
+        self.assertIn(r.status_code, (400, 404), r.text)
+        self.assertEqual(await self._hitung(RuangDraf), 0)
+        body = {"amount": "900000", "source": "nasi box", "client_ref": "jual-1", "allocations": [
+            {"envelope_id": str(self.u["env"]), "amount": "900000"}]}
+        a = await self._req("POST", "/incomes/", body, user=self.dewi)
+        b = await self._req("POST", "/incomes/", body, user=self.dewi)
+        self.assertEqual((a.status_code, b.status_code), (202, 202), a.text)
+        self.assertEqual(a.json()["draf_id"], b.json()["draf_id"])
+        r = await self._req("POST", f"/ruang/{self.nusa_id}/persetujuan/{a.json()['draf_id']}/setujui", user=self.ani)
+        self.assertEqual(r.status_code, 200, r.text)
+        c = await self._req("POST", "/incomes/", body, user=self.dewi)      # sesudah disetujui
+        self.assertEqual((c.status_code, c.json()["status"]), (202, "disetujui"))
+        self.assertEqual(await self._hitung(Income, Income.description == "nasi box"), 1)
+
+    async def test_notifikasi_target_untuk_owner_bukan_karyawan(self):
+        """Temuan 4: notifikasi target (berisi angka) dari penjualan karyawan dikirim ke owner, juga saat draf
+        disetujui; pencatat biasa tetap menerimanya sendiri."""
+        penerima = []
+
+        async def tangkap(db, user, before):
+            penerima.append(user.id)
+            return []
+        await self._batasan(batas_nominal=500000)
+        with patch("app.services.goal_notify.notify_goals_reached", tangkap):
+            await self._req("POST", "/incomes/", {"amount": "100000", "source": "jual 1", "allocations": [
+                {"envelope_id": str(self.u["env"]), "amount": "100000"}]}, user=self.dewi)
+            r = await self._req("POST", "/incomes/", {"amount": "900000", "source": "jual 2", "allocations": [
+                {"envelope_id": str(self.u["env"]), "amount": "900000"}]}, user=self.dewi)
+            await self._req("POST", f"/ruang/{self.nusa_id}/persetujuan/{r.json()['draf_id']}/setujui", user=self.ani)
+            await self._req("POST", "/incomes/", {"amount": "1000", "source": "admin"}, header=self.nusa_id,
+                            user=self.ani)
+        self.assertEqual(penerima, [self.me.id, self.me.id, self.ani.id])
 
 
 if __name__ == "__main__":

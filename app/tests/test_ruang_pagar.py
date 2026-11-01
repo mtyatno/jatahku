@@ -27,7 +27,7 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 # berkas → jumlah kemunculan `HouseholdMember.user_id ==` yang diizinkan, dan alasannya.
 DIIZINKAN = {
     "services/ruang.py": 3,              # penentu ruang itu sendiri
-    "services/peran.py": 1,              # peran user di ruang tertentu (R5, batasan karyawan)
+    "services/peran.py": 2,              # peran user di ruang tertentu (R5, batasan karyawan) + owner ruang tertentu (join)
     "services/merge.py": 3,              # gabung akun: keanggotaan per user (ruang keluarga + hapus akun sumber)
     "services/account_deletion.py": 1,   # hapus akun: semua keanggotaan user
     "services/kotak_struk/view.py": 1,   # cek user masih anggota household item tertentu

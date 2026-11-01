@@ -19,14 +19,18 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Dokumen: kontrak §1, §2 (v1 R5), §7; `AGENTS.md` aturan 3 + checklist R5; `00-indeks.md`; `PROGRESS.md` (R3 selesai, R5 review).
 - Tes: unittest 2403 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, sama dengan `main`) · node --test 644 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok, plus urutan produksi (`create_all` model baru → stamp → upgrade) ok · `openapi_cek` tanpa perubahan memutus.
 
+- **Review keamanan PR #175** (sesi terpisah, 1 Nov): Request Changes, tiga temuan menahan merge. Semua dikerjakan di branch ini dengan tes di `test_ruang_peran.py` (+5 tes, total 24): (1) pesan dana/limit tanpa angka untuk karyawan tanpa `lihat_saldo` (`peran.pesan_cek_karyawan`, jalur tunggal dan batch); (2) `raise_daily_limit` diabaikan untuk karyawan (`peran.boleh_naikkan_limit`); (3) penjualan karyawan wajib dialokasikan penuh, 422 `alokasi_tidak_penuh`, supaya sisa tidak jatuh ke atau membuat Tabungan. Ikut di PR ini: (4) notifikasi target dari penjualan karyawan ke owner (`peran.owner_ruang`), juga saat draf disetujui; (5) validasi alokasi sebelum cabang draf; (6) `client_ref` aditif di `POST /incomes` untuk idempotensi draf penjualan; (7) audit `catatan_dihapus`; (9 sebagian) `@limiter.limit("10/minute")` di `/ruang/gabung`.
+- Tes sesudah review: unittest 2408 (1 gagal yang sama dengan `main`) · `openapi_cek` tanpa perubahan memutus.
+
 **Digantung**
 - Notifikasi ke admin saat draf baru dan ke karyawan saat diputus belum ada (`Notification.type` masih SAEnum; perlu migrasi enum atau kolom `kind`): masuk U6 (notifikasi admin) dan R6 (tampilan karyawan).
 - Daftar dan pencabutan undangan (`dicabut_at` sudah ada di tabel) belum punya endpoint: R6 bersama halaman Anggota.
-- Pemasukan tidak punya `client_ref`, jadi kirim ulang `POST /incomes` dari karyawan di atas batas membuat draf kedua (sama dengan perilaku pemasukan hari ini). Perlu `client_ref` di pemasukan sebelum form penjualan U2.
+- `client_ref` pemasukan baru dipakai untuk draf karyawan; idempotensi pemasukan biasa (owner/admin) belum ada, sama seperti sebelum R5. Perlu sebelum form penjualan U2.
+- **Butuh keputusan pemilik produk (review #8, #10):** (8) admin sekarang boleh membuat undangan berperan admin, menaikkan anggota menjadi admin, dan menurunkan atau mengeluarkan admin lain; ADR-P4 hanya melindungi owner. Bila disengaja, tulis di ADR; bila tidak, batasi aksi atas admin ke owner. (10) batas nominal berlaku per catatan, jadi satu belanja bisa dipecah; apakah perlu batas kumulatif harian per karyawan?
+- Pencabutan undangan (review #9, `dicabut_at` sudah ada) masuk R6 bersama daftar undangan.
 - Beranda template "Karyawan" dan penyaringan per kartu (`/dashboard/*` sekarang 403 untuk karyawan): R6. Kotak Struk untuk karyawan (unggah bukti ke ruang usaha): R7.
 - Draf yang macet di status `diproses` (proses mati di antara klaim dan pencatatan) tidak bisa disetujui ulang dari UI; transaksi ganda tetap tercegah `client_ref`. Bila muncul: ubah status ke `menunggu` di DB.
 - Anggota yang keluar lalu diundang lagi mendapat batasan bawaan (tanpa batas nominal); admin perlu mengatur ulang. Pertimbangkan bawaan yang lebih ketat di R6.
-- Kode undangan tanpa rate limit (ruang 32^10); tambahkan limiter bila undangan dibuka ke umum.
 
 **Jebakan**
 - `request.scope["endpoint"]` dipakai `ruang_aktif` untuk mengenali route (`modul.nama_fungsi`); mengganti nama handler di `KARYAWAN_BOLEH` membuatnya tertolak untuk karyawan (aman, tapi tes `test_karyawan_hanya_route_pencatatan_lewat_header` menangkapnya).
@@ -44,7 +48,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Batch: baris draf dikembalikan `ok: false` + `kode: perlu_persetujuan`, supaya klien lama menyimpan barisnya; kiriman ulangnya idempoten.
 
 **Cara melanjutkan**
-- Review keamanan terpisah: "review PR #175 terhadap 03-workflow.md bagian keamanan" (gerbang "Batasan ditegakkan di server" dan "Karyawan tidak melihat laporan"). Temuan dikerjakan di branch ini.
+- Review keamanan pertama selesai (Request Changes, temuan 1–7 dikerjakan). Minta review ulang terhadap commit tindak lanjut: "review ulang PR #175 terhadap 03-workflow.md bagian keamanan, fokus temuan 1–3".
 - Merge: label `migrasi`; checklist "Plugin R5" di `AGENTS.md`, mengikuti "Urutan merge PR bermigrasi".
 - Berikutnya `/sesi-plugin R4` (membuat dan berpindah ruang; R5 tidak menyentuh `Layout.jsx`/`api.js`), lalu R6 (butuh R4, R5, B2).
 

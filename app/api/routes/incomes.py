@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -45,6 +45,8 @@ class IncomeCreate(BaseModel):
     # Klien hanya boleh menyatakan pemasukan biasa atau top-up amplop; transfer dan
     # penyesuaian ditulis server lewat jalurnya sendiri (fund_shift, balance_check).
     kind: Literal["pemasukan", "top-up"] = "pemasukan"
+    # R5 (aditif): kunci idempotensi draf penjualan karyawan; kiriman ulang mendapat draf yang sama.
+    client_ref: str | None = Field(default=None, max_length=64)
 
 
 class IncomeResponse(BaseModel):
@@ -102,22 +104,6 @@ async def create_income(
 
 async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: UUID):
     """Jalur pencatatan pemasukan (route di atas, dan persetujuan draf R5 di dalam `peran.atas_izin_pengelola`)."""
-    # R5: karyawan di ruang usaha mencatat penjualan dalam batasan; di atas batas nominal → draf.
-    batasan = await peran.batasan_karyawan(db, user.id, hid)
-    try:
-        perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENJUALAN,
-                                amplop_ids=[a.envelope_id for a in req.allocations], jumlah=req.amount, ada_foto=True)
-    except peran.PeranDitolak as exc:
-        raise RuangDitolak.dari_peran(exc)
-    if perlu:
-        from app.api.routes.transactions import jawaban_draf
-        draf = await peran.buat_draf(
-            db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENJUALAN, amount=req.amount,
-            description=req.source, envelope_id=req.allocations[0].envelope_id if req.allocations else None,
-            rincian={"kind": req.kind, "allocations": [
-                {"envelope_id": str(a.envelope_id), "amount": str(a.amount)} for a in req.allocations]})
-        return jawaban_draf(draf, peran.pesan_persetujuan(batasan))
-
     # Validate allocations don't exceed income
     total_allocated = sum(a.amount for a in req.allocations)
     if total_allocated > req.amount:
@@ -137,6 +123,33 @@ async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: 
         )
         if not env_check.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=f"Amplop {alloc.envelope_id} tidak ditemukan")
+
+    # R5: karyawan di ruang usaha mencatat penjualan dalam batasan; di atas batas nominal → draf. Validasi di atas
+    # jalan lebih dulu, supaya draf tidak pernah berisi alokasi yang tidak sah (review PR #175, temuan 5).
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is not None:
+        draf = await peran.draf_dari_ref(db, user.id, req.client_ref)
+        if draf is not None:   # kiriman ulang (temuan 6): status draf terbaru, tanpa draf atau pemasukan kedua
+            from app.api.routes.transactions import jawaban_draf
+            return jawaban_draf(draf)
+    try:
+        perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENJUALAN,
+                                amplop_ids=[a.envelope_id for a in req.allocations], jumlah=req.amount, ada_foto=True)
+        if batasan is not None and total_allocated != req.amount:
+            # Sisa pemasukan otomatis masuk (atau membuat) amplop Tabungan, di luar amplop yang diizinkan (temuan 3).
+            raise peran.PeranDitolak(
+                "alokasi_tidak_penuh", "Bagikan seluruh penjualan ke amplop yang diizinkan untukmu.", status_code=422)
+    except peran.PeranDitolak as exc:
+        raise RuangDitolak.dari_peran(exc)
+    if perlu:
+        from app.api.routes.transactions import jawaban_draf
+        draf = await peran.buat_draf(
+            db, household_id=hid, user_id=user.id, jenis=peran.JENIS_PENJUALAN, amount=req.amount,
+            description=req.source, envelope_id=req.allocations[0].envelope_id if req.allocations else None,
+            client_ref=req.client_ref,
+            rincian={"kind": req.kind, "allocations": [
+                {"envelope_id": str(a.envelope_id), "amount": str(a.amount)} for a in req.allocations]})
+        return jawaban_draf(draf, peran.pesan_persetujuan(batasan))
 
     # Goal yang baru tercapai karena pemasukan ini dinotifikasi (app/services/goal_notify.py)
     from app.services.goal_notify import goal_snapshot, notify_goals_reached
@@ -178,7 +191,14 @@ async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: 
         alloc_details.append({"envelope": "Tabungan", "emoji": "💰", "amount": str(remainder), "auto": True})
 
     await db.commit()
-    await notify_goals_reached(db, user, goals_before)
+    # Notifikasi target (berisi angka) untuk pemilik ruang bila pencatatnya karyawan, juga saat draf disetujui
+    # (review PR #175, temuan 4). Peran dibaca langsung, karena `batasan` None di dalam persetujuan.
+    penerima = user
+    role, jenis = await peran.peran_di_ruang(db, user.id, hid)
+    if role == "member" and jenis == "usaha":
+        penerima = await peran.owner_ruang(db, hid)
+    if penerima is not None:
+        await notify_goals_reached(db, penerima, goals_before)
 
     return IncomeResponse(
         id=income.id,

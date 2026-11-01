@@ -304,11 +304,15 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     # Behavior checks — satu kali (dulu dua kali, dan cek pertama menolak cooling
     # sebelum pending sempat dibuat). Cooling tidak lagi menahan pencatatan.
     txn_date, check = await _check_row(db, user, req)
-    if not check.allowed and check.check_type == "daily_limit" and req.raise_daily_limit:
-        # Dikonfirmasi user → limit dinaikkan sampai tengah malam, lalu cek ulang.
+    if (not check.allowed and check.check_type == "daily_limit" and req.raise_daily_limit
+            and peran.boleh_naikkan_limit(batasan)):
+        # Dikonfirmasi user → limit dinaikkan sampai tengah malam, lalu cek ulang. Karyawan tidak bisa (R5).
         await _raise_daily_limit(user.id, envelope.id)
         check = await check_behavior(req.envelope_id, user.id, req.amount, db)
     if not check.allowed:
+        tanpa_angka = peran.pesan_cek_karyawan(batasan, check.check_type)
+        if tanpa_angka:   # R5: karyawan tanpa lihat_saldo tidak membaca saldo/limit lewat pesan galat
+            raise HTTPException(status_code=403, detail=tanpa_angka)
         if check.check_type == "locked":
             raise HTTPException(status_code=403, detail=f"Amplop dikunci. Tidak bisa belanja.")
         elif check.check_type == "not_funded":
@@ -513,7 +517,8 @@ async def batch_create_transactions(
             continue
 
         txn_date, check = await _check_row(db, user, item)
-        if not check.allowed and check.check_type == "daily_limit" and item.raise_daily_limit:
+        if (not check.allowed and check.check_type == "daily_limit" and item.raise_daily_limit
+                and peran.boleh_naikkan_limit(batasan)):
             try:
                 from app.services.behavior import raise_daily_limit_today
                 await raise_daily_limit_today(user.id, envelope.id)
@@ -531,6 +536,7 @@ async def batch_create_transactions(
             elif check.check_type == "insufficient":
                 d = check.details
                 msg = f"Dana tidak cukup. Sisa: Rp{int(d.get('available', 0)):,}, diminta: Rp{int(d.get('requested', 0)):,}"
+            msg = peran.pesan_cek_karyawan(batasan, check.check_type) or msg
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error=msg))
             continue
 
@@ -794,11 +800,14 @@ async def delete_transaction(
     txn = result.scalar_one_or_none()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
     try:   # R5: karyawan hanya menghapus catatannya sendiri, dalam jendela ubah dari admin
-        peran.cek_jendela_ubah(await peran.batasan_karyawan(db, user.id, hid),
-                               milik_sendiri=txn.user_id == user.id, dibuat=txn.created_at)
+        peran.cek_jendela_ubah(batasan, milik_sendiri=txn.user_id == user.id, dibuat=txn.created_at)
     except peran.PeranDitolak as exc:
         raise RuangDitolak.dari_peran(exc)
+    if batasan is not None:   # jejak untuk admin (review PR #175, temuan 7); tanpa nominal
+        peran.audit(db, hid, user.id, "catatan_dihapus", user.id, transaction_id=txn.id,
+                    tanggal=txn.transaction_date.isoformat())
 
     txn.is_deleted = True
     await db.commit()

@@ -80,7 +80,7 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 // POST   /ruang/{id}/undangan {"peran": "member" | "admin"} → 201 {"kode": "RU…", "peran", "kedaluwarsa"}
 //        sekali pakai, berlaku 7 hari (tabel ruang_undangan; bukan households.invite_code)
 // POST   /ruang/gabung {"kode"} → {"id", "nama", "jenis": "usaha", "peran"}
-//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400
+//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP
 // PATCH  /ruang/{id}/anggota/{user_id} {"peran"?: "member" | "admin", "jabatan"?} → {"user_id", "peran"}
 // DELETE /ruang/{id}/anggota/{user_id} → 204   // owner/admin mengeluarkan, atau anggota keluar sendiri (bukan owner);
 //        akses hilang seketika; catatan lama tetap milik ruang; draf yang menunggu → dibatalkan; batasannya dihapus
@@ -88,7 +88,7 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 //        amplop bukan milik ruang itu → 422; jam_kerja tidak sah → 422
 // GET    /ruang/{id}/audit?limit=50 → [{"aksi", "oleh", "anggota", "rincian", "waktu"}]
 //        aksi: undangan_dibuat, anggota_bergabung, anggota_diubah, anggota_keluar, anggota_dikeluarkan,
-//        batasan_diubah, draf_disetujui, draf_ditolak, reset_ruang (jumlah catatan per pencatat, tanpa nominal)
+//        batasan_diubah, draf_disetujui, draf_ditolak, catatan_dihapus, reset_ruang (jumlah catatan per pencatat, tanpa nominal)
 
 // batasan per anggota (hanya untuk peran member; owner dan admin tanpa batasan)
 // Bawaan bila admin belum mengatur: dua jenis, semua amplop, tanpa batas nominal dan foto, hari_sama, lihat_saldo false,
@@ -113,9 +113,9 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 | `GET /envelopes/summary` | 403 `khusus_admin` bila `lihat_saldo` false; selain itu hanya amplop yang diizinkan |
 | `GET /transactions/` | Hanya catatan miliknya |
 | `POST /transactions/suggest-envelope(s)` | Amplop yang tidak diizinkan tidak disarankan |
-| `POST /transactions/`, `/transactions/batch` | Batasan per catatan (urutan: jenis → amplop → foto → nominal); di atas batas → 202 draf |
-| `DELETE /transactions/{id}` | Hanya catatan miliknya, dalam `jendela_ubah`; selain itu 403 `jendela_ubah_lewat` |
-| `POST /incomes/` | Jenis `penjualan`, amplop alokasi, batas nominal; di atas batas → 202 draf |
+| `POST /transactions/`, `/transactions/batch` | Batasan per catatan (urutan: jenis → amplop → foto → nominal); di atas batas → 202 draf. `raise_daily_limit` diabaikan (limit harian dari admin tidak bisa dinaikkan karyawan). Tanpa `lihat_saldo`, pesan dana tidak cukup, amplop belum diisi, dan limit harian tanpa angka |
+| `DELETE /transactions/{id}` | Hanya catatan miliknya, dalam `jendela_ubah`; selain itu 403 `jendela_ubah_lewat`. Tercatat di log audit (`catatan_dihapus`) |
+| `POST /incomes/` | Jenis `penjualan`, amplop alokasi, lalu alokasi harus sama dengan nominal (sisa tidak boleh jatuh ke Tabungan: 422 `alokasi_tidak_penuh`), batas nominal; di atas batas → 202 draf. Field baru `client_ref` (aditif): kiriman ulang → 202 dengan status draf terbaru. Notifikasi target dari penjualan karyawan dikirim ke owner |
 | `GET /persetujuan/saya` | Draf miliknya |
 
 Semua route lain (amplop, grup, transfer, target, langganan, cocokkan saldo, analitik, ekspor, Beranda, AI Advisor, reset, …) → 403 `khusus_admin`. Beranda template "Karyawan" dan penyaringan per kartu menyusul di R6.
@@ -369,5 +369,6 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `instans_tidak_ada` | 404 | `GET /dashboard/data/{id}` untuk instans yang tidak ada di tata letak user |
 | `gagal_memuat` | per kartu | Sumber data kartu gagal dimuat; kartu lain tetap terisi |
 | `alokasi_bukan_100` | 422 | Total persen alokasi omzet ≠ 100 |
+| `alokasi_tidak_penuh` | 422 | Penjualan karyawan yang alokasinya tidak sama dengan nominal (sisa akan jatuh ke amplop di luar izinnya) (R5) |
 
 Batasan member juga berlaku di `POST /transactions/batch` (antrean offline) dan untuk kiriman ulang dengan `client_ref` yang sama: item yang ditolak kembali dengan `kode` di hasil per item, dan tetap disimpan klien (`AGENTS.md`, "Service Worker", antrean offline).
