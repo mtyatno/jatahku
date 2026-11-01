@@ -776,64 +776,93 @@ def _status_part(text: str) -> str:
 # gagal/pending, tidak pernah berhasil: "Tujuan Transfer CV SUKSES JAYA" juga berbentuk judul, dan "berhasil" palsu di judul
 # akan menutupi kegagalan di bawah baris 4.
 _NAME_FIELDS = ("merchant", "sender")
+# Kata benda transaksi di awal judul status (dipakai `_STATUS_TITLE` dan `_CANCEL_TITLE`: satu daftar). "dana"/"saldo" sengaja
+# tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI").
+_TITLE_NOUN = (r"(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|"
+               r"setoran|pembelian|purchase|withdrawal|deposit)")
 # Judul status: kata benda transaksi, paling banyak 3 kata lain, lalu kata status ("Transfer Gagal", "Transaksi Anda Gagal",
 # "Payment failed", "Top Up Gagal", "rekening gagal didebet"). Nama seperti "TOKO GAGAL MANIA" atau "BUDI GAGAL" tidak.
-# "dana"/"saldo" sengaja tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI").
-_STATUS_TITLE = re.compile(
-    r"(?<!\w)(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|setoran|"
-    r"pembelian|purchase|withdrawal|deposit)(?!\w)\s+(?:\S+\s+){0,3}" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
+_STATUS_TITLE = re.compile(r"(?<!\w)" + _TITLE_NOUN + r"(?!\w)\s+(?:\S+\s+){0,3}" + _STATUS_WORD + r"(?!\w)", re.IGNORECASE)
 
 
 # Kata status "batal" (keputusan pemilik 3, spec §7): dibatalkan, ditolak, batal, rejected, cancelled/canceled, void = gagal,
 # tetapi HANYA di (a) judul status (kata benda transaksi, paling banyak 3 kata lain, lalu kata itu: "Transfer Dibatalkan",
 # "Pembayaran Ditolak", "Transaksi Batal", "Payment rejected"), (b) nilai label status pembayaran ("Status: Dibatalkan",
-# "Status Transaksi Ditolak"), dan (c) baris berstatus saja di 4 baris pertama ("Dibatalkan", "Ditolak", "Rejected",
-# "Cancelled"; "Batal" dan "Void" saja tidak pernah: tombol "Batal", baris "VOID" di struk). Baris badan pendek tidak
-# membacanya. Di posisi itu kata ini diganti "gagal" (`_cancel_as_failed`), sehingga aturan kata gagal yang ada (kaki
-# bersyarat/tanya/bantuan, baris nama, batas kata) tetap berlaku. Tidak dihitung: kata itu sesudah negasi/modal/kata
-# penghubung ("tidak dapat dibatalkan", "akan dibatalkan", "Payment cannot be cancelled", "Transaksi yang dibatalkan tidak
-# dapat dikembalikan": kebijakan, bukan status) atau diikuti kata bersyarat ("Transaksi dibatalkan jika tidak dibayar").
+# "Status Transaksi Ditolak", "Status: Saldo tidak cukup, transaksi ditolak"), dan (c) baris berstatus di 4 baris pertama
+# yang diawali kata itu ("Dibatalkan", "Telah ditolak", "Dibatalkan 26/10/2026 08:12", "Ditolak oleh bank"; "Batal" dan
+# "Void" tanpa kata benda tidak pernah: tombol "Batal", baris "VOID" di struk). Baris badan pendek tidak membacanya. Di
+# posisi itu kata ini diganti "gagal" (`_cancel_as_failed`), sehingga aturan kata gagal yang ada (kaki bersyarat/tanya/
+# bantuan, ajakan sesudah status, baris nama, batas kata) tetap berlaku. Tidak dihitung (kalimat kebijakan, bukan status):
+# - negasi/modal di klausa kata itu sebelum kata itu ("tidak dapat dibatalkan", "akan dibatalkan", "Payment cannot be
+#   cancelled"), atau "yang" tepat sebelum kata itu ("Transaksi yang dibatalkan ..."); klausa = sampai tanda baca terakhir
+#   sebelum kata itu, jadi "Saldo tidak cukup, transaksi ditolak" tetap dihitung;
+# - kata bersyarat tepat sesudah kata itu (paling banyak satu kata di antaranya: "dibatalkan jika ...", "dibatalkan otomatis
+#   bila ..."); kata bersyarat sesudah tanda baca ("Ditolak, jika saldo terpotong hubungi 14017") = ajakan, tetap dihitung;
+# - di judul dan baris (c): kata itu harus menutup klausanya, boleh diikuti tanggal/jam, atau diikuti oleh/karena/pada/
+#   sejak/by/due ("Transaksi Dibatalkan oleh sistem"); "Transaksi dibatalkan maks 1x24 jam", "Pembelian dibatalkan tidak
+#   dapat direfund" tidak. "TRANSAKSI VOID" (slip EDC void) dihitung.
 # Di posisi lain kata ini hanya mencegah `berhasil` (`_NOT_DONE`).
 _CANCEL_WORD = r"(?:dibatalkan|ditolak|batal|rejected|cancell?ed|void)"
 _CANCEL = re.compile(r"(?<!\w)" + _CANCEL_WORD + r"(?!\w)", re.IGNORECASE)
-_CANCEL_GUARD = (r"(?:tidak|tak|gak|nggak|ga|belum|bukan|dapat|bisa|boleh|akan|harus|perlu|mau|ingin|yang|"
-                 r"not|cannot|can|will|could|may|might|must|to|be|which|that)")
+_CANCEL_GUARD = (r"(?:tidak|tak|gak|nggak|ga|belum|bukan|dapat|bisa|boleh|akan|harus|perlu|mau|ingin|"
+                 r"not|cannot|can|will|could|may|might|must|be|which|that)")
 _CANCEL_GUARD_WORD = re.compile(r"(?<!\w)" + _CANCEL_GUARD + r"(?!\w)", re.IGNORECASE)
 _CANCEL_TITLE = re.compile(
-    r"(?<!\w)(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|penarikan|setoran|"
-    r"pembelian|purchase|withdrawal|deposit)(?!\w)\s+(?:(?!" + _CANCEL_GUARD + r"(?!\w))\S+\s+){0,3}"
+    r"(?<!\w)" + _TITLE_NOUN + r"(?!\w)\s+(?:(?!" + _CANCEL_GUARD + r"(?!\w))\S+\s+){0,3}"
     r"(?P<word>" + _CANCEL_WORD + r")(?!\w)", re.IGNORECASE)
-# Baris berstatus saja (hanya di judul): "Dibatalkan", "Telah ditolak", "Cancelled!". Bukan "Batal"/"Void".
-_CANCEL_ALONE = re.compile(r"\W*(?:(?:telah|sudah|has\s+been|was)\s+)?(?P<word>dibatalkan|ditolak|rejected|cancell?ed)\W*",
+# Baris (c): diawali kata itu, boleh didahului telah/sudah/has been/was. Bukan "Batal"/"Void".
+_CANCEL_ALONE = re.compile(r"\W*(?:(?:telah|sudah|has\s+been|was)\s+)?(?P<word>dibatalkan|ditolak|rejected|cancell?ed)(?!\w)",
                            re.IGNORECASE)
-_IF_WORD = re.compile(r"(?<!\w)(?:jika|bila|apabila|kalau|if|unless|kecuali)(?!\w)", re.IGNORECASE)
+_YANG_BEFORE = re.compile(r"(?<!\w)yang\s+$", re.IGNORECASE)
+_CANCEL_CLAUSE = re.compile(r"[.,](?!\d)|[;:!?|()]|\s[-–—]+\s")
+_IF_NEXT = re.compile(r"\s+(?:[^\s.,;:!?|()]+\s+)?(?:jika|bila|apabila|kalau|if|unless|kecuali)(?!\w)", re.IGNORECASE)
+_CLAUSE_START = re.compile(r"\s*(?:[.,;:!?|()]|[-–—](?:\s|$))")
+_AGENT_NEXT = re.compile(r"\s+(?:oleh|karena|pada|sejak|by|due)(?!\w)", re.IGNORECASE)
+_DATE_TOKEN = (r"(?:\d{1,4}(?:[/.\-:]\d{1,4})*|jan\w*|feb\w*|mar\w*|apr\w*|mei|may|jun\w*|jul\w*|agu\w*|agt|aug\w*|"
+               r"sep\w*|okt\w*|oct\w*|nov\w*|des\w*|dec\w*|wib|wita|wit|pukul)")
+_DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
 
 
-def _cancel_counts(text: str, m: re.Match) -> bool:
-    """Kata batal di `m` dihitung bila tidak diikuti kata bersyarat ("dibatalkan jika tidak dibayar")."""
-    return not _IF_WORD.search(text, m.end())
+def _cancel_ends_clause(text: str, end: int) -> bool:
+    """Kata batal yang berakhir di `end` menutup klausanya: akhir baris, tanda baca, atau sisa tanpa huruf/angka, boleh
+    sesudah tanggal/jam ("Dibatalkan 26/10/2026 08:12"), atau diikuti pelaku/sebab ("oleh sistem", "karena saldo")."""
+    rest = text[end:]
+    if _AGENT_NEXT.match(rest):
+        return True
+    m = _DATE_TAIL.match(rest)
+    if m:
+        part = m.group(0).strip(" ,")
+        if parse_datetime_id(part) or _TIME_ONLY.fullmatch(part):
+            rest = rest[m.end():]
+    return not re.search(r"[^\W_]", rest) or bool(_CLAUSE_START.match(rest))   # sisa tanpa huruf/angka: "*** CANCELLED ***"
+
+
+def _cancel_counts(text: str, m: re.Match, word: str = "word") -> bool:
+    """Kata batal di `m` tidak diikuti kata bersyarat tepat sesudahnya ("dibatalkan jika", "dibatalkan otomatis bila") dan
+    tidak didahului "yang" ("Transaksi yang dibatalkan ...")."""
+    return not _IF_NEXT.match(text, m.end(word)) and not _YANG_BEFORE.search(text[:m.start(word)])
 
 
 def _cancel_as_failed(text: str, *, value: bool = False, header: bool = False) -> str:
-    """`text` dengan kata batal yang dihitung diganti "gagal" (lihat `_CANCEL_WORD`): selalu di judul status; di mana saja
-    bila `value` (nilai label status pembayaran), kecuali sesudah negasi/modal; seluruh baris bila `header` dan baris itu
-    berstatus saja. Selain itu teks dikembalikan apa adanya."""
+    """`text` dengan kata batal yang dihitung diganti "gagal" (lihat `_CANCEL_WORD`): judul status yang kata batalnya menutup
+    klausa; bila `value` (nilai label status pembayaran) di mana saja tanpa negasi/modal di klausanya; bila `header` (4 baris
+    pertama) baris yang diawali kata itu dan kata itu menutup klausanya. Selain itu teks dikembalikan apa adanya."""
     if not _CANCEL.search(text or ""):
         return text
-    if header:
-        m = _CANCEL_ALONE.fullmatch(text)
-        if m:
-            return text[:m.start("word")] + "gagal" + text[m.end("word"):]
     spans = []
+    if header:
+        m = _CANCEL_ALONE.match(text)
+        if m and _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word")):
+            spans.append((m.start("word"), m.end("word")))
     if value:
         for m in _CANCEL.finditer(text):
-            if not _CANCEL_GUARD_WORD.search(text[:m.start()]) and _cancel_counts(text, m):
+            clause = _CANCEL_CLAUSE.split(text[:m.start()])[-1]
+            if not _CANCEL_GUARD_WORD.search(clause) and _cancel_counts(text, m, 0):
                 spans.append((m.start(), m.end()))
-    else:
-        for m in _CANCEL_TITLE.finditer(text):
-            if _cancel_counts(text, m):
-                spans.append((m.start("word"), m.end("word")))
-    for start, end in reversed(spans):
+    for m in _CANCEL_TITLE.finditer(text):
+        if _cancel_counts(text, m) and _cancel_ends_clause(text, m.end("word")):
+            spans.append((m.start("word"), m.end("word")))
+    for start, end in sorted(set(spans), reverse=True):
         text = text[:start] + "gagal" + text[end:]
     return text
 
@@ -910,7 +939,7 @@ def has_header_status_title(lines: list[str]) -> bool:
     sebagai `berhasil`, tetapi bukan judul status, jadi struk belanja biasa tidak memenuhinya."""
     cleaned = clean_lines(lines)
     return any(_is_status_title(part)
-               for part in _status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned), header=True))
+               for part in _status_lines(cleaned[:HEADER_LINES], HEADER_WORDS, store=has_item_lines(cleaned)))
 
 
 def has_status_title(lines: list[str]) -> bool:

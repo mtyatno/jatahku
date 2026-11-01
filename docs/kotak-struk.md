@@ -916,13 +916,24 @@ Catatan:
   hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, kata status di nama tanpa label di empat baris pertama
   ("TOKO SUKSES MAKMUR") masih terbaca berhasil dan menutupi kata status tunggal di bawahnya ("Gagal"; judul status
   seperti "Pembayaran Gagal" sudah dibaca sejak A14 ronde 1); kata batal ("dibatalkan", "ditolak", "batal", "rejected",
-  "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di judul status ("Transfer
-  Dibatalkan", "Payment rejected", "Transaksi Batal"), nilai label status pembayaran ("Status: Ditolak", "Status" lalu
-  "Dibatalkan" di baris bawahnya) dan baris berstatus saja di empat baris pertama ("Dibatalkan", "Rejected"; "Batal" dan
-  "Void" saja tidak pernah: tombol, baris VOID struk); kata itu saja di badan ("Dibatalkan" di bawah rincian) dan kata
-  "belum selesai" lainnya ("Dikembalikan", "Menunggu") tetap `tidak_diketahui` (tidak diblokir, hanya mencegah
-  `berhasil`), dan kalimat kebijakan/bersyarat ("Transaksi tidak dapat dibatalkan", "akan dibatalkan", "dibatalkan jika
-  tidak dibayar", "Transaksi yang dibatalkan …") tidak dihitung; kaki bantuan berbentuk
+  "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di tiga posisi: judul status yang
+  kata batalnya menutup klausa ("Transfer Dibatalkan", "Payment rejected", "Transaksi Batal", juga diikuti tanggal/jam
+  atau oleh/karena/pada/sejak/by/due: "Transaksi Dibatalkan oleh sistem"; slip EDC "TRANSAKSI VOID" ikut diblokir), nilai
+  label status pembayaran ("Status: Ditolak", "Status: Saldo tidak cukup, transaksi ditolak") dan baris di empat baris
+  pertama yang diawali kata itu ("Dibatalkan", "Telah ditolak", "Dibatalkan 26/10/2026 08:12"; "Batal" dan "Void" saja
+  tidak pernah: tombol, baris VOID struk). Negasi/modal hanya dihitung di klausa kata itu ("tidak dapat dibatalkan",
+  "akan dibatalkan"), "yang" hanya tepat sebelum kata itu, dan kata bersyarat hanya tepat sesudahnya ("dibatalkan jika
+  tidak dibayar"; "Ditolak, jika saldo terpotong hubungi 14017" tetap gagal). Jadi kalimat kebijakan ("Transaksi
+  dibatalkan maks 1x24 jam", "Pembelian dibatalkan tidak dapat direfund") tidak memblokir struk belanja maupun bukti
+  sukses. Yang belum: "Status" lalu "Dibatalkan"/"Ditolak" di baris bawahnya hanya diblokir bila teksnya tampak bukti
+  (tata letak transfer, kedua saklar); tata letak GoPay/BCA tanpa penanda lain ("Status" lalu "Dibatalkan", "Dibatalkan oleh
+  kamu") dibaca jalur struk dan tidak diblokir, persis seperti "Gagal" di posisi itu (titik terbuka N1, L6e); kata itu
+  saja di badan ("Dibatalkan" di bawah rincian, juga di jalur struk dengan saklar mati) dan kata "belum selesai" lainnya
+  ("Dikembalikan", "Menunggu") tetap `tidak_diketahui` (tidak diblokir, hanya mencegah `berhasil`); judul yang kata
+  batalnya diikuti kata lain ("Pembayaran Ditolak Bank"), lebih dari 3 kata di antara kata benda dan kata batal
+  ("Payment to TOKO A was rejected"), kata benda di luar daftar ("Pesanan Dibatalkan"), OCR terpisah ("Di batalkan") dan
+  "declined" tidak dibaca; nama toko berbentuk judul ("KEDAI TRANSAKSI BATAL") memblokir seperti "KEDAI TRANSAKSI GAGAL";
+  kaki bantuan berbentuk
   judul pada bukti tanpa status sendiri ("Info transaksi pending/gagal: 14017") memblokir di kedua jalur; negasi kata
   tiba di tengah kalimat ("Transfer belum diterima bank tujuan.") atau tanpa subjek uang di luar label status (judul
   "Belum diterima" atau "Tidak terkirim" saja) tidak dibaca, jadi bukti seperti itu tidak diblokir dan tidak
