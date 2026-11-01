@@ -59,6 +59,12 @@ def _late_ok(doc_type: str | None, document) -> bool:
     return doc_type in LATE_RECORDABLE and bool(document)
 
 
+def late_recordable(item: ReceiptScan) -> bool:
+    """Item ini, bila kedaluwarsa, masih boleh dicatat (`_late_ok`); dipakai pesan bot untuk memilih antara tombol
+    catat dan pemberitahuan kedaluwarsa."""
+    return _late_ok(item.doc_type, item.document)
+
+
 async def check_recordable(db: AsyncSession, item_id: uuid.UUID, user: User) -> ReceiptScan:
     """Item milik `user` yang boleh dicatat sekarang, atau `NotRecordable`. Struk belanja boleh dicatat lagi
     setelah `tercatat` (satu struk, banyak transaksi); bukti lain hanya selagi `siap`. Item `kedaluwarsa` mendapat
