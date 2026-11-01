@@ -12,7 +12,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | F0 | #137 | Bootstrap repo dan CI migrasi | 0 Persiapan | 2 | O1 | selesai | Pemilik produk + Claude | #159 | 2026-10-31 | 2026-10-31 |
 | B1 (migrasi) | #138 | Registry kartu dan data batch | 1 Beranda registry | 3,5 | F0 | selesai | Pemilik produk + Claude | #162 | 2026-11-01 | 2026-11-01 |
 | B2 | #139 | Beranda dari registry | 1 Beranda registry | 3,5 | B1 | selesai | Pemilik produk + Claude | #165 | 2026-11-01 | 2026-11-01 |
-| B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | berjalan | Pemilik produk + Claude | #PR | 2026-11-01 | |
+| B3 | #140 | Verifikasi dan rilis Beranda registry | 1 Beranda registry | 2 | B2 | berjalan | Pemilik produk + Claude | #167 | 2026-11-01 | |
 | R1 (migrasi) | #141 | Model ruang | 2 Ruang usaha | 2,5 | F0 | selesai | Pemilik produk + Claude | #161 | 2026-11-01 | 2026-11-01 |
 | R2 (review) | #142 | Resolver `ruang_aktif` (2 sesi, 1 PR) | 2 Ruang usaha | 7 | R1 | review | Pemilik produk + Claude | #166 | 2026-11-01 | |
 | R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | belum | | | | |
@@ -36,7 +36,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 
 | Gerbang | Syarat lulus | Diuji di | Status |
 |---|---|---|---|
-| B | Angka dan tampilan Beranda sama untuk semua user; `POST /dashboard/data` p95 ≤ 500 ms | B3 | alat siap (PR #PR); menunggu `beranda_paritas` di VPS + banding tampilan, lalu flag `*` |
+| B | Angka dan tampilan Beranda sama untuk semua user; `POST /dashboard/data` p95 ≤ 500 ms | B3 | alat siap (PR #167); menunggu `beranda_paritas` di VPS + banding tampilan, lalu flag `*` |
 | R | Angka user lama identik sebelum dan sesudah refactor; nol kebocoran antar-ruang (tes IDOR); chat tetap ruang keluarga | R2, R3, R8 | sebagian: bagian R2 lulus di tes (paritas tanpa header untuk 40 endpoint GET, IDOR baca/tulis, bot ruang keluarga); produksi `ruang_paritas` setelah merge; R3, R8 menyusul |
 | H | Buku Usaha bisa dipasang, dijeda, dilanjutkan, dicopot, dan dipulihkan bersih; tes isolasi lulus | U1 | belum |
 | Rilis | Review keamanan terpisah lulus; angka ruang keluarga tetap identik; flag per ruang siap | V1 | belum |
