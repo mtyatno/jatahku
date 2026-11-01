@@ -269,8 +269,9 @@ Tanpa migrasi dan tanpa paket baru. Merge PR B3 → deploy otomatis; tampilan be
    → kode keluar 0 dan baris terakhir `Gerbang B: LULUS` (semua user `ok`/`lewati`, p95 batch ≤ 500 ms).
    Keluaran tanpa nama amplop atau nominal: tempel dua baris terakhirnya di issue #140.
    Bila `beda`/`crash`: jangan lanjut; jalankan ulang untuk user itu (`--user <id>`) dan laporkan barisnya.
-2. **Banding tampilan** di laptop, akun sendiri (Chrome + `pip install playwright pillow`):
-   `JATAHKU_TOKEN=<localStorage jatahku_token dari jatahku.com> python scripts/banding_beranda.py --out /tmp/banding`
+2. **Banding tampilan** di **laptop** (bukan VPS), akun sendiri (Chrome + `pip install playwright pillow`):
+   `read -s JATAHKU_TOKEN && export JATAHKU_TOKEN` (tempel localStorage `jatahku_token`; tidak masuk riwayat shell),
+   lalu `python scripts/banding_beranda.py --out /tmp/banding && unset JATAHKU_TOKEN`
    → `Tampilan: SAMA di semua lebar dan tema` (390/820/1100/1440 px, gelap dan terang).
    Di HP sungguhan: buka `jatahku.com/?beranda=lama` lalu `jatahku.com/?beranda=registry`; keduanya harus sama.
 3. **Nyalakan bertahap:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
