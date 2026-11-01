@@ -671,13 +671,14 @@ class ApiClient {
     return null;
   }
 
-  // Keputusan pemilik: action setujui|tolak|cabut, catatan opsional (≤ 200, sudah dirapikan; null = tanpa catatan).
-  // → {ok, status, data}; status 0 = tidak sampai. 409 = transisi tidak sah (G5), 404 = aturan tidak ada.
-  async adminProofRuleAction(id, action, note) {
+  // Keputusan pemilik: action setujui|tolak|cabut; body dari proofRules.decisionBody: {note, from_status} (status
+  // baris yang dilihat admin). → {ok, status, data}; status 0 = tidak sampai. 409 = transisi tidak sah / admin lain
+  // sudah memutuskan / di bawah ambang, 404 = aturan tidak ada.
+  async adminProofRuleAction(id, action, body) {
     try {
       const res = await this.request(`/admin/kotak/rules/${encodeURIComponent(id)}/${encodeURIComponent(action)}`, {
         method: 'POST',
-        body: JSON.stringify({ note: note || null }),
+        body: JSON.stringify({ note: body?.note ?? null, from_status: body?.from_status ?? null }),
       });
       return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
     } catch {

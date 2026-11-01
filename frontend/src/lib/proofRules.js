@@ -20,6 +20,8 @@ export const RULE_TABS = [
 const STATUSES = ['menunggu', 'disetujui', 'ditolak', 'dicabut'];
 
 export const NOTE_MAX = 200;   // = server NOTE_MAX (kolom proof_rules.note)
+export const RULE_MIN_USERS = 2;   // = server config.RULE_MIN_USERS: setujui di bawahnya → 409 "Aturan belum didukung 2 user"
+export const THRESHOLD_HINT = `Belum didukung ${RULE_MIN_USERS} user`;
 
 export const WARNING_TEXT = 'Label ini mirip kata status/metode — periksa contohnya.';
 
@@ -31,6 +33,12 @@ const ACTIONS = { menunggu: ['setujui', 'tolak'], disetujui: ['cabut'], ditolak:
 const ACTION_LABEL = { setujui: 'Setujui', tolak: 'Tolak', cabut: 'Cabut' };
 const DONE_TEXT = { setujui: 'Aturan disetujui.', tolak: 'Aturan ditolak.', cabut: 'Aturan dicabut.' };
 const DECIDED_VERB = { disetujui: 'Disetujui', ditolak: 'Ditolak', dicabut: 'Dicabut' };
+// Petunjuk aturan di bawah ambang: yang disetujui masih dipakai pembaca (pemilik bisa mencabutnya); status lain belum
+// bisa disetujui (tombol Setujui tidak ditampilkan).
+const THRESHOLD_TEXT = {
+  disetujui: `${THRESHOLD_HINT} — masih dipakai pembaca; pertimbangkan Cabut.`,
+  other: `${THRESHOLD_HINT}, jadi belum bisa disetujui.`,
+};
 
 const EMPTY_TEXT = {
   menunggu: 'Tidak ada aturan yang menunggu.',
@@ -70,9 +78,19 @@ export function ruleActions(status) {
   return own(ACTIONS, status) ? [...ACTIONS[status]] : [];
 }
 
-// Tombol per status; semuanya mati selama satu keputusan sedang dikirim (`busy`).
-export function actionButtons(status, busy) {
-  return ruleActions(status).map(action => ({ action, label: ACTION_LABEL[action], disabled: !!busy }));
+// Aksi satu baris: transisi G5, tanpa Setujui bila pendukungnya < RULE_MIN_USERS (server menolaknya dengan 409).
+export function rowActions(status, users) {
+  const actions = ruleActions(status);
+  return count(users) < RULE_MIN_USERS ? actions.filter(a => a !== 'setujui') : actions;
+}
+
+// Tombol satu baris (hasil ruleRows); semuanya mati selama satu keputusan sedang dikirim (`busy`) atau bila
+// catatannya tidak sah (`note`, lihat noteError).
+export function actionButtons(row, busy, note) {
+  const blocked = !!busy || noteError(note) !== null;
+  return (Array.isArray(row?.actions) ? row.actions : [])
+    .filter(a => own(ACTION_LABEL, a))
+    .map(action => ({ action, label: ACTION_LABEL[action], disabled: blocked }));
 }
 
 // {menunggu, disetujui, ditolak, dicabut} dari `counts` server (seluruh tabel); rusak → 0.
@@ -112,24 +130,32 @@ function compare(tab) {
     || count(b.users) - count(a.users) || byText(a.id, b.id);
 }
 
-// Baris satu tab (status) → [{id, status, kind, app, label, example, support, date, note, warning, actions}];
+// Baris satu tab (status) → [{id, status, kind, app, label, example, support, date, meta, note, warning, threshold,
+// actions}] (`meta` = support · date; `threshold` = petunjuk di bawah ambang atau null);
 // tab "suara"/tidak dikenal → []; respons tanpa daftar → null. Baris rusak dilewati, tidak pernah melempar.
 export function ruleRows(resp, tab) {
   if (!Array.isArray(resp?.rules)) return null;
   if (!own(ACTIONS, tab)) return [];
-  return resp.rules.filter(r => validRule(r) && r.status === tab).sort(compare(tab)).map(r => ({
-    id: r.id,
-    status: r.status,
-    kind: own(KIND_LABEL, r.kind) ? KIND_LABEL[r.kind] : r.kind,
-    app: ruleAppLabel(r.rule_key),
-    label: r.value,
-    example: syntheticExample(r),
-    support: `${count(r.users)} user · ${count(r.households)} rumah tangga`,
-    date: dateLine(r),
-    note: typeof r.note === 'string' && r.note.trim() ? r.note.trim() : null,
-    warning: r.warning === true ? WARNING_TEXT : null,
-    actions: ruleActions(r.status),
-  }));
+  return resp.rules.filter(r => validRule(r) && r.status === tab).sort(compare(tab)).map((r) => {
+    const support = `${count(r.users)} user · ${count(r.households)} rumah tangga`;
+    const date = dateLine(r);
+    const below = count(r.users) < RULE_MIN_USERS;
+    return {
+      id: r.id,
+      status: r.status,
+      kind: own(KIND_LABEL, r.kind) ? KIND_LABEL[r.kind] : r.kind,
+      app: ruleAppLabel(r.rule_key),
+      label: r.value,
+      example: syntheticExample(r),
+      support,
+      date,
+      meta: date ? `${support} · ${date}` : support,
+      note: typeof r.note === 'string' && r.note.trim() ? r.note.trim() : null,
+      warning: r.warning === true ? WARNING_TEXT : null,
+      threshold: below ? THRESHOLD_TEXT[r.status === 'disetujui' ? 'disetujui' : 'other'] : null,
+      actions: rowActions(r.status, r.users),
+    };
+  });
 }
 
 // Tab "Suara": hanya angka (user berbeda, label berbeda) per aplikasi dan jenis; field lain diabaikan.
@@ -154,17 +180,33 @@ export function voteRows(resp) {
     .map(({ _rank, ...row }) => row);
 }
 
-// Catatan dikirim sesudah dirapikan; panjangnya dihitung per code point seperti server (Python).
+// Spasi yang dibuang `str.strip()` Python (server merapikan catatan SEBELUM batas panjang). Berbeda dari `trim()` JS:
+// U+FEFF tidak dibuang, U+001C–U+001F dan U+0085 dibuang.
+const PY_SPACE = '\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PY_STRIP = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, 'g');
+// Karakter kontrol (server: kategori Cc → 422) dan U+FEFF (tak terlihat; ditolak klien).
+const BAD_NOTE_CHAR = /[\p{Cc}\uFEFF]/u;
+
+// Catatan dikirim sesudah dirapikan seperti server; kosong → null.
 export function notePayload(note) {
   if (typeof note !== 'string') return null;
-  const t = note.trim();
+  const t = note.replace(PY_STRIP, '');
   return t || null;
 }
 
+// Galat catatan sebelum dikirim, atau null. Panjang dihitung per code point seperti server (Python).
 export function noteError(note) {
   const t = notePayload(note);
-  const n = t ? [...t].length : 0;
+  if (!t) return null;
+  if (BAD_NOTE_CHAR.test(t)) return 'Catatan tidak boleh memuat tab, baris baru, atau karakter khusus lain.';
+  const n = [...t].length;
   return n > NOTE_MAX ? `Catatan maksimal ${NOTE_MAX} karakter (sekarang ${n}).` : null;
+}
+
+// Body POST keputusan: catatan yang sudah dirapikan + `from_status` = status baris yang dilihat admin, supaya server
+// menolak (409) bila admin lain sudah memutuskan lebih dulu (review L4a m-2).
+export function decisionBody(row, note) {
+  return { note: notePayload(note), from_status: own(ACTIONS, row?.status) ? row.status : null };
 }
 
 // Teks `detail` server hanya dipakai bila berupa kalimat pendek (bukan JSON/objek).
@@ -191,7 +233,7 @@ export function actionOutcome(action, res) {
   }
   if (status === 404) return { kind: 'conflict', text: 'Aturan tidak ditemukan lagi. Daftar dimuat ulang.', reload: true };
   if (status === 403) return { kind: 'error', text: 'Hanya admin yang bisa memutuskan aturan.', reload: false };
-  if (status === 422) return { kind: 'error', text: 'Catatan tidak diterima (maksimal 200 karakter).', reload: false };
+  if (status === 422) return { kind: 'error', text: 'Catatan tidak diterima.', reload: false };
   if (status === 0) return { kind: 'error', text: 'Koneksi gagal, coba lagi.', reload: false };
   return { kind: 'error', text: `Keputusan belum tersimpan (kode ${status}). Coba lagi.`, reload: false };
 }
@@ -207,6 +249,18 @@ export function pendingBadge(stats, resp) {
 // Server lama tanpa API aturan (stats tanpa `rules_pending`) → bagian tidak dirender.
 export function hasRulesSection(stats) {
   return Number.isSafeInteger(stats?.rules_pending);
+}
+
+// Tab berikutnya untuk tombol panah/Home/End di daftar tab (pola tab WAI-ARIA, melingkar), atau null.
+export function nextTab(current, key) {
+  const keys = RULE_TABS.map(t => t.key);
+  const i = keys.indexOf(current);
+  if (i < 0) return null;
+  if (key === 'ArrowRight') return keys[(i + 1) % keys.length];
+  if (key === 'ArrowLeft') return keys[(i - 1 + keys.length) % keys.length];
+  if (key === 'Home') return keys[0];
+  if (key === 'End') return keys[keys.length - 1];
+  return null;
 }
 
 export function emptyText(tab) {
