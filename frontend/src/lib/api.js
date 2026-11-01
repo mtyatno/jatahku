@@ -1,4 +1,4 @@
-import { saveCache, loadCache } from './localCache';
+import { saveCache, loadCache, clearAllCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
@@ -92,6 +92,7 @@ class ApiClient {
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
+    clearAllCache(); // cache offline (profil, amplop, transaksi, Beranda) — jangan terbaca akun berikutnya
     // Bukti yang dibagikan tapi belum terkirim: dikosongkan hanya saat user sendiri keluar (revoke), dan pindah ke
     // /login menunggu penghapusannya (maks 2 dtk; tanpa ditunggu, navigasi memutusnya). Refresh ditolak
     // (revoke:false): bukti tetap aman sampai login lagi (spec 5b), langsung ke /login. Tidak pernah melempar.
