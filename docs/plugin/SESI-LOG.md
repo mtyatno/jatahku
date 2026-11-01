@@ -4,6 +4,32 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## B3 (lanjutan) · Rilis Beranda registry ke pemilik · 2026-11-01 · pemilik produk + Claude
+
+**Selesai** (status jeda; PR #167, #168 di-merge dan tayang; issue #140 tetap terbuka sampai `*`)
+- `beranda_paritas` di VPS (data produksi): **105 user · ok 105 · beda 0 · crash 0 · lewati 0 · batch p95 231 ms → Gerbang B (angka): LULUS**.
+- Flag `beranda_registry_users` = user_id pemilik. Beranda registry jalan di akun pemilik (`POST /dashboard/data` 200, ±7 kB untuk 14 kartu).
+- Log produksi pertama: `dashboard penyedia core.kpi.jatah/sisa_bebas 154–220 ms` di setiap muat, tanpa `dashboard batch` (batch < 500 ms). Penyebab: kartu inti pertama menanggung muat sumber bersama. #168: peringatan per penyedia hanya untuk kartu plugin; `Sumber` mencatat waktu muat per sumber; `dashboard batch` menyebut tiga sumber terlama. Tes baru di `test_dashboard_registry.py`. Deploy `774c294` terverifikasi.
+
+**Digantung**
+- Banding tampilan otomatis (`scripts/banding_beranda.py`) belum dijalankan di laptop; dicoba di VPS dan gagal (`python` tidak ada, tanpa Chrome/Playwright — memang alat laptop). Pengganti sementara: banding manual `?beranda=lama` vs `?beranda=registry` di HP pemilik.
+- Flag `*` setelah sehari dipakai pemilik tanpa `dashboard batch` / `dashboard sumber … gagal` di `journalctl`. Lalu: Gerbang B lulus, B3 `selesai`, tutup #140 (PR dokumen kecil).
+- Hapus `BerandaLama.jsx` dan `?beranda=` setelah `*` stabil (sesi kecil terpisah).
+
+**Jebakan**
+- Token akses pemilik sempat ditempel di chat dan di shell VPS (perintah `JATAHKU_TOKEN=… python …`). Pemilik diminta logout sesi itu (mencabut `sid` di server) dan menghapus baris dari riwayat shell. Petunjuk alat banding kini memakai `read -s` supaya token tidak masuk riwayat.
+- `scripts/banding_beranda.py` butuh Python dengan Playwright + Chrome: jalankan di laptop, bukan VPS produksi.
+
+**Keputusan kecil**
+- Status B3 `jeda` (bukan `berjalan`): tidak ada pekerjaan kode tersisa; menunggu waktu pakai dan keputusan pemilik menyalakan `*`.
+- Anggaran 150 ms per penyedia hanya untuk kartu plugin, sesuai 01-kajian.md; kartu inti dinilai dari total batch.
+
+**Cara melanjutkan**
+- Pemilik: `journalctl -u jatahku --since today | grep -E "dashboard (batch|sumber)"` kosong → `sudo -u postgres psql jatahku_db -c "UPDATE app_settings SET value = '*' WHERE key = 'beranda_registry_users'"`.
+- Lalu `/sesi-plugin B3` sebentar untuk menandai Gerbang B lulus dan B3 selesai (atau digabung ke PR sesi berikutnya). Jalur ruang: `/sesi-plugin R3`.
+
+---
+
 ## B3 · Verifikasi dan rilis Beranda registry · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status berjalan: alat di PR #167, issue #140 tetap terbuka sampai flag `*`)
