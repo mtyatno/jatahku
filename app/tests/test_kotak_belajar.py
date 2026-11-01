@@ -544,6 +544,54 @@ class DecideTests(DbBase):
         self.assertEqual((await self.decide(rule.id, "setujui")).status, "disetujui")
 
 
+class RecountRaceTests(DbBase):
+    """Review L4a m-9: rekonsiliasi tiap jam menghapus aturan `menunggu` di bawah ambang. Bila penghapusan itu terjadi di
+    antara `select id` dan UPDATE di `recount` (suara baru atau `forget_user` bersamaan), UPDATE mengenai 0 baris:
+    `recount` menganggap aturannya tidak ada (jalur sisip bila suara cukup, selain itu None), tidak pernah melempar."""
+
+    async def racing_recount(self, *new_votes):
+        """`recount` V dengan baris aturannya dihapus tepat sebelum UPDATE (seperti rekonsiliasi yang meng-commit di
+        antaranya). `new_votes` = user yang suaranya ditambahkan di sesi yang sama sebelum menghitung."""
+        async with self.Session() as db:
+            for user, household in new_votes:
+                db.add(ProofRuleVote(kind=V.kind, rule_key=V.rule_key, value=V.value, user_id=user.id,
+                                     household_id=household.id))
+            await db.flush()
+            real, raced = db.execute, []
+
+            async def execute(stmt, *args, **kwargs):
+                if getattr(stmt, "is_update", False) and getattr(getattr(stmt, "table", None), "name", None) == ProofRule.__tablename__:
+                    await real(ProofRule.__table__.delete())
+                    raced.append(True)
+                return await real(stmt, *args, **kwargs)
+
+            with patch.object(db, "execute", execute):
+                rule = await recount(db, V.kind, V.rule_key, V.value)
+            await db.commit()
+        self.assertEqual(raced, [True])
+        return rule
+
+    async def pending_rule_with_one_vote(self):
+        async with self.Session() as db:
+            db.add(ProofRuleVote(kind=V.kind, rule_key=V.rule_key, value=V.value, user_id=self.users[0].id,
+                                 household_id=self.hh[0].id))
+            db.add(ProofRule(kind=V.kind, rule_key=V.rule_key, value=V.value, users=1, households=1, status="menunggu"))
+            await db.commit()
+
+    async def test_second_vote_after_a_racing_delete_creates_the_rule(self):
+        await self.pending_rule_with_one_vote()
+        rule = await self.racing_recount((self.users[1], self.hh[1]))
+        self.assertEqual((rule.users, rule.households, rule.status), (2, 2, "menunggu"))
+        [stored] = await self.rules()
+        self.assertEqual((stored.id, stored.users, stored.status), (rule.id, 2, "menunggu"))
+        self.assertEqual(await self.vote_count(), 2)   # suara user kedua tidak hilang
+
+    async def test_below_the_threshold_after_a_racing_delete_is_no_rule(self):
+        await self.pending_rule_with_one_vote()
+        self.assertIsNone(await self.racing_recount())
+        self.assertEqual((await self.rules(), await self.vote_count()), ([], 1))
+
+
 class ReconcileTests(DbBase):
     """Review L2 M-2: dua suara bersamaan bisa tidak membuat aturan atau menyimpan hitungan lama; rekonsiliasi tiap jam
     menyamakan semuanya dari tabel suara."""

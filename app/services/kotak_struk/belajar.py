@@ -258,14 +258,23 @@ def votes_for(layout: dict | None, document: dict | None, merchant: str | None, 
 async def recount(db: AsyncSession, kind: str, rule_key: str, value: str) -> ProofRule | None:
     """Hitung ulang pendukung satu aturan: `users` = suara (satu per user), `households` = rumah tangga berbeda (NULL
     tidak dihitung). Baris aturan dibuat berstatus `menunggu` saat `users >= RULE_MIN_USERS`; baris yang ada hanya
-    diperbarui hitungannya (status apa pun, juga turun di bawah ambang) dan tidak pernah dihapus. None bila belum ada
-    aturan. Tidak meng-commit."""
+    diperbarui hitungannya (status apa pun, juga turun di bawah ambang) dan tidak pernah dihapus di sini. None bila belum
+    ada aturan. Baris yang terhapus bersamaan (rekonsiliasi) di antara select dan UPDATE dianggap tidak ada: jalur sisip
+    bila suara cukup, selain itu None; tidak pernah melempar karena itu. Tidak meng-commit."""
     users, households = (await db.execute(
         select(func.count(), func.count(distinct(ProofRuleVote.household_id)))
         .where(ProofRuleVote.kind == kind, ProofRuleVote.rule_key == rule_key, ProofRuleVote.value == value)
     )).one()
     match = (ProofRule.kind == kind, ProofRule.rule_key == rule_key, ProofRule.value == value)
     rule_id = (await db.execute(select(ProofRule.id).where(*match))).scalar_one_or_none()
+    if rule_id is not None:
+        updated = await db.execute(update(ProofRule).where(ProofRule.id == rule_id)
+                                   .values(users=users, households=households)
+                                   .execution_options(synchronize_session=False))
+        if updated.rowcount == 0:
+            # Dihapus bersamaan di antara select dan UPDATE (rekonsiliasi tiap jam menghapus aturan `menunggu` di bawah
+            # ambang; review L4a m-9): aturannya dianggap tidak ada.
+            rule_id = None
     if rule_id is None:
         if users < RULE_MIN_USERS:
             return None
@@ -277,11 +286,8 @@ async def recount(db: AsyncSession, kind: str, rule_key: str, value: str) -> Pro
             .on_conflict_do_update(index_elements=["kind", "rule_key", "value"],
                                    set_={"users": users, "households": households})
         )
-    else:
-        await db.execute(update(ProofRule).where(ProofRule.id == rule_id)
-                         .values(users=users, households=households)
-                         .execution_options(synchronize_session=False))
-    return (await db.execute(select(ProofRule).where(*match).execution_options(populate_existing=True))).scalar_one()
+    return (await db.execute(select(ProofRule).where(*match)
+                             .execution_options(populate_existing=True))).scalar_one_or_none()
 
 
 async def record_votes(db: AsyncSession, votes: Iterable[Vote], *, user_id: uuid.UUID,
