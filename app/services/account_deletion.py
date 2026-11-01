@@ -2,14 +2,17 @@
 
 Yang dihapus permanen: baris `users`, sesi login (semua perangkat langsung keluar),
 notifikasi, preferensi, streak, kata kunci amplop, scan struk (termasuk item Kotak
-Struk), order pembayaran, transaksi tertunda, dan foto profil/bukti bayar di disk.
+Struk), order pembayaran, transaksi tertunda, laporan berkala beserta pengaturannya
+(termasuk kata sandi PDF laporan), dan foto profil/bukti bayar di disk.
 Berkas Kotak Struk dari item yang belum selesai tidak dihapus di sini: barisnya ikut
 terhapus, lalu penyapu berkas yatim (scheduler `kotak_maintenance`) menghapus berkasnya.
 
 Household:
 - Hanya user ini anggotanya → household dihapus utuh (amplop, transaksi, pemasukan,
   alokasi, langganan, target, snapshot, cocokkan saldo, merchant rumah tangga dan
-  peta merchant → amplop).
+  peta merchant → amplop). Laporan berkala yang menunjuk household itu tetapi milik
+  user lain (dulu anggota, kini sudah pindah) tidak ikut terhapus: `household_id`-nya
+  dikosongkan, isinya beku dan tetap milik pemiliknya.
 - Ada anggota lain → amplop pribadi user dihapus (beserta baris peta merchant ke
   amplop itu; merchant-nya tetap milik household); catatannya di amplop bersama
   dianonimkan ke user "Mantan anggota" (keterangan diganti, nominal tetap) supaya
@@ -44,7 +47,8 @@ from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
     HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
     Notification, NotificationPreference, PaymentOrder, PendingTransaction, ReceiptLearnVote,
-    ReceiptScan, RecurringTransaction, Transaction, User, UserEnvelopeKeyword, UserStreak,
+    ReceiptScan, RecurringTransaction, Report, ReportSettings, Transaction, User, UserEnvelopeKeyword,
+    UserStreak,
 )
 
 logger = logging.getLogger("jatahku.account_deletion")
@@ -112,6 +116,9 @@ async def _delete_household(db: AsyncSession, hid) -> None:
     await db.execute(delete(Income).where(Income.household_id == hid))
     await db.execute(delete(BalanceCheck).where(BalanceCheck.household_id == hid))
     await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
+    # Laporan berkala menunjuk household (FK SET NULL): laporan mantan anggota tetap ada dan tautannya dilepas
+    # eksplisit, tidak bergantung pada aksi FK. Laporan user ini sendiri dihapus di daftar tingkat user.
+    await db.execute(update(Report).where(Report.household_id == hid).values(household_id=None))
     await db.execute(delete(HouseholdMember).where(HouseholdMember.household_id == hid))
     await db.execute(delete(Household).where(Household.id == hid))
 
@@ -206,7 +213,8 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     await _anonymize_leftovers(db, uid)
 
     for model in (PendingTransaction, Notification, NotificationPreference, UserStreak,
-                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, PaymentOrder, AuthSession):
+                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, PaymentOrder, AuthSession,
+                  Report, ReportSettings):
         await db.execute(delete(model).where(model.user_id == uid))
     # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
     await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))
