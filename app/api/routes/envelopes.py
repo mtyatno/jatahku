@@ -211,6 +211,8 @@ async def update_group(
     """Ganti nama dan/atau jenis grup (field yang tidak dikirim tidak diubah; `"jenis": null`
     mengembalikan ke otomatis). Jenis mengubah jatah harian AI Advisor → cache household dihapus."""
     hid = await _ruang_grup(db, user, group_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
     )
@@ -240,6 +242,8 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _ruang_grup(db, user, group_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Grup tidak ditemukan")
     from sqlalchemy import update
     result = await db.execute(
         select(EnvelopeGroup).where(EnvelopeGroup.id == group_id, EnvelopeGroup.household_id == hid)
@@ -323,6 +327,8 @@ async def update_envelope(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await ruang_amplop(db, user, envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -379,6 +385,8 @@ async def delete_envelope(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await ruang_amplop(db, user, envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == envelope_id,
@@ -469,6 +477,8 @@ async def transfer_between_envelopes(
     Aturan (amplop aktif yang boleh diakses, jumlah ≤ sisa sumber) dan bentuk
     datanya dari app/services/fund_shift.py — sama dengan geser dana di bot."""
     hid = await ruang_amplop_satu(db, user, [from_id, to_id])
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     from app.services.envelope_balance import compute_envelope_summaries
     from app.services.fund_shift import lock_household
     from app.services.fund_shift import record_transfer, transfer_error

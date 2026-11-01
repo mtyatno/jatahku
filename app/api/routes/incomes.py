@@ -86,10 +86,13 @@ async def create_income(
     *,
     hid: RuangAktif,
 ):
-    # R3: ruang pemasukan = ruang amplop alokasinya (semua harus satu ruang, selain itu 400 lintas_ruang);
+    # R3: ruang pemasukan = ruang amplop alokasinya (semua harus satu ruang, selain itu 400 lintas_ruang;
+    # semua amplop di ruang orang lain = 404, sama dengan objek asing lain, kontrak §1);
     # pemasukan tanpa alokasi = objek baru tanpa induk → ruang dari header (`ruang_aktif`, keanggotaan dicek).
     if req.allocations:
-        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations]) or hid
+        hid = await ruang_amplop_satu(db, user, [a.envelope_id for a in req.allocations])
+        if not hid:
+            raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     if not hid:
         raise HTTPException(status_code=400, detail="Belum punya household")
 

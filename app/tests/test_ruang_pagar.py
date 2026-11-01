@@ -71,9 +71,10 @@ class PagarSumberTests(unittest.TestCase):
                     self.assertNotIn(nama, teks, f"{rel}: chat selalu ruang keluarga (ADR-P2)")
 
     def test_tulis_dengan_ruang_aktif_hanya_pengecualian_tercatat(self):
-        """Route non-GET memakai `ruang_tulis` (AGENTS.md aturan 1). `ruang_aktif` di route non-GET hanya
-        boleh untuk POST yang sekadar membaca, atau data milik user/viewer sendiri per ruang — bukan data
-        bersama ruang. Menambah baris di sini butuh alasan (review keamanan PR #166)."""
+        """Sejak R3 route tulis menentukan ruang dari objeknya (lihat `test_setiap_route_tulis_punya_sumber_ruang`).
+        `ruang_aktif` di route non-GET hanya untuk POST yang sekadar membaca, data milik user/viewer sendiri per
+        ruang, atau objek baru tanpa induk (keputusan A, R3). Menambah baris di sini butuh alasan (review
+        keamanan PR #166, #171)."""
         from fastapi.routing import APIRoute
         from app.main import app
         from app.services import ruang
@@ -105,6 +106,72 @@ class PagarSumberTests(unittest.TestCase):
                 if pakai(r.dependant, ruang.ruang_aktif):
                     ditemukan.add((m, r.path))
         self.assertEqual(ditemukan, diizinkan)
+
+    def test_setiap_route_tulis_punya_sumber_ruang(self):
+        """Setiap route non-GET masuk tepat satu kelompok (review keamanan PR #171):
+        - `aktif`: dependency `ruang_aktif` (daftar izin di tes sebelumnya);
+        - `tulis`: dependency `ruang_tulis` (hanya undangan anggota, ruang keluarga);
+        - `objek`: badan handler memanggil pembantu ruang objek (`ruang_objek`, `ruang_amplop`,
+          `ruang_amplop_satu`, `_ruang_*`, `ruang_cek`) — ruang dari baris DB lalu keanggotaan dicek;
+        - `tanpa`: tidak menyentuh data ruang, atau ruangnya ditentukan jalur lain yang tercatat di bawah.
+        Route tulis baru yang tidak masuk satu pun kelompok gagal di sini, jadi tidak bisa lupa menentukan ruang."""
+        import inspect
+        from fastapi.routing import APIRoute
+        from app.main import app
+        from app.services import ruang
+
+        objek = {
+            ("POST", "/balance-check/{check_id}/undo"),
+            ("PATCH", "/envelopes/groups/{group_id}"), ("DELETE", "/envelopes/groups/{group_id}"),
+            ("POST", "/envelopes/transfer"), ("PUT", "/envelopes/{envelope_id}"), ("DELETE", "/envelopes/{envelope_id}"),
+            ("POST", "/goals/"), ("PUT", "/goals/{goal_id}"), ("DELETE", "/goals/{goal_id}"),
+            ("PUT", "/kotak-struk/merchants/{merchant_id}"),
+            ("POST", "/recurring/"), ("PUT", "/recurring/{rec_id}"), ("DELETE", "/recurring/{rec_id}"),
+            ("POST", "/recurring/{rec_id}/mark-paid"), ("POST", "/recurring/{rec_id}/pay"),
+            ("POST", "/recurring/{rec_id}/skip"),
+            ("POST", "/transactions/"), ("POST", "/transactions/batch"), ("DELETE", "/transactions/{txn_id}"),
+            ("POST", "/incomes/"),   # juga `aktif`: dengan alokasi = ruang amplop, tanpa alokasi = header
+        }
+        tulis = {("POST", "/household/invite")}
+        # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,
+        # chat (bot memakai ruang_keluarga, ADR-P2), notifikasi dan pembayaran per user, profil user, webhook.
+        tanpa_awalan = ("/admin/", "/auth/", "/app/errors", "/bot/chat/", "/notifications/", "/payment/", "/user/",
+                        "/webhook/")
+        tanpa = {
+            ("POST", "/household/join"),                       # kode undangan; hanya ruang keluarga (review #166)
+            ("POST", "/kotak-struk/"),                         # unggah bukti: ruang keluarga di intake (R7)
+            ("POST", "/kotak-struk/{item_id}/saran"),          # item milik user (`_owned_item`)
+            ("POST", "/kotak-struk/{item_id}/lewati"),         # item milik user (`_owned_item`)
+            ("POST", "/transactions/scan-receipt"),            # baca struk lewat Kotak Struk (ruang keluarga, R7)
+            ("POST", "/transactions/scan-receipt/{scan_id}/feedback"),  # scan milik user
+            ("POST", "/transactions/transcribe"),              # suara → teks, tanpa data ruang
+            ("POST", "/snapshots/run"), ("POST", "/snapshots/daily-summary"),        # admin
+            ("POST", "/snapshots/weekly-summary"), ("POST", "/snapshots/process-recurring"),  # admin
+        }
+        pembantu = re.compile(r"\b(ruang_objek|ruang_amplop|ruang_amplop_satu|_ruang_\w+|ruang_cek)\(")
+
+        def pakai(dependant, fn):
+            return any(d.call is fn or pakai(d, fn) for d in dependant.dependencies)
+
+        tanpa_kelompok, objek_tanpa_pembantu = [], []
+        for r in app.routes:
+            if not isinstance(r, APIRoute):
+                continue
+            for m in r.methods - {"GET", "HEAD"}:
+                kunci = (m, r.path)
+                if kunci in objek:
+                    if not pembantu.search(inspect.getsource(r.endpoint)):
+                        objek_tanpa_pembantu.append(kunci)
+                    continue
+                if pakai(r.dependant, ruang.ruang_aktif) or pakai(r.dependant, ruang.ruang_tulis):
+                    if pakai(r.dependant, ruang.ruang_tulis) and kunci not in tulis:
+                        tanpa_kelompok.append(kunci)
+                    continue
+                if kunci in tanpa or r.path.startswith(tanpa_awalan) and r.path != "/user/reset":
+                    continue
+                tanpa_kelompok.append(kunci)
+        self.assertEqual(objek_tanpa_pembantu, [], "route 'objek' tanpa pembantu ruang objek")
+        self.assertEqual(sorted(tanpa_kelompok), [], "route tulis tanpa sumber ruang yang tercatat")
 
     def test_route_ber_ruang_memakai_parameter_keyword_only(self):
         # `hid=Depends(...)` dengan nilai bawaan membuat pemanggil langsung meneruskan objek Depends.

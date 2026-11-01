@@ -294,8 +294,9 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
             elif body is not None:
                 kw["json"] = body
             r = await self.client.request(method.upper(), path, **kw)
+            # Kontrak §1: objek di ruang orang lain = 404 biasa, tanpa membocorkan keberadaannya (review PR #171).
             # 422 berarti permintaan tidak sampai ke pemeriksaan ruang: tesnya yang salah, bukan bukti aman.
-            self.assertIn(r.status_code, (400, 403, 404), f"{method} {path} {headers}: {r.status_code} {r.text[:200]}")
+            self.assertEqual(r.status_code, 404, f"{method} {path} {headers}: {r.status_code} {r.text[:200]}")
 
     async def _utuh(self, ids, amplop):
         from sqlalchemy import select
@@ -426,23 +427,28 @@ class RuangGerbangTests(unittest.IsolatedAsyncioTestCase):
         await self._beri_ruang_usaha()
         async with self.Session() as db:
             await db.execute(update(User).where(User.id == self.me.id).values(plan="basic"))
-            for i in range(50):
+            for i in range(48):              # + 1 kopi rumah dari fixture = 49
                 db.add(Transaction(envelope_id=self.id_rumah["env"], user_id=self.me.id, amount=D("1"),
                                    description=f"isi {i}", transaction_date=_date.today()))
             await db.commit()
             self.me = await db.get(User, self.me.id)
+        r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_rumah["env"]), "amount": "1",
+                                                      "description": "isi terakhir"})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertTrue(r.json().get("quota_notice"), r.text)      # input ke-50 ruang keluarga: kuota kini habis
         r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_rumah["env"]), "amount": "1",
                                                       "description": "lewat kuota"})
         self.assertEqual(r.status_code, 403, r.text)               # kuota Basic ruang keluarga habis
         r = await self._req("POST", "/transactions/", {"envelope_id": str(self.id_usaha["env"]), "amount": "1",
                                                       "description": "jualan"})
         self.assertEqual(r.status_code, 201, r.text)               # ruang usaha tidak memakai kuota Basic
+        self.assertIsNone(r.json().get("quota_notice"), r.text)    # ...dan tidak diberi peringatan kuota (review #171)
         for i in range(6):                                         # batas 6 amplop Basic tidak berlaku di ruang usaha
             r = await self._req("POST", "/envelopes/", {"name": f"Usaha {i}", "budget_amount": "100000"},
                                 header=self.usaha_id)
             self.assertEqual(r.status_code, 201, r.text)
         prof = (await self._req("GET", "/user/profile")).json()
-        self.assertEqual(prof["usage"]["txn_this_month"], 51)      # 50 isi + 1 kopi rumah; transaksi usaha tidak dihitung
+        self.assertEqual(prof["usage"]["txn_this_month"], 50)      # 48 isi + kopi rumah + isi terakhir; usaha tidak dihitung
 
     # ── gabung akun: ruang yang dipertahankan tidak boleh dari body sembarang (review PR #166) ──
     async def _akun_bot(self):

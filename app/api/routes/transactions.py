@@ -153,13 +153,14 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db, after=None) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None, *, household_id) -> TransactionCreateResponse:
     """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
-    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu)."""
+    dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu),
+    untuk ruang transaksinya (`household_id`): catatan di ruang usaha tidak memakai kuota Basic (ADR-P13)."""
     out = TransactionCreateResponse.model_validate(txn)
     if after is not None:
         await after()
-    out.quota_notice = await quota_notice_after_input(user, db)
+    out.quota_notice = await quota_notice_after_input(user, db, household_id=household_id)
     return out
 
 
@@ -229,14 +230,16 @@ async def create_transaction(
             if req.receipt_item_id:
                 async def heal():
                     await heal_recorded(db, user, req.receipt_item_id, existing.id, existing.envelope_id)
-            return await _created(existing, user, db, after=heal)  # sudah tercatat sebelumnya (kirim ulang)
+            return await _created(existing, user, db, after=heal, household_id=hid)  # sudah tercatat sebelumnya (kirim ulang)
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
         if receipt_error:
             raise HTTPException(status_code=409, detail=receipt_error)
-    # Verify envelope belongs to user's household
-
+    # Verify envelope belongs to user's household. Urutan tetap (spec 5d): idempotensi -> struk -> amplop, jadi
+    # 404 amplop asing/tanpa ruang dicek di sini, eksplisit, bukan lewat `household_id IS NULL` (review PR #171).
+    if not hid:
+        raise HTTPException(status_code=404, detail="Envelope not found")
     result = await db.execute(
         select(Envelope).where(
             Envelope.id == req.envelope_id,
@@ -309,7 +312,7 @@ async def create_transaction(
     async def after():
         await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
                            description=txn.description)
-    return await _created(txn, user, db, after=after)
+    return await _created(txn, user, db, after=after, household_id=hid)
 
 
 async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID):

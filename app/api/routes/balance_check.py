@@ -83,6 +83,8 @@ async def balance_check_undo(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await svc.ruang_cek(db, user, check_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Penyesuaian tidak ditemukan")
     try:
         return await svc.undo_balance_check(user, db, check_id, household_id=hid)
     except svc.BalanceCheckError as e:

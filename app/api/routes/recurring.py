@@ -129,6 +129,8 @@ async def create_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await ruang_amplop(db, user, req.envelope_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
     env_result = await db.execute(
         select(Envelope).where(
             Envelope.id == req.envelope_id,
@@ -174,6 +176,8 @@ async def update_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Tidak ditemukan")
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
@@ -248,6 +252,8 @@ async def pay_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
@@ -271,6 +277,8 @@ async def skip_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     rec.next_run = _next_date(rec.next_run, rec.frequency)
@@ -287,6 +295,8 @@ async def mark_recurring_paid(
     """Tandai lunas (AI Advisor DAT-06): tagihan sudah dibayar lewat catat biasa, jadi
     `next_run` dimajukan tanpa transaksi baru. Jendela bayar sama dengan Bayar/Lewati."""
     hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Langganan tidak ditemukan")
     rec = await _resolve_rec(rec_id, user, db, hid)
     _ensure_payable(rec, user)
     prev = rec.next_run
@@ -344,6 +354,8 @@ async def delete_recurring(
     db: AsyncSession = Depends(get_db),
 ):
     hid = await _ruang_langganan(db, user, rec_id)
+    if not hid:
+        raise HTTPException(status_code=404, detail="Tidak ditemukan")
     result = await db.execute(
         select(RecurringTransaction)
         .join(Envelope, RecurringTransaction.envelope_id == Envelope.id)
