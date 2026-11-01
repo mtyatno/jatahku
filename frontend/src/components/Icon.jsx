@@ -20,6 +20,8 @@ import {
   TShirt, Heartbeat, GraduationCap, BookOpen, CreditCard, FilmSlate,
   GameController, Gift, HandHeart, DeviceMobile, Lifebuoy, Folder,
   Package, Baby, PawPrint, Barbell, Airplane,
+  // ruang (Plugin R4)
+  Storefront,
 } from '@phosphor-icons/react';
 
 const DEFAULT_WEIGHT = 'duotone';
@@ -41,6 +43,8 @@ const UI = {
   moon: Moon,
   chevron: CaretDown,
   plus: Plus,
+  home: House,        // ruang keluarga (Plugin R4)
+  store: Storefront,   // ruang usaha (Plugin R4)
   close: X,
   calendar: CalendarBlank,
   transfer: ArrowsLeftRight,

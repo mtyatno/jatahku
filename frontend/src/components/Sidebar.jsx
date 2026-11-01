@@ -62,7 +62,7 @@ function Leaderboard({ members }) {
   );
 }
 
-export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, mode, onToggleMode }) {
+export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, mode, onToggleMode, ruangSlot = null }) {
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 flex-col px-4 overflow-hidden"
       style={{
@@ -72,6 +72,9 @@ export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, m
       <NavLink to="/" className="px-3 font-display text-[26px] leading-none font-bold tracking-tight" style={{ color: 'var(--text)', marginBottom: 'clamp(14px, 3.4vh, 32px)' }} aria-label="Jatahku — Beranda">
         jatahku<span style={{ color: 'var(--brand-400)' }}>.</span>
       </NavLink>
+
+      {/* Pemilih ruang (Plugin R4, desain A2 butir 1): di bawah logo, hanya bila user punya ruang lain. */}
+      {ruangSlot && <div style={{ marginTop: 'calc(-1 * clamp(4px, 1.6vh, 16px))', marginBottom: 'clamp(10px, 2.4vh, 22px)' }}>{ruangSlot}</div>}
 
       <div role="navigation" aria-label="Menu utama" className="flex flex-col gap-0.5">
         {items.map(item => (

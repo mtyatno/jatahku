@@ -14,6 +14,7 @@ import ChatPanel from './ChatPanel';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import PlanSheet from './PlanSheet';
 import Sidebar, { SIDEBAR_WIDTH } from './Sidebar';
+import RuangPicker from './RuangPicker';
 import { CreateModal } from '../pages/Envelopes';
 import { RecurringModal } from '../pages/Langganan';
 import { api } from '../lib/api';
@@ -25,6 +26,7 @@ import { Icon, EnvelopeIcon } from './Icon';
 import UpdateRequired from './UpdateRequired';
 import { AppConfigProvider, useAppConfigLoader } from '../hooks/useAppConfig';
 import { isUpdateRequired } from '../lib/appConfig';
+import { chatDiRuang, getRuangAktif, pilihanRuang } from '../lib/ruangAktif';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -364,8 +366,12 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const appConfig = useAppConfigLoader();
+  // Ruang (Plugin R4): daftar dari `GET /ruang`; pilihan tersimpan di perangkat (`lib/ruangAktif.js`).
+  const [ruangDaftar, setRuangDaftar] = useState(null);
+  const ruang = pilihanRuang(ruangDaftar, getRuangAktif());
+  const chat = chatDiRuang(ruang.aktif);   // ADR-P16: chat selalu ruang keluarga
 
-  const openChat = () => { setFabMenu(false); setChatMounted(true); setChatOpen(true); };
+  const openChat = () => { if (!chat.tampil) return; setFabMenu(false); setChatMounted(true); setChatOpen(true); };
   const closeChat = useCallback(() => setChatOpen(false), []);
 
   useEffect(() => {
@@ -493,6 +499,11 @@ export default function Layout() {
     return () => window.removeEventListener('jatahku:open-action', onOpen);
   }, [navigate, showNotice]);
 
+  useEffect(() => {
+    if (!user) return;
+    api.daftarRuang().then(({ ok, data }) => { if (ok && data) setRuangDaftar(data); });
+  }, [user]);
+
   // Badge Langganan (telat + belum bayar periode ini) dan Papan disiplin untuk sidebar.
   useEffect(() => {
     if (!user) return undefined;
@@ -576,7 +587,8 @@ export default function Layout() {
     <AppConfigProvider value={appConfig}>
     <div className="min-h-screen bg-page">
       <Sidebar items={sidebarItems} langgananBadge={langgananBadge} leaderboard={leaderboard}
-        isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode} />
+        isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode}
+        ruangSlot={ruang.tampil ? <RuangPicker pilihan={ruang} /> : null} />
 
       <div className="lg:pl-[var(--sidebar-w)]" style={{ '--sidebar-w': `${SIDEBAR_WIDTH}px` }}>
       {/* Top bar layar lebar: sapaan + slot halaman (mis. periode & Laporan di Beranda) + chat, notifikasi, Catat.
@@ -589,11 +601,15 @@ export default function Layout() {
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div ref={setTopbarSlot} className="flex items-center gap-3" />
-          <button type="button" onClick={openChat} className={squareBtn}
-            style={chatOpen ? { ...squareStyle, color: 'var(--brand-600)' } : squareStyle}
-            title="Chat bot" aria-label="Buka chat bot">
-            <Icon name="chat" size={21} weight="regular" />
-          </button>
+          {chat.tampil && (
+            <button type="button" onClick={openChat} className={chat.label ? `${squareBtn} w-auto px-3 gap-2` : squareBtn}
+              style={chatOpen ? { ...squareStyle, color: 'var(--brand-600)' } : squareStyle}
+              title={chat.label ? `Chat bot · ${chat.label}` : 'Chat bot'}
+              aria-label={chat.label ? `Buka chat bot (${chat.label})` : 'Buka chat bot'}>
+              <Icon name="chat" size={21} weight="regular" />
+              {chat.label && <span className="text-[13px] font-semibold whitespace-nowrap">{chat.label}</span>}
+            </button>
+          )}
           <div className={`${squareBtn} [&>div>button]:p-2`} style={squareStyle}>
             <NotificationBell />
           </div>
@@ -627,22 +643,28 @@ export default function Layout() {
 
       <header className="lg:hidden bg-white/80 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <NavLink to="/" className="font-display text-xl font-bold text-brand-600">
-              Jatah<span className="text-brand-400">ku</span>
-            </NavLink>
+          <div className="flex items-center gap-8 min-w-0">
+            {ruang.tampil ? (
+              <RuangPicker pilihan={ruang} variant="header" />
+            ) : (
+              <NavLink to="/" className="font-display text-xl font-bold text-brand-600">
+                Jatah<span className="text-brand-400">ku</span>
+              </NavLink>
+            )}
           </div>
 
           {/* Notifications + Profile */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
+          {chat.tampil && (
           <button
             onClick={openChat}
             className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${chatOpen ? 'bg-brand-50 text-brand-600' : 'text-gray-500 hover:bg-gray-100'}`}
-            title="Chat bot"
-            aria-label="Buka chat bot"
+            title={chat.label ? `Chat bot · ${chat.label}` : 'Chat bot'}
+            aria-label={chat.label ? `Buka chat bot (${chat.label})` : 'Buka chat bot'}
           >
             <Icon name="chat" size={19} />
           </button>
+          )}
           <NotificationBell />
           <button
             onClick={toggleMode}
@@ -718,12 +740,12 @@ export default function Layout() {
       <div className="lg:hidden fixed bottom-24 inset-x-0 pointer-events-none z-50">
         <div className="max-w-6xl mx-auto px-4 flex justify-end items-center gap-3">
           {/* Mobile: chat sekali ketuk, di jangkauan jempol di samping FAB */}
-          {!fabMenu && (
+          {!fabMenu && chat.tampil && (
             <button
               onClick={openChat}
               className="md:hidden pointer-events-auto w-12 h-12 rounded-2xl bg-white border border-brand-200 text-brand-600 shadow-lg flex items-center justify-center transition-all active:scale-95"
-              title="Chat bot"
-              aria-label="Buka chat bot"
+              title={chat.label ? `Chat bot · ${chat.label}` : 'Chat bot'}
+              aria-label={chat.label ? `Buka chat bot (${chat.label})` : 'Buka chat bot'}
             >
               <Icon name="chat" size={24} weight="fill" />
             </button>
@@ -756,7 +778,7 @@ export default function Layout() {
           </div>
         </div>
       </div>
-      {chatMounted && <ChatPanel open={chatOpen} onClose={closeChat} draft={chatDraftState} />}
+      {chatMounted && chat.tampil && <ChatPanel open={chatOpen} onClose={closeChat} draft={chatDraftState} ruangLabel={chat.label} />}
       {planAction && (
         <PlanSheet kebutuhan={planAction.kebutuhan} title={planAction.title} onClose={() => setPlanAction(null)}
           onIncome={amt => { setPlanAction(null); setActionPayload(incomePrefill({ jumlah: amt })); setActionSeq(n => n + 1); setFabAction('income'); }} />
