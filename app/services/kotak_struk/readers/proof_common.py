@@ -1187,3 +1187,9 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
         return False
     totals = _total_amounts(lines, total_at)
     return any(_is_payment_line_for(line, totals) for line in lines[total_at + 1:])
+
+
+# Nama publik untuk modul lain (kotak_struk/kerangka.py, tes impornya di test_kotak_kerangka): jangan dihapus atau
+# diganti nama tanpa memperbarui pemakainya.
+classify_status = _classify
+STATUS_TITLE = _STATUS_TITLE

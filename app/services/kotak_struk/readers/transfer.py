@@ -148,3 +148,8 @@ class TransferReader:
 
     def checks(self, parsed: Parsed, ctx: ParseContext) -> list[Check]:
         return []   # cek silang bersama (nominal, status, tanggal, arah uang) ada di checks.py
+
+
+# Nama publik untuk modul lain (kotak_struk/kerangka.py): jangan dihapus atau diganti nama tanpa memperbarui pemakainya.
+TOP_UP = _TOP_UP
+INCOMING = _INCOMING

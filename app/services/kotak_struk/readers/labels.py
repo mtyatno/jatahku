@@ -135,3 +135,7 @@ def find_datetime(lines: list[str]) -> datetime | None:
         if parsed:
             return parsed
     return None
+
+
+# Nama publik untuk modul lain (kotak_struk/kerangka.py): jangan dihapus atau diganti nama tanpa memperbarui pemakainya.
+find_date = _find_date
