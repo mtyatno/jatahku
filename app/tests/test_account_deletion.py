@@ -26,11 +26,13 @@ from app.api.routes import auth as auth_route, user_settings
 from app.core.database import Base, get_db
 from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, Household, HouseholdMember, HouseholdMerchant,
-    HouseholdRole, Income, MerchantEnvelopeMap, Notification, NotificationPreference, PaymentOrder,
+    HouseholdRole, Income, IncomeKind, MerchantEnvelopeMap, Notification, NotificationPreference, PaymentOrder,
     PendingTransaction, RecurringTransaction, Transaction, User, UserStreak,
 )
 from app.services import account_deletion
 from app.services.account_deletion import FORMER_MEMBER_ID
+from app.services.envelope_balance import compute_envelope_summaries
+from app.services.fund_shift import record_transfer
 
 configure_mappers()
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -315,6 +317,160 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
             await self.client.delete("/user/account", headers=self.auth(await self.login(email)))
         self.assertEqual(await self.count(User, User.name == "Mantan anggota"), 1)
         self.assertEqual(await self.count(Transaction, Transaction.user_id == FORMER_MEMBER_ID), 2)
+
+    # ── pemasukan & geser dana yang masih beralokasi di amplop bersama ─────
+    # Income hanya boleh dibuang bila TIDAK punya alokasi lagi. Geser dana = Income bernilai 0 dengan alokasi
+    # −x/+x; `allocations.income_id` NOT NULL, jadi menghapus Income yang alokasinya tersisa membuat flush gagal
+    # dan seluruh hapus akun dibatalkan (data user tetap tersimpan, padahal ia minta dihapus).
+    async def transfer_household(self):
+        """Owner Andi + anggota Sari; dua amplop bersama (Dapur 500rb, Listrik 100rb, dari gaji Andi) dan amplop
+        pribadi Sari. Mengembalikan (andi, sari, hid, dapur, listrik, amplop pribadi Sari)."""
+        now = datetime.now(timezone.utc)
+        andi, hid, _ = await self.add_user("Andi", "andi@example.com", joined=now - timedelta(days=30))
+        sari, _, sari_env = await self.add_user("Sari", "sari@example.com", household=hid,
+                                                role=HouseholdRole.member, joined=now - timedelta(days=5))
+        async with self.Session() as db:
+            dapur, listrik = Envelope(household_id=hid, name="Dapur"), Envelope(household_id=hid, name="Listrik")
+            db.add_all([dapur, listrik])
+            await db.flush()
+            gaji = Income(household_id=hid, user_id=andi, amount=Decimal("600000"), description="gaji Andi")
+            db.add(gaji)
+            await db.flush()
+            db.add_all([
+                Allocation(income_id=gaji.id, envelope_id=dapur.id, amount=Decimal("500000")),
+                Allocation(income_id=gaji.id, envelope_id=listrik.id, amount=Decimal("100000")),
+            ])
+            await db.commit()
+            return andi, sari, hid, dapur.id, listrik.id, sari_env
+
+    async def shift(self, user_id, hid, from_env, to_env, amount):
+        """Geser dana lewat `fund_shift.record_transfer`, bentuk yang sama dengan POST /envelopes/transfer
+        (Income bernilai 0, alokasi −x di sumber dan +x di tujuan). Mengembalikan id Income-nya."""
+        async with self.Session() as db:
+            income = record_transfer(db, hid, user_id, await db.get(Envelope, from_env),
+                                     await db.get(Envelope, to_env), Decimal(amount))
+            await db.commit()
+            return income.id
+
+    async def shared_balances(self, hid, viewer):
+        """{id amplop bersama: (dialokasikan, sisa)} yang dilihat `viewer` (rumus saldo dashboard sungguhan)."""
+        async with self.Session() as db:
+            rows = await compute_envelope_summaries(await db.get(User, viewer), db, household_id=hid)
+        return {r["id"]: (r["allocated"], r["remaining"]) for r in rows if not r["is_personal"]}
+
+    async def allocations_of(self, income_id):
+        async with self.Session() as db:
+            rows = (await db.execute(select(Allocation).where(Allocation.income_id == income_id))).scalars().all()
+        return [(a.envelope_id, a.amount) for a in rows]
+
+    async def delete_via_api(self, email):
+        r = await self.client.delete("/user/account", headers=self.auth(await self.login(email)))
+        self.assertEqual((r.status_code, r.json()), (200, {"status": "deleted"}))
+
+    def assertAnonymizedTransfer(self, income):
+        self.assertEqual(
+            (income.user_id, income.description, income.amount, income.kind),
+            (FORMER_MEMBER_ID, account_deletion.ANON_INCOME_DESC, Decimal("0"), IncomeKind.TRANSFER),
+        )
+
+    async def test_member_deletion_keeps_transfer_between_shared_envelopes(self):
+        # Dapur → Listrik, keduanya bersama: jumlah alokasi 0, tapi alokasinya milik amplop yang tetap ada.
+        # Income-nya dianonimkan (bukan dihapus), alokasinya tidak disentuh, saldo Dapur & Listrik tetap.
+        andi, sari, hid, dapur, listrik, _ = await self.transfer_household()
+        transfer = await self.shift(sari, hid, dapur, listrik, "150000")
+        before = await self.shared_balances(hid, andi)
+        self.assertEqual(before, {dapur: (Decimal("350000"), Decimal("350000")),
+                                  listrik: (Decimal("250000"), Decimal("250000"))})
+
+        await self.delete_via_api("sari@example.com")
+
+        self.assertIsNone(await self.get(User, sari))
+        self.assertAnonymizedTransfer(await self.get(Income, transfer))
+        self.assertCountEqual(await self.allocations_of(transfer),
+                              [(dapur, Decimal("-150000")), (listrik, Decimal("150000"))])
+        self.assertEqual(await self.shared_balances(hid, andi), before)
+        # Data Andi dan household-nya tidak tersentuh.
+        self.assertIsNotNone(await self.get(Household, hid))
+        self.assertEqual(await self.count(Income, Income.user_id == andi), 1)
+
+    async def test_member_deletion_keeps_transfer_whose_personal_side_is_deleted(self):
+        # Dapur → amplop pribadi Sari: amplop pribadi ikut terhapus beserta alokasi +x-nya, tersisa hanya sisi −x di
+        # Dapur (jumlah negatif). Income-nya tetap dianonimkan dan tetap bernilai 0 (bukan −x, supaya tidak dihitung
+        # sebagai pemasukan negatif), alokasi −x tidak disentuh, saldo Dapur tetap.
+        andi, sari, hid, dapur, _, sari_env = await self.transfer_household()
+        transfer = await self.shift(sari, hid, dapur, sari_env, "120000")
+        before = await self.shared_balances(hid, andi)
+        self.assertEqual(before[dapur], (Decimal("380000"), Decimal("380000")))
+
+        await self.delete_via_api("sari@example.com")
+
+        self.assertIsNone(await self.get(User, sari))
+        self.assertIsNone(await self.get(Envelope, sari_env))
+        self.assertAnonymizedTransfer(await self.get(Income, transfer))
+        self.assertEqual(await self.allocations_of(transfer), [(dapur, Decimal("-120000"))])
+        self.assertEqual(await self.shared_balances(hid, andi), before)
+
+    async def test_member_deletion_keeps_transfer_whose_source_is_deleted_personal_envelope(self):
+        # Kebalikannya: amplop pribadi Sari → Dapur. Tersisa hanya sisi +x (jumlah positif); perilaku lama tidak berubah,
+        # nominal Income tetap 0 (min(0, x)) dan saldo Dapur tetap.
+        andi, sari, hid, dapur, _, sari_env = await self.transfer_household()
+        transfer = await self.shift(sari, hid, sari_env, dapur, "70000")
+        before = await self.shared_balances(hid, andi)
+        self.assertEqual(before[dapur], (Decimal("570000"), Decimal("570000")))
+
+        await self.delete_via_api("sari@example.com")
+
+        self.assertIsNone(await self.get(Envelope, sari_env))
+        self.assertAnonymizedTransfer(await self.get(Income, transfer))
+        self.assertEqual(await self.allocations_of(transfer), [(dapur, Decimal("70000"))])
+        self.assertEqual(await self.shared_balances(hid, andi), before)
+
+    async def test_member_deletion_drops_income_without_remaining_allocations(self):
+        # Pemasukan yang seluruhnya masuk amplop pribadi (ikut terhapus) dan yang tidak pernah dialokasikan:
+        # tidak ada lagi yang bergantung padanya, jadi dibuang (bukan dianonimkan jadi baris kosong).
+        _, sari, hid, _, _, sari_env = await self.transfer_household()
+        async with self.Session() as db:
+            all_personal = Income(household_id=hid, user_id=sari, amount=Decimal("800000"), description="gaji Sari")
+            unallocated = Income(household_id=hid, user_id=sari, amount=Decimal("50000"), description="belum dialokasikan")
+            db.add_all([all_personal, unallocated])
+            await db.flush()
+            db.add(Allocation(income_id=all_personal.id, envelope_id=sari_env, amount=Decimal("800000")))
+            await db.commit()
+            ids = [all_personal.id, unallocated.id]
+
+        await self.delete_via_api("sari@example.com")
+
+        self.assertIsNone(await self.get(User, sari))
+        for income_id in ids:
+            self.assertIsNone(await self.get(Income, income_id))
+        self.assertEqual(await self.count(Income, Income.user_id.in_([sari, FORMER_MEMBER_ID])), 0)
+        self.assertEqual(await self.count(Allocation, Allocation.income_id.in_(ids)), 0)
+
+    async def test_member_deletion_caps_income_to_amount_still_allocated_to_shared_envelopes(self):
+        # Gaji Sari 1jt: 400rb Dapur + 250rb Listrik (bersama), 100rb amplop pribadi (ikut terhapus), 250rb belum
+        # dialokasikan. Nominalnya dipangkas ke 650rb yang masih teralokasi, kedua alokasi bersama tetap.
+        andi, sari, hid, dapur, listrik, sari_env = await self.transfer_household()
+        async with self.Session() as db:
+            gaji = Income(household_id=hid, user_id=sari, amount=Decimal("1000000"), description="gaji Sari")
+            db.add(gaji)
+            await db.flush()
+            db.add_all([
+                Allocation(income_id=gaji.id, envelope_id=dapur, amount=Decimal("400000")),
+                Allocation(income_id=gaji.id, envelope_id=listrik, amount=Decimal("250000")),
+                Allocation(income_id=gaji.id, envelope_id=sari_env, amount=Decimal("100000")),
+            ])
+            await db.commit()
+            gaji_id = gaji.id
+        before = await self.shared_balances(hid, andi)
+
+        await self.delete_via_api("sari@example.com")
+
+        income = await self.get(Income, gaji_id)
+        self.assertEqual((income.user_id, income.description, income.amount, income.kind),
+                         (FORMER_MEMBER_ID, account_deletion.ANON_INCOME_DESC, Decimal("650000"), IncomeKind.PEMASUKAN))
+        self.assertCountEqual(await self.allocations_of(gaji_id),
+                              [(dapur, Decimal("400000")), (listrik, Decimal("250000"))])
+        self.assertEqual(await self.shared_balances(hid, andi), before)
 
     # ── peta merchant Kotak Struk ─────────────────────────────────────────
     async def add_merchant(self, hid, key, maps):

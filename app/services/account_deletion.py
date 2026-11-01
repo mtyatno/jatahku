@@ -15,8 +15,14 @@ Household:
   dianonimkan ke user "Mantan anggota" (keterangan diganti, nominal tetap) supaya
   saldo bersama tidak berubah (kajian, keputusan pemilik produk #5). Pemasukan user
   dipangkas ke jumlah yang masih teralokasi ke amplop bersama, jadi uangnya tidak
-  muncul sebagai "belum dialokasikan" di household. Peran owner pindah ke anggota
-  tertua. Peta merchant di amplop bersama tetap, `last_user_id` user ini dikosongkan.
+  muncul sebagai "belum dialokasikan" di household. Pemasukan yang masih punya
+  alokasi tidak pernah dihapus, termasuk geser dana antar-amplop (Income bernilai 0,
+  alokasi −x/+x): alokasinya milik amplop bersama, `allocations.income_id` NOT NULL
+  sehingga menghapus Income-nya menggagalkan seluruh hapus akun, dan menghapus
+  alokasinya menggeser saldo anggota lain. Income seperti itu dianonimkan dengan
+  nominal tetap (0); hanya pemasukan tanpa alokasi sama sekali yang dibuang. Peran
+  owner pindah ke anggota tertua. Peta merchant di amplop bersama tetap,
+  `last_user_id` user ini dikosongkan.
 
 "Mantan anggota" satu baris `users` bersama (FORMER_MEMBER_ID), bukan anggota household
 mana pun dan tidak bisa login. Email berawalan `deleted_` supaya scheduler, admin, dan
@@ -129,7 +135,15 @@ async def _leave_shared_household(db: AsyncSession, user: User, membership: Hous
 
 
 async def _anonymize_leftovers(db: AsyncSession, user_id) -> None:
-    """Catatan user yang masih tersisa (di amplop/household bersama) → Mantan anggota."""
+    """Catatan user yang masih tersisa (di amplop/household bersama) → Mantan anggota.
+
+    Pemasukan dibuang HANYA bila sudah tidak punya alokasi sama sekali. Yang masih beralokasi
+    dianonimkan, berapa pun jumlah alokasinya: geser dana antar-amplop bersama adalah Income
+    bernilai 0 dengan alokasi −x/+x (jumlah 0, atau negatif bila sisi +x ada di amplop pribadi
+    yang ikut terhapus). Alokasi itu milik amplop bersama, dan `allocations.income_id` NOT NULL:
+    `db.delete(income)` akan meng-UPDATE-nya jadi NULL, flush gagal (IntegrityError), seluruh
+    hapus akun dibatalkan dan data user tetap tersimpan. Menghapus alokasinya malah mengubah
+    saldo amplop bersama anggota lain, jadi bukan jalan keluarnya."""
     await db.execute(delete(Transaction).where(Transaction.user_id == user_id, Transaction.is_deleted.is_(True)))
     has_txn = (await db.execute(select(func.count(Transaction.id)).where(Transaction.user_id == user_id))).scalar()
     incomes = (await db.execute(select(Income).where(Income.user_id == user_id))).scalars().all()
@@ -144,14 +158,18 @@ async def _anonymize_leftovers(db: AsyncSession, user_id) -> None:
     )
     await db.execute(update(BalanceCheck).where(BalanceCheck.user_id == user_id).values(user_id=former))
     for inc in incomes:
-        allocated = (await db.execute(
-            select(func.coalesce(func.sum(Allocation.amount), 0)).where(Allocation.income_id == inc.id)
-        )).scalar()
-        allocated = Decimal(str(allocated or 0))
-        if allocated <= 0:
+        n_alloc, allocated = (await db.execute(
+            select(func.count(Allocation.id), func.coalesce(func.sum(Allocation.amount), 0))
+            .where(Allocation.income_id == inc.id)
+        )).one()
+        if not n_alloc:  # tidak ada yang bergantung padanya lagi (mis. seluruhnya ke amplop pribadi)
             await db.delete(inc)
             continue
-        inc.amount = min(inc.amount, allocated)
+        allocated = Decimal(str(allocated or 0))
+        if allocated > 0:
+            inc.amount = min(inc.amount, allocated)
+        # allocated <= 0 (geser dana): nominal dibiarkan apa adanya (0). Riwayat mengenali transfer dari
+        # amount == 0 dan total pemasukan hanya menghitung amount > 0; nominal negatif merusak keduanya.
         inc.user_id = former
         inc.description = ANON_INCOME_DESC
 
