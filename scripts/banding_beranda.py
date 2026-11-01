@@ -6,8 +6,8 @@ per piksel. Data dan izin tetap dari server: alat ini hanya membaca Beranda akun
 
 Dijalankan di laptop (bukan VPS), butuh Python dengan `playwright` dan `pillow`, plus Chrome:
     pip install playwright pillow && python -m playwright install chromium   # atau --chrome /path
-    JATAHKU_TOKEN=<isi localStorage 'jatahku_token' dari jatahku.com yang sedang login> \\
-        python scripts/banding_beranda.py --out /tmp/banding
+    read -s JATAHKU_TOKEN && export JATAHKU_TOKEN   # tempel localStorage 'jatahku_token'; tidak masuk riwayat
+    python scripts/banding_beranda.py --out /tmp/banding && unset JATAHKU_TOKEN
 
 Token akses hanya dibaca dari env, tidak pernah ditulis ke disk atau dicetak; berlaku singkat.
 Hasil: `<out>/<tema>-<lebar>-{lama,registry,beda}.png` dan ringkasan. Kode keluar 1 bila ada yang beda.

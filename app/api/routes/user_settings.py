@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_session_id, get_current_user
 from app.core.security import hash_password, verify_password
 from app.services import account_deletion, auth_sessions
+from app.services.household_cycle import payday_context, set_household_payday
 from app.services.email_service import (
     send_account_deleted_email, send_account_deletion_email, send_password_changed_email,
 )
@@ -116,6 +117,10 @@ async def get_profile(
     )
     total_recurring = rec_count.scalar()
 
+    # Siklus anggaran milik household (spec siklus-household, bagian 3). None = user tanpa keanggotaan (data lama/rusak):
+    # profil tetap 200 dengan nilai bawaan.
+    ctx = await payday_context(db, user)
+
     plan = getattr(user, 'plan', 'basic') or 'basic'
     limits = {
         "basic": {"envelopes": 6, "txn_per_month": 50, "recurring": 5},
@@ -131,7 +136,12 @@ async def get_profile(
         "has_password": bool(user.password_hash),
         "google_connected": bool(getattr(user, "google_id", None)),
         "timezone": getattr(user, 'timezone', 'Asia/Jakarta') or 'Asia/Jakarta',
-        "payday_day": getattr(user, 'payday_day', 1) or 1,
+        "payday_day": getattr(user, 'payday_day', 1) or 1,  # cermin: arti lama tidak berubah
+        "household_payday_day": ctx.payday_day if ctx else payday_day,
+        "payday_locked": (not ctx.can_change) if ctx else False,
+        "payday_owner_name": ctx.owner_name if ctx else None,
+        "household_name": ctx.household.name if ctx else None,
+        "household_member_count": ctx.member_count if ctx else 1,
         "income_type": getattr(user, 'income_type', 'monthly') or 'monthly',
         "profile_pic": getattr(user, 'profile_pic', None),
         "plan": plan,
@@ -155,6 +165,26 @@ async def update_profile(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Tanggal gajian milik household, owner yang memutuskan (spec siklus-household, bagian 3). Semua penolakan (tanpa
+    # household, di luar rentang, bukan hak user) terjadi SEBELUM field apa pun diubah, jadi 400/403 tidak menyimpan apa-apa.
+    ctx = None
+    if req.payday_day is not None:
+        ctx = await payday_context(db, user)
+        if ctx is None:
+            raise HTTPException(400, "Belum punya household")
+        if not (1 <= req.payday_day <= 31):
+            raise HTTPException(400, "payday_day harus antara 1 dan 31")
+        if not ctx.can_change:
+            if req.payday_day != ctx.payday_day:
+                raise HTTPException(
+                    403,
+                    f"Tanggal gajian mengikuti rumah tangga ({ctx.household.name}, tanggal {ctx.payday_day}). "
+                    "Minta owner yang mengubahnya.",
+                )
+            # Anggota terkunci yang mengulang tanggal rumah (klien lama atau ber-cache; Onboarding sebelum fase ini
+            # mengirim {payday_day, income_type}) tidak mengubah apa pun: payday diabaikan, tanpa 403 dan tanpa service,
+            # dan field lain disimpan seperti biasa.
+            ctx = None
     if req.name is not None:
         user.name = req.name
     if req.timezone is not None:
@@ -168,15 +198,17 @@ async def update_profile(
         if req.timezone not in valid_tz:
             raise HTTPException(400, f"Invalid timezone. Options: {', '.join(valid_tz)}")
         user.timezone = req.timezone
-    if req.payday_day is not None:
-        if not (1 <= req.payday_day <= 31):
-            raise HTTPException(400, "payday_day harus antara 1 dan 31")
-        user.payday_day = req.payday_day
     if req.income_type is not None:
         valid_types = ['monthly', 'weekly', 'daily', 'irregular']
         if req.income_type not in valid_types:
             raise HTTPException(400, f"Invalid income_type. Options: {', '.join(valid_types)}")
         user.income_type = req.income_type
+    if ctx is not None:
+        # Dipanggil setelah semua field lain valid dan di-assign: service commit sendiri bila tanggalnya berubah, jadi
+        # 400 dari field lain tidak boleh datang sesudahnya. Service-lah yang meng-assign household dan cermin anggota.
+        await set_household_payday(db, ctx.household, req.payday_day, actor=user)
+    # Commit akhir selalu: service tidak commit saat tanggalnya sama, padahal field lain (mis. income_type dari
+    # Onboarding, yang mengirim payday_day berdampingan dengannya) sudah di-assign di sesi ini.
     await db.commit()
     return {"status": "updated"}
 

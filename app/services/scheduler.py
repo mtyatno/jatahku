@@ -1,4 +1,5 @@
 import logging
+import uuid
 from datetime import date, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services.rollover import create_monthly_snapshots
@@ -15,54 +16,77 @@ scheduler = AsyncIOScheduler()
 CATCH_UP_PERIODS = 3
 
 
-async def payday_snapshot_job():
-    """Run daily — ensure snapshots exist for all recently-closed budget periods.
+def household_runs(
+    rows: list[tuple[uuid.UUID, int]], today: date, catch_up: int
+) -> list[tuple[uuid.UUID, int, list[tuple[date, date]]]]:
+    """Rencana snapshot harian: untuk tiap `(household_id, payday)` sampai `catch_up` periode tertutup terakhir
+    menurut tanggal gajian household itu sendiri, oldest-first. Urutan input dipertahankan.
 
-    Idempotent and self-healing: walks the last few closed periods oldest-first
-    and creates any that are missing (e.g. skipped by a missed run), so the
-    rollover chain never loses a link. Existing snapshots are left untouched."""
-    from app.core.database import AsyncSessionLocal
+    Murni (tanpa IO), supaya rencananya bisa diuji tanpa DB. Satu household satu jendela: household campuran (anggota
+    dengan tanggal gajian berbeda) tidak lagi diproses sekali per tanggal. Job memanggilnya per household, dengan
+    tanggal yang dibaca ulang di dalam `household_lock`."""
     from app.core.period import get_closed_periods
-    from app.models.models import User, HouseholdMember
+
+    return [(hid, payday, get_closed_periods(payday, today, catch_up)) for hid, payday in rows]
+
+
+async def payday_snapshot_job():
+    """Jalan harian: pastikan snapshot periode anggaran yang baru tutup ada, per household.
+
+    Siklus anggaran milik household (`households.payday_day`), jadi tiap household yang punya anggota diproses SEKALI
+    dengan satu tanggal gajiannya; household tanpa anggota (sisa yang ditinggalkan user yang pindah) dilewati.
+
+    Tahap pertama, satu sesi: tiap household diisi tanggalnya bila masih NULL (`household_payday`) dan
+    `users.payday_day` anggota yang menyimpang diselaraskan (`heal`), lalu commit dan sesi ditutup. Snapshot dibuat
+    `create_monthly_snapshots` lewat sesinya sendiri, yang tidak boleh berhadapan dengan UPDATE yang belum di-commit.
+
+    Tahap kedua, per household, di dalam `household_lock` (kunci yang sama dengan `recompute_history`: recompute
+    menghapus lalu menyisipkan ulang kunci snapshot yang juga ditulis di sini, jadi keduanya tidak boleh berjalan
+    bersamaan). Tanggal gajian DIBACA ULANG di dalam kunci (`current_payday`) dan jendela dibangun darinya, bukan dari
+    tahap pertama: pemilik bisa mengubah tanggal selagi job mengerjakan household lain, dan recompute-nya lalu membangun
+    ulang riwayat serta membuang kunci periode berjalan menurut tanggal baru. Jendela basi akan menulis kunci itu lagi
+    dengan angka periode lama, dan job (tanpa `force`) tidak pernah menimpanya, jadi rollover yang salah terbawa terus.
+    Household yang sudah dihapus (merge, penghapusan akun) dilewati dengan peringatan.
+
+    Periode tertutup terakhir (`CATCH_UP_PERIODS`) ditelusuri oldest-first, supaya rollover tiap periode melihat
+    pendahulunya yang sudah dibuat, dan yang belum ada dibuat. Tanpa `force`: snapshot yang sudah ada tidak disentuh,
+    jadi run yang terlewat terkejar tanpa merusak rantai rollover."""
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import Household, HouseholdMember
+    from app.services.household_cycle import current_payday, heal, household_lock, household_payday
 
     today = date.today()
 
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select as _sel
-        users_r = await db.execute(_sel(User).where(User.payday_day != None))
-        users = users_r.scalars().all()
+        households = (await db.execute(
+            select(Household).where(Household.id.in_(select(HouseholdMember.household_id)))
+        )).scalars().all()
+        hids: list[uuid.UUID] = []
+        for household in households:
+            # Urutan penting: `household_payday` mengisi tanggal yang NULL, dan `heal` melewati household yang
+            # tanggalnya belum terisi. Nilai kembaliannya sengaja tidak dipakai: jendela memakai tanggal yang dibaca
+            # ulang di dalam kunci (tahap kedua).
+            await household_payday(db, household)
+            await heal(db, household)
+            hids.append(household.id)
+        await db.commit()
 
-        # Group user IDs by payday_day
-        payday_user_ids: dict[int, list] = {}
-        for user in users:
-            pd = getattr(user, 'payday_day', 1) or 1
-            payday_user_ids.setdefault(pd, []).append(user.id)
-
-        # Resolve the households for each payday_day group
-        payday_households: dict[int, list] = {}
-        for pd, user_ids in payday_user_ids.items():
-            hm_r = await db.execute(
-                _sel(HouseholdMember.household_id)
-                .where(HouseholdMember.user_id.in_(user_ids))
-                .distinct()
-            )
-            payday_households[pd] = list(hm_r.scalars().all())
-
-    # Backfill recent closed periods per payday_day, oldest-first so each
-    # period's rollover sees its (already-created) predecessor.
-    for pd, household_ids in payday_households.items():
-        if not household_ids:
-            continue
-        for period_start, period_end in get_closed_periods(pd, today, CATCH_UP_PERIODS):
-            result = await create_monthly_snapshots(
-                period_start, period_end, household_ids=household_ids
-            )
-            if result["snapshots_created"]:
-                logger.info(
-                    f"payday={pd} period {period_start} → {period_end}: "
-                    f"{result['snapshots_created']} snapshots created, "
-                    f"{len(result['errors'])} errors"
-                )
+    for hid in hids:
+        async with household_lock(hid):
+            payday = await current_payday(hid)
+            if payday is None:
+                logger.warning("household=%s sudah tidak ada saat gilirannya; snapshot dilewati", hid)
+                continue
+            [(_, _, periods)] = household_runs([(hid, payday)], today, CATCH_UP_PERIODS)  # rencana satu household
+            for period_start, period_end in periods:
+                result = await create_monthly_snapshots(period_start, period_end, household_ids=[hid])
+                if result["snapshots_created"]:
+                    logger.info(
+                        "household=%s payday=%s period %s → %s: %s snapshots created, %s errors",
+                        hid, payday, period_start, period_end,
+                        result["snapshots_created"], len(result["errors"]),
+                    )
 
 
 async def check_pending_reminders():

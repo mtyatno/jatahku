@@ -32,6 +32,7 @@ DIIZINKAN = {
     "services/kotak_struk/view.py": 1,   # cek user masih anggota household item tertentu
     "services/recurring_processor.py": 1,  # anggota household amplop tertentu (join)
     "services/advisor/snapshot.py": 1,   # nama anggota household tertentu (join)
+    "services/household_cycle.py": 1,    # anggota household tertentu (join): cermin payday di heal/set_household_payday
     "api/routes/household.py": 3,        # daftar anggota (join) + cek sudah anggota household tujuan
     "api/routes/admin.py": 1,            # panel admin: ruang keluarga user (filter type)
     "api/routes/user_settings.py": 1,    # peran user di ruang yang di-reset

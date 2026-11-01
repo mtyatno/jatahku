@@ -277,8 +277,9 @@ Tanpa migrasi dan tanpa paket baru. Merge PR B3 → deploy otomatis; tampilan be
    → kode keluar 0 dan baris terakhir `Gerbang B: LULUS` (semua user `ok`/`lewati`, p95 batch ≤ 500 ms).
    Keluaran tanpa nama amplop atau nominal: tempel dua baris terakhirnya di issue #140.
    Bila `beda`/`crash`: jangan lanjut; jalankan ulang untuk user itu (`--user <id>`) dan laporkan barisnya.
-2. **Banding tampilan** di laptop, akun sendiri (Chrome + `pip install playwright pillow`):
-   `JATAHKU_TOKEN=<localStorage jatahku_token dari jatahku.com> python scripts/banding_beranda.py --out /tmp/banding`
+2. **Banding tampilan** di **laptop** (bukan VPS), akun sendiri (Chrome + `pip install playwright pillow`):
+   `read -s JATAHKU_TOKEN && export JATAHKU_TOKEN` (tempel localStorage `jatahku_token`; tidak masuk riwayat shell),
+   lalu `python scripts/banding_beranda.py --out /tmp/banding && unset JATAHKU_TOKEN`
    → `Tampilan: SAMA di semua lebar dan tema` (390/820/1100/1440 px, gelap dan terang).
    Di HP sungguhan: buka `jatahku.com/?beranda=lama` lalu `jatahku.com/?beranda=registry`; keduanya harus sama.
 3. **Nyalakan bertahap:** `sudo -u postgres psql jatahku_db -c "INSERT INTO app_settings (key, value) VALUES
@@ -353,6 +354,69 @@ Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terp
 4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
    PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
    sini.
+
+## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b) — sudah jalan 2026-11-01
+Menambah `households.payday_day` (siklus milik rumah; NULL = belum dimigrasi), `monthly_snapshots.allocated_amount` dan
+`spent_amount`, beserta backfill `households.payday_day` dari anggota (owner, lalu admin, lalu yang tertua). Migrasi
+**idempoten**: `lifespan` (`HOUSEHOLD_CYCLE_DDL` di `app/services/household_cycle_schema.py`) menjalankan DDL dan backfill
+yang sama saat API restart, dan kolomnya nullable, jadi tidak ada jendela 500. Migrasinya tetap harus dijalankan, kalau
+tidak `deploy.sh` berakhir exit 2. Riwayat snapshot lama dihitung ulang skrip terpisah (langkah 4–6), bukan migrasi.
+Tanpa paket, folder, atau `.env` baru. Detail: `docs/siklus-household.md`.
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart pertama menjalankan `ALTER TABLE households` dan `ALTER TABLE monthly_snapshots` sebagai user DB
+   aplikasi, jadi `jatahku` harus pemilik (`bisa_alter` = t) keduanya; kalau tidak, API gagal start (`ADD COLUMN IF NOT
+   EXISTS` tetap mensyaratkan pemilik walau kolomnya sudah ada). Pakai query di checklist Kotak Struk dengan
+   `IN ('households','monthly_snapshots')`. Bila ada yang bukan `jatahku`, sebagai `postgres`:
+   `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+2. `ls /opt/jatahku/app/alembic/versions/ | grep 2d51b9031a6b`; `alembic current` harus `b1d4a7c2e9f0` (Plugin B1;
+   R2 dan B3 tanpa migrasi) sebelum upgrade; bila belum, jalankan checklist Plugin R1 dan B1 dulu. Checklist Plugin R2
+   juga harus sudah selesai (`ruang_paritas` kode keluar 0, tanpa `beda`): siklus ini membaca keanggotaan ruang keluarga
+   lewat resolver R2, dan user dengan dua ruang keluarga membuat langkah 6 dan job harian menyamakan cerminnya
+   bergantian ke dua tanggal.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
+   `2d51b9031a6b`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job deploy yang gagal.
+Langkah 4–6 di **hari yang sama dengan merge, sebelum job snapshot harian 00:05 (waktu server) berikutnya**, di jam
+sepi yang tidak di sekitar 00:05 (skrip berjalan di proses terpisah, jadi tidak diserialkan dengan job). Job 00:05
+pertama sesudah deploy menyamakan anggota household campuran **tanpa notifikasi** (hanya warning di log), dan `--apply`
+sesudahnya tidak menemukan siapa pun untuk diberi tahu. Bila job itu sudah jalan lebih dulu:
+`journalctl -u jatahku --since "<waktu deploy>" | grep menyimpang` mendaftar anggota yang tanggal gajiannya dipindahkan
+(`payday anggota <id user> menyimpang (lama → baru)`); beri tahu mereka manual. `--apply` tetap menghitung ulang riwayat.
+4. Migrasi data, dry-run: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.siklus_household` (tidak menulis apa pun). Baca daftarnya: baris `CAMPURAN` = household yang anggotanya
+   beda payday dan akan disamakan ke `target`; `[usaha]` = ruang usaha (siklusnya sendiri, tidak dicerminkan ke user).
+5. Cadangkan `monthly_snapshots` (`--apply` menulis ulang riwayat snapshot semua household dengan force; nilai lamanya
+   tidak bisa diambil lagi tanpa ini). Baris kedua harus mencetak satu baris `TABLE DATA public monthly_snapshots`:
+   ```bash
+   sudo -u postgres pg_dump -Fc -t monthly_snapshots jatahku_db | sudo tee /opt/jatahku/backups/monthly_snapshots-pre-siklus.dump > /dev/null
+   sudo pg_restore -l /opt/jatahku/backups/monthly_snapshots-pre-siklus.dump | grep 'TABLE DATA'
+   ```
+   Mengembalikannya (hanya bila perlu, di jam sepi): `TRUNCATE` lalu data dari backup, dalam **satu transaksi**, supaya
+   restore yang gagal tidak meninggalkan tabel kosong; file dibaca lewat `sudo cat`, jadi `postgres` tidak perlu hak baca
+   folder backup:
+   ```bash
+   { echo 'BEGIN; TRUNCATE monthly_snapshots;'
+     sudo cat /opt/jatahku/backups/monthly_snapshots-pre-siklus.dump | sudo -u postgres pg_restore --data-only -t monthly_snapshots -f -
+     echo 'COMMIT;'; } | sudo -u postgres psql -v ON_ERROR_STOP=1 -q jatahku_db > /dev/null
+   ```
+   Tanpa `ERROR` = berhasil. `violates foreign key constraint` = ada amplop yang dihapus sejak backup (reset data, hapus
+   akun); transaksinya batal dan tabel tidak berubah. Diuji di PostgreSQL 16 (1 Nov 2026): restore identik (jumlah baris
+   dan md5 isi sama), dan restore yang gagal tidak mengubah tabel.
+6. Sesudah dibaca dan dicadangkan: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.siklus_household --apply` (mengisi payday rumah; menghitung ulang riwayat semua household, minimal 12
+   periode dan mundur sampai aktivitas pertama tiap household; menyamakan anggota; memberi tahu yang berubah). Gagal di
+   tengah (traceback, exit 1) = jalankan ulang; run kedua aman. Exit 1 dengan `N error` (N > 0) di baris terakhir = ada
+   error per amplop: rinciannya di log `jatahku.household_cycle` ("punya error") di atasnya; perbaiki sebabnya lalu
+   jalankan ulang.
+   **Yang perlu diketahui owner:** household yang tidak campuran biasanya tetap dengan angka yang sama, KECUALI bila
+   periode tertutupnya diubah setelah snapshot-nya dibuat (transaksi bertanggal mundur, transaksi yang diedit atau
+   dihapus, alokasi yang terlambat): recompute kini memasukkan perubahan itu, jadi sebagian saldo rollover bergeser
+   (lebih benar) tanpa notifikasi. Pertimbangkan memberi tahu user.
+7. Verifikasi: dua anggota satu household → `GET /user/profile` memberi `household_payday_day` yang sama;
+   `sudo -u postgres psql jatahku_db -c "SELECT COUNT(*) FROM households h WHERE h.payday_day IS NULL AND EXISTS (SELECT 1
+   FROM household_members m WHERE m.household_id = h.id)"` → 0; esok harinya `journalctl -u jatahku | grep menyimpang`
+   kosong (job 00:05 tidak menyamakan siapa pun lagi). Bila dry-run menandai household CAMPURAN, cek dashboard anggota
+   yang berubah: sisa amplop masuk akal, tanpa transaksi terhitung ganda.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.

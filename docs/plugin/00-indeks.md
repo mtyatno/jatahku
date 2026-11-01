@@ -2,7 +2,7 @@
 
 Sistem **Fitur Tambahan** (plugin) untuk Jatahku, dengan **Buku Usaha** sebagai plugin pertama (ADR-P7). Uang usaha dipisah dari uang keluarga lewat **ruang**: ruang usaha adalah household kedua bertipe `usaha`, dengan banyak anggota, peran, dan batasan dari admin (ADR-P1, P4). Kartu Beranda menjadi registry dengan data batch, supaya plugin bisa menyumbang kartu. Chat (Telegram dan chat web) tetap hanya untuk ruang keluarga (ADR-P2).
 
-**Fase sekarang:** Fase 1 (Beranda registry) dan Fase 2 (ruang usaha) berjalan paralel. F0, R1 (#161), B1 (#162), B2 (#165), R2 (#166), dan B3 (#167) sudah di-merge 1 Nov 2026. Ruang ditentukan `app/services/ruang.py`: membaca dari `ruang_aktif` (header `X-Jatahku-Ruang`, tanpa header = ruang keluarga); sejak R3 (#143) menulis dari objek yang ditulis, objek baru tanpa induk dari header, dan kuota Basic hanya di ruang keluarga; bot dan job selalu ruang keluarga. Berikutnya R4 (membuat dan berpindah ruang, flag `ruang_usaha_users`), R5, R8, dan H1. Status per sesi: `PROGRESS.md`.
+**Fase sekarang:** Fase 1 (Beranda registry) selesai 1 Nov 2026: B1 #162, B2 #165, B3 #167/#168 (Gerbang B lulus, paritas produksi 105 user, p95 231 ms; flag `beranda_registry_users` dinyalakan bertahap oleh pemilik). Fase 2 (ruang usaha) berjalan: R1 #161 dan R2 #166 tayang. Ruang ditentukan `app/services/ruang.py`: membaca dari `ruang_aktif` (header `X-Jatahku-Ruang`, tanpa header = ruang keluarga); sejak R3 (#143) menulis dari objek yang ditulis, objek baru tanpa induk dari header, dan kuota Basic hanya di ruang keluarga; bot dan job selalu ruang keluarga. Berikutnya R4 (membuat dan berpindah ruang, flag `ruang_usaha_users`), R5, R8, dan H1. Status per sesi: `PROGRESS.md`.
 
 ## Dokumen
 

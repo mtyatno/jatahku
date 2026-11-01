@@ -57,6 +57,12 @@ def get_budget_period(payday_day: int, today: date | None = None) -> tuple[date,
     return period_start, period_end
 
 
+def get_period_for_month(payday_day: int, year: int, month: int) -> tuple[date, date]:
+    """Periode yang dimulai pada tanggal gajian bulan (year, month), dengan tanggal gajian dijepit ke akhir bulan
+    (31 Jan → 28 Feb). Setara dengan get_budget_period(payday_day, _safe_date(year, month, payday_day))."""
+    return get_budget_period(payday_day, _safe_date(year, month, payday_day))
+
+
 def document_date_kind(doc_date: date | None, *, payday_day: int, today: date) -> str | None:
     """Tanggal dokumen (struk/bukti bayar) terhadap periode anggaran berjalan user: None (tanpa tanggal), "past"
     (sebelum awal periode berjalan), "future" (sesudah hari ini), atau "current". Bot menanyakan tanggal catat hanya
@@ -113,6 +119,28 @@ def get_closed_periods(
         anchor = start - timedelta(days=1)
     periods.reverse()
     return periods
+
+
+def periods_to_cover(payday_day: int, first_day: date, today: date | None = None) -> int:
+    """Berapa periode TERTUTUP yang harus dihitung ulang (`get_closed_periods(payday_day, today, n)`) supaya riwayat
+    yang aktivitas pertamanya `first_day` tercakup seluruhnya: dari periode SEBELUM periode yang memuat `first_day`
+    sampai periode tertutup terbaru. Tidak pernah negatif (`first_day` sesudah periode berjalan → 0).
+
+    Periode sebelumnya itu wajib. Kunci snapshot hanya (tahun, bulan awal periode), dan saat tanggal gajian dimajukan,
+    kunci tepat sebelum periode pertama menurut tanggal baru masih bisa menyimpan snapshot berjendela LAMA yang memuat
+    data. Contoh: gajian 25 → 1, data pertama 5 Mar. Di bawah tanggal 25 kunci 2026-02 berjendela 25 Feb–24 Mar dan
+    memuat 5 Mar; di bawah tanggal 1 data pertama ada di periode Maret. Tanpa Februari, snapshot lama itu tetap ada dan
+    rollover-nya terbawa ke Maret, padahal transaksinya terhitung lagi di Maret. Kunci yang lebih tua tidak bisa memuat
+    data: jendela lama kunci bulan M−2 berakhir paling lambat di bulan M−1, sebelum hari pertama.
+
+    Periode berurutan selalu mulai di bulan kalender berurutan (dikunci test_rollover_key_invariant), jadi jumlahnya
+    selisih bulan awal periode berjalan dan bulan awal periode `first_day`, ditambah satu."""
+    if today is None:
+        today = date.today()
+    first_start, _ = get_budget_period(payday_day, first_day)
+    open_start, _ = get_budget_period(payday_day, today)
+    months = (open_start.year * 12 + open_start.month) - (first_start.year * 12 + first_start.month)
+    return max(0, months + 1)
 
 
 def payday_reminder_day_index(payday_day: int, user_today: date) -> int | None:

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { native } from '../native';
@@ -8,6 +8,9 @@ import { useTheme } from '../hooks/useTheme';
 import { useAppConfig } from '../hooks/useAppConfig';
 import { formatCurrency } from '../lib/utils';
 import { SHARE_TIP, receiptInboxOn } from '../lib/pendingProofs';
+import {
+  PAYDAY_SAVE_DELAY_MS, householdPayday, parsePaydayDay, paydayLockState, joinSuccessMessage,
+} from '../lib/paydayLock';
 
 const TIMEZONES = [
   { value: 'Asia/Jakarta', label: 'WIB (Jakarta, GMT+7)' },
@@ -333,6 +336,40 @@ function HardResetDialog({ profile, members, onClose, onSuccess }) {
   );
 }
 
+// Pesan `detail` dari respons error API (string), atau `fallback` bila body-nya bukan itu.
+async function errorDetail(res, fallback) {
+  const d = await res.json().catch(() => ({}));
+  return typeof d.detail === 'string' && d.detail ? d.detail : fallback;
+}
+
+// Konfirmasi owner sebelum mengubah tanggal gajian household yang berisi lebih dari satu anggota (pola HardResetDialog).
+function PaydayConfirmDialog({ text, saving, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true" aria-labelledby="payday-confirm-title">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
+        <h3 id="payday-confirm-title" className="text-lg font-semibold">📅 Ubah tanggal gajian?</h3>
+        <p className="text-sm text-gray-600">{text}</p>
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={onConfirm}
+            disabled={saving}
+            className="flex-1 btn-primary text-sm py-2 disabled:opacity-50"
+          >
+            {saving ? 'Menyimpan...' : 'Lanjutkan'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={saving}
+            className="px-4 py-2 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50"
+          >
+            Batal
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, logout } = useAuth();
   const { color: themeColor, setColor } = useTheme();
@@ -354,7 +391,10 @@ export default function Settings() {
   const [cooling, setCooling] = useState('');
   const [dailyLimit, setDailyLimit] = useState('');
   const [defaultLocked, setDefaultLocked] = useState(false);
-  const [paydayDay, setPaydayDay] = useState(1);
+  const [paydayDay, setPaydayDay] = useState(1); // angka dari server, atau teks yang sedang diketik
+  const [paydayConfirm, setPaydayConfirm] = useState(null); // tanggal yang menunggu konfirmasi owner; dialog terbuka bila bukan null
+  const [paydaySaving, setPaydaySaving] = useState(false);
+  const paydayTimer = useRef(null); // simpan tertunda (debounce) untuk household sendirian
   const [msg, setMsg] = useState('');
   const [errMsg, setErrMsg] = useState('');
 
@@ -379,6 +419,9 @@ export default function Settings() {
   // Income type
   const [incomeType, setIncomeType] = useState('monthly');
 
+  // Tanggal gajian milik household (lib/paydayLock.js): terkunci, perlu konfirmasi, atau simpan langsung
+  const paydayLock = paydayLockState(profile);
+
   const load = async () => {
     const res = await api.request('/user/profile');
     if (res.ok) {
@@ -386,7 +429,8 @@ export default function Settings() {
       setProfile(p);
       setName(p.name);
       setTz(p.timezone);
-      setPaydayDay(p.payday_day || 1);
+      // Simpan tertunda = user sedang mengetik: jangan timpa angkanya dengan nilai server yang lebih lama
+      if (!paydayTimer.current) setPaydayDay(householdPayday(p));
       setCooling(p.default_cooling_threshold || '');
       setDailyLimit(p.default_daily_limit || '');
       setDefaultLocked(p.default_is_locked);
@@ -400,6 +444,9 @@ export default function Settings() {
   useEffect(() => {
     load();
   }, []);
+
+  // Batalkan simpan tanggal gajian yang masih tertunda saat halaman ditinggalkan
+  useEffect(() => () => clearTimeout(paydayTimer.current), []);
 
   // Poll for TG link
   useEffect(() => {
@@ -442,12 +489,44 @@ export default function Settings() {
     flash('Timezone diperbarui', 'tz');
   };
 
-  const savePaydayDay = async (val) => {
-    const day = parseInt(val);
-    if (day < 1 || day > 31) return;
-    setPaydayDay(day);
-    await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ payday_day: day }) });
-    flash('Tanggal gajian diperbarui', 'payday');
+  // Satu-satunya jalur yang mengirim payday_day. Anggota yang terkunci tidak pernah sampai sini: inputnya diganti teks.
+  // Hanya memakai setter state dan ref (stabil), jadi aman dipanggil dari timer milik render yang lebih lama.
+  const putPaydayDay = async (day) => {
+    let res;
+    try {
+      res = await api.request('/user/profile', { method: 'PUT', body: JSON.stringify({ payday_day: day }) });
+    } catch {
+      flashErr('Gagal menyimpan tanggal gajian. Cek koneksi.', 'payday');
+      return;
+    }
+    if (res.ok) flash('Tanggal gajian diperbarui', 'payday');
+    else flashErr(await errorDetail(res, 'Gagal menyimpan tanggal gajian'), 'payday');
+    load(); // juga setelah ditolak: profil terbaru (mis. kini terkunci) menggantikan angka yang ditolak
+  };
+
+  const onPaydayChange = (raw) => {
+    const day = parsePaydayDay(raw);
+    if (raw !== '' && day === null) return; // di luar 1-31: abaikan seperti dulu; kosong boleh, supaya bisa mengetik ulang
+    setPaydayDay(raw);
+    if (paydayLock.needsConfirm) return; // household >1 anggota: disimpan lewat tombol Simpan + konfirmasi
+    clearTimeout(paydayTimer.current);
+    paydayTimer.current = null;
+    if (day === null) return; // dikosongkan: tunggu angka berikutnya
+    paydayTimer.current = setTimeout(() => {
+      paydayTimer.current = null;
+      putPaydayDay(day);
+    }, PAYDAY_SAVE_DELAY_MS);
+  };
+
+  const confirmPaydayChange = async () => {
+    if (paydayConfirm === null || paydaySaving) return;
+    setPaydaySaving(true);
+    try {
+      await putPaydayDay(paydayConfirm);
+    } finally {
+      setPaydaySaving(false);
+      setPaydayConfirm(null);
+    }
   };
 
   const saveIncomeType = async (val) => {
@@ -502,7 +581,7 @@ export default function Settings() {
     setJoining(false);
     if (res.ok) {
       const d = await res.json();
-      flash(`Berhasil bergabung ke ${d.household_name}!`, 'household');
+      flash(joinSuccessMessage(d.household_name, d.payday_day), 'household');
       setJoinCode('');
       load();
     } else {
@@ -559,6 +638,10 @@ export default function Settings() {
   const plan = profile.plan || 'basic';
   const u = profile.usage;
   const l = profile.limits;
+
+  // Simpan (owner household >1 anggota) hanya aktif untuk tanggal 1-31 yang berbeda dari yang berlaku
+  const paydayInput = parsePaydayDay(paydayDay);
+  const canSavePayday = paydayInput !== null && paydayInput !== householdPayday(profile);
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -791,22 +874,40 @@ export default function Settings() {
       <div className="card">
         <h3 className="font-semibold text-sm mb-1">📅 Tanggal Gajian</h3>
         <p className="text-xs text-gray-400 mb-3">Periode budget dihitung dari tanggal ini setiap bulan.</p>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Tanggal</span>
-            <input
-              type="number" min="1" max="31"
-              className="input text-sm w-20 text-center"
-              value={paydayDay}
-              onChange={e => savePaydayDay(e.target.value)}
-            />
-            <span className="text-sm text-gray-600">setiap bulan</span>
-          </div>
-          <InlineFlash k="payday" />
-        </div>
-        <p className="text-xs text-gray-400 mt-2">
-          Contoh: gajian tgl 25 → periode 25 Mar – 24 Apr
-        </p>
+        {paydayLock.locked ? (
+          <p className="text-sm text-gray-600">
+            {paydayLock.note}
+            <InlineFlash k="payday" />
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Tanggal</span>
+                <input
+                  type="number" min="1" max="31"
+                  className="input text-sm w-20 text-center"
+                  value={paydayDay}
+                  onChange={e => onPaydayChange(e.target.value)}
+                />
+                <span className="text-sm text-gray-600">setiap bulan</span>
+              </div>
+              {paydayLock.needsConfirm && (
+                <button
+                  onClick={() => setPaydayConfirm(paydayInput)}
+                  disabled={!canSavePayday}
+                  className="btn-primary text-sm py-1.5 px-4 disabled:opacity-50"
+                >
+                  Simpan
+                </button>
+              )}
+              <InlineFlash k="payday" />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Contoh: gajian tgl 25 → periode 25 Mar – 24 Apr
+            </p>
+          </>
+        )}
       </div>
 
       {/* Income Type */}
@@ -979,6 +1080,15 @@ export default function Settings() {
           members={members}
           onClose={() => setShowReset(false)}
           onSuccess={onResetSuccess}
+        />
+      )}
+
+      {paydayConfirm !== null && (
+        <PaydayConfirmDialog
+          text={paydayLock.confirmText}
+          saving={paydaySaving}
+          onConfirm={confirmPaydayChange}
+          onCancel={() => setPaydayConfirm(null)}
         />
       )}
     </div>

@@ -35,6 +35,7 @@
 - NLP: "kopi 35k", "rp17.000", "sewa server 250k tiap bulan" all work
 - Redis key prefix: `link:webapp:{code}`, `txn:{key}`, `sub:{key}`
 - Scheduler: hourly per-user timezone-aware dispatch
+- Siklus anggaran milik household: households.payday_day (owner menentukan), users.payday_day = cermin untuk ruang keluarga; penulis tunggal services/household_cycle.py
 - DMARC: `none` (not quarantine) for inbox delivery
 - SMTP: localhost:587 with auth (noreply@jatahku.com); kredensial hanya di `/opt/jatahku/.env` (`SMTP_*`, lihat `app/core/config.py`), tidak pernah di kode — repo ini publik
 
