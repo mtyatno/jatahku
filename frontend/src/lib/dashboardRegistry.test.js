@@ -113,3 +113,17 @@ test('sumber pertama dari respons batch', () => {
 test('kunci cache per user', () => {
   assert.notEqual(cacheKeyData('u1'), cacheKeyData('u2'));
 });
+
+test('pilih Beranda: flag dari server, atau dipaksa lewat ?beranda=', async () => {
+  const { pilihBeranda, paksaDariUrl } = await import('./dashboardRegistry.js');
+  assert.equal(pilihBeranda(null, null), 'lama');
+  assert.equal(pilihBeranda({ enabled: false }, null), 'lama');
+  assert.equal(pilihBeranda({ enabled: true }, null), 'registry');
+  assert.equal(pilihBeranda({ enabled: true }, 'lama'), 'lama');
+  assert.equal(pilihBeranda({ enabled: false }, 'registry'), 'registry');
+  assert.equal(pilihBeranda(null, 'registry'), 'memuat');
+  assert.equal(paksaDariUrl('?beranda=lama'), 'lama');
+  assert.equal(paksaDariUrl('?beranda=registry&x=1'), 'registry');
+  assert.equal(paksaDariUrl('?beranda=apa'), null);
+  assert.equal(paksaDariUrl(''), null);
+});
