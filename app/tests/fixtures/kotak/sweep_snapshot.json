@@ -2610,7 +2610,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -2625,7 +2625,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-canceled-judul": {
@@ -2706,7 +2706,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -2721,7 +2721,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-dibatalkan-judul": {
@@ -2834,7 +2834,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -2849,7 +2849,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-ditolak-judul-qris": {
@@ -2898,7 +2898,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -2913,7 +2913,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-ditolak-label-sebaris": {
@@ -2962,7 +2962,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -2977,7 +2977,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-gopay-blok-dibatalkan": {
@@ -3250,7 +3250,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -3265,7 +3265,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-failed-void-judul": {
@@ -3314,7 +3314,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -3329,7 +3329,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5-probe-tombol-batal-1": {
@@ -4746,7 +4746,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4761,7 +4761,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-bertanggal-wib": {
@@ -4769,31 +4769,31 @@
    "checks": {
     "status_gagal": "block"
    },
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
     "status_gagal": "block"
    },
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-bintang": {
@@ -4810,7 +4810,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4825,7 +4825,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-has-been": {
@@ -4842,7 +4842,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4857,7 +4857,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-sudah": {
@@ -4874,7 +4874,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4889,7 +4889,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-telah": {
@@ -4906,7 +4906,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4921,7 +4921,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-failed-saja-was": {
@@ -4938,7 +4938,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -4953,7 +4953,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-judul-kebijakan-01": {
@@ -5127,169 +5127,169 @@
  "l5f1-proof-label-kebijakan-01": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-label-kebijakan-02": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-label-kebijakan-03": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-label-kebijakan-04": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-label-kebijakan-05": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-proof-label-kebijakan-06": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f1-store-kebijakan-01": {
@@ -6058,7 +6058,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -6073,7 +6073,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-failed-saja-otomatis": {
@@ -6090,7 +6090,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -6105,7 +6105,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-failed-saja-tanpa-tahun": {
@@ -6122,7 +6122,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -6137,7 +6137,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-failed-saja-titik-tengah": {
@@ -6145,31 +6145,31 @@
    "checks": {
     "status_gagal": "block"
    },
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-31",
    "reader": "struk_belanja",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
     "status_gagal": "block"
    },
-   "counterparty": "Dana",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
    "lines": 0,
-   "merchant": "Dana",
+   "merchant": null,
    "paid_date": "2026-10-31",
    "reader": "struk_belanja",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-proof-judul-kaki-01": {
@@ -6287,113 +6287,113 @@
  "l5f2-proof-label-kaki-01": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-proof-label-kaki-02": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-proof-label-kaki-03": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-proof-label-kaki-04": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f2-store-kaki-01": {
@@ -7082,7 +7082,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -7097,7 +7097,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-failed-saja-bank-tujuan": {
@@ -7114,7 +7114,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -7129,7 +7129,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-failed-saja-penjual": {
@@ -7146,7 +7146,7 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {
@@ -7161,175 +7161,175 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-01": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-02": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-03": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-04": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-05": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-proof-label-kaki-06": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l5f3-store-kaki-01": {
@@ -7869,141 +7869,141 @@
  "l6b-gagal-akan-diproses": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l6b-informasi": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l6b-m13-label-01": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l6b-m13-label-02": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l6b-m13-label-03": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-30",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "l6b-m13-qris-01": {
@@ -8827,6 +8827,254 @@
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 15000,
+   "unread_proof": false
+  }
+ },
+ "l6e-gopay-order-status-gagal": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "gagal",
+   "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-status-01": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-status-02": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-status-03": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-status-04": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-status-05": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-28",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-slip-edc-logo-bca": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  }
+ },
+ "l6e-struk-debit-nomor": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-14",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 20000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-14",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 20000,
    "unread_proof": false
   }
  },
@@ -9999,113 +10247,113 @@
  "probe-n1-berhasil": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n1-pengaduan": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n1-status-label": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n1-tanpa-status": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 2,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n2-bare": {
@@ -10173,57 +10421,57 @@
  "probe-n4a-info": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n4b-refund": {
   "off": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   },
   "on": {
    "checks": {},
-   "counterparty": "Bca Mobile",
+   "counterparty": null,
    "doc_type": "struk_belanja",
    "issuer": null,
-   "lines": 1,
-   "merchant": "Bca Mobile",
+   "lines": 0,
+   "merchant": null,
    "paid_date": "2026-10-26",
    "reader": "struk_belanja",
    "status": "berhasil",
    "total": 150000,
-   "unread_proof": false
+   "unread_proof": true
   }
  },
  "probe-n4c-dana-refund": {

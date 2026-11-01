@@ -17,6 +17,7 @@ from app.services.kotak_struk.readers.proof_common import (
     clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
     looks_like_store_text, read_labelled_failure,
 )
+from app.services.kotak_struk.readers.profiles import logo_profile
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
@@ -60,7 +61,9 @@ def looks_like_proof(doc: TextDoc) -> bool:
     sumber; juga tagihan dan pulsa, yang memuat nomor meter/HP dan token), atau bila judul status ada di baris mana pun dan teksnya tidak berpola struk belanja
     (`has_status_title`, `looks_like_store_receipt` pada baris yang dinormalkan seperti `parse_receipt`): bukti dengan satu
     penanda saja tidak dikenali pembaca bukti, dan bukti sering mencetak judulnya di bawah rincian atau di bawah baris status
-    bar dan nama aplikasi. Struk belanja yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
+    bar dan nama aplikasi. Juga bila baris logo aplikasi ("BCA mobile", "gopay") ada di 2 baris pertama dan teksnya tidak
+    berpola struk belanja (L6e: slip satu penanda tanpa judul status, "Ke BUDI 1234 5678 9012"). Struk belanja yang mencetak
+    "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
     penyimpanan: perutean, status, cek, dan nominal tetap mengikuti `read_document`.
 
     Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
@@ -69,7 +72,10 @@ def looks_like_proof(doc: TextDoc) -> bool:
     if any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines) \
             or is_app_receipt(doc.lines):
         return True
-    if not has_status_title(doc.lines):
+    # Slip aplikasi satu penanda tanpa judul status (L6e, sisa N1): logo aplikasi (`logo_profile`: nama aplikasi saja, bukan
+    # "TOKO MANDIRI JAYA"/"KANTIN BNI") di 2 baris pertama, tanpa syarat label rekening sumber.
+    has_logo = any(logo_profile(line) for line in clean_lines(doc.lines)[:2])
+    if not has_logo and not has_status_title(doc.lines):
         return False
     # Pola struk dibaca dari baris yang dinormalkan seperti `parse_receipt` ("TUNAL 50.000" = "TUNAI 50.000"), supaya struk
     # belanja ber-OCR buruk yang mencetak judul status di kakinya tetap struk dan rinciannya tetap tersimpan.

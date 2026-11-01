@@ -685,13 +685,14 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   sungguhan (bahan `apply_feedback`) dan dihapus setelah feedback atau **24 jam** (`purge_stale_ocr_text`, job
   scheduler tiap jam); item `kedaluwarsa` juga dikosongkan. Teks yang tampak seperti bukti bayar (dikenali pembaca
   bukti, berjudul status seperti "Transfer Berhasil" di 4 baris pertama, atau memuat judul status di baris mana pun
-  tanpa pola struk belanja; pola struk dibaca dari baris yang dinormalkan seperti pembaca struk, jadi struk belanja
+  atau logo aplikasi ("BCA mobile", "gopay") di 2 baris pertama, tanpa pola struk belanja (L6e); pola struk dibaca dari baris yang dinormalkan seperti pembaca struk, jadi struk belanja
   yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk) tapi dibaca pembaca struk (saklar mati, atau bukti
   yang tidak dikenali pembaca bukti) diperlakukan sebagai bukti: tanpa `ocr_lines`, tanpa rincian baris
   (`document.lines`, juga tanpa `receipt`), tanpa nama merchant (dan tanpa kunci pihak dari nama itu), tanpa kutipan
   baris di `evidence`, tanpa peta merchant; yang tersimpan hanya nominal, waktu, status, keyakinan, dan cek. Pembaca
   struk memecah nomor berkelompok menjadi "barang" (`Rekening Tujuan 0123 0100`, 1234, 567), jadi rincian itu tidak
-  boleh tersimpan.
+  boleh tersimpan. Di struk belanja sungguhan, kutipan baris di `evidence` menyamarkan deret >= 6 digit (boleh
+  berkelompok: `Non-tunai "DEBIT BCA …7890 Rp20.000"`; L6e, M7).
 - **File asli dihapus begitu item selesai dibaca** (`siap` atau `gagal`), `file_path` dikosongkan. Folder
   `KOTAK_DIR` (mode 0700, milik `jatahku`, di luar `backup.sh`); nama file = id item; file tidak pernah disajikan
   ke browser; tanpa pratinjau gambar. Teks bukti juga ditulis sebagai file sementara dengan aturan yang sama.
@@ -938,9 +939,9 @@ Catatan:
   "akan dibatalkan"), "yang" hanya tepat sebelum kata itu, dan kata bersyarat hanya tepat sesudahnya ("dibatalkan jika
   tidak dibayar"; "Ditolak, jika saldo terpotong hubungi 14017" tetap gagal). Jadi kalimat kebijakan ("Transaksi
   dibatalkan maks 1x24 jam", "Pembelian dibatalkan tidak dapat direfund") tidak memblokir struk belanja maupun bukti
-  sukses. Yang belum: "Status" lalu "Dibatalkan"/"Ditolak" di baris bawahnya hanya diblokir bila teksnya tampak bukti
-  (tata letak transfer, kedua saklar); tata letak GoPay/BCA tanpa penanda lain ("Status" lalu "Dibatalkan", "Dibatalkan oleh
-  kamu") dibaca jalur struk dan tidak diblokir, persis seperti "Gagal" di posisi itu (titik terbuka N1, L6e); kata itu
+  sukses. "Status" lalu "Dibatalkan"/"Ditolak" di baris bawahnya diblokir bila teksnya tampak bukti (tata letak
+  transfer, dan sejak L6e juga tata letak GoPay/BCA berlogo tanpa penanda lain: "Status" lalu "Dibatalkan", "Dibatalkan
+  oleh kamu", "Gagal"), di kedua saklar. Yang belum: kata itu
   saja di badan ("Dibatalkan" di bawah rincian, juga di jalur struk dengan saklar mati) dan kata "belum selesai" lainnya
   ("Dikembalikan", "Menunggu") tetap `tidak_diketahui` (tidak diblokir, hanya mencegah `berhasil`); judul yang kata
   batalnya diikuti kata bebas ("Transaksi Ditolak Bank Mandiri"; "oleh Bank Mandiri" dibaca), bulan sebelum tanggal
@@ -994,10 +995,13 @@ Catatan:
   `qris` (saklar menyala) atau diperlakukan sebagai bukti tanpa rincian. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
   rincian, dan nama; lihat "Privasi") bila memuat judul status berkata benda transaksi ("Transfer Berhasil",
   "Pembayaran Gagal", dan sejak L6c "Kirim Uang Berhasil", "Kirim Dana Berhasil") di 4 baris pertama, atau di baris mana
-  pun bila teksnya tidak berpola struk belanja. Belum dikenali: judul tanpa kata itu ("Bayar Berhasil"), status berlabel atau kata status saja ("Status: Berhasil",
-  "BERHASIL"), dan bukti tanpa status sama sekali; untuk teks seperti itu pembaca struk masih bisa menyimpan nomor
-  berkelompok sebagai rincian ("Ke BUDI 1234", 5678, 9012). Bukti satu penanda yang sama sekali tidak memuat judul
-  status tetap disimpan sebagai struk belanja sampai A14. Sebaliknya, struk 1–2 barang tanpa pola struk (tanpa baris
+  pun bila teksnya tidak berpola struk belanja, atau (L6e) bila baris logo aplikasi ada di 2 baris pertama dan teksnya
+  tidak berpola struk ("BCA mobile" lalu "Ke BUDI 1234 5678 9012", dengan atau tanpa "BERHASIL"/"Status : Berhasil").
+  Belum dikenali: slip tanpa judul status dan tanpa logo aplikasi di 2 baris pertama (logo di baris ke-3 sesudah dua
+  baris status bar, atau aplikasi di luar daftar profil); untuk teks seperti itu pembaca struk masih bisa menyimpan
+  nomor berkelompok sebagai rincian ("Ke BUDI 1234", 5678, 9012). Sebaliknya, teks berpola struk yang diawali logo
+  aplikasi (struk kasir/EDC) tetap struk, dan slip EDC berlogo tanpa pola struk ("BCA" lalu satu barang dan baris kartu)
+  kini diperlakukan sebagai bukti tanpa rincian. Lalu, struk 1–2 barang tanpa pola struk (tanpa baris
   tunai dan tanpa kolom jumlah barang) yang mencetak judul status disimpan sebagai bukti, tanpa rincian (nominal tetap
   terbaca).
 - **Hasil bukti chat web saat panel tertutup.** Bukti chat web yang selesai dibaca lewat batas tunggu diambil panel

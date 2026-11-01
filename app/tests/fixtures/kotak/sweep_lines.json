@@ -1552,7 +1552,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N1 sisa (plan L6e): slip satu penanda tanpa judul status disimpan sebagai struk (rincian dari digit rekening)."
+  "note": "N1 sisa (plan L6e): slip satu penanda tanpa judul status disimpan sebagai struk (rincian dari digit rekening). L6e: ditutup, logo aplikasi di 2 baris pertama + teks tanpa pola struk = tampak bukti (tanpa rincian, merchant, teks OCR)."
  },
  {
   "id": "probe-n1-berhasil",
@@ -1570,7 +1570,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N1 sisa (plan L6e), status lepas \"BERHASIL\"."
+  "note": "N1 sisa (plan L6e), status lepas \"BERHASIL\". L6e: ditutup, logo aplikasi di 2 baris pertama + teks tanpa pola struk = tampak bukti (tanpa rincian, merchant, teks OCR)."
  },
  {
   "id": "probe-n1-status-label",
@@ -1588,7 +1588,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N1 sisa (plan L6e), status berlabel."
+  "note": "N1 sisa (plan L6e), status berlabel. L6e: ditutup, logo aplikasi di 2 baris pertama + teks tanpa pola struk = tampak bukti (tanpa rincian, merchant, teks OCR)."
  },
  {
   "id": "probe-n1-pengaduan",
@@ -1606,7 +1606,7 @@
   ],
   "user_name": null,
   "source": "a15-preflight.md §9.1 / plan L6",
-  "note": "N1 sisa (plan L6e), kaki pengaduan (D2)."
+  "note": "N1 sisa (plan L6e), kaki pengaduan (D2). L6e: ditutup, logo aplikasi di 2 baris pertama + teks tanpa pola struk = tampak bukti (tanpa rincian, merchant, teks OCR)."
  },
  {
   "id": "store-quiet-footer-01",
@@ -9026,5 +9026,213 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py SmallQrisStoreReceiptTests (L6d)"
+ },
+ {
+  "id": "l6e-gopay-status-01",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Gagal",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e, L5 review m6)"
+ },
+ {
+  "id": "l6e-gopay-status-02",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Dibatalkan",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e, L5 review m6)"
+ },
+ {
+  "id": "l6e-gopay-status-03",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Ditolak",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e, L5 review m6)"
+ },
+ {
+  "id": "l6e-gopay-status-04",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Dibatalkan oleh kamu",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e, L5 review m6)"
+ },
+ {
+  "id": "l6e-gopay-status-05",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "gopay",
+   "Rp10.000",
+   "Ditransfer ke Rina Wulandari",
+   "BCA …1234",
+   "Chat dengan CS",
+   "Status",
+   "Gagal oleh kamu",
+   "Uang ditarik dari GoPay kamu",
+   "Rincian transaksi",
+   "Status  Selesai",
+   "Metode pembayaran  GoPay Saldo",
+   "Waktu  9:31",
+   "Tanggal  28 Okt 2026",
+   "ID transaksi  …1a2b...",
+   "Jumlah  Rp10.000",
+   "Biaya admin  Gratis!",
+   "Total  Rp10.000",
+   "Harga tercantum sudah termasuk PPN",
+   "Dikirim dari app GoPay. Dapetin gratis"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e, L5 review m6)"
+ },
+ {
+  "id": "l6e-gopay-order-status-gagal",
+  "tags": [
+   "probe",
+   "proof",
+   "failed"
+  ],
+  "lines": [
+   "GoPay",
+   "Order #INV12345",
+   "Ke BUDI",
+   "Nominal Rp50.000",
+   "Status: Gagal",
+   "26/10/2026 08:12"
+  ],
+  "user_name": null,
+  "source": "task-L5-review.md re-review 3 (pre-existing N1) / L6e",
+  "note": "L6e: dulu tidak_dikenali/tidak_diketahui di kedua saklar (status berlabel di bawah 4 baris pertama pada teks yang tidak tampak bukti); kini logo GoPay membuatnya tampak bukti dan status berlabel memblokir."
+ },
+ {
+  "id": "l6e-slip-edc-logo-bca",
+  "tags": [
+   "probe",
+   "proof"
+  ],
+  "lines": [
+   "BCA",
+   "KOPI 15.000",
+   "TOTAL 15.000",
+   "DEBIT BCA 1234567890 Rp15.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e)",
+  "note": "L6e: baris pertama logo \"BCA\" dan baris bayar bukan nominal yang sama (nomor kartu di tengah): tampak bukti, tanpa rincian/merchant (sebelumnya merchant \"Bca\" + 1 baris)."
+ },
+ {
+  "id": "l6e-struk-debit-nomor",
+  "tags": [
+   "store"
+  ],
+  "lines": [
+   "TOKO MAJU",
+   "14-10-2026 08:15",
+   "KOPI 10.000",
+   "ROTI 5.000",
+   "SUSU 5.000",
+   "TOTAL 20.000",
+   "DEBIT BCA 1234567890 Rp20.000"
+  ],
+  "user_name": null,
+  "source": "test_kotak_kalibrasi.py OneMarkerAppSlipTests (L6e)",
+  "note": "L6e (M7): struk tetap struk; kutipan evidence-nya disamarkan."
  }
 ]

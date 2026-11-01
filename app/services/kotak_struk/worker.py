@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import replace
@@ -30,7 +31,7 @@ from app.services.kotak_struk.config import (
 )
 from app.services.kotak_struk.extract import ExtractError, TextDoc, extract_text
 from app.services.kotak_struk.kerangka import build_layout
-from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, upsert_household_merchant
+from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, mask_digits, upsert_household_merchant
 from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.registry import ReadResult, looks_like_proof, read_document
@@ -180,6 +181,21 @@ class _Outcome(NamedTuple):
     unread_proof: bool
 
 
+_QUOTED = re.compile(r'"[^"]*"')
+# Deret digit (boleh berkelompok >= 3 digit dengan spasi/strip: "1234 5678 9012", "0812-3456-7890"); nominal bertitik/koma
+# ("20.000") dan tanggal ("14-10-2026") tidak tergabung.
+_DIGIT_RUN = re.compile(r"(?<![\d.,])\d+(?:[ \-]\d{3,})*(?![\d.,])")
+LONG_DIGITS = 6
+
+
+def _masked_evidence(evidence: list[str]) -> list[str]:
+    """Kutipan baris di `evidence` ('Non-tunai "DEBIT BCA 1234567890 Rp20.000"') dengan deret >= 6 digit disamarkan
+    (`mask_digits`: "…7890"); teks di luar kutipan (nominal sesudah panah) tetap (L6e, M7)."""
+    def mask_run(m: re.Match) -> str:
+        return mask_digits(m.group(0)) if len(re.sub(r"\D", "", m.group(0))) >= LONG_DIGITS else m.group(0)
+    return [_QUOTED.sub(lambda q: _DIGIT_RUN.sub(mask_run, q.group(0)), e) for e in evidence]
+
+
 def _plain_evidence(evidence: list[str]) -> list[str]:
     """Bukti (`evidence`) tanpa yang mengutip baris OCR ('Baris "..."', 'Non-tunai "..."') atau memuat angka: kutipan
     baris bukti bayar bisa memuat nomor rekening/HP utuh ('Non-tunai "Rekening Debit 0123 0100 1234 567"')."""
@@ -223,7 +239,9 @@ def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None) ->
         document["lines"] = []
         document["counterparty"]["name"] = None
         document["evidence"] = _plain_evidence(document["evidence"])
-    elif store_receipt:
+    else:
+        document["evidence"] = _masked_evidence(document["evidence"])
+    if store_receipt and not unread_proof:
         document["receipt"] = {key: extra.get(key) for key in RECEIPT_KEYS}
     paid_at = doc.paid_at
     if paid_at is not None and paid_at.tzinfo is None:

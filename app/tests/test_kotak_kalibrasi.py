@@ -1526,8 +1526,8 @@ class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
                     res = await read(lines, enabled=enabled)
                     self.assertEqual(res.parsed.doc.status, "gagal")
                     self.assertIn("status_gagal", [c.code for c in res.checks])
-        # Kata saja di bawah "Status" dibaca persis seperti "Gagal" di posisi itu (tanpa penanda transfer, teks ini tidak
-        # dikenali sebagai bukti: titik terbuka N1/L6e, bukan kosakata).
+        # Kata saja di bawah "Status" dibaca persis seperti "Gagal" di posisi itu (sejak L6e logo GoPay membuat teks ini
+        # tampak bukti, jadi keduanya diblokir: OneMarkerAppSlipTests).
         for enabled in (True, False):
             got = {}
             for value in ("Gagal", "Dibatalkan", "Ditolak"):
@@ -1983,3 +1983,100 @@ class SmallQrisStoreReceiptTests(unittest.IsolatedAsyncioTestCase):
                       ["TOKO MAJU", "Nominal Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"]):
             with self.subTest(lines):
                 self.assertFalse(pc.looks_like_store_receipt(lines))
+
+
+N1_BASE = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
+N1_RESIDUE = {"tanpa status": N1_BASE, "BERHASIL": [*N1_BASE, "BERHASIL"], "label status": [*N1_BASE, "Status : Berhasil"],
+              "pengaduan": [*N1_BASE, "Pengaduan transaksi gagal: 14017 Gagal"]}
+STORES_WITH_A_BANK_NAME = (
+    ["TOKO MANDIRI JAYA", "Jl. Merdeka 10 Bandung", "29/10/2026 19:20", "ROTI TAWAR 1 x 15.000 15.000",
+     "SUSU UHT 2 x 6.000 12.000", "TELUR 1 x 28.000 28.000", "TOTAL 55.000", "Non Tunai (QRIS) 55.000"],
+    ["KANTIN BNI", "Gedung BNI Lt 2", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "Rp 33.000"],
+    ["BAKSO MANDIRI", "Cab. Dago", "Bakso Urat 2 x 20.000 40.000", "Es Jeruk 2 x 7.000 14.000", "Sub Total 54.000",
+     "Pajak 5.400", "Total 59.400"],
+)
+
+
+def rebuilt_digit_runs(document):
+    """Deret digit yang bisa dirangkai ulang dari Dokumen Bayar tersimpan (pola `test_kotak_worker.rebuilt_numbers`):
+    seluruh JSON tanpa non-digit, dan field tiap baris rincian dirangkai dalam urutan apa pun."""
+    import itertools
+    found = [re.sub(r"\D", "", json.dumps(document))]
+    for line in document.get("lines") or []:
+        parts = [re.sub(r"\D", "", str(v)) for k, v in line.items() if k != "kind" and v is not None]
+        found += ["".join(order) for order in itertools.permutations([p for p in parts if p])]
+    return found
+
+
+class OneMarkerAppSlipTests(unittest.IsolatedAsyncioTestCase):
+    """L6e (sisa N1 + M7): slip aplikasi satu penanda tanpa judul status (logo aplikasi di 2 baris pertama, teks tidak berpola
+    struk) tampak bukti: tanpa rincian dari digit rekening, merchant "Bca Mobile", baris peta, dan teks OCR; nominal,
+    status, dan cek tetap. Kutipan `evidence` struk belanja tidak memuat deret >= 6 digit."""
+
+    async def test_n1_residue_keeps_no_number(self):
+        for name, lines in N1_RESIDUE.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    d = res.parsed.doc
+                    self.assertEqual((d.doc_type, d.status, status_levels(res)), ("struk_belanja", "berhasil", {}))
+                    assert_kept_as_proof(self, res, out, 150000)
+                    self.assertIsNone(out.columns["document"]["counterparty"]["name"])
+                    for run in rebuilt_digit_runs(out.columns["document"]):
+                        self.assertNotIn("123456789012", run)
+
+    async def test_gopay_status_block_with_a_bare_failure_word_blocks(self):
+        """L5 m6: GoPay "Status" lalu "Gagal"/"Dibatalkan"/"Ditolak"/"Dibatalkan oleh kamu" kini tampak bukti (logo), jadi
+        status berlabel (baris pertama di bawah label) memblokir di kedua saklar."""
+        for value in ("Gagal", "Dibatalkan", "Ditolak", "Dibatalkan oleh kamu", "Gagal oleh kamu"):
+            lines = gopay_transfer()
+            lines[6] = value
+            for enabled in (True, False):
+                with self.subTest(value, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+                    assert_kept_as_proof(self, res, out, 10000)
+
+    async def test_stores_named_after_a_bank_stay_store_receipts(self):
+        for lines in STORES_WITH_A_BANK_NAME:
+            with self.subTest(lines[0], check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual((res.reader, out.unread_proof), ("struk_belanja", False))
+                    self.assertTrue(out.columns["document"]["lines"])
+                    self.assertTrue(out.columns["merchant"])
+
+    async def test_store_evidence_quotes_hold_no_long_digit_run(self):
+        """M7: kutipan baris di `evidence` struk belanja ('Non-tunai "DEBIT BCA 1234567890 Rp20.000"') disamarkan; nominal
+        sesudah panah tetap."""
+        for pay in ("DEBIT BCA 1234567890 Rp150.000", "DEBIT BCA 1234 5678 9012 Rp150.000", "QRIS 0812-3456-7890 Rp150.000",
+                    "DEBIT BCA 123456 Rp150.000"):
+            lines = ["TOKO MAJU", "14-10-2026 08:15", "KOPI 100.000", "ROTI 25.000", "SUSU 25.000", "TOTAL 150.000", pay]
+            for enabled in (True, False):
+                with self.subTest(pay, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertFalse(out.unread_proof)
+                    evidence = out.columns["document"]["evidence"]
+                    quoted = "".join(re.findall(r'"[^"]*"', " ".join(evidence)))
+                    self.assertNotRegex(re.sub(r"[ \-]", "", quoted), r"\d{6,}")
+                    self.assertTrue(any('"TOTAL 150.000"' in e for e in evidence), evidence)
+                    self.assertTrue(any(e.startswith("Non-tunai") and e.endswith("→ 150000") for e in evidence), evidence)
+
+    async def test_logo_window_and_store_pattern(self):
+        """Logo di baris 1 atau 2 (baris status bar dulu) menandai bukti; di baris 3 tidak. Teks berpola struk tetap struk
+        walau baris pertamanya logo (struk dari mesin EDC/aplikasi kasir)."""
+        slip = ["14:22", "BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
+        self.assertTrue(looks_like_proof(textdoc(slip)))
+        for lines in (["TOKO MAJU", "Jl. Merdeka 1", "BCA", "KOPI 15.000", "TOTAL 15.000"],
+                      ["BCA", "TOKO MAJU", "KOPI 10.000", "ROTI 5.000", "SUSU 5.000", "TOTAL 20.000", "TUNAI 20.000"],
+                      ["gopay", "WARUNG SEDERHANA", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "TOTAL 33.000", "QRIS 33.000"]):
+            with self.subTest(lines[0], check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual((res.reader, out.unread_proof), ("struk_belanja", False))   # teks OCR dan rincian tetap
