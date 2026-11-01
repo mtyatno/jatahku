@@ -11,18 +11,25 @@ punya payday berbeda. Ruang usaha ditandai [usaha] dan tidak pernah CAMPURAN: pa
 berbeda (itu siklus ruang keluarga mereka). Tidak menulis apa pun.
 
 --apply, per household: mengisi payday household yang masih kosong, menyimpan, menghitung ulang riwayat snapshot
---periods periode terakhir (bawaan 12; mengisi kolom allocated/spent), menyamakan payday anggota ruang keluarga
-dengannya, lalu memberi tahu (lonceng web, dan Telegram bila tertaut) anggota yang payday-nya berubah. Aman diulang:
-dijalankan ulang, hasilnya sama dan tidak ada notifikasi kedua, karena tidak ada anggota yang berubah lagi.
+(minimal --periods periode terakhir, bawaan 12, dan selalu mundur sampai aktivitas pertama household; mengisi kolom
+allocated/spent), menyamakan payday anggota ruang keluarga dengannya, lalu memberi tahu (lonceng web, dan Telegram bila
+tertaut) anggota yang payday-nya berubah. Aman diulang: dijalankan ulang, hasilnya sama dan tidak ada notifikasi kedua,
+karena tidak ada anggota yang berubah lagi. --apply menulis ulang snapshot semua household dengan force: cadangkan
+tabel monthly_snapshots dulu (perintahnya di AGENTS.md, checklist siklus household).
 
-Jalankan di jam sepi dan jangan di sekitar job snapshot harian pukul 00:05 (waktu server). Skrip ini berjalan di
-proses terpisah, jadi kunci per household milik aplikasi (`household_lock`) hanya berlaku di dalam proses uvicorn
-dan tidak menyerialkannya dengan web maupun job itu. Recompute menghapus lalu menyisipkan ulang kunci snapshot yang juga
-ditulis job harian; bila berjalan bersamaan, keduanya bisa bertabrakan di kunci unik (envelope_id, year, month).
+Jalankan (dry-run lalu --apply) pada hari yang sama dengan merge, SEBELUM job snapshot harian pukul 00:05 (waktu
+server) berikutnya: job itu menyamakan anggota yang menyimpang tanpa notifikasi, jadi bila ia jalan lebih dulu, --apply
+tidak menemukan siapa pun untuk diberi tahu. Pilih jam sepi yang tidak di sekitar 00:05.
+Skrip ini berjalan di proses terpisah, jadi kunci per household milik aplikasi (`household_lock`) hanya berlaku di
+dalam proses uvicorn dan tidak menyerialkannya dengan web maupun job itu. Recompute menghapus lalu menyisipkan ulang
+kunci snapshot yang juga ditulis job harian; bila berjalan bersamaan, keduanya bisa bertabrakan di kunci unik
+(envelope_id, year, month).
 
-Kode keluar 0 bila selesai. Kegagalan (database, recompute) tidak ditangkap: traceback dan kode keluar 1. Household yang
-sudah diproses tersimpan, dan run yang gagal cukup dijalankan ulang: --apply berikutnya melanjutkannya, termasuk
-menyamakan dan memberi tahu anggota household yang gagal.
+Kode keluar 0 bila selesai tanpa error. Error per amplop di dalam recompute tidak menghentikan run: jumlahnya dicetak di
+baris terakhir, rinciannya di log `jatahku.household_cycle` ("punya error"), dan kode keluarnya 1. Kegagalan lain
+(database, recompute) tidak ditangkap: traceback dan kode keluar 1. Household yang sudah diproses tersimpan, dan run
+yang gagal cukup dijalankan ulang: --apply berikutnya melanjutkannya, termasuk menyamakan dan memberi tahu anggota
+household yang gagal.
 Konfigurasi dibaca dari /opt/jatahku/.env seperti aplikasinya; skrip ini tidak mengarang nilai bawaan.
 """
 from __future__ import annotations
@@ -45,8 +52,8 @@ if TYPE_CHECKING:
 # TIDAK boleh mengarang nilai bawaan seperti kotak_corpus.py (`os.environ.setdefault`): `Settings` memberi prioritas
 # pada variabel lingkungan di atas /opt/jatahku/.env, jadi nilai karangan akan menimpa DATABASE_URL asli di VPS.
 
-# Spec bagian 7. Sama dengan `household_cycle.RECOMPUTE_PERIODS_ON_CHANGE`; ditulis di sini supaya `--help` tidak
-# mengimpor service itu (lihat catatan di atas).
+# Spec bagian 7. Sama dengan `household_cycle.RECOMPUTE_PERIODS_ON_CHANGE` (batas bawah: recompute selalu mundur sampai
+# aktivitas pertama household); ditulis di sini supaya `--help` tidak mengimpor service itu (lihat catatan di atas).
 DEFAULT_PERIODS = 12
 
 
@@ -118,10 +125,13 @@ def format_survey(surveys: list[HouseholdSurvey]) -> str:
 
 
 async def apply(db: AsyncSession, surveys: list[HouseholdSurvey], periods: int) -> dict:
-    """Terapkan migrasi per household: isi payday (`household_payday`), simpan, hitung ulang `periods` periode terakhir
-    (`recompute_history`, untuk SEMUA household: mengisi allocated/spent, dan household yang tidak campuran menghasilkan
-    angka yang sama), samakan anggota (`heal`), lalu beri tahu anggota yang payday-nya berubah (tanpa pelaku: pesan
-    skrip). Mengembalikan `{"households", "mixed", "snapshots", "notified"}`.
+    """Terapkan migrasi per household: isi payday (`household_payday`), simpan, hitung ulang riwayat
+    (`recompute_history`, minimal `periods` periode dan mundur sampai aktivitas pertama, untuk SEMUA household: mengisi
+    allocated/spent; angka household yang tidak campuran hanya berubah bila periode tertutupnya diubah setelah
+    snapshot-nya dibuat), samakan anggota (`heal`), lalu beri tahu anggota yang payday-nya berubah (tanpa pelaku: pesan
+    skrip, dengan jumlah periode yang benar-benar dihitung ulang). Mengembalikan `{"households", "mixed", "snapshots",
+    "notified", "errors"}`; `errors` = jumlah error per amplop di semua periode yang dihitung ulang (`recompute_history`
+    hanya mencatatnya).
 
     `commit` di sini, untuk tiap household dan sebelum recompute (kontrak di docstring `household_cycle`):
     `recompute_history` membaca payday lewat sesinya sendiri, sedangkan `household_payday` hanya `flush` pengisian NULL.
@@ -135,28 +145,30 @@ async def apply(db: AsyncSession, surveys: list[HouseholdSurvey], periods: int) 
     kedua."""
     from app.services.household_cycle import heal, household_payday, notify_payday_changed, recompute_history
 
-    snapshots = notified = 0
+    snapshots = notified = errors = 0
     for item in surveys:
         household = item.household
         payday = await household_payday(db, household, item.members)
         await db.commit()
         results = await recompute_history(household.id, periods)
         snapshots += sum(period["snapshots_created"] for period in results)
+        errors += sum(len(period["errors"]) for period in results)
         changed = await heal(db, household)
         if changed:
             notified += await notify_payday_changed(
-                changed, household_name=household.name, day=payday, changed_by=None, periods=periods,
+                changed, household_name=household.name, day=payday, changed_by=None, periods=len(results),
             )
     return {
         "households": len(surveys),
         "mixed": sum(1 for item in surveys if item.mixed),
         "snapshots": snapshots,
         "notified": notified,
+        "errors": errors,
     }
 
 
 def _positive_int(text: str) -> int:
-    """`--periods`: 0 atau negatif membuat recompute kosong, tetapi notifikasinya tetap menyebut "0 periode"."""
+    """`--periods`: bilangan bulat 1 atau lebih (batas bawah recompute); 0 atau negatif ditolak argparse."""
     try:
         value = int(text)
     except ValueError:
@@ -179,11 +191,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     mode.add_argument(
         "--apply", action="store_true",
-        help="isi payday household, samakan anggota, hitung ulang riwayat, beri tahu anggota yang berubah",
+        help=(
+            "per household: household_payday → commit → recompute_history → heal → notifikasi (isi payday household, "
+            "simpan, hitung ulang riwayat, samakan anggota, beri tahu anggota yang berubah)"
+        ),
     )
     parser.add_argument(
         "--periods", type=_positive_int, default=DEFAULT_PERIODS, metavar="N",
-        help="jumlah periode tertutup terakhir yang dihitung ulang (bawaan %(default)s)",
+        help=(
+            "jumlah MINIMAL periode tertutup terakhir yang dihitung ulang (bawaan %(default)s); recompute selalu "
+            "mundur sampai aktivitas pertama tiap household"
+        ),
     )
     return parser
 
@@ -201,9 +219,11 @@ async def _run(do_apply: bool, periods: int) -> int:
             summary = await apply(db, surveys, periods)
         print(
             f"\nSelesai: {summary['households']} household diproses ({summary['mixed']} campuran), "
-            f"{summary['snapshots']} snapshot ditulis, {summary['notified']} anggota diberi tahu."
+            f"{summary['snapshots']} snapshot ditulis, {summary['notified']} anggota diberi tahu, "
+            f"{summary['errors']} error."
         )
-        return 0
+        # Error per amplop tidak melempar (hanya tercatat di log), jadi kode keluar yang memberi tahu operator.
+        return 1 if summary["errors"] else 0
     finally:
         # Pool asyncpg terikat ke event loop `asyncio.run` ini: ditutup di sini, sebelum loop-nya ditutup.
         await engine.dispose()

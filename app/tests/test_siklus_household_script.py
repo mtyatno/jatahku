@@ -267,15 +267,19 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         result = await script.apply(db, items, 12)
         self.assertEqual(self.heal.await_args_list, [call(db, first), call(db, second)])
         self.assertEqual(self.recompute.await_args_list, [call(first.id, 12), call(second.id, 12)])
-        self.notify.assert_awaited_once_with([budi], household_name="Rumah Budi", day=25, changed_by=None, periods=12)
-        self.assertEqual(result, {"households": 2, "mixed": 1, "snapshots": 7, "notified": 1})
+        # `periods` di notifikasi = periode yang benar-benar dihitung ulang household itu (2), bukan yang diminta (12).
+        self.notify.assert_awaited_once_with([budi], household_name="Rumah Budi", day=25, changed_by=None, periods=2)
+        self.assertEqual(result, {"households": 2, "mixed": 1, "snapshots": 7, "notified": 1, "errors": 0})
 
-    async def test_apply_passes_the_given_periods_to_recompute_and_the_notification(self):
+    async def test_apply_passes_the_minimum_to_recompute_and_the_actual_count_to_the_notification(self):
+        # Ruling R18: --periods hanya batas bawah; recompute mundur sampai aktivitas pertama (di sini 7 periode), dan
+        # notifikasi menyebut jumlah yang benar-benar dihitung ulang.
         home = household("Rumah Budi", 25)
         self.heal.return_value = [person("Budi", 1)]
+        self.recompute.return_value = periods_result(1, 1, 1, 1, 1, 1, 1)
         await script.apply(db_with(), [surveyed(home, [member("Budi", HouseholdRole.owner, 25)], 25)], 6)
         self.recompute.assert_awaited_once_with(home.id, 6)
-        self.assertEqual(self.notify.await_args.kwargs["periods"], 6)
+        self.assertEqual(self.notify.await_args.kwargs["periods"], 7)
 
     async def test_apply_twice_is_idempotent(self):
         home = household("Rumah Budi", 25)
@@ -293,7 +297,7 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.notify.assert_not_awaited()  # tidak ada notifikasi kedua
         self.assertEqual((first["notified"], second["notified"]), (1, 0))
         self.assertEqual(self.recompute.await_count, 2)  # riwayat tetap dihitung ulang (deterministik, aman diulang)
-        self.assertEqual(second, {"households": 1, "mixed": 1, "snapshots": 3, "notified": 0})
+        self.assertEqual(second, {"households": 1, "mixed": 1, "snapshots": 3, "notified": 0, "errors": 0})
 
     async def test_apply_commits_the_session_before_every_recompute(self):
         # Kontrak `recompute_history` (docstring `household_cycle`, ruling R7): ia membaca state yang sudah tersimpan
@@ -361,10 +365,10 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
         self.notify.assert_not_awaited()
         db.commit.assert_awaited_once()  # payday household sudah tersimpan sebelum recompute (kontrak R7)
 
-        result = await script.apply(db, [item], 12)  # run ulang: recompute kini berhasil
+        result = await script.apply(db, [item], 12)  # run ulang: recompute kini berhasil (satu periode)
         self.heal.assert_awaited_once_with(db, home)
-        self.notify.assert_awaited_once_with([budi], household_name="Rumah Budi", day=25, changed_by=None, periods=12)
-        self.assertEqual(result, {"households": 1, "mixed": 1, "snapshots": 3, "notified": 1})
+        self.notify.assert_awaited_once_with([budi], household_name="Rumah Budi", day=25, changed_by=None, periods=1)
+        self.assertEqual(result, {"households": 1, "mixed": 1, "snapshots": 3, "notified": 1, "errors": 0})
 
     async def test_apply_counts_only_surveyed_mixed_households(self):
         items = [
@@ -373,14 +377,35 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
             surveyed(household("C", 3), [member("Citra", HouseholdRole.owner, 3)], 3, mixed=True),
         ]
         result = await script.apply(db_with(), items, 12)
-        self.assertEqual(result, {"households": 3, "mixed": 2, "snapshots": 0, "notified": 0})
+        self.assertEqual(result, {"households": 3, "mixed": 2, "snapshots": 0, "notified": 0, "errors": 0})
 
     async def test_apply_with_nothing_surveyed_does_nothing(self):
         db = db_with()
-        self.assertEqual(await script.apply(db, [], 12), {"households": 0, "mixed": 0, "snapshots": 0, "notified": 0})
+        self.assertEqual(
+            await script.apply(db, [], 12), {"households": 0, "mixed": 0, "snapshots": 0, "notified": 0, "errors": 0}
+        )
         db.commit.assert_not_awaited()
         self.heal.assert_not_awaited()
         self.recompute.assert_not_awaited()
+
+    async def test_apply_counts_per_period_errors_of_all_households(self):
+        # Error per amplop di dalam periode tidak melempar (recompute_history hanya mencatatnya): skrip menjumlahkannya
+        # supaya bisa keluar dengan kode 1. Household berikutnya tetap diproses.
+        first, second = household("Rumah Budi", 25), household("Rumah Ani", 10)
+        self.recompute.side_effect = [
+            [
+                {"period": "p1", "processed": 2, "snapshots_created": 1, "errors": ["Makan: boom"]},
+                {"period": "p2", "processed": 2, "snapshots_created": 2, "errors": []},
+            ],
+            [{"period": "p1", "processed": 3, "snapshots_created": 1, "errors": ["Listrik: x", "Air: y"]}],
+        ]
+        items = [
+            surveyed(first, [member("Budi", HouseholdRole.owner, 25)], 25),
+            surveyed(second, [member("Ani", HouseholdRole.owner, 10)], 10),
+        ]
+        result = await script.apply(db_with(), items, 12)
+        self.assertEqual(result, {"households": 2, "mixed": 0, "snapshots": 4, "notified": 0, "errors": 3})
+        self.assertEqual(self.heal.await_count, 2)
 
 
 class MainTests(unittest.TestCase):
@@ -455,13 +480,14 @@ class MainTests(unittest.TestCase):
         mocks["heal"].assert_awaited_once_with(db, home)
         mocks["recompute_history"].assert_awaited_once_with(home.id, 12)
         mocks["notify_payday_changed"].assert_awaited_once_with(
-            [budi], household_name="Rumah Budi", day=25, changed_by=None, periods=12,
+            [budi], household_name="Rumah Budi", day=25, changed_by=None, periods=2,
         )
         db.commit.assert_awaited()
         lines = out.splitlines()
         self.assertIn("1 household, 1 campuran", lines)  # daftar survei dicetak lebih dulu
         self.assertEqual(
-            lines[-1], "Selesai: 1 household diproses (1 campuran), 3 snapshot ditulis, 1 anggota diberi tahu."
+            lines[-1],
+            "Selesai: 1 household diproses (1 campuran), 3 snapshot ditulis, 1 anggota diberi tahu, 0 error.",
         )
         self.assertNotIn("Dry-run", out)
         engine.dispose.assert_awaited_once()
@@ -469,7 +495,7 @@ class MainTests(unittest.TestCase):
     def test_periods_option_reaches_apply(self):
         db = db_with()
         survey = AsyncMock(return_value=[])
-        apply = AsyncMock(return_value={"households": 0, "mixed": 0, "snapshots": 0, "notified": 0})
+        apply = AsyncMock(return_value={"households": 0, "mixed": 0, "snapshots": 0, "notified": 0, "errors": 0})
         for argv, expected in ((["--apply"], 12), (["--apply", "--periods", "6"], 6)):
             with self.subTest(argv=argv):
                 apply.reset_mock()
@@ -477,6 +503,33 @@ class MainTests(unittest.TestCase):
                     code, _, _ = self.run_main(argv, db)
                 self.assertEqual(code, 0)
                 apply.assert_awaited_once_with(db, [], expected)
+
+    def test_apply_exits_1_and_prints_the_error_count_when_periods_had_errors(self):
+        # Error per amplop hanya tercatat di log (`jatahku.household_cycle`, mudah terlewat): baris terakhir menyebut
+        # jumlahnya dan kode keluar 1, supaya operator tahu run ini belum bersih.
+        home = household("Rumah Budi", 25)
+        db = db_with(FakeResult(rows=[home]), FakeResult(rows=two_rows(25, 25)))
+        failed = [{"period": "p1", "processed": 3, "snapshots_created": 1, "errors": ["Makan: boom", "Air: x"]}]
+        with self.collaborators("heal", "recompute_history", "notify_payday_changed") as mocks:
+            mocks["heal"].return_value = []
+            mocks["recompute_history"].return_value = failed
+            code, out, engine = self.run_main(["--apply"], db)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out.splitlines()[-1],
+            "Selesai: 1 household diproses (0 campuran), 1 snapshot ditulis, 0 anggota diberi tahu, 2 error.",
+        )
+        engine.dispose.assert_awaited_once()
+
+    def test_help_names_the_apply_order_and_that_periods_is_a_minimum(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            script.main(["--help"])
+        text = " ".join(out.getvalue().split())  # argparse membungkus bantuan argumen sesuai lebar terminal
+        self.assertIn("household_payday → commit → recompute_history → heal → notifikasi", text)
+        self.assertIn("MINIMAL", text)
+        self.assertIn("aktivitas pertama", text)
+        self.assertIn("hari yang sama", text)  # langkah --apply: hari merge, sebelum job 00:05 berikutnya
 
     def test_rejects_bad_arguments_before_opening_a_session(self):
         bad = (["--apply", "--dry-run"], ["--periods", "0"], ["--periods", "-3"], ["--periods", "abc"], ["--bogus"])
