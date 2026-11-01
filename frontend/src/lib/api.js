@@ -1,4 +1,4 @@
-import { saveCache, loadCache } from './localCache';
+import { saveCache, loadCache, clearAllCache } from './localCache';
 import { clearAllHistory } from './chatHistory';
 import { revokeSession } from './authLogout';
 import { withClientHeader } from './clientInfo';
@@ -92,6 +92,7 @@ class ApiClient {
     this.setToken(null);
     this.setRefreshToken(null);
     clearAllHistory(); // riwayat chat bot berisi saldo & transaksi — jangan tertinggal
+    clearAllCache(); // cache offline (profil, amplop, transaksi, Beranda) — jangan terbaca akun berikutnya
     // Bukti yang dibagikan tapi belum terkirim: dikosongkan hanya saat user sendiri keluar (revoke), dan pindah ke
     // /login menunggu penghapusannya (maks 2 dtk; tanpa ditunggu, navigasi memutusnya). Refresh ditolak
     // (revoke:false): bukti tetap aman sampai login lagi (spec 5b), langsung ke /login. Tidak pernah melempar.
@@ -700,6 +701,28 @@ class ApiClient {
   // AI Advisor v2 — pipa CTA (S8). Kontrak: docs/ai-advisor/04-kontrak-api.md.
   // GET /advisor/dashboard (S3). {"enabled": false} → user di luar flag; null bila gagal.
   // Keduanya membuat Beranda memakai UI lama.
+  // Beranda registry (Plugin B1/B2, docs/plugin/04-kontrak-api.md §4). Gagal → null; pemanggil
+  // memakai cache lokal atau Beranda lama.
+  async getDashboardLayout(surface = 'beranda') {
+    try {
+      const res = await this.request(`/dashboard/layout?surface=${encodeURIComponent(surface)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  async getDashboardData(items, periode = null) {
+    try {
+      const res = await this.request('/dashboard/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periode, items }),
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
   async getAdvisorDashboard() {
     try {
       const res = await this.request('/advisor/dashboard');
