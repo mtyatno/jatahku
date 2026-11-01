@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, call, patch
 
 from sqlalchemy.dialects import postgresql
 
+from app.core.period import get_closed_periods
 from app.services import rollover
 from app.tests.fakes import FakeResult, db_with, fixed_date
 
@@ -98,16 +99,71 @@ class CreateMonthlySnapshotsTests(unittest.IsolatedAsyncioTestCase):
 
 class RecomputeHouseholdTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        # Setelah periode tertutup dibangun ulang, recompute_household membuka sesi sendiri untuk SATU DELETE
-        # (snapshot periode berjalan dan sesudahnya). Tiap tes mendapat db tiruan yang hanya menerima kueri itu.
+        # recompute_household membuka sesi sendiri untuk `first_activity_date` (di-patch: bawaannya None = tanpa
+        # aktivitas, jadi `periods` pemanggil berlaku apa adanya) dan satu lagi untuk SATU DELETE (snapshot periode
+        # berjalan dan sesudahnya), sebelum periode tertutup dibangun ulang. Tiap tes mendapat db tiruan yang hanya
+        # menerima DELETE itu.
         self.db = db_with(FakeResult(None))
+        self.first_activity = AsyncMock(return_value=None)
         self.enterContext(patch.object(rollover, "AsyncSessionLocal", new=lambda: FakeSession(self.db)))
+        self.enterContext(patch.object(rollover, "first_activity_date", new=self.first_activity))
 
     def _deletes(self):
         """Statement yang dieksekusi di sesi tiruan; tepat satu, yaitu DELETE-nya."""
         statements = [c.args[0] for c in self.db.execute.await_args_list]
-        self.assertEqual(len(statements), 1, "harus ada tepat satu DELETE setelah periode tertutup dibangun ulang")
+        self.assertEqual(len(statements), 1, "harus ada tepat satu DELETE kunci periode berjalan")
         return statements[0]
+
+    async def _windows(self, *, first, payday, periods, today):
+        """Jendela yang dibangun ulang `recompute_household(hid, payday, periods, today)` bila aktivitas pertama
+        household `first`, oldest-first; sekaligus memeriksa bahwa nilai kembalinya satu entri per jendela itu."""
+        self.first_activity.return_value = first
+        fake = AsyncMock(return_value={"processed": 0, "snapshots_created": 0, "errors": []})
+        hid = uuid.uuid4()
+        with patch.object(rollover, "create_monthly_snapshots", new=fake):
+            out = await rollover.recompute_household(hid, payday, periods, today=today)
+        self.first_activity.assert_awaited_once_with(self.db, hid)
+        windows = [(c.args[0], c.args[1]) for c in fake.await_args_list]
+        self.assertTrue(all(c.kwargs == {"force": True, "household_ids": [hid]} for c in fake.await_args_list))
+        self.assertEqual([r["period"] for r in out], [f"{s} → {e}" for s, e in windows])
+        return windows
+
+    async def test_recompute_household_extends_periods_back_to_the_first_activity(self):
+        # Ruling R18: `periods` dari pemanggil hanya batas bawah. Aktivitas pertama 5 Mar 2025 (periode 25 Feb–24 Mar
+        # menurut tanggal 25): 21 periode tertutup, mulai dari periode SEBELUMNYA (25 Jan–24 Feb 2025), bukan 12.
+        with self.assertNoLogs("jatahku.rollover", "WARNING"):
+            windows = await self._windows(first=date(2025, 3, 5), payday=25, periods=12, today=date(2026, 11, 10))
+        self.assertEqual(len(windows), 21)
+        self.assertEqual(windows, get_closed_periods(25, date(2026, 11, 10), 21))  # oldest-first, berurutan
+        self.assertEqual(windows[0], (date(2025, 1, 25), date(2025, 2, 24)))
+        self.assertEqual(windows[-1], (date(2026, 9, 25), date(2026, 10, 24)))
+
+    async def test_recompute_household_keeps_the_callers_minimum_when_history_is_shorter(self):
+        # Aktivitas pertama 1 Sep 2026: tiga periode sudah cukup, tetapi pemanggil meminta 12.
+        windows = await self._windows(first=date(2026, 9, 1), payday=1, periods=12, today=date(2026, 11, 10))
+        self.assertEqual(windows, get_closed_periods(1, date(2026, 11, 10), 12))
+        self.assertEqual(windows[0], (date(2025, 11, 1), date(2025, 11, 30)))
+
+    async def test_recompute_household_without_activity_uses_the_callers_periods(self):
+        windows = await self._windows(first=None, payday=1, periods=3, today=date(2026, 11, 10))
+        self.assertEqual(windows, [
+            (date(2026, 8, 1), date(2026, 8, 31)),
+            (date(2026, 9, 1), date(2026, 9, 30)),
+            (date(2026, 10, 1), date(2026, 10, 31)),
+        ])
+
+    async def test_recompute_household_caps_the_extension_with_a_warning(self):
+        # Riwayat sejak Jan 2010 = 203 periode; dibatasi MAX_RECOMPUTE_PERIODS (120), yang terbaru tetap tercakup.
+        self.assertEqual(rollover.MAX_RECOMPUTE_PERIODS, 120)
+        with self.assertLogs("jatahku.rollover", "WARNING") as logs:
+            windows = await self._windows(first=date(2010, 1, 1), payday=1, periods=12, today=date(2026, 11, 10))
+        self.assertEqual(len(windows), 120)
+        self.assertEqual(windows[0], (date(2016, 11, 1), date(2016, 11, 30)))
+        self.assertEqual(windows[-1], (date(2026, 10, 1), date(2026, 10, 31)))
+        (record,) = logs.records
+        self.assertEqual(record.levelname, "WARNING")
+        for part in ("203", "120"):
+            self.assertIn(part, record.getMessage())
 
     async def test_recompute_household_oldest_first_force_single_household(self):
         hid = uuid.uuid4()
@@ -193,8 +249,16 @@ class RecomputeHouseholdTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params, {"household_id_1": hid, "year_1": 2026, "year_2": 2026, "month_1": 10})
         self.db.commit.assert_awaited_once()
 
-    async def test_recompute_household_deletes_after_the_rebuilds_and_commits(self):
+    async def test_recompute_household_deletes_and_commits_before_the_rebuilds(self):
+        # Ruling R20 (mengubah R8): kunci periode berjalan dibuang dan di-commit SEBELUM periode tertutup dibangun
+        # ulang. Kuncinya tidak pernah beririsan (setiap kunci tertutup < kunci periode berjalan), jadi urutan ini tidak
+        # mengubah angka; tetapi rebuild yang gagal di tengah jalan tidak boleh lagi meninggalkan kunci periode berjalan
+        # basi, yang tidak pernah ditimpa job. Aktivitas pertama dibaca paling awal (menentukan jumlah periode).
         events = []
+
+        async def first_activity(db, household_id):
+            events.append(("first",))
+            return None
 
         async def rebuild(period_start, period_end, **kwargs):
             events.append(("rebuild", period_start))
@@ -207,14 +271,27 @@ class RecomputeHouseholdTests(unittest.IsolatedAsyncioTestCase):
         async def commit():
             events.append(("commit",))
 
+        self.first_activity.side_effect = first_activity
         self.db.execute = AsyncMock(side_effect=execute)
         self.db.commit = AsyncMock(side_effect=commit)
         with patch.object(rollover, "create_monthly_snapshots", new=rebuild):
             await rollover.recompute_household(uuid.uuid4(), 25, 2, today=date(2026, 11, 10))
         self.assertEqual(
             events,
-            [("rebuild", date(2026, 8, 25)), ("rebuild", date(2026, 9, 25)), ("delete",), ("commit",)],
+            [("first",), ("delete",), ("commit",), ("rebuild", date(2026, 8, 25)), ("rebuild", date(2026, 9, 25))],
         )
+
+    async def test_recompute_household_failed_rebuild_leaves_no_open_period_key(self):
+        # Rebuild melempar di periode pertama: DELETE kunci periode berjalan sudah di-commit lebih dulu.
+        hid = uuid.uuid4()
+        failing = AsyncMock(side_effect=RuntimeError("db mati"))
+        with patch.object(rollover, "create_monthly_snapshots", new=failing), \
+             self.assertRaisesRegex(RuntimeError, "db mati"):
+            await rollover.recompute_household(hid, 25, 12, today=date(2026, 11, 10))
+        _, params = compiled(self._deletes())
+        self.assertEqual(params, {"household_id_1": hid, "year_1": 2026, "year_2": 2026, "month_1": 10})
+        self.db.commit.assert_awaited_once()
+        failing.assert_awaited_once()
 
     async def test_recompute_household_delete_boundary_is_the_open_period_start_key(self):
         # Kunci periode berjalan = (tahun, bulan) AWAL periode, bukan bulan `today`.
@@ -235,6 +312,49 @@ class RecomputeHouseholdTests(unittest.IsolatedAsyncioTestCase):
                 (statement,) = [c.args[0] for c in db.execute.await_args_list]
                 _, params = compiled(statement)
                 self.assertEqual((params["year_1"], params["year_2"], params["month_1"]), (year, year, month))
+
+
+class FirstActivityDateTests(unittest.IsolatedAsyncioTestCase):
+    """`first_activity_date`: tanggal aktivitas paling awal household (transaksi, atau pemasukan yang dialokasikan ke
+    amplopnya), batas mundur recompute. Dua kueri MIN lewat amplop household itu, tanpa filter `is_active` maupun
+    `is_deleted`: amplop nonaktif dan transaksi terhapus hanya memperlebar rentangnya (snapshot lama bisa masih
+    memuatnya)."""
+
+    async def test_first_activity_date_takes_the_earlier_of_both_minimums(self):
+        hid = uuid.uuid4()
+        cases = [
+            (date(2026, 3, 5), date(2026, 2, 27), date(2026, 2, 27)),  # pemasukan lebih dulu
+            (date(2026, 1, 9), date(2026, 2, 27), date(2026, 1, 9)),   # transaksi lebih dulu
+            (date(2026, 3, 5), None, date(2026, 3, 5)),                # hanya transaksi
+            (None, date(2026, 2, 27), date(2026, 2, 27)),              # hanya pemasukan teralokasi
+            (None, None, None),                                        # tanpa aktivitas
+        ]
+        for first_txn, first_income, expected in cases:
+            with self.subTest(first_txn=first_txn, first_income=first_income):
+                db = db_with(FakeResult(first_txn), FakeResult(first_income))
+                self.assertEqual(await rollover.first_activity_date(db, hid), expected)
+                self.assertEqual(db.execute.await_count, 2)
+
+    async def test_first_activity_date_statements_follow_the_households_envelopes(self):
+        hid = uuid.uuid4()
+        db = db_with(FakeResult(None), FakeResult(None))
+        await rollover.first_activity_date(db, hid)
+        (txn_sql, txn_params), (income_sql, income_params) = [
+            compiled(c.args[0]) for c in db.execute.await_args_list
+        ]
+        self.assertTrue(txn_sql.startswith("SELECT min(transactions.transaction_date)"), txn_sql)
+        self.assertIn("FROM transactions JOIN envelopes ON envelopes.id = transactions.envelope_id", txn_sql)
+        self.assertTrue(income_sql.startswith("SELECT min(incomes.income_date)"), income_sql)
+        self.assertIn(
+            "FROM incomes JOIN allocations ON allocations.income_id = incomes.id "
+            "JOIN envelopes ON envelopes.id = allocations.envelope_id",
+            income_sql,
+        )
+        for statement, params in ((txn_sql, txn_params), (income_sql, income_params)):
+            self.assertTrue(statement.endswith("WHERE envelopes.household_id = %(household_id_1)s::UUID"), statement)
+            self.assertEqual(params, {"household_id_1": hid})  # household ini saja
+            self.assertNotIn("is_active", statement)
+            self.assertNotIn("is_deleted", statement)
 
 
 if __name__ == "__main__":

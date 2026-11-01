@@ -20,18 +20,21 @@ pengecualian: `heal`, yang dipanggil job harian tanpa pemanggil lain yang menyim
 yang harus menyimpan perubahan sebelum recompute karena recompute membaca lewat sesi sendiri. `recompute_history`
 dan job harian membaca tanggal lewat sesi sendiri yang HANYA-BACA (`current_payday`: tidak assign, flush, maupun
 commit; None bila household-nya sudah dihapus), jadi pemanggil yang baru mengubah atau mengisi
-`households.payday_day` di sesinya harus commit dulu. Hanya `notification_service.kirim` yang memakai sesi sendiri
-dan commit di sana.
+`households.payday_day` di sesinya harus commit dulu. Yang memakai sesi sendiri dan commit di sana:
+`notification_service.kirim`, dan recompute itu sendiri: `rollover.recompute_household` (membuang kunci periode
+berjalan) dan `rollover.create_monthly_snapshots` (satu sesi per periode yang dibangun ulang).
 
 Mengubah tanggal (`set_household_payday`): validasi, no-op bila sama, lalu household dan (untuk ruang keluarga) cermin
 semua anggota dalam satu transaksi (commit), `advisor_cache.invalidate`, `recompute_history` (diserialkan per
-household, tanggal dibaca di dalam kunci), dan notifikasi ke anggota lain. Gagal kirim notifikasi dan gagal recompute
-dicatat dan tidak membatalkan perubahan yang sudah di-commit.
+household, tanggal dibaca di dalam kunci, riwayat mundur sampai aktivitas pertama household), dan notifikasi ke anggota
+lain dengan jumlah periode yang benar-benar dihitung ulang. Gagal kirim notifikasi dan gagal recompute dicatat dan
+tidak membatalkan perubahan yang sudah di-commit.
 
-Kunci per household itu publik (`household_lock`): `recompute_history` dan job snapshot harian
-(`scheduler.payday_snapshot_job`) sama-sama memegangnya, karena keduanya menulis kunci snapshot yang sama. Keduanya
-membaca tanggal gajian (`current_payday`) SETELAH memegang kunci, bukan sebelumnya: tanggal yang dibaca di luar kunci
-bisa basi saat gilirannya tiba, dan jendela basi menulis kunci periode berjalan yang baru dibuang recompute.
+Kunci per household itu publik (`household_lock`): `recompute_history`, job snapshot harian
+(`scheduler.payday_snapshot_job`), dan `POST /snapshots/run` sama-sama memegangnya, karena semuanya menulis kunci
+snapshot yang sama. Semuanya membaca tanggal gajian (`current_payday`) SETELAH memegang kunci, bukan sebelumnya: tanggal
+yang dibaca di luar kunci bisa basi saat gilirannya tiba, dan jendela basi menulis kunci periode berjalan yang baru
+dibuang recompute.
 """
 import asyncio
 import logging
@@ -50,7 +53,9 @@ from app.services.advisor import advisor_cache
 
 logger = logging.getLogger("jatahku.household_cycle")
 
-# Berapa periode tertutup terakhir yang dihitung ulang saat tanggal gajian household berubah (spec keputusan 7).
+# Periode tertutup yang diminta dihitung ulang saat tanggal gajian household berubah (spec keputusan 7). Ini batas
+# BAWAH: `rollover.recompute_household` selalu mundur sampai periode sebelum aktivitas pertama household (dibatasi
+# `rollover.MAX_RECOMPUTE_PERIODS`), jadi riwayat yang lebih panjang tetap terhitung ulang seluruhnya.
 RECOMPUTE_PERIODS_ON_CHANGE = 12
 
 # Peringkat siapa yang menentukan siklus saat household belum punya tanggal: owner, lalu admin, lalu yang lain.
@@ -71,7 +76,8 @@ class MemberRow:
 
 @dataclass
 class PaydayContext:
-    """Satu titik baca siklus untuk route profil, recompute, dan household."""
+    """Satu titik baca siklus untuk route profil (`GET`/`PUT /user/profile`) dan `POST /snapshots/recompute`.
+    (`GET /household/` tidak memakainya: route itu memakai `_get_membership` + `household_payday`.)"""
     household: Household
     role: HouseholdRole | str
     payday_day: int
@@ -233,21 +239,21 @@ async def heal(db: AsyncSession, household) -> list[User]:
 
 # ── mengubah tanggal gajian ─────────────────────────────────────────────────
 # Satu kunci per household, dipegang semua penulis kunci snapshot `(envelope_id, year, month)` di proses ini:
-# `recompute_history` dan job harian `scheduler.payday_snapshot_job`. Kunci dalam proses sudah cukup: app berjalan
-# sebagai satu proses uvicorn, scheduler di dalam proses yang sama (spec, penyesuaian 2). Dict ini tumbuh satu entri
-# per household yang pernah di-recompute atau di-snapshot job (kecil, dibiarkan). `asyncio.Lock` terikat ke event loop
-# tempat ia pertama kali diperebutkan, jadi tes yang berebut kunci memakai id household baru per tes.
+# `recompute_history`, job harian `scheduler.payday_snapshot_job`, dan `POST /snapshots/run`. Kunci dalam proses sudah
+# cukup: app berjalan sebagai satu proses uvicorn, scheduler di dalam proses yang sama (spec, penyesuaian 2). Dict ini
+# tumbuh satu entri per household yang pernah di-recompute atau di-snapshot (kecil, dibiarkan). `asyncio.Lock` terikat
+# ke event loop tempat ia pertama kali diperebutkan, jadi tes yang berebut kunci memakai id household baru per tes.
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
 def household_lock(household_id) -> asyncio.Lock:
     """Kunci snapshot milik household ini (satu per household); dibuat saat pertama diminta. Pemakaian:
     `async with household_lock(hid):`. Pemegangnya tidak berjalan bersamaan dengan pemegang lain pada household yang
-    sama: `recompute_history` dan job snapshot harian.
+    sama: `recompute_history`, job snapshot harian, dan `POST /snapshots/run`.
 
     Recompute menghapus lalu menyisipkan ulang kunci snapshot yang juga ditulis job harian, dan kunci unik
     `(envelope_id, year, month)` bisa bertabrakan bila keduanya berjalan sekaligus. Tidak re-entrant: pemegang tidak
-    boleh meminta kunci household yang sama lagi (`recompute_history` dan job tidak saling memanggil)."""
+    boleh meminta kunci household yang sama lagi (para pemegangnya tidak saling memanggil)."""
     lock = _locks.get(household_id)
     if lock is None:
         lock = _locks[household_id] = asyncio.Lock()
@@ -264,10 +270,10 @@ async def current_payday(household_id) -> int | None:
     pemanggil (yang sudah `flush` pengisian yang sama lewat `household_payday` dan belum commit), padahal kunci
     recompute sedang dipegang.
 
-    Pemakainya (`recompute_history`, job snapshot harian) membacanya SETELAH memegang `household_lock`. Perubahan
-    tanggal yang sudah di-commit saat kunci dipegang pasti terbaca (`set_household_payday` commit sebelum recompute-nya
-    meminta kunci), dan yang di-commit sesudahnya diikuti recompute-nya sendiri yang menunggu kunci ini. Jadi jendela
-    snapshot tidak pernah lebih tua dari recompute terakhir yang sudah selesai."""
+    Pemakainya (`recompute_history`, job snapshot harian, `POST /snapshots/run`) membacanya SETELAH memegang
+    `household_lock`. Perubahan tanggal yang sudah di-commit saat kunci dipegang pasti terbaca (`set_household_payday`
+    commit sebelum recompute-nya meminta kunci), dan yang di-commit sesudahnya diikuti recompute-nya sendiri yang
+    menunggu kunci ini. Jadi jendela snapshot tidak pernah lebih tua dari recompute terakhir yang sudah selesai."""
     async with AsyncSessionLocal() as db:
         household = (await db.execute(
             select(Household).where(Household.id == household_id)
@@ -280,8 +286,10 @@ async def current_payday(household_id) -> int | None:
 
 
 async def recompute_history(household_id, periods: int) -> list[dict]:
-    """Hitung ulang snapshot `periods` periode tertutup terakhir household, satu recompute pada satu waktu dan tidak
-    bersamaan dengan job snapshot harian household yang sama (kunci yang sama: `household_lock`).
+    """Hitung ulang riwayat snapshot household, satu recompute pada satu waktu dan tidak bersamaan dengan job snapshot
+    harian household yang sama (kunci yang sama: `household_lock`). `periods` adalah batas bawah: recompute mundur
+    sampai periode sebelum aktivitas pertama household (`rollover.recompute_household`), jadi panjang hasilnya bisa
+    lebih dari `periods`.
 
     Dua perubahan tanggal beruntun (mengetik "2" lalu "25") bisa menjalankan dua recompute bersamaan dengan jendela
     berbeda, dan yang selesai terakhir menang, belum tentu tanggal terakhir. Maka tanggal dibaca DI DALAM kunci:
@@ -315,20 +323,19 @@ async def notify_payday_changed(
     """Beri tahu `users` bahwa siklus anggaran rumah mereka berubah; mengembalikan jumlah yang berhasil dikirimi.
 
     `changed_by` terisi (nama yang mengubah) → pesan perubahan oleh owner; None → pesan skrip migrasi, yang tidak
-    punya pelaku. `history_recomputed=False` (recompute gagal, dipakai `set_household_payday`) membuang kalimat
-    "Riwayat ... dihitung ulang" dari pesan owner supaya tidak mengklaim yang tidak terjadi; varian skrip tidak
-    memakainya. Judul dan pesan tidak dikirim sebagai `telegram_html`: `kirim` yang meng-escape, jadi nama rumah
-    atau orang yang berisi `<` atau `&` aman. Tiap kirim dibungkus tersendiri: yang gagal dicatat dan tidak
-    menghentikan yang lain, apalagi membatalkan perubahan tanggalnya."""
+    punya pelaku. `periods` = jumlah periode yang BENAR-BENAR dihitung ulang (panjang hasil `recompute_history`, yang
+    bisa lebih dari yang diminta). Kalimat "Riwayat {periods} periode terakhir dihitung ulang." hanya ada bila
+    `history_recomputed` (False: recompute gagal, dipakai `set_household_payday`) dan `periods > 0` (0: household sudah
+    tidak ada saat recompute), di kedua varian, supaya pesan tidak mengklaim yang tidak terjadi. Judul dan pesan tidak
+    dikirim sebagai `telegram_html`: `kirim` yang meng-escape, jadi nama rumah atau orang yang berisi `<` atau `&` aman.
+    Tiap kirim dibungkus tersendiri: yang gagal dicatat dan tidak menghentikan yang lain, apalagi membatalkan perubahan
+    tanggalnya."""
     if changed_by:
         message = f"Tanggal gajian {household_name} kini tanggal {day} (diubah {changed_by})."
-        if history_recomputed:
-            message += f" Riwayat {periods} periode terakhir dihitung ulang."
     else:
-        message = (
-            f"Siklus anggaranmu kini mengikuti {household_name}: tanggal {day}. "
-            f"Riwayat {periods} periode terakhir dihitung ulang."
-        )
+        message = f"Siklus anggaranmu kini mengikuti {household_name}: tanggal {day}."
+    if history_recomputed and periods > 0:
+        message += f" Riwayat {periods} periode terakhir dihitung ulang."
     sent = 0
     for user in users:
         try:
@@ -347,10 +354,11 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
     `ValueError` bila `day` di luar 1–31 (route: 400); tanggal yang sama dengan sekarang → `{"changed": False}`
     tanpa recompute dan tanpa notifikasi. Selain itu household dan, untuk ruang keluarga (`mirrors_users`), cermin
     semua anggota di-assign dalam satu transaksi lalu di-commit (recompute membaca lewat sesi lain, jadi perubahan
-    harus sudah tersimpan), cache advisor household dihapus, 12 periode terakhir dihitung ulang, dan anggota selain
-    `actor` diberi tahu. Ruang usaha menempuh langkah yang sama kecuali cermin: `users.payday_day` anggotanya
-    tidak disentuh (itu siklus ruang keluarga mereka), dan `members` tetap menghitung anggota ruang itu.
-    Hasil: `{"changed": True, "members": n, "recomputed": k}`.
+    harus sudah tersimpan), cache advisor household dihapus, riwayat dihitung ulang (minimal
+    `RECOMPUTE_PERIODS_ON_CHANGE` periode, mundur sampai aktivitas pertama household), dan anggota selain `actor`
+    diberi tahu dengan jumlah periode yang dihitung ulang. Ruang usaha menempuh langkah yang sama kecuali cermin:
+    `users.payday_day` anggotanya tidak disentuh (itu siklus ruang keluarga mereka), dan `members` tetap menghitung
+    anggota ruang itu. Hasil: `{"changed": True, "members": n, "recomputed": k}` (k = periode yang dihitung ulang).
 
     Recompute yang gagal (exception; error per amplop hanya dicatat oleh `recompute_history`) tidak membatalkan
     perubahan yang sudah di-commit dan tidak membuat pemanggil gagal: dicatat dengan `logger.exception`, hasilnya
@@ -381,7 +389,7 @@ async def set_household_payday(db: AsyncSession, household, day: int, *, actor) 
         household_name=household.name,
         day=day,
         changed_by=actor.name,
-        periods=RECOMPUTE_PERIODS_ON_CHANGE,
+        periods=len(results),
         history_recomputed=history_recomputed,
     )
     return {"changed": True, "members": len(members), "recomputed": len(results)}

@@ -5,10 +5,14 @@ from datetime import date
 from sqlalchemy import select, func, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
-from app.core.period import get_budget_period, get_closed_periods
+from app.core.period import get_budget_period, get_closed_periods, periods_to_cover
 from app.models.models import Envelope, Transaction, Allocation, MonthlySnapshot, Household, Income
 
 logger = logging.getLogger("jatahku.rollover")
+
+# Batas atas periode yang dihitung ulang `recompute_household` saat riwayat household lebih panjang dari `periods`
+# pemanggil (10 tahun). Lewat batas ini rantai di ujung paling tua tidak tercakup; dicatat sebagai warning.
+MAX_RECOMPUTE_PERIODS = 120
 
 
 async def calculate_envelope_balance(env_id, period_start: date, period_end: date, db: AsyncSession) -> dict:
@@ -183,29 +187,67 @@ async def create_monthly_snapshots(
         return results
 
 
+async def first_activity_date(db: AsyncSession, household_id) -> date | None:
+    """Tanggal aktivitas paling awal household: yang lebih dulu dari transaksi pertama dan pemasukan pertama yang
+    dialokasikan ke amplopnya, atau None bila belum ada aktivitas. Batas mundur `recompute_household`.
+
+    Amplop household dipilih seperti `create_monthly_snapshots` memilihnya untuk `household_ids`, tetapi TANPA filter
+    `is_active`, dan transaksi tidak disaring `is_deleted`: amplop nonaktif dan transaksi yang sudah dihapus hanya
+    memperlebar rentangnya (snapshot lama bisa masih memuatnya). Pemasukan tanpa alokasi tidak pernah masuk snapshot,
+    jadi tidak dihitung."""
+    first_txn = (await db.execute(
+        select(func.min(Transaction.transaction_date))
+        .join(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Envelope.household_id == household_id)
+    )).scalar()
+    first_income = (await db.execute(
+        select(func.min(Income.income_date))
+        .join(Allocation, Allocation.income_id == Income.id)
+        .join(Envelope, Envelope.id == Allocation.envelope_id)
+        .where(Envelope.household_id == household_id)
+    )).scalar()
+    dates = [d for d in (first_txn, first_income) if d is not None]
+    return min(dates) if dates else None
+
+
 async def recompute_household(
     household_id, payday_day: int, periods: int, today: date | None = None
 ) -> list[dict]:
-    """Hitung ulang riwayat snapshot SATU household: `periods` periode tertutup terakhir menurut `payday_day`,
-    oldest-first dan force=True, supaya rantai rollover terbangun ulang berurutan (tiap periode melihat pendahulunya
-    yang baru dihitung). Mengembalikan satu dict per periode: `{"period": "{awal} → {akhir}", **hasil}` (bentuk
-    respons endpoint /snapshots/recompute).
+    """Hitung ulang riwayat snapshot SATU household menurut `payday_day`: periode tertutup oldest-first dan
+    force=True, supaya rantai rollover terbangun ulang berurutan (tiap periode melihat pendahulunya yang baru
+    dihitung). Mengembalikan satu dict per periode: `{"period": "{awal} → {akhir}", **hasil}` (bentuk respons endpoint
+    /snapshots/recompute).
 
-    Snapshot hanya boleh ada untuk periode tertutup, jadi setelah itu snapshot household ini pada kunci periode
-    berjalan menurut `payday_day` (bulan AWAL periode berjalan) dan sesudahnya dibuang. Kunci snapshot hanya
-    (tahun, bulan awal periode), tanpa jendela tanggalnya, dan job harian tidak menimpa kunci yang sudah ada. Contoh:
-    payday 1 → 25 pada 10 Nov 2026. Kunci 2026-10 ditulis job 1 Nov dengan angka 1–31 Okt, padahal di bawah payday 25
-    kunci itu periode berjalan 25 Okt–24 Nov; dibiarkan, job 25 Nov melewatinya (sudah ada) dan rollover yang salah
-    terbawa selamanya ke periode berikutnya. Dibuang, job membuatnya lagi dengan benar saat periodenya tutup.
+    Berapa periode: `periods` dari pemanggil hanya batas BAWAH. Recompute selalu mundur sampai periode sebelum periode
+    yang memuat aktivitas pertama household (`first_activity_date`, `period.periods_to_cover`), dibatasi
+    `MAX_RECOMPUTE_PERIODS` dengan warning. Periode tertua yang dihitung ulang membaca rollover kunci sebelumnya, dan
+    kunci itu berjendela LAMA bila tanggal gajian baru saja berubah: berhenti di periode ke-`periods` meninggalkan celah
+    (hari yang tidak terhitung di mana pun) atau tumpang-tindih (terhitung dua kali) di batas itu, dan rollover
+    membawanya ke saldo amplop selamanya.
 
-    Tidak ada lock di sini: hanya dipanggil lewat `household_cycle.recompute_history`, yang menserialkan per household."""
+    Snapshot hanya boleh ada untuk periode tertutup, jadi snapshot household ini pada kunci periode berjalan menurut
+    `payday_day` (bulan AWAL periode berjalan) dan sesudahnya dibuang, dan itu dilakukan (dan di-commit) SEBELUM
+    periode tertutup dibangun ulang: rebuild yang gagal di tengah jalan tidak boleh meninggalkan kunci periode berjalan
+    basi. Kuncinya tidak pernah beririsan dengan yang dibangun ulang (setiap kunci tertutup < kunci periode berjalan),
+    jadi urutan ini tidak mengubah angka. Kunci snapshot hanya (tahun, bulan awal periode), tanpa jendela tanggalnya,
+    dan job harian tidak menimpa kunci yang sudah ada. Contoh: payday 1 → 25 pada 10 Nov 2026. Kunci 2026-10 ditulis
+    job 1 Nov dengan angka 1–31 Okt, padahal di bawah payday 25 kunci itu periode berjalan 25 Okt–24 Nov; dibiarkan,
+    job 25 Nov melewatinya (sudah ada) dan rollover yang salah terbawa selamanya ke periode berikutnya. Dibuang, job
+    membuatnya lagi dengan benar saat periodenya tutup.
+
+    Tidak ada lock di sini: hanya dipanggil lewat `household_cycle.recompute_history`, yang menserialkan per household.
+    Tiap langkah memakai sesinya sendiri dan commit di sana."""
     today = today or date.today()
-    out = []
-    for period_start, period_end in get_closed_periods(payday_day, today, periods):
-        result = await create_monthly_snapshots(
-            period_start, period_end, force=True, household_ids=[household_id]
-        )
-        out.append({"period": f"{period_start} → {period_end}", **result})
+    async with AsyncSessionLocal() as db:
+        first = await first_activity_date(db, household_id)
+    if first is not None:
+        needed = periods_to_cover(payday_day, first, today)
+        if needed > MAX_RECOMPUTE_PERIODS:
+            logger.warning(
+                "recompute household %s: riwayat sejak %s butuh %s periode, dibatasi %s",
+                household_id, first, needed, MAX_RECOMPUTE_PERIODS,
+            )
+        periods = max(periods, min(needed, MAX_RECOMPUTE_PERIODS))
 
     open_start, _ = get_budget_period(payday_day, today)
     async with AsyncSessionLocal() as db:
@@ -221,6 +263,13 @@ async def recompute_household(
             .execution_options(synchronize_session=False)
         )
         await db.commit()
+
+    out = []
+    for period_start, period_end in get_closed_periods(payday_day, today, periods):
+        result = await create_monthly_snapshots(
+            period_start, period_end, force=True, household_ids=[household_id]
+        )
+        out.append({"period": f"{period_start} → {period_end}", **result})
     return out
 
 

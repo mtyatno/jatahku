@@ -105,6 +105,7 @@ class SetHouseholdPaydayTests(unittest.IsolatedAsyncioTestCase):
         db.execute.assert_not_called()  # anggota pun tidak dimuat
 
     async def test_change_syncs_all_members_and_recomputes_12(self):
+        # 12 = RECOMPUTE_PERIODS_ON_CHANGE, batas bawah; recompute sendiri yang mundur sampai aktivitas pertama.
         household, budi, ani, db = rumah_budi(payday=1)
         result = await hc.set_household_payday(db, household, 25, actor=budi)
         self.assertEqual(household.payday_day, 25)
@@ -164,6 +165,27 @@ class SetHouseholdPaydayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((household.payday_day, budi.payday_day, ani.payday_day), (10, 10, 10))
         self.assertEqual(db.execute.await_count, 2)
         db.commit.assert_awaited_once()
+
+    async def test_notification_states_the_actual_number_of_recomputed_periods(self):
+        # Ruling R18: 12 hanya batas bawah; recompute mundur sampai aktivitas pertama household, dan pesannya menyebut
+        # jumlah periode yang benar-benar dihitung ulang.
+        household, budi, ani, db = rumah_budi(payday=1)
+        self.recompute.return_value = [{}] * 20
+        result = await hc.set_household_payday(db, household, 25, actor=budi)
+        self.recompute.assert_awaited_once_with(household.id, 12)  # yang diminta tetap minimum 12
+        self.assertEqual(result, {"changed": True, "members": 2, "recomputed": 20})
+        self.assertEqual(
+            self.kirim.await_args.args[3],
+            "Tanggal gajian Rumah Budi kini tanggal 25 (diubah Budi). Riwayat 20 periode terakhir dihitung ulang.",
+        )
+
+    async def test_household_gone_before_recompute_notifies_without_history_claim(self):
+        # `recompute_history` mengembalikan [] untuk household yang sudah dihapus: tidak ada "Riwayat 0 periode".
+        household, budi, ani, db = rumah_budi(payday=1)
+        self.recompute.return_value = []
+        result = await hc.set_household_payday(db, household, 25, actor=budi)
+        self.assertEqual(result, {"changed": True, "members": 2, "recomputed": 0})
+        self.assertEqual(self.kirim.await_args.args[3], "Tanggal gajian Rumah Budi kini tanggal 25 (diubah Budi).")
 
     async def test_notifies_members_except_actor(self):
         household, budi, ani, db = rumah_budi(payday=1)
@@ -258,13 +280,35 @@ class NotifyPaydayChangedTests(unittest.IsolatedAsyncioTestCase):
             self.kirim.await_args.args[3], "Tanggal gajian Rumah Budi kini tanggal 25 (diubah Budi)."
         )
 
-    async def test_notify_payday_changed_script_message_ignores_history_flag(self):
-        # Varian skrip (tanpa pelaku) tidak memakai flag itu: teksnya tetap.
+    async def test_notify_payday_changed_script_message_without_history_claim(self):
+        # Kedua varian memakai aturan yang sama: kalimat riwayat hanya bila riwayat benar-benar dihitung ulang.
         await hc.notify_payday_changed(
             [person("Ani")], household_name="Rumah Ani", day=25, changed_by=None, periods=12,
             history_recomputed=False,
         )
-        self.assertEqual(self.kirim.await_args.args[3], SCRIPT_MESSAGE)
+        self.assertEqual(self.kirim.await_args.args[3], "Siklus anggaranmu kini mengikuti Rumah Ani: tanggal 25.")
+
+    async def test_notify_payday_changed_zero_periods_drops_the_history_sentence(self):
+        # Nol periode (household sudah tidak ada saat recompute) bukan riwayat yang dihitung ulang: kedua varian tanpa
+        # "Riwayat 0 periode terakhir dihitung ulang."
+        for changed_by, expected in (
+            ("Budi", "Tanggal gajian Rumah Ani kini tanggal 25 (diubah Budi)."),
+            (None, "Siklus anggaranmu kini mengikuti Rumah Ani: tanggal 25."),
+        ):
+            with self.subTest(changed_by=changed_by):
+                await hc.notify_payday_changed(
+                    [person("Ani")], household_name="Rumah Ani", day=25, changed_by=changed_by, periods=0,
+                )
+                self.assertEqual(self.kirim.await_args.args[3], expected)
+
+    async def test_notify_payday_changed_script_message_uses_given_periods(self):
+        await hc.notify_payday_changed(
+            [person("Ani")], household_name="Rumah Ani", day=25, changed_by=None, periods=21
+        )
+        self.assertEqual(
+            self.kirim.await_args.args[3],
+            "Siklus anggaranmu kini mengikuti Rumah Ani: tanggal 25. Riwayat 21 periode terakhir dihitung ulang.",
+        )
 
     async def test_notify_payday_changed_counts_successes_and_continues_after_failure(self):
         first, second, third = person("A"), person("B"), person("C")

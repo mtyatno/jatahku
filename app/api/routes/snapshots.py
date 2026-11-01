@@ -159,13 +159,21 @@ def _nothing_done() -> dict:
 
 @router.post("/recompute")
 async def recompute_snapshots(
-    periods: int = Query(6, ge=1, le=36),
+    periods: int = Query(
+        6, ge=1, le=36,
+        description=(
+            "Jumlah MINIMAL periode tertutup terakhir yang dihitung ulang. Recompute selalu mundur sampai periode "
+            "sebelum aktivitas pertama household, jadi riwayat yang lebih panjang tetap terhitung ulang seluruhnya."
+        ),
+    ),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Hitung ulang `periods` snapshot periode tertutup terakhir household pemanggil, oldest-first dan force=True,
-    dengan tanggal gajian rumah (bukan tanggal si pemanggil), supaya rantai rollover terbangun ulang dari ujung ke
-    ujung. Memperbaiki rantai yang rusak karena job snapshot terlewat.
+    """Hitung ulang riwayat snapshot household pemanggil, oldest-first dan force=True, dengan tanggal gajian rumah
+    (bukan tanggal si pemanggil), supaya rantai rollover terbangun ulang dari ujung ke ujung. `periods` adalah batas
+    bawah: recompute selalu mundur sampai periode sebelum aktivitas pertama household (`rollover.recompute_household`),
+    karena endpoint ini alat pemulihan (rantai yang rusak karena job snapshot terlewat, atau recompute perubahan tanggal
+    yang gagal), dan rantai hanya utuh bila dibangun dari awal riwayat.
 
     Siklus milik rumah, jadi hanya yang boleh mengubahnya (owner/admin, atau member yang sendirian) yang boleh
     menghitung ulang riwayat; member lain mendapat 403. Tanpa household tidak ada yang dihitung."""
