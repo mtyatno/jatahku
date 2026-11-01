@@ -233,6 +233,38 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b)
+Menambah `households.payday_day` (siklus milik rumah; NULL = belum dimigrasi), `monthly_snapshots.allocated_amount` dan
+`spent_amount`, beserta backfill `households.payday_day` dari anggota (owner, lalu admin, lalu yang tertua). Migrasi
+**idempoten**: `lifespan` (`HOUSEHOLD_CYCLE_DDL` di `app/services/household_cycle_schema.py`) menjalankan DDL dan backfill
+yang sama saat API restart, dan kolomnya nullable, jadi tidak ada jendela 500. Migrasinya tetap harus dijalankan, kalau
+tidak `deploy.sh` berakhir exit 2. Riwayat snapshot lama dihitung ulang skrip terpisah (langkah 4–5), bukan migrasi.
+Tanpa paket, folder, atau `.env` baru. Detail: `docs/siklus-household.md`.
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart pertama menjalankan `ALTER TABLE households` dan `ALTER TABLE monthly_snapshots` sebagai user DB
+   aplikasi, jadi `jatahku` harus pemilik (`bisa_alter` = t) keduanya; kalau tidak, API gagal start (`ADD COLUMN IF NOT
+   EXISTS` tetap mensyaratkan pemilik walau kolomnya sudah ada). Pakai query di checklist Kotak Struk dengan
+   `IN ('households','monthly_snapshots')`. Bila ada yang bukan `jatahku`, sebagai `postgres`:
+   `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+2. `ls /opt/jatahku/app/alembic/versions/ | grep 2d51b9031a6b`; `alembic current` harus `b1d4a7c2e9f0` (Plugin B1)
+   sebelum upgrade; bila belum, jalankan checklist Plugin R1 dan B1 dulu.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`; `alembic current` harus
+   `2d51b9031a6b`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job deploy yang gagal.
+4. Migrasi data, di jam sepi dan **bukan sekitar 00:05** (job snapshot harian; skrip berjalan di proses terpisah, jadi
+   tidak diserialkan dengan job): `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.siklus_household` (dry-run, tidak menulis apa pun). Baca daftarnya: baris `CAMPURAN` = household yang
+   anggotanya beda payday dan akan disamakan ke `target`; `[usaha]` = ruang usaha (siklusnya sendiri, tidak dicerminkan
+   ke user).
+5. Sesudah dibaca, di jam sepi yang sama: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.siklus_household --apply` (mengisi payday rumah, menghitung ulang 12 periode terakhir semua household,
+   menyamakan anggota, memberi tahu yang berubah). Gagal di tengah (traceback, exit 1) = jalankan ulang; run kedua aman.
+6. Verifikasi: dua anggota satu household → `GET /user/profile` memberi `household_payday_day` yang sama;
+   `sudo -u postgres psql jatahku_db -c "SELECT COUNT(*) FROM households h WHERE h.payday_day IS NULL AND EXISTS (SELECT 1
+   FROM household_members m WHERE m.household_id = h.id)"` → 0; esok harinya `journalctl -u jatahku | grep menyimpang`
+   kosong (job 00:05 tidak menyamakan siapa pun lagi). Bila dry-run menandai household CAMPURAN, cek dashboard anggota
+   yang berubah: sisa amplop masuk akal, tanpa transaksi terhitung ganda.
+
 ## Deploy Checklist — Plugin B1: `dashboard_layouts` (b1d4a7c2e9f0)
 Menambah tabel `dashboard_layouts` (tata letak Beranda per user per ruang, ADR-P8) dan endpoint baru
 `/dashboard/*`. Migrasi **idempoten** (`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat
