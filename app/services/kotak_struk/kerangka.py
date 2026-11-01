@@ -4,7 +4,7 @@ Worker menyimpan kerangka ini di kolom `receipt_scans.layout` (bukan di `documen
 supaya koreksi user yang datang belakangan bisa dipetakan ke baris asalnya tanpa menyimpan teks OCR. Kerangka hanya
 memuat STRUKTUR:
 
-    {"v": 1, "key": "gopay" | "logo:<kata>", "lines": [
+    {"v": 1, "key": "gopay", "lines": [
         {"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000},
         {"i": 7, "label": "tanggal", "kind": "tanggal", "date": "2026-10-31"},
         {"i": 3, "label": "ditransfer ke", "kind": "nama", "h": "<HMAC nama ternormalisasi>"},
@@ -13,11 +13,21 @@ memuat STRUKTUR:
 - `i` = indeks baris di `clean_lines(lines)`; paling banyak LAYOUT_MAX_LINES entri, urut `i`.
 - Label hanya dari kosakata label (`LABEL_WORDS`), digit diganti `#`, tanpa kata nama pihak lawan/pengirim/user
   (`safe_label`); label lain menjadi None.
-- Baris yang memuat nomor rahasia (referensi, rekening, NMID) atau deret >= LONG_DIGITS digit di luar nominal/tanggal
-  tidak masuk sama sekali. Nama hanya sebagai HMAC (`merchants.hmac_hex`, kunci `KOTAK_HMAC_KEY`).
+- Baris yang memuat nomor rahasia (referensi, rekening, NMID), nomor tersamar, atau deret >= LONG_DIGITS digit di luar
+  nominal/tanggal tidak masuk sama sekali. Nama hanya sebagai HMAC (`merchants.hmac_hex`, kunci `KOTAK_HMAC_KEY`).
+- `nominal` hanya dari token uang yang rapi (awalan Rp/IDR, atau ribuan bertitik tanpa nol di depan; angka polos
+  >= 1000 hanya di bawah label uang) dan tidak pernah di bawah label nomor (rekening, no, ref, id, NPWP, VA, HP, ...)
+  atau di baris alamat: nomor berbentuk angka tidak pernah tersimpan sebagai nominal.
 - Kata judul hanya kata kosakata (label, status, arah uang, nama aplikasi), tanpa kata nama.
 - Hanya `doc_type` di LAYOUT_TYPES (QRIS, transfer, tidak dikenali) dengan kunci aturan (`rule_key`) yang punya
-  kerangka; kunci `logo:<kata>` hanya untuk `tidak_dikenali`. Struk belanja tidak pernah punya kerangka.
+  kerangka. Tahap 1: kunci hanya profil aplikasi yang dikenal (`LOGO_KEYS = False`); kunci `logo:<kata>` (baris logo
+  aplikasi tak dikenal) baru dinyalakan di tahap 2 (M2) bersama konfirmasi user, karena baris teratas bukti tak dikenal
+  bisa nama orang atau merchant. Struk belanja tidak pernah punya kerangka.
+
+Batas yang diketahui (spec §8; dicatat untuk dokumen L7): kata nama yang KEBETULAN juga kata kosakata ("Dana", "Mega",
+"Toko", "Admin") bisa bertahan di label atau judul bila pembaca tidak membaca nama itu sebagai pihak lawan/pengirim
+(mis. pengirim "DANA PRATAMA" dianggap nama penyedia). Yang bocor paling banyak satu kata umum yang tidak mengenali
+siapa pun; nama utuh, nomor, dan kata di luar kosakata tidak pernah tersimpan.
 
 Semua fungsi murni (tanpa I/O; `hmac_hex` membaca kunci dari konfigurasi).
 """
@@ -31,7 +41,7 @@ from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers import transfer as transfer_reader
 from app.services.kotak_struk.readers.base import Secrets
-from app.services.kotak_struk.readers.labels import _find_date, parse_datetime_id
+from app.services.kotak_struk.readers.labels import find_date, parse_datetime_id
 from app.services.kotak_struk.readers.profiles import (
     GENERIC_LABELS, LOGO_WORDS, MONEY_PROVIDERS, PROFILES, AppProfile, detect_issuer, is_provider_only,
 )
@@ -39,6 +49,7 @@ from app.services.receipt_parser import amounts_in
 
 LAYOUT_VERSION = 1
 HEADER_LINES = 4          # judul hanya dari baris-baris teratas (selaras proof_common.HEADER_LINES)
+LOGO_KEYS = False         # tahap 1 tanpa kunci `logo:<kata>` (keputusan review L1 I-1); M2 menyalakannya
 LOGO_LINES = 3            # kunci logo dari baris-baris teratas (G4)
 LOGO_MIN_LETTERS = 3
 TITLE_MAX_WORDS = 6
@@ -93,10 +104,25 @@ _KNOWN_LABEL = re.compile(
     r"^\s*(?:" + "|".join(r"\s+".join(re.escape(part) for part in label.split()) for label in _KNOWN_LABELS)
     + r")(?=$|[\s:：])", re.IGNORECASE)
 
-# Nominal dan bagian tanggal tidak dihitung sebagai deret angka panjang (Rp1.500.000 = 7 digit).
-_MONEY_TOKEN = re.compile(r"(?:rp|idr)\.?\s*\d{1,8}(?:[.,]\d{3})*(?:,\d{2})?(?!\d)"
-                          r"|(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:,\d{2})?(?![\d])", re.IGNORECASE)
-_MONEY_START = re.compile(r"(?:rp|idr)\.?\s*\d|(?<![A-Za-z])\d", re.IGNORECASE)
+# Token uang yang rapi: awalan Rp/IDR (ribuan bertitik/berkoma atau angka polos <= 8 digit, tanpa nol di depan), atau
+# ribuan bertitik tanpa awalan ("15.000"). Pengelompokan janggal ("012.345.678.9", "5.123.4567") bukan uang: menjadi
+# deret angka panjang dan barisnya dibuang. Nominal dan tanggal tidak dihitung sebagai deret panjang (Rp1.500.000).
+_MONEY = re.compile(
+    r"(?:(?<![A-Za-z])(?:rp|idr)\.?\s*(?:(?!0)\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|(?!0)\d{1,8}(?:[.,]\d{2})?|0)"
+    r"|(?<![\d.,])(?!0)\d{1,3}(?:\.\d{3})+(?:,\d{2})?)(?![\d]|[.,]\d)", re.IGNORECASE)
+# Angka polos >= 1000 tanpa pemisah: nominal hanya bila labelnya label uang (`_MONEY_WORDS`).
+_BARE = re.compile(r"(?<![\d.,])(?!0)\d{4,8}(?![\d]|[.,]\d)")
+_MONEY_WORDS = frozenset(
+    "nominal jumlah total bayar dibayar pembayaran biaya admin harga subtotal amount tagihan saldo terpakai fee layanan "
+    "diskon potongan promo voucher pajak ppn tax discount tips tip ongkir donasi debit paid payment".split())
+# Label nomor: angka di bawah/di samping label ini adalah nomor (rekening, referensi, pelanggan, HP, ...), bukan nominal.
+_ID_LABEL = re.compile(
+    r"(?<![A-Za-z])(?:rek|rekening|no|nomor|ref|referensi|npwp|nmid|nik|id|va|virtual|kode|pos|telp|telepon|hp|phone|"
+    r"terminal|pan|rrn|order|sn|trx|akun|account|kartu|card|pelanggan|resi|invoice)(?![A-Za-z])", re.IGNORECASE)
+# Baris alamat (kode pos, nomor rumah): tidak pernah nominal.
+_ADDRESS = re.compile(
+    r"(?<![A-Za-z])(?:jl|jln|jalan|kel|kelurahan|kec|kecamatan|kab|kabupaten|kota|rt|rw|lantai|lt|blok|gedung|tower|"
+    r"komplek|perumahan|desa)(?![A-Za-z])", re.IGNORECASE)
 _NAME_WORD = re.compile(r"[A-Za-z][A-Za-z.'&\-,]*")
 _TEXT_LINE = re.compile(r"[A-Za-z]{4,}")   # baris yang memuat kata; bilah status ("10:57", "LTE", panah) tidak
 # Nomor tersamar ("…4821", "*********2096", "0123****4567", "…K2NW", "xxxx1234"): ekor rekening/PAN/referensi, bukan nominal.
@@ -135,18 +161,21 @@ def safe_label(text: str | None, *, forbidden_words: set[str]) -> str | None:
 # ── kunci aturan ────────────────────────────────────────────────────────────
 
 def _is_status(text: str) -> bool:
-    return bool(pc._classify(text) or pc._STATUS_TITLE.search(text)
-                or transfer_reader._TOP_UP.search(text) or transfer_reader._INCOMING.search(text))
+    return bool(pc.classify_status(text) or pc.STATUS_TITLE.search(text)
+                or transfer_reader.TOP_UP.search(text) or transfer_reader.INCOMING.search(text))
 
 
 def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: set[str]) -> str | None:
-    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Selain itu `logo:<kata>` dari baris logo: baris pertama
+    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Tahap 1 (`LOGO_KEYS = False`): selain itu None.
+    Dengan `LOGO_KEYS` (M2): `logo:<kata>` dari baris logo: baris pertama
     di antara LOGO_LINES baris bersih teratas yang 1-2 kata, hanya huruf, >= 3 huruf, bukan label/kata status/kata
     `LABEL_WORDS`, dan bukan kata `forbidden_words`; huruf kecil, <= LAYOUT_LABEL_MAX. Baris di atasnya hanya boleh bilah
     status (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Selain itu None
     (tanpa kerangka dan tanpa suara)."""
     if profile is not None:
         return profile.key
+    if not LOGO_KEYS:
+        return None
     for line in pc.clean_lines(lines)[:LOGO_LINES]:
         words = line.split()
         candidate = (1 <= len(words) <= 2 and all(w.isascii() and w.isalpha() for w in words)
@@ -154,7 +183,8 @@ def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: s
         if candidate:
             lowered = [w.lower() for w in words]
             key = " ".join(lowered)
-            if (len(key) <= LAYOUT_LABEL_MAX and not pc.is_label_line(line) and not _is_status(line)
+            # Baris label pasti memuat kata LABEL_WORDS, jadi cek kosakata juga menolak baris label.
+            if (len(key) <= LAYOUT_LABEL_MAX and not _is_status(line)
                     and not set(lowered) & (LABEL_WORDS | forbidden_words)):
                 return f"logo:{key}"
         if _TEXT_LINE.search(line):
@@ -180,10 +210,10 @@ def _secret_line(line: str, secrets: Secrets) -> bool:
         if len(value_digits) >= pc.LONG_DIGITS and value_digits in digits:
             return True
     rest = line
-    found = _find_date(rest)
+    found = find_date(rest)
     if found:
         rest = rest[:found[0]] + " " + rest[found[1]:]
-    rest = _MONEY_TOKEN.sub(" ", rest)
+    rest = _MONEY.sub(" ", rest)
     return bool(pc.split_long_numbers(rest)[1])
 
 
@@ -246,18 +276,26 @@ def _entry(i: int, line: str, prev: str | None, forbidden: set[str]) -> dict | N
             return safe_label(text, forbidden_words=forbidden)
         return _label_only(prev, forbidden)
 
-    found = _find_date(line)
+    found = find_date(line)
     if found:
         paid = parse_datetime_id(line)
         if paid is not None:
             return {"i": i, "label": label_of(line[:found[0]]), "kind": "tanggal", "date": paid.date().isoformat()}
-    m = _MONEY_START.search(line)
-    if m:
-        amounts = amounts_in(line[m.start():])
+    if not _ADDRESS.search(line):
+        m, bare = _MONEY.search(line), False
+        if m is None:
+            m, bare = _BARE.search(line), True
+        amounts = amounts_in(m.group(0)) if m else []
         if amounts:
-            return {"i": i, "label": label_of(line[:m.start()]), "kind": "nominal", "amount": int(amounts[0])}
-    if i < HEADER_LINES and (pc._STATUS_TITLE.search(line) or transfer_reader._TOP_UP.search(line)
-                             or transfer_reader._INCOMING.search(line)):
+            head = line[:m.start()]
+            if _ID_LABEL.search(head) or (not head.strip(_EDGE) and prev and not re.search(r"\d", prev)
+                                          and _ID_LABEL.search(prev)):
+                return None   # nomor berlabel (rekening, referensi, pelanggan, ...), bukan nominal
+            label = label_of(head)
+            if not bare or (label and set(_words(label)) & _MONEY_WORDS):
+                return {"i": i, "label": label, "kind": "nominal", "amount": int(amounts[0])}
+    if i < HEADER_LINES and (pc.STATUS_TITLE.search(line) or transfer_reader.TOP_UP.search(line)
+                             or transfer_reader.INCOMING.search(line)):
         words = [w for w in re.findall(r"[a-z]+", line.lower()) if w in TITLE_WORDS and w not in forbidden]
         if words:
             return {"i": i, "label": None, "kind": "judul", "words": words[:TITLE_MAX_WORDS]}
@@ -279,8 +317,9 @@ def _profile_of(doc: DokumenBayar, lines: list[str]) -> AppProfile | None:
 
 
 def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_name: str | None) -> dict | None:
-    """Kerangka aman satu bukti (lihat docstring modul). None bila `doc.doc_type` bukan LAYOUT_TYPES, tanpa kunci aturan,
-    atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah (`TextDoc.lines`); `doc`/`secrets` = hasil pembaca SEBELUM disamarkan worker."""
+    """Kerangka aman satu bukti (lihat docstring modul). None bila `doc.doc_type` bukan LAYOUT_TYPES, tanpa kunci aturan
+    (tahap 1: aplikasi tak dikenal), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
+    (`TextDoc.lines`); `doc`/`secrets` = hasil pembaca SEBELUM disamarkan worker."""
     if doc.doc_type not in LAYOUT_TYPES:
         return None
     clean = pc.clean_lines(lines)

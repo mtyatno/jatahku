@@ -27,7 +27,7 @@ from app.core.database import Base
 from app.main import app, lifespan
 from app.models.models import AppSetting, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, ReceiptScan, User
 from app.services.app_config import FEATURES, feature_enabled
-from app.services.kotak_struk import merchants, record, view, waiter, worker
+from app.services.kotak_struk import kerangka, merchants, record, view, waiter, worker
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import ExtractError, PdfLocked, TextDoc
 from app.services.kotak_struk.intake import IntakeRequest, create_item
@@ -863,16 +863,26 @@ class LayoutTests(WorkerBase):
         self.assertNotIn("layout", detail["document"])
         self.assertNotIn(hmac_hex("budi santoso"), json.dumps(detail, default=str))
 
+    async def test_unknown_app_gets_no_layout(self):
+        # Tahap 1 (review L1 I-1): bukti aplikasi tak dikenal tanpa kerangka, apa pun baris teratasnya (nama orang).
+        for lines in (["09:41", "Siti Aminah", "Kirim Uang Berhasil", "Nominal Rp50.000"],
+                      ["Wahyu", "Pembayaran Berhasil", "Nominal Rp10.000", "26/10/2026 08:12"]):
+            item = await self.item(text="x")
+            self.assertEqual(await self.process(item, lines), "siap")
+            self.assertIsNone((await self.get(item.id)).layout)
+
     async def test_layout_never_keys_on_the_user_name(self):
-        # Aplikasi tak dikenal yang baris pertamanya nama user (Rina Wulandari): tanpa kunci, tanpa kerangka.
+        # Dengan kunci logo (M2, saklar `LOGO_KEYS`): baris pertama nama user (Rina Wulandari) tidak pernah jadi kunci.
+        # Nama user sampai ke kerangka lewat `process_item`.
         lines = ["Wulandari", "Pembayaran Berhasil", "Nominal Rp10.000", "26/10/2026 08:12"]
         item = await self.item(text="x")
-        self.assertEqual(await self.process(item, lines), "siap")
-        self.assertIsNone((await self.get(item.id)).layout)
-        res = await worker.read_document(TextDoc(lines=lines, kind="image"), worker.ParseContext(today=date(2026, 10, 26)),
-                                         proofs_enabled=True)
-        self.assertEqual(worker._outcome(res, TextDoc(lines=lines, kind="image")).columns["layout"]["key"],
-                         "logo:wulandari")   # pembanding: tanpa nama user, baris yang sama menjadi kunci logo
+        with patch.object(kerangka, "LOGO_KEYS", True):
+            self.assertEqual(await self.process(item, lines), "siap")
+            self.assertIsNone((await self.get(item.id)).layout)
+            res = await worker.read_document(TextDoc(lines=lines, kind="image"),
+                                             worker.ParseContext(today=date(2026, 10, 26)), proofs_enabled=True)
+            self.assertEqual(worker._outcome(res, TextDoc(lines=lines, kind="image")).columns["layout"]["key"],
+                             "logo:wulandari")   # pembanding: tanpa nama user, baris yang sama menjadi kunci logo
 
     async def test_store_receipt_gets_no_layout(self):
         for enabled in (False, True):
