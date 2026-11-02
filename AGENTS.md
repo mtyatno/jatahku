@@ -480,8 +480,9 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `lifespan` membuat tabel dan kolomnya (`create_all` + `KOTAK_DDL`), jadi migrasi ini tidak membuat apa pun lagi (IF NOT
    EXISTS) dan hanya menandai revisi: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`
    (bila `receipt_scans`/`users` milik `postgres`, jalankan sebagai postgres); `alembic current` harus `e7b3d5a9c1f4`.
-   `sudo systemctl restart jatahku` sesudahnya mengikuti urutan umum, tidak wajib. 500 di kartu itu = `create_all` gagal
-   (cek langkah 1 dan `journalctl -u jatahku`).
+   `sudo systemctl restart jatahku` sesudahnya mengikuti urutan umum, tidak wajib. Bila `create_all`/`KOTAK_DDL` gagal
+   (biasanya hak tabel, langkah 1), API tidak start sama sekali: deploy berhenti di "API menjalankan … tidak menjawab"
+   (exit 1) sebelum cek migrasi; lihat `journalctl -u jatahku`.
 4. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"), seperti langkah 5 "Urutan merge PR
    bermigrasi", supaya "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`.
 5. Verifikasi:

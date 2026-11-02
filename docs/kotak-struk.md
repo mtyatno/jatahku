@@ -892,7 +892,8 @@ dari `/opt/jatahku/app/privacy.html` bila ada, selain itu dari `/opt/jatahku/bac
 adalah file sumber itu, bukan hanya salinan di `public_html`:
 `sudo ls -l /opt/jatahku/app/privacy.html /opt/jatahku/backups/privacy.html`; ubah file sumber yang dipakai, lalu
 `sudo cp <file itu> /home/jatahku/web/jatahku.com/public_html/privacy.html`. Mengubah `public_html` saja hilang di
-deploy berikutnya (paling lambat PR `share_target`, langkah 7). Lebih aman lagi: masukkan `privacy.html` ke repo.
+deploy berikutnya (paling lambat PR `share_target`, langkah 7). Lebih aman lagi: masukkan `privacy.html` ke repo. Saat memasukkannya ke repo, pindahkan dulu salinan tak terlacak
+`/opt/jatahku/app/privacy.html` (mis. ke `/opt/jatahku/backups/`), kalau tidak `git pull` di deploy gagal.
 Paragraf dari spec belajar lintas user §8, siap ditempel:
 
 ```html
@@ -945,7 +946,7 @@ tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti
 ini)" (`Admin.jsx`, `scanStats.js`): lihat "Tips Settings dan rincian Admin" di "Web dan PWA". Sejak tahap 1 belajar
 lintas user juga `rules_pending` (jumlah aturan `menunggu`, semua waktu; lencana dan bagian "Aturan belajar"). Endpoint ini
 membaca `proof_rules`; tabel itu dibuat `lifespan` (`create_all`) saat API start, jadi tidak ada jendela 500 sebelum
-migrasi `e7b3d5a9c1f4` (500 di kartu itu = `create_all` gagal, biasanya hak tabel). Sesudah saklar menyala, `% dikoreksi` per penerbit dan aturan menunggu adalah alat pantau
+migrasi `e7b3d5a9c1f4` (bila `create_all` gagal, biasanya hak tabel, API tidak start sama sekali dan deploy berhenti exit 1). Sesudah saklar menyala, `% dikoreksi` per penerbit dan aturan menunggu adalah alat pantau
 utama: aplikasi dengan `% dikoreksi` tinggi tanpa aturan = kandidat kalibrasi manual.
 
 ## Konfigurasi (`/opt/jatahku/.env`)
