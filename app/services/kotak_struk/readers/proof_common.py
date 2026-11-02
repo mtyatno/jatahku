@@ -787,13 +787,18 @@ def _status_part(text: str) -> str:
 # atau "Dari rekening gagal didebet" diawali kata yang kebetulan label nama. Judul dari baris nama hanya boleh menyumbang
 # gagal/pending, tidak pernah berhasil: "Tujuan Transfer CV SUKSES JAYA" juga berbentuk judul, dan "berhasil" palsu di judul
 # akan menutupi kegagalan di bawah baris 4.
-# Baris catatan user ("Catatan arisan gagal kemarin", "Berita: transfer gagal kemarin"; L6b, keluarga N4) dibaca sama: teks
-# bebas yang ditulis user, bukan status, kecuali judul status gagal/pending.
+# Baris catatan user (label catatan/berita/keterangan; L6b, keluarga N4) dibaca sama: teks bebas yang ditulis user, jadi kalimat
+# tanpa judul status ("Catatan arisan gagal kemarin") bukan status; judul status ("Berita: transfer gagal kemarin",
+# "Keterangan: Transaksi gagal") tetap gagal/pending. Kecuali nilai catatan yang HANYA kata status ("Keterangan: Gagal",
+# "Catatan: Pending", "Keterangan: Sedang diproses"; review L6 I-1): beberapa bank mencetak status di bawah "Keterangan".
 _NAME_FIELDS = ("merchant", "sender", "note")
+_NOTE_FIELDS = ("note",)
+# Kata pengisi di nilai berstatus saja ("Sedang diproses", "Telah berhasil").
+_STATUS_FILLER = re.compile(r"(?<!\w)(?:sedang|masih|telah|sudah|dalam)(?!\w)", re.IGNORECASE)
 # Kata benda transaksi di awal judul status (dipakai `_STATUS_TITLE` dan `_CANCEL_TITLE`: satu daftar). "dana"/"saldo" sengaja
-# tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI"). "Kirim uang"/"kirim dana"/"transfer dana" (L6c, C2: DANA "Kirim
+# tidak masuk: kata biasa dalam nama ("DANA SUKSES ABADI"). "Kirim uang"/"kirim dana" (L6c, C2: DANA "Kirim
 # Uang Berhasil") hanya sebagai frasa utuh; "bayar" tidak (terlalu umum di struk). Penanda pembaca transfer tidak berubah.
-_TITLE_NOUN = (r"(?:transaksi|transfer(?:\s+dana)?|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|"
+_TITLE_NOUN = (r"(?:transaksi|transfer|pembayaran|payment|transaction|top[\s-]?up|isi\s+saldo|rekening|pengiriman|"
                r"penarikan|setoran|pembelian|purchase|withdrawal|deposit|kirim\s+uang|kirim\s+dana)")
 # Judul status: kata benda transaksi, paling banyak 3 kata lain, lalu kata status ("Transfer Gagal", "Transaksi Anda Gagal",
 # "Payment failed", "Top Up Gagal", "rekening gagal didebet"). Nama seperti "TOKO GAGAL MANIA" atau "BUDI GAGAL" tidak.
@@ -868,6 +873,13 @@ _TAIL_TOKEN = re.compile(
 _TAIL_NUMBER_ID = re.compile(r"[\s,]+#\d+(?!\w)")
 _DATE_TOKEN = r"(?:\d{1,4}(?:[/.\-:]\d{1,4})*|" + _MONTH + r"|wib|wita|wit|pukul)"
 _DATE_TAIL = re.compile(r"(?:[\s,]+" + _DATE_TOKEN + r"(?!\w))+", re.IGNORECASE)
+_DATE_WORD = re.compile(_DATE_TOKEN, re.IGNORECASE)
+
+
+def _is_date_word(word: str) -> bool:
+    """Token tanpa huruf (tanggal, jam, angka, tanda baca) atau nama bulan/zona waktu: bukan kata nama."""
+    word = word.strip(".,:;!?•·()[]-–—")
+    return not re.search(r"[A-Za-z]", word) or bool(_DATE_WORD.fullmatch(word))
 
 
 def _policy_modal(clause: str) -> bool:
@@ -944,10 +956,18 @@ def _is_status_title(text: str) -> bool:
     return bool(_STATUS_TITLE.search(text) or _STATUS_TITLE.search(_cancel_as_failed(text)))
 
 
-def _name_label_end(text: str) -> int | None:
-    labels = {label.lower() for name in _NAME_FIELDS for label in labels_for(None, name)}
+def _name_label_end(text: str, fields: tuple[str, ...] = _NAME_FIELDS) -> int | None:
+    labels = {label.lower() for name in fields for label in labels_for(None, name)}
     m = _label_start(tuple(sorted(labels, key=len, reverse=True))).match(text)
     return m.end() if m else None
+
+
+def _is_status_only(text: str) -> bool:
+    """Teks hanya kata status (boleh kata pengisi, tanggal/jam, dan tanda baca): "Gagal", "GAGAL.", "Sedang diproses"."""
+    if not _ANY_STATUS.search(text):
+        return False
+    rest = _STATUS_FILLER.sub(" ", _ANY_STATUS.sub(" ", text))
+    return not [w for w in rest.split() if re.search(r"[^\W_]", w) and not _is_date_word(w)]
 
 
 def _status_lines(texts: list[str], max_words: int, *, store: bool = False, header: bool = False) -> list[str]:
@@ -958,24 +978,25 @@ def _status_lines(texts: list[str], max_words: int, *, store: bool = False, head
     pembayaran negasi kata tiba dibatasi (`_mask_arrival`; `store`: teks berbaris barang, `has_item_lines`). Kata batal
     (`_CANCEL_WORD`) dibaca sebagai gagal di judul status, nilai label status pembayaran, dan, bila `header` (4 baris
     pertama), baris berstatus saja (`_cancel_as_failed`)."""
-    out, name_below = [], False
+    out, name_below, note_below = [], False, False
     for text in texts:
         value = payment_status_value(text)
         if _STATUS_LABEL_WORD.match(text) and value is None:
-            name_below = False
+            name_below = note_below = False
             continue                     # "Status Member: Gagal", "Status Pengiriman: Gagal": bukan status pembayaran
-        is_name, name_below = name_below, False
+        is_name, is_note, name_below, note_below = name_below, note_below, False, False
         if value is None:
             text = _mask_arrival(text, store=store)
         text = _cancel_as_failed(text, value=value is not None, header=header, store=store)
         label_end = _name_label_end(text)
         if label_end is not None:
+            from_note = _name_label_end(text, _NOTE_FIELDS) == label_end
             text = text[label_end:].strip(" :：")
-            name_below = not text
+            name_below, note_below = not text, not text and from_note
             from_name = True
         else:
-            from_name = is_name
-        if from_name and not _is_status_title(text):
+            from_name, from_note = is_name, is_note
+        if from_name and not _is_status_title(text) and not (from_note and _is_status_only(text)):
             continue
         if len(text.split()) > max_words or not _is_status_sentence(text):
             continue
@@ -988,14 +1009,28 @@ def _status_lines(texts: list[str], max_words: int, *, store: bool = False, head
     return out
 
 
+# Frasa sukses yang bukan nama (review L6 m-1): kata seru di depan ("Yeay, …", "Hore! …"), kata benda transaksi berakhiran
+# -mu/-nya/-ku ("pembayaranmu berhasil"), dan kata status yang langsung diikuti kata kerja bayar/kirim ("Berhasil dibayar
+# ke WARUNG BAKSO", "Sukses bayar ke …"; bukan "SUKSES JAYA", "SUKSES DIESEL").
+_CHEER = re.compile(r"(?<!\w)(?:yeay|yey|yay|yeah|hore+|horray|hooray|wah|asyik|asik|selamat)(?!\w)", re.IGNORECASE)
+_POSSESSIVE = re.compile(r"(?<=[a-z])(?:mu|nya|ku)(?!\w)", re.IGNORECASE)
+_SUCCESS_VERB = re.compile(r"\W*" + _STATUS_WORD + r"\s+(?:dibayar|dikirim|ditransfer|diterima|dibeli|terkirim|terbayar|"
+                           r"bayar|membayar|transfer|kirim|mengirim|top[\s-]?up)(?!\w)", re.IGNORECASE)
+
+
 def _is_name_shaped_success(part: str) -> bool:
     """Bagian status `berhasil` yang berbentuk nama ("TOKO SUKSES MAKMUR", "CV BERHASIL JAYA ABADI"): bukan judul status,
-    dan sesudah kata statusnya dibuang tersisa lebih dari satu kata lain. Baris berstatus saja ("Berhasil", "Berhasil
-    dikirim", "Status : Berhasil") dan judul status ("Pembayaran Sukses!") bukan (L6a, sisa N2). Nilai label status
-    pembayaran dibaca `read_status` sebelum baris-baris ini, jadi tidak pernah sampai ke sini sebagai penentu."""
-    if _classify(part) != BERHASIL or _is_status_title(part):
+    dan sesudah kata statusnya dibuang tersisa lebih dari satu kata lain. Tanggal, jam, angka, nama bulan, tanda baca, dan
+    kata seru tidak dihitung kata ("Berhasil 26 Okt 2026, 08:12 WIB", "Yeay, berhasil!"); judul dengan kata benda
+    berakhiran -mu/-nya/-ku ("pembayaranmu berhasil") dan kata status yang diikuti kata kerja bayar/kirim ("Berhasil
+    dibayar ke WARUNG BAKSO") bukan nama (review L6 m-1). Baris berstatus saja ("Berhasil", "Berhasil dikirim", "Status :
+    Berhasil") dan judul status ("Pembayaran Sukses!") bukan (L6a, sisa N2). Nilai label status pembayaran dibaca
+    `read_status` sebelum baris-baris ini, jadi tidak pernah sampai ke sini sebagai penentu."""
+    if _classify(part) != BERHASIL or _is_status_title(part) or _is_status_title(_POSSESSIVE.sub("", part)) \
+            or _SUCCESS_VERB.match(part):
         return False
-    return len([w for w in _ANY_STATUS.sub(" ", part).split() if re.search(r"[^\W_]", w)]) > 1
+    rest = _CHEER.sub(" ", _ANY_STATUS.sub(" ", part))
+    return len([w for w in rest.split() if not _is_date_word(w)]) > 1
 
 
 def _status_reading(texts: list[str]) -> list[str]:
@@ -1227,6 +1262,9 @@ MIN_STORE_ITEMS = 3        # barang tanpa kuantitas sebelum total
 # Label bukti bayar di atas TOTAL (L6d): teks seperti ini bukan struk kecil walau baris "KOPI 15.000" lalu "QRIS 15.000".
 _PROOF_LABEL_FIELDS = ("merchant", "sender", "nmid", "account")
 _AMOUNT_LABEL = re.compile(r"^\W*(?:nominal|jumlah|amount)(?![A-Za-z])", re.IGNORECASE)
+# Nominal Rp polos di atas TOTAL ("Rp25.000" lalu "Donasi Rp2.000"): nominal bukti di bawah nama merchant, bukan harga barang
+# (review L6 m-4: bukti QRIS dengan biaya tanpa label).
+_BARE_RP_AMOUNT = re.compile(r"^\W*(?:Rp\.?|IDR)\s*\d[\d.,]*\s*$", re.IGNORECASE)
 MIN_QTY_ITEMS = 2          # baris "NAMA QTY HARGA" (bukti bayar tidak pernah memakai bentuk ini)
 
 
@@ -1296,8 +1334,8 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     - >= 2 baris "NAMA QTY HARGA" di mana saja;
     - >= 1 baris "NAMA QTY HARGA" sebelum baris total dan sesudahnya baris cara bayar ("QRIS 40.000") bernominal sama dengan total;
     - >= 1 baris barang tanpa kuantitas ("KOPI 15.000") sebelum baris total, sesudahnya baris cara bayar bernominal sama
-      dengan total, dan tidak ada label bukti (Merchant/Penerima/NMID/Rekening/Pengirim berlabel, Nominal/Jumlah) di atas
-      baris total (L6d, C3: struk 1-2 barang dibayar QRIS).
+      dengan total, dan tidak ada label bukti (Merchant/Penerima/NMID/Rekening/Pengirim berlabel, Nominal/Jumlah, atau
+      nominal Rp polos) di atas baris total (L6d, C3: struk 1-2 barang dibayar QRIS).
     Baris berlabel bukti (Subtotal, Harga, Tip, Top Up, Nominal, ...) tidak pernah dihitung barang.
     Struk toko kecil (1-2 barang) yang dibayar QRIS dan mencetak NMID/Terminal ID masuk pola ini."""
     if any(_is_cash_line(line) for line in lines):
@@ -1312,7 +1350,8 @@ def looks_like_store_receipt(lines: list[str]) -> bool:
     if total_at is None or not items:
         return False
     if not any(_is_qty_item_line(line) for line in before) and any(
-            is_label_line(line, fields=_PROOF_LABEL_FIELDS) or _AMOUNT_LABEL.match(line) for line in before):
+            is_label_line(line, fields=_PROOF_LABEL_FIELDS) or _AMOUNT_LABEL.match(line) or _BARE_RP_AMOUNT.match(line)
+            for line in before):
         return False
     totals = _total_amounts(lines, total_at)
     return any(_is_payment_line_for(line, totals) for line in lines[total_at + 1:])

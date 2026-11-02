@@ -286,6 +286,7 @@ async def recount(db: AsyncSession, kind: str, rule_key: str, value: str) -> Pro
             .on_conflict_do_update(index_elements=["kind", "rule_key", "value"],
                                    set_={"users": users, "households": households})
         )
+    # Sesudah UPDATE atau sisip baris ini selalu ada di transaksi ini; `_or_none` hanya pertahanan (review L4a m-9).
     return (await db.execute(select(ProofRule).where(*match)
                              .execution_options(populate_existing=True))).scalar_one_or_none()
 

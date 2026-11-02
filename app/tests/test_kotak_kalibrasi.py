@@ -1821,6 +1821,8 @@ class InfoAndRefundFootersTests(unittest.IsolatedAsyncioTestCase):
         """m13: kata kerja kegagalan sesudah modal bernegasi tetap alasan gagal. m15: "sebab" memisah alasan, "belum"
         menegasi modal."""
         for text in ("Transaksi Ditolak karena kartu tidak dapat digunakan",
+                     # kata tukar/refund hanya kebijakan tepat sesudah modal bernegasi (review L6 m-5)
+                     "Transaksi ditolak karena tidak dapat diproses untuk refund",
                      "Transaksi dibatalkan karena tidak bisa diproses",
                      "Transaksi Ditolak sebab kartu tidak dapat digunakan",
                      "Transaksi Ditolak karena kartu belum bisa digunakan",
@@ -1834,7 +1836,8 @@ class InfoAndRefundFootersTests(unittest.IsolatedAsyncioTestCase):
     def test_help_and_refund_phrases(self):
         for text in ("Info transaksi pending/gagal: 14017", "Informasi pembayaran gagal hubungi 14017",
                      "Transaksi gagal akan dikembalikan", "Pembayaran gagal akan di-refund otomatis",
-                     "Dana transaksi gagal akan direfund", "Transfer gagal akan diproses ulang"):
+                     "Dana transaksi gagal akan direfund", "Transfer gagal akan diproses ulang",
+                     "Gagal akan dikembalikan", "Transaksi yang gagal akan di-refund"):     # kata benda awal opsional
             with self.subTest(text):
                 self.assertEqual(pc._status_lines([text], pc.HEADER_WORDS), [])
         for text in ("Info: Transaksi Gagal", "Transaksi Gagal", "Transaksi gagal, dana dikembalikan",
@@ -1980,9 +1983,18 @@ class SmallQrisStoreReceiptTests(unittest.IsolatedAsyncioTestCase):
                       ["TOKO MAJU", "TOTAL 15.000", "QRIS 15.000"],                     # tanpa barang
                       ["TOKO MAJU", "KOPI 15.000", "QRIS 15.000"],                      # tanpa TOTAL
                       ["Penerima TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
-                      ["TOKO MAJU", "Nominal Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"]):
+                      ["TOKO MAJU", "Nominal Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      # review L6 m-5: setiap label bukti di daftar
+                      ["TOKO MAJU", "Jumlah Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Rekening Tujuan 0123 0100", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Dari ANDI", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "NMID ID1020304050607", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      # m-4: nominal Rp polos di atas TOTAL (bukti QRIS dengan biaya tanpa label)
+                      ["WARUNG X", "Rp25.000", "Donasi Rp2.000", "Total Rp27.000", "QRIS Rp27.000"]):
             with self.subTest(lines):
                 self.assertFalse(pc.looks_like_store_receipt(lines))
+        # Baris barang berkuantitas: aturan lama, label bukti tidak menghalangi.
+        self.assertTrue(pc.looks_like_store_receipt(["Merchant WARUNG X", "KOPI 1 15.000", "TOTAL 15.000", "QRIS 15.000"]))
 
 
 N1_BASE = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
@@ -2080,3 +2092,101 @@ class OneMarkerAppSlipTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(lines[0], enabled=enabled):
                     res, out = await stored(lines, enabled)
                     self.assertEqual((res.reader, out.unread_proof), ("struk_belanja", False))   # teks OCR dan rincian tetap
+
+
+# ── L6 fix round 1 (review task-L6-review.md) ───────────────────────────────
+
+TRANSFER_LAYOUT = ["Transfer", "26/10/2026 14:22", "Penerima BUDI SANTOSO", "Bank Tujuan BRI", "Rekening Tujuan 0123 0100 1234 567",
+                   "Nominal Rp150.000"]
+
+
+class NoteStatusValueTests(unittest.IsolatedAsyncioTestCase):
+    """I-1: nilai label catatan yang HANYA kata status ("Keterangan: Gagal", "Catatan: Pending", "Keterangan: Sedang
+    diproses") tetap dibaca sebagai status; catatan berisi kata lain hanya bila memuat judul status ("Catatan arisan gagal
+    kemarin" tidak memblokir, "Keterangan: Transaksi gagal" memblokir)."""
+
+    async def test_status_only_note_values_block_or_warn_with_the_flag_on(self):
+        for line, levels in (("Keterangan: Gagal", {"status_gagal": "block"}), ("Keterangan : GAGAL", {"status_gagal": "block"}),
+                             ("Catatan: Gagal.", {"status_gagal": "block"}),
+                             ("Keterangan: Pending", {"status_pending": "warn"}),
+                             ("Keterangan: Sedang diproses", {"status_pending": "warn"}),
+                             ("Keterangan: Transaksi gagal", {"status_gagal": "block"})):
+            with self.subTest(line):
+                res = await read([*TRANSFER_LAYOUT, line])
+                self.assertEqual((res.reader, status_levels(res)), ("transfer.umum", levels))
+        # Nilai label NAMA tetap hanya judul status (aturan A14/L6b): "Penerima: Gagal" bukan status.
+        self.assertEqual(pc._status_lines(["Penerima: Gagal", "Merchant: Pending"], pc.HEADER_WORDS), [])
+        self.assertEqual(pc._status_lines(["Keterangan: Gagal", "Catatan: Pending"], pc.HEADER_WORDS), ["Gagal", "Pending"])
+        # Label berdiri sendiri, nilainya di baris bawah.
+        res = await read([*TRANSFER_LAYOUT, "Keterangan", "Gagal"])
+        self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_free_text_notes_stay_unblocked(self):
+        for line in ("Catatan arisan gagal kemarin", "Keterangan: arisan gagal", "Berita: uang kas gagal panen"):
+            for enabled in (True, False):
+                with self.subTest(line, enabled=enabled):
+                    res = await read([*TRANSFER_LAYOUT, line], enabled=enabled)
+                    self.assertEqual(status_levels(res), {})
+
+
+class ShopNameFilterPhrasingTests(unittest.TestCase):
+    """m-1: saringan nama toko L6a mengabaikan tanggal/jam/tanda baca dan frasa sukses umum."""
+
+    def test_success_lines_that_are_not_names(self):
+        for line in ("Berhasil 26 Okt 2026, 08:12 WIB", "Sukses 26 Okt 2026 08:12", "Berhasil • 26/10/2026 08:12",
+                     "Yeay, pembayaranmu berhasil!", "Transaksimu sukses", "Berhasil dibayar ke WARUNG BAKSO",
+                     "Sukses bayar ke WARUNG BAKSO PAK DI", "Hore! Berhasil", "Yeay! Kamu berhasil",
+                     "Pembayaranmu ke WARUNG BAKSO berhasil"):
+            with self.subTest(line):
+                self.assertEqual(pc.read_status(["QRIS", line, "Rp25.000", "NMID ID1234567890"]), pc.BERHASIL)
+
+    def test_names_still_do_not_cover_a_failure(self):
+        for name in ("TOKO SUKSES MAKMUR", "SUKSES JAYA ABADI MOTOR", "CV BERHASIL JAYA 2", "SUKSES DIESEL MOTOR"):
+            with self.subTest(name):
+                self.assertEqual(pc.read_status(["QRIS", name, "Rp25.000", "NMID ID1234567890", "Gagal"]), pc.GAGAL)
+
+
+class EvidenceMaskingEdgesTests(unittest.TestCase):
+    """m-3, nit-3: penyamaran kutipan `evidence` juga untuk deret yang menempel ke "."/","/":" dan nomor bertitik yang bukan
+    nominal; tanggal tidak pernah disamarkan sebagian; 5 digit tetap."""
+
+    def test_masking(self):
+        from app.services.kotak_struk.worker import _masked_evidence
+        for quote in ('Non-tunai "KARTU DEBIT NO.1234567890 Rp20.000" → 20000', '"DEBIT BCA 1234567890, Rp20.000"',
+                      '"DEBIT BCA 1234567890."', '"REK 123.456.7890"', '"NO:1234567890"', '"1234 5678 9012"'):
+            with self.subTest(quote):
+                got = _masked_evidence([quote])[0]
+                self.assertNotRegex(re.sub(r"[ .,:\-]", "", got.split("→")[0]), r"\d{6,}")
+                self.assertIn("…", got)
+        for quote, kept in (('"14-10-2026 08:15 TOTAL 1.500.000" → 1500000', None), ('"KODE 12345"', None),
+                            ('"TOTAL 150.000.000"', None), ('"ROTI 1 x 128.000 128.000"', None)):
+            with self.subTest(quote):
+                self.assertEqual(_masked_evidence([quote])[0], quote)
+
+
+class UnlabelledFeeQrisProofTests(unittest.IsolatedAsyncioTestCase):
+    """m-4: bukti QRIS dengan biaya tanpa label ("Donasi Rp2.000") di bawah nominal Rp polos tetap dibaca pembaca QRIS
+    (saklar menyala, bila berjudul status) dan tidak pernah disimpan sebagai struk dengan merchant tebakan ("Menunggu
+    Pembayaran"), di kedua saklar."""
+
+    async def test_routes_and_storage(self):
+        for head in ("Pembayaran Gagal", "Pembayaran Berhasil", "Menunggu Pembayaran"):
+            for extra in ("Donasi Rp2.000", "Layanan Rp2.000", "Ongkir Rp2.000"):
+                lines = [head, "QRIS", "WARUNG X", "Rp25.000", extra, "Total Rp27.000", "QRIS Rp27.000", "26/10/2026 08:12"]
+                if head != "Menunggu Pembayaran":   # tanpa kata status: QRIS 0,7 kalah dari pembaca struk (seperti b64a8b8)
+                    with self.subTest(head, extra=extra, enabled=True):
+                        self.assertEqual((await read(lines)).reader, "qris.umum")
+                for enabled in (True, False):
+                    with self.subTest(head, extra=extra, enabled=enabled):
+                        res, out = await stored(lines, enabled)
+                        assert_kept_as_proof(self, res, out, 27000)
+                        if head == "Pembayaran Gagal":
+                            self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+
+class LogoWindowCleanedLinesTests(unittest.TestCase):
+    """nit-3: jendela logo membaca baris yang dibersihkan (baris kosong OCR tidak dihitung)."""
+
+    def test_blank_lines_before_the_logo(self):
+        self.assertTrue(looks_like_proof(textdoc(["", " ", "BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012",
+                                                  "Nominal Rp150.000", "Total Rp150.000"])))

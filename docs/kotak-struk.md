@@ -697,8 +697,10 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   (`document.lines`, juga tanpa `receipt`), tanpa nama merchant (dan tanpa kunci pihak dari nama itu), tanpa kutipan
   baris di `evidence`, tanpa peta merchant; yang tersimpan hanya nominal, waktu, status, keyakinan, dan cek. Pembaca
   struk memecah nomor berkelompok menjadi "barang" (`Rekening Tujuan 0123 0100`, 1234, 567), jadi rincian itu tidak
-  boleh tersimpan. Di struk belanja sungguhan, kutipan baris di `evidence` menyamarkan deret >= 6 digit (boleh
-  berkelompok: `Non-tunai "DEBIT BCA …7890 Rp20.000"`; L6e, M7).
+  boleh tersimpan. Di struk belanja sungguhan, kutipan baris di `evidence` menyamarkan deret >= 6 digit, juga yang
+  menempel ke tanda baca ("NO.1234567890") dan kelompok >= 3 digit bersambung spasi/titik/strip ("1234 5678 9012",
+  "123.456.7890"): `Non-tunai "DEBIT BCA …7890 Rp20.000"` (L6e, M7). Nominal berpemisah ribuan dan tanggal/jam tidak
+  disamarkan.
 - **File asli dihapus begitu item selesai dibaca** (`siap` atau `gagal`), `file_path` dikosongkan. Folder
   `KOTAK_DIR` (mode 0700, milik `jatahku`, di luar `backup.sh`); nama file = id item; file tidak pernah disajikan
   ke browser; tanpa pratinjau gambar. Teks bukti juga ditulis sebagai file sementara dengan aturan yang sama.
@@ -922,7 +924,9 @@ Catatan:
   struk/tidak dikenali, kata status tunggal di badan ("Gagal") tidak dibaca, dan status berlabel ("Status: Gagal")
   hanya pada teks yang tampak bukti (judul status paling banyak 8 kata); di jalur bukti, nama tanpa label yang memuat
   kata sukses ("TOKO SUKSES MAKMUR") tidak lagi terbaca berhasil (L6a: `berhasil` hanya dari judul status, baris
-  berstatus saja dengan paling banyak satu kata lain, atau nilai label status), jadi kata status tunggal di bawahnya
+  berstatus saja dengan paling banyak satu kata lain, atau nilai label status; tanggal/jam, tanda baca, dan kata seru
+  tidak dihitung kata, dan frasa sukses seperti "Yeay, pembayaranmu berhasil!" atau "Berhasil dibayar ke WARUNG BAKSO"
+  tetap berhasil), jadi kata status tunggal di bawahnya
   ("Gagal", "Pending") dibaca dan nama itu sendiri tanpa status lain `tidak_diketahui`; nama dengan satu kata lain saja
   ("Warung Sukses") masih terbaca seperti baris berstatus ("Berhasil dikirim") dan menutupinya; kata batal ("dibatalkan", "ditolak", "batal", "rejected",
   "cancelled"/"canceled", "void") dibaca `gagal` dan diblokir seperti "Gagal" hanya di tiga posisi: judul status yang
@@ -956,8 +960,11 @@ Catatan:
   ("Payment to TOKO A was rejected"), kata benda di luar daftar ("Pesanan Dibatalkan"), OCR terpisah ("Di batalkan") dan
   "declined" tidak dibaca; nama toko berbentuk judul ("KEDAI TRANSAKSI BATAL") memblokir seperti "KEDAI TRANSAKSI GAGAL";
   kaki bantuan "Info/Informasi transaksi gagal …", kalimat informasi "… gagal akan dikembalikan/di-refund/diproses"
-  ("Pembayaran gagal akan di-refund otomatis"), dan catatan user ("Catatan arisan gagal kemarin") tidak lagi memblokir
-  (L6b); label "Info:" lalu judul gagal ("Info: Transaksi Gagal") tetap gagal, dan nilai label status berhasil atau
+  ("Pembayaran gagal akan di-refund otomatis"), dan catatan user tanpa judul status ("Catatan arisan gagal kemarin")
+  tidak lagi memblokir (L6b); nilai catatan yang hanya kata status ("Keterangan: Gagal", "Catatan: Pending",
+  "Keterangan: Sedang diproses") tetap memblokir/memperingatkan di jalur bukti (saklar menyala), tetapi di jalur struk
+  (saklar mati, atau slip tanpa penanda bukti seperti "BCA mobile" + "Keterangan: Gagal") tidak dibaca, seperti kata
+  status tunggal lain di badan; label "Info:" lalu judul gagal ("Info: Transaksi Gagal") tetap gagal, dan nilai label status berhasil atau
   "BERHASIL" di judul tidak menutupi judul gagal di badan (seperti slip EDC "TRANSAKSI VOID"); "Pembayaran pending akan
   diproses otomatis" tetap pending; negasi kata
   tiba di tengah kalimat ("Transfer belum diterima bank tujuan.") atau tanpa subjek uang di luar label status (judul
@@ -995,8 +1002,8 @@ Catatan:
   bukti dari aplikasi dengan tata letak tidak biasa bisa terbaca `tidak_dikenali` atau dengan keyakinan `rendah`
   (user tetap mengonfirmasi dan mengoreksi nominal). Contohnya, transfer yang hanya punya satu penanda
   (DANA "Kirim Uang") bisa terbaca `struk_belanja`. Struk berisi 1–2 barang dengan harga polos lalu TOTAL dan baris
-  cara bayar bernominal sama ("QRIS 15.000", "DEBIT BCA 15.000"), tanpa label bukti (Merchant, Penerima, NMID, Nominal)
-  di atas TOTAL, kini struk belanja dengan rincian dan merchant di kedua saklar (L6d); baris cara bayar tanpa nominal
+  cara bayar bernominal sama ("QRIS 15.000", "DEBIT BCA 15.000"), tanpa label bukti (Merchant, Penerima, Pengirim,
+  Rekening, NMID, Nominal, Jumlah, atau nominal Rp polos seperti "Rp25.000" di atas biaya tanpa label) di atas TOTAL, kini struk belanja dengan rincian dan merchant di kedua saklar (L6d); baris cara bayar tanpa nominal
   ("Bayar QRIS", "QRIS", "Non Tunai (QRIS)") atau tanpa baris cara bayar belum, jadi struk seperti itu masih bisa terbaca
   `qris` (saklar menyala) atau diperlakukan sebagai bukti tanpa rincian. Teks seperti itu tetap diperlakukan sebagai bukti (tanpa teks OCR,
   rincian, dan nama; lihat "Privasi") bila memuat judul status berkata benda transaksi ("Transfer Berhasil",

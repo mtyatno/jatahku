@@ -9078,6 +9078,380 @@
    "unread_proof": false
   }
  },
+ "l6f1-catatan-arisan-transfer": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150567,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "BUDI SANTOSO",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI SANTOSO",
+   "paid_date": "2026-10-26",
+   "reader": "transfer.umum",
+   "status": "tidak_diketahui",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-ket-gagal-bca": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": true
+  }
+ },
+ "l6f1-ket-gagal-transfer": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150567,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": "BUDI SANTOSO",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI SANTOSO",
+   "paid_date": "2026-10-26",
+   "reader": "transfer.umum",
+   "status": "gagal",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-ket-pending-bca": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150000,
+   "unread_proof": true
+  }
+ },
+ "l6f1-ket-pending-transfer": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150567,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_pending": "warn"
+   },
+   "counterparty": "BUDI SANTOSO",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI SANTOSO",
+   "paid_date": "2026-10-26",
+   "reader": "transfer.umum",
+   "status": "pending",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-ket-sedang-diproses-transfer": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 150567,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_pending": "warn"
+   },
+   "counterparty": "BUDI SANTOSO",
+   "doc_type": "transfer",
+   "issuer": null,
+   "lines": 0,
+   "merchant": "BUDI SANTOSO",
+   "paid_date": "2026-10-26",
+   "reader": "transfer.umum",
+   "status": "pending",
+   "total": 150000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-qris-donasi-berhasil": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 27000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 27000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-qris-donasi-gagal": {
+  "off": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "gagal",
+   "total": 27000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {
+    "status_gagal": "block"
+   },
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "gagal",
+   "total": 27000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-qris-donasi-menunggu": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 27000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 27000,
+   "unread_proof": true
+  }
+ },
+ "l6f1-struk-kartu-no": {
+  "off": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-14",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 20000,
+   "unread_proof": false
+  },
+  "on": {
+   "checks": {},
+   "counterparty": "Toko Maju",
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 3,
+   "merchant": "Toko Maju",
+   "paid_date": "2026-10-14",
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 20000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-sukses-bukan-nama-01": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": "2026-10-26",
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-sukses-bukan-nama-02": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
+ "l6f1-sukses-bukan-nama-03": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "tidak_dikenali",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "tidak_dikenali",
+   "status": "tidak_diketahui",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "qris",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "qris.umum",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": false
+  }
+ },
  "pending-kalibrasi-001": {
   "off": {
    "checks": {

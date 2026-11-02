@@ -182,18 +182,28 @@ class _Outcome(NamedTuple):
 
 
 _QUOTED = re.compile(r'"[^"]*"')
-# Deret digit (boleh berkelompok >= 3 digit dengan spasi/strip: "1234 5678 9012", "0812-3456-7890"); nominal bertitik/koma
-# ("20.000") dan tanggal ("14-10-2026") tidak tergabung.
-_DIGIT_RUN = re.compile(r"(?<![\d.,])\d+(?:[ \-]\d{3,})*(?![\d.,])")
-LONG_DIGITS = 6
+# Nominal berpemisah ribuan ("20.000", "1.500.000", "45,400.00") dilindungi dulu, lalu disamarkan: deret >= 6 digit di mana
+# pun (juga menempel ke ".", ",", ":": "NO.1234567890", "1234567890,") dan kelompok >= 3 digit yang disambung spasi, titik,
+# atau strip ("1234 5678 9012", "0812-3456-7890", "123.456.7890"). Tanggal/jam ("14-10-2026", "08:15") tidak pernah
+# tersamar sebagian (review L6 m-3).
+_AMOUNT = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?(?![\d.,]\d|\d)")
+_DIGIT_RUN = re.compile(r"(?<!\d)\d{3,}(?:[ .\-]\d{3,})+(?!\d)|\d{6,}")   # keduanya >= 6 digit
 
 
 def _masked_evidence(evidence: list[str]) -> list[str]:
     """Kutipan baris di `evidence` ('Non-tunai "DEBIT BCA 1234567890 Rp20.000"') dengan deret >= 6 digit disamarkan
-    (`mask_digits`: "…7890"); teks di luar kutipan (nominal sesudah panah) tetap (L6e, M7)."""
-    def mask_run(m: re.Match) -> str:
-        return mask_digits(m.group(0)) if len(re.sub(r"\D", "", m.group(0))) >= LONG_DIGITS else m.group(0)
-    return [_QUOTED.sub(lambda q: _DIGIT_RUN.sub(mask_run, q.group(0)), e) for e in evidence]
+    (`mask_digits`: "…7890"); nominal berpemisah ribuan di kutipan dan teks di luar kutipan (nominal sesudah panah) tetap
+    (L6e, M7; review L6 m-3)."""
+    def mask_quote(q: re.Match) -> str:
+        amounts: list[str] = []
+
+        def protect(m: re.Match) -> str:
+            amounts.append(m.group(0))
+            return f"\x00{len(amounts) - 1}\x00"
+
+        text = _DIGIT_RUN.sub(lambda m: mask_digits(m.group(0)), _AMOUNT.sub(protect, q.group(0)))
+        return re.sub("\x00(\\d+)\x00", lambda m: amounts[int(m.group(1))], text)
+    return [_QUOTED.sub(mask_quote, e) for e in evidence]
 
 
 def _plain_evidence(evidence: list[str]) -> list[str]:
