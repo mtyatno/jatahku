@@ -13,7 +13,7 @@ import json
 import re
 import unittest
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -29,7 +29,7 @@ from app.services.kotak_struk.belajar import (
 )
 from app.services.kotak_struk.config import RULE_MIN_USERS
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
-from app.services.kotak_struk.kerangka import LABEL_WORDS, build_layout
+from app.services.kotak_struk.kerangka import LABEL_WORDS, TITLE_WORDS, build_layout
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import ParseContext
@@ -766,6 +766,418 @@ class PrivacyTests(DbBase):
                          {"id", "kind", "rule_key", "value", "users", "households", "status", "created_at",
                           "decided_at", "decided_by", "note"})
 
+
+
+# ── L8: invarian ujung ke ujung (plan 2026-11-01 Task L8) ───────────────────
+
+# Bukti transfer GoPay rekaan (sama dengan test_kotak_aturan_pembaca.GOPAY_MISREAD): hari ini saldo "Rp50.000" terbaca
+# sebagai total (`sedang`); total sebenarnya di bawah "Jumlah Kirim Uang". Tahap 1 tidak punya kunci `logo:` (review L1
+# I-1, `kerangka.LOGO_KEYS` mati), jadi "aplikasi yang belum dikenal pembaca" di sini adalah aplikasi BERPROFIL (kunci
+# `gopay`) yang tata letaknya belum dipahami pembaca: hanya bukti berkunci profil yang mendapat kerangka dan suara.
+E2E_TRANSFER = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Saldo GoPay", "Rp50.000",
+                "Jumlah Kirim Uang", "Rp12.500", "Tanggal 26 Okt 2026 08:12"]
+E2E_FAILED = ["GoPay", "Transfer Gagal", *E2E_TRANSFER[2:]]
+# QRIS GoPay rekaan: cashback "Rp2.000" terbaca sebagai total; total sebenarnya di bawah "Dibayar".
+E2E_QRIS = ["GoPay", "Pembayaran Berhasil", "QRIS", "Merchant PT DOMPET CONTOH", "Nama Toko WARUNG BAKSO PAK DI",
+            "NMID ID1234567890", "Cashback", "Rp2.000", "Dibayar", "Rp15.000", "Waktu Dibuat 25 Okt 2026 23:58",
+            "Waktu Selesai 26 Okt 2026 00:01"]
+E2E_TOTAL_RULE = ("label_total", "gopay", "jumlah kirim uang")
+E2E_QRIS_RULE = ("label_total", "gopay", "dibayar")
+# Kata nama yang tercetak di bukti dan nama user (>= 4 huruf, supaya tidak bentrok dengan kata label pendek).
+E2E_NAME_WORDS = {"budi", "santoso", "dompet", "contoh", "warung", "bakso", "larasati", "wirawan", "kusuma", "pemilik"}
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class EndToEndInvariantTests(unittest.IsolatedAsyncioTestCase):
+    """Satu lingkaran belajar penuh lewat jalur sungguhan (intake -> worker -> `POST /transactions` dengan
+    `receipt_item_id` -> `mark_recorded` -> suara -> API Admin -> cache aturan -> worker berikutnya), SQLite + worker
+    dengan OCR palsu. Invarian: belajar tidak pernah membuat/menggandakan transaksi, saklar mati tidak pernah memakai
+    aturan, bukti gagal tetap diblokir, tanpa PII di kerangka/suara/aturan, kerangka dibersihkan 24 jam, hapus akun
+    menghitung ulang (aturan menunggu di bawah ambang diturunkan oleh rekonsiliasi; keputusan pemilik tetap)."""
+
+    async def asyncSetUp(self):
+        import shutil
+        import tempfile
+        from decimal import Decimal
+        import httpx
+        from fastapi import Depends, FastAPI
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import StaticPool
+        from app.api.routes import admin_kotak
+        from app.api.routes import transactions as txn_route
+        from app.core.database import get_db
+        from app.core.deps import get_current_user
+        from app.models.models import Allocation, Envelope, Income
+        from app.services.kotak_struk import waiter
+        from app.tests import test_kotak_api as kapi
+
+        asyncio.get_running_loop().slow_callback_duration = 2.0
+        self.kapi = kapi
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool,
+                                          connect_args={"check_same_thread": False})
+        self.addAsyncCleanup(self.engine.dispose)
+        event.listen(self.engine.sync_engine, "connect", lambda conn, _rec: setattr(conn, "isolation_level", None))
+        event.listen(self.engine.sync_engine, "begin", lambda conn: conn.exec_driver_sql("BEGIN"))
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+
+        # Tiga user di tiga rumah tangga berbeda (masing-masing pemilik, amplop Makan berdana) + pemilik aplikasi.
+        self.users, self.hh, self.env = [], [], []
+        async with self.Session() as db:
+            for name in ("Larasati", "Wirawan", "Kusuma"):
+                user, hh = User(name=name), Household(name=f"Rumah {name}")
+                db.add_all([user, hh])
+                await db.flush()
+                env = Envelope(household_id=hh.id, name="Makan")
+                db.add_all([HouseholdMember(user_id=user.id, household_id=hh.id, role=HouseholdRole.owner), env])
+                await db.flush()
+                income = Income(household_id=hh.id, user_id=user.id, amount=Decimal("5000000"), description="Gaji",
+                                income_date=date.today())
+                db.add(income)
+                await db.flush()
+                db.add(Allocation(income_id=income.id, envelope_id=env.id, amount=Decimal("1000000")))
+                self.users.append(user)
+                self.hh.append(hh)
+                self.env.append(env)
+            self.admin = User(name="Pemilik", is_admin=True)
+            db.add(self.admin)
+            await db.commit()
+        self.current = self.users[0]
+
+        app = FastAPI()
+        app.include_router(txn_route.router, prefix="/transactions")
+        app.include_router(admin_kotak.router, prefix="/admin/kotak", tags=["admin"])
+        app.state.limiter = txn_route.limiter
+
+        async def _db():
+            async with self.Session() as db:
+                yield db
+
+        async def _user(db=Depends(get_db)):   # user di sesi permintaan, seperti produksi
+            return await db.get(User, self.current.id)
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_current_user] = _user
+        self.c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        self.addAsyncCleanup(self.c.aclose)
+
+        self.redis = _KvRedis()
+        settings = SimpleNamespace(KOTAK_DIR=os.path.join(self.dir, "kotak"), REDIS_URL="redis://tes")
+        for p in (patch("app.services.kotak_struk.intake.get_settings", return_value=settings),
+                  patch("redis.asyncio.from_url", return_value=self.redis),
+                  patch.object(merchants, "_warned_no_key", True),
+                  patch.object(waiter, "publish_done", new_callable=AsyncMock)):
+            p.start()
+            self.addCleanup(p.stop)
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+
+    # --- pembantu ------------------------------------------------------
+
+    async def share(self, user, lines, *, flag=True):
+        """Bagikan bukti (intake sungguhan, berkas unik) lalu baca dengan worker sungguhan; item sesudahnya."""
+        from app.services.kotak_struk.intake import IntakeRequest, create_item
+        from app.services.kotak_struk.worker import process_item
+        kapi = self.kapi
+        async with self.Session() as db:
+            req = IntakeRequest(await db.get(User, user.id), "pwa_share", data=kapi.JPG + uuid.uuid4().bytes,
+                                content_type="image/jpeg")
+            item, _ = await create_item(db, req, redis=self.redis, kotak_dir=os.path.join(self.dir, "kotak"),
+                                        now=kapi.NOW)
+        status = await process_item(item.id, session_factory=self.Session, extract=kapi.fake_extract(lines),
+                                    now=kapi.NOW, proofs_enabled=flag)
+        self.assertEqual(status, "siap")
+        return await self.item(item.id)
+
+    async def item(self, item_id):
+        from app.models.models import ReceiptScan
+        async with self.Session() as db:
+            return await db.get(ReceiptScan, item_id)
+
+    async def record(self, user, item, amount, desc, *, ref):
+        self.current = user
+        idx = next(i for i, u in enumerate(self.users) if u.id == user.id)
+        return await self.c.post("/transactions/", json={
+            "envelope_id": str(self.env[idx].id), "amount": amount, "description": desc, "client_ref": ref,
+            "receipt_item_id": str(item.id)})
+
+    async def txn_counts(self) -> dict:
+        from app.models.models import Transaction
+        async with self.Session() as db:
+            rows = (await db.execute(select(Transaction.user_id, func.count()).group_by(Transaction.user_id))).all()
+        return {uid: n for uid, n in rows}
+
+    async def rule_rows(self) -> dict:
+        async with self.Session() as db:
+            return {(r.kind, r.rule_key, r.value): r
+                    for r in (await db.execute(select(ProofRule))).scalars().all()}
+
+    async def bot_asks_amount(self, item, user) -> bool:
+        """Payload bot persis seperti `receipt_cmd._proof_reply` (keyakinan total dokumen) -> `needs_amount_check`."""
+        from app.bot.receipt_cmd import needs_amount_check
+        from app.services.kotak_struk.view import item_detail
+        async with self.Session() as db:
+            detail = await item_detail(db, item, await db.get(User, user.id))
+        payload = {"confidence": ((detail.get("document") or {}).get("confidence") or {}).get("total")}
+        return needs_amount_check(payload)
+
+    def assert_no_pii(self, layouts, votes, rules):
+        """Kerangka: tanpa deret >= 6 digit di luar nominal/tanggal/HMAC, HMAC 64 hex, teks polos tanpa digit dan
+        tanpa kata nama. Suara/aturan: jenis, kunci profil, label kosakata; tanpa digit dan tanpa kata nama."""
+        self.assertTrue(layouts)
+        for lay in layouts:
+            self.assertIn(lay["key"], PROFILE_KEYS)
+            stripped = json.dumps({**lay, "lines": [{k: v for k, v in e.items() if k not in ("amount", "date", "h")}
+                                                    for e in lay["lines"]]})
+            self.assertNotRegex(stripped, r"\d{6,}")
+            for e in lay["lines"]:
+                self.assertLessEqual(set(e), {"i", "label", "kind", "amount", "date", "h", "words"})
+                if e["kind"] == "nama":
+                    self.assertRegex(e["h"], r"^[0-9a-f]{64}$")
+                for text, vocabulary in ([e.get("label") or "", LABEL_WORDS],
+                                         *([w, TITLE_WORDS] for w in e.get("words") or [])):
+                    self.assertNotRegex(text, r"\d", e)
+                    self.assertFalse(set(re.findall(r"[a-z]+", text.lower())) & E2E_NAME_WORDS, e)
+                    self.assertTrue(all(w in vocabulary for w in text.split() if w.strip(".,:;()'&/-")), e)
+        self.assertTrue(votes and rules)
+        for kind, rule_key, value in [*votes, *rules]:
+            self.assertIn(kind, belajar.KINDS)
+            self.assertIn(rule_key, PROFILE_KEYS)
+            self.assertNotRegex(value, r"\d")
+            self.assertNotIn("#", value)
+            self.assertFalse(set(re.findall(r"[a-z]+", value)) & E2E_NAME_WORDS, value)
+
+    # --- tes -----------------------------------------------------------
+
+    async def test_learning_loop_end_to_end(self):
+        from app.models.models import ReceiptScan, Transaction
+        from app.services.account_deletion import delete_account
+        from app.services.kotak_struk.record import MSG_BLOCKED
+        ani, budi, citra = self.users
+
+        # 1. Dua user di rumah tangga berbeda membagikan bukti yang sama; worker menyimpan kerangka (kunci profil).
+        first = {u.id: await self.share(u, E2E_TRANSFER) for u in (ani, budi)}
+        qris = {u.id: await self.share(u, E2E_QRIS) for u in (ani, budi)}
+        for got in [*first.values(), *qris.values()]:
+            self.assertEqual(got.layout["key"], "gopay")
+        for got in first.values():
+            self.assertEqual((got.doc_type, got.document["amounts"]["total"], got.document["confidence"]["total"]),
+                             ("transfer", 50000, "sedang"))
+        for got in qris.values():
+            self.assertEqual((got.doc_type, got.document["amounts"]["total"]), ("qris", 2000))
+        self.assertEqual(await self.txn_counts(), {})   # worker tidak pernah mencatat
+        layouts = [got.layout for got in [*first.values(), *qris.values()]]
+
+        # 2. Masing-masing mengoreksi nominal lewat POST /transactions + receipt_item_id -> aturan `menunggu` 2/2.
+        for n, user in enumerate((ani, budi)):
+            r = await self.record(user, first[user.id], 12500, "Transfer ke BUDI SANTOSO", ref=f"t{n}")
+            self.assertEqual(r.status_code, 201, r.text)
+            r = await self.record(user, qris[user.id], 15000, "bakso", ref=f"q{n}")
+            self.assertEqual(r.status_code, 201, r.text)
+            # Kirim ulang client_ref yang sama: transaksi yang sama, tanpa suara kedua.
+            again = await self.record(user, first[user.id], 12500, "Transfer ke BUDI SANTOSO", ref=f"t{n}")
+            self.assertEqual(again.status_code, 201, again.text)
+            if user is ani:   # satu user: hanya suara, belum ada aturan
+                self.assertEqual((await self.rule_rows(), await self.vote_total()), ({}, 2))
+        self.assertEqual(await self.txn_counts(), {ani.id: 2, budi.id: 2})
+        for got in [*first.values(), *qris.values()]:
+            got = await self.item(got.id)
+            self.assertEqual((got.status, len(got.transaction_ids)), ("tercatat", 1))
+        rules = await self.rule_rows()
+        self.assertEqual(set(rules), {E2E_TOTAL_RULE, E2E_QRIS_RULE})
+        for rule in rules.values():
+            self.assertEqual((rule.status, rule.users, rule.households), ("menunggu", 2, 2))
+        async with self.Session() as db:
+            votes = [(v.kind, v.rule_key, v.value) for v in (await db.execute(select(ProofRuleVote))).scalars()]
+        self.assertEqual(sorted(votes), sorted([E2E_TOTAL_RULE, E2E_QRIS_RULE] * 2))
+
+        # 3. Admin menyetujui aturan nominal transfer lewat rute L4a (aturan QRIS dibiarkan menunggu).
+        self.current = self.admin
+        listed = (await self.c.get("/admin/kotak/rules")).json()
+        row = next(r for r in listed["rules"] if (r["kind"], r["rule_key"], r["value"]) == E2E_TOTAL_RULE)
+        self.assertEqual((row["users"], row["households"], row["status"]), (2, 2, "menunggu"))
+        r = await self.c.post(f"/admin/kotak/rules/{row['id']}/setujui", json={"from_status": "menunggu"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((await self.rule_rows())[E2E_TOTAL_RULE].status, "disetujui")
+
+        # 4. User ketiga (saklar menyala) membagikan bukti yang sama: total dari aturan, `tinggi`, bot tidak bertanya.
+        third = await self.share(citra, E2E_TRANSFER)
+        self.assertEqual((third.doc_type, third.document["amounts"]["total"], third.document["confidence"]["total"]),
+                         ("transfer", 12500, "tinggi"))
+        self.assertFalse(await self.bot_asks_amount(third, citra))
+        layouts.append(third.layout)
+
+        # 5. Saklar mati tidak pernah memakai aturan (tidak dimuat sama sekali): bacaan lama, bot tetap bertanya.
+        spy = AsyncMock(wraps=belajar.approved_rules)
+        with patch.object(belajar, "approved_rules", spy):
+            off = await self.share(citra, E2E_TRANSFER, flag=False)
+        spy.assert_not_awaited()
+        self.assertEqual((off.document["amounts"]["total"], off.document["confidence"]["total"]), (50000, "rendah"))
+        self.assertTrue(await self.bot_asks_amount(off, citra))
+
+        # 6. Versi gagal bukti itu (aturan aktif membaca nominalnya `tinggi`) tetap diblokir, kedua saklar.
+        for flag in (True, False):
+            failed = await self.share(citra, E2E_FAILED, flag=flag)
+            self.assertEqual(failed.document["status"], "gagal")
+            if flag:
+                self.assertEqual((failed.document["amounts"]["total"], failed.document["confidence"]["total"]),
+                                 (12500, "tinggi"))
+            r = await self.record(citra, failed, 12500, "Transfer ke BUDI SANTOSO", ref=f"gagal-{flag}")
+            self.assertEqual((r.status_code, r.json()["detail"]), (409, MSG_BLOCKED))
+            self.assertEqual((await self.item(failed.id)).status, "siap")
+
+        # 7. User ketiga mencatat bacaan aturan apa adanya: satu transaksi, tanpa suara baru (nominal = total terbaca).
+        r = await self.record(citra, third, 12500, "Transfer ke BUDI SANTOSO", ref="c1")
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.txn_counts(), {ani.id: 2, budi.id: 2, citra.id: 1})
+        self.assertEqual(await self.vote_total(), 4)
+
+        # 8. Tanpa PII di kerangka (semua bukti yang dibaca), suara, dan aturan.
+        rules = await self.rule_rows()
+        self.assert_no_pii(layouts, votes, list(rules))
+
+        # 9. Kerangka item selesai dikosongkan 24 jam sesudah dibaca; item terbuka (siap) tidak disentuh.
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_layouts(db, now=self.kapi.NOW + timedelta(hours=23)), 0)
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_layouts(db, now=self.kapi.NOW + timedelta(hours=25)), 5)
+        async with self.Session() as db:
+            items = (await db.execute(select(ReceiptScan))).scalars().all()
+        for got in items:
+            with self.subTest(item=str(got.id), status=got.status):
+                if got.status == "tercatat":
+                    self.assertIsNone(got.layout)
+                else:
+                    self.assertEqual(got.status, "siap")
+                    self.assertIsNotNone(got.layout)
+
+        # 10. Hapus akun user pertama: suaranya dilupakan, users 2 -> 1. Aturan yang disetujui tetap `disetujui`
+        #     (keputusan pemilik); aturan `menunggu` di bawah ambang diturunkan rekonsiliasi tiap jam.
+        txns_before = await self.txn_counts()
+        async with self.Session() as db:
+            await delete_account(db, await db.get(User, ani.id))
+        rules = await self.rule_rows()
+        self.assertEqual((rules[E2E_TOTAL_RULE].status, rules[E2E_TOTAL_RULE].users, rules[E2E_TOTAL_RULE].households),
+                         ("disetujui", 1, 1))
+        self.assertEqual((rules[E2E_QRIS_RULE].status, rules[E2E_QRIS_RULE].users), ("menunggu", 1))
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.reconcile_proof_rules(db), 1)
+        rules = await self.rule_rows()
+        self.assertEqual(set(rules), {E2E_TOTAL_RULE})
+        self.assertEqual((rules[E2E_TOTAL_RULE].status, rules[E2E_TOTAL_RULE].users), ("disetujui", 1))
+        self.assertEqual(await self.vote_total(), 2)   # suara Budi tetap
+        async with self.Session() as db:   # rekonsiliasi idempoten
+            self.assertEqual(await maintenance.reconcile_proof_rules(db), 0)
+        # Transaksi user lain tidak tersentuh; transaksi user yang dihapus ikut rumah tangganya (tanpa anggota lain).
+        self.assertEqual(await self.txn_counts(), {budi.id: txns_before[budi.id], citra.id: txns_before[citra.id]})
+        async with self.Session() as db:
+            self.assertEqual((await db.execute(select(func.count()).select_from(Transaction))).scalar_one(), 3)
+        # Pembaca masih memakai aturan yang disetujui.
+        belajar.invalidate_rules_cache()
+        again = await self.share(budi, E2E_TRANSFER)
+        self.assertEqual((again.document["amounts"]["total"], again.document["confidence"]["total"]), (12500, "tinggi"))
+        self.assertEqual(await self.txn_counts(), {budi.id: 2, citra.id: 1})
+
+    async def vote_total(self) -> int:
+        async with self.Session() as db:
+            return (await db.execute(select(func.count()).select_from(ProofRuleVote))).scalar_one()
+
+
+class _KvRedis:
+    """Redis tiruan secukupnya: idempotensi `client_ref` (get/set NX/delete) dan batas per jam intake (incr/expire)."""
+
+    def __init__(self):
+        self.kv, self.counts = {}, {}
+
+    async def get(self, key):
+        value = self.kv.get(key)
+        return value.encode() if isinstance(value, str) else value
+
+    async def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.kv:
+            return None
+        self.kv[key] = value
+        return True
+
+    async def setex(self, key, ttl, value):
+        self.kv[key] = value
+
+    async def delete(self, key):
+        self.kv.pop(key, None)
+
+    async def incr(self, key):
+        self.counts[key] = self.counts.get(key, 0) + 1
+        return self.counts[key]
+
+    async def expire(self, key, ttl):
+        return True
+
+    async def aclose(self):
+        pass
+
+
+# ── carry review L1 R-1: setiap kata label nomor menjaga angka bertitik rapi ─
+
+# Salinan TANGAN daftar kata `kerangka._ID_LABEL` (bukan diturunkan dari regex: menghapus satu kata di regex harus
+# menggagalkan tes ini). Kata baru di regex juga ditambahkan di sini (`test_word_list_matches_the_regex`).
+ID_LABEL_WORDS = ("rek", "rekening", "no", "nomor", "ref", "referensi", "npwp", "nmid", "nik", "id", "va", "virtual",
+                  "kode", "pos", "telp", "telepon", "hp", "phone", "terminal", "pan", "rrn", "order", "sn", "trx", "akun",
+                  "account", "kartu", "card", "pelanggan", "resi", "invoice")
+GROUPED_ID = "12.345.678"   # < MAX_AMOUNT dan ribuan bertitik rapi: hanya label nomornya yang membuatnya bukan nominal
+
+
+class IdentifierWordTests(_Quiet):
+    def layout_amounts(self, body):
+        from app.services.kotak_struk.readers.base import Secrets
+        from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
+        lines = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", *body, "Total Bayar Rp12.500"]
+        doc = DokumenBayar(doc_type="transfer", issuer="gopay", counterparty=Counterparty(name="BUDI SANTOSO"),
+                           amounts=Amounts(total=12500))
+        lay = build_layout(lines, doc, Secrets(), user_name=None)
+        self.assertIsNotNone(lay)
+        return [e["amount"] for e in lay["lines"] if e["kind"] == "nominal"]
+
+    def test_every_identifier_word_keeps_a_grouped_number_out_of_amounts(self):
+        # Kontrol: tanpa label nomor, "12.345.678" memang dibaca sebagai nominal (jadi yang menahan di bawah adalah
+        # kata labelnya, bukan bentuk angkanya).
+        self.assertIn(12345678, self.layout_amounts([f"Nominal {GROUPED_ID}"]))
+        self.assertIn(12345678, self.layout_amounts(["Nominal", GROUPED_ID]))
+        for word in ID_LABEL_WORDS:
+            for label in (word, word.upper(), word.title()):
+                for body in ([f"{label} {GROUPED_ID}"], [f"{label}: {GROUPED_ID}"], [label, GROUPED_ID]):
+                    with self.subTest(body=body):
+                        self.assertEqual(self.layout_amounts(body), [12500])
+        self.assertEqual(self.layout_amounts(["Rekening Tujuan", GROUPED_ID]), [12500])
+        self.assertEqual(self.layout_amounts([f"No. HP {GROUPED_ID}"]), [12500])
+
+    def test_word_list_matches_the_regex(self):
+        import app.services.kotak_struk.kerangka as kerangka_mod
+        for word in ID_LABEL_WORDS:
+            self.assertTrue(kerangka_mod._ID_LABEL.search(word), word)
+        found = set(re.findall(r"[a-z]+", kerangka_mod._ID_LABEL.pattern.split("(?:", 1)[1].split(")", 1)[0]))
+        self.assertEqual(found, set(ID_LABEL_WORDS))
+
+
+# ── carry review L6 nit-6: catatan berstatus saja dengan tanggal tetap memblokir ─
+
+class NoteStatusWithDateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_note_gagal_with_a_date_blocks(self):
+        """"Keterangan: Gagal 26/10/2026": tanggal dalam nilai catatan tidak dihitung sebagai kata lain
+        (`proof_common._is_status_only`), jadi nilai itu tetap status gagal dan bukti diblokir (saklar menyala)."""
+        from app.tests.test_kotak_kalibrasi import TRANSFER_LAYOUT, read, status_levels
+        with patch.object(merchants, "_warned_no_key", True):
+            for line in ("Keterangan: Gagal 26/10/2026", "Keterangan: Gagal 26/10/2026 08:12",
+                         "Catatan: GAGAL 26 Okt 2026"):
+                with self.subTest(line):
+                    res = await read([*TRANSFER_LAYOUT, line])
+                    self.assertEqual((res.reader, res.parsed.doc.status, status_levels(res)),
+                                     ("transfer.umum", "gagal", {"status_gagal": "block"}))
+            # Pembanding: catatan dengan kata lain tetap tidak memblokir.
+            res = await read([*TRANSFER_LAYOUT, "Keterangan: arisan gagal 26/10/2026"])
+            self.assertEqual(status_levels(res), {})
 
 if __name__ == "__main__":
     unittest.main()
