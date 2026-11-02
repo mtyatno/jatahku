@@ -475,10 +475,13 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `ls /opt/jatahku/app/alembic/versions/ | grep e7b3d5a9c1f4`; `alembic current` harus `2d51b9031a6b` (Siklus household)
    sebelum upgrade. Revisi lain = main sudah punya migrasi yang lebih baru: berhenti, `down_revision` PR ini harus
    disesuaikan dulu (satu head).
-3. **`alembic upgrade head` SEBELUM restart service untuk PR ini**: `GET /admin/receipt-scans/stats` (kartu Scan Struk di
-   Admin) kini membaca `proof_rules` (`rules_pending`), jadi tanpa tabel itu seluruh kartu 500.
-   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `receipt_scans`/`users`
-   milik `postgres`, jalankan sebagai postgres); `alembic current` harus `e7b3d5a9c1f4`. Lalu `sudo systemctl restart jatahku`.
+3. **`alembic upgrade head` sesudah deploy selesai** (langkah 2). Kartu Scan Struk (`GET /admin/receipt-scans/stats`
+   membaca `proof_rules` untuk `rules_pending`) dan API `/admin/kotak/*` sudah jalan sejak restart deploy karena
+   `lifespan` membuat tabel dan kolomnya (`create_all` + `KOTAK_DDL`), jadi migrasi ini tidak membuat apa pun lagi (IF NOT
+   EXISTS) dan hanya menandai revisi: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`
+   (bila `receipt_scans`/`users` milik `postgres`, jalankan sebagai postgres); `alembic current` harus `e7b3d5a9c1f4`.
+   `sudo systemctl restart jatahku` sesudahnya mengikuti urutan umum, tidak wajib. 500 di kartu itu = `create_all` gagal
+   (cek langkah 1 dan `journalctl -u jatahku`).
 4. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"), seperti langkah 5 "Urutan merge PR
    bermigrasi", supaya "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`.
 5. Verifikasi:

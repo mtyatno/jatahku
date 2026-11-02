@@ -332,7 +332,7 @@ Kerangka ada di kolomnya sendiri, bukan di `document`, dan tidak pernah dikirim 
 | Jenis (`kind`) | Suara bila | Tidak pernah |
 |---|---|---|
 | `label_total` | nominal tercatat ≠ total terbaca (atau total tidak terbaca) dan tercetak di tepat satu label `nominal` (beberapa label: yang berkata awal "total" bila tepat satu) | label biaya/diskon/potongan/cashback/pajak/saldo; label sub-nominal (jumlah/nominal/amount tanpa "total") pada bukti yang punya baris biaya berlabel (user memilih mencatat tanpa biaya, bukan salah baca); nominal yang tidak tercetak |
-| `label_pihak` | keterangan tercatat memuat nama (1–6 kata, dicocokkan lewat HMAC) yang tercetak di baris `nama` berlabel penerima, dan bukan nama yang terbaca (atau potongannya) | label tanpa kata penerima (penerima, ke, kepada, tujuan, merchant, toko, recipient, to, payee; "nama"/"name" hanya bersama kata penerima lain) atau dengan kata status/keterangan/catatan/berita/pesan/metode/sumber/dari/pengirim/lokasi/alamat/id/ref/kode/cabang; nama panggilan yang tidak tercetak |
+| `label_pihak` | keterangan tercatat memuat nama (1–6 kata, dicocokkan lewat HMAC) yang tercetak di baris `nama` berlabel penerima, dan bukan nama yang terbaca (atau potongannya) | label tanpa kata penerima (penerima, ke, kepada, tujuan, merchant, toko, recipient, to, payee; "nama"/"name" hanya bersama kata penerima lain; kata yang juga harus ada di `LABEL_WORDS`: "kepada"/"payee" belum, lihat Batasan) atau dengan kata status/keterangan/catatan/berita/pesan/metode/sumber/dari/pengirim/lokasi/alamat/id/ref/kode/cabang; nama panggilan yang tidak tercetak |
 | `label_tanggal` | tanggal tercatat bukan hari ini (WIB) dan bukan tanggal bukti, dan tercetak di tepat satu baris `tanggal` berlabel | dalam praktik hanya dari form Catat: bot dan kartu bukti hanya menawarkan hari ini atau tanggal bukti |
 
 Nilai aturan = label kerangka (tanpa `#`, lolos `safe_label` lagi); nama, nomor, nominal, dan tanggal tidak pernah masuk
@@ -394,12 +394,13 @@ bukti aslinya; label berkata status/metode (peringatan) hampir selalu salah; jum
     subtotal, biaya, pajak, dan diskon tetap hasil baca biasa, jadi `selisih_nominal` tetap memperingatkan dan menurunkan
     keyakinan ke `sedang`. Pembaca tidak dikenali mencoba label aturan sebelum fallback LLM;
   - **tanggal**: label aturan lebih dulu, keyakinan `tinggi`; jam dari baris yang sama atau baris berikutnya;
-  - **nama penerima** (QRIS, transfer): label aturan lebih dulu, tetapi hanya bila pembacaan tanpa aturan adalah `keluar`
-    biasa ke orang yang bukan user.
-- **Arah uang** (`flow`: rekening sendiri, uang masuk, top-up) diputuskan dari nama yang dibaca **tanpa aturan**; status,
-  blokir, semua cek, nomor referensi (dedup), NMID, kota, catatan, dan pengirim juga selalu dibaca tanpa aturan
-  (`registry.read_document` memberi `apply_flow` dan cek konteks tanpa aturan); bank dan rekening tujuan ikut baris nama
-  penerima yang dipakai. Aturan tidak pernah melonggarkan blokir
+  - **nama penerima** (QRIS, transfer): label aturan lebih dulu; di transfer hanya bila pembacaan tanpa aturan adalah
+    `keluar` biasa ke orang yang bukan user.
+- **Arah uang** (`flow`: rekening sendiri, uang masuk, top-up): bacaan transfer yang tanpa aturan bukan `keluar` tidak
+  pernah memakai nama aturan; `apply_flow` dan cek lain menerima konteks tanpa aturan (`registry.read_document`), tetapi
+  melihat nama yang dipakai. Status, blokir, semua cek, nomor referensi (dedup), NMID, kota, catatan, dan pengirim
+  selalu dibaca tanpa aturan. Bank dan rekening berlabel dibaca seperti tanpa aturan; hanya bank/rekening tanpa label
+  yang tercetak di samping/bawah nama mengikuti baris nama aturan. Aturan tidak pernah melonggarkan blokir
   gagal/pending, cek arah uang, atau cek duplikat; paling jauh nama aturan mengubah `keluar` menjadi saran "bukan
   pengeluaran?" (tetap bisa "Tetap catat").
 - Label bawaan profil dan label umum tetap dipakai bila label aturan tidak menemukan nilai. Tes pembaca, `kotak_corpus`,
@@ -886,7 +887,13 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   yang tidak mengenali siapa pun; nama utuh, nomor, dan kata di luar kosakata tidak pernah tersimpan.
 
 **Untuk `privacy.html` dan DPIA (sisa A68; dipasang pemilik produk di server, file itu tidak ada di repo).** Pasang
-sebelum saklar menyala (langkah 2 "Menyalakan saklar"). Paragraf dari spec belajar lintas user §8, siap ditempel:
+sebelum saklar menyala (langkah 2 "Menyalakan saklar"). `deploy.sh` memasang ulang `privacy.html` di setiap deploy
+dari `/opt/jatahku/app/privacy.html` bila ada, selain itu dari `/opt/jatahku/backups/privacy.html`, jadi yang diubah
+adalah file sumber itu, bukan hanya salinan di `public_html`:
+`sudo ls -l /opt/jatahku/app/privacy.html /opt/jatahku/backups/privacy.html`; ubah file sumber yang dipakai, lalu
+`sudo cp <file itu> /home/jatahku/web/jatahku.com/public_html/privacy.html`. Mengubah `public_html` saja hilang di
+deploy berikutnya (paling lambat PR `share_target`, langkah 7). Lebih aman lagi: masukkan `privacy.html` ke repo.
+Paragraf dari spec belajar lintas user §8, siap ditempel:
 
 ```html
 <p><strong>Belajar dari koreksi.</strong> Saat Anda mengoreksi hasil pembacaan bukti bayar (nominal, nama penerima,
@@ -897,14 +904,15 @@ Anda tidak pernah dibagikan. Aturan baru ditinjau pengelola sebelum dipakai. Gam
 teks hasil bacanya tidak disimpan.</p>
 ```
 
-Catatan: tahap 1 belum belajar dari "bukan pengeluaran" (jenis `arah`, tahap 2); frasa itu boleh dibiarkan karena
-tahap 2 langsung menyusul (keputusan pemilik §12.4), atau dibuang dulu dan ditambahkan bersama tahap 2.
+Catatan: teks ini teks spec §8 yang sudah disetujui pemilik. Tahap 1 belum belajar dari "bukan pengeluaran" (jenis
+`arah` datang di tahap 2, M3), jadi teks menyebut sedikit lebih banyak dari yang dilakukan tahap 1. Bawaan: tempel apa
+adanya (tahap 2 langsung menyusul, keputusan pemilik §12.4); membuang frasa itu hanya bila tahap 2 ditunda.
 
 Baris DPIA ringkas (tambahan untuk tabel belajar):
 
 | Pemrosesan | Data | Dasar | Retensi |
 |---|---|---|---|
-| Belajar lintas user dari koreksi bukti bayar (`proof_rule_votes`, `proof_rules`; kerangka `receipt_scans.layout`) | label baris bukti (kosakata, tanpa digit), jenis aturan, kunci aplikasi, hitungan user/rumah tangga, id user dan rumah tangga pemberi suara; kerangka per item: label, nominal, tanggal, HMAC nama | kepentingan sah (ketepatan pembacaan bukti untuk semua pengguna) | aturan: selama aturan dipakai; suara: sampai akun dihapus atau digabung; kerangka: 24 jam sejak dibaca untuk item selesai |
+| Belajar lintas user dari koreksi bukti bayar (`proof_rule_votes`, `proof_rules`; kerangka `receipt_scans.layout`) | label baris bukti (kosakata, tanpa digit), jenis aturan, kunci aplikasi, hitungan user/rumah tangga, id user dan rumah tangga pemberi suara, id admin pemutus dan catatannya; kerangka per item: label, nominal, tanggal, HMAC nama, kata judul kosakata | kepentingan sah (ketepatan pembacaan bukti untuk semua pengguna) | aturan: tanpa batas waktu (hanya label, hitungan, keputusan; yang ditolak/dicabut disimpan sebagai jejak; tidak ada penghapusan otomatis, hanya aturan `menunggu` di bawah 2 user yang dihapus); suara: sampai akun dihapus atau digabung; kerangka: 24 jam sejak dibaca untuk item selesai, item yang tidak diselesaikan sampai kedaluwarsa (7 hari) |
 
 ## Pemeliharaan
 
@@ -936,8 +944,8 @@ tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti
 `outcome`. Data ini dipakai untuk menambah profil aplikasi. Tampilannya di Admin → Dashboard → kartu "Scan Struk (bulan
 ini)" (`Admin.jsx`, `scanStats.js`): lihat "Tips Settings dan rincian Admin" di "Web dan PWA". Sejak tahap 1 belajar
 lintas user juga `rules_pending` (jumlah aturan `menunggu`, semua waktu; lencana dan bagian "Aturan belajar"). Endpoint ini
-membaca `proof_rules`, jadi tabel itu harus ada (migrasi `e7b3d5a9c1f4`, atau `create_all` saat API start); tanpa itu
-seluruh kartu Scan Struk 500. Sesudah saklar menyala, `% dikoreksi` per penerbit dan aturan menunggu adalah alat pantau
+membaca `proof_rules`; tabel itu dibuat `lifespan` (`create_all`) saat API start, jadi tidak ada jendela 500 sebelum
+migrasi `e7b3d5a9c1f4` (500 di kartu itu = `create_all` gagal, biasanya hak tabel). Sesudah saklar menyala, `% dikoreksi` per penerbit dan aturan menunggu adalah alat pantau
 utama: aplikasi dengan `% dikoreksi` tinggi tanpa aturan = kandidat kalibrasi manual.
 
 ## Konfigurasi (`/opt/jatahku/.env`)
@@ -1044,8 +1052,8 @@ Semua langkah saat `features.receipt_inbox` dinyalakan, berurutan. Aturan nginx 
 sesudah Bagian B di-merge; ia harus sudah aktif sebelum PR `share_target` di-merge.
 
 **Status produksi (29 Okt 2026):** aturan nginx `/bagikan` terpasang (GET → 200 `text/html`, POST → 303
-`…/bagikan?err=sw`) dan batas unggah `api.jatahku.com` sudah dicek (file 10 MB → 401). Langkah 2 dan 3 di "Urutan"
-sudah selesai.
+`…/bagikan?err=sw`) dan batas unggah `api.jatahku.com` sudah dicek (file 10 MB → 401). Keduanya sudah selesai; di "Urutan" cukup dicek ulang bila konfigurasi domain berubah
+(langkah 1). Langkah privasi (langkah 2) belum.
 
 **Aturan nginx `/bagikan`** (di luar repo: konfigurasi nginx domain jatahku.com di HestiaCP). Share yang sampai ke
 server karena service worker belum aktif dijawab 303 ke `/bagikan?err=sw` ("Buka Jatahku sekali, lalu bagikan
@@ -1100,13 +1108,16 @@ tanpa beta, dan gerbang korpus §7c diganti). Syarat kode sudah di PR tahap 1: t
 (N2, N4, C2, C3, sisa N1) ditutup dengan sapuan, kosakata kata batal, dan belajar lintas user beserta migrasinya, supaya
 koreksi hari pertama langsung terkumpul.
 1. **Merge PR tahap 1 dan migrasi `e7b3d5a9c1f4`**: `AGENTS.md` "Deploy Checklist — Kotak Struk belajar lintas user
-   (e7b3d5a9c1f4)" sampai verifikasinya lulus (`alembic upgrade head` sebelum restart; Admin → Scan Struk menampilkan
-   "Aturan belajar"). Aturan nginx `/bagikan` dan batas unggah `api.jatahku.com` (di atas) sudah selesai 29 Okt 2026;
+   (e7b3d5a9c1f4)" sampai verifikasinya lulus (migrasi dijalankan sesudah deploy selesai, tanpa jendela 500 karena `lifespan` membuat
+   tabelnya; Admin → Scan Struk menampilkan "Aturan belajar"). Aturan nginx `/bagikan` dan batas unggah `api.jatahku.com` (di atas) sudah selesai 29 Okt 2026;
    cek ulang dua perintah nginx bila konfigurasi domain berubah sejak itu.
 2. **Privasi (sisa A68), oleh pemilik produk di server**: paragraf "Belajar dari koreksi" dipasang di `privacy.html` dan
    baris DPIA ditambahkan (teks siap tempel di "Privasi dan masa simpan"). Formulir toko (sisa A68 lainnya) bukan syarat
    spec §9 untuk saklar.
-   Cek: `curl -s https://jatahku.com/privacy.html | grep -c "Belajar dari koreksi"` → 1.
+   Ubah file sumber yang dipasang ulang `deploy.sh` (`/opt/jatahku/app/privacy.html`, selain itu
+   `/opt/jatahku/backups/privacy.html`) dan salinannya di `public_html` (lihat "Privasi dan masa simpan").
+   Cek: `curl -s https://jatahku.com/privacy.html | grep -c "Belajar dari koreksi"` → 1. Ulangi cek ini sesudah deploy
+   berikutnya (paling lambat sesudah langkah 7): hasil 0 = paragraf tertimpa `deploy.sh`.
 3. **Laporan korpus** (bukan gerbang): `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
    app.scripts.kotak_corpus eval --real-only`; catat angka dan sampel yang gagal di catatan rilis. Kode keluar 1
    ("korpus nyata belum ada" atau di bawah ambang) tidak menahan langkah berikutnya.
@@ -1125,7 +1136,14 @@ koreksi hari pertama langsung terkumpul.
 5. **Nyalakan saklar** (`PUT /admin/settings/app_config`, bagian "Saklar fitur"), segera sesudah langkah 4.
 6. Uji di HP sungguhan tanpa menu Bagikan (spec 7c), sebelum PR `share_target` di-merge: bot Telegram di Android dan
    iPhone, chat bot web, PDF dari tombol PDF di desktop, dan screenshot QRIS dari Galeri di form Catat. Untuk belajar:
-   koreksi nominal satu bukti GoPay/Jago di kartu atau "✏️ Nominal salah" di bot, lalu `GET /admin/kotak/votes` (admin)
+   (a) kerangka: sesudah membagikan satu bukti GoPay/Jago,
+   `sudo -u postgres psql jatahku_db -c "SELECT doc_type, count(*) FROM receipt_scans WHERE layout IS NOT NULL GROUP BY 1"`
+   → angkanya bertambah (kerangka dibuat), dan `GET /admin/kotak/votes` (admin) → 200.
+   (b) suara: hanya muncul dari koreksi sungguhan, yaitu nominal tercatat ≠ total terbaca dan nominal itu tercetak di
+   baris berlabel yang bukan biaya/diskon (kartu dan bot hanya membuka koreksi nominal bila total "kurang yakin"/`rendah`;
+   form Catat selalu), atau keterangan/catatan/"Ubah nama" yang memuat nama yang tercetak di baris berlabel penerima lain.
+   **Bukti yang terbaca benar tidak pernah memberi suara**; jangan memaksakannya. Bila ada koreksi seperti itu:
+   `sudo -u postgres psql jatahku_db -c "SELECT kind, rule_key, value, count(*) AS users FROM proof_rule_votes GROUP BY 1, 2, 3 ORDER BY 4 DESC"`
    → baris aplikasi itu `users` 1 (aturan baru muncul setelah user kedua).
 7. Merge PR `share_target` (blok di "Share target dan service worker") segera sesudah langkah 6, lalu cek versi yang
    tayang (`https://jatahku.com/version.json`). Saklar harus menyala lebih dulu, paling sedikit 5 menit sebelumnya:
@@ -1140,8 +1158,8 @@ koreksi hari pertama langsung terkumpul.
 9. **Pemantauan 2 minggu pertama**: Admin → Scan Struk → "Per penerbit" (`% dikoreksi` per aplikasi; tinggi tanpa
    aturan = kandidat kalibrasi manual) dan "Aturan belajar" (lencana aturan menunggu; tinjau dan putuskan, lihat "Yang
    diperiksa pemilik sebelum Setujui"), laporan user (bukti gagal yang lolos, nominal salah, item yang tidak muncul), dan
-   log: `journalctl -u jatahku | grep -E "suara koreksi|suara Nominal salah|aturan belajar|kerangka tata letak"` (galat belajar; pencatatan tidak
-   terpengaruh).
+   log: `journalctl -u jatahku --since "1 day ago" | grep -E "suara koreksi|suara Nominal salah|kunci Nominal salah|belajar dari koreksi|aturan belajar Kotak Struk tidak bisa dimuat|kerangka tata letak Kotak Struk tidak dibuat|kotak_maintenance: .* gagal"`
+   (hanya pesan galat belajar, bukan baris info tiap jam; pencatatan tidak terpengaruh).
 
 **Rollback**: matikan saklar lagi kapan saja (`PUT /admin/settings/app_config` dengan `receipt_inbox` `web: false`):
 item berikutnya dibaca seperti saklar mati (tanpa pembaca QRIS/transfer dan tanpa aturan), klien membaca ulang
@@ -1324,8 +1342,8 @@ Catatan:
     berlabel seperti "Total Order Rp50.000" tidak bisa dipelajari. Total tanpa Rp dan tanpa pemisah
     ribuan ≥ 6 digit ("Total 150000") dibuang dari kerangka bersama barisnya (privasi lebih dulu).
   - Tanggal dalam praktik hanya dipelajari dari form Catat (bot dan kartu bukti hanya menawarkan hari ini atau tanggal
-    bukti, keduanya bukan suara). Nama hanya bila nama yang benar diketik di keterangan/catatan dan tercetak di baris
-    berlabel penerima lain.
+    bukti, keduanya bukan suara). Nama hanya bila nama yang benar diketik di keterangan/catatan (atau lewat "Ubah nama" di
+    kartu, karena nama panggilan masuk ke keterangan) dan tercetak di baris berlabel penerima lain.
   - Arah uang (top-up, uang masuk, rekening sendiri dari "Bukan pengeluaran") belum dipelajari: jenis `arah` di tahap 2
     (M3). Melewati item tidak memberi suara.
   - Nominal ketikan sesudah "✏️ Nominal salah" diambil dari teks itu sendiri, bukan dari transaksi yang tercatat: teks
