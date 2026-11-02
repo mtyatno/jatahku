@@ -93,7 +93,7 @@ class MigrationTests(unittest.TestCase):
 
     def test_migration_is_idempotent(self):
         mod = self.load()
-        self.assertEqual((mod.revision, mod.down_revision), ("e7b3d5a9c1f4", "2d51b9031a6b"))
+        self.assertEqual((mod.revision, mod.down_revision), ("e7b3d5a9c1f4", "c5r5a8e2d417"))
         first, second = self.run_with(mod, "upgrade"), self.run_with(mod, "upgrade")
         # Setiap pernyataan KOTAK_DDL (sumber yang sama dengan lifespan), semuanya IF NOT EXISTS: aman diulang.
         self.assertEqual(first.statements, KOTAK_DDL)
@@ -149,9 +149,9 @@ class MigrationTests(unittest.TestCase):
                                   for i in model.__table__.indexes},
                                  {(n, c, u) for (n, t, c, u) in indexes if t == model.__tablename__})
 
-    def test_single_head_after_siklus_household(self):
+    def test_single_head_after_plugin_r5(self):
         children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
-                    if "down_revision: Union[str, None] = '2d51b9031a6b'" in p.read_text(encoding="utf-8")]
+                    if "down_revision: Union[str, None] = 'c5r5a8e2d417'" in p.read_text(encoding="utf-8")]
         self.assertEqual(children, [MIGRATION.name])
 
 
