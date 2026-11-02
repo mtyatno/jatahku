@@ -2178,6 +2178,38 @@ class KotakBotDbTests(TxnBase):
         await self.type_text("alfamart 45500")
         self.assertEqual(await self.votes(), [])
 
+    async def test_fix_hook_runs_after_capture_note(self):
+        """Review L2b m-1: catatan untuk bukti lain (tombol "Tambah catatan") ditangkap dulu dan tidak menghabiskan
+        kunci "Nominal salah"; pesan teks biasa berikutnya yang memberi suara."""
+        item = await self.fix_vote_item()
+        await self.tap(f"struk_fix_{item.id}")
+        await self.send()   # bukti B (QRIS) lewat foto: tidak menyentuh kunci
+        key = self.button("Makan").split("_")[1]
+        await self.tap(f"kn_{key}")
+        note = await self.type_text("transfer budi 11rb")
+        note.reply_text.assert_not_awaited()   # catatan B, bukan NLP
+        self.assertIn("📝 transfer budi 11rb", self.bot.edit_message_text.call_args.args[0])
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(item.id))
+        self.assertEqual((await self.votes(), await self.txns()), ([], []))
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+        self.assertEqual([t.amount for t in await self.txns()], [D("11000")])
+
+    async def test_only_fix_writes_the_key_for_layout_types(self):
+        """Review L2b m-2/m-3: "Batal" (`struk_no_`) dan "Bukan pengeluaran"/"Duplikat" tidak menulis kunci; "Nominal
+        salah" menulisnya juga untuk item tidak dikenali (LAYOUT_TYPES, bukan hanya QRIS/transfer)."""
+        for data in ("struk_no_{}", "kx_{}", "kd_{}"):
+            item = await self.fix_vote_item()
+            with self.subTest(data=data):
+                await self.tap(data.format(item.id))
+                self.assertEqual((await self.get(item.id)).status, "dilewati")
+                self.assertNotIn("kotak:fix:42", self.redis.store)
+        unknown = await self.ready_unknown()
+        query = await self.tap(f"struk_fix_{unknown.id}")
+        self.assertEqual((await self.get(unknown.id)).status, "dilewati")
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(unknown.id))
+        self.assertNotEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_FIX_PROOF)   # pesan struk lama
+
     async def test_fix_never_blocks_nlp_when_redis_down(self):
         item = await self.fix_vote_item()
 
@@ -2188,10 +2220,13 @@ class KotakBotDbTests(TxnBase):
             query = await self.tap(f"struk_fix_{item.id}")
         self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_FIX_PROOF)
         self.assertEqual((await self.get(item.id)).status, "dilewati")
-        # Redis mati saat membaca kunci: ketikan dicatat seperti biasa, tanpa suara.
+        # Redis mati saat membaca kunci: ketikan dicatat seperti biasa, tanpa suara, dan diam-diam (review L2b m-4:
+        # tanpa peringatan bertraceback di setiap pesan teks, seperti `capture_note`; hanya log debug).
         self.redis.store["kotak:fix:42"] = str(item.id)
-        with patch.object(self.redis, "getdel", new=down), self.assertLogs("jatahku.bot", level="WARNING"):
+        with patch.object(self.redis, "getdel", new=down), self.assertLogs("jatahku.bot", level="DEBUG") as logs:
             await self.type_text("transfer budi 11rb")
+        self.assertEqual([r.levelname for r in logs.records if "Nominal salah" in r.getMessage()], ["DEBUG"])
+        self.assertFalse([r for r in logs.records if r.levelno >= 30], [r.getMessage() for r in logs.records])
         self.assertEqual([t.amount for t in await self.txns()], [D("11000")])
         self.assertEqual(await self.votes(), [])
         # Galat lain sesudah kunci terbaca (mis. database): ditelan, dicatat di log, pencatatan tetap jalan.

@@ -25,10 +25,10 @@ yang sama dengan `t_`), "Nominal salah" (`struk_fix_`), "Batal" (`struk_no_`). B
 (itu di webapp), jadi satu pertanyaan sebelum satu-satunya pencatatan.
 
 Nominal ketikan sesudah "Nominal salah" (plan 2026-11-01 Task L2b, pre-flight K4): `struk_fix_` yang melewati item
-QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL `FIX_TTL_S`). Ketikan berikutnya user
-itu (`note_fix_amount`, dari handlers.handle_message) mengambil kunci itu sekali; satu nominal → suara koreksi nominal
-untuk item (`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke
-item.
+QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL `FIX_TTL_S`). Pesan teks berikutnya
+user itu dalam FIX_TTL_S (`note_fix_amount`, dari handlers.handle_message sesudah `capture_note`; perintah, foto, tombol,
+dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal → suara koreksi nominal untuk item
+(`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
 """
 import asyncio
 import json
@@ -1059,21 +1059,26 @@ def fix_amount(text: str) -> int | None:
 
 
 async def note_fix_amount(update, text: str) -> None:
-    """Ketikan pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`): kunci
-    `FIX_KEY` diambil sekali (`getdel`); satu nominal (`fix_amount`) → suara koreksi nominal untuk item itu
-    (`belajar.learn_from_correction` dengan `Final(nominal, None, None, hari ini WIB)`) lalu commit. Item milik user lain
-    / tidak ada / tanpa kerangka / struk belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks:
-    pemanggil selalu lanjut ke NLP, yang mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa
-    suara."""
+    """Pesan teks pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`: perintah,
+    foto, tombol, dan catatan yang ditangkap tidak menghabiskan kunci): kunci `FIX_KEY` diambil sekali (`getdel`); satu
+    nominal (`fix_amount`) → suara koreksi nominal untuk item itu (`belajar.learn_from_correction` dengan
+    `Final(nominal, None, None, hari ini WIB)`) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
+    belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks: pemanggil selalu lanjut ke NLP, yang
+    mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa suara, diam-diam seperti
+    `capture_note` (log debug; peringatan hanya untuk galat sesudah kunci terbaca)."""
+    tg_user = update.effective_user
     try:
-        tg_user = update.effective_user
         r = _redis()
         try:
             raw = await r.getdel(FIX_KEY.format(tg_user.id))
         finally:
             await r.aclose()
-        if not raw:
-            return
+    except Exception:
+        logger.debug("kunci Nominal salah tidak bisa dibaca (Redis)", exc_info=True)
+        return
+    if not raw:
+        return
+    try:
         item_id = _uuid(raw.decode() if isinstance(raw, bytes) else raw)
         amount = fix_amount(text)
         if item_id is None or amount is None:
