@@ -55,6 +55,12 @@ class ParseContext:
     user_id: Any = None
     plan: str = "basic"
     llm: Callable | None = None
+    # Aturan belajar yang disetujui pemilik (spec 2026-11-01 §5): `{rule_key: {"label_total": [...], "label_pihak": [...],
+    # "label_tanggal": [...]}}`, dimuat worker dari cache (`belajar.approved_rules`). Kosong = perilaku tanpa aturan
+    # (bawaan; tes pembaca dan `kotak_corpus` selalu kosong). Hanya pembaca QRIS, transfer, dan tidak dikenali yang
+    # membacanya, dan hanya untuk label nilai; status, arah uang, cek, dan dedup tidak pernah (registry memberi mereka
+    # konteks tanpa aturan).
+    rules: dict = field(default_factory=dict)
 
 
 class DocReader(Protocol):

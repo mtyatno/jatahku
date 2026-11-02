@@ -5,7 +5,7 @@ gambar aslinya tidak pernah di-commit."""
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-import json, unittest
+import json, re, unittest
 from datetime import date
 from pathlib import Path
 from app.scripts.kotak_corpus import evaluate, gate_failures, receipt_samples, sample_context
@@ -909,9 +909,10 @@ class NegatedSuccessAndPaymentNounTests(unittest.IsolatedAsyncioTestCase):
                         res = await read(make(value), enabled=enabled)
                         self.assertEqual(res.parsed.doc.status, status)
                         self.assertIn(check, [c.code for c in res.checks])
-        # Dua baris probes9 lainnya: tidak memblokir/memperingatkan seperti di main (saklar mati), dan saklar menyala tidak
-        # pernah membacanya berhasil (gagal atau tidak_diketahui: keputusan pemilik / nilai ambigu, tidak dikunci di sini).
-        for value in ("Kartu ditolak", "Refund gagal"):
+        # Baris probes9 lainnya: tidak memblokir/memperingatkan seperti di main (saklar mati), dan saklar menyala tidak
+        # pernah membacanya berhasil (gagal atau tidak_diketahui: nilai ambigu, tidak dikunci di sini). "Kartu ditolak"
+        # sejak Task L5 (keputusan pemilik 3) = gagal di kedua saklar: `CancelledVocabularyTests`.
+        for value in ("Refund gagal",):
             for name, make in (("transfer", transfer_with_status), ("qris", gopay_qris_with_status)):
                 for enabled in (True, False):
                     with self.subTest(value, layout=name, enabled=enabled):
@@ -1365,3 +1366,827 @@ class RewardFooterTests(unittest.IsolatedAsyncioTestCase):
                              ("Pembayaran belum diterima, harap tunggu", "pending"), ("Dana belum masuk", "pending")):
             with self.subTest(text):
                 self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), status)
+
+
+# ── Tahap 1 Kotak Belajar, Task L5: kosakata "dibatalkan/ditolak" → gagal (spec §7) ─────────────
+
+D_L5 = "26/10/2026 08:12"
+# Bukti dibatalkan/ditolak yang diblokir seperti gagal di kedua saklar (nama dan nomor rekaan).
+CANCELLED_PROOFS = {
+    "judul transfer": ["GoPay", "Transfer Dibatalkan", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "label status": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: Ditolak", D_L5],
+    "payment cancelled": ["QRIS", "Payment cancelled", "Merchant TOKO A", "Amount Rp25.000", "NMID ID1024358806544", D_L5],
+    "transaksi batal": ["Transaksi Batal", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "pembayaran ditolak": ["Pembayaran Ditolak", "QRIS", "Merchant TOKO A", "Rp 25.000", "NMID ID1024358806544", D_L5],
+    "payment rejected": ["Payment rejected", "Recipient BUDI", "Bank BCA", "Amount Rp50.000", D_L5],
+    "transaction canceled": ["Transaction canceled", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "transaksi void": ["Transaksi Void", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "telah dibatalkan": ["Transaksi Anda telah dibatalkan", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "kata saja dibatalkan": ["DANA", "Dibatalkan", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja ditolak": ["DANA", "Ditolak", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja rejected": ["DANA", "Rejected", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja cancelled": ["DANA", "Cancelled!", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "status transaksi ditolak": ["BCA mobile", D_L5, "Ke BUDI", "Status Transaksi Ditolak", "Nominal Rp150.000"],
+    "status batal": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: Batal", D_L5],
+    "status void": ["GoPay", "Ke BUDI", "Nominal Rp50.000", "Status: VOID", D_L5],
+    "judul di badan": ["Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5, "No. Ref 2026102612345678",
+                       "Transfer Dibatalkan"],
+    # Fix round 1 (review L5 I1, m1, m2, m3): kata itu menutup klausanya; "to"/"yang" jauh dari kata itu bukan penjaga;
+    # ajakan/syarat sesudah tanda baca tetap status; tanggal/jam, oleh/karena sesudahnya; awalan telah/sudah/has been/was.
+    "judul to": ["GoPay", "Transfer to BUDI cancelled", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul yang jauh": ["GoPay", "Transaksi yang Anda lakukan dibatalkan", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul lalu syarat": ["Transaksi Dibatalkan, jika saldo terpotong hubungi 14017", "Penerima BUDI", "Bank Tujuan BCA",
+                          "Nominal Rp50.000", D_L5],
+    "judul lalu kalimat": ["GoPay", "Transfer Dibatalkan. Hubungi CS jika saldo terpotong", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul bertanggal": ["GoPay", "Transfer Dibatalkan 26/10/2026 08:12", "Ke BUDI", "Nominal Rp50.000"],
+    "judul oleh": ["Transaksi Dibatalkan oleh sistem", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", D_L5],
+    "judul karena": ["Transaksi dibatalkan karena saldo tidak cukup", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000",
+                     D_L5],
+    "kata saja bertanggal": ["DANA", "Dibatalkan 26/10/2026 08:12", "Ke SITI", "Nominal Rp50.000"],
+    "kata saja bertanggal wib": ["DANA", "Ditolak 26 Okt 2026, 08:12 WIB", "Ke SITI", "Nominal Rp50.000"],
+    "kata saja bintang": ["DANA", "*** CANCELLED ***", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "telah dibatalkan saja": ["DANA", "Telah dibatalkan", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "sudah ditolak saja": ["DANA", "Sudah ditolak", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "has been cancelled saja": ["DANA", "Has been cancelled", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "was rejected saja": ["DANA", "Was rejected", "Ke SITI", "Nominal Rp50.000", D_L5],
+    # Fix round 2 (re-review I3, m8): satu kata pelaku/cara, nominal Rp, #id, tanggal tanpa tahun, "on"/"•" + tanggal, ":".
+    "judul ditolak bank": ["GoPay", "Pembayaran Ditolak Bank", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul ditolak sistem": ["GoPay", "Transfer Ditolak Sistem", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul penerbit kartu": ["GoPay", "Pembayaran Ditolak Penerbit Kartu", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul otomatis": ["GoPay", "Transaksi Dibatalkan Otomatis", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul nominal": ["GoPay", "Transfer Dibatalkan Rp50.000", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul id": ["GoPay", "Transaksi Dibatalkan #12345", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul on tanggal": ["GoPay", "Transaction Cancelled on 31 Oct 2026", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul tanpa tahun": ["GoPay", "Transfer dibatalkan 31/10 09:00", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "judul titik dua": ["GoPay", "Transfer Dibatalkan: rekening tidak aktif", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "kata saja tanpa tahun": ["DANA", "Dibatalkan 31/10 09:00", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja otomatis": ["DANA", "Dibatalkan otomatis", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja bank": ["DANA", "Ditolak bank", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "kata saja titik tengah": ["DANA", "Dibatalkan • 31 Okt 2026", "Ke SITI", "Nominal Rp50.000", D_L5],
+    # Fix round 3 (re-review 2 I4): alasan bernegasi ("karena kartu tidak dapat digunakan") = alasan gagal, bukan kebijakan.
+    "alasan tidak dapat": ["GoPay", "Transaksi Ditolak karena kartu tidak dapat digunakan", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "alasan tidak bisa": ["GoPay", "Pembayaran Ditolak karena PIN tidak bisa diverifikasi", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "oleh lalu alasan": ["GoPay", "Transaksi Dibatalkan oleh sistem karena tidak dapat diproses", "Ke BUDI", "Nominal Rp50.000",
+                         D_L5],
+    "alasan tanpa subjek": ["GoPay", "Transaksi dibatalkan karena tidak bisa diproses", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "because cannot": ["GoPay", "Payment rejected because card cannot be used", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "kata saja alasan": ["DANA", "Ditolak karena kartu tidak dapat digunakan", "Ke SITI", "Nominal Rp50.000", D_L5],
+    # m10: kata pelaku + satu penjelas dari daftar tertutup.
+    "pelaku bank tujuan": ["GoPay", "Transaksi Ditolak Bank Tujuan", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "pelaku bank penerima": ["GoPay", "Transfer Ditolak Bank Penerima", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "pelaku sistem otomatis": ["GoPay", "Transaksi Dibatalkan Sistem Otomatis", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "pelaku issuer bank": ["GoPay", "Transaksi Ditolak Issuer Bank", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "kata saja bank tujuan": ["DANA", "Ditolak Bank Tujuan", "Ke SITI", "Nominal Rp50.000", D_L5],
+    # m12: satu baris per anggota daftar (IDR, kamu, penjual, pukul, WIB).
+    "nominal idr": ["GoPay", "Transfer Dibatalkan IDR 50,000", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "pelaku kamu": ["GoPay", "Pembayaran Dibatalkan Kamu", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "pelaku penjual": ["GoPay", "Pembayaran Ditolak Penjual", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "kata saja penjual": ["DANA", "Ditolak Penjual", "Ke SITI", "Nominal Rp50.000", D_L5],
+    "pukul": ["GoPay", "Transfer dibatalkan pukul 09.00", "Ke BUDI", "Nominal Rp50.000", D_L5],
+    "jam wib": ["GoPay", "Transaksi Ditolak 31 Okt 08.12 WIB", "Ke BUDI", "Nominal Rp50.000", D_L5],
+}
+# Label status dengan nilai dibatalkan/ditolak pada tata letak transfer dan QRIS GoPay (kedua saklar).
+CANCELLED_VALUES = ("Dibatalkan", "Ditolak", "Batal", "Void", "Rejected", "Cancelled", "Canceled", "Kartu ditolak",
+                    "Transaksi dibatalkan",
+                    # Fix round 1 (I1, m1): penjaga hanya di klausa kata itu; syarat sesudah tanda baca = ajakan.
+                    "Saldo tidak cukup, transaksi ditolak", "Rekening tujuan tidak aktif, transfer dibatalkan",
+                    "Dibatalkan (jika saldo terpotong akan dikembalikan)", "Ditolak, jika saldo terpotong hubungi 14017",
+                    "Pembayaran yang kamu lakukan ditolak", "Payment to merchant rejected", "Ditolak oleh bank tujuan",
+                    "Saldo tidak cukup, ditolak", "Akun tujuan tidak aktif; dibatalkan",      # tanpa judul: hanya nilai label
+                    "Saldo tidak cukup (ditolak)")                                          # fix round 2 (m8): "(" batas klausa
+# Kaki bersyarat/kebijakan/tanya: bukan status, tidak pernah menghitung kata dibatalkan/ditolak.
+CANCEL_FOOTERS = ("Jika transaksi dibatalkan, dana kembali dalam 3 hari",
+                  "Barang yang sudah dibeli tidak dapat dibatalkan",
+                  "Transaksi tidak dapat dibatalkan",
+                  "Transaksi yang dibatalkan tidak dapat dikembalikan",
+                  "Pembayaran akan dibatalkan otomatis",
+                  "Transaksi dibatalkan otomatis jika tidak dibayar",
+                  "Transaksi dibatalkan? Hubungi 14017",
+                  "Pengaduan transaksi dibatalkan: 14017",
+                  "Payment cannot be cancelled",
+                  "Batal",
+                  "VOID",
+                  # Fix round 1 (I2): kata itu tidak menutup klausanya = kalimat kebijakan.
+                  "Transaksi dibatalkan maks 1x24 jam",
+                  "Transaksi dibatalkan otomatis setelah 1x24 jam",
+                  "Pembayaran dibatalkan otomatis dalam 15 menit",
+                  "Pembelian dibatalkan tidak dapat direfund",
+                  "Transaksi batal tidak dapat diuangkan",
+                  "Dana transaksi dibatalkan dikembalikan dalam 3 hari kerja",
+                  # Fix round 2 (re-review m7, I3): modal sesudah pelaku/sebab di klausa yang sama; angka polos bukan ekor.
+                  "Transaksi dibatalkan oleh pembeli tidak dapat direfund",
+                  "Transaksi dibatalkan karena barang rusak dapat ditukar",
+                  "TRANSAKSI VOID 15.000",
+                  "Transaksi Batal 2",
+                  # Fix round 3 (m11, m12): nama barang bukan nama bulan, Rp0 bukan penutup, modal "harus" sesudah pelaku.
+                  "TRANSAKSI VOID 1 MARLBORO",
+                  "PEMBELIAN BATAL 1 SEPATU",
+                  "PEMBELIAN BATAL 2 DESSERT",
+                  "Transaksi batal Rp0",
+                  "Transaksi void Rp 0",
+                  "Transaksi dibatalkan oleh pembeli harus lapor kasir")
+# "#" + angka saja menutup klausa hanya di teks tanpa baris barang: struk belanja tidak terblokir (m11).
+STORE_ONLY_CANCEL_FOOTERS = ("Transaksi Batal #2", "PEMBELIAN BATAL #12")
+# Bukti sukses yang statusnya hanya label (tanpa judul; dibaca jalur struk di kedua saklar), untuk kaki di atas.
+def success_label_proof(footer):
+    return ["BCA mobile", "30/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000", "Status : Berhasil", "Total Rp150.000", footer]
+
+
+class CancelledVocabularyTests(unittest.IsolatedAsyncioTestCase):
+    """Task L5 (spec §7, keputusan pemilik 3): "dibatalkan", "ditolak", "batal", "rejected", "cancelled"/"canceled", "void"
+    = gagal, hanya di judul status (kata benda transaksi + kata itu, kata itu menutup klausanya), nilai label status
+    pembayaran, dan baris yang diawali kata itu di 4 baris pertama (bukan "Batal"/"Void" tanpa kata benda: tombol, baris
+    VOID struk). Baris badan pendek tidak membacanya; kaki bersyarat/tanya/bantuan, negasi/modal di klausa kata itu
+    ("tidak dapat dibatalkan", "akan dibatalkan") dan kalimat kebijakan ("dibatalkan maks 1x24 jam") tidak dihitung."""
+
+    async def test_cancelled_or_rejected_proofs_are_blocked_in_both_modes(self):
+        for name, lines in CANCELLED_PROOFS.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual([(c.code, c.level) for c in res.checks if c.code == "status_gagal"],
+                                     [("status_gagal", "block")])
+
+    async def test_cancelled_values_in_both_layouts_and_both_modes(self):
+        for value in CANCELLED_VALUES:
+            for name, make in (("transfer", transfer_with_status), ("qris", gopay_qris_with_status)):
+                for enabled in (True, False):
+                    with self.subTest(value, layout=name, enabled=enabled):
+                        res = await read(make(value), enabled=enabled)
+                        self.assertEqual(res.parsed.doc.status, "gagal")
+                        self.assertIn("status_gagal", [c.code for c in res.checks])
+
+    async def test_gopay_status_block_with_a_cancelled_value(self):
+        for value in ("Transfer ke penerima dibatalkan", "Transfer uang ke penerima ditolak"):
+            lines = gopay_transfer()
+            lines[6] = value                         # di bawah "Status"; "Status  Selesai" tetap di rincian
+            for enabled in (True, False):
+                with self.subTest(value, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertIn("status_gagal", [c.code for c in res.checks])
+        # Kata saja di bawah "Status" dibaca persis seperti "Gagal" di posisi itu (sejak L6e logo GoPay membuat teks ini
+        # tampak bukti, jadi keduanya diblokir: OneMarkerAppSlipTests).
+        for enabled in (True, False):
+            got = {}
+            for value in ("Gagal", "Dibatalkan", "Ditolak"):
+                lines = gopay_transfer()
+                lines[6] = value
+                res = await read(lines, enabled=enabled)
+                got[value] = (res.reader, res.parsed.doc.status, [c.code for c in res.checks])
+            with self.subTest(enabled=enabled):
+                self.assertEqual(got["Dibatalkan"], got["Gagal"])
+                self.assertEqual(got["Ditolak"], got["Gagal"])
+
+    async def test_batal_button_does_not_block(self):
+        for lines in (["QRIS", "Menunggu pembayaran", "Merchant TOKO A", "Total Rp25.000", "NMID ID1024358806544", D_L5, "Batal"],
+                      ["QRIS", "Batal", "Menunggu pembayaran", "Merchant TOKO A", "Total Rp25.000", "NMID ID1024358806544"],
+                      ["Menunggu pembayaran", "Transfer ke BUDI", "Nominal Rp50.000", "Bayar", "Batal"]):
+            for enabled in (True, False):
+                with self.subTest(lines[1], enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertNotEqual(res.parsed.doc.status, "gagal")
+                    self.assertNotIn("status_gagal", [c.code for c in res.checks])
+        # Blok di bawah "Status" (saklar mati, `read_labelled_failure`): hanya baris tepat di bawah label adalah nilainya;
+        # tombol "Batal" di bawah langkah-langkah bukan status.
+        lines = gopay_transfer()
+        lines[6:8] = ["Menunggu transfer ke penerima", "Batal"]
+        self.assertIsNone(pc.read_labelled_failure(lines))
+        for enabled in (True, False):
+            with self.subTest("blok status", enabled=enabled):
+                self.assertNotIn("status_gagal", [c.code for c in (await read(lines, enabled=enabled)).checks])
+
+    async def test_store_receipts_with_void_or_cancel_footers_are_unchanged(self):
+        void_line = ["TOKO MAJU", "01-10-2026 08:15", "KOPI 1 15.000", "VOID 1 KOPI 15.000", "ROTI 1 10.000", "SUSU 1 5.000",
+                     "TOTAL 15.000", "TUNAI 15.000"]
+        receipts = {"void": void_line, **{f: store_receipt(f) for f in (*CANCEL_FOOTERS, *STORE_ONLY_CANCEL_FOOTERS)}}
+        for name, lines in receipts.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, res.checks), ("struk_belanja", "berhasil", []))
+                    self.assertFalse(looks_like_proof(textdoc(lines)))
+
+    async def test_conditional_policy_and_question_footers_stay_success_on_proofs(self):
+        for footer in CANCEL_FOOTERS:
+            for enabled in (True, False):
+                with self.subTest(footer, enabled=enabled):
+                    lines = ["Transfer Berhasil", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", "30 Okt 2026 09:31",
+                             footer]
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "berhasil")
+                    self.assertEqual(status_checks(res), [])
+                with self.subTest(footer, layout="label saja", enabled=enabled):
+                    res = await read(success_label_proof(footer), enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "berhasil")
+                    self.assertEqual(status_checks(res), [])
+
+    async def test_edc_void_slip_is_blocked(self):
+        """Keputusan pengendali (fix round 1): "TRANSAKSI VOID" di slip EDC = transaksi dibatalkan, diblokir."""
+        for lines in (store_receipt("TRANSAKSI VOID"), success_label_proof("TRANSAKSI VOID")):
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual((res.parsed.doc.status, status_checks(res)), ("gagal", ["status_gagal"]))
+
+    async def test_selesai_with_a_cancel_word_anywhere_is_never_berhasil(self):
+        """Jalur bukti (saklar menyala): "Status Selesai" + kata itu di baris mana pun bukan berhasil (`_NOT_DONE` tetap);
+        di judul kata saja itu gagal."""
+        base = lines_of("real-gopay-qris-01")
+        for at in (1, 5, len(base)):
+            for word in ("Dibatalkan", "Ditolak", "Batal", "Rejected", "Cancelled"):
+                lines = base[:at] + [word] + base[at:]
+                with self.subTest(word, at=at):
+                    status = (await read(lines)).parsed.doc.status
+                    self.assertNotEqual(status, "berhasil")
+                    if at == 1 and word != "Batal":
+                        self.assertEqual(status, "gagal")
+
+    def test_positions(self):
+        lines = ["QRIS", "Merchant TOKO A", "Jumlah Rp5.000", "NMID ID1024358806544", D_L5, "Dibatalkan"]
+        # Kata saja di badan (sesudah 4 baris pertama) tidak dibaca; di judul dibaca.
+        self.assertEqual(pc.read_status(lines), pc.TIDAK_DIKETAHUI)
+        self.assertEqual(pc.read_status([lines[0], "Dibatalkan", *lines[1:5]]), pc.GAGAL)
+        # "Batal"/"Void" tanpa kata benda tidak pernah dibaca, juga di judul.
+        for word in ("Batal", "VOID", "Batal!"):
+            with self.subTest(word):
+                self.assertEqual(pc.read_status([lines[0], word, *lines[1:5]]), pc.TIDAK_DIKETAHUI)
+        for text, status in (("Transfer Dibatalkan", pc.GAGAL), ("Pembayaran Ditolak", pc.GAGAL), ("Transaksi Batal", pc.GAGAL),
+                             ("Payment rejected", pc.GAGAL), ("Payment cancelled", pc.GAGAL), ("Transaksi VOID", pc.GAGAL),
+                             ("Transaksi telah dibatalkan oleh bank", pc.GAGAL),
+                             ("Transaksi Dibatalkan, silakan coba lagi", pc.GAGAL),
+                             ("Transaksi tidak dapat dibatalkan", None), ("Transaksi bisa dibatalkan", None),
+                             ("Transaksi yang dibatalkan tidak dapat dikembalikan", None),
+                             ("Pembayaran akan dibatalkan otomatis", None), ("Payment will be cancelled", None),
+                             ("Transaksi dibatalkan jika tidak dibayar", None), ("Jika transaksi dibatalkan, dana kembali", None),
+                             ("Transaksi dibatalkan?", None), ("Untuk transaksi yang dibatalkan hubungi 14017", None),
+                             ("Pembatalan transaksi", None), ("TOKO BATAL JAYA", None), ("Kartu ditolak", None),
+                             # Fix round 1: kata itu harus menutup klausanya (I2), boleh diikuti tanggal/jam atau pelaku/sebab.
+                             ("Transaksi Dibatalkan 26/10/2026 08:12", pc.GAGAL), ("Transaksi Dibatalkan.", pc.GAGAL),
+                             ("Transaksi dibatalkan karena saldo tidak cukup", pc.GAGAL),
+                             ("Payment cancelled by user", pc.GAGAL), ("Transfer to BUDI cancelled", pc.GAGAL),
+                             ("Pembayaran yang Anda lakukan dibatalkan", pc.GAGAL),
+                             ("Transaksi dibatalkan maks 1x24 jam", None), ("Transaksi dibatalkan setelah 26/10/2026", None),
+                             ("Pembayaran dibatalkan otomatis dalam 15 menit", None),
+                             ("Pembelian dibatalkan tidak dapat direfund", None),
+                             ("Transaksi dibatalkan 24 jam", None), ("Total transaksi dibatalkan 3", None),
+                             ("Daftar transaksi yang dibatalkan", None),
+                             # Fix round 2 (I3): satu kata pelaku/cara, lalu nominal Rp/#id/tanggal (juga tanpa tahun).
+                             ("Pembayaran Ditolak Bank", pc.GAGAL), ("Transaksi Dibatalkan Otomatis", pc.GAGAL),
+                             ("Pembayaran Ditolak Penerbit Kartu", pc.GAGAL), ("Transfer Dibatalkan Rp50.000", pc.GAGAL),
+                             ("Transaksi Dibatalkan #12345", pc.GAGAL), ("Transaction Cancelled on 31 Oct 2026", pc.GAGAL),
+                             ("Transfer dibatalkan 31/10 09:00", pc.GAGAL), ("Transaksi Dibatalkan 31 Okt", pc.GAGAL),
+                             ("Transaksi Ditolak Bank Rp50.000", pc.GAGAL), ("Transfer Dibatalkan: rekening tidak aktif", pc.GAGAL),
+                             ("TRANSAKSI VOID 15.000", None), ("Transaksi Batal 2", None),
+                             # Fix round 3 (m10): satu penjelas dari daftar tertutup sesudah kata pelaku; kata bebas tidak.
+                             ("Transaksi Ditolak Bank Tujuan", pc.GAGAL), ("Transaksi Dibatalkan Otomatis Sistem", pc.GAGAL),
+                             ("Transaksi Ditolak Bank Tujuan Anda", None), ("Transaksi Ditolak Bank Mandiri", None),
+                             # m11: nama bulan utuh; Rp0 bukan penutup.
+                             ("Transaksi batal 1 Juni", pc.GAGAL), ("Transaksi Dibatalkan 31 Okt.", pc.GAGAL),
+                             ("TRANSAKSI VOID 1 MARLBORO", None), ("PEMBELIAN BATAL 2 DESSERT", None),
+                             ("Transaksi batal Rp0", None), ("Transaksi void Rp 0,00", None),
+                             # I4: modal bernegasi sesudah kata alasan = alasan gagal; modal tanpa negasi = kebijakan.
+                             ("Transaksi Ditolak karena kartu tidak dapat digunakan", pc.GAGAL),
+                             ("Payment rejected due to card can't be used", pc.GAGAL),
+                             ("Transaksi dibatalkan sebab saldo kurang", pc.GAGAL),
+                             ("Transaksi dibatalkan oleh kasir tidak dapat diuangkan", None),
+                             ("Transaksi dibatalkan oleh pembeli harus lapor kasir", None),
+                             # m7: modal sesudah pelaku/sebab di klausa yang sama = kebijakan; "tidak" saja bukan modal.
+                             ("Transaksi dibatalkan oleh pembeli tidak dapat direfund", None),
+                             ("Transaksi dibatalkan karena barang rusak dapat ditukar", None),
+                             ("Transaksi dibatalkan oleh sistem, dana akan dikembalikan", pc.GAGAL)):
+            with self.subTest(text):
+                self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), status)
+        self.assertTrue(pc._is_status_title("Transfer Dibatalkan"))
+        self.assertFalse(pc._is_status_title("Transaksi tidak dapat dibatalkan"))
+        # "#" + angka saja: penutup hanya bila bukan teks berbaris barang; baris itu sendiri bukan baris barang (m11).
+        self.assertEqual(pc._cancel_as_failed("Transaksi Batal #2"), "Transaksi gagal #2")
+        self.assertEqual(pc._cancel_as_failed("Transaksi Batal #2", store=True), "Transaksi Batal #2")
+        self.assertEqual(pc._cancel_as_failed("Transaksi Batal #A12", store=True), "Transaksi gagal #A12")
+        self.assertFalse(pc._is_item_line("Transaksi Dibatalkan #12345"))
+        # Satu daftar kata benda untuk judul gagal biasa dan judul batal (L6c menambah kata benda di satu tempat).
+        self.assertIn(pc._TITLE_NOUN, pc._STATUS_TITLE.pattern)
+        self.assertIn(pc._TITLE_NOUN, pc._CANCEL_TITLE.pattern)
+        # Baris (c) di judul: awalan telah/sudah/has been/was, tanggal/jam sesudahnya; bukan kalimat kebijakan.
+        for word, status in (("Telah dibatalkan", pc.GAGAL), ("Sudah ditolak", pc.GAGAL), ("Has been cancelled", pc.GAGAL),
+                             ("Was rejected", pc.GAGAL), ("Dibatalkan 26/10/2026 08:12", pc.GAGAL),
+                             ("Ditolak oleh bank", pc.GAGAL), ("Dibatalkan otomatis dalam 15 menit", pc.TIDAK_DIKETAHUI),
+                             ("Ditolak bank", pc.GAGAL), ("Dibatalkan 31/10 09:00", pc.GAGAL),
+                             ("Dibatalkan • 31 Okt 2026", pc.GAGAL), ("Dibatalkan 15", pc.TIDAK_DIKETAHUI),
+                             ("Dibatalkan 31 Okt WIB", pc.GAGAL),      # zona waktu terpisah dari jam (m12)
+                             ("Dibatalkan jika tidak dibayar", pc.TIDAK_DIKETAHUI), ("Telah batal", pc.TIDAK_DIKETAHUI)):
+            with self.subTest("judul", word=word):
+                self.assertEqual(pc.read_status([lines[0], word, *lines[1:5]]), status)
+        # Label "Status" berdiri sendiri, nilainya di baris bawah (di badan): dibaca dari tingkat label, bukan baris badan.
+        below = ["Transfer", "Penerima BUDI", "Bank Tujuan BCA", "Nominal Rp50.000", "30 Okt 2026 09:31", "Status"]
+        for word in ("Dibatalkan", "Ditolak", "Batal", "Void"):
+            with self.subTest("label di atas", word=word):
+                self.assertEqual(pc.read_status([*below, word]), pc.GAGAL)
+                self.assertEqual(pc.read_status([*below[:-1], word]), pc.TIDAK_DIKETAHUI)   # tanpa label: baris badan
+        # Nilai label status: kata itu di mana saja di nilainya, kecuali sesudah negasi/modal.
+        for line, status in (("Status: Dibatalkan", "gagal"), ("Status Transaksi Ditolak", "gagal"), ("Status: Batal", "gagal"),
+                             ("Status: Void", "gagal"), ("Status: Kartu ditolak", "gagal"),
+                             ("Status: Tidak dapat dibatalkan", None),
+                             # Fix round 1 (I1): penjaga di klausa kata itu saja; syarat tepat sesudahnya tidak dihitung.
+                             ("Status: Saldo tidak cukup, transaksi ditolak", "gagal"),
+                             ("Status: Ditolak, jika saldo terpotong hubungi 14017", "gagal"),
+                             ("Status: Dibatalkan (jika saldo terpotong akan dikembalikan)", "gagal"),
+                             ("Status: Pembayaran yang kamu lakukan ditolak", "gagal"),
+                             ("Status: Dibatalkan jika tidak dibayar", None),
+                             ("Status: Dibatalkan otomatis bila tidak dibayar", None),
+                             ("Status: Saldo cukup, tidak dapat dibatalkan", None),
+                             ("Status: Saldo tidak cukup, ditolak", "gagal"),
+                             ("Status: Dibatalkan kecuali dibayar hari ini", None),
+                             ("Status: Cancelled unless paid today", None),
+                             # Fix round 2 (m8): "(" memutus klausa penjaga nilai label.
+                             ("Status: Saldo tidak cukup (ditolak)", "gagal"),
+                             ("Status: Berhasil (tidak bisa dibatalkan)", None)):
+            with self.subTest(line):
+                self.assertEqual(pc.read_labelled_failure([line]), status)
+
+
+# ── Task L6a–L6e: titik wajib review akhir Bagian A (spec §9.1) ─────────────
+
+def status_levels(res):
+    return {c.code: c.level for c in res.checks if c.code.startswith("status_")}
+
+
+N2_BARE = ["QRIS", "TOKO SUKSES MAKMUR", "Rp25.000", "26/10/2026 08:12", "NMID ID1234567890", "Gagal"]
+
+
+class StatusWordInAShopNameTests(unittest.IsolatedAsyncioTestCase):
+    """L6a (N2 sisa): kata status di baris nama toko ("TOKO SUKSES MAKMUR") bukan status. `berhasil` hanya dari judul
+    status, baris berstatus saja (paling banyak satu kata lain), atau nilai label status; baris berbentuk nama tidak
+    menyumbang apa pun, sehingga "Gagal" tunggal di badan terbaca."""
+
+    async def test_bare_failure_below_a_shop_name_blocks(self):
+        res = await read(N2_BARE)
+        self.assertEqual((res.reader, res.parsed.doc.status), ("qris.umum", "gagal"))
+        self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_shop_name_alone_is_not_success(self):
+        res = await read(N2_BARE[:-1])
+        self.assertEqual((res.reader, res.parsed.doc.status), ("qris.umum", "tidak_diketahui"))
+        self.assertEqual(status_levels(res), {})
+
+    async def test_real_titles_still_decide(self):
+        for lines, status in (([*N2_BARE[:2], "Pembayaran Berhasil", *N2_BARE[2:5], "Gagal? Hubungi kami"], "berhasil"),
+                              (["QRIS", "Berhasil", *N2_BARE[1:5]], "berhasil"),
+                              (["QRIS", "TOKO SUKSES MAKMUR", "Rp25.000", "26/10/2026 08:12", "Pembayaran Gagal"], "gagal"),
+                              ([*N2_BARE[:5], "Status: Berhasil"], "berhasil"),
+                              ([*N2_BARE[:5], "Pending"], "pending")):
+            with self.subTest(lines[-1], second=lines[1]):
+                res = await read(lines)
+                self.assertEqual(res.parsed.doc.status, status)
+
+    def test_read_status_skips_name_shaped_success_lines(self):
+        self.assertEqual(pc.read_status(N2_BARE), pc.GAGAL)
+        self.assertEqual(pc.read_status(N2_BARE[:-1]), pc.TIDAK_DIKETAHUI)
+        for line, status in (("Berhasil", pc.BERHASIL), ("Pembayaran Sukses!", pc.BERHASIL), ("Berhasil dikirim", pc.BERHASIL),
+                             ("Status Berhasil", pc.BERHASIL), ("Status : Berhasil", pc.BERHASIL),
+                             ("Transaksi Anda Berhasil", pc.BERHASIL), ("CV BERHASIL JAYA ABADI", pc.TIDAK_DIKETAHUI),
+                             ("TOKO SUKSES MAKMUR", pc.TIDAK_DIKETAHUI)):
+            with self.subTest(line):
+                self.assertEqual(pc.read_status(["QRIS", line, "Rp25.000", "26/10/2026 08:12"]), status)
+
+
+N4_BASE = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI", "Nominal Rp150.000", "Total Rp150.000"]
+N4_FALSE_BLOCKS = {
+    "a info": [*N4_BASE, "Info transaksi pending/gagal: 14017"],
+    "b refund": [*N4_BASE, "Status Berhasil", "Transaksi gagal akan dikembalikan"],
+    "c dana refund": ["DANA", "Kirim Uang Berhasil", "Ke SITI", "Nominal Rp50.000", "Total Rp50.000",
+                      "Pembayaran gagal akan di-refund otomatis"],
+    "informasi": [*N4_BASE, "Informasi transaksi gagal hubungi 14017"],
+    "akan diproses": [*N4_BASE, "Transaksi gagal akan diproses ulang"],
+    "catatan": ["gopay", "Rp10.000", "Ditransfer ke Rina Wulandari", "BCA …1234", "Chat dengan CS", "Status",
+                "Transfer uang ke penerima", "Catatan arisan gagal kemarin", "Rincian transaksi", "Status  Selesai",
+                "Waktu  9:31", "Tanggal  28 Okt 2026", "Jumlah  Rp10.000", "Total  Rp10.000"],
+}
+N4_REAL_FAILURES = {
+    "judul gagal di badan": [*N4_BASE, "Transaksi Gagal"],
+    "sudah dikembalikan": [*N4_BASE, "Transaksi gagal, dana dikembalikan ke saldo kamu"],
+    # Keputusan L6b: label "Info" lalu judul gagal = status (tidak ada kata jenis transaksi sesudah "Info").
+    "info berlabel": [*N4_BASE, "Info: Transaksi Gagal"],
+    "catatan judul gagal": [*N4_BASE, "Catatan: Transfer Gagal"],
+    "BERHASIL di badan bukan judul": [*N4_BASE, "BERHASIL", "Transaksi Gagal"],
+    # Nilai label status berhasil dan "BERHASIL" di judul bukan judul status: judul gagal di badan tetap memblokir (seperti
+    # slip EDC "TRANSAKSI VOID" di bawah "Status : Berhasil", keputusan L5; deviasi L6b dari langkah ketiga rencana).
+    "label berhasil lalu judul gagal": [*N4_BASE, "Status Berhasil", "Info: Transaksi Gagal"],
+    "BERHASIL di judul": ["BCA mobile", "BERHASIL", *N4_BASE[1:], "Transaksi Gagal"],
+}
+# Re-review 3 L5 m13: modal bernegasi lalu kata tukar/refund sesudah kata alasan = kebijakan, bukan kegagalan.
+REFUND_POLICY_FOOTERS = ("Transaksi dibatalkan karena barang rusak tidak dapat ditukar",
+                         "Transaksi dibatalkan sebab apapun tidak bisa diuangkan",
+                         "Transaksi dibatalkan karena alasan pribadi tidak dapat dikembalikan",
+                         "Transaksi dibatalkan karena promo tidak bisa direfund",
+                         "Transaksi dibatalkan karena salah pilih tidak dapat diganti",
+                         "Payment cancelled because goods can't be returned")
+QRIS_STORE = ["WARUNG SEDERHANA", "30/10/2026 15:10", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "TOTAL 33.000",
+              "QRIS 33.000"]
+
+
+class InfoAndRefundFootersTests(unittest.IsolatedAsyncioTestCase):
+    """L6b (N4): kaki bantuan "Info/Informasi transaksi gagal …", kalimat "… gagal akan dikembalikan/di-refund/diproses",
+    dan catatan user ("Catatan arisan gagal kemarin") tidak memblokir bukti berhasil. Judul gagal sungguhan di badan tetap
+    memblokir, juga di bawah nilai label status berhasil."""
+
+    async def test_false_blocks_are_gone_in_both_modes(self):
+        for name, lines in N4_FALSE_BLOCKS.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertNotEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual(status_levels(res), {})
+
+    async def test_real_failures_still_block(self):
+        for name, lines in N4_REAL_FAILURES.items():
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(res.parsed.doc.status, "gagal")
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_refund_policy_footers_after_a_reason_do_not_block(self):
+        for footer in REFUND_POLICY_FOOTERS:
+            for layout, lines in (("tunai", store_receipt(footer)), ("qris", [*QRIS_STORE, footer]),
+                                  ("label saja", success_label_proof(footer))):
+                for enabled in (True, False):
+                    with self.subTest(footer, layout=layout, enabled=enabled):
+                        res = await read(lines, enabled=enabled)
+                        self.assertNotEqual(res.parsed.doc.status, "gagal")
+                        self.assertEqual(status_levels(res), {})
+
+    def test_failure_reasons_with_a_negated_modal_still_block(self):
+        """m13: kata kerja kegagalan sesudah modal bernegasi tetap alasan gagal. m15: "sebab" memisah alasan, "belum"
+        menegasi modal."""
+        for text in ("Transaksi Ditolak karena kartu tidak dapat digunakan",
+                     # kata tukar/refund hanya kebijakan tepat sesudah modal bernegasi (review L6 m-5)
+                     "Transaksi ditolak karena tidak dapat diproses untuk refund",
+                     "Transaksi dibatalkan karena tidak bisa diproses",
+                     "Transaksi Ditolak sebab kartu tidak dapat digunakan",
+                     "Transaksi Ditolak karena kartu belum bisa digunakan",
+                     "Payment rejected because card can't be used"):
+            with self.subTest(text):
+                self.assertEqual(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)), pc.GAGAL)
+        for text in REFUND_POLICY_FOOTERS:
+            with self.subTest(text):
+                self.assertIsNone(pc._strongest(pc._status_lines([text], pc.HEADER_WORDS)))
+
+    def test_help_and_refund_phrases(self):
+        for text in ("Info transaksi pending/gagal: 14017", "Informasi pembayaran gagal hubungi 14017",
+                     "Transaksi gagal akan dikembalikan", "Pembayaran gagal akan di-refund otomatis",
+                     "Dana transaksi gagal akan direfund", "Transfer gagal akan diproses ulang",
+                     "Gagal akan dikembalikan", "Transaksi yang gagal akan di-refund"):     # kata benda awal opsional
+            with self.subTest(text):
+                self.assertEqual(pc._status_lines([text], pc.HEADER_WORDS), [])
+        for text in ("Info: Transaksi Gagal", "Transaksi Gagal", "Transaksi gagal, dana dikembalikan",
+                     "Pembayaran berhasil akan diproses"):
+            with self.subTest(text):
+                self.assertTrue(pc._status_lines([text], pc.HEADER_WORDS))
+
+
+async def stored(lines, enabled):
+    """Yang akan disimpan worker untuk teks ini (`worker._outcome`): kolom, dan apakah teksnya bukti bayar tak terbaca."""
+    from app.services.kotak_struk import worker
+    doc = textdoc(lines)
+    res = await read_document(doc, CTX, proofs_enabled=enabled)
+    return res, worker._outcome(res, doc)
+
+
+def assert_kept_as_proof(case, res, out, total):
+    """Teks bukti bayar: tanpa teks OCR, rincian, merchant, kunci pihak, dan baris peta merchant; nominal tetap."""
+    cols = out.columns
+    case.assertTrue(out.unread_proof or res.parsed.doc.doc_type in ("qris", "transfer"))
+    case.assertIsNone(cols["ocr_lines"])
+    case.assertEqual(cols["document"]["lines"], [])
+    case.assertNotIn("receipt", cols["document"])
+    if out.unread_proof:
+        case.assertEqual((cols["merchant"], cols["merchant_key"], cols["counterparty_key"], cols["total_label"]),
+                         (None, None, None, None))
+    case.assertEqual(int(cols["parsed_total"]), total)
+
+
+C2_SLIPS = {
+    "kirim uang": ["DANA", "Kirim Uang Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000",
+                   "26/10/2026 08:12"],
+    "kirim dana": ["DANA", "Kirim Dana Berhasil", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000"],
+    "kirim uang di badan": ["DANA", "26/10/2026 08:12", "Ke SITI 0812 3456 7890", "Nominal Rp50.000", "Total Rp50.000",
+                            "Kirim Uang Berhasil"],
+}
+
+
+class KirimUangTitleTests(unittest.IsolatedAsyncioTestCase):
+    """L6c (C2): "Kirim Uang Berhasil", "Kirim Dana Berhasil" adalah judul status (kata benda kirim uang/kirim dana/transfer
+    dana): teksnya tampak bukti, jadi nomor HP di baris "Ke SITI 0812 …" tidak tersimpan sebagai teks OCR, rincian, atau
+    merchant "Dana". Instruksi bayar di faktur ("Silakan kirim uang ke rekening BCA …") tetap bukan bukti."""
+
+    async def test_kirim_uang_slips_are_kept_as_proofs(self):
+        for name, lines in C2_SLIPS.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual(res.parsed.doc.status, "berhasil")
+                    assert_kept_as_proof(self, res, out, 50000)
+                    self.assertNotIn("081234567890", "".join(re.sub(r"\D", "", json.dumps(out.columns["document"]))))
+
+    async def test_kirim_uang_failure_titles_block(self):
+        for title in ("Kirim Uang Gagal", "Kirim Uang Dibatalkan"):
+            lines = ["DANA", title, "Ke SITI", "Nominal Rp50.000", "Total Rp50.000"]
+            for enabled in (True, False):
+                with self.subTest(title, enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_invoices_and_store_receipts_are_unchanged(self):
+        for lines in (["TOKO ONLINE MAJU", "Kaos 1 x 75.000 75.000", "Total Rp75.000", "Penerima: Budi",
+                       "Silakan kirim uang ke rekening BCA 1234567890"],
+                      ["INVOICE", "Jasa desain 500.000", "Total Rp500.000", "Kirim uang ke BCA 1234567890 a.n. BUDI"],
+                      store_receipt("Kirim uang berhasil? Cek riwayat transaksi")):
+            with self.subTest(lines[0]):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res = await read(lines, enabled=enabled)
+                    self.assertEqual((res.reader, res.parsed.doc.status, status_levels(res)), ("struk_belanja", "berhasil", {}))
+                    self.assertTrue(res.parsed.doc.lines)
+
+    def test_title_nouns(self):
+        for text in ("Kirim Uang Berhasil", "Kirim Dana Berhasil", "Transfer Dana Berhasil", "KIRIM UANG SUKSES"):
+            with self.subTest(text):
+                self.assertTrue(pc._is_status_title(text))
+        for text in ("Silakan kirim uang ke rekening BCA", "Kirim ke SITI Berhasil", "Uang Berhasil",
+                     "Bayar Berhasil"):          # "bayar" sengaja bukan kata benda judul (terlalu umum di struk)
+            with self.subTest(text):
+                self.assertFalse(pc._is_status_title(text))
+
+
+C3_RECEIPTS = {   # nama: (baris, nama toko yang tersimpan)
+    "satu barang": (["TOKO SUKSES MAKMUR", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"], 15000),
+    "dua barang nmid": (["TOKO MAJU", "KOPI 15.000", "ROTI 10.000", "TOTAL 25.000", "QRIS 25.000", "NMID ID1020304050607"],
+                        25000),
+    # Re-review 3 L5 m14: "Order #12345" bukan barang; dua barang + QRIS bernominal sama tetap struk.
+    "order nomor": (["KEDAI KOPI", "Order #12345", "KOPI SUSU 25.000", "ROTI 15.000", "TOTAL 40.000", "QRIS 40.000",
+                     "NMID ID1020304050607"], 40000),
+    "ocr buruk": (["TOKO MAJU", "KOPI 15.OOO", "T0TAL 15.000", "QRIS 15.000"], 15000),
+    "debit": (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "DEBIT BCA 15.000"], 15000),
+    # Penjaga struk detektor QRIS/transfer membaca baris yang dinormalkan ("T0TAL", "TUNAL"), seperti looks_like_proof.
+    "ocr buruk nmid": (["TOKO MAJU", "KOPI 15.OOO", "T0TAL 15.000", "QRIS 15.000", "NMID ID1020304050607"], 15000),
+    "ocr buruk penanda transfer": (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "TUNAL 20.000",
+                                    "Transfer ke penerima tidak dilayani"], 15000),
+}
+
+
+class SmallQrisStoreReceiptTests(unittest.IsolatedAsyncioTestCase):
+    """L6d (C3): struk 1–2 barang tanpa kuantitas yang dibayar QRIS/debit (baris cara bayar sesudah TOTAL bernominal sama
+    dengan total, tanpa label bukti di atas TOTAL) adalah struk belanja di kedua saklar: rincian dan merchant tersimpan.
+    Penjaga struk di detektor bukti membaca baris yang dinormalkan, seperti `registry.looks_like_proof`."""
+
+    async def test_small_receipts_paid_by_qris_stay_store_receipts(self):
+        for name, (lines, total) in C3_RECEIPTS.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    d = res.parsed.doc
+                    self.assertEqual((res.reader, d.doc_type, d.status, status_levels(res)),
+                                     ("struk_belanja", "struk_belanja", "berhasil", {}))
+                    self.assertFalse(out.unread_proof)
+                    self.assertTrue(out.columns["document"]["lines"])
+                    self.assertTrue(out.columns["merchant"])
+                    self.assertEqual(int(out.columns["parsed_total"]), total)
+
+    async def test_qris_proofs_stay_qris(self):
+        for sample in ("sint-qris-1", "sint-qris-2", "real-gopay-qris-01", "real-jago-qris-01", "real-livin-qris-01",
+                       "real-shopeepay-qris-01"):
+            with self.subTest(sample):
+                self.assertEqual((await read(lines_of(sample))).reader, "qris.umum")
+        # Teks dengan label bukti di atas TOTAL lalu baris cara bayar bernominal sama: tetap bukti (tidak disimpan sebagai
+        # struk), di kedua saklar.
+        for lines in (["QRIS", "Merchant TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["QRIS", "NMID ID1020304050607", "Kopi 15.000", "Total Rp15.000", "QRIS Rp15.000"],
+                      ["Pembayaran Berhasil", "QRIS", "Nominal Rp15.000", "Kopi 15.000", "Total Rp15.000", "QRIS 15.000"]):
+            with self.subTest(lines[1]):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[1], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    assert_kept_as_proof(self, res, out, 15000)
+
+    def test_store_pattern(self):
+        self.assertTrue(pc.looks_like_store_receipt(["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"]))
+        for lines in (["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 16.000"],      # nominal lain: RRN/sisa saldo
+                      ["TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS"],             # tanpa nominal
+                      ["TOKO MAJU", "TOTAL 15.000", "QRIS 15.000"],                     # tanpa barang
+                      ["TOKO MAJU", "KOPI 15.000", "QRIS 15.000"],                      # tanpa TOTAL
+                      ["Penerima TOKO MAJU", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Nominal Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      # review L6 m-5: setiap label bukti di daftar
+                      ["TOKO MAJU", "Jumlah Rp15.000", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Rekening Tujuan 0123 0100", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "Dari ANDI", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      ["TOKO MAJU", "NMID ID1020304050607", "KOPI 15.000", "TOTAL 15.000", "QRIS 15.000"],
+                      # m-4: nominal Rp polos di atas TOTAL (bukti QRIS dengan biaya tanpa label)
+                      ["WARUNG X", "Rp25.000", "Donasi Rp2.000", "Total Rp27.000", "QRIS Rp27.000"]):
+            with self.subTest(lines):
+                self.assertFalse(pc.looks_like_store_receipt(lines))
+        # Baris barang berkuantitas: aturan lama, label bukti tidak menghalangi.
+        self.assertTrue(pc.looks_like_store_receipt(["Merchant WARUNG X", "KOPI 1 15.000", "TOTAL 15.000", "QRIS 15.000"]))
+
+
+N1_BASE = ["BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
+N1_RESIDUE = {"tanpa status": N1_BASE, "BERHASIL": [*N1_BASE, "BERHASIL"], "label status": [*N1_BASE, "Status : Berhasil"],
+              "pengaduan": [*N1_BASE, "Pengaduan transaksi gagal: 14017 Gagal"]}
+STORES_WITH_A_BANK_NAME = (
+    ["TOKO MANDIRI JAYA", "Jl. Merdeka 10 Bandung", "29/10/2026 19:20", "ROTI TAWAR 1 x 15.000 15.000",
+     "SUSU UHT 2 x 6.000 12.000", "TELUR 1 x 28.000 28.000", "TOTAL 55.000", "Non Tunai (QRIS) 55.000"],
+    ["KANTIN BNI", "Gedung BNI Lt 2", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "Rp 33.000"],
+    ["BAKSO MANDIRI", "Cab. Dago", "Bakso Urat 2 x 20.000 40.000", "Es Jeruk 2 x 7.000 14.000", "Sub Total 54.000",
+     "Pajak 5.400", "Total 59.400"],
+)
+
+
+def rebuilt_digit_runs(document):
+    """Deret digit yang bisa dirangkai ulang dari Dokumen Bayar tersimpan (pola `test_kotak_worker.rebuilt_numbers`):
+    seluruh JSON tanpa non-digit, dan field tiap baris rincian dirangkai dalam urutan apa pun."""
+    import itertools
+    found = [re.sub(r"\D", "", json.dumps(document))]
+    for line in document.get("lines") or []:
+        parts = [re.sub(r"\D", "", str(v)) for k, v in line.items() if k != "kind" and v is not None]
+        found += ["".join(order) for order in itertools.permutations([p for p in parts if p])]
+    return found
+
+
+class OneMarkerAppSlipTests(unittest.IsolatedAsyncioTestCase):
+    """L6e (sisa N1 + M7): slip aplikasi satu penanda tanpa judul status (logo aplikasi di 2 baris pertama, teks tidak berpola
+    struk) tampak bukti: tanpa rincian dari digit rekening, merchant "Bca Mobile", baris peta, dan teks OCR; nominal,
+    status, dan cek tetap. Kutipan `evidence` struk belanja tidak memuat deret >= 6 digit."""
+
+    async def test_n1_residue_keeps_no_number(self):
+        for name, lines in N1_RESIDUE.items():
+            with self.subTest(name, check="looks_like_proof"):
+                self.assertTrue(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(name, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    d = res.parsed.doc
+                    self.assertEqual((d.doc_type, d.status, status_levels(res)), ("struk_belanja", "berhasil", {}))
+                    assert_kept_as_proof(self, res, out, 150000)
+                    self.assertIsNone(out.columns["document"]["counterparty"]["name"])
+                    for run in rebuilt_digit_runs(out.columns["document"]):
+                        self.assertNotIn("123456789012", run)
+
+    async def test_gopay_status_block_with_a_bare_failure_word_blocks(self):
+        """L5 m6: GoPay "Status" lalu "Gagal"/"Dibatalkan"/"Ditolak"/"Dibatalkan oleh kamu" kini tampak bukti (logo), jadi
+        status berlabel (baris pertama di bawah label) memblokir di kedua saklar."""
+        for value in ("Gagal", "Dibatalkan", "Ditolak", "Dibatalkan oleh kamu", "Gagal oleh kamu"):
+            lines = gopay_transfer()
+            lines[6] = value
+            for enabled in (True, False):
+                with self.subTest(value, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual(status_levels(res), {"status_gagal": "block"})
+                    assert_kept_as_proof(self, res, out, 10000)
+
+    async def test_stores_named_after_a_bank_stay_store_receipts(self):
+        for lines in STORES_WITH_A_BANK_NAME:
+            with self.subTest(lines[0], check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual((res.reader, out.unread_proof), ("struk_belanja", False))
+                    self.assertTrue(out.columns["document"]["lines"])
+                    self.assertTrue(out.columns["merchant"])
+
+    async def test_store_evidence_quotes_hold_no_long_digit_run(self):
+        """M7: kutipan baris di `evidence` struk belanja ('Non-tunai "DEBIT BCA 1234567890 Rp20.000"') disamarkan; nominal
+        sesudah panah tetap."""
+        for pay in ("DEBIT BCA 1234567890 Rp150.000", "DEBIT BCA 1234 5678 9012 Rp150.000", "QRIS 0812-3456-7890 Rp150.000",
+                    "DEBIT BCA 123456 Rp150.000"):
+            lines = ["TOKO MAJU", "14-10-2026 08:15", "KOPI 100.000", "ROTI 25.000", "SUSU 25.000", "TOTAL 150.000", pay]
+            for enabled in (True, False):
+                with self.subTest(pay, enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertFalse(out.unread_proof)
+                    evidence = out.columns["document"]["evidence"]
+                    quoted = "".join(re.findall(r'"[^"]*"', " ".join(evidence)))
+                    self.assertNotRegex(re.sub(r"[ \-]", "", quoted), r"\d{6,}")
+                    self.assertTrue(any('"TOTAL 150.000"' in e for e in evidence), evidence)
+                    self.assertTrue(any(e.startswith("Non-tunai") and e.endswith("→ 150000") for e in evidence), evidence)
+
+    async def test_logo_window_and_store_pattern(self):
+        """Logo di baris 1 atau 2 (baris status bar dulu) menandai bukti; di baris 3 tidak. Teks berpola struk tetap struk
+        walau baris pertamanya logo (struk dari mesin EDC/aplikasi kasir)."""
+        slip = ["14:22", "BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012", "Nominal Rp150.000", "Total Rp150.000"]
+        self.assertTrue(looks_like_proof(textdoc(slip)))
+        for lines in (["TOKO MAJU", "Jl. Merdeka 1", "BCA", "KOPI 15.000", "TOTAL 15.000"],
+                      ["BCA", "TOKO MAJU", "KOPI 10.000", "ROTI 5.000", "SUSU 5.000", "TOTAL 20.000", "TUNAI 20.000"],
+                      ["gopay", "WARUNG SEDERHANA", "Nasi Goreng 25.000", "Es Teh 5.000", "Kerupuk 3.000", "TOTAL 33.000", "QRIS 33.000"]):
+            with self.subTest(lines[0], check="looks_like_proof"):
+                self.assertFalse(looks_like_proof(textdoc(lines)))
+            for enabled in (True, False):
+                with self.subTest(lines[0], enabled=enabled):
+                    res, out = await stored(lines, enabled)
+                    self.assertEqual((res.reader, out.unread_proof), ("struk_belanja", False))   # teks OCR dan rincian tetap
+
+
+# ── L6 fix round 1 (review task-L6-review.md) ───────────────────────────────
+
+TRANSFER_LAYOUT = ["Transfer", "26/10/2026 14:22", "Penerima BUDI SANTOSO", "Bank Tujuan BRI", "Rekening Tujuan 0123 0100 1234 567",
+                   "Nominal Rp150.000"]
+
+
+class NoteStatusValueTests(unittest.IsolatedAsyncioTestCase):
+    """I-1: nilai label catatan yang HANYA kata status ("Keterangan: Gagal", "Catatan: Pending", "Keterangan: Sedang
+    diproses") tetap dibaca sebagai status; catatan berisi kata lain hanya bila memuat judul status ("Catatan arisan gagal
+    kemarin" tidak memblokir, "Keterangan: Transaksi gagal" memblokir)."""
+
+    async def test_status_only_note_values_block_or_warn_with_the_flag_on(self):
+        for line, levels in (("Keterangan: Gagal", {"status_gagal": "block"}), ("Keterangan : GAGAL", {"status_gagal": "block"}),
+                             ("Catatan: Gagal.", {"status_gagal": "block"}),
+                             ("Keterangan: Pending", {"status_pending": "warn"}),
+                             ("Keterangan: Sedang diproses", {"status_pending": "warn"}),
+                             ("Keterangan: Transaksi gagal", {"status_gagal": "block"})):
+            with self.subTest(line):
+                res = await read([*TRANSFER_LAYOUT, line])
+                self.assertEqual((res.reader, status_levels(res)), ("transfer.umum", levels))
+        # Nilai label NAMA tetap hanya judul status (aturan A14/L6b): "Penerima: Gagal" bukan status.
+        self.assertEqual(pc._status_lines(["Penerima: Gagal", "Merchant: Pending"], pc.HEADER_WORDS), [])
+        self.assertEqual(pc._status_lines(["Keterangan: Gagal", "Catatan: Pending"], pc.HEADER_WORDS), ["Gagal", "Pending"])
+        # Label berdiri sendiri, nilainya di baris bawah.
+        res = await read([*TRANSFER_LAYOUT, "Keterangan", "Gagal"])
+        self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+    async def test_free_text_notes_stay_unblocked(self):
+        for line in ("Catatan arisan gagal kemarin", "Keterangan: arisan gagal", "Berita: uang kas gagal panen"):
+            for enabled in (True, False):
+                with self.subTest(line, enabled=enabled):
+                    res = await read([*TRANSFER_LAYOUT, line], enabled=enabled)
+                    self.assertEqual(status_levels(res), {})
+
+
+class ShopNameFilterPhrasingTests(unittest.TestCase):
+    """m-1: saringan nama toko L6a mengabaikan tanggal/jam/tanda baca dan frasa sukses umum."""
+
+    def test_success_lines_that_are_not_names(self):
+        for line in ("Berhasil 26 Okt 2026, 08:12 WIB", "Sukses 26 Okt 2026 08:12", "Berhasil • 26/10/2026 08:12",
+                     "Yeay, pembayaranmu berhasil!", "Transaksimu sukses", "Berhasil dibayar ke WARUNG BAKSO",
+                     "Sukses bayar ke WARUNG BAKSO PAK DI", "Hore! Berhasil", "Yeay! Kamu berhasil",
+                     "Pembayaranmu ke WARUNG BAKSO berhasil"):
+            with self.subTest(line):
+                self.assertEqual(pc.read_status(["QRIS", line, "Rp25.000", "NMID ID1234567890"]), pc.BERHASIL)
+
+    def test_names_still_do_not_cover_a_failure(self):
+        for name in ("TOKO SUKSES MAKMUR", "SUKSES JAYA ABADI MOTOR", "CV BERHASIL JAYA 2", "SUKSES DIESEL MOTOR"):
+            with self.subTest(name):
+                self.assertEqual(pc.read_status(["QRIS", name, "Rp25.000", "NMID ID1234567890", "Gagal"]), pc.GAGAL)
+
+
+class EvidenceMaskingEdgesTests(unittest.TestCase):
+    """m-3, nit-3: penyamaran kutipan `evidence` juga untuk deret yang menempel ke "."/","/":" dan nomor bertitik yang bukan
+    nominal; tanggal tidak pernah disamarkan sebagian; 5 digit tetap."""
+
+    def test_masking(self):
+        from app.services.kotak_struk.worker import _masked_evidence
+        for quote in ('Non-tunai "KARTU DEBIT NO.1234567890 Rp20.000" → 20000', '"DEBIT BCA 1234567890, Rp20.000"',
+                      '"DEBIT BCA 1234567890."', '"REK 123.456.7890"', '"NO:1234567890"', '"1234 5678 9012"'):
+            with self.subTest(quote):
+                got = _masked_evidence([quote])[0]
+                self.assertNotRegex(re.sub(r"[ .,:\-]", "", got.split("→")[0]), r"\d{6,}")
+                self.assertIn("…", got)
+        for quote, kept in (('"14-10-2026 08:15 TOTAL 1.500.000" → 1500000', None), ('"KODE 12345"', None),
+                            ('"TOTAL 150.000.000"', None), ('"ROTI 1 x 128.000 128.000"', None)):
+            with self.subTest(quote):
+                self.assertEqual(_masked_evidence([quote])[0], quote)
+
+
+class UnlabelledFeeQrisProofTests(unittest.IsolatedAsyncioTestCase):
+    """m-4: bukti QRIS dengan biaya tanpa label ("Donasi Rp2.000") di bawah nominal Rp polos tetap dibaca pembaca QRIS
+    (saklar menyala, bila berjudul status) dan tidak pernah disimpan sebagai struk dengan merchant tebakan ("Menunggu
+    Pembayaran"), di kedua saklar."""
+
+    async def test_routes_and_storage(self):
+        for head in ("Pembayaran Gagal", "Pembayaran Berhasil", "Menunggu Pembayaran"):
+            for extra in ("Donasi Rp2.000", "Layanan Rp2.000", "Ongkir Rp2.000"):
+                lines = [head, "QRIS", "WARUNG X", "Rp25.000", extra, "Total Rp27.000", "QRIS Rp27.000", "26/10/2026 08:12"]
+                if head != "Menunggu Pembayaran":   # tanpa kata status: QRIS 0,7 kalah dari pembaca struk (seperti b64a8b8)
+                    with self.subTest(head, extra=extra, enabled=True):
+                        self.assertEqual((await read(lines)).reader, "qris.umum")
+                for enabled in (True, False):
+                    with self.subTest(head, extra=extra, enabled=enabled):
+                        res, out = await stored(lines, enabled)
+                        assert_kept_as_proof(self, res, out, 27000)
+                        if head == "Pembayaran Gagal":
+                            self.assertEqual(status_levels(res), {"status_gagal": "block"})
+
+
+class LogoWindowCleanedLinesTests(unittest.TestCase):
+    """nit-3: jendela logo membaca baris yang dibersihkan (baris kosong OCR tidak dihitung)."""
+
+    def test_blank_lines_before_the_logo(self):
+        self.assertTrue(looks_like_proof(textdoc(["", " ", "BCA mobile", "26/10/2026 14:22", "Ke BUDI 1234 5678 9012",
+                                                  "Nominal Rp150.000", "Total Rp150.000"])))

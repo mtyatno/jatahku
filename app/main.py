@@ -12,6 +12,7 @@ from app.services.scheduler import start_scheduler, stop_scheduler
 from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard
 from app.api.routes import ruang as ruang_routes
 from app.api.routes import ruang_kelola
+from app.api.routes import admin_kotak
 
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
@@ -151,6 +152,7 @@ app.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 app.include_router(user_settings.router, prefix="/user", tags=["user"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(admin_kotak.router, prefix="/admin/kotak", tags=["admin"])
 app.include_router(payment.router, prefix="/payment", tags=["payment"])
 app.include_router(webhook.router, tags=["webhook"])
 app.include_router(cms_oauth.router, tags=["cms"])

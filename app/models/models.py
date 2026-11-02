@@ -622,6 +622,12 @@ class ReceiptScan(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transaction_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    # Kerangka tata letak bukti bayar untuk belajar lintas user (kotak_struk/kerangka.py): label tersamar, jenis nilai,
+    # nominal/tanggal, HMAC nama; tanpa nomor dan nama polos. Tidak pernah dikirim ke klien (bukan bagian `document`);
+    # dihapus `maintenance.purge_layouts` 24 jam sejak dibaca untuk item selesai, dan saat kedaluwarsa. `none_as_null`:
+    # None ditulis sebagai SQL NULL (bukan JSON 'null'), supaya `layout IS NOT NULL` hanya menemukan kerangka sungguhan.
+    layout: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
 
     # Satu unggahan (upload_id dari klien) hanya satu item per user. Nama sama dengan di
     # KOTAK_DDL, jadi DDL startup tidak membuat indeks ganda di basis data baru.
@@ -663,6 +669,45 @@ class ReceiptLearnVote(Base):
     value: Mapped[str] = mapped_column(String(100), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProofRuleVote(Base):
+    """Suara koreksi bukti bayar Kotak Struk (belajar lintas user, spec 2026-11-01 §3b): satu suara per user per aturan.
+    Hanya STRUKTUR: jenis aturan, kunci aplikasi (`gopay` atau `logo:<kata>`), dan label kosakata tanpa digit; tidak
+    pernah nama, nomor, nominal, atau tanggal (app/services/kotak_struk/belajar.py). `household_id` tanpa FK, sama
+    dengan `receipt_scans.household_id` (rumah tangga bisa dihapus saat gabung akun); hanya untuk dihitung."""
+    __tablename__ = "proof_rule_votes"
+
+    kind: Mapped[str] = mapped_column(String(20), primary_key=True)  # label_total | label_pihak | label_tanggal
+    rule_key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(String(60), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    household_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProofRule(Base):
+    """Aturan belajar bukti bayar: suara yang didukung >= RULE_MIN_USERS user berbeda, menunggu keputusan pemilik di
+    Admin. `users`/`households` = pendukung berbeda, dihitung ulang tiap suara (dan saat user dilupakan); status
+    menunggu | disetujui | ditolak | dicabut, hanya diubah keputusan admin. Baris yang sudah diputuskan tidak pernah
+    dihapus; baris `menunggu` di bawah ambang dihapus oleh rekonsiliasi tiap jam (suaranya tetap)."""
+    __tablename__ = "proof_rules"
+    __table_args__ = (
+        UniqueConstraint("kind", "rule_key", "value", name="uq_proof_rule"),
+        Index("ix_proof_rules_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20))
+    rule_key: Mapped[str] = mapped_column(String(60))
+    value: Mapped[str] = mapped_column(String(60))
+    users: Mapped[int] = mapped_column(Integer)
+    households: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class HouseholdMerchant(Base):

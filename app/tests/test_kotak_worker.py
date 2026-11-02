@@ -21,13 +21,13 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import event, func, select, update
+from sqlalchemy import event, func, select, text, update
 
 from app.core.database import Base
 from app.main import app, lifespan
 from app.models.models import AppSetting, Household, HouseholdMember, HouseholdMerchant, HouseholdRole, ReceiptScan, User
 from app.services.app_config import FEATURES, feature_enabled
-from app.services.kotak_struk import merchants, record, waiter, worker
+from app.services.kotak_struk import kerangka, merchants, record, view, waiter, worker
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import ExtractError, PdfLocked, TextDoc
 from app.services.kotak_struk.intake import IntakeRequest, create_item
@@ -833,6 +833,79 @@ class WorkerTests(WorkerBase):
             async with racing() as db:
                 self.assertEqual(await recover_stale(db, now=NOW), 1)
         fake.send_ready_message.assert_awaited_once_with(item.id)
+
+
+# Bukti transfer aplikasi yang dikenal (GoPay), data karangan; dipakai tes kerangka tata letak (A15 L1).
+LAYOUT_LINES = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Mandiri 1234567890",
+                "Jumlah Kirim Uang", "Rp10.000", "Tanggal 31 Okt 2026", "No. Ref 123456789012"]
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class LayoutTests(WorkerBase):
+    """Kerangka tata letak (spec 2026-11-01 §3a; pre-flight K1): kolom `receipt_scans.layout`, bukan `document.layout`,
+    dan tidak pernah dikirim ke klien."""
+
+    async def test_worker_stores_layout_column_not_in_document(self):
+        item = await self.item(text="x")
+        self.assertEqual(await self.process(item, LAYOUT_LINES), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.layout["v"], got.layout["key"]), ("transfer", 1, "gopay"))
+        self.assertIn({"i": 3, "label": "ditransfer ke", "kind": "nama", "h": hmac_hex("budi santoso")},
+                      got.layout["lines"])
+        self.assertIn({"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000}, got.layout["lines"])
+        self.assertNotIn("layout", got.document)
+        for number in ("1234567890", "123456789012"):
+            self.assertNotIn(number, json.dumps(got.layout))
+        async with self.Session() as db:
+            user = await db.get(User, self.user_id)
+            detail = await view.item_detail(db, got, user)
+        self.assertNotIn("layout", detail)
+        self.assertNotIn("layout", detail["document"])
+        self.assertNotIn(hmac_hex("budi santoso"), json.dumps(detail, default=str))
+
+    async def test_unknown_app_gets_no_layout(self):
+        # Tahap 1 (review L1 I-1): bukti aplikasi tak dikenal tanpa kerangka, apa pun baris teratasnya (nama orang).
+        for lines in (["09:41", "Siti Aminah", "Kirim Uang Berhasil", "Nominal Rp50.000"],
+                      ["Wahyu", "Pembayaran Berhasil", "Nominal Rp10.000", "26/10/2026 08:12"]):
+            item = await self.item(text="x")
+            self.assertEqual(await self.process(item, lines), "siap")
+            self.assertIsNone((await self.get(item.id)).layout)
+
+    async def test_layout_never_keys_on_the_user_name(self):
+        # Dengan kunci logo (M2, saklar `LOGO_KEYS`): baris pertama nama user (Rina Wulandari) tidak pernah jadi kunci.
+        # Nama user sampai ke kerangka lewat `process_item`.
+        lines = ["Wulandari", "Pembayaran Berhasil", "Nominal Rp10.000", "26/10/2026 08:12"]
+        item = await self.item(text="x")
+        with patch.object(kerangka, "LOGO_KEYS", True):
+            self.assertEqual(await self.process(item, lines), "siap")
+            self.assertIsNone((await self.get(item.id)).layout)
+            res = await worker.read_document(TextDoc(lines=lines, kind="image"),
+                                             worker.ParseContext(today=date(2026, 10, 26)), proofs_enabled=True)
+            self.assertEqual(worker._outcome(res, TextDoc(lines=lines, kind="image")).columns["layout"]["key"],
+                             "logo:wulandari")   # pembanding: tanpa nama user, baris yang sama menjadi kunci logo
+
+    async def test_store_receipt_gets_no_layout(self):
+        for enabled in (False, True):
+            item = await self.item(text="x")
+            self.assertEqual(await self.process(item, STORE_LINES, proofs_enabled=enabled), "siap")
+            got = await self.get(item.id)
+            self.assertEqual((got.doc_type, got.layout), ("struk_belanja", None))
+        # SQL NULL, bukan JSON 'null': pembersih `layout IS NOT NULL` tidak menemukan baris tanpa kerangka.
+        async with self.Session() as db:
+            raw = (await db.execute(text("SELECT COUNT(*) FROM receipt_scans WHERE layout IS NOT NULL"))).scalar()
+        self.assertEqual(raw, 0)
+
+    async def test_layout_error_keeps_item_siap_without_layout(self):
+        item = await self.item(text="x")
+        with patch.object(worker, "build_layout", side_effect=RuntimeError("BUDI SANTOSO 1234567890")), \
+                self.assertLogs(worker.__name__, level="WARNING") as logs:
+            self.assertEqual(await self.process(item, LAYOUT_LINES), "siap")
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.doc_type, got.layout, int(got.parsed_total)), ("siap", "transfer", None, 10000))
+        # Pesan galat bisa memuat isi bukti: log hanya mencatat jenis galatnya.
+        self.assertTrue(any("RuntimeError" in line for line in logs.output))
+        self.assertFalse(any("BUDI" in line or "1234567890" in line for line in logs.output))
+        self.assertTrue(all(r.exc_info is None for r in logs.records))
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")

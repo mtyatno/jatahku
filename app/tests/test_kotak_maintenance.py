@@ -21,7 +21,8 @@ from app.core.database import Base
 from app.models.models import Envelope, Household, HouseholdMember, HouseholdRole, ReceiptScan, Transaction, User
 from app.services import scheduler as scheduler_mod
 from app.services.kotak_struk import maintenance
-from app.services.kotak_struk.maintenance import delete_orphan_files, expire_items
+from app.services.kotak_struk.config import LAYOUT_TTL
+from app.services.kotak_struk.maintenance import delete_orphan_files, expire_items, purge_layouts
 from app.services.receipt_scan import accuracy_stats
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -150,6 +151,51 @@ class ExpireItemsTests(MaintenanceBase):
                 self.assertEqual([(await self.get(i.id)).status for i in (old, soon)], ["kedaluwarsa", "siap"])
 
 
+# ── kerangka tata letak (A15 L1) ─────────────────────────────────────────────
+
+LAYOUT = {"v": 1, "key": "gopay", "lines": [{"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000}]}
+
+
+class LayoutPurgeTests(MaintenanceBase):
+    """Kerangka dihapus 24 jam sejak dibaca, hanya untuk item selesai (pre-flight K2), dan saat kedaluwarsa."""
+
+    async def test_purge_layouts_only_finished_and_older_than_24h(self):
+        old = NOW - LAYOUT_TTL - timedelta(minutes=1)
+        gone = [await self.item(status=s, layout=LAYOUT, processed_at=old, ref_hash="b" * 64, document={"schema": 1})
+                for s in ("tercatat", "dilewati", "kedaluwarsa")]
+        never_read = await self.item(status="dilewati", layout=LAYOUT)            # processed_at NULL: tidak ada umur
+        open_or_failed = [await self.item(status=s, layout=LAYOUT, processed_at=old)
+                          for s in ("diterima", "diproses", "siap", "gagal", None)]
+        young = await self.item(status="tercatat", layout=LAYOUT, processed_at=NOW - timedelta(hours=23))
+        edge = await self.item(status="tercatat", layout=LAYOUT, processed_at=NOW - LAYOUT_TTL)   # tepat 24 jam
+        self.assertEqual(await purge_layouts(self.db, now=NOW), len(gone) + 1)
+        for it in [*gone, never_read]:
+            got = await self.get(it.id)
+            self.assertIsNone(got.layout)
+        got = await self.get(gone[0].id)
+        self.assertEqual((got.status, got.ref_hash, got.document), ("tercatat", "b" * 64, {"schema": 1}))
+        for it in [*open_or_failed, young, edge]:
+            self.assertEqual((await self.get(it.id)).layout, LAYOUT)
+        # Idempoten; tanpa sesi terbuka (commit sendiri).
+        self.assertEqual(await purge_layouts(self.db, now=NOW), 0)
+        self.assertFalse(self.db.in_transaction())
+
+    async def test_purge_now_in_any_zone_or_naive_utc_gives_same_result(self):
+        for now in (NOW, NOW.astimezone(WIB), NOW.replace(tzinfo=None)):
+            with self.subTest(now=now.isoformat()):
+                old = await self.item(status="tercatat", layout=LAYOUT, processed_at=NOW - timedelta(hours=25))
+                young = await self.item(status="tercatat", layout=LAYOUT, processed_at=NOW - timedelta(hours=23))
+                self.assertEqual(await purge_layouts(self.db, now=now), 1)
+                self.assertEqual([(await self.get(i.id)).layout for i in (old, young)], [None, LAYOUT])
+
+    async def test_expire_clears_layout(self):
+        expired = await self.item(status="siap", expires_at=NOW - timedelta(minutes=1), layout=LAYOUT,
+                                  processed_at=NOW - timedelta(days=7))
+        fresh = await self.item(status="siap", expires_at=NOW + timedelta(days=1), layout=LAYOUT)
+        self.assertEqual(await expire_items(self.db, now=NOW), 1)
+        self.assertEqual([(await self.get(i.id)).layout for i in (expired, fresh)], [None, LAYOUT])
+
+
 # ── file yatim ───────────────────────────────────────────────────────────────
 
 class OrphanFileTests(MaintenanceBase):
@@ -252,12 +298,52 @@ class _FakeSession:
 
 
 class SchedulerJobTests(unittest.IsolatedAsyncioTestCase):
-    def patches(self, *, expire, orphans):
+    def patches(self, *, expire, orphans, layouts=None, rules=None):
         stack = contextlib.ExitStack()
         stack.enter_context(patch("app.core.database.AsyncSessionLocal", lambda: _FakeSession()))
         stack.enter_context(patch.object(maintenance, "expire_items", expire))
         stack.enter_context(patch.object(maintenance, "delete_orphan_files", orphans))
+        stack.enter_context(patch.object(maintenance, "purge_layouts", layouts or AsyncMock(return_value=0)))
+        stack.enter_context(patch.object(maintenance, "reconcile_proof_rules", rules or AsyncMock(return_value=0)))
         return stack
+
+    async def test_rule_reconcile_runs_as_its_own_step(self):
+        # Langkah 4 (review L2 M-2): aturan belajar disamakan dengan suaranya tiap jam, walau langkah lain gagal, dan
+        # galatnya tidak menghentikan job.
+        rules = AsyncMock(return_value=2)
+        with self.patches(expire=AsyncMock(side_effect=RuntimeError("db mati")), orphans=AsyncMock(side_effect=OSError("disk")),
+                          layouts=AsyncMock(side_effect=RuntimeError("db mati")), rules=rules), \
+                self.assertLogs("jatahku.scheduler", level="INFO") as logs:
+            await scheduler_mod.kotak_maintenance()
+        rules.assert_awaited_once()
+        self.assertTrue(any(r.levelname == "INFO" and "2 aturan belajar" in r.getMessage() for r in logs.records))
+
+        layouts = AsyncMock(return_value=0)
+        with self.patches(expire=AsyncMock(return_value=0), orphans=AsyncMock(return_value=0), layouts=layouts,
+                          rules=AsyncMock(side_effect=RuntimeError("db mati"))), \
+                self.assertLogs("jatahku.scheduler", level="ERROR") as logs:
+            await scheduler_mod.kotak_maintenance()
+        layouts.assert_awaited_once()
+        self.assertTrue(any("reconcile_proof_rules" in r.getMessage() for r in logs.records))
+
+    async def test_layout_purge_runs_as_its_own_step(self):
+        # Langkah 3 (kerangka tata letak) berjalan walau dua langkah lain gagal, dan galatnya tidak menghentikan job.
+        layouts = AsyncMock(return_value=4)
+        with self.patches(expire=AsyncMock(side_effect=RuntimeError("db mati")), orphans=AsyncMock(side_effect=OSError("disk")),
+                          layouts=layouts), self.assertLogs("jatahku.scheduler", level="INFO") as logs:
+            await scheduler_mod.kotak_maintenance()
+        layouts.assert_awaited_once()
+        self.assertIn("now", layouts.await_args.kwargs)
+        self.assertTrue(any(r.levelname == "INFO" and "4" in r.getMessage() and "kerangka" in r.getMessage()
+                            for r in logs.records))
+
+        orphans = AsyncMock(return_value=0)
+        with self.patches(expire=AsyncMock(return_value=0), orphans=orphans,
+                          layouts=AsyncMock(side_effect=RuntimeError("db mati"))), \
+                self.assertLogs("jatahku.scheduler", level="ERROR") as logs:
+            await scheduler_mod.kotak_maintenance()
+        orphans.assert_awaited_once()
+        self.assertTrue(any("purge_layouts" in r.getMessage() for r in logs.records))
 
     async def test_both_steps_run_even_when_one_fails(self):
         orphans = AsyncMock(return_value=2)
@@ -335,7 +421,7 @@ class StatsTests(MaintenanceBase):
         self.assertEqual(old, {"total": 6, "accepted": 1, "corrected": 2, "discarded": 1, "expired": 1, "pending": 1,
                                "llm": 1, "accuracy_pct": 33.3,
                                "most_corrected": [{"merchant_key": "ALFAMART", "count": 2}]})
-        self.assertEqual(set(s) - set(old), {"by_doc_type", "by_issuer", "unrecognized"})
+        self.assertEqual(set(s) - set(old), {"by_doc_type", "by_issuer", "unrecognized", "rules_pending"})
 
     async def recorded(self, issuer, *, parsed_total, paid_at, txns, doc_type="qris", **cols):
         """Item tercatat dengan `transaction_ids` = txns (id transaksi, atau UUID acak untuk yang tidak ada)."""
