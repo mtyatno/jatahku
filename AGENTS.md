@@ -207,9 +207,9 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `a7c4e2b9d1f3`. Lalu `sudo systemctl restart jatahku`.
 6. Uji (saklar mati): kirim foto struk ke bot → pesan struk tanpa baris sisa scan; kirim PDF → hasil, bukan
    "📄 File belum didukung"; `sudo ls -A /var/lib/jatahku/kotak` kosong setelah item selesai; `sudo grep -c '^KOTAK_HMAC_KEY=' /opt/jatahku/.env` → 1.
-7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus: `cd /opt/jatahku/app && sudo -u jatahku
-   /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
-   "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
+7. **Saklar `features.receipt_inbox` tetap mati** sampai urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"
+   (gerbang korpus A14 diganti keputusan pemilik produk 1 Nov 2026; mulai dengan checklist "Kotak Struk belajar lintas
+   user (e7b3d5a9c1f4)" di bawah). `kotak_corpus eval --real-only` tetap dijalankan dan dilaporkan, bukan gerbang.
 
 ## Deploy Checklist — Plugin R1: model ruang (1c7e5a9d3b20) — sudah jalan 2026-11-01
 Menambah `households.type` (bawaan `rumah_tangga`), `incomes.kind` (bawaan `pemasukan`) beserta backfill, dan unik
@@ -390,9 +390,9 @@ Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terp
 3. Pasang aturan nginx `/bagikan` (file HestiaCP `nginx.ssl_conf_bagikan`): langkah dan hasil yang diharapkan ada di
    `docs/kotak-struk.md` bagian "Menyalakan saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR
    `share_target`.
-4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
-   PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
-   sini.
+4. Menyalakan saklar (merge dan migrasi `e7b3d5a9c1f4`, `privacy.html` dan DPIA, laporan `eval --real-only` (bukan
+   gerbang), `kotak_hari_pertama` dry-run lalu `--apply`, saklar, uji HP tanpa share, PR `share_target`, uji share,
+   pemantauan 2 minggu): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
 ## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b) — sudah jalan 2026-11-01
 Menambah `households.payday_day` (siklus milik rumah; NULL = belum dimigrasi), `monthly_snapshots.allocated_amount` dan
@@ -456,6 +456,44 @@ sesudahnya tidak menemukan siapa pun untuk diberi tahu. Bila job itu sudah jalan
    FROM household_members m WHERE m.household_id = h.id)"` → 0; esok harinya `journalctl -u jatahku | grep menyimpang`
    kosong (job 00:05 tidak menyamakan siapa pun lagi). Bila dry-run menandai household CAMPURAN, cek dashboard anggota
    yang berubah: sisa amplop masuk akal, tanpa transaksi terhitung ganda.
+
+## Deploy Checklist — Kotak Struk belajar lintas user (e7b3d5a9c1f4)
+Tahap 1 belajar lintas user (branch `feat/kotak-belajar`, label `migrasi`): kolom `receipt_scans.layout` (JSONB NULL),
+tabel `proof_rule_votes` dan `proof_rules` (indeks `ix_proof_rules_status`), API Admin `/admin/kotak/*`, bagian "Aturan
+belajar" di kartu Scan Struk, perintah `app.scripts.kotak_hari_pertama`, dan langkah 3–4 job `kotak_maintenance`.
+Migrasi **idempoten**: `lifespan` (`KOTAK_DDL` + `create_all`) membuat kolom dan tabel yang sama saat API restart; migrasinya
+tetap harus dijalankan, kalau tidak `deploy.sh` berakhir exit 2. **Tanpa paket, folder, atau `.env` baru.** Deploy ini
+tidak mengubah saklar `features.receipt_inbox`. Detail: `docs/kotak-struk.md` bagian "Belajar lintas user".
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart dari deploy (sebelum migrasi) menjalankan `KOTAK_DDL` (`ALTER TABLE receipt_scans ADD COLUMN IF NOT
+   EXISTS layout`) dan `create_all` (dua tabel baru ber-FK ke `users`) sebagai user DB aplikasi, jadi `jatahku` harus
+   pemilik `receipt_scans` (`bisa_alter` = t) dan boleh REFERENCES `users` (`bisa_fk` = t); kalau tidak, API gagal start.
+   Pakai query di checklist Kotak Struk Bagian A dengan `IN ('receipt_scans','users','alembic_version')`. Bila ada yang
+   bukan `jatahku`, sebagai `postgres`: `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+2. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
+   `ls /opt/jatahku/app/alembic/versions/ | grep e7b3d5a9c1f4`; `alembic current` harus `2d51b9031a6b` (Siklus household)
+   sebelum upgrade. Revisi lain = main sudah punya migrasi yang lebih baru: berhenti, `down_revision` PR ini harus
+   disesuaikan dulu (satu head).
+3. **`alembic upgrade head` SEBELUM restart service untuk PR ini**: `GET /admin/receipt-scans/stats` (kartu Scan Struk di
+   Admin) kini membaca `proof_rules` (`rules_pending`), jadi tanpa tabel itu seluruh kartu 500.
+   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `receipt_scans`/`users`
+   milik `postgres`, jalankan sebagai postgres); `alembic current` harus `e7b3d5a9c1f4`. Lalu `sudo systemctl restart jatahku`.
+4. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"), seperti langkah 5 "Urutan merge PR
+   bermigrasi", supaya "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`.
+5. Verifikasi:
+   - `sudo -u postgres psql jatahku_db -c '\d proof_rules'` (unik `uq_proof_rule` pada `kind, rule_key, value`, indeks
+     `ix_proof_rules_status`, FK `decided_by` ON DELETE SET NULL), `-c '\d proof_rule_votes'` (PK `kind, rule_key, value,
+     user_id`, FK `user_id` ON DELETE CASCADE), dan `-c '\d receipt_scans' | grep layout` (`jsonb`).
+   - Dengan token admin: `GET https://api.jatahku.com/admin/kotak/rules` → 200 dengan `counts` (`{"menunggu": 0,
+     "disetujui": 0, "ditolak": 0, "dicabut": 0}` di hari pertama) dan `rules: []`; `GET /admin/receipt-scans/stats` →
+     200 dengan `rules_pending`; Admin → Dashboard → Scan Struk menampilkan bagian "Aturan belajar". Token user biasa →
+     403 di `/admin/kotak/rules`.
+   - Sesudah menit 17 jam berikutnya: `journalctl -u jatahku --since "1 hour ago" | grep kotak_maintenance` tanpa baris
+     `gagal` (langkah `purge_layouts` dan `reconcile_proof_rules`).
+6. Menyalakan saklar (`privacy.html` + DPIA, laporan `eval --real-only`, `kotak_hari_pertama` dry-run lalu `--apply`,
+   saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
+   urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.

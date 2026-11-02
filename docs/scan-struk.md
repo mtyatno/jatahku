@@ -221,6 +221,10 @@ Pengaman agar data bersama tidak "teracuni":
 Koreksi rincian barang belum dipelajari — feedback hanya membawa total, tanggal,
 dan nama toko.
 
+Bukti bayar (QRIS, transfer, tidak dikenali) belajar dengan pola yang sama di tabel terpisah (`proof_rule_votes`,
+`proof_rules`: label nominal/penerima/tanggal per aplikasi, ≥ 2 user berbeda, dipakai hanya setelah disetujui pemilik
+di Admin); struk belanja tidak pernah ikut, lihat [`docs/kotak-struk.md`](kotak-struk.md) "Belajar lintas user".
+
 Teks OCR (`receipt_scans.ocr_lines`) dihapus begitu feedback diproses; scan yang
 tidak pernah diberi feedback dibersihkan scheduler setelah 24 jam (outcome `expired`).
 Bukti bayar yang dibaca jalur struk ini (saklar `receipt_inbox` mati) tidak menyimpan teks OCR sama sekali, juga
