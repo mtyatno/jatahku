@@ -43,9 +43,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
     HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
-    Notification, NotificationPreference, PaymentOrder, PendingTransaction, ReceiptLearnVote,
-    ReceiptScan, RecurringTransaction, Transaction, User, UserEnvelopeKeyword, UserStreak,
+    Notification, NotificationPreference, PaymentOrder, PendingTransaction, ProofRule, ProofRuleVote,
+    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Transaction, User, UserEnvelopeKeyword, UserStreak,
 )
+from app.services.kotak_struk import belajar
 
 logger = logging.getLogger("jatahku.account_deletion")
 
@@ -205,8 +206,12 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     await _delete_envelopes(db, stray)
     await _anonymize_leftovers(db, uid)
 
+    # Suara belajar Kotak Struk: dihapus lalu aturan yang pernah dipilih dihitung ulang (spec 2026-11-01 §8); jejak
+    # keputusan admin di aturan dikosongkan eksplisit (FK SET NULL tidak selalu ada, mis. SQLite).
+    await belajar.forget_user(db, uid)
+    await db.execute(update(ProofRule).where(ProofRule.decided_by == uid).values(decided_by=None))
     for model in (PendingTransaction, Notification, NotificationPreference, UserStreak,
-                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, PaymentOrder, AuthSession):
+                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, ProofRuleVote, PaymentOrder, AuthSession):
         await db.execute(delete(model).where(model.user_id == uid))
     # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
     await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))

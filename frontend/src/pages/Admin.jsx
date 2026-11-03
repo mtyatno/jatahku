@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatCurrency, formatShort } from '../lib/utils';
 import { docTypeLine, issuerRows } from '../lib/scanStats';
+import { pendingBadge, hasRulesSection } from '../lib/proofRules';
+import ProofRulesSection from '../components/ProofRulesSection';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
 
 function formatDate(isoStr) {
@@ -1407,9 +1409,11 @@ function PaymentsTab({ onAction }) {
 }
 
 // Scan struk: akurasi bulan ini (diterima tanpa koreksi) + pemakaian fallback LLM vs plafon, lalu rincian Kotak
-// Struk per jenis dokumen dan per penerbit (lib/scanStats.js; server lama tanpa rincian → bagian itu tidak tampil).
+// Struk per jenis dokumen dan per penerbit (lib/scanStats.js; server lama tanpa rincian → bagian itu tidak tampil), dan
+// bagian "Aturan belajar" (lib/proofRules.js) dengan lencana "N aturan menunggu" di kepala kartu.
 function ReceiptScanCard() {
   const [s, setS] = useState(null);
+  const [rules, setRules] = useState(null);   // daftar aturan terakhir: lencana mengikuti keputusan terbaru
   useEffect(() => {
     api.request('/admin/receipt-scans/stats')
       .then(r => (r.ok ? r.json() : null))
@@ -1421,9 +1425,13 @@ function ReceiptScanCard() {
   const rp = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
   const docTypes = docTypeLine(s);
   const issuers = issuerRows(s);
+  const badge = pendingBadge(s, rules);
   return (
     <div className="card">
-      <h3 className="font-semibold text-sm mb-3">📸 Scan Struk (bulan ini)</h3>
+      <h3 className="font-semibold text-sm mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>📸 Scan Struk (bulan ini)</span>
+        {badge && <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">{badge}</span>}
+      </h3>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div><div className="text-xs text-gray-400">Total scan</div><div className="font-bold text-lg">{s.total}</div></div>
         <div>
@@ -1477,6 +1485,7 @@ function ReceiptScanCard() {
           </div>
         </div>
       )}
+      {hasRulesSection(s) && <ProofRulesSection onLoaded={setRules} />}
     </div>
   );
 }

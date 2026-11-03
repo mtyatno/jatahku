@@ -7,7 +7,7 @@ tanpa bergantung pada siapa yang mengimpor modul pembaca (modul pembaca tidak me
 jadi tidak ada impor melingkar)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk import checks as cross_checks
@@ -15,13 +15,13 @@ from app.services.kotak_struk.config import PROOF_TYPES, READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
 from app.services.kotak_struk.readers.proof_common import (
     clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
-    looks_like_store_receipt, read_labelled_failure,
+    looks_like_store_text, read_labelled_failure,
 )
+from app.services.kotak_struk.readers.profiles import logo_profile
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
 from app.services.kotak_struk.readers.unknown import UnknownReader
-from app.services.receipt_parser import normalize_line
 
 if TYPE_CHECKING:
     from app.services.kotak_struk.extract import TextDoc
@@ -61,7 +61,9 @@ def looks_like_proof(doc: TextDoc) -> bool:
     sumber; juga tagihan dan pulsa, yang memuat nomor meter/HP dan token), atau bila judul status ada di baris mana pun dan teksnya tidak berpola struk belanja
     (`has_status_title`, `looks_like_store_receipt` pada baris yang dinormalkan seperti `parse_receipt`): bukti dengan satu
     penanda saja tidak dikenali pembaca bukti, dan bukti sering mencetak judulnya di bawah rincian atau di bawah baris status
-    bar dan nama aplikasi. Struk belanja yang mencetak "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
+    bar dan nama aplikasi. Juga bila baris logo aplikasi ("BCA mobile", "gopay") ada di 2 baris pertama dan teksnya tidak
+    berpola struk belanja (L6e: slip satu penanda tanpa judul status, "Ke BUDI 1234 5678 9012"). Struk belanja yang mencetak
+    "Pembayaran QRIS berhasil" di kakinya tetap struk. Hanya untuk
     penyimpanan: perutean, status, cek, dan nominal tetap mengikuti `read_document`.
 
     Dipakai worker: dengan saklar mati bukti bayar dibaca pembaca struk belanja, tetapi teks OCR-nya memuat
@@ -70,12 +72,14 @@ def looks_like_proof(doc: TextDoc) -> bool:
     if any(reader.detect(doc) >= READER_THRESHOLD for reader in _PROOF_READERS) or has_header_status_title(doc.lines) \
             or is_app_receipt(doc.lines):
         return True
-    if not has_status_title(doc.lines):
+    # Slip aplikasi satu penanda tanpa judul status (L6e, sisa N1): logo aplikasi (`logo_profile`: nama aplikasi saja, bukan
+    # "TOKO MANDIRI JAYA"/"KANTIN BNI") di 2 baris pertama, tanpa syarat label rekening sumber.
+    has_logo = any(logo_profile(line) for line in clean_lines(doc.lines)[:2])
+    if not has_logo and not has_status_title(doc.lines):
         return False
     # Pola struk dibaca dari baris yang dinormalkan seperti `parse_receipt` ("TUNAL 50.000" = "TUNAI 50.000"), supaya struk
     # belanja ber-OCR buruk yang mencetak judul status di kakinya tetap struk dan rinciannya tetap tersimpan.
-    normalized = [line for line in (normalize_line(text) for text in clean_lines(doc.lines)) if line]
-    return not looks_like_store_receipt(normalized)
+    return not looks_like_store_text(doc.lines)
 
 
 def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
@@ -95,6 +99,10 @@ def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
 
 
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
+    """Baca `doc` dengan pembaca terbaik, lalu status berlabel, arah uang, dan cek silang. Aturan belajar
+    (`ctx.rules`, spec 2026-11-01 §5) hanya sampai ke `parse` pembaca bukti (QRIS, transfer) dan pembaca tidak dikenali,
+    dan hanya bila saklar bukti bayar menyala (saklar mati = perilaku lama). Pembaca struk belanja, arah uang, dan cek
+    silang (status gagal/pending, nominal, tanggal) selalu menerima konteks TANPA aturan."""
     reader: DocReader | None = None
     best = 0.0
     for candidate in readers_for(proofs_enabled):
@@ -103,10 +111,11 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
             reader, best = candidate, score
     reader = reader or _UNKNOWN
 
-    parsed = await reader.parse(doc, ctx)
+    plain = replace(ctx, rules={}) if ctx.rules else ctx
+    parsed = await reader.parse(doc, ctx if proofs_enabled and reader is not _STRUK_BELANJA else plain)
     _apply_labelled_failure(parsed, doc)
-    cross_checks.apply_flow(parsed, ctx)
-    found = [*reader.checks(parsed, ctx), *cross_checks.common_checks(parsed, ctx)]
+    cross_checks.apply_flow(parsed, plain)
+    found = [*reader.checks(parsed, plain), *cross_checks.common_checks(parsed, plain)]
     parsed.doc.checks = [c.as_dict() for c in found]
     return ReadResult(parsed=parsed, checks=found, reader=reader.name)
 
