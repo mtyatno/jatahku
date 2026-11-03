@@ -6,6 +6,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R5 · Peran, batasan, persetujuan di server · 2026-11-01 · pemilik produk + Claude
 
+**Tayang 4 Nov 2026:** PR #175 di-merge 2 Nov (`9d26d7c`); migrasi `c5r5a8e2d417` dijalankan pemilik di VPS; deploy ulang hijau (run 41360830696, percobaan ke-2). R5 `selesai`. Sisa dari checklist yang dikerjakan pemilik: uji alur karyawan di ruang usaha uji (undang, batas nominal, draf, setujui).
+
 **Selesai** (status review, PR #175, menunggu review keamanan terpisah; issue #145)
 - Keputusan pemilik produk (1 Nov, "lanjut" atas dua usulan pembukaan sesi): **(1)** tafsiran `05-desain-buku-usaha.md` B1 dikonfirmasi: ruang usaha dan adminnya tidak punya akses apa pun ke ruang keluarga anggota; fitur household yang sekarang tetap. **(2)** R5 menegakkan batasan tulis, antrean persetujuan, audit, dan pagar baca berupa tolak-bawaan; Beranda template "Karyawan" dan penyaringan per kartu di R6.
 - Migrasi `c5r5a8e2d417`: hanya tabel baru `ruang_batasan` (jabatan + batasan per anggota), `ruang_undangan` (kode sekali pakai, berperan, 7 hari), `ruang_draf` (antrean; unik parsial `user_id, client_ref`), `ruang_audit`. Tidak ada kolom baru di tabel lama, jadi tanpa jendela 500; idempoten seperti B1.
