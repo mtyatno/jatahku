@@ -252,7 +252,8 @@ klien yang memanggil endpoint ini (H3), jadi tidak ada perubahan perilaku. Tanpa
   (token admin). Berlaku pada permintaan berikutnya, tanpa restart; status per ruang tidak berubah. Matikan dengan
   `value=` kosong.
 
-## Deploy Checklist — Plugin R5: peran, batasan, persetujuan (c5r5a8e2d417)
+## Deploy Checklist — Plugin R5: peran, batasan, persetujuan (c5r5a8e2d417) — sudah jalan 2026-11-04
+Migrasi dijalankan pemilik di VPS; run deploy `9d26d7c` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang".
 Menambah empat tabel baru (`ruang_batasan`, `ruang_undangan`, `ruang_draf`, `ruang_audit`) dan route `/ruang/{id}/…`,
 `/ruang/gabung`, `/persetujuan/saya`. **Tidak ada kolom baru di tabel lama**, jadi tidak ada jendela 500: `lifespan`
 (`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten (`if_not_exists`). Perilaku baru hanya
