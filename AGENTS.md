@@ -492,7 +492,7 @@ Sebelum merge (aman untuk kode lama):
    bukan `jatahku`, sebagai `postgres`: `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
 Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
 2. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
-   `ls /opt/jatahku/app/alembic/versions/ | grep e7b3d5a9c1f4`; `alembic current` harus `c5r5a8e2d417` (Plugin R5)
+   `ls /opt/jatahku/app/alembic/versions/ | grep e7b3d5a9c1f4`; `alembic current` harus `a7e3c1f5d9b2` (Plugin H1)
    sebelum upgrade. Revisi lain = main sudah punya migrasi yang lebih baru: berhenti, `down_revision` PR ini harus
    disesuaikan dulu (satu head).
 3. **`alembic upgrade head` sesudah deploy selesai** (langkah 2). Kartu Scan Struk (`GET /admin/receipt-scans/stats`

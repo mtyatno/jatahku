@@ -93,7 +93,7 @@ class MigrationTests(unittest.TestCase):
 
     def test_migration_is_idempotent(self):
         mod = self.load()
-        self.assertEqual((mod.revision, mod.down_revision), ("e7b3d5a9c1f4", "c5r5a8e2d417"))
+        self.assertEqual((mod.revision, mod.down_revision), ("e7b3d5a9c1f4", "a7e3c1f5d9b2"))
         first, second = self.run_with(mod, "upgrade"), self.run_with(mod, "upgrade")
         # Setiap pernyataan KOTAK_DDL (sumber yang sama dengan lifespan), semuanya IF NOT EXISTS: aman diulang.
         self.assertEqual(first.statements, KOTAK_DDL)
@@ -149,9 +149,16 @@ class MigrationTests(unittest.TestCase):
                                   for i in model.__table__.indexes},
                                  {(n, c, u) for (n, t, c, u) in indexes if t == model.__tablename__})
 
-    def test_single_head_after_plugin_r5(self):
+    def test_single_head_after_plugin_h1(self):
+        """Migrasi ini menyusul Plugin H1 (a7e3c1f5d9b2) dan menjadi satu-satunya head."""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        cfg = Config(str(REPO / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO / "alembic"))   # tidak bergantung folder kerja
+        script = ScriptDirectory.from_config(cfg)
+        self.assertEqual(script.get_heads(), ["e7b3d5a9c1f4"])
         children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
-                    if "down_revision: Union[str, None] = 'c5r5a8e2d417'" in p.read_text(encoding="utf-8")]
+                    if "down_revision: Union[str, None] = 'a7e3c1f5d9b2'" in p.read_text(encoding="utf-8")]
         self.assertEqual(children, [MIGRATION.name])
 
 

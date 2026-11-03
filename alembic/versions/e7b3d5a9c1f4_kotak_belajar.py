@@ -14,7 +14,7 @@ lifespan) menjalankan KOTAK_DDL yang sama serta create_all untuk kedua tabel bar
 sebelum ATAU sesudah deploy dan tidak ada jendela 500 (kolom nullable, model menerima NULL).
 
 Revision ID: e7b3d5a9c1f4
-Revises: c5r5a8e2d417
+Revises: a7e3c1f5d9b2
 Create Date: 2026-11-01
 """
 from typing import Sequence, Union
@@ -25,7 +25,7 @@ from alembic import op
 from app.services.kotak_struk.schema import KOTAK_DDL
 
 revision: str = 'e7b3d5a9c1f4'
-down_revision: Union[str, None] = 'c5r5a8e2d417'
+down_revision: Union[str, None] = 'a7e3c1f5d9b2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
