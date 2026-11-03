@@ -6,6 +6,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## H1 · Host inti · 2026-11-01 · pemilik produk + Claude
 
+**Tayang 4 Nov 2026:** PR #176 di-merge (`e739245`); migrasi `a7e3c1f5d9b2` dijalankan pemilik di VPS; deploy ulang hijau (run 41687358185, percobaan ke-2). H1 `selesai`. Sisa dari checklist yang dikerjakan pemilik: langkah 4 (`\d plugin_installations`, baris `plugin dimuat: (tidak ada)` di journal, `GET /plugins` → `[]`). PR #180 (Kotak Belajar) bermigrasi dari `c5r5a8e2d417`: induknya harus dipindah ke `a7e3c1f5d9b2` sebelum merge.
+
 **Selesai** (status review, PR #176, issue #149; review keamanan terpisah lulus 2 Nov, temuan 1–5 dikerjakan di branch ini)
 - `app/plugins/host/manifest.py`: skema manifest (pydantic, kunci asing ditolak) dengan aturan T1: penerbit "Jatahku" (ADR-P9); izin dari `IZIN`, `ai:analyze`/`network:*` ditolak (ADR-P14); cakupan `ruang` saja (ADR-P11); awalan `p_<id>_` untuk tabel dan `<id>.` untuk kartu/aksi/notifikasi; perintah bot `kind: read` + `audience` wajib; aksi cepat ≤ 2; copot = `archive_90_days` (ADR-P15); `engines.plugin_api` dicocokkan dengan `PLUGIN_API_VERSION` 1.0.0.
 - `registry.py`: muat `app/plugins/<id>/manifest.json` (folder `host`, `sdk`, `_*` dilewati); aturan antarplugin (folder = id, `requires` ada/tidak melingkar/mendukung jenis ruang, `conflicts` ada, prefix callback/perintah bot/aturan advisor/flag unik). Mode ketat (CI, tes) vs mode start (lewati yang rusak dan pemakainya, `log.error`). `muat_saat_start()` di lifespan mencetak `🧩 plugin dimuat: …`.
