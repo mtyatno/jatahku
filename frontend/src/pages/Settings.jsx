@@ -8,6 +8,7 @@ import { useTheme } from '../hooks/useTheme';
 import { useAppConfig } from '../hooks/useAppConfig';
 import { formatCurrency } from '../lib/utils';
 import { SHARE_TIP, receiptInboxOn } from '../lib/pendingProofs';
+import { CONSENT_TEXT, consentView, toggleOutcome } from '../lib/kotakDonasi';
 import {
   PAYDAY_SAVE_DELAY_MS, householdPayday, parsePaydayDay, paydayLockState, joinSuccessMessage,
 } from '../lib/paydayLock';
@@ -148,6 +149,58 @@ const THEME_OPTIONS = [
   { id: 'laut',  label: '🌊 Laut',  from: '#2563eb', to: '#60a5fa' },
   { id: 'senja', label: '🌅 Senja', from: '#d97706', to: '#fbbf24' },
 ];
+
+// Kartu "Bantu Jatahku membaca bukti bayar" (donasi contoh Kotak Struk tahap 2). Tampil bila saklar kotak_donasi
+// menyala atau user sudah setuju (supaya tetap bisa dimatikan walau saklar ditutup); teks persetujuan penuh selalu
+// terlihat sebelum menyalakan. Logika di lib/kotakDonasi.js.
+function KotakDonasiCard() {
+  const [view, setView] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const load = async () => {
+    const data = await api.kotakDonasi();
+    if (alive.current) setView(consentView(data));
+  };
+  useEffect(() => { load(); }, []);
+
+  if (!view?.show) return null;
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    const out = toggleOutcome(await api.setKotakDonasi(!view.on));
+    if (!alive.current) return;
+    setMessage(out);
+    if (out.view) setView(out.view); else await load();
+    if (alive.current) setBusy(false);
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 id="kotak-donasi-title" className="font-semibold text-sm">🧾 {CONSENT_TEXT.title}</h3>
+          <p id="kotak-donasi-body" className="mt-1 text-xs text-gray-600">{CONSENT_TEXT.body}</p>
+        </div>
+        <button type="button" role="switch" aria-checked={view.on} aria-labelledby="kotak-donasi-title"
+          aria-describedby="kotak-donasi-body" aria-disabled={busy} onClick={toggle}
+          className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors aria-disabled:opacity-50 ${view.on ? 'bg-brand-600' : 'bg-gray-300'}`}>
+          <span aria-hidden="true"
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${view.on ? 'translate-x-5' : ''}`} />
+        </button>
+      </div>
+      <p className="mt-2 text-xs text-gray-500">{view.label}</p>
+      {view.closed && <p className="text-xs text-gray-500">{view.closed}</p>}
+      <p role="status" aria-live="polite" className={`text-xs ${message?.kind === 'ok' ? 'text-green-700' : 'text-amber-600'}`}>
+        {message && <span className="block mt-1">{message.text}</span>}
+      </p>
+    </div>
+  );
+}
 
 function GoogleAccountCard({ connected, onChange }) {
   const [clientId, setClientId] = useState(null);
@@ -811,6 +864,8 @@ export default function Settings() {
           <p className="text-sm text-gray-600">{SHARE_TIP}</p>
         </div>
       )}
+
+      <KotakDonasiCard />
 
       <GoogleAccountCard connected={profile.google_connected} onChange={load} />
 

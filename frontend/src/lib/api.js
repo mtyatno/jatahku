@@ -711,6 +711,76 @@ class ApiClient {
     return null;
   }
 
+  // Donasi contoh Kotak Struk (tahap 2; app/api/routes/user_settings.py, logika tampilan di lib/kotakDonasi.js).
+  // Persetujuan user → {available, consented, consented_at} atau null bila gagal.
+  async kotakDonasi() {
+    try {
+      const res = await this.request('/user/kotak-donasi');
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Nyalakan/matikan persetujuan → {ok, status, data}; 409 = saklar mati saat menyalakan. Mematikan selalu boleh.
+  async setKotakDonasi(on) {
+    try {
+      const res = await this.request('/user/kotak-donasi', {
+        method: 'PUT',
+        body: JSON.stringify({ consented: on === true }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+
+  // Admin "Donasi contoh" (app/api/routes/admin_kotak.py; logika tampilan di lib/proofSamples.js).
+  // Sampel per status (menunggu|disetujui|semua) → {counts, samples} atau null bila gagal.
+  async adminProofSamples(status = 'semua') {
+    try {
+      const res = await this.request(`/admin/kotak/samples?status=${encodeURIComponent(status)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Setujui/tolak satu sampel; body dari proofSamples.approveBody/rejectBody. Hanya field yang dikenal server yang
+  // dikirim (server menolak field lain dengan 422). → {ok, status, data}; status 0 = tidak sampai.
+  async adminProofSampleAction(id, action, body) {
+    const payload = action === 'setujui'
+      ? { lines: body?.lines, user_name: body?.user_name ?? null, note: body?.note ?? null, from_status: body?.from_status ?? null }
+      : { note: body?.note ?? null, from_status: body?.from_status ?? null };
+    try {
+      const res = await this.request(`/admin/kotak/samples/${encodeURIComponent(id)}/${encodeURIComponent(action)}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+
+  // Entri korpus sampel yang disetujui → {ok, status, data: {entry, truth, gated_diff}}; 409 = belum disetujui.
+  async adminProofSampleEntry(id) {
+    try {
+      const res = await this.request(`/admin/kotak/samples/${encodeURIComponent(id)}/korpus`);
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+
+  // Hapus sampel sesudah entrinya disalin ke korpus → {ok, status, data} (204 tanpa isi).
+  async adminDeleteProofSample(id) {
+    try {
+      const res = await this.request(`/admin/kotak/samples/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return { ok: res.ok, status: res.status, data: res.status === 204 ? {} : await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+
   // Incomes
   async getIncomes(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
