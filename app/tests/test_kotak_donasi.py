@@ -1,7 +1,9 @@
 """Kotak Struk tahap 2 — donasi contoh (spec 2026-11-01 §10 Tahap 2 butir 1; pre-flight A16 §2, K1, G1, G4).
 
 M1a: saklar `features.kotak_donasi`, persetujuan opt-in (`GET/PUT /user/kotak-donasi`), dan lupa (tarik persetujuan,
-hapus akun, gabung akun). Route asli lewat httpx ASGITransport di atas SQLite in-memory; butuh `aiosqlite`.
+hapus akun, gabung akun). M1b: `samaran` (penyamaran nomor dipindah dari `kotak_corpus`, nama samaran), baris tersamar
+`donasi.sample_lines`, dan penangkapannya di worker hanya untuk user yang setuju saat saklar menyala (pre-flight A16 §2,
+K2, K5, G6). Route asli lewat httpx ASGITransport di atas SQLite in-memory; butuh `aiosqlite`.
 Semua nama, nomor, dan baris di sini karangan.
 Run: python -m unittest app.tests.test_kotak_donasi -v
 """
@@ -11,10 +13,18 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import asyncio
 import importlib.util
+import inspect
 import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import FastAPI
@@ -27,11 +37,23 @@ from app.models.models import (
     AppSetting, Household, HouseholdMember, HouseholdRole, ProofSample, ProofSampleConsent, ReceiptScan, User,
 )
 from app.services.kotak_struk import config as K
+from app.services.kotak_struk.extract import TextDoc
+from app.services.kotak_struk.readers.base import ParseContext, Secrets
 
 configure_mappers()
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 T0 = datetime(2026, 11, 2, 3, 0, tzinfo=timezone.utc)
 LINES = ["gopay", "Pembayaran Berhasil", "Ke TOKO CONTOH", "Total Rp12.500"]   # karangan, sudah tersamar
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SWEEP = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "sweep_lines.json").read_text())
+SWEEP_TAGS = ("proof", "probe", "failed", "pending")
+INVENTED_USER = "Rina Wulandari"   # nama user karangan untuk daftar sapuan tanpa nama user
+# Bukti GoPay karangan: pihak lawan (RUDI HARTONO), rekening, nomor referensi, dan nama user sebagai sumber dana.
+GOPAY_LINES = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "RUDI HARTONO", "Mandiri 1234567890", "Jumlah Kirim Uang",
+               "Rp10.000", "Tanggal 31 Okt 2026", "No. Ref 123456789012", "Sumber Dana", "Rina Wulandari"]
+STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
+               "Non Tunai (QRIS) 45.400"]
+PSEUDONYM_WORDS = {"andi", "pratama", "budi", "santoso", "siti", "aminah", "toko", "contoh"}
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
@@ -336,6 +358,297 @@ class MergeDonationTests(DonasiBase):
         self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.other.id), 1)
         self.assertEqual(await self.count(ProofSampleConsent, ProofSampleConsent.user_id == self.other.id), 1)
         self.assertFalse(await self.sql_null_sample_lines(target_item))
+
+
+# ── M1b: samaran, baris tersamar, worker ─────────────────────────────────────
+
+class SamaranTests(unittest.TestCase):
+    def test_mask_line_moved_without_change(self):
+        from app.scripts import kotak_corpus
+        from app.services.kotak_struk import samaran
+        # Satu fungsi yang sama (diekspor ulang), bukan salinan: MaskLineTests/NeedsReviewTests `test_kotak_corpus` yang
+        # tidak diubah menguji fungsi ini.
+        self.assertIs(kotak_corpus.mask_line, samaran.mask_line)
+        self.assertIs(kotak_corpus.needs_review, samaran.needs_review)
+        self.assertEqual(kotak_corpus.MIN_RUN_DIGITS, samaran.MIN_RUN_DIGITS)
+        script = inspect.getsource(kotak_corpus)
+        for name in ("def mask_line", "def needs_review", "def _kept_spans", "_DIGIT_RUN = ", "MIN_RUN_DIGITS = "):
+            self.assertNotIn(name, script)
+        self.assertEqual(samaran.mask_line("Rekening Tujuan 0123 0100 1234 567 Rp150.000 26/10/2026 09:30"),
+                         "Rekening Tujuan …4567 Rp150.000 26/10/2026 09:30")
+        self.assertTrue(samaran.needs_review("Ref …5678 …1234"))
+
+    def test_samaran_is_pure(self):
+        from app.services.kotak_struk import samaran
+        source = inspect.getsource(samaran)
+        self.assertFalse("os.environ" in source, "samaran tidak boleh menyentuh os.environ")
+        self.assertNotRegex(source, r"(?m)^(?:from|import) (?!__future__|re\b)")
+        # Dapat diimpor tanpa DATABASE_URL/JWT_SECRET (tanpa konfigurasi aplikasi).
+        env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "JWT_SECRET")}
+        out = subprocess.run([sys.executable, "-c", "import app.services.kotak_struk.samaran as s; print(s.mask_line('x'))"],
+                             cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+        self.assertEqual((out.returncode, out.stdout.strip()), (0, "x"), out.stderr)
+
+    def test_normalize_matches_merchants(self):
+        from app.services.kotak_struk import samaran
+        from app.services.kotak_struk.merchants import normalize_name
+        for s in ("P.T. Sinar", "BUDI-SANTOSO", "  Rina   Wulandari ", "Toko_Maju 12", "Café Ñusa", "", None, "O'Neil & Co."):
+            self.assertEqual(samaran._normalize(s), normalize_name(s), s)
+
+    def test_pseudonymise_roles_case_and_whole_words(self):
+        from app.services.kotak_struk.samaran import PSEUDONYMS, pseudonymise
+        self.assertEqual(PSEUDONYMS, {"user": "ANDI PRATAMA", "pihak": "BUDI SANTOSO", "pengirim": "SITI AMINAH",
+                                      "merchant": "TOKO CONTOH"})
+        lines = ["Ke RUDI HARTONO", "Penerima: Rudi Hartono", "rudi hartono", "Ke:RUDI,", "RUDIMAN HARTONOWATI",
+                 "Dari Dewi Lestari", "Merchant WARUNG SEDAP", "Rina Wulandari", "Rudi123"]
+        out, user = pseudonymise(lines, {"pihak": "RUDI HARTONO", "pengirim": "Dewi Lestari",
+                                         "merchant": "Warung Sedap", "user": "Rina Wulandari"})
+        self.assertEqual(out, ["Ke BUDI SANTOSO", "Penerima: Budi Santoso", "budi santoso", "Ke:BUDI,",
+                               "RUDIMAN HARTONOWATI", "Dari Siti Aminah", "Merchant TOKO CONTOH", "Andi Pratama",
+                               "Budi123"])
+        self.assertEqual(user, "Andi Pratama")
+
+    def test_pseudonymise_long_names_punctuation_and_missing(self):
+        from app.services.kotak_struk.samaran import pseudonymise
+        out, user = pseudonymise(["RUDI HARTONO WIJAYA KUSUMA", "R.U.D.I.", "Rudi-Hartono", "RUDIHARTONO", "A B"],
+                                 {"pihak": "Rudi-Hartono Wijaya Kusuma", "pengirim": None, "user": "A"})
+        self.assertEqual(out, ["BUDI SANTOSO SANTOSO SANTOSO", "BUDI.", "Budi-Santoso", "BUDI", "A B"])
+        self.assertIsNone(user)   # nama satu huruf bukan kata nama
+        self.assertEqual(pseudonymise(["Ke RUDI"], {}), (["Ke RUDI"], None))
+        self.assertEqual(pseudonymise([], {"user": "rina wulandari putri"}), ([], "andi pratama pratama"))
+        # Satu kata di dua nama: peran pihak lawan menang (urutan ROLES).
+        self.assertEqual(pseudonymise(["Ke Rudi"], {"user": "Rudi Hartono", "pihak": "Rudi"})[0], ["Ke Budi"])
+
+
+def _known_name_words(lines, doc, user_name) -> set[str]:
+    """Kata nama yang dikenal untuk satu bukti, dihitung terpisah dari `donasi`: pihak lawan (bukti yang tidak dibaca
+    pembaca QRIS/transfer: tanpa kata kosakata judul `kerangka.TITLE_WORDS`), pengirim tercetak, merchant berlabel, user.
+    Kata nama samaran (publik) tidak dihitung."""
+    from app.services.kotak_struk import kerangka
+    from app.services.kotak_struk.merchants import normalize_name
+    from app.services.kotak_struk.readers import proof_common as pc
+    clean = pc.clean_lines(lines)
+    profile = kerangka._profile_of(doc, clean)
+    party = doc.counterparty.name
+    party_words = normalize_name(party).split()
+    if doc.doc_type not in K.PROOF_TYPES:
+        party_words = [w for w in (party or "").split() if kerangka.words(w)
+                       and kerangka.words(w)[0] not in kerangka.TITLE_WORDS]
+        party_words = normalize_name(" ".join(party_words)).split()
+    names = [pc.read_sender_name(clean, profile), pc.read_name(pc.body_lines(clean), profile, "merchant"), user_name]
+    words = set(party_words) | {w for name in names for w in normalize_name(name).split()}
+    return {w for w in words if sum(c.isalpha() for c in w) >= 2} - PSEUDONYM_WORDS
+
+
+async def _sweep_cases():
+    """Setiap daftar sapuan bertanda proof/probe/failed/pending, saklar bukti mati dan menyala, dibaca seperti worker
+    (tanggal tetap, tanpa aturan) dengan nama user daftar itu atau nama karangan."""
+    from app.services.kotak_struk.registry import read_document
+    for item in SWEEP:
+        if not set(SWEEP_TAGS) & set(item["tags"]):
+            continue
+        user_name = item["user_name"] or INVENTED_USER
+        for proofs in (False, True):
+            text = TextDoc(lines=list(item["lines"]), kind="image")
+            res = await read_document(text, ParseContext(today=date(2026, 11, 1), user_name=user_name),
+                                      proofs_enabled=proofs)
+            yield item["id"], proofs, item["lines"], res.parsed.doc, res.parsed.secrets, user_name
+
+
+class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
+    async def read(self, lines, proofs=True, user_name=INVENTED_USER):
+        from app.services.kotak_struk.registry import read_document
+        res = await read_document(TextDoc(lines=list(lines), kind="image"),
+                                  ParseContext(today=date(2026, 11, 1), user_name=user_name), proofs_enabled=proofs)
+        return res.parsed.doc, res.parsed.secrets
+
+    async def test_samples_hold_no_long_digits_or_known_names(self):   # Review Focus 2
+        from app.services.kotak_struk.donasi import sample_lines
+        from app.services.kotak_struk.merchants import normalize_name
+        cases = with_sample = 0
+        async for case_id, proofs, lines, doc, secrets, user_name in _sweep_cases():
+            cases += 1
+            got = sample_lines(lines, doc, secrets, user_name=user_name)
+            with_sample += bool(got)
+            dumped = "\n".join(got or [])
+            with self.subTest(case=case_id, proofs=proofs):
+                self.assertNotRegex(dumped, r"\d{6,}")
+                for value in (*secrets.ref_values, secrets.account_number, secrets.nmid):
+                    if value and len(value) >= 4:
+                        self.assertNotIn(value.lower(), dumped.lower())
+                words = normalize_name(dumped).split()
+                for word in _known_name_words(lines, doc, user_name):
+                    self.assertNotIn(word, words)
+                    self.assertNotRegex(dumped.lower(), rf"(?<![^\W\d_]){re.escape(word)}(?![^\W\d_])")
+                self.assertLessEqual(len(got or []), K.SAMPLE_MAX_LINES)
+                self.assertTrue(all(len(line) <= K.SAMPLE_LINE_MAX for line in got or []))
+        self.assertGreater(cases, 600)              # 330 daftar x 2 posisi saklar
+        self.assertGreater(with_sample, cases * 0.9)   # hampir semua bukti menghasilkan baris
+
+    async def test_store_receipt_has_no_sample(self):
+        # G6: struk belanja biasa tidak pernah (jenis `struk_belanja` dan teksnya tidak tampak bukti bayar). Daftar sapuan
+        # bertanda store yang terbaca QRIS, atau struk yang tampak bukti, diperlakukan seperti bukti (sama dengan worker).
+        from app.scripts.kotak_corpus import receipt_samples
+        from app.services.kotak_struk.donasi import sample_lines
+        from app.services.kotak_struk.registry import looks_like_proof
+        always = [STORE_LINES] + [s["lines"] for s in receipt_samples()]
+        stores = always + [i["lines"] for i in SWEEP if set(i["tags"]) & {"store", "store_void", "store_pending"}]
+        plain = 0
+        for n, lines in enumerate(stores):
+            for proofs in (False, True):
+                doc, secrets = await self.read(lines, proofs)
+                text = TextDoc(lines=list(lines), kind="image")
+                if n < len(always):
+                    self.assertEqual(doc.doc_type, "struk_belanja")
+                    self.assertFalse(looks_like_proof(text))
+                if doc.doc_type != "struk_belanja" or looks_like_proof(text):
+                    continue
+                plain += 1
+                with self.subTest(first=lines[0], proofs=proofs):
+                    self.assertIsNone(sample_lines(lines, doc, secrets, user_name=INVENTED_USER))
+        self.assertGreater(plain, 300)
+
+    async def test_sample_masks_numbers_and_names(self):
+        from app.services.kotak_struk.donasi import sample_lines
+        for proofs in (True, False):   # pembaca transfer, dan bukti yang dibaca pembaca struk/tidak dikenali
+            doc, secrets = await self.read(GOPAY_LINES, proofs)
+            got = sample_lines(GOPAY_LINES, doc, secrets, user_name=INVENTED_USER)
+            with self.subTest(proofs=proofs, doc_type=doc.doc_type):
+                self.assertIn("Transfer Berhasil", got)   # judul status bukan nama: tetap
+                self.assertIn("Mandiri …7890", got)
+                self.assertIn("No. Ref …9012", got)
+                self.assertIn("Rp10.000", got)
+                self.assertIn("Tanggal 31 Okt 2026", got)
+                dumped = "\n".join(got).lower()
+                for word in ("rudi", "hartono", "rina", "wulandari", "1234567890", "123456789012"):
+                    self.assertNotIn(word, dumped)
+
+    async def test_unread_proof_title_words_are_not_names(self):
+        # Saklar mati: pembaca struk "membaca" judul status sebagai nama merchant; kata itu bukan nama.
+        from app.services.kotak_struk.donasi import sample_lines
+        lines = ["Transfer Berhasil", "Ke RUDI 0812 3456 7890", "Nominal Rp150.000", "Total Rp150.000"]
+        doc, secrets = await self.read(lines, proofs=False)
+        self.assertEqual((doc.doc_type, doc.counterparty.name), ("struk_belanja", "Transfer Berhasil"))
+        got = sample_lines(lines, doc, secrets, user_name=None)
+        self.assertEqual(got, ["Transfer Berhasil", "Ke TOKO …7890", "Nominal Rp150.000", "Total Rp150.000"])
+
+    def test_secret_and_long_digit_lines_dropped_and_capped(self):
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        from app.services.kotak_struk.donasi import sample_lines
+        doc = DokumenBayar(doc_type="transfer", counterparty=Counterparty(name=None))
+        secrets = Secrets(ref_values=["A1B2C3D4E5"], account_number="98AB76CD", nmid="ID1234567890123")
+        lines = ["Transfer Berhasil", "Ref A1B2C3D4E5", "Rekening 98ab76cd", "Total Rp150000", "Total Rp150.000",
+                 "NMID ID1234567890123", "Merchant ID1234567890123"]
+        self.assertEqual(sample_lines(lines, doc, secrets, user_name=None),
+                         ["Transfer Berhasil", "Total Rp150.000", "Merchant ID…0123"])
+        many = ["Transfer Berhasil"] + [f"Baris {'x' * 300}"] + [f"Catatan {n}" for n in range(200)]
+        got = sample_lines(many, doc, Secrets(), user_name=None)
+        self.assertEqual(len(got), K.SAMPLE_MAX_LINES)
+        self.assertEqual(len(got[1]), K.SAMPLE_LINE_MAX)
+        # Tidak ada baris tersisa: None, bukan daftar kosong.
+        self.assertIsNone(sample_lines(["Ref A1B2C3D4E5"], doc, secrets, user_name=None))
+
+
+class WorkerDonationTests(DonasiBase):
+    """Penangkapan di worker: hanya saklar `kotak_donasi` menyala DAN user setuju (Review Focus 1)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        from app.api.routes import kotak_struk
+        self.app.include_router(kotak_struk.router, prefix="/kotak-struk")
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+
+    async def set_consent(self, on: bool):
+        async with self.Session() as db:
+            row = await db.get(ProofSampleConsent, self.user.id)
+            if on and row is None:
+                db.add(ProofSampleConsent(user_id=self.user.id, consented_at=T0))
+            elif not on and row is not None:
+                await db.delete(row)
+            await db.commit()
+
+    async def process(self, lines, *, flag: bool, consent: bool, **kw):
+        from app.services.kotak_struk.worker import process_item
+        await self.flag(kotak_donasi=flag)
+        await self.set_consent(consent)
+        item_id = uuid.uuid4()
+        path = Path(self.dir) / item_id.hex
+        path.write_bytes(b"\xff\xd8\xff\xe0jpeg")
+        async with self.Session() as db:
+            db.add(ReceiptScan(id=item_id, user_id=self.user.id, status=K.ST_DITERIMA, source="telegram",
+                               file_path=str(path), content_type="image/jpeg", file_sha256=item_id.hex * 2))
+            await db.commit()
+        extract = AsyncMock(return_value=TextDoc(lines=list(lines), kind="image"))
+        status = await process_item(item_id, session_factory=self.Session, extract=extract, now=T0,
+                                    proofs_enabled=True, **kw)
+        async with self.Session() as db:
+            item = await db.get(ReceiptScan, item_id)
+        return status, item
+
+    async def test_donation_requires_consent_and_flag(self):      # Review Focus 1
+        from app.services.kotak_struk.view import item_detail
+        for flag, consent in ((False, True), (True, False), (False, False)):
+            with self.subTest(flag=flag, consent=consent):
+                status, item = await self.process(GOPAY_LINES, flag=flag, consent=consent)
+                self.assertEqual(status, "siap")
+                self.assertIsNone(item.sample_lines)
+                self.assertTrue(await self.sql_null_sample_lines(item.id))   # SQL NULL, bukan JSON 'null'
+                self.assertIsNotNone(item.layout)   # kerangka tetap seperti biasa
+        status, item = await self.process(GOPAY_LINES, flag=True, consent=True)
+        self.assertEqual(status, "siap")
+        self.assertIn("BUDI SANTOSO", item.sample_lines)
+        dumped = "\n".join(item.sample_lines).lower()
+        for word in ("rudi", "hartono", "rina", "wulandari", "1234567890", "123456789012"):
+            self.assertNotIn(word, dumped)
+        self.assertEqual(await self.count(ProofSample), 0)   # baris baru pindah ke antrean saat dikoreksi (M1c)
+        async with self.Session() as db:
+            user = await db.get(User, self.user.id)
+            detail = await item_detail(db, item, user)
+        self.assertNotIn("sample_lines", json.dumps(detail, default=str))
+        self.assertNotIn("BUDI SANTOSO", json.dumps(detail, default=str))
+        # Tidak ada respons API yang memuatnya (daftar dan detail item).
+        for url in ("/kotak-struk/", f"/kotak-struk/{item.id}"):
+            r = await self.client.get(url)
+            self.assertEqual(r.status_code, 200, url)
+            self.assertNotIn("sample_lines", r.text)
+            self.assertNotIn("BUDI SANTOSO", r.text)
+
+    async def test_store_receipt_has_no_sample(self):
+        status, item = await self.process(STORE_LINES, flag=True, consent=True)
+        self.assertEqual((status, item.doc_type, item.sample_lines), ("siap", "struk_belanja", None))
+
+    async def test_flag_off_reads_no_consent(self):
+        from app.services.kotak_struk import donasi
+        with patch.object(donasi, "consented", AsyncMock(return_value=True)) as spy:
+            status, item = await self.process(GOPAY_LINES, flag=False, consent=True)
+        self.assertEqual(status, "siap")
+        spy.assert_not_awaited()   # saklar mati: tidak ada kueri persetujuan
+        self.assertIsNone(item.sample_lines)
+        with patch.object(donasi, "consented", AsyncMock(return_value=False)) as spy:
+            await self.process(GOPAY_LINES, flag=True, consent=False)
+        spy.assert_awaited_once()
+
+    async def test_consent_read_error_reads_without_donation(self):
+        from app.services.kotak_struk import donasi, worker
+        with patch.object(donasi, "consented", AsyncMock(side_effect=RuntimeError("db putus"))), \
+                self.assertLogs(worker.__name__, level="WARNING") as logs:
+            status, item = await self.process(GOPAY_LINES, flag=True, consent=True)
+        self.assertEqual((status, item.doc_type, item.sample_lines), ("siap", "transfer", None))
+        self.assertTrue(any("persetujuan donasi Kotak Struk tidak terbaca (RuntimeError)" in line
+                            for line in logs.output))
+
+    async def test_sample_error_keeps_item_siap(self):
+        from app.services.kotak_struk import donasi, worker
+        with patch.object(donasi, "sample_lines", side_effect=RuntimeError("RUDI HARTONO 1234567890")), \
+                self.assertLogs(worker.__name__, level="WARNING") as logs:
+            status, item = await self.process(GOPAY_LINES, flag=True, consent=True)
+        self.assertEqual((status, item.status, item.doc_type, item.sample_lines, int(item.parsed_total)),
+                         ("siap", "siap", "transfer", None, 10000))
+        self.assertIsNotNone(item.layout)
+        self.assertTrue(any("baris donasi Kotak Struk tidak dibuat (RuntimeError)" in line for line in logs.output))
+        self.assertFalse(any("RUDI" in line or "1234567890" in line for line in logs.output))
+        self.assertTrue(all(r.exc_info is None for r in logs.records))
 
 
 if __name__ == "__main__":

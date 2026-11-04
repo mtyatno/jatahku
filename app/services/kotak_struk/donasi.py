@@ -4,10 +4,12 @@ User yang SETUJU (opt-in di Settings) menyumbang baris teks bukti TERSAMAR dari 
 meninjaunya di Admin dan menyalin yang disetujui ke korpus pembaca. Semuanya di balik saklar `features.kotak_donasi`
 (bawaan mati, pre-flight A16 K1/G1): kebijakan privasi yang tayang harus memuat paragraf donasi dulu.
 
-Bagian ini (M1a): saklar, persetujuan, dan lupa.
+Bagian M1a: saklar, persetujuan, dan lupa. Bagian M1b: `sample_lines` (baris tersamar yang ditangkap worker).
 - `donation_available`: saklar menyala (web).
 - `consented` / `set_consent`: satu baris `proof_sample_consents` per user; menyalakan idempoten (waktu pertama tetap),
   mematikan = menghapus baris itu dan `forget_user`.
+- `sample_lines` (M1b, pre-flight A16 §2, K5, G6): dari teks OCR dan hasil baca SEBELUM disamarkan (titik yang sama
+  dengan kerangka tata letak worker), hanya dipanggil worker untuk user yang setuju saat saklar menyala.
 - `forget_user` (G4): semua `proof_samples` user (juga yang disetujui), persetujuannya, dan `receipt_scans.sample_lines`
   miliknya. Dipakai saat menarik persetujuan, hapus akun (`account_deletion.delete_account`), dan gabung akun
   (`merge.merge_users`, source; persetujuan tidak diwariskan ke target).
@@ -17,6 +19,7 @@ menanyakan keanggotaan household (`test_ruang_pagar`).
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
@@ -26,6 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ProofSample, ProofSampleConsent, ReceiptScan
 from app.services.app_config import feature_enabled
+from app.services.kotak_struk import kerangka, samaran
+from app.services.kotak_struk.config import PROOF_TYPES, SAMPLE_LINE_MAX, SAMPLE_MAX_LINES, SAMPLE_TYPES
+from app.services.kotak_struk.document import DokumenBayar
+from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
+from app.services.kotak_struk.readers import proof_common as pc
+from app.services.kotak_struk.readers.base import Secrets
+from app.services.kotak_struk.registry import looks_like_proof
 
 FEATURE = "kotak_donasi"
 
@@ -81,3 +91,71 @@ async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:
         .values(sample_lines=null())
         .execution_options(synchronize_session=False)
     )
+
+
+# ── Baris tersamar (M1b) ────────────────────────────────────────────────────
+
+_LONG_DIGITS = re.compile(r"\d{%d,}" % samaran.MIN_RUN_DIGITS)
+_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
+
+
+def _party_name(doc: DokumenBayar) -> str | None:
+    """Nama pihak lawan dokumen. Bukti yang tidak dibaca pembaca QRIS/transfer (struk belanja/tidak dikenali): "nama"-nya
+    tebakan pembaca struk, sering judul status atau logo aplikasi ("Transfer Berhasil", "Bca Mobile"; worker membuangnya
+    dari Dokumen Bayar). Dari tebakan itu kata kosakata judul (`kerangka.TITLE_WORDS`: label, status, arah uang, nama
+    aplikasi/bank) bukan kata nama dan tidak disamarkan; kata lainnya ("Penerima Budi" -> "Budi") tetap."""
+    name = doc.counterparty.name
+    if not name or doc.doc_type in PROOF_TYPES:
+        return name
+    rest = [w for w in name.split() if kerangka.words(w) and kerangka.words(w)[0] not in kerangka.TITLE_WORDS]
+    return " ".join(rest) or None
+
+
+def _known_names(clean: list[str], doc: DokumenBayar, user_name: str | None) -> dict[str, str | None]:
+    """Nama yang dikenal per peran samaran: pihak lawan dokumen (`_party_name`), pengirim tercetak, merchant yang dibaca
+    pembaca bukti dari baris berlabel, dan user (sumber yang sama dengan `kerangka._forbidden_words`)."""
+    profile = kerangka._profile_of(doc, clean)
+    try:   # pembaca nama hanya tambahan pengaman
+        merchant = pc.read_name(pc.body_lines(clean), profile, "merchant")
+    except Exception:
+        merchant = None
+    return {"pihak": _party_name(doc), "pengirim": pc.read_sender_name(clean, profile), "merchant": merchant,
+            "user": user_name}
+
+
+def _holds_secret(line: str, secrets: Secrets) -> bool:
+    """Baris masih memuat nilai rahasia (nomor referensi, rekening, NMID di luar baris berlabel NMID) atau deret
+    >= 6 digit."""
+    if _LONG_DIGITS.search(line):
+        return True
+    digits = re.sub(r"\D", "", line)
+    values = [*secrets.ref_values, secrets.account_number]
+    if not _NMID_LINE.search(line):
+        values.append(secrets.nmid)
+    for value in values:
+        value = (value or "").strip()
+        if not value:
+            continue
+        if len(value) >= 4 and value.lower() in line.lower():
+            return True
+        value_digits = re.sub(r"\D", "", value)
+        if len(value_digits) >= pc.LONG_DIGITS and value_digits in digits:
+            return True
+    return False
+
+
+def sample_lines(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_name: str | None) -> list[str] | None:
+    """Baris tersamar satu bukti untuk donasi contoh, atau None.
+
+    Hanya bukti bayar (G6): `doc.doc_type` di SAMPLE_TYPES, atau teks yang tampak bukti (`looks_like_proof`; bukti yang
+    dibaca pembaca struk); struk belanja biasa tidak pernah. `lines` = baris OCR mentah, `doc`/`secrets` = hasil pembaca
+    SEBELUM disamarkan worker. Langkah: `clean_lines` -> `samaran.mask_line` -> `samaran.pseudonymise` (nama pihak lawan,
+    pengirim, merchant terbaca, user) -> baris yang masih memuat nilai `secrets` atau deret >= 6 digit dibuang -> paling
+    banyak SAMPLE_MAX_LINES baris, masing-masing SAMPLE_LINE_MAX karakter. None juga bila tidak ada baris tersisa."""
+    if doc.doc_type not in SAMPLE_TYPES and not looks_like_proof(TextDoc(lines=list(lines), kind=KIND_IMAGE)):
+        return None
+    clean = pc.clean_lines(lines)
+    masked = [samaran.mask_line(line) for line in clean]
+    named, _user = samaran.pseudonymise(masked, _known_names(clean, doc, user_name))
+    kept = [line[:SAMPLE_LINE_MAX] for line in named if not _holds_secret(line, secrets)]
+    return kept[:SAMPLE_MAX_LINES] or None

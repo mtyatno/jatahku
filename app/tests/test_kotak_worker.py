@@ -912,6 +912,27 @@ class LayoutTests(WorkerBase):
         self.assertFalse(any("BUDI" in line or "1234567890" in line for line in logs.output))
         self.assertTrue(all(r.exc_info is None for r in logs.records))
 
+    async def test_sample_lines_only_when_asked(self):
+        # Donasi contoh (tahap 2 M1b): `_outcome` hanya membuat `sample_lines` bila `process_item` memintanya (saklar
+        # `kotak_donasi` menyala dan user setuju); dibangun dari hasil baca sebelum disamarkan, seperti kerangka.
+        text = TextDoc(lines=LAYOUT_LINES, kind="image")
+        res = await worker.read_document(text, worker.ParseContext(today=date(2026, 10, 26)), proofs_enabled=True)
+        self.assertIsNone(worker._outcome(res, text).columns["sample_lines"])
+        self.assertIsNone(worker._outcome(res, text, user_name="Rina Wulandari", sample=False).columns["sample_lines"])
+        got = worker._outcome(res, text, user_name="Rina Wulandari", sample=True).columns["sample_lines"]
+        self.assertEqual(got[:4], ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO"])
+        self.assertIn("Mandiri …7890", got)
+        self.assertFalse(re.search(r"\d{6,}", "\n".join(got)))
+
+    async def test_default_worker_stores_no_sample_lines(self):
+        # Saklar `kotak_donasi` bawaan mati: worker tidak menangkap baris, apa pun bukti dan saklar bukti.
+        for n, (lines, enabled) in enumerate(((LAYOUT_LINES, True), (LAYOUT_LINES, False), (STORE_LINES, True))):
+            item = await self.item(text=f"x{n}")
+            self.assertEqual(await self.process(item, lines, proofs_enabled=enabled), "siap")
+            self.assertIsNone((await self.get(item.id)).sample_lines)
+        async with self.Session() as db:
+            raw = (await db.execute(text("SELECT COUNT(*) FROM receipt_scans WHERE sample_lines IS NOT NULL"))).scalar()
+        self.assertEqual(raw, 0)
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
 class RunWorkerTests(WorkerBase):
@@ -1060,6 +1081,7 @@ class MerchantUpsertTests(WorkerBase):
                 row = await upsert_household_merchant(db, self.hh_id, "k", "KEDUA", None, now=NOW)
                 await db.commit()
         self.assertEqual((row.raw_name, await self.count_merchants()), ("KEDUA", 1))
+
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")

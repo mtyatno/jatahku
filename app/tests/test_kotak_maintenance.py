@@ -16,6 +16,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy import text
+
 from app.core.config import get_settings
 from app.core.database import Base
 from app.models.models import Envelope, Household, HouseholdMember, HouseholdRole, ReceiptScan, Transaction, User
@@ -154,6 +156,7 @@ class ExpireItemsTests(MaintenanceBase):
 # ── kerangka tata letak (A15 L1) ─────────────────────────────────────────────
 
 LAYOUT = {"v": 1, "key": "gopay", "lines": [{"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000}]}
+SAMPLE = ["GoPay", "Transfer Berhasil", "Ke BUDI SANTOSO", "Rp10.000"]   # baris donasi karangan, sudah tersamar
 
 
 class LayoutPurgeTests(MaintenanceBase):
@@ -195,6 +198,30 @@ class LayoutPurgeTests(MaintenanceBase):
         self.assertEqual(await expire_items(self.db, now=NOW), 1)
         self.assertEqual([(await self.get(i.id)).layout for i in (expired, fresh)], [None, LAYOUT])
 
+
+    async def test_purge_and_expire_clear_sample_lines(self):
+        # Donasi contoh (tahap 2 M1b): baris tersamar ikut dihapus bersama kerangka, juga pada item tanpa kerangka.
+        old = NOW - LAYOUT_TTL - timedelta(minutes=1)
+        done = [await self.item(status=s, sample_lines=SAMPLE, processed_at=old) for s in ("tercatat", "dilewati",
+                                                                                       "kedaluwarsa")]
+        both = await self.item(status="tercatat", layout=LAYOUT, sample_lines=SAMPLE, processed_at=old)
+        kept = [await self.item(status=s, sample_lines=SAMPLE, processed_at=old) for s in ("diterima", "siap", "gagal")]
+        young = await self.item(status="tercatat", sample_lines=SAMPLE, processed_at=NOW - timedelta(hours=23))
+        self.assertEqual(await purge_layouts(self.db, now=NOW), len(done) + 1)
+        for it in [*done, both]:
+            got = await self.get(it.id)
+            self.assertEqual((got.sample_lines, got.layout), (None, None))
+        for it in [*kept, young]:
+            self.assertEqual((await self.get(it.id)).sample_lines, SAMPLE)
+        self.assertEqual(await purge_layouts(self.db, now=NOW), 0)
+        expired = await self.item(status="siap", expires_at=NOW - timedelta(minutes=1), sample_lines=SAMPLE)
+        fresh = await self.item(status="siap", expires_at=NOW + timedelta(days=1), sample_lines=SAMPLE)
+        self.assertEqual(await expire_items(self.db, now=NOW), 1)   # item `kept` tanpa expires_at tidak kedaluwarsa
+        self.assertEqual([(await self.get(i.id)).sample_lines for i in (expired, fresh)], [None, SAMPLE])
+        # SQL NULL, bukan JSON 'null'.
+        async with self.Session() as db:
+            raw = (await db.execute(text("SELECT COUNT(*) FROM receipt_scans WHERE sample_lines IS NOT NULL"))).scalar()
+        self.assertEqual(raw, len(kept) + 2)
 
 # ── file yatim ───────────────────────────────────────────────────────────────
 

@@ -6,7 +6,9 @@
   tidak disentuh), supaya bukti yang sama tetap bisa dikenali.
 - `purge_layouts`: kerangka tata letak (`layout`, belajar lintas user) item selesai (`tercatat`/`dilewati`/`kedaluwarsa`)
   dihapus 24 jam (LAYOUT_TTL) sejak dibaca (`processed_at`); tidak pernah sebelum item selesai, karena belajar dari
-  koreksi terjadi saat item selesai. Item kedaluwarsa juga kehilangan kerangkanya di `expire_items`.
+  koreksi terjadi saat item selesai. Item kedaluwarsa juga kehilangan kerangkanya di `expire_items`. Baris tersamar
+  donasi contoh (`sample_lines`, tahap 2) ikut dihapus di kedua tempat; item yang dikoreksi memindahkannya ke
+  `proof_samples` lebih dulu (M1c).
 - `reconcile_proof_rules`: aturan belajar (`proof_rules`) disamakan dengan tabel suara (`belajar.reconcile_rules`):
   hitungan yang tertinggal karena dua suara bersamaan diperbaiki dan aturan yang terlewat dibuat (review L2 M-2);
   aturan `menunggu` yang turun di bawah ambang (user dilupakan) dihapus, suaranya tetap (review L4a m-6).
@@ -44,12 +46,13 @@ def _utc(dt: datetime) -> datetime:
 
 
 async def expire_items(db: AsyncSession, *, now: datetime) -> int:
-    """Satu UPDATE bersyarat: `siap`/`gagal` dengan `expires_at < now` -> `kedaluwarsa`, `ocr_lines` dan `layout` NULL.
-    Status lain dan `expires_at` NULL tidak pernah disentuh. Commit sendiri; mengembalikan jumlah baris."""
+    """Satu UPDATE bersyarat: `siap`/`gagal` dengan `expires_at < now` -> `kedaluwarsa`, `ocr_lines`, `layout`, dan
+    `sample_lines` NULL. Status lain dan `expires_at` NULL tidak pernah disentuh. Commit sendiri; mengembalikan jumlah
+    baris."""
     res = await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)), ReceiptScan.expires_at < _utc(now))
-        .values(status=ST_KEDALUWARSA, ocr_lines=None, layout=null())
+        .values(status=ST_KEDALUWARSA, ocr_lines=None, layout=null(), sample_lines=null())
         .execution_options(synchronize_session=False)
     )
     await db.commit()
@@ -57,14 +60,15 @@ async def expire_items(db: AsyncSession, *, now: datetime) -> int:
 
 
 async def purge_layouts(db: AsyncSession, *, now: datetime) -> int:
-    """Satu UPDATE: `layout` NULL untuk item `tercatat`/`dilewati`/`kedaluwarsa` yang masih punya kerangka dan dibaca
-    lebih dari LAYOUT_TTL lalu (`processed_at < now - LAYOUT_TTL`, atau tanpa `processed_at`). Item terbuka/gagal tidak
-    disentuh. Commit sendiri; mengembalikan jumlah baris."""
+    """Satu UPDATE: `layout` dan `sample_lines` NULL untuk item `tercatat`/`dilewati`/`kedaluwarsa` yang masih punya
+    kerangka atau baris donasi dan dibaca lebih dari LAYOUT_TTL lalu (`processed_at < now - LAYOUT_TTL`, atau tanpa
+    `processed_at`). Item terbuka/gagal tidak disentuh. Commit sendiri; mengembalikan jumlah baris."""
     res = await db.execute(
         update(ReceiptScan)
-        .where(ReceiptScan.status.in_((ST_TERCATAT, ST_DILEWATI, ST_KEDALUWARSA)), ReceiptScan.layout.is_not(None),
+        .where(ReceiptScan.status.in_((ST_TERCATAT, ST_DILEWATI, ST_KEDALUWARSA)),
+               or_(ReceiptScan.layout.is_not(None), ReceiptScan.sample_lines.is_not(None)),
                or_(ReceiptScan.processed_at.is_(None), ReceiptScan.processed_at < _utc(now) - LAYOUT_TTL))
-        .values(layout=null())   # SQL NULL, bukan JSON 'null'
+        .values(layout=null(), sample_lines=null())   # SQL NULL, bukan JSON 'null'
         .execution_options(synchronize_session=False)
     )
     await db.commit()
