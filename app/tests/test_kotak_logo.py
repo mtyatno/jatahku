@@ -95,6 +95,9 @@ class LogoKeyTests(unittest.TestCase):
         # nominalnya atau tanggal. Bilah status di antaranya dilewati.
         self.assertIsNone(key_of(["Andi", "Rp50.000", "Transfer Berhasil"]))
         self.assertIsNone(key_of(["Siti", "12 Okt 2026", "Rp50.000"]))
+        # Cabang tanggal sendiri (tanpa nominal di baris berikutnya; fix round 2 R1-1).
+        self.assertIsNone(key_of(["Siti", "12 Oktober 2026 10:00", "Transfer Berhasil"]))
+        self.assertIsNone(key_of(["Siti", "Selasa, 12 Okt 2026", "Transfer Berhasil"]))
         self.assertIsNone(key_of(["Siti", "09:41", "LTE", "Rp50.000", "Transfer Berhasil"]))
         self.assertIsNone(key_of(["09:41", "Andi", "Nominal Rp50.000"]))
         self.assertEqual(key_of(["NEWPAY", "Pembayaran Berhasil", "Total Rp50.000"]), "logo:newpay")
@@ -110,8 +113,11 @@ class LogoKeyTests(unittest.TestCase):
         # Sisa yang diterima (review M2a temuan 1): nama depan satu kata yang diikuti baris judul tetap menjadi kunci
         # logo bila pembaca tidak mengenalinya sebagai nama (pihak lawan/pengirim/merchant/user). Pertahanannya: suara
         # ditolak bila kata itu nama yang dikenal (`learn_app_choice`), ambang 2 user, persetujuan pemilik, dan
-        # penyamaran kunci logo di tab Suara Admin (M3d, K15) yang menjadi GERBANG RILIS tahap 2.
+        # penyamaran kunci logo di tab Suara Admin (M3d, K15) yang menjadi GERBANG RILIS tahap 2. Juga nama dua baris:
+        # nama depan, lalu nama belakang di baris sendiri, lalu nominal ("Andi" / "Saputra" / "Rp50.000"): baris
+        # berikutnya teks, bukan nominal, jadi "Andi" tetap menjadi kunci.
         self.assertEqual(key_of(["Andi", "Transfer Berhasil", "Rp50.000"]), "logo:andi")
+        self.assertEqual(key_of(["Andi", "Saputra", "Rp50.000"]), "logo:andi")
         self.assertIsNone(key_of(["Andi", "Transfer Berhasil", "Rp50.000"], {"andi"}))
 
     def test_logo_word(self):
