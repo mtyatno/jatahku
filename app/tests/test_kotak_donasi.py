@@ -420,10 +420,18 @@ class SamaranTests(unittest.TestCase):
         self.assertEqual(pseudonymise(["Ke Rudi"], {"user": "Rudi Hartono", "pihak": "Rudi"})[0], ["Ke Budi"])
 
 
+# Kata yang tidak dihitung sebagai kata nama pada tebakan pihak lawan bukti yang tak terbaca: HANYA kosakata label/status
+# (`LABEL_WORDS | _TITLE_EXTRA`), bukan seluruh `TITLE_WORDS` (kata penyedia/logo seperti "mega", "jago" bisa nama orang;
+# review M1b temuan 1). Dihitung di sini, tidak memakai `donasi._VOCAB_WORDS`.
+def _label_status_words() -> frozenset[str]:
+    from app.services.kotak_struk import kerangka
+    return kerangka.LABEL_WORDS | frozenset(kerangka._TITLE_EXTRA.split())
+
+
 def _known_name_words(lines, doc, user_name) -> set[str]:
     """Kata nama yang dikenal untuk satu bukti, dihitung terpisah dari `donasi`: pihak lawan (bukti yang tidak dibaca
-    pembaca QRIS/transfer: tanpa kata kosakata judul `kerangka.TITLE_WORDS`), pengirim tercetak, merchant berlabel, user.
-    Kata nama samaran (publik) tidak dihitung."""
+    pembaca QRIS/transfer: tebakan yang semua katanya `kerangka.TITLE_WORDS` bukan nama; selain itu semua kata kecuali
+    kosakata label/status), pengirim tercetak, merchant berlabel, user. Kata nama samaran (publik) tidak dihitung."""
     from app.services.kotak_struk import kerangka
     from app.services.kotak_struk.merchants import normalize_name
     from app.services.kotak_struk.readers import proof_common as pc
@@ -432,9 +440,13 @@ def _known_name_words(lines, doc, user_name) -> set[str]:
     party = doc.counterparty.name
     party_words = normalize_name(party).split()
     if doc.doc_type not in K.PROOF_TYPES:
-        party_words = [w for w in (party or "").split() if kerangka.words(w)
-                       and kerangka.words(w)[0] not in kerangka.TITLE_WORDS]
-        party_words = normalize_name(" ".join(party_words)).split()
+        raw = [kerangka.words(w)[0] for w in (party or "").split() if kerangka.words(w)]
+        if all(w in kerangka.TITLE_WORDS for w in raw):
+            party_words = []
+        else:
+            keep = [w for w in (party or "").split() if kerangka.words(w)
+                    and kerangka.words(w)[0] not in _label_status_words()]
+            party_words = normalize_name(" ".join(keep)).split()
     names = [pc.read_sender_name(clean, profile), pc.read_name(pc.body_lines(clean), profile, "merchant"), user_name]
     words = set(party_words) | {w for name in names for w in normalize_name(name).split()}
     return {w for w in words if sum(c.isalpha() for c in w) >= 2} - PSEUDONYM_WORDS
@@ -531,6 +543,57 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((doc.doc_type, doc.counterparty.name), ("struk_belanja", "Transfer Berhasil"))
         got = sample_lines(lines, doc, secrets, user_name=None)
         self.assertEqual(got, ["Transfer Berhasil", "Ke TOKO …7890", "Nominal Rp150.000", "Total Rp150.000"])
+
+    def test_known_name_helper_has_no_provider_exemption(self):
+        # Helper Review Focus 2 bukan tautologi: kata penyedia/logo yang juga nama orang TIDAK dikecualikan.
+        from app.services.kotak_struk import kerangka
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        provider_names = {"mega", "neo", "jago", "mandiri", "permata", "jenius", "blu", "allo"}
+        self.assertTrue(provider_names <= kerangka.TITLE_WORDS)
+        self.assertFalse(provider_names & _label_status_words())
+        doc = DokumenBayar(doc_type="struk_belanja", counterparty=Counterparty(name="Mega Lestari"))
+        self.assertEqual(_known_name_words(["MEGA LESTARI"], doc, None), {"mega", "lestari"})
+        doc = DokumenBayar(doc_type="struk_belanja", counterparty=Counterparty(name="Jago Neo"))
+        self.assertEqual(_known_name_words(["Jago Neo"], doc, None), set())   # semua kata judul: bukan nama
+
+    async def test_title_word_next_to_name_is_pseudonymised(self):
+        # Review M1b temuan 1: "Mega" (kata penyedia) di samping kata nama tetap disamarkan.
+        from app.services.kotak_struk.donasi import sample_lines
+        lines = ["MEGA LESTARI", "Transfer Berhasil", "Rp50.000", "Total Rp50.000"]
+        for proofs in (False, True):
+            doc, secrets = await self.read(lines, proofs, user_name=None)
+            got = sample_lines(lines, doc, secrets, user_name=None)
+            with self.subTest(proofs=proofs, doc_type=doc.doc_type, name=doc.counterparty.name):
+                self.assertTrue(got)
+                dumped = "\n".join(got).lower()
+                self.assertNotIn("mega", dumped)
+                self.assertNotIn("lestari", dumped)
+                self.assertIn("Transfer Berhasil", got)
+
+    async def test_sender_who_is_not_the_user_is_pseudonymised(self):
+        # Review M1b temuan 4: pengirim tercetak (bukan user) memakai nama samaran pengirim.
+        from app.services.kotak_struk.donasi import sample_lines
+        lines = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "RUDI HARTONO", "Jumlah Kirim Uang", "Rp10.000",
+                 "Tanggal 31 Okt 2026", "Sumber Dana", "DEWI LESTARI"]
+        doc, secrets = await self.read(lines, True, user_name=INVENTED_USER)
+        self.assertEqual(doc.doc_type, "transfer")
+        got = sample_lines(lines, doc, secrets, user_name=INVENTED_USER)
+        self.assertIn("SITI AMINAH", got)
+        self.assertIn("BUDI SANTOSO", got)
+        self.assertNotIn("dewi", "\n".join(got).lower())
+        self.assertNotIn("lestari", "\n".join(got).lower())
+
+    def test_email_and_grouped_account_lines_dropped(self):
+        # Review M1b temuan 2 dan 3 (M1d memakai aturan yang sama saat menyetujui).
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        from app.services.kotak_struk.donasi import sample_lines
+        doc = DokumenBayar(doc_type="transfer", counterparty=Counterparty(name=None))
+        lines = ["Transfer Berhasil", "Email fajar.nugroho88@contoh.co.id", "rinawulandari99@contoh.com",
+                 "Rek 1.234.567.890", "Rek 1-234-567-890 BCA", "Nominal Rp 1.234.567", "Total IDR 1.234.567.890,00",
+                 "Biaya 2.500", "1.500.000,00"]
+        self.assertEqual(sample_lines(lines, doc, Secrets(), user_name=None),
+                         ["Transfer Berhasil", "Rek …7890 BCA", "Nominal Rp 1.234.567", "Total IDR 1.234.567.890,00",
+                          "Biaya 2.500", "1.500.000,00"])
 
     def test_secret_and_long_digit_lines_dropped_and_capped(self):
         from app.services.kotak_struk.document import Counterparty, DokumenBayar

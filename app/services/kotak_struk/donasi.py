@@ -97,18 +97,33 @@ async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:
 
 _LONG_DIGITS = re.compile(r"\d{%d,}" % samaran.MIN_RUN_DIGITS)
 _NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+GROUPED_MIN_DIGITS = 10
+_GROUPED_NUMBER = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?![\d])")
+_AFTER_CURRENCY = re.compile(r"(?:rp|idr)\s*[.:]?\s*$", re.IGNORECASE)
+
+
+# Kata kosakata label/status/arah uang (bukan nama). Kata penyedia/logo/penanda aplikasi di `kerangka.TITLE_WORDS`
+# ("mega", "neo", "jago", "mandiri", "permata") sering juga nama orang, jadi tidak termasuk (review M1b temuan 1). Sisa
+# risiko: "dana" kata label ("Sumber Dana") sekaligus nama depan; nama itu di tebakan pembaca struk tidak disamarkan
+# otomatis, pemilik meninjaunya di Admin.
+_VOCAB_WORDS: frozenset[str] = kerangka.LABEL_WORDS | frozenset(kerangka._TITLE_EXTRA.split())
 
 
 def _party_name(doc: DokumenBayar) -> str | None:
     """Nama pihak lawan dokumen. Bukti yang tidak dibaca pembaca QRIS/transfer (struk belanja/tidak dikenali): "nama"-nya
     tebakan pembaca struk, sering judul status atau logo aplikasi ("Transfer Berhasil", "Bca Mobile"; worker membuangnya
-    dari Dokumen Bayar). Dari tebakan itu kata kosakata judul (`kerangka.TITLE_WORDS`: label, status, arah uang, nama
-    aplikasi/bank) bukan kata nama dan tidak disamarkan; kata lainnya ("Penerima Budi" -> "Budi") tetap."""
+    dari Dokumen Bayar). Tebakan yang SEMUA katanya kosakata judul (`kerangka.TITLE_WORDS`) bukan nama (None). Selain itu
+    hanya kata kosakata label/status (`_VOCAB_WORDS`) yang tidak disamarkan; kata lain, juga kata penyedia/logo,
+    disamarkan ("Penerima Budi" -> "Budi"; "Mega Lestari" -> kedua katanya)."""
     name = doc.counterparty.name
     if not name or doc.doc_type in PROOF_TYPES:
         return name
-    rest = [w for w in name.split() if kerangka.words(w) and kerangka.words(w)[0] not in kerangka.TITLE_WORDS]
-    return " ".join(rest) or None
+    words = [(w, kerangka.words(w)) for w in name.split()]
+    words = [(w, norm[0]) for w, norm in words if norm]
+    if all(norm in kerangka.TITLE_WORDS for _w, norm in words):
+        return None
+    return " ".join(w for w, norm in words if norm not in _VOCAB_WORDS) or None
 
 
 def _known_names(clean: list[str], doc: DokumenBayar, user_name: str | None) -> dict[str, str | None]:
@@ -123,10 +138,22 @@ def _known_names(clean: list[str], doc: DokumenBayar, user_name: str | None) -> 
             "user": user_name}
 
 
+def _grouped_account(line: str) -> bool:
+    """Ada nomor berkelompok ribuan >= GROUPED_MIN_DIGITS digit yang tidak langsung sesudah Rp/IDR ("Rek 1.234.567.890":
+    `mask_line` membiarkannya karena berbentuk nominal). "Rp 1.234.567" tetap."""
+    for m in _GROUPED_NUMBER.finditer(line):
+        if sum(c.isdigit() for c in m.group()) >= GROUPED_MIN_DIGITS and not _AFTER_CURRENCY.search(line[:m.start()]):
+            return True
+    return False
+
+
 def _holds_secret(line: str, secrets: Secrets) -> bool:
-    """Baris masih memuat nilai rahasia (nomor referensi, rekening, NMID di luar baris berlabel NMID) atau deret
-    >= 6 digit."""
-    if _LONG_DIGITS.search(line):
+    """Baris masih memuat nilai rahasia (nomor referensi, rekening, NMID di luar baris berlabel NMID), deret >= 6 digit,
+    alamat email, atau nomor berkelompok ribuan >= 10 digit di luar Rp/IDR (review M1b temuan 2, 3).
+
+    Dua aturan terakhir (email, nomor berkelompok) juga harus diterapkan pemeriksaan persetujuan Admin (M1d) pada baris
+    editan, bersama `\\d{6,}`."""
+    if _LONG_DIGITS.search(line) or _EMAIL.search(line) or _grouped_account(line):
         return True
     digits = re.sub(r"\D", "", line)
     values = [*secrets.ref_values, secrets.account_number]
