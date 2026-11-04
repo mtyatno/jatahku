@@ -157,6 +157,9 @@ Antrean persetujuan — **v1 (R5)**, ADR-P18. Draf disimpan terpisah (`ruang_dra
 // → 202 {"draf_id", "kode": "perlu_persetujuan", "status": "menunggu", "detail": "Batas catatanmu Rp1.000.000. …"}
 //   bukan 201; klien menampilkan "Menunggu persetujuan". Kirim ulang client_ref yang sama → 202 draf yang sama;
 //   sesudah disetujui → 201 transaksi hasil persetujuan (client_ref yang sama dipakai saat dicatat).
+//   Satu client_ref = satu catatan (R7, review keamanan #191): kiriman ulang hanya menjawab transaksi/draf lama bila
+//   ruang, jenis, dan amplopnya sama; ref yang sudah dipakai catatan lain → 409 `client_ref_bentrok` (di batch: per
+//   baris), tidak pernah jawaban catatan ruang lain.
 // POST /transactions/batch: baris di atas batas → {"ok": false, "kode": "perlu_persetujuan", "draf_id", "error": "…"};
 //   baris yang ditolak batasan → {"ok": false, "kode": "<kode §7>", "error": "…"} (field kode, draf_id baru, aditif)
 // GET  /ruang/{id}/persetujuan → [{"id", "pencatat", "pencatat_id", "jenis", "jumlah", "keterangan", "amplop_id",
@@ -183,6 +186,7 @@ semua anggota ruang itu (sesudah kata user sendiri, §3). Hanya ruang usaha; atu
 // `total` = semua kata di ruang ini sebelum q dan limit. Kata frasa ("kardus besar") ikut sebagai baris sendiri.
 // DELETE /ruang/{id}/kamus/{kamus_id} → 204. Kata ruang lain → 404. Ikut menghapus kata user (`user_envelope_keywords`)
 //   yang sama untuk amplop itu milik semua anggota, supaya pengajarnya juga tidak mendapat tebakan itu lagi.
+//   Termasuk frasa user yang sama sesudah nominal/satuan dibuang ("kardus besar pcs" untuk kata "kardus besar").
 //   Log ruang: `kata_dihapus` {"kata", "envelope_id", "amplop"}.
 ```
 
@@ -227,8 +231,10 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
   "envelope_id": "…", "envelope_name": "Operasional", "confident": true,          // field lama, tetap
   "sumber": {"jenis": "kamus_ruang", "kali": 4, "diajarkan_oleh": "Bagas", "oleh_saya": false} | null,
   //   jenis: kata_saya | kamus_ruang | kamus_plugin (titik `nlp_kamus`, H2) | kamus_kategori | nama_amplop (U5 menambah kontak)
-  //   kali: kata_saya dan kamus_ruang; diajarkan_oleh/oleh_saya: hanya kamus_ruang (nama null bila pengajarnya
-  //   pemanggil sendiri atau akunnya terhapus)
+  //   kali: kata_saya dan kamus_ruang = hitungan kata yang cocok yang paling sering diajarkan (≈ jumlah catatan);
+  //   diajarkan_oleh/oleh_saya: hanya kamus_ruang (nama null bila pengajarnya pemanggil sendiri atau akunnya terhapus).
+  //   Karyawan: kamus_ruang hanya {"jenis": "kamus_ruang"} tanpa kali, diajarkan_oleh, oleh_saya (review keamanan
+  //   #191 temuan 2, keputusan pemilik produk 5 Nov), supaya saran tidak bisa dipakai menebak catatan anggota lain.
   "aturan": [{"kode": "foto_nota", "teks": "Wajib foto nota di atas Rp300.000."},
              {"kode": "persetujuan", "teks": "Di atas batasmu Rp1.000.000: menunggu persetujuan admin."}]
   //   batasan karyawan untuk `amount` (kosong untuk owner/admin, ruang keluarga, atau tanpa amount); juga dijawab
@@ -236,6 +242,8 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
   // U5 (v0): "jenis_catatan": "pengeluaran" | "penjualan" | …, "kontak": {"id", "nama", "peran"} | null
 }
 // POST /transactions/suggest-envelopes {"descriptions": [...]} → results[] dengan field lama + "sumber": {"jenis"} | null
+// Batas (R7, review keamanan #191): description ≤ 500 huruf, descriptions ≤ 100 item (lebih → 422); per user
+// suggest-envelope 60/menit dan suggest-envelopes 20/menit (lebih → 429), termasuk permintaan tanpa header.
 ```
 
 Urutan cocok (`txn_nlp.cari_amplop`): kata yang dipelajari user sendiri (amplop di ruang ini) → kamus ruang (hanya bila
@@ -513,6 +521,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |
 | `perlu_persetujuan` | 202 | Di atas `batas_nominal`; draf dibuat, belum menjadi transaksi |
+| `client_ref_bentrok` | 409 / per baris | `client_ref` sudah dipakai catatan lain (ruang, jenis, atau amplop berbeda); tidak ada yang dicatat (R7, review keamanan #191) |
 | `jendela_ubah_lewat` | 403 | Mengubah atau menghapus catatan di luar jendela |
 | `butuh_paket_usaha` | 402 | Ruang usaha tanpa hak Paket Usaha (ADR-P13) |
 | `plugin_tidak_aktif` | 404 | Plugin tidak terpasang atau dijeda di ruang ini |
