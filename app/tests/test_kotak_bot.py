@@ -364,7 +364,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_ready_proof_buttons(self):
         await self.send_photo(detail=DETAIL_QRIS)
         item_id = DETAIL_QRIS["id"]
-        self.assertEqual(datas(self.keyboard())[-3:], [f"kn_{self.key}", f"kx_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual(datas(self.keyboard())[-3:], [f"kn_{self.key}", f"kx_{item_id}_c{self.key}", f"struk_no_{item_id}"])
         self.assertEqual(self.button_texts()[:2], ["⭐ 🍜 Makan", "🛒 Jajan"])   # tabungan tidak ditawarkan
         self.assertNotIn("🐷 Tabungan", self.button_texts())
         self.assertEqual(self.button_texts()[-2:], ["🚫 Bukan pengeluaran", "❌ Batal"])
@@ -650,7 +650,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         key, item_id = self.date_key(), DETAIL_QRIS["id"]
         self.assertEqual([[b.text for b in row] for row in self.keyboard()],
                          [["📅 Hari ini (28 Okt)", "📅 26 Okt"], ["🚫 Bukan pengeluaran", "❌ Batal"]])
-        self.assertEqual(datas(self.keyboard()), [f"kt_{key}_h", f"kt_{key}_d", f"kx_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual(datas(self.keyboard()), [f"kt_{key}_h", f"kt_{key}_d", f"kx_{item_id}_c{key}", f"struk_no_{item_id}"])
         self.assertEqual(self.payload(key)["date"], "2026-10-26")
 
     async def test_document_date_answer_marks_the_payload_past_period(self):
@@ -663,7 +663,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
                          "\n\nMasuk ke amplop mana?")
         rows = keyboard_of(query.edit_message_text.call_args)
         self.assertEqual(rows[0][0].text, "⭐ 🍜 Makan")
-        self.assertEqual(datas(rows), [f"t_{key}_0", f"t_{key}_1", f"kn_{key}", f"kx_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual(datas(rows), [f"t_{key}_0", f"t_{key}_1", f"kn_{key}", f"kx_{item_id}_c{key}", f"struk_no_{item_id}"])
         payload = self.payload(key)
         self.assertEqual((payload["date"], payload["past_period"], payload["date_answered"]), ("2026-10-26", True, True))
 
@@ -675,7 +675,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         query = await self.press(f"ko_{key}")   # "Tetap catat"
         self.assertTrue(query.edit_message_text.call_args.args[0].endswith("\n\n" + QUESTION_PROOF))
         self.assertEqual(datas(keyboard_of(query.edit_message_text.call_args)),
-                         [f"kt_{key}_h", f"kt_{key}_d", f"kx_{DETAIL_QRIS['id']}", f"struk_no_{DETAIL_QRIS['id']}"])
+                         [f"kt_{key}_h", f"kt_{key}_d", f"kx_{DETAIL_QRIS['id']}_c{key}", f"struk_no_{DETAIL_QRIS['id']}"])
 
     async def test_note_keeps_the_date_question_until_answered_and_the_answer_afterwards(self):
         self.owner_payday()
@@ -1536,7 +1536,72 @@ class KotakBotDbTests(TxnBase):
         await self.ask_note()
         await self.tap(f"kx_{self.items[-1]}_m")
         self.assertEqual((await self.get(self.items[-1])).status, "dilewati")
+        self.assertNotIn("kotak:note:42", self.redis.store)   # melewati menghapus catatan yang ditunggu
         await self.assert_typing_reaches_nlp()
+
+    async def test_note_pending_survives_the_reason_choice_and_back(self):
+        """Review M3c temuan 1: "✏️ Tambah catatan" → "🚫 Bukan pengeluaran" → Kembali → ketikan = catatan bukti (pesan
+        diedit dengan 📝), bukan transaksi NLP; bukti tetap `siap`."""
+        await self.ask_note()
+        item_id = self.items[-1]
+        await self.tap(self.button("Bukan pengeluaran"))
+        self.assertIn("kotak:note:42", self.redis.store)
+        back = (await self.tap(f"kx_{item_id}_k{self.button('Makan').split('_')[1]}")).edit_message_text.call_args
+        self.assertIn("kotak:note:42", self.redis.store)
+        makan = next(b.callback_data for row in keyboard_of(back) for b in row if "Makan" in b.text)
+        message = await self.type_text("makan siang tim")
+        message.reply_text.assert_not_awaited()   # bukan NLP
+        self.assertIn("📝 makan siang tim", self.bot.edit_message_text.call_args.args[0])
+        self.assertEqual(((await self.get(item_id)).status, await self.txns()), ("siap", []))
+        await self.tap(makan)
+        [txn] = await self.txns()
+        self.assertIn("makan siang tim", txn.description)
+
+    async def test_note_pending_while_the_choice_is_open_edits_it_back(self):
+        """Catatan diketik selagi pilihan alasan terbuka: pesan itu kembali ke tombol amplop dengan catatannya."""
+        await self.ask_note()
+        item_id = self.items[-1]
+        await self.tap(self.button("Bukan pengeluaran"))
+        message = await self.type_text("bensin motor")
+        message.reply_text.assert_not_awaited()
+        call = self.bot.edit_message_text.call_args
+        self.assertIn("📝 bensin motor", call.args[0])
+        self.assertTrue([d for d in datas(keyboard_of(call)) if d.startswith("t_")])
+        self.assertEqual(((await self.get(item_id)).status, await self.txns()), ("siap", []))
+
+    async def test_saved_note_survives_back_from_the_reason_choice(self):
+        """Review M3c temuan 2: catatan yang sudah tersimpan (📝) tetap ada sesudah pilihan alasan → Kembali, dan
+        tombol amplopnya mencatat dengan catatan itu."""
+        await self.ask_note()
+        item_id = self.items[-1]
+        await self.type_text("makan siang tim")
+        noted = self.bot.edit_message_text.call_args
+        ask = next(b.callback_data for row in keyboard_of(noted) for b in row if "Bukan pengeluaran" in b.text)
+        reasons = (await self.tap(ask)).edit_message_text.call_args
+        back_data = next(b.callback_data for row in keyboard_of(reasons) for b in row if b.text == "↩️ Kembali")
+        back = (await self.tap(back_data)).edit_message_text.call_args
+        self.assertEqual(back.args[0], noted.args[0])
+        self.assertIn("📝 makan siang tim", back.args[0])
+        makan = next(b.callback_data for row in keyboard_of(back) for b in row if "Makan" in b.text)
+        await self.tap(makan)
+        [txn] = await self.txns()
+        self.assertIn("makan siang tim", txn.description)
+        self.assertEqual((await self.get(item_id)).status, "tercatat")
+
+    async def test_back_with_a_foreign_or_missing_session_starts_a_new_one(self):
+        """Kembali dengan kunci sesi milik bukti lain, rusak, atau sudah habis: sesi baru tanpa catatan, tidak galat."""
+        await self.ask_note()
+        await self.type_text("catatan bukti pertama")
+        first_key = self.button("Makan").split("_")[1]
+        other = await self.ready_qris()
+        for key in (first_key, "deadbeef"):
+            with self.subTest(key=key):
+                back = (await self.tap(f"kx_{other.id}_k{key}")).edit_message_text.call_args
+                self.assertNotIn("📝", back.args[0])
+                keys = {d.split("_")[1] for d in datas(keyboard_of(back)) if d.startswith("t_")}
+                self.assertNotIn(first_key, keys)
+                self.assertEqual(len(keys), 1)
+        self.assertEqual((await self.get(other.id)).status, "siap")
 
     async def test_note_pending_then_recorded_typing_goes_to_nlp(self):
         await self.ask_note()
@@ -2598,26 +2663,33 @@ class KotakBotDbTests(TxnBase):
         await self.send()
         item_id = self.items[-1]
         first_text, first_rows = self.texts()[-1], self.reason_rows(self.status.edit_text.call_args)
-        self.assertIn(("🚫 Bukan pengeluaran", f"kx_{item_id}"), first_rows[-1])
-        query = await self.tap(f"kx_{item_id}")
+        key = self.button("Makan").split("_")[1]
+        self.assertIn(("🚫 Bukan pengeluaran", f"kx_{item_id}_c{key}"), first_rows[-1])   # membawa sesi tombol
+        query = await self.tap(self.button("Bukan pengeluaran"))
         call = query.edit_message_text.call_args
         self.assertEqual(call.args[0], "Kenapa bukan pengeluaran?")
         rows = self.reason_rows(call)
         self.assertEqual([[t for t, _ in row] for row in rows], self.REASON_ROWS)
         self.assertEqual([d for row in rows for _, d in row],
-                         [f"kx_{item_id}_{s}" for s in ("t", "m", "s", "l", "k")])
+                         [f"kx_{item_id}_{s}" for s in ("t", "m", "s", "l", f"k{key}")])
         self.assertTrue(all(len(d.encode()) <= 64 for row in rows for _, d in row))
         self.assertEqual(((await self.get(item_id)).status, await self.votes()), ("siap", []))   # belum dilewati
-        # Akhiran tidak dikenal → pertanyaan yang sama, tanpa melewati.
-        for data in (f"kx_{item_id}_x", f"kx_{item_id}_tt", f"kx_{item_id}_", f"kx_{item_id}_Y"):
+        # Tombol lama `kx_{id}` dan akhiran tidak dikenal → pertanyaan yang sama tanpa sesi (Kembali `_k`), tanpa melewati.
+        plain = [[(t, d.replace(f"_k{key}", "_k")) for t, d in row] for row in rows]
+        for data in (f"kx_{item_id}", f"kx_{item_id}_x", f"kx_{item_id}_tt", f"kx_{item_id}_", f"kx_{item_id}_Y",
+                     f"kx_{item_id}_cZZ", f"kx_{item_id}_kzz"):
             with self.subTest(data=data):
                 again = (await self.tap(data)).edit_message_text.call_args
-                self.assertEqual((again.args[0], self.reason_rows(again)), (call.args[0], rows))
+                self.assertEqual((again.args[0], self.reason_rows(again)), (call.args[0], plain))
         self.assertEqual((await self.get(item_id)).status, "siap")
-        # Kembali: pesan amplop dirender ulang (teks dan bentuk tombol sama, sesi tombol baru), tombolnya masih mencatat.
-        back = (await self.tap(f"kx_{item_id}_k")).edit_message_text.call_args
+        # Kembali: pesan amplop yang sama dengan sesi tombol yang sama; tombolnya masih mencatat.
+        back = (await self.tap(f"kx_{item_id}_k{key}")).edit_message_text.call_args
         self.assertEqual(back.args[0], first_text)
-        self.assertEqual([[t for t, _ in row] for row in self.reason_rows(back)],
+        self.assertEqual(self.reason_rows(back), first_rows)
+        # Kembali tanpa sesi (tombol pertanyaan lama): pesan sama, sesi baru.
+        fresh = (await self.tap(f"kx_{item_id}_k")).edit_message_text.call_args
+        self.assertEqual(fresh.args[0], first_text)
+        self.assertEqual([[t for t, _ in row] for row in self.reason_rows(fresh)],
                          [[t for t, _ in row] for row in first_rows])
         makan = next(d for row in self.reason_rows(back) for t, d in row if "Makan" in t)
         await self.tap(makan)
@@ -2767,7 +2839,7 @@ class KotakBotDbTests(TxnBase):
         item_id = self.items[-1]
         msg_id, reading = ops[0]["id"], ops[-1]
         ask = next(b["data"] for row in reading["buttons"] for b in row if b["text"] == "🚫 Bukan pengeluaran")
-        self.assertEqual(ask, f"kx_{item_id}")
+        self.assertTrue(ask.startswith(f"kx_{item_id}_c"), ask)
         [edit] = await web_adapter.run_action(user, msg_id, ask)
         self.assertEqual((edit["type"], edit["text"]), ("edit", "Kenapa bukan pengeluaran?"))
         self.assertEqual([b["text"] for row in edit["buttons"] for b in row],

@@ -37,10 +37,11 @@ baris kedua. Ketukannya mengedit pesan menjadi pertanyaan "Logo di bukti: {flags
 "↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `belajar.learn_app_choice` (satu suara per item,
 tidak mencatat dan tidak mengubah status) lalu pesan hasil dirender ulang tanpa tombol aplikasi; tombol amplop tetap.
 
-"Bukan pengeluaran" dua langkah (tahap 2 M3c, pre-flight K11): "🚫 Bukan pengeluaran" (`kx_{item_id}`) mengedit pesan
-menjadi "Kenapa bukan pengeluaran?" dengan "Top-up saldo sendiri" (`kx_{item_id}_t`), "Uang masuk" (`_m`), "Ke
-rekening sendiri" (`_s`), "Lainnya" (`_l`, lewati tanpa alasan = perilaku lama) dan "↩️ Kembali" (`_k`, tombol amplop
-dirender ulang); arah uang item (saran) di urutan pertama. "Oke, lewati" pada tawaran lewati = `kx_{item_id}_y`: satu
+"Bukan pengeluaran" dua langkah (tahap 2 M3c, pre-flight K11): "🚫 Bukan pengeluaran" (`kx_{item_id}_c{key}`, kunci
+sesi tombol amplop) mengedit pesan menjadi "Kenapa bukan pengeluaran?" dengan "Top-up saldo sendiri" (`kx_{item_id}_t`),
+"Uang masuk" (`_m`), "Ke rekening sendiri" (`_s`), "Lainnya" (`_l`, lewati tanpa alasan = perilaku lama) dan
+"↩️ Kembali" (`_k{key}`, tombol amplop sesi yang sama dirender ulang, catatan 📝 tetap); arah uang item (saran) di
+urutan pertama. Catatan yang ditunggu ("✏️ Tambah catatan") hanya dihapus saat benar-benar melewati. "Oke, lewati" pada tawaran lewati = `kx_{item_id}_y`: satu
 ketukan, alasan = arah uang item (sama dengan bacaan, jadi tanpa suara, K14). Akhiran lain dan tombol `kx_{item_id}`
 dari pesan sebelum M3c membuka pilihan. Lewati = `record.skip_item(..., alasan=...)` (suara `arah` hanya bila alasan
 berbeda dengan arah terbaca; galatnya tidak pernah menggagalkan lewati). `kd_` ("Sama, lewati") tidak berubah.
@@ -127,15 +128,18 @@ APP_OTHER = "n"
 APP_BACK = "k"
 APP_PER_ROW = 3
 
-# "Bukan pengeluaran" dua langkah (Task M3c, K11): `kx_{item_id}` (pertanyaan), `kx_{item_id}_{t|m|s}` (alasan),
-# `kx_{item_id}_l` (Lainnya: tanpa alasan), `kx_{item_id}_y` (tawaran: alasan = arah item), `kx_{item_id}_k` (Kembali).
-# Paling panjang 3 + 36 + 2 = 41 <= 64.
+# "Bukan pengeluaran" dua langkah (Task M3c, K11): `kx_{item_id}_c{key}` (pertanyaan, dari tombol amplop sesi `key`;
+# `kx_{item_id}` dari pesan lama), `kx_{item_id}_{t|m|s}` (alasan), `kx_{item_id}_l` (Lainnya: tanpa alasan),
+# `kx_{item_id}_y` (tawaran: alasan = arah item), `kx_{item_id}_k{key}` (Kembali ke sesi tombol `key`, catatannya
+# tetap; `kx_{item_id}_k` tanpa sesi). Paling panjang 3 + 36 + 2 + 8 = 49 <= 64.
 ASK_SKIP_REASON = "Kenapa bukan pengeluaran?"
 SKIP_REASONS = (("t", "top_up", "Top-up saldo sendiri"), ("m", "masuk", "Uang masuk"),
                 ("s", "antar_rekening_sendiri", "Ke rekening sendiri"))
 SKIP_OTHER = "l"
 SKIP_OFFERED = "y"
 SKIP_BACK = "k"
+SKIP_ASK = "c"
+_SESSION_KEY = re.compile(r"[0-9a-f]{4,16}")   # `secrets.token_hex(4)`: kunci sesi tombol `txn:{key}`
 SKIP_PER_ROW = 2
 MSG_CANNOT_SKIP = f"⚠️ {record.MSG_CANNOT_SKIP}."
 
@@ -426,12 +430,14 @@ async def forget_note(tg_user_id) -> bool:
 
 # ── pesan hasil ─────────────────────────────────────────────────────────────
 
-def _second_row(payload: dict) -> list:
+def _second_row(payload: dict, key: str | None = None) -> list:
     """Baris tombol di bawah amplop (atau pertanyaan tanggal): bukti "Bukan pengeluaran" + "Batal", struk "Nominal
-    salah" + "Batal"."""
+    salah" + "Batal". "Bukan pengeluaran" membawa kunci sesi tombol (`kx_{item_id}_c{key}`) supaya Kembali dari
+    pilihan alasan kembali ke sesi yang sama (catatan tetap)."""
     if payload.get("kind") == "proof":
         item_id = payload["item_id"]
-        return [InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=f"kx_{item_id}"),   # pilihan alasan (M3c)
+        ask = f"kx_{item_id}_{SKIP_ASK}{key}" if key else f"kx_{item_id}"
+        return [InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=ask),   # pilihan alasan (M3c)
                 InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{item_id}")]
     scan_id = payload["scan_id"]
     return [InlineKeyboardButton("✏️ Nominal salah", callback_data=f"struk_fix_{scan_id}"),
@@ -467,7 +473,7 @@ def _envelope_reply(key: str, payload: dict, reading: str, labels: list[str],
     rows = [[InlineKeyboardButton(label, callback_data=f"t_{key}_{i}")] for i, label in enumerate(labels)]
     if proof:
         rows.append([InlineKeyboardButton("✏️ Tambah catatan", callback_data=f"kn_{key}")])
-    rows.append(_second_row(payload))
+    rows.append(_second_row(payload, key))
     return f"{reading}\n\n{ASK_ENVELOPE}", InlineKeyboardMarkup(rows)
 
 
@@ -479,7 +485,7 @@ def _date_question(key: str, payload: dict, reading: str, doc_day: date, today: 
     ask = ASK_DATE.format(noun=noun, doc=short_date(doc_day, today), period=period_label(*period, today))
     rows = [[InlineKeyboardButton(BTN_DATE_TODAY.format(day=short_date(today, today)), callback_data=f"kt_{key}_h"),
              InlineKeyboardButton(BTN_DATE_DOC.format(day=short_date(doc_day, today)), callback_data=f"kt_{key}_d")],
-            _second_row(payload)]
+            _second_row(payload, key)]
     return f"{reading}\n\n{ask}", InlineKeyboardMarkup(rows)
 
 
@@ -880,14 +886,15 @@ async def handle_kotak_callback(update, context):
     "Sedang diproses..."."""
     query = update.callback_query
     action, _, arg = (query.data or "").partition("_")
-    lock = await _txn_lock(arg) if action == "ko" else None
+    session = arg if action == "ko" else _back_key(arg) if action == "kx" else None   # Kembali `kx_` juga menulis ulang
+    lock = await _txn_lock(session) if session else None
     if lock is False:
         await query.answer("Sedang diproses...")
         return
     try:
         await _kotak_action(update, query, action, arg)
     finally:
-        await _txn_unlock(arg, lock)
+        await _txn_unlock(session, lock)
 
 
 async def _kotak_action(update, query, action: str, arg: str) -> None:
@@ -900,8 +907,7 @@ async def _kotak_action(update, query, action: str, arg: str) -> None:
         await _app_action(query, tg_user, arg)
         return
 
-    if action == "kx":
-        await forget_note(tg_user.id)
+    if action == "kx":   # catatan yang ditunggu dihapus hanya saat benar-benar melewati (`_skip_action`)
         await _skip_action(query, tg_user, arg)
         return
 
@@ -955,24 +961,38 @@ def _skip_alasan(suffix: str, item) -> tuple[bool, str | None]:
     return False, None
 
 
-def _skip_question(item) -> tuple[str, InlineKeyboardMarkup]:
+def _session_of(suffix: str, code: str) -> str | None:
+    """Kunci sesi tombol di akhiran `{code}{key}` (`c{key}` pertanyaan, `k{key}` Kembali), None bila tidak ada/rusak."""
+    rest = suffix[len(code):] if suffix.startswith(code) else ""
+    return rest if _SESSION_KEY.fullmatch(rest) else None
+
+
+def _back_key(arg: str) -> str | None:
+    """Kunci sesi Kembali `kx_{item_id}_k{key}` (dikunci seperti "Tetap catat" karena menulis ulang `txn:{key}`)."""
+    return _session_of(arg.partition("_")[2], SKIP_BACK)
+
+
+def _skip_question(item, key: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
     """"Kenapa bukan pengeluaran?": tiga alasan (arah uang item, bila salah satunya, di urutan pertama) + "Lainnya",
-    lalu "↩️ Kembali"."""
+    lalu "↩️ Kembali" (membawa kunci sesi tombol asal bila ada)."""
     flow = (item.document or {}).get("flow") if isinstance(item.document, dict) else None
     reasons = sorted(SKIP_REASONS, key=lambda r: r[1] != flow)
     buttons = [InlineKeyboardButton(label, callback_data=f"kx_{item.id}_{code}") for code, _, label in reasons]
     buttons.append(InlineKeyboardButton("Lainnya", callback_data=f"kx_{item.id}_{SKIP_OTHER}"))
     rows = [buttons[i:i + SKIP_PER_ROW] for i in range(0, len(buttons), SKIP_PER_ROW)]
-    rows.append([InlineKeyboardButton("↩️ Kembali", callback_data=f"kx_{item.id}_{SKIP_BACK}")])
+    rows.append([InlineKeyboardButton("↩️ Kembali", callback_data=f"kx_{item.id}_{SKIP_BACK}{key or ''}")])
     return ASK_SKIP_REASON, InlineKeyboardMarkup(rows)
 
 
 async def _skip_action(query, tg_user, arg: str) -> None:
-    """`kx_{item_id}` (dan akhiran tidak dikenal) → pertanyaan alasan (`_skip_question`); `kx_{item_id}_{t|m|s|l|y}` →
-    `record.skip_item(..., "bukan_pengeluaran", alasan=...)` → MSG_SKIPPED; `kx_{item_id}_k` → pesan amplop dirender
-    ulang (`_result_reply` ready: user datang dari tombol amplop). Item milik user ini yang tidak bisa dilewati lagi
-    (tercatat, dilewati, kedaluwarsa di tempat lain) → MSG_CANNOT_SKIP + pesan hasil saat ini (tombol amplop bila
-    masih `siap`), Kembali tanpa peringatan. Item milik user lain / tidak ada / id rusak → MSG_CANNOT_SKIP tanpa
+    """`kx_{item_id}[_c{key}]` (dan akhiran tidak dikenal) → pertanyaan alasan (`_skip_question`);
+    `kx_{item_id}_{t|m|s|l|y}` → catatan yang ditunggu dihapus (`forget_note`), lalu `record.skip_item(...,
+    "bukan_pengeluaran", alasan=...)` → MSG_SKIPPED; `kx_{item_id}_k[{key}]` → pesan amplop dirender ulang
+    (`_result_reply` ready: user datang dari tombol amplop) dengan sesi tombol `key` dan catatannya bila payload-nya
+    masih ada dan milik item ini, selain itu sesi baru. Membuka pilihan dan Kembali tidak menyentuh catatan yang
+    ditunggu: ketikannya tetap menjadi catatan (`capture_note` mengedit pesan ini kembali ke tombol amplop). Item
+    milik user ini yang tidak bisa dilewati lagi (tercatat, dilewati, kedaluwarsa di tempat lain) → MSG_CANNOT_SKIP +
+    pesan hasil saat ini (tombol amplop bila masih `siap`), Kembali tanpa peringatan. Item milik user lain / tidak ada / id rusak → MSG_CANNOT_SKIP tanpa
     tombol. Tidak pernah mencatat; lewati hanya lewat `skip_item` (satu UPDATE bersyarat)."""
     from app.bot.handlers import get_or_create_user
 
@@ -982,21 +1002,31 @@ async def _skip_action(query, tg_user, arg: str) -> None:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         item = await _own_item(db, _uuid(raw_id), user)
         now, alasan = _skip_alasan(suffix, item) if item is not None else (False, None)
+        back = suffix == SKIP_BACK or _session_of(suffix, SKIP_BACK) is not None
         if item is None:
             pass
-        elif suffix == SKIP_BACK:
-            text, markup = await _result_reply(db, user, item, ready=True)
+        elif back:
+            key = _session_of(suffix, SKIP_BACK)
+            try:
+                payload = await _load_payload(key) if key else None
+            except Exception:   # Redis mati: sesi baru, seperti tanpa kunci
+                payload = None
+            if payload is None or payload.get("item_id") != str(item.id):
+                key, payload = None, {}
+            text, markup = await _result_reply(db, user, item, key=key, note=payload.get("note"), ready=True)
         elif item.status not in (ST_SIAP, ST_GAGAL):
             text, markup = await _result_reply(db, user, item)
             text = f"{MSG_CANNOT_SKIP}\n\n{text}"
         elif not now:
-            text, markup = _skip_question(item)
-        elif await record.skip_item(db, item.id, user.id, "bukan_pengeluaran", alasan=alasan):
-            text = MSG_SKIPPED
-        else:   # kalah dari pencatatan/lewati di tempat lain di antara baca dan UPDATE
-            await db.refresh(item)
-            text, markup = await _result_reply(db, user, item)
-            text = f"{MSG_CANNOT_SKIP}\n\n{text}"
+            text, markup = _skip_question(item, _session_of(suffix, SKIP_ASK))
+        else:
+            await forget_note(tg_user.id)   # melewati: ketikan berikutnya bukan catatan lagi
+            if await record.skip_item(db, item.id, user.id, "bukan_pengeluaran", alasan=alasan):
+                text = MSG_SKIPPED
+            else:   # kalah dari pencatatan/lewati di tempat lain di antara baca dan UPDATE
+                await db.refresh(item)
+                text, markup = await _result_reply(db, user, item)
+                text = f"{MSG_CANNOT_SKIP}\n\n{text}"
     await query.edit_message_text(text, reply_markup=markup)
 
 
