@@ -27,6 +27,14 @@
   dijalankan ulang setelah deploy. Insiden serupa: `c5e9a2d7f4b1`.
 - **Aturan:** migrasi dijalankan **setelah** deploy menarik kode (lihat
   "Urutan merge PR bermigrasi" di bagian Deploy Script), bukan sebelum merge.
+- **Produksi berjalan dengan `APP_ENV=development` (ditemukan 2026-11-05).**
+  `/opt/jatahku/.env` berisi `APP_ENV=development`, jadi engine SQLAlchemy berjalan dengan
+  `echo=True`: setiap query beserta parameternya (email saat login, keterangan transaksi,
+  isi laporan) tercatat di journal, dan `/docs` serta `/redoc` terbuka untuk umum.
+  Diperbaiki dengan `APP_ENV=production` lalu restart.
+- **Aturan:** `.env` produksi harus `APP_ENV=production` (nilai bawaan kode). Cek:
+  `sudo grep -n '^APP_ENV' /opt/jatahku/.env` dan
+  `curl -s -o /dev/null -w "%{http_code}\n" https://api.jatahku.com/docs` → `404`.
 
 ## Git & File Management
 - **NEVER use `git add -A`** — always stage specific files with `git add file1 file2 ...`
@@ -569,7 +577,7 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
    urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
-## Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)
+## Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d) — sudah jalan 2026-11-05
 Branch `feat/laporan-berkala` (label `migrasi`): tabel `reports` dan `report_settings`, kolom `users.email_verified_at`,
 job `laporan_job` (tiap jam menit 30), API `/laporan*` dan `/user/laporan-pengaturan`, halaman `/laporan`, Pengaturan →
 Laporan, dan tombol top bar "Ekspor". Migrasi **idempoten**: `lifespan` (`create_all` + `LAPORAN_DDL`) membuat tabel dan

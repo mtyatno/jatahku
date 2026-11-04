@@ -1,5 +1,7 @@
 # Laporan berkala tahap 1 (inti) — Implementation Plan
 
+**Status:** selesai; tayang 5 Nov 2026 (PR #190, squash `56ddf74`, migrasi `967a27d0c15d`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Laporan bulanan beku per user terbit otomatis di hari gajian, bisa dibaca di halaman desktop, layar ringkas HP,
