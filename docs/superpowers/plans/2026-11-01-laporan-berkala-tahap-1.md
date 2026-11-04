@@ -589,3 +589,9 @@ eksekusi". Revisi alembic akhirnya `967a27d0c15d` dengan parent `e7b3d5a9c1f4` (
   RecursionError `decode_token` diperbaiki di branch keamanan terpisah, tayang lebih dulu sebagai #187; branch fitur
   mengambil sisi main saat menggabungkannya.
 - **R13**: trailer commit di branch keamanan dibiarkan; main menerima satu commit squash dengan trailer sesi.
+- **R14**: karyawan ruang usaha (Plugin R6) tetap boleh membuka `/laporan` dan `/laporan/:id` (tautan notifikasi);
+  endpoint laporan tidak membaca ruang aktif. Menu karyawan tidak berubah (`ruteBoleh`, `RUTE_PRIBADI`).
+- **R15**: baris laporan yang memuat nama/teks pencatat membawa `pencatat_id`; hapus akun menganonimkan baris itu di
+  laporan milik user lain, gabung akun mengalihkannya ke akun target (`app/services/laporan/pencatat.py`).
+- **R16**: sapu notifikasi tanpa lonceng ganda, WARNING snapshot hilang di hari terakhir jendela, arsip `/laporan`
+  "Tampilkan lebih banyak", tautan "Lihat laporan" di Pengaturan, kunci React, regex "Ekspor", perintah checklist.

@@ -35,7 +35,7 @@ yang berlaku.
 
 ## Penyesuaian saat eksekusi (1–4 Nov 2026)
 
-Review per tugas menghasilkan keputusan berikut ("ruling" di catatan eksekusi; daftar lengkap R1–R13 di lampiran
+Review per tugas menghasilkan keputusan berikut ("ruling" di catatan eksekusi; daftar lengkap R1–R16 di lampiran
 rencana; R15 dan R16 dari review akhir seluruh branch). Yang di sini mengubah perilaku dari bagian di bawah atau dari
 rencana, dan diuji di tugasnya.
 
@@ -65,6 +65,9 @@ rencana, dan diuji di tugasnya.
   dari access token yang sah, `kunci_per_user` di `app/core/rate_limit.py`; selainnya alamat IP), bukan hash teks header
   Authorization, yang bisa diakali dengan menulis ulang header atau login ulang. Kunci yang sama dipasang untuk
   `/transactions/transcribe` dan chat web lewat PR keamanan terpisah (#187) sebelum fitur ini.
+- **R14, karyawan ruang usaha** (bagian 6): `/laporan` dan `/laporan/:id` tetap terbuka saat ruang usaha aktif dan
+  user berperan karyawan (Plugin R6 mengalihkan halaman lain ke Beranda), supaya tautan notifikasi laporan berfungsi;
+  endpoint laporan tidak membaca ruang aktif. Menu karyawan tidak berubah.
 - **R15, anggota yang menghapus akun di laporan beku** (bagian 2c, 2e, 8): baris `data` yang memuat nama atau teks
   seorang pencatat (`terbesar[]`, `langganan.terbayar[]`, `mutasi[]`) membawa `pencatat_id` (id user, tambahan di versi
   1; `versi` tetap 1), tidak pernah ditampilkan. Hapus akun menulis ulang persis baris yang `pencatat_id`-nya akun itu di
