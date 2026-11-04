@@ -18,7 +18,7 @@ const STATUS = {
   aman: { label: 'Aman', kelas: 'text-brand-600 bg-brand-50' },
   hampir_habis: { label: 'Hampir habis', kelas: 'text-amber-600 bg-amber-50' },
   lewat_batas: { label: 'Lewat batas', kelas: 'text-danger-400 bg-danger-50' },
-  tabungan: { label: 'Tabungan', kelas: 'text-blue-600 bg-blue-50' },
+  tabungan: { label: 'Tabungan', kelas: 'text-blue-600 bg-gray-100' },
   kosong: { label: 'Kosong', kelas: 'text-gray-500 bg-gray-100' },
 };
 

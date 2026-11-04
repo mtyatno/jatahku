@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
+import LaporanSettings from '../components/LaporanSettings';
 import GoogleButton from '../components/GoogleButton';
 import { useTheme } from '../hooks/useTheme';
 import { useAppConfig } from '../hooks/useAppConfig';
@@ -979,6 +980,12 @@ export default function Settings() {
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">🔔 Notifikasi</h3>
         <NotifPrefs />
+      </div>
+
+      {/* Laporan */}
+      <div className="card" id="laporan">
+        <h3 className="font-semibold text-sm mb-3">📄 Laporan</h3>
+        <LaporanSettings />
       </div>
 
       {/* Plan & Usage */}
