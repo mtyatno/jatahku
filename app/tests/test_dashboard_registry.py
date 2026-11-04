@@ -191,7 +191,9 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/dashboard/cards")
         self.assertEqual(r.status_code, 200)
         keys = [c["key"] for c in r.json()]
-        self.assertEqual(keys, list(registry.REGISTRY))
+        # Katalog ruang keluarga tidak berubah sejak B1: semua kartu umum; kartu karyawan (R6) tidak ikut.
+        self.assertEqual(keys, [k for k, c in registry.REGISTRY.items() if c.untuk == "umum"])
+        self.assertEqual(keys[:15], [c.key for c in registry.CORE])
         jatah = r.json()[0]
         self.assertEqual((jatah["judul"], jatah["asal"], jatah["hak"], jatah["size_bawaan"]),
                          ("Jatah hari ini", "inti", "ok", "S"))

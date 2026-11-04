@@ -4,6 +4,10 @@ Semua endpoint baru (API hanya bertambah). Ruang = `ruang_aktif` (header `X-Jata
 header ruang keluarga; R2). Tata letak adalah dokumen milik user per ruang, jadi `PUT /layout` juga
 memakai ruang aktif (keanggotaan sudah diperiksa resolver). Body tidak pernah membawa ruang.
 Galat memakai `detail` teks siap tampil + `kode` untuk mesin (§7).
+
+Karyawan ruang usaha (R6): kelima route ini ada di `KARYAWAN_BOLEH`, dan masing-masing menyaring per peran di
+server: katalog, template, tata letak, dan data hanya kartu karyawan (`registry.boleh`). Kartu umum (laba, kas,
+saldo) tidak pernah dimuat untuk karyawan.
 """
 from __future__ import annotations
 
@@ -17,12 +21,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import User
+from app.services import peran
 from app.services.dashboard import batch, layout, registry
 from app.services.ruang import RuangAktif
 
 router = APIRouter()
 
 FLAG_KEY = "beranda_registry_users"   # AppSetting: daftar user_id dipisah koma, atau `*` (B2–B3)
+
+
+async def _karyawan(db, user_id, hid):
+    """Batasan karyawan di ruang ini, atau None (ruang keluarga, owner, admin)."""
+    return await peran.batasan_karyawan(db, user_id, hid) if hid else None
 
 
 async def _flag_aktif(db, user_id) -> bool:
@@ -71,9 +81,12 @@ async def get_layout(
 ):
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    karyawan = await _karyawan(db, user.id, hid) is not None
+    doc = await layout.ambil(db, user.id, hid, surface, karyawan)
     # Beranda web memakai registry hanya bila user ada di flag (B2); selain itu tetap Beranda lama.
-    return {**doc, "enabled": await _flag_aktif(db, user.id)}
+    # Karyawan selalu registry (R6): Beranda lama memanggil endpoint yang tertutup untuknya.
+    enabled = True if karyawan else await _flag_aktif(db, user.id)
+    return {**doc, "enabled": enabled, "untuk": "karyawan" if karyawan else "umum"}
 
 
 @router.put("/layout")
@@ -87,17 +100,25 @@ async def put_layout(
     user_id = user.id
     if not hid:
         return _tanpa_ruang()
+    karyawan = await _karyawan(db, user_id, hid) is not None
     try:
-        tersimpan = await layout.simpan(db, user_id, hid, req.surface, req.if_version, req.items, req.removed)
+        tersimpan = await layout.simpan(db, user_id, hid, req.surface, req.if_version, req.items, req.removed,
+                                        karyawan)
     except layout.GalatTataLetak as exc:
         return _galat(exc.status, exc.kode, exc.detail)
     return {"layout": tersimpan, "version": tersimpan["version"]}
 
 
 @router.get("/cards")
-async def get_cards(user: User = Depends(get_current_user)):
-    # Semua kartu inti boleh untuk semua peran ruang keluarga; kartu laporan usaha khusus admin (H/U).
-    return registry.katalog()
+async def get_cards(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
+):
+    # Kartu umum untuk semua peran kecuali karyawan ruang usaha; karyawan hanya kartu karyawan (R6).
+    # Kartu laporan usaha khusus admin menyusul (U4).
+    return registry.katalog(await _karyawan(db, user.id, hid) is not None)
 
 
 @router.post("/data")
@@ -117,7 +138,8 @@ async def post_data(
         periode = await batch.tentukan_periode(user, req.periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items], household_id=hid)
+    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items], household_id=hid,
+                                karyawan=await _karyawan(db, user.id, hid))
 
 
 @router.get("/data/{instance_id}")
@@ -134,7 +156,8 @@ async def get_data_instance(
     tersimpan, bukan dari klien). Bentuk sama dengan satu entri `data` di `POST /dashboard/data`."""
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    karyawan = await _karyawan(db, user.id, hid)
+    doc = await layout.ambil(db, user.id, hid, surface, karyawan is not None)
     item = next((i for i in doc["items"] if i["id"] == instance_id), None)
     if item is None:
         return _galat(404, "instans_tidak_ada", "Kartu ini tidak ada di Berandamu.")
@@ -142,5 +165,5 @@ async def get_data_instance(
         p = await batch.tentukan_periode(user, periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    hasil = await batch.jalankan(user, db, p, [item], household_id=hid)
+    hasil = await batch.jalankan(user, db, p, [item], household_id=hid, karyawan=karyawan)
     return hasil["data"][instance_id]

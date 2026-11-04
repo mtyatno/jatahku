@@ -68,6 +68,7 @@ class Sumber:
     db: Any
     periode: Periode
     hid: Any = None
+    karyawan: Any = None   # R6: batasan karyawan (`peran.Batasan`) bila user karyawan di ruang ini, selain itu None
     _cache: dict = field(default_factory=dict)
     waktu: dict = field(default_factory=dict)   # nama sumber → ms memuat (untuk log batch lambat)
 
@@ -161,6 +162,40 @@ class Sumber:
     async def papan(self) -> list:
         from app.api.routes import household as r
         return await self._muat("papan", r.router, r.streak_leaderboard)
+
+    # ── sumber kartu karyawan (R6): hanya data milik karyawan itu dan batasannya ──
+    async def _muat_fungsi(self, nama: str, fungsi) -> Any:
+        """Seperti `_muat`, untuk layanan yang bukan handler route (hasilnya sudah berbentuk JSON)."""
+        if nama not in self._cache:
+            mulai = time.perf_counter()
+            try:
+                self._cache[nama] = jsonable_encoder(await fungsi())
+            except Exception:
+                logger.exception("dashboard sumber %s gagal", nama)
+                self._cache[nama] = SumberGagal(nama)
+            self.waktu[nama] = (time.perf_counter() - mulai) * 1000
+        hasil = self._cache[nama]
+        if isinstance(hasil, SumberGagal):
+            raise hasil
+        return hasil
+
+    async def amplop_diizinkan(self) -> list:
+        """`GET /envelopes/` untuk karyawan: hanya amplop yang diizinkan, anggaran 0 tanpa `lihat_saldo`."""
+        from app.api.routes import envelopes as r
+        return await self._muat("amplop", r.router, r.list_envelopes)
+
+    async def draf_saya(self) -> list:
+        from app.api.routes.ruang_kelola import _draf_api
+        from app.services import peran
+
+        async def _f():
+            return [_draf_api(d, self.user.name) for d in await peran.draf_saya(self.db, self.user.id, self.hid)]
+        return await self._muat_fungsi("draf_saya", _f)
+
+    async def catatan_hari_ini(self) -> dict:
+        from app.services import peran
+        return await self._muat_fungsi(
+            "catatan_hari_ini", lambda: peran.catatan_hari_ini(self.db, self.user, self.hid, self.karyawan))
 
 
 async def daftar_periode(user, jumlah: int = 24) -> list[dict]:

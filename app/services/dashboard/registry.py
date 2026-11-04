@@ -6,6 +6,10 @@ key yang sama di `providers.py`. Kartu plugin akan mendaftar lewat titik ekstens
 
 Teks yang tampil ke user (judul, deskripsi) dirakit di sini, satu tempat, supaya web, aplikasi,
 dan permukaan lain memakai kalimat yang sama (AGENTS.md "Plugin dan ruang" aturan 7).
+
+Peran (R6): setiap kartu menyatakan `untuk`. Kartu `umum` (semua kartu inti) untuk semua peran kecuali
+karyawan ruang usaha; kartu `karyawan` hanya untuk karyawan (peran `member` di ruang usaha). Server yang
+menyaring katalog, template, tata letak, dan data (`boleh`); frontend hanya menggambar yang dikirim.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ SIZES = ("S", "M", "L", "XL")
 DEVICES = ("all", "wide", "narrow")
 SHAPES = ("kpi", "progress", "list", "table", "series", "alert", "inti")
 SURFACES = ("beranda",)
+UNTUK = ("umum", "karyawan")
 SCHEMA_VERSION = 1
 MAX_ITEMS = 40
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -55,6 +60,7 @@ class CardDef:
     multi_instance: bool = False
     refresh_on: tuple[str, ...] = ()
     validasi: Callable[[dict], dict] = field(default=_tanpa_pengaturan, compare=False)
+    untuk: str = "umum"                 # umum | karyawan (R6)
 
     def katalog(self) -> dict:
         """Satu baris `GET /dashboard/cards` (04-kontrak-api.md §4)."""
@@ -105,29 +111,65 @@ CORE: tuple[CardDef, ...] = (
             "S", ("S", "M"), "list", False, refresh_on=TXN),
 )
 
-REGISTRY: dict[str, CardDef] = {c.key: c for c in CORE}
+DRAF = ("jatahku:txn-added", "jatahku:draf-baru")
+
+# Kartu karyawan (R6, 05-desain-buku-usaha.md B4.3, artboard "Karyawan: Beranda di ruang usaha"). Hanya data
+# milik karyawan itu sendiri dan batasan dari admin: tanpa laba, kas, omzet, atau saldo amplop (ADR-P3, P4).
+KARYAWAN: tuple[CardDef, ...] = (
+    CardDef("core.karyawan.catat", "Catat", "Catat pengeluaran atau penjualan di ruang ini.",
+            "M", ("M", "L"), "inti", False, untuk="karyawan"),
+    CardDef("core.karyawan.hari_ini", "Hari ini", "Jumlah pengeluaran dan penjualan yang kamu catat hari ini.",
+            "M", ("M", "L"), "inti", False, refresh_on=TXN, untuk="karyawan"),
+    CardDef("core.karyawan.menunggu", "Menunggu persetujuan",
+            "Catatanmu di atas batas nominal yang menunggu admin, dan keputusan 14 hari terakhir.",
+            "M", ("M", "L"), "list", False, refresh_on=DRAF, untuk="karyawan"),
+    CardDef("core.karyawan.catatan_hari_ini", "Catatanku hari ini", "Catatan yang kamu buat hari ini di ruang ini.",
+            "M", ("M", "L"), "list", False, refresh_on=TXN, untuk="karyawan"),
+    CardDef("core.karyawan.batasan", "Batasan dari admin", "Jenis catatan, amplop, dan batas yang diatur admin.",
+            "M", ("M", "L"), "inti", False, untuk="karyawan"),
+    CardDef("core.karyawan.ruang_terpisah", "Ruang keluargamu terpisah",
+            "Pengingat bahwa catatan pribadi tetap di ruang keluargamu.",
+            "M", ("M", "L", "XL"), "alert", False, untuk="karyawan"),
+)
+
+REGISTRY: dict[str, CardDef] = {c.key: c for c in CORE + KARYAWAN}
+
+
+def _template(keys: tuple[str, ...]) -> tuple[dict, ...]:
+    return tuple(
+        {"id": f"a{i}", "card": key, "size": REGISTRY[key].size_bawaan, "hidden": False, "devices": "all"}
+        for i, key in enumerate(keys, start=1)
+    )
+
 
 # Template Beranda ruang keluarga = Beranda sekarang. `devices` mengikuti tampilan sekarang:
 # Papan disiplin hanya di katalog (sekarang tampil di sidebar dan header HP, bukan kartu grid).
-TEMPLATE_BERANDA: tuple[dict, ...] = tuple(
-    {"id": f"a{i}", "card": key, "size": REGISTRY[key].size_bawaan, "hidden": False, "devices": "all"}
-    for i, key in enumerate((
-        "core.kpi.jatah", "core.kpi.sisa_bebas", "core.kpi.terpakai", "core.kpi.income",
-        "core.kpi.tagihan", "core.kpi.tabungan", "core.cocokkan_saldo", "core.pengeluaran_harian",
-        "core.advisor", "core.ke_mana_uangmu", "core.amplop_pengeluaran", "core.target_tabungan",
-        "core.transaksi_terbaru", "core.langganan",
-    ), start=1)
-)
+TEMPLATE_BERANDA: tuple[dict, ...] = _template((
+    "core.kpi.jatah", "core.kpi.sisa_bebas", "core.kpi.terpakai", "core.kpi.income",
+    "core.kpi.tagihan", "core.kpi.tabungan", "core.cocokkan_saldo", "core.pengeluaran_harian",
+    "core.advisor", "core.ke_mana_uangmu", "core.amplop_pengeluaran", "core.target_tabungan",
+    "core.transaksi_terbaru", "core.langganan",
+))
+
+# Template "Karyawan" (R6): Beranda karyawan di ruang usaha. Urutan = urutan baca di HP.
+TEMPLATE_KARYAWAN: tuple[dict, ...] = _template(tuple(c.key for c in KARYAWAN))
 
 
 def get(key: str) -> CardDef | None:
     return REGISTRY.get(key)
 
 
-def katalog() -> list[dict]:
-    return [c.katalog() for c in REGISTRY.values()]
+def boleh(definisi: CardDef | None, karyawan: bool) -> bool:
+    """Kartu ini boleh untuk peran ini: kartu karyawan hanya untuk karyawan, kartu umum untuk selain karyawan."""
+    return definisi is not None and (definisi.untuk == "karyawan") == bool(karyawan)
 
 
-def template(surface: str) -> list[dict]:
+def katalog(karyawan: bool = False) -> list[dict]:
+    return [c.katalog() for c in REGISTRY.values() if boleh(c, karyawan)]
+
+
+def template(surface: str, karyawan: bool = False) -> list[dict]:
     """Salinan baru template bawaan (dokumen bisa diubah pemanggil)."""
-    return [dict(item) for item in TEMPLATE_BERANDA] if surface == "beranda" else []
+    if surface != "beranda":
+        return []
+    return [dict(item) for item in (TEMPLATE_KARYAWAN if karyawan else TEMPLATE_BERANDA)]

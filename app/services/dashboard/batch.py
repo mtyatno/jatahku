@@ -23,6 +23,7 @@ ANGGARAN_PENYEDIA_MS = 150
 PESAN = {
     "kartu_tidak_dikenal": "Kartu ini tidak tersedia.",
     "gagal_memuat": "Data kartu ini belum bisa dimuat. Coba lagi sebentar.",
+    "khusus_admin": "Kartu ini hanya untuk pemilik dan admin ruang.",
 }
 
 
@@ -63,6 +64,11 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     penyedia = PROVIDERS.get(item.get("card"))
     if definisi is None or penyedia is None:
         return _galat("kartu_tidak_dikenal")
+    # R6: karyawan hanya kartu karyawan (kartu umum memuat laba, kas, saldo); selain karyawan tidak memuat kartu
+    # karyawan. Penyedia tidak dipanggil sama sekali untuk kartu yang bukan haknya.
+    karyawan = sumber.karyawan is not None
+    if not registry.boleh(definisi, karyawan):
+        return _galat("khusus_admin" if karyawan else "kartu_tidak_dikenal")
     try:
         settings = definisi.validasi(item.get("settings") or {})
     except registry.PengaturanTidakSah as exc:
@@ -84,9 +90,10 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     return data
 
 
-async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
+async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id, karyawan=None) -> dict:
+    """`karyawan` = batasan karyawan di ruang ini (`peran.batasan_karyawan`), None untuk peran lain."""
     mulai = time.perf_counter()
-    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id)
+    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id, karyawan=karyawan)
     data = {item["id"]: await satu_kartu(sumber, item) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:

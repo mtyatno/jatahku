@@ -25,21 +25,27 @@ def _422(kode: str, detail: str) -> GalatTataLetak:
     return GalatTataLetak(422, kode, detail)
 
 
-def efektif(surface: str, items: list[dict], parked: list[dict], version: int) -> dict:
+def efektif(surface: str, items: list[dict], parked: list[dict], version: int, karyawan: bool = False) -> dict:
     """Tata letak yang benar-benar tampil. Instans yang definisinya tidak ada lagi dipindah ke
     `parked` (posisinya kembali bila kartunya ada lagi). Semua instans yang tersisa dikirim,
-    termasuk yang `visible: false`, dan wajib dikirim balik saat menyimpan."""
+    termasuk yang `visible: false`, dan wajib dikirim balik saat menyimpan.
+
+    R6: kartu yang bukan untuk peran ini (kartu umum untuk karyawan, kartu karyawan untuk selain karyawan)
+    tetap dikirim dengan `visible: false` dan `alasan`, tanpa data; `POST /dashboard/data` juga menolaknya."""
     aktif, parkir = [], [dict(p) for p in parked]
     for item in items:
         definisi = registry.get(item.get("card"))
         if definisi is None:
             parkir.append(dict(item))
             continue
-        aktif.append({
+        baris = {
             "id": item["id"], "card": item["card"], "size": item.get("size") or definisi.size_bawaan,
             "hidden": bool(item.get("hidden", False)), "devices": item.get("devices") or "all",
             "settings": item.get("settings") or {}, "visible": True,
-        })
+        }
+        if not registry.boleh(definisi, karyawan):
+            baris.update(visible=False, alasan="khusus_admin" if karyawan else "khusus_karyawan")
+        aktif.append(baris)
     return {"surface": surface, "schema_version": registry.SCHEMA_VERSION, "version": version,
             "items": aktif, "parked": parkir}
 
@@ -51,14 +57,22 @@ async def _muat(db, user_id, household_id, surface) -> DashboardLayout | None:
     ))).scalar_one_or_none()
 
 
-async def ambil(db, user_id, household_id, surface: str) -> dict:
+async def ambil(db, user_id, household_id, surface: str, karyawan: bool = False) -> dict:
     row = await _muat(db, user_id, household_id, surface)
     if row is None:
-        return efektif(surface, registry.template(surface), [], 0)
-    return efektif(surface, row.items or [], row.parked or [], row.version)
+        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan)
+    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan)
 
 
-def _rapikan(item) -> dict:
+async def hapus_milik(db, user_id, household_id) -> None:
+    """Tata letak user di satu ruang dibuang (peran berubah atau keluar dari ruang): Beranda berikutnya memakai
+    template peran yang baru. Ikut commit pemanggil."""
+    from sqlalchemy import delete
+    await db.execute(delete(DashboardLayout).where(
+        DashboardLayout.user_id == user_id, DashboardLayout.household_id == household_id))
+
+
+def _rapikan(item, karyawan: bool = False) -> dict:
     """Satu instans dari klien → bentuk tersimpan, atau 422."""
     if not isinstance(item, dict):
         raise _422("instans_tidak_sah", "Bentuk kartu tidak dikenali.")
@@ -66,7 +80,7 @@ def _rapikan(item) -> dict:
     if not isinstance(iid, str) or not registry.ID_RE.match(iid):
         raise _422("instans_tidak_sah", "ID kartu tidak sah.")
     definisi = registry.get(key) if isinstance(key, str) else None
-    if definisi is None:
+    if definisi is None or not registry.boleh(definisi, karyawan):
         raise _422("kartu_tidak_dikenal", "Ada kartu yang tidak tersedia.")
     size = item.get("size", definisi.size_bawaan)
     if size not in definisi.sizes:
@@ -90,11 +104,20 @@ def _rapikan(item) -> dict:
     return rapi
 
 
-def validasi(items: list, removed: list, sekarang: dict) -> tuple[list[dict], list[dict]]:
-    """(items tersimpan, parked tersimpan) dari kiriman klien terhadap tata letak efektif `sekarang`."""
+def validasi(items: list, removed: list, sekarang: dict, karyawan: bool = False) -> tuple[list[dict], list[dict]]:
+    """(items tersimpan, parked tersimpan) dari kiriman klien terhadap tata letak efektif `sekarang`.
+    Kartu yang bukan untuk peran ini ditolak (`kartu_tidak_dikenal`), kecuali instans lama yang dikirim balik
+    apa adanya (`visible: false` di `sekarang`), supaya dokumen tidak kehilangan instans saat peran berganti."""
     if len(items) > registry.MAX_ITEMS:
         raise _422("terlalu_banyak", f"Beranda paling banyak {registry.MAX_ITEMS} kartu.")
-    baru = [_rapikan(i) for i in items]
+    lama = {i["id"]: i["card"] for i in sekarang["items"] if not i.get("visible", True)}
+
+    def _satu(item):
+        if isinstance(item, dict) and item.get("id") in lama and lama[item["id"]] == item.get("card"):
+            return _rapikan(item, not karyawan)   # instans peran lain yang dikirim balik; datanya tetap ditolak
+        return _rapikan(item, karyawan)
+
+    baru = [_satu(i) for i in items]
     ids = [i["id"] for i in baru]
     if len(set(ids)) != len(ids):
         raise _422("instans_tidak_sah", "Ada ID kartu ganda.")
@@ -112,11 +135,11 @@ def validasi(items: list, removed: list, sekarang: dict) -> tuple[list[dict], li
 
 
 async def simpan(db, user_id, household_id, surface: str, if_version: int,
-                 items: list, removed: list) -> dict:
-    sekarang = await ambil(db, user_id, household_id, surface)
+                 items: list, removed: list, karyawan: bool = False) -> dict:
+    sekarang = await ambil(db, user_id, household_id, surface, karyawan)
     if if_version != sekarang["version"]:
         raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
-    baru, parked = validasi(items, removed, sekarang)
+    baru, parked = validasi(items, removed, sekarang, karyawan)
     versi = if_version + 1
     if if_version == 0:
         db.add(DashboardLayout(user_id=user_id, household_id=household_id, surface=surface,
@@ -139,4 +162,4 @@ async def simpan(db, user_id, household_id, surface: str, if_version: int,
             await db.rollback()
             raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
         await db.commit()
-    return efektif(surface, baru, parked, versi)
+    return efektif(surface, baru, parked, versi, karyawan)
