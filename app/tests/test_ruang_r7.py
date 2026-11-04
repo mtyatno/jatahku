@@ -34,7 +34,7 @@ if HAS_AIOSQLITE:
 
     from app.models.models import (
         Allocation, Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, Income, RuangAudit,
-        RuangKamus, UserEnvelopeKeyword,
+        RuangDraf, RuangKamus, Transaction, UserEnvelopeKeyword,
     )
     from app.services import txn_nlp
 
@@ -295,6 +295,81 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._kamus(), {})
         self.assertEqual(len(await self._kamus(self.toko_id)), 1)
         self.assertEqual(len(await self._kamus(self.rumah_id)), 1)
+
+    # 6. Review keamanan PR #191 ------------------------------------------------
+    async def _transaksi_keluarga_dewi(self):
+        async with self.Session() as db:
+            return (await db.execute(select(func.count()).select_from(Transaction).where(
+                Transaction.envelope_id == self.kd["env"], Transaction.description == "pulsa"))).scalar_one()
+
+    async def test_ref_draf_ruang_usaha_tidak_menjawab_catatan_ruang_keluarga(self):
+        """Temuan 1, PoC1: draf ruang usaha (di atas batas) lalu kiriman ke amplop ruang keluarga dengan client_ref yang
+        sama → 409 `client_ref_bentrok`, bukan 202 draf ruang usaha; tidak ada transaksi ruang keluarga yang hilang
+        diam-diam, dan draf tetap menunggu admin. Sama lewat antrean offline."""
+        await self._batasan(batas_nominal=100000)
+        r = await self._catat(self.dewi, self.op_id, "pulsa", amount="500000", client_ref="ref-1")
+        self.assertEqual(r.status_code, 202, r.text)
+        draf_id = r.json()["draf_id"]
+        r = await self._catat(self.dewi, self.kd["env"], "pulsa", amount="500000", client_ref="ref-1")
+        self.assertEqual(self._kode(r), (409, "client_ref_bentrok"))
+        r = await self._req("POST", "/transactions/batch", {"items": [
+            {"envelope_id": str(self.kd["env"]), "amount": "500000", "description": "pulsa", "client_ref": "ref-1"}]},
+            user=self.dewi)
+        self.assertEqual((r.json()[0]["ok"], r.json()[0]["kode"]), (False, "client_ref_bentrok"))
+        self.assertIsNone(r.json()[0].get("draf_id"))
+        self.assertEqual(await self._transaksi_keluarga_dewi(), 0)
+        async with self.Session() as db:
+            d = await db.get(RuangDraf, uuid.UUID(draf_id))
+        self.assertEqual(d.status, "menunggu")
+        # Amplop ruang usaha lain dengan ref yang sama juga bukan draf itu; kiriman ulang yang sama tetap 202.
+        r = await self._catat(self.dewi, self.u["env"], "pulsa", amount="500000", client_ref="ref-1")
+        self.assertEqual(self._kode(r), (409, "client_ref_bentrok"))
+        r = await self._catat(self.dewi, self.op_id, "pulsa", amount="500000", client_ref="ref-1")
+        self.assertEqual((r.status_code, r.json()["draf_id"]), (202, draf_id))
+        # Penjualan dengan ref draf pengeluaran: jenis lain → 409, bukan draf pengeluaran.
+        r = await self._req("POST", "/incomes/", {"amount": "500000", "source": "jual", "client_ref": "ref-1",
+                                                  "allocations": [{"envelope_id": str(self.op_id), "amount": "500000"}]},
+                            header=self.nusa_id, user=self.dewi)
+        self.assertEqual(self._kode(r), (409, "client_ref_bentrok"))
+
+    def test_cek_ref_draf_tanpa_amplop_tetap_memeriksa_ruang(self):
+        """Pembantu `cek_ref_draf` tanpa amplop (pemanggil tanpa alokasi) tetap menolak draf ruang lain."""
+        from types import SimpleNamespace
+        from app.services import peran
+        draf = SimpleNamespace(household_id=self.nusa_id, jenis="penjualan", envelope_id=self.op_id)
+        peran.cek_ref_draf(draf, household_id=self.nusa_id, jenis="penjualan")
+        for kw in ({"household_id": self.rumah_dewi_id, "jenis": "penjualan"},
+                   {"household_id": self.nusa_id, "jenis": "pengeluaran"},
+                   {"household_id": self.nusa_id, "jenis": "penjualan", "envelope_id": self.u["env"]}):
+            with self.subTest(**{k: str(v) for k, v in kw.items()}), self.assertRaises(peran.PeranDitolak) as cm:
+                peran.cek_ref_draf(draf, **kw)
+            self.assertEqual((cm.exception.kode, cm.exception.status_code), ("client_ref_bentrok", 409))
+
+    async def test_ref_transaksi_ruang_usaha_tidak_menjawab_catatan_ruang_keluarga(self):
+        """Temuan 1, PoC2: catatan ruang usaha tersimpan lalu kiriman ke amplop ruang keluarga dengan client_ref yang
+        sama → 409, bukan 201 berisi transaksi Operasional. Kiriman ulang yang sama persis tetap 201 transaksi lama."""
+        r = await self._catat(self.dewi, self.op_id, "pulsa", client_ref="ref-2")
+        self.assertEqual(r.status_code, 201, r.text)
+        txn_id = r.json()["id"]
+        r = await self._catat(self.dewi, self.kd["env"], "pulsa", client_ref="ref-2")
+        self.assertEqual(self._kode(r), (409, "client_ref_bentrok"))
+        r = await self._req("POST", "/transactions/batch", {"items": [
+            {"envelope_id": str(self.kd["env"]), "amount": "25000", "description": "pulsa", "client_ref": "ref-2"}]},
+            user=self.dewi)
+        self.assertEqual((r.json()[0]["ok"], r.json()[0]["kode"], r.json()[0].get("id")),
+                         (False, "client_ref_bentrok", None))
+        self.assertEqual(await self._transaksi_keluarga_dewi(), 0)
+        r = await self._catat(self.dewi, self.op_id, "pulsa", client_ref="ref-2")
+        self.assertEqual((r.status_code, r.json()["id"]), (201, txn_id))
+        r = await self._req("POST", "/transactions/batch", {"items": [
+            {"envelope_id": str(self.op_id), "amount": "25000", "description": "pulsa", "client_ref": "ref-2"}]},
+            user=self.dewi)
+        self.assertEqual((r.json()[0]["ok"], r.json()[0]["id"]), (True, txn_id))
+        # Arah sebaliknya: catatan ruang keluarga dulu, lalu ruang usaha dengan ref yang sama.
+        r = await self._catat(self.dewi, self.kd["env"], "pulsa", client_ref="ref-3")
+        self.assertEqual(r.status_code, 201, r.text)
+        r = await self._catat(self.dewi, self.op_id, "pulsa", client_ref="ref-3")
+        self.assertEqual(self._kode(r), (409, "client_ref_bentrok"))
 
     # 5. Hapus akun -----------------------------------------------------------
     async def test_hapus_akun_pengajar_mengosongkan_nama(self):

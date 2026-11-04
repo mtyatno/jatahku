@@ -263,6 +263,8 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     if existing_ref:
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
+            if existing.envelope_id != req.envelope_id:   # satu ref = satu catatan (review #191 temuan 1)
+                raise RuangDitolak.dari_peran(peran.ref_bentrok())
             heal = None
             if req.receipt_item_id:
                 async def heal():
@@ -271,8 +273,13 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     if not peran.izin_pengelola_aktif():
         draf = await peran.draf_dari_ref(db, user.id, req.client_ref)   # kiriman ulang catatan yang menjadi draf
-        if draf is not None and draf.status != peran.ST_DISETUJUI:
-            return jawaban_draf(draf)
+        if draf is not None:
+            try:   # draf ruang/jenis/amplop lain dengan ref yang sama tidak pernah menjadi jawaban (#191 temuan 1)
+                peran.cek_ref_draf(draf, household_id=hid, jenis=peran.JENIS_PENGELUARAN, envelope_id=req.envelope_id)
+            except peran.PeranDitolak as exc:
+                raise RuangDitolak.dari_peran(exc)
+            if draf.status != peran.ST_DISETUJUI:
+                return jawaban_draf(draf)
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
         if receipt_error:
@@ -497,13 +504,25 @@ async def batch_create_transactions(
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
         if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
-            if item.receipt_item_id:
-                prior = await db.get(Transaction, UUID(existing_ref))
-                if prior is not None:
-                    await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
+            prior = await db.get(Transaction, UUID(existing_ref))
+            if prior is not None and prior.envelope_id != item.envelope_id:   # satu ref = satu catatan (#191 t1)
+                bentrok = peran.ref_bentrok()
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                      error=bentrok.detail, kode=bentrok.kode))
+                continue
+            if item.receipt_item_id and prior is not None:
+                await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
         draf = await peran.draf_dari_ref(db, user.id, item.client_ref)
+        if draf is not None:
+            try:   # draf ruang/jenis/amplop lain dengan ref yang sama tidak pernah menjadi jawaban (#191 temuan 1)
+                peran.cek_ref_draf(draf, household_id=ruang_baris[i], jenis=peran.JENIS_PENGELUARAN,
+                                   envelope_id=item.envelope_id)
+            except peran.PeranDitolak as exc:
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                      error=exc.detail, kode=exc.kode))
+                continue
         if draf is not None and draf.status != peran.ST_DISETUJUI:   # kiriman ulang catatan yang menjadi draf
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
                                                   error="Catatan ini menunggu persetujuan admin.",

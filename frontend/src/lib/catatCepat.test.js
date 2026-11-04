@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, labelSumber, perluCekPribadi, pesanAjari, tawaranPribadi,
-  uraiCatatan,
+  amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, labelSumber, perluCekPribadi,
+  pesanAjari, pesanTerkunci, tawaranPribadi, uraiCatatan,
 } from './catatCepat.js';
 
 test('uraiCatatan: nominal dan keterangan dari satu kotak teks, kasus sama dengan bot', () => {
@@ -90,4 +90,31 @@ test('amplopPilihan: tanpa tabungan untuk pengeluaran, tebakan di depan', () => 
   assert.deepEqual(amplopPilihan(d, 'pengeluaran', 'b').map(e => e.id), ['b', 'a']);
   assert.deepEqual(amplopPilihan(d, 'penjualan').map(e => e.id), ['a', 't', 'b', 's']);
   assert.deepEqual(amplopPilihan(null, 'pengeluaran'), []);
+});
+
+test('hasilTidakPasti: koneksi putus, sedang diproses, dan 5xx belum pasti; bentrok ref dan penolakan pasti', () => {
+  assert.equal(hasilTidakPasti(0, null), true);
+  assert.equal(hasilTidakPasti(503, {}), true);
+  assert.equal(hasilTidakPasti(409, { detail: 'Transaksi ini sedang diproses.' }), true);
+  assert.equal(hasilTidakPasti(409, { kode: 'client_ref_bentrok' }), false);
+  assert.equal(hasilTidakPasti(403, { detail: 'Dana tidak cukup' }), false);
+  assert.equal(hasilTidakPasti(201, {}), false);
+  assert.equal(hasilTidakPasti(202, { kode: 'perlu_persetujuan' }), false);
+});
+
+test('hasilPribadi: "di ruang keluargamu" hanya bila transaksinya di amplop ruang keluarga itu (review #191, PoC1/PoC2)', () => {
+  const keluarga = { envelope_id: 'jajan', envelope_name: 'Jajan Dewi' };
+  const tercatat = { hasil: 'tercatat', pesan: 'Tercatat.' };
+  assert.deepEqual(hasilPribadi(tercatat, { envelope_id: 'jajan' }, keluarga),
+    { hasil: 'tercatat', pesan: 'Tercatat di ruang keluargamu (Jajan Dewi)' });
+  assert.deepEqual(hasilPribadi(tercatat, { envelope_id: 'operasional' }, keluarga), tercatat);   // PoC2
+  const draf = { hasil: 'menunggu', pesan: 'Catatan ini menunggu persetujuan admin.' };
+  assert.deepEqual(hasilPribadi(draf, { kode: 'perlu_persetujuan', draf_id: 'd' }, keluarga), draf);   // PoC1
+  assert.deepEqual(hasilPribadi(tercatat, {}, null), tercatat);
+});
+
+test('pesanTerkunci per jalur', () => {
+  assert.match(pesanTerkunci('usaha', 'Dapur Nusa'), /Simpan ke Dapur Nusa/);
+  assert.match(pesanTerkunci('pribadi'), /Catat di ruang keluarga/);
+  assert.equal(pesanTerkunci(null), '');
 });

@@ -6,12 +6,15 @@
 // Server menegakkan semua batasan (aturan admin di kartu hanya tampilan). Koreksi amplop mengajari kamus ruang ini
 // (server, hanya catatan bukan-privat). Tawaran "pengeluaran pribadi" bertanya ke ruang keluarga user sendiri lewat
 // permintaan terpisah tanpa header ruang; tidak tersimpan dan tidak terlihat admin (lib/catatCepat.js).
-// `client_ref` dibuat sekali per lembar: menekan Simpan lagi sesudah koneksi putus tidak mencatat dua kali.
+// Dua jalur, dua `client_ref` (review keamanan PR #191 temuan 1): Simpan ke ruang usaha dan "Catat di ruang keluarga"
+// masing-masing punya ref sendiri. Bila hasil satu jalur belum pasti (koneksi putus, sedang diproses, 5xx), isian dan
+// jalur lain dikunci, dan kirim ulang memakai permintaan yang sama persis, jadi tidak tercatat dua kali dan tidak
+// pernah berpindah ruang diam-diam.
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import {
-  JEDA_SARAN_MS, amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, labelSumber, perluCekPribadi, pesanAjari,
-  tawaranPribadi, uraiCatatan,
+  JEDA_SARAN_MS, amplopDipakai, amplopPilihan, aturanCatatan, galatCatat, hasilPribadi, hasilTidakPasti, labelSumber,
+  perluCekPribadi, pesanAjari, pesanTerkunci, tawaranPribadi, uraiCatatan,
 } from '../lib/catatCepat';
 import { hasilCatat, payloadCatat } from '../lib/ruangPeran';
 import { EnvelopeIcon, Icon } from './Icon';
@@ -47,7 +50,10 @@ export default function CatatCepat({
   const [saving, setSaving] = useState(false);
   const [suaraSibuk, setSuaraSibuk] = useState(false);
   const [galat, setGalat] = useState('');
-  const [clientRef] = useState(buatRef);
+  const [refUsaha] = useState(buatRef);
+  const [refPribadi] = useState(buatRef);
+  const [terkunci, setTerkunci] = useState(null);        // 'usaha' | 'pribadi': hasil jalur itu belum pasti
+  const kiriman = useRef(null);                           // permintaan terakhir per jalur, dikirim ulang apa adanya
   const urut = useRef(0);
 
   const { nominal, keterangan } = uraiCatatan(teks);
@@ -85,35 +91,50 @@ export default function CatatCepat({
   const amplop = pilihanAmplop.find(e => e.id === amplopId) || null;
   const aturan = aturanCatatan(saran?.aturan);
   const ajari = pesanAjari({ jenis, keterangan, saran, amplopId, namaRuang });
-  const pribadi = !abaikanPribadi && jenis === 'pengeluaran' && tawaranPribadi(keluarga);
+  // Tawaran tidak muncul selama hasil Simpan ke ruang usaha belum pasti; tetap tampil (untuk kirim ulang) bila jalur
+  // pribadi yang belum pasti.
+  const pribadi = terkunci === 'pribadi'
+    || (!terkunci && !abaikanPribadi && jenis === 'pengeluaran' && tawaranPribadi(keluarga));
   const dariTebakan = amplopId && !pilihan && saran?.envelope_id === amplopId;
 
-  const kirim = async (fn, sesudah) => {
-    if (saving || suaraSibuk) return;
+  // Kirim satu jalur. Selama hasil jalur ini belum pasti, kirim ulang memakai permintaan yang sama persis.
+  const kirim = async (jalur, buat) => {
+    if (saving || suaraSibuk || (terkunci && terkunci !== jalur)) return;
+    const k = terkunci === jalur && kiriman.current?.jalur === jalur ? kiriman.current : { jalur, ...buat() };
+    kiriman.current = k;
     setSaving(true);
     setGalat('');
-    const r = await fn();
-    const hasil = hasilCatat(r.status, r.data);
+    const r = jalur === 'pribadi' ? await api.catatDiRuangKeluarga(k.body) : await api.catatKaryawan(k.path, k.body);
+    let hasil = hasilCatat(r.status, r.data);
     setSaving(false);
-    if (hasil.hasil === 'galat') { setGalat(hasil.pesan); return; }
+    if (hasil.hasil === 'galat') {
+      setTerkunci(hasilTidakPasti(r.status, r.data) ? jalur : null);
+      setGalat(hasil.pesan);
+      return;
+    }
+    setTerkunci(null);
+    if (jalur === 'pribadi') hasil = hasilPribadi(hasil, r.data, k.keluarga);
     window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
     if (hasil.hasil === 'menunggu') window.dispatchEvent(new CustomEvent('jatahku:draf-baru'));
-    onDone?.(sesudah ? sesudah(hasil) : hasil);
+    onDone?.(hasil);
   };
 
   const simpan = (e) => {
     e.preventDefault();
-    const salah = galatCatat({ nominal, amplopId: amplop ? amplopId : null, tahan: aturan.tahan });
-    if (salah) { setGalat(salah); return; }
-    const { path, body } = payloadCatat({ jenis, nominal, keterangan, amplopId, clientRef });
-    kirim(() => api.catatKaryawan(path, body));
+    if (terkunci !== 'usaha') {
+      const salah = galatCatat({ nominal, amplopId: amplop ? amplopId : null, tahan: aturan.tahan });
+      if (salah) { setGalat(salah); return; }
+    }
+    kirim('usaha', () => payloadCatat({ jenis, nominal, keterangan, amplopId, clientRef: refUsaha }));
   };
 
   const catatPribadi = () => {
-    if (!nominal) { setGalat('Tulis nominalnya dulu, mis. "pulsa 50rb".'); return; }
-    kirim(() => api.catatDiRuangKeluarga({ envelope_id: keluarga.envelope_id, amount: Math.round(nominal),
-      description: keterangan || 'Pengeluaran', client_ref: clientRef }),
-    () => ({ hasil: 'tercatat', pesan: `Tercatat di ruang keluargamu (${keluarga.envelope_name})` }));
+    if (!nominal && terkunci !== 'pribadi') { setGalat('Tulis nominalnya dulu, mis. "pulsa 50rb".'); return; }
+    kirim('pribadi', () => ({
+      keluarga,
+      body: { envelope_id: keluarga.envelope_id, amount: Math.round(nominal), description: keterangan || 'Pengeluaran',
+        client_ref: refPribadi },
+    }));
   };
 
   if (daftar === null) return <div className="text-center py-8 text-gray-400">Loading...</div>;
@@ -124,7 +145,7 @@ export default function CatatCepat({
         <div role="radiogroup" aria-label="Jenis catatan" className="grid grid-cols-2 gap-2">
           {jenisBoleh.map(j => (
             <button key={j} type="button" role="radio" aria-checked={jenis === j}
-              onClick={() => { setJenis(j); setPilihan(null); }}
+              onClick={() => { setJenis(j); setPilihan(null); }} disabled={!!terkunci}
               className="rounded-xl py-2.5 text-sm font-semibold border transition-colors"
               style={jenis === j
                 ? { background: 'var(--brand-50, rgba(29,158,117,0.12))', borderColor: 'var(--brand-400)', color: 'var(--brand-600)' }
@@ -141,9 +162,9 @@ export default function CatatCepat({
           <textarea id="catat-cepat" rows={2} maxLength={200} autoFocus autoComplete="off"
             className="input flex-1 resize-none"
             placeholder={jenis === 'penjualan' ? 'nasi box 30 pax 900rb' : 'kardus 50 pcs 125rb'}
-            value={teks} onChange={e => setTeks(e.target.value)}
+            value={teks} onChange={e => setTeks(e.target.value)} readOnly={!!terkunci}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-          <VoiceInput disabled={saving} onBusyChange={setSuaraSibuk} onError={setGalat}
+          <VoiceInput disabled={saving || !!terkunci} onBusyChange={setSuaraSibuk} onError={setGalat}
             onTranscript={(t) => setTeks(v => (v.trim() ? `${v.trim()} ${t}` : t))} />
         </div>
       </div>
@@ -172,7 +193,7 @@ export default function CatatCepat({
         <div role="status" className="rounded-xl px-4 py-3 text-sm border"
           style={{ borderColor: 'rgba(217,119,6,0.35)', background: 'rgba(217,119,6,0.08)', color: 'var(--text)' }}>
           <p>
-            Sepertinya pengeluaran pribadi: biasanya kamu mencatat "{keterangan}" di <b>{keluarga.envelope_name}</b>.
+            Sepertinya pengeluaran pribadi: biasanya kamu mencatat "{keterangan}" di <b>{(kiriman.current?.keluarga || keluarga)?.envelope_name}</b>.
             Catat di ruang keluargamu?
           </p>
           <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Hanya kamu yang melihat tawaran ini.</p>
@@ -180,7 +201,9 @@ export default function CatatCepat({
             <button type="button" onClick={catatPribadi} disabled={saving} className="btn-primary text-sm disabled:opacity-50">
               Catat di ruang keluarga
             </button>
-            <button type="button" onClick={() => setAbaikanPribadi(true)} className="btn-outline text-sm">Tetap di {namaRuang}</button>
+            {!terkunci && (
+              <button type="button" onClick={() => setAbaikanPribadi(true)} className="btn-outline text-sm">Tetap di {namaRuang}</button>
+            )}
           </div>
         </div>
       )}
@@ -201,7 +224,8 @@ export default function CatatCepat({
                   style={aktif
                     ? { borderColor: 'var(--brand-400)', color: 'var(--text)', background: 'rgba(29,158,117,0.08)' }
                     : { borderColor: 'var(--border)', color: 'var(--text)' }}>
-                  <input type="radio" name="amplop" className="sr-only" checked={aktif} onChange={() => setPilihan(env.id)} />
+                  <input type="radio" name="amplop" className="sr-only" checked={aktif} disabled={!!terkunci}
+                    onChange={() => setPilihan(env.id)} />
                   <EnvelopeIcon value={env.emoji} size={18} />
                   <span className="truncate flex-1">{env.name}</span>
                   {jenis === 'pengeluaran' && saran?.envelope_id === env.id && (
@@ -234,12 +258,15 @@ export default function CatatCepat({
       {galat && (
         <div role="alert" className="rounded-xl px-4 py-3 text-sm border" style={{ color: '#DC2626', borderColor: 'rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.06)' }}>
           {galat}
+          {terkunci && <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{pesanTerkunci(terkunci, namaRuang)}</p>}
         </div>
       )}
 
       <div className="flex gap-2">
         <button type="button" onClick={onCancel} className="btn-outline flex-1">Batal</button>
-        <button type="submit" disabled={saving || suaraSibuk || pilihanAmplop.length === 0 || !!aturan.tahan}
+        <button type="submit"
+          disabled={saving || suaraSibuk || terkunci === 'pribadi'
+            || (terkunci !== 'usaha' && (pilihanAmplop.length === 0 || !!aturan.tahan))}
           className="btn-primary flex-1 disabled:opacity-50">
           {saving ? '...' : aturan.persetujuan ? 'Kirim untuk persetujuan' : `Simpan ke ${namaRuang}`}
         </button>

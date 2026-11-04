@@ -92,3 +92,29 @@ export function amplopPilihan(daftar, jenis, saranId = null) {
   if (!saranId) return rows;
   return [...rows.filter(e => e.id === saranId), ...rows.filter(e => e.id !== saranId)];
 }
+
+// ── Kiriman dan jawabannya (review keamanan PR #191 temuan 1) ───────────────
+// Simpan ke ruang usaha dan "Catat di ruang keluarga" adalah dua catatan berbeda: masing-masing memakai `client_ref`
+// sendiri, dan selama hasil satu jalur belum pasti, jalur lain ditutup dan isian dikunci (kirim ulang = permintaan
+// yang sama persis, server menjawab catatan yang sudah ada; ref yang dipakai catatan lain → 409 `client_ref_bentrok`).
+
+/** Hasil kiriman belum pasti (mungkin sudah tercatat): koneksi putus, sedang diproses, atau galat server. */
+export function hasilTidakPasti(status, data) {
+  return status === 0 || status >= 500 || (status === 409 && data?.kode !== 'client_ref_bentrok');
+}
+
+/** Jawaban "Catat di ruang keluarga" → hasil yang ditampilkan. Kalimat "di ruang keluargamu" hanya bila server
+ *  menjawab transaksi di amplop ruang keluarga itu; jawaban lain (mis. draf 202) ditampilkan apa adanya. */
+export function hasilPribadi(hasil, data, keluarga) {
+  if (hasil?.hasil === 'tercatat' && keluarga?.envelope_id && data?.envelope_id === keluarga.envelope_id) {
+    return { hasil: 'tercatat', pesan: `Tercatat di ruang keluargamu (${keluarga.envelope_name})` };
+  }
+  return hasil;
+}
+
+/** Keterangan saat isian dikunci karena hasil jalur ini belum pasti. */
+export function pesanTerkunci(jalur, namaRuang = 'ruang ini') {
+  if (jalur === 'usaha') return `Isian dikunci sampai hasilnya pasti. Tekan "Simpan ke ${namaRuang}" lagi; tidak akan tercatat dua kali.`;
+  if (jalur === 'pribadi') return 'Isian dikunci sampai hasilnya pasti. Tekan "Catat di ruang keluarga" lagi; tidak akan tercatat dua kali.';
+  return '';
+}
