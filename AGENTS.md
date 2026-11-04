@@ -233,7 +233,7 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
-## Deploy Checklist — Plugin R6: halaman Anggota dan Beranda karyawan (tanpa migrasi)
+## Deploy Checklist — Plugin R6: halaman Anggota dan Beranda karyawan (tanpa migrasi) — sudah jalan 2026-11-04
 Halaman Anggota (`/ruang`), Beranda template "Karyawan", menu dan Catat per peran, gabung ruang dengan kode di pemilih
 ruang, daftar/cabut undangan, ganti nama ruang. Semuanya hanya di ruang usaha, jadi di balik flag `ruang_usaha_users`;
 ruang keluarga tidak berubah (katalog dan template Beranda umum sama). Tanpa migrasi, paket, atau `.env`.
@@ -244,8 +244,11 @@ ruang keluarga tidak berubah (katalog dan template Beranda umum sama). Tanpa mig
    Catat, Hari ini, Menunggu persetujuan, Catatanku hari ini, Batasan dari admin, dan pengingat ruang keluarga; tidak
    ada angka saldo atau laporan. Pemilik: atur batas nominal kecil (tersimpan otomatis) → karyawan mencatat di atasnya
    → "menunggu persetujuan" → pemilik menyetujui dari halaman Anggota (angka di menu berkurang).
+4. Flag `ruang_usaha_users` berisi user_id **dipisah koma, tanpa spasi**, termasuk pemilik. Menambah user:
+   `UPDATE app_settings SET value = value || ',<user_id>' WHERE key='ruang_usaha_users'`. Bila id menyatu tanpa koma,
+   tidak ada user yang cocok (pemilik ikut kehilangan ruang usaha): tulis ulang nilainya utuh dengan `SET value = '<id1>,<id2>'`.
 
-## Deploy Checklist — Plugin R8: prive dua sisi (tanpa migrasi)
+## Deploy Checklist — Plugin R8: prive dua sisi (tanpa migrasi) — sudah jalan 2026-11-04
 Endpoint baru `POST /prive` dan nilai baru `incomes.kind = prive` (kolom String, tanpa migrasi). Tanpa paket, `.env`,
 atau perubahan tampilan; belum bisa dipakai siapa pun sebelum ada ruang usaha (R4, flag `ruang_usaha_users`).
 1. Merge, tunggu deploy hijau (`api.jatahku.com/health` → commit baru).
