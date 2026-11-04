@@ -1,6 +1,17 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import KataSandiForm from './laporan/KataSandiForm';
+
+// Tautan ke arsip laporan: di HP (tanpa sidebar) satu-satunya jalan ke /laporan selain notifikasi. Tetap tampil saat
+// pengaturan gagal dimuat.
+function LihatLaporan() {
+  return (
+    <Link to="/laporan" className="inline-block text-sm font-semibold text-brand-600 hover:underline">
+      Lihat laporan
+    </Link>
+  );
+}
 
 // Kartu pengaturan laporan (tahap 1): hanya kata sandi PDF yang bisa diubah.
 export default function LaporanSettings() {
@@ -26,7 +37,14 @@ export default function LaporanSettings() {
     muat();
   };
 
-  if (error) return <p className="text-sm text-danger-400">{error}</p>;
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-danger-400">{error}</p>
+        <LihatLaporan />
+      </div>
+    );
+  }
   if (!pengaturan) return <div className="h-12 animate-pulse rounded-lg bg-gray-100" />;
   const diatur = !!pengaturan.kata_sandi_diatur;
   const label = diatur ? 'Ganti kata sandi' : 'Atur kata sandi';
@@ -43,6 +61,7 @@ export default function LaporanSettings() {
       ) : (
         <KataSandiForm label={label} onSaved={tersimpan} onCancel={() => setEdit(false)} />
       )}
+      <LihatLaporan />
     </div>
   );
 }

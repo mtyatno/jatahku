@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BREAKPOINT_DESKTOP, tampilanLaporan, labelStatus, angkaUtama, trenTeks, bannerLaporan, unduhPdf,
+  HALAMAN_LAPORAN, isiHalaman, masihAdaHalaman, gabungLaporan,
 } from './laporanView.js';
 
 const res = (status, body, { blob } = {}) => ({
@@ -52,6 +53,35 @@ test('trenTeks', () => {
   assert.equal(trenTeks(0), 'Pengeluaran sama dengan periode lalu');
   assert.equal(trenTeks(null), '');
   assert.equal(trenTeks(undefined), '');
+});
+
+test('daftar laporan per halaman: ukuran sama dengan bawaan API, isi halaman dari daftar atau {items}', () => {
+  assert.equal(HALAMAN_LAPORAN, 24);
+  const satu = [{ id: 'a' }];
+  assert.deepEqual(isiHalaman(satu), satu);
+  assert.deepEqual(isiHalaman({ items: satu }), satu);
+  assert.deepEqual(isiHalaman(null), []);
+  assert.deepEqual(isiHalaman({}), []);
+});
+
+test('masihAdaHalaman: hanya bila halaman terakhir penuh', () => {
+  const halaman = (n) => Array.from({ length: n }, (_, i) => ({ id: String(i) }));
+  assert.equal(masihAdaHalaman(halaman(HALAMAN_LAPORAN)), true);
+  assert.equal(masihAdaHalaman(halaman(HALAMAN_LAPORAN - 1)), false);  // halaman pendek: habis
+  assert.equal(masihAdaHalaman([]), false);                            // daftar kosong atau halaman kosong
+  assert.equal(masihAdaHalaman(halaman(3), 3), true);
+  assert.equal(masihAdaHalaman(null), false);
+  assert.equal(masihAdaHalaman(undefined), false);
+});
+
+test('gabungLaporan: menyambung tanpa mengulang id yang sudah tampil', () => {
+  const lama = [{ id: 'a' }, { id: 'b' }];
+  // Laporan baru terbit di antara dua muatan: offset bergeser satu, baris terakhir halaman lalu datang lagi.
+  assert.deepEqual(gabungLaporan(lama, [{ id: 'b' }, { id: 'c' }]).map((l) => l.id), ['a', 'b', 'c']);
+  assert.deepEqual(gabungLaporan(lama, []).map((l) => l.id), ['a', 'b']);
+  assert.deepEqual(gabungLaporan(null, [{ id: 'x' }]).map((l) => l.id), ['x']);
+  assert.deepEqual(gabungLaporan(lama, null), lama);
+  assert.deepEqual(lama.map((l) => l.id), ['a', 'b']);  // masukan tidak diubah
 });
 
 test('bannerLaporan', () => {

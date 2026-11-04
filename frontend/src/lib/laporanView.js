@@ -46,6 +46,27 @@ export function trenTeks(persen) {
   return 'Pengeluaran sama dengan periode lalu';
 }
 
+// Daftar `/laporan` dimuat per halaman (`GET /laporan?limit&offset`, terbaru dulu); sama dengan bawaan `limit` API.
+export const HALAMAN_LAPORAN = 24;
+
+// Isi satu halaman dari jawaban API: daftar, atau `{items}` bila bentuknya kelak dibungkus.
+export function isiHalaman(jawaban) {
+  return Array.isArray(jawaban) ? jawaban : (jawaban?.items || []);
+}
+
+// Halaman berikutnya mungkin ada hanya bila halaman terakhir penuh; halaman pendek (atau kosong) = sudah habis.
+export function masihAdaHalaman(halaman, ukuran = HALAMAN_LAPORAN) {
+  return Array.isArray(halaman) && halaman.length >= ukuran;
+}
+
+// Sambungkan halaman berikutnya tanpa mengulang laporan yang sudah tampil: laporan yang terbit di antara dua muatan
+// menggeser offset, jadi baris terakhir halaman sebelumnya bisa datang lagi (id ganda = kunci React ganda).
+export function gabungLaporan(lama, baru) {
+  const sebelumnya = lama || [];
+  const ada = new Set(sebelumnya.map((l) => l.id));
+  return [...sebelumnya, ...(baru || []).filter((l) => !ada.has(l.id))];
+}
+
 // null = tidak ada banner (kata sandi sudah diatur, atau pengaturan belum termuat).
 export function bannerLaporan(pengaturan) {
   if (!pengaturan || pengaturan.kata_sandi_diatur) return null;

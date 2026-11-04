@@ -247,8 +247,9 @@ export default function LaporanLengkap({ laporan }) {
           <p className="text-xs text-gray-400 mb-1.5">Amplop yang tidak pernah lewat batas</p>
           {(sorotan.amplop_aman || []).length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {sorotan.amplop_aman.map((n) => (
-                <span key={n} className="px-2.5 py-1 rounded-full text-xs font-semibold text-brand-600 bg-brand-50">{n}</span>
+              {/* Kunci indeks: nama amplop bisa sama (mis. dua amplop "Jajan"), daftar beku tidak pernah berubah urutan. */}
+              {sorotan.amplop_aman.map((n, i) => (
+                <span key={i} className="px-2.5 py-1 rounded-full text-xs font-semibold text-brand-600 bg-brand-50">{n}</span>
               ))}
             </div>
           ) : <p className="text-sm">{STRIP}</p>}

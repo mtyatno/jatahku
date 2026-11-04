@@ -10,7 +10,7 @@ import {
   reportFrameSandbox,
 } from '../lib/exportPeriod';
 
-// compact: satu tombol "Laporan" berisi menu (dipakai di top bar layar lebar).
+// compact: satu tombol "Ekspor" berisi menu (dipakai di top bar layar lebar).
 export default function ExportButtons({ periodStart, periodEnd, periodLabel, compact = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);

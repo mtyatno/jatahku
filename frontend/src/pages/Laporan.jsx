@@ -2,18 +2,45 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { periodeTeks, terbitTeks } from '../lib/laporanFormat';
+import { HALAMAN_LAPORAN, isiHalaman, masihAdaHalaman, gabungLaporan } from '../lib/laporanView';
 
 export default function Laporan() {
   const [items, setItems] = useState(null);
   const [error, setError] = useState('');
+  // Baris yang sudah diambil dari server (offset halaman berikutnya), bukan jumlah yang tampil: baris ganda dibuang.
+  const [diambil, setDiambil] = useState(0);
+  const [masihAda, setMasihAda] = useState(false);
+  const [memuat, setMemuat] = useState(false);
+  const [errorLagi, setErrorLagi] = useState('');
 
   useEffect(() => {
     let batal = false;
-    api.getLaporanList()
-      .then((d) => { if (!batal) setItems(Array.isArray(d) ? d : (d?.items || [])); })
+    api.getLaporanList({ limit: HALAMAN_LAPORAN, offset: 0 })
+      .then((d) => {
+        if (batal) return;
+        const halaman = isiHalaman(d);
+        setItems(halaman);
+        setDiambil(halaman.length);
+        setMasihAda(masihAdaHalaman(halaman));
+      })
       .catch((e) => { if (!batal) setError(e.message); });
     return () => { batal = true; };
   }, []);
+
+  const muatLagi = () => {
+    if (memuat) return;
+    setMemuat(true);
+    setErrorLagi('');
+    api.getLaporanList({ limit: HALAMAN_LAPORAN, offset: diambil })
+      .then((d) => {
+        const halaman = isiHalaman(d);
+        setItems((lama) => gabungLaporan(lama, halaman));
+        setDiambil((n) => n + halaman.length);
+        setMasihAda(masihAdaHalaman(halaman));
+      })
+      .catch((e) => setErrorLagi(e.message))
+      .finally(() => setMemuat(false));
+  };
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -38,6 +65,12 @@ export default function Laporan() {
           ))}
         </div>
       )}
+      {items && items.length > 0 && masihAda && (
+        <button type="button" onClick={muatLagi} disabled={memuat} className="btn-outline text-sm py-2">
+          {memuat ? 'Memuat…' : 'Tampilkan lebih banyak'}
+        </button>
+      )}
+      {errorLagi && <p className="text-sm text-danger-400" role="alert">{errorLagi}</p>}
     </div>
   );
 }

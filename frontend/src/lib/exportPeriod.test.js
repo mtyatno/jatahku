@@ -62,6 +62,10 @@ test('getExportButtonLabel: "Ekspor" plus periode, tanpa awalan Laporan ganda', 
   assert.equal(getExportButtonLabel('Agustus 2026'), 'Ekspor Agustus 2026');
   assert.equal(getExportButtonLabel('01 Agu – 31 Agu 2026'), 'Ekspor 01 Agu – 31 Agu 2026');
   assert.equal(getExportButtonLabel('Laporan Agustus 2026'), 'Ekspor Agustus 2026');
+  assert.equal(getExportButtonLabel('Laporan'), 'Ekspor');
+  // Hanya kata "Laporan" utuh yang dibuang, bukan awalan kata lain.
+  assert.equal(getExportButtonLabel('Laporanku Agustus'), 'Ekspor Laporanku Agustus');
+  assert.equal(getExportButtonLabel('Laporan-Agustus'), 'Ekspor Laporan-Agustus');
   assert.equal(getExportButtonLabel(''), 'Ekspor');
   assert.equal(getExportButtonLabel(null), 'Ekspor');
   assert.equal(getExportButtonLabel(undefined), 'Ekspor');
