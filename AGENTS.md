@@ -233,6 +233,32 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin R7: Catat cepat dan kamus per ruang (d7r7k4a1m9c3)
+Menambah satu tabel baru `ruang_kamus`, route `GET`/`DELETE /ruang/{id}/kamus`, field aditif di
+`POST /transactions/suggest-envelope(s)` (`sumber`, `aturan`, request `amount`), lembar Catat cepat di ruang usaha, dan
+bagian "Kata yang dipelajari" di halaman Anggota (04-kontrak-api.md §2, §3). **Tidak ada kolom baru di tabel lama**, jadi
+tidak ada jendela 500: `lifespan` (`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten
+(`if_not_exists`). Kamus hanya diisi dan dibaca di ruang usaha (flag `ruang_usaha_users`); ruang keluarga, bot, dan
+Catat lama tidak berubah selain satu kueri tambahan yang kosong saat kata user tidak cocok. Tanpa paket atau `.env`.
+1. Sebelum merge: `alembic current` di VPS = `e7b3d5a9c1f4` (Kotak Struk belajar lintas user). Bila belum, jalankan
+   checklist "Kotak Struk belajar lintas user (e7b3d5a9c1f4)" dulu (migrasi R7 menginduk ke sana).
+2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
+   `ls /opt/jatahku/app/alembic/versions/ | grep d7r7k4a1m9c3`.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`envelopes`/
+   `users` milik `postgres`, FK ke sana butuh hak REFERENCES: jalankan sebagai postgres; cek dengan query di checklist
+   Kotak Struk); `alembic current` harus `d7r7k4a1m9c3`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job
+   deploy yang gagal.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d ruang_kamus'` (unik `uq_ruang_kamus`, indeks
+   `ix_ruang_kamus_household_keyword`); `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.ruang_paritas` → kode keluar 0; catat lewat bot dan web di ruang keluarga seperti biasa → saran amplop
+   sama seperti sebelumnya; `sudo -u postgres psql jatahku_db -c "SELECT COUNT(*) FROM ruang_kamus k JOIN households h
+   ON h.id = k.household_id WHERE h.type <> 'usaha'"` → 0 (juga kapan pun sesudahnya).
+5. Uji dua akun di ruang usaha (flag): pemilik mencatat "kardus 125rb" ke Operasional lewat Catat cepat → karyawan
+   mengetik "kardus 50 pcs 125rb" → tebakan Operasional dengan "Kamus <ruang> · diajarkan <pemilik>"; karyawan mengetik
+   kata yang biasa ia catat di ruang keluarganya (mis. "pulsa 50rb") → tawaran "Catat di ruang keluarga" → tercatat di
+   ruang keluarganya, tidak di ruang usaha; pemilik: halaman Anggota → "Kata yang dipelajari" → hapus "kardus" → log
+   ruang "menghapus kata".
+
 ## Deploy Checklist — Plugin R6: halaman Anggota dan Beranda karyawan (tanpa migrasi) — sudah jalan 2026-11-04
 Halaman Anggota (`/ruang`), Beranda template "Karyawan", menu dan Catat per peran, gabung ruang dengan kode di pemilih
 ruang, daftar/cabut undangan, ganti nama ruang. Semuanya hanya di ruang usaha, jadi di balik flag `ruang_usaha_users`;
@@ -633,7 +659,7 @@ Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, be
 5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
 6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
 7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
-8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
+8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang. Kamus ruang (R7, `RuangKamus`): hanya dibaca untuk ruang usaha yang sedang dicari (`txn_nlp.cari_amplop`, gerbang jenis ruang di kueri) dan hanya ditulis dari catatan web bukan-privat ke amplop bersama ruang usaha (`save_learned_keywords(kamus_ruang=True)`; bot dan Kotak Struk tidak). Tawaran "pengeluaran pribadi" di Catat cepat bukan kueri lintas ruang: klien membuat permintaan terpisah tanpa header ruang (ruang keluarga user sendiri), dan server tidak menyimpannya.
 9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
 - **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1; umumnya `plugin_<id>_users`, dibaca host); saklar darurat `plugin_saklar_darurat` (H1, daftar id plugin). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
 - **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.

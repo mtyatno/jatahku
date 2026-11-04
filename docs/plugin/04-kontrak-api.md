@@ -170,11 +170,32 @@ Antrean persetujuan — **v1 (R5)**, ADR-P18. Draf disimpan terpisah (`ruang_dra
 // status draf: menunggu | diproses | disetujui | ditolak | dibatalkan
 ```
 
-Kamus ruang (R7) dan Prive (R8):
+Kamus ruang — **v1 (R7)**, ADR-P5. Kata → amplop yang diajarkan anggota mana pun dari catatan yang tersimpan, dipakai
+semua anggota ruang itu (sesudah kata user sendiri, §3). Hanya ruang usaha; aturan sama dengan `/ruang/{id}/…` lain
+(owner/admin, bukan anggota atau bukan ruang usaha atau di luar flag → 404, karyawan → 403 `khusus_admin`).
 
 ```jsonc
-// GET    /ruang/{id}/kamus → [{"kata", "amplop_id", "diajarkan_oleh", "dipakai"}]   (owner, admin)
-// DELETE /ruang/{id}/kamus/{kata}
+// GET /ruang/{id}/kamus?q=&limit=200 → {"total": 37, "items": [
+//   {"id", "kata": "kardus", "envelope_id", "amplop": "Operasional", "emoji": "🧾", "kali": 4,
+//    "diajarkan_oleh": "Bagas" | null,   // pengajar terakhir; null = akun terhapus atau baris lama
+//    "diubah": "2026-11-04T03:10:00+00:00"}]}
+// Urut: paling sering dulu, lalu kata. `q` = kata memuat teks itu (tanpa wildcard); limit 1–500 (bawaan 200);
+// `total` = semua kata di ruang ini sebelum q dan limit. Kata frasa ("kardus besar") ikut sebagai baris sendiri.
+// DELETE /ruang/{id}/kamus/{kamus_id} → 204. Kata ruang lain → 404. Ikut menghapus kata user (`user_envelope_keywords`)
+//   yang sama untuk amplop itu milik semua anggota, supaya pengajarnya juga tidak mendapat tebakan itu lagi.
+//   Log ruang: `kata_dihapus` {"kata", "envelope_id", "amplop"}.
+```
+
+Yang mengajari kamus ruang: catatan pengeluaran **bukan-privat** lewat web/aplikasi (`POST /transactions`,
+`/transactions/batch`, dan draf yang disetujui, atas nama pencatatnya) ke amplop **bersama** (tanpa `owner_id`), aktif,
+bertujuan pengeluaran, di ruang usaha. Kata = kata dari keterangan tanpa nominal, angka, dan satuan (`pcs`, `kg`, `pax`,
+…), maksimal 12 kata + satu frasa. Tidak mengajari: catatan privat (kamus terlihat admin), amplop pribadi, ruang
+keluarga, bot (ADR-P2), Kotak Struk, pemasukan. Reset ruang menghapus kamusnya; hapus akun mengosongkan
+`diajarkan_oleh`.
+
+Prive (R8):
+
+```jsonc
 
 // POST /prive {"dari_amplop_id", "jumlah", "tanggal"?, "catatan"?, "client_ref"}     (v1, R8; client_ref wajib)
 // Hanya owner ruang usaha asal (ruang dari amplop). Tujuan selalu ruang keluarga pemanggil, ditentukan server;
@@ -195,23 +216,38 @@ Kamus ruang (R7) dan Prive (R8):
 
 Kedua sisi tersimpan di `incomes` dengan `kind = "prive"` (v0 menulis `keluar.transaction_id`; diubah di R8 supaya prive tidak pernah menjadi transaksi pengeluaran). Akibatnya: prive tidak dihitung sebagai beban dan tidak mengurangi laba (U3 menghitung beban dari transaksi); `GET /incomes/` di ruang usaha menampilkan sisi keluar sebagai `type: "transfer"`, `transfer: null`, `kind: "prive"` (riwayat web sekarang melewatinya), dan di ruang keluarga sisi masuk sebagai `type: "income"`, `kind: "prive"`. Hapus atau batalkan prive belum ada.
 
-## 3. Catat cepat (R7, U5)
+## 3. Catat cepat (R7, U5) — **v1 untuk saran amplop, sumber, dan aturan (R7)**; `jenis_catatan` dan `kontak` masih v0 (U5)
 
 Endpoint yang ada tetap; field baru hanya bertambah. Ruang dari header (membaca), karena saran tidak menulis apa pun.
+Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dikirim terpisah dari keterangan.
 
 ```jsonc
-// POST /transactions/suggest-envelope {"description": "kardus 50 pcs 125rb"}
+// POST /transactions/suggest-envelope {"description": "kardus 50 pcs", "amount": 125000}   // amount opsional (R7)
 {
   "envelope_id": "…", "envelope_name": "Operasional", "confident": true,          // field lama, tetap
-  "sumber": {"jenis": "kamus_ruang", "diajarkan_oleh": "Bagas", "kali": 4},        // kata_saya | kamus_ruang | kontak | kamus_kategori
-  "jumlah": 125000,
-  "jenis_catatan": "pengeluaran",                                                  // dari kamus plugin (nlp_kamus, U5): penjualan, modal, …
-  "kontak": {"id": "…", "nama": "Toko Plastik Jaya", "peran": "pemasok"} | null,  // U5, bila Buku Usaha aktif
-  "aturan": [{"kode": "foto_nota", "teks": "Wajib foto nota di atas Rp300.000"}],  // batasan yang berlaku untuk catatan ini
-  "amplop_terkunci": [{"envelope_id": "…", "alasan": "Dikunci admin untukmu"}],
-  "tawaran_pribadi": false   // true bila mirip kata pribadi user sendiri; hanya untuk user itu, tidak dicatat (ADR-P5)
+  "sumber": {"jenis": "kamus_ruang", "kali": 4, "diajarkan_oleh": "Bagas", "oleh_saya": false} | null,
+  //   jenis: kata_saya | kamus_ruang | kamus_kategori | nama_amplop (U5 menambah kontak, kamus plugin)
+  //   kali: kata_saya dan kamus_ruang; diajarkan_oleh/oleh_saya: hanya kamus_ruang (nama null bila pengajarnya
+  //   pemanggil sendiri atau akunnya terhapus)
+  "aturan": [{"kode": "foto_nota", "teks": "Wajib foto nota di atas Rp300.000."},
+             {"kode": "persetujuan", "teks": "Di atas batasmu Rp1.000.000: menunggu persetujuan admin."}]
+  //   batasan karyawan untuk `amount` (kosong untuk owner/admin, ruang keluarga, atau tanpa amount); juga dijawab
+  //   bila description kosong. Hanya tampilan: penegakan tetap di jalur catat (§2, kode §7).
+  // U5 (v0): "jenis_catatan": "pengeluaran" | "penjualan" | …, "kontak": {"id", "nama", "peran"} | null
 }
+// POST /transactions/suggest-envelopes {"descriptions": [...]} → results[] dengan field lama + "sumber": {"jenis"} | null
 ```
+
+Urutan cocok (`txn_nlp.cari_amplop`): kata yang dipelajari user sendiri (amplop di ruang ini) → kamus ruang (hanya bila
+ruang di header bertipe usaha; gerbangnya di kueri) → kamus kategori bawaan → nama amplop di keterangan. Karyawan:
+hanya amplop yang diizinkan menjadi kandidat, jadi amplop terkunci tidak menutupi tebakan berikutnya; amplop terkunci
+tidak dikirim (daftar amplop karyawan dari `GET /envelopes/` sudah hanya yang diizinkan).
+
+**Tawaran "pengeluaran pribadi"** (v0 `tawaran_pribadi` dihapus; keputusan R7 B): tidak dihitung server, supaya tidak ada
+kueri lintas ruang selain Prive (`AGENTS.md` aturan 8). Bila tebakan di ruang usaha tidak berasal dari `kata_saya` atau
+`kamus_ruang`, klien memanggil endpoint yang sama **tanpa header** (= ruang keluarga user sendiri); tawaran muncul hanya
+bila `sumber.jenis` jawabannya `kata_saya` dan `confident`. "Catat di ruang keluarga" = `POST /transactions` tanpa header
+ke amplop dari jawaban itu (ruang tulis dari amplop, R3). Tidak tersimpan, tidak terlihat admin.
 
 ## 4. Beranda (B1, B2) — **v1 (B1 #162; `enabled` B2)**
 
