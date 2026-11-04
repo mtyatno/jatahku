@@ -21,8 +21,16 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
   3. **Rendah:** ruang nama kunci: `idempotency._key` kini punya `scope`; prive memakai `priveref:{user}:{ref}`, transaksi/advisor tetap `txnref`.
   4. **Rendah:** `notify_goals_reached` sesudah commit dibungkus try (tidak lagi 500 sesudah commit).
   - Tes +7 (30): tanggal sebelum periode (termasuk PoC 40 hari), awal periode boleh, Redis mati → 503 tanpa baris, simpan hasil gagal → 503 tanpa baris lalu kirim ulang 201, tanpa `client_ref` tidak butuh Redis, kunci basi, notifikasi gagal → 201; ruang nama kunci. Tiga tes baru dibuktikan gagal di route lama. unittest 2739 lulus · `openapi_cek` tanpa perubahan memutus.
+- **Review ulang (4 Nov, `d1df20a`):** tanggal mundur tertutup; minta perubahan untuk temuan baru, semua dikerjakan:
+  1. **Sedang:** cek sisa dan batas tanggal memakai siklus ruang keluarga (`users.payday_day`), padahal ruang usaha selalu bulan kalender (`USAHA_PAYDAY`). PoC: gajian keluarga tgl 25, amplop usaha Rp1 jt dari rollover Oktober → prive Rp1 jt 10 Nov dan 26 Nov sama-sama 201. Sekarang `compute_envelope_summaries(…, payday_day=)` (parameter aditif) memakai `household_payday` ruang usaha; tanggal = irisan periode berjalan kedua ruang; satu sumber "hari ini" (`date.today()`, sama dengan perhitungan saldo).
+  2. **Rendah:** commit ambigu (COMMIT sampai, jawaban hilang) bisa dobel karena `except` memanggil `forget`. Sekarang `release` (hanya status pending); commit yang benar-benar gagal dikenali sebagai kunci basi.
+  3. **Rendah:** `client_ref` wajib (422) selagi belum ada klien, supaya tidak menjadi perubahan memutus nanti.
+  4. **Rendah:** panggilan Redis strict memakai timeout 2 detik (dipanggil sambil memegang kunci dua household).
+  5. **Info:** cek tanggal dipindah ke sesudah lookup `client_ref`; kiriman ulang yang melewati pergantian periode mengembalikan jawaban lama. Cek akses tetap di depan.
+  - Tes 34 (+4 baru, 1 diganti): siklus ruang usaha (PoC tgl 25 dengan tanggal dipatok), commit ambigu, `client_ref` wajib, timeout Redis, kiriman ulang sesudah ganti periode. Kelimanya gagal di `d1df20a`. unittest 2743 lulus · `openapi_cek` tanpa perubahan memutus.
 
 **Digantung**
+- **Temuan di luar PR ini (review ulang #177):** akar yang sama (saldo ruang usaha dihitung dengan `users.payday_day`) membuat `/envelopes/summary`, geser dana, dan cocokkan saldo salah untuk owner/admin ruang usaha yang gajian keluarganya bukan tgl 1. Tidak mengeluarkan uang dari ruang, tetapi U3 (laba/kas) membaca angka ini: perlu PR terpisah sebelum U3, memakai `compute_envelope_summaries(…, payday_day=household_payday(ruang))`.
 - UI prive (menu Catat ▾ "Prive ke Rumah tangga", FAB di HP) belum ada; R8 hanya server. Riwayat pemasukan web melewati sisi keluar (`type: "transfer"`, `transfer: null`) — tampilkan saat UI ruang usaha digarap.
 - Hapus/batalkan prive belum ada (tidak ada endpoint hapus pemasukan sama sekali). Bila ditambah: hapus kedua sisi bersama; penghubung dua baris belum ada (hanya tanggal, nominal, keterangan).
 - Sisi masuk dihitung `Income.amount > 0`, jadi ikut meredam pengingat gajian (`payday_reminder.py`) dan masuk total pemasukan analitik ruang keluarga. Dianggap benar (prive = gaji pemilik), tetapi belum diputuskan pemilik produk.
@@ -41,7 +49,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Kirim ulang `client_ref` mengembalikan jawaban tersimpan tanpa memeriksa ulang peran (sama dengan `advisor/execute`); kunci Redis per user, jadi user lain tidak bisa memakainya.
 
 **Cara melanjutkan**
-- Review ulang singkat: "review ulang PR #177 terhadap 03-workflow.md bagian keamanan, fokus batas tanggal periode dan idempotensi fail-closed". Lalu merge.
+- Review ulang kedua yang singkat: "review ulang PR #177 terhadap 03-workflow.md bagian keamanan, fokus siklus ruang usaha (payday) dan release vs forget". Lalu merge.
 - Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu Gerbang R bisa dinilai lulus (R2, R3, R8).
 - Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan; migrasi, review) atau `/sesi-plugin H1`.
 

@@ -129,6 +129,8 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         return await self.client.post("/prive", json=body, headers=headers)
 
     def _body(self, amplop=None, jumlah="250000", **lain):
+        import uuid
+        lain.setdefault("client_ref", str(uuid.uuid4()))  # wajib (review ulang #177)
         return {"dari_amplop_id": str(amplop or self.env_prive), "jumlah": jumlah, **lain}
 
     async def _prive_rows(self):
@@ -334,12 +336,77 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ulang.status_code, 201, ulang.text)
         self.assertEqual(len(await self._prive_rows()), 2)
 
-    async def test_tanpa_client_ref_tanpa_redis(self):
-        async def mati(*a, **k):
-            raise ConnectionError("redis mati")
-        with patch.object(self.redis, "set", mati), patch.object(self.redis, "get", mati):
-            r = await self._post(self.me, self._body())
-        self.assertEqual(r.status_code, 201, r.text)
+    async def test_client_ref_wajib(self):
+        for ref in (None, ""):
+            body = self._body()
+            if ref is None:
+                del body["client_ref"]
+            else:
+                body["client_ref"] = ref
+            await self._ditolak(self.me, body, 422)
+
+    async def test_redis_strict_memakai_timeout(self):
+        import redis.asyncio
+        await self._post(self.me, self._body())
+        kw = [c.kwargs for c in redis.asyncio.from_url.call_args_list]
+        self.assertTrue(kw and all(k.get("socket_timeout") == 2 and k.get("socket_connect_timeout") == 2 for k in kw))
+
+    async def test_commit_ambigu_tidak_dobel(self):
+        # Review ulang #177: COMMIT sampai di database tetapi jawabannya hilang → kiriman ulang tidak boleh mencatat lagi.
+        from sqlalchemy.ext.asyncio import AsyncSession
+        asli = AsyncSession.commit
+
+        async def commit_lalu_putus(sess):
+            await asli(sess)
+            raise ConnectionError("koneksi putus sesudah COMMIT")
+        with patch.object(AsyncSession, "commit", commit_lalu_putus):
+            r = await self._post(self.me, self._body(client_ref="ref-ambigu"))
+        self.assertEqual(r.status_code, 500)
+        self.assertEqual(len(await self._prive_rows()), 2)
+        ulang = await self._post(self.me, self._body(client_ref="ref-ambigu"))
+        self.assertEqual(ulang.status_code, 201, ulang.text)
+        self.assertEqual(len(await self._prive_rows()), 2)
+        self.assertEqual(await self._sisa(self.me, self.usaha_id, "Prive"), D("750000"))
+
+    async def test_kirim_ulang_sesudah_ganti_periode(self):
+        a = await self._post(self.me, self._body(client_ref="ref-periode"))
+        lama = (self.today - timedelta(days=60)).isoformat()   # di luar periode: hanya kiriman ulang yang lolos
+        b = await self._post(self.me, self._body(client_ref="ref-periode", tanggal=lama))
+        self.assertEqual((a.status_code, b.status_code), (201, 201))
+        self.assertEqual(a.json(), b.json())
+        self.assertEqual(len(await self._prive_rows()), 2)
+
+    async def test_siklus_ruang_usaha_bukan_gajian_keluarga(self):
+        # Review ulang #177 (PoC): gajian keluarga tgl 25, ruang usaha bulan kalender. Amplop usaha berisi Rp1 jt
+        # dari rollover Oktober. Prive Rp1 jt pada 10 Nov sah; prive Rp1 jt lagi pada 26 Nov harus ditolak.
+        from datetime import date as _date
+        from app.models.models import MonthlySnapshot
+
+        def pada(hari):
+            class Hari(_date):
+                @classmethod
+                def today(cls):
+                    return hari
+            return Hari
+        async with self.Session() as db:
+            (await db.get(Household, self.rumah_id)).payday_day = 25
+            (await db.get(Household, self.usaha_id)).payday_day = 1
+            (await db.get(User, self.me.id)).payday_day = 25
+            kas = Envelope(household_id=self.usaha_id, name="Kas Bulanan", emoji="💼", budget_amount=D("0"),
+                           is_rollover=True)
+            db.add(kas)
+            await db.flush()
+            db.add(MonthlySnapshot(envelope_id=kas.id, year=2026, month=10, opening_balance=D("0"),
+                                   closing_balance=D("1000000"), rollover_amount=D("1000000")))
+            await db.commit()
+        self.me.payday_day = 25
+        for hari, status in ((_date(2026, 11, 10), 201), (_date(2026, 11, 26), 400)):
+            with patch("app.api.routes.prive.date", pada(hari)), \
+                 patch("app.services.envelope_balance.date", pada(hari)):
+                r = await self._post(self.me, self._body(kas.id, jumlah="1000000"))
+            self.assertEqual(r.status_code, status, (hari, r.text))
+        self.assertIn("Maksimal prive dari Kas Bulanan: Rp0", r.json()["detail"])
+        self.assertEqual(len(await self._prive_rows()), 2)
 
     async def test_kunci_basi_dianggap_belum_tercatat(self):
         import json

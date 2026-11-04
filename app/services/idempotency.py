@@ -40,8 +40,14 @@ def _gagal(op: str, exc: Exception, strict: bool):
         raise RedisTidakTersedia(str(exc)) from exc
 
 
-def _redis():
+STRICT_TIMEOUT = 2  # detik: pemanggil strict memegang kunci baris, jadi Redis yang menggantung harus gagal cepat
+
+
+def _redis(strict: bool = False):
     import redis.asyncio as aioredis
+    if strict:
+        return aioredis.from_url(get_settings().REDIS_URL, socket_timeout=STRICT_TIMEOUT,
+                                 socket_connect_timeout=STRICT_TIMEOUT)
     return aioredis.from_url(get_settings().REDIS_URL)
 
 
@@ -50,7 +56,7 @@ async def lookup(user_id, ref: str | None, *, scope: str = SCOPE_TXN, strict: bo
     if not ref:
         return None
     try:
-        r = _redis()
+        r = _redis(strict)
         try:
             val = await r.get(_key(user_id, ref, scope))
         finally:
@@ -66,7 +72,7 @@ async def reserve(user_id, ref: str | None, *, scope: str = SCOPE_TXN, strict: b
     if not ref:
         return True
     try:
-        r = _redis()
+        r = _redis(strict)
         try:
             return bool(await r.set(_key(user_id, ref, scope), PENDING, nx=True, ex=PENDING_TTL))
         finally:
@@ -80,7 +86,7 @@ async def store(user_id, ref: str | None, txn_id, *, scope: str = SCOPE_TXN, str
     if not ref:
         return
     try:
-        r = _redis()
+        r = _redis(strict)
         try:
             await r.set(_key(user_id, ref, scope), str(txn_id), ex=TTL_SECONDS)
         finally:
@@ -94,7 +100,7 @@ async def release(user_id, ref: str | None, *, scope: str = SCOPE_TXN, strict: b
     if not ref:
         return
     try:
-        r = _redis()
+        r = _redis(strict)
         try:
             key = _key(user_id, ref, scope)
             if (await r.get(key)) in (PENDING, PENDING.encode()):
@@ -110,7 +116,7 @@ async def forget(user_id, ref: str | None, *, scope: str = SCOPE_TXN, strict: bo
     if not ref:
         return
     try:
-        r = _redis()
+        r = _redis(strict)
         try:
             await r.delete(_key(user_id, ref, scope))
         finally:

@@ -159,11 +159,12 @@ Kamus ruang (R7) dan Prive (R8):
 // GET    /ruang/{id}/kamus → [{"kata", "amplop_id", "diajarkan_oleh", "dipakai"}]   (owner, admin)
 // DELETE /ruang/{id}/kamus/{kata}
 
-// POST /prive {"dari_amplop_id", "jumlah", "tanggal"?, "catatan"?, "client_ref"?}     (v1, R8)
+// POST /prive {"dari_amplop_id", "jumlah", "tanggal"?, "catatan"?, "client_ref"}     (v1, R8; client_ref wajib)
 // Hanya owner ruang usaha asal (ruang dari amplop). Tujuan selalu ruang keluarga pemanggil, ditentukan server;
-// header X-Jatahku-Ruang tidak dipakai. tanggal bawaan hari ini (zona waktu user), hanya di periode berjalan
-// (tidak di masa depan, tidak sebelum awal periode); catatan maks. 200 karakter; client_ref maks. 64 (kirim ulang →
-// jawaban yang sama, tanpa catatan ganda; fail-closed: Redis tidak terjangkau → 503).
+// header X-Jatahku-Ruang tidak dipakai. Sisa amplop dihitung dengan siklus ruang usaha (bulan kalender).
+// tanggal bawaan hari ini (server), hanya di irisan periode berjalan ruang usaha dan ruang keluarga pemilik;
+// catatan maks. 200 karakter; client_ref 1–64 karakter, wajib (kirim ulang → jawaban yang sama tanpa catatan
+// ganda, juga bila tanggalnya sudah di luar periode; fail-closed: Redis tidak terjangkau dalam 2 detik → 503).
 // → 201 {
 //   "keluar": {"income_id", "ruang_id", "amplop"},   // ruang usaha: pemasukan bernilai 0 + alokasi -jumlah di amplop asal
 //   "masuk":  {"income_id", "ruang_id", "amplop": "Tabungan"},  // ruang keluarga: pemasukan sungguhan ke Tabungan
@@ -171,7 +172,7 @@ Kamus ruang (R7) dan Prive (R8):
 // }   — dua sisi dalam satu transaksi database
 // Galat: 404 amplop tidak ada / ruang orang lain / pribadi anggota lain / nonaktif · 400 `bukan_ruang_usaha`
 // · 403 `prive_hanya_pemilik` · 400 `tanpa_ruang_keluarga` · 400 melebihi sisa amplop ("Maksimal prive dari …")
-// · 400 tanggal masa depan / sebelum awal periode berjalan · 409 client_ref masih diproses · 422 jumlah ≤ 0
+// · 400 tanggal masa depan / sebelum awal periode berjalan · 409 client_ref masih diproses · 422 jumlah ≤ 0 atau tanpa client_ref
 // · 503 client_ref dikirim tetapi pengaman kiriman ulang tidak terjangkau (coba lagi)
 ```
 

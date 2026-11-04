@@ -8,12 +8,13 @@ permintaan tulis yang boleh menyentuh dua ruang (pengecualian `lintas_ruang`, AG
 - ruang tujuan = ruang keluarga pemanggil, ditentukan server (`ruang_keluarga_id`), tidak pernah
   dari body atau header — jadi tidak ada cara menulis ke ruang keluarga orang lain;
 - kedua sisi dalam satu transaksi database (`fund_shift.record_prive`);
-- tanggal hanya di periode berjalan (sumber periode sama dengan `compute_envelope_summaries`), supaya
-  cek sisa amplop tidak bisa dilewati dengan tanggal mundur ke periode yang rollover-nya sudah dihitung
-  (review keamanan PR #177);
-- idempoten lewat `client_ref`, **fail-closed**: prive tidak bisa dibatalkan, jadi bila Redis tidak
-  terjangkau permintaan ber-`client_ref` dijawab 503, dan hasil disimpan ke Redis sebelum commit (bila
-  commit gagal, kuncinya dihapus; kunci yang menunjuk baris yang tidak ada dianggap basi).
+- sisa amplop dihitung dengan siklus **ruang usaha** (`household_payday`, bulan kalender), bukan tanggal
+  gajian keluarga user; tanggal hanya di irisan periode berjalan kedua ruang, dengan satu sumber "hari ini"
+  (`date.today()`, sama dengan perhitungan saldo), supaya cek sisa tidak bisa dilewati (review #177);
+- `client_ref` wajib dan idempotensi **fail-closed**: prive tidak bisa dibatalkan, jadi Redis tidak
+  terjangkau (timeout 2 detik) → 503; hasil disimpan ke Redis sebelum commit dan tidak dihapus bila commit
+  gagal (hanya status pending yang dilepas), karena commit bisa sampai di database walau jawabannya hilang;
+  kunci yang menunjuk baris yang tidak ada dianggap basi.
 
 Chat tidak punya jalur prive (ADR-P2): bot hanya mencatat ke ruang keluarga.
 """
@@ -45,28 +46,28 @@ PESAN_REDIS = "Prive belum bisa dicatat sekarang. Coba lagi sebentar."
 class PriveCreate(BaseModel):
     dari_amplop_id: UUID
     jumlah: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
-    tanggal: date | None = None          # bawaan: hari ini di zona waktu user; hanya periode berjalan
+    tanggal: date | None = None          # bawaan: hari ini; hanya irisan periode berjalan kedua ruang
     catatan: str | None = Field(default=None, max_length=200)
-    client_ref: str | None = Field(default=None, max_length=64)
+    client_ref: str = Field(min_length=1, max_length=64)   # wajib: prive tidak bisa dibatalkan
 
 
-def _hari_ini(user) -> date:
-    from app.services.streak import user_today
-    return user_today(getattr(user, "timezone", None))
-
-
-def _periode_berjalan(user) -> tuple[date, date]:
-    """Periode yang dipakai `compute_envelope_summaries` untuk sisa amplop (payday user, `date.today()`)."""
+async def _periode_irisan(db, usaha_id, keluarga_id) -> tuple[int, date, date]:
+    """(payday ruang usaha, awal, akhir): irisan periode berjalan ruang usaha dan ruang keluarga.
+    Hari ini (`date.today()`, sumber yang sama dengan `compute_envelope_summaries`) selalu di dalamnya."""
     from app.core.period import get_budget_period
-    return get_budget_period(getattr(user, "payday_day", None) or 1, date.today())
+    from app.services.household_cycle import household_payday
+    hari_ini = date.today()
+    usaha = await db.get(Household, usaha_id)
+    keluarga = await db.get(Household, keluarga_id)
+    payday_usaha = await household_payday(db, usaha)
+    a_u, z_u = get_budget_period(payday_usaha, hari_ini)
+    a_k, z_k = get_budget_period(await household_payday(db, keluarga), hari_ini)
+    return payday_usaha, max(a_u, a_k), min(z_u, z_k, hari_ini)
 
 
-def _tanggal_prive(user, diminta: date | None) -> date:
-    hari_ini = _hari_ini(user)
-    awal, akhir = _periode_berjalan(user)
-    paling_akhir = min(hari_ini, akhir)
-    tanggal = diminta or paling_akhir
-    if tanggal > paling_akhir:
+def _cek_tanggal(diminta: date | None, awal: date, akhir: date) -> date:
+    tanggal = diminta or akhir
+    if tanggal > akhir:
         raise HTTPException(status_code=400, detail="Tanggal prive tidak boleh di masa depan.")
     if tanggal < awal:
         raise HTTPException(status_code=400,
@@ -96,12 +97,9 @@ async def create_prive(
     if not keluarga_id:
         raise RuangDitolak(kode=KODE_TANPA_KELUARGA, status_code=400,
                            detail="Ruang keluargamu belum ada. Buka Jatahku di ruang keluarga dulu, lalu coba lagi.")
-    tanggal = _tanggal_prive(user, req.tanggal)
-
     from app.services import idempotency
-    ref = req.client_ref
     try:
-        hasil, goals_before = await _catat(db, user, req, usaha_id, keluarga_id, tanggal, ref)
+        hasil, goals_before = await _catat(db, user, req, usaha_id, keluarga_id, req.client_ref)
     except idempotency.RedisTidakTersedia:
         await db.rollback()
         raise HTTPException(status_code=503, detail=PESAN_REDIS)
@@ -118,7 +116,7 @@ async def create_prive(
     return hasil
 
 
-async def _catat(db, user, req: PriveCreate, usaha_id, keluarga_id, tanggal, ref) -> tuple[dict, dict | None]:
+async def _catat(db, user, req: PriveCreate, usaha_id, keluarga_id, ref) -> tuple[dict, dict | None]:
     """Mengembalikan (jawaban, potret target sebelum) — potret None bila ini kiriman ulang."""
     from app.api.routes.incomes import _get_or_create_tabungan
     from app.models.models import Income
@@ -135,25 +133,27 @@ async def _catat(db, user, req: PriveCreate, usaha_id, keluarga_id, tanggal, ref
     for hid in sorted((usaha_id, keluarga_id), key=str):
         await lock_household(db, hid)
 
-    if ref:
-        sudah = await idempotency.lookup(user.id, ref, **kunci)
-        if sudah == idempotency.PENDING:
-            raise HTTPException(status_code=409, detail=PESAN_SIBUK)
-        if sudah:
-            try:
-                lama = json.loads(sudah)
-                ada = await db.get(Income, UUID(lama["keluar"]["income_id"]))
-            except (ValueError, KeyError, TypeError):
-                lama, ada = None, None
-            if ada is not None and ada.user_id == user.id:
-                await db.rollback()  # lepas kunci; tidak ada yang ditulis
-                return lama, None    # kiriman ulang: kedua sisi sudah tercatat
-            await idempotency.forget(user.id, ref, **kunci)  # basi: commit sebelumnya gagal
-        if not await idempotency.reserve(user.id, ref, **kunci):
-            raise HTTPException(status_code=409, detail=PESAN_SIBUK)
+    sudah = await idempotency.lookup(user.id, ref, **kunci)
+    if sudah == idempotency.PENDING:
+        raise HTTPException(status_code=409, detail=PESAN_SIBUK)
+    if sudah:
+        try:
+            lama = json.loads(sudah)
+            ada = await db.get(Income, UUID(lama["keluar"]["income_id"]))
+        except (ValueError, KeyError, TypeError):
+            lama, ada = None, None
+        if ada is not None and ada.user_id == user.id:
+            await db.rollback()  # lepas kunci; tidak ada yang ditulis
+            return lama, None    # kiriman ulang: kedua sisi sudah tercatat (sebelum cek tanggal: periode bisa berganti)
+        await idempotency.forget(user.id, ref, **kunci)  # basi: commit sebelumnya benar-benar gagal
+    if not await idempotency.reserve(user.id, ref, **kunci):
+        raise HTTPException(status_code=409, detail=PESAN_SIBUK)
 
     try:
-        rows = {str(r["id"]): r for r in await compute_envelope_summaries(user, db, household_id=usaha_id)}
+        payday_usaha, awal, akhir = await _periode_irisan(db, usaha_id, keluarga_id)
+        tanggal = _cek_tanggal(req.tanggal, awal, akhir)
+        rows = {str(r["id"]): r for r in await compute_envelope_summaries(
+            user, db, household_id=usaha_id, payday_day=payday_usaha)}
         row = rows.get(str(req.dari_amplop_id))
         if row is None:  # amplop nonaktif, atau amplop pribadi anggota lain
             raise HTTPException(status_code=404, detail="Amplop tidak ditemukan")
@@ -181,10 +181,11 @@ async def _catat(db, user, req: PriveCreate, usaha_id, keluarga_id, tanggal, ref
         await idempotency.store(user.id, ref, json.dumps(hasil), **kunci)
         await db.commit()
     except BaseException:
-        if ref:
-            try:
-                await idempotency.forget(user.id, ref, scope=SCOPE_REF)  # pending atau hasil yang belum di-commit
-            except Exception:
-                pass
+        # Hanya status pending yang dilepas. Hasil yang sudah disimpan dibiarkan: commit bisa sampai di database
+        # walau jawabannya hilang (koneksi putus); bila commit benar-benar gagal, kunci itu dikenali basi.
+        try:
+            await idempotency.release(user.id, ref, scope=SCOPE_REF)
+        except Exception:
+            pass
         raise
     return hasil, goals_before
