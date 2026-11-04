@@ -28,11 +28,12 @@ from app.services.kotak_struk.belajar import (
     Final, Vote, forget_user, learn_from_correction, next_status, record_votes, recount, votes_for,
 )
 from app.services.kotak_struk.config import RULE_MIN_USERS
+from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
 from app.services.kotak_struk.kerangka import LABEL_WORDS, TITLE_WORDS, build_layout
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
-from app.services.kotak_struk.readers.base import ParseContext
+from app.services.kotak_struk.readers.base import ParseContext, Secrets
 from app.services.kotak_struk.readers.profiles import PROFILES, detect_issuer
 from app.services.kotak_struk.registry import read_document
 
@@ -253,6 +254,22 @@ class ReviewFixVotesTests(_Quiet):
                 self.assertTrue(belajar._votable(label), label)   # label kosakata yang sah: hanya jenisnya yang menolak
                 votes = votes_for(lay, doc(name="BUDI"), None, final(description="arisan Siti Rahayu"))
                 self.assertEqual(votes, [Vote("label_pihak", "gopay", label)] if label in self.PARTY else [])
+
+    def test_kepada_label_votes_label_pihak_and_atas_nama_alone_does_not(self):
+        # Pre-flight L2 R-2: "kepada" ada di PARTY_WORDS sejak tahap 1 tetapi tidak pernah cocok (kerangka memberi label
+        # None). Kini label "Kepada" masuk kerangka dan menjadi suara penerima; "Atas Nama" masuk kerangka tetapi bukan
+        # label penerima ("nama" lemah, "atas" bukan kata penerima).
+        read = {"amounts": {"total": 10000}, "counterparty": {"name": "BUDI"}}
+        for printed, expected in (("Kepada", [Vote("label_pihak", "gopay", "kepada")]), ("Atas Nama", [])):
+            with self.subTest(printed=printed):
+                lines = ["GoPay", "Transfer Berhasil", printed, "SITI RAHAYU", "Jumlah Rp10.000"]
+                built = build_layout(lines, DokumenBayar(doc_type="transfer", issuer="gopay",
+                                                         counterparty=Counterparty(name="BUDI"),
+                                                         amounts=Amounts(total=10000)), Secrets(), user_name=None)
+                labels = [e["label"] for e in built["lines"] if e["kind"] == "nama"]
+                self.assertEqual(labels, [printed.lower()])
+                self.assertEqual(votes_for(built, read, None, final(10000, description="Transfer ke Siti Rahayu")),
+                                 expected)
 
     def test_lone_nama_label_is_not_a_recipient(self):
         # Review L2 R-1: Jago PLN "NAMA: PT CONTOH DAYA" (pemilik meter, sering user sendiri) dan "Nama Acquirer" /

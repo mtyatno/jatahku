@@ -58,11 +58,13 @@ NAME_MAX_WORDS = 6
 _EDGE = " \t:：;,.|·•-–—_/\\"           # tanda baca ujung label
 _WORD_PUNCT = ".,:;()'\"&/-–!?*•·"       # tanda baca yang dilepas dari kata sebelum dicocokkan
 
-# Kata label kurasi (G2), di luar kata dari GENERIC_LABELS dan label profil aplikasi.
+# Kata label kurasi (G2), di luar kata dari GENERIC_LABELS dan label profil aplikasi. "kepada" dan "atas" (label penerima
+# "Kepada" dan "Atas Nama"; pre-flight A16 L2 R-2): label "Kepada" kini bisa menjadi suara `label_pihak`; "Atas Nama"
+# masuk kerangka tetapi bukan label penerima (`belajar._party_label`: "nama" lemah, "atas" bukan kata penerima).
 _CURATED = (
     "jumlah kirim uang bayar pembayaran total nominal transfer ke dari tujuan penerima nama merchant toko tanggal waktu "
     "selesai transaksi biaya admin layanan saldo terpakai dibayar debit sumber metode jenis keterangan catatan tagihan "
-    "harga subtotal amount date time paid payment recipient to from name rp idr qris"
+    "harga subtotal amount date time paid payment recipient to from name rp idr qris kepada atas"
 )
 
 

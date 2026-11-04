@@ -233,6 +233,18 @@ class BuildLayoutTests(unittest.TestCase):
                                (2, "nama", "nama merchant", hmac_hex(normalize_name("WARUNG BAKSO PAK DI"))),
                                (3, "nama", "ke", hmac_hex("siti"))])
 
+    def test_kepada_and_atas_nama_are_labels(self):
+        # Pre-flight L2 R-2: "Kepada" dan "Atas Nama" kini kata label; nilainya tetap hanya HMAC.
+        for printed, label in (("Kepada", "kepada"), ("Atas Nama", "atas nama"), ("KEPADA:", "kepada")):
+            with self.subTest(printed=printed):
+                lines = ["GoPay", "Transfer Berhasil", printed, "SITI RAHAYU", "Jumlah Rp10.000"]
+                lay = build_layout(lines, transfer_doc(name="SITI RAHAYU", total=10000), Secrets(), user_name=None)
+                by_i = {e["i"]: e for e in lay["lines"]}
+                self.assertNotIn(2, by_i)   # baris label tanpa nilai bukan entri
+                self.assertEqual(by_i[3], {"i": 3, "label": label, "kind": "nama", "h": hmac_hex("siti rahayu")})
+                self.assertNotIn("siti", json.dumps(lay).lower())
+        self.assertTrue({"kepada", "atas"} <= LABEL_WORDS)
+
     def test_title_words_hold_no_name_and_only_in_the_header(self):
         lines = ["GoPay", "Transfer ke BUDI Berhasil", "Top Up Saldo", "Nominal Rp10.000", "Pembayaran Berhasil"]
         lay = build_layout(lines, transfer_doc(name=None), Secrets(), user_name=None)
