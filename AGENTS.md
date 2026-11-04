@@ -526,6 +526,72 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
    urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
+## Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)
+Branch `feat/laporan-berkala` (label `migrasi`): tabel `reports` dan `report_settings`, kolom `users.email_verified_at`,
+job `laporan_job` (tiap jam menit 30), API `/laporan*` dan `/user/laporan-pengaturan`, halaman `/laporan`, Pengaturan →
+Laporan, dan tombol top bar "Ekspor". Migrasi **idempoten**: `lifespan` (`create_all` + `LAPORAN_DDL`) membuat tabel dan
+kolom yang sama saat API restart, dan kolom `users` nullable, jadi tidak ada jendela 500; migrasinya tetap harus
+dijalankan, kalau tidak `deploy.sh` berakhir exit 2. **Paket baru dan kunci `.env` baru.** Detail perilaku, batasan, dan
+pemulihan: `docs/laporan-berkala.md`.
+Sebelum merge (aman untuk kode lama):
+1. Paket (deploy tidak meng-install paket; tanpa ini **API gagal start**, karena `main.py` mengimpor route laporan yang
+   mengimpor fpdf2 dan cryptography): `sudo -u jatahku /opt/jatahku/venv/bin/pip install fpdf2==2.8.9 cryptography==50.0.2`
+   (ikut terpasang: Pillow, fonttools, defusedxml). Cek:
+   `sudo -u jatahku /opt/jatahku/venv/bin/python -c "import fpdf, cryptography; from fpdf.enums import EncryptionMethod; print(fpdf.__version__, cryptography.__version__, EncryptionMethod.AES_256)"`
+   → `2.8.9 50.0.2 EncryptionMethod.AES_256`. Lalu `sudo systemctl restart jatahku` dan `POST /auth/login` dengan email
+   asal → 401, bukan 500 (kode lama tetap jalan dengan `cryptography` baru).
+2. Kunci kata sandi laporan: tambahkan `REPORT_SECRET_KEY=<kunci Fernet>` ke `/opt/jatahku/.env`, dibuat dengan
+   `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` memakai python venv
+   (cryptography pasti ada di sana). Tanpa menampilkan kuncinya di layar (`\n` di depan: baris terakhir `.env` yang tanpa
+   akhir baris tidak tersambung dengan kunci):
+   ```bash
+   sudo sh -c 'printf "\nREPORT_SECRET_KEY=%s\n" "$(/opt/jatahku/venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")" >> /opt/jatahku/.env'
+   sudo grep -c '^REPORT_SECRET_KEY=.' /opt/jatahku/.env   # → 1
+   ```
+   Isi **sekali** dan jangan diganti: kunci lain membuat kata sandi laporan yang tersimpan tak terbaca (user diminta
+   mengatur ulang; rotasi di luar cakupan). Jangan pernah menulis kunci ini di repo atau log. Kode lama mengabaikannya
+   (`extra="ignore"`).
+3. Hak tabel: restart pertama menjalankan `create_all` (dua tabel ber-FK ke `users` dan `households`) dan `LAPORAN_DDL`
+   (`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at`) sebagai user DB aplikasi, jadi `jatahku` harus pemilik
+   `users` (`bisa_alter` = t) dan boleh REFERENCES `users` dan `households` (`bisa_fk` = t); kalau tidak, API gagal start.
+   Pakai query di checklist Kotak Struk Bagian A dengan `IN ('users','households','alembic_version')`. Bila ada yang
+   bukan `jatahku`, sebagai `postgres`: `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+4. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
+   `ls /opt/jatahku/app/alembic/versions/ | grep 967a27d0c15d`; `alembic current` harus `e7b3d5a9c1f4` (Kotak Struk
+   belajar) sebelum upgrade. Masih `a7e3c1f5d9b2`: jalankan checklist "Kotak Struk belajar lintas user (e7b3d5a9c1f4)"
+   dulu (migrasi ini menginduk ke sana). Revisi lain = main sudah punya migrasi yang lebih baru: berhenti,
+   `down_revision` PR ini harus disesuaikan dulu (satu head).
+5. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `users`/`households` milik
+   `postgres`, jalankan sebagai postgres); `alembic current` harus `967a27d0c15d`. Lalu `sudo systemctl restart jatahku`
+   dan jalankan ulang job deploy yang gagal (langkah 5 "Urutan merge PR bermigrasi").
+6. Log restart tanpa peringatan kunci: `sudo journalctl -u jatahku --since "10 min ago" | grep -c "REPORT_SECRET_KEY"` → 0
+   (ada = kunci kosong atau tidak valid: kata sandi dan PDF laporan menjawab 503; perbaiki `.env`, restart).
+7. Verifikasi skema: `sudo -u postgres psql jatahku_db -c '\d reports'` (unik `uq_reports_user_jenis_periode`, indeks
+   `ix_reports_email_antrean`, FK `user_id` ON DELETE CASCADE dan `household_id` ON DELETE SET NULL, `data` jsonb),
+   `-c '\d report_settings'` (PK `user_id`, tiga toggle `DEFAULT true NOT NULL`), `-c '\d users' | grep email_verified_at`.
+8. Uji di Postgres sungguhan dengan akun sendiri (jalur JSONB `->>` dan `FOR NO KEY UPDATE` baru diuji di PostgreSQL 16
+   lokal): di desktop buka `jatahku.com/laporan` → daftar tampil (`GET /laporan` 200; kosong = "Belum ada laporan. …"),
+   lalu Pengaturan → 📄 Laporan → "Atur kata sandi" → "Kata sandi laporan disimpan" dan status "Kata sandi laporan sudah
+   diatur." (`PUT /user/laporan-pengaturan` 200). `journalctl -u jatahku --since "10 min ago" | grep -i laporan` tanpa
+   traceback. Tombol top bar bernama "Ekspor".
+9. **Laporan pertama bisa terbit di jam :30 pertama sesudah restart**, bukan menunggu gajian berikutnya: household yang
+   periodenya tutup ≤ 7 hari lalu langsung mendapat laporan beserta lonceng dan Telegram (gajian tanggal 1: "Laporan
+   Oktober 2026" bila tayang paling lambat 7 Nov 2026). Setelah jam :30 itu: `journalctl -u jatahku --since "1 hour ago"
+   | grep -i laporan` → baris `N laporan terbit`, tanpa `gagal`/`ditunda`; bila akun sendiri ikut, buka laporannya dan
+   unduh PDF: terbuka dengan kata sandi laporan, tidak tanpa kata sandi.
+10. Hari gajian berikutnya ±07:30 WIB (job :30 sesudah snapshot 00:05 UTC): `journalctl -u jatahku | grep -i laporan`
+    dan `/laporan` berisi laporan periode yang baru tutup. Household yang gagal dicoba ulang tiap jam selama 7 hari;
+    menjalankan job manual dan mengirim ulang notifikasi: `docs/laporan-berkala.md` bagian "Pemulihan".
+- **Menaikkan versi fpdf2:** `app/services/laporan/pdf.py` memakai bagian dalam fpdf2 (membersihkan cache glyph
+  `SubsetMap.pick/get_glyph` dan menutup berkas font di `finally` setiap render; `StandardSecurityHandler.prepare_string`
+  untuk memeriksa kata sandi). Periksa lagi keduanya, lalu jalankan `app.tests.test_laporan_pdf`, sebelum mengganti pin.
+- **Rollback:** revert PR. Jangan `alembic downgrade` (membuang laporan yang sudah terbit dan kata sandi laporan); tabel
+  dan kolom baru boleh tetap ada (kode lama tidak memetakannya). Sesudah revert tayang, berkas revisi `967a27d0c15d`
+  hilang dari server sehingga `alembic current` gagal dan `deploy.sh` berhenti; tandai ulang ke parent-nya:
+  `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic stamp --purge e7b3d5a9c1f4` (`--purge`
+  mengosongkan `alembic_version` dulu, jadi revisi yang tak dikenal tidak dicari), lalu jalankan ulang job deploy.
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.

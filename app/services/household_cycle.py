@@ -32,10 +32,11 @@ lain dengan jumlah periode yang benar-benar dihitung ulang. Gagal kirim notifika
 tidak membatalkan perubahan yang sudah di-commit.
 
 Kunci per household itu publik (`household_lock`): `recompute_history`, job snapshot harian
-(`scheduler.payday_snapshot_job`), dan `POST /snapshots/run` sama-sama memegangnya, karena semuanya menulis kunci
-snapshot yang sama. Semuanya membaca tanggal gajian (`current_payday`) SETELAH memegang kunci, bukan sebelumnya: tanggal
-yang dibaca di luar kunci bisa basi saat gilirannya tiba, dan jendela basi menulis kunci periode berjalan yang baru
-dibuang recompute.
+(`scheduler.payday_snapshot_job`), `POST /snapshots/run`, dan job laporan berkala (`laporan.job.terbitkan_household`,
+yang me-refresh paksa snapshot periode yang baru tutup sebelum membangun laporan; Ruling R4/R9,
+docs/laporan-berkala.md) sama-sama memegangnya, karena semuanya menulis kunci snapshot yang sama. Semuanya membaca
+tanggal gajian (`current_payday`) SETELAH memegang kunci, bukan sebelumnya: tanggal yang dibaca di luar kunci bisa
+basi saat gilirannya tiba, dan jendela basi menulis kunci periode berjalan yang baru dibuang recompute.
 """
 import asyncio
 import logging
@@ -272,7 +273,8 @@ async def heal(db: AsyncSession, household) -> list[User]:
 
 # ── mengubah tanggal gajian ─────────────────────────────────────────────────
 # Satu kunci per household, dipegang semua penulis kunci snapshot `(envelope_id, year, month)` di proses ini:
-# `recompute_history`, job harian `scheduler.payday_snapshot_job`, dan `POST /snapshots/run`. Kunci dalam proses sudah
+# `recompute_history`, job harian `scheduler.payday_snapshot_job`, `POST /snapshots/run`, dan job laporan berkala
+# `laporan.job.terbitkan_household` (refresh paksa periode yang baru tutup, Ruling R4/R9). Kunci dalam proses sudah
 # cukup: app berjalan sebagai satu proses uvicorn, scheduler di dalam proses yang sama (spec, penyesuaian 2). Dict ini
 # tumbuh satu entri per household yang pernah di-recompute atau di-snapshot (kecil, dibiarkan). `asyncio.Lock` terikat
 # ke event loop tempat ia pertama kali diperebutkan, jadi tes yang berebut kunci memakai id household baru per tes.
@@ -282,7 +284,8 @@ _locks: dict[uuid.UUID, asyncio.Lock] = {}
 def household_lock(household_id) -> asyncio.Lock:
     """Kunci snapshot milik household ini (satu per household); dibuat saat pertama diminta. Pemakaian:
     `async with household_lock(hid):`. Pemegangnya tidak berjalan bersamaan dengan pemegang lain pada household yang
-    sama: `recompute_history`, job snapshot harian, dan `POST /snapshots/run`.
+    sama: `recompute_history`, job snapshot harian, `POST /snapshots/run`, dan job laporan berkala
+    (`laporan.job.terbitkan_household`, yang menulis ulang snapshot periode yang baru tutup dengan force).
 
     Recompute menghapus lalu menyisipkan ulang kunci snapshot yang juga ditulis job harian, dan kunci unik
     `(envelope_id, year, month)` bisa bertabrakan bila keduanya berjalan sekaligus. Tidak re-entrant: pemegang tidak
@@ -303,10 +306,11 @@ async def current_payday(household_id) -> int | None:
     pemanggil (yang sudah `flush` pengisian yang sama lewat `household_payday` dan belum commit), padahal kunci
     recompute sedang dipegang.
 
-    Pemakainya (`recompute_history`, job snapshot harian, `POST /snapshots/run`) membacanya SETELAH memegang
-    `household_lock`. Perubahan tanggal yang sudah di-commit saat kunci dipegang pasti terbaca (`set_household_payday`
-    commit sebelum recompute-nya meminta kunci), dan yang di-commit sesudahnya diikuti recompute-nya sendiri yang
-    menunggu kunci ini. Jadi jendela snapshot tidak pernah lebih tua dari recompute terakhir yang sudah selesai."""
+    Pemakainya (`recompute_history`, job snapshot harian, `POST /snapshots/run`, job laporan berkala) membacanya
+    SETELAH memegang `household_lock`. Perubahan tanggal yang sudah di-commit saat kunci dipegang pasti terbaca
+    (`set_household_payday` commit sebelum recompute-nya meminta kunci), dan yang di-commit sesudahnya diikuti
+    recompute-nya sendiri yang menunggu kunci ini. Jadi jendela snapshot tidak pernah lebih tua dari recompute terakhir
+    yang sudah selesai."""
     async with AsyncSessionLocal() as db:
         household = (await db.execute(
             select(Household).where(Household.id == household_id)

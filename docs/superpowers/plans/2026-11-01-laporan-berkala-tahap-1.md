@@ -558,3 +558,34 @@ encryption_method=EncryptionMethod.AES_256, permissions=<cetak + salin>)`. Tidak
 - [ ] **Step 4:** Verifikasi penuh: suite backend (hanya kegagalan lama yang diterima), `openapi_cek`, `node --test`,
   `npm run build` lalu `git checkout -- frontend/dist`, `git status` bersih.
 - [ ] **Step 5: Commit** — `docs(laporan): revisi alembic, checklist deploy, dokumentasi tahap 1`.
+
+---
+
+## Lampiran: keputusan saat eksekusi (ruling)
+
+Diambil saat review per tugas (1–4 Nov 2026); yang mengubah perilaku juga dicatat di spec bagian "Penyesuaian saat
+eksekusi". Revisi alembic akhirnya `967a27d0c15d` dengan parent `e7b3d5a9c1f4` (main bergerak sejak rencana ditulis).
+
+- **R1** (Task 7): route laporan memakai limiter slowapi bersama (`auth.limiter`, seperti `user_settings.py`) dengan
+  `request: Request`; kuncinya kemudian diganti R11.
+- **R2** (Task 4): `tagihan_berikut` hanya untuk amplop yang menjadi baris; `susun` tetap menulis `amplop` null secara
+  defensif dan renderer menoleransinya.
+- **R3** (Task 3–4): total pembanding dari field bahan `terpakai_lalu_total` (semua amplop lingkup yang punya snapshot
+  periode itu); `banding.amplop[]` tetap per baris.
+- **R4** (Task 5): job me-refresh paksa snapshot periode yang baru tutup di dalam `household_lock`, lalu
+  `advisor_cache.invalidate`, sebelum `muat_bahan`; refresh yang error menggagalkan household untuk jam itu.
+- **R5** (Task 3): `ringkasan.persen_terpakai` dan `email.persen_terpakai` tanpa amplop tabungan
+  (`hitung.adalah_tabungan`).
+- **R6** (Task 3): `sorotan.amplop_aman` tanpa amplop berstatus `lewat_batas`.
+- **R7** (Task 4): `streak_saat_ini` dari `streak.get_streak`, bukan `UserStreak.current_streak` mentah.
+- **R8** (Task 4): amplop yang tanggal UTC `created_at`-nya sesudah akhir periode tidak menjadi baris.
+- **R9** (Task 5, memperhalus R4): refresh hanya bila ada calon penerima dan household punya transaksi atau alokasi di
+  jendela.
+- **R10** (Task 6–7): PUT memvalidasi kata sandi dengan `pdf.periksa_kata_sandi` (422, termasuk aturan SASLprep) dan
+  menyimpannya NFC; unduh memetakan `KataSandiPdfTidakValid` ke 409.
+- **R11** (Task 7, mengubah R1 dan keputusan rencana 1): kunci batas frekuensi = user dari access token yang sah
+  (`kunci_per_user`, `app/core/rate_limit.py`), cadangan alamat IP; dipakai juga `/transactions/transcribe`.
+- **R12**: kunci hash-header yang sudah ada di main (transcribe, chat web), `receipt_key_func` yang tak terpakai, dan
+  RecursionError `decode_token` diperbaiki di branch keamanan terpisah, tayang lebih dulu sebagai #187; branch fitur
+  mengambil sisi main saat menggabungkannya.
+- **R13**: trailer commit di branch keamanan dibiarkan; main menerima satu commit squash dengan trailer sesi.

@@ -2,10 +2,68 @@
 
 **Tanggal:** 1 Nov 2026
 **Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026.
-Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
+**Tahap 1 diimplementasikan (belum tayang)** di branch `feat/laporan-berkala` (4 Nov 2026, di atas main `7faa202`):
+revisi alembic `967a27d0c15d`; PR berlabel `migrasi` menunggu merge dan checklist deploy di `AGENTS.md` ("Laporan berkala
+tahap 1"). Perilaku final tahap 1: `docs/laporan-berkala.md`. Yang berubah dari desain ini tercatat di "Penyesuaian saat
+menyusun rencana" dan "Penyesuaian saat eksekusi" di bawah; keputusan pemilik produk 1–12 tidak berubah. Tahap 2 dan 3
+belum dimulai. Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
 **Dasar:** `main` setelah siklus household (#169) dan penandaan checklist-nya (#173). Siklus anggaran milik household
 (`households.payday_day`, penulis tunggal `app/services/household_cycle.py`, lihat `docs/siklus-household.md`), dan
 `monthly_snapshots.allocated_amount`/`spent_amount` terisi untuk seluruh riwayat.
+
+## Penyesuaian saat menyusun rencana (1 Nov 2026)
+
+Membaca kode saat menyusun rencana tahap 1 menghasilkan tujuh keputusan berikut (rencana, bagian "Keputusan rencana").
+Bagian 1–13 di bawah tetap rancangan yang disetujui; bila berbeda, butir di sini dan di "Penyesuaian saat eksekusi"
+yang berlaku.
+
+1. **Batas frekuensi** (bagian 8) memakai slowapi di memori proses API dengan kunci per user pola
+   `/transactions/transcribe`, bukan penghitung Redis baru. Kuncinya diganti saat eksekusi (R11/R12).
+2. **Langganan terbayar** (bagian 2d) = transaksi di jendela laporan yang keterangannya diawali penanda tombol Bayar
+   (`BILL_MARKER` `"🔄 "`, `app/services/advisor/snapshot.py`), bukan `compute_bills`, yang membaca `next_run` saat ini dan
+   tidak cocok untuk periode yang sudah tutup.
+3. **`email_status` dibiarkan NULL di tahap 1** (bagian 6c); tahap 2 hanya mengisi status untuk laporan yang terbit
+   setelah tahap 2 tayang, jadi tidak ada email tertunda untuk laporan lama.
+4. **FK** (bagian 2a–2b): `reports.user_id` ON DELETE CASCADE, `reports.household_id` ON DELETE SET NULL (laporan mantan
+   anggota tetap ada saat household dihapus), `report_settings.user_id` CASCADE; ditambah penanganan eksplisit di hapus
+   dan gabung akun (bagian 8).
+5. **`data.email`** (ringkasan tanpa nominal, bagian 6b) sudah dihitung dan dibekukan bersama laporan sejak tahap 1.
+6. **Prasyarat snapshot** (bagian 3 langkah 3) = ada ≥ 1 snapshot kunci periode itu di antara amplop household (aktif
+   atau tidak); job snapshot menulis satu household di bawah `household_lock` yang sama.
+7. **Kata sandi tersimpan yang tidak terbaca** (kunci diganti; bagian 4 dan 9) diperlakukan seperti belum diatur (409
+   `kata_sandi_belum_diatur`) dan dicatat sebagai warning.
+
+## Penyesuaian saat eksekusi (1–4 Nov 2026)
+
+Review per tugas menghasilkan keputusan berikut ("ruling" di catatan eksekusi; daftar lengkap R1–R13 di lampiran
+rencana). Yang di sini mengubah perilaku dari bagian di bawah atau dari rencana, dan diuji di tugasnya.
+
+- **R2, tagihan berikut** (bagian 2c butir 6): `langganan.jatuh_tempo` hanya untuk amplop yang menjadi baris laporan;
+  tagihan di amplop yang dibuat sesudah periode tutup tidak ikut (jarang dalam jendela 7 hari).
+- **R3, total pembanding** (bagian 2c butir 3, 2d): total periode lalu dan rata-rata 3 periode dijumlahkan dari semua
+  amplop lingkup yang punya snapshot periode itu, bukan dari baris laporan sekarang, supaya tren tidak melompat saat
+  amplop dibuat atau ditutup; angka per amplop tetap per baris.
+- **R4/R9, refresh snapshot sebelum membangun** (bagian 3 langkah 4, 2e): di dalam `household_lock`, sebelum memuat
+  bahan, job menulis ulang snapshot periode yang baru tutup (`create_monthly_snapshots(..., force=True)` untuk household
+  itu) dan mengosongkan cache advisor-nya. Snapshot dibekukan 00:05, sedangkan mutasi membaca transaksi hidup, jadi
+  transaksi bertanggal mundur memecah Σ mutasi = terpakai. R9: hanya bila masih ada calon penerima dan household punya
+  transaksi atau alokasi di jendela; refresh yang error menunda household itu ke jam berikutnya.
+- **R5, persen terpakai** (bagian 2c butir 1, 6b): `ringkasan.persen_terpakai` (dan `email.persen_terpakai`) tanpa
+  amplop tabungan (`saving`/`sinking_fund`, `hitung.adalah_tabungan`) di pembilang dan penyebut, sama dengan Beranda;
+  total rupiah tetap atas semua baris.
+- **R6, amplop aman** (bagian 2c butir 7): `sorotan.amplop_aman` juga mengecualikan amplop berstatus `lewat_batas`.
+- **R7, streak saat terbit** (bagian 2c butir 7): dari `streak.get_streak` (0 bila sudah putus), sama dengan layar
+  aplikasi, bukan `user_streaks.current_streak` mentah.
+- **R8, amplop yang dibuat sesudah periode** (bagian 2d): amplop yang tanggal UTC `created_at`-nya sesudah akhir periode
+  tidak menjadi baris walau punya snapshot kunci itu (refresh R4 memberinya snapshot nol).
+- **R10, validasi kata sandi** (bagian 4): disimpan dalam bentuk NFC dan diperiksa `pdf.periksa_kata_sandi`; ditolak (422,
+  kalimat siap tampil) bila memuat karakter kontrol atau dua arah bercampur, hanya karakter tak kasatmata, lebih dari 127
+  byte UTF-8, atau berubah oleh SASLprep (hanya terbuka di sebagian pembaca PDF). Kata sandi tersimpan yang kini ditolak
+  diperlakukan seperti token tak terbaca (409).
+- **R11/R12, kunci batas frekuensi** (bagian 8, penyesuaian rencana 1): kuncinya user yang terautentikasi (`user:<sub>`
+  dari access token yang sah, `kunci_per_user` di `app/core/rate_limit.py`; selainnya alamat IP), bukan hash teks header
+  Authorization, yang bisa diakali dengan menulis ulang header atau login ulang. Kunci yang sama dipasang untuk
+  `/transactions/transcribe` dan chat web lewat PR keamanan terpisah (#187) sebelum fitur ini.
 
 ## 1. Tujuan dan keputusan
 

@@ -1,9 +1,10 @@
 """Laporan berkala tahap 1, Task 1: tabel `reports` dan `report_settings`, kolom
 `users.email_verified_at`, dan pemasangannya di lifespan (spec 2026-11-01-laporan-berkala-design,
-bagian 2a-2b dan 9).
+bagian 2a-2b dan 9); Task 11: revisi alembic yang menirukannya.
 
-Metadata model, teks DDL, dan sumber lifespan dicek tanpa basis data. Constraint, default, dan
-cascade dicoba di SQLite in-memory dengan FK menyala (butuh `aiosqlite`; dilewati bila tidak ada).
+Metadata model, teks DDL, sumber lifespan, dan revisi alembic dicek tanpa basis data. Constraint,
+default, dan cascade dicoba di SQLite in-memory dengan FK menyala (butuh `aiosqlite`; dilewati bila
+tidak ada).
 Run: python -m unittest app.tests.test_laporan_model -v
 """
 import os
@@ -32,6 +33,7 @@ HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA_PY = REPO / "app" / "services" / "laporan" / "schema.py"
 MAIN_PY = REPO / "app" / "main.py"
+MIGRATION = REPO / "alembic" / "versions" / "967a27d0c15d_laporan_berkala.py"
 
 DATA_V1 = {"versi": 1, "judul": "Laporan Oktober 2026", "ringkasan": {"terpakai": "1250000.00"}}
 
@@ -217,6 +219,118 @@ class LifespanTests(unittest.TestCase):
         src = inspect.getsource(main.lifespan)
         self.assertLess(src.index("email_service.check_configured()"), src.index("rahasia.check_configured()"))
         self.assertLess(src.index("for stmt in LAPORAN_DDL"), src.index("rahasia.check_configured()"))
+
+
+class _OpRecorder:
+    """Pengganti `alembic.op`: mencatat pernyataan dan panggilan, tanpa basis data."""
+    def __init__(self):
+        self.statements, self.calls = [], []
+
+    def execute(self, stmt):
+        self.statements.append(str(stmt))
+
+    def __getattr__(self, name):   # create_table, create_index, drop_table, drop_index
+        return lambda *args, **kwargs: self.calls.append((name, args, kwargs))
+
+
+class MigrationTests(unittest.TestCase):
+    """Revisi alembic laporan berkala (Task 11). CI "Migrasi" (`alembic check` di Postgres) membandingkan kolom, tipe,
+    nullable, FK, unik, dan indeks dengan model, tetapi tidak bawaan server; tes ini membandingkan semuanya, termasuk
+    bawaan server, tanpa basis data."""
+
+    def load(self):
+        spec = importlib.util.spec_from_file_location("migrasi_967a27d0c15d", MIGRATION)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def run_with(self, mod, fn):
+        rec, real = _OpRecorder(), mod.op
+        mod.op = rec
+        try:
+            getattr(mod, fn)()
+        finally:
+            mod.op = real
+        return rec
+
+    def test_revision_follows_kotak_belajar(self):
+        mod = self.load()
+        self.assertEqual((mod.revision, mod.down_revision), ("967a27d0c15d", "e7b3d5a9c1f4"))
+
+    def test_upgrade_is_idempotent_and_shares_the_lifespan_ddl(self):
+        mod = self.load()
+        first, second = self.run_with(mod, "upgrade"), self.run_with(mod, "upgrade")
+        # Kolom users.email_verified_at: pernyataan yang sama dengan lifespan, IF NOT EXISTS.
+        self.assertEqual(first.statements, LAPORAN_DDL)
+        self.assertEqual(second.statements, first.statements)
+        self.assertEqual([(name, args[0]) for name, args, _kw in first.calls],
+                         [("create_table", "reports"), ("create_index", "ix_reports_email_antrean"),
+                          ("create_table", "report_settings")])
+        self.assertEqual(len(second.calls), len(first.calls))
+        for name, _args, kwargs in first.calls:   # create_all di lifespan bisa sudah membuatnya lebih dulu
+            with self.subTest(name):
+                self.assertIs(kwargs.get("if_not_exists"), True)
+
+    def test_downgrade_drops_everything_if_exists(self):
+        down = self.run_with(self.load(), "downgrade")
+        self.assertEqual(down.statements, ["ALTER TABLE users DROP COLUMN IF EXISTS email_verified_at"])
+        self.assertEqual([(name, args[0]) for name, args, _kw in down.calls],
+                         [("drop_table", "report_settings"), ("drop_index", "ix_reports_email_antrean"),
+                          ("drop_table", "reports")])
+        for name, _args, kwargs in down.calls:
+            with self.subTest(name):
+                self.assertIs(kwargs.get("if_exists"), True)
+
+    def test_migration_tables_match_the_models(self):
+        """Tabel yang dibuat revisi sama dengan model: kolom (tipe Postgres, nullable, bawaan server), kunci primer,
+        FK + ondelete, unik, dan indeks, dengan nama constraint dan urutan kolom yang sama."""
+        import sqlalchemy as sa
+        calls = self.run_with(self.load(), "upgrade").calls
+        md = sa.MetaData()
+        sa.Table("users", md, sa.Column("id", sa.Uuid(), primary_key=True))
+        sa.Table("households", md, sa.Column("id", sa.Uuid(), primary_key=True))
+        for name, args, _kwargs in calls:
+            if name == "create_table":
+                sa.Table(args[0], md, *args[1:])
+        indexes = {(args[0], args[1], tuple(args[2]), bool(kwargs.get("unique")))
+                   for name, args, kwargs in calls if name == "create_index"}
+        pg = postgresql.dialect()
+
+        def bawaan(col):
+            if col.server_default is None:
+                return None
+            arg = col.server_default.arg
+            return arg if isinstance(arg, str) else str(arg.compile(dialect=pg))
+
+        def shape(table):
+            return {
+                "cols": [(c.name, c.type.compile(dialect=pg), c.nullable, bawaan(c)) for c in table.columns],
+                "pk": [c.name for c in table.primary_key.columns],
+                "fks": {(fk.parent.name, fk.target_fullname, fk.ondelete) for fk in table.foreign_keys},
+                "uniques": {(u.name, tuple(c.name for c in u.columns)) for u in table.constraints
+                            if isinstance(u, sa.UniqueConstraint)},
+            }
+        for model in (Report, ReportSettings):
+            with self.subTest(model.__tablename__):
+                self.assertEqual(shape(md.tables[model.__tablename__]), shape(model.__table__))
+                self.assertEqual({(i.name, tuple(c.name for c in i.columns), bool(i.unique))
+                                  for i in model.__table__.indexes},
+                                 {(n, c, u) for (n, t, c, u) in indexes if t == model.__tablename__})
+
+    def test_single_head_and_only_child_of_kotak_belajar(self):
+        """Satu head, garisnya melewati revisi ini (revisi sesudahnya boleh menyusul), dan revisi ini satu-satunya anak
+        e7b3d5a9c1f4: deploy.sh berhenti bila `alembic current` ≠ `alembic heads`."""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        cfg = Config(str(REPO / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO / "alembic"))   # tidak bergantung folder kerja
+        script = ScriptDirectory.from_config(cfg)
+        heads = script.get_heads()
+        self.assertEqual(len(heads), 1, heads)
+        self.assertIn("967a27d0c15d", [r.revision for r in script.iterate_revisions(heads[0], "base")])
+        children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
+                    if "down_revision: Union[str, None] = 'e7b3d5a9c1f4'" in p.read_text(encoding="utf-8")]
+        self.assertEqual(children, [MIGRATION.name])
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
