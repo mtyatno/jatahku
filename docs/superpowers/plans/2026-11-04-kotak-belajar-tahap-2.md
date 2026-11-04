@@ -23,8 +23,12 @@
 - **Privasi:**
   - Tabel aturan tetap hanya struktur: nilai `logo` ∈ 12 kunci profil ∪ {`baru`} (K6); kunci `logo:<kata>` lolos penyaring kandidat ketat (K8); token `arah` hanya kata kosakata (K9). Tidak ada nama, nomor, nominal, atau teks bebas.
   - Baris donasi hanya untuk user yang setuju, hanya saat `features.kotak_donasi` menyala (K1, G1), hanya jenis di G6; tersamar `mask_line`; kata nama yang dikenal (pihak lawan, pengirim, merchant terbaca, user) diganti nama samaran (K5); tidak ada deret ≥ 6 digit (diuji); tidak pernah dikirim ke klien selain Admin; dihapus seperti `layout` bila bukan koreksi; `proof_samples` berumur `SAMPLE_TTL` (G2); hapus akun, gabung akun, dan menarik persetujuan menghapus semuanya (G4).
-  - Suara `label_*`/`arah` untuk kunci `logo:` hanya sesudah aturan `logo` kunci itu disetujui (K8). Tab Suara Admin menyamarkan kunci logo dan token arah (K15).
-- Konstanta baru di `app/services/kotak_struk/config.py`: `SAMPLE_MAX_LINES = 80`, `SAMPLE_LINE_MAX = 200`, `SAMPLE_TTL = timedelta(days=30)`, `SAMPLE_TYPES = LAYOUT_TYPES`, `APP_NEW = "baru"`, `ARAH_FLOWS = ("top_up", "masuk", "antar_rekening_sendiri")`, `KEY_MAX = 60` (pindah dari `belajar`, nilai sama).
+  - Suara `label_*`/`arah` untuk kunci `logo:` hanya sesudah aturan `logo` kunci itu disetujui (K8).
+  - **Amandemen (keputusan pemilik 5 Nov 2026, as-built):** retensi sampel 7 hari (bukan 30); menarik persetujuan
+    menyisakan sampel yang sudah `disetujui` (hapus akun dan gabung akun tetap menghapus semuanya); Tolak menghapus
+    sampel (ruling M1d, tanpa status `ditolak` tersimpan); teks persetujuan dan paragraf `privacy.html` final ada di
+    `docs/kotak-struk.md` "Donasi contoh" dan "Privasi dan masa simpan". Butir draf di bawah yang berbeda kalah oleh ini. Tab Suara Admin menyamarkan kunci logo dan token arah (K15).
+- Konstanta baru di `app/services/kotak_struk/config.py`: `SAMPLE_MAX_LINES = 80`, `SAMPLE_LINE_MAX = 200`, `SAMPLE_TTL = timedelta(days=7)` (keputusan pemilik 5 Nov 2026; draf: 30 hari), `SAMPLE_TYPES = LAYOUT_TYPES`, `APP_NEW = "baru"`, `ARAH_FLOWS = ("top_up", "masuk", "antar_rekening_sendiri")`, `KEY_MAX = 60` (pindah dari `belajar`, nilai sama).
 - Jenis aturan baru: `logo` (kunci `logo:<kata>`, nilai kunci profil | `baru`), `arah` (kunci `{app}|judul:<kata>` atau `{app}|ke:<kata>`, nilai flow). Transisi status, ambang `RULE_MIN_USERS = 2`, rekonsiliasi, `forget_user`: sama dengan tahap 1. Tambahan G8: menyetujui nilai kedua untuk kunci `logo`/`arah` yang sudah punya nilai `disetujui` → 409.
 - Tes pembaca, `kotak_corpus`, dan sapuan berjalan **tanpa** aturan; hanya tes khusus yang menyuntik `ParseContext(rules=…)`.
 - `app/services/` tidak menanyakan keanggotaan household sendiri (`test_ruang_pagar.py`). Route tulis baru dicatat di `test_ruang_pagar.test_setiap_route_tulis_punya_sumber_ruang` (K13).

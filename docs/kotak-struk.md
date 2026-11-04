@@ -21,6 +21,12 @@ rincian Scan Struk di Admin; tombol PDF, banner, tips Settings, dan isi `/bagika
 (tabel di "Saklar fitur"). Menu Bagikan Android butuh `share_target` di manifest: PR kecil terpisah sesudah saklar
 menyala (keputusan pemilik produk 28 Okt 2026). **4 Nov 2026:** saklar menyala dan langkah 2–6 "Menyalakan saklar"
 selesai (pemilik produk); `share_target` ditambahkan ke manifest (branch `feat/share-target`, langkah 7).
+**Tahap 2 belajar lintas user** (branch `feat/kotak-belajar-2`, satu PR berlabel `migrasi`, revisi `c9e4a7f2b5d8`;
+rencana `docs/superpowers/plans/2026-11-04-kotak-belajar-tahap-2.md`, keputusan pemilik produk 5 Nov 2026): donasi
+contoh (opt-in di Settings, saklar baru `features.kotak_donasi`, bawaan **mati**), aturan `logo` ("Aplikasi apa
+ini?") dan aturan `arah` (alasan "Bukan pengeluaran"); bagian "Belajar lintas user" dan "Donasi contoh", checklist
+`AGENTS.md` "Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)". Menunggu merge; `kotak_donasi` baru
+dinyalakan sesudah paragraf "Donasi contoh" tayang di `privacy.html`.
 Perbarui bagian ini saat status berubah.
 
 ## Alur
@@ -288,8 +294,9 @@ terbaca utuh (≥ 8 digit); selain itu `nama:<nama>|<kota atau bank>` (huruf kec
 
 ## Belajar lintas user
 
-Tahap 1 (spec `docs/superpowers/specs/2026-11-01-kotak-belajar-lintas-user-design.md`, rencana
-`docs/superpowers/plans/2026-11-01-kotak-belajar.md`). Koreksi user atas hasil baca bukti bayar menjadi **suara**; pola yang
+Tahap 1 dan tahap 2 (spec `docs/superpowers/specs/2026-11-01-kotak-belajar-lintas-user-design.md`, rencana tahap 1
+`docs/superpowers/plans/2026-11-01-kotak-belajar.md`, tahap 2 `docs/superpowers/plans/2026-11-04-kotak-belajar-tahap-2.md`;
+jenis tahap 2 di "Tahap 2: aturan `logo`" dan "Tahap 2: aturan `arah`" di bawah, donasi contoh di bagian sendiri). Koreksi user atas hasil baca bukti bayar menjadi **suara**; pola yang
 sama dari ≥ 2 user berbeda menjadi **aturan** yang menunggu persetujuan pemilik produk di Admin; aturan yang disetujui
 dipakai pembaca untuk semua user. Polanya sama dengan belajar struk belanja ([`scan-struk.md`](scan-struk.md) "Belajar dari
 koreksi"), ditambah persetujuan pemilik. Yang dibagikan lintas user hanya **struktur**: dari baris berlabel mana sebuah
@@ -300,13 +307,15 @@ disimpan, jadi worker menyimpan kerangka yang aman supaya koreksi yang datang be
 Kerangka ada di kolomnya sendiri, bukan di `document`, dan tidak pernah dikirim ke klien (`view.item_detail`).
 - Dibuat worker di kedua posisi saklar, hanya untuk `doc_type` QRIS, transfer, dan tidak dikenali (`LAYOUT_TYPES`)
   yang punya kunci aturan (`rule_key`). Struk belanja (juga teks tampak bukti yang dibaca jalur struk) tidak pernah.
-- Kunci tahap 1 = kunci profil aplikasi (12 profil: `bca_mobile`, `livin`, `brimo`, `bni`, `bsi`, `jago`, `seabank`,
-  `blu`, `gopay`, `ovo`, `dana`, `shopeepay`). Kunci `logo:<kata>` untuk aplikasi tanpa profil dimatikan
-  (`kerangka.LOGO_KEYS = False`; baris teratas bukti tak dikenal bisa nama orang) dan dibuka di tahap 2 (M2).
+- Kunci = kunci profil aplikasi (12 profil: `bca_mobile`, `livin`, `brimo`, `bni`, `bsi`, `jago`, `seabank`,
+  `blu`, `gopay`, `ovo`, `dana`, `shopeepay`). Sejak tahap 2 (`kerangka.LOGO_KEYS = True`) bukti `tidak_dikenali` dari
+  aplikasi tanpa profil bisa berkunci `logo:<kata>` dari baris logonya, dengan penyaring ketat (lihat "Tahap 2: aturan
+  `logo`"; baris teratas bukti tak dikenal bisa nama orang). QRIS/transfer tidak pernah berkunci logo.
 - Isi `{"v": 1, "key": …, "lines": [...]}`, paling banyak 60 entri (`LAYOUT_MAX_LINES`), urut indeks baris `i`:
   `nominal` (`label`, `amount`), `tanggal` (`label`, `date`), `nama` (`label`, `h` = HMAC nama ternormalisasi dengan
-  `KOTAK_HMAC_KEY`, seperti `ref_hash`), `judul` (`words`: paling banyak 6 kata kosakata baris judul, tanpa digit; untuk
-  aturan `arah` di tahap 2).
+  `KOTAK_HMAC_KEY`, seperti `ref_hash`), `judul` (`words`: paling banyak 6 kata kosakata baris judul, tanpa digit).
+  Sejak tahap 2 juga `"arah"`: daftar token arah uang (`kerangka.arah_tokens`, lihat "Tahap 2: aturan `arah`"); kerangka
+  lama tanpa kunci itu tidak memberi suara `arah`.
 - Label (`safe_label`): huruf kecil, digit → `#`, ≤ 40 karakter (`LAYOUT_LABEL_MAX`), ≤ 5 kata (`LAYOUT_LABEL_WORDS`),
   setiap kata ada di `LABEL_WORDS` (kata label umum dan profil plus daftar kurasi), tanpa kata nama pihak lawan,
   pengirim, user, atau merchant. Selain itu label `None` (entri tanpa label tidak pernah menjadi suara).
@@ -322,7 +331,8 @@ Kerangka ada di kolomnya sendiri, bukan di `document`, dan tidak pernah dikirim 
 - `record.mark_recorded` memanggilnya **sekali per transaksi baru** (sesudah pemeriksaan idempoten), dengan nilai
   TRANSAKSI yang tercatat (`Final`: nominal, tanggal, keterangan, dan hari ini WIB), jadi berlaku untuk semua jalur
   catat: `POST /transactions` dan `/batch` dengan `receipt_item_id` (kartu bukti, form Catat), tombol amplop bot dan chat
-  web, dan `heal_recorded`. Melewati item (`skip_item`, "Bukan pengeluaran") tidak memberi suara di tahap 1.
+  web, dan `heal_recorded`. Melewati item (`skip_item`) tidak memberi suara label; sejak tahap 2 "Bukan
+  pengeluaran" dengan alasan memberi suara `arah` (lihat "Tahap 2: aturan `arah`").
 - Bot **"✏️ Nominal salah"** (`struk_fix_`): nominal yang diketik sesudahnya menjadi suara `label_total` (kunci Redis
   `kotak:fix:{id user chat}`, `FIX_TTL_S` 300 dtk; rinciannya di "Kanal", butir "Nominal kurang yakin").
 - Satu pencatatan paling banyak satu suara per jenis; satu user satu suara per aturan (PK `(kind, rule_key, value,
@@ -334,11 +344,11 @@ Kerangka ada di kolomnya sendiri, bukan di `document`, dan tidak pernah dikirim 
 | Jenis (`kind`) | Suara bila | Tidak pernah |
 |---|---|---|
 | `label_total` | nominal tercatat ≠ total terbaca (atau total tidak terbaca) dan tercetak di tepat satu label `nominal` (beberapa label: yang berkata awal "total" bila tepat satu) | label biaya/diskon/potongan/cashback/pajak/saldo; label sub-nominal (jumlah/nominal/amount tanpa "total") pada bukti yang punya baris biaya berlabel (user memilih mencatat tanpa biaya, bukan salah baca); nominal yang tidak tercetak |
-| `label_pihak` | keterangan tercatat memuat nama (1–6 kata, dicocokkan lewat HMAC) yang tercetak di baris `nama` berlabel penerima, dan bukan nama yang terbaca (atau potongannya) | label tanpa kata penerima (penerima, ke, kepada, tujuan, merchant, toko, recipient, to, payee; "nama"/"name" hanya bersama kata penerima lain; kata yang juga harus ada di `LABEL_WORDS`: "kepada"/"payee" belum, lihat Batasan) atau dengan kata status/keterangan/catatan/berita/pesan/metode/sumber/dari/pengirim/lokasi/alamat/id/ref/kode/cabang; nama panggilan yang tidak tercetak |
+| `label_pihak` | keterangan tercatat memuat nama (1–6 kata, dicocokkan lewat HMAC) yang tercetak di baris `nama` berlabel penerima, dan bukan nama yang terbaca (atau potongannya) | label tanpa kata penerima (penerima, ke, kepada, tujuan, merchant, toko, recipient, to, payee; "nama"/"name" hanya bersama kata penerima lain; kata itu juga harus ada di `LABEL_WORDS`: "kepada" ada sejak tahap 2 (M0), "payee" belum, lihat Batasan; "Atas Nama" saja tidak, karena "atas" dan "nama" bukan kata penerima) atau dengan kata status/keterangan/catatan/berita/pesan/metode/sumber/dari/pengirim/lokasi/alamat/id/ref/kode/cabang; nama panggilan yang tidak tercetak |
 | `label_tanggal` | tanggal tercatat bukan hari ini (WIB) dan bukan tanggal bukti, dan tercetak di tepat satu baris `tanggal` berlabel | dalam praktik hanya dari form Catat: bot dan kartu bukti hanya menawarkan hari ini atau tanggal bukti |
 
 Nilai aturan = label kerangka (tanpa `#`, lolos `safe_label` lagi); nama, nomor, nominal, dan tanggal tidak pernah masuk
-tabel. Jenis `arah` (top-up/uang masuk/rekening sendiri dari "Bukan pengeluaran") dan `logo` menyusul di tahap 2 (M3, M2).
+tabel. Jenis tahap 2 `logo` dan `arah`: lihat "Tahap 2: aturan `logo`" dan "Tahap 2: aturan `arah`" di bawah.
 Kata status tidak pernah dipelajari (salah belajar di sana berarti bukti gagal bisa tercatat); itu hanya lewat kalibrasi.
 
 **Ambang dan rumah tangga.** Setiap suara menghitung ulang `users` (user berbeda) dan `households` (rumah tangga berbeda;
@@ -362,19 +372,27 @@ dikosongkan (hapus akun) atau dipindah ke akun tujuan (gabung akun).
 `ProofRulesSection.jsx`, logika di `frontend/src/lib/proofRules.js`). Bagian ini tampil bila server mengirim
 `rules_pending` di statistik; lencana "N aturan menunggu" di kepala kartu. Tab Menunggu, Disetujui, Ditolak, Dicabut, dan
 Suara; satu permintaan `GET /admin/kotak/rules?status=semua`, dikelompokkan di klien.
-- Tiap aturan: jenis ("Nominal", "Nama penerima", "Tanggal"), aplikasi, label, contoh **sintetis** dari label dan jenis
+- Tiap aturan: jenis ("Nominal", "Nama penerima", "Tanggal"; tahap 2 "Aplikasi", "Arah uang"), aplikasi, label, contoh **sintetis** dari label dan jenis
   saja ("Total bayar Rp##.###", "… NAMA PENERIMA", "… ## Okt ####"; tanpa angka), "N user · M rumah tangga", tanggal
   masuk atau keputusan (dan oleh siapa), catatan, dan tombol sesuai status.
 - Transisi (`belajar.DECISIONS`): **Setujui** ← `menunggu`/`ditolak`/`dicabut`, hanya bila ≥ 2 user (selain itu tanpa
   tombol, petunjuk "Belum didukung 2 user", server 409 "Aturan belum didukung 2 user"); **Tolak** ← `menunggu`;
   **Cabut** ← `disetujui`. Lainnya 409 "Aturan ini tidak bisa diubah ke status itu". Klien mengirim `from_status` (status
-  yang dilihatnya): keputusan admin lain yang lebih dulu → 409 dan daftar dimuat ulang.
-- Catatan opsional ≤ 200 karakter, tanpa karakter kontrol (422). Teks aturan tidak pernah diambil dari klien.
+  yang dilihatnya): keputusan admin lain yang lebih dulu → 409 dan daftar dimuat ulang. Tahap 2 (G8): **Setujui** nilai
+  kedua untuk kunci `logo`/`arah` yang masih punya nilai `disetujui` → 409 "Kunci ini sudah punya aturan yang disetujui;
+  cabut dulu" (lihat "G8" di bawah).
+- Catatan opsional ≤ 200 karakter, tanpa karakter kontrol dan tanpa karakter format tak terlihat (kategori Unicode `Cc`
+  dan, sejak tahap 2 M0, `Cf`: U+200B, U+200D, U+202E, U+FEFF, U+2060, U+00AD, …; 422 "Catatan tidak boleh memuat
+  karakter kontrol"). Emoji bersambung ZWJ (mis. emoji keluarga) ikut ditolak; diterima, catatan admin pendek. Teks
+  aturan tidak pernah diambil dari klien.
 - Peringatan "Label ini mirip kata status/metode — periksa contohnya." bila label memuat kata status, metode/sumber, atau
   catatan (`WARNING_WORDS`: status, berhasil, gagal, pending, dibatalkan, batal, metode, sumber, keterangan, catatan,
   berita, pesan, deskripsi, ref, referensi, kode). Hanya petunjuk: aturan seperti itu tetap tidak bisa mengubah status
   atau blokir.
 - Tab Suara: angka per aplikasi dan jenis ("3 user · 2 label"), termasuk pola 1 user, tanpa teks label dan tanpa id.
+  Sejak tahap 2 (K15) setiap kunci yang bukan kunci profil (kunci `logo:`, kata teratas bukti satu user yang bisa nama
+  depan orang) tampil `logo:*` ("Aplikasi baru (logo disamarkan)") untuk jenis apa pun, dan kunci `arah` hanya bagian
+  aplikasinya, tanpa token. Tab aturan (≥ 2 user) tetap menampilkan kunci penuh.
 - `ditolak`: suara tetap tersimpan dan hitungannya tetap diperbarui, tetapi aturan tidak dipakai. `dicabut`: sama, untuk
   aturan yang pernah disetujui.
 
@@ -391,7 +409,9 @@ bukti aslinya; label berkata status/metode (peringatan) hampir selalu salah; jum
 - Hanya pembaca QRIS, transfer, dan tidak dikenali, dan hanya aturan berkunci profil aplikasi bukti itu. Pembaca struk
   belanja tidak pernah memakai aturan.
 - Aturan hanya mengubah **tiga nilai**, dan labelnya harus cocok dengan seluruh label baris (aturan "total" tidak membaca
-  "Total Bayar Rp11.000"):
+  "Total Bayar Rp11.000"). Sejak "kepada" dan "atas" masuk kosakata (tahap 2 M0), baris "Ke Atas Nama ANDI" berlabel "ke
+  atas nama", jadi aturan "ke" yang sudah disetujui tidak lagi membaca baris itu dan pembacaan biasa yang dipakai (aturan
+  membaca lebih sedikit, tidak pernah lebih):
   - **total**: label aturan dibaca lebih dulu, keyakinan `tinggi` (bot tidak lagi bertanya "Nominal … belum pasti");
     subtotal, biaya, pajak, dan diskon tetap hasil baca biasa, jadi `selisih_nominal` tetap memperingatkan dan menurunkan
     keyakinan ke `sedang`. Pembaca tidak dikenali mencoba label aturan sebelum fallback LLM;
@@ -408,7 +428,211 @@ bukti aslinya; label berkata status/metode (peringatan) hampir selalu salah; jum
 - Label bawaan profil dan label umum tetap dipakai bila label aturan tidak menemukan nilai. Tes pembaca, `kotak_corpus`,
   dan sapuan berjalan tanpa aturan.
 
-Batas tahap 1: "Batasan yang diketahui", butir "Belajar lintas user (tahap 1)".
+**Tahap 2: aturan `logo` ("Aplikasi apa ini?")** (`kerangka.logo_candidate`/`rule_key`, `belajar.learn_app_choice`,
+`record.choose_app`, `profiles.learned_logo`, `readers/unknown.py`; spec §2, pre-flight A16 K6–K8, G9–G11):
+- **Kunci** `logo:<kata>`: hanya bukti `tidak_dikenali` tanpa profil terdeteksi. Baris pertama di antara baris bersih
+  teratas (`LOGO_LINES`; di atasnya hanya bilah status) yang lolos `logo_candidate`: 1–2 kata huruf ASCII, bersama ≥ 3
+  huruf, ≤ 40 karakter; dua kata hanya bila salah satunya kata logo/penyedia (`LOGO_COMPANIONS`: "bank raya" ya, "siti
+  aminah" tidak); bukan hanya kata pendamping ("bank digital", "mobile"); tanpa kata `LABEL_WORDS` selain kata pendamping;
+  bukan kata status; tanpa kata nama yang dibaca dari bukti itu (pihak lawan, pengirim, merchant, user). Satu kata yang
+  baris isi berikutnya nominal atau tanggal ditolak (nama penerima besar di atas nominalnya; harganya: logo aplikasi yang
+  langsung di atas nominal tidak berkunci). Nama depan satu kata di atas baris judul tetap bisa menjadi kunci; itu dijaga
+  pemeriksaan nama saat suara dan penyamaran di Admin.
+- **Pertanyaan**: detail item `flags.ask_app` true hanya untuk item `siap`/`tercatat`, `tidak_dikenali`, berkunci logo
+  yang sah, dan belum dijawab (`channel_meta.app_choice`); `flags.app_logo` = kata logonya dalam huruf besar (≤ 40). Tanpa
+  kandidat logo tidak ada pertanyaan (G9). Kartu dan bot tidak bertanya untuk bukti yang transaksinya gagal (`blocked` =
+  `transaksi_gagal`); bukti pending dan yang sudah tercatat tetap ditanya (jawabannya tidak mencatat apa pun). Form Catat
+  tidak pernah bertanya (G12).
+- **Jawaban** (`POST /kotak-struk/{id}/aplikasi` dan tombol bot `ka_`, satu tempat: `record.choose_app`): salah satu 12
+  kunci profil atau `baru` (`APP_NEW`; "Lainnya" di kartu dan bot, "Aplikasi baru" di Admin). Tidak ada teks bebas (K6).
+  Sekali per item. Menjadi suara `Vote("logo", "logo:<kata>", jawaban)`, kecuali kata logonya kata nama yang dikenal di
+  bukti itu (keterangan transaksi tercatat, pihak lawan, merchant terbaca, nama user; juga dipisah pada tanda baca):
+  jawabannya tetap tersimpan, tanpa suara (K8). Ambang, rekonsiliasi, dan `forget_user` sama dengan tahap 1. Tidak membuat
+  transaksi dan tidak mengubah status item.
+- **Suara lain untuk kunci logo**: suara `label_*` (dan `arah`) untuk kunci `logo:` hanya sesudah aturan `logo` kunci itu
+  disetujui (`belajar.approved_logo_keys`; K8).
+- **Pembaca** (hanya saat saklar `receipt_inbox` menyala, hanya `UnknownReader`, hanya bila `detect_issuer` tidak
+  menemukan profil; K7): aturan `logo` yang disetujui bernilai kunci profil P → `doc.issuer = P` (hanya bila hasilnya
+  tetap `tidak_dikenali`; penyelamatan LLM menjadi struk belanja tanpa penerbit) dan label belajar dibaca dengan kunci P
+  (`learned_for`). Profil P sendiri tidak pernah dipakai: kalimat selesai (status), pihak di atas nominal, dan label
+  referensi (dedup) tetap bacaan tanpa aturan. Nilai `baru` → penerbit tetap kosong, label belajar berkunci `logo:<kata>`
+  dipakai. Tanpa aturan `logo` yang disetujui, label berkunci logo diabaikan; mencabut aturannya menghentikannya di
+  bacaan berikutnya. Status, `{code: level}` cek, `check_recordable`, `ref_hash`, `doc_type`, dan perutean tidak pernah
+  berubah (dipin `test_logo_rules_never_change_status_or_routing`).
+- **Bukti yang dipetakan ke P** mendapat kerangka berkunci P (`kerangka._profile_of` memakai `doc.issuer`), jadi
+  `ask_app` false dan suara label berikutnya masuk aturan P; sesudah disetujui, pembaca QRIS/transfer P yang sungguhan
+  juga memakainya (K7; keputusan pengendali M2b: pemetaan yang salah bisa mencampur label dua aplikasi, dan pemetaan
+  butuh 2 user dan persetujuan pemilik). Baris logo bukti itu tetap ada di kerangka sebagai entri `nama` tanpa label (nama
+  ber-HMAC; tidak pernah menjadi suara).
+- **Admin**: contoh `Logo "NEWPAY" → BSI Mobile` (`baru`: `→ Aplikasi baru`), dan setiap aturan `logo` (satu maupun dua
+  kata) membawa peringatan "Kata logo bisa saja nama depan orang — periksa bukan nama orang.". Kartu aturan `baru`
+  menyebut "Aplikasi baru" dua kali (aplikasi "Aplikasi baru: newpay", nilai "Aplikasi baru"): artinya user memilih
+  "Lainnya", aplikasi di luar 12 profil. `GET /admin/receipt-scans/stats` `by_issuer` tidak menghitung item
+  `tidak_dikenali`, jadi penerbit dari aturan `logo` tidak mengubah "% dikoreksi" aplikasi P.
+
+**Tahap 2: aturan `arah` (alasan "Bukan pengeluaran")** (`kerangka.arah_tokens`, `belajar.learn_from_skip`,
+`profiles.learned_arah`, `registry._apply_learned_arah`; spec §2, §5, pre-flight A16 K9–K11, K14):
+- **Token** (kerangka `"arah"`, hanya kata kosakata, paling banyak satu `judul:` lalu satu `ke:`):
+  - `judul:<kata>` = kata judul status/top-up/uang masuk di baris atas (`TITLE_WORDS`, tanpa kata status, tanpa kata nama
+    yang dibaca, paling sedikit satu kata di luar kata umum `ARAH_GENERIC`). Kata label (penerima, pengirim, tujuan,
+    kepada, nama, tagihan, …) tidak pernah membentuk token; judul dengan kata berulang juga tidak.
+  - `ke:<kata>` = 2–3 kata terdepan nama penerima selama kata itu kata penyedia/penanda aplikasi atau kata top-up
+    (`ARAH_PARTY_WORDS`), paling sedikit satu kata penyedia dan satu kata top-up (`TOP_UP_WORDS`); kata yang memuat
+    digit menghentikannya ("OVO 0812 TOPUP" tidak memberi token). Top-up GoPay dari ShopeePay "Kirim Ke GOPAY TOPU-…" →
+    `ke:gopay topu` (K9). Nama orang ("GOPAY SITI AMINAH", "Shopeepaysitxx …") tidak pernah memberi token.
+- **Suara**: "Bukan pengeluaran" dengan alasan (`POST /kotak-struk/{id}/lewati` `{reason: "bukan_pengeluaran", alasan}`,
+  bot `kx_{id}_t|_m|_s`, pilihan alasan di kartu) pada QRIS/transfer berkunci profil: `Vote("arah", "{kunci}|{token}",
+  alasan)` per token sah (kunci ≤ 60 karakter, `KEY_MAX`). Tidak ada suara bila alasan sama dengan arah terbaca (K14:
+  mengiyakan bacaan bukan koreksi; juga "Oke, lewati"), tanpa alasan ("Lainnya"), atau kerangka lama tanpa `"arah"`.
+  Alasan disimpan di `channel_meta.skip_alasan`. Galat suara tidak pernah menggagalkan lewati (dipin
+  `test_skip_votes_never_fail_the_skip`).
+- **Pembaca** (`registry.read_document`, hanya saat saklar `receipt_inbox` menyala; K10): sesudah `apply_flow`, bukti
+  QRIS/transfer dengan `doc.issuer` kunci profil yang masih `keluar` mendapat arah aturan pertama yang cocok (token urut
+  `judul:` lalu `ke:`, nilai urut pendukung) dan bukti "Arah uang dari aturan belajar". **Hanya saran**: hasilnya
+  `flags.skip_suggestion`; item tetap `siap`, Simpan/`t_`/"Tetap catat" tetap mencatat satu kali, tidak ada lewati
+  otomatis. Arah selain `keluar` tidak pernah diubah dan tidak pernah menjadi `keluar`; status, cek (dihitung dengan
+  konteks tanpa aturan), nomor referensi, dan dedup tidak membaca arah (dipin `test_arah_rules_never_bypass_blocks`,
+  `test_arah_rule_never_records_or_skips`, `test_arah_only_from_keluar`).
+- Aturan `arah` berkunci aplikasi `logo:<kata>` (`logo:<kata>|…`) bisa muncul dan disetujui di Admin, tetapi pembaca
+  tidak pernah memakainya (`belajar._arah_key_ok` mensyaratkan kunci profil); dalam praktik tidak muncul, karena kunci
+  logo hanya ada di bukti `tidak_dikenali`, yang tidak memberi suara `arah`.
+- **Tanpa suara tandingan**: "Tetap catat" pada saran dari aturan `arah` yang salah tidak memberi suara apa pun; aturan
+  yang salah dicabut pemilik di Admin. Item yang dibaca selama aturan itu disetujui menyimpan arah bacaannya (tidak
+  dibaca ulang).
+- **Admin**: contoh `Judul "top up" → Top-up` atau `Penerima "GOPAY TOPU…" → Top-up`; kata kunci hanya bila bentuknya sah
+  (`kerangka.arah_token_ok`), selain itu "…".
+
+**G8 (tahap 2).** Satu kunci `logo`/`arah` paling banyak punya satu nilai `disetujui` (satu logo = satu aplikasi, satu
+token = satu arah). Setujui nilai kedua → 409 "Kunci ini sudah punya aturan yang disetujui; cabut dulu"
+(`belajar.RuleKeyTaken`), diperiksa di UPDATE bersyarat (NOT EXISTS). Dua persetujuan bersamaan yang sama-sama lolos
+NOT EXISTS ditolak indeks unik parsial `ux_proof_rules_satu_nilai` (`proof_rules (kind, rule_key) WHERE status =
+'disetujui' AND kind IN ('logo', 'arah')`; UPDATE di SAVEPOINT, `IntegrityError` → 409, bukan 500). Indeks itu hanya
+dibuat migrasi `c9e4a7f2b5d8` (tidak oleh restart), jadi di menit antara deploy dan `alembic upgrade head` hanya NOT
+EXISTS yang menjaga. Jenis label tetap boleh beberapa label disetujui per kunci; Tolak dan Cabut tidak pernah terhalang.
+
+Batas: "Batasan yang diketahui", butir "Belajar lintas user (tahap 1)" dan "Belajar lintas user (tahap 2)".
+
+## Donasi contoh
+
+Tahap 2 (spec belajar lintas user §10 Tahap 2 butir 1, §12.4; pre-flight A16 K1–K5, K17, G1–G7; keputusan pemilik
+produk 5 Nov 2026). User yang **setuju** (opt-in di Settings) menyumbang baris teks bukti **tersamar** dari bukti bayar
+yang ia koreksi. Pemilik produk meninjaunya di Admin, mengganti nama yang tersisa, menyetujui, lalu mengunduh entri korpus
+dan menambahkannya ke `corpus.json` lewat PR. Kode: `app/services/kotak_struk/donasi.py`, `samaran.py`,
+`routes/user_settings.py` (`/user/kotak-donasi`), `routes/admin_kotak.py` (`/admin/kotak/samples`).
+
+**Saklar** `features.kotak_donasi` (bawaan **mati**, `app_config.FEATURES`; `donasi.donation_available` =
+`feature_enabled(db, "kotak_donasi", "web")`, galat membaca → mati). Dinyalakan hanya sesudah paragraf "Donasi contoh"
+tayang di `privacy.html` (K1: kebijakan yang tayang menyebut teks hasil baca tidak disimpan); urutannya di `AGENTS.md`
+"Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)". Tidak bergantung pada saklar `receipt_inbox`. Saklar
+mati: kartu Settings hanya tampil untuk user yang sudah setuju (supaya bisa dimatikan), menyalakan → 409 "Donasi contoh
+belum dibuka", worker tidak menangkap baris, dan `donate` tidak menyimpan sampel (baris yang sempat tertangkap
+dikosongkan). Antrean Admin tetap bisa ditinjau, diunduh, dan dihapus.
+
+**Persetujuan** (`proof_sample_consents`, satu baris per user; `GET`/`PUT /user/kotak-donasi`):
+- Kartu Settings **"🧾 Bantu Jatahku membaca bukti bayar"** (`KotakDonasiCard`, logika `kotakDonasi.js`), sesudah tips
+  "Bagikan bukti bayar" dan sebelum kartu Google. Teks persetujuan (keputusan pemilik 5 Nov 2026, apa adanya): "Bantu
+  Jatahku menjadi lebih tepat dalam membaca berbagai model dan bentuk bukti bayar (struk) dari berbagai bank dan layanan
+  keuangan di seluruh Indonesia. Teks bukti yang sudah disamarkan dikirim ke pengelola untuk ditinjau; bisa dimatikan
+  kapan saja." Teks lengkap selalu terlihat sebelum menyalakan.
+- Saklar `role="switch"`; status "Aktif sejak {tgl}" (hari WIB persetujuan) atau "Mati"; sudah setuju tetapi saklar
+  fitur mati: "Donasi contoh sedang ditutup; kamu tetap bisa mematikannya.". Pesan: "Terima kasih, bantuanmu aktif.",
+  "Dimatikan. Contoh yang belum ditinjau sudah dihapus.", 409 → teks server, "Koneksi gagal, coba lagi.", lainnya
+  "Belum tersimpan (kode N). Coba lagi."; toggle yang gagal mempertahankan tampilan sebelumnya. Kartu yang sudah tampil
+  tetap tampil sepanjang kunjungan. Bacaan pertama gagal → kartu tidak tampil (tanpa coba lagi; buka Settings lagi).
+- Menyalakan idempoten (waktu persetujuan pertama tetap). **Menarik** (`set_consent(off)` →
+  `forget_user(keep_approved=True)`) selalu boleh, juga saat saklar mati: baris persetujuan, sampel yang belum ditinjau
+  (`menunggu`), dan `sample_lines` di item user itu dihapus; sampel yang sudah `disetujui` tetap sampai umurnya habis
+  (keputusan pemilik 5 Nov 2026: isinya sudah ditinjau dan tersamar).
+
+**Apa yang ditangkap dan kapan** (worker, `donasi.sample_lines`; G6, K5):
+- Hanya saat saklar menyala **dan** user setuju (dibaca di sesi baca; persetujuan dibaca ulang dengan kunci `FOR SHARE`
+  tepat sebelum hasil disimpan, `donasi.still_consented`). Selain itu `sample_lines` NULL dan tanpa kueri tambahan saat
+  saklar mati.
+- Hanya bukti bayar: `doc_type` di `SAMPLE_TYPES` (= `LAYOUT_TYPES`: QRIS, transfer, tidak dikenali) atau teks yang tampak
+  bukti (`looks_like_proof`, juga bila dibaca jalur struk). Struk belanja biasa tidak pernah.
+- Dari baris OCR dan hasil baca **sebelum** disamarkan (titik yang sama dengan kerangka): `clean_lines` →
+  `samaran.mask_line` (deret ≥ 6 digit menjadi `…dddd`; nominal, tanggal, jam, dan NMID dibiarkan) →
+  `samaran.pseudonymise`: setiap kata nama yang dikenal diganti kata nama samaran perannya (`samaran.PSEUDONYMS`: pihak
+  lawan "BUDI SANTOSO", pengirim "SITI AMINAH", merchant terbaca "TOKO CONTOH", user "ANDI PRATAMA") → baris yang masih
+  memuat nilai rahasia bukti (referensi, rekening, NMID di luar baris NMID), deret ≥ 6 digit, alamat email, atau nomor
+  berkelompok ribuan ≥ 10 digit yang tidak langsung sesudah Rp/IDR dibuang seluruhnya ("Total 1.234.567.890" tanpa Rp
+  ikut terbuang) → paling banyak 80 baris (`SAMPLE_MAX_LINES`) × 200 karakter (`SAMPLE_LINE_MAX`). Tanpa baris tersisa →
+  NULL.
+- Tebakan pihak lawan yang hanya kata judul/aplikasi bukan nama; di tebakan campuran hanya kata label dikecualikan, jadi
+  kata bank/aplikasi yang juga nama orang ("Mega", "Neo", "Jago") ikut diganti nama samaran; "Dana" tetap (kata label).
+- Disimpan di kolom `receipt_scans.sample_lines` (JSONB NULL), bukan di `document`, tidak pernah dikirim ke klien
+  (`view.item_detail`). Galat → NULL, peringatan "baris donasi Kotak Struk tidak dibuat (jenis galat)", item tetap `siap`.
+
+**Pemicu: koreksi** (`donasi.correction_trigger`, K3; dipanggil `record.mark_recorded` sekali per transaksi baru,
+`record.skip_item`, `record.choose_app`, dan bot `note_fix_amount`). Baris tersamar pindah ke `proof_samples` (status
+`menunggu`) hanya bila bukti itu dikoreksi:
+
+| `trigger` (Admin) | Bila |
+|---|---|
+| `nominal` ("Nominal dikoreksi") | nominal tercatat ≠ total terbaca, atau total tidak terbaca |
+| `tanggal` ("Tanggal dikoreksi") | tanggal tercatat bukan tanggal bukti (WIB) dan bukan hari ini |
+| `tidak_dikenali` ("Bukti tidak dikenali dipastikan") | item `tidak_dikenali` tercatat (tanpa koreksi nominal/tanggal), atau dilewati "Bukan pengeluaran" tanpa alasan yang mengoreksi arah |
+| `arah` ("Bukan pengeluaran") | "Bukan pengeluaran" dengan alasan yang beda dari arah terbaca, atau tanpa alasan pada bukti terbaca `keluar` |
+| `aplikasi` ("Aplikasi dipilih") | jawaban "Aplikasi apa ini?" |
+| `nominal_bot` ("Nominal dikoreksi di bot") | nominal ketikan sesudah bot "✏️ Nominal salah" yang beda dari total terbaca (sama → bukan koreksi) |
+
+- Selain itu (bacaan benar, lewati `batal`/`duplikat`, alasan sama dengan arah terbaca, persetujuan ditarik, saklar mati)
+  baris dikosongkan di titik yang sama. Bot "✏️ Nominal salah" melewati item dengan `batal` tetapi membiarkan barisnya
+  (`keep_sample`, hanya dari tombol bot) sampai nominal diketik; tanpa ketikan pemeliharaan menghapusnya dalam 24 jam.
+- Satu sampel per item (`uq_proof_sample_item`, `on_conflict_do_nothing`; kirim ulang tidak menggandakan). Isi: baris,
+  `rule_key` kerangka, `doc_type`, `trigger`, `user_name` = nama samaran user (bukan nama asli), `truth` = koreksi user
+  `{total, date, flow, app}` (G7), `today` = hari baca WIB.
+- Persetujuan dicek ulang di `donate` (kunci `FOR SHARE`; urutan kunci persetujuan lalu baris item, sama dengan
+  `forget_user`). SAVEPOINT sendiri; galat ditelan ("sampel donasi Kotak Struk untuk item … tidak disimpan"). Donasi
+  tidak pernah membuat transaksi, mengubah status item, atau menggagalkan pencatatan/lewati (dipin
+  `test_donation_never_affects_recording`).
+
+**Antrean Admin "Donasi contoh"** (Admin → Dashboard → kartu "Scan Struk (bulan ini)", di bawah "Aturan belajar", dengan
+syarat tampil yang sama; `ProofSamplesSection.jsx`, logika `proofSamples.js`). Tab **Menunggu** dan **Disetujui** (satu
+`GET /admin/kotak/samples?status=semua`). Tiap sampel: aplikasi (label profil, jawaban aplikasi, atau `Logo "NEWPAY"`),
+pemicu, tabel "Hasil baca" (pembaca sekarang pada baris itu, tanpa aturan; `donasi.read_lines`) lawan "Koreksi user"
+(baris yang beda ditandai), dan baris bertanda PERIKSA (`samaran.needs_review`).
+- **Menunggu**: baris bisa diedit (satu baris per baris bukti; ganti nama yang tersisa), nama samaran user dipilih dari 4
+  nama samaran atau "Tanpa nama", catatan opsional ≤ 200. **Setujui**: server menyamarkan lagi (`mask_line`) dan menolak
+  422 "Masih ada nomor panjang di baris N" / "Masih ada alamat email di baris N" / "Masih ada nomor rekening di baris N";
+  `user_name` hanya kata nama samaran (422 "Nama user harus nama samaran"); hanya dari `menunggu` (409 "Sampel sudah
+  diputuskan"). **Tolak** (dengan konfirmasi): barisnya **dihapus**, jadi sampel `ditolak` tidak pernah ada (ruling M1d;
+  `counts.ditolak` tetap ada untuk bentuk respons, selalu 0); penolakan tidak bisa dibatalkan, koreksi user berikutnya
+  menyumbang lagi.
+- **Disetujui**: **Unduh entri korpus** (`GET …/{id}/korpus`) menyimpan `<id entri>.json` berisi `{entry, truth,
+  gated_diff}`: `entry.id` = `donasi-<doc_type>-<8 hex id sampel>`, `real`/`reviewed` true, `today`, `user_name` (tidak ada
+  bila kosong), `lines`, dan `expect` = pembaca sekarang dengan nilai koreksi user menggantikannya untuk total, tanggal
+  (WIB), status, arah, dan aplikasi (hanya kunci profil, bukan `baru`) ("Koreksi user (sudah diterapkan)"); `gated_diff`
+  = field yang pembacanya beda dari koreksi user. Lalu **Hapus sesudah disalin** (dengan konfirmasi; `DELETE`).
+- **Langkah manusia** (K4; teks di bawah tombol): "Simpan berkas, lalu jalankan `python -m app.scripts.kotak_corpus add
+  --dari-donasi <berkas>` di checkout lokal dan buka PR. Bila pembaca berbeda dari koreksi user, perintah berhenti (exit
+  3); pakai `--tahan` untuk menulis `reviewed: false`." Tidak pernah di VPS (checkout deploy harus bersih, kalau tidak
+  `git pull` di deploy gagal). Koreksi berarti pembacanya salah, jadi sampel donasi biasanya masuk lewat `--tahan`
+  (`reviewed: false`) dan menjadi `reviewed: true` di PR yang memperbaiki pembacanya (K17): sampel `reviewed: true` yang
+  gagal membuat gerbang rilis (`test_real_corpus_meets_release_gate`) merah. Rincian alatnya di "Alat korpus dan gerbang
+  rilis".
+
+**Yang tetap sampai ke pemilik tanpa tersamar** (diganti pemilik di Admin sebelum Setujui; review M1b): nama yang tidak
+dibaca pembaca sebagai pihak lawan, pengirim, merchant, atau user (mis. nama di baris tanpa label; K5); "Dana" sebagai label
+sekaligus nama; angka di bawah 6 digit (PIN, kode area, kode pos, RT/RW); 4 digit terakhir nomor tersamar; nomor
+berkelompok ≤ 9 digit tanpa Rp; referensi huruf-angka pendek dan angka bergaris miring (ditandai PERIKSA); alamat jalan
+(ditandai); email yang disamarkan penulisnya ("nama[at]domain"). Email asli dan nomor berkelompok ≥ 10 digit tanpa Rp/IDR
+dibuang bersama barisnya.
+
+**Umur dan penghapusan** (G2, G4):
+- `proof_samples` berumur `SAMPLE_TTL` = **7 hari** (keputusan pemilik 5 Nov 2026; draf pre-flight 30 hari):
+  `menunggu` sejak dibuat, `disetujui` sejak diputuskan (`maintenance.purge_samples`, langkah 5 "Pemeliharaan"). Unduh
+  entri yang disetujui sebelum itu; salinannya di korpus repo permanen dan hanya memuat teks tersamar yang sudah ditinjau.
+- `sample_lines` di item dihapus bersama `layout`: 24 jam sejak dibaca untuk item selesai (`purge_layouts`) dan saat
+  kedaluwarsa (`expire_items`).
+- Hapus akun dan gabung akun (akun sumber) menghapus **semua** sampel user itu, juga yang disetujui, persetujuannya, dan
+  baris tersamarnya (`donasi.forget_user`; FK ON DELETE CASCADE); persetujuan tidak diwariskan ke akun tujuan.
+  `decided_by` sampel user lain dikosongkan (hapus akun) atau dipindah ke akun tujuan (gabung akun). Menarik persetujuan:
+  lihat "Persetujuan" (yang disetujui tetap).
+- Ekspor data user tidak memuat item Kotak Struk (G5, tidak berubah).
+- Penarikan saat bukti sedang dibaca: worker membaca ulang persetujuan sebelum menyimpan dan `donate` memeriksanya lagi,
+  jadi baris dari penarikan yang bersamaan tidak pernah menjadi sampel. Dalam balapan yang tersisa baris tersamar bisa
+  tinggal di item `siap` yang tidak disentuh lagi sampai pemeliharaan (item selesai + 24 jam, atau kedaluwarsa).
 
 ## Kanal
 
@@ -422,18 +646,49 @@ Batas tahap 1: "Batasan yang diketahui", butir "Belajar lintas user (tahap 1)".
   `merchant`, `penerima`, `tujuan`, `nmid`); panjang ≤ 4.000 karakter. Ketikan biasa ("kopi 35k", daftar "kopi 20k"
   + "roti 15k") tetap ke NLP.
 - **Struk belanja** (dan `tidak_dikenali`): pesan struk lama (rincian, cocok/selisih), **tanpa baris sisa kuota**.
+  Bukti `tidak_dikenali` yang boleh ditanya (`flags.ask_app`) mendapat tombol "🏷️ Aplikasi apa ini?" (di bawah).
 - **QRIS/transfer**: `{QRIS|Transfer} · {nama} · {kota}`, `{Rp} · {tgl jam} · {status}`, "Masuk ke amplop mana?",
   dengan tombol amplop (saran teratas, ⭐ bila yakin), **✏️ Tambah catatan** (`kn_`), **🚫 Bukan pengeluaran**
-  (`kx_`), **❌ Batal** (`struk_no_`). Transfer gagal: "⚠️ Transaksi ini gagal di bank, jadi tidak dicatat." tanpa
+  (`kx_{id}_c{key}`, dua langkah, di bawah), **❌ Batal** (`struk_no_`). Transfer gagal: "⚠️ Transaksi ini gagal di bank, jadi tidak dicatat." tanpa
   tombol. Sudah tercatat: "✅ Bukti ini sudah tercatat {tgl} di {amplop}." (nama amplop disembunyikan bila amplop
   pribadi anggota lain). Duplikat lunak: "Mirip "…" yang dicatat {jam}. Sama?" dengan **Sama, lewati** (`kd_`) dan
-  **Beda, catat** (`ko_`). Top-up, uang masuk, rekening sendiri: **Oke, lewati** dan **Tetap catat**.
+  **Beda, catat** (`ko_`). Top-up, uang masuk, rekening sendiri (juga saran dari aturan `arah`): **Oke, lewati**
+  (`kx_{id}_y`) dan **Tetap catat**; "Tetap catat" masih menanyakan duplikat lunaknya bila ada (payload `txn:{key}`
+  `"asked"`: `skip`|`soft`; payload lama tanpa itu = langsung tombol amplop).
 - **Tambah catatan**: bot membalas "Ketik isi belanjaannya (atau /batal)" dan menyimpan `kotak:note:{tg_user_id}`
   (TTL 300 dtk). Pesan teks berikutnya menjadi catatan sebelum NLP; saran dan pesan tombol dihitung ulang. `/batal`
   selama menunggu catatan hanya membatalkan catatan (bukan transaksi terakhir). Catatan yang masuk saat tombol pesan
   yang sama sedang diproses menunggu sebentar (≤ 2 dtk); masih sibuk → "⏳ Sedang diproses, kirim ulang catatannya.";
   bila tombol itu sudah memakai sesinya (mis. mencatat) → "⚠️ Bukti ini sudah diproses, catatannya tidak
   ditambahkan." Catatan yang sempat menunggu tidak pernah diproses NLP.
+- **Bukan pengeluaran, dua langkah** (tahap 2 M3c, K11): "🚫 Bukan pengeluaran" (`kx_{id}_c{key}`, membawa kunci sesi
+  tombol `txn:{key}`) mengedit pesan menjadi "Kenapa bukan pengeluaran?" dengan **Top-up saldo sendiri** (`_t`), **Uang
+  masuk** (`_m`), **Ke rekening sendiri** (`_s`), **Lainnya** (`_l`, lewati tanpa alasan = perilaku lama), lalu **↩️
+  Kembali** (`kx_{id}_k{key}`, ≤ 49 byte); arah uang item (saran) di urutan pertama. Alasan → `skip_item(...,
+  "bukan_pengeluaran", alasan=...)` → "❌ Dilewati." (suara `arah` bila beda dari arah terbaca). "Oke, lewati" =
+  `kx_{id}_y`: alasan = arah item, tanpa suara (K14). Kembali merender ulang tombol amplop sesi yang sama: catatan 📝 yang
+  tersimpan dan jawaban tanggal tetap; kunci asing/rusak/kedaluwarsa → sesi baru tanpa catatan. "✏️ Tambah catatan" yang
+  sedang ditunggu tetap hidup saat pilihan alasan dibuka dan sesudah Kembali (teks yang diketik tetap menjadi catatan;
+  `capture_note` mengedit pesan pilihan kembali ke tombol amplop) dan baru dibuang saat benar-benar melewati
+  (`_t/_m/_s/_l/_y`). Akhiran tidak dikenal dan tombol `kx_{id}` dari sebelum deploy (juga "Oke, lewati" lama) membuka
+  pilihan alasan (satu ketukan tambahan); tombol lama tanpa kunci sesi, jadi Kembali-nya (`_k`) memulai sesi baru, dan
+  dari "Oke, lewati" lama langsung ke tombol amplop tanpa pertanyaan duplikat lunak (hanya pesan lama; sebelum M3c "Tetap
+  catat" di pesan seperti itu juga melewatinya). Bukti milik sendiri yang tidak bisa dilewati (mis. sudah tercatat) →
+  "⚠️ Bukti ini tidak bisa dilewati." disusul hasil terkini (Kembali tanpa peringatan); untuk bukti `kedaluwarsa` yang
+  masih bisa dicatat terlambat hasil itu bisa membawa "🚫 Bukan pengeluaran" lagi (peringatan berulang; tidak ada yang
+  dicatat atau dilewati). `kd_` ("Sama, lewati") tidak berubah.
+- **Aplikasi apa ini?** (tahap 2 M2c): pesan struk untuk bukti `tidak_dikenali` dengan `flags.ask_app` (bukan bukti yang
+  transaksinya gagal; pending dan sudah tercatat tetap ditanya) mendapat baris **🏷️ Aplikasi apa ini?** (`ka_{id}`).
+  Ketukannya mengedit pesan menjadi "Logo di bukti: {flags.app_logo}. Aplikasi apa ini?" dengan 12 aplikasi berprofil
+  (`ka_{id}_{i}`, i = indeks `PROFILES`, 3 per baris; label bot dari `PROFILES`, mis. "BNI Mobile (wondr)", "BSI Mobile",
+  "Bank Jago", "blu by BCA Digital", sedangkan kartu web memakai "wondr by BNI", "BSI", "Jago", "blu"; kuncinya sama),
+  **Lainnya** (`ka_{id}_n` = `baru`), dan **↩️ Kembali** (`ka_{id}_k`, pesan hasil dirender ulang tanpa menjawab).
+  Jawaban → `record.choose_app` + commit, lalu pesan hasil dirender ulang tanpa tombol aplikasi (tombol amplop tetap, sesi
+  tombol baru). Item yang tidak bisa ditanya lagi atau jawaban yang ditolak → "⚠️ Aplikasi bukti ini tidak bisa
+  dipilih." + pesan hasil (tombol amplop tetap bila masih `siap`); item orang lain/tidak ada → pesan itu tanpa tombol.
+  Tombol hanya di pesan struk/tidak dikenali (`_store_reply`), yang tidak punya "✏️ Tambah catatan", jadi `ka_{id}_k`
+  tidak membawa kunci sesi; tidak ada tombol aplikasi sesudah jawaban tanggal atau bila total/amplop tidak ada. Prefiks
+  `^k[nxdoa]_` juga terdaftar di `app/plugins/host/manifest.py` (plugin tidak boleh memakainya).
 - **Lewat batas tunggu**: Telegram membalas "⏳ Masih dibaca, nanti kukabari." lalu worker mengedit pesan itu
   menjadi hasil (atau gagal) lewat `send_ready_message`; pesan terhapus → pesan baru. Chat web membalas "⏳ Masih
   dibaca, nanti kukabari di sini." dengan id item di gelembungnya (op `item`, `pending`), lalu panel chat menanyakan
@@ -480,8 +735,8 @@ scan, tombol PDF): bagian berikut.
 ## Web dan PWA (Bagian B)
 
 Aturannya ada di modul murni `frontend/src/lib/` yang diuji `node --test` (`receiptScan.js`, `multiAddRows.js`,
-`receiptProgress.js`, `shareInbox.js`, `proofFormat.js`, `pendingProofs.js`, `scanStats.js`); komponen JSX hanya
-merender. Saklar `features.receipt_inbox` dibaca dari `/app/config`; hanya nilai `true` yang berarti menyala.
+`receiptProgress.js`, `shareInbox.js`, `proofFormat.js`, `pendingProofs.js`, `scanStats.js`; tahap 2 belajar lintas
+user: `proofRules.js`, `proofSamples.js`, `kotakDonasi.js`); komponen JSX hanya merender. Saklar `features.receipt_inbox` dibaca dari `/app/config`; hanya nilai `true` yang berarti menyala.
 
 **Form Catat: baris hasil scan** (tidak bergantung saklar; `receiptScan.js`, `multiAddRows.js`):
 - QRIS dan transfer menjadi satu baris biasa tanpa rincian barang: keterangan dari `description_preview`, tanggal bayar
@@ -508,7 +763,8 @@ merender. Saklar `features.receipt_inbox` dibaca dari `/app/config`; hanya nilai
   menunggu dicatat, kecuali baris lain masih memakai item itu. Jawaban 2xx memicu event `jatahku:kotak-changed`, jadi
   banner langsung menghitung ulang.
 - Umpan balik belajar struk (`scan-receipt/{id}/feedback`) hanya untuk struk belanja (dan scan lama tanpa jenis); bukti
-  bayar belajar di server saat tercatat.
+  bayar belajar di server saat tercatat. Baris form Catat tidak menanyakan "Aplikasi apa ini?" dan tidak memilih alasan
+  "Bukan pengeluaran" (× = `batal`; G12): keduanya hanya di `ProofCard` (halaman `/bagikan`) dan bot.
 
 **Tombol PDF** (hanya saat saklar menyala; `ReceiptInput.jsx`, `useReceiptScan.js`, `receiptProgress.js`):
 - Tombol **PDF** di samping Foto/Galeri membuka `native.files.pickDocument` (gambar atau PDF, tanpa penanda kamera).
@@ -667,7 +923,15 @@ sini.
   yang dicatat {jam}. Sudah dicatat?"); lalu peringatan server apa adanya. Tidak ada langkah konfirmasi tambahan:
   menekan Simpan dengan peringatan yang terlihat sama dengan "Tetap catat" di bot.
 - Tombol: **Simpan**; **Sama, lewati** (duplikat lunak, dan satu-satunya tombol lewati untuk bukti yang sudah
-  tercatat); **Bukan pengeluaran** (selain bukti yang sudah tercatat). Simpan mati sampai kartu siap; alasan pertama
+  tercatat); **Bukan pengeluaran** (selain bukti yang sudah tercatat). Sejak tahap 2 (M3c) "Bukan pengeluaran" membuka
+  "Kenapa bukan pengeluaran?": kelompok radio Top-up saldo sendiri / Uang masuk / Ke rekening sendiri / Lainnya, saran
+  server (`flags.skip_suggestion`) di urutan pertama, terpilih, dan bertanda "(disarankan)"; **Lewati** dan **Batal**,
+  Esc menutup. `alasan` dikirim hanya untuk tiga arah uang (`skipBody`; "Lainnya" = `{reason}` saja).
+- "Aplikasi apa ini?" (tahap 2 M2c, `appQuestion`): hanya bila `flags.ask_app` true, `flags.app_logo` terisi, item
+  `siap`/`tercatat`, dan bukan `transaksi_gagal`: "Logo di bukti: {logo}. Aplikasi apa ini?" dengan pilihan "Pilih
+  aplikasi" (12 aplikasi + "Lainnya" = `baru`) dan **Kirim** → `POST /kotak-struk/{id}/aplikasi`. Berhasil → "Terima
+  kasih, dicatat." (item tidak dibaca ulang); 409/404 → teks server atau "Aplikasi bukti ini tidak bisa dipilih.",
+  pertanyaan ditutup; galat lain bisa dicoba lagi. Simpan mati sampai kartu siap; alasan pertama
   yang menghalangi tampil di bawahnya ("Nominal tidak terbaca", "Pilih tanggal catat", "Pilih amplop dulu", atau "Butuh
   koneksi internet"), sedangkan alasan blokir tampil di peringatan.
 - Struk belanja dibaca ulang (`GET /kotak-struk/{id}`, maks 20 dtk) tepat sebelum Simpan, karena server menerima lebih
@@ -705,14 +969,17 @@ sini.
   halaman terbuka, atau lewat "Kirim lagi"), jadi share yang belum terkirim menunggu satu ketukan.
 
 **Tips Settings dan rincian Admin**:
+- Settings, kartu donasi contoh "Bantu Jatahku membaca bukti bayar" (tahap 2; saklar `kotak_donasi`, bukan
+  `receipt_inbox`): lihat "Donasi contoh". Admin, bagian "Aturan belajar" dan "Donasi contoh": lihat "Belajar lintas
+  user" dan "Donasi contoh".
 - Settings, tepat sesudah kartu Telegram, hanya saat saklar menyala: "Bagikan bukti bayar ke Jatahku: di Android,
   pasang Jatahku dari browser lalu pilih Jatahku di menu Bagikan. Di iPhone, bagikan bukti ke bot Telegram Jatahku."
   Teks ini menganggap menu Bagikan sudah ada (PR `share_target`).
 - Admin → Dashboard → kartu "Scan Struk (bulan ini)" (`scanStats.js`, tidak bergantung saklar) menambah baris "Jenis
   dokumen: Struk belanja {n} · QRIS {n} · Transfer {n} · Tidak dikenali {n}" (jenis lain menyusul dengan kuncinya) dan
   tabel "Per penerbit": Penerbit, Total, Tercatat, Dikoreksi, dan "% dikoreksi" (dikoreksi / tercatat, dibulatkan; "–"
-  bila belum ada yang tercatat), urut total terbanyak. Hanya pembaca QRIS dan transfer yang mengisi `issuer`, jadi
-  selama saklar mati tabel itu tidak tampil. Server lama tanpa rincian → bagian itu tidak tampil. Angkanya dari
+  bila belum ada yang tercatat), urut total terbanyak. Hanya pembaca QRIS dan transfer yang mengisi `issuer` (penerbit
+  dari aturan `logo` di bukti `tidak_dikenali` tidak dihitung server), jadi selama saklar mati tabel itu tidak tampil. Server lama tanpa rincian → bagian itu tidak tampil. Angkanya dari
   `GET /admin/receipt-scans/stats` (lihat "Statistik Admin").
 
 ## API
@@ -727,7 +994,10 @@ garis miring penutup (`/kotak-struk/`); tanpa itu dijawab 307.
 | `GET /kotak-struk/count?status=siap` | `{count}`: jumlah item milik user dengan status itu (bawaan `siap`), saringan sama dengan daftar tanpa batas 50; satu COUNT tanpa detail item (banner bukti menunggu di web) |
 | `GET /kotak-struk/{id}` | Detail item |
 | `POST /kotak-struk/{id}/saran` | `{note}` (≤ 200) → `{suggestion, description_preview}` |
-| `POST /kotak-struk/{id}/lewati` | `{reason: bukan_pengeluaran \| duplikat \| batal}` → `dilewati`. Hanya item `siap`/`gagal`; selain itu 409 "Bukti ini tidak bisa dilewati" |
+| `POST /kotak-struk/{id}/lewati` | `{reason: bukan_pengeluaran \| duplikat \| batal, alasan?}` → `dilewati`. Hanya item `siap`/`gagal`; selain itu 409 "Bukti ini tidak bisa dilewati". `alasan` (tahap 2, opsional: `top_up` \| `masuk` \| `antar_rekening_sendiri`) hanya bersama `bukan_pengeluaran`, selain itu 422 "Alasan hanya untuk Bukan pengeluaran"; menjadi suara `arah` bila beda dari arah terbaca |
+| `POST /kotak-struk/{id}/aplikasi` | Tahap 2: `{app}` (≤ 20) = kunci profil atau `baru` → `{app, ask_app: false}`. Jawaban "Aplikasi apa ini?" untuk item dengan `flags.ask_app` (sekali per item; suara `logo`, donasi `aplikasi`; tidak mencatat). Item tidak ada/milik user lain 404; nilai lain 422 "Pilihan aplikasi tidak dikenal"; tidak bisa ditanya atau sudah dijawab 409 "Aplikasi bukti ini tidak bisa dipilih" |
+| `GET /user/kotak-donasi` | Tahap 2: `{available, consented, consented_at}` (`available` = saklar `kotak_donasi`); tetap menjawab saat saklar mati |
+| `PUT /user/kotak-donasi` | Tahap 2: `{consented: true \| false}` (boolean ketat; field lain 422) → bentuk yang sama. Menyalakan saat saklar mati → 409 "Donasi contoh belum dibuka"; menarik selalu boleh (lihat "Donasi contoh") |
 | `PUT /kotak-struk/merchants/{merchant_id}` | `{display_name}` (≤ 60; tag `<…>` dan karakter selain A–Z, a–z, 0–9, spasi, `&'.-` dibuang; kosong menghapus). Hanya anggota rumah tangga merchant itu, selain itu 404 |
 | `POST /transactions`, `/transactions/batch` | Field opsional `receipt_item_id` (UUID); 409 bila item tidak boleh dicatat |
 | `POST /transactions/scan-receipt` | Gambar atau PDF; respons lama + field baru |
@@ -741,10 +1011,11 @@ selesai ("Masih ada bukti yang sedang dibaca. Tunggu sebentar.").
 
 **Detail item**: `id`, `status`, `doc_type`, `source`, `created_at`, `paid_at`, `document`, `merchant`
 (`{id, name, display_name}`), `suggestion`, `description_preview`, `flags`, `error`. `flags` =
-`{duplicate_of, skip_suggestion, blocked, warnings[]}`: `duplicate_of.kind` = `file` | `ref` | `soft`;
+`{duplicate_of, skip_suggestion, blocked, warnings[], ask_app, app_logo}`: `duplicate_of.kind` = `file` | `ref` | `soft`;
 `skip_suggestion` = `top_up` | `masuk` | `antar_rekening_sendiri`; `blocked` = `transaksi_gagal` | `sudah_tercatat`. `duplicate_of` terisi
 dengan `recorded` (true untuk file/ref yang sudah tercatat, false untuk referensi anggota lain yang masih `siap`; lunak tidak memuat
-`recorded`). **Yang memblokir hanya `blocked`** (di antara `flags`; yang bisa dicatat tetap hanya item `siap`, lihat `receipt_item_id` di bawah), bukan `duplicate_of.kind`: klien tidak boleh menolak bukti hanya karena `kind: "ref"`.
+`recorded`). Tahap 2 (field tambahan): `ask_app` (boolean, "Aplikasi apa ini?" boleh ditanyakan) dan `app_logo` (kata logo
+huruf besar ≤ 40, hanya bila `ask_app`; bukan nilai blokir). **Yang memblokir hanya `blocked`** (di antara `flags`; yang bisa dicatat tetap hanya item `siap`, lihat `receipt_item_id` di bawah), bukan `duplicate_of.kind`: klien tidak boleh menolak bukti hanya karena `kind: "ref"`.
 Item `diterima`/`diproses`/`gagal` hanya memuat kolom dasar (tanpa `document`, `merchant`, saran).
 
 **`receipt_item_id` di `POST /transactions` dan `/batch`**: dicek setelah `client_ref` (kirim ulang tetap
@@ -769,10 +1040,15 @@ kartu sebelum disimpan; lihat "Tanggal dokumen" di "Web dan PWA"), dan baris tan
 | Endpoint | Isi |
 |---|---|
 | `GET /admin/kotak/rules?status=` | `menunggu` (bawaan), `disetujui`, `ditolak`, `dicabut`, atau `semua`; nilai lain 422. `{counts: {menunggu, disetujui, ditolak, dicabut}, rules: [...]}`: `counts` atas semua aturan apa pun saringannya; tiap aturan `id, kind, rule_key, value, users, households, status, created_at, decided_at, decided_by, decided_by_name, note, example, warning`, urut `users` terbanyak lalu yang tertua. Hanya membaca |
-| `POST /admin/kotak/rules/{id}/setujui` | Body opsional `{note, from_status}` (`note` ≤ 200 karakter sesudah dirapikan, tanpa karakter kontrol; `from_status` = status yang dilihat admin; field lain 422). 200 → aturan yang diputuskan. 404 "Aturan tidak ditemukan"; 409 "Aturan ini tidak bisa diubah ke status itu" (transisi tidak sah atau status sudah berubah) atau "Aturan belum didukung 2 user". Commit, lalu cache aturan pembaca dibuang |
+| `POST /admin/kotak/rules/{id}/setujui` | Body opsional `{note, from_status}` (`note` ≤ 200 karakter sesudah dirapikan, tanpa karakter kontrol/format `Cc`/`Cf`; `from_status` = status yang dilihat admin; field lain 422). 200 → aturan yang diputuskan. 404 "Aturan tidak ditemukan"; 409 "Aturan ini tidak bisa diubah ke status itu" (transisi tidak sah atau status sudah berubah), "Aturan belum didukung 2 user", atau (tahap 2, G8) "Kunci ini sudah punya aturan yang disetujui; cabut dulu". Commit, lalu cache aturan pembaca dibuang |
 | `POST /admin/kotak/rules/{id}/tolak` | Sama; hanya dari `menunggu` |
 | `POST /admin/kotak/rules/{id}/cabut` | Sama; hanya dari `disetujui` |
-| `GET /admin/kotak/votes` | `{rows: [{rule_key, kind, users, values}]}`: user berbeda dan label berbeda per aplikasi dan jenis, termasuk pola 1 user; tanpa teks label dan tanpa id user/rumah tangga |
+| `GET /admin/kotak/votes` | `{rows: [{rule_key, kind, users, values}]}`: user berbeda dan label berbeda per aplikasi dan jenis, termasuk pola 1 user; tanpa teks label dan tanpa id user/rumah tangga. Tahap 2 (K15): `rule_key` bukan kunci profil → `logo:*`; kunci `arah` → hanya aplikasinya |
+| `GET /admin/kotak/samples?status=` | Tahap 2, donasi contoh: `menunggu` (bawaan), `disetujui`, `ditolak` (selalu kosong), atau `semua`. `{counts: {menunggu, disetujui, ditolak}, samples: [...]}`; tiap sampel `id, doc_type, rule_key, app_label, trigger, lines [{text, periksa}], user_name, truth, reading, today, status, created_at, decided_at, decided_by_name, note` (`reading` = pembaca sekarang tanpa aturan; galat → null), urut yang tertua. Tanpa id user/item. Hanya membaca |
+| `POST /admin/kotak/samples/{id}/setujui` | `{lines (1–80, ≤ 200 karakter, tanpa `Cc` selain tab), user_name?, note?, from_status?: "menunggu"}` (field lain 422; `user_name` tidak dikirim = tetap, null/kosong = dikosongkan; `user_name`/`note` tanpa `Cc`/`Cf`). Baris disamarkan lagi; 422 "Masih ada nomor panjang / alamat email / nomor rekening di baris N", "Nama user harus nama samaran"; 409 "Sampel sudah diputuskan"; 404 "Sampel tidak ditemukan". 200 → sampel |
+| `POST /admin/kotak/samples/{id}/tolak` | Body opsional `{note, from_status}` → `{deleted: true}`: sampel `menunggu` dihapus (catatan tidak disimpan); 409/404 seperti di atas |
+| `DELETE /admin/kotak/samples/{id}` | 204, status apa pun (sesudah entri disalin ke korpus); 404 |
+| `GET /admin/kotak/samples/{id}/korpus` | `{entry, truth, gated_diff}` hanya untuk `disetujui` (selain itu 409 "Sampel belum disetujui"): entri korpus siap salin (lihat "Donasi contoh"); `user_name` kosong tidak dikirim |
 
 `GET /admin/receipt-scans/stats` menambah `rules_pending` (jumlah aturan `menunggu`, semua waktu; lihat "Statistik Admin").
 
@@ -797,6 +1073,13 @@ tanggal, × melewati item), penangan `POST /bagikan` di service worker, dan rinc
 PWA"). Menu Bagikan Android juga tidak diatur saklar: Jatahku muncul di sana setelah `share_target` ada di manifest dan
 PWA memperbarui manifestnya. Klien web membaca saklar dari cache `/app/config` (lihat "Menyalakan saklar"); halaman
 `/bagikan` memintanya lagi setiap putaran (jawaban yang disimpan browser berumur paling lama 5 menit).
+
+**Saklar kedua `features.kotak_donasi`** (tahap 2, bawaan mati): hanya donasi contoh (kartu Settings, tangkap baris di
+worker, sampel). Aturan `logo`/`arah` mengikuti `receipt_inbox` seperti aturan tahap 1 (dipakai pembaca hanya saat
+menyala). Menyalakan `kotak_donasi`: `AGENTS.md` "Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)"
+langkah 7, sesudah paragraf privasi "Donasi contoh" tayang; nilainya digabung dengan isi lama:
+`{"features": {"receipt_inbox": {"web": true}, "kotak_donasi": {"web": true}}}` (ditambah kunci lain yang sudah ada).
+Lihat "Donasi contoh".
 
 Menyalakan: ikuti urutan di "Menyalakan saklar" (merge dan migrasi tahap 1, `privacy.html` dan DPIA, perintah hari
 pertama, saklar, uji HP tanpa share, PR `share_target`, uji share, pemantauan 2 minggu). Mematikan lagi = rollback.
@@ -839,13 +1122,20 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
 | `RULE_MIN_USERS` | 2 | User berbeda sebelum suara menjadi aturan `menunggu`; juga syarat Setujui |
 | `RULE_CACHE_S` | 300 | Cache aturan `disetujui` di proses API (detik); keputusan Admin membuangnya |
 | `FIX_TTL_S` | 300 | Bot menunggu nominal ketikan sesudah "✏️ Nominal salah" (suara `label_total`) |
+| `KEY_MAX` | 60 | Panjang `rule_key`/`value` aturan belajar (dulu `belajar.KEY_MAX`, nilai sama) |
+| `APP_NEW` | `"baru"` | Jawaban "Aplikasi apa ini?" untuk aplikasi di luar 12 profil ("Lainnya") |
+| `ARAH_FLOWS` | `top_up`, `masuk`, `antar_rekening_sendiri` | Alasan "Bukan pengeluaran" = nilai aturan `arah` = `SkipIn.alasan` |
+| `SAMPLE_MAX_LINES` / `SAMPLE_LINE_MAX` | 80 / 200 | Baris per sampel donasi; karakter per baris |
+| `SAMPLE_TTL` | 7 hari | Sampel donasi `menunggu` (sejak dibuat) dan `disetujui` (sejak diputuskan) dihapus (keputusan pemilik 5 Nov 2026) |
+| `SAMPLE_TYPES` | = `LAYOUT_TYPES` | `doc_type` yang boleh menyumbang baris (ditambah teks yang tampak bukti) |
 
 ## Privasi dan masa simpan
 
 - **Nomor rekening tidak pernah disimpan utuh.** Dokumen Bayar hanya memuat versi tersamar (`id_masked`, 4 digit
   terakhir); kunci `rek:` adalah HMAC. **RRN/nomor referensi** hanya sebagai HMAC (`ref_hash`) dan versi tersamar.
   HMAC memakai `KOTAK_HMAC_KEY`. NMID QRIS (publik) boleh disimpan.
-- **Teks OCR bukti bayar tidak pernah disimpan.** `receipt_scans.ocr_lines` hanya diisi untuk struk belanja
+- **Teks OCR bukti bayar tidak pernah disimpan** (satu pengecualian opt-in: baris tersamar donasi contoh, butir
+  "Donasi contoh" di bawah). `receipt_scans.ocr_lines` hanya diisi untuk struk belanja
   sungguhan (bahan `apply_feedback`) dan dihapus setelah feedback atau **24 jam** (`purge_stale_ocr_text`, job
   scheduler tiap jam); item `kedaluwarsa` juga dikosongkan. Teks yang tampak seperti bukti bayar (dikenali pembaca
   bukti, berjudul status seperti "Transfer Berhasil" di 4 baris pertama, atau memuat judul status di baris mana pun
@@ -872,7 +1162,8 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   pribadinya dihapus; saat rumah tangga dihapus, `household_merchants` dan peta ikut terhapus. File sementara
   item yang belum selesai tidak dihapus di sana: barisnya hilang, penyapu file yatim yang menghapusnya (paling lama
   ±2 jam). Suara belajar user dihapus dan aturan dihitung ulang (`forget_user`, juga saat gabung akun; lihat "Belajar
-  lintas user").
+  lintas user"). Sejak tahap 2 juga persetujuan, semua sampel donasi, dan baris tersamar user itu (`donasi.forget_user`,
+  lihat "Donasi contoh").
 - **Kerangka tata letak** (`receipt_scans.layout`, per item, hanya pemilik item di server; tidak pernah dikirim ke
   klien): label tersamar dari kosakata label, jenis nilai, nominal dan tanggal (yang juga ada di Dokumen Bayar), nama
   hanya sebagai HMAC; tanpa nomor rekening/HP/referensi, tanpa deret ≥ 6 digit, tanpa teks bebas. Dikosongkan 24 jam
@@ -881,7 +1172,18 @@ Nilai di query harus di-URL-encode. Berlaku untuk item berikutnya; item yang sud
   (tanpa digit), hitungan user/rumah tangga, status keputusan, dan catatan admin. Suara menyimpan `user_id` dan
   `household_id` (satu suara per user, dihitung, dihapus bersama akun); tidak ada nama, nomor, nominal, atau tanggal.
   Admin hanya melihat label, contoh sintetis, dan angka. Dipin tes `test_layout_holds_no_pii` dan
-  `test_votes_and_rules_hold_no_pii` (semua daftar sapuan, kedua saklar).
+  `test_votes_and_rules_hold_no_pii` (semua daftar sapuan, kedua saklar). Jenis tahap 2: `logo` (kunci `logo:<kata>` = kata
+  logo yang lolos penyaring kandidat, nilai salah satu 12 kunci profil atau `baru`) dan `arah` (kunci `{aplikasi}|judul:`/
+  `ke:` + kata kosakata, nilai `top_up`/`masuk`/`antar_rekening_sendiri`); tetap tanpa teks bebas, nama, nomor, atau
+  nominal (K6, K8, K9). Kata logo satu kata bisa nama depan orang: tab Suara menyamarkannya (`logo:*`), dan suara logo
+  ditolak bila katanya nama yang dikenal di bukti itu.
+- **Donasi contoh (tahap 2, opt-in)** — satu-satunya tempat teks bukti tersimpan, hanya untuk user yang setuju dan hanya
+  saat saklar `kotak_donasi` menyala: `receipt_scans.sample_lines` (baris tersamar per item, tidak pernah dikirim ke klien,
+  dihapus bersama `layout`), `proof_samples` (antrean tinjauan; hanya Admin yang melihatnya, tanpa id user/item di API;
+  7 hari), `proof_sample_consents` (id user dan waktu persetujuan). Tanpa deret ≥ 6 digit dan tanpa kata nama yang dikenal
+  (dipin `test_samples_hold_no_long_digits_or_known_names`, `test_approve_remasks_and_refuses_numbers`); yang masih bisa
+  lolos ke pemilik dan aturan penghapusannya di "Donasi contoh". Gambar bukti tidak pernah dikirim. Entri yang disalin
+  pemilik ke `corpus.json` (repo publik) hanya memuat baris yang sudah ditinjau dan nama samaran.
 - **Batas yang diketahui:** kata nama yang kebetulan juga kata kosakata label ("Dana", "Mega", "Toko", "Admin") bisa
   bertahan di label atau kata judul kerangka (dan dari sana menjadi nilai suara) bila pembaca tidak membacanya sebagai
   nama pihak lawan/pengirim (mis. pengirim "DANA PRATAMA" dianggap nama penyedia). Yang lolos paling banyak satu kata umum
@@ -910,29 +1212,49 @@ Catatan: teks ini teks spec §8 yang sudah disetujui pemilik. Tahap 1 belum bela
 `arah` datang di tahap 2, M3), jadi teks menyebut sedikit lebih banyak dari yang dilakukan tahap 1. Bawaan: tempel apa
 adanya (tahap 2 langsung menyusul, keputusan pemilik §12.4); membuang frasa itu hanya bila tahap 2 ditunda.
 
-Baris DPIA ringkas (tambahan untuk tabel belajar):
+Paragraf tahap 2 untuk `privacy.html` (disetujui pemilik produk 5 Nov 2026; retensi 7 hari, sampel yang sudah ditinjau
+tetap sesudah persetujuan ditarik), dipasang **sebelum** saklar `kotak_donasi` dinyalakan, di bawah paragraf "Belajar
+dari koreksi", dengan cara pasang yang sama (file sumber yang dipasang ulang `deploy.sh`, lalu `public_html`). Kalimat
+terakhir paragraf "Belajar dari koreksi" ("teks hasil bacanya tidak disimpan") tetap benar untuk user yang tidak setuju;
+paragraf ini pengecualian opt-in (K1). Cek: `curl -s https://jatahku.com/privacy.html | grep -c "Donasi contoh"` → 1.
+
+```html
+<p><strong>Donasi contoh (opsional).</strong> Bila Anda mengaktifkan "Bantu Jatahku membaca bukti bayar" di Pengaturan,
+saat Anda mengoreksi hasil pembacaan bukti bayar, teks bukti itu dikirim ke pengelola Jatahku untuk ditinjau: nomor
+rekening, nomor referensi, dan nomor HP sudah disamarkan, dan nama yang kami kenali diganti nama samaran. Pengelola
+mengganti nama yang tersisa lalu memakainya sebagai contoh pengujian pembacaan. Contoh yang belum ditinjau dihapus dalam
+7 hari; contoh yang sudah ditinjau hanya memuat teks yang sudah disamarkan. Gambar bukti tidak pernah dikirim. Anda bisa
+mematikannya kapan saja, dan contoh yang belum ditinjau ikut dihapus.</p>
+```
+
+Baris DPIA ringkas (tambahan untuk tabel belajar; baris kedua tahap 2):
 
 | Pemrosesan | Data | Dasar | Retensi |
 |---|---|---|---|
 | Belajar lintas user dari koreksi bukti bayar (`proof_rule_votes`, `proof_rules`; kerangka `receipt_scans.layout`) | label baris bukti (kosakata, tanpa digit), jenis aturan, kunci aplikasi, hitungan user/rumah tangga, id user dan rumah tangga pemberi suara, id admin pemutus dan catatannya; kerangka per item: label, nominal, tanggal, HMAC nama, kata judul kosakata | kepentingan sah (ketepatan pembacaan bukti untuk semua pengguna) | aturan: tanpa batas waktu (hanya label, hitungan, keputusan; yang ditolak/dicabut disimpan sebagai jejak; tidak ada penghapusan otomatis, hanya aturan `menunggu` di bawah 2 user yang dihapus); suara: sampai akun dihapus atau digabung; kerangka: 24 jam sejak dibaca untuk item selesai, item yang tidak diselesaikan sampai kedaluwarsa (7 hari) |
+| Donasi contoh bukti bayar, opt-in (`proof_sample_consents`, `proof_samples`, kolom `receipt_scans.sample_lines`; tahap 2 juga jenis aturan `logo`/`arah` di baris di atas: kata logo, token kosakata, kunci aplikasi, arah uang) | baris teks bukti tersamar (nomor ≥ 6 digit disamarkan, nama yang dikenal diganti nama samaran; bisa memuat nama, alamat, atau angka pendek yang tidak dikenali sampai pemilik menggantinya), koreksi user (nominal, tanggal, arah uang, aplikasi), jenis bukti, kunci aplikasi, nama samaran user, id user, waktu persetujuan, id admin pemutus dan catatannya | persetujuan (opt-in di Pengaturan, bisa ditarik kapan saja) | baris di item: 24 jam sejak dibaca untuk item selesai, item terbuka sampai kedaluwarsa (7 hari); sampel menunggu: 7 hari sejak dibuat; disetujui: 7 hari sejak diputuskan (entri yang disalin pemilik ke korpus repo permanen, hanya teks tersamar yang sudah ditinjau dan nama samaran); ditolak: dihapus saat diputuskan; menarik persetujuan: semua kecuali yang sudah disetujui; hapus akun/gabung akun: semua |
 
 ## Pemeliharaan
 
 Job scheduler `kotak_maintenance` (`services/scheduler.py`): **cron tiap jam di menit 17** (bukan interval, supaya
-tetap jalan walau API sering restart saat deploy; menghindari job menit 00). Empat langkah, masing-masing dengan
+tetap jalan walau API sering restart saat deploy; menghindari job menit 00). Lima langkah, masing-masing dengan
 sesi dan penanganan galat sendiri (langkah yang gagal dicatat di log, langkah berikutnya tetap jalan):
 
-1. `expire_items`: satu `UPDATE` bersyarat `siap`/`gagal` dengan `expires_at < sekarang` → `kedaluwarsa`, `ocr_lines`
-   dan `layout` dikosongkan. Baris tetap disimpan (hash, `ref_hash`, `transaction_ids` tidak disentuh).
+1. `expire_items`: satu `UPDATE` bersyarat `siap`/`gagal` dengan `expires_at < sekarang` → `kedaluwarsa`, `ocr_lines`,
+   `layout`, dan `sample_lines` (tahap 2) dikosongkan. Baris tetap disimpan (hash, `ref_hash`, `transaction_ids` tidak disentuh).
 2. `delete_orphan_files`: berkas biasa di `KOTAK_DIR` (tanpa rekursi, tanpa symlink) yang namanya UUID kanonik,
    lebih tua dari 1 jam, dan bukan milik item `diterima`/`diproses`. Nama lain dibiarkan (jaga-jaga bila
    `KOTAK_DIR` salah menunjuk folder bersama). Folder tidak ada → tidak dibuat.
-3. `purge_layouts`: satu `UPDATE` yang mengosongkan `layout` (SQL NULL) item `tercatat`/`dilewati`/`kedaluwarsa` yang
-   dibaca lebih dari 24 jam lalu (`LAYOUT_TTL`, dari `processed_at`). Item terbuka tidak disentuh, jadi koreksi yang
+3. `purge_layouts`: satu `UPDATE` yang mengosongkan `layout` dan `sample_lines` (SQL NULL) item
+   `tercatat`/`dilewati`/`kedaluwarsa` yang masih punya salah satunya dan dibaca lebih dari 24 jam lalu (`LAYOUT_TTL`,
+   dari `processed_at`). Item terbuka tidak disentuh, jadi koreksi yang
    datang belakangan masih bisa belajar.
 4. `reconcile_proof_rules` (`belajar.reconcile_rules`): hitungan aturan belajar disamakan dengan tabel suara, aturan
    yang hilang dibuat, aturan `menunggu` di bawah 2 user dihapus (lihat "Belajar lintas user"). Log: "n aturan belajar
    dihitung ulang".
+5. `purge_samples` (tahap 2): satu `DELETE` sampel donasi `menunggu` dengan `created_at` dan `disetujui` dengan
+   `decided_at` lebih tua dari 7 hari (`SAMPLE_TTL`). Log: "Kotak Struk: n sampel donasi dihapus"; galat
+   "kotak_maintenance: purge_samples gagal".
 
 `purge_receipt_ocr_text` (interval 1 jam) tetap menghapus teks OCR scan lama yang tidak pernah diberi feedback.
 
@@ -940,7 +1262,8 @@ sesi dan penanganan galat sendiri (langkah yang gagal dicatat di log, langkah be
 
 `GET /admin/receipt-scans/stats` (kartu Scan Struk) mempertahankan kunci lama dan menambah, dari item bulan ini
 (baris riwayat tanpa status tidak ikut): `by_doc_type` (`{doc_type: n}`), `unrecognized` (jumlah `tidak_dikenali`),
-dan `by_issuer` (`{issuer: {total, recorded, corrected}}`, hanya aplikasi yang profilnya dikenali). `corrected`
+dan `by_issuer` (`{issuer: {total, recorded, corrected}}`, hanya aplikasi yang profilnya dikenali; sejak tahap 2 tanpa item
+`tidak_dikenali`, yang bisa mendapat penerbit dari aturan `logo`). `corrected`
 untuk QRIS/transfer **diturunkan**: item `tercatat` yang nominal transaksinya beda dari hasil baca, nominalnya
 tidak terbaca, atau tanggal transaksinya bukan tanggal bayar (WIB), karena bukti bayar tidak pernah memakai
 `outcome`. Data ini dipakai untuk menambah profil aplikasi. Tampilannya di Admin → Dashboard → kartu "Scan Struk (bulan
@@ -990,6 +1313,11 @@ Tahap 1 belajar lintas user (migrasi `e7b3d5a9c1f4`: kolom `receipt_scans.layout
 `proof_rules`) tanpa paket, folder, atau `.env` baru; checklist-nya `AGENTS.md` "Deploy Checklist — Kotak Struk belajar
 lintas user (e7b3d5a9c1f4)".
 
+Tahap 2 belajar lintas user (migrasi `c9e4a7f2b5d8`: kolom `receipt_scans.sample_lines`, tabel `proof_sample_consents` dan
+`proof_samples`, indeks unik parsial `ux_proof_rules_satu_nilai`) juga tanpa paket, folder, atau `.env` baru; migrasinya
+bukan hanya penanda revisi (indeks G8 hanya dibuat `alembic upgrade head`). Checklist-nya `AGENTS.md` "Deploy Checklist —
+Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)", termasuk urutan menyalakan `kotak_donasi`.
+
 ## Alat korpus dan gerbang rilis
 
 Korpus `app/tests/fixtures/kotak/corpus.json` berisi **baris teks tersamar**, bukan gambar atau PDF, dengan hasil
@@ -997,6 +1325,7 @@ yang diharapkan. **Berkas bukti asli tidak pernah di-commit** (alatnya tidak men
 
 ```
 python -m app.scripts.kotak_corpus add <berkas> --id <id> [--real] [--user-name NAMA] [--corpus PATH]
+python -m app.scripts.kotak_corpus add --dari-donasi <berkas.json> [--id ID] [--tahan] [--corpus PATH]
 python -m app.scripts.kotak_corpus eval [--real-only] [--corpus PATH]
 ```
 
@@ -1006,7 +1335,21 @@ Di VPS: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m 
   (`mask_line`: deret ≥ 6 digit menjadi `…dddd`; nominal, tanggal, jam, dan NMID dibiarkan), menjalankan pembaca pada
   baris tersamar, lalu menambahkan sampel dengan `expect` = hasil pembaca saat ini. `--real` menandainya bukti nyata
   dengan `"reviewed": false`; `--user-name` untuk cek "rekening sendiri" (pakai nama samaran); `--corpus` memilih
-  berkas lain. Id berawalan `indomaret-` dicadangkan; id yang sudah ada ditolak (exit 2).
+  berkas lain. Id berawalan `indomaret-` dicadangkan; id yang sudah ada ditolak (exit 2). `mask_line` dan `needs_review`
+  sekarang di `app/services/kotak_struk/samaran.py` (diekspor ulang di sini; K2), dipakai juga donasi contoh.
+- **`add --dari-donasi <berkas.json>`** (tahap 2; K4, K17): berkas `{entry, truth, gated_diff}` dari Admin "Donasi contoh"
+  ("Unduh entri korpus"), **di checkout lokal, tidak pernah di VPS**, lalu PR. Entri divalidasi: bentuk sampel, id unik
+  (`--id` menggantinya), awalan `indomaret-` ditolak, `user_name` hanya kata nama samaran, dan baris harus sudah tersamar
+  dan lolos aturan persetujuan Admin (`donasi.approved_lines`: tanpa deret ≥ 6 digit, email, atau nomor rekening
+  berkelompok). `expect` dihitung ulang dengan pembaca saat ini (tanpa aturan, seperti `eval`), lalu nilai koreksi user
+  (`truth`) menggantikannya (`donasi.confirmed_expect`: total, tanggal WIB, status, arah, aplikasi berkunci profil); yang
+  dicetak: baris, PERIKSA, `expect`, dan setiap "Beda {field}". Hanya kunci sampel korpus yang ditulis, `real` selalu
+  true. Kode keluar: **0** ditulis (`reviewed: true` bila pembaca sama dengan koreksi user); **2** berkas atau entri tidak
+  sah (berkas rusak, id sudah ada, nama bukan nama samaran, baris masih bernomor/beremail, `--tahan` tanpa
+  `--dari-donasi`, atau digabung dengan berkas bukti/`--real`/`--user-name`); **3** pembaca beda dengan koreksi user pada
+  field apa pun → korpus tidak diubah, kecuali dengan **`--tahan`**: ditulis dengan nilai koreksi user dan
+  `"reviewed": false` (pola A14: perbaiki pembacanya di PR yang sama, lalu set `"reviewed": true`). Karena donasi berasal
+  dari koreksi, `--tahan` jalan yang biasa untuk sampel donasi. Berkas korpus tidak berubah bila gagal.
 - **Tinjauan manusia wajib** untuk sampel nyata: bandingkan baris dan `expect` dengan bukti aslinya, samarkan nama
   orang pribadi (juga `user_name`; selain penerima/merchant yang dibutuhkan), lalu ubah ke `"reviewed": true`. Baris
   bertanda **`PERIKSA baris N`** masih memuat ≥ 6 digit atau huruf mirip angka di luar bentuk yang dibiarkan
@@ -1029,7 +1372,7 @@ tercatat tanpa konfirmasi user, bukti `tidak_dikenali` membawa nominal tebakan y
 diblokir/diperingatkan. `eval --real-only` tetap dijalankan dan hasilnya dilaporkan saat menyalakan (langkah 3
 "Menyalakan saklar"), bukan sebagai gerbang; `eval` polos lulus karena memakai sampel sintetis. Cakupan spec §7a (8
 bank dan 4 e-wallet, ≥ 3 contoh per aplikasi per jenis, contoh negatif) tetap target korpus, ditambah dari donasi contoh
-di tahap 2 (M1). Tes `test_real_corpus_meets_release_gate` tetap dilewati ("korpus nyata belum ada") sampai ada sampel
+di tahap 2 ("Donasi contoh"). Tes `test_real_corpus_meets_release_gate` tetap dilewati ("korpus nyata belum ada") sampai ada sampel
 nyata yang sudah ditinjau, dan sesudah itu CI memeriksa ambangnya. Butir spec §7c yang bergantung pada klien (share
 Android ≤ 5 dtk, saran yakin di share kedua, folder sementara kosong setelah semua item diproses) tetap diuji manual di
 HP sungguhan saat saklar dinyalakan; butir server lain (tidak pernah tercatat dua kali, transfer gagal tidak bisa
@@ -1333,11 +1676,12 @@ Catatan:
   tepat sebelum saklar (langkah 4 "Menyalakan saklar"). Yang tetap terhitung: scan form Catat dari 24 jam terakhir, dan
   bukti bot/chat web/share yang tombolnya tidak pernah diketuk (sengaja tidak disentuh).
 - **Belajar lintas user (tahap 1).**
-  - Hanya aplikasi berprofil (12 kunci profil) yang belajar; bukti dari aplikasi lain tidak punya kerangka (kunci
-    `logo:` di tahap 2, M2). Bukti yang dibaca jalur struk belanja (saklar mati: mis. bukti GoPay/ShopeePay yang
+  - Hanya aplikasi berprofil (12 kunci profil) yang belajar label; bukti dari aplikasi lain tidak punya kerangka, kecuali
+    (tahap 2) bukti `tidak_dikenali` berkunci `logo:`, yang belajar label sesudah aturan `logo`-nya disetujui. Bukti yang dibaca jalur struk belanja (saklar mati: mis. bukti GoPay/ShopeePay yang
     terbaca `struk_belanja`; juga teks tampak bukti tanpa pembaca bukti) tidak punya kerangka dan tidak belajar.
-  - Label di luar kosakata `LABEL_WORDS` tidak bisa dipelajari: label kerangkanya `None`. Contoh: "Kepada" (OVO/BCA),
-    "Atas Nama", "Nama Pemilik Rekening", "Penjual", "Outlet", "Biller". Aplikasi yang mencetak penerima tanpa label
+  - Label di luar kosakata `LABEL_WORDS` tidak bisa dipelajari: label kerangkanya `None`. Contoh: "Nama Pemilik
+    Rekening", "Penjual", "Outlet", "Biller", "Payee". "Kepada" (OVO/BCA) dan "Atas Nama" masuk kosakata sejak tahap 2
+    (M0): "Kepada" bisa memberi suara `label_pihak`, "Atas Nama" saja tidak ("atas" dan "nama" bukan kata penerima). Aplikasi yang mencetak penerima tanpa label
     (mis. Jago, nama di bawah logo) tidak bisa belajar `label_pihak`; nama penerimanya tetap dari profil. "nama" saja
     bukan label penerima (Jago PLN "NAMA:" = pemilik meter, "Nama Acquirer"/"Nama Pengakuisisi").
   - Label yang memuat kata nomor (rekening, no, ref, id, kartu, order, …) tidak pernah memberi `amount`, jadi nominal
@@ -1346,8 +1690,7 @@ Catatan:
   - Tanggal dalam praktik hanya dipelajari dari form Catat (bot dan kartu bukti hanya menawarkan hari ini atau tanggal
     bukti, keduanya bukan suara). Nama hanya bila nama yang benar diketik di keterangan/catatan (atau lewat "Ubah nama" di
     kartu, karena nama panggilan masuk ke keterangan) dan tercetak di baris berlabel penerima lain.
-  - Arah uang (top-up, uang masuk, rekening sendiri dari "Bukan pengeluaran") belum dipelajari: jenis `arah` di tahap 2
-    (M3). Melewati item tidak memberi suara.
+  - Melewati item tidak memberi suara label; arah uang dari "Bukan pengeluaran" dipelajari sejak tahap 2 (jenis `arah`).
   - Nominal ketikan sesudah "✏️ Nominal salah" diambil dari teks itu sendiri, bukan dari transaksi yang tercatat: teks
     lain dengan satu nominal ("pindah 11rb …") dalam 300 dtk juga bisa menjadi suara. Dibatasi: nominal harus sama
     dengan nominal berlabel yang tercetak dan berbeda dari total terbaca, satu suara per user, aturan butuh 2 user dan
@@ -1362,6 +1705,33 @@ Catatan:
     dibaca ulang dengan aturan baru.
   - Nama aturan penerima bisa mengubah `keluar` menjadi saran "bukan pengeluaran?" (lebih ketat, tidak pernah
     sebaliknya). Kata nama yang juga kata kosakata bisa lolos di label kerangka (lihat "Privasi dan masa simpan").
+  - Duplikat lunak (`soft_duplicate`, o-1) tidak menerima input arah, tetapi membandingkan total/tanggal hasil baca, dan
+    aturan label yang disetujui mengubah total/tanggal itu: aturan yang salah bisa memunculkan atau menyembunyikan tanda
+    "Mirip …". Tanda itu tidak pernah memblokir (Simpan/"Beda, catat" tetap ada); dedup nomor referensi tidak membaca
+    aturan.
+- **Belajar lintas user (tahap 2).**
+  - Aturan `logo` hanya di pembaca tidak dikenali dan hanya penerbit + kunci label belajar (K7): QRIS/transfer dari aplikasi
+    tanpa profil tidak pernah berkunci logo, aplikasi yang logonya langsung di atas nominal/tanggal tidak berkunci, dan
+    status/pihak/referensi tidak pernah dari profil yang dipetakan. Pemetaan logo → P memasukkan label bukti itu ke aturan
+    P (dipakai juga pembaca QRIS/transfer P yang sungguhan); pemetaan yang salah dicabut di Admin.
+  - Nama depan satu kata di atas baris judul bisa menjadi kunci logo; suaranya ditolak bila kata itu nama yang dikenal di
+    bukti, Suara menyamarkannya, dan setiap aturan `logo` berperingatan. Jawaban aplikasi hanya 12 profil + "Lainnya":
+    aplikasi baru tidak punya nama di tabel, hanya kata logonya.
+  - Aturan `arah` hanya untuk QRIS/transfer berprofil yang terbaca `keluar` dan hanya menjadi saran (K10): arah lain yang
+    salah terbaca tidak dikoreksi, aplikasi tanpa profil tidak pernah, dan aturan `arah` berkunci `logo:` tidak dipakai
+    pembaca. Token hanya kosakata (K9): judul dengan kata label atau kata berulang, dan penerima yang kata awalnya berdigit
+    ("OVO 0812 TOPUP") tidak dipelajari. Tidak ada suara tandingan dari "Tetap catat"; aturan yang salah hanya dicabut.
+  - Form Catat tidak menanyakan aplikasi dan tidak memilih alasan (× = `batal`; G12).
+  - Tombol `kx_{id}` dari sebelum deploy membuka pilihan alasan (satu ketukan tambahan); karena tanpa kunci sesi,
+    Kembali-nya memulai sesi baru tanpa catatan 📝 tersimpan, dan dari "Oke, lewati" lama langsung ke tombol amplop tanpa
+    pertanyaan duplikat lunak.
+  - Bot dan kartu memakai label aplikasi yang berbeda untuk BNI/BSI/Jago/blu (lihat "Kanal"); kuncinya sama.
+  - Indeks G8 baru ada sesudah `alembic upgrade head`; di menit antara deploy dan migrasi, dua persetujuan bersamaan untuk
+    satu kunci `logo`/`arah` masih bisa sama-sama lolos (Admin pemilik saja; pra-cek di checklist).
+  - Donasi contoh: sampel bisa memuat nama, alamat, dan angka pendek yang tidak dikenali (daftar di "Donasi contoh"), jadi
+    tinjauan pemilik wajib sebelum Setujui; `user_name` hanya nama samaran (nama khusus tidak bisa); Tolak tidak bisa
+    dibatalkan; sampel yang disetujui hilang 7 hari sesudah diputuskan, dan bersama akunnya bila akun dihapus/digabung
+    sebelum diunduh; sampel donasi biasanya masuk korpus sebagai `reviewed: false` sampai pembacanya diperbaiki (K17).
 
 ## Tes
 
@@ -1377,6 +1747,17 @@ dengan aturan; `test_empty_rules_change_nothing`, `test_rules_never_bypass_statu
 `test_kotak_hari_pertama` (perintah hari pertama), `test_kotak_sapuan` (snapshot sapuan; juga
 `python -m app.scripts.kotak_sapuan cek`), dan di `test_kotak_transactions` `test_learning_never_records_or_duplicates`.
 Web: `proofRules.test.js` (bagian "Aturan belajar" di Admin).
+
+Tahap 2: `test_kotak_donasi` (persetujuan, tangkap, donasi, penarikan, hapus/gabung akun;
+`test_donation_requires_consent_and_flag`, `test_withdraw_deletes_samples`, `test_samples_hold_no_long_digits_or_known_names`),
+`test_kotak_donasi_admin` (API Admin sampel; `test_approve_remasks_and_refuses_numbers`), `test_kotak_logo` (kunci logo,
+suara, pembaca; `test_logo_key_never_from_person_or_merchant_name`), `test_kotak_arah` (token, suara, pembaca;
+`test_arah_only_from_keluar`, `test_arah_rules_never_bypass_blocks`, `test_skip_votes_never_fail_the_skip`),
+`test_kotak_aturan_pembaca` (`test_logo_rules_never_change_status_or_routing`), `test_kotak_transactions`
+(`test_donation_never_affects_recording`, `test_arah_rule_never_records_or_skips`), `test_kotak_schema`
+(`test_migration_is_idempotent`, head `c9e4a7f2b5d8`), `test_kotak_bot` (`ka_`, `kx_` dua langkah), `test_web_chat`,
+`test_kotak_corpus` (`--dari-donasi`, `--tahan`, exit 3). Web: `kotakDonasi.test.js`, `proofSamples.test.js`,
+`proofFormat.test.js` (pilihan aplikasi dan alasan), `proofRules.test.js` (jenis `logo`/`arah`, Suara tersamar).
 
 Web (Bagian B): `cd frontend && node --test src/lib/*.test.js src/native/*.test.js`, antara lain `shareInbox`,
 `swShareTarget` (memuat `sw.js` asli dengan `self`, `caches`, dan `fetch` tiruan), `proofFormat`, `pendingProofs`,

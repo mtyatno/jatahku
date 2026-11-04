@@ -526,6 +526,86 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
    urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
+## Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)
+Tahap 2 belajar lintas user (branch `feat/kotak-belajar-2`, label `migrasi`): kolom `receipt_scans.sample_lines` (JSONB
+NULL, lewat `KOTAK_DDL`), tabel `proof_sample_consents` dan `proof_samples` (unik `uq_proof_sample_item`, indeks
+`ix_proof_samples_user_id` dan `ix_proof_samples_status`), indeks unik parsial `ux_proof_rules_satu_nilai` di
+`proof_rules`, API `/user/kotak-donasi`, `/admin/kotak/samples*`, `POST /kotak-struk/{id}/aplikasi`, field opsional
+`SkipIn.alasan`/`flags.ask_app`/`flags.app_logo`, langkah 5 `purge_samples` job `kotak_maintenance`, dan saklar baru
+`features.kotak_donasi` (bawaan **mati**). **Tanpa paket, folder, atau `.env` baru.** Migrasi idempoten, tetapi **bukan
+hanya penanda revisi**: kolom dan dua tabel baru dibuat `lifespan` saat API restart (`KOTAK_DDL` + `create_all`), indeks
+`ux_proof_rules_satu_nilai` (G8: satu nilai disetujui per kunci `logo`/`arah`) **hanya** oleh `alembic upgrade head`;
+sampai itu pemeriksaan NOT EXISTS di `belajar.decide` yang menjaga. Deploy ini tidak mengubah `receipt_inbox` dan tidak
+menyalakan `kotak_donasi`. Detail: `docs/kotak-struk.md` bagian "Belajar lintas user" (tahap 2) dan "Donasi contoh".
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart dari deploy menjalankan `KOTAK_DDL` (`ALTER TABLE receipt_scans ADD COLUMN IF NOT EXISTS
+   sample_lines`) dan `create_all` (dua tabel baru ber-FK ke `users`) sebagai user DB aplikasi, dan migrasinya membuat
+   indeks di `proof_rules`: `jatahku` harus pemilik `receipt_scans` dan `proof_rules` (`bisa_alter` = t) dan boleh
+   REFERENCES `users` (`bisa_fk` = t). Pakai query di checklist Kotak Struk Bagian A dengan
+   `IN ('receipt_scans','proof_rules','users','alembic_version')`. Bila ada yang bukan `jatahku`, sebagai `postgres`:
+   `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+2. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
+   `ls /opt/jatahku/app/alembic/versions/ | grep c9e4a7f2b5d8`; `alembic current` harus `e7b3d5a9c1f4` (tahap 1) sebelum
+   upgrade. Revisi lain = main sudah punya migrasi yang lebih baru: berhenti, `down_revision` PR ini harus disesuaikan dulu
+   (satu head).
+3. Pra-cek G8, tepat sebelum upgrade (sejak restart kode baru bisa membuat dan menyetujui aturan `logo`/`arah`; dua
+   persetujuan bersamaan sebelum indeks ada bisa sama-sama lolos):
+   `sudo -u postgres psql jatahku_db -c "SELECT kind, rule_key, count(*) FROM proof_rules WHERE status = 'disetujui' AND kind IN ('logo', 'arah') GROUP BY 1, 2 HAVING count(*) > 1"`
+   → **0 baris**. Ada baris → Cabut salah satu nilai kunci itu di Admin → Scan Struk → "Aturan belajar", lalu ulangi;
+   kalau tidak, `CREATE UNIQUE INDEX` di migrasi gagal.
+4. **`alembic upgrade head` sesudah deploy selesai**: `cd /opt/jatahku/app && sudo -u jatahku
+   /opt/jatahku/venv/bin/alembic upgrade head` (bila `receipt_scans`/`proof_rules`/`users` milik `postgres`, jalankan
+   sebagai postgres); `alembic current` harus `c9e4a7f2b5d8`. Kolom dan tabelnya sudah ada (IF NOT EXISTS), migrasi
+   menambah indeks G8 dan menandai revisi. `sudo systemctl restart jatahku` sesudahnya mengikuti urutan umum, tidak wajib.
+   Bila `create_all`/`KOTAK_DDL` gagal (biasanya hak tabel, langkah 1), API tidak start sama sekali: deploy berhenti di
+   "API menjalankan … tidak menjawab" (exit 1) sebelum cek migrasi; lihat `journalctl -u jatahku`.
+5. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"), seperti langkah 5 "Urutan merge PR
+   bermigrasi", supaya "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`.
+6. Verifikasi:
+   - `sudo -u postgres psql jatahku_db -c '\d proof_samples'` (PK `id`, unik `uq_proof_sample_item` pada `item_id`,
+     indeks `ix_proof_samples_user_id` dan `ix_proof_samples_status`, FK `user_id` ON DELETE CASCADE, FK `decided_by`
+     ON DELETE SET NULL), `-c '\d proof_sample_consents'` (PK `user_id`, FK ON DELETE CASCADE),
+     `-c '\d receipt_scans' | grep sample_lines` (`jsonb`), dan `-c '\d proof_rules'` → ada
+     `"ux_proof_rules_satu_nilai" UNIQUE, btree (kind, rule_key) WHERE status = 'disetujui' AND kind IN ('logo','arah')`
+     (psql menampilkannya dengan `::text` / `= ANY (ARRAY[...])`), di samping `uq_proof_rule` dan `ix_proof_rules_status`.
+   - Dengan token admin: `GET https://api.jatahku.com/admin/kotak/samples` → 200 dengan `counts`
+     (`{"menunggu": 0, "disetujui": 0, "ditolak": 0}` di hari pertama) dan `samples: []`; token user biasa → 403. Admin →
+     Dashboard → Scan Struk menampilkan bagian "Donasi contoh" (kosong) di bawah "Aturan belajar".
+   - Dengan token user biasa: `GET /user/kotak-donasi` → `{"available": false, "consented": false, "consented_at": null}`;
+     `PUT /user/kotak-donasi` `{"consented": true}` → 409 "Donasi contoh belum dibuka". Settings tidak menampilkan kartu
+     "Bantu Jatahku membaca bukti bayar".
+   - Sesudah menit 17 jam berikutnya: `journalctl -u jatahku --since "1 hour ago" | grep kotak_maintenance` tanpa baris
+     `gagal` (juga `purge_samples`).
+7. **Urutan menyalakan donasi contoh** (pemilik produk; boleh kapan saja sesudah langkah 6, tidak wajib di hari merge):
+   a. Pasang paragraf "Donasi contoh (opsional)" dan baris DPIA donasi (teks siap tempel di `docs/kotak-struk.md`
+      "Privasi dan masa simpan"; retensi 7 hari) di file sumber `privacy.html` yang dipasang ulang `deploy.sh` dan
+      salinannya di `public_html`, seperti paragraf "Belajar dari koreksi". Cek:
+      `curl -s https://jatahku.com/privacy.html | grep -c "Donasi contoh"` → 1; ulangi sesudah deploy berikutnya (0 =
+      paragraf tertimpa `deploy.sh`). Saklar tidak boleh menyala sebelum ini (K1).
+   b. `GET /admin/settings/app_config`, lalu `PUT /admin/settings/app_config` dengan isi lama **digabung**
+      `"kotak_donasi": {"web": true}` di dalam `features` (PUT mengganti seluruh nilai: jangan menimpa `receipt_inbox`
+      atau kunci lain), mis. `{"features": {"receipt_inbox": {"web": true}, "kotak_donasi": {"web": true}}}`, URL-encode
+      seperti di `docs/kotak-struk.md` "Saklar fitur". `GET /app/config` → `features.kotak_donasi` true;
+      `GET /user/kotak-donasi` → `available: true`.
+   c. Uji dengan akun uji yang menyalakan kartu Settings ("Aktif sejak {tgl}"): satu koreksi sungguhan (mis. bukti
+      QRIS/transfer dicatat dengan nominal yang diubah di form Catat, atau "Bukan pengeluaran" dengan alasan yang beda
+      dari bacaan) → Admin → "Donasi contoh" → tab Menunggu memuat sampel itu dengan baris tersamar (tanpa deret ≥ 6
+      digit, nama yang dikenal sudah nama samaran). Tolak sampel uji itu (atau Setujui → Unduh entri korpus → Hapus
+      sesudah disalin). Matikan kartu → "Dimatikan. Contoh yang belum ditinjau sudah dihapus.". Bukti yang terbaca benar
+      tidak menjadi sampel; jangan dipaksakan.
+   d. Sesudah itu tinjau Admin → "Donasi contoh" rutin: sampel `menunggu` dan yang disetujui terhapus 7 hari sesudah
+      dibuat/diputuskan. Entri disetujui diunduh lalu ditambahkan **di checkout lokal** (`python -m
+      app.scripts.kotak_corpus add --dari-donasi <berkas>`, exit 3 → `--tahan`) dan masuk lewat PR, **tidak pernah di
+      VPS** (checkout deploy harus bersih).
+   Log galat tahap 2 (pencatatan tidak terpengaruh): `journalctl -u jatahku --since "1 day ago" | grep -E "donasi|suara arah|jawaban aplikasi|purge_samples gagal"`.
+Rollback: matikan `kotak_donasi` (`PUT /admin/settings/app_config` dengan `kotak_donasi` `web: false`, digabung dengan isi
+lama): worker berhenti menangkap baris di item berikutnya, `donate` tidak menyimpan sampel (baris yang sudah tertangkap
+dikosongkan saat koreksi atau oleh pemeliharaan), menyalakan di Settings → 409, kartu hanya tampil untuk user yang sudah
+setuju (supaya bisa menarik). Antrean Admin tetap bisa ditinjau, diunduh, dan dihapus; `purge_samples` tetap jalan. Aturan
+`logo`/`arah` yang salah: **Cabut** di Admin (berlaku di bacaan berikutnya), tanpa mematikan `receipt_inbox`. Migrasi tidak
+perlu di-downgrade (downgrade hanya bermakna bersama kode lama).
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.

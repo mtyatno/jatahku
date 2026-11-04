@@ -729,8 +729,9 @@ class ProofRule(Base):
 
 class ProofSampleConsent(Base):
     """Persetujuan opt-in donasi contoh Kotak Struk (tahap 2, Settings): ada baris = user setuju teks bukti TERSAMAR
-    yang ia koreksi dikirim ke antrean tinjauan pemilik. Menarik persetujuan menghapus baris ini beserta semua sampel
-    dan baris tersamar user itu (kotak_struk/donasi.py `set_consent`/`forget_user`); tidak diwariskan saat gabung akun."""
+    yang ia koreksi dikirim ke antrean tinjauan pemilik. Menarik persetujuan menghapus baris ini beserta sampel yang
+    belum disetujui dan baris tersamar user itu (yang `disetujui` tetap sampai SAMPLE_TTL; kotak_struk/donasi.py
+    `set_consent`/`forget_user`); tidak diwariskan saat gabung akun."""
     __tablename__ = "proof_sample_consents"
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -742,8 +743,8 @@ class ProofSample(Base):
     koreksi user yang setuju, menunggu tinjauan pemilik di Admin; yang disetujui diunduh pemilik sebagai entri korpus.
     `item_id` tanpa FK (item boleh kedaluwarsa lebih dulu), satu sampel per item. `trigger`: nominal | tanggal |
     tidak_dikenali | arah | aplikasi | nominal_bot. `truth`: koreksi user `{total, date, flow, app}`. Status menunggu |
-    disetujui | ditolak; berumur SAMPLE_TTL. Hapus akun, gabung akun, dan menarik persetujuan menghapus semua sampel
-    user itu (juga yang disetujui)."""
+    disetujui (Tolak menghapus baris, jadi `ditolak` tidak pernah tersimpan); berumur SAMPLE_TTL (7 hari). Hapus akun
+    dan gabung akun menghapus semua sampel user itu; menarik persetujuan menyisakan yang `disetujui`."""
     __tablename__ = "proof_samples"
     __table_args__ = (
         UniqueConstraint("item_id", name="uq_proof_sample_item"),

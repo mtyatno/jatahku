@@ -468,8 +468,8 @@ async def put_kotak_donasi(
     db: AsyncSession = Depends(get_db),
 ):
     """Nyalakan atau tarik persetujuan donasi contoh. Menyalakan saat saklar `kotak_donasi` mati -> 409 "Donasi contoh
-    belum dibuka"; menarik selalu boleh dan menghapus semua sampel serta baris tersamar user ini
-    (kotak_struk/donasi.py `set_consent`)."""
+    belum dibuka"; menarik selalu boleh dan menghapus sampel yang belum disetujui serta baris tersamar user ini
+    (sampel `disetujui` tetap sampai SAMPLE_TTL; kotak_struk/donasi.py `set_consent`)."""
     if body.consented and not await donasi.donation_available(db):
         raise HTTPException(status_code=409, detail="Donasi contoh belum dibuka")
     await donasi.set_consent(db, user.id, body.consented, now=datetime.now(timezone.utc))
