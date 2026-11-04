@@ -10,6 +10,7 @@ Modul ini juga memegang sesi tambahan dan audit plugin (dulu di SDK, yang boleh 
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import weakref
@@ -38,7 +39,7 @@ class Keadaan:
     penghitung: dict = field(default_factory=lambda: {"notify": 0})
 
 
-_KEADAAN: dict[int, tuple["weakref.ref", Keadaan]] = {}
+_KEADAAN: dict[int, tuple["weakref.ref", Keadaan, Any]] = {}
 
 
 class KonteksTidakSah(RuntimeError):
@@ -55,8 +56,15 @@ def buat(**isi) -> Any:
         if ada is not None and ada[0] is ref:
             del _KEADAAN[kunci]
 
-    _KEADAAN[kunci] = (weakref.ref(ctx, _buang), Keadaan(**isi))
+    _KEADAAN[kunci] = (weakref.ref(ctx, _buang), Keadaan(**isi), _task())
     return ctx
+
+
+def _task():
+    try:
+        return asyncio.current_task()
+    except RuntimeError:
+        return None
 
 
 def tutup(ctx) -> None:
@@ -69,12 +77,13 @@ def tutup(ctx) -> None:
 
 def ambil(ctx) -> Keadaan:
     """Keadaan konteks buatan host. Hanya objek `PluginContext` persis (bukan subkelas atau peniru) yang identitasnya
-    terdaftar."""
+    terdaftar, dan hanya di task asyncio yang membuatnya: konteks permintaan lain yang sedang berjalan bersamaan tidak
+    bisa dipinjam (review ulang ketiga #186 no. 1)."""
     from app.plugins.sdk.context import PluginContext
     if type(ctx) is not PluginContext:
         raise KonteksTidakSah("PluginContext hanya dibuat host")
     ada = _KEADAAN.get(id(ctx))
-    if ada is None or ada[0]() is not ctx:
+    if ada is None or ada[0]() is not ctx or ada[2] is not _task():
         raise KonteksTidakSah("PluginContext hanya dibuat host")
     return ada[1]
 

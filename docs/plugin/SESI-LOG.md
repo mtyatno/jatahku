@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## H2 · PluginContext dan titik ekstensi server · 2026-11-04 · pemilik produk + Claude
 
-**Selesai** (status review, PR #186, issue #150; **wajib review keamanan terpisah sebelum merge**: "review PR #186 terhadap 03-workflow.md bagian keamanan")
+**Selesai** (PR #186, issue #150; review keamanan terpisah **lulus** pada putaran keempat, 4 Nov; di-merge atas permintaan pemilik produk sesudah review lulus)
 - Keputusan pemilik produk (4 Nov, "lanjut" atas empat usulan pembukaan sesi): **A** audit = setiap tulis/kiriman dan setiap penolakan izin, baca yang diizinkan tidak dicatat per panggilan; **B** metode tulis SDK (`record_income`, `record_expense`, `propose_fund_move`) ditambah di U2 bersama pemakai pertamanya; **C** notifikasi plugin tanpa migrasi (`NotificationType.system`, judul berawalan nama ruang, preferensi per jenis di U6); **D** `form_fields` hanya validasi + hook di H2, disambungkan ke body transaksi/pemasukan di U2; perintah bot plugin dijalankan per ruang yang memasang plugin, berawalan nama ruang.
 - `app/plugins/sdk/`: `Plugin` (dekorator `kartu`, `cek`, `aturan_advisor`, `perintah_bot`, `job`, `field_form`, masing-masing dengan `izin=`), `PluginContext` beku dengan sesi DB privat: izin = `granted_permissions` instalasi ∩ manifest ∩ `izin=` fungsi di setiap panggilan; `envelopes`/`transactions`/`incomes`/`income`/`members` lewat `visibility.py` (amplop pribadi orang lain tidak pernah, deskripsi privat tersamar); karyawan (member di ruang usaha) ditolak data keuangan `khusus_admin`; job tanpa user hanya amplop bersama dan semua deskripsi tersamar; penolakan dan kiriman dicatat di `plugin_audit_log` lewat sesi sendiri (penolakan sama sekali per jam per proses). `Saran`, `AksiRoute`, `RencanaPengeluaran`, `NilaiTidakSah`; nominal `Decimal`.
 - `host/kode.py`: impor plugin diperiksa AST **sebelum** kode dijalankan (hanya `app.plugins.sdk`, paket sendiri, plugin di `requires`; `importlib`, `__import__`, `._db` ditolak), kode dimuat dari `__init__.py` (`plugin = Plugin("<id>")`), lalu dicocokkan dua arah dengan manifest dan izinnya. `registry.py` memuatnya di kedua mode (ketat: gagal; start: plugin dan pemakainya dilewati). Plugin tanpa `__init__.py` hanya manifest.
@@ -45,6 +45,11 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
   1. **Sedang:** konteks tetap sah sesudah fungsi plugin selesai; plugin yang menyimpan `ctx` di variabel modul (bug multi-tenant yang lazim) membaca ruang, izin, dan sesi DB panggilan pertama untuk user lain (PoC: Orang menerima transaksi Dapur Nusa). Sekarang host memanggil setiap fungsi plugin lewat `titik.panggil`, yang menutup konteks di `finally` (`keadaan.tutup`); konteks simpanan gagal `KonteksTidakSah`.
   2. **Rendah:** introspeksi bingkai (`cr_frame`/`gi_frame`/`f_globals`/`f_back`) dan pengambilan atribut tanpa simpul `Attribute` (`string.Formatter().get_field`, `reduce(getattr, …)`) mencapai modul host; `Keadaan` bisa diubah; kelas `Plugin` bisa ditambal lewat alias. Sekarang atribut bingkai ditolak AST, `getattr`/`setattr`/`delattr`/`hasattr`/`vars`/… hanya boleh dipanggil langsung, `string` keluar dari `PUSTAKA_BOLEH`, `Keadaan` beku (penghitung `notify` terpisah), dan `Plugin` memakai metaclass beku yang sama dengan `PluginContext` (tidak bisa ditambal atau diturunkan).
   - Tes 46: konteks simpanan tidak berlaku untuk user lain, konteks ditutup sesudah `panggil`, kelas `Plugin` beku, AST bingkai/`getattr` sebagai nilai/`string`.
+- **Review ulang ketiga (4 Nov, `a086cab`): lulus.** Sisa Rendah/Info ikut ditutup sebelum merge (PoC `poc_h2d.py` kini gagal atau ditolak validator):
+  1. **Rendah:** konteks permintaan lain yang sedang berjalan bersamaan bisa dipinjam lewat variabel modul. Sekarang konteks terikat ke task asyncio pembuatnya (`keadaan.ambil` menolak task lain).
+  2. **Rendah:** `typing.get_type_hints` mengevaluasi anotasi teks sebagai kode. Sekarang `get_type_hints`, `ForwardRef`, `evaluate_forward_ref`, `_eval_type` ditolak (nama, atribut, impor).
+  3. **Info:** `str.format`/`format_map` menelusuri atribut lewat teks di luar AST. Sekarang `.format`/`.format_map` ditolak; f-string tetap boleh.
+  4. **Info (kegunaan):** API `namedtuple` berawalan `_` (`_replace`, `_asdict`, `_fields`, `_make`) dikecualikan dari aturan atribut `_`.
 
 **Digantung**
 - Metode tulis SDK (`record_income`, `record_expense`, `propose_fund_move`) dengan `client_ref` dan audit tulis: U2 (keputusan B). `funds:move` tetap lewat `/advisor/plan` → `/advisor/execute`.
@@ -78,8 +83,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Perintah bot di luar plugin aktif menjawab "Perintah ini belum tersedia di ruangmu." (tanpa nama plugin, supaya plugin yang belum dirilis tidak bisa ditebak).
 
 **Cara melanjutkan**
-- Review keamanan terpisah: "review PR #186 terhadap 03-workflow.md bagian keamanan" (gerbang "Plugin sebagai tamu": izin di setiap panggilan, audit, validator menolak perintah tulis dan impor inti).
-- Merge tanpa migrasi; tidak ada langkah VPS. Sesudah merge: `/cek-deploy <PR>`.
+- Review keamanan terpisah lulus (empat putaran, 4 Nov; PoC reviewer di scratchpad sesi, tidak di repo). Merge tanpa migrasi; tidak ada langkah VPS. Sesudah merge: `/cek-deploy 186`.
+- Pemeriksaan AST adalah disiplin T1, bukan sandbox: plugin mitra (T2) tetap butuh isolasi proses sungguhan. Menambah pustaka untuk plugin = PR yang mengubah `PUSTAKA_BOLEH` (U1 kemungkinan butuh pustaka untuk tabel plugin; buka lewat SDK bila bisa).
 - Berikutnya `/sesi-plugin H3` (butuh H2, B2, R4) atau `/sesi-plugin R6`.
 
 ---

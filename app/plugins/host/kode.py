@@ -44,6 +44,13 @@ PANGGILAN_NAMA = ("getattr", "setattr", "delattr", "hasattr")
 DUNDER_BOLEH = {"__name__", "__doc__", "__init__", "__post_init__"}
 # Introspeksi bingkai (coroutine/generator/traceback) mencapai globals modul host tanpa nama `_` atau dunder
 # (review ulang kedua #186 no. 2).
+# API publik pustaka standar yang kebetulan berawalan `_` (namedtuple).
+ATRIBUT_GARIS_BAWAH_BOLEH = {"_replace", "_asdict", "_fields", "_make"}
+# Nama yang menjalankan teks sebagai kode atau menelusuri atribut lewat teks (review ulang ketiga #186 no. 2–3):
+# `typing.get_type_hints` mengevaluasi anotasi teks; `str.format`/`format_map` menelusuri `{0.a.b}` di luar AST.
+# f-string tetap boleh (atributnya terlihat AST).
+NAMA_TERLARANG = {"get_type_hints", "ForwardRef", "evaluate_forward_ref", "_eval_type", "format_map"}
+ATRIBUT_PANGGILAN_TERLARANG = {"format", "format_map"}
 ATRIBUT_TERLARANG = {"_db", "cr_frame", "gi_frame", "ag_frame", "cr_await", "gi_yieldfrom", "ag_await",
                      "f_globals", "f_locals", "f_back", "f_builtins", "f_code", "tb_frame", "tb_next"}
 
@@ -132,6 +139,12 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
             if isinstance(n, ast.Name) and n.id in PANGGILAN_NAMA + PANGGILAN_TERLARANG \
                     and id(n) not in fungsi_panggilan:
                 galat.append(f"{rel}:{n.lineno}: '{n.id}' hanya boleh dipanggil langsung")
+            if isinstance(n, ast.Name) and n.id in NAMA_TERLARANG:
+                galat.append(f"{rel}:{n.lineno}: '{n.id}' tidak boleh (menjalankan teks sebagai kode)")
+            if isinstance(n, ast.ImportFrom):
+                for a in n.names:
+                    if a.name in NAMA_TERLARANG:
+                        galat.append(f"{rel}:{n.lineno}: impor '{a.name}' tidak boleh (menjalankan teks sebagai kode)")
 
         for node in ast.walk(pohon):
             if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
@@ -155,13 +168,16 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
                 a = node.attr
                 dunder = a.startswith("__") and a.endswith("__")
                 milik_sendiri = isinstance(node.value, ast.Name) and node.value.id in ("self", "cls")
-                if a in ATRIBUT_TERLARANG or (dunder and a not in DUNDER_BOLEH) or \
-                        (a.startswith("_") and not dunder and not milik_sendiri):
+                if a in ATRIBUT_TERLARANG or a in NAMA_TERLARANG or a in ATRIBUT_PANGGILAN_TERLARANG or \
+                        (dunder and a not in DUNDER_BOLEH) or \
+                        (a.startswith("_") and not dunder and not milik_sendiri and a not in ATRIBUT_GARIS_BAWAH_BOLEH):
                     galat.append(f"{rel}:{node.lineno}: atribut '.{a}' tidak boleh; data inti hanya lewat PluginContext")
             elif isinstance(node, ast.Call):
                 f = node.func
                 nama = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
-                if nama in PANGGILAN_TERLARANG:
+                if isinstance(f, ast.Attribute) and nama in ATRIBUT_PANGGILAN_TERLARANG:
+                    galat.append(f"{rel}:{node.lineno}: .{nama}() tidak boleh; pakai f-string")
+                elif nama in PANGGILAN_TERLARANG:
                     galat.append(f"{rel}:{node.lineno}: {nama}() tidak boleh")
                 elif isinstance(f, ast.Name) and nama in PANGGILAN_NAMA:
                     arg = node.args[1] if len(node.args) > 1 else None

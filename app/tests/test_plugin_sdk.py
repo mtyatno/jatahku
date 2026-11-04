@@ -289,6 +289,11 @@ class KodeTests(unittest.TestCase):
             "def f(g):\n    return g.gi_frame.f_back": "atribut '.gi_frame' tidak boleh",
             "from functools import reduce\nx = reduce(getattr, ['envelopes'], 1)": "'getattr' hanya boleh dipanggil langsung",
             "import string": "impor 'string' tidak ada di daftar pustaka",
+            "from typing import get_type_hints": "impor 'get_type_hints' tidak boleh",
+            "import typing\nx = typing.get_type_hints": "atribut '.get_type_hints' tidak boleh",
+            "x = '{0.envelopes}'.format(1)": ".format() tidak boleh",
+            "x = '{a}'.format_map({})": ".format_map() tidak boleh",
+            "f = '{0.envelopes}'.format\nx = f(1)": "atribut '.format' tidak boleh",
         }
         for kode, pesan in kasus.items():
             with self.subTest(kode=kode):
@@ -296,7 +301,9 @@ class KodeTests(unittest.TestCase):
                 self.assertTrue(any(pesan in g for g in kode_mod.periksa_impor(self.dir / "kecil", m)),
                                 kode_mod.periksa_impor(self.dir / "kecil", m))
         berkas.write_text("from app.plugins.sdk import Plugin, Saran, AksiRoute\nfrom decimal import Decimal\n"
+                          "from collections import namedtuple\nfrom typing import Any\n"
                           "nama = type(Decimal(1)).__name__\nx = getattr(Saran, 'judul', None)\n"
+                          "T = namedtuple('T', 'a b')\ny = T(1, 2)._replace(a=3)._asdict()\nz = f'{nama} {y}'\n"
                           "class A:\n    def __init__(self):\n        super().__init__()\n")
         self.assertEqual(kode_mod.periksa_impor(self.dir / "kecil", m), [])
 
@@ -717,6 +724,13 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
                 keadaan_mod.ambil(c2)
             with self.assertRaises(KonteksTidakSah):
                 await c2.envelopes()
+            # Konteks hanya berlaku di task asyncio yang membuatnya (review ulang ketiga #186 no. 1): permintaan lain
+            # yang berjalan bersamaan tidak bisa meminjamnya.
+            import asyncio
+            c3 = await self.ctx(db, self.pemilik, "kartu", "contoh.kas", izin=["envelopes:read"])
+            self.assertEqual(len(await c3.envelopes()), 1)
+            with self.assertRaises(KonteksTidakSah):
+                await asyncio.create_task(c3.envelopes())
             self.assertIsInstance(c.viewer, PenggunaView)
             self.assertEqual((c.viewer.id, c.viewer.nama), (self.pemilik.id, "Pemilik"))
             self.assertFalse(hasattr(c.viewer, "email"))
