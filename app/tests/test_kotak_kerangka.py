@@ -351,6 +351,16 @@ class PublicReaderNamesTests(unittest.TestCase):
         src = Path(kerangka.__file__).read_text(encoding="utf-8")
         self.assertNotRegex(src, r"(?:pc|transfer_reader|labels)\._[a-z_A-Z]+|import _")
 
+    def test_words_is_public_and_same_as_private(self):
+        # Pre-flight n-1: peringatan Admin (`admin_kotak.has_warning`) memakai normalisasi kata yang sama dengan
+        # `safe_label` lewat nama publik `kerangka.words`; alias `_words` tetap untuk pemanggil lama.
+        self.assertIs(kerangka._words, kerangka.words)
+        self.assertEqual(kerangka.words("  (Status) Bayar:  keterangan, "), ["status", "bayar", "keterangan"])
+        self.assertEqual(kerangka.words(" .. "), [])
+        src = (Path(kerangka.__file__).parents[2] / "api" / "routes" / "admin_kotak.py").read_text(encoding="utf-8")
+        self.assertRegex(src, r"from app\.services\.kotak_struk\.kerangka import words\b")
+        self.assertNotRegex(src, r"import _words")
+
     def test_store_receipt_has_no_layout(self):
         doc = DokumenBayar(doc_type="struk_belanja", counterparty=Counterparty(name="ALFAMART"))
         self.assertIsNone(build_layout(["ALFAMART", "ROTI 1 15.000", "Total Belanja 15.000"], doc, Secrets(),

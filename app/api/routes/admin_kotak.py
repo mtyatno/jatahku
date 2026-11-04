@@ -30,7 +30,7 @@ from app.core.database import get_db
 from app.core.deps import require_admin
 from app.models.models import ProofRule, ProofRuleVote, User
 from app.services.kotak_struk import belajar
-from app.services.kotak_struk.kerangka import _words as label_words   # normalisasi kata yang sama dengan safe_label
+from app.services.kotak_struk.kerangka import words as label_words   # normalisasi kata yang sama dengan safe_label
 
 router = APIRouter()
 

@@ -74,8 +74,12 @@ def _word(w: str) -> str:
     return w.strip(_WORD_PUNCT).lower()
 
 
-def _words(text: str) -> list[str]:
+def words(text: str) -> list[str]:
+    """Kata huruf kecil tanpa tanda baca tepi, seperti yang dicocokkan `safe_label` (juga dipakai peringatan Admin)."""
     return [w for w in (_word(x) for x in text.split()) if w]
+
+
+_words = words   # alias lama; nama publiknya `words` (pre-flight A16 n-1)
 
 
 def _label_words() -> frozenset[str]:
