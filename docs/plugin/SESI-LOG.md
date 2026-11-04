@@ -49,7 +49,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Kirim ulang `client_ref` mengembalikan jawaban tersimpan tanpa memeriksa ulang peran (sama dengan `advisor/execute`); kunci Redis per user, jadi user lain tidak bisa memakainya.
 
 **Cara melanjutkan**
-- Review ulang kedua yang singkat: "review ulang PR #177 terhadap 03-workflow.md bagian keamanan, fokus siklus ruang usaha (payday) dan release vs forget". Lalu merge.
+- Review ulang kedua (4 Nov, `3e9e026`): **lulus**, siap merge. Saran dikerjakan: tes siklus kini memakai isi amplop bertanggal 28 Okt, sehingga di kode lama prive kedua (26 Nov) lolos 201 seperti PoC.
+- Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu PR kecil "R8 tayang" (status `selesai`, Gerbang R).
 - Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu Gerbang R bisa dinilai lulus (R2, R3, R8).
 - Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan; migrasi, review) atau `/sesi-plugin H1`.
 

@@ -398,6 +398,13 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
             await db.flush()
             db.add(MonthlySnapshot(envelope_id=kas.id, year=2026, month=10, opening_balance=D("0"),
                                    closing_balance=D("1000000"), rollover_amount=D("1000000")))
+            # Isi amplop bertanggal 28 Okt (sudah masuk rollover Oktober). Dengan siklus keluarga (tgl 25) kode lama
+            # membacanya sebagai alokasi periode 25 Okt–24 Nov lalu, sesudah 25 Nov, rollover Oktober lagi: 201, 201.
+            isi = Income(household_id=self.usaha_id, user_id=self.me.id, amount=D("1000000"),
+                         description="Omzet Oktober", income_date=_date(2026, 10, 28))
+            db.add(isi)
+            await db.flush()
+            db.add(Allocation(income_id=isi.id, envelope_id=kas.id, amount=D("1000000")))
             await db.commit()
         self.me.payday_day = 25
         for hari, status in ((_date(2026, 11, 10), 201), (_date(2026, 11, 26), 400)):
