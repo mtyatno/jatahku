@@ -22,6 +22,7 @@ test('labelSumber: setiap tebakan menyebut asalnya', () => {
     'Kamus Dapur Nusa · diajarkan kamu · 1×');
   assert.equal(labelSumber({ jenis: 'kamus_ruang', kali: 2, diajarkan_oleh: null, oleh_saya: false }),
     'Kamus ruang ini · diajarkan anggota · 2×');   // akun pengajar terhapus
+  assert.equal(labelSumber({ jenis: 'kamus_ruang' }, 'Dapur Nusa'), 'Kamus Dapur Nusa');   // karyawan (#191 temuan 2)
   assert.equal(labelSumber({ jenis: 'kata_saya', kali: 3 }), 'Kata yang kamu ajarkan · 3×');
   assert.equal(labelSumber({ jenis: 'kamus_kategori' }), 'Kamus kategori bawaan');
   assert.equal(labelSumber({ jenis: 'kamus_plugin' }), 'Kamus Fitur Tambahan');

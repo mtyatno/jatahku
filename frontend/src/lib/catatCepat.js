@@ -30,6 +30,8 @@ export function labelSumber(sumber, namaRuang = 'ruang ini') {
   switch (sumber.jenis) {
     case 'kata_saya': return `Kata yang kamu ajarkan${kali}`;
     case 'kamus_ruang': {
+      // Karyawan menerima kamus ruang tanpa pengajar dan hitungan (review keamanan PR #191 temuan 2).
+      if (!('oleh_saya' in sumber) && !('diajarkan_oleh' in sumber)) return `Kamus ${namaRuang}`;
       const oleh = sumber.oleh_saya ? 'kamu' : (sumber.diajarkan_oleh || 'anggota');
       return `Kamus ${namaRuang} · diajarkan ${oleh}${kali}`;
     }

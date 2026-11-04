@@ -491,7 +491,8 @@ async def daftar_kamus(rid: UUID, q: str | None = Query(None, max_length=100),
 async def hapus_kamus(rid: UUID, kamus_id: UUID, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
     """Hapus satu kata → amplop dari kamus ruang (owner/admin). Kata user yang sama untuk amplop itu ikut dihapus,
-    supaya pengajarnya juga tidak lagi mendapat tebakan itu (keputusan R7 C). Kata ruang lain → 404."""
+    termasuk frasa yang sama sesudah nominal/satuan dibuang (`txn_nlp.normal_kamus`), supaya pengajarnya juga tidak
+    lagi mendapat tebakan itu (keputusan R7 C). Kata ruang lain → 404."""
     await _ruang_kelola(db, user, rid)
     k = (await db.execute(select(RuangKamus).where(
         RuangKamus.id == kamus_id, RuangKamus.household_id == rid))).scalar_one_or_none()
@@ -499,9 +500,14 @@ async def hapus_kamus(rid: UUID, kamus_id: UUID, user: User = Depends(get_curren
         raise HTTPException(status_code=404, detail="Kata tidak ditemukan")
     kata, eid = k.keyword, k.envelope_id
     nama_amplop = (await db.execute(select(Envelope.name).where(Envelope.id == eid))).scalar_one_or_none()
-    await db.execute(delete(UserEnvelopeKeyword).where(
-        UserEnvelopeKeyword.keyword == kata, UserEnvelopeKeyword.envelope_id == eid,
-        UserEnvelopeKeyword.envelope_id.in_(select(Envelope.id).where(Envelope.household_id == rid))))
+    # Kata user untuk amplop itu yang bentuk kamusnya sama (kata persis, atau frasa yang sama tanpa nominal/satuan).
+    from app.services.txn_nlp import normal_kamus
+    milik_user = (await db.execute(select(UserEnvelopeKeyword.id, UserEnvelopeKeyword.keyword).where(
+        UserEnvelopeKeyword.envelope_id == eid,
+        UserEnvelopeKeyword.envelope_id.in_(select(Envelope.id).where(Envelope.household_id == rid))))).all()
+    hapus_ids = [i for i, kw in milik_user if kw == kata or normal_kamus(kw) == kata]
+    if hapus_ids:
+        await db.execute(delete(UserEnvelopeKeyword).where(UserEnvelopeKeyword.id.in_(hapus_ids)))
     await db.delete(k)
     peran.audit(db, rid, user.id, "kata_dihapus", kata=kata, envelope_id=str(eid), amplop=nama_amplop)
     await db.commit()

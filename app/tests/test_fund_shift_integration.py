@@ -613,7 +613,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_receipt_items_teach_per_item_envelope_suggestions(self):
         """Struk dicatat per barang ("SABUN MANDI (Indomaret)") → kata kunci barang
         dipelajari → scan berikutnya menyarankan amplop per barang dari nama barang."""
-        from app.api.routes.transactions import BatchSuggestEnvelopeRequest, suggest_envelopes
+        from app.api.routes.transactions import BatchSuggestEnvelopeRequest, saran_amplop_banyak
         t, m = self.env["Transport"].id, self.env["Makan"].id
         with patch("redis.asyncio.from_url", return_value=self.redis):
             out = await self.web_batch([
@@ -622,7 +622,7 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ])
             self.assertTrue(all(r.ok for r in out))
             async with self.Session() as db:
-                res = await suggest_envelopes(
+                res = await saran_amplop_banyak(
                     BatchSuggestEnvelopeRequest(descriptions=["SABUN CAIR", "ROTI TAWAR", "XYZ QWERTY"]),
                     await self.web_user(db), db, hid=self.hid)
         got = [(r["envelope_id"], r["confident"]) for r in res["results"]]

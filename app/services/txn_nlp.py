@@ -97,6 +97,13 @@ def kata_kamus(description: str) -> list:
     return [w for w in out if len(w) <= KATA_MAKS]
 
 
+def normal_kamus(keyword: str) -> str:
+    """Kata atau frasa yang dipelajari (`UserEnvelopeKeyword.keyword`) dalam bentuk kamus ruang: tanpa token nominal,
+    angka, dan satuan. Dipakai saat admin menghapus kata kamus ruang, supaya frasa user yang sama ("kardus besar pcs")
+    ikut terhapus (review PR #191)."""
+    return " ".join(w for w in (keyword or "").split() if w not in _SATUAN and not _NOMINAL.match(w))
+
+
 def guess_envelope_name(description):
     desc_lower = description.lower()
     for envelope_name, keywords in CATEGORY_KEYWORDS.items():
@@ -199,7 +206,9 @@ async def _kamus_ruang(db, household_id, description, env_by_id) -> Tebakan | No
     if not skor:
         return None
     best = max(skor, key=lambda x: skor[x])
-    return Tebakan(env_by_id[best], True, SUMBER_KAMUS_RUANG, skor[best], pengajar[best][1])
+    # `kali` = hitungan kata yang paling sering diajarkan (≈ jumlah catatan), bukan jumlah semua kata yang cocok
+    # (review PR #191: 3 catatan "kasbon bagas" = 3×, bukan 9× dari kasbon + bagas + frasanya).
+    return Tebakan(env_by_id[best], True, SUMBER_KAMUS_RUANG, pengajar[best][0], pengajar[best][1])
 
 
 async def cari_amplop(description, household_id, db, user_id=None, *, amplop_boleh=None) -> Tebakan:
@@ -231,7 +240,7 @@ async def cari_amplop(description, household_id, db, user_id=None, *, amplop_bol
         from app.models.models import UserEnvelopeKeyword
         keywords = extract_keywords(description)
         if keywords:
-            scores = {}
+            scores, maks = {}, {}
             for kw in keywords:
                 kw_res = await db.execute(
                     select(UserEnvelopeKeyword).where(
@@ -243,9 +252,10 @@ async def cari_amplop(description, household_id, db, user_id=None, *, amplop_bol
                     eid = str(row.envelope_id)
                     if eid in env_by_id:
                         scores[eid] = scores.get(eid, 0) + row.count
+                        maks[eid] = max(maks.get(eid, 0), row.count)
             if scores:
                 best_id = max(scores, key=lambda x: scores[x])
-                return Tebakan(env_by_id[best_id], True, SUMBER_KATA_SAYA, scores[best_id])
+                return Tebakan(env_by_id[best_id], True, SUMBER_KATA_SAYA, maks[best_id])
 
     # 0b. Kamus ruang usaha (R7): sesudah kata user sendiri, sebelum kamus kategori.
     if household_id:

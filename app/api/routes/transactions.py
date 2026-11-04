@@ -1,4 +1,5 @@
 import logging
+from typing import Annotated
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -92,14 +93,22 @@ class TransactionCreateResponse(TransactionResponse):
     peringatan: list[str] | None = None
 
 
+# Review keamanan PR #191 temuan 2: saran amplop dibatasi (panjang, jumlah, frekuensi per user), supaya kamus ruang tidak
+# bisa disisir sekaligus. Panjang = kolom `description` transaksi.
+SARAN_TEKS_MAKS = 500
+SARAN_JUMLAH_MAKS = 100
+BATAS_SARAN = "60/minute"
+BATAS_SARAN_BANYAK = "20/minute"
+
+
 class SuggestEnvelopeRequest(BaseModel):
-    description: str
+    description: str = Field(max_length=SARAN_TEKS_MAKS)
     # R7 (opsional): nominal yang sudah diurai klien (parseAmount.js), untuk `aturan` batasan karyawan.
     amount: Decimal | None = Field(default=None, ge=0)
 
 
 class BatchSuggestEnvelopeRequest(BaseModel):
-    descriptions: list[str]
+    descriptions: list[Annotated[str, Field(max_length=SARAN_TEKS_MAKS)]] = Field(max_length=SARAN_JUMLAH_MAKS)
 
 
 class BatchSuggestEnvelopeResult(BaseModel):
@@ -395,10 +404,14 @@ async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID, *, karyaw
 _SARAN_KOSONG = {"envelope_id": None, "envelope_name": None, "confident": False, "sumber": None}
 
 
-async def _sumber_api(db: AsyncSession, user: User, t) -> dict | None:
-    """`sumber` saran amplop (R7, 04-kontrak-api.md §3). Nama pengajar kamus ruang hanya nama tampilan anggota."""
+async def _sumber_api(db: AsyncSession, user: User, t, *, karyawan: bool) -> dict | None:
+    """`sumber` saran amplop (R7, 04-kontrak-api.md §3). Nama pengajar kamus ruang hanya nama tampilan anggota.
+    Karyawan (review keamanan PR #191 temuan 2, keputusan pemilik produk 5 Nov): kamus ruang tanpa pengajar dan
+    hitungan, supaya saran tidak bisa dipakai menebak siapa mencatat apa dan seberapa sering."""
     if t.sumber is None:
         return None
+    if karyawan and t.sumber == "kamus_ruang":
+        return {"jenis": t.sumber}
     out = {"jenis": t.sumber}
     if t.kali is not None:
         out["kali"] = t.kali
@@ -412,7 +425,9 @@ async def _sumber_api(db: AsyncSession, user: User, t) -> dict | None:
 
 
 @router.post("/suggest-envelope")
+@limiter.limit(BATAS_SARAN, key_func=kunci_per_user)
 async def suggest_envelope(
+    request: Request,
     req: SuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -433,17 +448,24 @@ async def suggest_envelope(
     if not envelope or (batasan is not None and not batasan.boleh_amplop(envelope.id)):
         return {**_SARAN_KOSONG, "aturan": aturan}
     return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(t.confident),
-            "sumber": await _sumber_api(db, user, t), "aturan": aturan}
+            "sumber": await _sumber_api(db, user, t, karyawan=batasan is not None), "aturan": aturan}
 
 
 @router.post("/suggest-envelopes")
+@limiter.limit(BATAS_SARAN_BANYAK, key_func=kunci_per_user)
 async def suggest_envelopes(
+    request: Request,
     req: BatchSuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
     hid: RuangAktif,
 ):
+    return await saran_amplop_banyak(req, user, db, hid=hid)
+
+
+async def saran_amplop_banyak(req: BatchSuggestEnvelopeRequest, user: User, db: AsyncSession, *, hid):
+    """Isi `POST /suggest-envelopes` tanpa batas frekuensi (route di atas), untuk pemanggil di server dan tes."""
     from app.services.txn_nlp import cari_amplop
     if not hid:
         return {"results": [{"index": i, "envelope_id": None, "envelope_name": None, "confident": False} for i in range(len(req.descriptions))]}

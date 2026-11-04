@@ -43,6 +43,10 @@ if HAS_AIOSQLITE:
 class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
     # Fixture dan pembantu R5 (tanpa mewarisi tes R5, supaya tidak berjalan dua kali).
     async def asyncSetUp(self):
+        # Batas frekuensi saran (60/menit) di memori proses, kunci = alamat IP di tes: direset per tes.
+        from app.api.routes import transactions as rute_transaksi
+        rute_transaksi.limiter.reset()
+        self.addCleanup(rute_transaksi.limiter.reset)
         await r5.RuangPeranTests.asyncSetUp(self)
         async with self.Session() as db:
             # Ruang usaha kedua milik Orang, dengan kamusnya sendiri (untuk IDOR).
@@ -172,8 +176,13 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((s["envelope_id"], s["envelope_name"], s["confident"]), (str(self.op_id), "Operasional", True))
         self.assertEqual(s["sumber"], {"jenis": "kamus_ruang", "kali": 4, "oleh_saya": False,
                                        "diajarkan_oleh": "Dewi"})
-        s = await self._saran("kopi susu", self.dewi, self.nusa_id)
-        self.assertEqual(s["sumber"], {"jenis": "kamus_ruang", "kali": 4, "oleh_saya": True, "diajarkan_oleh": None})
+        s = await self._saran("kopi susu", self.me, self.nusa_id)          # pemilik: pengajar orang lain
+        self.assertEqual(s["sumber"], {"jenis": "kamus_ruang", "kali": 4, "oleh_saya": False,
+                                       "diajarkan_oleh": "Dewi"})
+        await self._ajari("susu", self.op_id, 1, self.ani.id)
+        s = await self._saran("kopi susu", self.ani, self.nusa_id)          # kali = kata terbanyak, bukan jumlah
+        self.assertEqual(s["sumber"], {"jenis": "kamus_ruang", "kali": 4, "oleh_saya": False,
+                                       "diajarkan_oleh": "Dewi"})
         # Kata user sendiri mengalahkan kamus ruang.
         await self._kata_user(self.ani, "kopi", self.u["env"], count=1)
         s = await self._saran("kopi susu", self.ani, self.nusa_id)
@@ -201,7 +210,7 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
         await self._ajari("kardus", self.u["env"], 1, self.ani.id)
         await self._batasan(amplop_ids=[str(self.u["env"])], foto_nota_di_atas=300000, batas_nominal=1000000)
         s = await self._saran("kardus", self.dewi, self.nusa_id)
-        self.assertEqual((s["envelope_id"], s["sumber"]["kali"]), (str(self.u["env"]), 1))
+        self.assertEqual((s["envelope_id"], s["sumber"]), (str(self.u["env"]), {"jenis": "kamus_ruang"}))
         r = await self._req("POST", "/transactions/suggest-envelopes", {"descriptions": ["kardus"]},
                             header=self.nusa_id, user=self.dewi)
         self.assertEqual(r.json()["results"][0]["envelope_id"], str(self.u["env"]))
@@ -218,6 +227,40 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self._saran("kardus", self.ani, self.nusa_id, amount=2000000))["aturan"], [])
         # Aturan juga dijawab saat teks kosong (nominal diketik lebih dulu).
         self.assertEqual(len((await self._saran(" ", self.dewi, self.nusa_id, amount=2000000))["aturan"]), 2)
+
+    async def test_karyawan_tidak_bisa_menebak_catatan_lain_lewat_kamus(self):
+        """Review keamanan PR #191 temuan 2 (PoC3), keputusan pemilik produk 5 Nov: tebakan kamus ruang untuk karyawan
+        tanpa nama pengajar dan hitungan; pemilik/admin tetap melihatnya. Saran dibatasi panjang dan jumlahnya."""
+        for _ in range(3):
+            r = await self._catat(self.me, self.op_id, "kasbon bagas")
+            self.assertEqual(r.status_code, 201, r.text)
+        r = await self._req("GET", "/transactions/", header=self.nusa_id, user=self.dewi)
+        self.assertEqual((r.status_code, r.json()), (200, []))
+        s = await self._saran("kasbon bagas", self.dewi, self.nusa_id)
+        self.assertEqual((s["envelope_id"], s["sumber"]), (str(self.op_id), {"jenis": "kamus_ruang"}))
+        r = await self._req("POST", "/transactions/suggest-envelopes", {"descriptions": ["kasbon bagas"]},
+                            header=self.nusa_id, user=self.dewi)
+        self.assertEqual(r.json()["results"][0]["sumber"], {"jenis": "kamus_ruang"})
+        s = await self._saran("kasbon bagas", self.ani, self.nusa_id)
+        self.assertEqual(s["sumber"], {"jenis": "kamus_ruang", "kali": 3, "oleh_saya": False,
+                                       "diajarkan_oleh": "Saya"})
+        s = await self._saran("kasbon", self.dewi, self.nusa_id)
+        self.assertEqual(s["sumber"], {"jenis": "kamus_ruang"})
+        # Kata yang dicatat karyawan sendiri: datanya sendiri (`kata_saya`, dengan hitungan), seperti sebelum R7.
+        r = await self._catat(self.dewi, self.op_id, "elpiji")
+        self.assertEqual(r.status_code, 201, r.text)
+        s = await self._saran("elpiji", self.dewi, self.nusa_id)
+        self.assertEqual(s["sumber"], {"jenis": "kata_saya", "kali": 1})
+
+        r = await self._req("POST", "/transactions/suggest-envelopes", {"descriptions": ["x"] * 101},
+                            header=self.nusa_id, user=self.dewi)
+        self.assertEqual(r.status_code, 422)
+        r = await self._req("POST", "/transactions/suggest-envelope", {"description": "x" * 501},
+                            header=self.nusa_id, user=self.dewi)
+        self.assertEqual(r.status_code, 422)
+        r = await self._req("POST", "/transactions/suggest-envelopes", {"descriptions": ["kardus"] * 100},
+                            header=self.nusa_id, user=self.ani)
+        self.assertEqual(len(r.json()["results"]), 100)
 
     # 4. Kamus di halaman Anggota ----------------------------------------------
     async def test_daftar_kamus_untuk_owner_dan_admin_saja(self):
@@ -257,6 +300,8 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
         await self._kata_user(self.dewi, "kardus", self.u["env"])               # amplop lain: tetap
         await self._kata_user(self.dewi, "kardus", self.kd["env"])              # ruang keluarga Dewi: tetap
         await self._kata_user(self.ani, "elpiji", self.op_id)                   # kata lain: tetap
+        await self._kata_user(self.ani, "kardus pcs 125rb", self.op_id)         # frasa yang sama tanpa satuan: dihapus
+        await self._kata_user(self.ani, "kardus besar", self.op_id)             # frasa lain: tetap
         async with self.Session() as db:
             kid = (await db.execute(select(RuangKamus.id).where(
                 RuangKamus.keyword == "kardus", RuangKamus.envelope_id == self.op_id))).scalar_one()
@@ -279,7 +324,7 @@ class RuangR7Tests(unittest.IsolatedAsyncioTestCase):
                                                 UserEnvelopeKeyword.envelope_id))).all())
             log = (await db.execute(select(RuangAudit).where(RuangAudit.aksi == "kata_dihapus"))).scalar_one()
         self.assertEqual(sisa, {(self.dewi.id, "kardus", self.u["env"]), (self.dewi.id, "kardus", self.kd["env"]),
-                                (self.ani.id, "elpiji", self.op_id)})
+                                (self.ani.id, "elpiji", self.op_id), (self.ani.id, "kardus besar", self.op_id)})
         self.assertEqual((log.household_id, log.actor_id, log.rincian["kata"], log.rincian["amplop"]),
                          (self.nusa_id, self.ani.id, "kardus", "Operasional"))
         self.assertEqual((await self._kamus(self.toko_id))[("kardus", self.t["env"])][0], 50)   # Toko Orang utuh
