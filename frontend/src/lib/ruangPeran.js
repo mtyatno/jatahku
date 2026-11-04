@@ -214,6 +214,7 @@ export function labelAudit(a) {
     case 'catatan_dihapus': return `${oleh} menghapus catatannya`;
     case 'reset_ruang': return `${oleh} mereset data ruang`;
     case 'ruang_diubah': return `${oleh} mengganti nama ruang menjadi ${r.nama?.ke || ''}`.trim();
+    case 'kata_dihapus': return `${oleh} menghapus kata "${r.kata || ''}"${r.amplop ? ` (${r.amplop})` : ''} dari kamus ruang`;
     default: return `${oleh}: ${a?.aksi || 'perubahan'}`;
   }
 }

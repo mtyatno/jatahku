@@ -146,6 +146,8 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/ruang/{rid}/persetujuan/{draf_id}/setujui"), ("POST", "/ruang/{rid}/persetujuan/{draf_id}/tolak"),
             # R6: cabut undangan dan ganti nama ruang, sama (`_ruang_kelola`).
             ("DELETE", "/ruang/{rid}/undangan/{undangan_id}"), ("PATCH", "/ruang/{rid}"),
+            # R7: hapus kata kamus ruang, sama (`_ruang_kelola`; kata ruang lain 404).
+            ("DELETE", "/ruang/{rid}/kamus/{kamus_id}"),
             # H1: ruang dari path (`_ruang_kelola` → `ruang_objek`, lalu peran owner/admin).
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/pasang"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),

@@ -4,6 +4,53 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## R7 · Catat cepat dan kamus per ruang · 2026-11-04 · pemilik produk + Claude
+
+**Selesai** (status review, PR #191; issue #147; label `migrasi`, `review-keamanan`; menunggu review sesi keamanan terpisah)
+- Keputusan pemilik produk (4 Nov, "lanjut" atas lima usulan pembukaan sesi): **(A)** kamus ruang hanya di ruang usaha; ruang keluarga tetap belajar per user. **(B)** Tawaran "pengeluaran pribadi" dihitung di klien lewat permintaan terpisah tanpa header ruang (ruang keluarga user sendiri), tanpa kueri lintas ruang di server; `tawaran_pribadi` v0 dihapus dari kontrak. **(C)** Admin menghapus kata = juga menghapus kata user yang sama untuk amplop itu di ruang itu. **(D)** Lampiran foto nota karyawan (Kotak Struk di ruang usaha), titipan R4/R6, ditunda ke sesi sendiri. **(E)** Catat cepat juga pintu Catat pemilik/admin di ruang usaha, dengan tautan "Form lengkap".
+- Server: tabel `ruang_kamus` (migrasi `d7r7k4a1m9c3`, hanya tabel baru, idempoten). `txn_nlp.cari_amplop` (urutan kata user → kamus ruang → kamus kategori → nama amplop, `Tebakan.sumber`, `amplop_boleh` untuk karyawan; `find_best_envelope` tetap pembungkus); `ajari_kamus_ruang` (upsert atomik, hanya amplop bersama aktif bertujuan pengeluaran di ruang usaha; `kata_kamus` tanpa nominal/angka/satuan, maks 12 kata + frasa). Belajar hanya dari `routes/transactions._after_saved` dengan `kamus_ruang=not is_private` (catat, batch, draf disetujui atas nama pencatat); bot dan Kotak Struk tidak. `suggest-envelope`: `sumber`, `aturan` (`peran.aturan_catatan`), request `amount`; `suggest-envelopes`: `sumber`. `GET`/`DELETE /ruang/{id}/kamus` di `ruang_kelola.py` (log `kata_dihapus`). Reset ruang dan hapus akun.
+- Web: `components/CatatCepat.jsx` menggantikan `CatatKaryawan.jsx` (dihapus): satu kotak teks + suara, kartu Terdeteksi dengan sumber tebakan, aturan admin, pesan "kata ini masuk kamus", tawaran pribadi; `lib/catatCepat.js` + tes; `api.request` opsi `ruangKeluarga`, `saranCatat`, `catatDiRuangKeluarga`, `kamusRuang`, `hapusKamus`; `Layout.jsx` (pintu Catat ruang usaha, `expense-lengkap`); halaman Anggota bagian "Kata yang dipelajari"; label log; teks panel foto nota.
+- Tes: `app/tests/test_ruang_r7.py` (10); diperbarui `test_ruang_pagar` (route hapus kata), `test_kotak_schema` (satu head, rantai melewati e7b3d5a9c1f4), `test_plugin_sdk` (kamus ruang sebelum kamus plugin H2, `kamus_plugin`). 13 uji mutasi semuanya tertangkap. unittest 2838 lulus · node --test 695 lulus · build ok · `openapi_cek` tanpa perubahan memutus · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · upsert bersamaan di PostgreSQL ok (3 pengajar → hitungan 3).
+- Browser (Playwright, API dipalsukan): karyawan dan pemilik, 390 dan 1440 px, terang dan gelap; saran ruang usaha dengan header, saran dan catat ke ruang keluarga tanpa header; karyawan tidak memanggil `/kamus`; hapus kata dari halaman Anggota → log.
+- Dokumen: kontrak §2 (kamus v1) dan §3 (Catat cepat v1); `AGENTS.md` aturan 8 + checklist "Plugin R7"; `00-indeks.md`; `PROGRESS.md`.
+
+- **Review keamanan terpisah (5 Nov): minta perubahan.** Fokus SESI-LOG (gerbang jenis ruang di kueri kamus, belajar hanya dari catatan bukan-privat ke amplop bersama, hapus kata hanya di ruang sendiri, permintaan tanpa header) dinilai benar. Dikerjakan di branch ini, dengan tes yang gagal di kode sebelumnya dan uji mutasi:
+  1. **Merah — satu `client_ref` dipakai dua ruang.** Catat cepat memakai satu ref untuk Simpan (ruang usaha) dan "Catat di ruang keluarga"; idempotensi dan `draf_dari_ref` hanya dikunci per user+ref. Respons Simpan hilang → tawaran pribadi dengan ref yang sama → server menjawab draf ruang usaha (PoC1, 202) atau transaksi Operasional (PoC2, 201), dan UI menulis "Tercatat di ruang keluargamu". Perbaikan server: kiriman ulang hanya menjawab transaksi/draf lama bila ruang, jenis, dan amplop sama, selain itu 409 `client_ref_bentrok` (`peran.ref_bentrok`, `cek_ref_draf`; `POST /transactions`, `/transactions/batch` per baris, `POST /incomes` karyawan). Klien: ref terpisah per jalur; hasil belum pasti (0, 409 diproses, 5xx) mengunci isian dan jalur lain, kirim ulang memakai permintaan yang sama persis; "di ruang keluargamu" hanya bila jawabannya amplop itu (`hasilPribadi`). Tes PoC1, PoC2, arah sebaliknya, batch, pemasukan, pembantu tanpa amplop; 7 mutasi tertangkap; Playwright: 403 pasti tidak mengunci + ref berbeda + jawaban Operasional tidak disebut ruang keluarga; koneksi putus mengunci + kirim ulang identik.
+  2. **Perlu keputusan — kamus sebagai alat uji catatan orang lain (PoC3).** Keputusan pemilik produk 5 Nov: karyawan melihat tebakan kamus ruang hanya sebagai "Kamus <ruang>" (tanpa `diajarkan_oleh`, `kali`, `oleh_saya`); pemilik/admin tetap melihatnya. Kamus tetap belajar dari semua catatan bukan-privat (bukan hanya koreksi: kata baru tetap masuk, jadi tidak menutup celah). Ditambah batas: description ≤ 500, descriptions ≤ 100 (422), 60/menit `suggest-envelope` dan 20/menit `suggest-envelopes` per user (`kunci_per_user`, 429). Tes di `test_ruang_r7` dan `test_rate_limit.SaranBatasTests`.
+  3. Saran tidak memblokir, ikut dikerjakan: `kali` = hitungan kata terbanyak, bukan jumlah semua kata yang cocok (3 catatan = 3×, bukan 9×); hapus kata ikut frasa user yang sama sesudah nominal/satuan dibuang (`txn_nlp.normal_kamus`).
+  - **Review ulang (5 Nov, `2e2d3a9`): lulus, boleh merge.** Temuan 1, 2, dan saran tertutup; tidak ada masalah keamanan baru; range-diff sesudah rebase hanya induk migrasi dan impor `account_deletion.py`. Risiko sisa yang diterima pemilik produk: karyawan masih bisa mengecek apakah sebuah frasa ada di kamus dan masuk amplop mana (tanpa nama dan hitungan, frekuensi dibatasi). Kata dari akun terhapus/anggota keluar tetap di kamus: masuk penilaian dampak UU PDP sebelum beta.
+  - Rebase ke `main` 5 Nov sesudah laporan berkala (#190, migrasi `967a27d0c15d`): migrasi R7 kini menginduk ke `967a27d0c15d`; konflik `account_deletion.py` (impor) dan `test_kotak_schema.py` (versi `main`, isinya sama) diselesaikan.
+  - Sesudah perbaikan: unittest 3221 (sesudah rebase #190): 3220 lulus, 1 gagal di luar scope (`test_job_dan_notifikasi`, jam tenang; gagal juga di `main` a2f010a pada jam yang sama) · node --test 718 lulus · build ok · `cek-migrasi.sh origin/main` ok (induk `967a27d0c15d`) · `openapi_cek` tanpa perubahan memutus (batas baru tidak tergolong memutus).
+
+**Digantung**
+- Lampiran foto nota untuk karyawan (keputusan D): sesi sendiri, dengan review keamanan (unggah file di ruang usaha; belajar struk lintas user tidak boleh memuat data usaha). Sampai itu Catat cepat menahan Simpan bila aturan foto nota berlaku, dan server tetap 422 `perlu_foto_nota`.
+- PR #186 (H2) di-merge saat sesi ini ditutup; branch R7 di-rebase ke `a2f010a`. Konflik di `routes/transactions.py` (`peringatan` H2 + `is_private` R7) dan `00-indeks.md` diselesaikan; di `txn_nlp.cari_amplop` kamus plugin H2 (titik `nlp_kamus`) berada sesudah kamus ruang dan sebelum kamus kategori, dengan `sumber.jenis = kamus_plugin` (baru).
+- Deteksi jenis catatan (penjualan, modal) dan Kontak: U5. Pemasukan tidak mengajari kamus.
+- Kamus tanpa batas jumlah baris per ruang (hanya batas 12 kata per catatan dan `limit` daftar 500); dinilai ulang dari data beta.
+- `amplop_terkunci` di kontrak v0 tidak dibuat: daftar amplop karyawan sudah hanya yang diizinkan.
+- Retensi (review #191): kata dari akun yang dihapus atau anggota yang keluar tetap di kamus ruang (nama pengajar dikosongkan saat akun dihapus), konsisten dengan `MerchantEnvelopeMap`. Catat di penilaian dampak UU PDP sebelum beta.
+- Di luar scope (main, H2): `test_plugin_sdk.SdkDbTests.test_job_dan_notifikasi` gagal bila dijalankan di jam tenang 21.00–07.00 WIB (`proaktif.jam_tenang` memakai jam sekarang; tes tidak membekukan waktu). Ditemukan reviewer dan dicek ulang 5 Nov 04.24 WIB. CI yang berjalan pada 14.00–24.00 UTC ikut merah. Perbaikan kecil (patch `jam_tenang` di tes itu) sebaiknya PR terpisah.
+
+**Jebakan**
+- `git add -A frontend` ikut memasukkan `frontend/dist/index.html` hasil build; dikembalikan di commit terpisah. Stage per file.
+- Satu kueri kamus tambahan di setiap tebakan yang kata usernya tidak cocok, termasuk ruang keluarga dan bot (kosong karena gerbang jenis ruang di kueri). Tes baru yang memalsukan `db.execute` berurutan di jalur `find_best_envelope` perlu menyediakan hasil untuk kueri itu (tes yang ada tidak terdampak).
+- `pkill -f "vite preview"` di Bash membunuh shell-nya sendiri (kode 144) dan ikut menghentikan PostgreSQL lokal; jalankan ulang `pg_ctl ... start`.
+- `test_kotak_schema.test_single_head_after_plugin_h1` dulu mengunci head = `e7b3d5a9c1f4`; kini satu head yang rantainya melewati revisi itu.
+
+**Keputusan kecil**
+- Pengajar di kamus = pencatat terakhir (`diajarkan_oleh`); `kali` = jumlah catatan. Karyawan melihat nama pengajar ("diajarkan Bagas"), sesuai artboard; `oleh_saya` untuk "diajarkan kamu".
+- Kamus belajar dari setiap catatan yang tersimpan (bukan hanya koreksi), sama dengan kata user. Pesan "masuk kamus" hanya tampil bila amplop berbeda dari tebakan kamus/kata user.
+- Amplop pribadi (`owner_id`) dan catatan privat tidak mengajari kamus, karena kamus terlihat admin.
+- `aturan` juga dijawab saat keterangan kosong (nominal diketik lebih dulu); Simpan ditahan bila ada `foto_nota`, label tombol "Kirim untuk persetujuan" bila ada `persetujuan`.
+- Mengosongkan kotak teks membuang pilihan amplop manual.
+
+**Cara melanjutkan**
+- Review keamanan di sesi Claude Code terpisah: "review PR #191 terhadap 03-workflow.md bagian keamanan". Fokus: gerbang jenis ruang di kueri kamus, belajar hanya catatan bukan-privat ke amplop bersama, hapus kata hanya ruang sendiri, permintaan tanpa header di klien.
+- Merge oleh pemilik produk sesudah review lulus: ikuti "Urutan merge PR bermigrasi" dan checklist "Plugin R7" di `AGENTS.md` (`alembic current` = `967a27d0c15d`, laporan berkala, sebelum upgrade; migrasi R7 di-rebase ke sana 5 Nov sesudah #190). Sesudah deploy terverifikasi, PR kecil "R7 tayang" (status `selesai`).
+- Berikutnya `/sesi-plugin H3` (butuh H2, B2, R4; semua selesai).
+
+---
+
 ## H2 · PluginContext dan titik ekstensi server · 2026-11-04 · pemilik produk + Claude
 
 **Selesai** (PR #186, issue #150; review keamanan terpisah **lulus** pada putaran keempat, 4 Nov; di-merge atas permintaan pemilik produk sesudah review lulus)
@@ -110,6 +157,8 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
   4. Cache Beranda per peran (`cacheKeyLayout/Data(uid, 'karyawan')`); BerandaKaryawan membuang cache umum ruang itu; `Layout.jsx` membuang semua cache Beranda ruang aktif bila peran berubah (`peranBerubah`).
   5. `daftar_undangan` menyaring kedaluwarsa di SQL + batas 50; `UbahRuang` mewarisi `RuangBuat` (`NAMA_MAKS`); `CardDef.untuk` divalidasi terhadap `UNTUK`.
   - Tes `/ruang/gabung` di R6 mereset batas laju (`ruang_kelola.limiter.reset()`): batas 10/menit di memori proses terbawa antar tes.
+  - **Review ulang (5 Nov, `2e2d3a9`): lulus, boleh merge.** Temuan 1, 2, dan saran tertutup; tidak ada masalah keamanan baru; range-diff sesudah rebase hanya induk migrasi dan impor `account_deletion.py`. Risiko sisa yang diterima pemilik produk: karyawan masih bisa mengecek apakah sebuah frasa ada di kamus dan masuk amplop mana (tanpa nama dan hitungan, frekuensi dibatasi). Kata dari akun terhapus/anggota keluar tetap di kamus: masuk penilaian dampak UU PDP sebelum beta.
+  - Rebase ke `main` 5 Nov sesudah laporan berkala (#190, migrasi `967a27d0c15d`): migrasi R7 kini menginduk ke `967a27d0c15d`; konflik `account_deletion.py` (impor) dan `test_kotak_schema.py` (versi `main`, isinya sama) diselesaikan.
   - Sesudah perbaikan: unittest 2766 lulus · node --test 663 lulus · build ok · `openapi_cek` tanpa perubahan memutus.
 - **Review ulang (4 Nov, `1e7f4f6`): lulus, boleh merge dari sisi keamanan.** Dua catatan non-penghalang ikut dikerjakan:
   - `batch.jalankan` dan `layout.ambil` menentukan peran dari keanggotaan (`layout.peran_beranda`: karyawan / umum / bukan anggota). Bukan anggota → `ruang_tidak_diizinkan` per kartu (dan 403 di `ambil`), juga untuk pemanggil langsung (plugin H2). Tidak bergantung lagi pada `izin_pengelola_aktif()`: di dalam `atas_izin_pengelola()` karyawan tetap karyawan. Batasan untuk kartu dari `peran.batasan_anggota`.

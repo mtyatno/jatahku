@@ -54,7 +54,7 @@ from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
     HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
     Notification, NotificationPreference, PaymentOrder, PendingTransaction, ProofRule, ProofRuleVote,
-    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings, Transaction, User,
+    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings, RuangKamus, Transaction, User,
     UserEnvelopeKeyword, UserStreak,
 )
 from app.services.kotak_struk import belajar
@@ -108,7 +108,7 @@ async def _delete_envelopes(db: AsyncSession, env_ids: list) -> None:
     if not env_ids:
         return
     for model in (Allocation, Transaction, PendingTransaction, RecurringTransaction,
-                  Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap):
+                  Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap, RuangKamus):
         await db.execute(delete(model).where(model.envelope_id.in_(env_ids)))
     await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
@@ -236,6 +236,8 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
         await db.execute(delete(model).where(model.user_id == uid))
     # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
     await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))
+    # Kamus ruang usaha (R7) tetap milik ruang; nama pengajar dikosongkan eksplisit.
+    await db.execute(update(RuangKamus).where(RuangKamus.diajarkan_oleh == uid).values(diajarkan_oleh=None))
     await db.flush()
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()

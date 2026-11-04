@@ -47,7 +47,26 @@ PESAN = {
     "amplop_tidak_diizinkan": "Amplop ini tidak termasuk yang diizinkan admin untukmu.",
     "jenis_tidak_diizinkan": "Admin belum mengizinkanmu mencatat jenis ini di ruang ini.",
     "jendela_ubah_lewat": "Catatan ini sudah tidak bisa diubah atau dihapus. Minta admin bila perlu.",
+    "client_ref_bentrok": "Kode kiriman ini sudah dipakai catatan lain (ruang, jenis, atau amplop berbeda). "
+                          "Muat ulang untuk melihat catatan itu, lalu catat lagi bila perlu.",
 }
+
+# Review keamanan PR #191 temuan 1: satu `client_ref` hanya untuk satu catatan. Kiriman ulang dengan ref yang sama
+# hanya menjawab catatan/draf lama bila ruang, jenis, dan amplopnya sama; selain itu 409 `client_ref_bentrok`, supaya
+# klien tidak pernah menerima catatan ruang lain sebagai jawaban (mis. "tercatat di ruang keluargamu" padahal draf
+# ruang usaha).
+REF_BENTROK = "client_ref_bentrok"
+
+
+def ref_bentrok() -> "PeranDitolak":
+    return PeranDitolak(REF_BENTROK, status_code=409)
+
+
+def cek_ref_draf(draf, *, household_id, jenis: str, envelope_id=None) -> None:
+    """Draf dari `client_ref` yang sama boleh dijawab ulang hanya untuk catatan yang sama. Melempar `PeranDitolak`."""
+    if (draf.household_id != household_id or draf.jenis != jenis
+            or (envelope_id is not None and draf.envelope_id != envelope_id)):
+        raise ref_bentrok()
 
 
 class PeranDitolak(Exception):
@@ -239,6 +258,21 @@ def cek_catat(batasan: Batasan | None, *, jenis: str, amplop_ids, jumlah: Decima
                            f"Wajib foto nota untuk catatan di atas {_rp(batasan.foto_nota_di_atas)}.",
                            status_code=422)
     return batasan.batas_nominal is not None and jumlah > batasan.batas_nominal
+
+
+def aturan_catatan(batasan: Batasan | None, jumlah: Decimal | None) -> list[dict]:
+    """Batasan yang akan berlaku untuk satu catatan karyawan senilai `jumlah`, untuk ditampilkan sebelum simpan
+    (Catat cepat, R7; `aturan` di `/transactions/suggest-envelope`). Hanya tampilan: penegakannya tetap `cek_catat`.
+    Kosong untuk owner/admin (batasan None) atau bila nominal belum diketahui."""
+    if batasan is None or jumlah is None:
+        return []
+    out = []
+    if batasan.foto_nota_di_atas is not None and jumlah > batasan.foto_nota_di_atas:
+        out.append({"kode": "foto_nota", "teks": f"Wajib foto nota di atas {_rp(batasan.foto_nota_di_atas)}."})
+    if batasan.batas_nominal is not None and jumlah > batasan.batas_nominal:
+        out.append({"kode": "persetujuan",
+                    "teks": f"Di atas batasmu {_rp(batasan.batas_nominal)}: menunggu persetujuan admin."})
+    return out
 
 
 def pesan_persetujuan(batasan: Batasan) -> str:
