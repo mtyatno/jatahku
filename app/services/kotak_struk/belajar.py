@@ -396,7 +396,9 @@ async def learn_from_skip(db: AsyncSession, item, alasan: str | None, *, user_id
     (`approved_logo_keys`; dalam praktik tidak pernah: kunci logo hanya untuk `tidak_dikenali`, bukan PROOF_TYPES)."""
     item_id = getattr(item, "id", None)
     try:
-        if not item.layout or item.doc_type not in LAYOUT_TYPES:
+        # Jenis dicek lebih dulu (review M3a temuan 5): hanya QRIS/transfer yang bisa memberi suara, jadi aturan logo
+        # tidak perlu dibaca untuk jenis lain.
+        if not item.layout or item.doc_type not in PROOF_TYPES:
             return 0
         key = item.layout.get("key") if isinstance(item.layout, dict) else None
         approved_logo = (await approved_logo_keys(db) if isinstance(key, str) and logo_word(key) else frozenset())

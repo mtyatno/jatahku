@@ -118,6 +118,21 @@ class ArahTokenTests(unittest.TestCase):
             with self.subTest(title):
                 self.assertEqual(arah_tokens(["GoPay", title, "Rp20.000"], transfer_doc()), [])
 
+    def test_label_only_title_gives_no_judul_token(self):   # review M3a temuan 1
+        for title in ("Penerima Transfer Sukses Abadi", "Tujuan Transfer Berhasil Kepada Rina", "Pembayaran Tagihan Berhasil",
+                      "Tujuan Transfer Berhasil", "Pengirim Transfer Berhasil", "Nama Penerima Transaksi Berhasil",
+                      "Status Pembayaran Berhasil"):
+            with self.subTest(title):
+                self.assertEqual([t for t in arah_tokens(["BCA", title, "Rp20.000"], transfer_doc(issuer="bca_mobile"))
+                                  if t.startswith("judul:")], [])
+        self.assertLessEqual({"penerima", "pengirim", "tujuan", "kepada", "nama", "tagihan"}, ARAH_GENERIC)
+        # Kata arah uang tetap membedakan.
+        self.assertEqual(arah_tokens(["GoPay", "Top Up Berhasil", "Rp20.000"], transfer_doc()), ["judul:top up"])
+        self.assertEqual(arah_tokens(["GoPay", "Dana Masuk", "Rp20.000"], transfer_doc()), ["judul:dana masuk"])
+        self.assertTrue(TOP_UP_WORDS.isdisjoint(ARAH_GENERIC))
+        self.assertTrue({"masuk", "terima", "diterima", "setoran", "penarikan", "kembali", "refund"}.isdisjoint(
+            ARAH_GENERIC))
+
     def test_judul_token_from_title_words_without_status(self):
         cases = {
             "Top Up Berhasil": "judul:top up",
@@ -209,7 +224,10 @@ class VotesForSkipTests(unittest.TestCase):
         bad = ["ke:budi santoso", "ke:gopay budi", "ke:gopay", "ke:gopay topu topup ovo", "ke:gopay topup budi",
                "ke:budi gopay topup", "ke:gopay topu sxxxx", "judul:wahyu", "judul:top up wahyu",
                "judul:transfer", "judul:top up 1234", "judul:top up berhasil", "kirim:gopay topu", 7, None,
-               "judul:", "ke:", "judul:top  up", "judul:Top Up"]
+               "judul:", "ke:", "judul:top  up", "judul:Top Up",
+               # review M3a temuan 2: kata TITLE_WORDS bertanda baca/"#" dan kata berulang
+               "judul:pb#", "judul:m-bca", "judul:top up top", "ke:dana dana saldo", "ke:gopay topu topu",
+               "judul:penerima", "judul:tujuan transfer", "judul:pembayaran tagihan"]
         self.assertEqual(votes_for_skip(layout(arah=bad), document(), "top_up"), [])
         for token in bad:
             with self.subTest(token):
@@ -347,6 +365,27 @@ class SkipAlasanTests(ApiBase):
         # Tanpa alasan = perilaku lama.
         r = await self.skip(item.id, reason="bukan_pengeluaran")
         self.assertEqual((r.status_code, (await self.get(item.id)).channel_meta), (200, {"skip_reason": "bukan_pengeluaran"}))
+
+    async def test_skip_alasan_on_recorded_item_is_409_without_vote(self):   # review M3a temuan 3
+        """Suara hanya sesudah UPDATE lewati berhasil: item yang sudah `tercatat` (atau status lain yang tidak bisa
+        dilewati) -> 409, tidak ada suara, item tidak berubah."""
+        for status in ("tercatat", "dilewati", "kedaluwarsa", "diproses"):
+            with self.subTest(status):
+                item = await self.ready(TOPUP)
+                await self.set(item.id, status=status)
+                r = await self.skip(item.id, reason="bukan_pengeluaran", alasan="top_up")
+                self.assertEqual((r.status_code, r.json()["detail"]), (409, "Bukti ini tidak bisa dilewati"))
+                row = await self.get(item.id)
+                self.assertEqual(row.status, status)
+                self.assertNotIn("skip_alasan", row.channel_meta or {})
+        self.assertEqual(await self.votes(), [])
+        # Layanan langsung (sesi yang sama di-commit sesudahnya): tetap tanpa suara.
+        item = await self.ready(TOPUP)
+        await self.set(item.id, status="tercatat")
+        async with self.Session() as db:
+            self.assertFalse(await record.skip_item(db, item.id, self.a.id, "bukan_pengeluaran", alasan="top_up"))
+            await db.commit()
+        self.assertEqual(await self.votes(), [])
 
     async def test_skip_alasan_on_failed_item_is_stored_without_vote(self):
         item = await self.ready(TOPUP)

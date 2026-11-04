@@ -383,9 +383,13 @@ ARAH_PARTY_WORDS: frozenset[str] = (
     frozenset(MONEY_PROVIDERS)
     | frozenset(w for p in PROFILES for m in p.markers for w in re.findall(r"[a-z]+", m) if len(w) >= 3)
     | TOP_UP_WORDS)
-# Kata judul yang terlalu umum untuk membedakan arah uang: judul yang hanya memuat kata ini tidak memberi token.
-ARAH_GENERIC: frozenset[str] = frozenset({"transfer", "pembayaran", "bayar", "transaksi", "payment", "transaction",
-                                          "kirim", "uang", "ke", "dari", "qris", "nominal", "total", "rekening"})
+# Kata judul yang terlalu umum untuk membedakan arah uang: judul yang hanya memuat kata ini tidak memberi token. Termasuk
+# kata label kolom (review M3a temuan 1: "Penerima Transfer ...", "Tujuan Transfer", "Pembayaran Tagihan" bukan arah
+# uang). Kata arah (top, up, isi, saldo, masuk, terima, setoran, penarikan, refund, deposit) dan nama penyedia tidak.
+ARAH_GENERIC: frozenset[str] = frozenset(
+    "transfer pembayaran bayar transaksi payment transaction kirim uang ke dari qris nominal total rekening "
+    "penerima pengirim tujuan kepada nama name recipient atas asal sumber tagihan merchant toko jumlah status "
+    "keterangan catatan berita tanggal waktu jam pukul nomor no id ref referensi biaya admin".split())
 # Kata status di judul (dibuang dari token `judul:`): status bukan arah uang ("Transfer Berhasil" -> tanpa token).
 ARAH_STATUS_WORDS: frozenset[str] = (
     frozenset(w for w in TITLE_WORDS if pc.classify_status(w))
@@ -399,13 +403,23 @@ ARAH_KE_MIN_WORDS = 2
 _ARAH_PROVIDER_WORDS = ARAH_PARTY_WORDS - TOP_UP_WORDS
 
 
+_ARAH_WORD = re.compile(r"[a-z]+")
+
+
+def _plain_words(words: list[str]) -> bool:
+    """Kata huruf kecil ASCII saja (tanpa "#", "-", digit) dan tanpa kata berulang (review M3a temuan 2)."""
+    return all(_ARAH_WORD.fullmatch(w) for w in words) and len(set(words)) == len(words)
+
+
 def _judul_ok(words: list[str]) -> bool:
-    return (1 <= len(words) <= TITLE_MAX_WORDS and all(w in TITLE_WORDS and w not in ARAH_STATUS_WORDS for w in words)
+    return (1 <= len(words) <= TITLE_MAX_WORDS and _plain_words(words)
+            and all(w in TITLE_WORDS and w not in ARAH_STATUS_WORDS for w in words)
             and any(w not in ARAH_GENERIC for w in words))
 
 
 def _ke_ok(words: list[str]) -> bool:
-    return (ARAH_KE_MIN_WORDS <= len(words) <= ARAH_KE_MAX_WORDS and all(w in ARAH_PARTY_WORDS for w in words)
+    return (ARAH_KE_MIN_WORDS <= len(words) <= ARAH_KE_MAX_WORDS and _plain_words(words)
+            and all(w in ARAH_PARTY_WORDS for w in words)
             and any(w in TOP_UP_WORDS for w in words) and any(w in _ARAH_PROVIDER_WORDS for w in words))
 
 
