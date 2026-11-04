@@ -49,14 +49,18 @@ class IncomeKind:
     """`incomes.kind` — membedakan pemasukan sungguhan dari gerakan internal.
 
     transfer: geser dana antar-amplop (nominal 0); top-up: pemasukan baru yang
-    langsung mengisi satu amplop; penyesuaian: cocokkan saldo (`balance_check_id`).
+    langsung mengisi satu amplop; penyesuaian: cocokkan saldo (`balance_check_id`);
+    prive: uang yang diambil pemilik dari ruang usaha (Plugin R8), dua baris —
+    di ruang usaha nominal 0 dengan alokasi negatif (keluar, bukan beban, tidak
+    mengurangi laba), di ruang keluarga pemilik pemasukan biasa ke Tabungan (masuk).
     Jenis usaha (penjualan, modal, pinjaman) milik plugin Buku Usaha, bukan inti.
     """
     PEMASUKAN = "pemasukan"
     TRANSFER = "transfer"
     TOPUP = "top-up"
     PENYESUAIAN = "penyesuaian"
-    ALL = (PEMASUKAN, TRANSFER, TOPUP, PENYESUAIAN)
+    PRIVE = "prive"
+    ALL = (PEMASUKAN, TRANSFER, TOPUP, PENYESUAIAN, PRIVE)
 
 
 # --- Mixins ---

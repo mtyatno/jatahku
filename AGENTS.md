@@ -233,6 +233,12 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin R8: prive dua sisi (tanpa migrasi)
+Endpoint baru `POST /prive` dan nilai baru `incomes.kind = prive` (kolom String, tanpa migrasi). Tanpa paket, `.env`,
+atau perubahan tampilan; belum bisa dipakai siapa pun sebelum ada ruang usaha (R4, flag `ruang_usaha_users`).
+1. Merge, tunggu deploy hijau (`api.jatahku.com/health` → commit baru).
+2. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0.
+
 ## Deploy Checklist — Plugin H1: host plugin (a7e3c1f5d9b2) — sudah jalan 2026-11-04
 Migrasi dijalankan pemilik di VPS; run deploy `e739245` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang".
 Menambah tabel `plugin_installations`, `entitlements`, `plugin_audit_log` dan endpoint `GET /plugins`,
@@ -543,7 +549,7 @@ Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, be
 5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
 6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
 7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
-8. **Tidak ada kueri lintas ruang** selain Prive. Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
+8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
 9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
 - **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1; umumnya `plugin_<id>_users`, dibaca host); saklar darurat `plugin_saklar_darurat` (H1, daftar id plugin). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
 - **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.

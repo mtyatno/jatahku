@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard, plugins
+from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard, plugins, prive
 from app.api.routes import ruang as ruang_routes
 from app.api.routes import ruang_kelola
 from app.api.routes import admin_kotak
@@ -170,6 +170,7 @@ app.include_router(ruang_routes.router, prefix="/ruang", tags=["ruang"])
 app.include_router(ruang_kelola.router, tags=["ruang"])   # R5: /ruang/{id}/…, /ruang/gabung, /persetujuan/saya
 app.include_router(plugins.router, prefix="/plugins", tags=["plugins"])
 app.include_router(plugins.ruang_router, prefix="/ruang", tags=["plugins"])
+app.include_router(prive.router, prefix="/prive", tags=["prive"])
 
 
 from starlette.middleware.base import BaseHTTPMiddleware
