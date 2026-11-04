@@ -1,7 +1,9 @@
 """Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending; juga judul status
 gagal/pending di badan), seperti struk belanja. Total: label total atau nominal utama bila teksnya resi aplikasi bank
 (tagihan, pulsa, bukti bayar saat saklar mati), selain itu nominal Rp terbesar. Bila aplikasinya punya aturan belajar
-`label_total` yang disetujui (`ParseContext.rules`) dan labelnya menemukan nominal: total itu, keyakinan `tinggi`."""
+`label_total` yang disetujui (`ParseContext.rules`) dan labelnya menemukan nominal: total itu, keyakinan `tinggi`. Aplikasi
+tanpa profil dengan aturan `logo` yang disetujui (tahap 2, M2b; pre-flight A16 K7): `doc.issuer` = kunci profil yang
+dipetakan, dan label belajar dibaca dengan kunci itu (nilai "baru": penerbit tetap kosong, label dengan kunci logo)."""
 from __future__ import annotations
 
 import re
@@ -13,7 +15,10 @@ from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB, learned_amount
-from app.services.kotak_struk.readers.profiles import detect_issuer, learned_paid_at, learned_profile
+from app.services.kotak_struk.config import APP_NEW
+from app.services.kotak_struk.readers.profiles import (
+    Learned, detect_issuer, learned_for, learned_logo, learned_paid_at, learned_profile,
+)
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
 from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt, printed_dates
 
@@ -39,7 +44,35 @@ class UnknownReader:
         return parsed
 
     async def _parse(self, doc: TextDoc, ctx: ParseContext) -> Parsed:
-        learned = self._learned(doc, ctx)
+        issuer, rule_labels = self._rule_labels(doc, ctx)
+        parsed = await self._read(doc, ctx, rule_labels)
+        # Penerbit dari aturan `logo` hanya untuk bukti yang tetap `tidak_dikenali` (penyelamatan LLM = struk belanja).
+        if issuer is not None and parsed.doc.doc_type == self.doc_type:
+            parsed.doc.issuer = issuer
+        return parsed
+
+    @staticmethod
+    def _rule_labels(doc: TextDoc, ctx: ParseContext) -> tuple[str | None, Learned]:
+        """(penerbit dari aturan `logo`, label aturan belajar) untuk bukti ini. Profil terdeteksi (`detect_issuer`): label
+        dengan kunci profil itu, aturan `logo` tidak dibaca, penerbit tetap kosong (seperti tahap 1). Tanpa profil:
+        `learned_logo` memberi kunci profil P -> (P, label kunci P), hanya label (`learned_for`), tidak pernah profil P
+        sendiri (kalimat selesai, pihak di atas nominal, label referensi: status dan dedup; K7); "baru" -> (None, label
+        kunci `logo:<kata>`); tanpa aturan `logo` yang disetujui -> tanpa label (label berkunci logo diabaikan)."""
+        if not ctx.rules:
+            return None, Learned()
+        lines = pc.clean_lines(doc.lines)
+        profile = detect_issuer(lines)
+        if profile is not None:
+            return None, learned_profile(lines, profile, ctx.rules)[0]
+        app = learned_logo(ctx.rules, lines)
+        if app is None:
+            return None, Learned()
+        if app == APP_NEW:
+            return None, learned_profile(lines, None, ctx.rules, allow_logo=True)[0]
+        return app, learned_for(ctx.rules, app)
+
+    async def _read(self, doc: TextDoc, ctx: ParseContext, rule_labels: Learned) -> Parsed:
+        learned = self._learned(doc, ctx, rule_labels)
         if learned is not None:
             return learned
         # Seperti scan struk lama: foto yang tidak terbaca pun dicoba ke LLM cadangan (bila aktif).
@@ -77,19 +110,17 @@ class UnknownReader:
         ))
 
     @staticmethod
-    def _learned(doc: TextDoc, ctx: ParseContext) -> Parsed | None:
-        """Bukti tak dikenal dari aplikasi yang punya aturan belajar `label_total` yang disetujui (kunci dari
-        `kerangka.rule_key`: hanya kunci profil, mis. resi tagihan Jago; aturan label berkunci `logo:<kata>` baru dibaca di
-        M2b, dan hanya selagi aturan `logo` kunci itu disetujui; review M2a temuan 3) dan label itu menemukan nominal:
-        total itu,
-        keyakinan `tinggi` (spec §5), sebelum LLM cadangan dan `_app_receipt_total` (teksnya terbaca; aturan yang
-        disetujui lebih dipercaya dari tebakan). Tanggal dari label aturan `label_tanggal` bila ada, selain itu tebakan
-        biasa (tepat satu tanggal tercetak). Status tetap hanya dari judul (`parse`). None bila tanpa aturan atau labelnya
-        tidak menemukan nominal: pembacaan biasa."""
-        if not ctx.rules:
+    def _learned(doc: TextDoc, ctx: ParseContext, learned: Learned) -> Parsed | None:
+        """Bukti tak dikenal dari aplikasi yang punya aturan belajar `label_total` yang disetujui (`learned`, dari
+        `_rule_labels`: kunci profil terdeteksi, mis. resi tagihan Jago; kunci profil dari aturan `logo`; atau kunci
+        `logo:<kata>` hanya selagi aturan `logo` "baru" kunci itu disetujui, review M2a temuan 3) dan label itu menemukan
+        nominal: total itu, keyakinan `tinggi` (spec §5), sebelum LLM cadangan dan `_app_receipt_total` (teksnya terbaca;
+        aturan yang disetujui lebih dipercaya dari tebakan). Tanggal dari label aturan `label_tanggal` bila ada, selain
+        itu tebakan biasa (tepat satu tanggal tercetak). Status tetap hanya dari judul (`parse`). None bila tanpa label
+        aturan atau labelnya tidak menemukan nominal: pembacaan biasa."""
+        if not learned:
             return None
         lines = pc.clean_lines(doc.lines)
-        learned, _ = learned_profile(lines, detect_issuer(lines), ctx.rules)
         body = pc.body_lines(lines)
         total = learned_amount(body, learned.total)
         if total is None:

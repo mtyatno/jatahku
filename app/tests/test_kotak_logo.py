@@ -179,35 +179,148 @@ class LogoReadKeyTests(unittest.IsolatedAsyncioTestCase):
                                             proofs_enabled=enabled)
                 if plain.parsed.doc.doc_type not in ("qris", "transfer"):
                     continue
-                ruled = await read_document(TextDoc(lines=list(case["lines"]), kind=KIND_IMAGE),
-                                            ParseContext(today=TODAY, user_name=case.get("user_name"),
-                                                         rules={key: dict(HOSTILE)}),
-                                            proofs_enabled=enabled)
-                compared += 1
-                with self.subTest(id=case["id"], on=enabled):
-                    self.assertEqual(ruled.reader, plain.reader)
-                    self.assertEqual(ruled.parsed.doc.to_json(), plain.parsed.doc.to_json())
+                # Juga dengan aturan `logo` yang disetujui untuk kunci itu (M2b): hanya `UnknownReader` memakainya.
+                for extra in ({}, {"logo": ["baru"]}, {"logo": ["bsi"]}):
+                    ruled = await read_document(TextDoc(lines=list(case["lines"]), kind=KIND_IMAGE),
+                                                ParseContext(today=TODAY, user_name=case.get("user_name"),
+                                                             rules={key: {**HOSTILE, **extra}}),
+                                                proofs_enabled=enabled)
+                    compared += 1
+                    with self.subTest(id=case["id"], on=enabled, extra=extra):
+                        self.assertEqual(ruled.reader, plain.reader)
+                        self.assertEqual(ruled.parsed.doc.to_json(), plain.parsed.doc.to_json())
         self.assertGreater(compared, 5)
 
 
+async def read_doc(lines, rules=None, *, enabled=True, user_name=None):
+    ctx = ParseContext(today=TODAY, user_name=user_name, **({"rules": rules} if rules is not None else {}))
+    return await read_document(TextDoc(lines=list(lines), kind=KIND_IMAGE), ctx, proofs_enabled=enabled)
+
+
+def logo_rule(value, **labels):
+    return {"logo": [value] if isinstance(value, str) else list(value), **labels}
+
+
+# NEWPAY dengan dua tanggal: tanpa aturan total Rp50.000 berkeyakinan `rendah` (nominal Rp terbesar) dan tanpa tanggal
+# (dua tanggal tercetak); aturan "nominal"/"tanggal" membacanya `tinggi` dan tanggal 30. Baris Rp kedua (mis. biaya)
+# membuat teks ini dibaca pembaca struk belanja, jadi tidak dipakai di sini.
+NEWPAY_DATES = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "Tanggal 30/10/2026 09:00", "31/10/2026 10:00"]
+RULE_LABELS = {"label_total": ["nominal"], "label_pihak": [], "label_tanggal": ["tanggal"]}
+
+
 class UnknownReaderLogoRulesTests(unittest.IsolatedAsyncioTestCase):
-    async def test_unknown_reader_ignores_logo_keyed_label_rules_until_m2b(self):
-        # Review M2a temuan 3, pilihan pengendali "tunda ke M2b": aturan label berkunci `logo:<kata>` belum dipakai
-        # pembaca mana pun (juga `UnknownReader`), karena di sini pembaca belum tahu apakah aturan `logo` kunci itu
-        # masih disetujui. Tanpa itu label "biaya" akan dibaca sebagai total Rp2.500 berkeyakinan tinggi.
-        from app.services.kotak_struk.readers.unknown import UnknownReader
-        lines = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "Biaya Rp2.500", "31/10/2026 10:00"]
-        self.assertEqual(key_of(lines), "logo:newpay")
-        plain = await UnknownReader().parse(TextDoc(lines=lines, kind=KIND_IMAGE), ParseContext(today=TODAY))
-        rules = {"logo:newpay": {"label_total": ["biaya"], "label_pihak": [], "label_tanggal": ["tanggal"]}}
-        ruled = await UnknownReader().parse(TextDoc(lines=lines, kind=KIND_IMAGE), ParseContext(today=TODAY, rules=rules))
-        self.assertEqual(ruled.doc.to_json(), plain.doc.to_json())
-        self.assertEqual(ruled.doc.amounts.total, 50000)
-        # Kunci profil tetap dipakai seperti tahap 1 (pembanding: aturannya sungguh bisa menggigit).
-        jago = ["Jago Syariah", "Pembayaran Berhasil", "Nominal Rp50.000", "Biaya Rp2.500", "31/10/2026 10:00"]
-        got = await UnknownReader().parse(TextDoc(lines=jago, kind=KIND_IMAGE),
-                                          ParseContext(today=TODAY, rules={"jago": rules["logo:newpay"]}))
-        self.assertEqual((got.doc.amounts.total, got.doc.confidence["total"]), (2500, "tinggi"))
+    """Aturan `logo` yang disetujui (Task M2b; pre-flight A16 K7, G11) hanya memberi `UnknownReader` penerbit
+    (`doc.issuer`) dan kunci label belajarnya. Status, pihak, referensi, perutean, dan keyakinan tanpa label aturan sama
+    persis dengan tanpa aturan."""
+
+    async def asyncSetUp(self):
+        asyncio.get_running_loop().slow_callback_duration = 5.0
+        patcher = patch.object(merchants, "_warned_no_key", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def same_but_issuer(self, got, plain, issuer):
+        self.assertEqual(got.reader, plain.reader)
+        self.assertEqual(got.parsed.doc.issuer, issuer)
+        self.assertEqual({**got.parsed.doc.to_json(), "issuer": None}, plain.parsed.doc.to_json())
+        self.assertEqual(vars(got.parsed.secrets), vars(plain.parsed.secrets))
+        self.assertEqual([c.as_dict() for c in got.checks], [c.as_dict() for c in plain.checks])
+
+    async def test_approved_logo_maps_unknown_app_to_profile_issuer(self):
+        # Rencana memakai "Total Rp50.000"; label "Total" membuat teks ini dibaca pembaca struk belanja (tanpa aturan
+        # pun), jadi di sini "Nominal Rp50.000" (NEWPAY), yang memang jatuh ke pembaca tidak dikenali.
+        rules = {"logo:newpay": {"logo": ["bsi"]}}
+        d = (await read_doc(NEWPAY, rules)).parsed.doc
+        self.assertEqual((d.doc_type, d.issuer), ("tidak_dikenali", "bsi"))
+        plain = await read_doc(NEWPAY)
+        self.assertIsNone(plain.parsed.doc.issuer)
+        self.same_but_issuer(await read_doc(NEWPAY, rules), plain, "bsi")
+        # Nilai pertama yang sah (urut pendukung); nilai rusak dilewati; bentuk rusak = tanpa aturan.
+        for values, want in ((["jago", "bsi"], "jago"), (["siti", "BSI", "seabank"], "seabank"), (["siti"], None),
+                             ([], None), (["baru", "bsi"], None)):
+            with self.subTest(values=values):
+                self.same_but_issuer(await read_doc(NEWPAY, {"logo:newpay": logo_rule(values)}), plain, want)
+        for broken in ({"logo:newpay": {"logo": "bsi"}}, {"logo:newpay": ["bsi"]}, {"logo:newpay": {"logo": [7]}},
+                       {"logo:kilatpay": {"logo": ["bsi"]}}, {"newpay": {"logo": ["bsi"]}}, {"bsi": {"logo": ["jago"]}}):
+            with self.subTest(broken=broken):
+                self.same_but_issuer(await read_doc(NEWPAY, broken), plain, None)
+        # Saklar bukti mati: aturan tidak sampai ke pembaca.
+        off = await read_doc(NEWPAY, enabled=False)
+        self.same_but_issuer(await read_doc(NEWPAY, rules, enabled=False), off, None)
+
+    async def test_mapped_profile_gives_labels_but_never_status_party_or_refs(self):
+        plain = await read_doc(NEWPAY_DATES)
+        self.assertEqual((plain.parsed.doc.doc_type, plain.parsed.doc.amounts.total, plain.parsed.doc.confidence,
+                          plain.parsed.doc.paid_at), ("tidak_dikenali", 50000, {"total": "rendah"}, None))
+        # Label dibaca dengan kunci profil P, bukan kunci logo.
+        got = await read_doc(NEWPAY_DATES, {"logo:newpay": logo_rule("jago"), "jago": dict(RULE_LABELS)})
+        d = got.parsed.doc
+        self.assertEqual((d.issuer, d.amounts.total, d.confidence["total"]), ("jago", 50000, "tinggi"))
+        self.assertEqual((d.paid_at.day, d.confidence["paid_at"]), (30, "tinggi"))
+        self.assertEqual((d.doc_type, d.status, got.reader), (plain.parsed.doc.doc_type, plain.parsed.doc.status,
+                                                               plain.reader))
+        # Label berkunci logo tidak dipakai bila logonya dipetakan ke profil; label profil lain juga tidak.
+        for rules in ({"logo:newpay": logo_rule("jago", **RULE_LABELS)},
+                      {"logo:newpay": logo_rule("jago"), "bsi": dict(RULE_LABELS)}):
+            with self.subTest(rules=rules):
+                self.same_but_issuer(await read_doc(NEWPAY_DATES, rules), plain, "jago")
+        # Profil Jago punya kalimat selesai (status), pihak di atas nominal, dan label referensi "id transaksi": tidak
+        # satu pun dipakai untuk bukti tak dikenal yang dipetakan ke Jago (K7).
+        jago_like = ["NEWPAY", "Pembayaran", "WARUNG CONTOH", "Rp50.000", "ID Transaksi", "87654321",
+                     "Nomor Referensi 12345678", "Resi ini merupakan bukti transaksi yang sah"]
+        plain = await read_doc(jago_like)
+        self.assertEqual((plain.parsed.doc.doc_type, plain.parsed.doc.status), ("tidak_dikenali", "tidak_diketahui"))
+        for labels in ({}, {"label_pihak": ["id transaksi", "nomor referensi"], "label_tanggal": ["status"]}):
+            with self.subTest(labels=labels):
+                self.same_but_issuer(await read_doc(jago_like, {"logo:newpay": logo_rule("jago"), "jago": labels}),
+                                     plain, "jago")
+        # Penyelamatan LLM (dibaca sebagai struk belanja): tanpa penerbit dari aturan logo, sama dengan tanpa aturan.
+        llm = AsyncMock(return_value={"merchant": "TOKO", "date": None, "total": 99000})
+        extra = {"image": b"img", "content_type": "image/jpeg", "llm": llm}
+        saved = await read_document(TextDoc(lines=list(NEWPAY), kind=KIND_IMAGE),
+                                    ParseContext(today=TODAY, **extra), proofs_enabled=True)
+        self.assertEqual(saved.parsed.doc.doc_type, "struk_belanja")
+        ruled = await read_document(TextDoc(lines=list(NEWPAY), kind=KIND_IMAGE),
+                                    ParseContext(today=TODAY, rules={"logo:newpay": logo_rule("bsi")}, **extra),
+                                    proofs_enabled=True)
+        self.same_but_issuer(ruled, saved, None)
+        # Bukti tak dikenal yang profilnya terdeteksi tidak pernah memakai aturan logo (kunci aturannya kunci profil).
+        jago = ["Jago Syariah", "Pembayaran Berhasil", "Nominal Rp50.000", "Tanggal 30/10/2026 09:00", "31/10/2026 10:00"]
+        self.assertEqual(key_of(jago), "logo:jago syariah")
+        plain = await read_doc(jago)
+        self.assertEqual(plain.reader, "tidak_dikenali")
+        self.same_but_issuer(await read_doc(jago, {"logo:jago syariah": logo_rule("bsi", **RULE_LABELS)}), plain, None)
+        # Pembanding: label kunci profil `jago` sungguh dipakai (tahap 1), tetap tanpa penerbit.
+        got = (await read_doc(jago, {"jago": dict(RULE_LABELS), "logo:jago syariah": logo_rule("bsi")})).parsed.doc
+        self.assertEqual((got.issuer, got.confidence["total"]), (None, "tinggi"))
+
+    async def test_logo_baru_unlocks_learned_labels_for_logo_key(self):
+        plain = await read_doc(NEWPAY_DATES)
+        labels = {"logo:newpay": dict(RULE_LABELS)}
+        # Tanpa aturan `logo` yang disetujui untuk kunci itu: label berkunci logo diabaikan (review M2a temuan 3).
+        for rules in (labels, {**labels, "logo:kilatpay": logo_rule("baru")},
+                      {"logo:newpay": {**RULE_LABELS, "logo": ["siti"]}}, {"logo:newpay": {**RULE_LABELS, "logo": []}}):
+            with self.subTest(rules=rules):
+                self.same_but_issuer(await read_doc(NEWPAY_DATES, rules), plain, None)
+        # `baru`: penerbit tetap None, label dibaca dengan kunci `logo:newpay`.
+        got = await read_doc(NEWPAY_DATES, {"logo:newpay": logo_rule("baru", **RULE_LABELS)})
+        d = got.parsed.doc
+        self.assertEqual((d.issuer, d.amounts.total, d.confidence["total"]), (None, 50000, "tinggi"))
+        self.assertEqual((d.paid_at.day, d.confidence["paid_at"]), (30, "tinggi"))
+        self.assertEqual((d.doc_type, d.status, got.reader), ("tidak_dikenali", "tidak_diketahui", "tidak_dikenali"))
+        # Label profil tidak dipakai untuk `baru`.
+        self.same_but_issuer(await read_doc(NEWPAY_DATES, {"logo:newpay": logo_rule("baru"), "jago": dict(RULE_LABELS)}),
+                             plain, None)
+        # Status tetap hanya dari judul: label jahat ("status", baris gagal) tidak membuka blokir.
+        failed = ["NEWPAY", "Pembayaran Gagal", "Nominal Rp50.000", "31/10/2026 10:00"]
+        hostile = {"label_total": ["status", "pembayaran gagal", "nominal"], "label_pihak": ["status"],
+                   "label_tanggal": ["status", "pembayaran gagal"]}
+        before = await read_doc(failed)
+        after = await read_doc(failed, {"logo:newpay": logo_rule("baru", **hostile)})
+        self.assertEqual((before.parsed.doc.doc_type, before.parsed.doc.status), ("tidak_dikenali", "gagal"))
+        self.assertEqual(after.parsed.doc.status, "gagal")
+        self.assertEqual([c.as_dict() for c in after.checks], [c.as_dict() for c in before.checks])
+        self.assertEqual(after.parsed.doc.confidence["total"], "tinggi")   # aturannya sungguh dipakai
 
 
 class VotesForLogoTests(unittest.TestCase):
@@ -407,10 +520,10 @@ class AppChoiceTests(DbBase):
             await db.rollback()   # tidak meng-commit sendiri
         self.assertEqual((await self.votes(), await self.meta(item)), ([], None))
 
-    async def test_approved_logo_keys_and_reader_rules_unchanged(self):
-        async def add(kind, key, value, status="disetujui"):
+    async def test_approved_logo_keys_and_reader_rules_with_logo(self):
+        async def add(kind, key, value, status="disetujui", users=2):
             async with self.Session() as db:
-                db.add(ProofRule(kind=kind, rule_key=key, value=value, users=2, households=1, status=status,
+                db.add(ProofRule(kind=kind, rule_key=key, value=value, users=users, households=1, status=status,
                                  decided_at=datetime(2026, 10, 30, tzinfo=timezone.utc)))
                 await db.commit()
             belajar.invalidate_rules_cache()
@@ -428,11 +541,22 @@ class AppChoiceTests(DbBase):
         self.assertEqual(set(rules), {"logo:sinarpay", "gopay"})
         await add("logo", "logo:newpay", "baru")
         await add("logo", "logo:siti aminah", "bsi")   # bentuk rusak (data lama/tangan): tidak pernah kunci logo
+        await add("logo", "logo:kilatpay", "siti")   # nilai bukan pilihan (data lama/tangan): tidak dimuat
+        await add("logo", "gopay", "bsi")             # aturan `logo` untuk kunci profil: tidak dimuat
         logo_keys, rules = await keys()
         self.assertEqual(logo_keys, frozenset({"logo:newpay"}))
-        # Pembaca belum memakai aturan `logo` (M2b): bentuk `approved_rules` sama persis dengan tahap 1.
+        # M2b: `approved_rules` memuat jenis `logo` (`{"logo": [nilai]}`) untuk kunci logo yang sah; kunci yang tidak
+        # punya aturan `logo` tetap berbentuk tahap 1 (tanpa `"logo"`).
         self.assertEqual(rules, {"logo:sinarpay": {"label_total": ["nominal"], "label_pihak": [], "label_tanggal": []},
-                                 "gopay": {"label_total": ["dibayar"], "label_pihak": [], "label_tanggal": []}})
+                                 "gopay": {"label_total": ["dibayar"], "label_pihak": [], "label_tanggal": []},
+                                 "logo:newpay": {"label_total": [], "label_pihak": [], "label_tanggal": [],
+                                                 "logo": ["baru"]}})
+        # Nilai `logo` urut pendukung terbanyak (lalu yang lebih dulu disetujui, lalu teksnya).
+        await add("logo", "logo:newpay", "jago", users=3)
+        await add("label_total", "logo:newpay", "biaya")
+        _, rules = await keys()
+        self.assertEqual(rules["logo:newpay"], {"label_total": ["biaya"], "label_pihak": [], "label_tanggal": [],
+                                                "logo": ["jago", "baru"]})
         # Galat database: kosong, bukan melempar.
         belajar.invalidate_rules_cache()
         broken = AsyncMock()
@@ -476,7 +600,8 @@ class AdminLogoKindTests(AdminRulesBase):
         self.assertEqual((await self.act(rule["id"], "setujui")).status_code, 200)
         async with self.Session() as db:
             self.assertEqual(await belajar.approved_logo_keys(db), frozenset({"logo:newpay"}))
-            self.assertEqual(await belajar.approved_rules(db), {})
+            self.assertEqual(await belajar.approved_rules(db), {"logo:newpay": {
+                "label_total": [], "label_pihak": [], "label_tanggal": [], "logo": ["bsi"]}})
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")

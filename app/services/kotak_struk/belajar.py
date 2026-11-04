@@ -17,7 +17,8 @@ Nilai aturan = label kosakata dari kerangka: hanya baris BERLABEL, tanpa `#` (di
 Jenis tahap 2 `logo` (M2a; spec §2, pre-flight A16 K6, K8): jawaban "Aplikasi apa ini?" pada bukti `tidak_dikenali`
 berkunci logo (`learn_app_choice`): kunci `logo:<kata>`, nilai salah satu dari 12 kunci profil atau APP_NEW ("baru");
 tidak pernah teks bebas. Suara ditolak bila kata logonya nama yang dikenal di bukti itu (keterangan tercatat, pihak
-lawan, merchant terbaca, nama user). Aturan `logo` belum dipakai pembaca di sini (M2b).
+lawan, merchant terbaca, nama user). Aturan `logo` yang disetujui dimuat `approved_rules` untuk pembaca tidak dikenali
+(M2b: hanya penerbit `doc.issuer` dan kunci label belajarnya; status, pihak, referensi tidak pernah).
 
 - `label_total`: nominal akhir berbeda dari total terbaca (juga bila total tidak terbaca) dan tercetak di baris
   `nominal` berlabel. Label biaya/potongan/saldo (`NOT_TOTAL_WORDS`) tidak pernah menjadi label total. Tepat satu label
@@ -527,14 +528,15 @@ def invalidate_rules_cache() -> None:
     _rules_generation += 1
 
 
-# Jenis yang dimuat cache aturan: label (pembaca) dan `logo` (`approved_logo_keys`; pembaca memakainya mulai M2b).
+# Jenis yang dimuat cache aturan: label dan `logo` (pembaca lewat `approved_rules`, dan `approved_logo_keys`).
 _CACHED_KINDS = (*KINDS, KIND_LOGO)
 
 
 async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
     """Semua aturan `disetujui` berjenis `_CACHED_KINDS` (`{rule_key: {kind: [nilai]}}`, urutan `approved_rules`), dari
-    cache modul bila masih segar. None bila database galat (log peringatan; tidak disimpan di cache). Hasilnya objek
-    cache: pemanggil tidak boleh mengubahnya."""
+    cache modul bila masih segar. Aturan `logo` hanya untuk kunci logo yang sah (`logo_word`) dan nilai pilihan
+    (`APP_CHOICES`: kunci profil atau "baru", K6); selain itu (data lama/tangan) dilewati. None bila database galat (log
+    peringatan; tidak disimpan di cache). Hasilnya objek cache: pemanggil tidak boleh mengubahnya."""
     global _rules_cache
     cached = _rules_cache
     if cached is not None and _clock() - cached[0] < RULE_CACHE_S:
@@ -552,6 +554,8 @@ async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
         return None
     rules: dict[str, dict[str, list[str]]] = {}
     for rule_key, kind, value in rows:
+        if kind == KIND_LOGO and (value not in APP_CHOICES or not logo_word(rule_key)):
+            continue
         if kind in _CACHED_KINDS:
             rules.setdefault(rule_key, {})
             rules[rule_key].setdefault(kind, []).append(value)
@@ -562,16 +566,19 @@ async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
 
 async def approved_rules(db: AsyncSession) -> dict[str, dict[str, list[str]]]:
     """Aturan berstatus `disetujui` untuk pembaca: `{rule_key: {"label_total": [...], "label_pihak": [...],
-    "label_tanggal": [...]}}`, label urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui (`decided_at`),
-    lalu teksnya. Hanya jenis label (`KINDS`): aturan `logo` belum dibaca pembaca (M2b), jadi kunci yang hanya punya
-    aturan `logo` tidak muncul. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya.
-    Galat database: log peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba
-    lagi), kueri di SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
+    "label_tanggal": [...]}}`, ditambah `"logo": [nilai]` hanya untuk kunci `logo:<kata>` yang punya aturan `logo`
+    disetujui (tahap 2, M2b: nilai kunci profil atau "baru"; `profiles.learned_logo`). Kunci lain berbentuk tahap 1
+    persis (tanpa `"logo"`). Nilai urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui (`decided_at`), lalu
+    teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database: log
+    peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba lagi), kueri di
+    SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
     rules = await _approved(db)
     out: dict[str, dict[str, list[str]]] = {}
     for rule_key, kinds in (rules or {}).items():
-        if any(kinds.get(k) for k in KINDS):
+        if any(kinds.get(k) for k in _CACHED_KINDS):
             out[rule_key] = {k: list(kinds.get(k, ())) for k in KINDS}
+            if kinds.get(KIND_LOGO):
+                out[rule_key][KIND_LOGO] = list(kinds[KIND_LOGO])
     return out
 
 

@@ -23,9 +23,9 @@ from sqlalchemy import func, select
 
 from app.models.models import ProofRule
 from app.scripts import kotak_corpus, kotak_sapuan
-from app.services.kotak_struk import belajar, checks as cross_checks, kerangka, record, registry
+from app.services.kotak_struk import belajar, checks as cross_checks, kerangka, merchants, record, registry, worker
 from app.services.kotak_struk.belajar import Final, votes_for
-from app.services.kotak_struk.config import RULE_CACHE_S
+from app.services.kotak_struk.config import APP_NEW, RULE_CACHE_S
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers import profiles
@@ -33,6 +33,7 @@ from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB, learned_amount, learned_datetime
 from app.services.kotak_struk.readers.profiles import PROFILES, Learned, detect_issuer, learned_for, with_learned
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
+from app.services.kotak_struk.readers.unknown import UnknownReader
 from app.services.kotak_struk.registry import read_document
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
@@ -121,6 +122,15 @@ def status_view(res) -> tuple:
     return (doc.doc_type, doc.status, {k: v for k, v in levels.items() if k.startswith("status_")},
             sorted(k for k, v in levels.items() if v == "block"), doc.flow if doc.flow != "keluar" else None,
             list(res.parsed.secrets.ref_values))
+
+
+def logo_view(res, lines) -> tuple:
+    """Yang tidak boleh diubah aturan `logo` (Review Focus 4): pembaca, jenis, status, `{kode: level}` semua cek,
+    `ref_hash` kolom worker (bahan dedup), dan arah uang."""
+    doc = res.parsed.doc
+    columns = worker._outcome(res, TextDoc(lines=list(lines), kind=KIND_IMAGE)).columns
+    return (res.reader, doc.doc_type, doc.status, {c.code: c.level for c in res.checks}, columns["ref_hash"],
+            doc.flow)
 
 
 # Label realistis untuk sapuan arah uang: lolos `kerangka.safe_label` (bentuk nilai aturan), tanpa `#`.
@@ -470,6 +480,52 @@ class StatusBlockTests(_Loop):
                     changed += full(got) != full(plain)
         self.assertGreater(blocked, 250)  # bukti gagal (kedua saklar) tetap MSG_BLOCKED
         self.assertGreater(changed, 20)   # aturan jahat benar-benar dipakai (nominal/nama/tanggal berubah)
+
+    async def test_logo_rules_never_change_status_or_routing(self):   # Review Focus 4 (tahap 2, M2b)
+        """Setiap daftar sapuan (semua tag), juga dengan baris logo rekaan "NEWPAY" di atasnya, kedua saklar: aturan
+        `logo` jahat untuk kunci logo kandidatnya (nilai setiap kunci profil dan `baru`) bersama label jahat
+        (`hostile_labels`: "status", label status, teks baris gagal) di kunci logo itu dan di SETIAP kunci profil.
+        Dibanding label jahat yang sama tanpa aturan `logo`: pembaca, jenis, status, `{kode: level}`, `ref_hash`, arah
+        uang, dan `check_recordable` sama. Dibanding tanpa aturan sama sekali: status, cek status/blokir, arah uang selain
+        keluar, referensi, dan `check_recordable` sama. Setiap nilai dicoba bila aturan logonya bisa dipakai (kandidat
+        logo, tanpa profil terdeteksi, saklar menyala, dibaca pembaca tidak dikenali); selain itu satu kunci profil dan
+        `baru` saja (jalur pemetaan dan jalur "baru")."""
+        patcher = patch.object(merchants, "_warned_no_key", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        values = [*PROFILE_KEYS, APP_NEW]
+        mapped = unlocked = blocked = 0
+        for entry in SWEEP:
+            user = entry.get("user_name")
+            for variant, lines in (("asli", entry["lines"]), ("newpay", ["NEWPAY", *entry["lines"]])):
+                clean = pc.clean_lines(lines)
+                candidate = kerangka.rule_key(clean, None, forbidden_words=set())
+                usable = bool(candidate and candidate.startswith("logo:")) and detect_issuer(clean) is None
+                key = candidate if usable else "logo:newpay"
+                labels = hostile_labels(lines)
+                labelled_rules = {k: rule(labels, labels, labels) for k in [*PROFILE_KEYS, key]}
+                for switch, enabled in SWITCHES:
+                    plain = await read(lines, enabled=enabled, user_name=user)
+                    labelled = await read(lines, labelled_rules, enabled=enabled, user_name=user)
+                    plain_ok = await recordable(plain.parsed.doc.to_json())
+                    labelled_view = logo_view(labelled, lines)
+                    labelled_ok = await recordable(labelled.parsed.doc.to_json())
+                    every = usable and enabled and labelled.reader == UnknownReader.name
+                    for value in (values if every else [values[0], APP_NEW]):
+                        rules = {**labelled_rules, key: {**labelled_rules[key], "logo": [value]}}
+                        got = await read(lines, rules, enabled=enabled, user_name=user)
+                        with self.subTest(entry["id"], variant=variant, switch=switch, value=value):
+                            self.assertEqual(logo_view(got, lines), labelled_view)
+                            self.assertEqual(status_view(got), status_view(plain))
+                            outcome = await recordable(got.parsed.doc.to_json())
+                            self.assertEqual(outcome, labelled_ok)
+                            self.assertEqual(outcome, plain_ok)
+                        blocked += outcome == record.MSG_BLOCKED
+                        mapped += got.parsed.doc.issuer == value != labelled.parsed.doc.issuer
+                        unlocked += value == APP_NEW and full(got) != full(labelled)
+        self.assertGreater(mapped, 40)     # aturan logo sungguh memberi penerbit (daftar "NEWPAY" tak dikenal)
+        self.assertGreater(unlocked, 2)    # `baru` sungguh membuka label jahat berkunci logo
+        self.assertGreater(blocked, 250)   # bukti gagal tetap MSG_BLOCKED
 
     async def test_status_flow_and_checks_get_a_context_without_rules(self):
         seen = {}
