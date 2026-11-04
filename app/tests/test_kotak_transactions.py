@@ -9,7 +9,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import contextlib
 import json
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal as D
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -26,10 +26,11 @@ from app.api.routes.transactions import _read_receipt_upload, run_receipt_scan
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
-    Allocation, Envelope, Income, MerchantEnvelopeMap, ReceiptScan, Transaction, User, UserEnvelopeKeyword,
+    Allocation, Envelope, Income, MerchantEnvelopeMap, ProofRuleVote, ReceiptScan, Transaction, User,
+    UserEnvelopeKeyword,
 )
 from app.services.expense_rules import NOT_SPENDABLE_MSG
-from app.services.kotak_struk import maintenance
+from app.services.kotak_struk import belajar, maintenance
 from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
 from app.services.kotak_struk.extract import PdfLocked
@@ -40,6 +41,7 @@ from app.services.receipt_scan import ScanBusy, scan_receipt
 from app.tests import test_kotak_api as kapi
 from app.tests.fakes import fixed_date
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, QRIS_KEY, fake_extract
+from app.tests.test_kotak_belajar import postgres_abort
 
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
                "Non Tunai (QRIS) 45.400"]
@@ -908,6 +910,174 @@ class BatchWithReceiptItemTests(TxnBase):
         self.assertEqual(again[0]["id"], first[0]["id"])
         self.assertEqual((await self.get(item.id)).transaction_ids, [first[0]["id"]])
         self.assertEqual(await self.count(Transaction), 1)
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Bukti transfer GoPay (rekaan): total terbaca Rp11.000 (nominal + biaya); "Jumlah Kirim Uang" Rp10.000 berlabel. Tes
+# koreksi memakai bacaan salah (`ready_gopay(misread=True)`: total Rp10.000 dari "Jumlah Kirim Uang") yang user
+# betulkan menjadi Rp11.000 ("Total Bayar"). Mencatat Rp10.000 dari bacaan benar = memilih tanpa biaya, bukan suara.
+GOPAY_TRANSFER = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Jumlah Kirim Uang", "Rp10.000",
+                  "Biaya Layanan Rp1.000", "Total Bayar Rp11.000", "Tanggal 26 Okt 2026 08:12"]
+AMOUNT_VOTE = ("label_total", "gopay", "total bayar")
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class CorrectionLearningTests(TxnBase):
+    """Belajar dari koreksi di `record.mark_recorded` (plan 2026-11-01 Task L2, Review Focus 1): sekali per transaksi,
+    tidak pernah membuat atau menggandakan transaksi, tidak mengubah status item, galatnya ditelan."""
+
+    async def votes(self):
+        async with self.Session() as db:
+            return [(v.kind, v.rule_key, v.value, v.user_id, v.household_id)
+                    for v in (await db.execute(select(ProofRuleVote))).scalars().all()]
+
+    def spy_learning(self):
+        real = belajar.learn_from_correction
+        spy = AsyncMock(side_effect=real)
+        return spy, patch.object(belajar, "learn_from_correction", spy)
+
+    async def ready_gopay(self, *, misread=True):
+        item = await self.ready(GOPAY_TRANSFER)
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.layout["key"], got.document["amounts"]["total"]), ("transfer", "gopay", 11000))
+        if misread:   # pembaca salah mengambil "Jumlah Kirim Uang" sebagai total
+            await self.set(item.id, document={**got.document, "amounts": {**got.document["amounts"], "total": 10000}})
+        return item
+
+    async def test_learning_never_records_or_duplicates(self):
+        # 1. Simpan dengan nominal dikoreksi: satu transaksi, satu suara, item tercatat.
+        item = await self.ready_gopay()
+        spy, patcher = self.spy_learning()
+        with patcher:
+            r = await self.post(item, ref="r1", desc="Transfer ke BUDI SANTOSO", amount=11000)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual(await self.count(Transaction), 1)
+            self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id, self.hh.id)])
+            got = await self.get(item.id)
+            self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+            # Kirim ulang `client_ref` yang sama: transaksi yang sama, belajar tidak jalan lagi.
+            again = await self.post(item, ref="r1", desc="Transfer ke BUDI SANTOSO", amount=11000)
+            self.assertEqual(again.json()["id"], r.json()["id"])
+        self.assertEqual(spy.await_count, 1)
+        self.assertEqual((await self.count(Transaction), len(await self.votes())), (1, 1))
+        final = spy.await_args.args[2]
+        self.assertEqual((final.amount, final.description), (11000, "Transfer ke BUDI SANTOSO"))
+        self.assertEqual(final.today, belajar.today_wib())
+
+        # 2. Penandaan hilang lalu disembuhkan kirim ulang (heal_recorded): belajar sekali, saat item ditandai.
+        healed = await self.ready_gopay()
+        spy, patcher = self.spy_learning()
+        with patcher:
+            with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                    self.assertLogs(RECORD_LOG, "WARNING"):
+                first = await self.post(healed, ref="h1", desc="kirim", amount=11000)
+            self.assertEqual(first.status_code, 201)
+            for _ in range(2):
+                again = await self.post(healed, ref="h1", desc="kirim", amount=11000)
+                self.assertEqual(again.json()["id"], first.json()["id"])
+        self.assertEqual(spy.await_count, 1)
+        self.assertEqual((await self.get(healed.id)).transaction_ids, [first.json()["id"]])
+        self.assertEqual(await self.count(Transaction), 2)
+
+        # 3. Belajar melempar galat: tetap 201, item tercatat, satu transaksi, tanpa suara baru.
+        broken = await self.ready_gopay()
+        with patch.object(belajar, "learn_from_correction", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            r = await self.post(broken, ref="b1", desc="kirim", amount=11000)
+        self.assertEqual(r.status_code, 201, r.text)
+        got = await self.get(broken.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        self.assertEqual((await self.count(Transaction), len(await self.votes())), (3, 1))
+
+    async def test_vote_write_failing_at_the_database_still_marks_the_item(self):
+        # Galat seperti Postgres (transaksi "aborted" sampai savepoint dibatalkan): suara batal, penandaan tetap.
+        for prefix in ("INSERT INTO proof_rule_votes",
+                       "SELECT transactions.amount, transactions.transaction_date, transactions.description"):
+            item = await self.ready_gopay()
+            with self.subTest(prefix=prefix), postgres_abort(self.engine, prefix) as state, \
+                    self.assertLogs("app.services.kotak_struk", "WARNING"):
+                r = await self.post(item, ref=prefix[:12], desc="kirim", amount=11000)
+            self.assertEqual(state["left"], 0)
+            self.assertEqual(r.status_code, 201, r.text)
+            got = await self.get(item.id)
+            self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        self.assertEqual((await self.count(Transaction), await self.votes()), (2, []))
+
+    async def test_uncorrected_save_gives_no_vote(self):
+        item = await self.ready_gopay(misread=False)
+        r = await self.post(item, ref="r1", desc="Transfer ke BUDI SANTOSO", amount=11000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.votes(), [])
+
+    async def test_amount_saved_without_the_fee_gives_no_vote(self):
+        # Review L2 M-4: total Rp11.000 terbaca benar; user mencatat Rp10.000 ("Jumlah Kirim Uang", ada baris biaya).
+        item = await self.ready_gopay(misread=False)
+        r = await self.post(item, ref="r1", desc="Transfer ke BUDI SANTOSO", amount=10000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.votes(), [])
+
+    async def test_unknown_document_learns_through_mark_recorded(self):
+        # Review L2 M-3: bukti `tidak_dikenali` berkunci profil (Jago) dengan nominal dikoreksi -> satu suara.
+        item = await self.ready(next(c["lines"] for c in CORPUS if c["id"] == "real-jago-pln-01"))
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.layout["key"], got.document["amounts"]["total"]),
+                         ("tidak_dikenali", "jago", 102750))
+        r = await self.post(item, ref="r1", desc="token listrik", amount=100000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.votes(), [("label_total", "jago", "rp bayar", self.a.id, self.hh.id)])
+        self.assertEqual((await self.get(item.id)).status, "tercatat")
+
+    async def test_today_is_the_wib_date_independent_of_the_wall_clock(self):
+        # Review L2 M-3: 15 Okt 01:00 WIB = 14 Okt 18:00 UTC; hari ini menurut belajar = 15 Okt.
+        fixed = datetime(2026, 10, 14, 18, 0, tzinfo=timezone.utc)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+        item = await self.ready_gopay()
+        spy, patcher = self.spy_learning()
+        with patcher, patch.object(belajar, "datetime", Clock):
+            r = await self.post(item, ref="r1", desc="kirim", amount=11000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(spy.await_args.args[2].today, date(2026, 10, 15))
+
+    def test_fractional_amount_is_never_a_whole_rupiah(self):
+        # Review L2 M-3: Rp10.000,50 tidak pernah sama dengan nominal kerangka Rp10.000.
+        self.assertIsNone(record_mod._whole(D("10000.50")))
+        self.assertIsNone(record_mod._whole(None))
+        self.assertEqual(record_mod._whole(D("10000.00")), 10000)
+        self.assertIsInstance(record_mod._whole(D("10000.00")), int)
+
+    async def test_batch_line_learns_once(self):
+        item = await self.ready_gopay()
+        line = {"envelope_id": str(self.env["Makan"].id), "amount": 11000, "description": "kirim",
+                "client_ref": "a", "receipt_item_id": str(item.id)}
+        for _ in range(2):
+            r = await self.c.post("/transactions/batch", json={"items": [line]})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertTrue(r.json()[0]["ok"])
+        self.assertEqual((await self.count(Transaction), await self.votes()), (1, [(*AMOUNT_VOTE, self.a.id, self.hh.id)]))
+
+    async def test_name_correction_in_the_description_votes(self):
+        lines = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Nama Penerima", "SITI RAHAYU",
+                 "Jumlah Rp10.000", "Tanggal 26 Okt 2026 08:12"]
+        item = await self.ready(lines)
+        self.assertEqual((await self.get(item.id)).document["counterparty"]["name"], "SITI RAHAYU")
+        r = await self.post(item, ref="r1", desc="Transfer ke Budi Santoso", amount=11000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.votes(), [("label_pihak", "gopay", "ditransfer ke", self.a.id, self.hh.id)])
+
+    async def test_no_learning_from_store_receipts(self):
+        item = await self.ready_store_receipt()
+        self.assertIsNone((await self.get(item.id)).layout)
+        spy, patcher = self.spy_learning()
+        with patcher:
+            r = await self.post(item, ref="a", desc="ROTI (Alfamart)", amount=15000)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((spy.await_count, await self.votes()), (0, []))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -209,9 +209,12 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._prive_rows(), [])
         return r
 
-    async def test_admin_dan_karyawan_ditolak(self):
-        for u in (self.adi, self.bagas):
-            await self._ditolak(u, self._body(), 403, prive.KODE_HANYA_PEMILIK)
+    async def test_admin_ditolak(self):
+        await self._ditolak(self.adi, self._body(), 403, prive.KODE_HANYA_PEMILIK)
+
+    async def test_karyawan_ditolak_gerbang_r5(self):
+        # R5: karyawan di ruang usaha ditolak `ruang_amplop` (tolak-bawaan) sebelum cek pemilik prive.
+        await self._ditolak(self.bagas, self._body(), 403, "khusus_admin")
 
     async def test_flag_ruang_usaha_tertutup_404(self):
         # R4: di luar flag `ruang_usaha_users`, objek ruang usaha tidak bisa ditulis — termasuk prive.

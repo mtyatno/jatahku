@@ -5,8 +5,7 @@ sebagai header `X-Jatahku-Ruang` (§1). `POST /ruang` membuat ruang usaha baru d
 sebagai owner. Ruang keluarga tidak dibuat di sini (dibuat saat daftar akun).
 
 Sampai rilis, ruang usaha di balik flag `ruang_usaha_users` (`ruang.ruang_usaha_dibuka`): di luar
-flag, ruang usaha tidak tampil dan tidak bisa dibuat. Undangan ruang usaha baru dibuka di R5,
-bersamaan dengan penegakan peran (catatan review PR #171), jadi ruang usaha R4 hanya berisi pemiliknya.
+flag, ruang usaha tidak tampil dan tidak bisa dibuat. Anggota, undangan, batasan, dan persetujuan: `ruang_kelola.py` (R5).
 """
 from uuid import UUID
 
@@ -49,7 +48,7 @@ class RuangItem(BaseModel):
     peran: str                       # owner | admin | member
     jumlah_anggota: int
     paket: dict | None = None        # Paket Usaha (ADR-P12, P13): diisi H1/V1; null sampai saat itu
-    jam_kerja: dict | None = None    # jadwal anggota dari admin (ADR-P17): diisi R5
+    jam_kerja: dict | None = None    # jadwal karyawan dari admin (ADR-P17, R5); null untuk owner/admin dan tanpa jadwal
 
 
 class RuangDaftar(BaseModel):
@@ -109,6 +108,11 @@ async def daftar_ruang(user: User = Depends(get_current_user), db: AsyncSession 
     items = await _daftar(db, user.id, usaha=dibuka)
     bawaan = await ruang_keluarga_id(db, user.id)
     items.sort(key=lambda r: r.id != bawaan)   # stabil: ruang keluarga di depan, sisanya tetap urut bergabung
+    from app.services import peran   # R5: jadwal karyawan dari admin, supaya klien bisa menampilkan jam bukanya
+    for it in items:
+        if it.jenis == HouseholdType.USAHA and it.peran == HouseholdRole.member.value:
+            b = await peran.batasan_karyawan(db, user.id, it.id)
+            it.jam_kerja = b.jam_kerja if b is not None else None
     boleh = dibuka and await _jumlah_usaha_milik(db, user.id) < MAKS_RUANG_USAHA
     return RuangDaftar(bawaan=bawaan, items=items, boleh_buat_usaha=boleh)
 

@@ -661,6 +661,40 @@ class ApiClient {
     }
   }
 
+  // Admin "Aturan belajar" Kotak Struk (app/api/routes/admin_kotak.py; logika tampilan di lib/proofRules.js).
+  // Daftar aturan per status (menunggu|disetujui|ditolak|dicabut|semua) → {counts, rules} atau null bila gagal.
+  async adminProofRules(status = 'semua') {
+    try {
+      const res = await this.request(`/admin/kotak/rules?status=${encodeURIComponent(status)}`);
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
+  // Keputusan pemilik: action setujui|tolak|cabut; body dari proofRules.decisionBody: {note, from_status} (status
+  // baris yang dilihat admin). → {ok, status, data}; status 0 = tidak sampai. 409 = transisi tidak sah / admin lain
+  // sudah memutuskan / di bawah ambang, 404 = aturan tidak ada.
+  async adminProofRuleAction(id, action, body) {
+    try {
+      const res = await this.request(`/admin/kotak/rules/${encodeURIComponent(id)}/${encodeURIComponent(action)}`, {
+        method: 'POST',
+        body: JSON.stringify({ note: body?.note ?? null, from_status: body?.from_status ?? null }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: {} };
+    }
+  }
+
+  // Angka suara per (aplikasi, jenis), tanpa teks label → {rows} atau null bila gagal.
+  async adminProofVotes() {
+    try {
+      const res = await this.request('/admin/kotak/votes');
+      if (res.ok) return await res.json();
+    } catch {}
+    return null;
+  }
+
   // Incomes
   async getIncomes(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
@@ -977,6 +1011,12 @@ class ApiClient {
     return this._chat('/bot/chat/proaktif', {});
   }
 
+  // Hasil bukti chat yang dibaca lewat batas tunggu (lib/chatPending.js): items = [{item_id, message_id}].
+  // `pending` = id item yang masih dibaca (tanya lagi nanti).
+  async chatBukti(items) {
+    return this._chat('/bot/chat/bukti', { items });
+  }
+
   // Foto struk dari chat → alur scan struk bot (kuota sama dengan tombol Foto/Galeri di form Catat).
   async chatPhoto(blob, clientId, { onProgress, onUploaded } = {}) {
     try {
@@ -1010,7 +1050,7 @@ class ApiClient {
       const res = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
-        return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [] };
+        return { ok: true, ops: Array.isArray(d.ops) ? d.ops : [], pending: Array.isArray(d.pending) ? d.pending : [] };
       }
       if (res.status === 429) return { ok: false, error: 'Terlalu banyak pesan. Tunggu sebentar, ya.' };
       return { ok: false, error: 'Bot sedang tidak bisa dihubungi. Coba lagi.' };

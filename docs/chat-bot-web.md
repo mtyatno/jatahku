@@ -24,10 +24,12 @@ Desktop: panel samping di bawah header, ditutup dengan X.
 ChatPanel.jsx ──POST /bot/chat/message {text, client_id}──▶ web_adapter.run_message
               ──POST /bot/chat/action  {message_id, data}──▶ web_adapter.run_action
               ──POST /bot/chat/photo   (image, client_id)──▶ web_adapter.run_photo
+              ──POST /bot/chat/bukti   {items: [{item_id, message_id}]}──▶ web_adapter.run_bukti
                                                               │
                          handler app/bot/* (handle_message, /status, callback t_, fshift:, …)
                                                               │
               ◀──────────── {"ops": [message | edit | buttons | toast]} ──┘
+                            (/bukti juga: "pending": [item_id yang masih dibaca])
 ```
 
 - `app/bot/web_adapter.py` — objek pengganti `Update`/`Message`/`CallbackQuery`
@@ -85,9 +87,42 @@ yang belum selesai, gabungan semua kanal). Foto JPEG masuk sebagai `photo`, form
 lain sebagai `document`. Kirim ulang
 dengan `client_id` yang sama tidak diproses dua kali (balasan yang sama dikembalikan),
 dan file yang sama selagi masih dibaca atau menunggu dikembalikan sebagai item yang
-sama. Bukti yang belum selesai dibaca dalam 10 detik dijawab "Masih dibaca" (hasilnya
-menyusul di Kotak Struk). Riwayat lokal hanya menyimpan pratinjau kecil (±2–5 KB),
-bukan fotonya.
+sama. Riwayat lokal hanya menyimpan pratinjau kecil (±2–5 KB), bukan fotonya.
+
+**Bukti yang belum selesai dibaca dalam 10 detik** (OCR pertama sesudah API restart,
+foto yang jatuh ke LLM cadangan, worker sedang memproses bukti lain) dijawab
+"⏳ Masih dibaca, nanti kukabari di sini." — padanan "nanti kukabari" di Telegram, tetapi
+hasilnya **ditarik panel, bukan didorong worker**, karena server tidak menyimpan riwayat
+chat web (`send_ready_message` hanya untuk Telegram; item chat web tidak punya `notify`):
+
+- op `edit` gelembung itu membawa `item` (id item Kotak Struk) dan `pending: true`; riwayat
+  lokal menyimpan keduanya (`lib/chatHistory.js`), jadi bertahan walau app ditutup.
+- Selagi panel terbuka, `ChatPanel` memanggil `POST /bot/chat/bukti` `{items: [{item_id,
+  message_id}]}` dengan jeda 3→5→8→13→20→30 dtk (aturan di `lib/chatPending.js`), juga segera
+  saat panel dibuka lagi dan saat app kembali tampil. Jawabannya `{ops, pending}`:
+  `run_bukti` → `receipt_cmd.reply_item_result` merender hasil item (teks dan tombol yang
+  sama persis dengan Telegram, sesi tombol `txn:{key}` baru, tombol dicatat seperti pesan bot
+  lain) sebagai op `edit` untuk pesan yang sama; item yang masih dibaca masuk `pending` dan
+  gelembungnya tidak disentuh. Panel ditutup → berhenti bertanya; dibuka lagi → tanya lagi.
+- Hasil yang sudah selesai di tempat lain dikabari tanpa tombol catat: `tercatat` → "✅ Bukti
+  ini sudah tercatat …", `dilewati` → "❌ Dilewati.", `kedaluwarsa` (QRIS/transfer) → "⚠️ Bukti
+  ini sudah kedaluwarsa, …", `gagal` → galatnya. Item yang tidak ada atau bukan milik user →
+  "😕 Bukti ini sudah tidak ada. Kirim ulang fotonya." tanpa `item`, jadi panel berhenti
+  bertanya. Galat merender satu item dicatat di log dan item itu dikembalikan sebagai
+  `pending` (ditanya lagi nanti), supaya hasilnya tidak hilang dari chat.
+- **Tombol basi disegarkan.** Sesi tombol bot hanya 10 menit (`TXN_TTL`). Riwayat lokal
+  mencatat `renderedAt`; saat panel dibuka atau app kembali tampil, gelembung bukti yang masih
+  bertombol dan dirender ≥ 9 menit lalu ikut dikirim ke `/bukti` dan dirender ulang dengan sesi
+  baru — tanpa itu, ketukan sesudah pergi sebentar dijawab "⏰ Session expired. Kirim ulang."
+  Catatan atau jawaban tanggal yang sempat diberikan pada sesi lama ikut hilang (sesinya memang
+  sudah habis); pesan dirender dari status item saat ini.
+- Bukti yang sama dikirim lagi selagi dibaca dijawab "⏳ Bukti ini sudah dikirim tadi dan masih
+  dibaca. Hasilnya nanti di sini." dengan `item`/`pending` juga (riwayat chat web per perangkat,
+  pesan pertama bisa ada di HP lain); keduanya mendapat hasil, pencatatan tetap sekali (item
+  `tercatat` tidak bisa dicatat lagi lewat tombol pesan lainnya).
+- Hasil yang datang lewat `/bukti` menggulir daftar ke bawah hanya bila user sedang di paling
+  bawah (edit biasa tidak menggulir, seperti Telegram). Selama menunggu, di bawah gelembung
+  tampil "Hasilnya muncul di sini begitu selesai dibaca".
 
 **Route ini tetap khusus gambar**: PDF ditolak 415 ("Format foto tidak didukung. Pakai
 JPG, PNG, atau WebP."). Bot Telegram sudah menerima PDF lewat alur yang sama; dari web,
@@ -135,6 +170,8 @@ lain. Setelah deploy: buka webapp, ketuk ikon chat, kirim `kopi 35k` dan
   check-in harian, nanti "Sepadan?" Pikir-Pikir) ke chat web — sekarang hanya
   lewat Telegram.
 - Bukti PDF di chat web (route foto tetap khusus gambar; PDF dari web lewat form Catat dan
-  `/bagikan`). Bukti yang selesai dibaca belakangan dihitung banner "Bukti menunggu" dan tampil
-  sebagai kartu di `/bagikan` (Bagian B "Bagikan ke Jatahku"), hanya saat saklar `receipt_inbox`
-  menyala: selama saklar mati, "Cek Bukti menunggu di beranda nanti." di chat web belum punya banner.
+  `/bagikan`). Bukti dari chat yang selesai dibaca belakangan diambil panel chat sendiri (lihat
+  "Foto struk"); saat saklar `receipt_inbox` menyala, item yang sama juga dihitung banner "Bukti
+  menunggu" dan tampil sebagai kartu di `/bagikan` (Bagian B "Bagikan ke Jatahku").
+- Hasil bukti yang selesai saat panel chat tertutup baru terlihat saat chat dibuka lagi; belum ada
+  lencana di tombol chat atau notifikasi dalam aplikasi untuk itu.

@@ -53,7 +53,9 @@ def fake_db():
 class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_route_output(self):
         from app.api.routes.envelopes import envelope_summary
-        a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db(), hid=HID)
+        from unittest.mock import AsyncMock, patch
+        with patch("app.services.peran.batasan_karyawan", AsyncMock(return_value=None)):   # bukan karyawan (R5)
+            a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db(), hid=HID)
         self.assertEqual((a.allocated, a.rollover, a.spent), (D("1000000"), D("50000"), D("300000")))
         self.assertEqual((a.remaining, a.reserved, a.free), (D("750000"), D("100000"), D("650000")))
         self.assertEqual(a.group_name, "Kebutuhan")

@@ -33,7 +33,7 @@ from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBaya
 from app.services.kotak_struk.worker import process_item
 from app.tests.fakes import fixed_date
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, PAID, QRIS_KEY, fake_extract
-from app.tests.test_kotak_transactions import STORE_LINES, TxnBase
+from app.tests.test_kotak_transactions import AMOUNT_VOTE, GOPAY_TRANSFER, STORE_LINES, TxnBase
 from app.tests.test_web_chat import FakeRedis as ChatRedis
 
 # Fixture bertanggal Oktober 2026 (bukti 26 Okt, struk 14 Okt): "hari ini" untuk pertanyaan tanggal dokumen (H1) dipatok
@@ -405,12 +405,30 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.text(), "😕 PDF terkunci kata sandi")
         self.assertEqual(self.keyboard(), [])
 
-    async def test_slow_item_on_web_points_to_waiting_list_without_notify(self):
+    async def test_slow_item_on_web_tags_the_message_with_its_item_without_notify(self):
+        # Chat web tidak dikabari worker: gelembungnya membawa id item (`kotak_item`, `kotak_pending`) dan panel
+        # chat menanyakan hasilnya sendiri lewat /bot/chat/bukti.
         with channel.web_channel():
             await self.send_photo(detail=DETAIL_PENDING)
-        self.assertEqual(self.text(), "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti.")
+        self.assertEqual(self.text(), "⏳ Masih dibaca, nanti kukabari di sini.")
+        self.assertEqual(self.status.edit_text.call_args.kwargs,
+                         {"kotak_item": DETAIL_PENDING["id"], "kotak_pending": True})
         self.assertEqual(self.created_request().source, "web_chat")
         self.assertEqual(self.db.executed, [])   # tanpa `notify`
+
+    async def test_ready_item_on_web_tags_the_result_message_with_its_item(self):
+        with channel.web_channel():
+            await self.send_photo(detail=DETAIL_QRIS)
+        self.assertEqual(self.text(), proof_message(DETAIL_QRIS))
+        kwargs = self.status.edit_text.call_args.kwargs
+        self.assertEqual(kwargs["kotak_item"], DETAIL_QRIS["id"])
+        self.assertNotIn("kotak_pending", kwargs)
+
+    async def test_telegram_messages_carry_no_web_tags(self):
+        await self.send_photo(detail=DETAIL_QRIS)
+        self.assertEqual(set(self.status.edit_text.call_args.kwargs), {"reply_markup"})
+        await self.send_photo(detail=DETAIL_PENDING)
+        self.assertEqual(self.status.edit_text.call_args.kwargs, {})
 
     async def test_item_finished_before_notify_update_is_rendered_directly(self):
         self.db.rowcount = 0   # UPDATE bersyarat tidak mengenai baris: item sudah selesai
@@ -840,6 +858,24 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(f"txnlock:{key}", self.redis.store)
 
 
+class FixAmountTests(unittest.TestCase):
+    """`receipt_cmd.fix_amount` (Task L2b): nominal koreksi hanya dari satu pengeluaran ber-nominal yang dibaca NLP."""
+
+    def test_single_expense_amount(self):
+        for text, amount in [("transfer budi 11rb", 11000), ("bakso 12500", 12500), ("rp17.000", 17000),
+                             ("beli 2 kopi 25 ribu", 25000)]:
+            with self.subTest(text=text):
+                self.assertEqual(receipt_cmd.fix_amount(text), amount)
+
+    def test_no_amount_multi_item_proof_text_or_too_long(self):
+        proof = "\n".join(CORPUS[0]["lines"])
+        pasted = "Transfer Berhasil\nPenerima BUDI\nRp11.000"   # teks bukti satu nominal: masuk Kotak Struk, bukan NLP
+        self.assertTrue(looks_like_proof_text(proof) and looks_like_proof_text(pasted))
+        for text in ["halo", "", "kopi 20k, roti 15k", "kopi 6jt gojek 1juta", proof, pasted, "kopi 20k " + "x" * 500]:
+            with self.subTest(text=text[:40]):
+                self.assertIsNone(receipt_cmd.fix_amount(text))
+
+
 class CallbackRegistryTests(unittest.TestCase):
     def test_date_answer_is_routed_on_telegram_and_in_the_web_chat(self):
         for data in ("kt_1a2b3c4d_h", "kt_1a2b3c4d_d"):
@@ -1079,6 +1115,41 @@ class KotakBotDbTests(TxnBase):
         self.assertIn("bakso", learned)
         self.assertFalse({"siti", "aminah"} & learned)
 
+    async def test_bot_record_path_learns_through_mark_recorded(self):
+        """Jalur catat bot (`_receipt_feedback_saved` -> `record.mark_recorded`) belajar dari nilai akhir transaksi,
+        sekali: pembaca memilih "Nama Penerima", user menulis nama di baris "Ditransfer ke" lewat catatan."""
+        from app.models.models import ProofRuleVote
+        from app.services.kotak_struk import belajar
+        lines = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Nama Penerima", "SITI RAHAYU",
+                 "Jumlah Rp10.000", "Tanggal 26 Okt 2026 08:12"]
+        await self.send(lines)
+        item_id = self.items[-1]
+        self.assertEqual((await self.get(item_id)).layout["key"], "gopay")
+        key = self.button("Makan").split("_")[1]
+        await self.tap(f"kn_{key}")
+        note = SimpleNamespace(photo=None, document=None, text="titip Budi Santoso", reply_text=AsyncMock())
+        update_ = SimpleNamespace(message=note, effective_user=SimpleNamespace(id=42, first_name="Ani"),
+                                  effective_chat=SimpleNamespace(id=4242))
+        await handlers.handle_message(update_, SimpleNamespace(bot=self.bot))
+        makan = next(b.callback_data for row in keyboard_of(self.bot.edit_message_text.call_args) for b in row
+                     if "Makan" in b.text)
+        spy = AsyncMock(side_effect=belajar.learn_from_correction)
+        with patch.object(belajar, "learn_from_correction", spy):
+            await self.tap(makan)
+            await self.tap(makan)   # ketukan kedua: sesi habis, tidak mencatat dan tidak belajar lagi
+        [txn] = await self.txns()
+        self.assertEqual(txn.description, "titip Budi Santoso (Siti Rahayu)")
+        item = await self.get(item_id)
+        self.assertEqual((item.status, item.transaction_ids), ("tercatat", [str(txn.id)]))
+        self.assertEqual(spy.await_count, 1)
+        final = spy.await_args.args[2]
+        self.assertEqual((final.amount, final.txn_date, final.description),
+                         (10000, txn.transaction_date, txn.description))
+        async with self.Session() as db:
+            votes = [(v.kind, v.rule_key, v.value, v.user_id, v.household_id)
+                     for v in (await db.execute(select(ProofRuleVote))).scalars().all()]
+        self.assertEqual(votes, [("label_pihak", "gopay", "ditransfer ke", self.a.id, self.hh.id)])
+
     async def test_pdf_and_proof_text_become_kotak_items(self):
         await self.send(CORPUS[2]["lines"], data=b"%PDF-1.4\n%x\n", mime="application/pdf")
         self.assertTrue(self.texts()[-1].startswith("Transfer · Budi Santoso\nRp 152.500 · "))
@@ -1249,14 +1320,87 @@ class KotakBotDbTests(TxnBase):
         hook.assert_not_awaited()
         self.assertNotIn("notify", (await self.get(self.items[-1])).channel_meta)
 
-    async def test_web_chat_slow_item_has_no_notify(self):
+    async def test_web_chat_slow_item_has_no_notify_and_is_fetched_by_the_panel(self):
+        # Chat web: "Masih dibaca" membawa id item tanpa `notify`; panel menanyakan hasilnya lewat `run_bukti`
+        # (POST /bot/chat/bukti) sampai worker selesai, lalu pesan yang sama diganti hasil + tombol amplop.
         user = SimpleNamespace(id=self.a.id, name="Ani")
         with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
             ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
-        self.assertEqual(ops[-1]["text"], "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti.")
-        item = await self.get(self.items[-1])
+        msg_id, item_id = ops[0]["id"], self.items[-1]
+        self.assertEqual(ops[-1]["text"], "⏳ Masih dibaca, nanti kukabari di sini.")
+        self.assertEqual((ops[-1]["id"], ops[-1]["item"], ops[-1]["pending"]), (msg_id, str(item_id), True))
+        item = await self.get(item_id)
         self.assertEqual(item.source, "web_chat")
         self.assertNotIn("notify", item.channel_meta)
+
+        still = await web_adapter.run_bukti(user, [(item_id, msg_id)])   # worker belum selesai
+        self.assertEqual(still, {"ops": [], "pending": [str(item_id)]})
+
+        self.assertEqual(await process_item(item_id, session_factory=self.Session,
+                                            extract=fake_extract(CORPUS[0]["lines"]), now=NOW,
+                                            proofs_enabled=True), "siap")
+        await self.set(item_id, paid_at=PAID)
+        done = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+        self.assertEqual(done["pending"], [])
+        [op] = done["ops"]
+        self.assertEqual((op["type"], op["id"], op["item"]), ("edit", msg_id, str(item_id)))
+        self.assertNotIn("pending", op)
+        self.assertTrue(op["text"].startswith("QRIS · Siti Aminah"), op["text"])
+        makan = next(b["data"] for row in op["buttons"] for b in row if "Makan" in b["text"])
+        self.assertTrue(makan.startswith("t_"))
+        # Tombolnya tercatat untuk pesan itu (jaminan tombol chat web), jadi bisa ditekan dan mencatat sebagai webapp.
+        self.assertIn(makan, json.loads(self.redis.store[web_adapter.buttons_key(user.id, msg_id)]))
+        ops = await web_adapter.run_action(user, msg_id, makan)
+        self.assertIn("Masuk ke", ops[0]["text"])
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, str(txn.source)), (D("25000"), "TransactionSource.webapp"))
+        self.assertEqual((await self.get(item_id)).status, "tercatat")
+
+    async def test_run_bukti_renders_finished_states_without_record_buttons(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        msg_id, item_id = ops[0]["id"], self.items[-1]
+        await process_item(item_id, session_factory=self.Session, extract=fake_extract(CORPUS[0]["lines"]), now=NOW,
+                           proofs_enabled=True)
+        await self.set(item_id, paid_at=PAID)
+        for status, expect in [("dilewati", "❌ Dilewati."),
+                               ("kedaluwarsa", "⚠️ Bukti ini sudah kedaluwarsa, bagikan lagi untuk mencatatnya."),
+                               ("tercatat", "✅ Bukti ini sudah tercatat.")]:
+            with self.subTest(status):
+                await self.set(item_id, status=status)
+                res = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+                [op] = res["ops"]
+                self.assertEqual((res["pending"], op["id"], op["text"], op["buttons"]), ([], msg_id, expect, []))
+        # Gagal dibaca: galatnya, tanpa tombol.
+        await self.set(item_id, status="gagal", error="PDF terkunci kata sandi")
+        res = await web_adapter.run_bukti(user, [(item_id, msg_id)])
+        self.assertEqual((res["ops"][0]["text"], res["ops"][0]["buttons"]), ("😕 PDF terkunci kata sandi", []))
+
+    async def test_run_bukti_hides_other_users_items_and_unknown_ids(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        stranger = SimpleNamespace(id=self.b.id, name="Budi")
+        for who, iid in ((stranger, item_id), (user, uuid4())):
+            res = await web_adapter.run_bukti(who, [(iid, "m9")])
+            self.assertEqual(res["pending"], [])
+            [op] = res["ops"]
+            self.assertEqual((op["id"], op["text"], op["buttons"]),
+                             ("m9", "😕 Bukti ini sudah tidak ada. Kirim ulang fotonya.", []))
+            self.assertNotIn("item", op)
+        self.assertEqual((await self.get(item_id)).status, "siap")
+
+    async def test_run_bukti_keeps_an_item_pending_when_rendering_fails(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        with patch.object(receipt_cmd, "_result_reply", new=AsyncMock(side_effect=RuntimeError("db"))), \
+             self.assertLogs("jatahku.webchat", "ERROR"):
+            res = await web_adapter.run_bukti(user, [(item_id, "m1")])
+        self.assertEqual(res, {"ops": [], "pending": [str(item_id)]})   # klien bertanya lagi nanti
 
     # --- C5: "sudah tercatat {tgl} di {amplop}" -------------------------------
 
@@ -1445,14 +1589,16 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual((await self.get(item.id)).channel_meta,
                          {"chat_id": 4242, "status_message_id": 503, "notify": True})
 
-    async def test_web_chat_same_proof_while_waiting_points_to_the_waiting_list(self):
+    async def test_web_chat_same_proof_while_waiting_waits_on_its_own_message(self):
+        # Pesan kedua di chat web juga membawa id item: gelembungnya menanyakan hasilnya sendiri (riwayat chat web
+        # per perangkat, pesan pertama bisa ada di HP lain), tanpa merebut janji Telegram pesan pertama.
         photo = JPG + uuid4().bytes
         await self.send(lines=None, data=photo, message_id=501)
         user = SimpleNamespace(id=self.a.id, name="Ani")
         with patch.object(waiter, "wait_for_item", new=self.worker_inline(None)):
             ops = await web_adapter.run_photo(user, photo, "image/jpeg")
-        self.assertEqual(ops[-1]["text"],
-                         "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti.")
+        self.assertEqual(ops[-1]["text"], "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di sini.")
+        self.assertEqual((ops[-1]["item"], ops[-1]["pending"]), (str(self.items[0]), True))
         self.assertEqual((await self.get(self.items[0])).channel_meta,
                          {"chat_id": 4242, "status_message_id": 501, "notify": True})
 
@@ -1900,6 +2046,229 @@ class KotakBotDbTests(TxnBase):
         self.assertTrue(ops[-1]["text"].startswith("✅ Rp25rb — "), ops[-1]["text"])
         [txn] = await self.txns()
         self.assertEqual((txn.amount, txn.source.value), (D("25000"), "webapp"))
+
+
+    # --- L2b: nominal ketikan sesudah "Nominal salah" menjadi suara koreksi ---------------------------------------
+
+    async def fix_vote_item(self, owner=None, *, layout=True):
+        """Bukti transfer GoPay (`GOPAY_TRANSFER`) yang totalnya salah dibaca Rp10.000 ("Jumlah Kirim Uang"); yang benar
+        Rp11.000 ("Total Bayar"). `layout=False`: kerangka kosong (bukti lama, atau sudah dihapus pemeliharaan)."""
+        item = await self.ready(GOPAY_TRANSFER, owner=owner)
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.layout["key"]), ("transfer", "gopay"))
+        cols = {"document": {**got.document, "amounts": {**got.document["amounts"], "total": 10000}}}
+        if not layout:
+            cols["layout"] = None
+        await self.set(item.id, **cols)
+        return item
+
+    async def type_text(self, text, *, tg_id=42, envelope="Makan"):
+        """Ketikan biasa ke bot (handle_message). Bila NLP menanyakan amplop, tombol `envelope` diketuk. Mengembalikan
+        pesan tiruannya."""
+        message = SimpleNamespace(photo=None, document=None, text=text, reply_text=AsyncMock())
+        update_ = SimpleNamespace(message=message, effective_message=message,
+                                  effective_user=SimpleNamespace(id=tg_id, first_name="Ani"),
+                                  effective_chat=SimpleNamespace(id=tg_id * 100))
+        with patch("app.core.database.AsyncSessionLocal", new=self.Session):   # frasa niat yang dipelajari (NLP)
+            await handlers.handle_message(update_, SimpleNamespace(bot=self.bot))
+        for call in message.reply_text.call_args_list:
+            pick = [b.callback_data for row in keyboard_of(call) for b in row
+                    if envelope in b.text and (b.callback_data or "").startswith("t_")]
+            if pick:
+                await self.tap(pick[0])
+        return message
+
+    async def votes(self):
+        from app.models.models import ProofRuleVote
+        async with self.Session() as db:
+            return [(v.kind, v.rule_key, v.value, v.user_id)
+                    for v in (await db.execute(select(ProofRuleVote))).scalars().all()]
+
+    async def test_fix_then_typed_amount_votes_and_still_records_once(self):
+        from app.services.kotak_struk import belajar
+        from app.services.kotak_struk.config import FIX_TTL_S
+        item = await self.fix_vote_item()
+        query = await self.tap(f"struk_fix_{item.id}")
+        self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_FIX_PROOF)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.channel_meta["skip_reason"]), ("dilewati", "batal"))
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(item.id))
+        spy = AsyncMock(side_effect=belajar.learn_from_correction)
+        with patch.object(belajar, "learn_from_correction", spy), \
+                patch.object(self.redis, "set", wraps=self.redis.set) as redis_set:
+            await self.tap(f"struk_fix_{item.id}")   # ketukan kedua: item sudah dilewati, kunci tidak ditulis lagi
+            redis_set.assert_not_awaited()
+            await self.type_text("transfer budi 11rb")
+            await self.type_text("transfer budi 11rb")   # ketikan berikutnya: kunci sudah terpakai
+        # Pencatatan NLP seperti biasa: dua ketikan = dua transaksi, nominal ketikan, tidak tertaut ke item.
+        txns = await self.txns()
+        self.assertEqual([(t.amount, t.description, t.envelope_id) for t in txns],
+                         [(D("11000"), "transfer budi", self.env["Makan"].id)] * 2)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids), ("dilewati", None))
+        # Satu suara nominal dari user ini, sekali.
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+        self.assertEqual(spy.await_count, 1)
+        final = spy.await_args.args[2]
+        self.assertEqual(final, belajar.Final(11000, None, None, belajar.today_wib()))
+        self.assertEqual(spy.await_args.kwargs, {"user_id": self.a.id})
+        self.assertNotIn("kotak:fix:42", self.redis.store)
+        # Kunci ditulis dengan TTL FIX_TTL_S.
+        item2 = await self.fix_vote_item()
+        with patch.object(self.redis, "set", wraps=self.redis.set) as redis_set:
+            await self.tap(f"struk_fix_{item2.id}")
+        redis_set.assert_awaited_once_with("kotak:fix:42", str(item2.id), ex=FIX_TTL_S)
+
+    async def test_fix_key_expires_or_other_text_without_amount_no_vote(self):
+        # 1. Kunci habis (TTL): ketikan nominal tetap dicatat, tanpa suara.
+        item = await self.fix_vote_item()
+        await self.tap(f"struk_fix_{item.id}")
+        del self.redis.store["kotak:fix:42"]   # Redis menghapusnya sesudah FIX_TTL_S
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual([t.amount for t in await self.txns()], [D("11000")])
+        self.assertEqual(await self.votes(), [])
+        # 2. Ketikan pertama tanpa nominal memakai kuncinya: ketikan nominal sesudahnya bukan koreksi.
+        item = await self.fix_vote_item()
+        await self.tap(f"struk_fix_{item.id}")
+        await self.type_text("halo")
+        self.assertNotIn("kotak:fix:42", self.redis.store)
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual(len(await self.txns()), 2)
+        self.assertEqual(await self.votes(), [])
+        # Beberapa barang dalam satu ketikan, teks bukti, teks kepanjangan: `FixAmountTests`.
+
+    async def test_fix_vote_only_for_the_same_user_and_own_item(self):
+        # Kunci yang menunjuk item user lain (atau id rusak/tidak ada): tanpa suara (sebelum user ini pernah bersuara,
+        # supaya suara yang sama tidak tertutup oleh "satu suara per user per aturan").
+        theirs = await self.fix_vote_item(owner=self.b)
+        for value in (str(theirs.id), "bukan-id", str(uuid4())):
+            with self.subTest(value=value):
+                self.redis.store["kotak:fix:42"] = value
+                await self.type_text("transfer budi 11rb")
+                self.assertEqual(await self.votes(), [])
+                self.assertNotIn("kotak:fix:42", self.redis.store)
+        # "Nominal salah" pada item user lain tidak melewatinya dan tidak menulis kunci.
+        await self.tap(f"struk_fix_{theirs.id}")
+        self.assertEqual((await self.get(theirs.id)).status, "siap")
+        self.assertNotIn("kotak:fix:42", self.redis.store)
+        # Ketikan user Telegram lain tidak memakai kunci user ini.
+        item = await self.fix_vote_item()
+        await self.tap(f"struk_fix_{item.id}")
+        await self.type_text("transfer budi 11rb", tg_id=43)
+        self.assertEqual(await self.votes(), [])
+        self.assertIn("kotak:fix:42", self.redis.store)
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+
+    async def test_fix_without_layout_or_store_receipt_never_votes(self):
+        # Kerangka kosong: kuncinya ada (dipakai sekali), tapi tanpa suara; ketikan tetap dicatat.
+        item = await self.fix_vote_item(layout=False)
+        await self.tap(f"struk_fix_{item.id}")
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(item.id))
+        await self.type_text("transfer budi 11rb")
+        self.assertNotIn("kotak:fix:42", self.redis.store)
+        self.assertEqual(await self.votes(), [])
+        self.assertEqual(len(await self.txns()), 1)
+        # Struk belanja: "Nominal salah" tetap umpan balik scan struk lama, tanpa kunci dan tanpa suara.
+        await self.send(STORE_LINES)
+        store_id = self.items[-1]
+        await self.tap(f"struk_fix_{store_id}")
+        self.assertEqual((await self.get(store_id)).outcome, "corrected")
+        self.assertNotIn("kotak:fix:42", self.redis.store)
+        await self.type_text("alfamart 45500")
+        self.assertEqual(await self.votes(), [])
+
+    async def test_fix_hook_runs_after_capture_note(self):
+        """Review L2b m-1: catatan untuk bukti lain (tombol "Tambah catatan") ditangkap dulu dan tidak menghabiskan
+        kunci "Nominal salah"; pesan teks biasa berikutnya yang memberi suara."""
+        item = await self.fix_vote_item()
+        await self.tap(f"struk_fix_{item.id}")
+        await self.send()   # bukti B (QRIS) lewat foto: tidak menyentuh kunci
+        key = self.button("Makan").split("_")[1]
+        await self.tap(f"kn_{key}")
+        note = await self.type_text("transfer budi 11rb")
+        note.reply_text.assert_not_awaited()   # catatan B, bukan NLP
+        self.assertIn("📝 transfer budi 11rb", self.bot.edit_message_text.call_args.args[0])
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(item.id))
+        self.assertEqual((await self.votes(), await self.txns()), ([], []))
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+        self.assertEqual([t.amount for t in await self.txns()], [D("11000")])
+
+    async def test_only_fix_writes_the_key_for_layout_types(self):
+        """Review L2b m-2/m-3: "Batal" (`struk_no_`) dan "Bukan pengeluaran"/"Duplikat" tidak menulis kunci; "Nominal
+        salah" menulisnya juga untuk item tidak dikenali (LAYOUT_TYPES, bukan hanya QRIS/transfer)."""
+        for data in ("struk_no_{}", "kx_{}", "kd_{}"):
+            item = await self.fix_vote_item()
+            with self.subTest(data=data):
+                await self.tap(data.format(item.id))
+                self.assertEqual((await self.get(item.id)).status, "dilewati")
+                self.assertNotIn("kotak:fix:42", self.redis.store)
+        unknown = await self.ready_unknown()
+        query = await self.tap(f"struk_fix_{unknown.id}")
+        self.assertEqual((await self.get(unknown.id)).status, "dilewati")
+        self.assertEqual(self.redis.store["kotak:fix:42"], str(unknown.id))
+        self.assertNotEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_FIX_PROOF)   # pesan struk lama
+
+    async def test_fix_never_blocks_nlp_when_redis_down(self):
+        item = await self.fix_vote_item()
+
+        async def down(*a, **kw):
+            raise ConnectionError("redis down")
+        # Redis mati saat "Nominal salah": item tetap dilewati, pesan ketik manual tetap tampil.
+        with patch.object(self.redis, "set", new=down), self.assertLogs("jatahku.bot", level="WARNING"):
+            query = await self.tap(f"struk_fix_{item.id}")
+        self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_FIX_PROOF)
+        self.assertEqual((await self.get(item.id)).status, "dilewati")
+        # Redis mati saat membaca kunci: ketikan dicatat seperti biasa, tanpa suara, dan diam-diam (review L2b m-4:
+        # tanpa peringatan bertraceback di setiap pesan teks, seperti `capture_note`; hanya log debug).
+        self.redis.store["kotak:fix:42"] = str(item.id)
+        with patch.object(self.redis, "getdel", new=down), self.assertLogs("jatahku.bot", level="DEBUG") as logs:
+            await self.type_text("transfer budi 11rb")
+        self.assertEqual([r.levelname for r in logs.records if "Nominal salah" in r.getMessage()], ["DEBUG"])
+        self.assertFalse([r for r in logs.records if r.levelno >= 30], [r.getMessage() for r in logs.records])
+        self.assertEqual([t.amount for t in await self.txns()], [D("11000")])
+        self.assertEqual(await self.votes(), [])
+        # Galat lain sesudah kunci terbaca (mis. database): ditelan, dicatat di log, pencatatan tetap jalan.
+        self.redis.store["kotak:fix:42"] = str(item.id)
+        with patch.object(receipt_cmd, "find_chat_user", new=AsyncMock(side_effect=RuntimeError("db down"))), \
+                self.assertLogs("jatahku.bot", level="WARNING"):
+            await self.type_text("transfer budi 11rb")
+        self.assertEqual(len(await self.txns()), 2)
+        self.assertEqual(await self.votes(), [])
+
+    async def test_web_chat_same_path(self):
+        """Chat web: tombol "Nominal salah" pada pertanyaan nominal kurang yakin, lalu ketikan nominal di chat web."""
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+
+        async def low_gopay(item_id, timeout_s, **kw):
+            await process_item(item_id, session_factory=self.Session, extract=fake_extract(GOPAY_TRANSFER), now=NOW,
+                               proofs_enabled=True)
+            got = await self.get(item_id)
+            doc = {**got.document, "amounts": {**got.document["amounts"], "total": 10000},
+                   "confidence": {**got.document["confidence"], "total": "rendah"}}
+            await self.set(item_id, document=doc, paid_at=PAID)
+            return await self.get(item_id)
+        with patch.object(waiter, "wait_for_item", new=low_gopay):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        msg_id, reading = ops[0]["id"], ops[-1]
+        makan = next(b["data"] for row in reading["buttons"] for b in row if "Makan" in b["text"])
+        [edit] = await web_adapter.run_action(user, msg_id, makan)
+        fix = next(b["data"] for row in edit["buttons"] for b in row if b["text"] == "✏️ Nominal salah")
+        self.assertEqual(fix, f"struk_fix_{item_id}")
+        await web_adapter.run_action(user, msg_id, fix)
+        web_key = f"kotak:fix:web:{self.a.id}"
+        self.assertEqual(self.redis.store[web_key], str(item_id))
+        self.assertNotIn("kotak:fix:42", self.redis.store)   # kunci per percakapan, bukan Telegram user ini
+        ops = await web_adapter.run_message(user, "transfer budi 11rb")
+        if ops[-1].get("buttons"):
+            pick = next(b["data"] for row in ops[-1]["buttons"] for b in row if "Makan" in b["text"])
+            await web_adapter.run_action(user, ops[-1]["id"], pick)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.source.value), (D("11000"), "webapp"))
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+        self.assertNotIn(web_key, self.redis.store)
 
 
 if __name__ == "__main__":

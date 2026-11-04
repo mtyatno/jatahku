@@ -135,3 +135,110 @@ def find_datetime(lines: list[str]) -> datetime | None:
         if parsed:
             return parsed
     return None
+
+
+# ── Label aturan belajar (spec 2026-11-01 §5; plan Task L3) ────────────────
+
+# Tanda baca di depan baris yang bukan bagian label ("• Total Bayar", "- Waktu Selesai"); sama dengan pinggiran yang
+# dibuang `kerangka.safe_label`, jadi label aturan (dari kerangka) cocok dengan baris yang sama.
+_LEAD = " \t:：;,.|·•-–—_/\\"
+_AMOUNT_START = re.compile(r"(?:Rp|IDR)\.?\s*\d|\d", re.IGNORECASE)
+
+
+def _learned_values(lines: list[str], labels: list[str], starts) -> tuple[str, int] | None:
+    """(teks nilai, indeks barisnya) untuk label aturan yang PERSIS (bukan awalan label lain): sisa baris sesudah label
+    (dan titik dua) bila `starts(sisa)`, atau, bila label berdiri sendiri, baris berikutnya bila `starts(baris itu)`.
+    Label lebih awal diutamakan, lalu baris lebih atas. Sama dengan cara kerangka memberi label: teks sebelum nilai di
+    baris yang sama, atau baris label di atas nilai yang berdiri sendiri."""
+    for label in labels:
+        rx = _label_re(label)
+        for i, line in enumerate(lines):
+            m = rx.match(line.lstrip(_LEAD))
+            if not m:
+                continue
+            rest = m.group(1)
+            if rest:
+                if starts(rest):
+                    return rest, i
+                continue
+            following = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            if following and starts(following):
+                return following, i + 1
+    return None
+
+
+def learned_amount(lines: list[str], labels: list[str]) -> int | None:
+    """Nominal di label aturan `label_total` (K6: dibaca sebagai TOTAL, bukan subtotal): nilai harus diawali nominal
+    ("Rp12.500", "12.500"), jadi label aturan "total" tidak membaca baris "Total Bayar Rp11.000" dan "jumlah" tidak
+    membaca "Jumlah Kirim Uang". Nominal PERTAMA di nilai itu (seperti kerangka memberi suara). None bila tidak ketemu
+    (pembaca memakai logika biasa)."""
+    if not labels:
+        return None
+    found = _learned_values(lines, labels, lambda text: bool(_AMOUNT_START.match(text)))
+    amounts = amounts_in(found[0]) if found else []
+    return amounts[0] if amounts else None
+
+
+# Jam saja di baris sesudah tanggal ("26 Okt 2026" lalu "00:01 WIB"), sama dengan `proof_common.read_paid_at`.
+_TIME_LINE = re.compile(r"(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?\s*(?:WIB|WITA|WIT)?", re.IGNORECASE)
+
+
+def learned_datetime(lines: list[str], labels: list[str]) -> datetime | None:
+    """Waktu bayar di label aturan `label_tanggal`: nilai harus diawali tanggal (label aturan "waktu" tidak membaca
+    "Waktu Selesai 26 Okt 2026"). Jam dari baris yang sama, atau, bila tanpa jam, dari baris sesudahnya yang hanya
+    berisi jam (seperti `proof_common.read_paid_at`). None bila tidak ketemu (pembaca memakai logika biasa)."""
+    if not labels:
+        return None
+
+    def starts_with_date(text: str) -> bool:
+        found = _find_date(text)
+        return bool(found) and not text[:found[0]].strip(_LEAD)
+
+    found = _learned_values(lines, labels, starts_with_date)
+    if not found:
+        return None
+    value, at = found
+    paid = parse_datetime_id(value)
+    if paid is not None and (paid.hour, paid.minute, paid.second) == (0, 0, 0) and at + 1 < len(lines):
+        m = _TIME_LINE.fullmatch(lines[at + 1].strip())
+        if m and int(m.group(1)) < 24 and int(m.group(2)) < 60 and int(m.group(3) or 0) < 60:
+            paid = paid.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=int(m.group(3) or 0))
+    return paid
+
+
+def mask_partial_labels(lines: list[str], labels: list[str], label_words) -> tuple[list[str], bool]:
+    """(baris, ada yang persis) untuk label penerima aturan (`label_pihak`): baris yang diawali label aturan tetapi
+    labelnya di kerangka lebih panjang ("Tujuan Transfer Lainnya" untuk aturan "tujuan": kerangka menyerap kata label
+    "transfer" ke labelnya) dikosongkan (indeks tetap), supaya label aturan hanya membaca baris yang labelnya PERSIS
+    label itu. Persis: diikuti titik dua, akhir baris (nilai di baris bawah), atau kata yang bukan kata label
+    (`label_words` = kerangka.LABEL_WORDS); kata label berhuruf besar sesudah label berhuruf campuran tetap nilai
+    ("Ke TOKO MAJU"), seperti `kerangka._split_label`."""
+    out, whole = list(lines), False
+    for i, line in enumerate(lines):
+        text = line.lstrip(_LEAD)
+        hits = [label for label in labels if _label_re(label).match(text)]
+        if not hits:
+            continue
+        if any(_whole_label(text, label, label_words) for label in hits):
+            whole = True
+        else:
+            out[i] = ""
+    return out, whole
+
+
+def _whole_label(text: str, label: str, label_words) -> bool:
+    parts = [re.escape(p) for p in label.split()]
+    m = re.match(r"^\s*" + r"\s+".join(parts) + r"(?=$|[\s:：])\s*", text, re.IGNORECASE)
+    rest = text[m.end():]
+    if not rest or rest[0] in ":：":
+        return True
+    raw = rest.split()[0]
+    word = raw.strip(".,:;()'\"&/-–!?*•·").lower()
+    if not word or word not in label_words:
+        return True
+    head = text.split()[0]
+    return not head.isupper() and len(raw) > 1 and raw.isupper()
+
+
+# Nama publik untuk modul lain (kotak_struk/kerangka.py): jangan dihapus atau diganti nama tanpa memperbarui pemakainya.
+find_date = _find_date

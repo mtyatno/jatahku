@@ -308,6 +308,27 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ops[1]["id"], ops[0]["id"])
         self.assertIn("Budget kamu belum disiapkan", ops[2]["text"])
 
+    def test_edit_op_carries_kotak_item_tags_only_when_asked(self):
+        # Gelembung bukti: edit pesan status membawa id item (dan `pending` selagi dibaca), supaya panel chat bisa
+        # menanyakan hasilnya ke /bot/chat/bukti. Edit biasa tidak membawa keduanya.
+        outbox = web_adapter.Outbox()
+        outbox.edit("m1", "⏳ Masih dibaca", kotak_item="11111111-2222-4333-8444-555555555555", kotak_pending=True)
+        outbox.edit("m1", "QRIS · Siti", kotak_item="11111111-2222-4333-8444-555555555555")
+        outbox.edit("m2", "✅ Tercatat")
+        self.assertEqual((outbox.ops[0]["item"], outbox.ops[0]["pending"]),
+                         ("11111111-2222-4333-8444-555555555555", True))
+        self.assertEqual(outbox.ops[1]["item"], "11111111-2222-4333-8444-555555555555")
+        self.assertNotIn("pending", outbox.ops[1])
+        self.assertNotIn("item", outbox.ops[2])
+        self.assertNotIn("pending", outbox.ops[2])
+
+    async def test_web_message_edit_text_forwards_kotak_item_tags(self):
+        outbox = web_adapter.Outbox()
+        status = web_adapter.WebMessage(outbox, message_id="s1", from_user=web_adapter.WebChatUser(self.user))
+        await status.edit_text("⏳ Masih dibaca", kotak_item="abc", kotak_pending=True)
+        self.assertEqual((outbox.ops[-1]["id"], outbox.ops[-1]["item"], outbox.ops[-1]["pending"]),
+                         ("s1", "abc", True))
+
     async def test_reply_from_callback_message_appends_new_message(self):
         # intent_learning memakai query.message sebagai update.message
         self.redis.store[btn_key(self.user, "aa11")] = json.dumps(["intentlearn:t:sisa"])
@@ -353,6 +374,26 @@ class PhotoEndpointTests(unittest.TestCase):
             bad_id = c.post("/bot/chat/photo", files={"image": ("s.jpg", b"x", "image/jpeg")},
                             data={"client_id": "../etc"}, headers={"Authorization": "Bearer t"})
             self.assertEqual(bad_id.status_code, 422)
+        self.assertEqual(run.await_count, 1)
+
+    def test_bukti_endpoint_validates_items_and_forwards_them(self):
+        item_id = uuid.uuid4()
+        run = AsyncMock(return_value={"ops": [{"type": "edit", "id": "ab12", "text": "QRIS", "format": "plain",
+                                                "buttons": [], "item": str(item_id)}], "pending": []})
+        with patch("app.api.routes.bot_chat.run_bukti", new=run):
+            c = self.client()
+            res = c.post("/bot/chat/bukti", json={"items": [{"item_id": str(item_id), "message_id": "ab12"}]},
+                         headers={"Authorization": "Bearer t"})
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json(), {"ops": run.return_value["ops"], "pending": []})
+            self.assertEqual(run.call_args.args[1], [(item_id, "ab12")])
+            for body in ({"items": []},                                                   # kosong
+                         {"items": [{"item_id": "bukan-uuid", "message_id": "ab12"}]},    # bukan UUID
+                         {"items": [{"item_id": str(item_id), "message_id": "../x"}]},    # id pesan bukan hex
+                         {"items": [{"item_id": str(item_id), "message_id": "ab12"}] * 21}):   # lebih dari MAX_PENDING
+                with self.subTest(body):
+                    bad = c.post("/bot/chat/bukti", json=body, headers={"Authorization": "Bearer t"})
+                    self.assertEqual(bad.status_code, 422)
         self.assertEqual(run.await_count, 1)
 
     def test_photo_has_no_separate_hourly_limit(self):

@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
-    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text
+    ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -626,6 +626,12 @@ class ReceiptScan(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transaction_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    # Kerangka tata letak bukti bayar untuk belajar lintas user (kotak_struk/kerangka.py): label tersamar, jenis nilai,
+    # nominal/tanggal, HMAC nama; tanpa nomor dan nama polos. Tidak pernah dikirim ke klien (bukan bagian `document`);
+    # dihapus `maintenance.purge_layouts` 24 jam sejak dibaca untuk item selesai, dan saat kedaluwarsa. `none_as_null`:
+    # None ditulis sebagai SQL NULL (bukan JSON 'null'), supaya `layout IS NOT NULL` hanya menemukan kerangka sungguhan.
+    layout: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
 
     # Satu unggahan (upload_id dari klien) hanya satu item per user. Nama sama dengan di
     # KOTAK_DDL, jadi DDL startup tidak membuat indeks ganda di basis data baru.
@@ -667,6 +673,45 @@ class ReceiptLearnVote(Base):
     value: Mapped[str] = mapped_column(String(100), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProofRuleVote(Base):
+    """Suara koreksi bukti bayar Kotak Struk (belajar lintas user, spec 2026-11-01 §3b): satu suara per user per aturan.
+    Hanya STRUKTUR: jenis aturan, kunci aplikasi (`gopay` atau `logo:<kata>`), dan label kosakata tanpa digit; tidak
+    pernah nama, nomor, nominal, atau tanggal (app/services/kotak_struk/belajar.py). `household_id` tanpa FK, sama
+    dengan `receipt_scans.household_id` (rumah tangga bisa dihapus saat gabung akun); hanya untuk dihitung."""
+    __tablename__ = "proof_rule_votes"
+
+    kind: Mapped[str] = mapped_column(String(20), primary_key=True)  # label_total | label_pihak | label_tanggal
+    rule_key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(String(60), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    household_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProofRule(Base):
+    """Aturan belajar bukti bayar: suara yang didukung >= RULE_MIN_USERS user berbeda, menunggu keputusan pemilik di
+    Admin. `users`/`households` = pendukung berbeda, dihitung ulang tiap suara (dan saat user dilupakan); status
+    menunggu | disetujui | ditolak | dicabut, hanya diubah keputusan admin. Baris yang sudah diputuskan tidak pernah
+    dihapus; baris `menunggu` di bawah ambang dihapus oleh rekonsiliasi tiap jam (suaranya tetap)."""
+    __tablename__ = "proof_rules"
+    __table_args__ = (
+        UniqueConstraint("kind", "rule_key", "value", name="uq_proof_rule"),
+        Index("ix_proof_rules_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20))
+    rule_key: Mapped[str] = mapped_column(String(60))
+    value: Mapped[str] = mapped_column(String(60))
+    users: Mapped[int] = mapped_column(Integer)
+    households: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class HouseholdMerchant(Base):
@@ -724,3 +769,175 @@ class DashboardLayout(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# --- Ruang usaha: peran, batasan, persetujuan (Plugin R5, docs/plugin/04-kontrak-api.md §2, ADR-P4, P17, P18) ---
+# Hanya tabel baru (tidak ada kolom baru di tabel lama), jadi model lama tidak 500 sebelum migrasi c5r5a8e2d417
+# jalan; `create_all` saat start membuat tabel yang sama dan migrasinya idempoten.
+
+_JSON_R5 = JSON().with_variant(JSONB(), "postgresql")
+
+
+class RuangBatasan(TimestampMixin, Base):
+    """Jabatan dan batasan satu anggota di satu ruang usaha. Batasan hanya berlaku untuk peran `member`
+    (owner dan admin tanpa batasan); baris tidak ada = batasan bawaan (`app/services/peran.py`)."""
+    __tablename__ = "ruang_batasan"
+    __table_args__ = (UniqueConstraint("household_id", "user_id", name="uq_ruang_batasan"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    jabatan: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    jenis_catatan: Mapped[list] = mapped_column(_JSON_R5, default=lambda: ["pengeluaran", "penjualan"])
+    amplop_ids: Mapped[list | None] = mapped_column(_JSON_R5, nullable=True)          # None = semua amplop ruang
+    batas_nominal: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    foto_nota_di_atas: Mapped[Decimal | None] = mapped_column(Numeric(15, 2), nullable=True)
+    jendela_ubah: Mapped[str] = mapped_column(String(20), default="hari_sama", server_default="hari_sama")
+    lihat_saldo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    jam_kerja: Mapped[dict | None] = mapped_column(_JSON_R5, nullable=True)            # None = tanpa jam kerja
+    diubah_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class RuangUndangan(Base):
+    """Kode undangan ke ruang usaha: sekali pakai, berperan, kedaluwarsa (bukan `households.invite_code`,
+    yang tetap hanya untuk ruang keluarga)."""
+    __tablename__ = "ruang_undangan"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    kode: Mapped[str] = mapped_column(String(20), unique=True)
+    peran: Mapped[str] = mapped_column(String(10))                                      # member | admin
+    dibuat_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    kedaluwarsa: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    dipakai_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    dipakai_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dicabut_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RuangDraf(TimestampMixin, Base):
+    """Antrean persetujuan (ADR-P18): catatan karyawan di atas batas nominal. Tidak mengubah saldo; saat disetujui
+    dicatat lewat jalur pencatatan yang sama atas nama pencatat asli, lalu `hasil_id` diisi."""
+    __tablename__ = "ruang_draf"
+    __table_args__ = (
+        Index("ix_ruang_draf_household_status", "household_id", "status"),
+        Index("uq_ruang_draf_client_ref", "user_id", "client_ref", unique=True,
+              postgresql_where=text("client_ref IS NOT NULL"), sqlite_where=text("client_ref IS NOT NULL")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))          # pencatat
+    jenis: Mapped[str] = mapped_column(String(20))                                                  # pengeluaran | penjualan
+    envelope_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("envelopes.id", ondelete="SET NULL"), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
+    description: Mapped[str] = mapped_column(String(500))
+    tanggal: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="webapp", server_default="webapp")
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    receipt_item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    client_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rincian: Mapped[dict] = mapped_column(_JSON_R5, default=dict)                                  # alokasi, kind (pemasukan)
+    status: Mapped[str] = mapped_column(String(20), default="menunggu", server_default="menunggu")
+    diputus_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    diputus_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    alasan: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    hasil_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)                              # transaksi / pemasukan
+
+
+class RuangAudit(Base):
+    """Log audit ruang usaha: anggota, peran, batasan, undangan, persetujuan, reset. Tanpa nominal di `rincian`
+    kecuali batas yang diatur admin."""
+    __tablename__ = "ruang_audit"
+    __table_args__ = (Index("ix_ruang_audit_household_waktu", "household_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    aksi: Mapped[str] = mapped_column(String(40))
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rincian: Mapped[dict] = mapped_column(_JSON_R5, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- Plugin H1: host plugin (docs/plugin/01-kajian.md "Tabel pengelola", ADR-P9, P11, P15) ---
+
+class PluginInstallation(Base):
+    """Status satu plugin di satu ruang. `status` = installed | active | paused | uninstalled
+    (`app/plugins/host/siklus.py` satu-satunya penulis). Dicopot = arsip: baris tetap ada sampai
+    `purge_after`, lalu job pembersih menghapusnya bersama data `p_<id>_*` (ADR-P15).
+
+    Saklar darurat sengaja TIDAK disimpan di sini (AppSetting `plugin_saklar_darurat`), supaya
+    status asli tiap ruang utuh saat saklar dimatikan lagi. `owner_id` terisi hanya untuk plugin
+    bercakupan pribadi (belum ada; ADR-P11), jadi keunikan ruang memakai indeks parsial: NULL
+    tidak pernah dianggap sama oleh UNIQUE biasa."""
+    __tablename__ = "plugin_installations"
+    __table_args__ = (
+        Index("uq_plugin_installation_ruang", "household_id", "plugin_id", unique=True,
+              postgresql_where=text("owner_id IS NULL"), sqlite_where=text("owner_id IS NULL")),
+        Index("uq_plugin_installation_pribadi", "household_id", "plugin_id", "owner_id", unique=True,
+              postgresql_where=text("owner_id IS NOT NULL"), sqlite_where=text("owner_id IS NOT NULL")),
+        Index("ix_plugin_installations_household_status", "household_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    plugin_id: Mapped[str] = mapped_column(String(40))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20))
+    installed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    granted_permissions: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    settings: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
+    data_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    disabled_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    uninstalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Entitlement(Base):
+    """Hak atas SKU (`pro`, `plugin.<id>`, `bundle.usaha`) per user ATAU per ruang (ADR-P12:
+    Paket Usaha per ruang). H1 hanya membuat tabel dan pembacanya; belum ada yang ditolak
+    karena hak selama beta (ADR-P13, keputusan R3 B). Pro yang ada tetap di `users.plan`."""
+    __tablename__ = "entitlements"
+    __table_args__ = (
+        CheckConstraint("user_id IS NOT NULL OR household_id IS NOT NULL", name="ck_entitlement_pemilik"),
+        UniqueConstraint("source", "external_ref", name="uq_entitlement_sumber_rujukan"),
+        Index("ix_entitlements_household_sku", "household_id", "sku"),
+        Index("ix_entitlements_user_sku", "user_id", "sku"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    household_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), nullable=True)
+    sku: Mapped[str] = mapped_column(String(60))
+    source: Mapped[str] = mapped_column(String(20))        # transfer | promo | play | appstore | gateway | beta
+    status: Mapped[str] = mapped_column(String(20), default="aktif", server_default="aktif")  # aktif | berakhir | dicabut
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PluginAuditLog(Base):
+    """Jejak siapa memasang, memulihkan, melanjutkan, menjeda, mencopot, atau membersihkan
+    plugin di ruang mana (H1), dan akses data sensitif oleh plugin (H2, `PluginContext`).
+    Hanya ditambah, tidak pernah diubah."""
+    __tablename__ = "plugin_audit_log"
+    __table_args__ = (
+        Index("ix_plugin_audit_log_household_created", "household_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    plugin_id: Mapped[str] = mapped_column(String(40))
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(30))
+    detail: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

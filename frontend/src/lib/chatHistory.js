@@ -1,9 +1,12 @@
 // Riwayat chat bot di webapp: disimpan lokal per user (seperti riwayat chat
 // Telegram di HP), dan "ops" dari server diterapkan ke daftar pesan.
 //
-// Pesan: { id, role: 'user' | 'bot', text, format, buttons, ts, status?, kind?, thumb? }
+// Pesan: { id, role: 'user' | 'bot', text, format, buttons, ts, status?, kind?, thumb?, item?, pending?, renderedAt? }
 //   status (pesan user saja): 'sending' | 'failed'
 //   kind 'photo' (pesan user): foto struk; thumb = data URL kecil untuk pratinjau
+//   item (pesan bot): id item Kotak Struk gelembung bukti; pending = masih dibaca (op "edit" membawa `pending`),
+//   panel menanyakan hasilnya ke /bot/chat/bukti (lib/chatPending.js); renderedAt = kapan teks/tombol terakhir
+//   dirender (sesi tombol bot 10 menit: tombol yang hampir basi disegarkan saat panel dibuka)
 
 export const MAX_MESSAGES = 100;
 const KEY_PREFIX = 'jatahku_chat_';
@@ -70,6 +73,16 @@ export function setStatus(messages, id, status) {
   return messages.map(m => (m.id === id ? { ...m, status } : m));
 }
 
+// Field gelembung bukti (lihat atas) untuk pesan yang dirender op ini: op yang membawa `item` menetapkan item dan
+// statusnya; op biasa (tombol ditekan) mempertahankan item yang sudah ada dan tidak lagi menunggu. Pesan tanpa item
+// tidak membawa field ini sama sekali.
+function kotakFields(op, prev, now) {
+  const item = op.item != null ? String(op.item) : prev?.item;
+  if (!item) return {};
+  const pending = op.item != null ? op.pending === true : false;
+  return pending ? { item, pending, renderedAt: undefined } : { item, pending, renderedAt: now };
+}
+
 // Terapkan ops dari /bot/chat/*. Mengembalikan { messages, toasts }.
 export function applyOps(messages, ops, now = Date.now()) {
   let list = messages.slice();
@@ -90,11 +103,13 @@ export function applyOps(messages, ops, now = Date.now()) {
       list.push({
         id: String(op.id), role: 'bot', text: String(op.text ?? ''),
         format: op.format || 'plain', buttons: Array.isArray(op.buttons) ? op.buttons : [], ts: now,
+        ...kotakFields(op, null, now),
       });
     } else if (op.type === 'edit') {
       list[idx] = {
         ...list[idx], text: String(op.text ?? ''), format: op.format || 'plain',
         buttons: Array.isArray(op.buttons) ? op.buttons : [], edited: true,
+        ...kotakFields(op, list[idx], now),
       };
     } else if (op.type === 'buttons' && idx !== -1) {
       list[idx] = { ...list[idx], buttons: Array.isArray(op.buttons) ? op.buttons : [] };

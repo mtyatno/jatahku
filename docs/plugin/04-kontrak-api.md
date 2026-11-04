@@ -10,7 +10,7 @@ Bentuk header dan endpoint baru supaya frontend dan backend bisa dikerjakan para
 4. Nominal dalam rupiah bulat (integer). Tanggal `YYYY-MM-DD`; waktu ISO 8601 dengan zona waktu user, seperti endpoint yang ada.
 5. Teks yang tampil ke user (judul kartu, footer, pesan galat) dirakit server dari templat (aturan 7).
 6. **Galat.** Klien sekarang menampilkan `detail` sebagai teks, jadi `detail` tetap teks siap tampil. Galat baru menambah field `kode` untuk mesin: `{"detail": "Batas catatanmu Rp1.000.000. Catatan ini perlu disetujui admin.", "kode": "perlu_persetujuan"}`. Daftar kode di bagian 7.
-7. Data karyawan dibatasi di server: endpoint laporan (laba, kas, omzet, arus kas, saldo yang tidak diizinkan) menjawab 403 `khusus_admin` untuk peran `member`, termasuk lewat `/dashboard/data` dan ekspor.
+7. Data karyawan dibatasi di server: endpoint laporan (laba, kas, omzet, arus kas, saldo yang tidak diizinkan) menjawab 403 `khusus_admin` untuk peran `member`, termasuk lewat `/dashboard/data` dan ekspor. **Sejak R5 berupa tolak-bawaan:** karyawan (peran `member` di ruang **usaha**) hanya bisa memakai route di daftar `KARYAWAN_BOLEH` (`app/services/ruang.py`, lihat §2 "Karyawan"); semua route lain, termasuk route baru, menjawab 403 `khusus_admin`. Peran `member` di ruang keluarga tidak dibatasi.
 
 ## 0. Field baru di endpoint inti (R1) — **v1 (R1, PR plugin/r1-model-ruang)**
 
@@ -35,12 +35,12 @@ Implementasi: `app/services/ruang.py`. Route menerima ruang sebagai parameter ke
 | Header tidak dikirim, atau kosong | Ruang keluarga user: household `rumah_tangga` tempat user menjadi anggota (bila lebih dari satu, keanggotaan tertua). User dengan satu ruang dan aplikasi lama tidak berubah perilakunya |
 | UUID ruang tempat user menjadi anggota | Ruang itu dipakai untuk membaca (semua `GET`, plus `POST` yang hanya membaca: `/dashboard/data`, `/balance-check/preview`, `/advisor/allocation-recommendation`) |
 | UUID ruang yang bukan milik user, ruang terhapus, atau bukan UUID | 403 `{"detail": "<teks>", "kode": "ruang_tidak_diizinkan"}`. Tidak pernah jatuh diam-diam ke ruang lain |
-| Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `di_luar_jam_kerja`, dengan `buka_lagi` (waktu) di body (R5) |
+| Ruang usaha di luar jam kerja anggota itu (ADR-P17) | 403 `{"detail", "kode": "di_luar_jam_kerja", "buka_lagi": "2026-11-02T07:00:00+07:00"}` (R5). Berlaku lewat header dan untuk tulis dari objek (catat, hapus, pemasukan); di antrean offline per baris (`kode` di hasil baris) |
 | Endpoint tulis untuk objek yang sudah ada atau yang punya induk (R3) | Header tidak menentukan ruang. Ruang diambil dari objeknya: amplop (`PUT`/`DELETE /envelopes/{id}`, `POST /transactions/`, `POST /goals/`, `POST /recurring/`), transaksi, target, langganan (termasuk bayar/lewati/tandai), grup, cek saldo (`/balance-check/{id}/undo`), merchant Kotak Struk. Objek di ruang yang bukan milik user → 404 dengan pesan "tidak ditemukan" biasa (tidak membocorkan keberadaan objek). Mengubah langganan ke amplop ruang lain → 404 |
 | Satu permintaan tulis yang menyentuh dua ruang milik user (R3) | 400 `{"detail": "<teks>", "kode": "lintas_ruang"}`: `POST /envelopes/transfer` antar-ruang, `POST /incomes/` dengan alokasi ke dua ruang. Satu-satunya pengecualian: `POST /prive` (R8), yang menentukan kedua ruangnya sendiri di server |
 | Antrean offline `POST /transactions/batch` (R3) | Ruang per baris = ruang amplopnya (antrean tidak menyimpan ruang). Baris ke amplop di ruang yang bukan milik user ditolak per baris (`ok: false`, "Envelope not found"); baris lain tetap dicatat. Kirim ulang dengan `client_ref` yang sama mengembalikan transaksi user sendiri |
 | Objek baru tanpa induk (R3, keputusan pemilik produk 1 Nov) | Ruang dari header yang sah (`ruang_aktif`), tanpa header = ruang keluarga: `POST /envelopes/`, `POST /envelopes/groups`, `POST /incomes/` tanpa alokasi, `POST /user/reset`, `POST /snapshots/recompute`, `POST /balance-check/apply` (cocokkan saldo seluruh ruang; baris harus amplop ruang itu), `POST /advisor/plan` + `/execute`, saran amplop `POST /transactions/suggest-envelope(s)`. Header ruang orang lain → 403 |
-| Undangan anggota (`POST /household/invite`) | Tetap ruang keluarga (`ruang_tulis`); header ruang lain → 403. Undangan ruang usaha dibuat di R5 |
+| Undangan anggota (`POST /household/invite`) | Tetap ruang keluarga (`ruang_tulis`); header ruang lain → 403. Undangan ruang usaha: `POST /ruang/{id}/undangan` + `POST /ruang/gabung` (R5, §2) |
 
 Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per ruang, jadi keduanya memakai ruang aktif. Dismiss AI Advisor (`POST`/`DELETE /advisor/dismiss`) juga memakai ruang aktif (status per viewer, tidak mengubah data keuangan). Rencana dana dan eksekusinya sama-sama memakai ruang aktif. Daftar lengkap route non-GET yang memakai ruang aktif dijaga `app/tests/test_ruang_pagar.py`.
 
@@ -48,7 +48,7 @@ Tata letak Beranda (`GET`/`PUT /dashboard/layout`) adalah dokumen milik user per
 
 Bot (Telegram dan chat web), job terjadwal (ringkasan, pengingat gajian, peringatan proaktif), dan Kotak Struk (bukti baru dan saran amplopnya dicatat ke ruang keluarga sampai R7; mencatat bukti ke amplop ruang usaha tetap masuk ruang amplop itu) tidak membaca header ini dan selalu memakai `ruang_keluarga(user)` (ADR-P2).
 
-Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluarga (review keamanan PR #166): `POST /auth/link/merge` hanya menerima `keep_household_id` yang merupakan ruang keluarga salah satu dari kedua akun (selain itu 400, tanpa perubahan data); `POST /household/join` (dan `/join` di bot) menolak kode undangan yang menunjuk household selain `rumah_tangga` (400 "Kode invite tidak valid"). Undangan ruang usaha dibuat terpisah di R5.
+Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluarga (review keamanan PR #166): `POST /auth/link/merge` hanya menerima `keep_household_id` yang merupakan ruang keluarga salah satu dari kedua akun (selain itu 400, tanpa perubahan data); `POST /household/join` (dan `/join` di bot) menolak kode undangan yang menunjuk household selain `rumah_tangga` (400 "Kode invite tidak valid"). Undangan ruang usaha terpisah (R5, §2).
 
 ## 2. Ruang (R4, R5, R6, R7, R8) — **`GET`/`POST /ruang` v1 (R4)**
 
@@ -83,37 +83,74 @@ ulang Beranda. Permintaan yang ditolak tidak diulang tanpa header, supaya catata
 ruang memuat ulang aplikasi di Beranda. Chat tetap ruang keluarga: di ruang usaha tombolnya berlabel "Ruang keluarga"
 untuk pemilik dan admin, dan disembunyikan untuk karyawan (ADR-P16).
 
-Anggota, undangan, dan batasan (R5, R6). Hanya owner dan admin; admin tidak bisa mengubah atau mengeluarkan owner.
+Anggota, undangan, batasan, persetujuan, audit — **v1 (R5, PR plugin/r5-peran-batasan)**. Implementasi: `app/api/routes/ruang_kelola.py`, `app/services/peran.py`. Ikut flag `ruang_usaha_users` (R4): di luar flag route ini 404, dan `/ruang/gabung` 403 `ruang_usaha_belum_dibuka`.
+
+Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat `/household`) dan hanya owner dan admin ruang itu: bukan anggota atau ruang keluarga → 404 "Ruang tidak ditemukan"; karyawan → 403 `khusus_admin`. Admin tidak bisa mengubah atau mengeluarkan owner (403 `khusus_admin`). Setiap perubahan tercatat di log audit ruang.
 
 ```jsonc
 // GET    /ruang/{id}/anggota → [{"user_id", "nama", "peran", "jabatan", "bergabung", "batasan": {…} | null}]
-// POST   /ruang/{id}/undangan {"peran": "member" | "admin"} → {"kode", "kedaluwarsa"}
-//        Bergabung lewat kode memakai pola alur household yang ada (routes/household.py: /household/invite, /household/join).
-// PATCH  /ruang/{id}/anggota/{user_id} {"peran"?, "jabatan"?}
-// DELETE /ruang/{id}/anggota/{user_id}          // akses hilang seketika; catatan lama tetap milik ruang
-// PUT    /ruang/{id}/anggota/{user_id}/batasan  // isi di bawah; tersimpan di log audit ruang
+//        batasan hanya untuk peran member (bawaan bila belum pernah diatur); owner dan admin → null
+// POST   /ruang/{id}/undangan {"peran": "member" | "admin"} → 201 {"kode": "RU…", "peran", "kedaluwarsa"}
+//        sekali pakai, berlaku 7 hari (tabel ruang_undangan; bukan households.invite_code)
+// POST   /ruang/gabung {"kode"} → {"id", "nama", "jenis": "usaha", "peran"}
+//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP
+// PATCH  /ruang/{id}/anggota/{user_id} {"peran"?: "member" | "admin", "jabatan"?} → {"user_id", "peran"}
+// DELETE /ruang/{id}/anggota/{user_id} → 204   // owner/admin mengeluarkan, atau anggota keluar sendiri (bukan owner);
+//        akses hilang seketika; catatan lama tetap milik ruang; draf yang menunggu → dibatalkan; batasannya dihapus
+// PUT    /ruang/{id}/anggota/{user_id}/batasan → batasan tersimpan (isi di bawah); hanya peran member, selain itu 422;
+//        amplop bukan milik ruang itu → 422; jam_kerja tidak sah → 422
+// GET    /ruang/{id}/audit?limit=50 → [{"aksi", "oleh", "anggota", "rincian", "waktu"}]
+//        aksi: undangan_dibuat, anggota_bergabung, anggota_diubah, anggota_keluar, anggota_dikeluarkan,
+//        batasan_diubah, draf_disetujui, draf_ditolak, catatan_dihapus, reset_ruang (jumlah catatan per pencatat, tanpa nominal)
 
 // batasan per anggota (hanya untuk peran member; owner dan admin tanpa batasan)
+// Bawaan bila admin belum mengatur: dua jenis, semua amplop, tanpa batas nominal dan foto, hari_sama, lihat_saldo false,
+// tanpa jam kerja.
 {
-  "jenis_catatan": ["pengeluaran", "penjualan"],  // jenis lain ditambahkan plugin lewat manifest
-  "amplop_ids": ["…", "…"],                       // null = semua amplop ruang
+  "jenis_catatan": ["pengeluaran", "penjualan"],  // pengeluaran = POST /transactions, penjualan = POST /incomes
+  "amplop_ids": ["…", "…"],                       // null = semua amplop ruang; juga amplop alokasi pemasukan
   "batas_nominal": 1000000,                       // null = tanpa batas; di atas batas → draf menunggu persetujuan
-  "foto_nota_di_atas": 300000,                    // null = tidak wajib
-  "jendela_ubah": "hari_sama",                    // hari_sama | tidak_boleh
-  "lihat_saldo": false,
-  "jam_kerja": null                               // atau {"mulai": "07:00", "selesai": "15:00", "hari": [1, 2, 3, 4, 5, 6]}
+  "foto_nota_di_atas": 300000,                    // null = tidak wajib; foto = receipt_item_id (Kotak Struk)
+  "jendela_ubah": "hari_sama",                    // hari_sama | tidak_boleh (menghapus catatan sendiri)
+  "lihat_saldo": false,                           // false: /envelopes/summary 403, budget_amount di /envelopes = 0
+  "jam_kerja": null                               // atau {"mulai": "07:00", "selesai": "15:00", "hari": [1, 2, 3, 4, 5, 6], "zona": "Asia/Jakarta"}
 }
+// hari ISO (1 = Senin); selesai ≤ mulai = sif lewat tengah malam; zona bawaan = zona admin yang menyimpan.
 ```
 
-Antrean persetujuan (R5, ADR-P18). Draf disimpan terpisah dan tidak mengubah saldo; saat disetujui, draf dicatat lewat jalur pencatatan yang sama (`expense_rules`) dengan pencatat asli.
+**Karyawan** (peran `member` di ruang usaha). Route yang boleh, dengan penyaringannya:
+
+| Route | Perilaku untuk karyawan |
+| --- | --- |
+| `GET /envelopes/` | Hanya amplop di `amplop_ids`; `budget_amount` = 0 bila `lihat_saldo` false |
+| `GET /envelopes/summary` | 403 `khusus_admin` bila `lihat_saldo` false; selain itu hanya amplop yang diizinkan |
+| `GET /transactions/` | Hanya catatan miliknya |
+| `POST /transactions/suggest-envelope(s)` | Amplop yang tidak diizinkan tidak disarankan |
+| `POST /transactions/`, `/transactions/batch` | Batasan per catatan (urutan: jenis → amplop → foto → nominal); di atas batas → 202 draf. `raise_daily_limit` diabaikan (limit harian dari admin tidak bisa dinaikkan karyawan). Tanpa `lihat_saldo`, pesan dana tidak cukup, amplop belum diisi, dan limit harian tanpa angka |
+| `DELETE /transactions/{id}` | Hanya catatan miliknya, dalam `jendela_ubah`; selain itu 403 `jendela_ubah_lewat`. Tercatat di log audit (`catatan_dihapus`) |
+| `POST /incomes/` | Jenis `penjualan`, amplop alokasi, lalu alokasi harus sama dengan nominal (sisa tidak boleh jatuh ke Tabungan: 422 `alokasi_tidak_penuh`), batas nominal; di atas batas → 202 draf. Field baru `client_ref` (aditif): kiriman ulang → 202 dengan status draf terbaru. Notifikasi target dari penjualan karyawan dikirim ke owner |
+| `GET /persetujuan/saya` | Draf miliknya |
+
+Semua route lain (amplop, grup, transfer, target, langganan, cocokkan saldo, analitik, ekspor, Beranda, AI Advisor, reset, …) → 403 `khusus_admin`. Beranda template "Karyawan" dan penyaringan per kartu menyusul di R6.
+
+Antrean persetujuan — **v1 (R5)**, ADR-P18. Draf disimpan terpisah (`ruang_draf`) dan tidak mengubah saldo; saat disetujui, draf dicatat lewat jalur pencatatan yang sama (`catat_transaksi` / `catat_pemasukan`) atas nama pencatat asli, jadi aturan amplop, dana, limit harian, kunci, dan struk tetap berlaku; hanya batasan karyawan yang tidak dicek lagi.
 
 ```jsonc
-// POST /transactions (dan /incomes) dari member di atas batas_nominal
-// → 202 {"draf_id", "kode": "perlu_persetujuan", "detail": "…"}   — bukan 201; klien menampilkan "Menunggu persetujuan"
-// GET  /ruang/{id}/persetujuan → [{"id", "pencatat", "jenis", "jumlah", "keterangan", "amplop_id", "ada_foto", "dibuat"}]
-// GET  /persetujuan/saya → draf milik user di ruang aktif (Beranda karyawan)
-// POST /ruang/{id}/persetujuan/{draf_id}/setujui → {"transaction_id"}
-// POST /ruang/{id}/persetujuan/{draf_id}/tolak {"alasan"?}
+// POST /transactions (dan /incomes) dari karyawan di atas batas_nominal
+// → 202 {"draf_id", "kode": "perlu_persetujuan", "status": "menunggu", "detail": "Batas catatanmu Rp1.000.000. …"}
+//   bukan 201; klien menampilkan "Menunggu persetujuan". Kirim ulang client_ref yang sama → 202 draf yang sama;
+//   sesudah disetujui → 201 transaksi hasil persetujuan (client_ref yang sama dipakai saat dicatat).
+// POST /transactions/batch: baris di atas batas → {"ok": false, "kode": "perlu_persetujuan", "draf_id", "error": "…"};
+//   baris yang ditolak batasan → {"ok": false, "kode": "<kode §7>", "error": "…"} (field kode, draf_id baru, aditif)
+// GET  /ruang/{id}/persetujuan → [{"id", "pencatat", "pencatat_id", "jenis", "jumlah", "keterangan", "amplop_id",
+//                                 "ada_foto", "status", "alasan", "hasil_id", "dibuat"}]   (status menunggu)
+// GET  /persetujuan/saya → draf milik user di ruang aktif: menunggu + yang diputus 14 hari terakhir (bentuk sama)
+// POST /ruang/{id}/persetujuan/{draf_id}/setujui → {"transaction_id" | "income_id", "draf_id", "status": "disetujui"}
+//      aturan pencatatan gagal (mis. dana tidak cukup, limit harian amplop terlewati — persetujuan tidak menaikkan
+//      limit) → 403 dengan pesan lengkap untuk admin, draf kembali "menunggu";
+//      sudah diputus → 409; pencatat sudah keluar → 409
+// POST /ruang/{id}/persetujuan/{draf_id}/tolak {"alasan"?} → {"draf_id", "status": "ditolak"}
+// status draf: menunggu | diproses | disetujui | ditolak | dibatalkan
 ```
 
 Kamus ruang (R7) dan Prive (R8):
@@ -265,25 +302,52 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H3)
+## 5. Fitur Tambahan / plugin (H1, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti)**; `contributions` masih v0 (H3)
 
-Pasang, jeda, lanjut, dan copot hanya untuk owner dan admin ruang (ADR-P11). Ruang dari path; peran diperiksa server.
+Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
 ```jsonc
-// GET /plugins → katalog untuk ruang aktif
-[{"id": "buku_usaha", "nama": "Buku Usaha", "versi": "1.0.0", "deskripsi": "…", "jenis_ruang": ["usaha"],
-  "status": "tersedia",              // tersedia | terpasang | dijeda | dicopot | arsip
-  "izin": [{"kode": "incomes:write", "teks": "Mencatat penjualan sebagai pemasukan"}],
+// GET /plugins → katalog untuk ruang aktif (header). Anggota ruang keluarga boleh melihat; di ruang usaha karyawan
+// (peran member) mendapat 403 `khusus_admin` dari gerbang R5 (route di luar `KARYAWAN_BOLEH`).
+// Berisi plugin yang cocok dengan jenis ruang dan flag rollout user (`plugin_<id>_users`), ditambah plugin yang
+// sudah punya baris instalasi di ruang ini (supaya tetap bisa dijeda/dicopot walau flag dicabut).
+[{"id": "buku_usaha", "nama": "Buku Usaha", "versi": "1.0.0", "deskripsi": "…", "ikon": "book", "kategori": "usaha",
+  "jenis_ruang": ["usaha"],
+  "status": "tersedia",              // tersedia | terpasang | aktif | dijeda | arsip
+  "arsip_sampai": null,              // "YYYY-MM-DD" bila arsip (dicopot, dihapus permanen setelah tanggal ini)
+  "izin_diberikan": [],              // izin yang disetujui saat pasang/pulihkan; [] bila tersedia atau arsip
+  "izin": [{"kode": "incomes:write", "teks": "Mencatat pemasukan"}],   // dari manifest versi sekarang
   "kartu": [{"key": "buku_usaha.omzet", "judul": "Omzet", "bawaan": true}],
-  "hak": {"status": "uji_coba", "sampai": "2026-12-31"},
-  "arsip_sampai": null}]
+  "hak": {"status": "uji_coba", "sampai": null},   // gratis | uji_coba | aktif; belum menolak apa pun selama beta (ADR-P13)
+  "butuh": [],                       // id plugin yang harus aktif lebih dulu
+  "diperbaiki": false,               // saklar darurat menyala: tampilkan "Sedang diperbaiki"
+  "boleh_kelola": true}]             // owner/admin; tombol pasang/jeda/copot hanya tampilan, server tetap memeriksa
 
-// POST /ruang/{id}/plugins/{plugin_id}/pasang {"kartu": ["buku_usaha.omzet", …], "pengaturan": {…}} → instalasi
-// POST /ruang/{id}/plugins/{plugin_id}/jeda | /lanjut → instalasi
-// POST /ruang/{id}/plugins/{plugin_id}/copot → {"status": "arsip", "arsip_sampai": "2027-01-29", "ekspor": "/ruang/{id}/plugins/{plugin_id}/ekspor"}
-// GET  /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json   — escape dan anti formula-injection dari PR #136 (ADR-P15)
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang   body opsional {"pengaturan": {}}
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/lanjut | /jeda
+// → {"plugin": "buku_usaha", "status": "aktif", "arsip_sampai": null, "izin_diberikan": ["incomes:read", …]}
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/copot
+// → {"plugin": "buku_usaha", "status": "arsip", "arsip_sampai": "2027-01-30", "izin_diberikan": [], "ekspor": null}
+```
 
-// GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3)
+| Aksi | Dari | Ke | Catatan |
+| --- | --- | --- | --- |
+| `pasang` | tersedia | aktif, atau terpasang bila manifest punya wizard (`contributes.setup`) | Izin manifest saat itu dicatat sebagai `izin_diberikan` |
+| `pasang` | arsip | aktif / terpasang (**pulihkan**) | Baris dan data arsip yang sama kembali; izin disetujui ulang |
+| `lanjut` | terpasang, dijeda | aktif | Wizard selesai/dilewati, atau melanjutkan |
+| `jeda` | terpasang, aktif | dijeda | Data tetap, kontribusi hilang |
+| `copot` | terpasang, aktif, dijeda | arsip (+90 hari) | Data inti tidak pernah ikut terhapus (ADR-P15) |
+
+- **Idempoten:** aksi yang diulang pada status tujuannya menjawab 200 dengan status sekarang dan tidak menambah audit. Perpindahan lain yang tidak sah → 404 `plugin_tidak_aktif` (lanjut/jeda pada plugin yang belum terpasang atau arsip).
+- Pasang/pulihkan/lanjut ditolak bila: saklar darurat menyala (503 `plugin_diperbaiki`), jenis ruang tidak didukung (422 `jenis_ruang_tidak_cocok`), plugin di `butuh` belum aktif (409 `butuh_plugin`), atau bentrok dengan plugin terpasang (409 `bentrok_plugin`, dua arah). Pasang dan lanjut juga butuh flag rollout user (selain itu 404 `plugin_tidak_ada`); jeda dan copot tidak, supaya plugin selalu bisa dimatikan. Lanjut/jeda/copot tanpa instalasi menjawab `plugin_tidak_ada` (bukan `plugin_tidak_aktif`) bila plugin di luar flag user, supaya nama plugin yang belum dirilis tidak bisa ditebak.
+- Perubahan plugin di satu ruang diserialkan (kunci baris `households` sampai commit), jadi `requires`, `conflicts`, dan `dibutuhkan_plugin_lain` tetap benar walau dua permintaan datang bersamaan.
+- Jeda/copot ditolak bila plugin lain di ruang ini masih membutuhkannya (409 `dibutuhkan_plugin_lain`): jeda bila pemakainya terpasang/aktif, copot bila pemakainya belum dicopot.
+- `pengaturan` yang tidak kosong → 422 `pengaturan_tidak_sah` sampai titik `settings` (form dari JSON Schema + validasi server) ada di H2/U1. Pilihan kartu Beranda saat pasang (`kartu` di v0) dihapus dari body: klien menambah kartu lewat `PUT /dashboard/layout` (H3).
+- `ekspor` bernilai `null` sampai endpoint `GET /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json` ada (U1, bersama data plugin pertama; escape dan anti formula-injection dari PR #136).
+- Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (tidak peka huruf besar-kecil) (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
+
+```jsonc
+// GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3, masih v0)
 {
   "nav": [{"plugin": "buku_usaha", "grup": "usaha", "label": "Buku Usaha", "route": "/p/buku_usaha", "ikon": "book"}],
   "quick_actions": [{"plugin": "buku_usaha", "key": "buku_usaha.penjualan", "label": "Penjualan", "form": "penjualan"}],
@@ -291,7 +355,8 @@ Pasang, jeda, lanjut, dan copot hanya untuk owner dan admin ruang (ADR-P11). Rua
   "cards": ["buku_usaha.omzet", "…"],
   "form_fields": [{"plugin": "buku_usaha", "target": "transaction", "key": "kontak_id", "type": "reference", "label": "Pemasok"}]
 }
-// Plugin dijeda atau dicopot → tidak ada kontribusinya sama sekali. Saklar darurat (AppSetting) berlaku dalam satu siklus muat ulang.
+// Sumbernya `siklus.aktif_di_ruang()` (H1): hanya plugin berstatus aktif, tanpa saklar darurat, dengan flag user aktif.
+// Plugin dijeda, dicopot, atau dimatikan server → tidak ada kontribusinya sama sekali.
 ```
 
 ## 6. Buku Usaha (U1–U4)
@@ -343,8 +408,9 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `tanpa_ruang_keluarga` | 400 | Pemilik usaha belum punya ruang keluarga sebagai tujuan prive (R8) |
 | `ruang_usaha_belum_dibuka` | 403 | `POST /ruang` oleh user di luar flag `ruang_usaha_users` (R4) |
 | `batas_ruang_usaha` | 409 | `POST /ruang` saat user sudah memiliki 3 ruang usaha (R4) |
-| `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota |
-| `khusus_admin` | 403 | Peran member meminta data laporan atau aksi admin |
+| `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota; body juga berisi `buka_lagi` (R5) |
+| `khusus_admin` | 403 | Karyawan di ruang usaha memakai route di luar `KARYAWAN_BOLEH`, atau aksi admin lain (mengubah owner) (R5); member mengatur Fitur Tambahan (H1) |
+| `nominal_tidak_sah` | per baris | Baris antrean offline bernominal nol atau negatif (R5; jalur tunggal dan pemasukan: 422 validasi) |
 | `amplop_tidak_diizinkan` | 403 | Amplop tidak termasuk batasan anggota |
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
 | `perlu_foto_nota` | 422 | Nominal di atas `foto_nota_di_atas` tanpa foto |
@@ -352,15 +418,22 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `jendela_ubah_lewat` | 403 | Mengubah atau menghapus catatan di luar jendela |
 | `butuh_paket_usaha` | 402 | Ruang usaha tanpa hak Paket Usaha (ADR-P13) |
 | `plugin_tidak_aktif` | 404 | Plugin tidak terpasang atau dijeda di ruang ini |
+| `plugin_tidak_ada` | 404 | `plugin_id` tidak dikenal, atau flag rollout user belum aktif saat memasang (H1) |
+| `plugin_diperbaiki` | 503 | Saklar darurat menyala: pasang dan lanjut ditolak, jeda dan copot tetap boleh (H1) |
+| `jenis_ruang_tidak_cocok` | 422 | Plugin tidak mendukung jenis ruang ini (H1) |
+| `butuh_plugin` | 409 | Plugin yang dibutuhkan belum aktif di ruang ini (H1) |
+| `bentrok_plugin` | 409 | Bentrok dengan plugin yang terpasang (H1) |
+| `dibutuhkan_plugin_lain` | 409 | Plugin lain di ruang ini masih membutuhkannya (H1) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
-| `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`) |
+| `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |
 | `kartu_tidak_dikenal` | 422 / per kartu | Kartu tidak terdaftar (`PUT /dashboard/layout`; di `POST /dashboard/data` sebagai galat kartu) |
 | `ukuran_tidak_sah`, `kartu_ganda`, `instans_tidak_sah`, `terlalu_banyak` | 422 | Validasi tata letak atau permintaan data (§4) |
-| `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu |
+| `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu; pengaturan plugin saat pasang (H1, sampai titik `settings`) |
 | `periode_tidak_dikenal` | 422 | `periode` bukan `period_start` dari `GET /analytics/periods` |
 | `instans_tidak_ada` | 404 | `GET /dashboard/data/{id}` untuk instans yang tidak ada di tata letak user |
 | `gagal_memuat` | per kartu | Sumber data kartu gagal dimuat; kartu lain tetap terisi |
 | `alokasi_bukan_100` | 422 | Total persen alokasi omzet ≠ 100 |
+| `alokasi_tidak_penuh` | 422 | Penjualan karyawan yang alokasinya tidak sama dengan nominal (sisa akan jatuh ke amplop di luar izinnya) (R5) |
 
 Batasan member juga berlaku di `POST /transactions/batch` (antrean offline) dan untuk kiriman ulang dengan `client_ref` yang sama: item yang ditolak kembali dengan `kode` di hasil per item, dan tetap disimpan klien (`AGENTS.md`, "Service Worker", antrean offline).

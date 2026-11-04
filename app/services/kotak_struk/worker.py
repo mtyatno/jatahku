@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import replace
@@ -24,12 +25,13 @@ from sqlalchemy import or_, select, update
 from app.models.models import ReceiptScan, User
 from app.services import receipt_scan
 from app.services.app_config import feature_enabled
-from app.services.kotak_struk import waiter
+from app.services.kotak_struk import belajar, waiter
 from app.services.kotak_struk.config import (
     ITEM_EXPIRY, MAX_ATTEMPTS, PROOF_TYPES, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
 )
 from app.services.kotak_struk.extract import ExtractError, TextDoc, extract_text
-from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, upsert_household_merchant
+from app.services.kotak_struk.kerangka import build_layout
+from app.services.kotak_struk.merchants import counterparty_key, hmac_hex, mask_digits, upsert_household_merchant
 from app.services.kotak_struk.readers.base import ParseContext
 from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.registry import ReadResult, looks_like_proof, read_document
@@ -179,17 +181,54 @@ class _Outcome(NamedTuple):
     unread_proof: bool
 
 
+_QUOTED = re.compile(r'"[^"]*"')
+# Nominal berpemisah ribuan ("20.000", "1.500.000", "45,400.00") dilindungi dulu, lalu disamarkan: deret >= 6 digit di mana
+# pun (juga menempel ke ".", ",", ":": "NO.1234567890", "1234567890,") dan kelompok >= 3 digit yang disambung spasi, titik,
+# atau strip ("1234 5678 9012", "0812-3456-7890", "123.456.7890"). Tanggal/jam ("14-10-2026", "08:15") tidak pernah
+# tersamar sebagian (review L6 m-3).
+_AMOUNT = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?(?![\d.,]\d|\d)")
+_DIGIT_RUN = re.compile(r"(?<!\d)\d{3,}(?:[ .\-]\d{3,})+(?!\d)|\d{6,}")   # keduanya >= 6 digit
+
+
+def _masked_evidence(evidence: list[str]) -> list[str]:
+    """Kutipan baris di `evidence` ('Non-tunai "DEBIT BCA 1234567890 Rp20.000"') dengan deret >= 6 digit disamarkan
+    (`mask_digits`: "…7890"); nominal berpemisah ribuan di kutipan dan teks di luar kutipan (nominal sesudah panah) tetap
+    (L6e, M7; review L6 m-3)."""
+    def mask_quote(q: re.Match) -> str:
+        amounts: list[str] = []
+
+        def protect(m: re.Match) -> str:
+            amounts.append(m.group(0))
+            return f"\x00{len(amounts) - 1}\x00"
+
+        text = _DIGIT_RUN.sub(lambda m: mask_digits(m.group(0)), _AMOUNT.sub(protect, q.group(0)))
+        return re.sub("\x00(\\d+)\x00", lambda m: amounts[int(m.group(1))], text)
+    return [_QUOTED.sub(mask_quote, e) for e in evidence]
+
+
 def _plain_evidence(evidence: list[str]) -> list[str]:
     """Bukti (`evidence`) tanpa yang mengutip baris OCR ('Baris "..."', 'Non-tunai "..."') atau memuat angka: kutipan
     baris bukti bayar bisa memuat nomor rekening/HP utuh ('Non-tunai "Rekening Debit 0123 0100 1234 567"')."""
     return [e for e in evidence if '"' not in e and not any(c.isdigit() for c in e)]
 
 
-def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
+def _layout(text: TextDoc, doc, secrets, user_name: str | None) -> dict | None:
+    """Kerangka tata letak (kolom `layout`, belajar lintas user) dari baris OCR dan hasil baca SEBELUM disamarkan. Galat
+    apa pun -> None + peringatan berisi jenis galatnya saja (pesannya bisa mengutip isi bukti); item tetap `siap`."""
+    try:
+        return build_layout(text.lines, doc, secrets, user_name=user_name)
+    except Exception as exc:
+        log.warning("kerangka tata letak Kotak Struk tidak dibuat (%s)", type(exc).__name__)
+        return None
+
+
+def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None) -> _Outcome:
     """Hasil baca -> nilai kolom `receipt_scans`. Nomor rekening, NMID, dan nomor referensi hanya
-    masuk sebagai kunci/HMAC; Dokumen Bayar hanya memuat versi tersamarnya."""
+    masuk sebagai kunci/HMAC; Dokumen Bayar hanya memuat versi tersamarnya. `user_name` (nama user) hanya dipakai
+    supaya kerangka tata letak tidak memuat namanya."""
     parsed = res.parsed
     doc, extra, secrets = parsed.doc, parsed.extra, parsed.secrets
+    layout = _layout(text, doc, secrets, user_name)
     # Cabang berdasarkan jenis dokumen, bukan nama pembaca: penyelamatan LLM berpembaca
     # "tidak_dikenali" tetap struk belanja.
     store_receipt = doc.doc_type == "struk_belanja"
@@ -210,7 +249,9 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         document["lines"] = []
         document["counterparty"]["name"] = None
         document["evidence"] = _plain_evidence(document["evidence"])
-    elif store_receipt:
+    else:
+        document["evidence"] = _masked_evidence(document["evidence"])
+    if store_receipt and not unread_proof:
         document["receipt"] = {key: extra.get(key) for key in RECEIPT_KEYS}
     paid_at = doc.paid_at
     if paid_at is not None and paid_at.tzinfo is None:
@@ -236,6 +277,7 @@ def _outcome(res: ReadResult, text: TextDoc) -> _Outcome:
         "ref_hash": hmac_hex(secrets.ref_values[0]) if secrets.ref_values else None,
         "paid_at": paid_at,
         "pages": text.pages,
+        "layout": layout,
     }
     return _Outcome(columns, cp.name, cp.city, unread_proof)
 
@@ -311,7 +353,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
     `siap` (hasil tersimpan), `gagal` (bukti tidak bisa dibaca; pesan di `error`), `diterima` (galat tak
     terduga, akan dicoba lagi selama `attempts` < MAX_ATTEMPTS), status lama bila item bukan lagi
     `diterima`/`diproses` (tidak disentuh), atau "hilang" bila itemnya sudah tidak ada.
-    `proofs_enabled=None`: ikuti saklar fitur `receipt_inbox` (web)."""
+    `proofs_enabled=None`: ikuti saklar fitur `receipt_inbox` (web). Saklar menyala: aturan belajar yang disetujui
+    (`belajar.approved_rules`, cache 5 menit, galat = tanpa aturan) dimuat di sesi yang sama ke `ParseContext.rules`."""
     factory = session_factory or _default_factory()
     extract = extract or extract_text
     now = _aware(now or _utcnow())
@@ -328,6 +371,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
         aliases, profiles = await receipt_scan._load_learning(db)
         if proofs_enabled is None:
             proofs_enabled = await feature_enabled(db, "receipt_inbox", "web")
+        # Aturan belajar yang disetujui (cache 5 menit; galat -> tanpa aturan). Saklar bukti mati = perilaku lama.
+        rules = await belajar.approved_rules(db) if proofs_enabled else {}
     plan = str(getattr(user, "plan", None) or "basic")
 
     try:
@@ -348,9 +393,10 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
             image=data if image else None, content_type=content_type if image else None,
             user_id=user_id, plan=plan,
             llm=try_llm_fallback if image else None,
+            rules=rules,
         )
         res = await read_document(text, ctx, proofs_enabled=proofs_enabled)
-        return await _store(factory, item_id, _outcome(res, text), now)
+        return await _store(factory, item_id, _outcome(res, text, user_name=getattr(user, "name", None)), now)
     except ExtractError as exc:
         return await _fail(factory, item_id, exc.user_message, now)
     except Exception:

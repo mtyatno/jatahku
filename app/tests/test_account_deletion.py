@@ -27,7 +27,7 @@ from app.core.database import Base, get_db
 from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, Household, HouseholdMember, HouseholdMerchant,
     HouseholdRole, Income, IncomeKind, MerchantEnvelopeMap, Notification, NotificationPreference, PaymentOrder,
-    PendingTransaction, RecurringTransaction, Transaction, User, UserStreak,
+    PendingTransaction, ProofRule, ProofRuleVote, RecurringTransaction, Transaction, User, UserStreak,
 )
 from app.services import account_deletion
 from app.services.account_deletion import FORMER_MEMBER_ID
@@ -626,6 +626,36 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_member_deletion_drops_map_rows_of_personal_envelopes_without_fk_actions(self):
         await self.personal_map_scenario(fk=False)
+
+    async def learning_scenario(self, *, fk: bool):
+        """Suara koreksi Kotak Struk (spec 2026-11-01 §8, G7): suara user yang dihapus hilang dan aturan dihitung ulang
+        (status tetap); jejak keputusan admin dikosongkan. Varian tanpa FK membuktikan penghapusan eksplisit."""
+        uid, hid, _ = await self.add_user("Sari", "sari@example.com")
+        other, other_hid, _ = await self.add_user("Budi", "budi@example.com")
+        async with self.Session() as db:
+            for user, household in ((uid, hid), (other, other_hid)):
+                db.add(ProofRuleVote(kind="label_total", rule_key="jago", value="total bayar", user_id=user,
+                                     household_id=household))
+            db.add(ProofRuleVote(kind="label_pihak", rule_key="dana", value="penerima", user_id=uid, household_id=hid))
+            db.add(ProofRule(kind="label_total", rule_key="jago", value="total bayar", users=2, households=2,
+                             status="disetujui", decided_by=uid))
+            await db.commit()
+        await self.foreign_keys(fk)
+
+        await self.client.delete("/user/account", headers=self.auth(await self.login("sari@example.com")))
+
+        self.assertIsNone(await self.get(User, uid))
+        self.assertEqual(await self.count(ProofRuleVote, ProofRuleVote.user_id == uid), 0)
+        self.assertEqual(await self.count(ProofRuleVote, ProofRuleVote.user_id == other), 1)
+        async with self.Session() as db:
+            rule = (await db.execute(select(ProofRule))).scalar_one()
+        self.assertEqual((rule.users, rule.households, rule.status, rule.decided_by), (1, 1, "disetujui", None))
+
+    async def test_delete_account_forgets_votes_and_recounts(self):
+        await self.learning_scenario(fk=True)
+
+    async def test_delete_account_forgets_votes_and_recounts_without_fk_actions(self):
+        await self.learning_scenario(fk=False)
 
     async def test_former_member_cannot_be_deleted(self):
         await self.shared_household()
