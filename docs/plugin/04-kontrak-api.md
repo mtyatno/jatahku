@@ -379,7 +379,8 @@ Server menyaring di setiap route `/dashboard/*`:
 // PUT /dashboard/layout → kartu yang bukan untuk peran ini: 422 kartu_tidak_dikenal.
 // POST /dashboard/data → kartu umum untuk karyawan: {"error": {"kode": "khusus_admin"}} per kartu, penyedianya tidak
 // dipanggil; kartu karyawan untuk peran lain: {"error": {"kode": "kartu_tidak_dikenal"}}. `periode` diabaikan
-// kartu karyawan (selalu hari ini, zona user).
+// kartu karyawan (selalu hari ini, zona user). "Catatan hari ini" = dibuat hari ini menurut jam dibuat (`created_at`)
+// di zona user, sama dengan jendela ubah; bukan `transaction_date`/`income_date` (bertanggal jam server UTC).
 ```
 
 | Kartu (`untuk: karyawan`) | `shape` | Isi |

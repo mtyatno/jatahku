@@ -375,7 +375,7 @@ async def draf_saya(db: AsyncSession, user_id, household_id, limit: int = 50) ->
 
 async def catatan_hari_ini(db: AsyncSession, user, household_id, batasan: Batasan | None,
                            sekarang: datetime | None = None) -> dict:
-    """Catatan yang dibuat user sendiri hari ini (zona user) di satu ruang: pengeluaran (transaksi di amplop ruang
+    """Catatan yang dibuat user sendiri hari ini (jam dibuat, zona user) di satu ruang: pengeluaran (transaksi di amplop ruang
     itu) dan penjualan (pemasukan bernilai > 0). Tidak memuat catatan anggota lain, saldo, atau total ruang.
     `boleh_hapus` mengikuti jendela ubah (hanya transaksi; pemasukan tidak punya jalur hapus). Kartu Beranda
     karyawan (R6)."""
@@ -386,17 +386,23 @@ async def catatan_hari_ini(db: AsyncSession, user, household_id, batasan: Batasa
         zona = ZoneInfo(ZONA_BAWAAN)
     sekarang = sekarang or datetime.now(timezone.utc)
     hari = sekarang.astimezone(zona).date()
+    # "Hari ini" = jam dibuat di zona user, sama dengan jendela ubah, bukan `transaction_date`/`income_date`:
+    # catatan tanpa tanggal diberi tanggal jam server (UTC), jadi yang dicatat pukul 00.00–07.00 WIB bertanggal
+    # kemarin dan dulu hilang dari kartu ini.
+    awal = datetime.combine(hari, time.min, tzinfo=zona).astimezone(timezone.utc)
+    akhir = datetime.combine(hari + timedelta(days=1), time.min, tzinfo=zona).astimezone(timezone.utc)
     txn = (await db.execute(
         select(Transaction.id, Transaction.description, Transaction.amount, Transaction.created_at,
                Envelope.name, Envelope.emoji)
         .join(Envelope, Envelope.id == Transaction.envelope_id)
         .where(Envelope.household_id == household_id, Transaction.user_id == user.id,
-               Transaction.transaction_date == hari, Transaction.is_deleted == False)  # noqa: E712
+               Transaction.created_at >= awal, Transaction.created_at < akhir,
+               Transaction.is_deleted == False)  # noqa: E712
     )).all()
     inc = (await db.execute(
         select(Income.id, Income.description, Income.amount, Income.created_at)
-        .where(Income.household_id == household_id, Income.user_id == user.id, Income.income_date == hari,
-               Income.amount > 0)
+        .where(Income.household_id == household_id, Income.user_id == user.id,
+               Income.created_at >= awal, Income.created_at < akhir, Income.amount > 0)
     )).all()
 
     def _hapus(dibuat) -> bool:
