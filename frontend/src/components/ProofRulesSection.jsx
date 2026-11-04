@@ -155,7 +155,7 @@ export default function ProofRulesSection({ onLoaded }) {
                         <span className="font-semibold text-gray-800">{r.kind}</span>
                         <span className="text-gray-500">{r.app}</span>
                       </h5>
-                      <div className="mt-0.5 text-sm text-gray-800 break-words">Label: “{r.label}”</div>
+                      <div className="mt-0.5 text-sm text-gray-800 break-words">{r.valueLabel}: “{r.label}”</div>
                       <div className="text-gray-500 break-words">Contoh: <span className="font-mono text-gray-700">{r.example}</span></div>
                       {r.warning && <p className="text-amber-600">⚠ {r.warning}</p>}
                       <div className="text-gray-500">{r.meta}</div>
@@ -164,7 +164,7 @@ export default function ProofRulesSection({ onLoaded }) {
                       {buttons.length > 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <input type="text" className="input py-1.5 px-3 text-xs flex-1 min-w-[10rem] placeholder:text-gray-500"
-                            placeholder="Catatan (opsional, maks. 200)" aria-label={`Catatan untuk label ${r.label}`}
+                            placeholder="Catatan (opsional, maks. 200)" aria-label={`Catatan untuk ${r.valueLabel.toLowerCase()} ${r.label}`}
                             value={notes[r.id] || ''} disabled={busy}
                             onChange={e => setNotes(n => ({ ...n, [r.id]: e.target.value }))} />
                           {buttons.map(b => (

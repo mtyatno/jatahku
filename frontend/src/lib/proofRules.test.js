@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  KIND_LABEL, RULE_TABS, NOTE_MAX, RULE_MIN_USERS, THRESHOLD_HINT, WARNING_TEXT, ruleAppLabel, syntheticExample,
+  KIND_LABEL, RULE_TABS, NOTE_MAX, RULE_MIN_USERS, THRESHOLD_HINT, WARNING_TEXT, LOGO_WARNING_TEXT, ruleAppLabel,
+  syntheticExample, voteKey,
   ruleActions, rowActions, actionButtons, ruleSummary, tabCounts, ruleRows, voteRows, noteError, notePayload,
   decisionBody, actionOutcome, pendingBadge, hasRulesSection, emptyText, nextTab,
 } from './proofRules.js';
@@ -28,8 +29,10 @@ const RESP = {
   ],
 };
 
-test('KIND_LABEL dan tab: jenis tahap 1 dan lima tab berurutan', () => {
-  assert.deepEqual(KIND_LABEL, { label_total: 'Nominal', label_pihak: 'Nama penerima', label_tanggal: 'Tanggal' });
+test('KIND_LABEL dan tab: jenis tahap 1, jenis tahap 2, dan lima tab berurutan', () => {
+  assert.deepEqual(KIND_LABEL, {
+    label_total: 'Nominal', label_pihak: 'Nama penerima', label_tanggal: 'Tanggal', logo: 'Aplikasi', arah: 'Arah uang',
+  });
   assert.deepEqual(RULE_TABS.map(t => [t.key, t.label]), [
     ['menunggu', 'Menunggu'], ['disetujui', 'Disetujui'], ['ditolak', 'Ditolak'], ['dicabut', 'Dicabut'], ['suara', 'Suara'],
   ]);
@@ -53,18 +56,107 @@ test('syntheticExample: label berhuruf awal kapital + nilai tersamar; tidak pern
   assert.equal(syntheticExample({ kind: 'label_total', value: 'total bayar' }), 'Total bayar Rp##.###');
   assert.equal(syntheticExample({ kind: 'label_pihak', value: 'nama penerima' }), 'Nama penerima NAMA PENERIMA');
   assert.equal(syntheticExample({ kind: 'label_tanggal', value: 'waktu transaksi' }), 'Waktu transaksi ## Okt ####');
-  assert.equal(syntheticExample({ kind: 'arah', value: 'uang keluar' }), 'Uang keluar …');
+  assert.equal(syntheticExample({ kind: 'mystery', value: 'uang keluar' }), 'Uang keluar …');
   // Contoh dibangun dari label dan jenis saja: teks lain dari server (mis. `example` berisi data) tidak pernah dipakai.
   const ex = syntheticExample({ kind: 'label_total', value: 'nominal', example: 'Nominal Rp1.250.000 BUDI 0812345678' });
   assert.equal(ex, 'Nominal Rp##.###');
-  // Jenis yang belum punya topeng (tahap 2: arah, logo) juga tidak memakai `example` server.
-  assert.equal(syntheticExample({ kind: 'arah', value: 'x', example: 'X 0812345678 BUDI' }), 'X …');
+  assert.equal(syntheticExample({ kind: 'mystery', value: 'x', example: 'X 0812345678 BUDI' }), 'X …');
+  // Aturan label berkunci logo: contoh tahap 1.
+  assert.equal(syntheticExample({ kind: 'label_total', rule_key: 'logo:newpay', value: 'nominal' }), 'Nominal Rp##.###');
   for (const r of RESP.rules) assert.doesNotMatch(syntheticExample(r), /\d/);
   // Label yang memuat # (digit tersamar) tetap tanpa angka.
   assert.doesNotMatch(syntheticExample({ kind: 'label_total', value: 'total #' }), /\d/);
   assert.equal(syntheticExample(null), null);
   assert.equal(syntheticExample({ kind: 'label_total', value: '' }), null);
   assert.equal(syntheticExample({ kind: 'label_total', value: 12 }), null);
+});
+
+test('syntheticExample logo dan arah (M3d): dari jenis, kunci, nilai sendiri; huruf besar + "…"; tanpa angka', () => {
+  const ex = (kind, rule_key, value, extra = {}) => syntheticExample({ kind, rule_key, value, ...extra });
+  assert.equal(ex('logo', 'logo:newpay', 'bsi'), 'Logo "NEWPAY" → BSI');
+  assert.equal(ex('logo', 'logo:bank raya', 'baru'), 'Logo "BANK RAYA" → Aplikasi baru');
+  assert.equal(ex('logo', 'logo:newpay', 'livin'), 'Logo "NEWPAY" → Livin\' by Mandiri');
+  assert.equal(ex('arah', 'gopay|judul:top up', 'top_up'), 'Judul "top up" → Top-up');
+  assert.equal(ex('arah', 'shopeepay|ke:gopay topu', 'top_up'), 'Penerima "GOPAY TOPU…" → Top-up');
+  assert.equal(ex('arah', 'dana|judul:terima dana', 'masuk'), 'Judul "terima dana" → Uang masuk');
+  assert.equal(ex('arah', 'bca_mobile|ke:ovo topup', 'antar_rekening_sendiri'), 'Penerima "OVO TOPUP…" → Rekening sendiri');
+  // `example` server tidak pernah dipakai.
+  assert.equal(ex('logo', 'logo:newpay', 'bsi', { example: 'Logo BUDI 0812345678' }), 'Logo "NEWPAY" → BSI');
+  // Data rusak: kunci/nilai di luar bentuk sah → "…", tidak pernah melempar, tidak pernah angka atau teks kunci.
+  const broken = [
+    ex('logo', 'logo:budi 0812345678', 'bsi'), ex('logo', 'gopay', 'bsi'), ex('logo', null, 'bsi'),
+    ex('logo', 'logo:newpay', 'siti'), ex('logo', 'logo:newpay', 'toString'), ex('logo', 5, 'bsi'),
+    ex('arah', 'gopay|ke:andi 0812345678', 'top_up'), ex('arah', 'gopay', 'top_up'), ex('arah', 'gopay|judul:', 'top_up'),
+    ex('arah', 'gopay|judul:top up', 'keluar'), ex('arah', 'gopay|apa:top up', 'top_up'), ex('arah', {}, 'masuk'),
+    ex('arah', 'gopay|judul:Top Up', 'top_up'),
+  ];
+  assert.deepEqual(broken, [
+    'Logo "…" → BSI', 'Logo "…" → BSI', 'Logo "…" → BSI', 'Logo "NEWPAY" → …', 'Logo "NEWPAY" → …', 'Logo "…" → BSI',
+    'Kata kunci "…" → Top-up', 'Kata kunci "…" → Top-up', 'Kata kunci "…" → Top-up', 'Judul "top up" → …',
+    'Kata kunci "…" → Top-up', 'Kata kunci "…" → Uang masuk', 'Kata kunci "…" → Top-up',
+  ]);
+  for (const t of broken) assert.doesNotMatch(t, /\d|siti|andi|budi|toString/i);
+  assert.equal(ex('logo', 'logo:newpay', ''), null);
+  assert.equal(ex('arah', 'gopay|judul:top up', null), null);
+});
+
+test('ruleAppLabel dan voteKey: kunci arah = aplikasinya; logo:* tersamar', () => {
+  assert.equal(ruleAppLabel('shopeepay|ke:gopay topu'), 'ShopeePay');
+  assert.equal(ruleAppLabel('logo:newpay|judul:top up'), 'Aplikasi baru: newpay');
+  assert.equal(ruleAppLabel('logo:*'), 'Aplikasi baru (logo disamarkan)');
+  assert.equal(ruleAppLabel('|judul:top up'), '–');
+  assert.equal(voteKey('logo', 'logo:andi'), 'logo:*');
+  assert.equal(voteKey('label_total', 'logo:newpay'), 'logo:*');
+  assert.equal(voteKey('arah', 'shopeepay|ke:gopay topu'), 'shopeepay');
+  assert.equal(voteKey('arah', 'logo:newpay|judul:top up'), 'logo:*');
+  assert.equal(voteKey('label_total', 'gopay'), 'gopay');
+  assert.equal(voteKey('label_total', null), null);
+});
+
+test('ruleRows logo dan arah: label jenis, nilai terbaca, contoh, peringatan nama orang untuk setiap logo', () => {
+  const resp = { counts: {}, rules: [
+    rule({ id: 'lg', kind: 'logo', rule_key: 'logo:andi', value: 'bsi', users: 3, warning: true }),
+    rule({ id: 'lg2', kind: 'logo', rule_key: 'logo:bank raya', value: 'baru', users: 2, warning: false }),
+    rule({ id: 'ar', kind: 'arah', rule_key: 'shopeepay|ke:gopay topu', value: 'top_up', users: 2, warning: false }),
+    rule({ id: 'tl', kind: 'label_total', rule_key: 'gopay', value: 'total bayar', users: 2 }),
+  ] };
+  const rows = Object.fromEntries(ruleRows(resp, 'menunggu').map(r => [r.id, r]));
+  assert.deepEqual(
+    [rows.lg.kind, rows.lg.app, rows.lg.valueLabel, rows.lg.label, rows.lg.example, rows.lg.warning],
+    ['Aplikasi', 'Aplikasi baru: andi', 'Aplikasi', 'BSI', 'Logo "ANDI" → BSI', LOGO_WARNING_TEXT],
+  );
+  // Peringatan logo selalu, juga bila server lama tidak mengirimnya.
+  assert.equal(rows.lg2.warning, LOGO_WARNING_TEXT);
+  assert.equal(rows.lg2.label, 'Aplikasi baru');
+  assert.match(LOGO_WARNING_TEXT, /periksa bukan nama orang/);
+  assert.deepEqual(
+    [rows.ar.kind, rows.ar.app, rows.ar.valueLabel, rows.ar.label, rows.ar.example, rows.ar.warning],
+    ['Arah uang', 'ShopeePay', 'Arah uang', 'Top-up', 'Penerima "GOPAY TOPU…" → Top-up', null],
+  );
+  assert.deepEqual([rows.tl.valueLabel, rows.tl.label, rows.tl.warning], ['Label', 'total bayar', null]);
+  // Nilai di luar daftar: apa adanya (tidak pernah dari server selain `value`), tanpa melempar.
+  const odd = ruleRows({ rules: [rule({ id: 'x', kind: 'logo', rule_key: 'logo:newpay', value: 'toString' }),
+    rule({ id: 'y', kind: 'arah', rule_key: 7, value: 'keluar' })] }, 'menunggu');
+  assert.deepEqual(odd.map(r => [r.label, r.example]), [['toString', 'Logo "NEWPAY" → …'], ['keluar', 'Kata kunci "…" → …']]);
+});
+
+test('voteRows logo dan arah: kunci tersamar juga di klien; kata satuan per jenis', () => {
+  const rows = voteRows({ rows: [
+    { rule_key: 'logo:*', kind: 'logo', users: 3, values: 2 },
+    { rule_key: 'shopeepay', kind: 'arah', users: 2, values: 2 },
+    // server lama tanpa penyamaran: tetap tidak pernah tampil
+    { rule_key: 'logo:andi', kind: 'logo', users: 1, values: 1 },
+    { rule_key: 'gopay|ke:gopay topu', kind: 'arah', users: 1, values: 1 },
+  ] });
+  assert.deepEqual(rows.map(r => [r.app, r.kind, r.text]), [
+    ['Aplikasi baru (logo disamarkan)', 'Aplikasi', '3 user · 2 aplikasi'],
+    ['ShopeePay', 'Arah uang', '2 user · 2 alasan'],
+    ['Aplikasi baru (logo disamarkan)', 'Aplikasi', '1 user · 1 aplikasi'],
+    ['GoPay', 'Arah uang', '1 user · 1 alasan'],
+  ]);
+  assert.doesNotMatch(JSON.stringify(rows), /andi|topu|judul|ke:/);
+  // Baris yang tergabung oleh penyamaran (server lama) tetap berkunci unik untuk React.
+  assert.equal(new Set(rows.map(r => r.key)).size, rows.length);
 });
 
 test('ruleActions: transisi G5 per status', () => {
@@ -125,7 +217,7 @@ test('ruleRows menunggu: pendukung terbanyak dulu, lalu yang lebih dulu masuk; i
     id: 'm-top', status: 'menunggu', kind: 'Nama penerima', app: 'BCA mobile', label: 'nama penerima',
     example: 'Nama penerima NAMA PENERIMA', support: '5 user · 4 rumah tangga', date: 'Masuk 20 Okt 2026',
     meta: '5 user · 4 rumah tangga · Masuk 20 Okt 2026', note: null, warning: null, threshold: null,
-    actions: ['setujui', 'tolak'],
+    actions: ['setujui', 'tolak'], valueLabel: 'Label',
   });
   assert.equal(rows[2].app, 'Aplikasi baru: jeniuspay');
   assert.equal(rows[2].kind, 'Tanggal');
@@ -185,7 +277,7 @@ test('ruleRows: data rusak tidak melempar; baris tanpa id/status/jenis/label dil
   assert.equal(rows[0].support, '0 user · 0 rumah tangga');
   assert.deepEqual(rows[0].actions, ['tolak']);
   // Jenis yang belum dikenal klien: kunci asli.
-  assert.equal(ruleRows({ rules: [rule({ kind: 'arah' })] }, 'menunggu')[0].kind, 'arah');
+  assert.equal(ruleRows({ rules: [rule({ kind: 'mystery' })] }, 'menunggu')[0].kind, 'mystery');
 });
 
 test('ruleRows di bawah ambang: petunjuk di semua status, tanpa Setujui; yang disetujui disarankan dicabut', () => {
@@ -224,16 +316,18 @@ test('voteRows: hanya angka per aplikasi dan jenis; tanpa teks label; urut user 
   assert.deepEqual(rows, [
     { key: 'gopay|label_total', app: 'GoPay', kind: 'Nominal', users: 3, values: 1, text: '3 user · 1 label' },
     { key: 'gopay|label_pihak', app: 'GoPay', kind: 'Nama penerima', users: 3, values: 2, text: '3 user · 2 label' },
-    { key: 'logo:jeniuspay|label_tanggal', app: 'Aplikasi baru: jeniuspay', kind: 'Tanggal', users: 2, values: 4,
+    // Kunci logo tersamar juga untuk suara label (K15, M3d).
+    { key: 'logo:*|label_tanggal', app: 'Aplikasi baru (logo disamarkan)', kind: 'Tanggal', users: 2, values: 4,
       text: '2 user · 4 label' },
     { key: 'ovo|label_total', app: 'OVO', kind: 'Nominal', users: 1, values: 1, text: '1 user · 1 label' },
   ]);
   assert.doesNotMatch(JSON.stringify(rows), /RAHASIA|total bayar/);
-  // User sama banyak → urut NAMA aplikasi (bukan kunci: bni = "wondr by BNI", logo:x = "Aplikasi baru: x").
+  assert.doesNotMatch(JSON.stringify(rows), /jeniuspay/);
+  // User sama banyak → urut NAMA aplikasi (bukan kunci: bni = "wondr by BNI", logo:* = "Aplikasi baru (…)").
   assert.deepEqual(voteRows({ rows: [
     { rule_key: 'bni', kind: 'label_total', users: 2, values: 1 }, { rule_key: 'dana', kind: 'label_total', users: 2, values: 1 },
     { rule_key: 'livin', kind: 'label_total', users: 2, values: 1 }, { rule_key: 'logo:abc', kind: 'label_total', users: 2, values: 1 },
-  ] }).map(r => r.app), ['Aplikasi baru: abc', 'DANA', "Livin' by Mandiri", 'wondr by BNI']);
+  ] }).map(r => r.app), ['Aplikasi baru (logo disamarkan)', 'DANA', "Livin' by Mandiri", 'wondr by BNI']);
   assert.equal(voteRows(null), null);
   assert.equal(voteRows({ rows: {} }), null);
   assert.deepEqual(voteRows({ rows: [null, 3, { kind: 'label_total', users: 2 }, { rule_key: 'ovo', kind: 5 }] }), []);

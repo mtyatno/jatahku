@@ -71,6 +71,7 @@ from typing import Iterable, Iterator
 from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.models import ProofRule, ProofRuleVote, ReceiptScan, Transaction
 from app.services.kotak_struk.config import (
@@ -107,6 +108,10 @@ DECISIONS: dict[str, tuple[str, frozenset[str]]] = {
 MSG_RULE_NOT_FOUND = "Aturan tidak ditemukan"
 MSG_RULE_CONFLICT = "Aturan ini tidak bisa diubah ke status itu"
 MSG_RULE_BELOW_THRESHOLD = f"Aturan belum didukung {RULE_MIN_USERS} user"
+MSG_RULE_KEY_TAKEN = "Kunci ini sudah punya aturan yang disetujui; cabut dulu"
+# Jenis dengan SATU nilai disetujui per kunci (G8, M3d): satu logo = satu aplikasi, satu token arah = satu arah uang.
+# Jenis label boleh beberapa label disetujui per kunci (tahap 1).
+SINGLE_VALUE_KINDS = frozenset({KIND_LOGO, KIND_ARAH})
 
 NAME_NGRAM_MAX = 6           # kata nama terpanjang (sama dengan kerangka.NAME_MAX_WORDS)
 DESCRIPTION_WORDS_MAX = 40   # kata keterangan yang dicocokkan (keterangan transaksi pendek)
@@ -156,6 +161,10 @@ class RuleConflict(ValueError):
 
 class RuleBelowThreshold(RuleConflict):
     """Setujui aturan yang pendukungnya kurang dari RULE_MIN_USERS (review L4a m-6) -> 409."""
+
+
+class RuleKeyTaken(RuleConflict):
+    """Setujui nilai kedua untuk kunci `logo`/`arah` yang sudah punya nilai `disetujui` (G8, M3d) -> 409."""
 
 
 def today_wib() -> date:
@@ -553,7 +562,10 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
     status itu saja: tolak lalu setujui bersamaan dari `menunggu` -> yang kedua gagal, walaupun `ditolak` -> setujui
     sah. Setujui juga mensyaratkan `users >= RULE_MIN_USERS` (review L4a m-6). Mengisi `decided_at`, `decided_by`,
     `note`. `RuleNotFound` bila id tidak ada, `RuleBelowThreshold` bila status sah tetapi pendukung kurang,
-    `RuleConflict` bila transisinya tidak sah. Tidak meng-commit; pemanggil juga membatalkan cache aturan."""
+    `RuleKeyTaken` (G8, M3d) bila aturan `logo`/`arah` (SINGLE_VALUE_KINDS) yang mau disetujui punya saudara (jenis dan
+    kunci sama, nilai lain) yang masih `disetujui`, `RuleConflict` bila transisinya tidak sah. Syarat G8 ada di UPDATE
+    bersyarat itu sendiri (NOT EXISTS), bukan pemeriksaan terpisah sebelumnya. Mencabut dan menolak tidak pernah
+    terhalang G8. Tidak meng-commit; pemanggil juga membatalkan cache aturan."""
     decision = DECISIONS.get(action)
     if decision is not None:
         status, allowed = decision
@@ -562,6 +574,7 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
         conditions = [ProofRule.id == rule_id, ProofRule.status.in_(sorted(allowed))]
         if status == ST_DISETUJUI:
             conditions.append(ProofRule.users >= RULE_MIN_USERS)
+            conditions.append(~_approved_sibling(ProofRule))
         if allowed:
             done = await db.execute(
                 update(ProofRule).where(*conditions)
@@ -574,10 +587,22 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
     current = (await db.execute(select(ProofRule.status, ProofRule.users).where(ProofRule.id == rule_id))).one_or_none()
     if current is None:
         raise RuleNotFound(MSG_RULE_NOT_FOUND)
-    if decision is not None and decision[0] == ST_DISETUJUI and current.status in allowed \
-            and current.users < RULE_MIN_USERS:
-        raise RuleBelowThreshold(MSG_RULE_BELOW_THRESHOLD)
+    if decision is not None and decision[0] == ST_DISETUJUI and current.status in allowed:
+        if current.users < RULE_MIN_USERS:
+            raise RuleBelowThreshold(MSG_RULE_BELOW_THRESHOLD)
+        if (await db.execute(select(_approved_sibling(ProofRule)).where(ProofRule.id == rule_id))).scalar():
+            raise RuleKeyTaken(MSG_RULE_KEY_TAKEN)
     raise RuleConflict(MSG_RULE_CONFLICT)
+
+
+def _approved_sibling(rule):
+    """EXISTS: aturan lain dengan jenis dan kunci yang sama dengan `rule` (berkorelasi), berstatus `disetujui`, untuk
+    jenis SINGLE_VALUE_KINDS saja (G8). Jenis label: selalu False."""
+    other = aliased(ProofRule)
+    return (select(other.id)
+            .where(other.kind == rule.kind, other.rule_key == rule.rule_key, other.id != rule.id,
+                   other.status == ST_DISETUJUI, other.kind.in_(sorted(SINGLE_VALUE_KINDS)))
+            .correlate(rule).exists())
 
 
 # ── aturan yang disetujui untuk pembaca (L3) ────────────────────────────────

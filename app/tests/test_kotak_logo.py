@@ -593,7 +593,7 @@ class AdminLogoKindTests(AdminRulesBase):
             self.assertGreater(await belajar.reconcile_rules(db), 0)   # rekonsiliasi membuat aturan `logo`
             await db.commit()
         votes = (await self.c.get("/admin/kotak/votes")).json()["rows"]
-        self.assertEqual(votes, [{"rule_key": "logo:newpay", "kind": "logo", "users": 2, "values": 1}])
+        self.assertEqual(votes, [{"rule_key": "logo:*", "kind": "logo", "users": 2, "values": 1}])   # K15 (M3d)
         [rule] = (await self.c.get("/admin/kotak/rules")).json()["rules"]
         self.assertEqual((rule["kind"], rule["rule_key"], rule["value"], rule["users"]),
                          ("logo", "logo:newpay", "bsi", 2))

@@ -587,5 +587,243 @@ class StatsTests(AdminRulesBase):
         self.assertEqual(res.json()["rules_pending"], 1)
 
 
+# ── jenis tahap 2: `logo` dan `arah` (Task M3d; pre-flight A16 §3 "Admin", K15, G8) ────────────────────────────
+
+class LogoArahListTests(AdminRulesBase):
+    async def test_synthetic_examples_for_logo_and_arah_without_digits(self):
+        await self.rule("bsi", kind="logo", key="logo:newpay")
+        await self.rule("baru", kind="logo", key="logo:bank raya")
+        await self.rule("top_up", kind="arah", key="gopay|judul:top up")
+        await self.rule("top_up", kind="arah", key="shopeepay|ke:gopay topu")
+        await self.rule("masuk", kind="arah", key="dana|judul:terima dana")
+        await self.rule("antar_rekening_sendiri", kind="arah", key="bca_mobile|ke:ovo topup")
+        rows = {(x["kind"], x["rule_key"]): x["example"]
+                for x in (await self.c.get("/admin/kotak/rules")).json()["rules"]}
+        self.assertEqual(rows, {
+            ("logo", "logo:newpay"): 'Logo "NEWPAY" → BSI Mobile',
+            ("logo", "logo:bank raya"): 'Logo "BANK RAYA" → Aplikasi baru',
+            ("arah", "gopay|judul:top up"): 'Judul "top up" → Top-up',
+            ("arah", "shopeepay|ke:gopay topu"): 'Penerima "GOPAY TOPU…" → Top-up',
+            ("arah", "dana|judul:terima dana"): 'Judul "terima dana" → Uang masuk',
+            ("arah", "bca_mobile|ke:ovo topup"): 'Penerima "OVO TOPUP…" → Rekening sendiri',
+        })
+        self.assertFalse(any(ch.isdigit() for ex in rows.values() for ch in ex))
+
+    async def test_broken_logo_or_arah_rows_give_neutral_examples_without_digits(self):
+        # Data lama/tangan: kunci atau nilai di luar bentuk sah tidak pernah masuk contoh apa adanya.
+        await self.rule("siti", kind="logo", key="logo:newpay")
+        await self.rule("bsi", kind="logo", key="logo:budi 0812345678")
+        await self.rule("bsi", kind="logo", key="gopay")
+        await self.rule("keluar", kind="arah", key="gopay|judul:top up")
+        await self.rule("top_up", kind="arah", key="gopay|ke:andi 0812345678")
+        await self.rule("top_up", kind="arah", key="gopay")
+        res = await self.c.get("/admin/kotak/rules")
+        self.assertEqual(res.status_code, 200)
+        examples = [x["example"] for x in res.json()["rules"]]
+        self.assertEqual(len(examples), 6)
+        for ex in examples:
+            self.assertNotRegex(ex, r"\d")
+            self.assertNotIn("siti", ex.lower())
+            self.assertNotIn("andi", ex.lower())
+            self.assertNotIn("budi", ex.lower())
+
+    async def test_warning_for_every_logo_rule(self):
+        # Kata logo satu kata (nama depan sisa M2a: "logo:andi") maupun dua kata: pemilik selalu diingatkan.
+        for key in ("logo:newpay", "logo:andi", "logo:bank raya"):
+            await self.rule("bsi", kind="logo", key=key)
+        await self.rule("top_up", kind="arah", key="gopay|judul:top up")
+        rows = {x["rule_key"]: x["warning"] for x in (await self.c.get("/admin/kotak/rules")).json()["rules"]}
+        self.assertEqual(rows, {"logo:newpay": True, "logo:andi": True, "logo:bank raya": True,
+                                "gopay|judul:top up": False})
+
+    async def test_old_kinds_unchanged(self):
+        from app.api.routes import admin_kotak
+        self.assertEqual(admin_kotak.synthetic_example("label_total", "total bayar"), "Total bayar Rp##.###")
+        self.assertEqual(admin_kotak.synthetic_example("label_pihak", "ke", "logo:newpay"), "Ke NAMA PENERIMA")
+        self.assertEqual(admin_kotak.synthetic_example("label_tanggal", "tanggal", "gopay"), "Tanggal ## Okt ####")
+        self.assertTrue(admin_kotak.has_warning("status"))
+        self.assertFalse(admin_kotak.has_warning("total bayar"))
+        # Aturan label berkunci logo: contoh dan peringatan tahap 1 (bukan peringatan logo).
+        await self.rule("nominal", kind="label_total", key="logo:newpay")
+        [row] = (await self.c.get("/admin/kotak/rules")).json()["rules"]
+        self.assertEqual((row["rule_key"], row["example"], row["warning"]), ("logo:newpay", "Nominal Rp##.###", False))
+
+    async def test_rules_keep_full_keys(self):
+        await self.rule("bsi", kind="logo", key="logo:andi")
+        await self.rule("top_up", kind="arah", key="shopeepay|ke:gopay topu")
+        keys = {x["rule_key"] for x in (await self.c.get("/admin/kotak/rules")).json()["rules"]}
+        self.assertEqual(keys, {"logo:andi", "shopeepay|ke:gopay topu"})
+
+
+class LogoArahVotesTests(AdminRulesBase):
+    async def test_votes_mask_logo_keys_and_arah_tokens(self):   # K15, gerbang rilis tahap 2
+        user3 = User(name="Citra")
+        async with self.Session() as db:
+            db.add(user3)
+            await db.commit()
+        # Kunci logo (juga nama depan sisa "andi") dengan suara `logo` dan suara label berkunci logo.
+        await self.vote("bsi", self.user, kind="logo", key="logo:andi")
+        await self.vote("bsi", self.user2, kind="logo", key="logo:newpay")
+        await self.vote("baru", user3, kind="logo", key="logo:kilatpay")
+        await self.vote("nominal", self.user, kind="label_total", key="logo:newpay")
+        # Token arah: per aplikasi saja (juga arah untuk kunci logo yang disetujui).
+        await self.vote("top_up", self.user, kind="arah", key="shopeepay|ke:gopay topu")
+        await self.vote("top_up", self.user2, kind="arah", key="shopeepay|judul:top up")
+        await self.vote("masuk", self.user2, kind="arah", key="shopeepay|judul:terima dana")
+        await self.vote("top_up", user3, kind="arah", key="logo:newpay|judul:top up")
+        # Jenis lama berkunci profil: tidak berubah.
+        await self.vote("total bayar", self.user, key="gopay")
+        res = await self.c.get("/admin/kotak/votes")
+        self.assertEqual(res.status_code, 200)
+        rows = res.json()["rows"]
+        self.assertEqual(rows, [
+            {"rule_key": "logo:*", "kind": "logo", "users": 3, "values": 2},
+            {"rule_key": "shopeepay", "kind": "arah", "users": 2, "values": 2},
+            {"rule_key": "gopay", "kind": "label_total", "users": 1, "values": 1},
+            {"rule_key": "logo:*", "kind": "arah", "users": 1, "values": 1},
+            {"rule_key": "logo:*", "kind": "label_total", "users": 1, "values": 1},
+        ])
+        for secret in ("andi", "newpay", "kilatpay", "topu", "judul", "ke:", "terima", "|", "nominal", "total bayar"):
+            self.assertNotIn(secret, res.text)
+        for kind in ("logo", "arah"):
+            self.assertIn(kind, {r["kind"] for r in rows})
+
+    async def test_masked_vote_key(self):
+        from app.api.routes.admin_kotak import vote_key
+        self.assertEqual(vote_key("logo", "logo:andi"), "logo:*")
+        self.assertEqual(vote_key("label_pihak", "logo:bank raya"), "logo:*")
+        self.assertEqual(vote_key("arah", "shopeepay|ke:gopay topu"), "shopeepay")
+        self.assertEqual(vote_key("arah", "logo:newpay|judul:top up"), "logo:*")
+        self.assertEqual(vote_key("arah", "gopay"), "gopay")
+        self.assertEqual(vote_key("label_total", "gopay"), "gopay")
+        self.assertEqual(vote_key("label_total", "mystery_app"), "mystery_app")
+
+
+class LogoArahDecisionTests(AdminRulesBase):
+    async def test_second_approved_value_for_same_key_is_409(self):   # G8
+        for kind, key, first, second in (("logo", "logo:newpay", "bsi", "jago"),
+                                          ("arah", "shopeepay|ke:gopay topu", "top_up", "masuk")):
+            with self.subTest(kind=kind):
+                a = await self.rule(first, kind=kind, key=key)
+                b = await self.rule(second, kind=kind, key=key)
+                self.assertEqual((await self.act(a.id, "setujui")).status_code, 200)
+                with patch.object(belajar, "invalidate_rules_cache") as inv:
+                    res = await self.act(b.id, "setujui")
+                self.assertEqual(res.status_code, 409)
+                self.assertEqual(res.json()["detail"], "Kunci ini sudah punya aturan yang disetujui; cabut dulu")
+                inv.assert_not_called()
+                stored = await self.get_rule(b.id)
+                self.assertEqual((stored.status, stored.decided_at), ("menunggu", None))
+                # Tolak nilai kedua tetap boleh; sesudah mencabut yang pertama, nilai kedua bisa disetujui.
+                self.assertEqual((await self.act(a.id, "cabut")).status_code, 200)
+                self.assertEqual((await self.act(b.id, "setujui")).status_code, 200)
+                # Menyetujui ulang yang pertama sekarang yang ditolak.
+                self.assertEqual((await self.act(a.id, "setujui")).status_code, 409)
+                self.assertEqual((await self.get_rule(a.id)).status, "dicabut")
+
+    async def test_g8_only_same_kind_and_key(self):
+        await self.rule("bsi", kind="logo", key="logo:newpay", status="disetujui")
+        await self.rule("top_up", kind="arah", key="gopay|judul:top up", status="disetujui")
+        for value, kind, key in (("jago", "logo", "logo:kilatpay"), ("masuk", "arah", "gopay|judul:terima dana"),
+                                 ("masuk", "arah", "dana|judul:top up")):
+            r = await self.rule(value, kind=kind, key=key)
+            self.assertEqual((await self.act(r.id, "setujui")).status_code, 200, (kind, key))
+
+    async def test_label_kinds_still_allow_several_approved_values(self):   # jenis lama tidak berubah
+        a = await self.rule("total bayar", status="disetujui")
+        b = await self.rule("jumlah")
+        self.assertEqual((await self.act(b.id, "setujui")).status_code, 200)
+        self.assertEqual((await self.get_rule(a.id)).status, "disetujui")
+        # Label berkunci logo juga boleh beberapa nilai.
+        await self.rule("nominal", kind="label_total", key="logo:newpay", status="disetujui")
+        c = await self.rule("total", kind="label_total", key="logo:newpay")
+        self.assertEqual((await self.act(c.id, "setujui")).status_code, 200)
+
+    async def test_g8_stale_status_and_threshold_messages_keep_priority(self):
+        await self.rule("bsi", kind="logo", key="logo:newpay", status="disetujui")
+        low = await self.rule("jago", kind="logo", key="logo:newpay", users=1)
+        res = await self.act(low.id, "setujui")
+        self.assertEqual((res.status_code, res.json()["detail"]), (409, belajar.MSG_RULE_BELOW_THRESHOLD))
+        gone = await self.rule("seabank", kind="logo", key="logo:newpay", status="ditolak")
+        res = await self.act(gone.id, "setujui", {"from_status": "menunggu"})
+        self.assertEqual((res.status_code, res.json()["detail"]), (409, belajar.MSG_RULE_CONFLICT))
+        missing = await self.act(uuid.uuid4(), "setujui")
+        self.assertEqual(missing.status_code, 404)
+
+    async def test_decide_raises_key_taken(self):
+        await self.rule("bsi", kind="logo", key="logo:newpay", status="disetujui")
+        b = await self.rule("jago", kind="logo", key="logo:newpay")
+        async with self.Session() as db:
+            with self.assertRaises(belajar.RuleConflict) as cm:
+                await belajar.decide(db, b.id, "setujui", by=self.admin.id, note=None, now=T0)
+        self.assertEqual(str(cm.exception), belajar.MSG_RULE_KEY_TAKEN)
+        self.assertNotIsInstance(cm.exception, belajar.RuleBelowThreshold)
+
+
+class LogoArahEndToEndTests(AdminRulesBase):
+    """Setujui -> pembaca memakai aturan (lewat `approved_rules` dari database) -> cabut -> pembaca berhenti, dengan
+    pembatalan cache oleh API Admin (carry M2b, M3b: satu-satunya jalan melawan aturan yang salah adalah mencabutnya)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        from app.services.kotak_struk import merchants
+        asyncio.get_running_loop().slow_callback_duration = 5.0
+        patcher = patch.object(merchants, "_warned_no_key", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def read(self, lines):
+        from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
+        from app.services.kotak_struk.readers.base import ParseContext
+        from app.services.kotak_struk.registry import read_document
+        async with self.Session() as db:
+            rules = await belajar.approved_rules(db)
+        return await read_document(TextDoc(lines=list(lines), kind=KIND_IMAGE),
+                                   ParseContext(today=datetime(2026, 11, 1).date(), user_name="RINA WULANDARI", rules=rules),
+                                   proofs_enabled=True)
+
+    async def test_approve_logo_rule_applies_issuer_and_labels_then_revoke_stops(self):
+        lines = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "Tanggal 30/10/2026 09:00", "31/10/2026 10:00"]
+        plain = await self.read(lines)
+        self.assertEqual((plain.parsed.doc.doc_type, plain.parsed.doc.issuer, plain.parsed.doc.confidence["total"]),
+                         ("tidak_dikenali", None, "rendah"))
+        # Aturan label Jago tahap 1 sudah disetujui; aturan logo NEWPAY -> Jago dari dua suara.
+        await self.rule("nominal", kind="label_total", key="jago", status="disetujui", decided_at=T0)
+        await self.rule("tanggal", kind="label_tanggal", key="jago", status="disetujui", decided_at=T0)
+        for user in (self.user, self.user2):
+            await self.vote("jago", user, kind="logo", key="logo:newpay")
+        async with self.Session() as db:
+            await belajar.reconcile_rules(db)
+            await db.commit()
+        [rule] = (await self.c.get("/admin/kotak/rules")).json()["rules"]
+        self.assertEqual((rule["kind"], rule["rule_key"], rule["value"], rule["warning"]),
+                         ("logo", "logo:newpay", "jago", True))
+        self.assertEqual((await self.read(lines)).parsed.doc.issuer, None)   # menunggu: belum dipakai
+        self.assertEqual((await self.act(rule["id"], "setujui")).status_code, 200)
+        d = (await self.read(lines)).parsed.doc
+        self.assertEqual((d.issuer, d.confidence["total"], d.paid_at.day), ("jago", "tinggi", 30))
+        self.assertEqual((d.doc_type, d.status), (plain.parsed.doc.doc_type, plain.parsed.doc.status))
+        self.assertEqual((await self.act(rule["id"], "cabut")).status_code, 200)
+        after = await self.read(lines)
+        self.assertEqual(after.parsed.doc.to_json(), plain.parsed.doc.to_json())
+        async with self.Session() as db:
+            self.assertEqual(await belajar.approved_logo_keys(db), frozenset())
+
+    async def test_approve_arah_rule_suggests_then_revoke_stops(self):
+        from app.tests.test_kotak_arah import TOPUP_LINES, TOPUP_RULE
+        plain = await self.read(TOPUP_LINES)
+        self.assertEqual(plain.parsed.doc.flow, "keluar")
+        r = await self.rule("top_up", kind="arah", key=TOPUP_RULE)
+        await self.read(TOPUP_LINES)   # cache terisi tanpa aturan
+        self.assertEqual((await self.act(r.id, "setujui")).status_code, 200)
+        self.assertEqual((await self.read(TOPUP_LINES)).parsed.doc.flow, "top_up")
+        self.assertEqual((await self.act(r.id, "cabut")).status_code, 200)
+        self.assertEqual((await self.read(TOPUP_LINES)).parsed.doc.to_json(), plain.parsed.doc.to_json())
+        # Sesudah dicabut, nilai lain untuk kunci itu boleh disetujui (G8 hanya melawan yang masih disetujui).
+        other = await self.rule("masuk", kind="arah", key=TOPUP_RULE)
+        self.assertEqual((await self.act(other.id, "setujui")).status_code, 200)
+        self.assertEqual((await self.read(TOPUP_LINES)).parsed.doc.flow, "masuk")
+
+
 if __name__ == "__main__":
     unittest.main()
