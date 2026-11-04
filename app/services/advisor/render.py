@@ -838,7 +838,12 @@ def _kemungkinan(isi: str) -> str:
 
 
 def teks(ins: Insight, ctx: Konteks, kpi: str | None = None) -> dict:
-    out = TEMPLATE[ins.aturan](ins, ctx, kpi)
+    if ins.asal != "inti":
+        # Plugin H2: teks sudah dirakit templat plugin (`app/plugins/host/titik.ke_insight`).
+        t = ins.data["_teks"]
+        out = {"chip": t["chip"], "judul": t["judul"], "isi": t["isi"], "fakta": [dict(f) for f in t["fakta"]]}
+    else:
+        out = TEMPLATE[ins.aturan](ins, ctx, kpi)
     if ins.keyakinan == "rendah":
         out["isi"] = _kemungkinan(out["isi"])
     return out
@@ -852,7 +857,8 @@ def render_insight(ins: Insight, ctx: Konteks, kpi: str | None = None) -> dict:
     t = teks(ins, ctx, kpi)
     aksi = []
     for a in ins.aksi:
-        label, payload = _label_aksi(a, ins, ctx)
+        # Aksi insight plugin membawa label jadi (templat plugin); aksi inti tidak pernah punya `label`.
+        label, payload = (a["label"], dict(a["payload"])) if "label" in a else _label_aksi(a, ins, ctx)
         aksi.append({"kind": a["kind"], "label": label, "payload": payload})
     out = {
         "id": ins.id, "aturan": ins.aturan, "tone": ins.tone, "chip": t["chip"], "judul": t["judul"],

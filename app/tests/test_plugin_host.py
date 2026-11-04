@@ -127,9 +127,9 @@ class ManifestTests(unittest.TestCase):
 
     def test_daftar_bot_inti_sama_dengan_handlers(self):
         """Konstanta di manifest.py harus mengikuti bot inti; tambah perintah/callback inti = perbarui keduanya."""
-        from app.bot.handlers import bot_callbacks, bot_commands
+        from app.bot.handlers import bot_callbacks, perintah_inti
         from app.plugins.host.manifest import PERINTAH_INTI, POLA_CALLBACK_INTI
-        self.assertEqual(set(bot_commands()), set(PERINTAH_INTI))
+        self.assertEqual(set(perintah_inti()), set(PERINTAH_INTI))   # H2: bot_commands() = inti + plugin
         self.assertEqual([p for p, _ in bot_callbacks()], list(POLA_CALLBACK_INTI))
 
     def test_rentang_plugin_api(self):

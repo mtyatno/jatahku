@@ -364,6 +364,18 @@ async def kotak_maintenance():
         logger.exception("kotak_maintenance: reconcile_proof_rules gagal")
 
 
+async def plugin_jobs():
+    """Plugin H2 (titik `jobs`): job Fitur Tambahan yang jatuh tempo jam ini di zona waktu pemilik ruang.
+    Tanpa plugin yang mendaftarkan job: kembali seketika tanpa kueri."""
+    try:
+        from app.plugins.host import titik
+        n = await titik.jalankan_job()
+        if n:
+            logger.info(f"plugin: {n} job dijalankan")
+    except Exception:
+        logger.exception("plugin_jobs gagal")
+
+
 def start_scheduler():
     """Start the APScheduler with monthly snapshot job."""
     scheduler.add_job(
@@ -407,6 +419,13 @@ def start_scheduler():
         trigger="cron",
         minute=17,  # tiap jam di menit tetap: interval baru jalan 1 jam setelah tiap restart; :17 menghindari job :00
         id="kotak_maintenance",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        plugin_jobs,
+        trigger="cron",
+        minute=23,  # tiap jam; jadwal plugin per jam (`hourly`, `daily HH:00`), sekali per periode lewat klaim Redis
+        id="plugin_jobs",
         replace_existing=True,
     )
     from app.services.laporan.job import laporan_job
