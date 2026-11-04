@@ -473,8 +473,8 @@ async def learn_app_choice(db: AsyncSession, item, choice: str, *, user_id: uuid
     ini: keterangan transaksi tercatat, `document.counterparty.name`, `item.merchant`, atau `user_name` (K8; L1 I-1
     opsi B). Tidak membuat transaksi, tidak mengubah status item, tidak dibaca pencatatan/dedup. SAVEPOINT sendiri
     (baris item dikunci `FOR UPDATE` supaya dua jawaban bersamaan tidak sama-sama menang); tidak meng-commit; tidak
-    pernah melempar (galat -> log tanpa isi bukti + False). Kait donasi contoh (`donasi.donate`, "aplikasi") menyusul
-    di M1c."""
+    pernah melempar (galat -> log tanpa isi bukti + False). Kait donasi contoh (`donasi.donate`, "aplikasi") ada di
+    pemanggilnya `record.choose_app` (rute dan bot), supaya modul ini tidak mengimpor `donasi`."""
     item_id = getattr(item, "id", None)
     try:
         if choice not in APP_CHOICES:

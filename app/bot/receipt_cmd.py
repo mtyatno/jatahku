@@ -28,13 +28,14 @@ Nominal ketikan sesudah "Nominal salah" (plan 2026-11-01 Task L2b, pre-flight K4
 QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL `FIX_TTL_S`). Pesan teks berikutnya
 user itu dalam FIX_TTL_S (`note_fix_amount`, dari handlers.handle_message sesudah `capture_note`; perintah, foto, tombol,
 dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal → suara koreksi nominal untuk item
-(`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
+(`belajar.learn_from_correction`) dan donasi contoh `nominal_bot` (`donasi.donate`). Ketikannya tetap ke NLP dan
+dicatat persis seperti biasa, tidak tertaut ke item.
 
 "Aplikasi apa ini?" (belajar lintas user tahap 2, Task M2c): pesan struk untuk bukti tidak dikenali yang boleh
 ditanya (`flags.ask_app`, bukan bukti yang transaksinya gagal) mendapat baris "🏷️ Aplikasi apa ini?" (`ka_{item_id}`) di bawah
 baris kedua. Ketukannya mengedit pesan menjadi pertanyaan "Logo di bukti: {flags.app_logo}. Aplikasi apa ini?" dengan
 12 aplikasi berprofil (`ka_{item_id}_{i}`, i = indeks `PROFILES`, 3 per baris), "Lainnya" (`ka_{item_id}_n`) dan
-"↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `belajar.learn_app_choice` (satu suara per item,
+"↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `record.choose_app` (satu suara per item,
 tidak mencatat dan tidak mengubah status) lalu pesan hasil dirender ulang tanpa tombol aplikasi; tombol amplop tetap.
 
 "Bukan pengeluaran" dua langkah (tahap 2 M3c, pre-flight K11): "🚫 Bukan pengeluaran" (`kx_{item_id}_c{key}`, kunci
@@ -66,7 +67,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
-from app.services.kotak_struk import belajar, intake, record, view, waiter
+from app.services.kotak_struk import belajar, donasi, intake, record, view, waiter
 from app.services.kotak_struk.config import (
     APP_NEW, ARAH_FLOWS, FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI,
     ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
@@ -1031,8 +1032,9 @@ async def _skip_action(query, tg_user, arg: str) -> None:
 
 
 async def _app_action(query, tg_user, arg: str) -> None:
-    """`ka_{item_id}` → pertanyaan (`_app_question`); `ka_{item_id}_{i|n}` → jawaban: `belajar.learn_app_choice` (satu
-    suara per item) + commit, lalu pesan hasil dirender ulang (`_result_reply`: tanpa tombol aplikasi, tombol amplop
+    """`ka_{item_id}` → pertanyaan (`_app_question`); `ka_{item_id}_{i|n}` → jawaban: `record.choose_app` (satu
+    suara per item, donasi contoh `aplikasi`) + commit, lalu pesan hasil dirender ulang (`_result_reply`: tanpa tombol
+    aplikasi, tombol amplop
     tetap, sesi tombol baru); `ka_{item_id}_k` → pesan hasil dirender ulang tanpa menjawab. Akhiran lain → pertanyaan
     lagi. Item milik user ini yang tidak bisa ditanya lagi (dijawab di kartu web, bukti gagal, dilewati/kedaluwarsa
     di tempat lain) atau jawabannya ditolak → pesan hasil dirender ulang (tombol amplop tetap bila masih `siap`),
@@ -1054,8 +1056,7 @@ async def _app_action(query, tg_user, arg: str) -> None:
             text, markup = await _result_reply(db, user, item)
         elif logo is not None and choice is None:
             text, markup = _app_question(item.id, logo)
-        elif logo is not None and await belajar.learn_app_choice(db, item, choice, user_id=user.id,
-                                                                 user_name=user.name):
+        elif logo is not None and await record.choose_app(db, item, choice, user_id=user.id, user_name=user.name):
             await db.commit()
             await db.refresh(item)
             text, markup = await _result_reply(db, user, item)
@@ -1226,7 +1227,9 @@ async def handle_struk_callback(update, context):
         learnable = kotak and item.doc_type in LAYOUT_TYPES
         try:
             if kotak:
-                skipped = await record.skip_item(db, item_id, user.id, "batal")
+                # "Nominal salah" bukti berkerangka: baris donasi dibiarkan untuk `note_fix_amount` (M1c).
+                skipped = await record.skip_item(db, item_id, user.id, "batal",
+                                                 keep_sample=action == "fix" and learnable)
             if store:
                 await apply_feedback(user, scan_id, db, saved=False, wrong=(action == "fix"))
         except Exception as exc:  # best-effort
@@ -1277,7 +1280,8 @@ async def note_fix_amount(update, text: str) -> None:
     """Pesan teks pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`: perintah,
     foto, tombol, dan catatan yang ditangkap tidak menghabiskan kunci): kunci `FIX_KEY` diambil sekali (`getdel`); satu
     nominal (`fix_amount`) → suara koreksi nominal untuk item itu (`belajar.learn_from_correction` dengan
-    `Final(nominal, None, None, hari ini WIB)`) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
+    `Final(nominal, None, None, hari ini WIB)`) dan donasi contoh `nominal_bot` (`donasi.donate`, truth total; baris
+    tersamar dikosongkan bila tidak disimpan) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
     belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks: pemanggil selalu lanjut ke NLP, yang
     mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa suara, diam-diam seperti
     `capture_note` (log debug; peringatan hanya untuk galat sesudah kunci terbaca)."""
@@ -1304,7 +1308,12 @@ async def note_fix_amount(update, text: str) -> None:
             if item is None:
                 return
             final = belajar.Final(amount, None, None, belajar.today_wib())
-            if await belajar.learn_from_correction(db, item, final, user_id=user.id):
+            voted = await belajar.learn_from_correction(db, item, final, user_id=user.id)
+            sample = bool(item.sample_lines)
+            if sample:   # galat donasi ditelan `donate`; suara di atas tetap di-commit
+                await donasi.donate(db, item, donasi.correction_trigger(item, None, typed_amount=amount),
+                                    truth=donasi.truth_of(total=amount), now=datetime.now(timezone.utc))
+            if voted or sample:
                 await db.commit()
     except Exception:
         logger.warning("suara Nominal salah tidak dicatat", exc_info=True)

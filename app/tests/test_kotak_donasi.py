@@ -714,5 +714,166 @@ class WorkerDonationTests(DonasiBase):
         self.assertTrue(all(r.exc_info is None for r in logs.records))
 
 
+# ── M1c: koreksi -> antrean tinjauan ───────────────────────────────────────
+
+def _item(doc_type="transfer", *, total=10000, flow="keluar", paid_at="2026-10-31T02:00:00+00:00", **over):
+    """Item karangan untuk `correction_trigger` (murni)."""
+    from types import SimpleNamespace
+    document = {"doc_type": doc_type, "flow": flow, "amounts": {"total": total}, "paid_at": paid_at}
+    return SimpleNamespace(doc_type=doc_type, document=document, **over)
+
+
+class CorrectionTriggerTests(unittest.TestCase):
+    def test_recorded_triggers(self):
+        from app.services.kotak_struk.belajar import Final
+        from app.services.kotak_struk.donasi import correction_trigger
+        today = date(2026, 11, 2)
+        doc_day = date(2026, 10, 31)   # 31 Okt 09:00 WIB
+        cases = [
+            (_item(), Final(10000, doc_day, "kirim", today), None),             # bacaan benar
+            (_item(), Final(10000, today, "kirim", today), None),               # dicatat hari ini
+            (_item(), Final(12500, doc_day, "kirim", today), "nominal"),
+            (_item(total=None), Final(10000, doc_day, None, today), "nominal"),  # total tidak terbaca
+            (_item(), Final(None, doc_day, None, today), "nominal"),            # nominal pecahan
+            (_item(), Final(10000, date(2026, 10, 20), None, today), "tanggal"),
+            (_item(paid_at=None), Final(10000, date(2026, 10, 20), None, today), "tanggal"),
+            (_item("tidak_dikenali"), Final(10000, doc_day, None, today), "tidak_dikenali"),
+            (_item("tidak_dikenali", total=None), Final(10000, doc_day, None, today), "nominal"),
+            (_item(), None, None),
+        ]
+        for item, final, want in cases:
+            with self.subTest(final=final, doc=item.document):
+                self.assertEqual(correction_trigger(item, final), want)
+
+    def test_skip_app_and_bot_triggers(self):
+        from app.services.kotak_struk.belajar import Final
+        from app.services.kotak_struk.donasi import correction_trigger
+        final = Final(12500, None, None, date(2026, 11, 2))
+        for reason in ("batal", "duplikat"):
+            for doc in (_item(), _item("tidak_dikenali")):
+                self.assertIsNone(correction_trigger(doc, None, skip_reason=reason))
+                self.assertIsNone(correction_trigger(doc, final, skip_reason=reason))   # lewati menang atas final
+        skip = "bukan_pengeluaran"
+        self.assertEqual(correction_trigger(_item(), None, skip_reason=skip, alasan="top_up"), "arah")
+        self.assertEqual(correction_trigger(_item(), None, skip_reason=skip), "arah")          # keluar tanpa alasan
+        self.assertIsNone(correction_trigger(_item(flow="top_up"), None, skip_reason=skip, alasan="top_up"))
+        self.assertIsNone(correction_trigger(_item(flow="masuk"), None, skip_reason=skip))
+        self.assertEqual(correction_trigger(_item(flow="masuk"), None, skip_reason=skip, alasan="top_up"), "arah")
+        self.assertEqual(correction_trigger(_item("tidak_dikenali", flow=None), None, skip_reason=skip),
+                         "tidak_dikenali")
+        self.assertEqual(correction_trigger(_item(), None, app="bsi"), "aplikasi")
+        self.assertEqual(correction_trigger(_item(), None, typed_amount=11000), "nominal_bot")
+        self.assertEqual(correction_trigger(SimpleNamespaceItem(), None, typed_amount=1), "nominal_bot")
+
+    def test_truth_shape(self):
+        from app.services.kotak_struk.donasi import truth_of
+        self.assertEqual(truth_of(), {"total": None, "date": None, "flow": None, "app": None})
+        self.assertEqual(truth_of(total=5, day=date(2026, 11, 1), flow="keluar", app="bsi"),
+                         {"total": 5, "date": "2026-11-01", "flow": "keluar", "app": "bsi"})
+
+
+class SimpleNamespaceItem:
+    """Item tanpa dokumen (pertahanan: jalur bot/aplikasi tidak butuh dokumen)."""
+    doc_type = None
+    document = None
+
+
+class DonateServiceTests(DonasiBase):
+    """`donasi.donate`: persetujuan dan saklar dicek lagi, baris selalu dikosongkan, tidak meng-commit, tidak
+    melempar."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await self.flag(kotak_donasi=True)
+        async with self.Session() as db:
+            db.add(ProofSampleConsent(user_id=self.user.id, consented_at=T0))
+            await db.commit()
+
+    async def captured_item(self, user=None, **cols):
+        cols.setdefault("processed_at", datetime(2026, 10, 31, 18, 30, tzinfo=timezone.utc))   # 1 Nov 01:30 WIB
+        async with self.Session() as db:
+            item = ReceiptScan(user_id=(user or self.user).id, status=K.ST_TERCATAT, doc_type="transfer",
+                               sample_lines=list(LINES), layout={"v": 1, "key": "gopay", "lines": []}, **cols)
+            db.add(item)
+            await db.commit()
+            return item.id
+
+    async def donate(self, item_id, trigger="nominal", *, commit=True, **kw):
+        from app.services.kotak_struk import donasi
+        async with self.Session() as db:
+            item = await db.get(ReceiptScan, item_id)
+            got = await donasi.donate(db, item, trigger, truth=donasi.truth_of(total=12500), now=T0, **kw)
+            self.assertIsNone(item.sample_lines)
+            self.assertNotIn(item, db.dirty)   # objek tidak kotor: baris dikosongkan lewat UPDATE
+            if commit:
+                await db.commit()
+            else:
+                await db.rollback()
+            return got
+
+    async def test_donate_stores_one_sample_and_clears_lines(self):
+        item_id = await self.captured_item()
+        self.assertTrue(await self.donate(item_id))
+        [sample] = (await self._samples())
+        self.assertEqual((sample.status, sample.trigger, sample.rule_key, sample.doc_type, sample.lines, sample.today),
+                         ("menunggu", "nominal", "gopay", "transfer", LINES, date(2026, 11, 1)))
+        self.assertEqual((sample.user_name, sample.truth["total"]), ("Andi Pratama", 12500))
+        self.assertTrue(await self.sql_null_sample_lines(item_id))
+        # Item yang sama dengan baris baru (mis. kirim ulang yang menangkap lagi): tetap satu sampel.
+        async with self.Session() as db:
+            (await db.get(ReceiptScan, item_id)).sample_lines = list(LINES)
+            await db.commit()
+        self.assertFalse(await self.donate(item_id))
+        self.assertEqual(await self.count(ProofSample), 1)
+        self.assertTrue(await self.sql_null_sample_lines(item_id))
+
+    async def test_donate_never_commits(self):
+        item_id = await self.captured_item()
+        self.assertTrue(await self.donate(item_id, commit=False))
+        self.assertEqual(await self.count(ProofSample), 0)
+        self.assertFalse(await self.sql_null_sample_lines(item_id))
+
+    async def test_no_trigger_consent_or_flag_clears_lines_and_stores_nothing(self):
+        from app.services.kotak_struk import donasi
+        item_id = await self.captured_item()
+        self.assertFalse(await self.donate(item_id, trigger=None))
+        self.assertTrue(await self.sql_null_sample_lines(item_id))
+        # Persetujuan ditarik sesudah dibaca (review M1b temuan 5): dicek lagi di `donate`.
+        other = await self.captured_item(self.other)   # Dodi tidak pernah setuju
+        self.assertFalse(await self.donate(other))
+        self.assertTrue(await self.sql_null_sample_lines(other))
+        await self.flag(kotak_donasi=False)
+        off = await self.captured_item()
+        with patch.object(donasi, "consented", AsyncMock(return_value=True)):
+            self.assertFalse(await self.donate(off))
+        self.assertTrue(await self.sql_null_sample_lines(off))
+        self.assertEqual(await self.count(ProofSample), 0)
+
+    async def test_without_lines_no_query(self):
+        from app.services.kotak_struk import donasi
+        statements = []
+        event.listen(self.engine.sync_engine, "before_cursor_execute", lambda *a: statements.append(a[2]))
+        async with self.Session() as db:
+            item = ReceiptScan(user_id=self.user.id, status=K.ST_SIAP, doc_type="qris")
+            self.assertFalse(await donasi.donate(db, item, "nominal", truth={}, now=T0))
+        self.assertEqual(statements, [])
+
+    async def test_error_is_swallowed_without_proof_text(self):
+        from app.services.kotak_struk import donasi
+        item_id = await self.captured_item()
+        with patch.object(donasi, "consented", AsyncMock(side_effect=RuntimeError("BUDI SANTOSO 1234567890"))), \
+                self.assertLogs(donasi.__name__, "WARNING") as logs:
+            self.assertFalse(await self.donate(item_id))
+        self.assertTrue(all("BUDI" not in line and "1234" not in line for line in logs.output))
+        self.assertTrue(all(r.exc_info is None for r in logs.records))
+        self.assertTrue(any("(RuntimeError)" in line for line in logs.output))
+        self.assertEqual(await self.count(ProofSample), 0)
+        self.assertTrue(await self.sql_null_sample_lines(item_id))   # dikosongkan di savepoint baru
+
+    async def _samples(self):
+        async with self.Session() as db:
+            return list((await db.execute(select(ProofSample))).scalars())
+
+
 if __name__ == "__main__":
     unittest.main()

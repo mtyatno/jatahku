@@ -33,7 +33,7 @@ from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBaya
 from app.services.kotak_struk.worker import process_item
 from app.tests.fakes import fixed_date
 from app.tests.test_kotak_api import CORPUS, HAS_AIOSQLITE, JPG, NOW, PAID, QRIS_KEY, fake_extract
-from app.tests.test_kotak_transactions import AMOUNT_VOTE, GOPAY_TRANSFER, STORE_LINES, TxnBase
+from app.tests.test_kotak_transactions import AMOUNT_VOTE, GOPAY_TRANSFER, STORE_LINES, DonationMixin, TxnBase
 from app.tests.test_web_chat import FakeRedis as ChatRedis
 
 # Fixture bertanggal Oktober 2026 (bukti 26 Okt, struk 14 Okt): "hari ini" untuk pertanyaan tanggal dokumen (H1) dipatok
@@ -1003,7 +1003,7 @@ class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
 # ── ujung ke ujung: SQLite, intake dan worker sungguhan ───────────────────────
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
-class KotakBotDbTests(TxnBase):
+class KotakBotDbTests(DonationMixin, TxnBase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         async with self.Session() as db:
@@ -2450,6 +2450,68 @@ class KotakBotDbTests(TxnBase):
 
     def app_rows(self, call):
         return [[(b.text, b.callback_data) for b in row] for row in keyboard_of(call)]
+
+    # --- tahap 2 M1c: donasi contoh dari "Nominal salah" dan "Aplikasi apa ini?" ----------------------------------
+
+    async def test_bot_fix_amount_donates_once(self):
+        await self.enable_donation()
+        item = await self.fix_vote_item()
+        lines = await self.captured(item.id)
+        await self.tap(f"struk_fix_{item.id}")
+        got = await self.get(item.id)
+        # Dilewati `batal`, tapi baris donasi dibiarkan untuk nominal ketikan berikutnya.
+        self.assertEqual((got.status, got.channel_meta["skip_reason"], got.sample_lines), ("dilewati", "batal", lines))
+        await self.type_text("transfer budi 11rb")
+        await self.type_text("transfer budi 11rb")   # kunci sudah terpakai: tanpa sampel kedua
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.truth, sample.lines, sample.item_id),
+                         ("nominal_bot", {"total": 11000, "date": None, "flow": None, "app": None}, lines, item.id))
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])   # suara tetap
+        self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual(len(await self.txns()), 2)   # NLP mencatat seperti biasa
+        # Tanpa kerangka (suara tidak mungkin): sampel tetap tersimpan, dan di-commit.
+        bare = await self.fix_vote_item(layout=False)
+        await self.tap(f"struk_fix_{bare.id}")
+        await self.type_text("transfer budi 12rb")
+        self.assertEqual([(s.item_id, s.trigger, s.truth["total"]) for s in await self.samples()],
+                         [(item.id, "nominal_bot", 11000), (bare.id, "nominal_bot", 12000)])
+
+    async def test_bot_fix_amount_without_consent_clears_lines(self):
+        await self.enable_donation()
+        item = await self.fix_vote_item()
+        await self.captured(item.id)
+        await self.tap(f"struk_fix_{item.id}")
+        await self.enable_donation(consent=False)   # ditarik sesudah dibaca
+        await self.type_text("transfer budi 11rb")
+        self.assertEqual(await self.samples(), [])
+        self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+
+    async def test_bot_cancel_and_duplicate_clear_lines(self):
+        await self.enable_donation()
+        for data in ("struk_no_{}", "kd_{}"):
+            item = await self.fix_vote_item()
+            await self.captured(item.id)
+            with self.subTest(data=data):
+                await self.tap(data.format(item.id))
+                self.assertEqual((await self.get(item.id)).status, "dilewati")
+                self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual(await self.samples(), [])
+
+    async def test_bot_app_choice_donates_once(self):
+        from app.services.kotak_struk.readers.profiles import PROFILES
+        jago = [p.key for p in PROFILES].index("jago")
+        await self.enable_donation()
+        item_id = await self.send_newpay()
+        lines = await self.captured(item_id)
+        await self.tap(f"ka_{item_id}")
+        await self.tap(f"ka_{item_id}_{jago}")
+        await self.tap(f"ka_{item_id}_n")   # jawaban kedua ditolak
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.truth["app"], sample.lines, sample.rule_key),
+                         ("aplikasi", "jago", lines, "logo:newpay"))
+        self.assertTrue(await self.sql_null_lines(item_id))
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
 
     async def test_app_button_only_for_unknown_proofs_with_a_logo_key(self):
         item_id = await self.send_newpay()

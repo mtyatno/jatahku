@@ -20,10 +20,12 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import Base
-from app.models.models import Envelope, Household, HouseholdMember, HouseholdRole, ReceiptScan, Transaction, User
+from app.models.models import (
+    Envelope, Household, HouseholdMember, HouseholdRole, ProofSample, ReceiptScan, Transaction, User,
+)
 from app.services import scheduler as scheduler_mod
 from app.services.kotak_struk import maintenance
-from app.services.kotak_struk.config import LAYOUT_TTL
+from app.services.kotak_struk.config import LAYOUT_TTL, SAMPLE_TTL
 from app.services.kotak_struk.maintenance import delete_orphan_files, expire_items, purge_layouts
 from app.services.receipt_scan import accuracy_stats
 
@@ -223,6 +225,42 @@ class LayoutPurgeTests(MaintenanceBase):
             raw = (await db.execute(text("SELECT COUNT(*) FROM receipt_scans WHERE sample_lines IS NOT NULL"))).scalar()
         self.assertEqual(raw, len(kept) + 2)
 
+# ── sampel donasi contoh (tahap 2 G2) ────────────────────────────────────────
+
+class SamplePurgeTests(MaintenanceBase):
+    async def sample(self, status, *, created, decided=None):
+        async with self.Session() as db:
+            row = ProofSample(user_id=self.user_id, item_id=uuid.uuid4(), doc_type="transfer", trigger="nominal",
+                              lines=list(SAMPLE), today=date(2026, 10, 1), status=status, created_at=created,
+                              decided_at=decided)
+            db.add(row)
+            await db.commit()
+            return row.id
+
+    async def remaining(self):
+        async with self.Session() as db:
+            return set((await db.execute(text("SELECT id FROM proof_samples"))).scalars())
+
+    async def test_purge_samples_ttl(self):
+        old = NOW - SAMPLE_TTL - timedelta(minutes=1)
+        young = NOW - SAMPLE_TTL + timedelta(minutes=1)
+        gone = [await self.sample("menunggu", created=old),
+                await self.sample("disetujui", created=old, decided=old)]
+        kept = [await self.sample("menunggu", created=young),
+                await self.sample("menunggu", created=NOW - SAMPLE_TTL),              # tepat 30 hari
+                await self.sample("disetujui", created=old, decided=young),          # umur dari keputusan
+                await self.sample("ditolak", created=old, decided=old)]              # dihapus saat diputuskan (M1d)
+        self.assertEqual(SAMPLE_TTL, timedelta(days=30))
+        self.assertEqual(await maintenance.purge_samples(self.db, now=NOW), len(gone))
+        self.assertEqual(await self.remaining(), {k.hex for k in kept})
+        self.assertFalse(self.db.in_transaction())   # commit sendiri
+        self.assertEqual(await maintenance.purge_samples(self.db, now=NOW), 0)
+        # `now` di zona lain atau tanpa zona (UTC) memberi hasil sama.
+        for now in (NOW.astimezone(WIB), NOW.replace(tzinfo=None)):
+            await self.sample("menunggu", created=old)
+            self.assertEqual(await maintenance.purge_samples(self.db, now=now), 1)
+
+
 # ── file yatim ───────────────────────────────────────────────────────────────
 
 class OrphanFileTests(MaintenanceBase):
@@ -325,14 +363,35 @@ class _FakeSession:
 
 
 class SchedulerJobTests(unittest.IsolatedAsyncioTestCase):
-    def patches(self, *, expire, orphans, layouts=None, rules=None):
+    def patches(self, *, expire, orphans, layouts=None, rules=None, samples=None):
         stack = contextlib.ExitStack()
         stack.enter_context(patch("app.core.database.AsyncSessionLocal", lambda: _FakeSession()))
         stack.enter_context(patch.object(maintenance, "expire_items", expire))
         stack.enter_context(patch.object(maintenance, "delete_orphan_files", orphans))
         stack.enter_context(patch.object(maintenance, "purge_layouts", layouts or AsyncMock(return_value=0)))
         stack.enter_context(patch.object(maintenance, "reconcile_proof_rules", rules or AsyncMock(return_value=0)))
+        stack.enter_context(patch.object(maintenance, "purge_samples", samples or AsyncMock(return_value=0)))
         return stack
+
+    async def test_sample_purge_runs_as_its_own_step(self):
+        # Langkah 5 (tahap 2 G2): sampel donasi berumur dihapus walau semua langkah lain gagal; galatnya tidak
+        # menghentikan job dan tidak melewatkan langkah lain.
+        down = dict(expire=AsyncMock(side_effect=RuntimeError("db mati")), orphans=AsyncMock(side_effect=OSError("disk")),
+                    layouts=AsyncMock(side_effect=RuntimeError("db mati")), rules=AsyncMock(side_effect=RuntimeError("x")))
+        samples = AsyncMock(return_value=3)
+        with self.patches(**down, samples=samples), self.assertLogs("jatahku.scheduler", level="INFO") as logs:
+            await scheduler_mod.kotak_maintenance()
+        samples.assert_awaited_once()
+        self.assertIn("now", samples.await_args.kwargs)
+        self.assertTrue(any(r.levelname == "INFO" and "3 sampel donasi dihapus" in r.getMessage() for r in logs.records))
+
+        rules = AsyncMock(return_value=0)
+        with self.patches(expire=AsyncMock(return_value=0), orphans=AsyncMock(return_value=0), rules=rules,
+                          samples=AsyncMock(side_effect=RuntimeError("db mati"))), \
+                self.assertLogs("jatahku.scheduler", level="ERROR") as logs:
+            await scheduler_mod.kotak_maintenance()
+        rules.assert_awaited_once()
+        self.assertTrue(any("purge_samples" in r.getMessage() for r in logs.records))
 
     async def test_rule_reconcile_runs_as_its_own_step(self):
         # Langkah 4 (review L2 M-2): aturan belajar disamakan dengan suaranya tiap jam, walau langkah lain gagal, dan

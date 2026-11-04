@@ -324,8 +324,9 @@ async def purge_receipt_ocr_text():
 async def kotak_maintenance():
     """Kotak Struk, tiap jam di menit 17 (spec 2026-10-26 §2d): item siap/gagal yang lewat masa simpan → kedaluwarsa, lalu
     berkas yatim di folder sementara dihapus, lalu kerangka tata letak item selesai yang dibaca > 24 jam lalu dihapus
-    (spec 2026-11-01 §3a), lalu aturan belajar disamakan dengan suaranya (review L2 M-2). Tiap langkah memakai sesinya sendiri dan blok try sendiri: satu langkah gagal tidak
-    melewatkan yang lain. Galat hanya dicatat."""
+    (spec 2026-11-01 §3a), lalu aturan belajar disamakan dengan suaranya (review L2 M-2), lalu sampel donasi contoh
+    yang lewat SAMPLE_TTL dihapus (tahap 2 G2). Tiap langkah memakai sesinya sendiri dan blok try sendiri: satu langkah
+    gagal tidak melewatkan yang lain. Galat hanya dicatat."""
     from datetime import datetime, timezone
     from app.core.config import get_settings
     from app.core.database import AsyncSessionLocal
@@ -362,6 +363,14 @@ async def kotak_maintenance():
             logger.info(f"Kotak Struk: {n} aturan belajar dihitung ulang")
     except Exception:
         logger.exception("kotak_maintenance: reconcile_proof_rules gagal")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            n = await maintenance.purge_samples(db, now=datetime.now(timezone.utc))
+        if n:
+            logger.info(f"Kotak Struk: {n} sampel donasi dihapus")
+    except Exception:
+        logger.exception("kotak_maintenance: purge_samples gagal")
 
 
 def start_scheduler():

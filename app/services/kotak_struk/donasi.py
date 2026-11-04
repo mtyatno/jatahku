@@ -4,12 +4,17 @@ User yang SETUJU (opt-in di Settings) menyumbang baris teks bukti TERSAMAR dari 
 meninjaunya di Admin dan menyalin yang disetujui ke korpus pembaca. Semuanya di balik saklar `features.kotak_donasi`
 (bawaan mati, pre-flight A16 K1/G1): kebijakan privasi yang tayang harus memuat paragraf donasi dulu.
 
-Bagian M1a: saklar, persetujuan, dan lupa. Bagian M1b: `sample_lines` (baris tersamar yang ditangkap worker).
+Bagian M1a: saklar, persetujuan, dan lupa. Bagian M1b: `sample_lines` (baris tersamar yang ditangkap worker). Bagian
+M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tinjauan `proof_samples`).
 - `donation_available`: saklar menyala (web).
 - `consented` / `set_consent`: satu baris `proof_sample_consents` per user; menyalakan idempoten (waktu pertama tetap),
   mematikan = menghapus baris itu dan `forget_user`.
 - `sample_lines` (M1b, pre-flight A16 §2, K5, G6): dari teks OCR dan hasil baca SEBELUM disamarkan (titik yang sama
   dengan kerangka tata letak worker), hanya dipanggil worker untuk user yang setuju saat saklar menyala.
+- `correction_trigger` / `donate` (M1c, pre-flight A16 §2 "Trigger points", K3, G7): titik koreksi yang sudah ada
+  (`record.mark_recorded`, `record.skip_item`, `record.choose_app`, bot "Nominal salah") memanggil `donate`; koreksi
+  memindahkan `sample_lines` ke `proof_samples` (status `menunggu`), selain itu (bacaan benar, `batal`/`duplikat`,
+  persetujuan ditarik, saklar mati) baris itu dikosongkan. Pembersihan umur sampel: `maintenance.purge_samples`.
 - `forget_user` (G4): semua `proof_samples` user (juga yang disetujui), persetujuannya, dan `receipt_scans.sample_lines`
   miliknya. Dipakai saat menarik persetujuan, hapus akun (`account_deletion.delete_account`), dan gabung akun
   (`merge.merge_users`, source; persetujuan tidak diwariskan ke target).
@@ -21,21 +26,29 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+import logging
+from datetime import date, datetime, timezone
 
 from sqlalchemy import delete, exists, null, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import ProofSample, ProofSampleConsent, ReceiptScan
+from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.orm.exc import UnmappedInstanceError
+
+from app.models.models import ProofSample, ProofSampleConsent, ReceiptScan, User
 from app.services.app_config import feature_enabled
-from app.services.kotak_struk import kerangka, samaran
+from app.services.kotak_struk import belajar, kerangka, samaran
 from app.services.kotak_struk.config import PROOF_TYPES, SAMPLE_LINE_MAX, SAMPLE_MAX_LINES, SAMPLE_TYPES
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Secrets
+from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.registry import looks_like_proof
+
+log = logging.getLogger(__name__)
 
 FEATURE = "kotak_donasi"
 
@@ -186,3 +199,141 @@ def sample_lines(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
     named, _user = samaran.pseudonymise(masked, _known_names(clean, doc, user_name))
     kept = [line[:SAMPLE_LINE_MAX] for line in named if not _holds_secret(line, secrets)]
     return kept[:SAMPLE_MAX_LINES] or None
+
+
+# ── Koreksi -> antrean tinjauan (M1c) ───────────────────────────────────────
+
+TRIGGER_NOMINAL = "nominal"
+TRIGGER_TANGGAL = "tanggal"
+TRIGGER_TIDAK_DIKENALI = "tidak_dikenali"
+TRIGGER_ARAH = "arah"
+TRIGGER_APLIKASI = "aplikasi"
+TRIGGER_NOMINAL_BOT = "nominal_bot"
+TRIGGERS = (TRIGGER_NOMINAL, TRIGGER_TANGGAL, TRIGGER_TIDAK_DIKENALI, TRIGGER_ARAH, TRIGGER_APLIKASI,
+            TRIGGER_NOMINAL_BOT)
+SKIP_NOT_EXPENSE = "bukan_pengeluaran"   # sama dengan record.SKIP_NOT_EXPENSE (record mengimpor modul ini)
+ST_SAMPLE_WAITING = "menunggu"
+RULE_KEY_MAX = 60                        # proof_samples.rule_key String(60)
+
+
+def truth_of(*, total: int | None = None, day: date | None = None, flow: str | None = None,
+             app: str | None = None) -> dict:
+    """Petunjuk kebenaran dari koreksi user untuk pemilik (G7): `{total, date, flow, app}`; tanggal ISO."""
+    return {"total": total, "date": day.isoformat() if day is not None else None, "flow": flow, "app": app}
+
+
+def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | None = None,
+                       alasan: str | None = None, app: str | None = None,
+                       typed_amount: int | None = None) -> str | None:
+    """Jenis koreksi yang membuat bukti `item` layak menjadi sampel donasi, atau None (pre-flight A16 K3 opsi B). Murni.
+
+    - `aplikasi`: jawaban "Aplikasi apa ini?" (`app`); `nominal_bot`: nominal ketikan sesudah "Nominal salah"
+      (`typed_amount`).
+    - Lewati (`skip_reason`): `batal`/`duplikat` -> None. `bukan_pengeluaran`: `arah` bila `alasan` beda dari
+      `document.flow`; selain itu `tidak_dikenali` untuk item `tidak_dikenali`; selain itu `arah` bila tanpa alasan
+      dan arah terbaca `keluar`; selain itu None.
+    - Tercatat (`final` dari transaksi yang tercatat): `nominal` bila nominal tercatat beda dari total terbaca (juga
+      bila total tidak terbaca); `tanggal` bila tanggal tercatat bukan tanggal bukti (WIB) dan bukan hari ini;
+      `tidak_dikenali` bila item `tidak_dikenali`; selain itu None (bacaan benar)."""
+    if app is not None:
+        return TRIGGER_APLIKASI
+    if typed_amount is not None:
+        return TRIGGER_NOMINAL_BOT
+    document = getattr(item, "document", None)
+    document = document if isinstance(document, dict) else {}
+    doc_type = getattr(item, "doc_type", None)
+    if skip_reason is not None:
+        if skip_reason != SKIP_NOT_EXPENSE:
+            return None
+        flow = document.get("flow")
+        if alasan is not None and alasan != flow:
+            return TRIGGER_ARAH
+        if doc_type == "tidak_dikenali":
+            return TRIGGER_TIDAK_DIKENALI
+        if alasan is None and flow == "keluar":
+            return TRIGGER_ARAH
+        return None
+    if final is None:
+        return None
+    amounts = document.get("amounts") if isinstance(document.get("amounts"), dict) else {}
+    total = amounts.get("total")
+    if total is None or final.amount != total:
+        return TRIGGER_NOMINAL
+    if final.txn_date is not None and final.txn_date != final.today and final.txn_date != belajar._doc_date(document):
+        return TRIGGER_TANGGAL
+    if doc_type == "tidak_dikenali":
+        return TRIGGER_TIDAK_DIKENALI
+    return None
+
+
+def _forget_local(item) -> None:
+    """`sample_lines` objek pemanggil = None tanpa membuatnya kotor (baris sudah dikosongkan lewat UPDATE)."""
+    try:
+        set_committed_value(item, "sample_lines", None)
+    except (UnmappedInstanceError, AttributeError):
+        setattr(item, "sample_lines", None)
+
+
+def _sample_day(processed_at: datetime | None, now: datetime) -> date:
+    """`today` sampel: hari baca bukti menurut WIB (tanpa zona = UTC, seperti worker); belum dibaca -> hari `now`."""
+    moment = processed_at or now
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(WIB).date()
+
+
+async def donate(db: AsyncSession, item, trigger: str | None, *, truth: dict, now: datetime) -> bool:
+    """Pindahkan baris tersamar item Kotak Struk `item` (`sample_lines`) ke antrean tinjauan; True bila sampel baru
+    disimpan.
+
+    Tanpa `sample_lines` -> False tanpa kueri. Selain itu, dalam SAVEPOINT sendiri: bila `trigger` ada, saklar
+    `kotak_donasi` menyala, DAN user pemilik item MASIH setuju (dicek lagi di sini: persetujuan bisa ditarik selagi
+    bukti dibaca, review M1b temuan 5), sisip `ProofSample(status="menunggu", lines, rule_key dari kerangka, doc_type,
+    trigger, user_name = nama samaran user, truth, today = hari baca WIB)` dengan `on_conflict_do_nothing` pada
+    `uq_proof_sample_item` (satu sampel per item; kirim ulang tidak menggandakan). Dalam SEMUA kasus itu
+    `receipt_scans.sample_lines` item dikosongkan (SQL NULL). Tidak meng-commit (pemanggil meng-commit bersama
+    pencatatan/lewati). Tidak pernah melempar: galat -> log tanpa isi bukti + False (savepoint dibatalkan; baris
+    dikosongkan di savepoint baru bila bisa, selain itu pemeliharaan menghapusnya). Tidak membuat transaksi dan tidak
+    mengubah status item."""
+    item_id = getattr(item, "id", None)
+    try:
+        lines = getattr(item, "sample_lines", None)
+        if not lines:
+            return False
+        stored = False
+        async with db.begin_nested():
+            user_id = item.user_id
+            if trigger is not None and await donation_available(db) and await consented(db, user_id):
+                name = (await db.execute(select(User.name).where(User.id == user_id))).scalar_one_or_none()
+                layout = getattr(item, "layout", None)
+                key = layout.get("key") if isinstance(layout, dict) else None
+                res = await db.execute(
+                    pg_insert(ProofSample)
+                    .values(id=uuid.uuid4(), user_id=user_id, item_id=item_id,
+                            rule_key=key[:RULE_KEY_MAX] if isinstance(key, str) else None,
+                            doc_type=item.doc_type or "", trigger=trigger, lines=list(lines),
+                            user_name=samaran.pseudonymise([], {"user": name})[1] if name else None,
+                            truth=truth, today=_sample_day(getattr(item, "processed_at", None), now),
+                            status=ST_SAMPLE_WAITING, created_at=now)
+                    .on_conflict_do_nothing(index_elements=[ProofSample.item_id])
+                )
+                stored = (res.rowcount or 0) == 1
+            await _clear_lines(db, item_id)
+        _forget_local(item)
+        return stored
+    except Exception as exc:
+        log.warning("sampel donasi Kotak Struk untuk item %s tidak disimpan (%s)", item_id, type(exc).__name__)
+        try:   # baris tetap dikosongkan bila bisa (savepoint baru); bila tidak, pemeliharaan menghapusnya
+            async with db.begin_nested():
+                await _clear_lines(db, item_id)
+            _forget_local(item)
+        except Exception:
+            pass
+        return False
+
+
+async def _clear_lines(db: AsyncSession, item_id) -> None:
+    await db.execute(
+        update(ReceiptScan).where(ReceiptScan.id == item_id).values(sample_lines=null())
+        .execution_options(synchronize_session=False)
+    )

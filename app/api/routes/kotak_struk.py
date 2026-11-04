@@ -180,12 +180,13 @@ async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_curren
 async def choose_app(item_id: UUID, body: AppChoiceIn, user: User = Depends(get_current_user),
                      db: AsyncSession = Depends(get_db)):
     """Jawaban "Aplikasi apa ini?" untuk bukti `tidak_dikenali` berkunci logo (`flags.ask_app`): sekali per item, menjadi
-    suara aturan `logo` (`belajar.learn_app_choice`; tidak mencatat, tidak mengubah status item). Item tidak ada/milik
+    suara aturan `logo` dan, bila user setuju donasi contoh, sampel `aplikasi` (`record.choose_app`; tidak mencatat,
+    tidak mengubah status item). Item tidak ada/milik
     user lain 404; nilai bukan kunci profil atau "baru" 422; item yang tidak bisa ditanya atau sudah dijawab 409."""
     item = await _owned_item(db, item_id, user)
     if body.app not in belajar.APP_CHOICES:
         raise HTTPException(status_code=422, detail=MSG_APP_INVALID)
-    if belajar.app_logo(item) is None or not await belajar.learn_app_choice(
+    if belajar.app_logo(item) is None or not await record.choose_app(
             db, item, body.app, user_id=user.id, user_name=user.name):
         raise HTTPException(status_code=409, detail=MSG_APP_NOT_ASKABLE)
     await db.commit()

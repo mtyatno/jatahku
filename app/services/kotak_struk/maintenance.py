@@ -9,6 +9,8 @@
   koreksi terjadi saat item selesai. Item kedaluwarsa juga kehilangan kerangkanya di `expire_items`. Baris tersamar
   donasi contoh (`sample_lines`, tahap 2) ikut dihapus di kedua tempat; item yang dikoreksi memindahkannya ke
   `proof_samples` lebih dulu (M1c).
+- `purge_samples`: sampel donasi contoh (`proof_samples`, tahap 2 G2) berumur SAMPLE_TTL: `menunggu` sejak dibuat,
+  `disetujui` sejak diputuskan (salinan di korpus repo yang permanen). Yang ditolak dihapus saat diputuskan (M1d).
 - `reconcile_proof_rules`: aturan belajar (`proof_rules`) disamakan dengan tabel suara (`belajar.reconcile_rules`):
   hitungan yang tertinggal karena dua suara bersamaan diperbaiki dan aturan yang terlewat dibuat (review L2 M-2);
   aturan `menunggu` yang turun di bawah ambang (user dilupakan) dihapus, suaranya tetap (review L4a m-6).
@@ -26,13 +28,14 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import null, or_, select, update
+from sqlalchemy import and_, delete, null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import ReceiptScan
+from app.models.models import ProofSample, ReceiptScan
 from app.services.kotak_struk import belajar
 from app.services.kotak_struk.config import (
-    LAYOUT_TTL, ORPHAN_FILE_AGE, ST_DILEWATI, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
+    LAYOUT_TTL, ORPHAN_FILE_AGE, SAMPLE_TTL, ST_DILEWATI, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP,
+    ST_TERCATAT,
 )
 
 log = logging.getLogger(__name__)
@@ -69,6 +72,20 @@ async def purge_layouts(db: AsyncSession, *, now: datetime) -> int:
                or_(ReceiptScan.layout.is_not(None), ReceiptScan.sample_lines.is_not(None)),
                or_(ReceiptScan.processed_at.is_(None), ReceiptScan.processed_at < _utc(now) - LAYOUT_TTL))
         .values(layout=null(), sample_lines=null())   # SQL NULL, bukan JSON 'null'
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    return res.rowcount or 0
+
+
+async def purge_samples(db: AsyncSession, *, now: datetime) -> int:
+    """Satu DELETE: sampel donasi `menunggu` dengan `created_at < now - SAMPLE_TTL` dan `disetujui` dengan
+    `decided_at < now - SAMPLE_TTL` (G2). Status lain tidak disentuh. Commit sendiri; mengembalikan jumlah baris."""
+    cutoff = _utc(now) - SAMPLE_TTL
+    res = await db.execute(
+        delete(ProofSample)
+        .where(or_(and_(ProofSample.status == "menunggu", ProofSample.created_at < cutoff),
+                   and_(ProofSample.status == "disetujui", ProofSample.decided_at < cutoff)))
         .execution_options(synchronize_session=False)
     )
     await db.commit()

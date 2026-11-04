@@ -7,7 +7,12 @@ Struk belanja tidak pernah masuk peta merchant (saran per barang tetap lewat kat
 Urutan pemanggil (web dan bot): `check_recordable` (pesan yang ramah), `claim_for_recording` (penjaga atomik terhadap
 pencatatan ganda, di-commit bersama transaksinya), lalu sesudah commit `after_recorded` (streak, kata kunci, dan
 `mark_recorded`). Kirim ulang `client_ref` yang sudah tercatat memanggil `heal_recorded`. Melewati item (rute
-`lewati` dan tombol bot) lewat `skip_item`, UPDATE bersyarat yang sama polanya dengan klaim.
+`lewati` dan tombol bot) lewat `skip_item`, UPDATE bersyarat yang sama polanya dengan klaim. Jawaban "Aplikasi apa
+ini?" (rute dan bot) lewat `choose_app`.
+
+Donasi contoh (tahap 2 M1c): `mark_recorded`, `skip_item`, dan `choose_app` memanggil `donasi.donate` (SAVEPOINT
+sendiri, galat ditelan) dalam commit yang sama: koreksi memindahkan baris tersamar item ke antrean tinjauan, selain
+itu baris itu dikosongkan. Donasi tidak pernah membuat transaksi, mengubah status item, atau menggagalkan pencatatan.
 
 Satu struk belanja boleh dicatat per barang (banyak transaksi); semua jenis lain (QRIS, transfer, tidak dikenali)
 hanya sekali, dan penjaganya (klaim eksklusif, penyembuhan) berlaku untuk semuanya.
@@ -28,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, Transaction, User
 from app.services.expense_rules import after_expense_recorded
-from app.services.kotak_struk import belajar, dedup
+from app.services.kotak_struk import belajar, dedup, donasi
 from app.services.kotak_struk.config import (
     ARAH_FLOWS, LAYOUT_TYPES, PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
 )
@@ -142,7 +147,7 @@ MSG_ALASAN_ONLY_NOT_EXPENSE = "Alasan hanya untuk Bukan pengeluaran"
 
 
 async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, reason: str, *,
-                    alasan: str | None = None) -> bool:
+                    alasan: str | None = None, keep_sample: bool = False) -> bool:
     """Item `siap`/`gagal` milik user -> `dilewati`, alasan di `channel_meta.skip_reason` (bukan_pengeluaran |
     duplikat | batal). Satu UPDATE bersyarat: pencatatan (`claim_for_recording` mengubah `siap` -> `tercatat` dengan
     cara yang sama) dan melewati tidak mungkin sama-sama menang. True bila berhasil (sudah di-commit); False bila item
@@ -151,12 +156,18 @@ async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, re
     `alasan` (tahap 2 M3a; ARAH_FLOWS: top_up | masuk | antar_rekening_sendiri) hanya bersama `bukan_pengeluaran`,
     selain itu `ValueError` (MSG_ALASAN_ONLY_NOT_EXPENSE; rute 422) sebelum apa pun dibaca. Disimpan di
     `channel_meta.skip_alasan`; sesudah UPDATE berhasil dan sebelum commit, `belajar.learn_from_skip` mencatat suara
-    `arah` (savepoint sendiri) dalam commit yang sama. Galat suara tidak pernah menggagalkan lewati (Review Focus 3)."""
+    `arah` (savepoint sendiri) dalam commit yang sama. Galat suara tidak pernah menggagalkan lewati (Review Focus 3).
+
+    Donasi contoh (M1c): sesudah suara, `donasi.donate` dengan `donasi.correction_trigger(item, None,
+    skip_reason=reason, alasan=alasan)` dalam commit yang sama (`bukan_pengeluaran` yang mengoreksi arah atau bukti
+    tidak dikenali menjadi sampel; `batal`/`duplikat` mengosongkan baris tersamarnya). `keep_sample`: baris tersamar
+    dibiarkan untuk koreksi berikutnya (bot "Nominal salah" melewati item dengan `batal` lalu `note_fix_amount`
+    mendonasikannya), atau dihapus pemeliharaan. Galat donasi juga tidak pernah menggagalkan lewati."""
     if alasan is not None and (reason != SKIP_NOT_EXPENSE or alasan not in ARAH_FLOWS):
         raise ValueError(MSG_ALASAN_ONLY_NOT_EXPENSE)
     row = (await db.execute(
         select(ReceiptScan.channel_meta, ReceiptScan.layout, ReceiptScan.document, ReceiptScan.doc_type,
-               ReceiptScan.household_id)
+               ReceiptScan.household_id, ReceiptScan.sample_lines, ReceiptScan.processed_at)
         .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id)
     )).first()
     if row is None:
@@ -172,16 +183,23 @@ async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, re
     )
     if done.rowcount != 1:
         return False
+    # Kerangka, dokumen, dan baris tersamar dibaca bersama channel_meta (tidak berubah sesudah item terbaca).
+    item = SimpleNamespace(id=item_id, user_id=user_id, layout=row.layout, document=row.document,
+                           doc_type=row.doc_type, household_id=row.household_id, sample_lines=row.sample_lines,
+                           processed_at=row.processed_at)
     if alasan is not None:
-        # Suara `arah` dari kerangka item (dibaca bersama channel_meta; kerangka dan dokumen tidak berubah sesudah item
-        # terbaca). `learn_from_skip` menelan galatnya sendiri; pagar ini juga untuk galat di luarnya.
+        # Suara `arah`. `learn_from_skip` menelan galatnya sendiri; pagar ini juga untuk galat di luarnya.
         try:
-            item = SimpleNamespace(id=item_id, layout=row.layout, document=row.document, doc_type=row.doc_type,
-                                   household_id=row.household_id)
             await belajar.learn_from_skip(db, item, alasan, user_id=user_id)
         except Exception:
             log.warning("suara arah untuk item Kotak Struk %s gagal; item tetap dilewati", item_id, exc_info=True)
-        # Kait donasi contoh (`donasi.donate`, "lewati", truth={flow: alasan}) menyusul di M1c, di sini sebelum commit.
+    if item.sample_lines and not keep_sample:
+        # Donasi contoh (M1c). `donate` menelan galatnya sendiri; pagar ini juga untuk galat di luarnya.
+        try:
+            await donasi.donate(db, item, donasi.correction_trigger(item, None, skip_reason=reason, alasan=alasan),
+                                truth=donasi.truth_of(flow=alasan), now=datetime.now(timezone.utc))
+        except Exception:
+            log.warning("donasi contoh untuk item Kotak Struk %s gagal; item tetap dilewati", item_id)
     await db.commit()
     return True
 
@@ -241,29 +259,37 @@ def _whole(amount) -> int | None:
 
 
 async def _learn_correction(db: AsyncSession, item: ReceiptScan, user_id: uuid.UUID,
-                            transaction_id: uuid.UUID) -> None:
+                            transaction_id: uuid.UUID) -> belajar.Final | None:
     """Belajar lintas user dari koreksi (kotak_struk/belajar.py): nilai akhir dimuat dari baris transaksinya (satu
     sumber: nominal, tanggal, keterangan yang benar-benar tercatat, juga sesudah `_check_row` mengubah tanggal). Hanya
     item berkerangka (QRIS, transfer, tidak dikenali). Bacaan di SAVEPOINT (galat database tidak merusak sesi);
     `learn_from_correction` menulis di savepoint sendiri dan menelan galatnya. Item berkunci logo memberi suara label
-    hanya bila kuncinya ada di `belajar.approved_logo_keys` (cache aturan, galat = kosong)."""
-    if item.doc_type not in LAYOUT_TYPES or not item.layout:
-        return
+    hanya bila kuncinya ada di `belajar.approved_logo_keys` (cache aturan, galat = kosong).
+
+    Mengembalikan nilai akhir (`belajar.Final`) untuk donasi contoh (`mark_recorded`, M1c), atau None bila tidak
+    dimuat: item tanpa kerangka dan tanpa baris tersamar, atau transaksinya tidak ada. Item dengan baris tersamar
+    (`sample_lines`) memuat nilai akhir walau tanpa kerangka; suara tetap hanya untuk item berkerangka."""
+    votable = item.doc_type in LAYOUT_TYPES and bool(item.layout)
+    if not votable and not item.sample_lines:
+        return None
     async with db.begin_nested():
         row = (await db.execute(
             select(Transaction.amount, Transaction.transaction_date, Transaction.description)
             .where(Transaction.id == transaction_id)
         )).first()
     if row is None:
-        return
+        return None
     final = belajar.Final(amount=_whole(row.amount), txn_date=row.transaction_date, description=row.description,
                           today=belajar.today_wib())
+    if not votable:
+        return final
     # Kunci `logo:<kata>` hanya mendapat suara label sesudah aturan `logo` kunci itu disetujui (pre-flight A16 K8);
     # kunci profil tidak butuh kueri aturan.
     key = item.layout.get("key") if isinstance(item.layout, dict) else None
     approved_logo = (await belajar.approved_logo_keys(db) if isinstance(key, str) and key.startswith("logo:")
                      else frozenset())
     await belajar.learn_from_correction(db, item, final, user_id=user_id, approved_logo=approved_logo)
+    return final
 
 
 async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.UUID, transaction_id: uuid.UUID,
@@ -274,7 +300,11 @@ async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.U
     berkerangka (QRIS, transfer, tidak dikenali) juga memberi suara koreksi lintas user (`_learn_correction`); semua
     pencatatan pertama lewat sini (web, batch, bot, kirim ulang). Idempoten per `transaction_id`: id yang sudah ada di
     `transaction_ids` tidak ditambah, peta tidak dinaikkan lagi, dan tidak ada suara lagi. Boleh dipanggil setelah
-    `claim_for_recording` (status sudah `tercatat`). False bila item tidak ada. Meng-commit sendiri."""
+    `claim_for_recording` (status sudah `tercatat`). False bila item tidak ada. Meng-commit sendiri.
+
+    Donasi contoh (M1c): sesudah `_learn_correction`, sekali per transaksi di jalur yang sama, `donasi.donate` dengan
+    `donasi.correction_trigger(item, final)` (nilai akhir dari transaksi yang sama) dalam commit penandaan; galatnya
+    tidak pernah membiarkan item tetap `siap`."""
     item = await db.get(ReceiptScan, item_id)
     if item is None:
         return False
@@ -283,10 +313,22 @@ async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.U
     # Belajar dari koreksi: hanya di jalur transaksi BARU (sekali per transaksi; kirim ulang dan penyembuhan yang sudah
     # tercatat berhenti di atas), sebelum item diubah supaya savepoint-nya tidak ikut mem-flush penandaan item. Suaranya
     # di-commit bersama penandaan di bawah; galatnya tidak pernah membiarkan item tetap `siap`.
+    final = None
     try:
-        await _learn_correction(db, item, user_id, transaction_id)
+        final = await _learn_correction(db, item, user_id, transaction_id)
     except Exception:
         log.warning("belajar dari koreksi untuk item Kotak Struk %s dilewati", item_id, exc_info=True)
+    if item.sample_lines:
+        # Donasi contoh: koreksi -> antrean tinjauan, bacaan benar -> baris dikosongkan. `donate` menelan galatnya.
+        try:
+            document = item.document if isinstance(item.document, dict) else {}
+            await donasi.donate(
+                db, item, donasi.correction_trigger(item, final),
+                truth=donasi.truth_of(total=final.amount if final else None, day=final.txn_date if final else None,
+                                      flow=document.get("flow")),
+                now=datetime.now(timezone.utc))
+        except Exception:
+            log.warning("donasi contoh untuk item Kotak Struk %s dilewati", item_id)
     item.transaction_ids = list(item.transaction_ids or []) + [str(transaction_id)]  # daftar baru: perubahan terdeteksi
     item.status = ST_TERCATAT
     if item.doc_type in PROOF_TYPES and item.household_id is not None and item.counterparty_key:
@@ -296,6 +338,23 @@ async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.U
         except Exception:
             log.warning("peta merchant untuk item Kotak Struk %s tidak diperbarui", item_id, exc_info=True)
     await db.commit()
+    return True
+
+
+async def choose_app(db: AsyncSession, item: ReceiptScan, choice: str, *, user_id: uuid.UUID,
+                     user_name: str | None) -> bool:
+    """Jawaban "Aplikasi apa ini?" (rute `POST /kotak-struk/{id}/aplikasi` dan tombol bot `ka_`, satu tempat untuk
+    keduanya): `belajar.learn_app_choice` (sekali per item, suara `logo`), lalu bila jawabannya tersimpan, donasi
+    contoh `aplikasi` (`donasi.donate`, truth `app`). `belajar` tidak mengimpor `donasi`; kaitnya di sini. Tidak
+    meng-commit (pemanggil meng-commit); galat donasi ditelan. True bila jawabannya tersimpan."""
+    if not await belajar.learn_app_choice(db, item, choice, user_id=user_id, user_name=user_name):
+        return False
+    if item.sample_lines:
+        try:
+            await donasi.donate(db, item, donasi.correction_trigger(item, None, app=choice),
+                                truth=donasi.truth_of(app=choice), now=datetime.now(timezone.utc))
+        except Exception:
+            log.warning("donasi contoh untuk item Kotak Struk %s dilewati", getattr(item, "id", None))
     return True
 
 
