@@ -647,6 +647,20 @@ class ApiClient {
     }
   }
 
+  // Jawaban "Aplikasi apa ini?" (`flags.ask_app`): app = kunci profil atau 'baru' (proofFormat.APP_CHOICES) →
+  // {app, ask_app: false}. 409 bila item tidak bisa ditanya atau sudah dijawab, 404 bila bukan milik user.
+  async kotakChooseApp(id, app) {
+    try {
+      const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/aplikasi`, {
+        method: 'POST',
+        body: JSON.stringify({ app }),
+      });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } };
+    }
+  }
+
   // Nama panggilan merchant untuk serumah (≤ 60; kosong menghapus) → {id, name, display_name}. merchantId dari
   // `item.merchant.id`, yang bisa null (tanpa peta merchant): jangan panggil.
   async kotakRenameMerchant(merchantId, displayName) {

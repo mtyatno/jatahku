@@ -273,6 +273,34 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         # Edit tanpa tombol (seperti Telegram) → tombol lama tidak bisa ditekan lagi
         self.assertNotIn(btn_key(self.user, "aa11"), self.redis.store)
 
+    async def test_app_question_buttons_replay_through_bot_callbacks(self):
+        """Tahap 2 M2c: "Aplikasi apa ini?" (`ka_`) memakai `bot_callbacks()` sungguhan; tombol pertanyaan yang diedit
+        tercatat untuk pesan itu (jawaban bisa ditekan), tombol lama tidak lagi."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        item_id = "11111111-2222-4333-8444-555555555555"
+        self.redis.store[btn_key(self.user, "aa11")] = json.dumps([f"ka_{item_id}", "t_ab12_0"])
+        seen = []
+
+        async def fake_app_action(query, tg_user, arg):
+            seen.append(arg)
+            rows = [[InlineKeyboardButton("Jago", callback_data=f"ka_{item_id}_5")],
+                    [InlineKeyboardButton("Lainnya", callback_data=f"ka_{item_id}_n")]] if arg == item_id else None
+            await query.edit_message_text("Logo di bukti: NEWPAY. Aplikasi apa ini?",
+                                          reply_markup=InlineKeyboardMarkup(rows) if rows else None)
+
+        with patch.object(receipt_cmd, "_app_action", new=fake_app_action):
+            ops = await web_adapter.run_action(self.user, "aa11", f"ka_{item_id}")
+            self.assertEqual(ops[-1]["type"], "edit")
+            self.assertEqual(json.loads(self.redis.store[btn_key(self.user, "aa11")]),
+                             [f"ka_{item_id}_5", f"ka_{item_id}_n"])
+            stale = await web_adapter.run_action(self.user, "aa11", "t_ab12_0")   # tombol pesan sebelum diedit
+            self.assertEqual(stale[0]["text"], web_adapter.STALE_BUTTON)
+        self.assertEqual(seen, [item_id])
+        self.redis.store[btn_key(self.user, "aa11")] = json.dumps([f"ka_{item_id}_5"])
+        with patch.object(receipt_cmd, "_app_action", new=fake_app_action):
+            await web_adapter.run_action(self.user, "aa11", f"ka_{item_id}_5")
+        self.assertEqual(seen, [item_id, f"{item_id}_5"])
+
     async def test_telegram_only_callback_is_rejected_even_if_issued(self):
         self.redis.store[btn_key(self.user, "aa11")] = json.dumps(["merge_x", "unlink_y"])
         cb = AsyncMock()

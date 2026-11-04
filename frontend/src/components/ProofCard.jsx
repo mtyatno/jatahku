@@ -5,7 +5,7 @@ import { currentPeriod, proofBlockReason, wibToday } from '../lib/receiptScan';
 import {
   proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText, proofDate, descriptionFor,
   displayNameOf, envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome, skipOutcome,
-  createSharedLoader, readOnlyNotice, needsRecheck, recheckOutcome,
+  createSharedLoader, readOnlyNotice, needsRecheck, recheckOutcome, appQuestion, appChoiceOutcome,
 } from '../lib/proofFormat';
 import { READ_WAIT_MS, withTimeout } from '../lib/shareInbox';
 import { EnvelopeIcon, Icon } from './Icon';
@@ -59,6 +59,10 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
   const [renameText, setRenameText] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState('');
+  const [appPick, setAppPick] = useState('');       // "Aplikasi apa ini?": pilihan di <select>
+  const [appBusy, setAppBusy] = useState(false);
+  const [appResult, setAppResult] = useState(null); // appChoiceOutcome terakhir
+  const appBusyRef = useRef(false);
   const busyRef = useRef(false);
   const sentRef = useRef(null);    // payload yang hasilnya belum pasti: dikirim ulang persis sama
   const noteSeq = useRef(0);
@@ -203,6 +207,45 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
     }
   };
 
+  // "Aplikasi apa ini?": satu permintaan; terpisah dari Simpan/lewati (tidak mengunci isian, tidak membaca ulang item).
+  const sendApp = async (e) => {
+    e.preventDefault();
+    if (appBusyRef.current || !appPick) return;
+    appBusyRef.current = true;
+    setAppBusy(true);
+    setAppResult(null);
+    const out = appChoiceOutcome(await api.kotakChooseApp(item.id, appPick));
+    appBusyRef.current = false;
+    if (!mounted.current) return;
+    setAppBusy(false);
+    setAppResult(out);
+  };
+
+  const question = appQuestion(item);
+  const appClosed = appResult?.kind === 'ok' || appResult?.kind === 'conflict';
+  const appBlock = question && (
+    <div className="rounded-xl border border-gray-200 px-3 py-2">
+      {appClosed ? (
+        <p role="status" className={`text-sm ${appResult.kind === 'ok' ? 'text-brand-600' : 'text-gray-500'}`}>{appResult.text}</p>
+      ) : (
+        <form onSubmit={sendApp} className="space-y-1.5">
+          <label htmlFor={`${ids}-app`} className="block text-sm text-gray-700">{question.text}</label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select id={`${ids}-app`} className="input py-1.5 flex-1 min-w-[10rem]" value={appPick}
+              onChange={e => { setAppResult(null); setAppPick(e.target.value); }} disabled={appBusy}>
+              <option value="">Pilih aplikasi</option>
+              {question.choices.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            <button type="submit" disabled={appBusy || !appPick || !online} className="btn-outline disabled:opacity-50">
+              {appBusy ? 'Mengirim…' : 'Kirim'}
+            </button>
+          </div>
+          {appResult?.kind === 'error' && <p className="text-xs text-red-600" role="alert">{appResult.text}</p>}
+        </form>
+      )}
+    </div>
+  );
+
   const startRename = () => {
     setRenameText(name);
     setRenameError('');
@@ -237,6 +280,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           </p>
           <p className="text-xs text-gray-500 truncate">{[header.badge, name, when].filter(Boolean).join(' · ')}</p>
           {done.quotaNotice && <p className="text-xs text-amber-600">{done.quotaNotice}</p>}
+          {appBlock && done.kind === 'saved' && <div className="pt-2">{appBlock}</div>}
         </div>
       </section>
     );
@@ -252,6 +296,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           <p className="text-xs text-gray-500 truncate">{[total ? rupiah(total) : null, name, when].filter(Boolean).join(' · ')}</p>
         )}
         <p className={`text-sm ${READ_ONLY_TEXT[readOnly.tone] || ''}`}>{readOnly.text}</p>
+        {appBlock && <div className="pt-2">{appBlock}</div>}
       </section>
     );
   }
@@ -272,6 +317,8 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_PILL[header.statusTone] || ''}`}>{header.statusText}</span>
         )}
       </div>
+
+      {appBlock}
 
       {editable ? (
         <div>

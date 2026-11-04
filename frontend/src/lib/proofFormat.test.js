@@ -4,7 +4,7 @@ import {
   ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
   parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
   savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText, readOnlyNotice, needsRecheck,
-  recheckOutcome,
+  recheckOutcome, APP_CHOICES, appQuestion, appChoiceOutcome,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -516,4 +516,51 @@ test('needsRecheck dan recheckOutcome (R2): struk belanja dibaca ulang tepat seb
   assert.deepEqual(recheckOutcome(null), { kind: 'error', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
   assert.deepEqual(recheckOutcome(undefined, { resend: true }), { kind: 'uncertain', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
   assert.deepEqual(recheckOutcome({ id: 'i1', status: 'tercatat' }, { resend: true }), { kind: 'blocked', text: 'Struk ini sudah tercatat.' });
+});
+
+// "Aplikasi apa ini?" (tahap 2 M2c): bukti tidak dikenali berkunci logo (`flags.ask_app`, `flags.app_logo` dari server).
+const ASK = withFlags({ ask_app: true, app_logo: 'NEWPAY' }, typed('tidak_dikenali'));
+
+test('APP_CHOICES: 12 kunci ISSUER_LABEL (urutan tabel) + Lainnya', () => {
+  assert.equal(APP_CHOICES.length, 13);
+  assert.deepEqual(APP_CHOICES.map(c => c.key), [...Object.keys(ISSUER_LABEL), 'baru']);
+  assert.deepEqual(APP_CHOICES.slice(0, 12).map(c => c.label), Object.values(ISSUER_LABEL));
+  assert.deepEqual(APP_CHOICES[12], { key: 'baru', label: 'Lainnya' });
+  assert.equal(new Set(APP_CHOICES.map(c => c.key)).size, 13);
+});
+
+test('appQuestion: hanya dengan ask_app dan kata logo, siap/tercatat, tidak untuk bukti gagal/pending', () => {
+  assert.deepEqual(appQuestion(ASK), { logo: 'NEWPAY', text: 'Logo di bukti: NEWPAY. Aplikasi apa ini?', choices: APP_CHOICES });
+  // Sudah tercatat (blocked sudah_tercatat): masih boleh dijawab, jawabannya tidak mencatat apa pun.
+  assert.equal(appQuestion({ ...withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'sudah_tercatat' }, ASK), status: 'tercatat' }).logo, 'NEWPAY');
+  // Tanpa ask_app (bentuk lama tanpa field, false, atau sudah dijawab) → tidak ditanya.
+  assert.equal(appQuestion(typed('tidak_dikenali')), null);
+  assert.equal(appQuestion(withFlags({ ask_app: false, app_logo: 'NEWPAY' }, ASK)), null);
+  assert.equal(appQuestion(withFlags({ ask_app: 'true', app_logo: 'NEWPAY' }, ASK)), null);
+  // Kata logo hanya dari server; tanpa kata logo tidak ada yang ditanyakan (tidak pernah dari teks OCR lain).
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: null }, ASK)), null);
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: '  ' }, ASK)), null);
+  // Bukti yang transaksinya gagal/pending (blokir) tidak ditanya.
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'transaksi_gagal' }, ASK)), null);
+  for (const status of ['diterima', 'diproses', 'gagal', 'dilewati', 'kedaluwarsa']) {
+    assert.equal(appQuestion({ ...ASK, status }), null, status);
+  }
+  assert.equal(appQuestion(null), null);
+  assert.equal(appQuestion({ ...ASK, flags: null }), null);
+});
+
+test('appChoiceOutcome: ok → terima kasih; 409/404 → teks server; selain itu galat yang bisa dicoba lagi', () => {
+  assert.deepEqual(appChoiceOutcome({ ok: true, status: 200, data: { app: 'jago', ask_app: false } }),
+    { kind: 'ok', text: 'Terima kasih, dicatat.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 409, data: { detail: 'Aplikasi bukti ini tidak bisa dipilih' } }),
+    { kind: 'conflict', text: 'Aplikasi bukti ini tidak bisa dipilih.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 409, data: { detail: 'Pesan lain dari server' } }),
+    { kind: 'conflict', text: 'Pesan lain dari server.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 404, data: {} }),
+    { kind: 'conflict', text: 'Aplikasi bukti ini tidak bisa dipilih.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 422, data: { detail: [{ msg: 'x' }] } }),
+    { kind: 'error', text: 'Gagal mengirim. Coba lagi.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } }),
+    { kind: 'error', text: 'Koneksi gagal, coba lagi' });
+  assert.deepEqual(appChoiceOutcome(null), { kind: 'error', text: 'Gagal mengirim. Coba lagi.' });
 });

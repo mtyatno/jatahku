@@ -29,6 +29,13 @@ QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL
 user itu dalam FIX_TTL_S (`note_fix_amount`, dari handlers.handle_message sesudah `capture_note`; perintah, foto, tombol,
 dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal → suara koreksi nominal untuk item
 (`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
+
+"Aplikasi apa ini?" (belajar lintas user tahap 2, Task M2c): pesan struk untuk bukti tidak dikenali yang boleh
+ditanya (`flags.ask_app`, bukan bukti gagal/pending) mendapat baris "🏷️ Aplikasi apa ini?" (`ka_{item_id}`) di bawah
+baris kedua. Ketukannya mengedit pesan menjadi pertanyaan "Logo di bukti: {flags.app_logo}. Aplikasi apa ini?" dengan
+12 aplikasi berprofil (`ka_{item_id}_{i}`, i = indeks `PROFILES`, 3 per baris), "Lainnya" (`ka_{item_id}_n`) dan
+"↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `belajar.learn_app_choice` (satu suara per item,
+tidak mencatat dan tidak mengubah status) lalu pesan hasil dirender ulang tanpa tombol aplikasi; tombol amplop tetap.
 """
 import asyncio
 import json
@@ -48,11 +55,12 @@ from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
 from app.services.kotak_struk import belajar, intake, record, view, waiter
 from app.services.kotak_struk.config import (
-    FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI, ST_DIPROSES,
+    APP_NEW, FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI, ST_DIPROSES,
     ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
 )
 from app.services.kotak_struk.merchants import display_name
 from app.services.kotak_struk.readers.labels import WIB
+from app.services.kotak_struk.readers.profiles import PROFILES
 
 logger = logging.getLogger("jatahku.bot")
 
@@ -97,6 +105,15 @@ ASK_AMOUNT = "Nominal {amount} belum pasti — cek dengan {noun}. Sudah benar?"
 BTN_AMOUNT_OK = "✅ Ya, catat ke {emoji} {name}"
 AMOUNT_OK = "ky"                  # callback `ky_{key}_{idx}`: nominal dikonfirmasi, catat ke amplop idx
 TXN_LOCK = "txnlock:{}"           # kunci sesi tombol yang sama dengan tombol amplop (handlers.handle_txn_callback)
+
+# "Aplikasi apa ini?" (Task M2c): callback `ka_{item_id}` (pertanyaan), `ka_{item_id}_{i}` (indeks PROFILES),
+# `ka_{item_id}_n` (Lainnya = APP_NEW), `ka_{item_id}_k` (Kembali). Paling panjang 3 + 36 + 1 + 2 = 42 <= 64.
+BTN_ASK_APP = "🏷️ Aplikasi apa ini?"
+ASK_APP = "Logo di bukti: {logo}. Aplikasi apa ini?"
+MSG_APP_REFUSED = "⚠️ Aplikasi bukti ini tidak bisa dipilih."
+APP_OTHER = "n"
+APP_BACK = "k"
+APP_PER_ROW = 3
 
 PROOF_LABEL = {"qris": "QRIS", "transfer": "Transfer"}
 PAY_STATUS = {"berhasil": "Berhasil", "pending": "Pending"}
@@ -519,7 +536,40 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
     reading = (f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"
                f"Total: {_rp(total)}  {conf}"
                + (f"\n\n{summary}" if summary else ""))
-    return await _dated_reply(txn_key, payload, payday_day, reading, labels)
+    text, markup = await _dated_reply(txn_key, payload, payday_day, reading, labels)
+    if _app_logo(detail) is not None:   # di bawah baris kedua; tombol amplop/tanggal tidak berubah
+        markup = InlineKeyboardMarkup([*markup.inline_keyboard,
+                                       [InlineKeyboardButton(BTN_ASK_APP, callback_data=f"ka_{item.id}")]])
+    return text, markup
+
+
+def _app_logo(detail: dict) -> str | None:
+    """Kata logo untuk "Aplikasi apa ini?" (`flags.app_logo`, huruf besar dari server; tidak pernah dari teks OCR lain)
+    bila item boleh ditanya: `flags.ask_app` (server: siap/tercatat, tidak dikenali, kerangka berkunci logo, belum
+    dijawab) dan bukan bukti yang transaksinya gagal/pending (`blocked` transaksi_gagal). Selain itu None."""
+    flags = detail.get("flags") or {}
+    if flags.get("ask_app") is not True or flags.get("blocked") == view.BLOCKED_FAILED:
+        return None
+    logo = flags.get("app_logo")
+    return logo.strip() or None if isinstance(logo, str) else None
+
+
+def _app_choice(suffix: str) -> str | None:
+    """Akhiran tombol jawaban → nilai suara: indeks `PROFILES` → kunci profil, `n` → APP_NEW; lainnya None."""
+    if suffix == APP_OTHER:
+        return APP_NEW
+    if suffix.isdigit() and str(int(suffix)) == suffix and int(suffix) < len(PROFILES):
+        return PROFILES[int(suffix)].key
+    return None
+
+
+def _app_question(item_id, logo: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Langkah kedua "Aplikasi apa ini?": 12 aplikasi berprofil (3 per baris), lalu "Lainnya" dan "↩️ Kembali"."""
+    buttons = [InlineKeyboardButton(p.label, callback_data=f"ka_{item_id}_{i}") for i, p in enumerate(PROFILES)]
+    rows = [buttons[i:i + APP_PER_ROW] for i in range(0, len(buttons), APP_PER_ROW)]
+    rows.append([InlineKeyboardButton("Lainnya", callback_data=f"ka_{item_id}_{APP_OTHER}"),
+                 InlineKeyboardButton("↩️ Kembali", callback_data=f"ka_{item_id}_{APP_BACK}")])
+    return ASK_APP.format(logo=logo), InlineKeyboardMarkup(rows)
 
 
 async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -796,8 +846,9 @@ async def reply_item_result(message, user_id, item_id) -> bool:
 
 async def handle_kotak_callback(update, context):
     """kn_{key} tambah catatan · kx_{item_id} bukan pengeluaran · kd_{item_id} duplikat (lewati) ·
-    ko_{key} tetap catat (tampilkan tombol amplop). ko_ menulis ulang `txn:{key}`, jadi memakai kunci sesi tombol
-    (`_txn_lock`) sampai pesannya diedit; sedang dipakai → "Sedang diproses..."."""
+    ko_{key} tetap catat (tampilkan tombol amplop) · ka_{item_id}[_{pilihan}] "Aplikasi apa ini?" (`_app_action`).
+    ko_ menulis ulang `txn:{key}`, jadi memakai kunci sesi tombol (`_txn_lock`) sampai pesannya diedit; sedang dipakai →
+    "Sedang diproses..."."""
     query = update.callback_query
     action, _, arg = (query.data or "").partition("_")
     lock = await _txn_lock(arg) if action == "ko" else None
@@ -815,6 +866,10 @@ async def _kotak_action(update, query, action: str, arg: str) -> None:
 
     await query.answer()
     tg_user = update.effective_user
+
+    if action == "ka":
+        await _app_action(query, tg_user, arg)
+        return
 
     if action in ("kx", "kd"):
         await forget_note(tg_user.id)
@@ -848,6 +903,34 @@ async def _kotak_action(update, query, action: str, arg: str) -> None:
             else:
                 text, markup = await _result_reply(db, user, item, key=arg, note=payload.get("note"), ready=True)
         await query.edit_message_text(text, reply_markup=markup)
+
+
+async def _app_action(query, tg_user, arg: str) -> None:
+    """`ka_{item_id}` → pertanyaan (`_app_question`); `ka_{item_id}_{i|n}` → jawaban: `belajar.learn_app_choice` (satu
+    suara per item) + commit, lalu pesan hasil dirender ulang (`_result_reply`: tanpa tombol aplikasi, tombol amplop
+    tetap, sesi tombol baru); `ka_{item_id}_k` → pesan hasil dirender ulang tanpa menjawab. Akhiran lain → pertanyaan
+    lagi. Item milik user lain / tidak ada, tidak bisa ditanya (sudah dijawab, bukti gagal/pending), atau jawaban
+    ditolak → MSG_APP_REFUSED tanpa tombol. Tidak pernah mencatat atau melewati item."""
+    from app.bot.handlers import get_or_create_user
+
+    raw_id, _, suffix = arg.partition("_")
+    item_id = _uuid(raw_id)
+    text, markup = MSG_APP_REFUSED, None
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        item = await _own_item(db, item_id, user)
+        logo = _app_logo(await view.item_detail(db, item, user)) if item is not None else None
+        if logo is not None:
+            choice = _app_choice(suffix)
+            if suffix == APP_BACK:
+                text, markup = await _result_reply(db, user, item)
+            elif choice is None:
+                text, markup = _app_question(item.id, logo)
+            elif await belajar.learn_app_choice(db, item, choice, user_id=user.id, user_name=user.name):
+                await db.commit()
+                await db.refresh(item)
+                text, markup = await _result_reply(db, user, item)
+    await query.edit_message_text(text, reply_markup=markup)
 
 
 async def handle_date_callback(update, context):

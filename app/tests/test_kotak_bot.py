@@ -52,6 +52,11 @@ LOW_QRIS = ["Rp25.000", "Pembayaran Berhasil", "QRIS", "Merchant", "SITI AMINAH"
 JAGO_QRIS = ["Jago Syariah", "RM AJO PIAMAN", "Rp19.000", "ID Transaksi", "2610264RL9-PVRERW",
              "Tanggal & waktu transaksi", "26 Okt 2026, 18:52 WIB", "Status", "Sukses", "ID Terminal", "A01"]
 
+# "Aplikasi apa ini?" (tahap 2 M2c): bukti aplikasi tak berprofil rekaan, terbaca `tidak_dikenali` berkunci logo.
+NEWPAY = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "27/10/2026 10:00"]
+NEWPAY_FAILED = ["NEWPAY", "Pembayaran Gagal", "Nominal Rp50.000", "27/10/2026 10:00"]
+MSG_APP_REFUSED = "⚠️ Aplikasi bukti ini tidak bisa dipilih."
+
 UID = uuid4()
 HID = uuid4()
 USER = SimpleNamespace(id=UID, name="Ani", payday_day=1)
@@ -890,6 +895,36 @@ class CallbackRegistryTests(unittest.TestCase):
         self.assertIs(telegram, handlers.handle_txn_callback)
         self.assertIs(web_adapter._find_callback(data), handlers.handle_txn_callback)
         self.assertEqual([p for p, _ in handlers.bot_callbacks() if re.match(p, data)], [r"^ky_"])   # tanpa tabrakan
+
+
+class AppQuestionRegistryTests(unittest.TestCase):
+    """Tombol "Aplikasi apa ini?" (`ka_`) memakai handler kotak yang sama di Telegram dan chat web; callback_data muat."""
+
+    def test_app_buttons_are_routed_on_telegram_and_in_the_web_chat(self):
+        item_id = "11111111-2222-4333-8444-555555555555"
+        for data in (f"ka_{item_id}", f"ka_{item_id}_0", f"ka_{item_id}_11", f"ka_{item_id}_n", f"ka_{item_id}_k"):
+            with self.subTest(data):
+                self.assertLessEqual(len(data.encode()), 64)
+                self.assertEqual([h for p, h in handlers.bot_callbacks() if re.match(p, data)],
+                                 [receipt_cmd.handle_kotak_callback])   # tanpa tabrakan
+                self.assertIs(web_adapter._find_callback(data), receipt_cmd.handle_kotak_callback)
+
+    def test_app_choices_match_profiles(self):
+        """`proofFormat.APP_CHOICES` (kartu web) dibangun dari `ISSUER_LABEL` + "baru": kuncinya harus sama persis,
+        urutan sama, dengan `PROFILES` (indeks tombol bot `ka_{id}_{i}`) dan `belajar.APP_CHOICES` (cegah kunci basi)."""
+        from pathlib import Path
+        from app.services.kotak_struk import belajar
+        from app.services.kotak_struk.config import APP_NEW
+        from app.services.kotak_struk.readers.profiles import PROFILES
+        source = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "proofFormat.js").read_text(
+            encoding="utf-8")
+        table = re.search(r"export const ISSUER_LABEL = \{(.*?)\};", source, re.S).group(1)
+        keys = re.findall(r"(?:^|,)\s*([a-z_]+):", table)
+        self.assertEqual(keys, [p.key for p in PROFILES])
+        self.assertTrue(re.search(r"export const APP_CHOICES = \[\s*\.\.\.Object\.entries\(ISSUER_LABEL\)", source),
+                        "APP_CHOICES harus dibangun dari ISSUER_LABEL")
+        self.assertTrue(f"{{ key: '{APP_NEW}', label: 'Lainnya' }}" in source, "pilihan Lainnya harus bernilai APP_NEW")
+        self.assertEqual(set(keys) | {APP_NEW}, set(belajar.APP_CHOICES))
 
 
 class SendReadyMessageTests(unittest.IsolatedAsyncioTestCase):
@@ -2270,6 +2305,147 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
         self.assertNotIn(web_key, self.redis.store)
 
+
+    # --- M2c: "Aplikasi apa ini?" untuk bukti tidak dikenali berkunci logo ------------------------------------------
+
+    async def send_newpay(self, lines=NEWPAY):
+        await self.send(lines)
+        item_id = self.items[-1]
+        got = await self.get(item_id)
+        self.assertEqual((got.doc_type, (got.layout or {}).get("key")), ("tidak_dikenali", "logo:newpay"))
+        return item_id
+
+    def assert_refused(self, query):
+        query.edit_message_text.assert_awaited_once()
+        call = query.edit_message_text.call_args
+        self.assertEqual((call.args[0], call.kwargs.get("reply_markup")), (MSG_APP_REFUSED, None))
+
+    def app_rows(self, call):
+        return [[(b.text, b.callback_data) for b in row] for row in keyboard_of(call)]
+
+    async def test_app_button_only_for_unknown_proofs_with_a_logo_key(self):
+        item_id = await self.send_newpay()
+        rows = self.rows()
+        self.assertEqual([(b.text, b.callback_data) for b in rows[-1]], [("🏷️ Aplikasi apa ini?", f"ka_{item_id}")])
+        self.assertEqual(datas([rows[-2]]), [f"struk_fix_{item_id}", f"struk_no_{item_id}"])   # di bawah baris kedua
+        self.assertTrue([d for d in datas(rows) if d.startswith("t_")])
+        # Tanpa kandidat logo, bukti berprofil, struk belanja: tanpa pertanyaan.
+        for lines in (["foto buram", "Rp 12.000"], CORPUS[0]["lines"], STORE_LINES):
+            with self.subTest(lines=lines[0]):
+                await self.send(lines)
+                self.assertTrue(self.rows())
+                self.assertEqual([d for d in datas(self.rows()) if d.startswith("ka_")], [])
+        # Bukti berkunci logo yang transaksinya gagal (blokir): tanpa tombol, dan tombol lama tidak membuka pertanyaan
+        # dan tidak memberi suara.
+        failed = await self.send_newpay(NEWPAY_FAILED)
+        self.assertEqual(self.rows(), [])
+        for data in (f"ka_{failed}", f"ka_{failed}_0", f"ka_{failed}_n"):
+            with self.subTest(data=data):
+                self.assert_refused(await self.tap(data))
+        self.assertEqual(await self.votes(), [])
+        self.assertIsNone(((await self.get(failed)).channel_meta or {}).get("app_choice"))
+
+    async def test_app_question_in_two_steps_and_back(self):
+        from app.services.kotak_struk.readers.profiles import PROFILES
+        item_id = await self.send_newpay()
+        first_text, first_rows = self.texts()[-1], self.app_rows(self.status.edit_text.call_args)
+        query = await self.tap(f"ka_{item_id}")
+        call = query.edit_message_text.call_args
+        self.assertEqual(call.args[0], "Logo di bukti: NEWPAY. Aplikasi apa ini?")
+        rows = self.app_rows(call)
+        want = [[(p.label, f"ka_{item_id}_{i}") for i, p in list(enumerate(PROFILES))[r:r + 3]] for r in range(0, 12, 3)]
+        self.assertEqual(rows[:4], want)
+        self.assertEqual(rows[4:], [[("Lainnya", f"ka_{item_id}_n"), ("↩️ Kembali", f"ka_{item_id}_k")]])
+        self.assertTrue(all(len(d.encode()) <= 64 for row in rows for _, d in row))
+        self.assertEqual(await self.votes(), [])   # membuka pertanyaan bukan jawaban
+        # Akhiran yang tidak dikenal (indeks di luar daftar, sampah) → pertanyaan yang sama, tanpa suara.
+        for data in (f"ka_{item_id}_12", f"ka_{item_id}_x", f"ka_{item_id}_-1"):
+            with self.subTest(data=data):
+                again = (await self.tap(data)).edit_message_text.call_args
+                self.assertEqual((again.args[0], self.app_rows(again)), (call.args[0], rows))
+        self.assertEqual(await self.votes(), [])
+        # Kembali: pesan hasil dirender ulang (teks dan bentuk tombol sama, sesi tombol baru), tanpa suara.
+        back = (await self.tap(f"ka_{item_id}_k")).edit_message_text.call_args
+        self.assertEqual(back.args[0], first_text)
+        self.assertEqual([[t for t, _ in row] for row in self.app_rows(back)], [[t for t, _ in row] for row in first_rows])
+        self.assertEqual(self.app_rows(back)[-1], [("🏷️ Aplikasi apa ini?", f"ka_{item_id}")])
+        self.assertEqual(await self.votes(), [])
+        self.assertIsNone(((await self.get(item_id)).channel_meta or {}).get("app_choice"))
+
+    async def test_app_answer_votes_once_and_envelope_still_records_once(self):
+        from app.services.kotak_struk.readers.profiles import PROFILES
+        jago = [p.key for p in PROFILES].index("jago")
+        item_id = await self.send_newpay()
+        first_text = self.texts()[-1]
+        await self.tap(f"ka_{item_id}")
+        answer = (await self.tap(f"ka_{item_id}_{jago}")).edit_message_text.call_args
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["app_choice"]), ("siap", "jago"))
+        # Pesan hasil yang sama tanpa tombol aplikasi; tombol amplop dan baris kedua tetap.
+        self.assertEqual(answer.args[0], first_text)
+        data = datas(keyboard_of(answer))
+        self.assertEqual([d for d in data if d.startswith("ka_")], [])
+        self.assertEqual(data[-2:], [f"struk_fix_{item_id}", f"struk_no_{item_id}"])
+        makan = next(b.callback_data for row in keyboard_of(answer) for b in row if "Makan" in b.text)
+        # Jawaban kedua (lain atau sama), tombol pertanyaan lama: ditolak, tetap satu suara.
+        for data_ in (f"ka_{item_id}_n", f"ka_{item_id}_{jago}", f"ka_{item_id}"):
+            with self.subTest(data=data_):
+                self.assert_refused(await self.tap(data_))
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
+        self.assertEqual((await self.get(item_id)).channel_meta["app_choice"], "jago")
+        # Tombol amplop dari pesan sesudah menjawab mencatat tepat sekali (nominal tanpa label kurang yakin: ditanya dulu,
+        # H3); ketukan ulang tidak mencatat lagi.
+        asked = (await self.tap(makan)).edit_message_text.call_args
+        [yes] = [d for d in datas(keyboard_of(asked)) if d.startswith("ky_")]
+        for data_ in (yes, yes, makan):
+            await self.tap(data_)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("50000"), self.env["Makan"].id))
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(txn.id)]))
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
+
+    async def test_lainnya_votes_baru(self):
+        item_id = await self.send_newpay()
+        await self.tap(f"ka_{item_id}_n")   # langsung dari tombol pilihan (pesan pertanyaan) tanpa langkah pertama lagi
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "baru", self.a.id)])
+
+    async def test_app_question_refused_for_other_users_items_and_bad_ids(self):
+        theirs = await self.ready(NEWPAY, owner=self.b)
+        self.assertEqual((await self.get(theirs.id)).layout["key"], "logo:newpay")
+        for data in (f"ka_{theirs.id}", f"ka_{theirs.id}_0", f"ka_{theirs.id}_n", f"ka_{theirs.id}_k",
+                     "ka_bukan-id", "ka_bukan-id_0", f"ka_{uuid4()}", "ka_"):
+            with self.subTest(data=data):
+                self.assert_refused(await self.tap(data))
+        self.assertEqual(await self.votes(), [])
+        self.assertIsNone(((await self.get(theirs.id)).channel_meta or {}).get("app_choice"))
+
+    async def test_web_chat_replays_the_app_question(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(NEWPAY)):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        msg_id, reading = ops[0]["id"], ops[-1]
+        ask = next(b["data"] for row in reading["buttons"] for b in row if b["text"] == "🏷️ Aplikasi apa ini?")
+        self.assertEqual(ask, f"ka_{item_id}")
+        [edit] = await web_adapter.run_action(user, msg_id, ask)
+        self.assertEqual((edit["type"], edit["text"]), ("edit", "Logo di bukti: NEWPAY. Aplikasi apa ini?"))
+        lainnya = next(b["data"] for row in edit["buttons"] for b in row if b["text"] == "Lainnya")
+        ops = await web_adapter.run_action(user, msg_id, lainnya)
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "baru", self.a.id)])
+        result = ops[-1]
+        self.assertEqual([b["data"] for row in result["buttons"] for b in row if b["data"].startswith("ka_")], [])
+        makan = next(b["data"] for row in result["buttons"] for b in row if "Makan" in b["text"])
+        edit = (await web_adapter.run_action(user, msg_id, makan))[-1]
+        yes = next(b["data"] for row in edit["buttons"] for b in row if b["data"].startswith("ky_"))
+        await web_adapter.run_action(user, msg_id, yes)
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.source.value), (D("50000"), "webapp"))
+        # Tombol pertanyaan yang sudah diganti tidak bisa ditekan lagi (chat web hanya menerima tombol pesan terakhir).
+        stale = await web_adapter.run_action(user, msg_id, lainnya)
+        self.assertEqual(stale[0], {"type": "toast", "text": web_adapter.STALE_BUTTON})
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "baru", self.a.id)])
 
 if __name__ == "__main__":
     unittest.main()

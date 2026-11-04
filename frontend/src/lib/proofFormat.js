@@ -15,6 +15,14 @@ export const ISSUER_LABEL = {
   seabank: 'SeaBank', blu: 'blu', gopay: 'GoPay', ovo: 'OVO', dana: 'DANA', shopeepay: 'ShopeePay',
 };
 
+// "Aplikasi apa ini?" (tahap 2 M2c): 12 kunci profil (urutan tabel di atas = urutan `PROFILES` server, dipin
+// test_kotak_bot.test_app_choices_match_profiles) + "Lainnya" (`baru`, server config.APP_NEW). Nilai yang dikirim
+// `api.kotakChooseApp`.
+export const APP_CHOICES = [
+  ...Object.entries(ISSUER_LABEL).map(([key, label]) => ({ key, label })),
+  { key: 'baru', label: 'Lainnya' },
+];
+
 const KIND_LABEL = { qris: 'QRIS', transfer: 'Transfer', struk_belanja: 'Struk belanja', tidak_dikenali: 'Bukti bayar' };
 
 const STATUS = {
@@ -319,6 +327,30 @@ export function skipOutcome(res) {
   const detail = detailOf(res);
   if (res?.status === 409 || res?.status === 404) return { kind: 'blocked', text: sentence(detail) || 'Bukti ini tidak bisa dilewati.' };
   return { kind: 'error', text: detail || 'Koneksi gagal, coba lagi' };
+}
+
+// Pertanyaan "Aplikasi apa ini?" (tahap 2 M2c) → null atau { logo, text, choices }. Hanya bila server menandai item
+// boleh ditanya (`flags.ask_app` true: tidak dikenali, kerangka berkunci logo, belum dijawab) dan memberi kata logonya
+// (`flags.app_logo`; kata itu tidak pernah diambil dari teks lain), untuk item siap atau tercatat (jawabannya tidak
+// mencatat apa pun). Bukti yang transaksinya gagal/pending (`blocked` transaksi_gagal) tidak ditanya.
+export function appQuestion(item) {
+  const flags = item?.flags;
+  if (flags?.ask_app !== true || flags.blocked === 'transaksi_gagal') return null;
+  if (item.status !== 'siap' && item.status !== 'tercatat') return null;
+  const logo = typeof flags.app_logo === 'string' ? flags.app_logo.trim() : '';
+  if (!logo) return null;
+  return { logo, text: `Logo di bukti: ${logo}. Aplikasi apa ini?`, choices: APP_CHOICES };
+}
+
+// Hasil `api.kotakChooseApp` → ok (terima kasih; item tidak dibaca ulang) | conflict (409/404: teks server, pertanyaan
+// ditutup) | error (bisa dicoba lagi).
+export function appChoiceOutcome(res) {
+  if (res?.ok) return { kind: 'ok', text: 'Terima kasih, dicatat.' };
+  const detail = detailOf(res);
+  if (res?.status === 409 || res?.status === 404) {
+    return { kind: 'conflict', text: sentence(detail) || 'Aplikasi bukti ini tidak bisa dipilih.' };
+  }
+  return { kind: 'error', text: detail || 'Gagal mengirim. Coba lagi.' };
 }
 
 // Satu permintaan bersama untuk banyak kartu (mis. periode berjalan): panggilan bersamaan memakai janji yang sama,
