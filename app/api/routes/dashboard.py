@@ -4,6 +4,10 @@ Semua endpoint baru (API hanya bertambah). Ruang = `ruang_aktif` (header `X-Jata
 header ruang keluarga; R2). Tata letak adalah dokumen milik user per ruang, jadi `PUT /layout` juga
 memakai ruang aktif (keanggotaan sudah diperiksa resolver). Body tidak pernah membawa ruang.
 Galat memakai `detail` teks siap tampil + `kode` untuk mesin (§7).
+
+Karyawan ruang usaha (R6): kelima route ini ada di `KARYAWAN_BOLEH`, dan masing-masing menyaring per peran di
+server: katalog, template, tata letak, dan data hanya kartu karyawan (`registry.boleh`). Kartu umum (laba, kas,
+saldo) tidak pernah dimuat untuk karyawan.
 """
 from __future__ import annotations
 
@@ -23,6 +27,11 @@ from app.services.ruang import RuangAktif
 router = APIRouter()
 
 FLAG_KEY = "beranda_registry_users"   # AppSetting: daftar user_id dipisah koma, atau `*` (B2–B3)
+
+
+async def _karyawan(db, user_id, hid) -> bool:
+    """Karyawan di ruang ini (ruang keluarga, owner, admin → False). Satu sumber dengan `layout.ambil`."""
+    return await layout.peran_karyawan(db, user_id, hid)
 
 
 async def _flag_aktif(db, user_id) -> bool:
@@ -71,9 +80,14 @@ async def get_layout(
 ):
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    try:
+        doc = await layout.ambil(db, user.id, hid, surface)
+    except layout.GalatTataLetak as exc:   # bukan anggota; `ruang_aktif` sudah mencegahnya, ini cadangan
+        return _galat(exc.status, exc.kode, exc.detail)
     # Beranda web memakai registry hanya bila user ada di flag (B2); selain itu tetap Beranda lama.
-    return {**doc, "enabled": await _flag_aktif(db, user.id)}
+    # Karyawan selalu registry (R6): Beranda lama memanggil endpoint yang tertutup untuknya.
+    enabled = True if doc["untuk"] == "karyawan" else await _flag_aktif(db, user.id)
+    return {**doc, "enabled": enabled}
 
 
 @router.put("/layout")
@@ -95,9 +109,15 @@ async def put_layout(
 
 
 @router.get("/cards")
-async def get_cards(user: User = Depends(get_current_user)):
-    # Semua kartu inti boleh untuk semua peran ruang keluarga; kartu laporan usaha khusus admin (H/U).
-    return registry.katalog()
+async def get_cards(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    *,
+    hid: RuangAktif,
+):
+    # Kartu umum untuk semua peran kecuali karyawan ruang usaha; karyawan hanya kartu karyawan (R6).
+    # Kartu laporan usaha khusus admin menyusul (U4).
+    return registry.katalog(await _karyawan(db, user.id, hid))
 
 
 @router.post("/data")
@@ -134,7 +154,10 @@ async def get_data_instance(
     tersimpan, bukan dari klien). Bentuk sama dengan satu entri `data` di `POST /dashboard/data`."""
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    try:
+        doc = await layout.ambil(db, user.id, hid, surface)
+    except layout.GalatTataLetak as exc:
+        return _galat(exc.status, exc.kode, exc.detail)
     item = next((i for i in doc["items"] if i["id"] == instance_id), None)
     if item is None:
         return _galat(404, "instans_tidak_ada", "Kartu ini tidak ada di Berandamu.")

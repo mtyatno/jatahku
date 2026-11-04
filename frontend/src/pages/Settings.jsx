@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
+import { setRuangAktif } from '../lib/ruangAktif';
 import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
 import LaporanSettings from '../components/LaporanSettings';
@@ -371,8 +372,43 @@ function PaydayConfirmDialog({ text, saving, onConfirm, onCancel }) {
   );
 }
 
+// Ruang usaha yang sedang dibuka (Plugin R6): pengaturan household keluarga tidak berlaku di sini. Pemilik dan admin
+// diarahkan ke halaman Anggota; karyawan bisa keluar dari ruang ini.
+function RuangUsahaCard({ ruang, akses, userId }) {
+  const [galat, setGalat] = useState('');
+  const nama = ruang?.aktif?.nama || 'Ruang usaha';
+  const keluar = async () => {
+    if (!window.confirm(`Keluar dari ${nama}? Aksesmu langsung hilang; catatanmu tetap milik ruang itu.`)) return;
+    const r = await api.keluarkanAnggota(akses.ruangId, userId);
+    if (r.ok) { setRuangAktif(null); window.location.assign('/'); return; }
+    setGalat(typeof r.data?.detail === 'string' ? r.data.detail : 'Gagal keluar. Coba lagi.');
+  };
+  return (
+    <div className="card">
+      <h3 className="font-semibold text-sm mb-1">🏪 {nama}</h3>
+      {akses.pengelola ? (
+        <>
+          <p className="text-xs text-gray-400 mb-3">Anggota, batasan karyawan, undangan, dan persetujuan ruang usaha ini.</p>
+          <Link to="/ruang" className="btn-primary text-sm inline-block">Buka halaman Anggota</Link>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-gray-400 mb-3">
+            Kamu karyawan di ruang ini. Ruang keluargamu tetap terpisah dan pengaturannya ada di sana.
+          </p>
+          <button type="button" onClick={keluar} className="text-sm text-red-500 hover:underline">Keluar dari ruang ini</button>
+          {galat && <p className="text-xs text-red-500 mt-2">{galat}</p>}
+        </>
+      )}
+      <p className="text-xs text-gray-400 mt-3">Pengaturan household keluarga: pindah ke ruang keluarga lewat pemilih ruang.</p>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { user, logout } = useAuth();
+  const { ruang, akses } = useOutletContext() || {};
+  const diUsaha = !!akses?.usaha;
   const { color: themeColor, setColor } = useTheme();
   const navigate = useNavigate();
   const receiptInbox = receiptInboxOn(useAppConfig());
@@ -437,8 +473,11 @@ export default function Settings() {
       setDefaultLocked(p.default_is_locked);
       setIncomeType(p.income_type || 'monthly');
     }
-    const mRes = await api.request('/household/members');
-    if (mRes.ok) setMembers(await mRes.json());
+    // Ruang usaha: anggota household keluarga tidak dimuat di sini (R6, kartu ruang usaha menggantikannya).
+    if (!diUsaha) {
+      const mRes = await api.request('/household/members');
+      if (mRes.ok) setMembers(await mRes.json());
+    }
     setLoading(false);
   };
 
@@ -815,7 +854,10 @@ export default function Settings() {
 
       <GoogleAccountCard connected={profile.google_connected} onChange={load} />
 
+      {diUsaha && <RuangUsahaCard ruang={ruang} akses={akses} userId={user?.id} />}
+
       {/* Household */}
+      {!diUsaha && (
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">👨‍👩‍👧 Household</h3>
         {members.length > 0 && (
@@ -870,6 +912,7 @@ export default function Settings() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Payday Day */}
       <div className="card">
@@ -1024,6 +1067,7 @@ export default function Settings() {
       <div className="card">
         <h3 className="font-semibold text-sm mb-3">📦 Data & Akun</h3>
         <div className="space-y-3">
+          {!akses?.karyawan && (
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm">Download semua data</p>
@@ -1034,6 +1078,7 @@ export default function Settings() {
               <InlineFlash k="data" />
             </div>
           </div>
+          )}
           <div className="border-t border-gray-100 pt-3">
             {!showDelete ? (
               <button onClick={() => setShowDelete(true)} className="text-sm text-red-400 hover:underline">Hapus akun saya</button>
@@ -1054,7 +1099,8 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Zona Berbahaya */}
+      {/* Zona Berbahaya — tidak untuk karyawan ruang usaha (server menolak reset ruang usaha untuknya) */}
+      {!akses?.karyawan && (
       <div className="card border border-red-200 bg-red-50">
         <h3 className="font-semibold text-sm text-red-600 mb-1">⚠️ Zona Berbahaya</h3>
         <div className="flex items-center justify-between">
@@ -1070,6 +1116,7 @@ export default function Settings() {
           </button>
         </div>
       </div>
+      )}
 
       {/* Logout */}
       <div className="card">

@@ -19,6 +19,7 @@ import Settings from './pages/Settings';
 import Laporan from './pages/Laporan';
 import LaporanDetail from './pages/LaporanDetail';
 import Bagikan from './pages/Bagikan';
+import RuangKelola from './pages/RuangKelola';
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/upgrade" element={<Upgrade />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bagikan" element={<Bagikan />} />
+            <Route path="/ruang" element={<RuangKelola />} />
           </Route>
         </Routes>
       </BrowserRouter>

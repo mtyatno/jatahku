@@ -23,6 +23,8 @@ ANGGARAN_PENYEDIA_MS = 150
 PESAN = {
     "kartu_tidak_dikenal": "Kartu ini tidak tersedia.",
     "gagal_memuat": "Data kartu ini belum bisa dimuat. Coba lagi sebentar.",
+    "khusus_admin": "Kartu ini hanya untuk pemilik dan admin ruang.",
+    "ruang_tidak_diizinkan": "Ruang ini tidak bisa dibuka dari akunmu.",
 }
 
 
@@ -63,6 +65,11 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     penyedia = PROVIDERS.get(item.get("card"))
     if definisi is None or penyedia is None:
         return _galat("kartu_tidak_dikenal")
+    # R6: karyawan hanya kartu karyawan (kartu umum memuat laba, kas, saldo); selain karyawan tidak memuat kartu
+    # karyawan. Penyedia tidak dipanggil sama sekali untuk kartu yang bukan haknya.
+    karyawan = sumber.karyawan is not None
+    if not registry.boleh(definisi, karyawan):
+        return _galat("khusus_admin" if karyawan else "kartu_tidak_dikenal")
     try:
         settings = definisi.validasi(item.get("settings") or {})
     except registry.PengaturanTidakSah as exc:
@@ -85,9 +92,20 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
 
 
 async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
+    """Peran ditentukan di sini dari keanggotaan (user, ruang), bukan dari pemanggil (review keamanan PR #185): user
+    yang bukan anggota ruang itu tidak mendapat data apa pun (`ruang_tidak_diizinkan` per kartu), dan karyawan di
+    ruang usaha hanya kartu karyawan, juga di dalam `atas_izin_pengelola()`. Lewat HTTP, `ruang_aktif` sudah
+    memeriksa keanggotaan; ini untuk pemanggil langsung (skrip, plugin H2)."""
+    from app.services import peran
+    from app.services.dashboard.layout import peran_beranda
+    untuk = await peran_beranda(db, user.id, household_id)
+    karyawan = await peran.batasan_anggota(db, user.id, household_id) if untuk == "karyawan" else None
     mulai = time.perf_counter()
-    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id)
-    data = {item["id"]: await satu_kartu(sumber, item) for item in items}
+    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id, karyawan=karyawan)
+    if untuk is None:
+        data = {item["id"]: _galat("ruang_tidak_diizinkan") for item in items}
+    else:
+        data = {item["id"]: await satu_kartu(sumber, item) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:
         terlama = ", ".join(f"{n} {t:.0f}" for n, t in sorted(sumber.waktu.items(), key=lambda x: -x[1])[:3])

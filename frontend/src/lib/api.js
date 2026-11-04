@@ -81,14 +81,35 @@ class ApiClient {
   }
 
   async buatRuang(nama) {
+    return this.ruangKirim('/ruang', 'POST', { nama });
+  }
+
+  // Anggota, undangan, batasan, persetujuan, log (Plugin R5–R6, 04-kontrak-api.md §2). Ruang dari path; server
+  // memeriksa peran owner/admin. Semua mengembalikan { ok, status, data } (data = JSON atau { detail }).
+  async ruangKirim(path, method = 'GET', body = undefined) {
     try {
-      const res = await this.request('/ruang', { method: 'POST', body: JSON.stringify({ nama }) });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, data };
+      const res = await this.request(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      const data = res.status === 204 ? null : await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
     } catch {
-      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
     }
   }
+
+  gabungRuang(kode) { return this.ruangKirim('/ruang/gabung', 'POST', { kode }); }
+  ubahRuang(rid, nama) { return this.ruangKirim(`/ruang/${rid}`, 'PATCH', { nama }); }
+  ruangAnggota(rid) { return this.ruangKirim(`/ruang/${rid}/anggota`); }
+  ubahAnggota(rid, uid, isi) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}`, 'PATCH', isi); }
+  keluarkanAnggota(rid, uid) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}`, 'DELETE'); }
+  aturBatasan(rid, uid, batasan) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}/batasan`, 'PUT', batasan); }
+  daftarUndangan(rid) { return this.ruangKirim(`/ruang/${rid}/undangan`); }
+  buatUndangan(rid, peran) { return this.ruangKirim(`/ruang/${rid}/undangan`, 'POST', { peran }); }
+  cabutUndangan(rid, id) { return this.ruangKirim(`/ruang/${rid}/undangan/${id}`, 'DELETE'); }
+  daftarPersetujuan(rid) { return this.ruangKirim(`/ruang/${rid}/persetujuan`); }
+  setujuiDraf(rid, id) { return this.ruangKirim(`/ruang/${rid}/persetujuan/${id}/setujui`, 'POST'); }
+  tolakDraf(rid, id, alasan) { return this.ruangKirim(`/ruang/${rid}/persetujuan/${id}/tolak`, 'POST', { alasan: alasan || null }); }
+  logRuang(rid, limit = 50) { return this.ruangKirim(`/ruang/${rid}/audit?limit=${limit}`); }
+  catatKaryawan(path, body) { return this.ruangKirim(path, 'POST', body); }
 
   // Unggah FormData lewat XHR supaya progres unggah terlapor (fetch tidak bisa).
   // Token + header klien dirakit ulang di setiap kirim: setelah refresh, kirim ulang memakai token baru.
