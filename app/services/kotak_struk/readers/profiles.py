@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 
-from app.services.kotak_struk.config import APP_NEW, LAYOUT_LABEL_MAX
+from app.services.kotak_struk.config import APP_NEW, ARAH_FLOWS, LAYOUT_LABEL_MAX
 from app.services.kotak_struk.readers.labels import count_markers, learned_amount, learned_datetime, mask_partial_labels
 
 
@@ -192,6 +192,7 @@ def labels_for(profile: AppProfile | None, field: str) -> list[str]:
 
 RULE_TOTAL, RULE_PARTY, RULE_DATE = "label_total", "label_pihak", "label_tanggal"
 RULE_LOGO = "logo"   # tahap 2 (M2b): kunci `logo:<kata>` -> kunci profil | APP_NEW
+RULE_ARAH = "arah"   # tahap 2 (M3b): kunci `{profil}|{token arah}` -> ARAH_FLOWS
 
 
 @dataclass(frozen=True)
@@ -289,6 +290,28 @@ def learned_logo(rules: dict | None, lines: list[str]) -> str | None:
     if not isinstance(values, (list, tuple)):
         return None
     return next((v for v in values if isinstance(v, str) and (v in _PROFILE_KEYS or v == APP_NEW)), None)
+
+
+def learned_arah(rules: dict | None, key: str | None, tokens) -> str | None:
+    """Arah uang menurut aturan `arah` yang disetujui (tahap 2, M3b; pre-flight A16 K10): untuk kunci profil `key`
+    (`doc.issuer`) dan token arah bukti itu (`kerangka.arah_tokens`, urutan aslinya: `judul:` lalu `ke:`), nilai pertama
+    yang sah (ARAH_FLOWS) di `rules["{key}|{token}"]["arah"]` (urut pendukung) untuk token pertama yang punya aturan.
+    None tanpa aturan, tanpa token, bila `key` bukan kunci profil (kunci logo dan penerbit tak dikenal tidak pernah),
+    atau bentuknya rusak. Murni; hanya untuk `registry.read_document`, yang memakainya sebagai saran saja (arah
+    `keluar` -> bukan pengeluaran), tidak pernah untuk status, cek, atau nomor referensi."""
+    if not rules or not isinstance(rules, dict) or key not in _PROFILE_KEYS or not isinstance(tokens, (list, tuple)):
+        return None
+    for token in tokens:
+        if not isinstance(token, str):
+            continue
+        found = rules.get(f"{key}|{token}")
+        values = found.get(RULE_ARAH) if isinstance(found, dict) else None
+        if not isinstance(values, (list, tuple)):
+            continue
+        flow = next((v for v in values if isinstance(v, str) and v in ARAH_FLOWS), None)
+        if flow is not None:
+            return flow
+    return None
 
 
 def learned_total(amounts, confidence: str | None, body: list[str], labels: list[str]):

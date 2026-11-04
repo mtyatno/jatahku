@@ -594,14 +594,25 @@ def invalidate_rules_cache() -> None:
     _rules_generation += 1
 
 
-# Jenis yang dimuat cache aturan: label dan `logo` (pembaca lewat `approved_rules`, dan `approved_logo_keys`).
-_CACHED_KINDS = (*KINDS, KIND_LOGO)
+# Jenis yang dimuat cache aturan: label, `logo`, dan `arah` (pembaca lewat `approved_rules`, dan `approved_logo_keys`).
+_CACHED_KINDS = (*KINDS, KIND_LOGO, KIND_ARAH)
+
+
+def _arah_key_ok(rule_key) -> bool:
+    """Kunci aturan `arah` yang boleh dibaca pembaca (M3b): `{kunci profil}|{token}` dengan token yang lolos
+    pemeriksaan kosakata sisi suara (`kerangka.arah_token_ok`: `judul:<kata>` atau `ke:<kata>`), <= KEY_MAX. Kunci logo
+    tidak pernah (pembaca hanya memakai aturan arah untuk `doc.issuer` kunci profil)."""
+    if not isinstance(rule_key, str) or len(rule_key) > KEY_MAX or "|" not in rule_key:
+        return False
+    app, token = rule_key.split("|", 1)
+    return app in _PROFILE_KEYS and arah_token_ok(token)
 
 
 async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
     """Semua aturan `disetujui` berjenis `_CACHED_KINDS` (`{rule_key: {kind: [nilai]}}`, urutan `approved_rules`), dari
     cache modul bila masih segar. Aturan `logo` hanya untuk kunci logo yang sah (`logo_word`) dan nilai pilihan
-    (`APP_CHOICES`: kunci profil atau "baru", K6); selain itu (data lama/tangan) dilewati. None bila database galat (log
+    (`APP_CHOICES`: kunci profil atau "baru", K6); aturan `arah` hanya untuk kunci `{profil}|{token}` yang sah
+    (`_arah_key_ok`) dan nilai ARAH_FLOWS; selain itu (data lama/tangan) dilewati. None bila database galat (log
     peringatan; tidak disimpan di cache). Hasilnya objek cache: pemanggil tidak boleh mengubahnya."""
     global _rules_cache
     cached = _rules_cache
@@ -622,6 +633,8 @@ async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
     for rule_key, kind, value in rows:
         if kind == KIND_LOGO and (value not in APP_CHOICES or not logo_word(rule_key)):
             continue
+        if kind == KIND_ARAH and (value not in ARAH_FLOWS or not _arah_key_ok(rule_key)):
+            continue
         if kind in _CACHED_KINDS:
             rules.setdefault(rule_key, {})
             rules[rule_key].setdefault(kind, []).append(value)
@@ -633,18 +646,22 @@ async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
 async def approved_rules(db: AsyncSession) -> dict[str, dict[str, list[str]]]:
     """Aturan berstatus `disetujui` untuk pembaca: `{rule_key: {"label_total": [...], "label_pihak": [...],
     "label_tanggal": [...]}}`, ditambah `"logo": [nilai]` hanya untuk kunci `logo:<kata>` yang punya aturan `logo`
-    disetujui (tahap 2, M2b: nilai kunci profil atau "baru"; `profiles.learned_logo`). Kunci lain berbentuk tahap 1
-    persis (tanpa `"logo"`). Nilai urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui (`decided_at`), lalu
-    teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database: log
+    disetujui (tahap 2, M2b: nilai kunci profil atau "baru"; `profiles.learned_logo`), dan `{"arah": [flow]}` untuk
+    kunci `{kunci profil}|{token arah}` yang punya aturan `arah` disetujui (tahap 2, M3b: token lolos kosakata
+    `kerangka.arah_token_ok`, nilai ARAH_FLOWS; `profiles.learned_arah`; baris lain dilewati). Kunci lain berbentuk
+    tahap 1 persis (tanpa `"logo"`/`"arah"`). Nilai urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui
+    (`decided_at`), lalu teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database: log
     peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba lagi), kueri di
     SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
     rules = await _approved(db)
     out: dict[str, dict[str, list[str]]] = {}
     for rule_key, kinds in (rules or {}).items():
-        if any(kinds.get(k) for k in _CACHED_KINDS):
+        if any(kinds.get(k) for k in (*KINDS, KIND_LOGO)):
             out[rule_key] = {k: list(kinds.get(k, ())) for k in KINDS}
             if kinds.get(KIND_LOGO):
                 out[rule_key][KIND_LOGO] = list(kinds[KIND_LOGO])
+        if kinds.get(KIND_ARAH):
+            out.setdefault(rule_key, {})[KIND_ARAH] = list(kinds[KIND_ARAH])
     return out
 
 

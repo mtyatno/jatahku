@@ -8,6 +8,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import asyncio
+import dataclasses
 import importlib.util
 import json
 import unittest
@@ -21,7 +22,8 @@ from sqlalchemy import select
 
 from app.core.deps import get_current_user
 from app.models.models import ProofRule, ProofRuleVote, ReceiptScan
-from app.services.kotak_struk import belajar, kerangka, merchants, record
+from app.scripts import kotak_corpus
+from app.services.kotak_struk import belajar, kerangka, merchants, record, registry, worker
 from app.services.kotak_struk.belajar import KIND_ARAH, Vote, learn_from_skip, votes_for_skip
 from app.services.kotak_struk.config import ARAH_FLOWS, KEY_MAX, ST_DILEWATI
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
@@ -29,9 +31,13 @@ from app.services.kotak_struk.extract import TextDoc
 from app.services.kotak_struk.kerangka import (
     ARAH_GENERIC, ARAH_PARTY_WORDS, TOP_UP_WORDS, arah_tokens, build_layout,
 )
+from app.services.kotak_struk.readers import profiles
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import ParseContext, Secrets
+from app.services.kotak_struk.readers.profiles import PROFILES
 from app.services.kotak_struk.registry import read_document
+
+ARAH_EVIDENCE = "Arah uang dari aturan belajar"
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 CORPUS = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "corpus.json").read_text())["samples"]
@@ -132,6 +138,11 @@ class ArahTokenTests(unittest.TestCase):
         self.assertTrue(TOP_UP_WORDS.isdisjoint(ARAH_GENERIC))
         self.assertTrue({"masuk", "terima", "diterima", "setoran", "penarikan", "kembali", "refund"}.isdisjoint(
             ARAH_GENERIC))
+        # Kata lokasi juga bukan arah uang (review M3a nit).
+        for title in ("Kirim Uang ke Toko Kota Berhasil", "Lokasi Transfer Berhasil", "Location Payment Successful"):
+            with self.subTest(title):
+                self.assertEqual(arah_tokens(["BCA", title, "Rp20.000"], transfer_doc(issuer="bca_mobile")), [])
+        self.assertLessEqual({"kota", "lokasi", "location"}, ARAH_GENERIC)
 
     def test_judul_token_from_title_words_without_status(self):
         cases = {
@@ -246,6 +257,241 @@ class VotesForSkipTests(unittest.TestCase):
         self.assertGreater(len(f"bca_mobile|{token}"), KEY_MAX)
         self.assertEqual(votes_for_skip(layout(key="bca_mobile", arah=[token]), document(), "masuk"), [])
         self.assertEqual(len(votes_for_skip(layout(key="ovo", arah=[token]), document(), "masuk")), 1)
+
+
+# ── pembaca dengan aturan `arah` yang disetujui (M3b; spec §5 "`arah`", pre-flight K10) ─────────────────────
+
+# Top-up ShopeePay -> GoPay rekaan (bentuk real-shopeepay-topup-01, nama/nomor/nominal rekaan): tanpa aturan dibaca
+# `keluar` dengan token `ke:gopay topu`.
+TOPUP_LINES = ["ShopeePay", "Rp 25.000", "Berhasil", "Waktu Selesai: 25 Okt 2026, 09:41", "GOPAY TOPU-SKKKK",
+               "Kirim Ke  Bxxxxxxx", "GoPay: …5521", "Metode Pembayaran  Saldo ShopeePay", "Jumlah Pembayaran  Rp25.000",
+               "Jumlah Kirim Uang  Rp25.000", "Rincian Referensi", "Order SN  …K4PZ"]
+TOPUP_FAILED = [*TOPUP_LINES[:2], "Gagal", *TOPUP_LINES[3:]]
+TOPUP_PENDING = [*TOPUP_LINES[:2], "Diproses", *TOPUP_LINES[3:]]
+TOPUP_RULE = "shopeepay|ke:gopay topu"
+SWEEP = json.loads((Path(__file__).parent / "fixtures" / "kotak" / "sweep_lines.json").read_text(encoding="utf-8"))
+PROFILE_KEYS = sorted(p.key for p in PROFILES)
+USER = "RINA WULANDARI"
+SWITCHES = (("off", False), ("on", True))
+
+
+async def read_lines(lines, rules=None, *, enabled=True, user_name=USER):
+    kw = {"rules": rules} if rules is not None else {}
+    return await read_document(TextDoc(lines=list(lines), kind="image"),
+                               ParseContext(today=TODAY, user_name=user_name, **kw), proofs_enabled=enabled)
+
+
+def arah_rules(keys, tokens, flow) -> dict:
+    return {f"{key}|{token}": {"arah": [flow]} for key in keys for token in tokens}
+
+
+def without_arah(res) -> dict:
+    """Dokumen tanpa arah uang dan tanpa bukti aturan arah: yang lain tidak boleh diubah aturan `arah`."""
+    out = res.parsed.doc.to_json()
+    out.pop("flow")
+    out["evidence"] = [e for e in out["evidence"] if e != ARAH_EVIDENCE]
+    return out
+
+
+def block_view(res, lines) -> tuple:
+    """Yang tidak boleh diubah aturan `arah` (Review Focus 4): pembaca (perutean), jenis, status, `{kode: level}` semua
+    cek, dan `ref_hash` kolom worker (bahan dedup)."""
+    doc = res.parsed.doc
+    columns = worker._outcome(res, TextDoc(lines=list(lines), kind="image")).columns
+    return (res.reader, doc.doc_type, doc.status, {c.code: c.level for c in res.checks}, columns["ref_hash"])
+
+
+class ArahReaderTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        # Sapuan pembaca sungguhan di loop: mode debug asyncio mengeluh bila satu langkah > 0,1 detik.
+        asyncio.get_running_loop().slow_callback_duration = 5.0
+        patcher = patch.object(merchants, "_warned_no_key", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+
+    async def test_approved_arah_makes_shopeepay_topup_a_suggestion(self):
+        plain = await read_lines(TOPUP_LINES)
+        d = plain.parsed.doc
+        self.assertEqual((d.doc_type, d.issuer, d.flow, d.status), ("transfer", "shopeepay", "keluar", "berhasil"))
+        self.assertEqual(arah_tokens(pc.clean_lines(TOPUP_LINES), d), ["ke:gopay topu"])
+        for flow in ARAH_FLOWS:
+            with self.subTest(flow):
+                res = await read_lines(TOPUP_LINES, {TOPUP_RULE: {"arah": [flow]}})
+                self.assertEqual(res.parsed.doc.flow, flow)
+                self.assertEqual(res.parsed.doc.evidence, [*d.evidence, "Arah uang dari aturan belajar"])
+                self.assertEqual(without_arah(res), without_arah(plain))   # nominal, pihak, status, cek: sama
+                self.assertEqual(block_view(res, TOPUP_LINES), block_view(plain, TOPUP_LINES))
+                self.assertEqual(vars(res.parsed.secrets), vars(plain.parsed.secrets))
+        # Nilai pertama yang sah (urut pendukung); nilai lain (juga "keluar") dilewati; aturan label di sebelahnya
+        # (bentuk `approved_rules`) tidak mengganggu.
+        rules = {TOPUP_RULE: {"arah": ["keluar", "bukan", "masuk", "top_up"]},
+                 "shopeepay": {"label_total": [], "label_pihak": [], "label_tanggal": []}}
+        self.assertEqual((await read_lines(TOPUP_LINES, rules)).parsed.doc.flow, "masuk")
+        self.assertEqual((await read_lines(TOPUP_LINES, {TOPUP_RULE: {"arah": ["keluar"]}})).parsed.doc.flow, "keluar")
+        # Sampel korpus nyata (sudah disamarkan): dengan aturan dibaca `top_up` = expect korpusnya.
+        sample = corpus_sample("real-shopeepay-topup-01")
+        got = (await read_lines(sample["lines"], {TOPUP_RULE: {"arah": ["top_up"]}},
+                                user_name=sample.get("user_name"))).parsed.doc
+        self.assertEqual(got.flow, sample["expect"]["flow"])
+
+    async def test_learned_arah_shape(self):
+        tokens = ["judul:top up", "ke:gopay topu"]
+        self.assertIsNone(profiles.learned_arah(None, "shopeepay", tokens))
+        self.assertIsNone(profiles.learned_arah({}, "shopeepay", tokens))
+        self.assertIsNone(profiles.learned_arah({TOPUP_RULE: {"arah": ["top_up"]}}, "shopeepay", []))
+        self.assertEqual(profiles.learned_arah({TOPUP_RULE: {"arah": ["top_up"]}}, "shopeepay", tokens), "top_up")
+        # Token pertama yang punya aturan menang (judul lalu ke).
+        rules = {TOPUP_RULE: {"arah": ["top_up"]}, "shopeepay|judul:top up": {"arah": ["masuk"]}}
+        self.assertEqual(profiles.learned_arah(rules, "shopeepay", tokens), "masuk")
+        self.assertEqual(profiles.learned_arah(rules, "shopeepay", ["judul:isi saldo", "ke:gopay topu"]), "top_up")
+        # Bukan kunci profil (penerbit tak dikenal, kunci logo, teks lain): tidak pernah.
+        for key in (None, "", "logo:newpay", "tokoku", "shopeepay|ke:gopay topu"):
+            with self.subTest(key=key):
+                self.assertIsNone(profiles.learned_arah({f"{key}|ke:gopay topu": {"arah": ["top_up"]}}, key, tokens))
+        # Bentuk rusak.
+        for found in (None, "top_up", {"arah": "top_up"}, {"arah": [None, 1, "keluar"]}, {"label_total": ["top_up"]}):
+            with self.subTest(found=found):
+                self.assertIsNone(profiles.learned_arah({TOPUP_RULE: found}, "shopeepay", tokens))
+
+    async def test_arah_only_from_keluar(self):   # Review Focus 5, K10
+        """Setiap daftar sapuan dan sampel korpus yang terbaca QRIS/transfer dengan arah selain `keluar` (top-up, uang
+        masuk, antar rekening sendiri: juga dengan user = penerima yang terbaca), dengan token arah yang SELALU ada (token
+        dipalsukan untuk semua bukti) dan aturan setiap nilai ARAH_FLOWS untuk setiap kunci profil: hasil baca sama byte
+        demi byte. Bukti `keluar` dengan aturan yang sama berubah (aturannya sungguh dipakai)."""
+        from app.tests.test_kotak_aturan_pembaca import BSI_SELF, full
+        tokens = ["judul:top up", "ke:gopay topu"]
+        entries = [(e["id"], e["lines"], e.get("user_name")) for e in SWEEP]
+        entries += [(s["id"], s["lines"], s.get("user_name")) for s in CORPUS]
+        entries += [("bsi-self", BSI_SELF, USER)]
+        guarded, changed = {}, 0
+        with patch.object(kerangka, "arah_tokens", lambda lines, doc: list(tokens)):
+            for entry_id, lines, user_name in entries:
+                first = (await read_lines(lines, user_name=user_name)).parsed.doc
+                if first.doc_type not in ("qris", "transfer"):
+                    continue
+                for user in dict.fromkeys((user_name, first.counterparty.name)):
+                    plain = await read_lines(lines, user_name=user)
+                    base = plain.parsed.doc
+                    for flow in ARAH_FLOWS:
+                        got = await read_lines(lines, arah_rules(PROFILE_KEYS, tokens, flow), user_name=user)
+                        if base.flow == "keluar":
+                            changed += got.parsed.doc.flow == flow != base.flow
+                            continue
+                        with self.subTest(entry_id, user=user, flow=flow):
+                            self.assertEqual(full(got), full(plain))
+                    if base.flow != "keluar":
+                        guarded[base.flow] = guarded.get(base.flow, 0) + 1
+        self.assertEqual(set(guarded), set(ARAH_FLOWS))   # top-up, uang masuk, antar rekening sendiri: semua dijaga
+        self.assertGreater(sum(guarded.values()), 20)
+        self.assertGreater(changed, 100)
+
+    async def test_arah_needs_switch_and_profile_key(self):
+        rules = {TOPUP_RULE: {"arah": ["top_up"]}}
+        from app.tests.test_kotak_aturan_pembaca import full
+        self.assertEqual((await read_lines(TOPUP_LINES, rules)).parsed.doc.flow, "top_up")   # pembanding
+        # Saklar bukti mati: perilaku lama, dan aturan arah tidak pernah dicoba (juga bila pembacanya kelak memberi
+        # QRIS/transfer dengan saklar mati).
+        spy = patch.object(registry, "_apply_learned_arah", wraps=registry._apply_learned_arah)
+        with spy as applied:
+            off = await read_lines(TOPUP_LINES, rules, enabled=False)
+            applied.assert_not_called()
+            await read_lines(TOPUP_LINES, rules)
+            applied.assert_called_once()
+        self.assertEqual(full(off), full(await read_lines(TOPUP_LINES, enabled=False)))
+        # Aturan untuk aplikasi lain: tidak pernah dipakai.
+        plain = await read_lines(TOPUP_LINES)
+        other = {k: v for key in PROFILE_KEYS if key != "shopeepay" for k, v in
+                 arah_rules([key], ["ke:gopay topu", "judul:top up"], "top_up").items()}
+        self.assertEqual(full(await read_lines(TOPUP_LINES, other)), full(plain))
+        # Kunci logo / penerbit tak dikenal: tidak pernah, juga bila tokennya ada. Bukti tak dikenal (bukan QRIS/transfer)
+        # yang penerbitnya diberi aturan `logo` juga tidak.
+        tokens = ["judul:top up", "ke:gopay topu"]
+        hostile = {**arah_rules([*PROFILE_KEYS, "logo:newpay", "None", ""], tokens, "top_up"),
+                   "logo:newpay": {"label_total": [], "label_pihak": [], "label_tanggal": [], "logo": ["shopeepay"]}}
+        unknown = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "27/10/2026 10:00"]
+        seen = set()
+        with patch.object(kerangka, "arah_tokens", lambda lines, doc: list(tokens)):
+            for lines in [unknown, *(e["lines"] for e in SWEEP)]:
+                base = await read_lines(lines)
+                d = base.parsed.doc
+                if d.doc_type in ("qris", "transfer") and d.issuer:
+                    continue
+                if lines is unknown:
+                    self.assertEqual((d.doc_type, d.flow), ("tidak_dikenali", "tidak_diketahui"))
+                got = await read_lines(lines, hostile)
+                if lines is unknown:
+                    self.assertEqual(got.parsed.doc.issuer, "shopeepay")   # aturan logo dipakai, arah tidak
+                with self.subTest(lines[:3]):
+                    self.assertEqual(got.parsed.doc.flow, d.flow)
+                    self.assertNotIn(ARAH_EVIDENCE, got.parsed.doc.evidence)
+                seen.add((d.doc_type, bool(got.parsed.doc.issuer), d.flow))
+        self.assertIn(("transfer", False, "keluar"), seen)   # transfer tanpa profil
+        self.assertIn(("struk_belanja", False, "keluar"), seen)
+        self.assertIn(("tidak_dikenali", True, "tidak_diketahui"), seen)
+
+    async def test_arah_rules_never_bypass_blocks(self):   # Review Focus 4
+        """Setiap daftar gagal/pending sapuan, juga dengan baris "GoPay" + judul "Top Up" (Gagal) di atasnya (supaya
+        token `judul:top up` berprofil ada), dan top-up ShopeePay rekaan gagal/pending, kedua saklar: aturan `arah`
+        untuk SETIAP token daftar itu di SETIAP kunci profil, dengan setiap nilai ARAH_FLOWS. Pembaca, jenis, status,
+        `{kode: level}` semua cek, `ref_hash`, dan `check_recordable` sama dengan tanpa aturan; arah hanya berubah dari
+        `keluar` ke nilai aturan."""
+        from app.tests.test_kotak_aturan_pembaca import recordable
+        lists = [e for e in SWEEP if {"failed", "pending"} & set(e["tags"])]
+        self.assertGreaterEqual(len(lists), 200)
+        cases = [(e["id"], variant, [*pre, *e["lines"]], e.get("user_name")) for e in lists
+                 for variant, pre in (("asli", []), ("gopay-topup-gagal", ["GoPay", "Top Up Gagal"]),
+                                      ("gopay-topup", ["GoPay", "Top Up"]))]
+        cases += [("topup-gagal", "rekaan", TOPUP_FAILED, USER), ("topup-pending", "rekaan", TOPUP_PENDING, USER)]
+        changed = blocked = 0
+        for case_id, variant, lines, user in cases:
+            for switch, enabled in SWITCHES:
+                plain = await read_lines(lines, enabled=enabled, user_name=user)
+                tokens = kerangka.arah_tokens(pc.clean_lines(lines), plain.parsed.doc)
+                if not tokens:
+                    tokens = ["ke:gopay topu"]
+                view, ok = block_view(plain, lines), await recordable(plain.parsed.doc.to_json())
+                for flow in ARAH_FLOWS:
+                    got = await read_lines(lines, arah_rules(PROFILE_KEYS, tokens, flow), enabled=enabled,
+                                           user_name=user)
+                    with self.subTest(case_id, variant=variant, switch=switch, flow=flow):
+                        self.assertEqual(block_view(got, lines), view)
+                        outcome = await recordable(got.parsed.doc.to_json())
+                        self.assertEqual(outcome, ok)
+                        self.assertIn(got.parsed.doc.flow, (plain.parsed.doc.flow, flow))
+                        if got.parsed.doc.flow != plain.parsed.doc.flow:
+                            self.assertEqual(plain.parsed.doc.flow, "keluar")
+                    changed += got.parsed.doc.flow != plain.parsed.doc.flow
+                    blocked += outcome == record.MSG_BLOCKED
+        # Aturannya sungguh dipakai pada bukti gagal/pending berprofil, dan bukti gagal tetap MSG_BLOCKED.
+        self.assertGreater(changed, 150)
+        self.assertGreater(blocked, 500)
+        for lines in (TOPUP_FAILED, TOPUP_PENDING):
+            got = await read_lines(lines, {TOPUP_RULE: {"arah": ["top_up"]}})
+            self.assertEqual((got.parsed.doc.flow, got.parsed.doc.status),
+                             ("top_up", "gagal" if lines is TOPUP_FAILED else "pending"))
+        self.assertEqual(await recordable((await read_lines(TOPUP_FAILED, {TOPUP_RULE: {"arah": ["top_up"]}}))
+                                          .parsed.doc.to_json()), record.MSG_BLOCKED)
+
+    async def test_corpus_eval_uses_no_rules(self):
+        """`kotak_corpus eval` tidak memakai aturan: dengan aturan `arah` yang disetujui di cache proses yang sama,
+        real-shopeepay-topup-01 (salinan `reviewed: true`) tetap gagal (arah terbaca `keluar`); aturan yang sama lewat
+        ParseContext membacanya `top_up` (= expect)."""
+        from app.tests.test_kotak_aturan_pembaca import _RowsDb
+        sample = {**corpus_sample("real-shopeepay-topup-01"), "reviewed": True}
+        rules = {TOPUP_RULE: {"arah": ["top_up"]}}
+        self.assertEqual(await belajar.approved_rules(_RowsDb([(TOPUP_RULE, "arah", "top_up")])), rules)
+        result = await asyncio.to_thread(kotak_corpus.evaluate, [sample])
+        self.assertEqual(result["failures"], ["real-shopeepay-topup-01"])
+        [row] = result["rows"]
+        self.assertEqual(row["fields"]["flow"], {"ok": False, "expected": "top_up", "actual": "keluar"})
+        self.assertEqual([k for k, f in row["fields"].items() if not f["ok"]], ["flow"])
+        self.assertEqual(kotak_corpus.sample_context(sample).rules, {})
+        ctx = dataclasses.replace(kotak_corpus.sample_context(sample), rules=rules)
+        doc = (await read_document(TextDoc(lines=list(sample["lines"]), kind="image"), ctx,
+                                   proofs_enabled=True)).parsed.doc
+        self.assertEqual(doc.flow, "top_up")
 
 
 # ── database dan API ────────────────────────────────────────────────────────

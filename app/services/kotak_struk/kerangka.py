@@ -385,11 +385,13 @@ ARAH_PARTY_WORDS: frozenset[str] = (
     | TOP_UP_WORDS)
 # Kata judul yang terlalu umum untuk membedakan arah uang: judul yang hanya memuat kata ini tidak memberi token. Termasuk
 # kata label kolom (review M3a temuan 1: "Penerima Transfer ...", "Tujuan Transfer", "Pembayaran Tagihan" bukan arah
-# uang). Kata arah (top, up, isi, saldo, masuk, terima, setoran, penarikan, refund, deposit) dan nama penyedia tidak.
+# uang), juga kata lokasi ("kota", "lokasi", "location"; review M3a nit: "Kirim Uang ke Toko Kota"). Kata arah (top,
+# up, isi, saldo, masuk, terima, setoran, penarikan, refund, deposit) dan nama penyedia tidak.
 ARAH_GENERIC: frozenset[str] = frozenset(
     "transfer pembayaran bayar transaksi payment transaction kirim uang ke dari qris nominal total rekening "
     "penerima pengirim tujuan kepada nama name recipient atas asal sumber tagihan merchant toko jumlah status "
-    "keterangan catatan berita tanggal waktu jam pukul nomor no id ref referensi biaya admin".split())
+    "keterangan catatan berita tanggal waktu jam pukul nomor no id ref referensi biaya admin kota lokasi location"
+    .split())
 # Kata status di judul (dibuang dari token `judul:`): status bukan arah uang ("Transfer Berhasil" -> tanpa token).
 ARAH_STATUS_WORDS: frozenset[str] = (
     frozenset(w for w in TITLE_WORDS if pc.classify_status(w))

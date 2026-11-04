@@ -1129,6 +1129,37 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual(await self.map_count(), 2)   # peta merchant belajar sekali
         self.assertFalse({"siti", "aminah", "qris"} & await self.keywords())   # nama merchant bukan kata kunci
 
+    async def test_arah_rule_never_records_or_skips_bot(self):   # Review Focus 5 (tahap 2 M3b)
+        """Aturan `arah` disetujui hanya menambah tawaran "bukan pengeluaran": bot menawarkan "Oke, lewati" DAN "Tetap
+        catat"; item tetap `siap` sampai user memilih; "Tetap catat" lalu amplop mencatat tepat satu transaksi."""
+        from app.models.models import ProofRule
+        from app.services.kotak_struk import belajar
+        from app.tests.test_kotak_arah import TOPUP_LINES, TOPUP_RULE
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+        async with self.Session() as db:
+            db.add(ProofRule(kind="arah", rule_key=TOPUP_RULE, value="top_up", users=2, households=2,
+                             status="disetujui", decided_at=NOW))
+            await db.commit()
+        await self.send(TOPUP_LINES)
+        item_id = self.items[-1]
+        self.assertIn("ℹ️ Ini top-up saldo, bukan pengeluaran.", self.texts()[-1])
+        self.assertEqual([[b.text for b in row] for row in self.rows()], [["Oke, lewati", "Tetap catat"]])
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.document["flow"]), ("siap", "top_up"))
+        self.assertEqual(await self.txns(), [])
+        query = await self.tap(self.button("Tetap catat"))
+        envelope = next(b.callback_data for row in keyboard_of(query.edit_message_text.call_args) for b in row
+                        if "Makan" in b.text)
+        done = await self.tap(envelope)
+        self.assertIn("✅", done.edit_message_text.call_args.args[0])
+        [txn] = await self.txns()
+        self.assertEqual((txn.amount, txn.envelope_id), (D("25000"), self.env["Makan"].id))
+        self.assertEqual(((await self.get(item_id)).status, (await self.get(item_id)).transaction_ids),
+                         ("tercatat", [str(txn.id)]))
+        await self.tap(envelope)   # ketukan kedua: tidak mencatat lagi
+        self.assertEqual(len(await self.txns()), 1)
+
     async def test_note_becomes_description_and_only_note_is_learned(self):
         await self.send()
         key = self.button("Makan").split("_")[1]

@@ -410,6 +410,45 @@ class RecordWithReceiptItemTests(TxnBase):
         self.assertEqual(await self.learned_keywords(), {"bakso"})   # tanpa "siti"/"aminah"
         self.assertEqual(await self.map_count(), 2)                  # peta merchant: Makan 1 -> 2
 
+    async def test_arah_rule_never_records_or_skips(self):   # Review Focus 5 (tahap 2 M3b)
+        """Aturan `arah` disetujui (top-up ShopeePay -> GoPay): worker sungguhan membaca `top_up` dan item tetap `siap`
+        (tidak pernah dilewati atau dicatat otomatis); detail menyarankan bukan pengeluaran tanpa blokir; POST
+        /transactions dengan `receipt_item_id` tetap 201 dan mencatat tepat satu transaksi, kirim kedua 409."""
+        from app.models.models import ProofRule
+        from app.services.kotak_struk import view
+        from app.tests.test_kotak_arah import TOPUP_LINES, TOPUP_RULE
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+        async with self.Session() as db:
+            db.add(ProofRule(kind="arah", rule_key=TOPUP_RULE, value="top_up", users=2, households=2,
+                             status="disetujui", decided_at=NOW))
+            await db.commit()
+        item = await self.ready(TOPUP_LINES)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.doc_type, got.document["issuer"], got.document["flow"]),
+                         ("siap", "transfer", "shopeepay", "top_up"))
+        self.assertIn("Arah uang dari aturan belajar", got.document["evidence"])
+        self.assertEqual(got.transaction_ids or [], [])
+        self.assertEqual(got.layout["arah"], ["ke:gopay topu"])
+        async with self.Session() as db:
+            detail = await view.item_detail(db, await db.get(ReceiptScan, item.id), await db.get(User, self.a.id))
+        self.assertEqual((detail["status"], detail["flags"]["skip_suggestion"], detail["flags"]["blocked"]),
+                         ("siap", "top_up", None))
+        self.assertEqual(await self.count(Transaction), 0)
+        r = await self.post(item, ref="arah1", desc="top up gopay", amount=25000)
+        self.assertEqual(r.status_code, 201, r.text)
+        row = await self.get(item.id)
+        self.assertEqual((row.status, row.transaction_ids), ("tercatat", [r.json()["id"]]))
+        again = await self.post(item, ref="arah2", desc="top up gopay", amount=25000)
+        self.assertEqual((again.status_code, again.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 1)
+        # Mengiyakan bacaan bukan koreksi (K14): tidak ada suara arah dari pencatatan ini.
+        self.assertEqual(await self.votes_of_kind("arah"), [])
+
+    async def votes_of_kind(self, kind):
+        async with self.Session() as db:
+            return (await db.execute(select(ProofRuleVote).where(ProofRuleVote.kind == kind))).scalars().all()
+
     async def test_second_record_of_same_proof_is_409_but_resend_is_same(self):
         item = await self.ready_qris()
         first = await self.post(item, ref="r1", desc="x")

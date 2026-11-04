@@ -711,6 +711,33 @@ class ApprovedRulesCacheTests(DbBase):
             "jago": rule([], ["kepada", "nama toko", "penerima"], ["waktu selesai"]),
         })
 
+    async def test_arah_rules_loaded_only_in_valid_shape(self):   # tahap 2 M3b
+        """Aturan `arah` disetujui dimuat sebagai `{"{profil}|{token}": {"arah": [flow]}}` (urut pendukung) hanya bila
+        kuncinya kunci profil + token yang lolos kosakata sisi suara (`kerangka.arah_token_ok`) dan nilainya
+        ARAH_FLOWS; baris lain (data lama/tangan) dilewati. Kunci label tetap berbentuk tahap 1."""
+        await self.add("label_total", "gopay", "dibayar")
+        await self.add("arah", "shopeepay|ke:gopay topu", "top_up")
+        await self.add("arah", "gopay|judul:top up", "masuk", users=2)
+        await self.add("arah", "gopay|judul:top up", "top_up", users=3)
+        await self.add("arah", "bca_mobile|judul:dana masuk", "antar_rekening_sendiri", status="menunggu")
+        for key, value in (("shopeepay|ke:gopay topu", "keluar"),          # nilai bukan ARAH_FLOWS
+                           ("shopeepay|ke:gopay topu", "siti aminah"),
+                           ("logo:newpay|judul:top up", "top_up"),          # kunci logo: pembaca tidak pernah
+                           ("tokoku|judul:top up", "top_up"),               # bukan kunci profil
+                           ("gopay|judul:siti aminah", "masuk"),            # kata nama, bukan kosakata
+                           ("gopay|ke:gopay", "top_up"),                    # `ke:` tanpa kata top-up
+                           ("gopay|judul:berhasil", "top_up"),              # kata status saja
+                           ("gopay|judul:top up 0812", "top_up"),           # digit
+                           ("gopay|teks:top up", "top_up"),                 # awalan lain
+                           ("gopay", "top_up"),                              # tanpa token
+                           ("gopay|judul:" + " ".join(["top up"] * 30), "top_up")):   # > KEY_MAX
+            await self.add("arah", key, value)
+        self.assertEqual(await self.approved(), {
+            "gopay": rule(["dibayar"]),
+            "gopay|judul:top up": {"arah": ["top_up", "masuk"]},
+            "shopeepay|ke:gopay topu": {"arah": ["top_up"]},
+        })
+
     async def test_rule_cache_expires_and_invalidates(self):
         await self.add("label_total", "gopay", "dibayar")
         first = await self.approved()
