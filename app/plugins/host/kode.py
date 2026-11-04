@@ -10,7 +10,8 @@ paket plugin di `requires`. Pustaka di luar `app` hanya dari daftar izin `PUSTAK
 daftar larangan selalu bolong, mis. `operator.attrgetter`, `pkgutil.resolve_name`, `os.environ`); menambah pustaka =
 PR yang mengubah daftar ini. Jalan pintas yang lazim juga ditolak (review #186 temuan 4, review ulang no. 1–3):
 `__import__`, `eval`, `exec`, `compile`, `globals`, `locals`, `vars`; `getattr`/`setattr`/`delattr`/`hasattr` dengan
-nama yang bukan teks tetap atau berawalan `_`; atribut dunder (kecuali `__name__`, `__doc__`, `__init__`,
+nama yang bukan teks tetap atau berawalan `_`, atau dipakai sebagai nilai; atribut bingkai (`cr_frame`, `f_globals`, …);
+atribut dunder (kecuali `__name__`, `__doc__`, `__init__`,
 `__post_init__`); atribut berawalan `_` pada objek selain `self`/`cls`; menugasi atau menghapus atribut nama SDK
 (`PluginContext.x = …`); dan menurunkan kelas SDK. Pemeriksaan ini menjaga disiplin plugin T1 (kode sendiri yang
 direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.py`), dan kelasnya juga menolak
@@ -36,12 +37,15 @@ TERLARANG = ("app.models", "app.api", "app.services", "app.bot", "app.core", "ap
 # Pustaka di luar `app` yang boleh diimpor plugin (daftar izin, bukan daftar larangan).
 PUSTAKA_BOLEH = frozenset({
     "__future__", "calendar", "collections", "dataclasses", "datetime", "decimal", "enum", "functools", "itertools",
-    "json", "math", "re", "statistics", "string", "textwrap", "typing", "uuid", "zoneinfo",
+    "json", "math", "re", "statistics", "textwrap", "typing", "uuid", "zoneinfo",
 })
 PANGGILAN_TERLARANG = ("__import__", "eval", "exec", "compile", "globals", "locals", "vars")
 PANGGILAN_NAMA = ("getattr", "setattr", "delattr", "hasattr")
 DUNDER_BOLEH = {"__name__", "__doc__", "__init__", "__post_init__"}
-ATRIBUT_TERLARANG = {"_db"}
+# Introspeksi bingkai (coroutine/generator/traceback) mencapai globals modul host tanpa nama `_` atau dunder
+# (review ulang kedua #186 no. 2).
+ATRIBUT_TERLARANG = {"_db", "cr_frame", "gi_frame", "ag_frame", "cr_await", "gi_yieldfrom", "ag_await",
+                     "f_globals", "f_locals", "f_back", "f_builtins", "f_code", "tb_frame", "tb_next"}
 
 IZIN_BACA = frozenset({"envelopes:read", "transactions:read", "incomes:read", "members:read", "files:read"})
 IZIN_PER_JENIS: dict[str, frozenset[str]] = {
@@ -121,6 +125,13 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
             while isinstance(n, ast.Attribute):
                 n = n.value
             return n.id if isinstance(n, ast.Name) else None
+
+        # `getattr` dkk. hanya boleh dipanggil langsung (nama tetap); sebagai nilai (mis. `reduce(getattr, …)`) ditolak.
+        fungsi_panggilan = {id(n.func) for n in ast.walk(pohon) if isinstance(n, ast.Call)}
+        for n in ast.walk(pohon):
+            if isinstance(n, ast.Name) and n.id in PANGGILAN_NAMA + PANGGILAN_TERLARANG \
+                    and id(n) not in fungsi_panggilan:
+                galat.append(f"{rel}:{n.lineno}: '{n.id}' hanya boleh dipanggil langsung")
 
         for node in ast.walk(pohon):
             if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):

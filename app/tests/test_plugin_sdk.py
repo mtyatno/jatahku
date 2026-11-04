@@ -79,6 +79,8 @@ plugin = Plugin("contoh")
 async def _kas(ctx, pengaturan, periode):
     if PERILAKU.get("kartu_float"):
         return {"value": 1.5, "unit": "rp"}
+    if PERILAKU.get("simpan_ctx"):              # bug multi-tenant: konteks disimpan di variabel modul
+        ctx = PERILAKU.setdefault("ctx", ctx)
     if PERILAKU.get("ubah_periode"):
         periode.start = date(2000, 1, 1)          # review ulang #186 no. 4: salinan beku, bukan Periode batch
     txn = await ctx.transactions(periode.start, periode.end)
@@ -283,6 +285,10 @@ class KodeTests(unittest.TestCase):
             "x = ctx.envelopes.__globals__": "atribut '.__globals__' tidak boleh",
             "x = ctx.__class__": "atribut '.__class__' tidak boleh",
             "x = eval('1')": "eval() tidak boleh",
+            "async def f(ctx):\n    return ctx.envelopes().cr_frame.f_globals": "atribut '.cr_frame' tidak boleh",
+            "def f(g):\n    return g.gi_frame.f_back": "atribut '.gi_frame' tidak boleh",
+            "from functools import reduce\nx = reduce(getattr, ['envelopes'], 1)": "'getattr' hanya boleh dipanggil langsung",
+            "import string": "impor 'string' tidak ada di daftar pustaka",
         }
         for kode, pesan in kasus.items():
             with self.subTest(kode=kode):
@@ -695,6 +701,22 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TypeError):
                 type("Menyaru", (PluginContext,), {})
             self.assertFalse(hasattr(c, "_tolak") or hasattr(c, "_perlu"))
+            # Kelas Plugin juga beku (review ulang kedua #186 no. 2): menambalnya mengubah semua plugin.
+            Q = Plugin
+            with self.assertRaises(TypeError):
+                Q.ambil = lambda self, j, k: None
+            with self.assertRaises(TypeError):
+                type("PluginLain", (Plugin,), {})
+            # Konteks ditutup sesudah fungsi plugin selesai (review ulang kedua #186 no. 1).
+            from app.plugins.host import keadaan as keadaan_mod
+            async def baca(ctx):
+                return len(await ctx.envelopes())
+            c2 = await self.ctx(db, self.pemilik, "kartu", "contoh.kas", izin=["envelopes:read"])
+            self.assertEqual(await titik.panggil(c2, baca), 1)
+            with self.assertRaises(KonteksTidakSah):
+                keadaan_mod.ambil(c2)
+            with self.assertRaises(KonteksTidakSah):
+                await c2.envelopes()
             self.assertIsInstance(c.viewer, PenggunaView)
             self.assertEqual((c.viewer.id, c.viewer.nama), (self.pemilik.id, "Pemilik"))
             self.assertFalse(hasattr(c.viewer, "email"))
@@ -774,6 +796,21 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.put("/dashboard/layout", headers=self.hdr(), json={
             "surface": "beranda", "if_version": 0, "removed": [], "items": [{"id": "p9", "card": "contoh.kas", "size": "S"}]})
         self.assertEqual(r.json()["kode"], "kartu_tidak_dikenal")
+
+    async def test_konteks_simpanan_tidak_berlaku_untuk_user_lain(self):
+        """Review ulang kedua #186 no. 1: konteks yang disimpan plugin tidak membuka data ruang lain untuk user lain."""
+        PERILAKU["simpan_ctx"] = True
+        item = {"items": [{"id": "p1", "card": "contoh.kas"}]}
+        r = await self.client.post("/dashboard/data", headers=self.hdr(), json=item)
+        self.assertEqual(r.json()["data"]["p1"]["value"], "50000.00")           # panggilan pertama: konteksnya sendiri
+        async with self.Session() as db:
+            db.add(PluginInstallation(household_id=self.asing, plugin_id="contoh", status="active",
+                                      installed_by=self.orang.id, granted_permissions=list(IZIN), settings={}))
+            await db.commit()
+        self.current = self.orang
+        with self.assertLogs("jatahku.dashboard", level="ERROR"):
+            r = await self.client.post("/dashboard/data", headers=self.hdr(self.asing), json=item)
+        self.assertEqual(r.json()["data"]["p1"]["error"]["kode"], "gagal_memuat")   # konteks lama sudah ditutup
 
     async def test_kartu_menerima_periode_beku(self):
         PERILAKU["ubah_periode"] = True

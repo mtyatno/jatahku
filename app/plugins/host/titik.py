@@ -99,6 +99,15 @@ def konteks(db, m: Manifest, inst: PluginInstallation, ruang: Household, d: Pend
     )
 
 
+async def panggil(ctx: PluginContext, fn, *args):
+    """Jalankan satu fungsi plugin, lalu tutup konteksnya: konteks yang disimpan plugin (variabel modul, cache) tidak
+    berlaku lagi di panggilan berikutnya untuk user atau ruang lain (review ulang kedua #186 no. 1)."""
+    try:
+        return await fn(ctx, *args)
+    finally:
+        keadaan.tutup(ctx)
+
+
 @dataclass
 class _Aktif:
     m: Manifest
@@ -298,7 +307,7 @@ async def data_kartu(db, user, household_id, definisi, pengaturan: dict, periode
     mulai = time.perf_counter()
     # Salinan beku: `Periode` batch dipakai bersama kartu inti sesudahnya (review ulang #186 no. 4).
     beku = PeriodeView(start=periode.start, end=periode.end, berjalan=bool(periode.berjalan))
-    data = await a.d.fn(ctx, dict(pengaturan), beku)
+    data = await panggil(ctx, a.d.fn, dict(pengaturan), beku)
     _waktu(mulai, a.m, a.d)
     return rapikan_kartu(definisi.shape, data, a.m.id)
 
@@ -325,7 +334,7 @@ async def peringatan_pengeluaran(db, user, envelope, jumlah, deskripsi: str) -> 
         ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"cek:{a.d.kunci}")
         mulai = time.perf_counter()
         try:
-            hasil = await a.d.fn(ctx, rencana)
+            hasil = await panggil(ctx, a.d.fn, rencana)
             teks = [_teks(t, 200, boleh_kosong=False) for t in (hasil or [])][:MAKS_PERINGATAN_PLUGIN]
         except Exception:
             log.exception("cek plugin %s '%s' gagal", a.m.id, a.d.kunci)
@@ -380,7 +389,7 @@ async def saran_advisor(db, user, household_id) -> list:
         ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"advisor:{a.d.kunci}")
         mulai = time.perf_counter()
         try:
-            hasil = await a.d.fn(ctx)
+            hasil = await panggil(ctx, a.d.fn)
             out.extend(ke_insight(a.m, a.d.kunci, s) for s in list(hasil or [])[:MAKS_SARAN_PLUGIN])
         except Exception:
             log.exception("aturan advisor plugin %s '%s' gagal", a.m.id, a.d.kunci)
@@ -480,7 +489,7 @@ async def perintah(db, user, plugin_id: str, command: str) -> list[str]:
         a = aktif[0]
         ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"bot:{command}")
         try:
-            teks = _teks(await a.d.fn(ctx), 3500, boleh_kosong=False)
+            teks = _teks(await panggil(ctx, a.d.fn), 3500, boleh_kosong=False)
         except Exception:
             log.exception("perintah plugin %s /%s gagal", plugin_id, command)
             teks = PESAN_GAGAL
@@ -636,7 +645,7 @@ async def jalankan_job(now: datetime | None = None) -> int:
                     continue
                 d = reg.kode_plugin(pid).ambil("job", key)
                 ctx = konteks(db, m, inst, await _ruang(db, hid), d, sumber=f"job:{key}")
-                await d.fn(ctx)
+                await panggil(ctx, d.fn)
                 jalan += 1
         except Exception:
             log.exception("job plugin %s '%s' gagal di ruang %s", pid, key, hid)
@@ -722,7 +731,7 @@ async def periksa_field(db, user, household_id, target: str, kiriman: dict) -> d
             nilai = _nilai_bawaan(spec.type, nilai)
             ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"field:{target}.{key}")
             try:
-                bersih.setdefault(pid, {})[key] = await a.d.fn(ctx, nilai)
+                bersih.setdefault(pid, {})[key] = await panggil(ctx, a.d.fn, nilai)
             except NilaiTidakSah as exc:
                 raise _field_tidak_sah(f"{spec.label}: {str(exc)[:120] or 'tidak sah'}")
     return bersih

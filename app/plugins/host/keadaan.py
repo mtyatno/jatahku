@@ -21,7 +21,7 @@ from uuid import UUID
 log = logging.getLogger("jatahku.plugins")
 
 
-@dataclass
+@dataclass(frozen=True)
 class Keadaan:
     db: Any
     plugin_id: str
@@ -35,7 +35,7 @@ class Keadaan:
     jenis_notifikasi: frozenset[str]
     pengaturan: dict = field(default_factory=dict)
     sumber: str = ""
-    notify_dipakai: int = 0
+    penghitung: dict = field(default_factory=lambda: {"notify": 0})
 
 
 _KEADAAN: dict[int, tuple["weakref.ref", Keadaan]] = {}
@@ -57,6 +57,14 @@ def buat(**isi) -> Any:
 
     _KEADAAN[kunci] = (weakref.ref(ctx, _buang), Keadaan(**isi))
     return ctx
+
+
+def tutup(ctx) -> None:
+    """Konteks selesai dipakai (host memanggilnya sesudah setiap fungsi plugin): keadaannya dibuang, jadi konteks yang
+    disimpan plugin gagal `KonteksTidakSah` di panggilan berikutnya."""
+    ada = _KEADAAN.get(id(ctx))
+    if ada is not None and ada[0]() is ctx:
+        del _KEADAAN[id(ctx)]
 
 
 def ambil(ctx) -> Keadaan:

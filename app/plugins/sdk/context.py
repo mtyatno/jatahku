@@ -39,6 +39,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 
 from app.plugins.host import keadaan as _host
+from app.plugins.sdk.plugin import _KelasBeku
 
 log = logging.getLogger("jatahku.plugins")
 
@@ -177,16 +178,6 @@ def _pemasukan_terlihat(k, Income):
 def _pemasukan(i) -> PemasukanView:
     return PemasukanView(id=i.id, user_id=i.user_id, jumlah=Decimal(i.amount), deskripsi=i.description,
                          tanggal=i.income_date, jenis=i.kind or "")
-
-
-class _KelasBeku(type):
-    """Kelas `PluginContext` tidak bisa ditambal (`PluginContext.x = …`) atau diturunkan."""
-
-    def __setattr__(cls, nama, nilai):
-        raise TypeError("PluginContext tidak bisa diubah")
-
-    def __delattr__(cls, nama):
-        raise TypeError("PluginContext tidak bisa diubah")
 
 
 class PluginContext(metaclass=_KelasBeku):
@@ -351,8 +342,8 @@ class PluginContext(metaclass=_KelasBeku):
             await _host.tolak(k, "notifications:send", "bukan_job")
         if jenis not in k.jenis_notifikasi:
             await _host.tolak(k, f"notif:{jenis}"[:40], "jenis_tidak_dikenal")
-        if k.notify_dipakai >= MAKS_NOTIFY_PER_KONTEKS:
+        if k.penghitung["notify"] >= MAKS_NOTIFY_PER_KONTEKS:
             await _host.tolak(k, "notifications:send", "batas_notify")
-        k.notify_dipakai += 1
+        k.penghitung["notify"] += 1
         from app.plugins.host import titik
         return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis)

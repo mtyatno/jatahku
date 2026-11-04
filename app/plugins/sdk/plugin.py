@@ -42,8 +42,22 @@ class Pendaftaran:
     izin: tuple[str, ...]
 
 
-class Plugin:
+class _KelasBeku(type):
+    """Kelas SDK (`Plugin`, `PluginContext`) tidak bisa ditambal (`Plugin.ambil = …`) atau diturunkan
+    (review ulang #186). Menambal kelas mengubah perilaku semua plugin sekaligus."""
+
+    def __setattr__(cls, nama, nilai):
+        raise TypeError(f"{cls.__name__} tidak bisa diubah")
+
+    def __delattr__(cls, nama):
+        raise TypeError(f"{cls.__name__} tidak bisa diubah")
+
+
+class Plugin(metaclass=_KelasBeku):
     """Kumpulan fungsi server satu plugin. Hanya didaftarkan; host yang memanggil."""
+
+    def __init_subclass__(cls, **kw):
+        raise TypeError("Plugin tidak bisa diturunkan")
 
     def __init__(self, plugin_id: str):
         self.id = plugin_id
