@@ -103,8 +103,9 @@ async def check_behavior(
             envelope_name=envelope.name,
         )
 
-    # Determine current budget period from user's payday_day
-    payday_day = getattr(user, 'payday_day', 1) or 1
+    # Periode berjalan menurut siklus ruang amplop (ruang usaha: bulan kalender; keluarga: payday user)
+    from app.services.household_cycle import payday_ruang
+    payday_day = await payday_ruang(db, user, envelope.household_id)
     period_start, period_end = get_budget_period(payday_day)
 
     # Check 2: Not funded — no allocation = no spending

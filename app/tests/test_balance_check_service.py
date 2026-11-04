@@ -259,6 +259,14 @@ class ApplyTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UndoTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Fake DB berskrip: kueri jenis ruang (`payday_ruang`) memakan satu hasil skrip. Tes ini ruang keluarga,
+        # jadi siklusnya payday user, sama dengan sebelum siklus per ruang.
+        p = patch("app.services.household_cycle.payday_ruang",
+                  AsyncMock(side_effect=lambda db, user, hid: getattr(user, "payday_day", None) or 1))
+        p.start()
+        self.addCleanup(p.stop)
+
     def latest(self, user_id=USER_ID, check_id=CHECK_ID, created_at=None):
         return SimpleNamespace(id=check_id, user_id=user_id, undone_at=None,
                                created_at=created_at or datetime.now(timezone.utc))
@@ -339,6 +347,14 @@ class UndoTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StatusTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Fake DB berskrip: kueri jenis ruang (`payday_ruang`) memakan satu hasil skrip. Tes ini ruang keluarga,
+        # jadi siklusnya payday user, sama dengan sebelum siklus per ruang.
+        p = patch("app.services.household_cycle.payday_ruang",
+                  AsyncMock(side_effect=lambda db, user, hid: getattr(user, "payday_day", None) or 1))
+        p.start()
+        self.addCleanup(p.stop)
+
     def check(self, user_id=USER_ID, days_ago=0, gap="-340000", check_id=CHECK_ID):
         return SimpleNamespace(id=check_id, user_id=user_id, gap=D(gap),
                                created_at=datetime.now(timezone.utc) - timedelta(days=days_ago))

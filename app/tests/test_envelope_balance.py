@@ -11,6 +11,7 @@ import uuid
 from datetime import date
 from decimal import Decimal as D
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app.tests.fakes import FakeResult, db_with, executed_sql
 
@@ -51,6 +52,14 @@ def fake_db():
 
 
 class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Fake DB berskrip: kueri jenis ruang (`payday_ruang`) memakan satu hasil skrip. Tes ini ruang keluarga,
+        # jadi siklusnya payday user, sama dengan sebelum siklus per ruang.
+        p = patch("app.services.household_cycle.payday_ruang",
+                  AsyncMock(side_effect=lambda db, user, hid: getattr(user, "payday_day", None) or 1))
+        p.start()
+        self.addCleanup(p.stop)
+
     async def test_route_output(self):
         from app.api.routes.envelopes import envelope_summary
         from unittest.mock import AsyncMock, patch
