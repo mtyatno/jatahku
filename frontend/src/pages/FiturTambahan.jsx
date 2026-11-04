@@ -169,8 +169,9 @@ function TawaranKartu({ p, sibuk, onTambah, onLewati }) {
 }
 
 // ── layar copot ─────────────────────────────────────────────────────────────
+// Tombol unduh menyusul bersama endpoint ekspor (U1, `GET /ruang/{id}/plugins/{plugin_id}/ekspor`). Unduhan memakai
+// `api` (header Authorization dan ruang), bukan tautan `<a href>` langsung ke API.
 function LayarCopot({ p, sibuk, onCopot, onBatal }) {
-  const ekspor = Array.isArray(p.ekspor) ? p.ekspor : [];
   return (
     <div>
       <h3 className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>Copot {p.nama}?</h3>
@@ -181,15 +182,9 @@ function LayarCopot({ p, sibuk, onCopot, onBatal }) {
       </ul>
       <div className="mt-4 rounded-xl px-3 py-3" style={{ background: 'rgba(148,163,184,0.12)' }}>
         <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Simpan datanya dulu?</p>
-        {ekspor.length ? (
-          <div className="flex flex-wrap gap-2 mt-2">
-            {ekspor.map(f => <a key={f.format} href={f.url} className="btn-outline text-sm">Unduh {f.format.toUpperCase()}</a>)}
-          </div>
-        ) : (
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-            Unduhan data {p.nama} belum tersedia di versi ini. Datanya tetap tersimpan di arsip selama 90 hari.
-          </p>
-        )}
+        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+          Unduhan data {p.nama} belum tersedia di versi ini. Datanya tetap tersimpan di arsip selama 90 hari.
+        </p>
       </div>
       <div className="flex flex-wrap gap-2 mt-4">
         <button type="button" className="btn-danger !px-5 !py-2.5 !rounded-xl disabled:opacity-50" disabled={sibuk} onClick={onCopot}>
@@ -387,12 +382,15 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
 
 export default function FiturTambahan() {
   const { ruang } = useOutletContext() || {};
+  const { user } = useAuth();
   const [cari] = useSearchParams();
   const { mode } = useTheme();
   const gelap = mode === 'dark';
   const rid = ruang?.aktif?.id ?? null;
   const ruangNama = ruang?.aktif?.nama || 'ruang ini';
-  const [katalog, setKatalog] = useState(() => loadCache('plugin_katalog'));
+  // Cache per user dan per ruang (akhiran ruang dari localCache), seperti kontribusi: katalog berisi plugin di flag user.
+  const kunciKatalog = `plugin_katalog:${user?.id}`;
+  const [katalog, setKatalog] = useState(() => (user?.id ? loadCache(kunciKatalog) : null));
   const [galat, setGalat] = useState('');
   const [pilih, setPilih] = useState(() => cari.get('pilih'));
   const panelRef = useRef(null);
@@ -401,7 +399,7 @@ export default function FiturTambahan() {
     const r = await api.katalogPlugin();
     if (r.ok && Array.isArray(r.data)) {
       setKatalog(r.data);
-      saveCache('plugin_katalog', r.data);
+      if (user?.id) saveCache(kunciKatalog, r.data);
       setGalat('');
     } else if (r.status !== 0) {
       setGalat(pesanGalat(r.status, r.data));
@@ -409,7 +407,7 @@ export default function FiturTambahan() {
       setKatalog(k => k || []);
       setGalat('Koneksi terputus. Daftar ini mungkin belum terbaru.');
     }
-  }, []);
+  }, [user?.id, kunciKatalog]);
 
   useEffect(() => { muat(); }, [muat]);
 
