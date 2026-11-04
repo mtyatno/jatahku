@@ -291,7 +291,8 @@ class ReviewFixVotesTests(_Quiet):
                 self.assertEqual(votes_for(lay, doc(name="BUDI SANTOSO"), None, final(description=description)), [])
 
     def test_logo_keys_never_vote(self):
-        # Kunci logo bisa nama orang ("logo:wahyu nugroho"): tahap 1 hanya kunci profil (M-1).
+        # Kunci logo bisa nama orang ("logo:wahyu nugroho"): tanpa aturan `logo` yang disetujui hanya kunci profil (M-1;
+        # tahap 2 K8: `approved_logo`, test_kotak_logo).
         for key in ("logo:wahyu nugroho", "logo:gopay", "logo:byond", "wahyu", "GOPAY"):
             with self.subTest(key=key):
                 lay = layout(nominal(2, "nominal", 50000), nama(3, "penerima", "SITI"), key=key)
@@ -765,7 +766,8 @@ class PrivacyTests(DbBase):
                 for text in (row.kind, row.rule_key, row.value):
                     self.assertNotRegex(text, r"\d")
                     self.assertNotIn("#", text)
-                self.assertIn(row.rule_key, PROFILE_KEYS)   # tahap 1: tidak pernah kunci `logo:` (review L2 M-1)
+                # Tanpa aturan `logo` yang disetujui tidak pernah kunci `logo:` (review L2 M-1; tahap 2 K8).
+                self.assertIn(row.rule_key, PROFILE_KEYS)
                 if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1, R-1)
                     self.assertTrue(belajar._party_label(row.value), row.value)
                     self.assertNotIn(row.value, {"nama", "name"})
@@ -789,8 +791,9 @@ class PrivacyTests(DbBase):
 
 # Bukti transfer GoPay rekaan (sama dengan test_kotak_aturan_pembaca.GOPAY_MISREAD): hari ini saldo "Rp50.000" terbaca
 # sebagai total (`sedang`); total sebenarnya di bawah "Jumlah Kirim Uang". Tahap 1 tidak punya kunci `logo:` (review L1
-# I-1, `kerangka.LOGO_KEYS` mati), jadi "aplikasi yang belum dikenal pembaca" di sini adalah aplikasi BERPROFIL (kunci
-# `gopay`) yang tata letaknya belum dipahami pembaca: hanya bukti berkunci profil yang mendapat kerangka dan suara.
+# I-1; tahap 2 kunci logo baru memberi suara label sesudah aturan `logo`-nya disetujui, test_kotak_logo), jadi
+# "aplikasi yang belum dikenal pembaca" di sini adalah aplikasi BERPROFIL (kunci `gopay`) yang tata letaknya belum
+# dipahami pembaca: hanya bukti berkunci profil yang mendapat kerangka dan suara.
 E2E_TRANSFER = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Saldo GoPay", "Rp50.000",
                 "Jumlah Kirim Uang", "Rp12.500", "Tanggal 26 Okt 2026 08:12"]
 E2E_FAILED = ["GoPay", "Transfer Gagal", *E2E_TRANSFER[2:]]

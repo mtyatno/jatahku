@@ -219,7 +219,8 @@ async def _learn_correction(db: AsyncSession, item: ReceiptScan, user_id: uuid.U
     """Belajar lintas user dari koreksi (kotak_struk/belajar.py): nilai akhir dimuat dari baris transaksinya (satu
     sumber: nominal, tanggal, keterangan yang benar-benar tercatat, juga sesudah `_check_row` mengubah tanggal). Hanya
     item berkerangka (QRIS, transfer, tidak dikenali). Bacaan di SAVEPOINT (galat database tidak merusak sesi);
-    `learn_from_correction` menulis di savepoint sendiri dan menelan galatnya."""
+    `learn_from_correction` menulis di savepoint sendiri dan menelan galatnya. Item berkunci logo memberi suara label
+    hanya bila kuncinya ada di `belajar.approved_logo_keys` (cache aturan, galat = kosong)."""
     if item.doc_type not in LAYOUT_TYPES or not item.layout:
         return
     async with db.begin_nested():
@@ -231,7 +232,12 @@ async def _learn_correction(db: AsyncSession, item: ReceiptScan, user_id: uuid.U
         return
     final = belajar.Final(amount=_whole(row.amount), txn_date=row.transaction_date, description=row.description,
                           today=belajar.today_wib())
-    await belajar.learn_from_correction(db, item, final, user_id=user_id)
+    # Kunci `logo:<kata>` hanya mendapat suara label sesudah aturan `logo` kunci itu disetujui (pre-flight A16 K8);
+    # kunci profil tidak butuh kueri aturan.
+    key = item.layout.get("key") if isinstance(item.layout, dict) else None
+    approved_logo = (await belajar.approved_logo_keys(db) if isinstance(key, str) and key.startswith("logo:")
+                     else frozenset())
+    await belajar.learn_from_correction(db, item, final, user_id=user_id, approved_logo=approved_logo)
 
 
 async def mark_recorded(db: AsyncSession, item_id: uuid.UUID, *, user_id: uuid.UUID, transaction_id: uuid.UUID,

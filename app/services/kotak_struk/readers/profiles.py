@@ -250,16 +250,19 @@ def with_learned(profile: AppProfile | None, learned: Learned) -> AppProfile | N
     return replace(base, labels=labels)
 
 
-def learned_profile(lines: list[str], profile: AppProfile | None, rules: dict | None) -> tuple[Learned, AppProfile | None]:
-    """(label aturan, profil berlabel aturan) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (tahap 1: kunci
-    profil), lalu `learned_for` dan `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun.
-    Pembaca hanya memakai label aturannya: total (`learned_total`), tanggal (`learned_paid_at`), dan nama penerima
-    (`learned_party`); nilai lain dan status dibaca dengan profil asli (review L3 I-1)."""
+def learned_profile(lines: list[str], profile: AppProfile | None, rules: dict | None, *,
+                    allow_logo: bool = False) -> tuple[Learned, AppProfile | None]:
+    """(label aturan, profil berlabel aturan) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (kunci profil; kunci
+    `logo:<kata>` hanya dengan `allow_logo`, yang hanya dipakai `UnknownReader`: QRIS/transfer tanpa profil sering
+    diawali nama merchant, jadi tidak pernah berkunci logo saat membaca; pre-flight A16 §3), lalu `learned_for` dan
+    `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun. Pembaca hanya memakai label
+    aturannya: total (`learned_total`), tanggal (`learned_paid_at`), dan nama penerima (`learned_party`); nilai lain dan
+    status dibaca dengan profil asli (review L3 I-1)."""
     if not rules:
         return Learned(), profile
     # Impor di sini: kerangka mengimpor modul pembaca (impor melingkar bila di tingkat modul).
     from app.services.kotak_struk.kerangka import rule_key
-    learned = learned_for(rules, rule_key(lines, profile, forbidden_words=set()))
+    learned = learned_for(rules, rule_key(lines, profile, forbidden_words=set(), allow_logo=allow_logo))
     return learned, with_learned(profile, learned)
 
 

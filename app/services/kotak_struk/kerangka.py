@@ -20,9 +20,11 @@ memuat STRUKTUR:
   atau di baris alamat: nomor berbentuk angka tidak pernah tersimpan sebagai nominal.
 - Kata judul hanya kata kosakata (label, status, arah uang, nama aplikasi), tanpa kata nama.
 - Hanya `doc_type` di LAYOUT_TYPES (QRIS, transfer, tidak dikenali) dengan kunci aturan (`rule_key`) yang punya
-  kerangka. Tahap 1: kunci hanya profil aplikasi yang dikenal (`LOGO_KEYS = False`); kunci `logo:<kata>` (baris logo
-  aplikasi tak dikenal) baru dinyalakan di tahap 2 (M2) bersama konfirmasi user, karena baris teratas bukti tak dikenal
-  bisa nama orang atau merchant. Struk belanja tidak pernah punya kerangka.
+  kerangka: kunci profil aplikasi yang dikenal, atau (tahap 2, `LOGO_KEYS`, hanya `tidak_dikenali`) kunci
+  `logo:<kata>` dari baris logo aplikasi tak dikenal. Baris teratas bukti tak dikenal bisa nama orang atau merchant
+  (review L1 I-1), jadi kandidatnya ketat (`logo_candidate`, pre-flight A16 K8: satu kata, atau dua kata hanya bila
+  salah satunya kata logo/penyedia: "Bank Raya", bukan "Siti Aminah"), dan suara `logo` ditolak bila katanya nama yang
+  dikenal (`belajar.learn_app_choice`). Struk belanja tidak pernah punya kerangka.
 
 Batas yang diketahui (spec §8; dicatat untuk dokumen L7): kata nama yang KEBETULAN juga kata kosakata ("Dana", "Mega",
 "Toko", "Admin") bisa bertahan di label atau judul bila pembaca tidak membaca nama itu sebagai pihak lawan/pengirim
@@ -35,7 +37,9 @@ from __future__ import annotations
 
 import re
 
-from app.services.kotak_struk.config import LAYOUT_LABEL_MAX, LAYOUT_LABEL_WORDS, LAYOUT_MAX_LINES, LAYOUT_TYPES
+from app.services.kotak_struk.config import (
+    KEY_MAX, LAYOUT_LABEL_MAX, LAYOUT_LABEL_WORDS, LAYOUT_MAX_LINES, LAYOUT_TYPES,
+)
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
@@ -49,9 +53,13 @@ from app.services.receipt_parser import amounts_in
 
 LAYOUT_VERSION = 1
 HEADER_LINES = 4          # judul hanya dari baris-baris teratas (selaras proof_common.HEADER_LINES)
-LOGO_KEYS = False         # tahap 1 tanpa kunci `logo:<kata>` (keputusan review L1 I-1); M2 menyalakannya
+LOGO_KEYS = True          # tahap 2 (M2a): kunci `logo:<kata>` untuk bukti tak dikenal, kandidat ketat (K8)
 LOGO_LINES = 3            # kunci logo dari baris-baris teratas (G4)
 LOGO_MIN_LETTERS = 3
+LOGO_PREFIX = "logo:"
+LOGO_MAX_WORDS = 2
+# Kata yang membuat kandidat DUA kata sah: kata pendamping logo dan nama penyedia ("Bank Raya", "Kilat Syariah").
+LOGO_COMPANIONS: frozenset[str] = frozenset(LOGO_WORDS) | frozenset(MONEY_PROVIDERS)
 TITLE_MAX_WORDS = 6
 NAME_MAX_WORDS = 6
 
@@ -171,28 +179,51 @@ def _is_status(text: str) -> bool:
                 or transfer_reader.TOP_UP.search(text) or transfer_reader.INCOMING.search(text))
 
 
-def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: set[str]) -> str | None:
-    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Tahap 1 (`LOGO_KEYS = False`): selain itu None.
-    Dengan `LOGO_KEYS` (M2): `logo:<kata>` dari baris logo: baris pertama
-    di antara LOGO_LINES baris bersih teratas yang 1-2 kata, hanya huruf, >= 3 huruf, bukan label/kata status/kata
-    `LABEL_WORDS`, dan bukan kata `forbidden_words`; huruf kecil, <= LAYOUT_LABEL_MAX. Baris di atasnya hanya boleh bilah
-    status (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Selain itu None
-    (tanpa kerangka dan tanpa suara)."""
+def logo_candidate(words: list[str]) -> bool:
+    """Kata-kata (huruf kecil) sebuah baris logo boleh menjadi kunci `logo:` (pre-flight A16 K8): 1-2 kata, hanya huruf
+    ASCII, bersama >= LOGO_MIN_LETTERS huruf, <= LAYOUT_LABEL_MAX karakter; satu kata, atau dua kata hanya bila salah
+    satunya kata logo/penyedia (`LOGO_COMPANIONS`: "bank raya" ya, "siti aminah" tidak); paling sedikit satu kata di luar
+    kata pendamping logo (`LOGO_WORDS`: "bank digital", "mobile" bukan nama aplikasi); tidak ada kata `LABEL_WORDS`
+    (baris label pasti memuatnya) kecuali kata pendamping/penyedia itu ("bank"); dan bukan kata status. Nama satu kata
+    ("Bambang") lolos di sini: ditolak oleh `forbidden_words` saat membuat kerangka dan oleh pemeriksaan nama saat
+    suara `logo` (`belajar.learn_app_choice`)."""
+    if not 1 <= len(words) <= LOGO_MAX_WORDS or not all(w.isascii() and w.isalpha() and w == w.lower() for w in words):
+        return False
+    text = " ".join(words)
+    if sum(len(w) for w in words) < LOGO_MIN_LETTERS or len(text) > LAYOUT_LABEL_MAX:
+        return False
+    if len(words) == 2 and not set(words) & LOGO_COMPANIONS:
+        return False
+    if all(w in LOGO_WORDS for w in words) or set(words) & (LABEL_WORDS - LOGO_COMPANIONS):
+        return False
+    return not _is_status(text)
+
+
+def logo_word(key) -> str | None:
+    """Kata logo kunci `logo:<kata>` ("logo:newpay" -> "newpay"), hanya bila bentuknya kandidat yang sah
+    (`logo_candidate`, huruf kecil, satu spasi, <= KEY_MAX). Kunci profil, kunci rusak, dan selain teks: None."""
+    if not isinstance(key, str) or not key.startswith(LOGO_PREFIX) or len(key) > KEY_MAX:
+        return None
+    word = key[len(LOGO_PREFIX):]
+    words = word.split(" ")
+    return word if logo_candidate(words) else None
+
+
+def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: set[str],
+             allow_logo: bool = True) -> str | None:
+    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Selain itu (hanya dengan `LOGO_KEYS` dan
+    `allow_logo`) `logo:<kata>` dari baris logo: baris pertama di antara LOGO_LINES baris bersih teratas yang kata-katanya
+    (huruf kecil) lolos `logo_candidate` dan tanpa kata `forbidden_words`. Baris di atasnya hanya boleh bilah status
+    (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Selain itu None (tanpa
+    kerangka dan tanpa suara). Pembaca QRIS/transfer memanggilnya tanpa kunci logo (`profiles.learned_profile`)."""
     if profile is not None:
         return profile.key
-    if not LOGO_KEYS:
+    if not (LOGO_KEYS and allow_logo):
         return None
     for line in pc.clean_lines(lines)[:LOGO_LINES]:
-        words = line.split()
-        candidate = (1 <= len(words) <= 2 and all(w.isascii() and w.isalpha() for w in words)
-                     and sum(len(w) for w in words) >= LOGO_MIN_LETTERS)
-        if candidate:
-            lowered = [w.lower() for w in words]
-            key = " ".join(lowered)
-            # Baris label pasti memuat kata LABEL_WORDS, jadi cek kosakata juga menolak baris label.
-            if (len(key) <= LAYOUT_LABEL_MAX and not _is_status(line)
-                    and not set(lowered) & (LABEL_WORDS | forbidden_words)):
-                return f"logo:{key}"
+        lowered = [w.lower() for w in line.split()]
+        if logo_candidate(lowered) and not _is_status(line) and not set(lowered) & forbidden_words:
+            return LOGO_PREFIX + " ".join(lowered)
         if _TEXT_LINE.search(line):
             return None   # baris teks pertama bukan logo: tidak ada logo
     return None
@@ -324,7 +355,7 @@ def _profile_of(doc: DokumenBayar, lines: list[str]) -> AppProfile | None:
 
 def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_name: str | None) -> dict | None:
     """Kerangka aman satu bukti (lihat docstring modul). None bila `doc.doc_type` bukan LAYOUT_TYPES, tanpa kunci aturan
-    (tahap 1: aplikasi tak dikenal), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
+    (aplikasi tak dikenal tanpa baris logo yang sah), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
     (`TextDoc.lines`); `doc`/`secrets` = hasil pembaca SEBELUM disamarkan worker."""
     if doc.doc_type not in LAYOUT_TYPES:
         return None
@@ -334,10 +365,10 @@ def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
     key = rule_key(clean, profile, forbidden_words=forbidden)
     # Kunci logo hanya untuk bukti tak dikenal (spec §2): QRIS/transfer tanpa profil aplikasi sering diawali nama merchant,
     # dan nama merchant tidak pernah dipelajari lintas user.
-    if key is None or (key.startswith("logo:") and doc.doc_type != "tidak_dikenali"):
+    if key is None or (key.startswith(LOGO_PREFIX) and doc.doc_type != "tidak_dikenali"):
         return None
     logo_line = None if profile is not None else next(
-        (i for i, line in enumerate(clean[:LOGO_LINES]) if f"logo:{line.lower()}" == key), None)
+        (i for i, line in enumerate(clean[:LOGO_LINES]) if LOGO_PREFIX + " ".join(line.lower().split()) == key), None)
     entries = []
     for i, line in enumerate(clean):
         if len(entries) >= LAYOUT_MAX_LINES:

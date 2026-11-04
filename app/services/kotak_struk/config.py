@@ -52,3 +52,5 @@ RULE_MIN_USERS = 2                        # user berbeda sebelum suara menjadi a
 RULE_CACHE_S = 300                        # cache aturan `disetujui` di worker (detik)
 FIX_TTL_S = 300                           # bot menunggu nominal pengganti sesudah "Nominal salah" (detik)
 LAYOUT_TYPES = {"qris", "transfer", "tidak_dikenali"}   # doc_type yang mendapat kerangka (struk belanja tidak)
+KEY_MAX = 60                              # panjang kolom rule_key / value aturan belajar (dulu `belajar.KEY_MAX`)
+APP_NEW = "baru"                          # jawaban "Aplikasi apa ini?": aplikasi yang belum berprofil (tahap 2, K6)

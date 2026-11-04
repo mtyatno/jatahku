@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Envelope, HouseholdMember, HouseholdMerchant, ReceiptScan, Transaction, User
-from app.services.kotak_struk import dedup
+from app.services.kotak_struk import belajar, dedup
 from app.services.kotak_struk.config import ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP, ST_TERCATAT
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.merchants import compose_description, display_name, merchant_for_item
@@ -19,6 +19,7 @@ NO_DOCUMENT = {ST_DITERIMA, ST_DIPROSES, ST_GAGAL}   # belum ada (atau tidak aka
 SKIP_FLOWS = {"top_up", "masuk", "antar_rekening_sendiri"}   # arah uang yang bukan pengeluaran
 BLOCKED_FAILED = "transaksi_gagal"
 BLOCKED_RECORDED = "sudah_tercatat"
+APP_LOGO_MAX = 40   # `flags.app_logo`: kata logo yang ditampilkan ke user (G10)
 
 
 def _iso(value) -> str | None:
@@ -26,7 +27,16 @@ def _iso(value) -> str | None:
 
 
 def _empty_flags() -> dict:
-    return {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": []}
+    return {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": [], "ask_app": False,
+            "app_logo": None}
+
+
+def _app_flags(item: ReceiptScan) -> dict:
+    """`ask_app` (tahap 2 M2a, field tambahan): item boleh ditanya "Aplikasi apa ini?" (`belajar.app_logo`: `siap`/
+    `tercatat`, `tidak_dikenali`, kerangka berkunci logo, belum dijawab); `app_logo` = kata logonya dalam huruf besar
+    (huruf aslinya tidak disimpan), <= APP_LOGO_MAX, hanya bila `ask_app`. Kerangka sendiri tidak pernah dikirim."""
+    word = belajar.app_logo(item)
+    return {"ask_app": word is not None, "app_logo": word.upper()[:APP_LOGO_MAX] if word else None}
 
 
 async def _household_of(db: AsyncSession, item: ReceiptScan, user: User) -> uuid.UUID | None:
@@ -54,7 +64,8 @@ def _merchant(row: HouseholdMerchant | None, item: ReceiptScan, doc: DokumenBaya
 async def _flags(db: AsyncSession, item: ReceiptScan, user: User, doc: DokumenBayar,
                  household_id: uuid.UUID | None) -> dict:
     """Tanda untuk klien: duplikat (tercatat > nomor referensi dibagikan anggota lain > transaksi manual yang
-    mirip, yang terakhir hanya untuk item `siap`), pemblokiran, arah uang, dan peringatan."""
+    mirip, yang terakhir hanya untuk item `siap`), pemblokiran, arah uang, peringatan, dan pertanyaan aplikasi
+    (`ask_app`, `app_logo`; tahap 2)."""
     warnings = [c["message"] for c in doc.checks if c.get("level") == "warn" and c.get("message")]
 
     duplicate = await dedup.recorded_duplicate(
@@ -73,7 +84,7 @@ async def _flags(db: AsyncSession, item: ReceiptScan, user: User, doc: DokumenBa
     elif (duplicate or {}).get("recorded") or (item.status == ST_TERCATAT and item.doc_type != STORE_RECEIPT):
         blocked = BLOCKED_RECORDED   # struk belanja boleh dicatat lagi (satu struk, banyak transaksi)
     return {"duplicate_of": duplicate, "skip_suggestion": doc.flow if doc.flow in SKIP_FLOWS else None,
-            "blocked": blocked, "warnings": warnings}
+            "blocked": blocked, "warnings": warnings, **_app_flags(item)}
 
 
 def _uuid(value) -> uuid.UUID | None:

@@ -1,5 +1,5 @@
 """API Kotak Struk ("Bagikan ke Jatahku"; spec 2026-10-26 bagian 5d): unggah bukti, daftar, jumlah, dan detail item,
-saran amplop, lewati, dan nama panggilan merchant. Tipis: validasi dan pengecekan intake ada di
+saran amplop, lewati, jawaban "Aplikasi apa ini?" (belajar lintas user tahap 2), dan nama panggilan merchant. Tipis: validasi dan pengecekan intake ada di
 `services/kotak_struk/intake.py`, bentuk detail di `services/kotak_struk/view.py`.
 
 Hanya pemilik item yang bisa melihat atau mengubahnya; item orang lain sama dengan tidak ada (404)."""
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import ReceiptScan, User
-from app.services.kotak_struk import record
+from app.services.kotak_struk import belajar, record
 from app.services.kotak_struk.config import PDF_MAX_BYTES, ST_SIAP, WAIT_FORM_S
 from app.services.kotak_struk.intake import IntakeRejected, IntakeRequest, create_item
 from app.services.kotak_struk.merchants import NICKNAME_MAX, display_name, set_display_name
@@ -27,7 +27,10 @@ router = APIRouter()
 
 LIST_LIMIT = 50
 MSG_MERCHANT_NOT_FOUND = "Merchant tidak ditemukan"
+MSG_APP_NOT_ASKABLE = "Aplikasi bukti ini tidak bisa dipilih"
+MSG_APP_INVALID = "Pilihan aplikasi tidak dikenal"
 NOTE_MAX = 200
+APP_MAX = 20
 
 
 class SuggestIn(BaseModel):
@@ -36,6 +39,15 @@ class SuggestIn(BaseModel):
 
 class SkipIn(BaseModel):
     reason: Literal["bukan_pengeluaran", "duplikat", "batal"]
+
+
+class AppChoiceIn(BaseModel):
+    app: str = Field(max_length=APP_MAX)   # kunci profil aplikasi atau "baru" (`belajar.APP_CHOICES`)
+
+
+class AppChoiceOut(BaseModel):
+    app: str
+    ask_app: bool = False
 
 
 class MerchantNameIn(BaseModel):
@@ -149,6 +161,22 @@ async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_curren
         raise HTTPException(status_code=409, detail=MSG_CANNOT_SKIP)
     await db.refresh(item)
     return await item_detail(db, item, user)
+
+
+@router.post("/{item_id}/aplikasi", response_model=AppChoiceOut)
+async def choose_app(item_id: UUID, body: AppChoiceIn, user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    """Jawaban "Aplikasi apa ini?" untuk bukti `tidak_dikenali` berkunci logo (`flags.ask_app`): sekali per item, menjadi
+    suara aturan `logo` (`belajar.learn_app_choice`; tidak mencatat, tidak mengubah status item). Item tidak ada/milik
+    user lain 404; nilai bukan kunci profil atau "baru" 422; item yang tidak bisa ditanya atau sudah dijawab 409."""
+    item = await _owned_item(db, item_id, user)
+    if body.app not in belajar.APP_CHOICES:
+        raise HTTPException(status_code=422, detail=MSG_APP_INVALID)
+    if belajar.app_logo(item) is None or not await belajar.learn_app_choice(
+            db, item, body.app, user_id=user.id, user_name=user.name):
+        raise HTTPException(status_code=409, detail=MSG_APP_NOT_ASKABLE)
+    await db.commit()
+    return AppChoiceOut(app=body.app, ask_app=False)
 
 
 @router.put("/merchants/{merchant_id}")
