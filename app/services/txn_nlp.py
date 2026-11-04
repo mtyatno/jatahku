@@ -131,7 +131,15 @@ async def find_best_envelope(description, household_id, db, user_id=None):
                 best_id = max(scores, key=lambda x: scores[x])
                 return env_by_id[best_id], True
 
-    guessed_name = guess_envelope_name(description)
+    # Plugin H2 (titik `nlp_kamus`): kamus kategori Fitur Tambahan yang aktif di ruang ini, dicoba sebelum kamus
+    # kategori inti (05-desain-buku-usaha.md B: kata user → kamus ruang → kamus kategori). Tanpa plugin berkamus:
+    # tanpa kueri. Kamus plugin tidak pernah dipakai di ruang yang tidak memasangnya.
+    guessed_name = None
+    if user_id:
+        from app.plugins.host import titik
+        if titik.ada_kamus():
+            guessed_name = titik.tebak_kamus(await titik.kamus_ruang(db, household_id, user_id), description)
+    guessed_name = guessed_name or guess_envelope_name(description)
 
     # 1. Exact match on guessed category name
     if guessed_name:

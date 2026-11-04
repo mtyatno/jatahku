@@ -22,6 +22,8 @@ Hanya bertambah; field lama tidak berubah arti. Belum ada perilaku ruang: semua 
 | `POST /incomes/` body | `kind` (opsional) | `pemasukan` (bawaan) atau `top-up`; nilai lain 422. `transfer` dan `penyesuaian` hanya ditulis server lewat geser dana, hapus amplop, dan cocokkan saldo |
 | `POST /incomes/` respons, `GET /incomes/` item | `kind` | `pemasukan`, `transfer`, `top-up`, atau `penyesuaian` (`incomes.kind`). Field lama `type` (`income`/`transfer`) dan `is_adjustment` tetap ada |
 
+**H2 (titik `checks`):** `POST /transactions/` respons (201) mendapat field `peringatan`: `null`, atau daftar teks siap tampil (maks. 3) dari Fitur Tambahan yang aktif di ruang amplop itu, mis. `["Melewati anggaran Bahan Baku"]`. Hanya informasi: pencatatan tidak pernah ditolak karenanya, dan karyawan tidak pernah menerimanya. Sumbernya `expense_rules.peringatan_plugin`, sama dengan bot. `POST /transactions/batch` dan pemasukan belum (menyusul bersama pemakainya).
+
 Pemasukan lama diberi `kind` oleh migrasi `1c7e5a9d3b20`: `balance_check_id` terisi → `penyesuaian`; nominal 0 → `transfer`; keterangan `Top-up` atau diawali `Top-up ` → `top-up`; selain itu `pemasukan`. Jenis usaha (penjualan, modal pemilik, pinjaman, lain-lain) disimpan Buku Usaha di tabelnya sendiri (U1–U2), bukan di kolom ini.
 
 ## 1. Header `X-Jatahku-Ruang` (R2; penulisan R3) — **v1 (R2 #166, penulisan R3)**
@@ -349,7 +351,7 @@ Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti)**; `contributions` masih v0 (H3)
+## 5. Fitur Tambahan / plugin (H1, H2, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti) dan titik ekstensi server (H2)**; `contributions` masih v0 (H3)
 
 Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
@@ -405,6 +407,18 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
 // Sumbernya `siklus.aktif_di_ruang()` (H1): hanya plugin berstatus aktif, tanpa saklar darurat, dengan flag user aktif.
 // Plugin dijeda, dicopot, atau dimatikan server → tidak ada kontribusinya sama sekali.
 ```
+
+### Titik ekstensi server — **v1 (H2, PR plugin/h2-plugin-context)**
+
+Plugin menyumbang lewat kode di `app/plugins/<id>/__init__.py` (`plugin = Plugin("<id>")` dari `app.plugins.sdk`), dicocokkan dengan manifest saat start dan di CI. Izin per jenis fungsi: kartu, cek, aturan advisor, perintah bot, dan field form hanya izin baca; `notifications:send` hanya untuk job. Data yang dibaca plugin mengikuti kontrak visibilitas: amplop pribadi anggota lain tidak terbaca, deskripsi transaksi privat tersamar, dan di ruang keluarga plugin hanya membaca pemasukan milik viewer (seperti `GET /incomes/`; job tanpa user tidak membaca pemasukan ruang keluarga). Tidak ada endpoint baru; endpoint inti yang berubah perilaku:
+
+- **Kartu (`cards`) di `/dashboard/*`.** `GET`/`PUT /dashboard/layout`, `POST /dashboard/data`, dan `GET /dashboard/data/{id}` mengenal kartu plugin (`<id>.<nama>`) yang **aktif di ruang header untuk user itu** (`siklus.aktif_di_ruang`). Kartu plugin yang tidak aktif (dijeda, dicopot, saklar darurat, flag dicabut) diperlakukan seperti kartu yang definisinya hilang: diparkir di `GET /dashboard/layout`, `kartu_tidak_dikenal` di `PUT` dan di galat per kartu. Data kartu plugin berbentuk deklaratif (§4: `kpi`, `progress`, `list`, `table`, `series`, `alert`, tidak pernah `inti`) dan diperiksa server sebelum dikirim: field asing, nominal float, daftar lebih panjang dari batas, atau aksi selain `route` ke `/p/<id>…` → galat kartu `gagal_memuat`. Nominal `Decimal` dikirim sebagai string desimal. `GET /dashboard/cards` belum memuat kartu plugin (H3, lewat `GET /plugins/contributions`).
+- **AI Advisor (`advisor_rules`).** Saran plugin masuk kartu AI Advisor (`GET /advisor/dashboard`, `advisor.items`/`sisa`) dengan bentuk item yang sama, `aturan` berupa kode plugin (mis. `BU-01`), aksi hanya `{"kind": "route", "label", "payload": {"to": "/p/<id>…"}}`. Maksimal 1 saran per plugin di `items` (`daftar_per_plugin`), tidak pernah chip KPI inti, tidak untuk karyawan. Dismiss memakai `kunci` yang sama seperti saran inti.
+- **Perintah bot (`bot_commands`).** Telegram dan chat web: perintah baca plugin dijawab satu pesan per ruang yang memasang plugin itu, berawalan `[Nama ruang]`. `audience: admin` hanya owner/admin (karyawan: "Laporan <ruang> hanya untuk admin ruang."); tanpa ruang yang aktif: "Perintah ini belum tersedia di ruangmu." Teks polos, tanpa tombol.
+- **Notifikasi (`notifications`).** Lewat `ctx.notify`, **hanya dari job** (konteks tanpa user; review keamanan #186): lonceng (`type` = `system`) dan Telegram, judul berawalan `[Nama ruang]`, `link` hanya `/p/<id>…`; hanya owner/admin ruang yang plugin-nya aktif untuk mereka; tidak pada jam tenang 21.00–07.00 waktu penerima; maksimal 2 per plugin per penerima per hari dan 1 per `kunci`. Tidak ada preferensi per jenis notifikasi sampai U6.
+- **Kamus Catat cepat (`nlp_kamus`).** Saran amplop (`POST /transactions/suggest-envelope(s)`, Kotak Struk) di ruang yang memasang plugin mencoba kamus plugin sebelum kamus kategori inti. Tidak dipakai di ruang lain.
+- **Field form (`form_fields`).** Validasi server `titik.periksa_field` untuk body `{"<plugin_id>": {"<key>": nilai}}`; field di luar plugin aktif atau manifest → 422 `field_tidak_sah`. Belum disambungkan ke body transaksi/pemasukan (U2).
+- **Job (`jobs`)** dan **cek (`checks`)**: tanpa permukaan API selain `peringatan` di §0.
 
 ## 6. Buku Usaha (U1–U4)
 
@@ -476,6 +490,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |
 | `kartu_tidak_dikenal` | 422 / per kartu | Kartu tidak terdaftar (`PUT /dashboard/layout`; di `POST /dashboard/data` sebagai galat kartu) |
 | `ukuran_tidak_sah`, `kartu_ganda`, `instans_tidak_sah`, `terlalu_banyak` | 422 | Validasi tata letak atau permintaan data (§4) |
+| `field_tidak_sah` | 422 | Isian Fitur Tambahan di form tidak dikenal, di luar plugin aktif, atau ditolak validasi plugin (H2; dipakai sejak U2) |
 | `pengaturan_tidak_sah` | 422 / per kartu | Pengaturan instans tidak cocok dengan skema kartu; pengaturan plugin saat pasang (H1, sampai titik `settings`) |
 | `periode_tidak_dikenal` | 422 | `periode` bukan `period_start` dari `GET /analytics/periods` |
 | `instans_tidak_ada` | 404 | `GET /dashboard/data/{id}` untuk instans yang tidak ada di tata letak user |

@@ -201,13 +201,15 @@ def kumpulkan_household(session) -> set[str]:
     """Household yang datanya ikut ditulis di flush ini (dipanggil di after_flush)."""
     from sqlalchemy import select
     from app.models.models import (
-        Allocation, BalanceCheck, Envelope, Goal, Income, MonthlySnapshot, RecurringTransaction, Transaction,
+        Allocation, BalanceCheck, Envelope, Goal, Income, MonthlySnapshot, PluginInstallation, RecurringTransaction,
+        Transaction,
     )
     hids: set = set()
     env_ids: set = set()
     inc_ids: set = set()
     for obj in chain(session.new, session.dirty, session.deleted):
-        if isinstance(obj, (Income, Envelope, BalanceCheck)):
+        # PluginInstallation (H2): pasang/jeda/copot mengubah saran Fitur Tambahan di kartu AI Advisor.
+        if isinstance(obj, (Income, Envelope, BalanceCheck, PluginInstallation)):
             hid = _loaded(obj, "household_id")
             if hid:
                 hids.add(hid)

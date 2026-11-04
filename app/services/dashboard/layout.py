@@ -5,6 +5,11 @@ Dokumen: satu baris `dashboard_layouts` per (user, ruang, permukaan). Belum ters
 bawaan dengan `version` 0. Menyimpan selalu dokumen utuh dengan `if_version`; instans yang hilang
 tanpa disebut di `removed` ditolak, supaya menyimpan dari satu perangkat tidak menghapus kartu
 perangkat lain. Ruang = household user, ditentukan server (R2: `ruang_aktif`).
+
+Kartu plugin (H2): pemanggil meneruskan `plugin=` (kartu plugin yang aktif di ruang ini untuk user ini,
+`titik.kartu_ruang`). Instans kartu plugin yang tidak aktif (dijeda, dicopot, saklar darurat, flag dicabut)
+diparkir seperti kartu yang definisinya hilang, dan tidak bisa ditambahkan. Kartu plugin selalu kartu `umum`
+(R6): untuk karyawan tampil `visible: false` tanpa data, seperti kartu umum inti.
 """
 from __future__ import annotations
 
@@ -26,7 +31,8 @@ def _422(kode: str, detail: str) -> GalatTataLetak:
     return GalatTataLetak(422, kode, detail)
 
 
-def efektif(surface: str, items: list[dict], parked: list[dict], version: int, *, karyawan: bool) -> dict:
+def efektif(surface: str, items: list[dict], parked: list[dict], version: int, *, karyawan: bool,
+            plugin: dict | None = None) -> dict:
     """Tata letak yang benar-benar tampil. Instans yang definisinya tidak ada lagi dipindah ke
     `parked` (posisinya kembali bila kartunya ada lagi). Semua instans yang tersisa dikirim,
     termasuk yang `visible: false`, dan wajib dikirim balik saat menyimpan.
@@ -35,7 +41,7 @@ def efektif(surface: str, items: list[dict], parked: list[dict], version: int, *
     tetap dikirim dengan `visible: false` dan `alasan`, tanpa data; `POST /dashboard/data` juga menolaknya."""
     aktif, parkir = [], [dict(p) for p in parked]
     for item in items:
-        definisi = registry.get(item.get("card"))
+        definisi = registry.get(item.get("card"), plugin)
         if definisi is None:
             parkir.append(dict(item))
             continue
@@ -77,7 +83,7 @@ async def peran_karyawan(db, user_id, household_id) -> bool:
     return await peran_beranda(db, user_id, household_id) == "karyawan"
 
 
-async def ambil(db, user_id, household_id, surface: str) -> dict:
+async def ambil(db, user_id, household_id, surface: str, *, plugin: dict | None = None) -> dict:
     """Tata letak efektif. User yang bukan anggota ruang ini → `GalatTataLetak` 403 `ruang_tidak_diizinkan`."""
     untuk = await peran_beranda(db, user_id, household_id)
     if untuk is None:
@@ -85,8 +91,8 @@ async def ambil(db, user_id, household_id, surface: str) -> dict:
     karyawan = untuk == "karyawan"
     row = await _muat(db, user_id, household_id, surface)
     if row is None:
-        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan=karyawan)
-    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan=karyawan)
+        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan=karyawan, plugin=plugin)
+    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan=karyawan, plugin=plugin)
 
 
 async def hapus_milik(db, user_id, household_id) -> None:
@@ -97,14 +103,14 @@ async def hapus_milik(db, user_id, household_id) -> None:
         DashboardLayout.user_id == user_id, DashboardLayout.household_id == household_id))
 
 
-def _rapikan(item, *, karyawan: bool) -> dict:
+def _rapikan(item, *, karyawan: bool, plugin: dict | None = None) -> dict:
     """Satu instans dari klien → bentuk tersimpan, atau 422."""
     if not isinstance(item, dict):
         raise _422("instans_tidak_sah", "Bentuk kartu tidak dikenali.")
     iid, key = item.get("id"), item.get("card")
     if not isinstance(iid, str) or not registry.ID_RE.match(iid):
         raise _422("instans_tidak_sah", "ID kartu tidak sah.")
-    definisi = registry.get(key) if isinstance(key, str) else None
+    definisi = registry.get(key, plugin) if isinstance(key, str) else None
     if definisi is None or not registry.boleh(definisi, karyawan):
         raise _422("kartu_tidak_dikenal", "Ada kartu yang tidak tersedia.")
     size = item.get("size", definisi.size_bawaan)
@@ -129,7 +135,8 @@ def _rapikan(item, *, karyawan: bool) -> dict:
     return rapi
 
 
-def validasi(items: list, removed: list, sekarang: dict, *, karyawan: bool) -> tuple[list[dict], list[dict]]:
+def validasi(items: list, removed: list, sekarang: dict, *, karyawan: bool,
+             plugin: dict | None = None) -> tuple[list[dict], list[dict]]:
     """(items tersimpan, parked tersimpan) dari kiriman klien terhadap tata letak efektif `sekarang`.
     Kartu yang bukan untuk peran ini ditolak (`kartu_tidak_dikenal`), kecuali instans lama yang dikirim balik
     (`visible: false` di `sekarang`), supaya dokumen tidak kehilangan instans saat peran berganti. Instans lama itu
@@ -145,13 +152,13 @@ def validasi(items: list, removed: list, sekarang: dict, *, karyawan: bool) -> t
             if asli.get("settings"):
                 tersimpan["settings"] = asli["settings"]
             return tersimpan
-        return _rapikan(item, karyawan=karyawan)
+        return _rapikan(item, karyawan=karyawan, plugin=plugin)
 
     baru = [_satu(i) for i in items]
     ids = [i["id"] for i in baru]
     if len(set(ids)) != len(ids):
         raise _422("instans_tidak_sah", "Ada ID kartu ganda.")
-    kunci = [i["card"] for i in baru if not registry.REGISTRY[i["card"]].multi_instance]
+    kunci = [i["card"] for i in baru if not registry.get(i["card"], plugin).multi_instance]
     if len(set(kunci)) != len(kunci):
         raise _422("kartu_ganda", "Kartu ini hanya boleh ada satu di Beranda.")
     if not all(isinstance(r, str) for r in removed):
@@ -164,12 +171,13 @@ def validasi(items: list, removed: list, sekarang: dict, *, karyawan: bool) -> t
     return baru, parked
 
 
-async def simpan(db, user_id, household_id, surface: str, if_version: int, items: list, removed: list) -> dict:
-    sekarang = await ambil(db, user_id, household_id, surface)
+async def simpan(db, user_id, household_id, surface: str, if_version: int, items: list, removed: list, *,
+                 plugin: dict | None = None) -> dict:
+    sekarang = await ambil(db, user_id, household_id, surface, plugin=plugin)
     karyawan = sekarang["untuk"] == "karyawan"
     if if_version != sekarang["version"]:
         raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
-    baru, parked = validasi(items, removed, sekarang, karyawan=karyawan)
+    baru, parked = validasi(items, removed, sekarang, karyawan=karyawan, plugin=plugin)
     versi = if_version + 1
     if if_version == 0:
         db.add(DashboardLayout(user_id=user_id, household_id=household_id, surface=surface,
@@ -192,4 +200,4 @@ async def simpan(db, user_id, household_id, surface: str, if_version: int, items
             await db.rollback()
             raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
         await db.commit()
-    return efektif(surface, baru, parked, versi, karyawan=karyawan)
+    return efektif(surface, baru, parked, versi, karyawan=karyawan, plugin=plugin)

@@ -44,6 +44,12 @@ async def _flag_aktif(db, user_id) -> bool:
 Surface = Literal["beranda"]
 
 
+async def _kartu_plugin(db, user, hid) -> dict:
+    """Kartu Fitur Tambahan yang aktif di ruang ini untuk user ini (H2). Kosong tanpa plugin, tanpa kueri."""
+    from app.plugins.host import titik
+    return await titik.kartu_ruang(db, user, hid)
+
+
 def _galat(status: int, kode: str, detail: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"detail": detail, "kode": kode})
 
@@ -81,7 +87,7 @@ async def get_layout(
     if not hid:
         return _tanpa_ruang()
     try:
-        doc = await layout.ambil(db, user.id, hid, surface)
+        doc = await layout.ambil(db, user.id, hid, surface, plugin=await _kartu_plugin(db, user, hid))
     except layout.GalatTataLetak as exc:   # bukan anggota; `ruang_aktif` sudah mencegahnya, ini cadangan
         return _galat(exc.status, exc.kode, exc.detail)
     # Beranda web memakai registry hanya bila user ada di flag (B2); selain itu tetap Beranda lama.
@@ -101,8 +107,10 @@ async def put_layout(
     user_id = user.id
     if not hid:
         return _tanpa_ruang()
+    plugin = await _kartu_plugin(db, user, hid)
     try:
-        tersimpan = await layout.simpan(db, user_id, hid, req.surface, req.if_version, req.items, req.removed)
+        tersimpan = await layout.simpan(db, user_id, hid, req.surface, req.if_version, req.items, req.removed,
+                                        plugin=plugin)
     except layout.GalatTataLetak as exc:
         return _galat(exc.status, exc.kode, exc.detail)
     return {"layout": tersimpan, "version": tersimpan["version"]}
@@ -137,7 +145,8 @@ async def post_data(
         periode = await batch.tentukan_periode(user, req.periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items], household_id=hid)
+    return await batch.jalankan(user, db, periode, [i.model_dump() for i in req.items], household_id=hid,
+                                plugin=await _kartu_plugin(db, user, hid))
 
 
 @router.get("/data/{instance_id}")
@@ -154,8 +163,9 @@ async def get_data_instance(
     tersimpan, bukan dari klien). Bentuk sama dengan satu entri `data` di `POST /dashboard/data`."""
     if not hid:
         return _tanpa_ruang()
+    plugin = await _kartu_plugin(db, user, hid)
     try:
-        doc = await layout.ambil(db, user.id, hid, surface)
+        doc = await layout.ambil(db, user.id, hid, surface, plugin=plugin)
     except layout.GalatTataLetak as exc:
         return _galat(exc.status, exc.kode, exc.detail)
     item = next((i for i in doc["items"] if i["id"] == instance_id), None)
@@ -165,5 +175,5 @@ async def get_data_instance(
         p = await batch.tentukan_periode(user, periode)
     except batch.PeriodeTidakDikenal as exc:
         return _galat(422, "periode_tidak_dikenal", str(exc))
-    hasil = await batch.jalankan(user, db, p, [item], household_id=hid)
+    hasil = await batch.jalankan(user, db, p, [item], household_id=hid, plugin=plugin)
     return hasil["data"][instance_id]

@@ -13,8 +13,12 @@ Dua mode:
 - **start** (lifespan API): plugin yang tidak sah, beserta plugin yang membutuhkannya, **dilewati** dengan log
   galat. Satu manifest rusak tidak boleh menjatuhkan seluruh API; lagi pula CI sudah menolaknya lebih dulu.
 
+Kode server (H2): folder plugin yang berisi `__init__.py` diperiksa impornya, diimpor, dan pendaftarannya
+dicocokkan dengan manifest (`kode.py`). Galatnya diperlakukan sama dengan galat manifest di kedua mode.
+
 Registry dimuat sekali per proses (`registry()`); tes mengganti isinya lewat `pakai_registry()`.
 """
+import hashlib
 import json
 import logging
 import pathlib
@@ -24,6 +28,7 @@ from dataclasses import dataclass, field
 from pydantic import ValidationError
 
 from app.plugins.host.manifest import Manifest
+from app.plugins.sdk.plugin import Plugin
 
 log = logging.getLogger("jatahku.plugins")
 
@@ -41,9 +46,18 @@ class ManifestTidakSah(Exception):
 class Registry:
     plugins: dict[str, Manifest] = field(default_factory=dict)
     galat: list[str] = field(default_factory=list)
+    kode: dict[str, Plugin] = field(default_factory=dict)      # H2: hanya plugin yang punya kode server
 
     def get(self, plugin_id: str) -> Manifest | None:
         return self.plugins.get(plugin_id)
+
+    def kode_plugin(self, plugin_id: str) -> Plugin | None:
+        return self.kode.get(plugin_id) if plugin_id in self.plugins else None
+
+    def punya(self, jenis: str) -> bool:
+        """Ada plugin dimuat yang mendaftarkan fungsi `jenis`? Titik ekstensi memakainya untuk melewati semua kerja
+        (termasuk kueri DB) bila belum ada plugin yang menyumbang ke titik itu."""
+        return any(p.semua(jenis) for pid, p in self.kode.items() if pid in self.plugins)
 
     def semua(self) -> list[Manifest]:
         return [self.plugins[k] for k in sorted(self.plugins)]
@@ -127,18 +141,56 @@ def periksa_antarplugin(plugins: dict[str, Manifest]) -> dict[str, list[str]]:
     return galat
 
 
+def _nama_modul(folder: pathlib.Path, plugin_id: str) -> str | None:
+    """Folder repo → `app.plugins.<id>`; folder lain (tes) → nama modul unik per folder."""
+    if folder.resolve() == FOLDER_PLUGIN:
+        return None
+    jejak = hashlib.sha1(str(folder.resolve()).encode()).hexdigest()[:10]
+    return f"_jatahku_plugin_{jejak}_{plugin_id}"
+
+
+def muat_semua_kode(folder: pathlib.Path, plugins: dict[str, Manifest]) -> tuple[dict[str, Plugin], dict[str, list]]:
+    """Kode server tiap plugin yang punya `__init__.py`: (kode sah, galat per plugin)."""
+    from app.plugins.host import kode as kode_mod
+    hasil: dict[str, Plugin] = {}
+    galat: dict[str, list[str]] = {}
+    for pid, m in sorted(plugins.items()):
+        sub = folder / pid
+        if not (sub / "__init__.py").is_file():
+            continue
+        salah = kode_mod.periksa_impor(sub, m)
+        if salah:
+            galat[pid] = salah
+            continue
+        try:
+            p = kode_mod.muat_kode(sub, pid, nama_modul=_nama_modul(folder, pid))
+        except Exception as e:      # galat saat impor tidak boleh menjatuhkan API (mode start)
+            galat[pid] = [f"kode gagal dimuat: {type(e).__name__}: {e}"]
+            continue
+        salah = kode_mod.cocokkan(m, p)
+        if salah:
+            galat[pid] = salah
+            continue
+        hasil[pid] = p
+    return hasil, galat
+
+
 def muat(folder: pathlib.Path = FOLDER_PLUGIN, *, ketat: bool = False) -> Registry:
     plugins, galat = baca_folder(folder)
     antar = periksa_antarplugin(plugins)
     for pid, daftar in sorted(antar.items()):
         galat.extend(f"{pid}: {p}" for p in daftar)
+    # Kode hanya dimuat untuk plugin yang lolos aturan antarplugin.
+    kode, galat_kode = muat_semua_kode(folder, {k: v for k, v in plugins.items() if k not in antar})
+    for pid, daftar in sorted(galat_kode.items()):
+        galat.extend(f"{pid}: {p}" for p in daftar)
     if ketat:
         if galat:
             raise ManifestTidakSah(galat)
-        return Registry(plugins=plugins)
+        return Registry(plugins=plugins, kode=kode)
 
     # Mode start: buang yang salah, lalu yang (berantai) membutuhkan plugin terbuang.
-    sah = {k: v for k, v in plugins.items() if k not in antar}
+    sah = {k: v for k, v in plugins.items() if k not in antar and k not in galat_kode}
     while True:
         buang = [k for k, v in sah.items() if any(r not in sah for r in v.requires)]
         if not buang:
@@ -148,7 +200,7 @@ def muat(folder: pathlib.Path = FOLDER_PLUGIN, *, ketat: bool = False) -> Regist
             del sah[k]
     for g in galat:
         log.error("plugin tidak dimuat: %s", g)
-    return Registry(plugins=sah, galat=galat)
+    return Registry(plugins=sah, galat=galat, kode={k: v for k, v in kode.items() if k in sah})
 
 
 _REGISTRY: Registry | None = None
