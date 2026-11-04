@@ -18,8 +18,8 @@ tinjauan Admin dan entri korpus.
   persetujuan ditarik, saklar mati) baris itu dikosongkan. Pembersihan umur sampel: `maintenance.purge_samples`.
 - Tinjauan Admin (M1d, pre-flight A16 §2 "Admin review -> corpus", K4, K17): `approve_sample` (baris editan disamarkan
   lagi dan diperiksa `approved_lines`), `reject_sample` (menghapus baris: sampel `ditolak` tidak pernah ada),
-  `delete_sample`, `read_lines` (pembaca sekarang tanpa aturan), `corpus_entry`, `truth_diff`/`gated_diff` (dipakai juga
-  `kotak_corpus add --dari-donasi`).
+  `delete_sample`, `read_lines` (pembaca sekarang tanpa aturan), `corpus_entry`, `truth_diff`/`gated_diff`/
+  `confirmed_expect` (expect memakai nilai koreksi user; dipakai juga `kotak_corpus add --dari-donasi`), `pseudonym_ok`.
 - `forget_user` (G4): persetujuan user, `proof_samples`-nya, dan `receipt_scans.sample_lines` miliknya. Hapus akun
   (`account_deletion.delete_account`) dan gabung akun (`merge.merge_users`, source; persetujuan tidak diwariskan ke
   target) menghapus SEMUA sampel; menarik persetujuan menyisakan sampel yang sudah `disetujui` (keputusan pemilik).
@@ -54,6 +54,7 @@ from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import ParseContext, Secrets
 from app.services.kotak_struk.readers.labels import WIB
+from app.services.kotak_struk.readers.profiles import PROFILES
 from app.services.kotak_struk.registry import looks_like_proof, read_document
 
 log = logging.getLogger(__name__)
@@ -388,8 +389,10 @@ async def _clear_lines(db: AsyncSession, item_id) -> None:
 
 ST_SAMPLE_APPROVED = "disetujui"
 SAMPLE_STATUSES = (ST_SAMPLE_WAITING, ST_SAMPLE_APPROVED, "ditolak")   # `ditolak` tidak pernah tersimpan (ruling M1d)
-GATED_FIELDS = ("total", "date", "status")                              # gerbang rilis korpus (K17)
-TRUTH_FIELDS = ("total", "date", "flow", "status")
+# Field koreksi user (`truth`) -> kunci `expect` korpus. `app` hanya untuk kunci profil (bukan `baru`).
+TRUTH_FIELDS = ("total", "date", "status", "flow", "app")
+_PROFILE_KEYS = frozenset(p.key for p in PROFILES)
+_EXPECT_KEY = {"total": "total", "date": "paid_at", "status": "status", "flow": "flow", "app": "issuer"}
 CORPUS_ID_PREFIX = "donasi-"
 
 
@@ -404,6 +407,20 @@ class SampleConflict(Exception):
 
 class SampleLineSecret(ValueError):
     """Baris editan pemilik masih memuat nomor/alamat yang tidak boleh masuk korpus; pesannya aman ditampilkan."""
+
+
+class SampleNameNotPseudonym(ValueError):
+    def __init__(self):
+        super().__init__("Nama user harus nama samaran")
+
+
+_PSEUDONYM_WORDS = frozenset(w.casefold() for name in samaran.PSEUDONYMS.values() for w in name.split())
+
+
+def pseudonym_ok(name: str | None) -> bool:
+    """Nama user sampel (masuk entri korpus publik) hanya kata nama samaran (`samaran.PSEUDONYMS`, huruf besar/kecil
+    bebas); kosong boleh. Murni."""
+    return not name or all(w.casefold() in _PSEUDONYM_WORDS for w in name.split())
 
 
 def approved_lines(lines: list[str]) -> list[str]:
@@ -442,6 +459,8 @@ async def approve_sample(db: AsyncSession, sample_id: uuid.UUID, *, lines: list[
     `SampleLineSecret`, tanpa perubahan apa pun). `set_user_name`: nama samaran user diganti `user_name` (None =
     dikosongkan); selain itu yang tersimpan tetap. UPDATE bersyarat status `menunggu` (dua keputusan bersamaan tidak
     saling menimpa); bukan `menunggu` -> `SampleConflict`, tidak ada -> `SampleNotFound`. Tidak meng-commit."""
+    if set_user_name and not pseudonym_ok(user_name):
+        raise SampleNameNotPseudonym()
     masked = approved_lines(lines)
     values = {"lines": masked, "status": ST_SAMPLE_APPROVED, "decided_at": now, "decided_by": by, "note": note}
     if set_user_name:
@@ -503,20 +522,59 @@ def _wib_day(paid_at) -> str | None:
     return (moment.astimezone(WIB).date() if moment.tzinfo else moment.date()).isoformat()
 
 
+def _truth_value(field: str, truth: dict):
+    value = truth.get(field)
+    if field == "app" and value not in _PROFILE_KEYS:
+        return None   # `baru` atau isian rusak: tidak ada penerbit yang bisa dipastikan
+    return value
+
+
 def truth_diff(expect: dict, truth: dict | None) -> list[tuple[str, object, object]]:
-    """Beda koreksi user (`truth`, G7) dengan hasil pembaca (`expect`): `(field, truth, terbaca)` untuk total, tanggal
-    (hari WIB `paid_at`), arah, dan status bila `truth` memuatnya (bukan None). Murni."""
+    """Beda koreksi user (`truth`, G7) dengan hasil pembaca (`expect`): `(field, koreksi, terbaca)` untuk total, tanggal
+    (hari WIB `paid_at`), status, arah, dan aplikasi (`issuer`, hanya kunci profil), bila `truth` memuatnya (bukan
+    None). Murni."""
     truth = truth if isinstance(truth, dict) else {}
     expect = expect if isinstance(expect, dict) else {}
-    read = {"total": expect.get("total"), "date": _wib_day(expect.get("paid_at")), "flow": expect.get("flow"),
-            "status": expect.get("status")}
-    return [(f, truth[f], read[f]) for f in TRUTH_FIELDS if truth.get(f) is not None and truth[f] != read[f]]
+    out = []
+    for field in TRUTH_FIELDS:
+        want = _truth_value(field, truth)
+        if want is None:
+            continue
+        got = _wib_day(expect.get("paid_at")) if field == "date" else expect.get(_EXPECT_KEY[field])
+        if want != got:
+            out.append((field, want, got))
+    return out
 
 
 def gated_diff(expect: dict, truth: dict | None) -> list[str]:
-    """Field gerbang rilis korpus (total, tanggal, status) yang berbeda antara koreksi user dan pembaca: sampel
-    `reviewed: true` seperti itu membuat `test_real_corpus_meets_release_gate` merah (K17)."""
-    return [f for f, _t, _r in truth_diff(expect, truth) if f in GATED_FIELDS]
+    """Field yang berbeda antara koreksi user dan pembaca (ruling M1d fix 1: semua field, juga arah). `expect` entri
+    memakai nilai koreksi user (`confirmed_expect`), jadi sampel `reviewed: true` seperti itu membuat gerbang rilis
+    (`test_real_corpus_meets_release_gate`) merah sampai pembaca diperbaiki (K17): ditahan `reviewed: false`."""
+    return [f for f, _want, _got in truth_diff(expect, truth)]
+
+
+def _with_day(paid_at, day: str) -> str:
+    """`paid_at` dengan tanggal WIB `day` (jam dari pembaca bila ada, selain itu 00:00 WIB)."""
+    try:
+        moment = datetime.fromisoformat(paid_at) if isinstance(paid_at, str) and paid_at else None
+    except ValueError:
+        moment = None
+    new_day = date.fromisoformat(day)
+    if moment is None:
+        return datetime(new_day.year, new_day.month, new_day.day, tzinfo=WIB).isoformat(timespec="seconds")
+    moment = moment.astimezone(WIB) if moment.tzinfo else moment.replace(tzinfo=WIB)
+    return moment.replace(year=new_day.year, month=new_day.month, day=new_day.day).isoformat(timespec="seconds")
+
+
+def confirmed_expect(expect: dict, truth: dict | None) -> dict:
+    """`expect` dengan nilai koreksi user yang dipastikan pemilik (`truth` bukan None) menggantikan hasil pembaca: total,
+    tanggal (`paid_at`, jam dari pembaca), status, arah, aplikasi (`issuer`, hanya kunci profil). Urutan kunci tetap.
+    Murni."""
+    out = dict(expect)
+    for field, want, _got in truth_diff(expect, truth):
+        key = _EXPECT_KEY[field]
+        out[key] = _with_day(expect.get("paid_at"), want) if field == "date" else want
+    return out
 
 
 def corpus_entry(sample: ProofSample, expect: dict) -> dict:

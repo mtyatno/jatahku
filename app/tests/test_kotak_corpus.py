@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
-import contextlib, copy, io, json, re, stat, subprocess, sys, tempfile, unittest
+import contextlib, copy, io, json, re, stat, subprocess, sys, tempfile, unittest, uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -1139,19 +1139,65 @@ class DonationCliTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(self.corpus.read_bytes(), before)
 
-    def test_tahan_writes_reviewed_false(self):
+    def test_tahan_writes_the_correction_with_reviewed_false(self):
         code, out, err = self.add(_donation(total=125000), "--tahan")
         self.assertEqual(code, 0, err)
         sample = load_corpus(self.corpus)[-1]
-        self.assertEqual((sample["reviewed"], sample["expect"]["total"]), (False, 150000))
+        self.assertEqual((sample["reviewed"], sample["expect"]["total"]), (False, 125000))   # nilai koreksi user
         code, out, _ = self.run_main("eval", "--corpus", str(self.corpus))
         self.assertEqual(code, 0)
         self.assertIn("1 sampel nyata belum ditinjau", out)
 
-    def test_flow_only_difference_is_not_gated(self):
+    def test_flow_only_difference_is_held(self):                    # review M1d temuan 2: pemicu `arah`
+        before = self.corpus.read_bytes()
         code, _, err = self.add(_donation(flow="top_up"))
+        self.assertEqual(code, 3)
+        self.assertIn("flow", err)
+        self.assertEqual(self.corpus.read_bytes(), before)
+        code, _, err = self.add(_donation(flow="top_up"), "--tahan")
         self.assertEqual(code, 0, err)
-        self.assertTrue(load_corpus(self.corpus)[-1]["reviewed"])
+        sample = load_corpus(self.corpus)[-1]
+        self.assertEqual((sample["reviewed"], sample["expect"]["flow"]), (False, "top_up"))
+        self.assertEqual(sample["expect"]["total"], 150000)
+
+    def test_unmasked_lines_exit_2_and_leave_the_corpus(self):      # review M1d temuan 1
+        before = self.corpus.read_bytes()
+        cases = {
+            "Rekening Tujuan 1234567890": "Masih ada nomor panjang di baris 10",
+            "NMID ID1024358806544": "Masih ada nomor panjang di baris 10",
+            "Email budi@contoh.id": "Masih ada alamat email di baris 10",
+            "Rek 1.234.567.890": "Masih ada nomor rekening di baris 10",
+        }
+        for line, message in cases.items():
+            with self.subTest(line):
+                value = _donation()
+                value["entry"]["lines"].append(line)
+                code, _, err = self.add(value)
+                self.assertEqual(code, 2)
+                self.assertIn(message, err)
+        self.assertEqual(self.corpus.read_bytes(), before)
+
+    def test_only_corpus_keys_are_written_and_real_is_true(self):   # review M1d temuan 1, 4
+        value = _donation()
+        value["entry"].update({"note": "catatan pemilik", "user_id": str(uuid.UUID(int=7)), "real": False})
+        code, out, err = self.add(value)
+        self.assertEqual(code, 0, err)
+        sample = load_corpus(self.corpus)[-1]
+        self.assertEqual(list(sample), ["id", "real", "reviewed", "today", "user_name", "lines", "expect"])
+        self.assertTrue(sample["real"])
+        text = self.corpus.read_text(encoding="utf-8")
+        self.assertNotIn("catatan pemilik", text)
+        self.assertNotIn(str(uuid.UUID(int=7)), text)
+        self.assertIn("note, user_id", out)
+
+    def test_user_name_must_be_a_pseudonym(self):                  # review M1d temuan 3
+        before = self.corpus.read_bytes()
+        value = _donation()
+        value["entry"]["user_name"] = "Rina Wulandari"
+        code, _, err = self.add(value)
+        self.assertEqual(code, 2)
+        self.assertIn("Nama user harus nama samaran", err)
+        self.assertEqual(self.corpus.read_bytes(), before)
 
     def test_invalid_entries_exit_2_and_leave_the_corpus(self):
         before = self.corpus.read_bytes()

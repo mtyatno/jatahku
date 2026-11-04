@@ -29,10 +29,11 @@ Tinjauan sampel donasi (tahap 2 M1d; pre-flight A16 §2 "Admin review -> corpus"
   baris tersamar dengan tanda `periksa` (`samaran.needs_review`), koreksi user (`truth`), dan `reading` = pembaca
   SEKARANG pada baris itu tanpa aturan (`donasi.read_lines`). Tidak pernah memuat `user_id`/`item_id`.
 - `POST .../{id}/setujui` — baris editan pemilik disamarkan lagi; masih bernomor panjang/email/nomor rekening -> 422
-  "Masih ada ... di baris N". Hanya dari `menunggu` (409 selain itu).
+  "Masih ada ... di baris N"; `user_name` hanya kata nama samaran (422 "Nama user harus nama samaran"). Hanya dari
+  `menunggu` (409 selain itu).
 - `POST .../{id}/tolak` — baris DIHAPUS (G2; ruling M1d: sampel `ditolak` tidak pernah ada, tab Ditolak selalu kosong,
   kunci `counts.ditolak` tetap untuk bentuknya). `DELETE .../{id}` — 204, sesudah entri disalin ke korpus.
-- `GET .../{id}/korpus` — entri korpus siap salin (hanya `disetujui`): pemilik mengunduhnya lalu menjalankan
+- `GET .../{id}/korpus` — entri korpus siap salin (hanya `disetujui`; `expect` memakai nilai koreksi user): pemilik mengunduhnya lalu menjalankan
   `kotak_corpus add --dari-donasi <berkas>` di checkout lokal dan membuka PR (K4; tidak pernah di VPS).
 Semua keputusan di-commit di route; tidak ada cache.
 """
@@ -487,12 +488,12 @@ async def _sample_out(sample: ProofSample, decided_by_name: str | None) -> Proof
 def _sample_error(e: Exception) -> HTTPException:
     if isinstance(e, donasi.SampleNotFound):
         return HTTPException(status_code=404, detail=str(e))
-    if isinstance(e, donasi.SampleLineSecret):
+    if isinstance(e, (donasi.SampleLineSecret, donasi.SampleNameNotPseudonym)):
         return HTTPException(status_code=422, detail=str(e))
     return HTTPException(status_code=409, detail=str(e))
 
 
-_SAMPLE_ERRORS = (donasi.SampleNotFound, donasi.SampleConflict, donasi.SampleLineSecret)
+_SAMPLE_ERRORS = (donasi.SampleNotFound, donasi.SampleConflict, donasi.SampleLineSecret, donasi.SampleNameNotPseudonym)
 
 
 @router.get("/samples", response_model=ProofSamplesResponse)
@@ -570,8 +571,9 @@ async def sample_corpus_entry(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Entri korpus siap salin dari sampel yang disetujui: `expect` = pembaca sekarang pada baris yang disetujui,
-    `gated_diff` = total/tanggal/status yang berbeda dari koreksi user (K17)."""
+    """Entri korpus siap salin dari sampel yang disetujui: `expect` = pembaca sekarang pada baris yang disetujui dengan
+    nilai koreksi user (`truth`) menggantikannya (`donasi.confirmed_expect`); `gated_diff` = field yang pembacanya
+    berbeda dari koreksi user (total, tanggal, status, arah, aplikasi; K17) — `add --dari-donasi` menahannya."""
     try:
         sample = await donasi.get_sample(db, sample_id)
     except _SAMPLE_ERRORS as e:
@@ -580,8 +582,8 @@ async def sample_corpus_entry(
         raise HTTPException(status_code=409, detail="Sampel belum disetujui")
     expect = await donasi.read_lines(sample.lines or [], today=sample.today, user_name=sample.user_name)
     truth = sample.truth if isinstance(sample.truth, dict) else None
-    out = CorpusEntryOut(entry=CorpusEntry(**donasi.corpus_entry(sample, expect)), truth=truth,
-                         gated_diff=donasi.gated_diff(expect, truth))
+    out = CorpusEntryOut(entry=CorpusEntry(**donasi.corpus_entry(sample, donasi.confirmed_expect(expect, truth))),
+                         truth=truth, gated_diff=donasi.gated_diff(expect, truth))
     # `user_name` kosong tidak dikirim (load_corpus menolak `"user_name": null`); field lain tetap, juga null di expect.
     return JSONResponse(out.model_dump(mode="json", exclude={"entry": {"user_name"}} if out.entry.user_name is None
                                        else None))

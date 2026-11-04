@@ -213,16 +213,26 @@ class ApproveTests(SamplesBase):
 
     async def test_approve_sets_decision_and_commits(self):
         s = await self.sample()
-        r = await self.approve(s.id, user_name="  DEWI LESTARI ", note="  nama penerima diganti  ",
+        r = await self.approve(s.id, user_name="  siti aminah ", note="  nama penerima diganti  ",
                                from_status="menunggu")
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual((body["status"], body["user_name"], body["note"], body["decided_by_name"]),
-                         ("disetujui", "DEWI LESTARI", "nama penerima diganti", "Pemilik Tes"))
+                         ("disetujui", "siti aminah", "nama penerima diganti", "Pemilik Tes"))
         self.assert_no_owner_ids(r, s)
         row = await self.get(s.id)   # sesi baru: route meng-commit
-        self.assertEqual((row.status, row.decided_by, row.user_name), ("disetujui", self.admin.id, "DEWI LESTARI"))
+        self.assertEqual((row.status, row.decided_by, row.user_name), ("disetujui", self.admin.id, "siti aminah"))
         self.assertIsNotNone(row.decided_at)
+
+    async def test_user_name_must_be_a_pseudonym(self):              # review M1d temuan 3: masuk entri korpus publik
+        s = await self.sample()
+        for name in ("Rina Wulandari", "ANDI WIJAYA", "Dewi"):
+            with self.subTest(name):
+                r = await self.approve(s.id, user_name=name)
+                self.assertEqual((r.status_code, r.json()["detail"]), (422, "Nama user harus nama samaran"))
+        self.assertEqual((await self.get(s.id)).status, "menunggu")
+        r = await self.approve(s.id, user_name="Budi Pratama")          # kata-kata daftar samaran, huruf bebas
+        self.assertEqual((r.status_code, r.json()["user_name"]), (200, "Budi Pratama"))
 
     async def test_user_name_kept_when_omitted_and_cleared_when_null(self):
         a = await self.sample()
@@ -307,7 +317,7 @@ class CorpusEntryTests(SamplesBase):
     async def test_entry_passes_load_corpus_and_reads_the_approved_lines(self):
         s = await self.sample()
         edited = [*LINES[:-1], "No. Ref 2026102612345678"]          # disamarkan lagi saat disetujui
-        self.assertEqual((await self.approve(s.id, lines=edited, user_name="DEWI LESTARI")).status_code, 200)
+        self.assertEqual((await self.approve(s.id, lines=edited, user_name="siti aminah")).status_code, 200)
         r = await self.c.get(f"/admin/kotak/samples/{s.id}/korpus")
         self.assertEqual(r.status_code, 200, r.text)
         self.assert_no_owner_ids(r, s)
@@ -316,7 +326,7 @@ class CorpusEntryTests(SamplesBase):
         self.assertEqual(list(entry), ["id", "real", "reviewed", "today", "user_name", "lines", "expect"])
         self.assertEqual(entry["id"], f"donasi-transfer-{s.id.hex[:8]}")
         self.assertEqual((entry["real"], entry["reviewed"], entry["today"], entry["user_name"]),
-                         (True, True, "2026-10-27", "DEWI LESTARI"))
+                         (True, True, "2026-10-27", "siti aminah"))
         self.assertEqual(entry["lines"][-1], "No. Ref …5678")
         self.assertEqual(entry["expect"], kotak_corpus.expect_from(await kotak_corpus._read(entry)))
         self.assertEqual((body["truth"], body["gated_diff"]), (TRUTH, []))
@@ -334,12 +344,27 @@ class CorpusEntryTests(SamplesBase):
         self.assertNotIn("user_name", entry)
         self.assertIsNone(kotak_corpus._sample_problem(entry))
 
-    async def test_gated_diff_lists_total_and_date_mismatches(self):
-        s = await self.sample(truth={"total": 125000, "date": "2026-10-25", "flow": "top_up", "app": None})
+    async def test_expect_uses_the_user_correction_and_lists_differences(self):   # review M1d temuan 2
+        s = await self.sample(truth={"total": 125000, "date": "2026-10-25", "flow": "top_up", "app": "dana"})
         await self.approve(s.id)
         body = (await self.c.get(f"/admin/kotak/samples/{s.id}/korpus")).json()
-        self.assertEqual(body["gated_diff"], ["total", "date"])   # flow tidak digerbang
+        self.assertEqual(body["gated_diff"], ["total", "date", "flow", "app"])
+        self.assertEqual(body["entry"]["expect"], {**READ, "issuer": "dana", "total": 125000,
+                                                   "paid_at": "2026-10-25T09:30:00+07:00", "flow": "top_up"})
         self.assertEqual(body["entry"]["reviewed"], True)        # pemilik menyetujui; CLI yang menahan (K17)
+        # Aplikasi `baru` dan nilai null bukan koreksi.
+        other = await self.sample(truth={"total": None, "date": None, "flow": None, "app": "baru"})
+        await self.approve(other.id)
+        body = (await self.c.get(f"/admin/kotak/samples/{other.id}/korpus")).json()
+        self.assertEqual((body["gated_diff"], body["entry"]["expect"]), ([], READ))
+
+    async def test_corpus_entry_has_only_corpus_keys(self):        # review M1d temuan 5
+        from app.services.kotak_struk import donasi
+        s = await self.get((await self.sample()).id)
+        self.assertEqual(list(donasi.corpus_entry(s, dict(READ))),
+                         ["id", "real", "reviewed", "today", "user_name", "lines", "expect"])
+        s.user_name = None
+        self.assertEqual(set(donasi.corpus_entry(s, dict(READ))), {"id", "real", "reviewed", "today", "lines", "expect"})
 
 
 class NonAdminTests(SamplesBase):
