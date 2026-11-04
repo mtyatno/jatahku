@@ -137,6 +137,15 @@ async def peran_di_ruang(db: AsyncSession, user_id, household_id) -> tuple[str |
     return role, str(row[1])
 
 
+async def batasan_anggota(db: AsyncSession, user_id, household_id) -> Batasan:
+    """Batasan tersimpan untuk anggota ini (bawaan bila admin belum mengatur), tanpa melihat izin pengelola. Untuk
+    tampilan milik karyawan sendiri (Beranda karyawan, R6); penegakan memakai `batasan_karyawan`."""
+    row = (await db.execute(
+        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
+    )).scalar_one_or_none()
+    return _dari_baris(row)
+
+
 async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan | None:
     """Batasan yang berlaku untuk user di ruang ini, atau None bila tidak dibatasi (ruang keluarga, owner, admin,
     bukan anggota, atau sedang menyetujui draf)."""
@@ -145,10 +154,7 @@ async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan |
     role, jenis = await peran_di_ruang(db, user_id, household_id)
     if role != HouseholdRole.member.value or jenis != HouseholdType.USAHA:
         return None
-    row = (await db.execute(
-        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
-    )).scalar_one_or_none()
-    return _dari_baris(row)
+    return await batasan_anggota(db, user_id, household_id)
 
 
 # ── Jam kerja (ADR-P17) ─────────────────────────────────────────────────────
@@ -317,6 +323,64 @@ async def buat_draf(db: AsyncSession, *, household_id, user_id, jenis: str, amou
         raise
     await db.refresh(draf)
     return draf
+
+
+DRAF_DIPUTUS_HARI = 14
+
+
+async def draf_saya(db: AsyncSession, user_id, household_id, limit: int = 50) -> list[RuangDraf]:
+    """Draf milik user di satu ruang: yang menunggu, plus yang diputus 14 hari terakhir (terbaru dulu).
+    Dipakai `GET /persetujuan/saya` dan kartu Beranda karyawan (R6)."""
+    batas = datetime.now(timezone.utc) - timedelta(days=DRAF_DIPUTUS_HARI)
+    return list((await db.execute(
+        select(RuangDraf).where(RuangDraf.household_id == household_id, RuangDraf.user_id == user_id,
+                                (RuangDraf.status == ST_MENUNGGU) | (RuangDraf.updated_at >= batas))
+        .order_by(RuangDraf.created_at.desc()).limit(limit)
+    )).scalars().all())
+
+
+async def catatan_hari_ini(db: AsyncSession, user, household_id, batasan: Batasan | None,
+                           sekarang: datetime | None = None) -> dict:
+    """Catatan yang dibuat user sendiri hari ini (zona user) di satu ruang: pengeluaran (transaksi di amplop ruang
+    itu) dan penjualan (pemasukan bernilai > 0). Tidak memuat catatan anggota lain, saldo, atau total ruang.
+    `boleh_hapus` mengikuti jendela ubah (hanya transaksi; pemasukan tidak punya jalur hapus). Kartu Beranda
+    karyawan (R6)."""
+    from app.models.models import Envelope, Income, Transaction
+    try:
+        zona = ZoneInfo(getattr(user, "timezone", None) or ZONA_BAWAAN)
+    except Exception:
+        zona = ZoneInfo(ZONA_BAWAAN)
+    sekarang = sekarang or datetime.now(timezone.utc)
+    hari = sekarang.astimezone(zona).date()
+    txn = (await db.execute(
+        select(Transaction.id, Transaction.description, Transaction.amount, Transaction.created_at,
+               Envelope.name, Envelope.emoji)
+        .join(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Envelope.household_id == household_id, Transaction.user_id == user.id,
+               Transaction.transaction_date == hari, Transaction.is_deleted == False)  # noqa: E712
+    )).all()
+    inc = (await db.execute(
+        select(Income.id, Income.description, Income.amount, Income.created_at)
+        .where(Income.household_id == household_id, Income.user_id == user.id, Income.income_date == hari,
+               Income.amount > 0)
+    )).all()
+
+    def _hapus(dibuat) -> bool:
+        try:
+            cek_jendela_ubah(batasan, milik_sendiri=True, dibuat=dibuat, sekarang=sekarang)
+            return True
+        except PeranDitolak:
+            return False
+
+    items = [{"id": str(i), "jenis": JENIS_PENGELUARAN, "judul": d, "subjudul": n, "emoji": e or "",
+              "nominal": int(a), "waktu": c.isoformat() if c else None, "boleh_hapus": _hapus(c)}
+             for i, d, a, c, n, e in txn]
+    items += [{"id": str(i), "jenis": JENIS_PENJUALAN, "judul": d, "subjudul": None, "emoji": "", "nominal": int(a),
+               "waktu": c.isoformat() if c else None, "boleh_hapus": False} for i, d, a, c in inc]
+    items.sort(key=lambda x: x["waktu"] or "", reverse=True)
+    ringkas = {j: {"jumlah": sum(1 for x in items if x["jenis"] == j),
+                   "total": sum(x["nominal"] for x in items if x["jenis"] == j)} for j in JENIS_SEMUA}
+    return {"tanggal": hari.isoformat(), "items": items, **ringkas}
 
 
 async def batalkan_draf_anggota(db: AsyncSession, household_id, user_id) -> int:

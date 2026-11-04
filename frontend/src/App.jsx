@@ -17,6 +17,7 @@ import Admin from './pages/Admin';
 import Upgrade from './pages/Upgrade';
 import Settings from './pages/Settings';
 import Bagikan from './pages/Bagikan';
+import RuangKelola from './pages/RuangKelola';
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/upgrade" element={<Upgrade />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bagikan" element={<Bagikan />} />
+            <Route path="/ruang" element={<RuangKelola />} />
           </Route>
         </Routes>
       </BrowserRouter>

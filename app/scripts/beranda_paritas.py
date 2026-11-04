@@ -95,7 +95,7 @@ async def periksa(user, Session) -> dict:
     from app.services.dashboard.sources import Periode, Sumber
     from app.services.ruang import ruang_keluarga
 
-    items = [{"id": i["id"], "card": i["card"], "settings": {}} for i in registry.template("beranda")]
+    items = [{"id": i["id"], "card": i["card"], "settings": {}} for i in registry.template("beranda", karyawan=False)]
     beda, ms = [], []
     try:
         async with Session() as db:

@@ -39,7 +39,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Batas laju tulis per plugin per ruang (01-kajian "Penegakan") menyusul bersama metode tulis (U2).
 
 **Jebakan**
-- **PR R6 (#185) dibuka bersamaan (4 Nov 15.25) dan menyentuh file yang sama:** `routes/dashboard.py`, `dashboard/{registry,layout,batch}.py`, `test_ruang_pagar.py`, `AGENTS.md`, dan dokumen plugin. R6 menambah argumen posisi ke-5 `karyawan` di `layout.efektif/ambil/simpan` dan `karyawan=` di `batch.jalankan`, sama dengan `plugin=` dari H2; R6 juga membuka `/dashboard/*` untuk karyawan (`KARYAWAN_BOLEH`) dengan saringan `registry.boleh(definisi, karyawan)`. PR yang di-merge kedua harus menggabungkan keduanya (sebaiknya argumen keyword: `plugin=`, `karyawan=`), menjaga kartu plugin tetap tidak untuk karyawan (`CardDef` plugin = kartu umum → `khusus_admin`; `PluginContext` juga menolak data keuangan untuk karyawan), dan mengganti tes H2 `test_kartu_saklar_flag_dan_ruang_lain` yang sekarang mengharapkan 403 untuk karyawan.
+- **R6 (#185) di-merge lebih dulu (4 Nov):** `main` digabung ke branch H2. Penyatuan: `layout.efektif/ambil/_rapikan/validasi/simpan` dan `batch.jalankan` memakai keyword `karyawan=` (R6) dan `plugin=` (H2); peran Beranda tetap dihitung di layout/batch dari keanggotaan (R6). Kartu plugin selalu `untuk="umum"`: untuk karyawan `visible: false` di tata letak, `khusus_admin` di data tanpa memanggil penyedia, dan `kartu_tidak_dikenal` saat ditambahkan (tes `test_kartu_saklar_flag_dan_ruang_lain` diperbarui; sebelumnya karyawan 403). `AGENTS.md` aturan 3 (R6) dan 4 (H2) digabung.
 - `test_ruang_pagar` menghitung `HouseholdMember.user_id ==`: peran di satu ruang pakai `ruang.keanggotaan`; kueri baru butuh baris `DIIZINKAN` dengan alasan.
 - `test_plugin_host` membandingkan `PERINTAH_INTI` dengan `perintah_inti()`, bukan `bot_commands()` (yang kini ikut memuat perintah plugin).
 - Jalur web pengeluaran tidak memanggil `check_expense` (memakai `check_behavior` langsung), jadi peringatan plugin dipanggil terpisah di `catat_transaksi`. Jalur baru wajib memanggil `expense_rules.peringatan_plugin` juga.
@@ -60,6 +60,64 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Review keamanan terpisah: "review PR #186 terhadap 03-workflow.md bagian keamanan" (gerbang "Plugin sebagai tamu": izin di setiap panggilan, audit, validator menolak perintah tulis dan impor inti).
 - Merge tanpa migrasi; tidak ada langkah VPS. Sesudah merge: `/cek-deploy <PR>`.
 - Berikutnya `/sesi-plugin H3` (butuh H2, B2, R4) atau `/sesi-plugin R6`.
+
+---
+
+## R6 · Halaman Anggota dan batasan, Beranda karyawan · 2026-11-04 · pemilik produk + Claude
+
+**Selesai** (status review, PR #185; issue #146; label `review-keamanan` atas usulan pembukaan sesi walau rencana tidak bertanda review: R6 membuka `/dashboard/*` untuk karyawan, bagian gerbang "Karyawan tidak melihat laporan")
+- Keputusan pemilik produk (4 Nov, "lanjut" atas lima usulan pembukaan sesi): **(1)** admin boleh mengundang admin, menaikkan, menurunkan, dan mengeluarkan admin lain; hanya owner terlindung — dicatat di ADR-P4 (review #175 no. 8). **(2)** Tanpa batas kumulatif harian karyawan selama beta (no. 10; A4 dicoret). **(3)** Antrean persetujuan di halaman Anggota + angka di menu; kartu Beranda usaha dinilai di U4 (A4). **(4)** Daftar/cabut undangan dan ganti nama ruang masuk R6; tutup/hapus ruang usaha ditunda. **(5)** Kartu Catat karyawan membuka form Catat — dikerjakan dengan form karyawan sendiri (lihat keputusan kecil).
+- Server: `registry.CardDef.untuk` (`umum` | `karyawan`), enam kartu `core.karyawan.*`, `TEMPLATE_KARYAWAN`, `registry.boleh`. `layout.py` (template per peran, `visible: false` + `alasan` untuk kartu peran lain, `PUT` menolak kartu peran lain kecuali instans lama dikirim balik, `hapus_milik`), `batch.satu_kartu` (kartu umum untuk karyawan → `khusus_admin` tanpa memanggil penyedia), `routes/dashboard.py` (`untuk` di `GET /layout`, karyawan selalu `enabled`, katalog per peran, `GET /cards` kini memakai `ruang_aktif`), lima route dashboard di `KARYAWAN_BOLEH`. Sumber `amplop_diizinkan` (handler `list_envelopes`), `draf_saya`, `catatan_hari_ini` (`peran.py`; `GET /persetujuan/saya` memakai `draf_saya`).
+- `ruang_kelola.py`: `GET`/`DELETE /ruang/{id}/undangan` (cabut atomik terhadap `/ruang/gabung`), `PATCH /ruang/{id}` (nama), ganti peran dan keluar membuang tata letak Beranda anggota di ruang itu, `oleh_nama`/`anggota_nama` di log. `GET /ruang`: `jenis_catatan` untuk karyawan.
+- Web: `lib/ruangPeran.js` (akses, rute, menu, Catat karyawan, payload/hasil Catat, ringkasan batasan, form batasan, label log) + tes; `pages/RuangKelola.jsx` (`/ruang`: antrean, anggota, panel batasan tersimpan otomatis, peran/jabatan, keluarkan/keluar, undangan buat/salin/cabut, nama ruang, log); `pages/BerandaKaryawan.jsx` + `cards/karyawan/` (layar tutup di luar jam kerja); `components/CatatKaryawan.jsx`; `Layout.jsx` (menu, Catat dan FAB per peran, halaman ditahan sampai peran diketahui, pengalihan rute, angka antrean, Papan disiplin/langganan/Telegram prompt/Kotak Struk tidak untuk karyawan); `RuangPicker.jsx` (Gabung dengan kode, tautan Anggota); `Settings.jsx` (kartu ruang usaha menggantikan household di ruang usaha; ekspor dan reset disembunyikan untuk karyawan); `Transactions.jsx` (tanpa AI Advisor untuk karyawan).
+- Tes: `app/tests/test_ruang_r6.py` (13); uji mutasi 6 pemeriksaan (boleh di batch, layout, katalog; cabut; filter user dan ruang di catatan hari ini) semuanya tertangkap. Diperbarui: `test_dashboard_registry` (katalog umum), `test_ruang_r4` (field `jenis_catatan`), `test_ruang_pagar` (route R6). unittest 2761 lulus · node --test 662 lulus · build ok · Migrasi: tidak berlaku · `openapi_cek`: tanpa perubahan memutus.
+- Diperiksa di browser (Playwright, API dipalsukan): karyawan dan pemilik, 390 dan 1440 px, terang dan gelap; karyawan tidak memanggil satu pun endpoint tertutup; alur simpan otomatis batasan, setujui draf, dan Catat karyawan 202 → "menunggu persetujuan admin".
+- Dokumen: kontrak §2 (undangan, nama ruang, log, `jenis_catatan`, tabel karyawan), §4 ("Beranda karyawan"), §7; ADR-P4; `05-desain-buku-usaha.md` A4; `AGENTS.md` aturan 3 + checklist R6; `00-indeks.md`; `PROGRESS.md` (R6 review, Gerbang R).
+- Deploy R8 (#177, `195c17f`) terverifikasi tayang (run 41785622123).
+
+- **Review keamanan terpisah (4 Nov):** minta perubahan; gerbang `/dashboard/*` untuk karyawan dinilai benar. Semua temuan dikerjakan di branch ini, dengan tes yang gagal di kode sebelumnya dan uji mutasi:
+  1. **Merah:** kode undangan buatan admin tetap berlaku setelah admin itu dikeluarkan, keluar, atau diturunkan (bisa masuk lagi sebagai admin dan melihat laba/kas selama 7 hari). Sekarang `/ruang/gabung` menolak kode yang pembuatnya bukan lagi owner/admin ruang itu (juga `dibuat_oleh` NULL), dan keluar/dikeluarkan/diturunkan mencabut undangan aktif buatan anggota itu dalam commit yang sama (`undangan_dicabut`, `alasan`). Tes P1, P2, keluar sendiri, lapis kedua di gabung.
+  2. **Keamanan:** nilai bawaan `karyawan=None/False` membuat pemanggil yang lupa mendapat tampilan admin. Sekarang `batch.jalankan` dan `layout.ambil`/`simpan` menghitung peran sendiri dari (user, ruang) lewat `layout.peran_karyawan`; `registry.katalog`, `template`, `layout.efektif`, `validasi`, `_rapikan` tanpa nilai bawaan. Tes pemanggilan langsung.
+  3. Kirim balik instans peran lain kini dari salinan server (ukuran/pengaturan klien diabaikan).
+  4. Cache Beranda per peran (`cacheKeyLayout/Data(uid, 'karyawan')`); BerandaKaryawan membuang cache umum ruang itu; `Layout.jsx` membuang semua cache Beranda ruang aktif bila peran berubah (`peranBerubah`).
+  5. `daftar_undangan` menyaring kedaluwarsa di SQL + batas 50; `UbahRuang` mewarisi `RuangBuat` (`NAMA_MAKS`); `CardDef.untuk` divalidasi terhadap `UNTUK`.
+  - Tes `/ruang/gabung` di R6 mereset batas laju (`ruang_kelola.limiter.reset()`): batas 10/menit di memori proses terbawa antar tes.
+  - Sesudah perbaikan: unittest 2766 lulus · node --test 663 lulus · build ok · `openapi_cek` tanpa perubahan memutus.
+- **Review ulang (4 Nov, `1e7f4f6`): lulus, boleh merge dari sisi keamanan.** Dua catatan non-penghalang ikut dikerjakan:
+  - `batch.jalankan` dan `layout.ambil` menentukan peran dari keanggotaan (`layout.peran_beranda`: karyawan / umum / bukan anggota). Bukan anggota → `ruang_tidak_diizinkan` per kartu (dan 403 di `ambil`), juga untuk pemanggil langsung (plugin H2). Tidak bergantung lagi pada `izin_pengelola_aktif()`: di dalam `atas_izin_pengelola()` karyawan tetap karyawan. Batasan untuk kartu dari `peran.batasan_anggota`.
+  - `_cabut_undangan_milik` memakai UPDATE bersyarat (`dipakai_at`/`dicabut_at` kosong, `RETURNING peran`), sama dengan `cabut_undangan`: kode yang sedang diklaim tidak ikut tercatat dicabut.
+  - Tes +2 (orang luar dan jalur persetujuan; kode terpakai tidak dicabut); 3 uji mutasi tertangkap. unittest 2768 lulus · `openapi_cek` tanpa perubahan memutus.
+
+**Digantung**
+- Kamus kata ruang di halaman Anggota dan Catat cepat yang menggantikan `CatatKaryawan`: R7. Foto nota untuk karyawan (Kotak Struk di ruang usaha) juga R7; sampai itu, batasan "wajib foto nota" membuat catatan karyawan di atas nominal itu ditolak 422 `perlu_foto_nota` (panel batasan menyebutnya).
+- Tutup/hapus ruang usaha belum ada (keputusan 4).
+- Notifikasi ke admin saat draf baru dan ke karyawan saat diputus: U6. Karyawan melihat statusnya di kartu Menunggu persetujuan.
+- "Urungkan" di halaman Anggota (artboard) belum ada; setiap perubahan tercatat di log ruang.
+- Bottom nav HP tanpa item Anggota (sudah 5 item, pertanyaan A4 ke H3); di HP dibuka dari pemilih ruang atau Pengaturan.
+- Pemilik/admin di ruang usaha: Telegram prompt, Kotak Struk, ekspor, dan reset tetap membaca ruang aktif (perilaku R4/R5, tidak diubah).
+- Bawaan batasan anggota yang diundang lagi tetap tanpa batas nominal (catatan R5); daftar anggota menampilkan batas nominal tiap karyawan.
+- R8 di `PROGRESS.md` masih `review`: deploy terverifikasi, sisa `ruang_paritas` di VPS lalu PR kecil "R8 tayang".
+
+**Jebakan**
+- Sumber Beranda memanggil handler route langsung (tanpa `ruang_aktif`), jadi gerbang karyawan untuk kartu harus di `batch.satu_kartu` (`registry.boleh`), bukan hanya `KARYAWAN_BOLEH`. Kartu baru yang memuat angka ruang selalu `untuk="umum"`.
+- Sebelum `GET /ruang` menjawab, peran belum diketahui: `Layout.jsx` menahan halaman bila ada ruang tersimpan (`menungguPeran`) dan menyimpan daftar ruang di cache per ruang (`ruang_daftar`); tanpa itu Beranda lama dan halaman lain sempat memanggil endpoint tertutup.
+- `api.getEnvelopeSummary` mengembalikan `[]` (bukan melempar) pada 403: form yang memakainya kosong untuk karyawan tanpa `lihat_saldo`.
+- `normalizeAction` menolak jenis aksi yang tidak dikenal: kartu Catat mengirim `expense`/`income`, dan `Layout.jsx` memetakannya ke form karyawan.
+- Mengimpor kelas tes ke modul tes lain membuat tesnya ikut jalan dua kali: `test_ruang_r6.py` mengimpor modul `test_ruang_peran`, bukan kelasnya.
+- `envelopes.emoji` bisa token ikon (`food`), jadi kartu mengirim `emoji` terpisah dari nama amplop.
+
+**Keputusan kecil**
+- Karyawan memakai `CatatKaryawan` (nominal, keterangan, satu amplop; penjualan dialokasikan penuh ke amplop itu; `client_ref` per form), bukan form Catat/Income lama, karena form lama memanggil ringkasan saldo, alokasi, dan scan yang tertutup untuk karyawan.
+- Menu karyawan: Beranda, Transaksi (hanya catatannya), Pengaturan; halaman lain dialihkan ke Beranda.
+- Kartu karyawan ukuran M, template a1–a6; "hari ini" = `transaction_date`/`income_date` di zona user; periode diabaikan.
+- Ganti peran dan keluar menghapus tata letak Beranda anggota itu di ruang itu; instans `visible: false` boleh dikirim balik apa adanya.
+- `PATCH /ruang/{id}` untuk owner dan admin; daftar undangan menampilkan kode utuh ke owner/admin (mereka bisa membuat kode baru pula).
+- Admin tidak bisa mengubah perannya sendiri di halaman Anggota (mencegah turun tanpa sengaja), tetapi bisa keluar.
+- Warna status draf per tema (kontras A2 butir 10); angka antrean merah #DC2626.
+
+**Cara melanjutkan**
+- Review keamanan selesai (review ulang lulus 4 Nov). Merge oleh pemilik produk: tanpa migrasi; checklist "Plugin R6" di `AGENTS.md` (`ruang_paritas` + uji dua akun). Sesudah deploy terverifikasi, PR kecil "R6 tayang" (status `selesai`).
+- Berikutnya `/sesi-plugin R7` (Catat cepat dan kamus per ruang; butuh R6) atau `/sesi-plugin H2`.
 
 ---
 

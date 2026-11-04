@@ -48,3 +48,7 @@ def decode_token(token: str) -> dict | None:
         return None
     except jwt.InvalidTokenError:
         return None
+    except RecursionError:
+        # Header JWT berupa JSON bersarang ribuan tingkat: `json.loads` milik PyJWT melempar RecursionError, bukan
+        # ValueError (yang diubah PyJWT menjadi DecodeError). Token seperti itu tidak sah: None, jadi 401, bukan 500.
+        return None

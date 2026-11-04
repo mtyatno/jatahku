@@ -664,9 +664,15 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         await self.set_setting("plugin_contoh_users", "*")
         r = await self.client.post("/dashboard/data", headers=self.hdr(self.rumah), json=item)   # tidak terpasang
         self.assertEqual(r.json()["data"]["p1"]["error"]["kode"], "kartu_tidak_dikenal")
-        self.current = self.karyawan                                                  # R5: karyawan tidak sampai
+        # R6: karyawan membuka Beranda, tetapi kartu plugin selalu kartu umum: tanpa data, penyedia tidak dipanggil.
+        self.current = self.karyawan
+        PERILAKU["kartu_float"] = True        # bila penyedia sempat dipanggil, galatnya akan `gagal_memuat`
         r = await self.client.post("/dashboard/data", headers=self.hdr(), json=item)
-        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["data"]["p1"]["error"]["kode"], "khusus_admin")
+        r = await self.client.put("/dashboard/layout", headers=self.hdr(), json={
+            "surface": "beranda", "if_version": 0, "removed": [], "items": [{"id": "p9", "card": "contoh.kas", "size": "S"}]})
+        self.assertEqual(r.json()["kode"], "kartu_tidak_dikenal")
 
     async def test_kartu_float_gagal_sendiri(self):
         PERILAKU["kartu_float"] = True

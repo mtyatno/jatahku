@@ -49,6 +49,7 @@ class RuangItem(BaseModel):
     jumlah_anggota: int
     paket: dict | None = None        # Paket Usaha (ADR-P12, P13): diisi H1/V1; null sampai saat itu
     jam_kerja: dict | None = None    # jadwal karyawan dari admin (ADR-P17, R5); null untuk owner/admin dan tanpa jadwal
+    jenis_catatan: list[str] | None = None   # R6: jenis yang boleh dicatat karyawan (menu Catat); null untuk peran lain
 
 
 class RuangDaftar(BaseModel):
@@ -113,6 +114,7 @@ async def daftar_ruang(user: User = Depends(get_current_user), db: AsyncSession 
         if it.jenis == HouseholdType.USAHA and it.peran == HouseholdRole.member.value:
             b = await peran.batasan_karyawan(db, user.id, it.id)
             it.jam_kerja = b.jam_kerja if b is not None else None
+            it.jenis_catatan = list(b.jenis_catatan) if b is not None else None
     boleh = dibuka and await _jumlah_usaha_milik(db, user.id) < MAKS_RUANG_USAHA
     return RuangDaftar(bawaan=bawaan, items=items, boleh_buat_usaha=boleh)
 
