@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
@@ -31,6 +31,11 @@ import { aksesRuang, catatKaryawan, jenisDariAksi, menuUntuk, peranBerubah, rute
 import { clearCache, loadCache, saveCache } from '../lib/localCache';
 import { kunciCacheBeranda } from '../lib/dashboardRegistry';
 import CatatKaryawan from './CatatKaryawan';
+import { useKontribusiPlugin } from '../plugins/useKontribusi';
+import { webPlugin } from '../plugins';
+import {
+  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, halamanUtama, kontribusiUntuk, menuPlugin,
+} from '../lib/pluginHost';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -339,6 +344,56 @@ const sidebarItems = [
 // Aksi lain di samping tombol "Catat" (top bar desktop); di HP lewat FAB.
 const MORE_ACTIONS = FAB_OPTIONS.filter(o => o.key !== 'expense');
 
+// Form aksi cepat Fitur Tambahan (Plugin H3): komponen lazy dari `src/plugins/<id>` (`aksi`).
+function FormAksiPlugin({ Form, onDone, onCancel }) {
+  return (
+    <Suspense fallback={<div className="text-center py-8 text-gray-400">Loading...</div>}>
+      <Form onDone={onDone} onCancel={onCancel} />
+    </Suspense>
+  );
+}
+
+// Lembar "Lainnya" di HP (Plugin H3, desain A2 butir 8): muncul sebagai item ke-6 bottom nav hanya bila ruang aktif punya
+// menu Fitur Tambahan. Berisi Analitik, menu plugin per grup, dan pintu Fitur Tambahan.
+function ItemLainnya({ to, icon, label, end = false, onClose }) {
+  return (
+    <NavLink to={to} end={end} onClick={onClose}
+      className="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-medium hover:bg-black/5"
+      style={({ isActive }) => ({ color: isActive ? 'var(--brand-600)' : 'var(--text)' })}>
+      <Icon name={icon} size={22} /> {label}
+    </NavLink>
+  );
+}
+
+function LembarLainnya({ grup, fiturTambahan, onClose }) {
+  useEffect(() => {
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [onClose]);
+  return (
+    <div className="lg:hidden fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="Menu lainnya">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute inset-x-0 bottom-0 rounded-t-2xl px-4 pt-3 pb-8 shadow-xl max-h-[80vh] overflow-y-auto"
+        style={{ background: 'var(--card-bg, #fff)' }}>
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full" style={{ background: 'var(--border)' }} aria-hidden="true" />
+        <ItemLainnya onClose={onClose} to="/analytics" icon="chartpie" label="Analitik" />
+        {grup.map(g => (
+          <div key={g.judul} className="mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+            <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{g.judul}</p>
+            {g.items.map(i => <ItemLainnya onClose={onClose} key={i.to} to={i.to} icon={i.icon} label={i.label} end={i.end} />)}
+          </div>
+        ))}
+        {fiturTambahan && (
+          <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+            <ItemLainnya onClose={onClose} to={RUTE_FITUR} icon="puzzle" label="Fitur Tambahan" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Karyawan (Plugin R6): pintu masuk lama (foto struk, CTA, ?struk=1) membuka form Catat karyawan; aksi lain tidak
 // untuknya (server menolak), jadi tidak dibuka sama sekali.
 function aksiKaryawan(key) {
@@ -389,6 +444,12 @@ export default function Layout() {
   // Ruang selain ruang keluarga terpilih tapi perannya belum diketahui (kunjungan pertama, tanpa cache): halaman
   // ditahan sampai GET /ruang menjawab, supaya karyawan tidak membuka halaman yang memanggil endpoint tertutup.
   const menungguPeran = !ruangDaftar && !!getRuangAktif();
+  // Fitur Tambahan (Plugin H3): kontribusi plugin aktif di ruang ini; karyawan tidak pernah (keputusan H3 B).
+  const pluginState = useKontribusiPlugin({ userId: user?.id, karyawan: akses.karyawan, menungguPeran });
+  const kontribusi = kontribusiUntuk(pluginState.kontribusi, akses);
+  const fiturTambahan = pluginState.katalogAda && !akses.karyawan;
+  const [lainnyaOpen, setLainnyaOpen] = useState(false);
+  const tutupLainnya = useCallback(() => setLainnyaOpen(false), []);
 
   const openChat = () => { if (!chat.tampil) return; setFabMenu(false); setChatMounted(true); setChatOpen(true); };
   const closeChat = useCallback(() => setChatOpen(false), []);
@@ -476,7 +537,8 @@ export default function Layout() {
           return;
         }
         case 'route': {
-          const path = safeRoute(payload.path ?? payload.url);
+          // `to`: aksi saran AI Advisor dan kartu Fitur Tambahan, selalu ke halaman plugin `/p/<id>…` (Plugin H2/H3).
+          const path = safeRoute(payload.path ?? payload.url ?? payload.to);
           if (path) navigate(path);
           return;
         }
@@ -623,16 +685,39 @@ export default function Layout() {
 
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
+  // Aksi cepat Fitur Tambahan (A2 butir 4): form plugin di modal bila ada di `src/plugins/<id>`, selain itu halaman
+  // plugin dengan `?aksi=<key>`. Karyawan tidak pernah punya aksi plugin (keputusan H3 B).
+  const grupAksiPlugin = karyawan ? [] : aksiCatatPlugin(kontribusi);
+  const aksiPluginDatar = grupAksiPlugin.flatMap(g => g.aksi);
+  const formAksiPlugin = (kunci) => {
+    const a = aksiPluginDatar.find(x => x.key === kunci);
+    return a ? webPlugin(a.plugin)?.aksi?.[a.aksi] || null : null;
+  };
   const openAction = (key) => {
-    setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key);
+    setCatatMenu(false); setFabMenu(false); setActionPayload(null);
+    if (aksiDariKunci(key) && !formAksiPlugin(key)) {
+      const a = aksiPluginDatar.find(x => x.key === key);
+      const halaman = a ? halamanUtama(kontribusi, a.plugin) : null;
+      if (halaman) navigate(`${halaman}?aksi=${encodeURIComponent(a.aksi)}`);
+      return;
+    }
+    setFabAction(key);
   };
   const closeAction = () => { setFabAction(null); setActionPayload(null); };
   const opsiKaryawan = catatKaryawan(akses);
-  const fabOptions = karyawan ? opsiKaryawan : FAB_OPTIONS;
+  const fabOptions = karyawan ? opsiKaryawan : [...FAB_OPTIONS, ...aksiPluginDatar];
   const moreActions = karyawan ? opsiKaryawan.slice(1) : MORE_ACTIONS;
   const catatUtama = karyawan ? opsiKaryawan[0]?.key : 'expense';
   const aksi = karyawan ? (opsiKaryawan.length ? aksiKaryawan(fabAction) : null) : fabAction;
   const aksiLama = karyawan ? null : fabAction;   // form lama hanya untuk peran selain karyawan
+  const aksiPlugin = aksiLama && aksiDariKunci(aksiLama) ? aksiPluginDatar.find(x => x.key === aksiLama) || null : null;
+  const FormPlugin = aksiPlugin ? formAksiPlugin(aksiPlugin.key) : null;
+  const menuPlug = menuPlugin(kontribusi);
+  const grupMenuPlugin = [
+    { judul: 'Usaha', items: menuPlug.usaha },
+    { judul: 'Lainnya', items: menuPlug.lainnya },
+  ].filter(g => g.items.length);
+  const adaLainnya = !karyawan && adaMenuPlugin(kontribusi);
   const selesaiKaryawan = (hasil) => {
     closeAction();
     showNotice(hasil.hasil === 'menunggu' ? 'Tersimpan · menunggu persetujuan admin' : 'Tercatat');
@@ -645,6 +730,7 @@ export default function Layout() {
     <div className="min-h-screen bg-page">
       <Sidebar items={menuUntuk(sidebarItems, akses, { menunggu })} langgananBadge={langgananBadge} leaderboard={leaderboard}
         isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode}
+        grupPlugin={karyawan ? [] : grupMenuPlugin} fiturTambahan={fiturTambahan}
         ruangSlot={ruang.tampil ? <RuangPicker pilihan={ruang} /> : null} />
 
       <div className="lg:pl-[var(--sidebar-w)]" style={{ '--sidebar-w': `${SIDEBAR_WIDTH}px` }}>
@@ -679,7 +765,8 @@ export default function Layout() {
             </button>
             {moreActions.length > 0 && (
             <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
-              aria-label={karyawan ? 'Catat lainnya: penjualan' : 'Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo'}
+              aria-label={karyawan ? 'Catat lainnya: penjualan'
+                : `Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo${aksiPluginDatar.map(a => `, ${a.label}`).join('')}`}
               className="h-[var(--nav-h)] w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
               <Icon name="chevron" size={14} weight="bold" />
@@ -694,6 +781,19 @@ export default function Layout() {
                     style={{ color: 'var(--text)' }}>
                     <Icon name={opt.icon} size={18} /> {opt.label}
                   </button>
+                ))}
+                {/* Grup per Fitur Tambahan, maksimal 2 aksi (desain A2 butir 4). */}
+                {grupAksiPlugin.map(g => (
+                  <div key={g.plugin} role="group" aria-label={g.nama} className="mt-1 pt-1" style={{ borderTop: '1px solid var(--border)' }}>
+                    <p className="px-4 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{g.nama}</p>
+                    {g.aksi.map(opt => (
+                      <button key={opt.key} type="button" role="menuitem" onClick={() => openAction(opt.key)}
+                        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 hover:bg-black/5"
+                        style={{ color: 'var(--text)' }}>
+                        <Icon name={opt.icon} size={18} /> {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
@@ -774,27 +874,37 @@ export default function Layout() {
         </div>
       </header>
 
-      {/* Bottom nav HP & tablet — 5 item; layar lebar memakai sidebar */}
+      {/* Bottom nav HP & tablet — 5 item; layar lebar memakai sidebar. Item ke-6 "Lainnya" hanya bila ruang aktif punya
+          menu Fitur Tambahan (keputusan H3 C), supaya tampilan user tanpa plugin tidak berubah. */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-50">
         <div className="flex justify-around py-2">
           {menuUntuk(navItems, akses, { kelola: false }).map(item => (
             <NavLink key={item.to} to={item.to} end={item.to === '/'}
               className={({ isActive }) =>
-                `flex flex-col items-center gap-0.5 px-2 py-1 text-xs font-medium transition-colors ${
+                `flex flex-col items-center gap-0.5 ${adaLainnya ? 'px-1' : 'px-2'} py-1 text-xs font-medium transition-colors ${
                   isActive ? 'text-brand-600' : 'text-gray-400'
                 }`}>
               <Icon name={item.icon} size={22} />{item.label}
             </NavLink>
           ))}
+          {adaLainnya && (
+            <button type="button" onClick={() => setLainnyaOpen(true)} aria-haspopup="dialog" aria-expanded={lainnyaOpen}
+              className={`flex flex-col items-center gap-0.5 px-1 py-1 text-xs font-medium transition-colors ${
+                lainnyaOpen || location.pathname === '/analytics' || location.pathname.startsWith('/p/') || location.pathname === RUTE_FITUR
+                  ? 'text-brand-600' : 'text-gray-400'}`}>
+              <Icon name="more" size={22} />Lainnya
+            </button>
+          )}
         </div>
       </nav>
+      {lainnyaOpen && adaLainnya && <LembarLainnya grup={grupMenuPlugin} fiturTambahan={fiturTambahan} onClose={tutupLainnya} />}
 
       {!karyawan && !menungguPeran && <TelegramPrompt />}
       <OfflineQueueCenter />
       {!karyawan && !menungguPeran && <PendingProofsBanner />}
       <main className="max-w-6xl lg:max-w-[1520px] mx-auto lg:mx-0 px-4 lg:px-8 py-6 lg:py-8 pb-24 lg:pb-10">{menungguPeran
         ? <div className="text-center py-12 text-gray-400">Loading...</div>
-        : <Outlet context={{ topbarSlot, ruang, akses }} />}</main>
+        : <Outlet context={{ topbarSlot, ruang, akses, plugin: { ...pluginState, kontribusi, katalogAda: fiturTambahan } }} />}</main>
       </div>
       {/* Global FAB — speed dial */}
       {fabMenu && (
@@ -874,6 +984,7 @@ export default function Layout() {
               {aksiLama === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
               {aksiLama === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
               {aksi.startsWith('karyawan-') && <><Icon name="plus" size={22} /> Catat di {ruang.aktif?.nama}</>}
+              {aksiPlugin && <><Icon name={aksiPlugin.icon} size={22} /> {aksiPlugin.label}</>}
               {ENVELOPE_FIELD[aksiLama] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[aksiLama].title}</>}
             </h3>
             {aksiLama === 'expense' && (
@@ -891,6 +1002,10 @@ export default function Layout() {
             {aksi.startsWith('karyawan-') && (
               <CatatKaryawan jenisAwal={jenisDariAksi(aksi)} jenisBoleh={akses.jenisCatatan}
                 onDone={selesaiKaryawan} onCancel={closeAction} />
+            )}
+            {FormPlugin && (
+              <FormAksiPlugin Form={FormPlugin} onCancel={closeAction}
+                onDone={(pesan) => { closeAction(); window.dispatchEvent(new CustomEvent('jatahku:txn-added')); if (pesan) showNotice(pesan); }} />
             )}
           </div>
         </div>

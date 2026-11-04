@@ -5,6 +5,7 @@ import { setRuangAktif } from '../lib/ruangAktif';
 import { native } from '../native';
 import { useAuth } from '../hooks/useAuth';
 import GoogleButton from '../components/GoogleButton';
+import { Icon } from '../components/Icon';
 import { useTheme } from '../hooks/useTheme';
 import { useAppConfig } from '../hooks/useAppConfig';
 import { formatCurrency } from '../lib/utils';
@@ -406,7 +407,7 @@ function RuangUsahaCard({ ruang, akses, userId }) {
 
 export default function Settings() {
   const { user, logout } = useAuth();
-  const { ruang, akses } = useOutletContext() || {};
+  const { ruang, akses, plugin } = useOutletContext() || {};
   const diUsaha = !!akses?.usaha;
   const { color: themeColor, setColor } = useTheme();
   const navigate = useNavigate();
@@ -854,6 +855,22 @@ export default function Settings() {
       <GoogleAccountCard connected={profile.google_connected} onChange={load} />
 
       {diUsaha && <RuangUsahaCard ruang={ruang} akses={akses} userId={user?.id} />}
+
+      {/* Fitur Tambahan (Plugin H3): pintu di HP (layar lebar juga lewat kaki sidebar); hanya bila ruang aktif punya
+          katalog, dan tidak untuk karyawan. */}
+      {plugin?.katalogAda && !akses?.karyawan && (
+        <Link to="/fitur-tambahan" className="card flex items-center gap-3 hover:bg-black/5 transition-colors">
+          <span className="w-9 h-9 rounded-xl shrink-0 inline-flex items-center justify-center"
+            style={{ background: 'color-mix(in srgb, var(--brand-400) 16%, transparent)', color: 'var(--brand-600)' }}>
+            <Icon name="puzzle" size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold text-sm">Fitur Tambahan</span>
+            <span className="block text-xs text-gray-400">Pasang, jeda, atau copot fitur untuk {ruang?.aktif?.nama || 'ruang ini'}.</span>
+          </span>
+          <Icon name="arrowright" size={16} className="text-gray-400" />
+        </Link>
+      )}
 
       {/* Household */}
       {!diUsaha && (

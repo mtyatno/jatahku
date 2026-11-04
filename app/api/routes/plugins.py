@@ -2,16 +2,18 @@
 
 - `GET /plugins` — katalog untuk ruang aktif (header `X-Jatahku-Ruang`, membaca). Di ruang usaha, karyawan ditolak
   gerbang R5 (403 `khusus_admin`, route ini tidak di `KARYAWAN_BOLEH`); di ruang keluarga semua anggota boleh melihat.
+- `GET /plugins/contributions` (H3) — kontribusi plugin aktif untuk ruang aktif dan user ini; karyawan ditolak sama.
 - `POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang | lanjut | jeda | copot` — ruang dari **path**, lalu
   keanggotaan (bukan anggota → 404 seperti ruang tidak ada, supaya keberadaan ruang orang lain tidak bocor),
   lalu peran owner/admin (selain itu 403 `khusus_admin`, ADR-P11). Aturan plugin di `app/plugins/host/siklus.py`.
 
 Router `/ruang` di sini hanya berisi rute plugin; `/ruang` milik R4 boleh menambah router lain di awalan yang sama.
 """
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -45,6 +47,23 @@ async def daftar_plugin(
                                 boleh_kelola=anggota is not None and _boleh_kelola(anggota.role))
 
 
+@router.get("/contributions")
+async def kontribusi_plugin(
+    *,
+    hid: RuangAktif,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Menu, aksi cepat, halaman, kartu, dan field form plugin yang aktif di ruang aktif untuk user ini (H3).
+
+    Membaca (`ruang_aktif`, header). Karyawan ruang usaha ditolak gerbang R5 (403 `khusus_admin`, route ini tidak di
+    `KARYAWAN_BOLEH`): selama H3 karyawan tidak mendapat kontribusi plugin apa pun (keputusan pembukaan sesi H3, B)."""
+    from app.plugins.host import titik
+    if hid is None:
+        return siklus.kontribusi([], {})
+    return siklus.kontribusi(await siklus.aktif_di_ruang(db, hid, user.id), await titik.kartu_ruang(db, user, hid))
+
+
 async def _ruang_kelola(db: AsyncSession, user: User, ruang_id: str) -> tuple[UUID, str]:
     """Ruang dari path → keanggotaan → peran pengelola. Mengembalikan (household_id, jenis ruang)."""
     try:
@@ -63,6 +82,8 @@ async def _ruang_kelola(db: AsyncSession, user: User, ruang_id: str) -> tuple[UU
 class PasangIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pengaturan: dict | None = None
+    # H3: kode izin yang ditampilkan di layar izin. Beda dengan manifest sekarang → 409 `izin_berubah`.
+    izin: list[Annotated[str, StringConstraints(max_length=60)]] | None = Field(default=None, max_length=40)
 
 
 @ruang_router.post("/{ruang_id}/plugins/{plugin_id}/pasang")
@@ -75,7 +96,8 @@ async def pasang_plugin(
 ):
     hid, jenis = await _ruang_kelola(db, user, ruang_id)
     m = siklus.manifest_atau_404(plugin_id)
-    inst = await siklus.pasang(db, user, hid, jenis, m, pengaturan=(body.pengaturan if body else None))
+    inst = await siklus.pasang(db, user, hid, jenis, m, pengaturan=(body.pengaturan if body else None),
+                               izin=(body.izin if body else None))
     await db.commit()
     return siklus.ke_api(m, inst)
 

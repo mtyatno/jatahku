@@ -27,9 +27,16 @@ export default function BerandaRegistry({ layout }) {
   const { mode } = useTheme();
   const shell = useBerandaShell();
   const { periods, periodIdx, isCurrentPeriod, selectedPeriod } = shell;
-  const { topbarSlot } = useOutletContext() || {};
+  const { topbarSlot, plugin } = useOutletContext() || {};
   const phone = useIsPhone();
   const uid = user?.id;
+  // Kartu Fitur Tambahan (Plugin H3) didaftarkan Layout sebelum kontribusinya sampai di sini; tata letak dihitung ulang
+  // saat daftar kartu plugin berubah (dipasang, dijeda, dicopot).
+  const kartuPlugin = plugin?.kontribusi?.cards || [];
+  const kunciPlugin = kartuPlugin.map(c => c.key).join('|');
+  const judulPlugin = useMemo(() => Object.fromEntries(kartuPlugin.map(c => [c.key, c.judul])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [kunciPlugin]);
 
   const [resp, setResp] = useState(() => (uid ? loadCache(cacheKeyData(uid)) : null));
   const [periodLoading, setPeriodLoading] = useState(false);
@@ -46,7 +53,8 @@ export default function BerandaRegistry({ layout }) {
     return () => events.forEach(e => window.removeEventListener(e, refresh));
   }, [refresh]);
 
-  const items = useMemo(() => itemsForData(layout, knownCard), [layout]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const items = useMemo(() => itemsForData(layout, knownCard), [layout, kunciPlugin]);
   const itemsKey = JSON.stringify(items);
 
   useEffect(() => {
@@ -88,7 +96,7 @@ export default function BerandaRegistry({ layout }) {
   return (
     <div className="space-y-6">
       <BerandaHeader shell={shell} user={user} prediction={prediction} periodLoading={periodLoading} topbarSlot={topbarSlot} />
-      <DashboardGrid layout={layout} data={cocok ? data : {}} ctx={ctx} />
+      <DashboardGrid layout={layout} data={cocok ? data : {}} ctx={ctx} judul={judulPlugin} />
     </div>
   );
 }

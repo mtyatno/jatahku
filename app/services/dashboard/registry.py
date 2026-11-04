@@ -173,8 +173,10 @@ def boleh(definisi: CardDef | None, karyawan: bool) -> bool:
 
 # `karyawan` tanpa nilai bawaan (review keamanan PR #185 temuan 2): pemanggil yang lupa menyebut peran gagal keras,
 # bukan diam-diam mendapat kartu umum.
-def katalog(karyawan: bool) -> list[dict]:
-    return [c.katalog() for c in REGISTRY.values() if boleh(c, karyawan)]
+def katalog(karyawan: bool, plugin: dict | None = None) -> list[dict]:
+    """`GET /dashboard/cards`: kartu inti untuk peran ini, lalu kartu plugin yang aktif di ruang ini (H3, `plugin` =
+    `titik.kartu_ruang`). Kartu plugin selalu `untuk="umum"`, jadi tidak pernah masuk katalog karyawan."""
+    return [c.katalog() for c in (*REGISTRY.values(), *(plugin or {}).values()) if boleh(c, karyawan)]
 
 
 def template(surface: str, karyawan: bool) -> list[dict]:
