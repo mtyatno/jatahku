@@ -5,9 +5,9 @@
   `layout`, saat menarik persetujuan, hapus akun, dan gabung akun. Kolomnya ada di KOTAK_DDL
   (app/services/kotak_struk/schema.py).
 - `proof_sample_consents`: persetujuan opt-in, satu baris per user (`user_id` PK, ON DELETE CASCADE).
-- `proof_samples`: antrean tinjauan sampel donasi (menunggu | disetujui | ditolak), `user_id` ON DELETE CASCADE
-  (indeks), `item_id` tanpa FK dan unik (uq_proof_sample_item: satu sampel per item), `decided_by` ON DELETE SET NULL,
-  indeks status. Berumur SAMPLE_TTL (30 hari).
+- `proof_samples`: antrean tinjauan sampel donasi (menunggu | disetujui; Tolak menghapus baris), `user_id` ON DELETE
+  CASCADE (indeks), `item_id` tanpa FK dan unik (uq_proof_sample_item: satu sampel per item), `decided_by` ON DELETE
+  SET NULL, indeks status. Berumur SAMPLE_TTL (7 hari); menarik persetujuan menyisakan yang sudah disetujui.
 - `ux_proof_rules_satu_nilai`: indeks unik parsial proof_rules (kind, rule_key) WHERE status = 'disetujui' AND kind IN
   ('logo', 'arah') — G8: dua persetujuan bersamaan untuk satu kunci logo/arah tidak bisa sama-sama lolos
   (`belajar.decide` menjawab 409, bukan 500). Belum ada aturan logo/arah di produksi saat migrasi ini dibuat, jadi
