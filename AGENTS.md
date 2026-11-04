@@ -233,7 +233,8 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
-## Deploy Checklist — Plugin H1: host plugin (a7e3c1f5d9b2)
+## Deploy Checklist — Plugin H1: host plugin (a7e3c1f5d9b2) — sudah jalan 2026-11-04
+Migrasi dijalankan pemilik di VPS; run deploy `e739245` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang".
 Menambah tabel `plugin_installations`, `entitlements`, `plugin_audit_log` dan endpoint `GET /plugins`,
 `POST /ruang/{id}/plugins/{plugin_id}/pasang|lanjut|jeda|copot` (04-kontrak-api.md §5). Migrasi **idempoten**
 (`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat API restart, dan tidak ada tabel lama yang
