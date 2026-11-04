@@ -41,6 +41,10 @@ DIIZINKAN = {
     "api/routes/user_settings.py": 1,    # peran user di ruang yang di-reset
     "bot/household_cmd.py": 1,           # cek sudah anggota household tujuan
     "scripts/ruang_paritas.py": 1,       # meniru kueri lama untuk dibandingkan
+    # Plugin H2: (1) perintah bot plugin = laporan per ruang milik user yang memasang plugin (ADR-P2, berawalan nama
+    # ruang); (2) penerima notifikasi plugin = owner/admin ruang tertentu (join); (3) pemilik ruang tertentu untuk
+    # zona waktu dan flag job plugin (join). Peran di satu ruang memakai `ruang.keanggotaan`.
+    "plugins/host/titik.py": 3,
 }
 
 

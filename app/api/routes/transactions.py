@@ -17,7 +17,9 @@ from app.models.models import (
     User, Transaction, Envelope, HouseholdType, TransactionSource
 )
 from app.services.behavior import BehaviorCheckResult, check_behavior
-from app.services.expense_rules import NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable
+from app.services.expense_rules import (
+    NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable, peringatan_plugin,
+)
 from app.services.kotak_struk.config import PDF_MAX_BYTES
 from app.services.kotak_struk.record import (
     NotRecordable, after_recorded, check_recordable, claim_failure_detail, claim_for_recording, heal_recorded,
@@ -86,6 +88,8 @@ class TransactionResponse(BaseModel):
 class TransactionCreateResponse(TransactionResponse):
     # Basic: kuota bulan ini habis sesudah input ini → pemberitahuan untuk user.
     quota_notice: str | None = None
+    # Plugin H2: peringatan Fitur Tambahan (titik `checks`), hanya informasi; null bila tidak ada.
+    peringatan: list[str] | None = None
 
 
 class SuggestEnvelopeRequest(BaseModel):
@@ -163,11 +167,12 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db, after=None, *, household_id) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None, *, household_id, peringatan: list[str] | None = None) -> TransactionCreateResponse:
     """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
     dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu),
     untuk ruang transaksinya (`household_id`): catatan di ruang usaha tidak memakai kuota Basic (ADR-P13)."""
     out = TransactionCreateResponse.model_validate(txn)
+    out.peringatan = peringatan or None
     if after is not None:
         await after()
     out.quota_notice = await quota_notice_after_input(user, db, household_id=household_id)
@@ -328,6 +333,8 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
             raise HTTPException(status_code=403, detail=daily_limit_message(envelope.name, check.details))
         else:
             raise HTTPException(status_code=403, detail=check.reason or "Transaksi tidak bisa dicatat.")
+    # Plugin H2: peringatan Fitur Tambahan (aturan bersama dengan bot, `expense_rules`), sebelum simpan.
+    peringatan = await peringatan_plugin(db, user, envelope, req.amount, req.description)
 
     if not await idempotency.reserve(user.id, req.client_ref):
         raise HTTPException(status_code=409, detail="Transaksi ini sedang diproses. Coba lagi sebentar.")
@@ -361,7 +368,7 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     async def after():
         await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
                            description=txn.description)
-    return await _created(txn, user, db, after=after, household_id=hid)
+    return await _created(txn, user, db, after=after, household_id=hid, peringatan=peringatan)
 
 
 async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID, *, karyawan: bool = False):

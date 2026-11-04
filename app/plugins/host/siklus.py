@@ -153,13 +153,19 @@ async def aktif_di_ruang(db: AsyncSession, household_id: UUID, user_id) -> list[
     """Plugin yang kontribusinya boleh tampil di ruang ini untuk user ini: berstatus `active`, tidak
     terkena saklar darurat, flag user aktif, dan masih dimuat registry. Dipakai H2/H3 (kartu, menu,
     perintah, job) — plugin dijeda, dicopot, atau dimatikan server tidak meninggalkan apa pun."""
+    return [m for m, _ in await aktif_dengan_instalasi(db, household_id, user_id)]
+
+
+async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID,
+                                 user_id) -> list[tuple[Manifest, PluginInstallation]]:
+    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2."""
     mati = await saklar_mati(db)
     hasil = []
     for pid, inst in sorted((await _instalasi_ruang(db, household_id)).items()):
         m = registry().get(pid)
         if inst.status != ACTIVE or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
             continue
-        hasil.append(m)
+        hasil.append((m, inst))
     return hasil
 
 

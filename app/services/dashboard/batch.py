@@ -3,6 +3,9 @@
 Satu `Sumber` per permintaan (satu snapshot), penyedia dijalankan berurutan di satu sesi
 database. Galat satu penyedia hanya mengisi `error` kartunya. Anggaran: batch p95 ≤ 500 ms,
 penyedia ≤ 150 ms; yang lewat dicatat di log dengan nama kartunya (01-kajian.md, "Penyedia data").
+
+Kartu plugin (H2): definisinya dari `plugin=` (kartu aktif di ruang ini, `titik.kartu_ruang`); datanya dari
+fungsi plugin lewat `PluginContext` (`titik.data_kartu`), diperiksa bentuknya sebelum dikirim.
 """
 from __future__ import annotations
 
@@ -57,10 +60,19 @@ def _galat(kode: str, detail: str | None = None) -> dict:
     return {"error": {"kode": kode, "detail": detail or PESAN[kode]}}
 
 
-async def satu_kartu(sumber: Sumber, item: dict) -> dict:
+async def _penyedia_plugin(sumber: Sumber, definisi, settings: dict) -> dict:
+    from app.plugins.host import titik
+    return await titik.data_kartu(sumber.db, sumber.user, sumber.hid, definisi, settings, sumber.periode)
+
+
+async def satu_kartu(sumber: Sumber, item: dict, plugin: dict | None = None) -> dict:
     """Data satu instans, atau `{"error": {...}}`. Tidak pernah melempar."""
-    definisi = registry.get(item.get("card"))
-    penyedia = PROVIDERS.get(item.get("card"))
+    definisi = registry.get(item.get("card"), plugin)
+    if definisi is not None and definisi.asal != "inti":
+        async def penyedia(s, settings, _d=definisi):
+            return await _penyedia_plugin(s, _d, settings)
+    else:
+        penyedia = PROVIDERS.get(item.get("card"))
     if definisi is None or penyedia is None:
         return _galat("kartu_tidak_dikenal")
     try:
@@ -84,10 +96,10 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     return data
 
 
-async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
+async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id, plugin: dict | None = None) -> dict:
     mulai = time.perf_counter()
     sumber = Sumber(user=user, db=db, periode=periode, hid=household_id)
-    data = {item["id"]: await satu_kartu(sumber, item) for item in items}
+    data = {item["id"]: await satu_kartu(sumber, item, plugin) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:
         terlama = ", ".join(f"{n} {t:.0f}" for n, t in sorted(sumber.waktu.items(), key=lambda x: -x[1])[:3])

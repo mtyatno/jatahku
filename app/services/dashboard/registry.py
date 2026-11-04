@@ -2,7 +2,9 @@
 
 Definisi kartu hidup di kode. Satu definisi = satu `key` (mis. `core.kpi.jatah`) dengan judul,
 ukuran yang didukung, sumber data, dan validator pengaturan. Penyedia data didaftarkan dengan
-key yang sama di `providers.py`. Kartu plugin akan mendaftar lewat titik ekstensi `cards` (H2).
+key yang sama di `providers.py`. Kartu plugin (titik `cards`, H2) tidak masuk `REGISTRY`: definisinya
+dibuat per ruang dan per user dari manifest plugin yang aktif (`app/plugins/host/titik.kartu_ruang`) dan
+diteruskan sebagai `plugin=` ke `get`, tata letak, dan batch.
 
 Teks yang tampil ke user (judul, deskripsi) dirakit di sini, satu tempat, supaya web, aplikasi,
 dan permukaan lain memakai kalimat yang sama (AGENTS.md "Plugin dan ruang" aturan 7).
@@ -120,8 +122,9 @@ TEMPLATE_BERANDA: tuple[dict, ...] = tuple(
 )
 
 
-def get(key: str) -> CardDef | None:
-    return REGISTRY.get(key)
+def get(key: str, plugin: dict[str, CardDef] | None = None) -> CardDef | None:
+    """Definisi kartu inti, atau kartu plugin yang aktif di ruang ini (`plugin` = `titik.kartu_ruang`, H2)."""
+    return REGISTRY.get(key) or (plugin or {}).get(key)
 
 
 def katalog() -> list[dict]:

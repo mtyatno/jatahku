@@ -1800,7 +1800,15 @@ async def post_init(application):
 
 def bot_commands() -> dict:
     """Perintah /nama → handler. Satu daftar untuk Telegram dan chat webapp
-    (app/bot/web_adapter.py), supaya keduanya selalu punya perintah yang sama."""
+    (app/bot/web_adapter.py), supaya keduanya selalu punya perintah yang sama.
+    Plugin H2: perintah baca Fitur Tambahan ditambahkan dari registry plugin (`app/bot/plugin_cmd.py`); validator
+    manifest menolak nama yang sama dengan perintah inti, jadi perintah inti tidak pernah tertimpa."""
+    from app.bot.plugin_cmd import perintah_plugin
+    return {**perintah_plugin(), **perintah_inti()}
+
+
+def perintah_inti() -> dict:
+    """Perintah bot inti (tanpa Fitur Tambahan)."""
     from app.bot.help_cmd import cmd_help, cmd_tanya
     from app.bot.nlp_cmd import handle_tagihan, handle_target
     from app.bot.link_cmd import cmd_link, cmd_unlink

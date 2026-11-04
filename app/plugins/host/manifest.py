@@ -20,7 +20,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Versi Plugin API yang disediakan host. Satu versi mayor hanya bertambah (01-kajian.md, "Versi dan kompatibilitas").
-PLUGIN_API_VERSION = (1, 0, 0)
+# 1.1 (H2): `PluginContext` (`app/plugins/sdk/`), `contributes.checks`, `contributes.nlp_kamus`, jadwal job baku.
+PLUGIN_API_VERSION = (1, 1, 0)
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")
@@ -59,6 +60,10 @@ POLA_CALLBACK_INTI = (
     r"^checkin_", r"^tpl_", r"^k[nxdo]_", r"^kt_", r"^t_", r"^ky_", r"^batch_", r"^bshift_", r"^blimit_", r"^struk_",
     r"^intentlearn:", r"^dlimit:", r"^fshift:", r"^sim:", r"^tanya:",
 )
+
+# Domain kode aturan AI Advisor inti (`app/services/advisor/render.py` TEMPLATE). Aturan plugin memakai domain sendiri
+# (mis. BU-01), supaya penekanan dan urutan chip inti tidak pernah menangkap insight plugin. Dicek tes H2.
+DOMAIN_ADVISOR_INTI = frozenset({"AMP", "DAT", "HAR", "INC", "PER", "PP", "TAB", "TAG"})
 
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,29}$")
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -144,7 +149,8 @@ class FieldForm(_Ketat):
 
 class Job(_Ketat):
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,39}$")
-    schedule: str = Field(min_length=1, max_length=60)
+    # H2: `hourly`, atau `daily HH:00` di zona waktu pemilik ruang (scheduler host berjalan sekali per jam).
+    schedule: str = Field(pattern=r"^(hourly|daily ([01]\d|2[0-3]):00)$")
 
 
 class PerintahBot(_Ketat):
@@ -197,6 +203,44 @@ class Kontribusi(_Ketat):
     reports: list[Laporan] = []
     settings_schema: dict | None = None
     setup: bool = False             # True = ada wizard; pasang → `installed` sampai `lanjut`
+    # H2: pemeriksaan sebelum simpan pengeluaran (peringatan saja, `expense_rules.peringatan_plugin`).
+    checks: list[str] = []
+    # H2: kamus Catat cepat, kategori (nama amplop tebakan) → kata. Hanya aktif di ruang yang memasang plugin
+    # (`txn_nlp.find_best_envelope`), dicoba sebelum kamus kategori inti; tidak pernah dipakai lintas ruang.
+    nlp_kamus: dict[str, list[str]] = {}
+
+    @field_validator("advisor_rules")
+    @classmethod
+    def _kode_aturan(cls, v):
+        for kode in v:
+            if not re.match(r"^[A-Z]{2,4}-\d{2}$", kode):
+                raise ValueError(f"kode aturan advisor '{kode}' harus berbentuk mis. BU-01")
+            if kode.split("-")[0] in DOMAIN_ADVISOR_INTI:
+                raise ValueError(f"kode aturan advisor '{kode}' memakai domain aturan inti")
+        return v
+
+    @field_validator("checks")
+    @classmethod
+    def _cek(cls, v):
+        for k in v:
+            if not re.match(r"^[a-z][a-z0-9_]{1,39}$", k):
+                raise ValueError(f"cek '{k}' harus huruf kecil/angka/garis bawah")
+        if len(set(v)) != len(v):
+            raise ValueError("cek ganda")
+        return v
+
+    @field_validator("nlp_kamus")
+    @classmethod
+    def _kamus(cls, v):
+        if len(v) > 30:
+            raise ValueError("nlp_kamus paling banyak 30 kategori")
+        for kategori, kata in v.items():
+            if not 1 <= len(kategori) <= 40 or not kata or len(kata) > 100:
+                raise ValueError(f"nlp_kamus '{kategori}': nama 1–40 karakter, 1–100 kata")
+            for k in kata:
+                if not re.match(r"^[a-z0-9][a-z0-9 ]{1,39}$", k):
+                    raise ValueError(f"nlp_kamus '{kategori}': kata '{k}' harus huruf kecil/angka, 2–40 karakter")
+        return v
 
 
 class Hak(_Ketat):
