@@ -26,10 +26,12 @@ async def compute_envelope_summaries(
     period_end: date | None = None,
     *,
     household_id,
+    payday_day: int | None = None,
 ) -> list[dict]:
     """Saldo tiap amplop aktif yang terlihat user (shared + personal miliknya) di
     ruang `household_id` (dari `app/services/ruang.py`; pemanggil yang menentukan).
-    Tanpa period_start/period_end → periode berjalan (payday user)."""
+    Tanpa period_start/period_end → periode berjalan. Siklusnya `payday_day` bila diberikan, selain itu siklus
+    ruang itu (`household_cycle.payday_ruang`: ruang keluarga = payday user, ruang usaha = bulan kalender)."""
     hid = household_id
     if not hid:
         return []
@@ -51,7 +53,9 @@ async def compute_envelope_summaries(
     group_names = {gid: gname for gid, gname in group_result.all()}
 
     now = date.today()
-    payday_day = getattr(user, 'payday_day', None) or 1
+    if not payday_day:
+        from app.services.household_cycle import payday_ruang
+        payday_day = await payday_ruang(db, user, hid)
     if period_start and period_end:
         # Historical period: rollover comes from the period before period_start
         prev_start, _ = get_budget_period(payday_day, period_start - timedelta(days=1))

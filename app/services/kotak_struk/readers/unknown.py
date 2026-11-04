@@ -1,6 +1,7 @@
 """Pembaca cadangan: bukti yang tidak dikenali pembaca mana pun. Status hanya dari judul (gagal/pending; juga judul status
 gagal/pending di badan), seperti struk belanja. Total: label total atau nominal utama bila teksnya resi aplikasi bank
-(tagihan, pulsa, bukti bayar saat saklar mati), selain itu nominal Rp terbesar."""
+(tagihan, pulsa, bukti bayar saat saklar mati), selain itu nominal Rp terbesar. Bila aplikasinya punya aturan belajar
+`label_total` yang disetujui (`ParseContext.rules`) dan labelnya menemukan nominal: total itu, keyakinan `tinggi`."""
 from __future__ import annotations
 
 import re
@@ -11,8 +12,8 @@ from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBaya
 from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
-from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.readers.profiles import detect_issuer
+from app.services.kotak_struk.readers.labels import WIB, learned_amount
+from app.services.kotak_struk.readers.profiles import detect_issuer, learned_paid_at, learned_profile
 from app.services.kotak_struk.readers.struk_belanja import apply_header_status, llm_fallback, parsed_from_receipt
 from app.services.receipt_parser import ReceiptParse, amounts_in, parse_receipt, printed_dates
 
@@ -38,6 +39,9 @@ class UnknownReader:
         return parsed
 
     async def _parse(self, doc: TextDoc, ctx: ParseContext) -> Parsed:
+        learned = self._learned(doc, ctx)
+        if learned is not None:
+            return learned
         # Seperti scan struk lama: foto yang tidak terbaca pun dicoba ke LLM cadangan (bila aktif).
         fb = await llm_fallback(ctx)
         if fb:
@@ -70,6 +74,39 @@ class UnknownReader:
             amounts=Amounts(total=total),
             confidence={"total": "sedang" if app_total is not None else "rendah"} if total is not None else {},
             evidence=evidence,
+        ))
+
+    @staticmethod
+    def _learned(doc: TextDoc, ctx: ParseContext) -> Parsed | None:
+        """Bukti tak dikenal dari aplikasi yang punya aturan belajar `label_total` yang disetujui (kunci dari
+        `kerangka.rule_key`; tahap 1 kunci profil, mis. resi tagihan Jago) dan label itu menemukan nominal: total itu,
+        keyakinan `tinggi` (spec §5), sebelum LLM cadangan dan `_app_receipt_total` (teksnya terbaca; aturan yang
+        disetujui lebih dipercaya dari tebakan). Tanggal dari label aturan `label_tanggal` bila ada, selain itu tebakan
+        biasa (tepat satu tanggal tercetak). Status tetap hanya dari judul (`parse`). None bila tanpa aturan atau labelnya
+        tidak menemukan nominal: pembacaan biasa."""
+        if not ctx.rules:
+            return None
+        lines = pc.clean_lines(doc.lines)
+        learned, _ = learned_profile(lines, detect_issuer(lines), ctx.rules)
+        body = pc.body_lines(lines)
+        total = learned_amount(body, learned.total)
+        if total is None:
+            return None
+        confidence = {"total": "tinggi"}
+        paid_at, paid_confidence = learned_paid_at(body, learned.date) or (None, None)
+        if paid_at is not None:
+            confidence["paid_at"] = paid_confidence
+        else:
+            rp = parse_receipt(doc.lines, ctx.today, merchant_aliases=ctx.merchant_aliases,
+                               merchant_profiles=ctx.merchant_profiles)
+            if len(printed_dates(rp.lines)) == 1:
+                _, paid_at = UnknownReader._legacy_meta(rp)
+        return Parsed(doc=DokumenBayar(
+            doc_type="tidak_dikenali",
+            paid_at=paid_at,
+            amounts=Amounts(total=total),
+            confidence=confidence,
+            evidence=["Jenis bukti tidak dikenali", "Total dari label aturan belajar"],
         ))
 
     @staticmethod

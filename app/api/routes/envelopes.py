@@ -18,7 +18,8 @@ from app.models.models import (
 from app.services.reserved import recurring_monthly_reserve
 from app.services.envelope_balance import compute_envelope_summaries
 from app.services.advisor.metrics import SAVING_PURPOSES, is_emergency_name
-from app.services.ruang import RuangAktif, ruang_amplop, ruang_amplop_satu, ruang_objek
+from app.services.ruang import RuangAktif, RuangDitolak, ruang_amplop, ruang_amplop_satu, ruang_objek
+from app.services import peran
 
 router = APIRouter()
 
@@ -142,7 +143,20 @@ async def list_envelopes(
         )
         .order_by(Envelope.created_at)
     )
-    return result.scalars().all()
+    rows = result.scalars().all()
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is None:
+        return rows
+    # R5, karyawan: hanya amplop yang diizinkan; anggaran disembunyikan bila tidak boleh melihat saldo.
+    out = []
+    for e in rows:
+        if not batasan.boleh_amplop(e.id):
+            continue
+        item = EnvelopeResponse.model_validate(e)
+        if not batasan.lihat_saldo:
+            item.budget_amount = Decimal("0")
+        out.append(item)
+    return out
 
 
 @router.get("/summary", response_model=list[EnvelopeSummary])
@@ -154,8 +168,13 @@ async def envelope_summary(
     *,
     hid: RuangAktif,
 ):
+    batasan = await peran.batasan_karyawan(db, user.id, hid)
+    if batasan is not None and not batasan.lihat_saldo:   # R5: saldo hanya bila admin mengizinkan
+        raise RuangDitolak.dari_peran(peran.PeranDitolak("khusus_admin"))
     # Rumus tinggal di satu tempat (dipakai juga oleh cocokkan saldo).
     rows = await compute_envelope_summaries(user, db, period_start, period_end, household_id=hid)
+    if batasan is not None:
+        rows = [r for r in rows if batasan.boleh_amplop(r["id"])]
     return [EnvelopeSummary(**r) for r in rows]
 
 

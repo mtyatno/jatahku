@@ -8,6 +8,7 @@ import {
   applyOps, clearHistory, loadHistory, looksLikeChange, saveHistory, setStatus, userMessage, userPhotoMessage,
 } from '../lib/chatHistory';
 import { quickChips } from '../lib/chatChips';
+import { askItems, pollDelay } from '../lib/chatPending';
 import { compressImage, thumbnailDataUrl } from '../lib/receiptImage';
 import { STAGE, stageLabel, stageSteps } from '../lib/receiptProgress';
 import { DRAG_SLOP, dragHeight, keyboardInset, pickSnap, sheetHeights } from '../lib/sheetGesture';
@@ -442,12 +443,58 @@ export default function ChatPanel({ open, onClose, draft = null, ruangLabel = nu
     el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
   }, [input]);
 
+  const messagesRef = useRef(messages); // daftar pesan terkini untuk timer penanya hasil bukti (tanpa re-run effect)
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // Naik setiap kali server menjawab "Masih dibaca" (op bukti `pending`): memulai ulang penanya hasil di bawah.
+  const [pendingNonce, setPendingNonce] = useState(0);
+
   const receive = useCallback((ops) => {
     setMessages(m => applyOps(m, ops).messages);
     const toasts = ops.filter(o => o?.type === 'toast' && o.text);
     if (toasts.length) showToast(toasts[toasts.length - 1].text);
     if (looksLikeChange(ops)) window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
+    if (ops.some(o => o?.pending === true && o.item)) setPendingNonce(n => n + 1);
   }, [showToast]);
+
+  // Bukti yang dibaca lewat batas tunggu bot: tanyakan hasilnya selagi panel terbuka (lib/chatPending.js) —
+  // segera saat panel dibuka, saat app kembali tampil, dan saat gelembung "Masih dibaca" baru datang; lalu dengan
+  // jeda yang membesar sampai server tidak lagi menyebut item itu `pending`. Saat dibuka/kembali tampil, tombol yang
+  // sesinya hampir habis ikut dirender ulang. Berhenti saat panel ditutup; dibuka lagi → tanya lagi.
+  useEffect(() => {
+    if (!open || !uid) return undefined;
+    let stopped = false;
+    let timer = null;
+    let attempt = 0;
+    const ask = async (refresh) => {
+      const items = askItems(messagesRef.current, Date.now(), { refresh });
+      if (!items.length || stopped) return;
+      const res = await api.chatBukti(items);
+      if (stopped) return;
+      if (res.ok) {
+        receive(res.ops);
+        // Hasil mengganti gelembung paling bawah dengan pesan yang lebih panjang: ikuti ke bawah bila user memang
+        // sedang di paling bawah (edit biasa tidak menggulir, seperti Telegram).
+        if (res.ops.length && atBottom.current) {
+          requestAnimationFrame(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; });
+        }
+        if (!res.pending.length) { attempt = 0; return; }
+      }
+      timer = setTimeout(() => ask(false), pollDelay(attempt++));
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      clearTimeout(timer);
+      attempt = 0;
+      ask(true);
+    };
+    ask(true);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [open, uid, receive, pendingNonce]);
 
   // AI Advisor proaktif (S16): saat panel dibuka, tarik item hari ini. Server yang membatasi
   // (sekali per hari, maks 2 permukaan), jadi buka-tutup panel tidak menggandakan pesan.
@@ -735,6 +782,12 @@ export default function ChatPanel({ open, onClose, draft = null, ruangLabel = nu
                   </div>
                   {mine && m.kind === 'photo' && m.status === 'sending' && photoStage?.id === m.id && (
                     <PhotoStageLabel stage={photoStage} />
+                  )}
+                  {!mine && m.pending === true && (
+                    <span className="mt-1 inline-flex items-center gap-1.5 text-[11.5px] text-gray-500">
+                      <span className="w-3 h-3 rounded-full border-2 border-gray-300 border-t-transparent animate-spin shrink-0" aria-hidden="true" />
+                      Hasilnya muncul di sini begitu selesai dibaca
+                    </span>
                   )}
                   {mine && m.status === 'failed' && (m.kind !== 'photo' || photoFiles.current.has(m.id)) && (
                     <button type="button" onClick={() => retry(m)}

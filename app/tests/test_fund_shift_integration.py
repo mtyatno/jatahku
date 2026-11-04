@@ -267,10 +267,10 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     # ── Struk: tanggal struk & feedback terbawa lewat isi dana / naikkan limit ─
 
-    def seed_receipt(self, env_name, amount):
+    def seed_receipt(self, env_name, amount, day="2026-10-10"):
         self.redis.store["txn:rcpt0001"] = json.dumps({
             "amount": amount, "desc": "Indomaret", "envs": {"0": str(self.env[env_name].id)},
-            "date": "2026-10-10", "scan_id": "scan-1"})
+            "date": day, "scan_id": "scan-1"})
 
     async def receipt_txn(self):
         async with self.Session() as db:
@@ -742,7 +742,9 @@ class FundShiftIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_basic_quota_bot_fund_shift_finishes_started_input(self):
         await self.fill_month(49)
-        self.seed_receipt("Makan", 30000)  # Makan sisa 10rb → kurang 20rb
+        # Struk bertanggal hari ini: kuota dihitung per bulan kalender, jadi tanggal tetap 10 Okt 2026 tidak lagi
+        # terhitung sejak November 2026 (tes ini sempat gagal tiap hari sejak 1 Nov).
+        self.seed_receipt("Makan", 30000, day=date.today().isoformat())  # Makan sisa 10rb → kurang 20rb
         with patch("app.services.receipt_scan.apply_feedback", new=AsyncMock()):
             call = await self.tap("t_rcpt0001_0")
             self.assertIn("Kurang <b>Rp20rb</b>", call.args[0])

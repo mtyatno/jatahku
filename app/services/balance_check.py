@@ -146,10 +146,11 @@ def _latest_check_query(hid):
     )
 
 
-def _in_current_period(check, user) -> bool:
-    """Cek dibuat di periode budget berjalan user (tanggal lokal server, sama
-    dengan konvensi date.today() untuk transaction_date penyesuaian)."""
-    period_start, _ = get_budget_period(getattr(user, "payday_day", 1) or 1)
+def _in_current_period(check, user, payday_day: int | None = None) -> bool:
+    """Cek dibuat di periode budget berjalan ruangnya (tanggal lokal server, sama
+    dengan konvensi date.today() untuk transaction_date penyesuaian). `payday_day` dari
+    `household_cycle.payday_ruang`; tanpa itu payday user (ruang keluarga)."""
+    period_start, _ = get_budget_period(payday_day or getattr(user, "payday_day", 1) or 1)
     return check.created_at.astimezone().date() >= period_start
 
 
@@ -291,7 +292,8 @@ async def undo_balance_check(user, db, check_id, *, household_id) -> dict:
     if str(latest.user_id) != str(user.id):
         raise BalanceCheckError(403, "Hanya pembuat penyesuaian yang bisa membatalkan")
     # Penyesuaian periode lalu sudah masuk snapshot rollover; membatalkannya membuat rollover basi.
-    if not _in_current_period(latest, user):
+    from app.services.household_cycle import payday_ruang
+    if not _in_current_period(latest, user, await payday_ruang(db, user, hid)):
         raise BalanceCheckError(400, "Cek saldo dari periode lalu tidak bisa dibatalkan")
 
     await db.execute(
@@ -320,9 +322,11 @@ async def get_status(user, db, *, household_id) -> dict:
     )).scalar() or 0
     # Selisih memuat amplop pribadi pembuatnya (privasi) → hanya terlihat oleh pembuat cek itu.
     mine = latest is not None and str(latest.user_id) == str(user.id)
+    from app.services.household_cycle import payday_ruang
+    payday = await payday_ruang(db, user, hid)
     return {
         "last_checked_at": latest.created_at if latest else None,
         "last_gap": latest.gap if mine else None,
-        "undo_check_id": latest.id if mine and _in_current_period(latest, user) else None,
+        "undo_check_id": latest.id if mine and _in_current_period(latest, user, payday) else None,
         "member_count": member_count,
     }

@@ -536,6 +536,26 @@ async def reset_data(
         filename = f"jatahku-backup-{_date.today().isoformat()}.json"
         email_sent = send_data_backup_email(user.email, user.name, export, filename)
 
+    # R5 (catatan review R3): reset ruang usaha menghapus catatan semua anggota, sedangkan cadangan email hanya berisi
+    # catatan owner. Jejaknya dicatat di log audit ruang: jumlah catatan per pencatat, tanpa nominal.
+    from app.services import peran
+    from app.services.ruang import ruang_jenis
+    if str(await ruang_jenis(db, hid)) == "usaha":
+        per_pencatat = {}
+        if env_ids:
+            for uid, n in (await db.execute(
+                select(Transaction.user_id, func.count()).where(
+                    Transaction.envelope_id.in_(env_ids), Transaction.is_deleted == False)
+                .group_by(Transaction.user_id)
+            )).all():
+                per_pencatat[str(uid)] = int(n)
+        peran.audit(db, hid, user.id, "reset_ruang", catatan_per_pencatat=per_pencatat,
+                    jumlah_amplop=len(env_ids), cadangan_email=bool(email_sent))
+        from app.models.models import RuangDraf
+        await db.execute(update(RuangDraf).where(RuangDraf.household_id == hid,
+                                                 RuangDraf.status == peran.ST_MENUNGGU)
+                         .values(status=peran.ST_DIBATALKAN))
+
     # --- Hard delete in FK-safe order ---
     if env_ids:
         await db.execute(delete(PendingTransaction).where(PendingTransaction.envelope_id.in_(env_ids)))

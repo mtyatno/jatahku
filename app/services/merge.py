@@ -8,8 +8,9 @@ from app.models.models import (
     Transaction, Income, Allocation, MonthlySnapshot,
     RecurringTransaction, Goal, BalanceCheck,
     Notification, NotificationPreference, UserStreak,
-    PendingTransaction, PaymentOrder, Report, ReportSettings,
+    PendingTransaction, PaymentOrder, ProofRule, Report, ReportSettings,
 )
+from app.services.kotak_struk import belajar
 
 from app.services.ruang import keanggotaan_keluarga, ruang_keluarga_id
 
@@ -317,6 +318,14 @@ async def merge_users(
     )
     await db.execute(
         delete(UserStreak).where(UserStreak.user_id == source_user_id)
+    )
+
+    # 7c. Suara belajar Kotak Struk milik source dilupakan (suara dihapus, aturan dihitung ulang; tanpa ini CASCADE
+    # menghapusnya diam-diam dan hitungan aturan tidak turun, G7). Jejak keputusan admin pindah ke target.
+    await belajar.forget_user(db, source_user_id)
+    await db.execute(
+        update(ProofRule).where(ProofRule.decided_by == source_user_id)
+        .values(decided_by=target_user_id)
     )
 
     # 8. Delete source user

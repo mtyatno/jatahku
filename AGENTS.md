@@ -207,9 +207,9 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `a7c4e2b9d1f3`. Lalu `sudo systemctl restart jatahku`.
 6. Uji (saklar mati): kirim foto struk ke bot → pesan struk tanpa baris sisa scan; kirim PDF → hasil, bukan
    "📄 File belum didukung"; `sudo ls -A /var/lib/jatahku/kotak` kosong setelah item selesai; `sudo grep -c '^KOTAK_HMAC_KEY=' /opt/jatahku/.env` → 1.
-7. **Saklar `features.receipt_inbox` tetap mati** sampai gerbang korpus A14 lulus: `cd /opt/jatahku/app && sudo -u jatahku
-   /opt/jatahku/venv/bin/python -m app.scripts.kotak_corpus eval --real-only` (kode keluar 0; `docs/kotak-struk.md` bagian
-   "Alat korpus dan gerbang rilis"). Menyalakannya = keputusan pemilik produk.
+7. **Saklar `features.receipt_inbox` tetap mati** sampai urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"
+   (gerbang korpus A14 diganti keputusan pemilik produk 1 Nov 2026; mulai dengan checklist "Kotak Struk belajar lintas
+   user (e7b3d5a9c1f4)" di bawah). `kotak_corpus eval --real-only` tetap dijalankan dan dilaporkan, bukan gerbang.
 
 ## Deploy Checklist — Plugin R1: model ruang (1c7e5a9d3b20) — sudah jalan 2026-11-01
 Menambah `households.type` (bawaan `rumah_tangga`), `incomes.kind` (bawaan `pemasukan`) beserta backfill, dan unik
@@ -232,6 +232,55 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `SELECT kind, COUNT(*) FROM incomes GROUP BY 1` → empat jenis masuk akal (transfer = baris bernominal 0);
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
+
+## Deploy Checklist — Plugin R8: prive dua sisi (tanpa migrasi)
+Endpoint baru `POST /prive` dan nilai baru `incomes.kind = prive` (kolom String, tanpa migrasi). Tanpa paket, `.env`,
+atau perubahan tampilan; belum bisa dipakai siapa pun sebelum ada ruang usaha (R4, flag `ruang_usaha_users`).
+1. Merge, tunggu deploy hijau (`api.jatahku.com/health` → commit baru).
+2. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m app.scripts.ruang_paritas` → kode keluar 0.
+
+## Deploy Checklist — Plugin H1: host plugin (a7e3c1f5d9b2) — sudah jalan 2026-11-04
+Migrasi dijalankan pemilik di VPS; run deploy `e739245` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang".
+Menambah tabel `plugin_installations`, `entitlements`, `plugin_audit_log` dan endpoint `GET /plugins`,
+`POST /ruang/{id}/plugins/{plugin_id}/pasang|lanjut|jeda|copot` (04-kontrak-api.md §5). Migrasi **idempoten**
+(`if_not_exists`): `lifespan` (`create_all`) membuat tabel yang sama saat API restart, dan tidak ada tabel lama yang
+berubah, jadi tidak ada jendela 500. Belum ada plugin di `app/plugins/` (yang pertama datang di U1) dan belum ada
+klien yang memanggil endpoint ini (H3), jadi tidak ada perubahan perilaku. Tanpa paket atau `.env` baru.
+1. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru.
+2. `ls /opt/jatahku/app/alembic/versions/ | grep a7e3c1f5d9b2`; `alembic current` harus `c5r5a8e2d417` (Plugin R5)
+   sebelum upgrade; bila belum, jalankan checklist "Plugin R5" dulu (migrasi H1 menginduk ke migrasi R5).
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
+   milik `postgres`, jalankan sebagai postgres); `alembic current` harus `a7e3c1f5d9b2`.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d plugin_installations'` (indeks parsial
+   `uq_plugin_installation_ruang ... WHERE owner_id IS NULL`); `journalctl -u jatahku --since "<waktu deploy>" | grep
+   "plugin dimuat"` → `plugin dimuat: (tidak ada)` tanpa baris `plugin tidak dimuat`; dengan token sendiri
+   `GET https://api.jatahku.com/plugins` → `[]`.
+- **Saklar darurat** (insiden pada plugin tertentu): `PUT /admin/settings/plugin_saklar_darurat?value=<id>[,<id>]`
+  (token admin). Berlaku pada permintaan berikutnya, tanpa restart; status per ruang tidak berubah. Matikan dengan
+  `value=` kosong.
+
+## Deploy Checklist — Plugin R5: peran, batasan, persetujuan (c5r5a8e2d417) — sudah jalan 2026-11-04
+Migrasi dijalankan pemilik di VPS; run deploy `9d26d7c` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang".
+Menambah empat tabel baru (`ruang_batasan`, `ruang_undangan`, `ruang_draf`, `ruang_audit`) dan route `/ruang/{id}/…`,
+`/ruang/gabung`, `/persetujuan/saya`. **Tidak ada kolom baru di tabel lama**, jadi tidak ada jendela 500: `lifespan`
+(`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten (`if_not_exists`). Perilaku baru hanya
+untuk peran `member` di ruang **usaha**, dan ruang usaha hanya terbuka bagi user di flag `ruang_usaha_users` (R4), jadi
+tidak ada yang berubah untuk user lain. Karyawan yang diundang juga harus masuk flag itu (`/ruang/gabung` di luar flag →
+403 `ruang_usaha_belum_dibuka`). Tanpa paket baru, `.env`, atau perubahan tampilan.
+1. Sebelum merge: checklist "Plugin R3" dan "Plugin R4" sudah jalan, dan `alembic current` di VPS = `2d51b9031a6b` (siklus household).
+   Bila belum, jalankan checklist siklus household dulu.
+2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
+   `ls /opt/jatahku/app/alembic/versions/ | grep c5r5a8e2d417`.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`users`
+   milik `postgres`, FK ke sana butuh hak REFERENCES: jalankan sebagai postgres; cek pemiliknya dengan query di checklist
+   Kotak Struk); `alembic current` harus `c5r5a8e2d417`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job
+   deploy yang gagal.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d ruang_draf'` (indeks unik parsial `uq_ruang_draf_client_ref`),
+   lalu dengan token sendiri: `GET https://api.jatahku.com/ruang/<id ruang keluarga>/anggota` → 404 (route hanya untuk
+   ruang usaha); catat transaksi di web dan bot seperti biasa → 201; `ruang_paritas` kode keluar 0. Di ruang usaha uji
+   (flag pemilik): undang akun kedua sebagai karyawan (akun itu ditambahkan ke flag), atur batas nominal kecil, catat di
+   atasnya dari akun karyawan → "menunggu persetujuan", setujui dari akun pemilik.
+5. Flag `*` tetap menunggu V1 (Paket Usaha dan uji beta), seperti catatan checklist R4.
 
 ## Deploy Checklist — Plugin R4: membuat dan berpindah ruang (tanpa migrasi, flag `ruang_usaha_users`)
 `GET`/`POST /ruang`, pemilih ruang di sidebar dan header HP, dan header `X-Jatahku-Ruang` dari web dan aplikasi. Selama
@@ -368,9 +417,9 @@ Sudah jalan 29 Okt 2026 (PR #132, deploy `bc4572e`; aturan nginx `/bagikan` terp
 3. Pasang aturan nginx `/bagikan` (file HestiaCP `nginx.ssl_conf_bagikan`): langkah dan hasil yang diharapkan ada di
    `docs/kotak-struk.md` bagian "Menyalakan saklar". Boleh langsung sesudah merge; wajib aktif sebelum PR
    `share_target`.
-4. Menyalakan saklar (gerbang A14, batas unggah `api.jatahku.com`, keputusan hari pertama, saklar, uji HP tanpa share,
-   PR `share_target`, uji share): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke
-   sini.
+4. Menyalakan saklar (merge dan migrasi `e7b3d5a9c1f4`, `privacy.html` dan DPIA, laporan `eval --real-only` (bukan
+   gerbang), `kotak_hari_pertama` dry-run lalu `--apply`, saklar, uji HP tanpa share, PR `share_target`, uji share,
+   pemantauan 2 minggu): ikuti urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
 ## Deploy Checklist — Siklus anggaran per household (2d51b9031a6b) — sudah jalan 2026-11-01
 Menambah `households.payday_day` (siklus milik rumah; NULL = belum dimigrasi), `monthly_snapshots.allocated_amount` dan
@@ -435,6 +484,48 @@ sesudahnya tidak menemukan siapa pun untuk diberi tahu. Bila job itu sudah jalan
    kosong (job 00:05 tidak menyamakan siapa pun lagi). Bila dry-run menandai household CAMPURAN, cek dashboard anggota
    yang berubah: sisa amplop masuk akal, tanpa transaksi terhitung ganda.
 
+## Deploy Checklist — Kotak Struk belajar lintas user (e7b3d5a9c1f4)
+Tahap 1 belajar lintas user (branch `feat/kotak-belajar`, label `migrasi`): kolom `receipt_scans.layout` (JSONB NULL),
+tabel `proof_rule_votes` dan `proof_rules` (indeks `ix_proof_rules_status`), API Admin `/admin/kotak/*`, bagian "Aturan
+belajar" di kartu Scan Struk, perintah `app.scripts.kotak_hari_pertama`, dan langkah 3–4 job `kotak_maintenance`.
+Migrasi **idempoten**: `lifespan` (`KOTAK_DDL` + `create_all`) membuat kolom dan tabel yang sama saat API restart; migrasinya
+tetap harus dijalankan, kalau tidak `deploy.sh` berakhir exit 2. **Tanpa paket, folder, atau `.env` baru.** Deploy ini
+tidak mengubah saklar `features.receipt_inbox`. Detail: `docs/kotak-struk.md` bagian "Belajar lintas user".
+Sebelum merge (aman untuk kode lama):
+1. Hak tabel: restart dari deploy (sebelum migrasi) menjalankan `KOTAK_DDL` (`ALTER TABLE receipt_scans ADD COLUMN IF NOT
+   EXISTS layout`) dan `create_all` (dua tabel baru ber-FK ke `users`) sebagai user DB aplikasi, jadi `jatahku` harus
+   pemilik `receipt_scans` (`bisa_alter` = t) dan boleh REFERENCES `users` (`bisa_fk` = t); kalau tidak, API gagal start.
+   Pakai query di checklist Kotak Struk Bagian A dengan `IN ('receipt_scans','users','alembic_version')`. Bila ada yang
+   bukan `jatahku`, sebagai `postgres`: `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+2. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
+   `ls /opt/jatahku/app/alembic/versions/ | grep e7b3d5a9c1f4`; `alembic current` harus `a7e3c1f5d9b2` (Plugin H1)
+   sebelum upgrade. Revisi lain = main sudah punya migrasi yang lebih baru: berhenti, `down_revision` PR ini harus
+   disesuaikan dulu (satu head).
+3. **`alembic upgrade head` sesudah deploy selesai** (langkah 2). Kartu Scan Struk (`GET /admin/receipt-scans/stats`
+   membaca `proof_rules` untuk `rules_pending`) dan API `/admin/kotak/*` sudah jalan sejak restart deploy karena
+   `lifespan` membuat tabel dan kolomnya (`create_all` + `KOTAK_DDL`), jadi migrasi ini tidak membuat apa pun lagi (IF NOT
+   EXISTS) dan hanya menandai revisi: `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head`
+   (bila `receipt_scans`/`users` milik `postgres`, jalankan sebagai postgres); `alembic current` harus `e7b3d5a9c1f4`.
+   `sudo systemctl restart jatahku` sesudahnya mengikuti urutan umum, tidak wajib. Bila `create_all`/`KOTAK_DDL` gagal
+   (biasanya hak tabel, langkah 1), API tidak start sama sekali: deploy berhenti di "API menjalankan … tidak menjawab"
+   (exit 1) sebelum cek migrasi; lihat `journalctl -u jatahku`.
+4. Jalankan ulang job deploy yang gagal (Actions → run itu → "Re-run failed jobs"), seperti langkah 5 "Urutan merge PR
+   bermigrasi", supaya "Verifikasi versi yang tayang" memeriksa `/health` dan `version.json`.
+5. Verifikasi:
+   - `sudo -u postgres psql jatahku_db -c '\d proof_rules'` (unik `uq_proof_rule` pada `kind, rule_key, value`, indeks
+     `ix_proof_rules_status`, FK `decided_by` ON DELETE SET NULL), `-c '\d proof_rule_votes'` (PK `kind, rule_key, value,
+     user_id`, FK `user_id` ON DELETE CASCADE), dan `-c '\d receipt_scans' | grep layout` (`jsonb`).
+   - Dengan token admin: `GET https://api.jatahku.com/admin/kotak/rules` → 200 dengan `counts` (`{"menunggu": 0,
+     "disetujui": 0, "ditolak": 0, "dicabut": 0}` di hari pertama) dan `rules: []`; `GET /admin/receipt-scans/stats` →
+     200 dengan `rules_pending`; Admin → Dashboard → Scan Struk menampilkan bagian "Aturan belajar". Token user biasa →
+     403 di `/admin/kotak/rules`.
+   - Sesudah menit 17 jam berikutnya: `journalctl -u jatahku --since "1 hour ago" | grep kotak_maintenance` tanpa baris
+     `gagal` (langkah `purge_layouts` dan `reconcile_proof_rules`).
+6. Menyalakan saklar (`privacy.html` + DPIA, laporan `eval --real-only`, `kotak_hari_pertama` dry-run lalu `--apply`,
+   saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
+   urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.
@@ -453,12 +544,12 @@ Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). B
 Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, bentuk API di `04-kontrak-api.md`). Buka sesi dengan `/sesi-plugin <kode>`, tutup dengan `/tutup-sesi-plugin`. Satu sesi = satu branch `plugin/<kode>-<slug>` = satu PR berjudul `Plugin <kode>: <nama>`; status di `docs/plugin/PROGRESS.md`, serah-terima di `docs/plugin/SESI-LOG.md`. PR berlabel `review-keamanan` direview sesi Claude Code terpisah sebelum merge, dan temuan keamanan dikerjakan sebelum fitur dilanjutkan.
 1. **Ruang dari server, bukan dari klien.** Membaca memakai `ruang_aktif` (header `X-Jatahku-Ruang`). Menulis objek yang sudah ada atau yang punya induk menentukan ruang dari objek itu (`ruang_amplop`, `ruang_amplop_satu`, `ruang_objek` di `app/services/ruang.py`), lalu memeriksa keanggotaan; objek ruang lain = 404, dua ruang dalam satu permintaan = 400 `lintas_ruang`. Objek baru tanpa induk memakai ruang dari header yang sah (`ruang_aktif`). `ruang_id` dari body atau query tidak pernah dipercaya. Route menerima ruang header sebagai parameter keyword-only `*, hid: RuangAktif` dan meneruskannya ke services sebagai `household_id`; services tidak pernah mencari household dari keanggotaan sendiri. Kueri `HouseholdMember.user_id == …` baru dan route non-GET baru yang memakai `ruang_aktif` dijaga `app/tests/test_ruang_pagar.py`.
 2. **Chat selalu ruang keluarga.** Handler bot memakai `ruang_keluarga(user)`. Tidak ada transaksi ruang usaha atau Fitur Tambahan lewat chat; perintah plugin hanya membaca dan menyatakan `audience` (data keuangan usaha hanya untuk pemilik dan admin).
-3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan.
+3. **Batasan peran ditegakkan di server** pada setiap jalur tulis: web, aplikasi, antrean offline (`/transactions/batch`), dan kirim ulang (`client_ref`). Frontend hanya menampilkan. Karyawan (peran `member` di ruang usaha) memakai **tolak-bawaan** (R5): `ruang_aktif` hanya mengizinkan route di `KARYAWAN_BOLEH`, dan pembantu ruang objek (`ruang_objek`, `ruang_amplop`, `ruang_amplop_satu`) menolak karyawan kecuali dipanggil dengan `karyawan=True` (hanya jalur pencatatan: catat/hapus transaksi, pemasukan). Route baru otomatis tertolak untuk karyawan; membukanya butuh alasan dan tes di `app/tests/test_ruang_peran.py`. Batasan per catatan, jam kerja, jendela ubah, dan draf persetujuan hanya di `app/services/peran.py`.
 4. **Plugin hanya lewat `PluginContext`.** Kode di `app/plugins/<id>/` tidak mengimpor model atau route inti dan tidak menulis ke tabel inti secara langsung.
 5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
 6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
 7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
-8. **Tidak ada kueri lintas ruang** selain Prive. Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
+8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
 9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
-- **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1); saklar darurat plugin (H1). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
+- **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1; umumnya `plugin_<id>_users`, dibaca host); saklar darurat `plugin_saklar_darurat` (H1, daftar id plugin). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
 - **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.

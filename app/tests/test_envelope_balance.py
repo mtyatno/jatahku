@@ -11,6 +11,7 @@ import uuid
 from datetime import date
 from decimal import Decimal as D
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app.tests.fakes import FakeResult, db_with, executed_sql
 
@@ -51,9 +52,19 @@ def fake_db():
 
 
 class EnvelopeSummaryCharacterizationTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Fake DB berskrip: kueri jenis ruang (`payday_ruang`) memakan satu hasil skrip. Tes ini ruang keluarga,
+        # jadi siklusnya payday user, sama dengan sebelum siklus per ruang.
+        p = patch("app.services.household_cycle.payday_ruang",
+                  AsyncMock(side_effect=lambda db, user, hid: getattr(user, "payday_day", None) or 1))
+        p.start()
+        self.addCleanup(p.stop)
+
     async def test_route_output(self):
         from app.api.routes.envelopes import envelope_summary
-        a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db(), hid=HID)
+        from unittest.mock import AsyncMock, patch
+        with patch("app.services.peran.batasan_karyawan", AsyncMock(return_value=None)):   # bukan karyawan (R5)
+            a, b = await envelope_summary(period_start=PS, period_end=PE, user=USER, db=fake_db(), hid=HID)
         self.assertEqual((a.allocated, a.rollover, a.spent), (D("1000000"), D("50000"), D("300000")))
         self.assertEqual((a.remaining, a.reserved, a.free), (D("750000"), D("100000"), D("650000")))
         self.assertEqual(a.group_name, "Kebutuhan")

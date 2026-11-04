@@ -1,13 +1,13 @@
-"""Kunci batas frekuensi per user (ruling R11, `app/core/rate_limit.py`).
+"""Kunci batas frekuensi per user (`app/core/rate_limit.py`).
 
-Sebelum R11 kuncinya sha256 dari teks header Authorization, jadi satu user mendapat ember baru dengan mengganti huruf
+Dulu kuncinya sha256 dari teks header Authorization, jadi satu user mendapat ember baru dengan mengganti huruf
 besar-kecil skema (`HTTPBearer` menerima "bearer" dan "BEARER"), menambah karakter yang diabaikan PyJWT
 (`<token>!!!!` tetap lolos verifikasi), atau login ulang (token baru). Sekarang kuncinya user yang terautentikasi:
 klaim `sub` dari access token yang sah; tanpa token yang sah, alamat IP.
 
 Di sini: fungsi kuncinya (permintaan sintetis, token asli dari `create_access_token`), pendelegasian
-`transactions.transcribe_key_func`, dan batas `/transactions/transcribe` lewat HTTP dengan `get_current_user` yang asli
-(hanya `get_db` diganti). Batas laporan: app/tests/test_laporan_api.py (`BatasFrekuensiTests`).
+`transactions.transcribe_key_func` dan `bot_chat.chat_key_func`, serta batas `/transactions/transcribe` (20/jam) dan
+`/bot/chat/message` (60/menit) lewat HTTP dengan `get_current_user` yang asli (hanya `get_db` diganti).
 Bagian HTTP butuh `aiosqlite`; dilewati bila tidak ada.
 Run: python -m unittest app.tests.test_rate_limit -v
 """
@@ -20,6 +20,7 @@ import logging
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from itertools import cycle, islice
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -30,7 +31,7 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import configure_mappers
 from starlette.requests import Request
 
-from app.api.routes import transactions
+from app.api.routes import bot_chat, transactions
 from app.core.config import get_settings
 from app.core.database import Base, get_db
 from app.core.rate_limit import kunci_per_user
@@ -44,6 +45,8 @@ settings = get_settings()
 
 IP = "203.0.113.7"
 RAHASIA_LAIN = "rahasia-lain-yang-cukup-panjang-untuk-hs256-32+"   # bukan JWT_SECRET server
+BATAS_TRANSCRIBE = 20   # per jam: `@limiter.limit("20/hour")` di transactions.py
+BATAS_CHAT = 60         # per menit: `@limiter.limit("60/minute")` di bot_chat.py (`/message`)
 
 
 def permintaan(authorization: str | None = None, ip: str | None = IP) -> Request:
@@ -74,7 +77,7 @@ class KunciPerUserTests(unittest.TestCase):
         self.assertEqual(kunci_per_user(permintaan(f"Bearer {self.token_budi}")), f"user:{self.budi}")
 
     def test_semua_bentuk_header_user_yang_sama_satu_kunci(self):
-        # Persis yang dilaporkan review: tiap bentuk ini lolos get_current_user sebagai user yang sama.
+        # Tiap bentuk ini lolos get_current_user sebagai user yang sama.
         login_ulang = create_access_token(str(self.ani), sid=str(uuid.uuid4()))   # sesi dan token baru
         self.assertNotEqual(login_ulang, self.token_ani)
         t = self.token_ani
@@ -150,10 +153,31 @@ class KunciPerUserTests(unittest.TestCase):
             transactions.transcribe_key_func(permintaan(f"BEARER {t}!!")), f"user:{self.ani}",
         )
 
+    def test_chat_key_func_memakai_kunci_yang_sama_dengan_awalan_chat(self):
+        t = self.token_ani
+        for header in (None, f"Bearer {t}", f"bearer {t}!!!!", "Bearer tidak-sah", f"Basic {t}"):
+            with self.subTest(header):
+                self.assertEqual(
+                    bot_chat.chat_key_func(permintaan(header)), "chat:" + kunci_per_user(permintaan(header)),
+                )
+        self.assertEqual(bot_chat.chat_key_func(permintaan(f"BEARER {t}!!")), f"chat:user:{self.ani}")
+        # Tanpa token sah: alamat IP (tetap berawalan "chat:").
+        self.assertEqual(bot_chat.chat_key_func(permintaan(None)), f"chat:{IP}")
 
-@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
-class TranscribeBatasTests(unittest.IsolatedAsyncioTestCase):
-    """`/transactions/transcribe` (20/jam) memakai `transcribe_key_func`: cacat yang sama ada di sana sebelum R11."""
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")   # diwarisi subkelas
+class _BatasHttp(unittest.IsolatedAsyncioTestCase):
+    """Dasar tes batas lewat HTTP: SQLite in-memory berisi dua user (Ani dan Budi), `get_current_user` yang asli
+    (token asli, user dibaca dari database; hanya `get_db` diganti), limiter rute dikosongkan dan dinyalakan.
+    Subkelas mengisi `router`, `prefix`, `limiter` dan mengganti pemroses permintaan di `siapkan_stub`, supaya
+    yang diuji hanya autentikasi dan batas."""
+
+    router = None
+    prefix = ""
+    limiter = None
+
+    def siapkan_stub(self):
+        raise NotImplementedError
 
     async def asyncSetUp(self):
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -172,26 +196,35 @@ class TranscribeBatasTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
 
         app = FastAPI()
-        app.state.limiter = transactions.limiter
+        app.state.limiter = self.limiter
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-        app.include_router(transactions.router, prefix="/transactions")
+        app.include_router(self.router, prefix=self.prefix)
 
         async def _db():
             async with self.Session() as db:
                 yield db
         app.dependency_overrides[get_db] = _db   # `get_current_user` yang asli: token asli, user dibaca dari database
 
-        limiter = transactions.limiter
+        limiter = self.limiter
         self.addCleanup(setattr, limiter, "enabled", limiter.enabled)
         self.addCleanup(limiter.reset)
         limiter.reset()
         limiter.enabled = True
-        proses = patch.object(transactions, "transcribe_audio", AsyncMock(return_value="kopi 35 ribu"))
-        proses.start()
-        self.addCleanup(proses.stop)
+        self.siapkan_stub()
 
         self.klien = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
         self.addAsyncCleanup(self.klien.aclose)
+
+
+class TranscribeBatasTests(_BatasHttp):
+    """`/transactions/transcribe` (20/jam) memakai `transcribe_key_func`."""
+
+    router, prefix, limiter = transactions.router, "/transactions", transactions.limiter
+
+    def siapkan_stub(self):
+        proses = patch.object(transactions, "transcribe_audio", AsyncMock(return_value="kopi 35 ribu"))
+        proses.start()
+        self.addCleanup(proses.stop)
 
     async def transkripsi(self, authorization: str | None):
         header = {} if authorization is None else {"Authorization": authorization}
@@ -204,7 +237,7 @@ class TranscribeBatasTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             login_ulang = (await auth_sessions.start_session(db, self.ani)).access_token
         self.assertNotEqual(login_ulang, token)
-        for n in range(20):
+        for n in range(BATAS_TRANSCRIBE):
             r = await self.transkripsi(f"Bearer {token}")
             self.assertEqual(r.status_code, 200, f"panggilan ke-{n + 1}: {r.text}")
         varian = {
@@ -223,11 +256,61 @@ class TranscribeBatasTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200, r.text)
 
     async def test_permintaan_tanpa_token_sah_ditolak_sebelum_dihitung(self):
-        # Ditolak get_current_user (401) sebelum batas diperiksa: tidak memakai ember siapa pun.
-        for header in (None, "Bearer bukan-token", f"Bearer {create_refresh_token(str(self.ani.id))}"):
-            with self.subTest(header):
-                self.assertEqual((await self.transkripsi(header)).status_code, 401)
-        r = await self.transkripsi(f"Bearer {create_access_token(str(self.ani.id))}")
+        # Ditolak get_current_user (401) sebelum batas diperiksa: tidak memakai ember siapa pun. Tiap bentuk dikirim
+        # lebih sering daripada batasnya, jadi bila ada yang dihitung (ember alamat IP atau ember user yang diakui
+        # token), panggilan ke-21 menjadi 429, bukan 401.
+        sub = str(self.ani.id)
+        tak_sah = {
+            "tanpa header": None,
+            "bukan token": "Bearer bukan-token",
+            "refresh token user yang sah": f"Bearer {create_refresh_token(sub)}",
+            "ditandatangani rahasia lain, mengaku user yang sah": f"Bearer {_tanda_tangani(_klaim(sub), RAHASIA_LAIN)}",
+        }
+        for nama, header in tak_sah.items():
+            with self.subTest(nama):
+                for n in range(BATAS_TRANSCRIBE + 1):
+                    r = await self.transkripsi(header)
+                    self.assertEqual(r.status_code, 401, f"panggilan ke-{n + 1}: {r.text}")
+        # Tidak ada ember yang terpakai oleh semua itu: panggilan sah Ani tetap lolos.
+        r = await self.transkripsi(f"Bearer {create_access_token(sub)}")
+        self.assertEqual(r.status_code, 200, r.text)
+
+
+class ChatBatasTests(_BatasHttp):
+    """`/bot/chat/message` (60/menit) memakai `chat_key_func`: cacat yang sama dengan `/transcribe` sebelum kunci
+    per user. Pemroses pesan (`run_message`) diganti stub."""
+
+    router, prefix, limiter = bot_chat.router, "/bot/chat", bot_chat.limiter
+
+    def siapkan_stub(self):
+        self.run_message = AsyncMock(return_value=[])
+        proses = patch.object(bot_chat, "run_message", self.run_message)
+        proses.start()
+        self.addCleanup(proses.stop)
+
+    async def kirim(self, authorization: str | None):
+        header = {} if authorization is None else {"Authorization": authorization}
+        return await self.klien.post("/bot/chat/message", json={"text": "kopi 35k"}, headers=header)
+
+    async def test_batas_chat_per_user_bukan_per_header(self):
+        token = create_access_token(str(self.ani.id))
+        async with self.Session() as db:
+            login_ulang = (await auth_sessions.start_session(db, self.ani)).access_token
+        self.assertNotEqual(login_ulang, token)
+        varian = [
+            f"Bearer {token}",
+            f"bearer {token}",
+            f"BEARER {token}",
+            f"BeArEr {token}",
+            f"Bearer {token}!!!!",          # sisa karakter yang diabaikan PyJWT
+            f"Bearer {login_ulang}",         # token kedua user yang sama dari login lain
+        ]
+        # Satu user bergantian memakai semua bentuk header: tepat 60 jawaban, yang ke-61 ditolak.
+        kode = [(await self.kirim(header)).status_code for header in islice(cycle(varian), BATAS_CHAT + 1)]
+        self.assertEqual(kode, [200] * BATAS_CHAT + [429])
+        self.assertEqual(self.run_message.await_count, BATAS_CHAT)   # yang ditolak tidak sampai ke pemroses pesan
+        # User lain, ember sendiri.
+        r = await self.kirim(f"Bearer {create_access_token(str(self.budi.id))}")
         self.assertEqual(r.status_code, 200, r.text)
 
 

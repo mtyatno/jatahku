@@ -144,6 +144,26 @@ def mirrors_users(household) -> bool:
 USAHA_PAYDAY = 1  # ruang usaha: periode bulan kalender (desain A2 butir 9)
 
 
+async def payday_ruang(db: AsyncSession, user, household_id) -> int:
+    """Tanggal gajian untuk menghitung periode saldo di ruang `household_id`.
+
+    Ruang keluarga (atau tanpa ruang): `users.payday_day`, cermin siklus ruang keluarga — angka user lama tidak
+    berubah. Ruang usaha: siklusnya sendiri (`households.payday_day`, bulan kalender), bukan gajian pribadi
+    pemanggil; tanpa ini owner/admin yang gajian keluarganya bukan tgl 1 melihat saldo usaha yang salah dan cek sisa
+    bisa dilewati (review keamanan PR #177). Tidak menulis apa pun."""
+    from sqlalchemy import select
+    from app.models.models import Household
+    pribadi = getattr(user, "payday_day", None) or 1
+    if household_id is None:
+        return pribadi
+    row = (await db.execute(
+        select(Household.type, Household.payday_day).where(Household.id == household_id)
+    )).one_or_none()
+    if row is None or row.type != HouseholdType.USAHA:
+        return pribadi
+    return row.payday_day or USAHA_PAYDAY
+
+
 def init_ruang_usaha(household) -> None:
     """Siklus ruang usaha baru (Plugin R4): bulan kalender, bukan tanggal gajian pemiliknya. Diisi saat dibuat,
     supaya `household_payday` tidak menurunkannya dari `users.payday_day` owner (cermin ruang keluarga)."""

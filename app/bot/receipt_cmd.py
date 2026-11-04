@@ -7,7 +7,8 @@ paling lama `WAIT_BOT_S` → pesan hasil yang menggantikan "🧾 Membaca bukti..
   "🚫 Bukan pengeluaran", dan "❌ Batal"; atau tawaran lewati (top-up, uang masuk, rekening sendiri, duplikat lunak);
   atau pemberitahuan saja (transaksi gagal, sudah tercatat).
 - Struk belanja dan tidak dikenali: pesan struk yang lama (rincian, cocok/selisih), tanpa baris kuota scan.
-- Lewat batas tunggu: Telegram dikabari worker lewat `send_ready_message`; chat web melihatnya di "Bukti menunggu".
+- Lewat batas tunggu: Telegram dikabari worker lewat `send_ready_message`; chat web menanyakan hasilnya sendiri
+  (gelembung "Masih dibaca" membawa id item; panel memanggil `web_adapter.run_bukti` → `reply_item_result`).
 
 Pencatatan memakai callback `t_{key}_{idx}` yang sudah ada (handle_txn_callback) dengan payload Redis `txn:{key}`:
 "date" (tanggal struk/bayar) dan "scan_id" (id item), ditambah untuk bukti bayar "kind": "proof", "item_id", "note".
@@ -22,6 +23,12 @@ Nominal kurang yakin (Task H3): payload menyimpan "confidence" (keyakinan total:
 menjadi pertanyaan `amount_question` (handlers._handle_txn_callback): "Ya, catat ke ..." (`ky_{key}_{idx}`, jalur catat
 yang sama dengan `t_`), "Nominal salah" (`struk_fix_`), "Batal" (`struk_no_`). Bot tidak memecah struk per barang
 (itu di webapp), jadi satu pertanyaan sebelum satu-satunya pencatatan.
+
+Nominal ketikan sesudah "Nominal salah" (plan 2026-11-01 Task L2b, pre-flight K4): `struk_fix_` yang melewati item
+QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL `FIX_TTL_S`). Pesan teks berikutnya
+user itu dalam FIX_TTL_S (`note_fix_amount`, dari handlers.handle_message sesudah `capture_note`; perintah, foto, tombol,
+dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal → suara koreksi nominal untuk item
+(`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
 """
 import asyncio
 import json
@@ -34,14 +41,15 @@ from datetime import date, datetime, timezone
 from sqlalchemy import update
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.bot.channel import is_web
+from app.bot.channel import find_chat_user, is_web
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
-from app.services.kotak_struk import intake, record, view, waiter
+from app.services.kotak_struk import belajar, intake, record, view, waiter
 from app.services.kotak_struk.config import (
-    IMAGE_MAX_BYTES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_SIAP, WAIT_BOT_S,
+    FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI, ST_DIPROSES,
+    ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
 )
 from app.services.kotak_struk.merchants import display_name
 from app.services.kotak_struk.readers.labels import WIB
@@ -50,14 +58,17 @@ logger = logging.getLogger("jatahku.bot")
 
 TXN_TTL = 600                       # detik; sesi tombol `txn:{key}` sama dengan alur bot lain
 NOTE_KEY = "kotak:note:{}"          # catatan yang ditunggu dari user (tombol "✏️ Tambah catatan")
+FIX_KEY = "kotak:fix:{}"            # item yang nominalnya salah: ketikan berikutnya = suara koreksi (`note_fix_amount`)
 WAITING = (ST_DITERIMA, ST_DIPROSES)
 
 MSG_READING = "🧾 Membaca bukti..."
 MSG_WAIT_TELEGRAM = "⏳ Masih dibaca, nanti kukabari."
-MSG_WAIT_WEB = "⏳ Masih dibaca. Cek Bukti menunggu di beranda nanti."
+MSG_WAIT_WEB = "⏳ Masih dibaca, nanti kukabari di sini."
 MSG_SAME_TELEGRAM = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di pesan sebelumnya."
-MSG_SAME_WEB = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Cek Bukti menunggu di beranda nanti."
+MSG_SAME_WEB = "⏳ Bukti ini sudah dikirim tadi dan masih dibaca. Hasilnya nanti di sini."
 MSG_UNREADABLE = "😕 Bukti tidak bisa dibaca. Coba kirim ulang."
+MSG_GONE_WEB = "😕 Bukti ini sudah tidak ada. Kirim ulang fotonya."   # /bot/chat/bukti: item hilang atau bukan milik user
+MSG_EXPIRED = f"⚠️ {record.MSG_EXPIRED}."                             # bukti bayar kedaluwarsa (struk tetap bisa dicatat)
 MSG_SEND_FILE = "📄 Kirim bukti sebagai foto (JPG/PNG) atau PDF."
 MSG_FAILED_TXN = "⚠️ Transaksi ini gagal di bank, jadi tidak dicatat."
 MSG_ALREADY_RECORDED = "✅ Bukti ini sudah tercatat."
@@ -559,13 +570,19 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
 
 async def _result_reply(db, user, item, *, key=None, note=None, ready=False) -> tuple[str, InlineKeyboardMarkup | None]:
     """Pesan hasil untuk item yang sudah selesai dibaca. `ready`: langsung tombol amplop (tanpa tawaran lewati);
-    `key`/`note`: sesi tombol yang sudah ada dan catatan user."""
+    `key`/`note`: sesi tombol yang sudah ada dan catatan user. Item yang sudah selesai di tempat lain (dilewati di
+    web, kedaluwarsa) hanya dikabari tanpa tombol catat — dirender ulang chat web (`reply_item_result`); kirim ulang
+    file yang sama di bot membuka item baru, jadi jalur bot tidak pernah sampai ke sini dengan status itu."""
     if item is None:
         return MSG_UNREADABLE, None
     if item.status in WAITING:
         return (MSG_WAIT_WEB if is_web() else MSG_WAIT_TELEGRAM), None
     if item.status == ST_GAGAL:
         return f"😕 {item.error or 'Bukti tidak bisa dibaca. Coba kirim ulang.'}", None
+    if item.status == ST_DILEWATI:
+        return MSG_SKIPPED, None
+    if item.status == ST_KEDALUWARSA and not record.late_recordable(item):
+        return MSG_EXPIRED, None
     detail = await view.item_detail(db, item, user, note=note)
     if ready:
         detail = _ready_only(detail)
@@ -630,14 +647,25 @@ async def _promise_notification(status, item, meta: dict) -> bool:
 
 def _answered_elsewhere(old_meta: dict | None, meta: dict) -> bool:
     """Item lama yang masih dibaca sudah punya pesan yang akan menerima hasilnya: di chat web selalu dianggap begitu
-    (hasilnya di "Bukti menunggu"); di Telegram bila pesan sebelumnya di chat yang sama (masih menunggu, atau sudah
-    dijanjikan kabar) atau kabar sudah dijanjikan ke pesan lain. Selain itu (mis. item dari form web atau PWA) pesan
-    baru ini yang dijanjikan kabar seperti biasa."""
+    (gelembung chat web menanyakan hasilnya sendiri, tanpa janji worker); di Telegram bila pesan sebelumnya di chat
+    yang sama (masih menunggu, atau sudah dijanjikan kabar) atau kabar sudah dijanjikan ke pesan lain. Selain itu
+    (mis. item dari form web atau PWA) pesan baru ini yang dijanjikan kabar seperti biasa."""
     if is_web():
         return True
     old_meta = old_meta or {}
     return bool(old_meta.get("notify")) or (old_meta.get("chat_id") is not None
                                             and old_meta.get("chat_id") == meta.get("chat_id"))
+
+
+def _web_tags(item_id, *, pending: bool = False) -> dict:
+    """Kwarg tambahan `edit_text` untuk gelembung bukti di chat web (`WebMessage.edit_text`: op membawa `item` dan
+    `pending`, lihat web_adapter). Di Telegram kosong — `telegram.Message.edit_text` tidak mengenalnya."""
+    if not is_web():
+        return {}
+    tags = {"kotak_item": str(item_id)}
+    if pending:
+        tags["kotak_pending"] = True
+    return tags
 
 
 async def _take_in(update, **upload) -> None:
@@ -668,19 +696,22 @@ async def _take_in(update, **upload) -> None:
             again = not created and item.status in WAITING and _answered_elsewhere(item.channel_meta, meta)
             await db.commit()   # item lama dikembalikan dengan transaksi baca terbuka: jangan ditahan selama menunggu
         if again:   # bukti yang sama selagi dibaca: janji pesan pertama tetap, `channel_meta` tidak diambil alih
-            await status.edit_text(MSG_SAME_WEB if is_web() else MSG_SAME_TELEGRAM)
+            if is_web():   # gelembung ini pun menanyakan hasilnya sendiri (pesan pertama bisa ada di perangkat lain)
+                await status.edit_text(MSG_SAME_WEB, **_web_tags(item_id, pending=True))
+            else:
+                await status.edit_text(MSG_SAME_TELEGRAM)
             return
 
         item = await waiter.wait_for_item(item_id, WAIT_BOT_S)
         if item is not None and item.status in WAITING:
-            if is_web():
-                await status.edit_text(MSG_WAIT_WEB)
+            if is_web():   # tanpa `notify`: panel chat menanyakan hasilnya lewat /bot/chat/bukti (`reply_item_result`)
+                await status.edit_text(MSG_WAIT_WEB, **_web_tags(item_id, pending=True))
                 return
             if await _promise_notification(status, item, meta):
                 return
         async with AsyncSessionLocal() as db:
             text, markup = await _result_reply(db, await db.get(User, user_id), await db.get(ReceiptScan, item_id))
-        await status.edit_text(text, reply_markup=markup)
+        await status.edit_text(text, reply_markup=markup, **_web_tags(item_id))
     except Exception:
         logger.exception("bukti dari bot gagal diproses")
         try:   # pesan "Membaca bukti..." tidak boleh menggantung
@@ -737,6 +768,28 @@ async def send_ready_message(item_id) -> None:
     except Exception as exc:
         logger.warning("pesan status bukti %s tidak bisa diedit (%s); dikirim pesan baru", item_id, exc)
         await bot.send_message(chat_id, text, reply_markup=markup)
+
+
+# ── hasil untuk chat web yang ditanyakan panel (padanan send_ready_message) ──
+
+async def reply_item_result(message, user_id, item_id) -> bool:
+    """Chat web (`web_adapter.run_bukti`): ganti `message` (gelembung "Masih dibaca" di riwayat lokal panel) dengan
+    pesan hasil item `item_id` milik user `user_id` — teks dan tombol yang sama dengan Telegram (`_result_reply`,
+    sesi tombol `txn:{key}` baru). Mengembalikan True bila item masih dibaca (pesan tidak disentuh, panel bertanya
+    lagi nanti). Item yang tidak ada atau bukan milik user (termasuk anggota rumah tangga yang sama) dijawab
+    MSG_GONE_WEB tanpa `item`, supaya panel berhenti bertanya. Dipanggil ulang untuk pesan yang sudah berhasil pun
+    aman: hasilnya dirender lagi dari status item saat ini (tercatat, dilewati, kedaluwarsa dikabari tanpa tombol)."""
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+        item = await _own_item(db, item_id, user) if user is not None else None
+        if item is None:
+            await message.edit_text(MSG_GONE_WEB)
+            return False
+        if item.status in WAITING:
+            return True
+        text, markup = await _result_reply(db, user, item)
+    await message.edit_text(text, reply_markup=markup, **_web_tags(item_id))
+    return False
 
 
 # ── tombol ──────────────────────────────────────────────────────────────────
@@ -948,19 +1001,23 @@ async def handle_struk_callback(update, context):
     await forget_note(update.effective_user.id)
     action, scan_id = parts[1], parts[2]
     item_id = _uuid(scan_id)
+    skipped = False
     async with AsyncSessionLocal() as db:
         user = await get_or_create_user(str(update.effective_user.id), update.effective_user.first_name, db)
         item = await db.get(ReceiptScan, item_id) if item_id is not None else None
         kotak = item is not None and item.status is not None
         proof = item is not None and item.doc_type in PROOF_TYPES
         store = item is None or item.doc_type == record.STORE_RECEIPT or item.status is None
+        learnable = kotak and item.doc_type in LAYOUT_TYPES
         try:
             if kotak:
-                await record.skip_item(db, item_id, user.id, "batal")
+                skipped = await record.skip_item(db, item_id, user.id, "batal")
             if store:
                 await apply_feedback(user, scan_id, db, saved=False, wrong=(action == "fix"))
         except Exception as exc:  # best-effort
             logger.warning("feedback struk gagal: %s", exc)
+    if action == "fix" and skipped and learnable:
+        await _remember_fix(update.effective_user.id, item_id)
     if action == "fix" and proof:
         await query.edit_message_text(MSG_FIX_PROOF, parse_mode="Markdown")
     elif action == "fix":
@@ -969,6 +1026,73 @@ async def handle_struk_callback(update, context):
             "Laporan ini membantu scan struk makin akurat 🙏", parse_mode="Markdown")
     else:
         await query.edit_message_text("❌ Struk dibatalkan.")
+
+
+async def _remember_fix(chat_user_id, item_id: uuid.UUID) -> None:
+    """Ingat item yang baru dilewati lewat "Nominal salah" (`FIX_KEY`, TTL FIX_TTL_S) untuk `note_fix_amount`. Redis
+    mati: tanpa suara nanti, tanpa galat (pesan "ketik manual" tetap tampil)."""
+    try:
+        r = _redis()
+        try:
+            await r.set(FIX_KEY.format(chat_user_id), str(item_id), ex=FIX_TTL_S)
+        finally:
+            await r.aclose()
+    except Exception:
+        logger.warning("kunci Nominal salah untuk item %s tidak tersimpan", item_id, exc_info=True)
+
+
+def fix_amount(text: str) -> int | None:
+    """Nominal koreksi dari ketikan sesudah "Nominal salah": tepat satu pengeluaran ber-nominal (`parse_amount`).
+    Ketikan beberapa barang (`parse_multi_expense`), teks bukti yang ditempel, teks kepanjangan, atau tanpa nominal →
+    None."""
+    from app.bot.handlers import parse_amount
+    from app.bot.nlp_cmd import parse_multi_expense
+
+    text = (text or "").strip()
+    # 500 = batas panjang ketikan NLP (handlers.handle_message): ketikan yang ditolak NLP bukan koreksi.
+    if not text or len(text) > 500 or looks_like_proof_text(text) or parse_multi_expense(text):
+        return None
+    parsed = parse_amount(text)
+    if parsed is None or parsed[0] <= 0 or parsed[0] != parsed[0].to_integral_value():
+        return None
+    return int(parsed[0])
+
+
+async def note_fix_amount(update, text: str) -> None:
+    """Pesan teks pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`: perintah,
+    foto, tombol, dan catatan yang ditangkap tidak menghabiskan kunci): kunci `FIX_KEY` diambil sekali (`getdel`); satu
+    nominal (`fix_amount`) → suara koreksi nominal untuk item itu (`belajar.learn_from_correction` dengan
+    `Final(nominal, None, None, hari ini WIB)`) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
+    belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks: pemanggil selalu lanjut ke NLP, yang
+    mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa suara, diam-diam seperti
+    `capture_note` (log debug; peringatan hanya untuk galat sesudah kunci terbaca)."""
+    tg_user = update.effective_user
+    try:
+        r = _redis()
+        try:
+            raw = await r.getdel(FIX_KEY.format(tg_user.id))
+        finally:
+            await r.aclose()
+    except Exception:
+        logger.debug("kunci Nominal salah tidak bisa dibaca (Redis)", exc_info=True)
+        return
+    if not raw:
+        return
+    try:
+        item_id = _uuid(raw.decode() if isinstance(raw, bytes) else raw)
+        amount = fix_amount(text)
+        if item_id is None or amount is None:
+            return
+        async with AsyncSessionLocal() as db:
+            user = await find_chat_user(str(tg_user.id), db)
+            item = await _own_item(db, item_id, user) if user is not None else None
+            if item is None:
+                return
+            final = belajar.Final(amount, None, None, belajar.today_wib())
+            if await belajar.learn_from_correction(db, item, final, user_id=user.id):
+                await db.commit()
+    except Exception:
+        logger.warning("suara Nominal salah tidak dicatat", exc_info=True)
 
 
 # ── jalur catat bot ─────────────────────────────────────────────────────────

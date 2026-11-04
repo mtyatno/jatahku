@@ -1141,8 +1141,11 @@ class UnlabelledExtraChargeProofTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pc.looks_like_store_receipt(["ROTI 1 15.000", "Total 15.000", "QRIS 15.000"]))
         self.assertTrue(pc.looks_like_store_receipt(["ROTI 2 x 15.000", "Total 30.000", "Pembayaran QRIS Rp 30.000"]))
         self.assertTrue(pc.looks_like_store_receipt(["INDOMIE GRG 2 3.100 6.200", "Total 6.200", "QRIS 6.200"]))        # qty, harga satuan, jumlah
-        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "Total 15.000", "QRIS 15.000"]))               # satu barang tanpa kuantitas: tak cukup
-        self.assertFalse(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "Total 45.400", "QRIS 45.400"]))
+        # L6d (C3): barang tanpa kuantitas + baris cara bayar bernominal sama kini cukup, asal tidak ada label bukti di atas TOTAL.
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "Total 15.000", "QRIS 15.000"]))
+        self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "Total 45.400", "QRIS 45.400"]))
+        self.assertFalse(pc.looks_like_store_receipt(["Merchant WARUNG X", "ROTI 15.000", "Total 15.000", "QRIS 15.000"]))
+        self.assertFalse(pc.looks_like_store_receipt(["Nominal Rp13.000", "Donasi Rp2.000", "Total Rp15.000", "QRIS Rp15.000"]))
         self.assertTrue(pc.looks_like_store_receipt(["ROTI 15.000", "SUSU 30.400", "AIR 4.000", "Total 49.400"]))      # 3 barang: tetap struk
         self.assertFalse(pc.looks_like_store_receipt(["Tips Rp2.000", "Total Rp2.000", "QRIS Rp2.000"]))
 

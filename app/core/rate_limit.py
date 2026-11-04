@@ -1,10 +1,10 @@
-"""Kunci batas frekuensi (`key_func` slowapi) per user (ruling R11, mengubah R1).
+"""Kunci batas frekuensi (`key_func` slowapi) per user, dipakai `/transactions/transcribe` dan `/bot/chat/*`.
 
-Kunci lama (`transactions.transcribe_key_func`) = sha256 dari teks header Authorization. Teks itu bukan identitas: satu
-user mendapat ember baru kapan saja dengan menulis ulang headernya, tanpa mengubah siapa dia: huruf besar-kecil skema
-(`HTTPBearer` menerima "bearer" dan "BEARER"), karakter di ujung token yang diabaikan PyJWT (`<token>!!!!` tetap lolos
-verifikasi), atau login ulang (sesi dan token baru). Di sini kuncinya user yang terautentikasi: klaim `sub` dari access
-token yang sah, jadi semua bentuk itu jatuh ke satu ember.
+Kunci lama (`transactions.transcribe_key_func`, `bot_chat.chat_key_func`) = sha256 dari teks header Authorization.
+Teks itu bukan identitas: satu user mendapat ember baru kapan saja dengan menulis ulang headernya, tanpa mengubah siapa
+dia: huruf besar-kecil skema (`HTTPBearer` menerima "bearer" dan "BEARER"), karakter di ujung token yang diabaikan
+PyJWT (`<token>!!!!` tetap lolos verifikasi), atau login ulang (sesi dan token baru). Di sini kuncinya user yang
+terautentikasi: klaim `sub` dari access token yang sah, jadi semua bentuk itu jatuh ke satu ember.
 
 Header diurai persis seperti `HTTPBearer` (`get_authorization_scheme_param`, skema tak peka huruf) dan diverifikasi
 persis seperti `get_current_user` (`decode_token`: tanda tangan, kedaluwarsa, dan harus access token). Token yang tidak
