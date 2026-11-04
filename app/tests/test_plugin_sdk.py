@@ -79,6 +79,8 @@ plugin = Plugin("contoh")
 async def _kas(ctx, pengaturan, periode):
     if PERILAKU.get("kartu_float"):
         return {"value": 1.5, "unit": "rp"}
+    if PERILAKU.get("ubah_periode"):
+        periode.start = date(2000, 1, 1)          # review ulang #186 no. 4: salinan beku, bukan Periode batch
     txn = await ctx.transactions(periode.start, periode.end)
     return {"value": sum((t.jumlah for t in txn), D("0")), "unit": "rp", "tone": "ok", "footer": f"{len(txn)} catatan"}
 
@@ -199,7 +201,7 @@ class KodeTests(unittest.TestCase):
             muat(self.dir, ketat=True)
         teks = "\n".join(cm.exception.galat)
         for bagian in ("'app.models.models' tidak boleh", "impor 'app' terlalu luas", "'app.services' tidak boleh",
-                       "impor 'importlib' tidak boleh", "'app.plugins' terlalu luas", "__import__() tidak boleh",
+                       "impor 'importlib' tidak ada di daftar pustaka", "'app.plugins' terlalu luas", "__import__() tidak boleh",
                        "'app.plugins.lain' dari plugin di luar requires", "atribut '._db' tidak boleh"):
             self.assertIn(bagian, teks)
         self.assertFalse(penanda.exists(), "kode plugin tidak boleh dijalankan sebelum impornya lolos")
@@ -265,9 +267,16 @@ class KodeTests(unittest.TestCase):
             "from app.plugins.sdk.context import sesi": "tidak boleh; pakai `from app.plugins.sdk import",
             "import app.plugins.sdk": "tidak boleh; pakai `from app.plugins.sdk import",
             "from app.plugins.sdk import _host": "'_host' bukan nama publik",
-            "import sys": "impor 'sys' tidak boleh",
-            "import gc": "impor 'gc' tidak boleh",
-            "import inspect": "impor 'inspect' tidak boleh",
+            "import sys": "impor 'sys' tidak ada di daftar pustaka",
+            "import gc": "impor 'gc' tidak ada di daftar pustaka",
+            "import inspect": "impor 'inspect' tidak ada di daftar pustaka",
+            "import operator": "impor 'operator' tidak ada di daftar pustaka",
+            "from pkgutil import resolve_name": "impor 'pkgutil' tidak ada di daftar pustaka",
+            "import os": "impor 'os' tidak ada di daftar pustaka",
+            "async def f(ctx):\n    await ctx._tolak('x', 'y')": "atribut '._tolak' tidak boleh",
+            "from app.plugins.sdk import PluginContext\nPluginContext.ruang_id = 1": "tidak boleh diubah",
+            "from app.plugins.sdk import PluginContext as P\ndel P.envelopes": "tidak boleh diubah",
+            "from app.plugins.sdk import PluginContext\nclass X(PluginContext):\n    pass": "tidak boleh menurunkan",
             "x = getattr(ctx, '_d' + 'b')": "getattr() hanya dengan nama atribut tetap",
             "x = getattr(ctx, '_k')": "getattr() hanya dengan nama atribut tetap",
             "x = vars(ctx)": "vars() tidak boleh",
@@ -677,6 +686,15 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             palsu = object.__new__(PluginContext)
             with self.assertRaises(KonteksTidakSah):
                 await palsu.envelopes()
+            # Review ulang #186 no. 1, 3: kelas tidak bisa ditambal atau diturunkan; izin diperiksa host.
+            for nama in ("ruang_id", "envelopes", "_perlu"):
+                with self.subTest(tambal=nama), self.assertRaises(TypeError):
+                    setattr(PluginContext, nama, property(lambda self: self.asing))
+            with self.assertRaises(TypeError):
+                delattr(PluginContext, "envelopes")
+            with self.assertRaises(TypeError):
+                type("Menyaru", (PluginContext,), {})
+            self.assertFalse(hasattr(c, "_tolak") or hasattr(c, "_perlu"))
             self.assertIsInstance(c.viewer, PenggunaView)
             self.assertEqual((c.viewer.id, c.viewer.nama), (self.pemilik.id, "Pemilik"))
             self.assertFalse(hasattr(c.viewer, "email"))
@@ -756,6 +774,14 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.put("/dashboard/layout", headers=self.hdr(), json={
             "surface": "beranda", "if_version": 0, "removed": [], "items": [{"id": "p9", "card": "contoh.kas", "size": "S"}]})
         self.assertEqual(r.json()["kode"], "kartu_tidak_dikenal")
+
+    async def test_kartu_menerima_periode_beku(self):
+        PERILAKU["ubah_periode"] = True
+        r = await self.client.post("/dashboard/data", headers=self.hdr(), json={"items": [
+            {"id": "p1", "card": "contoh.kas"}, {"id": "a1", "card": "core.cocokkan_saldo"}]})
+        self.assertEqual(r.json()["data"]["p1"]["error"]["kode"], "gagal_memuat")
+        self.assertNotEqual(r.json()["periode"]["start"], "2000-01-01")     # periode batch tidak berubah
+        self.assertNotIn("error", r.json()["data"]["a1"])
 
     async def test_kartu_float_gagal_sendiri(self):
         PERILAKU["kartu_float"] = True
@@ -917,9 +943,9 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cm.exception.alasan, "bukan_job")
         self.assertEqual(self.terkirim, [])
 
-    async def test_pemasukan_anggota_lain_tersamar_di_ruang_keluarga(self):
-        """Review #186 temuan 2: seperti inti, pemasukan anggota lain di ruang keluarga tidak terbaca utuh."""
-        from app.plugins.sdk.context import PEMASUKAN_PRIVAT
+    async def test_pemasukan_anggota_lain_tidak_terbaca_di_ruang_keluarga(self):
+        """Review #186 temuan 2 dan review ulang no. 5: seperti `GET /incomes/`, di ruang keluarga plugin hanya membaca
+        pemasukan milik viewer; job tidak membaca pemasukan ruang keluarga. Ruang usaha tetap utuh."""
         async with self.Session() as db:
             adik = User(name="Adik", plan="pro", timezone="Asia/Jakarta")
             db.add(adik)
@@ -934,13 +960,15 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
             semua = (date(2000, 1, 1), date(2100, 1, 1))
             c = await self.ctx(db, adik, "aturan_advisor", "CT-01", hid=self.rumah)
-            lihat = {(i.deskripsi, i.user_id, i.jumlah) for i in await c.incomes(*semua)}
-            self.assertEqual(lihat, {("uang jajan", adik.id, D("100000")), (PEMASUKAN_PRIVAT, None, D("500000"))})
+            lihat = [(i.deskripsi, i.user_id, i.jumlah) for i in await c.incomes(*semua)]
+            self.assertEqual(lihat, [("uang jajan", adik.id, D("100000"))])
             modal = (await db.execute(select(Income).where(Income.household_id == self.rumah,
                                                            Income.user_id == self.pemilik.id))).scalar_one()
-            self.assertEqual((await c.income(modal.id)).deskripsi, PEMASUKAN_PRIVAT)
+            self.assertIsNone(await c.income(modal.id))
+            c = await self.ctx(db, self.pemilik, "aturan_advisor", "CT-01", hid=self.rumah)
+            self.assertEqual([i.deskripsi for i in await c.incomes(*semua)], ["Modal"])
             c = await self.ctx(db, None, "job", "pagi", hid=self.rumah, izin=["incomes:read"])
-            self.assertEqual({i.deskripsi for i in await c.incomes(*semua)}, {PEMASUKAN_PRIVAT})
+            self.assertEqual(await c.incomes(*semua), [])
             c = await self.ctx(db, self.admin, "aturan_advisor", "CT-01")    # ruang usaha: data usaha, utuh
             self.assertEqual([(i.deskripsi, i.user_id) for i in await c.incomes(*semua)], [("Modal", self.pemilik.id)])
 

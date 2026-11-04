@@ -39,7 +39,7 @@ from app.plugins.host import keadaan
 from app.plugins.host.kode import IZIN_PER_JENIS
 from app.plugins.host.keadaan import catat_audit, sesi
 from app.plugins.sdk.context import (
-    AksiRoute, NilaiTidakSah, PenggunaView, PluginContext, RencanaPengeluaran, Saran,
+    AksiRoute, NilaiTidakSah, PenggunaView, PeriodeView, PluginContext, RencanaPengeluaran, Saran,
 )
 from app.plugins.sdk.plugin import Pendaftaran
 
@@ -296,7 +296,9 @@ async def data_kartu(db, user, household_id, definisi, pengaturan: dict, periode
         raise LookupError("bukan anggota ruang ini")
     ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"kartu:{definisi.key}")
     mulai = time.perf_counter()
-    data = await a.d.fn(ctx, dict(pengaturan), periode)
+    # Salinan beku: `Periode` batch dipakai bersama kartu inti sesudahnya (review ulang #186 no. 4).
+    beku = PeriodeView(start=periode.start, end=periode.end, berjalan=bool(periode.berjalan))
+    data = await a.d.fn(ctx, dict(pengaturan), beku)
     _waktu(mulai, a.m, a.d)
     return rapikan_kartu(definisi.shape, data, a.m.id)
 
@@ -528,35 +530,37 @@ async def kirim_notifikasi(ctx: PluginContext, jenis: str, judul: str, isi: str,
                            kunci: str, now: datetime | None = None) -> int:
     """Notifikasi plugin ke owner/admin ruang yang plugin-nya aktif untuk mereka. Jam tenang 21.00–07.00 waktu
     penerima (`proaktif.jam_tenang`), maksimal `MAKS_NOTIF_HARIAN` per plugin per penerima per hari, satu per
-    `kunci`. Telegram dan lonceng, judul berawalan nama ruang. Karyawan tidak menerima (ADR-P19 menyusul di U6)."""
+    `kunci`. Telegram dan lonceng, judul berawalan nama ruang. Karyawan tidak menerima (ADR-P19 menyusul di U6).
+    Ruang, plugin, dan user dibaca dari keadaan host, bukan dari properti konteks (review ulang #186 no. 1)."""
     from app.services import notification_service
     from app.services.advisor.proaktif import jam_tenang
     from app.services.ruang import ruang_usaha_dibuka
+    k = keadaan.ambil(ctx)
     judul = _teks(judul, 80, boleh_kosong=False)
     isi = _teks(isi, 500, boleh_kosong=False)
-    link = rute_plugin(link, ctx.plugin_id) if link is not None else None
+    link = rute_plugin(link, k.plugin_id) if link is not None else None
     kunci = _teks(kunci, 60, boleh_kosong=False)
-    db = keadaan.ambil(ctx).db
+    db = k.db
     penerima = (await db.execute(
         select(User).join(HouseholdMember, HouseholdMember.user_id == User.id)
-        .where(HouseholdMember.household_id == ctx.ruang_id,
+        .where(HouseholdMember.household_id == k.ruang_id,
                HouseholdMember.role.in_([HouseholdRole.owner, HouseholdRole.admin]))
     )).scalars().all()
     terkirim = 0
     for u in penerima:
-        if ctx.jenis_ruang == HouseholdType.USAHA and not await ruang_usaha_dibuka(db, u.id):
+        if k.jenis_ruang == HouseholdType.USAHA and not await ruang_usaha_dibuka(db, u.id):
             continue
-        if ctx.plugin_id not in {m.id for m in await siklus.aktif_di_ruang(db, ctx.ruang_id, u.id)}:
+        if k.plugin_id not in {m.id for m in await siklus.aktif_di_ruang(db, k.ruang_id, u.id)}:
             continue
         lokal = (now or datetime.now(timezone.utc)).astimezone(_tz(u))
-        if jam_tenang(lokal) or not await _klaim_buku(ctx.plugin_id, u.id, lokal.date(), kunci):
+        if jam_tenang(lokal) or not await _klaim_buku(k.plugin_id, u.id, lokal.date(), kunci):
             continue
-        hasil = await notification_service.kirim(u, NotificationType.system, f"[{ctx.nama_ruang}] {judul}", isi,
+        hasil = await notification_service.kirim(u, NotificationType.system, f"[{k.nama_ruang}] {judul}", isi,
                                                  link=link, permukaan=("telegram", "web"))
         terkirim += 1 if hasil else 0
     if terkirim:   # yang tersaring (jam tenang, batas, kunci sama) tidak dicatat, supaya audit tidak membanjir (no. 6)
-        await catat_audit(ctx.ruang_id, ctx.plugin_id, ctx.user_id, "kirim:notifications",
-                          jenis=jenis, kunci=kunci, penerima=terkirim, sumber=ctx.sumber)
+        await catat_audit(k.ruang_id, k.plugin_id, k.viewer.id if k.viewer is not None else None,
+                          "kirim:notifications", jenis=jenis, kunci=kunci, penerima=terkirim, sumber=k.sumber)
     return terkirim
 
 

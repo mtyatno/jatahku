@@ -10,7 +10,7 @@ Titik ekstensi server dan bentuknya:
 
 | Dekorator | Fungsi | Dipanggil oleh |
 | --- | --- | --- |
-| `plugin.kartu(key)` | `async (ctx, pengaturan, periode) -> dict` bentuk kartu | `POST /dashboard/data` (registry B1) |
+| `plugin.kartu(key)` | `async (ctx, pengaturan, PeriodeView) -> dict` bentuk kartu | `POST /dashboard/data` (registry B1) |
 | `plugin.cek(key)` | `async (ctx, RencanaPengeluaran) -> list[str]` peringatan | `expense_rules.peringatan_plugin` |
 | `plugin.aturan_advisor(kode)` | `async (ctx) -> list[Saran]` | AI Advisor (`select.py`, batas per plugin) |
 | `plugin.perintah_bot(cmd)` | `async (ctx) -> str` | Telegram dan chat web, hanya baca |
@@ -21,12 +21,12 @@ Titik ekstensi server dan bentuknya:
 manifest.
 """
 from app.plugins.sdk.context import (
-    AksiRoute, AmplopView, AnggotaView, IzinDitolak, NilaiTidakSah, PemasukanView, PenggunaView, PluginContext,
-    RencanaPengeluaran, Saran, TransaksiView,
+    AksiRoute, AmplopView, AnggotaView, IzinDitolak, NilaiTidakSah, PemasukanView, PenggunaView, PeriodeView,
+    PluginContext, RencanaPengeluaran, Saran, TransaksiView,
 )
 from app.plugins.sdk.plugin import Plugin
 
 __all__ = [
-    "AksiRoute", "AmplopView", "AnggotaView", "IzinDitolak", "NilaiTidakSah", "PemasukanView", "PenggunaView", "Plugin",
-    "PluginContext", "RencanaPengeluaran", "Saran", "TransaksiView",
+    "AksiRoute", "AmplopView", "AnggotaView", "IzinDitolak", "NilaiTidakSah", "PemasukanView", "PenggunaView",
+    "PeriodeView", "Plugin", "PluginContext", "RencanaPengeluaran", "Saran", "TransaksiView",
 ]

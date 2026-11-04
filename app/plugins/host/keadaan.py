@@ -1,10 +1,10 @@
 """Keadaan di balik `PluginContext`, milik host (Plugin H2; review keamanan PR #186 temuan 3, 4, 6).
 
 `PluginContext` (`app/plugins/sdk/context.py`) tidak menyimpan apa pun di dirinya sendiri: sesi DB, ruang, peran,
-izin, dan penghitung kiriman ada di `Keadaan` yang dipetakan dari objek konteks lewat `WeakKeyDictionary` di modul
-ini. Kode plugin tidak boleh mengimpor `app.plugins.host` (validator AST, `kode.py`), jadi plugin tidak bisa
-mengganti izin atau ruangnya (mis. `dataclasses.replace`, `object.__setattr__`) dan tidak bisa mencapai sesi DB.
-Konteks yang tidak dibuat `buat()` tidak punya keadaan dan setiap metodenya gagal.
+izin, dan penghitung kiriman ada di `Keadaan` yang dipetakan dari identitas objek konteks (`id` + `weakref`, bukan
+`__hash__`/`__eq__` yang bisa ditiru). Pemeriksaan izin dan penolakan (`perlu`, `tolak`) juga fungsi modul ini, bukan
+metode konteks, dan kelas konteks tidak bisa ditambal atau diturunkan (review ulang #186 temuan 1, 3). Kode plugin
+tidak boleh mengimpor `app.plugins.host` (validator AST, `kode.py`). Konteks yang tidak dibuat `buat()` gagal.
 
 Modul ini juga memegang sesi tambahan dan audit plugin (dulu di SDK, yang boleh diimpor plugin).
 """
@@ -38,7 +38,7 @@ class Keadaan:
     notify_dipakai: int = 0
 
 
-_KEADAAN: "weakref.WeakKeyDictionary[Any, Keadaan]" = weakref.WeakKeyDictionary()
+_KEADAAN: dict[int, tuple["weakref.ref", Keadaan]] = {}
 
 
 class KonteksTidakSah(RuntimeError):
@@ -48,15 +48,52 @@ class KonteksTidakSah(RuntimeError):
 def buat(**isi) -> Any:
     from app.plugins.sdk.context import PluginContext
     ctx = object.__new__(PluginContext)
-    _KEADAAN[ctx] = Keadaan(**isi)
+    kunci = id(ctx)
+
+    def _buang(ref, kunci=kunci):
+        ada = _KEADAAN.get(kunci)
+        if ada is not None and ada[0] is ref:
+            del _KEADAAN[kunci]
+
+    _KEADAAN[kunci] = (weakref.ref(ctx, _buang), Keadaan(**isi))
     return ctx
 
 
 def ambil(ctx) -> Keadaan:
-    try:
-        return _KEADAAN[ctx]
-    except (KeyError, TypeError):
-        raise KonteksTidakSah("PluginContext hanya dibuat host") from None
+    """Keadaan konteks buatan host. Hanya objek `PluginContext` persis (bukan subkelas atau peniru) yang identitasnya
+    terdaftar."""
+    from app.plugins.sdk.context import PluginContext
+    if type(ctx) is not PluginContext:
+        raise KonteksTidakSah("PluginContext hanya dibuat host")
+    ada = _KEADAAN.get(id(ctx))
+    if ada is None or ada[0]() is not ctx:
+        raise KonteksTidakSah("PluginContext hanya dibuat host")
+    return ada[1]
+
+
+# ── izin (dipanggil metode PluginContext) ────────────────────────────────
+IZIN_KEUANGAN = ("envelopes:read", "transactions:read", "incomes:read")
+
+
+def karyawan(k: Keadaan) -> bool:
+    return k.jenis_ruang == "usaha" and k.peran == "member"
+
+
+async def tolak(k: Keadaan, izin: str, alasan: str):
+    """Catat penolakan (sekali per jam per kunci) lalu lempar `IzinDitolak`."""
+    from app.plugins.sdk.context import IzinDitolak
+    if tolak_perlu_dicatat((k.ruang_id, k.plugin_id, izin, alasan, k.sumber)):
+        await catat_audit(k.ruang_id, k.plugin_id, k.viewer.id if k.viewer is not None else None,
+                          f"tolak:{izin}", alasan=alasan, sumber=k.sumber)
+    log.warning("plugin %s ditolak %s (%s) di %s", k.plugin_id, izin, alasan, k.sumber)
+    raise IzinDitolak(izin, alasan)
+
+
+async def perlu(k: Keadaan, izin: str) -> None:
+    if izin not in k.izin:
+        await tolak(k, izin, "tanpa_izin")
+    if izin in IZIN_KEUANGAN and karyawan(k):
+        await tolak(k, izin, "khusus_admin")
 
 
 # ── sesi DB tambahan (audit, notifikasi, job) ────────────────────────────

@@ -9,8 +9,8 @@ Plugin diperlakukan sebagai tamu (01-kajian.md "Penegakan"):
   sudah diperiksa); tidak ada metode yang menerima ruang dari plugin.
 - **Kontrak visibilitas.** Amplop pribadi anggota lain tidak pernah terbaca; deskripsi transaksi lewat
   `visibility.masked_description`. Konteks tanpa user (job) hanya melihat amplop bersama dan semua deskripsi
-  transaksi tersamar (fail-closed). Pemasukan anggota lain di ruang keluarga tersamar (keterangan dan pencatat),
-  seperti inti yang hanya menampilkan pemasukan milik sendiri; nominalnya tetap ikut agregat (review #186 temuan 2).
+  transaksi tersamar (fail-closed). Di ruang keluarga plugin hanya membaca pemasukan milik viewer, seperti
+  `GET /incomes/`; job tanpa user tidak membaca pemasukan ruang keluarga (review #186 temuan 2, review ulang no. 5).
   Di ruang usaha pemasukan adalah data usaha: owner, admin, dan job melihat semuanya.
 - **Karyawan.** Di ruang usaha, peran `member` adalah karyawan (R5): data keuangan (amplop, transaksi, pemasukan)
   ditolak `khusus_admin` (ADR-P3), seperti tolak-bawaan R5 di route.
@@ -20,7 +20,8 @@ Plugin diperlakukan sebagai tamu (01-kajian.md "Penegakan"):
   jam per proses.
 - **Keadaan di host.** Konteks tidak menyimpan sesi, ruang, peran, atau izin di dirinya (`app/plugins/host/keadaan.py`,
   review #186 temuan 3–4): plugin tidak bisa mengganti atau menyalinnya, dan `viewer` hanya `PenggunaView` beku, bukan
-  objek ORM yang terikat sesi.
+  objek ORM yang terikat sesi. Pemeriksaan izin adalah fungsi host, dan kelas `PluginContext` tidak bisa ditambal atau
+  diturunkan (review ulang #186 temuan 1, 3); setiap metode membaca ruang, viewer, dan peran dari keadaan host.
 - **Kirim hanya dari job.** `notify` hanya untuk konteks tanpa user (job): konteks yang dipicu seorang user (kartu,
   cek, saran, perintah bot, field) bisa melihat data pribadinya, yang tidak boleh diteruskan ke anggota lain
   (review #186 temuan 1). Maksimal `MAKS_NOTIFY_PER_KONTEKS` panggilan per konteks.
@@ -42,10 +43,8 @@ from app.plugins.host import keadaan as _host
 log = logging.getLogger("jatahku.plugins")
 
 PERAN_SISTEM = "sistem"          # job: tanpa user
-IZIN_KEUANGAN = ("envelopes:read", "transactions:read", "incomes:read")
 BATAS_BARIS = 1000               # baris maksimal per panggilan baca
 MAKS_NOTIFY_PER_KONTEKS = 10
-PEMASUKAN_PRIVAT = "Pemasukan anggota lain"
 
 
 class IzinDitolak(Exception):
@@ -96,7 +95,7 @@ class TransaksiView:
 @dataclass(frozen=True)
 class PemasukanView:
     id: UUID
-    user_id: UUID | None          # None = pemasukan anggota lain di ruang keluarga (tersamar)
+    user_id: UUID
     jumlah: Decimal
     deskripsi: str
     tanggal: date
@@ -108,6 +107,14 @@ class AnggotaView:
     user_id: UUID
     nama: str
     peran: str                    # owner | admin | member
+
+
+@dataclass(frozen=True)
+class PeriodeView:
+    """Periode yang diminta kartu Beranda (salinan beku; review ulang #186 no. 4)."""
+    start: date
+    end: date
+    berjalan: bool
 
 
 @dataclass(frozen=True)
@@ -145,10 +152,51 @@ def _k(ctx) -> "_host.Keadaan":
     return _host.ambil(ctx)
 
 
-class PluginContext:
+def _uid(k) -> UUID | None:
+    return k.viewer.id if k.viewer is not None else None
+
+
+def _amplop_terlihat(k, Envelope):
+    """Amplop bersama, plus amplop pribadi milik viewer (bila ada viewer)."""
+    uid = _uid(k)
+    if uid is None:
+        return Envelope.owner_id.is_(None)
+    return or_(Envelope.owner_id.is_(None), Envelope.owner_id == uid)
+
+
+def _pemasukan_terlihat(k, Income):
+    """Ruang usaha: semua (data usaha; karyawan sudah ditolak). Ruang keluarga: hanya milik viewer; tanpa viewer: tidak ada."""
+    if k.jenis_ruang == "usaha":
+        return Income.household_id == k.ruang_id
+    uid = _uid(k)
+    if uid is None:
+        return Income.id.is_(None)
+    return Income.user_id == uid
+
+
+def _pemasukan(i) -> PemasukanView:
+    return PemasukanView(id=i.id, user_id=i.user_id, jumlah=Decimal(i.amount), deskripsi=i.description,
+                         tanggal=i.income_date, jenis=i.kind or "")
+
+
+class _KelasBeku(type):
+    """Kelas `PluginContext` tidak bisa ditambal (`PluginContext.x = …`) atau diturunkan."""
+
+    def __setattr__(cls, nama, nilai):
+        raise TypeError("PluginContext tidak bisa diubah")
+
+    def __delattr__(cls, nama):
+        raise TypeError("PluginContext tidak bisa diubah")
+
+
+class PluginContext(metaclass=_KelasBeku):
     """Dibuat host (`app/plugins/host/titik.py` lewat `keadaan.buat`) untuk satu panggilan fungsi plugin; plugin tidak
-    membuatnya. Semua keadaan ada di host: atribut di bawah hanya-baca, objek ini tidak bisa disalin atau diubah."""
+    membuatnya. Semua keadaan ada di host: atribut di bawah hanya-baca, objek dan kelasnya tidak bisa disalin, diubah,
+    atau diturunkan."""
     __slots__ = ("__weakref__",)
+
+    def __init_subclass__(cls, **kw):
+        raise TypeError("PluginContext tidak bisa diturunkan")
 
     def __init__(self, *a, **kw):
         raise TypeError("PluginContext hanya dibuat host")
@@ -156,12 +204,15 @@ class PluginContext:
     def __setattr__(self, nama, nilai):
         raise AttributeError("PluginContext hanya-baca")
 
+    def __delattr__(self, nama):
+        raise AttributeError("PluginContext hanya-baca")
+
     def __reduce__(self):
         raise TypeError("PluginContext tidak bisa disalin")
 
     __copy__ = __deepcopy__ = __reduce__
 
-    # ── identitas ──
+    # ── identitas (hanya-baca, dari keadaan host) ──
     @property
     def plugin_id(self) -> str:
         return _k(self).plugin_id
@@ -188,7 +239,7 @@ class PluginContext:
 
     @property
     def user_id(self) -> UUID | None:
-        return _k(self).viewer.id if _k(self).viewer is not None else None
+        return _uid(_k(self))
 
     @property
     def peran(self) -> str:
@@ -204,44 +255,24 @@ class PluginContext:
 
     @property
     def karyawan(self) -> bool:
-        return self.jenis_ruang == "usaha" and self.peran == "member"
+        return _host.karyawan(_k(self))
 
     @property
     def admin(self) -> bool:
-        return self.peran in ("owner", "admin")
+        return _k(self).peran in ("owner", "admin")
 
     def settings(self) -> dict:
         return dict(_k(self).pengaturan)
 
-    # ── izin ──
-    async def _tolak(self, izin: str, alasan: str) -> None:
-        k = _k(self)
-        if _host.tolak_perlu_dicatat((k.ruang_id, k.plugin_id, izin, alasan, k.sumber)):
-            await _host.catat_audit(k.ruang_id, k.plugin_id, self.user_id, f"tolak:{izin}",
-                                    alasan=alasan, sumber=k.sumber)
-        log.warning("plugin %s ditolak %s (%s) di %s", k.plugin_id, izin, alasan, k.sumber)
-        raise IzinDitolak(izin, alasan)
-
-    async def _perlu(self, izin: str) -> None:
-        if izin not in _k(self).izin:
-            await self._tolak(izin, "tanpa_izin")
-        if izin in IZIN_KEUANGAN and self.karyawan:
-            await self._tolak(izin, "khusus_admin")
-
-    def _amplop_terlihat(self, Envelope):
-        """Amplop bersama, plus amplop pribadi milik viewer (bila ada viewer)."""
-        if self.user_id is None:
-            return Envelope.owner_id.is_(None)
-        return or_(Envelope.owner_id.is_(None), Envelope.owner_id == self.user_id)
-
     # ── baca ──
     async def envelopes(self) -> list[AmplopView]:
         """`envelopes:read`: amplop aktif ruang ini yang boleh dilihat viewer."""
-        await self._perlu("envelopes:read")
+        k = _k(self)
+        await _host.perlu(k, "envelopes:read")
         from app.models.models import Envelope
-        rows = (await _k(self).db.execute(
-            select(Envelope).where(Envelope.household_id == self.ruang_id, Envelope.is_active.is_(True),
-                                   self._amplop_terlihat(Envelope))
+        rows = (await k.db.execute(
+            select(Envelope).where(Envelope.household_id == k.ruang_id, Envelope.is_active.is_(True),
+                                   _amplop_terlihat(k, Envelope))
             .order_by(Envelope.name).limit(BATAS_BARIS)
         )).scalars().all()
         return [AmplopView(id=e.id, nama=e.name, emoji=e.emoji or "",
@@ -252,59 +283,59 @@ class PluginContext:
     async def transactions(self, mulai: date, akhir: date, *, amplop_id: UUID | None = None) -> list[TransaksiView]:
         """`transactions:read`: transaksi (tidak terhapus) di amplop yang boleh dilihat, `mulai` ≤ tanggal ≤ `akhir`.
         Deskripsi privat anggota lain tersamar; agregat (nominal) tetap utuh (kontrak visibilitas)."""
-        await self._perlu("transactions:read")
+        k = _k(self)
+        await _host.perlu(k, "transactions:read")
         from app.models.models import Envelope, Transaction
         from app.services.visibility import masked_description
+        uid = _uid(k)
         q = (select(Transaction).join(Envelope, Envelope.id == Transaction.envelope_id)
-             .where(Envelope.household_id == self.ruang_id, self._amplop_terlihat(Envelope),
+             .where(Envelope.household_id == k.ruang_id, _amplop_terlihat(k, Envelope),
                     Transaction.is_deleted.is_(False),
                     Transaction.transaction_date >= mulai, Transaction.transaction_date <= akhir))
         if amplop_id is not None:
             q = q.where(Transaction.envelope_id == amplop_id)
-        rows = (await _k(self).db.execute(
+        rows = (await k.db.execute(
             q.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc()).limit(BATAS_BARIS)
         )).scalars().all()
         return [TransaksiView(id=t.id, amplop_id=t.envelope_id, user_id=t.user_id, jumlah=Decimal(t.amount),
-                              deskripsi=masked_description(self.user_id, t), tanggal=t.transaction_date,
+                              deskripsi=masked_description(uid, t), tanggal=t.transaction_date,
                               sumber=str(getattr(t.source, "value", t.source)),
-                              milik_sendiri=self.user_id is not None and str(t.user_id) == str(self.user_id))
+                              milik_sendiri=uid is not None and str(t.user_id) == str(uid))
                 for t in rows]
 
     async def incomes(self, mulai: date, akhir: date) -> list[PemasukanView]:
-        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`. Di ruang keluarga, pemasukan anggota lain
-        tersamar (keterangan dan pencatat); nominal tetap ada untuk agregat."""
-        await self._perlu("incomes:read")
+        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`. Di ruang keluarga hanya milik viewer."""
+        k = _k(self)
+        await _host.perlu(k, "incomes:read")
         from app.models.models import Income
-        rows = (await _k(self).db.execute(
-            select(Income).where(Income.household_id == self.ruang_id,
+        rows = (await k.db.execute(
+            select(Income).where(Income.household_id == k.ruang_id, _pemasukan_terlihat(k, Income),
                                  Income.income_date >= mulai, Income.income_date <= akhir)
             .order_by(Income.income_date.desc(), Income.created_at.desc()).limit(BATAS_BARIS)
         )).scalars().all()
-        return [self._pemasukan(i) for i in rows]
+        return [_pemasukan(i) for i in rows]
 
     async def income(self, income_id: UUID) -> PemasukanView | None:
-        """`incomes:read`: satu pemasukan; None bila tidak ada atau milik ruang lain (tidak membedakan keduanya)."""
-        await self._perlu("incomes:read")
+        """`incomes:read`: satu pemasukan yang boleh dilihat; None bila tidak ada, milik ruang lain, atau (di ruang
+        keluarga) milik anggota lain — ketiganya tidak dibedakan."""
+        k = _k(self)
+        await _host.perlu(k, "incomes:read")
         from app.models.models import Income
-        i = (await _k(self).db.execute(
-            select(Income).where(Income.id == income_id, Income.household_id == self.ruang_id)
+        i = (await k.db.execute(
+            select(Income).where(Income.id == income_id, Income.household_id == k.ruang_id,
+                                 _pemasukan_terlihat(k, Income))
         )).scalar_one_or_none()
-        return self._pemasukan(i) if i is not None else None
-
-    def _pemasukan(self, i) -> PemasukanView:
-        utuh = self.jenis_ruang == "usaha" or (self.user_id is not None and str(i.user_id) == str(self.user_id))
-        return PemasukanView(id=i.id, user_id=i.user_id if utuh else None, jumlah=Decimal(i.amount),
-                             deskripsi=i.description if utuh else PEMASUKAN_PRIVAT, tanggal=i.income_date,
-                             jenis=i.kind or "")
+        return _pemasukan(i) if i is not None else None
 
     async def members(self) -> list[AnggotaView]:
         """`members:read`: nama dan peran anggota ruang ini."""
-        await self._perlu("members:read")
+        k = _k(self)
+        await _host.perlu(k, "members:read")
         from app.models.models import HouseholdMember, User
-        rows = (await _k(self).db.execute(
+        rows = (await k.db.execute(
             select(HouseholdMember.user_id, User.name, HouseholdMember.role)
             .join(User, User.id == HouseholdMember.user_id)
-            .where(HouseholdMember.household_id == self.ruang_id).order_by(User.name)
+            .where(HouseholdMember.household_id == k.ruang_id).order_by(User.name)
         )).all()
         return [AnggotaView(user_id=uid, nama=nama or "", peran=str(getattr(r, "value", r))) for uid, nama, r in rows]
 
@@ -314,14 +345,14 @@ class PluginContext:
         """`notifications:send`, hanya dari job: notifikasi untuk owner/admin ruang ini, lewat penyaring jam tenang dan
         batas harian per plugin (seperti `proaktif.py`). Judul diawali nama ruang; `link` hanya ke `/p/<id>…`. `kunci`
         mencegah kiriman ganda hari itu (bawaan: `jenis`). Mengembalikan jumlah penerima yang terkirim."""
-        await self._perlu("notifications:send")
         k = _k(self)
+        await _host.perlu(k, "notifications:send")
         if k.viewer is not None:
-            await self._tolak("notifications:send", "bukan_job")
+            await _host.tolak(k, "notifications:send", "bukan_job")
         if jenis not in k.jenis_notifikasi:
-            await self._tolak(f"notif:{jenis}"[:40], "jenis_tidak_dikenal")
+            await _host.tolak(k, f"notif:{jenis}"[:40], "jenis_tidak_dikenal")
         if k.notify_dipakai >= MAKS_NOTIFY_PER_KONTEKS:
-            await self._tolak("notifications:send", "batas_notify")
+            await _host.tolak(k, "notifications:send", "batas_notify")
         k.notify_dipakai += 1
         from app.plugins.host import titik
         return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis)

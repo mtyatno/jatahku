@@ -6,12 +6,15 @@ dicocokkan dengan manifest. Plugin tanpa `__init__.py` hanya manifest: kontribus
 
 Aturan impor (AGENTS.md "Plugin dan ruang" aturan 4): kode plugin hanya boleh mengimpor pustaka, nama publik
 `app.plugins.sdk` (`from app.plugins.sdk import X` dengan X di `__all__`; bukan submodulnya), paketnya sendiri, dan
-paket plugin di `requires`. Model, route, service, bot, `app.core`, dan host plugin tidak boleh. Begitu juga jalan
-pintas yang lazim untuk melewati aturan ini (review keamanan PR #186 temuan 4): impor dinamis dan introspeksi
-(`importlib`, `sys`, `gc`, `inspect`, `ctypes`, `builtins`, `__import__`, `eval`, `exec`, `compile`, `globals`,
-`locals`, `vars`), `getattr`/`setattr`/`delattr` dengan nama yang bukan teks tetap atau berawalan `_`, dan atribut
-dunder seperti `__globals__`, `__dict__`, `__class__`. Pemeriksaan ini menjaga disiplin plugin T1 (kode sendiri yang
-direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.py`).
+paket plugin di `requires`. Pustaka di luar `app` hanya dari daftar izin `PUSTAKA_BOLEH` (review ulang #186 no. 2:
+daftar larangan selalu bolong, mis. `operator.attrgetter`, `pkgutil.resolve_name`, `os.environ`); menambah pustaka =
+PR yang mengubah daftar ini. Jalan pintas yang lazim juga ditolak (review #186 temuan 4, review ulang no. 1–3):
+`__import__`, `eval`, `exec`, `compile`, `globals`, `locals`, `vars`; `getattr`/`setattr`/`delattr`/`hasattr` dengan
+nama yang bukan teks tetap atau berawalan `_`; atribut dunder (kecuali `__name__`, `__doc__`, `__init__`,
+`__post_init__`); atribut berawalan `_` pada objek selain `self`/`cls`; menugasi atau menghapus atribut nama SDK
+(`PluginContext.x = …`); dan menurunkan kelas SDK. Pemeriksaan ini menjaga disiplin plugin T1 (kode sendiri yang
+direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.py`), dan kelasnya juga menolak
+ditambal atau diturunkan saat berjalan.
 
 Izin per jenis fungsi (`IZIN_PER_JENIS`, review #186 temuan 1): kartu, cek, aturan advisor, perintah bot, dan field
 form hanya membaca; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data bersama). Izin
@@ -30,7 +33,11 @@ from app.plugins.sdk.plugin import JENIS, Plugin
 
 TERLARANG = ("app.models", "app.api", "app.services", "app.bot", "app.core", "app.main", "app.plugins.host",
              "app.schemas", "app.scripts", "app.tests")
-MODUL_TERLARANG = ("importlib", "sys", "gc", "inspect", "ctypes", "builtins")
+# Pustaka di luar `app` yang boleh diimpor plugin (daftar izin, bukan daftar larangan).
+PUSTAKA_BOLEH = frozenset({
+    "__future__", "calendar", "collections", "dataclasses", "datetime", "decimal", "enum", "functools", "itertools",
+    "json", "math", "re", "statistics", "string", "textwrap", "typing", "uuid", "zoneinfo",
+})
 PANGGILAN_TERLARANG = ("__import__", "eval", "exec", "compile", "globals", "locals", "vars")
 PANGGILAN_NAMA = ("getattr", "setattr", "delattr", "hasattr")
 DUNDER_BOLEH = {"__name__", "__doc__", "__init__", "__post_init__"}
@@ -72,8 +79,10 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
     galat = []
 
     def nilai(nama: str, berkas, baris, *, dari: bool = False, nama_impor=()):
-        if nama.split(".")[0] in MODUL_TERLARANG:
-            galat.append(f"{berkas}:{baris}: impor '{nama}' tidak boleh (impor dinamis/introspeksi)")
+        akar = nama.split(".")[0]
+        if akar != "app":
+            if akar not in PUSTAKA_BOLEH:
+                galat.append(f"{berkas}:{baris}: impor '{nama}' tidak ada di daftar pustaka yang boleh (PUSTAKA_BOLEH)")
             return
         if nama == "app" or nama == "app.plugins":
             galat.append(f"{berkas}:{baris}: impor '{nama}' terlalu luas; pakai app.plugins.sdk")
@@ -104,7 +113,26 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
         except SyntaxError as e:
             galat.append(f"{rel}: kode tidak bisa dibaca ({e.msg}, baris {e.lineno})")
             continue
+        # Nama yang diimpor dari app.plugins.sdk di berkas ini (termasuk alias): tidak boleh ditambal atau diturunkan.
+        nama_sdk = {a.asname or a.name for n in ast.walk(pohon) if isinstance(n, ast.ImportFrom)
+                    and n.level == 0 and n.module == "app.plugins.sdk" for a in n.names}
+
+        def basis(n):
+            while isinstance(n, ast.Attribute):
+                n = n.value
+            return n.id if isinstance(n, ast.Name) else None
+
         for node in ast.walk(pohon):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
+                sasaran = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+                for t in sasaran:
+                    for el in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t]):
+                        if isinstance(el, ast.Attribute) and basis(el) in nama_sdk:
+                            galat.append(f"{rel}:{node.lineno}: '{basis(el)}' dari app.plugins.sdk tidak boleh diubah")
+            if isinstance(node, ast.ClassDef):
+                for b in node.bases:
+                    if basis(b) in nama_sdk:
+                        galat.append(f"{rel}:{node.lineno}: kelas '{node.name}' tidak boleh menurunkan '{basis(b)}'")
             if isinstance(node, ast.Import):
                 for a in node.names:
                     nilai(a.name, rel, node.lineno)
@@ -114,7 +142,10 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
                     nilai(mod, rel, node.lineno, dari=True, nama_impor=[a.name for a in node.names])
             elif isinstance(node, ast.Attribute):
                 a = node.attr
-                if a in ATRIBUT_TERLARANG or (a.startswith("__") and a.endswith("__") and a not in DUNDER_BOLEH):
+                dunder = a.startswith("__") and a.endswith("__")
+                milik_sendiri = isinstance(node.value, ast.Name) and node.value.id in ("self", "cls")
+                if a in ATRIBUT_TERLARANG or (dunder and a not in DUNDER_BOLEH) or \
+                        (a.startswith("_") and not dunder and not milik_sendiri):
                     galat.append(f"{rel}:{node.lineno}: atribut '.{a}' tidak boleh; data inti hanya lewat PluginContext")
             elif isinstance(node, ast.Call):
                 f = node.func
