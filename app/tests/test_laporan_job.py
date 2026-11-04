@@ -26,7 +26,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import configure_mappers
 
@@ -190,6 +190,10 @@ class JobTestCase(unittest.IsolatedAsyncioTestCase):
         async def notifikasi(report_id):
             self.catat("notifikasi")
 
+        async def sapu(today, kecuali=frozenset()):
+            self.catat("sapu")
+            return 0
+
         self.db = db_with()
         self.db.execute = AsyncMock(side_effect=execute)
         self.db.commit = AsyncMock(side_effect=lambda: self.catat("commit"))
@@ -198,12 +202,14 @@ class JobTestCase(unittest.IsolatedAsyncioTestCase):
         self.invalidate = AsyncMock(side_effect=invalidate)
         self.muat = AsyncMock(side_effect=muat)
         self.notifikasi = AsyncMock(side_effect=notifikasi)
+        self.sapu = AsyncMock(side_effect=sapu)
         self.enterContext(patch.object(job, "AsyncSessionLocal", lambda: FakeSession(self.db)))
         self.enterContext(patch.object(job, "current_payday", self.current_payday))
         self.enterContext(patch.object(job, "create_monthly_snapshots", self.refresh))
         self.enterContext(patch.object(advisor_cache, "invalidate", self.invalidate))
         self.enterContext(patch.object(job, "muat_bahan", self.muat))
         self.enterContext(patch.object(job, "kirim_notifikasi_laporan", self.notifikasi))
+        self.enterContext(patch.object(job, "kirim_notifikasi_tertunda", self.sapu))
 
     def catat(self, nama: str):
         terkunci = frozenset(h for h in self.rumah if household_cycle.household_lock(h).locked())
@@ -318,6 +324,50 @@ class TerbitkanHouseholdTests(JobTestCase):
         self.assertEqual(len(await job.terbitkan_household(rumah.id, HARI_TERBIT)), 1)
         self.assertIn("monthly_snapshots", norm(sql(self.pernyataan[0])))
         self.assertLess(self.urutan().index("sql"), self.urutan().index("refresh"))
+
+    async def test_snapshot_belum_ada_di_hari_terakhir_jendela_dicatat_warning(self):
+        # Ruling R16: snapshot yang belum ada ditunda tiap jam dengan log DEBUG. Di hari terakhir jendela, household yang
+        # beraktivitas di periode itu tidak akan pernah mendapat laporannya bila snapshot tak dibuat hari itu: WARNING,
+        # supaya `journalctl -u jatahku | grep -i laporan` menangkapnya. Tanpa angka atau isi laporan di pesannya.
+        hari_terakhir = PE + timedelta(days=job.JENDELA_TERBIT_HARI)
+        rumah = rumah_tangga()
+        self.pasang([FakeResult(value=None), FakeResult(value=True)], rumah=[rumah.id])
+
+        with self.assertLogs("jatahku.laporan", "WARNING") as logs:
+            self.assertEqual(await job.terbitkan_household(rumah.id, hari_terakhir), [])
+
+        [catatan] = logs.records
+        self.assertEqual(catatan.levelname, "WARNING")
+        pesan = catatan.getMessage()
+        for bagian in (str(rumah.id), "2026-10-01", "2026-10-31", "laporan"):
+            self.assertIn(bagian, pesan)
+        self.refresh.assert_not_awaited()
+        self.db.add.assert_not_called()
+        [prasyarat, aktivitas] = self.pernyataan
+        self.assertIn("monthly_snapshots", norm(sql(prasyarat)))
+        self.assertIn("FROM transactions", norm(sql(aktivitas)))  # aktivitas periode itu, sama dengan gerbang R9
+        self.assertLessEqual({rumah.id, PS, PE}, set(params(aktivitas).values()))
+
+    async def test_snapshot_belum_ada_sebelum_hari_terakhir_atau_tanpa_aktivitas_hanya_debug(self):
+        kasus = [
+            # (nama, hari job, hasil kueri berurutan, jumlah kueri)
+            ("hari terbit", HARI_TERBIT, [FakeResult(value=None)], 1),
+            ("hari keenam", PE + timedelta(days=6), [FakeResult(value=None)], 1),
+            ("hari terakhir tanpa aktivitas", PE + timedelta(days=7), [FakeResult(value=None), FakeResult(value=False)],
+             2),
+        ]
+        for nama, hari, hasil, jumlah_kueri in kasus:
+            with self.subTest(nama):
+                rumah = rumah_tangga()
+                self.pasang(hasil, rumah=[rumah.id])
+
+                with self.assertLogs("jatahku.laporan", "DEBUG") as logs:
+                    self.assertEqual(await job.terbitkan_household(rumah.id, hari), [])
+
+                self.assertEqual([r.levelname for r in logs.records], ["DEBUG"])
+                self.assertIn(str(rumah.id), logs.records[0].getMessage())
+                self.assertEqual(len(self.pernyataan), jumlah_kueri)
+                self.refresh.assert_not_awaited()
 
     async def test_tanpa_aktivitas_dilewati(self):
         rumah, ani, budi = rumah_tangga(), orang("Ani"), orang("Budi")
@@ -445,6 +495,7 @@ class LaporanJobTests(JobTestCase):
             ("refresh", di_dalam), ("invalidate", di_dalam),
             ("muat Ani", di_dalam), ("muat Budi", di_dalam), ("commit", di_dalam),
             ("notifikasi", di_luar), ("notifikasi", di_luar),  # setelah kunci dilepas
+            ("sapu", di_luar),                                  # notifikasi yang tertinggal, setelah semua household
         ])
         self.assertEqual(self.notifikasi.await_args_list, [call(r.id) for r in self.laporan_baru()])
         self.assertFalse(kunci.locked())
@@ -510,6 +561,38 @@ class LaporanJobTests(JobTestCase):
         [catatan] = logs.records
         self.assertIn(str(pertama), catatan.getMessage())
 
+    async def test_sapu_notifikasi_setelah_semua_household_tanpa_mengulang_yang_baru_dicoba(self):
+        # Ruling R16: notifikasi yang tertinggal (galat DB, restart di antara commit laporan dan kirim) disusulkan oleh
+        # sapu di akhir setiap jalan. Laporan yang sudah dicoba di jalan ini (berhasil atau gagal) tidak dicoba dua kali
+        # dalam jam yang sama; household yang gagal tidak menghentikan sapu.
+        rumah1, rumah2 = rumah_tangga("Rumah Ani"), rumah_tangga("Rumah Citra")
+        ani, budi, citra = orang("Ani"), orang("Budi"), orang("Citra")
+        self.pasang(
+            [FakeResult(rows=[rumah1.id, rumah2.id]), *skrip_rumah(rumah1, [ani, budi]), *skrip_rumah(rumah2, [citra])],
+            rumah=[rumah1.id, rumah2.id], bahan={citra.id: RuntimeError("boom")},
+        )
+        self.notifikasi.side_effect = [RuntimeError("lonceng mati"), None]
+
+        with self.assertLogs("jatahku.laporan", "ERROR"):
+            hasil = await job.laporan_job(HARI_TERBIT)
+
+        self.assertEqual(hasil, {"terbit": 2, "gagal": 1})
+        dicoba = frozenset(r.id for r in self.laporan_baru())
+        self.assertEqual(len(dicoba), 2)
+        self.sapu.assert_awaited_once_with(HARI_TERBIT, kecuali=dicoba)
+        self.assertEqual(self.urutan()[-1], "sapu")
+
+    async def test_sapu_yang_gagal_hanya_dicatat(self):
+        self.pasang([FakeResult(rows=[])], rumah=[])
+        self.sapu.side_effect = RuntimeError("koneksi putus")
+
+        with self.assertLogs("jatahku.laporan", "ERROR") as logs:
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+
+        [catatan] = logs.records
+        self.assertIn("sapu notifikasi", catatan.getMessage())
+        self.assertIsNotNone(catatan.exc_info)
+
     async def test_tanpa_tanggal_memakai_tanggal_server(self):
         # Scheduler memanggil `laporan_job()` tanpa argumen: tanggal server hari itu.
         rumah, ani = rumah_tangga(), orang("Ani")
@@ -533,22 +616,36 @@ class NotifikasiTests(unittest.IsolatedAsyncioTestCase):
             f'<a href="https://jatahku.com/laporan/{self.RID}">Buka laporan</a>',
         ))
 
-    def pasang(self, report, user, *, kirim=None):
-        self.kejadian, self.pernyataan = [], []
-        antrian = iter([FakeResult(value=report), FakeResult(value=user), FakeResult()])
+    def pasang(self, report, user, *, kirim=None, diklaim=1, commit_gagal=None):
+        """Satu sesi tiruan: kueri laporan, kueri user, lalu UPDATE klaim `notified_at` yang mengenai `diklaim` baris.
+        `kirim` = pengganti `notification_service.kirim` (Telegram) atau galat yang dilemparnya; `commit_gagal` = galat
+        yang dilempar commit."""
+        self.kejadian, self.pernyataan, self.ditambah = [], [], []
+        antrian = iter([FakeResult(value=report), FakeResult(value=user), SimpleNamespace(rowcount=diklaim)])
 
         async def execute(stmt):
             self.kejadian.append("sql")
             self.pernyataan.append(stmt)
             return next(antrian)
 
+        def tambah(objek):
+            self.kejadian.append("add")
+            self.ditambah.append(objek)
+
+        async def commit():
+            self.kejadian.append("commit")
+            if commit_gagal is not None:
+                raise commit_gagal
+
         async def kirim_tercatat(*args, **kwargs):
             self.kejadian.append("kirim")
-            return {"web", "telegram"}
+            return {"telegram"}
 
         self.db = db_with()
         self.db.execute = AsyncMock(side_effect=execute)
-        self.db.commit = AsyncMock(side_effect=lambda: self.kejadian.append("commit"))
+        self.db.add = MagicMock(side_effect=tambah)
+        self.db.commit = AsyncMock(side_effect=commit)
+        self.db.rollback = AsyncMock(side_effect=lambda: self.kejadian.append("rollback"))
         self.kirim = AsyncMock(side_effect=kirim or kirim_tercatat)
         self.enterContext(patch.object(job, "AsyncSessionLocal", lambda: FakeSession(self.db)))
         self.enterContext(patch.object(notification_service, "kirim", self.kirim))
@@ -561,24 +658,35 @@ class NotifikasiTests(unittest.IsolatedAsyncioTestCase):
                         data={"judul": judul}, notified_at=notified_at)
         return report, User(id=uid, name="Ani", email="ani@contoh.id", telegram_id="12345")
 
-    async def test_notifikasi_isi_dan_notified_at(self):
+    async def test_lonceng_dan_notified_at_satu_transaksi_lalu_telegram(self):
+        # Ruling R16: lonceng dan `notified_at` di-commit bersama, didahului klaim bersyarat `notified_at IS NULL`, jadi
+        # mengulang tidak pernah membuat lonceng kedua; Telegram menyusul sekali setelah commit.
         report, user = self.laporan()
         self.pasang(report, user)
 
-        await job.kirim_notifikasi_laporan(self.RID)
+        self.assertIs(await job.kirim_notifikasi_laporan(self.RID), True)
 
+        self.assertEqual(self.kejadian, ["sql", "sql", "sql", "add", "commit", "kirim"])
+        klaim = self.pernyataan[2]
+        teks = norm(sql(klaim))
+        self.assertTrue(teks.startswith("UPDATE reports SET notified_at="), teks)
+        self.assertIn("reports.id = ", teks)
+        self.assertIn("reports.notified_at IS NULL", teks)
+        nilai = params(klaim)
+        self.assertEqual(nilai["id_1"], self.RID)
+        self.assertLess(abs(datetime.now(UTC) - nilai["notified_at"]), timedelta(minutes=1))
+        [lonceng] = self.ditambah
+        self.assertIsInstance(lonceng, Notification)
+        self.assertEqual((lonceng.user_id, lonceng.type, lonceng.title, lonceng.message, lonceng.link),
+                         (user.id, NotificationType.system, "Laporan 25 Sep – 24 Okt 2026 siap", PESAN,
+                          f"/laporan/{self.RID}"))
         self.kirim.assert_awaited_once_with(
             user, NotificationType.system, "Laporan 25 Sep – 24 Okt 2026 siap", PESAN,
             link=f"/laporan/{self.RID}",
             telegram_html="<b>Laporan 25 Sep – 24 Okt 2026 siap</b>\nLihat bagaimana periode kemarin berjalan.\n"
                           f'<a href="https://contoh.test/laporan/{self.RID}">Buka laporan</a>',
+            permukaan=("telegram",),
         )
-        self.assertEqual(self.kejadian, ["sql", "sql", "kirim", "sql", "commit"])  # notified_at setelah kirim kembali
-        ubah = self.pernyataan[2]
-        self.assertTrue(norm(sql(ubah)).startswith("UPDATE reports SET notified_at="), sql(ubah))
-        nilai = params(ubah)
-        self.assertEqual(nilai["id_1"], self.RID)
-        self.assertLess(abs(datetime.now(UTC) - nilai["notified_at"]), timedelta(minutes=1))
 
         # Judul di-escape di teks Telegram (parse mode HTML); lonceng menyimpannya apa adanya.
         report, user = self.laporan(judul="Laporan <Rumah & Toko>")
@@ -586,32 +694,94 @@ class NotifikasiTests(unittest.IsolatedAsyncioTestCase):
 
         await job.kirim_notifikasi_laporan(self.RID)
 
+        self.assertEqual(self.ditambah[0].title, "Laporan <Rumah & Toko> siap")
         argumen, kata_kunci = self.kirim.await_args
         self.assertEqual(argumen[2], "Laporan <Rumah & Toko> siap")
         self.assertTrue(kata_kunci["telegram_html"].startswith("<b>Laporan &lt;Rumah &amp; Toko&gt; siap</b>\n"),
                         kata_kunci["telegram_html"])
 
-    async def test_notified_at_tidak_diisi_bila_kirim_gagal(self):
+    async def test_telegram_gagal_tidak_membatalkan_lonceng(self):
+        # Telegram best-effort: lonceng dan `notified_at` sudah tersimpan, jadi galatnya hanya dicatat dan tidak membuat
+        # sapu mengirim ulang tiap jam selama tujuh hari.
         report, user = self.laporan()
-        self.pasang(report, user, kirim=RuntimeError("db lonceng mati"))
+        self.pasang(report, user, kirim=RuntimeError("Forbidden: bot was blocked by the user"))
+
+        with self.assertLogs("jatahku.laporan", "ERROR") as logs:
+            self.assertIs(await job.kirim_notifikasi_laporan(self.RID), True)
+
+        self.assertEqual(self.kejadian, ["sql", "sql", "sql", "add", "commit"])
+        self.assertIn(str(self.RID), logs.records[0].getMessage())
+
+    async def test_galat_database_tidak_menyimpan_apa_pun_dan_diteruskan(self):
+        # Commit gagal: lonceng dan `notified_at` sama-sama batal, galat diteruskan (sapu berikutnya mencoba lagi), dan
+        # Telegram tidak dikirim tanpa lonceng.
+        report, user = self.laporan()
+        self.pasang(report, user, commit_gagal=RuntimeError("koneksi putus"))
 
         with self.assertRaises(RuntimeError):
             await job.kirim_notifikasi_laporan(self.RID)
 
-        self.assertEqual(self.kejadian, ["sql", "sql"])
+        self.assertEqual(self.kejadian, ["sql", "sql", "sql", "add", "commit"])
+        self.kirim.assert_not_awaited()
+
+    async def test_klaim_kalah_tidak_membuat_lonceng(self):
+        # Proses lain (mis. jalan manual) memberi tahu laporan ini di antara baca dan klaim: UPDATE bersyarat tidak
+        # mengenai baris, jadi tidak ada lonceng kedua dan tidak ada Telegram.
+        report, user = self.laporan()
+        self.pasang(report, user, diklaim=0)
+
+        self.assertIs(await job.kirim_notifikasi_laporan(self.RID), False)
+
+        self.assertEqual(self.kejadian, ["sql", "sql", "sql", "rollback"])
         self.db.commit.assert_not_awaited()
+        self.kirim.assert_not_awaited()
 
     async def test_tidak_dikirim_ulang_atau_untuk_laporan_yang_hilang(self):
         report, user = self.laporan(notified_at=datetime(2026, 11, 1, 0, 31, tzinfo=UTC))
         self.pasang(report, user)
-        await job.kirim_notifikasi_laporan(self.RID)
+        self.assertIs(await job.kirim_notifikasi_laporan(self.RID), False)
         self.kirim.assert_not_awaited()
+        self.db.add.assert_not_called()
         self.db.commit.assert_not_awaited()
 
         self.pasang(None, None)  # laporan terhapus (akun dihapus) sebelum notifikasinya dikirim
-        await job.kirim_notifikasi_laporan(self.RID)
+        self.assertIs(await job.kirim_notifikasi_laporan(self.RID), False)
         self.kirim.assert_not_awaited()
+        self.db.add.assert_not_called()
         self.db.commit.assert_not_awaited()
+
+
+class SapuNotifikasiTests(unittest.IsolatedAsyncioTestCase):
+    """`kirim_notifikasi_tertunda` (Ruling R16): laporan yang belum diberi tahu dan terbit dalam jendela tujuh hari."""
+
+    async def test_memilih_yang_belum_diberi_tahu_dalam_jendela_dan_melewati_kecuali(self):
+        a, b, c, e = (uuid.uuid4() for _ in range(4))
+        db = db_with(FakeResult(rows=[a, b, c, e]))
+        hasil = {a: True, c: RuntimeError("koneksi putus"), e: False}  # e: diberi tahu proses lain lebih dulu
+
+        async def kirim(report_id):
+            isi = hasil[report_id]
+            if isinstance(isi, Exception):
+                raise isi
+            return isi
+
+        kirim_mock = AsyncMock(side_effect=kirim)
+        with patch.object(job, "AsyncSessionLocal", lambda: FakeSession(db)), \
+                patch.object(job, "kirim_notifikasi_laporan", kirim_mock), \
+                self.assertLogs("jatahku.laporan", "INFO") as logs:
+            terkirim = await job.kirim_notifikasi_tertunda(HARI_TERBIT, kecuali=frozenset({b}))
+
+        self.assertEqual(terkirim, 1)
+        self.assertEqual(kirim_mock.await_args_list, [call(a), call(c), call(e)])  # b sudah dicoba di jalan ini
+        [pilih] = [c_.args[0] for c_ in db.execute.call_args_list]
+        teks = norm(sql(pilih))
+        for bagian in ("SELECT reports.id FROM reports", "reports.notified_at IS NULL", "reports.terbit_at >= ",
+                       "ORDER BY reports.terbit_at"):
+            self.assertIn(bagian, teks)
+        # Jendela: terbit paling awal pukul 00.00 UTC tujuh hari sebelum hari job.
+        self.assertIn(datetime(2026, 10, 25, tzinfo=UTC), params(pilih).values())
+        tingkat = {(r.levelname, str(c) in r.getMessage()) for r in logs.records}
+        self.assertIn(("ERROR", True), tingkat)  # galat satu laporan dicatat, yang lain tetap dicoba
 
 
 class RegistrasiTests(unittest.TestCase):
@@ -820,6 +990,79 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(await self.semua(Report)), 2)
         self.assertEqual(len(await self.semua(Notification)), 2)
         self.assertEqual(await self.id_snapshot_okt(self.H), snapshot_h)
+
+    async def test_notifikasi_yang_gagal_disusulkan_tepat_sekali(self):
+        # Ruling R16: notifikasi pertama gagal sebelum apa pun tersimpan (galat DB, atau restart di antara commit laporan
+        # dan kirim). Laporannya tetap terbit dengan `notified_at` NULL; jam berikutnya sapu menyusulkan tepat satu
+        # lonceng, dan jalan-jalan sesudahnya tidak menambah apa pun.
+        await rollover.create_monthly_snapshots(PS, PE, household_ids=[self.H, self.W, self.F])
+        asli = job.kirim_notifikasi_laporan
+        panggilan = []
+
+        async def gagal_sekali(report_id):
+            panggilan.append(report_id)
+            if len(panggilan) == 1:
+                raise RuntimeError("koneksi putus")
+            return await asli(report_id)
+
+        with patch.object(job, "kirim_notifikasi_laporan", gagal_sekali), self.assertLogs("jatahku.laporan", "ERROR"):
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0})
+
+        laporan = {r.id: r for r in await self.semua(Report)}
+        self.assertEqual([i for i, r in laporan.items() if r.notified_at is None], [panggilan[0]])
+        self.assertEqual(len(await self.semua(Notification)), 1)
+        self.assertEqual(len(panggilan), 2)  # yang gagal tidak dicoba lagi oleh sapu di jam yang sama
+
+        for _ in range(3):
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+
+        notifikasi = await self.semua(Notification)
+        self.assertEqual(sorted(n.link for n in notifikasi), sorted(f"/laporan/{i}" for i in laporan))  # satu per laporan
+        self.assertTrue(all(r.notified_at is not None for r in await self.semua(Report)))
+
+    async def test_telegram_gagal_tidak_dikirim_ulang_tiap_jam(self):
+        # Telegram best-effort: bot diblokir user (galat permanen). Lonceng dan `notified_at` sudah tersimpan sebelum
+        # Telegram, jadi sapu tidak mengirim ulang tiap jam selama tujuh hari.
+        await rollover.create_monthly_snapshots(PS, PE, household_ids=[self.H, self.W, self.F])
+        async with self.Session() as db:
+            await db.execute(update(User).where(User.id == self.ANI).values(telegram_id="5550001"))
+            await db.commit()
+        bot = MagicMock()
+        bot.return_value.send_message = AsyncMock(side_effect=RuntimeError("Forbidden: bot was blocked by the user"))
+        self.enterContext(patch.object(notification_service, "Bot", bot))
+        self.enterContext(patch.object(notification_service, "settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="tes")))
+
+        with self.assertLogs("jatahku.notify", "ERROR"):
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0})
+        for _ in range(3):
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+
+        bot.return_value.send_message.assert_awaited_once()  # hanya Ani yang tertaut; sekali, walau gagal
+        self.assertEqual(bot.return_value.send_message.await_args.kwargs["chat_id"], 5550001)
+        self.assertEqual(len(await self.semua(Notification)), 2)
+        self.assertTrue(all(r.notified_at is not None for r in await self.semua(Report)))
+
+    async def test_sapu_hanya_laporan_yang_terbit_dalam_tujuh_hari(self):
+        async with self.Session() as db:
+            for mulai, terbit in [
+                (date(2026, 7, 1), datetime(2026, 10, 24, 23, 59, tzinfo=UTC)),  # sebelum jendela: dibiarkan
+                (date(2026, 8, 1), datetime(2026, 10, 25, 0, 0, tzinfo=UTC)),    # tepat di awal jendela
+                (date(2026, 9, 1), datetime(2026, 10, 31, 1, 0, tzinfo=UTC)),
+            ]:
+                db.add(Report(user_id=self.ANI, household_id=self.H, jenis="bulanan", periode_mulai=mulai,
+                              periode_akhir=mulai + timedelta(days=29), payday_day=1, data={"judul": "Laporan lama"},
+                              terbit_at=terbit))
+            await db.commit()
+
+        self.assertEqual(await job.kirim_notifikasi_tertunda(HARI_TERBIT), 2)
+        self.assertEqual(await job.kirim_notifikasi_tertunda(HARI_TERBIT), 0)
+
+        laporan = {r.periode_mulai: r for r in await self.semua(Report)}
+        self.assertIsNone(laporan[date(2026, 7, 1)].notified_at)
+        self.assertIsNotNone(laporan[date(2026, 8, 1)].notified_at)
+        self.assertIsNotNone(laporan[date(2026, 9, 1)].notified_at)
+        self.assertEqual(sorted(n.link for n in await self.semua(Notification)),
+                         sorted(f"/laporan/{laporan[m].id}" for m in (date(2026, 8, 1), date(2026, 9, 1))))
 
 
 if __name__ == "__main__":

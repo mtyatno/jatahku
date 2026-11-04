@@ -13,7 +13,9 @@ dibaca SETELAH kunci didapat (`current_payday`), lalu berurutan:
 1. periode yang paling baru tutup (`get_closed_periods`, sama dengan job snapshot); berhenti bila tutupnya lebih dari
    `JENDELA_TERBIT_HARI` hari lalu;
 2. prasyarat: ada snapshot kunci periode itu di antara amplop household, yaitu job snapshot harian sudah memprosesnya.
-   Diperiksa SEBELUM refresh (langkah 4), jadi refresh tidak pernah memenuhi prasyaratnya sendiri;
+   Diperiksa SEBELUM refresh (langkah 4), jadi refresh tidak pernah memenuhi prasyaratnya sendiri. Belum ada: ditunda
+   ke jam berikutnya (log DEBUG); di hari terakhir jendela, household yang beraktivitas di periode itu dicatat WARNING
+   (Ruling R16), karena laporannya hilang bila snapshot tidak dibuat hari itu;
 3. calon penerima: anggota yang `penerima_layak` dan belum punya laporan bulanan periode itu. Tanpa calon, atau tanpa
    transaksi dan alokasi di jendela pada amplop household mana pun (tak seorang pun bisa lolos `ada_aktivitas`),
    berhenti di sini: buku besar hanya ditulis ulang bila ada laporan yang akan dibangun, bukan tiap jam selama tujuh
@@ -29,13 +31,18 @@ dibaca SETELAH kunci didapat (`current_payday`), lalu berurutan:
 Sesi persiapan (langkah 2–3) ditutup sebelum refresh, dan pembangunan memakai sesi baru, jadi bacaannya pasti melihat
 snapshot yang baru ditulis.
 
-`kirim_notifikasi_laporan` mengirim lewat `notification_service.kirim` tanpa memegang sesi DB, lalu mengisi
-`notified_at`; gagal kirim tidak membatalkan laporan yang sudah terbit. `email_status` tetap NULL di tahap 1.
+Notifikasi (Ruling R16): `kirim_notifikasi_laporan` menyimpan lonceng dan `notified_at` dalam SATU transaksi, didahului
+UPDATE bersyarat `notified_at IS NULL` (klaim), lalu sesudah commit mengirim Telegram sekali lewat
+`notification_service.kirim(permukaan=("telegram",))`, best-effort. Jadi mencoba lagi tidak pernah membuat lonceng kedua,
+dan Telegram yang gagal permanen (bot diblokir) tidak dikirim ulang. Setelah semua household, `laporan_job` menyapu
+laporan yang `notified_at`-nya masih NULL dan terbit dalam `JENDELA_TERBIT_HARI` hari (`kirim_notifikasi_tertunda`):
+galat DB atau restart di antara commit laporan dan notifikasinya tersusulkan jam berikutnya. Gagal kirim tidak
+membatalkan laporan yang sudah terbit. `email_status` tetap NULL di tahap 1.
 """
 import html
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import or_, select, update
 
@@ -44,7 +51,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.period import get_closed_periods
 from app.models.models import (
     JENIS_BULANAN, Allocation, Envelope, Household, HouseholdMember, HouseholdType, Income, MonthlySnapshot,
-    NotificationType, Report, Transaction, User,
+    Notification, NotificationType, Report, Transaction, User,
 )
 from app.services import notification_service
 from app.services.advisor import advisor_cache
@@ -171,7 +178,15 @@ async def terbitkan_household(household_id, today: date) -> list[uuid.UUID]:
 
         async with AsyncSessionLocal() as db:
             if not await _ada_snapshot(db, household_id, ps):
-                logger.debug("household=%s periode %s → %s belum punya snapshot; laporan ditunda", household_id, ps, pe)
+                if (today - pe).days == JENDELA_TERBIT_HARI and await _rumah_beraktivitas(db, household_id, ps, pe):
+                    logger.warning(
+                        "household=%s periode %s → %s masih belum punya snapshot di hari terakhir jendela terbit; "
+                        "laporan periode ini tidak akan terbit bila snapshot tidak dibuat hari ini",
+                        household_id, ps, pe,
+                    )
+                else:
+                    logger.debug("household=%s periode %s → %s belum punya snapshot; laporan ditunda",
+                                 household_id, ps, pe)
                 return []
             calon = await _calon_penerima(db, household_id, ps, pe)
             if not calon or not await _rumah_beraktivitas(db, household_id, ps, pe):
@@ -203,27 +218,73 @@ async def terbitkan_household(household_id, today: date) -> list[uuid.UUID]:
         return [r.id for r in laporan]
 
 
-async def kirim_notifikasi_laporan(report_id) -> None:
-    """Beri tahu penerima bahwa laporan `report_id` sudah terbit (lonceng, dan Telegram bila tertaut), lalu isi
-    `notified_at`. Laporan yang sudah diberi tahu atau sudah tidak ada dilewati. Tidak memegang sesi DB selama
-    mengirim; `notified_at` hanya diisi setelah `kirim` kembali, dan galat `kirim` diteruskan ke pemanggil."""
+async def kirim_notifikasi_laporan(report_id) -> bool:
+    """Beri tahu penerima bahwa laporan `report_id` sudah terbit; True bila lonceng baru dibuat. Laporan yang sudah
+    diberi tahu, sudah tidak ada, atau diklaim proses lain lebih dulu dilewati (False).
+
+    Lonceng dan `notified_at` disimpan dalam satu transaksi, didahului UPDATE bersyarat `notified_at IS NULL` yang
+    harus mengenai tepat satu baris: dua proses yang bersamaan tidak bisa sama-sama membuat lonceng (yang kalah
+    menunggu kunci baris, lalu tidak mengenai apa-apa). Galat database diteruskan ke pemanggil tanpa ada yang
+    tersimpan, jadi sapu berikutnya mencoba lagi. Telegram (bila tertaut) dikirim sekali setelah commit, best-effort:
+    gagal hanya dicatat, tidak diulang, dan tidak pernah membatalkan lonceng. Tanpa nominal di keduanya."""
     async with AsyncSessionLocal() as db:
         report = (await db.execute(select(Report).where(Report.id == report_id))).scalar_one_or_none()
         if report is None or report.notified_at is not None:
-            return
+            return False
         user = (await db.execute(select(User).where(User.id == report.user_id))).scalar_one()
-    judul, pesan, tautan, telegram = notifikasi_laporan(report.data["judul"], report.id, get_settings().APP_URL)
-    await notification_service.kirim(user, NotificationType.system, judul, pesan, link=tautan, telegram_html=telegram)
-    async with AsyncSessionLocal() as db:
-        await db.execute(update(Report).where(Report.id == report_id).values(notified_at=datetime.now(timezone.utc)))
+        judul, pesan, tautan, telegram = notifikasi_laporan(report.data["judul"], report.id, get_settings().APP_URL)
+        klaim = await db.execute(
+            update(Report).where(Report.id == report_id, Report.notified_at.is_(None))
+            .values(notified_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
+        if klaim.rowcount != 1:
+            await db.rollback()
+            return False
+        db.add(Notification(user_id=user.id, type=NotificationType.system, title=judul, message=pesan, link=tautan))
         await db.commit()
+    try:
+        await notification_service.kirim(user, NotificationType.system, judul, pesan, link=tautan,
+                                         telegram_html=telegram, permukaan=("telegram",))
+    except Exception:
+        logger.exception("Telegram untuk laporan %s gagal; lonceng sudah tersimpan, tidak dikirim ulang", report_id)
+    return True
+
+
+async def kirim_notifikasi_tertunda(today: date, kecuali=frozenset()) -> int:
+    """Sapu notifikasi yang tertinggal (Ruling R16): laporan yang `notified_at`-nya NULL dan `terbit_at`-nya paling
+    awal pukul 00.00 UTC `JENDELA_TERBIT_HARI` hari sebelum `today`, terlama dulu, selain `kecuali` (sudah dicoba di
+    jalan ini). Masing-masing lewat `kirim_notifikasi_laporan` (tidak pernah lonceng kedua); galat satu laporan dicatat
+    dan yang lain tetap dicoba, laporan itu dicoba lagi jam berikutnya sampai keluar jendela. Mengembalikan jumlah
+    lonceng yang dibuat."""
+    batas = datetime.combine(today - timedelta(days=JENDELA_TERBIT_HARI), time.min, tzinfo=timezone.utc)
+    async with AsyncSessionLocal() as db:
+        ids = (await db.execute(
+            select(Report.id)
+            .where(Report.notified_at.is_(None), Report.terbit_at >= batas)
+            .order_by(Report.terbit_at, Report.id)
+        )).scalars().all()
+    terkirim = 0
+    for report_id in ids:
+        if report_id in kecuali:
+            continue
+        try:
+            if await kirim_notifikasi_laporan(report_id):
+                terkirim += 1
+        except Exception:
+            logger.exception("notifikasi laporan %s yang tertinggal masih gagal; dicoba lagi jam berikutnya", report_id)
+    if terkirim:
+        logger.info("%s notifikasi laporan yang tertinggal dikirim", terkirim)
+    return terkirim
 
 
 async def laporan_job(today: date | None = None) -> dict:
-    """Jalan tiap jam: terbitkan laporan bulanan untuk setiap ruang keluarga yang punya anggota, lalu beri tahu
-    penerimanya. `today` bawaan = tanggal server. Mengembalikan `{"terbit": laporan baru, "gagal": household gagal}`.
-    Household yang gagal dicatat (refresh snapshot yang error: `logger.error` dengan errornya; galat lain:
-    `logger.exception`) dan dicoba lagi jam berikutnya; notifikasi yang gagal dicatat tanpa membatalkan laporannya."""
+    """Jalan tiap jam: terbitkan laporan bulanan untuk setiap ruang keluarga yang punya anggota, beri tahu
+    penerimanya, lalu sapu notifikasi yang tertinggal (`kirim_notifikasi_tertunda`; laporan yang sudah dicoba di jalan
+    ini tidak dicoba dua kali). `today` bawaan = tanggal server. Mengembalikan `{"terbit": laporan baru, "gagal":
+    household gagal}`. Household yang gagal dicatat (refresh snapshot yang error: `logger.error` dengan errornya; galat
+    lain: `logger.exception`) dan dicoba lagi jam berikutnya; notifikasi yang gagal dicatat tanpa membatalkan
+    laporannya dan disusulkan sapu jam berikutnya."""
     today = today or date.today()
     async with AsyncSessionLocal() as db:
         household_ids = (await db.execute(
@@ -234,6 +295,7 @@ async def laporan_job(today: date | None = None) -> dict:
         )).scalars().all()
 
     terbit = gagal = 0
+    dicoba = set()
     for household_id in household_ids:
         try:
             ids = await terbitkan_household(household_id, today)
@@ -247,8 +309,13 @@ async def laporan_job(today: date | None = None) -> dict:
             continue
         terbit += len(ids)
         for report_id in ids:
+            dicoba.add(report_id)
             try:
                 await kirim_notifikasi_laporan(report_id)
             except Exception:
                 logger.exception("notifikasi laporan %s gagal; laporannya tetap terbit", report_id)
+    try:
+        await kirim_notifikasi_tertunda(today, kecuali=frozenset(dicoba))
+    except Exception:
+        logger.exception("sapu notifikasi laporan gagal; dicoba lagi jam berikutnya")
     return {"terbit": terbit, "gagal": gagal}
