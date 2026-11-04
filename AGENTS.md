@@ -240,8 +240,8 @@ bagian "Kata yang dipelajari" di halaman Anggota (04-kontrak-api.md §2, §3). *
 tidak ada jendela 500: `lifespan` (`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten
 (`if_not_exists`). Kamus hanya diisi dan dibaca di ruang usaha (flag `ruang_usaha_users`); ruang keluarga, bot, dan
 Catat lama tidak berubah selain satu kueri tambahan yang kosong saat kata user tidak cocok. Tanpa paket atau `.env`.
-1. Sebelum merge: `alembic current` di VPS = `e7b3d5a9c1f4` (Kotak Struk belajar lintas user). Bila belum, jalankan
-   checklist "Kotak Struk belajar lintas user (e7b3d5a9c1f4)" dulu (migrasi R7 menginduk ke sana).
+1. Sebelum merge: `alembic current` di VPS = `967a27d0c15d` (laporan berkala tahap 1). Bila belum, jalankan checklist
+   "Laporan berkala tahap 1 (967a27d0c15d)" dulu (migrasi R7 menginduk ke sana; di-rebase 5 Nov sesudah #190).
 2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
    `ls /opt/jatahku/app/alembic/versions/ | grep d7r7k4a1m9c3`.
 3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`envelopes`/
