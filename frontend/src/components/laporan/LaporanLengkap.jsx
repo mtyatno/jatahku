@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { formatCurrency } from '../../lib/utils';
 import { labelStatus, angkaUtama, trenTeks } from '../../lib/laporanView';
 import UnduhPdfButton from './UnduhPdfButton';
-import { periodeTeks, tanggalTeks, hariTeks } from './format';
+import { periodeTeks, tanggalTeks, hariTeks, hariAngka } from '../../lib/laporanFormat';
 
 const LANGKAH_MUTASI = 50;
 const STRIP = '—';
@@ -232,45 +232,41 @@ export default function LaporanLengkap({ laporan }) {
       <Bagian judul="Sorotan">
         {data.email?.sorotan && <p className="text-sm text-brand-800 bg-brand-50 rounded-xl px-4 py-3 mb-4">{data.email.sorotan}</p>}
         <div className="grid grid-cols-3 gap-4">
-          <div>
-            <p className="text-xs text-gray-400">Hari mencatat</p>
-            <p className="text-xl font-bold font-display">{sorotan.hari_mencatat ?? STRIP}</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-400">Beruntun terpanjang</p>
-            <p className="text-xl font-bold font-display">{sorotan.beruntun_terpanjang ?? STRIP} hari</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-400">Beruntun saat ini</p>
-            <p className="text-xl font-bold font-display">{sorotan.streak_saat_ini ?? STRIP} hari</p>
-          </div>
+          {[
+            ['Hari mencatat', sorotan.hari_mencatat],
+            ['Catat beruntun terpanjang', sorotan.beruntun_terpanjang],
+            ['Streak saat terbit', sorotan.streak_saat_ini],
+          ].map(([label, nilai]) => (
+            <div key={label}>
+              <p className="text-xs text-gray-400">{label}</p>
+              <p className="text-xl font-bold font-display">{hariAngka(nilai)}</p>
+            </div>
+          ))}
         </div>
-        {(sorotan.amplop_aman || []).length > 0 && (
-          <div className="mt-4">
-            <p className="text-xs text-gray-400 mb-1.5">Amplop yang selalu aman</p>
+        <div className="mt-4">
+          <p className="text-xs text-gray-400 mb-1.5">Amplop yang tidak pernah lewat batas</p>
+          {(sorotan.amplop_aman || []).length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {sorotan.amplop_aman.map((n) => (
                 <span key={n} className="px-2.5 py-1 rounded-full text-xs font-semibold text-brand-600 bg-brand-50">{n}</span>
               ))}
             </div>
-          </div>
-        )}
-        {(sorotan.target || []).length > 0 && (
-          <div className="mt-4 space-y-3">
-            <p className="text-xs text-gray-400">Target tabungan</p>
-            {sorotan.target.map((g, i) => (
-              <div key={i}>
-                <div className="flex justify-between text-sm">
-                  <span>{g.nama}</span>
-                  <span className="text-gray-500">{uang(g.terkumpul)} / {uang(g.target)}{g.persen !== null && g.persen !== undefined ? ` (${g.persen}%)` : ''}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-gray-100 mt-1.5 overflow-hidden">
-                  <div className="h-full bg-brand-600" style={{ width: `${Math.max(0, Math.min(100, g.persen ?? 0))}%` }} />
-                </div>
+          ) : <p className="text-sm">{STRIP}</p>}
+        </div>
+        <div className="mt-4 space-y-3">
+          <p className="text-xs text-gray-400">Target tabungan</p>
+          {(sorotan.target || []).length === 0 ? <Kosong>Belum ada target tabungan.</Kosong> : sorotan.target.map((g, i) => (
+            <div key={i}>
+              <div className="flex justify-between text-sm">
+                <span>{g.nama}</span>
+                <span className="text-gray-500">{uang(g.terkumpul)} / {uang(g.target)}{g.persen !== null && g.persen !== undefined ? ` (${g.persen}%)` : ''}</span>
               </div>
-            ))}
-          </div>
-        )}
+              <div className="h-1.5 rounded-full bg-gray-100 mt-1.5 overflow-hidden">
+                <div className="h-full bg-brand-600" style={{ width: `${Math.max(0, Math.min(100, g.persen ?? 0))}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
       </Bagian>
 
       <Bagian judul="Lampiran: mutasi">
@@ -293,7 +289,7 @@ export default function LaporanLengkap({ laporan }) {
               ))}
             </Tabel>
             {mutasi.length > tampil && (
-              <button type="button" onClick={() => setTampil((n) => n + LANGKAH_MUTASI)} className="btn-secondary text-sm py-2 mt-4">
+              <button type="button" onClick={() => setTampil((n) => n + LANGKAH_MUTASI)} className="btn-outline text-sm py-2 mt-4">
                 Tampilkan lebih banyak
               </button>
             )}

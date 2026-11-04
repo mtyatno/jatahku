@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../../lib/api';
 
 // Form kata sandi laporan (6–64 karakter). Dipakai di Pengaturan dan di dialog "Unduh PDF".
-export default function KataSandiForm({ label = 'Atur kata sandi', onSaved, onCancel }) {
+export default function KataSandiForm({ label = 'Atur kata sandi', autoFocus = false, onSaved, onCancel }) {
   const [kataSandi, setKataSandi] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -35,6 +35,7 @@ export default function KataSandiForm({ label = 'Atur kata sandi', onSaved, onCa
           minLength={6}
           maxLength={64}
           required
+          autoFocus={autoFocus}
           value={kataSandi}
           onChange={(e) => setKataSandi(e.target.value)}
         />
@@ -46,7 +47,7 @@ export default function KataSandiForm({ label = 'Atur kata sandi', onSaved, onCa
           {busy ? 'Menyimpan...' : label}
         </button>
         {onCancel && (
-          <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary text-sm py-2 disabled:opacity-50">
+          <button type="button" onClick={onCancel} disabled={busy} className="btn-outline text-sm py-2 disabled:opacity-50">
             Batal
           </button>
         )}

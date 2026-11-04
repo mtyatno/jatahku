@@ -37,7 +37,7 @@ export default function LaporanSettings() {
       </p>
       {!edit ? (
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setEdit(true)} className="btn-secondary text-sm py-2">{label}</button>
+          <button type="button" onClick={() => setEdit(true)} className="btn-outline text-sm py-2">{label}</button>
           {sukses && <span className="text-xs text-brand-600 animate-pulse">{sukses}</span>}
         </div>
       ) : (

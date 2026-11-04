@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { api } from '../../lib/api';
 import { native } from '../../native';
 import { unduhPdf } from '../../lib/laporanView';
@@ -10,6 +10,17 @@ export default function UnduhPdfButton({ laporan, className = '' }) {
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState(false);
   const pendingRef = useRef(null);
+  const tombolRef = useRef(null);
+
+  // Lepas permintaan kata sandi yang menggantung bila komponen hilang (ganti tampilan, pindah halaman).
+  useEffect(() => () => { pendingRef.current?.(false); pendingRef.current = null; }, []);
+
+  useEffect(() => {
+    if (!dialog) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') tutupDialog(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [dialog]);
 
   const mintaKataSandi = () => new Promise((resolve) => {
     pendingRef.current = resolve;
@@ -18,6 +29,7 @@ export default function UnduhPdfButton({ laporan, className = '' }) {
 
   const tutupDialog = (hasil) => {
     setDialog(false);
+    tombolRef.current?.focus();
     pendingRef.current?.(hasil);
     pendingRef.current = null;
   };
@@ -37,7 +49,7 @@ export default function UnduhPdfButton({ laporan, className = '' }) {
 
   return (
     <div className={className}>
-      <button type="button" onClick={klik} disabled={busy} className="btn-primary text-sm py-2.5 disabled:opacity-50 w-full sm:w-auto">
+      <button type="button" ref={tombolRef} onClick={klik} disabled={busy} className="btn-primary text-sm py-2.5 disabled:opacity-50 w-full sm:w-auto">
         {busy ? 'Menyiapkan...' : 'Unduh PDF'}
       </button>
       {error && <p className="text-sm text-danger-400 mt-2" role="alert">{error}</p>}
@@ -46,7 +58,7 @@ export default function UnduhPdfButton({ laporan, className = '' }) {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
             <h3 id="laporan-sandi-title" className="text-lg font-semibold">🔒 Atur kata sandi laporan</h3>
             <p className="text-sm text-gray-600">Atur kata sandi laporan dulu untuk mengunduh PDF.</p>
-            <KataSandiForm onSaved={() => tutupDialog(true)} onCancel={() => tutupDialog(false)} />
+            <KataSandiForm autoFocus onSaved={() => tutupDialog(true)} onCancel={() => tutupDialog(false)} />
           </div>
         </div>
       )}

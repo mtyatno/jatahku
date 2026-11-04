@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { periodeTeks, terbitTeks } from '../components/laporan/format';
+import { periodeTeks, terbitTeks } from '../lib/laporanFormat';
 
 export default function Laporan() {
   const [items, setItems] = useState(null);

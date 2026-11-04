@@ -1,6 +1,6 @@
 import { angkaUtama, trenTeks } from '../../lib/laporanView';
 import UnduhPdfButton from './UnduhPdfButton';
-import { periodeTeks } from './format';
+import { periodeTeks } from '../../lib/laporanFormat';
 
 // Layar ringkas untuk HP: angka utama, satu sorotan, tren, dan tombol unduh PDF selebar layar.
 export default function LaporanRingkas({ laporan }) {

@@ -41,7 +41,7 @@ export default function LaporanDetail() {
   return (
     <div className="space-y-4">
       {banner && (
-        <div className="rounded-xl bg-amber-50 text-amber-700 px-4 py-3 text-sm">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 text-amber-600 px-4 py-3 text-sm">
           {banner.teks}{' '}
           <Link to={banner.tautan} className="font-semibold underline">Atur sekarang</Link>
         </div>

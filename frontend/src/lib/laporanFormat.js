@@ -25,3 +25,8 @@ export function terbitTeks(iso) {
   if (Number.isNaN(d.getTime())) return '—';
   return `${d.getDate()} ${BULAN[d.getMonth()]} ${d.getFullYear()}`;
 }
+
+// "N hari" untuk angka sorotan; null/kosong → "—" saja (tanpa "— hari"), sama dengan PDF.
+export function hariAngka(n) {
+  return n === null || n === undefined || n === '' ? '—' : `${n} hari`;
+}
