@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SAMPLE_TABS, PSEUDONYM_CHOICES, SAMPLE_MAX_LINES, SAMPLE_LINE_MAX, EXPECT_LABEL, STEP_TEXT, sampleCounts, sampleRows,
+  SAMPLE_TABS, STEP_PARTS, PSEUDONYM_CHOICES, SAMPLE_MAX_LINES, SAMPLE_LINE_MAX, EXPECT_LABEL, STEP_TEXT, sampleCounts, sampleRows,
   periksaCount, editableLines, linesNotice, approveBody, rejectBody, entryFileName, entryDownload, actionOutcome,
   confirmText, nextSampleTab, emptyText,
 } from './proofSamples.js';
@@ -165,6 +165,10 @@ test('entryDownload: seluruh {entry, truth, gated_diff}, nama <entry.id>.json, e
   assert.equal(STEP_TEXT, 'Simpan berkas, lalu jalankan `python -m app.scripts.kotak_corpus add --dari-donasi <berkas>` '
     + 'di checkout lokal dan buka PR. Bila pembaca berbeda dari koreksi user, perintah berhenti (exit 3); pakai '
     + '`--tahan` untuk menulis `reviewed: false`.');
+  // bagian teks/kode untuk dirender (<code>), gabungannya = kalimat utuh di atas
+  assert.deepEqual(STEP_PARTS.filter(p => p.code).map(p => p.text),
+    ['python -m app.scripts.kotak_corpus add --dari-donasi <berkas>', '--tahan', 'reviewed: false']);
+  assert.equal(STEP_PARTS.map(p => (p.code ? `\`${p.text}\`` : p.text)).join(''), STEP_TEXT);
   for (const bad of [null, {}, { entry: {} }, { ...ENTRY, gated_diff: 'x' }, { ...ENTRY, entry: { ...ENTRY.entry, id: '../x' } }]) {
     assert.equal(entryDownload(bad), null);
   }

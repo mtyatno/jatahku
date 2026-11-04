@@ -57,3 +57,16 @@ export function toggleOutcome(res) {
   if (status === 0) return { kind: 'error', text: 'Koneksi gagal, coba lagi.', view: null };
   return { kind: 'error', text: `Belum tersimpan (kode ${status}). Coba lagi.`, view: null };
 }
+
+// Sesudah toggle (review M1e temuan 1): → {view, message}. Kartu yang sudah tampil tetap tampil sepanjang kunjungan
+// (`show: true`), supaya pesan 409/koneksi gagal terlihat dan "Mati" tetap terlihat sesudah menarik persetujuan saat
+// saklar ditutup. `reloaded` (jawaban GET baru) hanya dipakai bila PUT berhasil tetapi isinya rusak; bila PUT gagal,
+// tampilan sebelumnya tetap. `message` = {kind, text}. Tidak pernah melempar.
+export function afterToggle(prevView, res, reloaded) {
+  const out = toggleOutcome(res);
+  const base = out.kind === 'ok' ? (out.view ?? consentView(reloaded) ?? prevView) : prevView;
+  return {
+    view: base ? { ...base, show: true } : null,
+    message: { kind: out.kind, text: out.text },
+  };
+}

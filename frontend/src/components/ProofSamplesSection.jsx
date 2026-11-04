@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useId } from 'react';
 import { api } from '../lib/api';
 import { native } from '../native';
 import {
-  SAMPLE_TABS, PSEUDONYM_CHOICES, EXPECT_LABEL, READING_LABEL, TRUTH_LABEL, STEP_TEXT, sampleCounts, sampleRows,
+  SAMPLE_TABS, PSEUDONYM_CHOICES, EXPECT_LABEL, READING_LABEL, TRUTH_LABEL, STEP_PARTS, sampleCounts, sampleRows,
   editableLines, linesNotice, approveBody, rejectBody, entryDownload, actionOutcome, confirmText, nextSampleTab, emptyText,
 } from '../lib/proofSamples';
 
@@ -254,7 +254,11 @@ export default function ProofSamplesSection() {
                           Hapus sesudah disalin
                         </button>
                       </div>
-                      <p className="text-gray-500 break-words">{STEP_TEXT}</p>
+                      <p className="text-gray-500 break-words">
+                        {STEP_PARTS.map((p, i) => (p.code
+                          ? <code key={i} className="font-mono text-gray-700 bg-gray-100 rounded px-1">{p.text}</code>
+                          : <span key={i}>{p.text}</span>))}
+                      </p>
                     </div>
                   )}
                 </li>

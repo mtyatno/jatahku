@@ -8,7 +8,7 @@ import { useTheme } from '../hooks/useTheme';
 import { useAppConfig } from '../hooks/useAppConfig';
 import { formatCurrency } from '../lib/utils';
 import { SHARE_TIP, receiptInboxOn } from '../lib/pendingProofs';
-import { CONSENT_TEXT, consentView, toggleOutcome } from '../lib/kotakDonasi';
+import { CONSENT_TEXT, consentView, afterToggle } from '../lib/kotakDonasi';
 import {
   PAYDAY_SAVE_DELAY_MS, householdPayday, parsePaydayDay, paydayLockState, joinSuccessMessage,
 } from '../lib/paydayLock';
@@ -172,11 +172,14 @@ function KotakDonasiCard() {
     if (busy) return;
     setBusy(true);
     setMessage(null);
-    const out = toggleOutcome(await api.setKotakDonasi(!view.on));
+    const res = await api.setKotakDonasi(!view.on);
+    // Isi jawaban rusak padahal tersimpan → muat ulang; gagal → tampilan lama tetap (afterToggle).
+    const reloaded = res.ok && !consentView(res.data) ? await api.kotakDonasi() : null;
     if (!alive.current) return;
-    setMessage(out);
-    if (out.view) setView(out.view); else await load();
-    if (alive.current) setBusy(false);
+    const next = afterToggle(view, res, reloaded);
+    setView(next.view);
+    setMessage(next.message);
+    setBusy(false);
   };
 
   return (
@@ -187,16 +190,17 @@ function KotakDonasiCard() {
           <p id="kotak-donasi-body" className="mt-1 text-xs text-gray-600">{CONSENT_TEXT.body}</p>
         </div>
         <button type="button" role="switch" aria-checked={view.on} aria-labelledby="kotak-donasi-title"
-          aria-describedby="kotak-donasi-body" aria-disabled={busy} onClick={toggle}
-          className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full transition-colors aria-disabled:opacity-50 ${view.on ? 'bg-brand-600' : 'bg-gray-300'}`}>
+          aria-describedby="kotak-donasi-body" aria-disabled={busy} aria-busy={busy} onClick={toggle}
+          className={`relative shrink-0 mt-0.5 w-11 h-6 rounded-full border transition-colors aria-disabled:opacity-50 ${view.on ? 'bg-brand-600 border-brand-600' : 'bg-gray-100 border-gray-200'}`}>
+          {/* Mati: kenop bg-gray-500 di atas bg-gray-100 (≥ 3:1 di tema terang dan gelap, index.css memetakan gray-100). */}
           <span aria-hidden="true"
-            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${view.on ? 'translate-x-5' : ''}`} />
+            className={`absolute top-0.5 left-0.5 w-[1.125rem] h-[1.125rem] rounded-full shadow transition-transform ${view.on ? 'translate-x-5 bg-white' : 'bg-gray-500'}`} />
         </button>
       </div>
       <p className="mt-2 text-xs text-gray-500">{view.label}</p>
       {view.closed && <p className="text-xs text-gray-500">{view.closed}</p>}
-      <p role="status" aria-live="polite" className={`text-xs ${message?.kind === 'ok' ? 'text-green-700' : 'text-amber-600'}`}>
-        {message && <span className="block mt-1">{message.text}</span>}
+      <p role="status" aria-live="polite" className={`text-xs ${busy ? 'text-gray-500' : message?.kind === 'ok' ? 'text-green-700' : 'text-amber-600'}`}>
+        {busy ? <span className="block mt-1">Menyimpan…</span> : message && <span className="block mt-1">{message.text}</span>}
       </p>
     </div>
   );

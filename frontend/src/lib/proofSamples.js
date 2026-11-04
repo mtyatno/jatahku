@@ -32,9 +32,18 @@ export const PSEUDONYM_CHOICES = [
 export const EXPECT_LABEL = 'Koreksi user (sudah diterapkan)';
 export const READING_LABEL = 'Hasil baca';
 export const TRUTH_LABEL = 'Koreksi user';
-export const STEP_TEXT = 'Simpan berkas, lalu jalankan `python -m app.scripts.kotak_corpus add --dari-donasi <berkas>` '
-  + 'di checkout lokal dan buka PR. Bila pembaca berbeda dari koreksi user, perintah berhenti (exit 3); pakai '
-  + '`--tahan` untuk menulis `reviewed: false`.';
+// Langkah manusia di bawah tombol unduh (ruling M1d/M1e), dalam bagian teks/kode supaya perintahnya dirender <code>.
+export const STEP_PARTS = Object.freeze([
+  { text: 'Simpan berkas, lalu jalankan ' },
+  { text: 'python -m app.scripts.kotak_corpus add --dari-donasi <berkas>', code: true },
+  { text: ' di checkout lokal dan buka PR. Bila pembaca berbeda dari koreksi user, perintah berhenti (exit 3); pakai ' },
+  { text: '--tahan', code: true },
+  { text: ' untuk menulis ' },
+  { text: 'reviewed: false', code: true },
+  { text: '.' },
+]);
+// Kalimat utuh (kode dalam backtick), untuk teks polos.
+export const STEP_TEXT = STEP_PARTS.map(p => (p.code ? `\`${p.text}\`` : p.text)).join('');
 
 // = server donasi.TRIGGERS.
 const TRIGGER_LABEL = {
