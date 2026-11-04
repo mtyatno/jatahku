@@ -4,6 +4,43 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## R7 · Catat cepat dan kamus per ruang · 2026-11-04 · pemilik produk + Claude
+
+**Selesai** (status review, PR #191; issue #147; label `migrasi`, `review-keamanan`; menunggu review sesi keamanan terpisah)
+- Keputusan pemilik produk (4 Nov, "lanjut" atas lima usulan pembukaan sesi): **(A)** kamus ruang hanya di ruang usaha; ruang keluarga tetap belajar per user. **(B)** Tawaran "pengeluaran pribadi" dihitung di klien lewat permintaan terpisah tanpa header ruang (ruang keluarga user sendiri), tanpa kueri lintas ruang di server; `tawaran_pribadi` v0 dihapus dari kontrak. **(C)** Admin menghapus kata = juga menghapus kata user yang sama untuk amplop itu di ruang itu. **(D)** Lampiran foto nota karyawan (Kotak Struk di ruang usaha), titipan R4/R6, ditunda ke sesi sendiri. **(E)** Catat cepat juga pintu Catat pemilik/admin di ruang usaha, dengan tautan "Form lengkap".
+- Server: tabel `ruang_kamus` (migrasi `d7r7k4a1m9c3`, hanya tabel baru, idempoten). `txn_nlp.cari_amplop` (urutan kata user → kamus ruang → kamus kategori → nama amplop, `Tebakan.sumber`, `amplop_boleh` untuk karyawan; `find_best_envelope` tetap pembungkus); `ajari_kamus_ruang` (upsert atomik, hanya amplop bersama aktif bertujuan pengeluaran di ruang usaha; `kata_kamus` tanpa nominal/angka/satuan, maks 12 kata + frasa). Belajar hanya dari `routes/transactions._after_saved` dengan `kamus_ruang=not is_private` (catat, batch, draf disetujui atas nama pencatat); bot dan Kotak Struk tidak. `suggest-envelope`: `sumber`, `aturan` (`peran.aturan_catatan`), request `amount`; `suggest-envelopes`: `sumber`. `GET`/`DELETE /ruang/{id}/kamus` di `ruang_kelola.py` (log `kata_dihapus`). Reset ruang dan hapus akun.
+- Web: `components/CatatCepat.jsx` menggantikan `CatatKaryawan.jsx` (dihapus): satu kotak teks + suara, kartu Terdeteksi dengan sumber tebakan, aturan admin, pesan "kata ini masuk kamus", tawaran pribadi; `lib/catatCepat.js` + tes; `api.request` opsi `ruangKeluarga`, `saranCatat`, `catatDiRuangKeluarga`, `kamusRuang`, `hapusKamus`; `Layout.jsx` (pintu Catat ruang usaha, `expense-lengkap`); halaman Anggota bagian "Kata yang dipelajari"; label log; teks panel foto nota.
+- Tes: `app/tests/test_ruang_r7.py` (10); diperbarui `test_ruang_pagar` (route hapus kata), `test_kotak_schema` (satu head, rantai melewati e7b3d5a9c1f4), `test_plugin_sdk` (kamus ruang sebelum kamus plugin H2, `kamus_plugin`). 13 uji mutasi semuanya tertangkap. unittest 2838 lulus · node --test 695 lulus · build ok · `openapi_cek` tanpa perubahan memutus · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok · upsert bersamaan di PostgreSQL ok (3 pengajar → hitungan 3).
+- Browser (Playwright, API dipalsukan): karyawan dan pemilik, 390 dan 1440 px, terang dan gelap; saran ruang usaha dengan header, saran dan catat ke ruang keluarga tanpa header; karyawan tidak memanggil `/kamus`; hapus kata dari halaman Anggota → log.
+- Dokumen: kontrak §2 (kamus v1) dan §3 (Catat cepat v1); `AGENTS.md` aturan 8 + checklist "Plugin R7"; `00-indeks.md`; `PROGRESS.md`.
+
+**Digantung**
+- Lampiran foto nota untuk karyawan (keputusan D): sesi sendiri, dengan review keamanan (unggah file di ruang usaha; belajar struk lintas user tidak boleh memuat data usaha). Sampai itu Catat cepat menahan Simpan bila aturan foto nota berlaku, dan server tetap 422 `perlu_foto_nota`.
+- PR #186 (H2) di-merge saat sesi ini ditutup; branch R7 di-rebase ke `a2f010a`. Konflik di `routes/transactions.py` (`peringatan` H2 + `is_private` R7) dan `00-indeks.md` diselesaikan; di `txn_nlp.cari_amplop` kamus plugin H2 (titik `nlp_kamus`) berada sesudah kamus ruang dan sebelum kamus kategori, dengan `sumber.jenis = kamus_plugin` (baru).
+- Deteksi jenis catatan (penjualan, modal) dan Kontak: U5. Pemasukan tidak mengajari kamus.
+- Kamus tanpa batas jumlah baris per ruang (hanya batas 12 kata per catatan dan `limit` daftar 500); dinilai ulang dari data beta.
+- `amplop_terkunci` di kontrak v0 tidak dibuat: daftar amplop karyawan sudah hanya yang diizinkan.
+
+**Jebakan**
+- `git add -A frontend` ikut memasukkan `frontend/dist/index.html` hasil build; dikembalikan di commit terpisah. Stage per file.
+- Satu kueri kamus tambahan di setiap tebakan yang kata usernya tidak cocok, termasuk ruang keluarga dan bot (kosong karena gerbang jenis ruang di kueri). Tes baru yang memalsukan `db.execute` berurutan di jalur `find_best_envelope` perlu menyediakan hasil untuk kueri itu (tes yang ada tidak terdampak).
+- `pkill -f "vite preview"` di Bash membunuh shell-nya sendiri (kode 144) dan ikut menghentikan PostgreSQL lokal; jalankan ulang `pg_ctl ... start`.
+- `test_kotak_schema.test_single_head_after_plugin_h1` dulu mengunci head = `e7b3d5a9c1f4`; kini satu head yang rantainya melewati revisi itu.
+
+**Keputusan kecil**
+- Pengajar di kamus = pencatat terakhir (`diajarkan_oleh`); `kali` = jumlah catatan. Karyawan melihat nama pengajar ("diajarkan Bagas"), sesuai artboard; `oleh_saya` untuk "diajarkan kamu".
+- Kamus belajar dari setiap catatan yang tersimpan (bukan hanya koreksi), sama dengan kata user. Pesan "masuk kamus" hanya tampil bila amplop berbeda dari tebakan kamus/kata user.
+- Amplop pribadi (`owner_id`) dan catatan privat tidak mengajari kamus, karena kamus terlihat admin.
+- `aturan` juga dijawab saat keterangan kosong (nominal diketik lebih dulu); Simpan ditahan bila ada `foto_nota`, label tombol "Kirim untuk persetujuan" bila ada `persetujuan`.
+- Mengosongkan kotak teks membuang pilihan amplop manual.
+
+**Cara melanjutkan**
+- Review keamanan di sesi Claude Code terpisah: "review PR #191 terhadap 03-workflow.md bagian keamanan". Fokus: gerbang jenis ruang di kueri kamus, belajar hanya catatan bukan-privat ke amplop bersama, hapus kata hanya ruang sendiri, permintaan tanpa header di klien.
+- Merge oleh pemilik produk sesudah review lulus: ikuti "Urutan merge PR bermigrasi" dan checklist "Plugin R7" di `AGENTS.md` (`alembic current` = `e7b3d5a9c1f4` sebelum upgrade). Sesudah deploy terverifikasi, PR kecil "R7 tayang" (status `selesai`).
+- Berikutnya `/sesi-plugin H3` (butuh H2, B2, R4; semua selesai).
+
+---
+
 ## H2 · PluginContext dan titik ekstensi server · 2026-11-04 · pemilik produk + Claude
 
 **Selesai** (PR #186, issue #150; review keamanan terpisah **lulus** pada putaran keempat, 4 Nov; di-merge atas permintaan pemilik produk sesudah review lulus)
