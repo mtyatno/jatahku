@@ -199,8 +199,8 @@ class KodeTests(unittest.TestCase):
             muat(self.dir, ketat=True)
         teks = "\n".join(cm.exception.galat)
         for bagian in ("'app.models.models' tidak boleh", "impor 'app' terlalu luas", "'app.services' tidak boleh",
-                       "impor dinamis 'importlib'", "'app.plugins' terlalu luas", "__import__ tidak boleh",
-                       "'app.plugins.lain' dari plugin di luar requires", "'._db' tidak boleh"):
+                       "impor 'importlib' tidak boleh", "'app.plugins' terlalu luas", "__import__() tidak boleh",
+                       "'app.plugins.lain' dari plugin di luar requires", "atribut '._db' tidak boleh"):
             self.assertIn(bagian, teks)
         self.assertFalse(penanda.exists(), "kode plugin tidak boleh dijalankan sebelum impornya lolos")
         # Mode start: dilewati dengan log, API tetap jalan, kodenya tetap tidak dijalankan.
@@ -242,6 +242,48 @@ class KodeTests(unittest.TestCase):
         teks = "\n".join(cm.exception.galat)
         self.assertIn("kecil: kode gagal dimuat: TypeError", teks)
         self.assertIn("dua: Plugin('bukan') harus Plugin('dua')", teks)
+
+    def test_izin_per_jenis(self):
+        """Review #186 temuan 1: hanya job yang boleh mengirim; titik lain hanya membaca."""
+        p = Plugin("contoh")
+        for jenis, kunci in (("kartu", "contoh.kas"), ("kartu", "contoh.rusak"), ("cek", "anggaran"),
+                             ("aturan_advisor", "CT-01"), ("perintah_bot", "kas"), ("perintah_bot", "halo"),
+                             ("field_form", "transaction.proyek")):
+            izin = ["notifications:send"] if (jenis, kunci) == ("perintah_bot", "halo") else []
+            p._dekor(jenis, kunci, izin)(lambda *a: None)
+        p.job("pagi", izin=["notifications:send", "envelopes:read"])(lambda c: None)
+        galat = kode_mod.cocokkan(Manifest.model_validate(MF), p)
+        self.assertEqual(galat, ["perintah_bot 'halo' meminta izin yang tidak boleh untuk perintah_bot: "
+                                 "notifications:send (hanya baca; kirim hanya dari job)"])
+
+    def test_jalan_pintas_ditolak(self):
+        """Review #186 temuan 4: internal SDK, introspeksi, dan atribut dunder ditolak; pola biasa tetap boleh."""
+        m = Manifest.model_validate(self.manifest_kecil())
+        (self.dir / "kecil").mkdir()
+        berkas = self.dir / "kecil" / "__init__.py"
+        kasus = {
+            "from app.plugins.sdk.context import sesi": "tidak boleh; pakai `from app.plugins.sdk import",
+            "import app.plugins.sdk": "tidak boleh; pakai `from app.plugins.sdk import",
+            "from app.plugins.sdk import _host": "'_host' bukan nama publik",
+            "import sys": "impor 'sys' tidak boleh",
+            "import gc": "impor 'gc' tidak boleh",
+            "import inspect": "impor 'inspect' tidak boleh",
+            "x = getattr(ctx, '_d' + 'b')": "getattr() hanya dengan nama atribut tetap",
+            "x = getattr(ctx, '_k')": "getattr() hanya dengan nama atribut tetap",
+            "x = vars(ctx)": "vars() tidak boleh",
+            "x = ctx.envelopes.__globals__": "atribut '.__globals__' tidak boleh",
+            "x = ctx.__class__": "atribut '.__class__' tidak boleh",
+            "x = eval('1')": "eval() tidak boleh",
+        }
+        for kode, pesan in kasus.items():
+            with self.subTest(kode=kode):
+                berkas.write_text(kode + "\n")
+                self.assertTrue(any(pesan in g for g in kode_mod.periksa_impor(self.dir / "kecil", m)),
+                                kode_mod.periksa_impor(self.dir / "kecil", m))
+        berkas.write_text("from app.plugins.sdk import Plugin, Saran, AksiRoute\nfrom decimal import Decimal\n"
+                          "nama = type(Decimal(1)).__name__\nx = getattr(Saran, 'judul', None)\n"
+                          "class A:\n    def __init__(self):\n        super().__init__()\n")
+        self.assertEqual(kode_mod.periksa_impor(self.dir / "kecil", m), [])
 
     def test_plugin_contoh_cocok(self):
         self.assertEqual(kode_mod.cocokkan(Manifest.model_validate(MF), plugin), [])
@@ -312,6 +354,20 @@ class KeluaranTests(unittest.TestCase):
         for shape, data in salah:
             with self.subTest(shape=shape, data=data), self.assertRaises(titik.KeluaranTidakSah):
                 titik.rapikan_kartu(shape, data, "contoh")
+
+    def test_keluaran_ketat(self):
+        """Review #186 temuan 7: float, NaN, dan baris baru di tautan ditolak."""
+        m = Manifest.model_validate(MF)
+        for ke in ("/p/contoh\n", "/p/contoh/x\n", "/p/contohlain"):
+            with self.subTest(ke=ke), self.assertRaises(titik.KeluaranTidakSah):
+                titik.rute_plugin(ke, "contoh")
+        for data in ({"value": D("NaN")}, {"value": D("Infinity")}, {"value": 1, "bar": D("NaN")}):
+            with self.subTest(data=data), self.assertRaises(titik.KeluaranTidakSah):
+                titik.rapikan_kartu("kpi", data, "contoh")
+        for ubah in ({"rupiah": 0.1}, {"urgensi": 0.5}, {"rupiah": D("NaN")}, {"entitas": "kas\n"}):
+            with self.subTest(ubah=ubah), self.assertRaises(titik.KeluaranTidakSah):
+                titik.ke_insight(m, "CT-01", Saran(**{"entitas": "kas", "tone": "ok", "judul": "a", "isi": "",
+                                                       **ubah}))
 
     def test_kartu_bentuk_lain(self):
         out = titik.rapikan_kartu("list", {"items": [{"judul": "INV-1", "nominal": 2500, "aksi": {
@@ -432,7 +488,8 @@ if HAS_AIOSQLITE:
         Allocation, AppSetting, Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, Income,
         PluginAuditLog, PluginInstallation, Transaction, User,
     )
-    from app.plugins.sdk.context import pakai_sesi
+    from app.plugins.host.keadaan import pakai_sesi
+    from app.plugins.sdk.plugin import Pendaftaran
     from app.services import ruang
 
 
@@ -531,15 +588,18 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.aclose)
 
     # ── pembantu ──
-    async def ctx(self, db, user, jenis="kartu", kunci="contoh.kas", hid=None):
+    async def ctx(self, db, user, jenis="kartu", kunci="contoh.kas", hid=None, izin=None):
+        """Konteks buatan host untuk fungsi plugin contoh; `izin` mengganti `izin=` fungsinya (tes saja)."""
         m = Manifest.model_validate(MF)
         hid = hid or self.usaha
         inst = (await db.execute(select(PluginInstallation).where(PluginInstallation.household_id == hid)
                                  )).scalar_one()
         ruang_ = await db.get(Household, hid)
         peran = await titik._peran(db, user.id, hid) if user else "sistem"
-        return titik.konteks(db, m, inst, ruang_, plugin.ambil(jenis, kunci), viewer=user, peran=peran,
-                             sumber=f"uji:{kunci}")
+        d = plugin.ambil(jenis, kunci)
+        if izin is not None:
+            d = Pendaftaran(d.jenis, d.kunci, d.fn, tuple(izin))
+        return titik.konteks(db, m, inst, ruang_, d, viewer=user, peran=peran, sumber=f"uji:{kunci}")
 
     async def set_setting(self, key, value):
         async with self.Session() as db:
@@ -593,12 +653,35 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(IzinDitolak):
                 await c.transactions(date(2000, 1, 1), date(2100, 1, 1))
 
-    async def test_ctx_beku(self):
+    async def test_ctx_tidak_bisa_diubah_atau_disalin(self):
+        """Review #186 temuan 3–4: keadaan konteks di host; viewer bukan objek ORM."""
+        import copy as copy_mod
+        from app.plugins.host.keadaan import KonteksTidakSah
+        from app.plugins.sdk import PenggunaView, PluginContext
         async with self.Session() as db:
             c = await self.ctx(db, self.pemilik, "kartu", "contoh.rusak")
             for attr, nilai in (("izin", frozenset(IZIN)), ("peran", "owner"), ("ruang_id", self.asing)):
-                with self.subTest(attr=attr), self.assertRaises(dataclasses.FrozenInstanceError):
-                    setattr(c, attr, nilai)
+                with self.subTest(attr=attr):
+                    with self.assertRaises(AttributeError):
+                        setattr(c, attr, nilai)
+                    with self.assertRaises(AttributeError):
+                        object.__setattr__(c, attr, nilai)
+            self.assertFalse(hasattr(c, "__dict__"))
+            with self.assertRaises(TypeError):
+                dataclasses.replace(c, izin=frozenset(IZIN))
+            for salin in (copy_mod.copy, copy_mod.deepcopy):
+                with self.assertRaises(TypeError):
+                    salin(c)
+            with self.assertRaises(TypeError):
+                PluginContext()
+            palsu = object.__new__(PluginContext)
+            with self.assertRaises(KonteksTidakSah):
+                await palsu.envelopes()
+            self.assertIsInstance(c.viewer, PenggunaView)
+            self.assertEqual((c.viewer.id, c.viewer.nama), (self.pemilik.id, "Pemilik"))
+            self.assertFalse(hasattr(c.viewer, "email"))
+            with self.assertRaises(IzinDitolak):
+                await c.envelopes()
 
     async def test_ctx_karyawan_tanpa_data_keuangan(self):
         async with self.Session() as db:
@@ -612,7 +695,7 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             c = await self.ctx(db, None, "job", "pagi")
             self.assertEqual([a.nama for a in await c.envelopes()], ["Bahan Baku"])   # tanpa amplop pribadi
-            c = dataclasses.replace(c, izin=frozenset({"transactions:read"}))
+            c = await self.ctx(db, None, "job", "pagi", izin=["transactions:read"])
             txn = await c.transactions(date(2000, 1, 1), date(2100, 1, 1))
             self.assertEqual(sorted(t.deskripsi for t in txn), ["Transaksi privat", "Transaksi privat"])
 
@@ -817,9 +900,69 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
                 await c.notify("contoh.pengingat", "a", "b", link="https://jahat.id")
             with self.assertRaises(IzinDitolak):
                 await c.notify("lain.pengingat", "a", "b")
-            c = dataclasses.replace(c, izin=frozenset())
+            c = await self.ctx(db, None, "job", "pagi", izin=[])
             with self.assertRaises(IzinDitolak):
                 await c.notify("contoh.pengingat", "a", "b")
+
+    async def test_notify_hanya_dari_job(self):
+        """Review #186 temuan 1: konteks yang dipicu user (melihat data pribadinya) tidak bisa mengirim ke anggota lain."""
+        async with self.Session() as db:
+            c = await self.ctx(db, self.admin, "perintah_bot", "halo", izin=["notifications:send"])
+            self.assertNotIn("notifications:send", c.izin)                 # disaring izin per jenis saat berjalan
+            with self.assertRaises(IzinDitolak):
+                await c.notify("contoh.pengingat", "a", "b")
+            c = await self.ctx(db, self.admin, "job", "pagi")              # job, tetapi dengan user
+            with self.assertRaises(IzinDitolak) as cm:
+                await c.notify("contoh.pengingat", "rahasia admin", "b")
+            self.assertEqual(cm.exception.alasan, "bukan_job")
+        self.assertEqual(self.terkirim, [])
+
+    async def test_pemasukan_anggota_lain_tersamar_di_ruang_keluarga(self):
+        """Review #186 temuan 2: seperti inti, pemasukan anggota lain di ruang keluarga tidak terbaca utuh."""
+        from app.plugins.sdk.context import PEMASUKAN_PRIVAT
+        async with self.Session() as db:
+            adik = User(name="Adik", plan="pro", timezone="Asia/Jakarta")
+            db.add(adik)
+            await db.flush()
+            db.add_all([
+                HouseholdMember(user_id=adik.id, household_id=self.rumah, role=HouseholdRole.member),
+                PluginInstallation(household_id=self.rumah, plugin_id="contoh", status="active",
+                                   installed_by=self.pemilik.id, granted_permissions=list(IZIN), settings={}),
+                Income(household_id=self.rumah, user_id=adik.id, amount=D("100000"), description="uang jajan",
+                       income_date=self.hari),
+            ])
+            await db.commit()
+            semua = (date(2000, 1, 1), date(2100, 1, 1))
+            c = await self.ctx(db, adik, "aturan_advisor", "CT-01", hid=self.rumah)
+            lihat = {(i.deskripsi, i.user_id, i.jumlah) for i in await c.incomes(*semua)}
+            self.assertEqual(lihat, {("uang jajan", adik.id, D("100000")), (PEMASUKAN_PRIVAT, None, D("500000"))})
+            modal = (await db.execute(select(Income).where(Income.household_id == self.rumah,
+                                                           Income.user_id == self.pemilik.id))).scalar_one()
+            self.assertEqual((await c.income(modal.id)).deskripsi, PEMASUKAN_PRIVAT)
+            c = await self.ctx(db, None, "job", "pagi", hid=self.rumah, izin=["incomes:read"])
+            self.assertEqual({i.deskripsi for i in await c.incomes(*semua)}, {PEMASUKAN_PRIVAT})
+            c = await self.ctx(db, self.admin, "aturan_advisor", "CT-01")    # ruang usaha: data usaha, utuh
+            self.assertEqual([(i.deskripsi, i.user_id) for i in await c.incomes(*semua)], [("Modal", self.pemilik.id)])
+
+    async def test_job_lewati_ruang_usaha_tertutup(self):
+        """Review #186 temuan 5: ruang usaha di luar flag `ruang_usaha_users` pemiliknya tidak menjalankan job."""
+        await self.set_setting(ruang.FLAG_RUANG_USAHA, str(self.admin.id))
+        self.assertEqual(await titik.jalankan_job(datetime(2026, 11, 4, 1, 23, tzinfo=timezone.utc)), 0)
+        self.assertEqual(JEJAK, [])
+
+    async def test_audit_kiriman_dan_batas_notify(self):
+        """Review #186 temuan 6: hanya kiriman yang sampai dicatat; panggilan notify dibatasi per konteks."""
+        from app.plugins.sdk.context import MAKS_NOTIFY_PER_KONTEKS
+        malam = datetime(2026, 11, 4, 15, 0, tzinfo=timezone.utc)
+        with patch.object(titik, "datetime", SimpleNamespace(now=lambda tz=None: malam)):
+            async with self.Session() as db:
+                c = await self.ctx(db, None, "job", "pagi")
+                for i in range(MAKS_NOTIFY_PER_KONTEKS):
+                    self.assertEqual(await c.notify("contoh.pengingat", "a", "b", kunci=f"k{i}"), 0)
+                with self.assertRaises(IzinDitolak) as cm:
+                    await c.notify("contoh.pengingat", "a", "b", kunci="lagi")
+                self.assertEqual(cm.exception.alasan, "batas_notify")
+        self.assertEqual([a for a, _ in await self.audit()], ["tolak:notifications:send"])
 
     # ── kamus dan field ──
     async def test_kamus_hanya_di_ruang_yang_memasang(self):

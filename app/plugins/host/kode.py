@@ -4,10 +4,18 @@ Dipanggil `registry.muat()` untuk setiap plugin yang manifestnya sah dan foldern
 Urutannya: impor diperiksa statis (AST) **sebelum** kode dijalankan, baru paket diimpor, lalu pendaftarannya
 dicocokkan dengan manifest. Plugin tanpa `__init__.py` hanya manifest: kontribusi servernya tidak berbuat apa-apa.
 
-Aturan impor (AGENTS.md "Plugin dan ruang" aturan 4): kode plugin hanya boleh mengimpor pustaka, `app.plugins.sdk`,
-paketnya sendiri, dan paket plugin di `requires`. Model, route, service, bot, `app.core`, dan host plugin tidak
-boleh; begitu juga impor dinamis (`importlib`, `__import__`) yang bisa melewati aturan ini, dan sesi DB privat
-`PluginContext._db`. Pemeriksaan ini menjaga disiplin plugin T1 (kode sendiri yang direview), bukan sandbox.
+Aturan impor (AGENTS.md "Plugin dan ruang" aturan 4): kode plugin hanya boleh mengimpor pustaka, nama publik
+`app.plugins.sdk` (`from app.plugins.sdk import X` dengan X di `__all__`; bukan submodulnya), paketnya sendiri, dan
+paket plugin di `requires`. Model, route, service, bot, `app.core`, dan host plugin tidak boleh. Begitu juga jalan
+pintas yang lazim untuk melewati aturan ini (review keamanan PR #186 temuan 4): impor dinamis dan introspeksi
+(`importlib`, `sys`, `gc`, `inspect`, `ctypes`, `builtins`, `__import__`, `eval`, `exec`, `compile`, `globals`,
+`locals`, `vars`), `getattr`/`setattr`/`delattr` dengan nama yang bukan teks tetap atau berawalan `_`, dan atribut
+dunder seperti `__globals__`, `__dict__`, `__class__`. Pemeriksaan ini menjaga disiplin plugin T1 (kode sendiri yang
+direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.py`).
+
+Izin per jenis fungsi (`IZIN_PER_JENIS`, review #186 temuan 1): kartu, cek, aturan advisor, perintah bot, dan field
+form hanya membaca; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data bersama). Izin
+tulis belum dibuka untuk titik mana pun (U2). Dicek di sini saat memuat dan lagi saat berjalan (`titik.izin_efektif`).
 """
 from __future__ import annotations
 
@@ -22,9 +30,26 @@ from app.plugins.sdk.plugin import JENIS, Plugin
 
 TERLARANG = ("app.models", "app.api", "app.services", "app.bot", "app.core", "app.main", "app.plugins.host",
              "app.schemas", "app.scripts", "app.tests")
-MODUL_DINAMIS = ("importlib",)
-# Sesi DB privat PluginContext: plugin tidak boleh memakainya untuk melewati izin (tabel plugin sendiri lewat SDK, U1).
-ATRIBUT_TERLARANG = ("_db",)
+MODUL_TERLARANG = ("importlib", "sys", "gc", "inspect", "ctypes", "builtins")
+PANGGILAN_TERLARANG = ("__import__", "eval", "exec", "compile", "globals", "locals", "vars")
+PANGGILAN_NAMA = ("getattr", "setattr", "delattr", "hasattr")
+DUNDER_BOLEH = {"__name__", "__doc__", "__init__", "__post_init__"}
+ATRIBUT_TERLARANG = {"_db"}
+
+IZIN_BACA = frozenset({"envelopes:read", "transactions:read", "incomes:read", "members:read", "files:read"})
+IZIN_PER_JENIS: dict[str, frozenset[str]] = {
+    "kartu": IZIN_BACA,
+    "cek": IZIN_BACA,
+    "aturan_advisor": IZIN_BACA,
+    "perintah_bot": IZIN_BACA,          # ADR-P2: chat tidak pernah menulis
+    "field_form": IZIN_BACA,
+    "job": IZIN_BACA | {"notifications:send"},
+}
+
+
+def _nama_publik_sdk() -> set[str]:
+    from app.plugins import sdk
+    return set(sdk.__all__)
 
 
 def _modul_absolut(node: ast.ImportFrom, paket: str, berkas: pathlib.Path, akar: pathlib.Path) -> str | None:
@@ -40,20 +65,29 @@ def _modul_absolut(node: ast.ImportFrom, paket: str, berkas: pathlib.Path, akar:
 
 
 def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
-    """Galat impor di semua berkas .py plugin (tanpa menjalankannya)."""
+    """Galat impor dan jalan pintas di semua berkas .py plugin (tanpa menjalankannya)."""
     paket = f"app.plugins.{m.id}"
-    boleh_plugin = {f"app.plugins.{m.id}", "app.plugins.sdk", *(f"app.plugins.{r}" for r in m.requires)}
+    boleh_plugin = {f"app.plugins.{m.id}", *(f"app.plugins.{r}" for r in m.requires)}
+    publik = _nama_publik_sdk()
     galat = []
 
-    def nilai(nama: str, berkas, baris):
-        if nama.split(".")[0] in MODUL_DINAMIS:
-            galat.append(f"{berkas}:{baris}: impor dinamis '{nama}' tidak boleh")
+    def nilai(nama: str, berkas, baris, *, dari: bool = False, nama_impor=()):
+        if nama.split(".")[0] in MODUL_TERLARANG:
+            galat.append(f"{berkas}:{baris}: impor '{nama}' tidak boleh (impor dinamis/introspeksi)")
             return
         if nama == "app" or nama == "app.plugins":
             galat.append(f"{berkas}:{baris}: impor '{nama}' terlalu luas; pakai app.plugins.sdk")
             return
         if any(nama == t or nama.startswith(t + ".") for t in TERLARANG):
             galat.append(f"{berkas}:{baris}: impor '{nama}' tidak boleh; pakai app.plugins.sdk (aturan 4)")
+            return
+        if nama == "app.plugins.sdk" or nama.startswith("app.plugins.sdk."):
+            if not dari or nama != "app.plugins.sdk":
+                galat.append(f"{berkas}:{baris}: impor '{nama}' tidak boleh; pakai `from app.plugins.sdk import …`")
+                return
+            for n in nama_impor:
+                if n not in publik:
+                    galat.append(f"{berkas}:{baris}: '{n}' bukan nama publik app.plugins.sdk")
             return
         if nama.startswith("app.plugins.") and not any(nama == b or nama.startswith(b + ".") for b in boleh_plugin):
             galat.append(f"{berkas}:{baris}: impor '{nama}' dari plugin di luar requires")
@@ -77,13 +111,21 @@ def periksa_impor(folder: pathlib.Path, m: Manifest) -> list[str]:
             elif isinstance(node, ast.ImportFrom):
                 mod = _modul_absolut(node, paket, berkas, folder)
                 if mod is not None:          # `from app import models` → "app" (terlalu luas, ditolak)
-                    nilai(mod, rel, node.lineno)
-            elif isinstance(node, ast.Attribute) and node.attr in ATRIBUT_TERLARANG:
-                galat.append(f"{rel}:{node.lineno}: '.{node.attr}' tidak boleh; data inti hanya lewat metode PluginContext")
-            elif isinstance(node, ast.Call) and (
-                    (isinstance(node.func, ast.Name) and node.func.id == "__import__")
-                    or (isinstance(node.func, ast.Attribute) and node.func.attr == "__import__")):
-                galat.append(f"{rel}:{node.lineno}: __import__ tidak boleh")
+                    nilai(mod, rel, node.lineno, dari=True, nama_impor=[a.name for a in node.names])
+            elif isinstance(node, ast.Attribute):
+                a = node.attr
+                if a in ATRIBUT_TERLARANG or (a.startswith("__") and a.endswith("__") and a not in DUNDER_BOLEH):
+                    galat.append(f"{rel}:{node.lineno}: atribut '.{a}' tidak boleh; data inti hanya lewat PluginContext")
+            elif isinstance(node, ast.Call):
+                f = node.func
+                nama = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+                if nama in PANGGILAN_TERLARANG:
+                    galat.append(f"{rel}:{node.lineno}: {nama}() tidak boleh")
+                elif isinstance(f, ast.Name) and nama in PANGGILAN_NAMA:
+                    arg = node.args[1] if len(node.args) > 1 else None
+                    if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                            and not arg.value.startswith("_")):
+                        galat.append(f"{rel}:{node.lineno}: {nama}() hanya dengan nama atribut tetap tanpa '_'")
     return galat
 
 
@@ -140,4 +182,8 @@ def cocokkan(m: Manifest, p: Plugin) -> list[str]:
         lebih = set(d.izin) - izin_manifest
         if lebih:
             galat.append(f"{d.jenis} '{d.kunci}' meminta izin di luar manifest: {', '.join(sorted(lebih))}")
+        jenis_salah = set(d.izin) - IZIN_PER_JENIS.get(d.jenis, frozenset())
+        if jenis_salah:
+            galat.append(f"{d.jenis} '{d.kunci}' meminta izin yang tidak boleh untuk {d.jenis}: "
+                         f"{', '.join(sorted(jenis_salah))} (hanya baca; kirim hanya dari job)")
     return galat

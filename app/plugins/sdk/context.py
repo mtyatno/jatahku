@@ -9,37 +9,48 @@ Plugin diperlakukan sebagai tamu (01-kajian.md "Penegakan"):
   sudah diperiksa); tidak ada metode yang menerima ruang dari plugin.
 - **Kontrak visibilitas.** Amplop pribadi anggota lain tidak pernah terbaca; deskripsi transaksi lewat
   `visibility.masked_description`. Konteks tanpa user (job) hanya melihat amplop bersama dan semua deskripsi
-  transaksi tersamar (fail-closed).
+  transaksi tersamar (fail-closed). Pemasukan anggota lain di ruang keluarga tersamar (keterangan dan pencatat),
+  seperti inti yang hanya menampilkan pemasukan milik sendiri; nominalnya tetap ikut agregat (review #186 temuan 2).
+  Di ruang usaha pemasukan adalah data usaha: owner, admin, dan job melihat semuanya.
 - **Karyawan.** Di ruang usaha, peran `member` adalah karyawan (R5): data keuangan (amplop, transaksi, pemasukan)
   ditolak `khusus_admin` (ADR-P3), seperti tolak-bawaan R5 di route.
-- **Audit.** Penolakan izin dan setiap kiriman (notifikasi; tulis menyusul U2) dicatat di `plugin_audit_log` lewat
-  sesi DB sendiri, supaya tetap tercatat walau permintaan pemanggil dibatalkan. Baca yang diizinkan tidak dicatat
-  per panggilan (keputusan pemilik produk 4 Nov, H2). Penolakan yang sama dicatat sekali per jam per proses.
+- **Audit.** Penolakan izin dan setiap kiriman yang sampai (notifikasi; tulis menyusul U2) dicatat di
+  `plugin_audit_log` lewat sesi DB sendiri, supaya tetap tercatat walau permintaan pemanggil dibatalkan. Baca yang
+  diizinkan tidak dicatat per panggilan (keputusan pemilik produk 4 Nov, H2). Penolakan yang sama dicatat sekali per
+  jam per proses.
+- **Keadaan di host.** Konteks tidak menyimpan sesi, ruang, peran, atau izin di dirinya (`app/plugins/host/keadaan.py`,
+  review #186 temuan 3–4): plugin tidak bisa mengganti atau menyalinnya, dan `viewer` hanya `PenggunaView` beku, bukan
+  objek ORM yang terikat sesi.
+- **Kirim hanya dari job.** `notify` hanya untuk konteks tanpa user (job): konteks yang dipicu seorang user (kartu,
+  cek, saran, perintah bot, field) bisa melihat data pribadinya, yang tidak boleh diteruskan ke anggota lain
+  (review #186 temuan 1). Maksimal `MAKS_NOTIFY_PER_KONTEKS` panggilan per konteks.
 
 Nominal berupa `Decimal`, tidak pernah float.
 """
 from __future__ import annotations
 
 import logging
-import time
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
+
+from app.plugins.host import keadaan as _host
 
 log = logging.getLogger("jatahku.plugins")
 
 PERAN_SISTEM = "sistem"          # job: tanpa user
 IZIN_KEUANGAN = ("envelopes:read", "transactions:read", "incomes:read")
 BATAS_BARIS = 1000               # baris maksimal per panggilan baca
+MAKS_NOTIFY_PER_KONTEKS = 10
+PEMASUKAN_PRIVAT = "Pemasukan anggota lain"
 
 
 class IzinDitolak(Exception):
-    """Plugin memanggil sesuatu di luar izinnya. `alasan`: `tanpa_izin` | `khusus_admin` | `jenis_tidak_dikenal`."""
+    """Plugin memanggil sesuatu di luar izinnya. `alasan`: `tanpa_izin` | `khusus_admin` | `jenis_tidak_dikenal` |
+    `bukan_job` | `batas_notify`."""
 
     def __init__(self, izin: str, alasan: str = "tanpa_izin"):
         super().__init__(f"{izin}: {alasan}")
@@ -51,6 +62,14 @@ class NilaiTidakSah(ValueError):
 
 
 # ── bentuk data untuk plugin ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class PenggunaView:
+    """User yang memicu panggilan (tanpa email, telegram, atau data akun lain)."""
+    id: UUID
+    nama: str
+    zona_waktu: str
+
+
 @dataclass(frozen=True)
 class AmplopView:
     id: UUID
@@ -77,7 +96,7 @@ class TransaksiView:
 @dataclass(frozen=True)
 class PemasukanView:
     id: UUID
-    user_id: UUID
+    user_id: UUID | None          # None = pemasukan anggota lain di ruang keluarga (tersamar)
     jumlah: Decimal
     deskripsi: str
     tanggal: date
@@ -121,66 +140,67 @@ class Saran:
     keyakinan: str = "tinggi"
 
 
-# ── sesi DB tambahan (audit, notifikasi, job) ────────────────────────────
-_SESI = None
+def _k(ctx) -> "_host.Keadaan":
+    """Keadaan host untuk konteks ini (bukan atribut konteks, supaya tidak terjangkau dari kode plugin)."""
+    return _host.ambil(ctx)
 
 
-def sesi():
-    """Pabrik sesi untuk tulisan host yang harus berdiri sendiri. Tes menggantinya lewat `pakai_sesi`."""
-    if _SESI is not None:
-        return _SESI()
-    from app.core.database import AsyncSessionLocal
-    return AsyncSessionLocal()
-
-
-@contextmanager
-def pakai_sesi(pabrik):
-    global _SESI
-    lama, _SESI = _SESI, pabrik
-    try:
-        yield
-    finally:
-        _SESI = lama
-
-
-_TOLAK_TERCATAT: dict[tuple, float] = {}
-_TOLAK_MAKS = 10_000
-
-
-async def catat_audit(household_id, plugin_id: str, actor_id, aksi: str, **detail) -> None:
-    """Satu baris `plugin_audit_log` lewat sesi sendiri. Gagal → log, tidak pernah melempar."""
-    from app.models.models import PluginAuditLog
-    try:
-        async with sesi() as db:
-            db.add(PluginAuditLog(household_id=household_id, plugin_id=plugin_id, actor_id=actor_id,
-                                  action=aksi[:30], detail=detail))
-            await db.commit()
-    except Exception:
-        log.exception("audit plugin %s %s gagal dicatat", plugin_id, aksi)
-
-
-@dataclass(frozen=True)
 class PluginContext:
-    """Dibuat host (`app/plugins/host/titik.py`) untuk satu panggilan fungsi plugin. Plugin tidak membuatnya.
-    Beku: plugin tidak bisa mengganti izin, ruang, atau perannya sendiri. Sesi DB privat (`_db`); tabel plugin sendiri
-    dibuka lewat SDK bersama tabel pertamanya (U1), bukan lewat sesi ini."""
-    _db: Any
-    plugin_id: str
-    nama_plugin: str
-    ruang_id: UUID                                 # = household_id di database
-    nama_ruang: str
-    jenis_ruang: str
-    viewer: Any = None                             # User, atau None untuk job
-    peran: str = PERAN_SISTEM                      # owner | admin | member | sistem
-    izin: frozenset[str] = frozenset()             # granted ∩ manifest ∩ izin fungsi
-    jenis_notifikasi: frozenset[str] = frozenset()
-    pengaturan: dict = field(default_factory=dict)
-    sumber: str = ""                               # mis. "kartu:buku_usaha.omzet", "job:pengingat"
+    """Dibuat host (`app/plugins/host/titik.py` lewat `keadaan.buat`) untuk satu panggilan fungsi plugin; plugin tidak
+    membuatnya. Semua keadaan ada di host: atribut di bawah hanya-baca, objek ini tidak bisa disalin atau diubah."""
+    __slots__ = ("__weakref__",)
+
+    def __init__(self, *a, **kw):
+        raise TypeError("PluginContext hanya dibuat host")
+
+    def __setattr__(self, nama, nilai):
+        raise AttributeError("PluginContext hanya-baca")
+
+    def __reduce__(self):
+        raise TypeError("PluginContext tidak bisa disalin")
+
+    __copy__ = __deepcopy__ = __reduce__
 
     # ── identitas ──
     @property
+    def plugin_id(self) -> str:
+        return _k(self).plugin_id
+
+    @property
+    def nama_plugin(self) -> str:
+        return _k(self).nama_plugin
+
+    @property
+    def ruang_id(self) -> UUID:
+        return _k(self).ruang_id
+
+    @property
+    def nama_ruang(self) -> str:
+        return _k(self).nama_ruang
+
+    @property
+    def jenis_ruang(self) -> str:
+        return _k(self).jenis_ruang
+
+    @property
+    def viewer(self) -> PenggunaView | None:
+        return _k(self).viewer
+
+    @property
     def user_id(self) -> UUID | None:
-        return getattr(self.viewer, "id", None)
+        return _k(self).viewer.id if _k(self).viewer is not None else None
+
+    @property
+    def peran(self) -> str:
+        return _k(self).peran
+
+    @property
+    def izin(self) -> frozenset[str]:
+        return _k(self).izin
+
+    @property
+    def sumber(self) -> str:
+        return _k(self).sumber
 
     @property
     def karyawan(self) -> bool:
@@ -191,23 +211,19 @@ class PluginContext:
         return self.peran in ("owner", "admin")
 
     def settings(self) -> dict:
-        return dict(self.pengaturan)
+        return dict(_k(self).pengaturan)
 
     # ── izin ──
     async def _tolak(self, izin: str, alasan: str) -> None:
-        kunci = (self.ruang_id, self.plugin_id, izin, alasan, self.sumber)
-        sekarang = time.monotonic()
-        if len(_TOLAK_TERCATAT) > _TOLAK_MAKS:
-            _TOLAK_TERCATAT.clear()
-        if sekarang - _TOLAK_TERCATAT.get(kunci, -1e9) >= 3600:
-            _TOLAK_TERCATAT[kunci] = sekarang
-            await catat_audit(self.ruang_id, self.plugin_id, self.user_id, f"tolak:{izin}",
-                              alasan=alasan, sumber=self.sumber)
-        log.warning("plugin %s ditolak %s (%s) di %s", self.plugin_id, izin, alasan, self.sumber)
+        k = _k(self)
+        if _host.tolak_perlu_dicatat((k.ruang_id, k.plugin_id, izin, alasan, k.sumber)):
+            await _host.catat_audit(k.ruang_id, k.plugin_id, self.user_id, f"tolak:{izin}",
+                                    alasan=alasan, sumber=k.sumber)
+        log.warning("plugin %s ditolak %s (%s) di %s", k.plugin_id, izin, alasan, k.sumber)
         raise IzinDitolak(izin, alasan)
 
     async def _perlu(self, izin: str) -> None:
-        if izin not in self.izin:
+        if izin not in _k(self).izin:
             await self._tolak(izin, "tanpa_izin")
         if izin in IZIN_KEUANGAN and self.karyawan:
             await self._tolak(izin, "khusus_admin")
@@ -223,7 +239,7 @@ class PluginContext:
         """`envelopes:read`: amplop aktif ruang ini yang boleh dilihat viewer."""
         await self._perlu("envelopes:read")
         from app.models.models import Envelope
-        rows = (await self._db.execute(
+        rows = (await _k(self).db.execute(
             select(Envelope).where(Envelope.household_id == self.ruang_id, Envelope.is_active.is_(True),
                                    self._amplop_terlihat(Envelope))
             .order_by(Envelope.name).limit(BATAS_BARIS)
@@ -245,7 +261,7 @@ class PluginContext:
                     Transaction.transaction_date >= mulai, Transaction.transaction_date <= akhir))
         if amplop_id is not None:
             q = q.where(Transaction.envelope_id == amplop_id)
-        rows = (await self._db.execute(
+        rows = (await _k(self).db.execute(
             q.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc()).limit(BATAS_BARIS)
         )).scalars().all()
         return [TransaksiView(id=t.id, amplop_id=t.envelope_id, user_id=t.user_id, jumlah=Decimal(t.amount),
@@ -255,10 +271,11 @@ class PluginContext:
                 for t in rows]
 
     async def incomes(self, mulai: date, akhir: date) -> list[PemasukanView]:
-        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`."""
+        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`. Di ruang keluarga, pemasukan anggota lain
+        tersamar (keterangan dan pencatat); nominal tetap ada untuk agregat."""
         await self._perlu("incomes:read")
         from app.models.models import Income
-        rows = (await self._db.execute(
+        rows = (await _k(self).db.execute(
             select(Income).where(Income.household_id == self.ruang_id,
                                  Income.income_date >= mulai, Income.income_date <= akhir)
             .order_by(Income.income_date.desc(), Income.created_at.desc()).limit(BATAS_BARIS)
@@ -269,21 +286,22 @@ class PluginContext:
         """`incomes:read`: satu pemasukan; None bila tidak ada atau milik ruang lain (tidak membedakan keduanya)."""
         await self._perlu("incomes:read")
         from app.models.models import Income
-        i = (await self._db.execute(
+        i = (await _k(self).db.execute(
             select(Income).where(Income.id == income_id, Income.household_id == self.ruang_id)
         )).scalar_one_or_none()
         return self._pemasukan(i) if i is not None else None
 
-    @staticmethod
-    def _pemasukan(i) -> PemasukanView:
-        return PemasukanView(id=i.id, user_id=i.user_id, jumlah=Decimal(i.amount), deskripsi=i.description,
-                             tanggal=i.income_date, jenis=i.kind or "")
+    def _pemasukan(self, i) -> PemasukanView:
+        utuh = self.jenis_ruang == "usaha" or (self.user_id is not None and str(i.user_id) == str(self.user_id))
+        return PemasukanView(id=i.id, user_id=i.user_id if utuh else None, jumlah=Decimal(i.amount),
+                             deskripsi=i.description if utuh else PEMASUKAN_PRIVAT, tanggal=i.income_date,
+                             jenis=i.kind or "")
 
     async def members(self) -> list[AnggotaView]:
         """`members:read`: nama dan peran anggota ruang ini."""
         await self._perlu("members:read")
         from app.models.models import HouseholdMember, User
-        rows = (await self._db.execute(
+        rows = (await _k(self).db.execute(
             select(HouseholdMember.user_id, User.name, HouseholdMember.role)
             .join(User, User.id == HouseholdMember.user_id)
             .where(HouseholdMember.household_id == self.ruang_id).order_by(User.name)
@@ -293,11 +311,17 @@ class PluginContext:
     # ── kirim ──
     async def notify(self, jenis: str, judul: str, isi: str, *, link: str | None = None,
                      kunci: str | None = None) -> int:
-        """`notifications:send`: notifikasi untuk owner/admin ruang ini, lewat penyaring jam tenang dan batas harian
-        per plugin (seperti `proaktif.py`). Judul diawali nama ruang; `link` hanya ke `/p/<id>…`. `kunci` mencegah
-        kiriman ganda hari itu (bawaan: `jenis`). Mengembalikan jumlah penerima yang terkirim."""
+        """`notifications:send`, hanya dari job: notifikasi untuk owner/admin ruang ini, lewat penyaring jam tenang dan
+        batas harian per plugin (seperti `proaktif.py`). Judul diawali nama ruang; `link` hanya ke `/p/<id>…`. `kunci`
+        mencegah kiriman ganda hari itu (bawaan: `jenis`). Mengembalikan jumlah penerima yang terkirim."""
         await self._perlu("notifications:send")
-        if jenis not in self.jenis_notifikasi:
+        k = _k(self)
+        if k.viewer is not None:
+            await self._tolak("notifications:send", "bukan_job")
+        if jenis not in k.jenis_notifikasi:
             await self._tolak(f"notif:{jenis}"[:40], "jenis_tidak_dikenal")
+        if k.notify_dipakai >= MAKS_NOTIFY_PER_KONTEKS:
+            await self._tolak("notifications:send", "batas_notify")
+        k.notify_dipakai += 1
         from app.plugins.host import titik
         return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis)

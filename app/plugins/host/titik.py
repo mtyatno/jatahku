@@ -35,8 +35,11 @@ from app.models.models import (
 from app.plugins.host import siklus
 from app.plugins.host.manifest import Manifest
 from app.plugins.host.registry import registry
+from app.plugins.host import keadaan
+from app.plugins.host.kode import IZIN_PER_JENIS
+from app.plugins.host.keadaan import catat_audit, sesi
 from app.plugins.sdk.context import (
-    AksiRoute, NilaiTidakSah, PluginContext, RencanaPengeluaran, Saran, catat_audit, sesi,
+    AksiRoute, NilaiTidakSah, PenggunaView, PluginContext, RencanaPengeluaran, Saran,
 )
 from app.plugins.sdk.plugin import Pendaftaran
 
@@ -72,15 +75,25 @@ async def _peran(db, user_id, household_id) -> str | None:
 
 
 def izin_efektif(inst: PluginInstallation, m: Manifest, d: Pendaftaran) -> frozenset[str]:
-    """Izin yang terbuka untuk satu panggilan: disetujui saat pasang ∩ manifest sekarang ∩ `izin=` fungsi."""
-    return frozenset(inst.granted_permissions or []) & frozenset(m.permissions) & frozenset(d.izin)
+    """Izin yang terbuka untuk satu panggilan: disetujui saat pasang ∩ manifest sekarang ∩ `izin=` fungsi ∩ izin
+    yang boleh untuk jenis titik itu (`kode.IZIN_PER_JENIS`; mis. hanya job yang boleh mengirim, review #186 temuan 1)."""
+    return (frozenset(inst.granted_permissions or []) & frozenset(m.permissions) & frozenset(d.izin)
+            & IZIN_PER_JENIS.get(d.jenis, frozenset()))
+
+
+def _pengguna(user) -> PenggunaView | None:
+    """View beku user pemicu: plugin tidak pernah memegang objek ORM `User` (sesi DB, email, kredensial)."""
+    if user is None:
+        return None
+    return PenggunaView(id=user.id, nama=user.name or "", zona_waktu=getattr(user, "timezone", None) or "Asia/Jakarta")
 
 
 def konteks(db, m: Manifest, inst: PluginInstallation, ruang: Household, d: Pendaftaran, *,
             viewer=None, peran: str = "sistem", sumber: str) -> PluginContext:
-    return PluginContext(
-        _db=db, plugin_id=m.id, nama_plugin=m.name, ruang_id=ruang.id, nama_ruang=ruang.name or "",
-        jenis_ruang=ruang.type or HouseholdType.RUMAH_TANGGA, viewer=viewer, peran=peran,
+    """Konteks untuk satu panggilan fungsi plugin; `viewer` = objek `User` pemicu (atau None untuk job)."""
+    return keadaan.buat(
+        db=db, plugin_id=m.id, nama_plugin=m.name, ruang_id=ruang.id, nama_ruang=ruang.name or "",
+        jenis_ruang=ruang.type or HouseholdType.RUMAH_TANGGA, viewer=_pengguna(viewer), peran=peran,
         izin=izin_efektif(inst, m, d), jenis_notifikasi=frozenset(m.contributes.notifications),
         pengaturan=dict(inst.settings or {}), sumber=sumber,
     )
@@ -133,6 +146,8 @@ def _angka(v, *, boleh_none: bool = True):
         return None
     if isinstance(v, bool) or not isinstance(v, (int, Decimal)):
         raise KeluaranTidakSah("angka harus int atau Decimal (bukan float)")
+    if isinstance(v, Decimal) and not v.is_finite():
+        raise KeluaranTidakSah("angka harus terhingga (bukan NaN/Infinity)")
     return str(v) if isinstance(v, Decimal) else v
 
 
@@ -143,7 +158,7 @@ def _rasio(v):
         r = Decimal(str(v))
     except (InvalidOperation, ValueError):
         raise KeluaranTidakSah("bar harus 0–1")
-    if isinstance(v, bool) or not Decimal(0) <= r <= Decimal(1):
+    if isinstance(v, bool) or not r.is_finite() or not Decimal(0) <= r <= Decimal(1):
         raise KeluaranTidakSah("bar harus 0–1")
     return float(round(r, 4))
 
@@ -157,7 +172,7 @@ def _tone(v, *, boleh_none: bool = True):
 
 
 def rute_plugin(ke, plugin_id: str) -> str:
-    if not isinstance(ke, str) or len(ke) > 200 or not re.match(rf"^/p/{plugin_id}(/[a-z0-9_\-]+)*/?(\?[A-Za-z0-9_=&\-]*)?$", ke):
+    if not isinstance(ke, str) or len(ke) > 200 or not re.fullmatch(rf"/p/{plugin_id}(/[a-z0-9_\-]+)*/?(\?[A-Za-z0-9_=&\-]*)?", ke):
         raise KeluaranTidakSah(f"tautan harus ke halaman plugin /p/{plugin_id}")
     return ke
 
@@ -325,12 +340,15 @@ def ke_insight(m: Manifest, kode: str, s: Saran):
     from app.services.advisor.insight import Insight
     if not isinstance(s, Saran):
         raise KeluaranTidakSah("aturan advisor harus mengembalikan list[Saran]")
-    if not re.match(r"^[A-Za-z0-9_.\-]{1,60}$", s.entitas or ""):
+    if not isinstance(s.entitas, str) or not re.fullmatch(r"[A-Za-z0-9_.\-]{1,60}", s.entitas):
         raise KeluaranTidakSah("entitas saran tidak sah")
     if s.keyakinan not in ("tinggi", "sedang", "rendah"):
         raise KeluaranTidakSah("keyakinan tidak sah")
     if len(s.fakta) > 4 or len(s.aksi) > 2:
         raise KeluaranTidakSah("fakta maksimal 4, aksi maksimal 2")
+    for nilai in (s.rupiah, s.urgensi):                 # float ditolak: tidak ada pembulatan diam (review #186 no. 7)
+        if isinstance(nilai, bool) or not isinstance(nilai, (int, Decimal)) or not Decimal(nilai).is_finite():
+            raise KeluaranTidakSah("rupiah dan urgensi harus int atau Decimal terhingga")
     rupiah = Decimal(s.rupiah)
     urgensi = Decimal(s.urgensi)
     if rupiah < 0 or not Decimal(0) <= urgensi <= Decimal(1):
@@ -518,7 +536,7 @@ async def kirim_notifikasi(ctx: PluginContext, jenis: str, judul: str, isi: str,
     isi = _teks(isi, 500, boleh_kosong=False)
     link = rute_plugin(link, ctx.plugin_id) if link is not None else None
     kunci = _teks(kunci, 60, boleh_kosong=False)
-    db = ctx._db
+    db = keadaan.ambil(ctx).db
     penerima = (await db.execute(
         select(User).join(HouseholdMember, HouseholdMember.user_id == User.id)
         .where(HouseholdMember.household_id == ctx.ruang_id,
@@ -536,8 +554,9 @@ async def kirim_notifikasi(ctx: PluginContext, jenis: str, judul: str, isi: str,
         hasil = await notification_service.kirim(u, NotificationType.system, f"[{ctx.nama_ruang}] {judul}", isi,
                                                  link=link, permukaan=("telegram", "web"))
         terkirim += 1 if hasil else 0
-    await catat_audit(ctx.ruang_id, ctx.plugin_id, ctx.user_id, "kirim:notifications",
-                      jenis=jenis, kunci=kunci, penerima=terkirim, sumber=ctx.sumber)
+    if terkirim:   # yang tersaring (jam tenang, batas, kunci sama) tidak dicatat, supaya audit tidak membanjir (no. 6)
+        await catat_audit(ctx.ruang_id, ctx.plugin_id, ctx.user_id, "kirim:notifications",
+                          jenis=jenis, kunci=kunci, penerima=terkirim, sumber=ctx.sumber)
     return terkirim
 
 
@@ -569,6 +588,7 @@ async def jalankan_job(now: datetime | None = None) -> int:
     """Dipanggil scheduler tiap jam. Untuk setiap instalasi aktif dan job yang jatuh tempo di zona waktu pemilik
     ruang: klaim sekali per periode (Redis), lalu jalankan dengan sesi DB sendiri dan konteks tanpa user (hanya
     amplop bersama, deskripsi tersamar). Mengembalikan jumlah job yang dijalankan."""
+    from app.services.ruang import ruang_jenis, ruang_usaha_dibuka
     reg = registry()
     if not reg.punya("job"):
         return 0
@@ -591,6 +611,10 @@ async def jalankan_job(now: datetime | None = None) -> int:
                 .limit(1))).scalar_one_or_none()
             m = reg.get(inst.plugin_id)
             if pemilik is None or not await siklus.boleh_dilihat(db, m, pemilik.id):
+                continue
+            # Ruang usaha di luar flag `ruang_usaha_users` pemiliknya: plugin tidak meninggalkan job (review #186 no. 5).
+            if await ruang_jenis(db, inst.household_id) == HouseholdType.USAHA and \
+                    not await ruang_usaha_dibuka(db, pemilik.id):
                 continue
             lokal = now.astimezone(_tz(pemilik))
             for j in m.contributes.jobs:
