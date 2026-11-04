@@ -701,6 +701,70 @@ class WorkerDonationTests(DonasiBase):
         self.assertTrue(any("persetujuan donasi Kotak Struk tidak terbaca (RuntimeError)" in line
                             for line in logs.output))
 
+    async def process_withdrawn(self, *, withdraw):
+        """Persetujuan dan saklar menyala saat item mulai dibaca; `withdraw()` jalan di tengah OCR (sesudah sesi
+        pertama, sebelum `_store`)."""
+        from app.services.kotak_struk.worker import process_item
+        await self.flag(kotak_donasi=True)
+        await self.set_consent(True)
+        item_id = uuid.uuid4()
+        path = Path(self.dir) / item_id.hex
+        path.write_bytes(b"\xff\xd8\xff\xe0jpeg")
+        async with self.Session() as db:
+            db.add(ReceiptScan(id=item_id, user_id=self.user.id, status=K.ST_DITERIMA, source="telegram",
+                               file_path=str(path), content_type="image/jpeg", file_sha256=item_id.hex * 2))
+            await db.commit()
+
+        async def extract(data, content_type):
+            await withdraw()
+            return TextDoc(lines=list(GOPAY_LINES), kind="image")
+        status = await process_item(item_id, session_factory=self.Session, extract=extract, now=T0,
+                                    proofs_enabled=True)
+        async with self.Session() as db:
+            return status, await db.get(ReceiptScan, item_id)
+
+    async def test_withdraw_between_capture_and_store_stores_no_lines(self):
+        # Review M1c catatan 4: persetujuan dibaca ulang (kunci FOR SHARE) di sesi `_store`.
+        from app.services.kotak_struk import donasi
+
+        async def nothing():
+            pass
+
+        async def withdraw():
+            async with self.Session() as db:
+                await donasi.set_consent(db, self.user.id, False, now=T0)
+                await db.commit()
+
+        async def switch_off():
+            await self.flag(kotak_donasi=False)
+
+        status, item = await self.process_withdrawn(withdraw=nothing)   # kontrol: baris tertangkap
+        self.assertEqual(status, "siap")
+        self.assertTrue(item.sample_lines)
+        for change in (withdraw, switch_off):
+            with self.subTest(change=change.__name__):
+                status, item = await self.process_withdrawn(withdraw=change)
+                self.assertEqual((status, item.status, item.doc_type), ("siap", "siap", "transfer"))
+                self.assertIsNotNone(item.layout)
+                self.assertTrue(await self.sql_null_sample_lines(item.id))
+        # Galat baca ulang: tanpa baris, item tetap siap, log tanpa isi bukti.
+        from app.services.kotak_struk import worker
+        with patch.object(donasi, "still_consented", AsyncMock(side_effect=RuntimeError("RUDI 1234567890"))), \
+                self.assertLogs(worker.__name__, level="WARNING") as logs:
+            status, item = await self.process_withdrawn(withdraw=nothing)
+        self.assertEqual(status, "siap")
+        self.assertTrue(await self.sql_null_sample_lines(item.id))
+        self.assertTrue(any("tidak terbaca ulang (RuntimeError)" in line for line in logs.output))
+        self.assertFalse(any("RUDI" in line for line in logs.output))
+
+    async def test_store_rereads_consent_only_for_captured_lines(self):
+        from app.services.kotak_struk import donasi
+        with patch.object(donasi, "still_consented", wraps=donasi.still_consented) as spy:
+            await self.process(GOPAY_LINES, flag=True, consent=False)   # tidak ada baris: tanpa baca ulang
+            spy.assert_not_called()
+            await self.process(GOPAY_LINES, flag=True, consent=True)
+            spy.assert_awaited_once_with(unittest.mock.ANY, self.user.id)
+
     async def test_sample_error_keeps_item_siap(self):
         from app.services.kotak_struk import donasi, worker
         with patch.object(donasi, "sample_lines", side_effect=RuntimeError("RUDI HARTONO 1234567890")), \
@@ -763,6 +827,8 @@ class CorrectionTriggerTests(unittest.TestCase):
                          "tidak_dikenali")
         self.assertEqual(correction_trigger(_item(), None, app="bsi"), "aplikasi")
         self.assertEqual(correction_trigger(_item(), None, typed_amount=11000), "nominal_bot")
+        self.assertEqual(correction_trigger(_item(total=None), None, typed_amount=11000), "nominal_bot")
+        self.assertIsNone(correction_trigger(_item(), None, typed_amount=10000))   # sama dengan total terbaca
         self.assertEqual(correction_trigger(SimpleNamespaceItem(), None, typed_amount=1), "nominal_bot")
 
     def test_truth_shape(self):
@@ -844,8 +910,9 @@ class DonateServiceTests(DonasiBase):
         self.assertTrue(await self.sql_null_sample_lines(other))
         await self.flag(kotak_donasi=False)
         off = await self.captured_item()
-        with patch.object(donasi, "consented", AsyncMock(return_value=True)):
+        with patch.object(donasi, "_locked_consent", wraps=donasi._locked_consent) as spy:
             self.assertFalse(await self.donate(off))
+        spy.assert_not_called()   # saklar mati: persetujuan tidak dibaca
         self.assertTrue(await self.sql_null_sample_lines(off))
         self.assertEqual(await self.count(ProofSample), 0)
 
@@ -861,7 +928,8 @@ class DonateServiceTests(DonasiBase):
     async def test_error_is_swallowed_without_proof_text(self):
         from app.services.kotak_struk import donasi
         item_id = await self.captured_item()
-        with patch.object(donasi, "consented", AsyncMock(side_effect=RuntimeError("BUDI SANTOSO 1234567890"))), \
+        with patch.object(donasi, "still_consented",
+                          AsyncMock(side_effect=RuntimeError("BUDI SANTOSO 1234567890"))), \
                 self.assertLogs(donasi.__name__, "WARNING") as logs:
             self.assertFalse(await self.donate(item_id))
         self.assertTrue(all("BUDI" not in line and "1234" not in line for line in logs.output))
@@ -873,6 +941,36 @@ class DonateServiceTests(DonasiBase):
     async def _samples(self):
         async with self.Session() as db:
             return list((await db.execute(select(ProofSample))).scalars())
+
+    async def test_donate_reads_consent_with_a_share_lock(self):
+        # Review M1c temuan 1: baris persetujuan dibaca `FOR SHARE` (Postgres; SQLite mengabaikannya).
+        from sqlalchemy.dialects import postgresql
+        from app.services.kotak_struk import donasi
+        sql = str(donasi._locked_consent(self.user.id).compile(dialect=postgresql.dialect()))
+        self.assertIn("FROM proof_sample_consents", sql)
+        self.assertTrue(sql.rstrip().endswith("FOR SHARE"), sql)
+        item_id = await self.captured_item()
+        with patch.object(donasi, "_locked_consent", wraps=donasi._locked_consent) as spy:
+            self.assertTrue(await self.donate(item_id))
+        spy.assert_called_once_with(self.user.id)
+
+    async def test_forget_user_deletes_consent_first(self):
+        # Review M1c temuan 1: persetujuan dihapus lebih dulu (menunggu pendonor yang memegang kunci), lalu sampel,
+        # lalu baris tersamar.
+        from app.services.kotak_struk import donasi
+        await self.captured_item()
+        statements = []
+        hook = lambda *a: statements.append(a[2].lstrip().split("\n")[0])   # noqa: E731
+        event.listen(self.engine.sync_engine, "before_cursor_execute", hook)
+        try:
+            async with self.Session() as db:
+                await donasi.forget_user(db, self.user.id)
+                await db.commit()
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", hook)
+        writes = [s for s in statements if s.startswith(("DELETE", "UPDATE"))]
+        self.assertEqual([w.split(" WHERE")[0].split(" SET")[0] for w in writes],
+                         ["DELETE FROM proof_sample_consents", "DELETE FROM proof_samples", "UPDATE receipt_scans"])
 
 
 if __name__ == "__main__":

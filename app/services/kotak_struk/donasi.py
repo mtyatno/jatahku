@@ -65,6 +65,21 @@ async def consented(db: AsyncSession, user_id: uuid.UUID) -> bool:
         select(exists().where(ProofSampleConsent.user_id == user_id)))).scalar())
 
 
+def _locked_consent(user_id: uuid.UUID):
+    """SELECT baris persetujuan `... FOR SHARE` (review M1c temuan 1): menarik persetujuan (`forget_user` menghapus
+    baris ini lebih dulu) menunggu transaksi pembaca selesai, lalu menghapus sampel/baris yang baru di-commit-nya;
+    pembaca yang datang sesudah penghapusan menunggu dan tidak melihat barisnya lagi. SQLite mengabaikan kuncinya."""
+    return select(ProofSampleConsent.user_id).where(ProofSampleConsent.user_id == user_id).with_for_update(read=True)
+
+
+async def still_consented(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Saklar menyala DAN persetujuan user masih ada, dibaca dengan kunci FOR SHARE sampai transaksi pemanggil selesai.
+    Dipakai tepat sebelum menulis baris tersamar (worker `_store`) atau sampel (`donate`)."""
+    if not await donation_available(db):
+        return False
+    return (await db.execute(_locked_consent(user_id))).first() is not None
+
+
 async def consented_at(db: AsyncSession, user_id: uuid.UUID) -> datetime | None:
     """Waktu user menyalakan donasi contoh, atau None bila belum/sudah ditarik."""
     return (await db.execute(
@@ -95,9 +110,13 @@ async def set_consent(db: AsyncSession, user_id: uuid.UUID, on: bool, *, now: da
 async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Lupakan semua donasi user ini (G4): hapus semua `proof_samples`-nya (menunggu, disetujui, ditolak), baris
     persetujuannya, dan kosongkan `receipt_scans.sample_lines` miliknya (SQL NULL). Sampel milik user lain yang pernah
-    ia putuskan sebagai admin tidak disentuh (pemanggil hapus akun mengosongkan `decided_by`). Tidak meng-commit."""
-    await db.execute(delete(ProofSample).where(ProofSample.user_id == user_id))
+    ia putuskan sebagai admin tidak disentuh (pemanggil hapus akun mengosongkan `decided_by`). Tidak meng-commit.
+
+    Urutan (review M1c temuan 1): baris persetujuan DIHAPUS LEBIH DULU. Pendonor yang sedang memegang kunci FOR SHARE
+    (`still_consented`) membuat DELETE ini menunggu sampai ia commit; pernyataan berikutnya (READ COMMITTED: snapshot
+    baru) lalu menghapus sampel dan baris tersamar yang baru di-commit itu."""
     await db.execute(delete(ProofSampleConsent).where(ProofSampleConsent.user_id == user_id))
+    await db.execute(delete(ProofSample).where(ProofSample.user_id == user_id))
     await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.user_id == user_id, ReceiptScan.sample_lines.is_not(None))
@@ -228,7 +247,7 @@ def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | 
     """Jenis koreksi yang membuat bukti `item` layak menjadi sampel donasi, atau None (pre-flight A16 K3 opsi B). Murni.
 
     - `aplikasi`: jawaban "Aplikasi apa ini?" (`app`); `nominal_bot`: nominal ketikan sesudah "Nominal salah"
-      (`typed_amount`).
+      (`typed_amount`) yang beda dari total terbaca (sama -> None).
     - Lewati (`skip_reason`): `batal`/`duplikat` -> None. `bukan_pengeluaran`: `arah` bila `alasan` beda dari
       `document.flow`; selain itu `tidak_dikenali` untuk item `tidak_dikenali`; selain itu `arah` bila tanpa alasan
       dan arah terbaca `keluar`; selain itu None.
@@ -237,10 +256,11 @@ def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | 
       `tidak_dikenali` bila item `tidak_dikenali`; selain itu None (bacaan benar)."""
     if app is not None:
         return TRIGGER_APLIKASI
-    if typed_amount is not None:
-        return TRIGGER_NOMINAL_BOT
     document = getattr(item, "document", None)
     document = document if isinstance(document, dict) else {}
+    amounts = document.get("amounts") if isinstance(document.get("amounts"), dict) else {}
+    if typed_amount is not None:   # nominal ketikan sama dengan total terbaca: bukan koreksi (review M1c catatan 2)
+        return None if typed_amount == amounts.get("total") else TRIGGER_NOMINAL_BOT
     doc_type = getattr(item, "doc_type", None)
     if skip_reason is not None:
         if skip_reason != SKIP_NOT_EXPENSE:
@@ -255,7 +275,6 @@ def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | 
         return None
     if final is None:
         return None
-    amounts = document.get("amounts") if isinstance(document.get("amounts"), dict) else {}
     total = amounts.get("total")
     if total is None or final.amount != total:
         return TRIGGER_NOMINAL
@@ -287,8 +306,9 @@ async def donate(db: AsyncSession, item, trigger: str | None, *, truth: dict, no
     disimpan.
 
     Tanpa `sample_lines` -> False tanpa kueri. Selain itu, dalam SAVEPOINT sendiri: bila `trigger` ada, saklar
-    `kotak_donasi` menyala, DAN user pemilik item MASIH setuju (dicek lagi di sini: persetujuan bisa ditarik selagi
-    bukti dibaca, review M1b temuan 5), sisip `ProofSample(status="menunggu", lines, rule_key dari kerangka, doc_type,
+    `kotak_donasi` menyala, DAN user pemilik item MASIH setuju (dicek lagi di sini dengan kunci FOR SHARE,
+    `still_consented`: persetujuan bisa ditarik selagi bukti dibaca atau bersamaan, review M1b temuan 5, M1c temuan 1),
+    sisip `ProofSample(status="menunggu", lines, rule_key dari kerangka, doc_type,
     trigger, user_name = nama samaran user, truth, today = hari baca WIB)` dengan `on_conflict_do_nothing` pada
     `uq_proof_sample_item` (satu sampel per item; kirim ulang tidak menggandakan). Dalam SEMUA kasus itu
     `receipt_scans.sample_lines` item dikosongkan (SQL NULL). Tidak meng-commit (pemanggil meng-commit bersama
@@ -303,7 +323,7 @@ async def donate(db: AsyncSession, item, trigger: str | None, *, truth: dict, no
         stored = False
         async with db.begin_nested():
             user_id = item.user_id
-            if trigger is not None and await donation_available(db) and await consented(db, user_id):
+            if trigger is not None and await still_consented(db, user_id):
                 name = (await db.execute(select(User.name).where(User.id == user_id))).scalar_one_or_none()
                 layout = getattr(item, "layout", None)
                 key = layout.get("key") if isinstance(layout, dict) else None

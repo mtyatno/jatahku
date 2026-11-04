@@ -2476,6 +2476,17 @@ class KotakBotDbTests(DonationMixin, TxnBase):
         self.assertEqual([(s.item_id, s.trigger, s.truth["total"]) for s in await self.samples()],
                          [(item.id, "nominal_bot", 11000), (bare.id, "nominal_bot", 12000)])
 
+    async def test_bot_fix_amount_equal_to_the_read_total_donates_nothing(self):
+        # Review M1c catatan 2: nominal ketikan = total terbaca (Rp10.000 di `fix_vote_item`) bukan koreksi.
+        await self.enable_donation()
+        item = await self.fix_vote_item()
+        await self.captured(item.id)
+        await self.tap(f"struk_fix_{item.id}")
+        await self.type_text("transfer budi 10rb")
+        self.assertEqual(await self.samples(), [])
+        self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual(len(await self.txns()), 1)
+
     async def test_bot_fix_amount_without_consent_clears_lines(self):
         await self.enable_donation()
         item = await self.fix_vote_item()

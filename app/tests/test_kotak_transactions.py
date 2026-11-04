@@ -1354,7 +1354,7 @@ class DonationRecordingTests(DonationMixin, TxnBase):
         item = await self.ready_gopay()
         self.assertIsNone((await self.get(item.id)).sample_lines)
         await self.enable_donation()
-        with patch.object(donasi, "consented", AsyncMock(return_value=True)) as spy:
+        with patch.object(donasi, "still_consented", AsyncMock(return_value=True)) as spy:
             r = await self.post(item, ref="n1", desc="kirim", amount=12500)
         self.assertEqual(r.status_code, 201, r.text)
         spy.assert_not_awaited()

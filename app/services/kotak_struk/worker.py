@@ -302,6 +302,17 @@ async def _store(factory, item_id: uuid.UUID, out: _Outcome, now: datetime) -> s
             return STATUS_MISSING
         path = item.file_path
         siap = item.status in _WAITING
+        if siap and out.columns.get("sample_lines"):
+            # Persetujuan dibaca ulang tepat sebelum baris tersamar ditulis (review M1c catatan 4): ditarik selagi
+            # bukti dibaca -> tanpa baris. Kunci FOR SHARE (`donasi.still_consented`) sampai commit di bawah.
+            try:   # savepoint: galat baca tidak merusak sesi; kunci baris tetap sampai commit
+                async with db.begin_nested():
+                    keep = await donasi.still_consented(db, item.user_id)
+            except Exception as exc:
+                log.warning("persetujuan donasi Kotak Struk tidak terbaca ulang (%s)", type(exc).__name__)
+                keep = False
+            if not keep:
+                out.columns["sample_lines"] = None
         if siap:  # selain itu user sudah melewati/menghapusnya selagi dibaca: hasilnya dibuang
             for column, value in out.columns.items():
                 setattr(item, column, value)
