@@ -19,7 +19,9 @@ pemilik produk 1 Nov 2026: saklar `features.receipt_inbox` dinyalakan untuk **se
 di "Menyalakan saklar". Sampai itu saklar tetap mati: yang terlihat baru hanya baris hasil scan di form Catat dan
 rincian Scan Struk di Admin; tombol PDF, banner, tips Settings, dan isi `/bagikan` baru aktif saat saklar menyala
 (tabel di "Saklar fitur"). Menu Bagikan Android butuh `share_target` di manifest: PR kecil terpisah sesudah saklar
-menyala (keputusan pemilik produk 28 Okt 2026). Perbarui bagian ini saat status berubah.
+menyala (keputusan pemilik produk 28 Okt 2026). **4 Nov 2026:** saklar menyala dan langkah 2–6 "Menyalakan saklar"
+selesai (pemilik produk); `share_target` ditambahkan ke manifest (branch `feat/share-target`, langkah 7).
+Perbarui bagian ini saat status berubah.
 
 ## Alur
 
@@ -556,9 +558,8 @@ Struk dan untuk `ProofCard`. Tanggal dokumen = tanggal struk, atau tanggal WIB d
   dibaca (lihat "Pemilik kotak share").
 - Navigasi tetap NetworkFirst, tetapi hanya jawaban 2xx ber-`Content-Type` `text/html` yang disimpan sebagai app shell
   offline: 404, 5xx, redirect, atau berkas bukan HTML tidak lagi menimpa `/index.html`.
-- `share_target` di `frontend/public/manifest.json` belum ada di branch ini (keputusan pemilik produk 28 Okt 2026), jadi
-  menu Bagikan Android belum menampilkan Jatahku. PR kecil saat saklar dinyalakan menambah blok ini sebagai kunci
-  tingkat atas di samping `"shortcuts"` (tambahkan koma sesudah larik `shortcuts`):
+- `share_target` di `frontend/public/manifest.json` ditambahkan 4 Nov 2026 sesudah saklar menyala (branch
+  `feat/share-target`; keputusan pemilik produk 28 Okt 2026), sebagai kunci tingkat atas di samping `"shortcuts"`:
 
   ```json
     "share_target": {
