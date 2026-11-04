@@ -392,6 +392,16 @@ class StatsTests(MaintenanceBase):
         s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
         self.assertEqual((s["by_doc_type"]["qris"], s["unrecognized"], s["by_issuer"]["bca_mobile"]["total"]), (1, 1, 1))
 
+    async def test_unknown_proof_with_logo_issuer_not_counted_per_issuer(self):
+        # M2b: bukti tak dikenal yang penerbitnya dari aturan `logo` (mis. `bsi`) tidak mencampur angka pembaca BSI.
+        await self.item(status="siap", doc_type="qris", document={"issuer": "bsi"})
+        await self.recorded("bsi", doc_type="tidak_dikenali", parsed_total=45000, paid_at=NOW,
+                            txns=[await self.txn(50000, date(2026, 10, 26))])
+        await self.item(status="siap", doc_type="tidak_dikenali", document={"issuer": "jago"})
+        s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
+        self.assertEqual(s["by_issuer"], {"bsi": {"total": 1, "recorded": 0, "corrected": 0}})
+        self.assertEqual((s["by_doc_type"], s["unrecognized"]), ({"qris": 1, "tidak_dikenali": 2}, 2))
+
     async def test_breakdown_counts_only_this_period_and_kotak_rows(self):
         await self.item(status="siap", doc_type="qris", document={"issuer": "bca_mobile"})
         await self.item(status="gagal", doc_type="tidak_dikenali", document=None)

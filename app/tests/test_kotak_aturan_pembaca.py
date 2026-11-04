@@ -488,8 +488,9 @@ class StatusBlockTests(_Loop):
         Dibanding label jahat yang sama tanpa aturan `logo`: pembaca, jenis, status, `{kode: level}`, `ref_hash`, arah
         uang, dan `check_recordable` sama. Dibanding tanpa aturan sama sekali: status, cek status/blokir, arah uang selain
         keluar, referensi, dan `check_recordable` sama. Setiap nilai dicoba bila aturan logonya bisa dipakai (kandidat
-        logo, tanpa profil terdeteksi, saklar menyala, dibaca pembaca tidak dikenali); selain itu satu kunci profil dan
-        `baru` saja (jalur pemetaan dan jalur "baru")."""
+        logo, tanpa profil terdeteksi, saklar menyala, dibaca pembaca tidak dikenali); daftar lain dengan kandidat logo
+        (juga yang profilnya terdeteksi) satu kunci profil dan `baru` (jalur pemetaan dan jalur "baru"); daftar tanpa
+        kandidat logo (kuncinya tidak pernah terhitung, aturannya tidak bisa dipakai) hanya `baru`."""
         patcher = patch.object(merchants, "_warned_no_key", True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -500,8 +501,9 @@ class StatusBlockTests(_Loop):
             for variant, lines in (("asli", entry["lines"]), ("newpay", ["NEWPAY", *entry["lines"]])):
                 clean = pc.clean_lines(lines)
                 candidate = kerangka.rule_key(clean, None, forbidden_words=set())
-                usable = bool(candidate and candidate.startswith("logo:")) and detect_issuer(clean) is None
-                key = candidate if usable else "logo:newpay"
+                has_logo = bool(candidate and candidate.startswith("logo:"))
+                usable = has_logo and detect_issuer(clean) is None
+                key = candidate if has_logo else "logo:newpay"
                 labels = hostile_labels(lines)
                 labelled_rules = {k: rule(labels, labels, labels) for k in [*PROFILE_KEYS, key]}
                 for switch, enabled in SWITCHES:
@@ -511,7 +513,7 @@ class StatusBlockTests(_Loop):
                     labelled_view = logo_view(labelled, lines)
                     labelled_ok = await recordable(labelled.parsed.doc.to_json())
                     every = usable and enabled and labelled.reader == UnknownReader.name
-                    for value in (values if every else [values[0], APP_NEW]):
+                    for value in (values if every else [values[0], APP_NEW] if has_logo else [APP_NEW]):
                         rules = {**labelled_rules, key: {**labelled_rules[key], "logo": [value]}}
                         got = await read(lines, rules, enabled=enabled, user_name=user)
                         with self.subTest(entry["id"], variant=variant, switch=switch, value=value):

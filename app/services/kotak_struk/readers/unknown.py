@@ -10,12 +10,12 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from app.services.kotak_struk.config import APP_NEW
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import MIN_ACCOUNT_DIGITS
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import Check, ParseContext, Parsed
 from app.services.kotak_struk.readers.labels import WIB, learned_amount
-from app.services.kotak_struk.config import APP_NEW
 from app.services.kotak_struk.readers.profiles import (
     Learned, detect_issuer, learned_for, learned_logo, learned_paid_at, learned_profile,
 )

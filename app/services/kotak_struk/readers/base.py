@@ -59,8 +59,8 @@ class ParseContext:
     # "label_tanggal": [...]}}` (kunci `logo:<kata>` dengan aturan `logo` yang disetujui juga `"logo": [nilai]`, hanya
     # untuk pembaca tidak dikenali: penerbit dan kunci label; M2b), dimuat worker dari cache (`belajar.approved_rules`).
     # Kosong = perilaku tanpa aturan (bawaan; tes pembaca dan `kotak_corpus` selalu kosong). Hanya pembaca QRIS,
-    # transfer, dan tidak dikenali yang membacanya, dan hanya untuk label nilai; status, arah uang, cek, dan dedup tidak pernah (registry memberi mereka
-    # konteks tanpa aturan).
+    # transfer, dan tidak dikenali yang membacanya, dan hanya untuk label nilai; status, arah uang, cek, dan dedup tidak
+    # pernah (registry memberi mereka konteks tanpa aturan).
     rules: dict = field(default_factory=dict)
 
 
