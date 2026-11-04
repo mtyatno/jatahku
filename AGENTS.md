@@ -233,7 +233,9 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
-## Deploy Checklist — Plugin R7: Catat cepat dan kamus per ruang (d7r7k4a1m9c3)
+## Deploy Checklist — Plugin R7: Catat cepat dan kamus per ruang (d7r7k4a1m9c3) — sudah jalan 2026-11-05
+Migrasi dijalankan pemilik di VPS; run deploy `aa10826` (percobaan ke-2) hijau, termasuk "Verifikasi versi yang tayang";
+`ruang_paritas` 109/109 ok.
 Menambah satu tabel baru `ruang_kamus`, route `GET`/`DELETE /ruang/{id}/kamus`, field aditif di
 `POST /transactions/suggest-envelope(s)` (`sumber`, `aturan`, request `amount`), lembar Catat cepat di ruang usaha, dan
 bagian "Kata yang dipelajari" di halaman Anggota (04-kontrak-api.md §2, §3). **Tidak ada kolom baru di tabel lama**, jadi
