@@ -11,7 +11,7 @@ from __future__ import annotations
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.models.models import DashboardLayout
+from app.models.models import DashboardLayout, HouseholdRole, HouseholdType
 from app.services import peran
 from app.services.dashboard import registry
 
@@ -58,14 +58,31 @@ async def _muat(db, user_id, household_id, surface) -> DashboardLayout | None:
     ))).scalar_one_or_none()
 
 
+PESAN_BUKAN_ANGGOTA = "Ruang ini tidak bisa dibuka dari akunmu. Muat ulang Jatahku lalu pilih ruang lagi."
+
+
+async def peran_beranda(db, user_id, household_id) -> str | None:
+    """Peran Beranda user di ruang ini: "karyawan" (peran `member` di ruang usaha), "umum" (peran lain), atau None
+    bila bukan anggota. Dari keanggotaan langsung, bukan dari pemanggil (review keamanan PR #185 temuan 2) dan tanpa
+    izin pengelola (`atas_izin_pengelola()` tidak membuat karyawan menjadi admin di Beranda; review ulang #185)."""
+    if household_id is None:
+        return None
+    role, jenis = await peran.peran_di_ruang(db, user_id, household_id)
+    if role is None:
+        return None
+    return "karyawan" if role == HouseholdRole.member.value and jenis == HouseholdType.USAHA else "umum"
+
+
 async def peran_karyawan(db, user_id, household_id) -> bool:
-    """Karyawan (peran `member` di ruang usaha) di ruang ini? Dihitung di sini, bukan diterima dari pemanggil
-    (review keamanan PR #185 temuan 2)."""
-    return household_id is not None and await peran.batasan_karyawan(db, user_id, household_id) is not None
+    return await peran_beranda(db, user_id, household_id) == "karyawan"
 
 
 async def ambil(db, user_id, household_id, surface: str) -> dict:
-    karyawan = await peran_karyawan(db, user_id, household_id)
+    """Tata letak efektif. User yang bukan anggota ruang ini → `GalatTataLetak` 403 `ruang_tidak_diizinkan`."""
+    untuk = await peran_beranda(db, user_id, household_id)
+    if untuk is None:
+        raise GalatTataLetak(403, "ruang_tidak_diizinkan", PESAN_BUKAN_ANGGOTA)
+    karyawan = untuk == "karyawan"
     row = await _muat(db, user_id, household_id, surface)
     if row is None:
         return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan=karyawan)

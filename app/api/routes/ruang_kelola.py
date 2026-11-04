@@ -87,16 +87,17 @@ async def _baris_batasan(db: AsyncSession, rid: UUID, uid: UUID, buat: bool = Fa
 
 async def _cabut_undangan_milik(db: AsyncSession, rid: UUID, uid: UUID, actor_id: UUID, alasan: str) -> int:
     """Cabut undangan aktif buatan `uid` di ruang ini (pembuatnya dikeluarkan, keluar, atau diturunkan; review keamanan
-    PR #185 temuan 1). Ikut commit pemanggil; satu baris log `undangan_dicabut` per kode."""
-    rows = (await db.execute(select(RuangUndangan).where(
+    PR #185 temuan 1). Ikut commit pemanggil; satu baris log `undangan_dicabut` per kode. UPDATE bersyarat seperti
+    `cabut_undangan`: kode yang sedang diklaim `/ruang/gabung` pada saat yang sama tidak ikut tercatat dicabut."""
+    hasil = await db.execute(update(RuangUndangan).where(
         RuangUndangan.household_id == rid, RuangUndangan.dibuat_oleh == uid,
         RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
-    ))).scalars().all()
-    now = datetime.now(timezone.utc)
-    for u in rows:
-        u.dicabut_at = now
-        peran.audit(db, rid, actor_id, "undangan_dicabut", uid, peran=u.peran, alasan=alasan)
-    return len(rows)
+    ).values(dicabut_at=datetime.now(timezone.utc)).returning(RuangUndangan.peran)
+        .execution_options(synchronize_session=False))
+    dicabut = [p for (p,) in hasil.all()]
+    for p in dicabut:
+        peran.audit(db, rid, actor_id, "undangan_dicabut", uid, peran=p, alasan=alasan)
+    return len(dicabut)
 
 
 # ── Anggota ────────────────────────────────────────────────────────────────

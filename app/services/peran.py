@@ -137,6 +137,15 @@ async def peran_di_ruang(db: AsyncSession, user_id, household_id) -> tuple[str |
     return role, str(row[1])
 
 
+async def batasan_anggota(db: AsyncSession, user_id, household_id) -> Batasan:
+    """Batasan tersimpan untuk anggota ini (bawaan bila admin belum mengatur), tanpa melihat izin pengelola. Untuk
+    tampilan milik karyawan sendiri (Beranda karyawan, R6); penegakan memakai `batasan_karyawan`."""
+    row = (await db.execute(
+        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
+    )).scalar_one_or_none()
+    return _dari_baris(row)
+
+
 async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan | None:
     """Batasan yang berlaku untuk user di ruang ini, atau None bila tidak dibatasi (ruang keluarga, owner, admin,
     bukan anggota, atau sedang menyetujui draf)."""
@@ -145,10 +154,7 @@ async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan |
     role, jenis = await peran_di_ruang(db, user_id, household_id)
     if role != HouseholdRole.member.value or jenis != HouseholdType.USAHA:
         return None
-    row = (await db.execute(
-        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
-    )).scalar_one_or_none()
-    return _dari_baris(row)
+    return await batasan_anggota(db, user_id, household_id)
 
 
 # ── Jam kerja (ADR-P17) ─────────────────────────────────────────────────────

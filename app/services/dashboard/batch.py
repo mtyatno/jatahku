@@ -24,6 +24,7 @@ PESAN = {
     "kartu_tidak_dikenal": "Kartu ini tidak tersedia.",
     "gagal_memuat": "Data kartu ini belum bisa dimuat. Coba lagi sebentar.",
     "khusus_admin": "Kartu ini hanya untuk pemilik dan admin ruang.",
+    "ruang_tidak_diizinkan": "Ruang ini tidak bisa dibuka dari akunmu.",
 }
 
 
@@ -91,13 +92,20 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
 
 
 async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
-    """Peran ditentukan di sini dari (user, ruang), bukan dari pemanggil (review keamanan PR #185 temuan 2): karyawan
-    di ruang usaha hanya mendapat kartu karyawan, apa pun pemanggilnya (route, skrip, plugin nanti)."""
+    """Peran ditentukan di sini dari keanggotaan (user, ruang), bukan dari pemanggil (review keamanan PR #185): user
+    yang bukan anggota ruang itu tidak mendapat data apa pun (`ruang_tidak_diizinkan` per kartu), dan karyawan di
+    ruang usaha hanya kartu karyawan, juga di dalam `atas_izin_pengelola()`. Lewat HTTP, `ruang_aktif` sudah
+    memeriksa keanggotaan; ini untuk pemanggil langsung (skrip, plugin H2)."""
     from app.services import peran
-    karyawan = await peran.batasan_karyawan(db, user.id, household_id) if household_id else None
+    from app.services.dashboard.layout import peran_beranda
+    untuk = await peran_beranda(db, user.id, household_id)
+    karyawan = await peran.batasan_anggota(db, user.id, household_id) if untuk == "karyawan" else None
     mulai = time.perf_counter()
     sumber = Sumber(user=user, db=db, periode=periode, hid=household_id, karyawan=karyawan)
-    data = {item["id"]: await satu_kartu(sumber, item) for item in items}
+    if untuk is None:
+        data = {item["id"]: _galat("ruang_tidak_diizinkan") for item in items}
+    else:
+        data = {item["id"]: await satu_kartu(sumber, item) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:
         terlama = ", ".join(f"{n} {t:.0f}" for n, t in sorted(sumber.waktu.items(), key=lambda x: -x[1])[:3])

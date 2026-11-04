@@ -24,6 +24,10 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
   5. `daftar_undangan` menyaring kedaluwarsa di SQL + batas 50; `UbahRuang` mewarisi `RuangBuat` (`NAMA_MAKS`); `CardDef.untuk` divalidasi terhadap `UNTUK`.
   - Tes `/ruang/gabung` di R6 mereset batas laju (`ruang_kelola.limiter.reset()`): batas 10/menit di memori proses terbawa antar tes.
   - Sesudah perbaikan: unittest 2766 lulus · node --test 663 lulus · build ok · `openapi_cek` tanpa perubahan memutus.
+- **Review ulang (4 Nov, `1e7f4f6`): lulus, boleh merge dari sisi keamanan.** Dua catatan non-penghalang ikut dikerjakan:
+  - `batch.jalankan` dan `layout.ambil` menentukan peran dari keanggotaan (`layout.peran_beranda`: karyawan / umum / bukan anggota). Bukan anggota → `ruang_tidak_diizinkan` per kartu (dan 403 di `ambil`), juga untuk pemanggil langsung (plugin H2). Tidak bergantung lagi pada `izin_pengelola_aktif()`: di dalam `atas_izin_pengelola()` karyawan tetap karyawan. Batasan untuk kartu dari `peran.batasan_anggota`.
+  - `_cabut_undangan_milik` memakai UPDATE bersyarat (`dipakai_at`/`dicabut_at` kosong, `RETURNING peran`), sama dengan `cabut_undangan`: kode yang sedang diklaim tidak ikut tercatat dicabut.
+  - Tes +2 (orang luar dan jalur persetujuan; kode terpakai tidak dicabut); 3 uji mutasi tertangkap. unittest 2768 lulus · `openapi_cek` tanpa perubahan memutus.
 
 **Digantung**
 - Kamus kata ruang di halaman Anggota dan Catat cepat yang menggantikan `CatatKaryawan`: R7. Foto nota untuk karyawan (Kotak Struk di ruang usaha) juga R7; sampai itu, batasan "wajib foto nota" membuat catatan karyawan di atas nominal itu ditolak 422 `perlu_foto_nota` (panel batasan menyebutnya).
@@ -53,8 +57,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Warna status draf per tema (kontras A2 butir 10); angka antrean merah #DC2626.
 
 **Cara melanjutkan**
-- Review ulang singkat: "review ulang PR #185 terhadap 03-workflow.md bagian keamanan, fokus perbaikan temuan 1 (undangan pembuat yang kehilangan hak) dan 2 (peran dihitung di batch/layout)".
-- Merge: tanpa migrasi; checklist "Plugin R6" di `AGENTS.md` (`ruang_paritas` + uji dua akun).
+- Review keamanan selesai (review ulang lulus 4 Nov). Merge oleh pemilik produk: tanpa migrasi; checklist "Plugin R6" di `AGENTS.md` (`ruang_paritas` + uji dua akun). Sesudah deploy terverifikasi, PR kecil "R6 tayang" (status `selesai`).
 - Berikutnya `/sesi-plugin R7` (Catat cepat dan kamus per ruang; butuh R6) atau `/sesi-plugin H2`.
 
 ---

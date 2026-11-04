@@ -130,6 +130,26 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TypeError):   # tanpa nilai bawaan: peran wajib disebut
                 fungsi(*argumen)
 
+    async def test_pemanggil_langsung_bukan_anggota_dan_jalur_persetujuan(self):
+        """Review ulang PR #185: orang luar dengan id ruang usaha tidak mendapat angka apa pun lewat pemanggilan
+        langsung (plugin H2 nanti), dan karyawan tetap karyawan di dalam `peran.atas_izin_pengelola()`."""
+        from app.services.dashboard import batch, layout
+        async with self.Session() as db:
+            orang = await db.get(type(self.orang), self.orang.id)
+            dewi = await db.get(type(self.dewi), self.dewi.id)
+            p = await batch.tentukan_periode(orang, None)
+            luar = await batch.jalankan(orang, db, p, _items(KARTU_UMUM + KARTU_KARYAWAN), household_id=self.nusa_id)
+            with self.assertRaises(layout.GalatTataLetak) as c:
+                await layout.ambil(db, self.orang.id, self.nusa_id, "beranda")
+            with peran.atas_izin_pengelola():
+                dalam = await batch.jalankan(dewi, db, p, _items(KARTU_UMUM), household_id=self.nusa_id)
+                doc = await layout.ambil(db, self.dewi.id, self.nusa_id, "beranda")
+        self.assertEqual({v["error"]["kode"] for v in luar["data"].values()}, {"ruang_tidak_diizinkan"})
+        self.assertNotIn("6840000", str(luar))
+        self.assertEqual(c.exception.kode, "ruang_tidak_diizinkan")
+        self.assertEqual({v["error"]["kode"] for v in dalam["data"].values()}, {"khusus_admin"})
+        self.assertEqual(doc["untuk"], "karyawan")
+
     async def test_karyawan_tidak_bisa_menyimpan_kartu_umum(self):
         r = await self._req("GET", "/dashboard/layout", header=self.nusa_id, user=self.dewi)
         items = [{k: i[k] for k in ("id", "card", "size", "hidden", "devices")} for i in r.json()["items"]]
@@ -326,6 +346,23 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
         r = await self._req("GET", f"/ruang/{self.nusa_id}/undangan", user=self.me)
         self.assertEqual(r.json(), [])
         self.assertEqual(await self._hitung(RuangAudit, RuangAudit.aksi == "undangan_dicabut"), 2)
+
+    async def test_pencabutan_otomatis_tidak_menyentuh_kode_yang_sudah_dipakai(self):
+        """Pencabutan saat pembuat dikeluarkan memakai UPDATE bersyarat (`dipakai_at` dan `dicabut_at` kosong), sama
+        dengan `cabut_undangan`: kode yang sudah dipakai tidak tercatat dicabut di log."""
+        dipakai = await self._undang(self.ani, "member")
+        r = await self._req("POST", "/ruang/gabung", {"kode": dipakai}, user=self.rina)
+        self.assertEqual(r.status_code, 200, r.text)
+        aktif = await self._undang(self.ani, "member")
+        r = await self._req("DELETE", f"/ruang/{self.nusa_id}/anggota/{self.ani.id}", user=self.me)
+        self.assertEqual(r.status_code, 204, r.text)
+        async with self.Session() as db:
+            baris = {k: (pakai, cabut) for k, pakai, cabut in (await db.execute(select(
+                RuangUndangan.kode, RuangUndangan.dipakai_at, RuangUndangan.dicabut_at))).all()}
+        self.assertIsNotNone(baris[dipakai][0])
+        self.assertIsNone(baris[dipakai][1])
+        self.assertIsNotNone(baris[aktif][1])
+        self.assertEqual(await self._hitung(RuangAudit, RuangAudit.aksi == "undangan_dicabut"), 1)
 
     async def test_kode_pembuat_yang_keluar_sendiri_tidak_berlaku(self):
         kode = await self._undang(self.ani)

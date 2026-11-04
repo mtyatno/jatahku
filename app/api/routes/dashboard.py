@@ -80,7 +80,10 @@ async def get_layout(
 ):
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    try:
+        doc = await layout.ambil(db, user.id, hid, surface)
+    except layout.GalatTataLetak as exc:   # bukan anggota; `ruang_aktif` sudah mencegahnya, ini cadangan
+        return _galat(exc.status, exc.kode, exc.detail)
     # Beranda web memakai registry hanya bila user ada di flag (B2); selain itu tetap Beranda lama.
     # Karyawan selalu registry (R6): Beranda lama memanggil endpoint yang tertutup untuknya.
     enabled = True if doc["untuk"] == "karyawan" else await _flag_aktif(db, user.id)
@@ -151,7 +154,10 @@ async def get_data_instance(
     tersimpan, bukan dari klien). Bentuk sama dengan satu entri `data` di `POST /dashboard/data`."""
     if not hid:
         return _tanpa_ruang()
-    doc = await layout.ambil(db, user.id, hid, surface)
+    try:
+        doc = await layout.ambil(db, user.id, hid, surface)
+    except layout.GalatTataLetak as exc:
+        return _galat(exc.status, exc.kode, exc.detail)
     item = next((i for i in doc["items"] if i["id"] == instance_id), None)
     if item is None:
         return _galat(404, "instans_tidak_ada", "Kartu ini tidak ada di Berandamu.")
