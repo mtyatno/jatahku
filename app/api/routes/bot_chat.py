@@ -3,7 +3,6 @@
 Pesan dan tombol diproses oleh handler bot Telegram yang sama lewat
 `app/bot/web_adapter.py`, jadi perilaku chat di web = perilaku @JatahkuBot.
 """
-import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -13,20 +12,20 @@ from slowapi.util import get_remote_address
 
 from app.bot.web_adapter import run_action, run_bukti, run_message, run_photo
 from app.core.deps import get_current_user
+from app.core.rate_limit import kunci_per_user
 from app.models.models import User
 from app.services.kotak_struk.config import MAX_PENDING
 
 router = APIRouter()
 
-# Pola sama dengan transactions.py: limiter lokal, kunci per token user.
+# Pola sama dengan transactions.py: limiter lokal, kunci per user.
 limiter = Limiter(key_func=get_remote_address)
 
 
 def chat_key_func(request: Request) -> str:
-    auth = request.headers.get("authorization", "")
-    if auth:
-        return "chat:" + hashlib.sha256(auth.encode()).hexdigest()[:16]
-    return get_remote_address(request)
+    """Kunci batas chat: awalan "chat:" + `app.core.rate_limit.kunci_per_user` (user yang terautentikasi; tanpa
+    token yang sah, alamat IP)."""
+    return "chat:" + kunci_per_user(request)
 
 
 class ChatMessageIn(BaseModel):

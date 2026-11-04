@@ -149,7 +149,8 @@ manifest (lihat [`kotak-struk.md`](kotak-struk.md) bagian "Web dan PWA").
   untuk Telegram).
 - Frontend tidak pernah merender HTML mentah: `chatFormat.js` mengubah
   HTML/Markdown Telegram menjadi node React; tautan hanya http(s).
-- Rate limit 60/menit per token, ditambah batas 30 pesan/menit milik bot.
+- Rate limit 60/menit per user (kunci dari klaim `sub` access token yang sah, bukan teks header; tanpa token sah
+  alamat IP), ditambah batas 30 pesan/menit milik bot.
 
 ## Riwayat
 
