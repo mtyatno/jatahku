@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     RECEIPT_LLM_PRICE_OUT_USD: float = 4.00
     RECEIPT_LLM_USD_IDR: int = 17_500
 
+    # Laporan berkala. REPORT_SECRET_KEY: kunci Fernet yang mengenkripsi kata sandi PDF laporan
+    # (report_settings.kata_sandi_enc). HANYA dari /opt/jatahku/.env, tidak pernah ada default di
+    # kode; repo ini publik. Kosong atau tidak valid = kata sandi dan PDF laporan nonaktif (API
+    # tetap jalan, startup mencatat peringatan). Hilang atau diganti = kata sandi tersimpan tidak
+    # terbaca dan user mengatur ulang. Buat kunci:
+    #   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    REPORT_SECRET_KEY: str = ""
+
     model_config = {"env_file": "/opt/jatahku/.env", "extra": "ignore"}
 
 

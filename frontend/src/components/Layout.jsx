@@ -334,6 +334,7 @@ const SIDEBAR_ICONS = { '/': 'grid', '/transactions': 'listbullets', '/allocate'
 const sidebarItems = [
   ...navItems.map(item => ({ ...item, icon: SIDEBAR_ICONS[item.to] || item.icon })),
   { to: '/analytics', label: 'Analitik', icon: 'chartpie' },
+  { to: '/laporan', label: 'Laporan', icon: 'file' },
 ];
 
 // Aksi lain di samping tombol "Catat" (top bar desktop); di HP lewat FAB.

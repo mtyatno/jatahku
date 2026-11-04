@@ -428,6 +428,15 @@ def start_scheduler():
         id="plugin_jobs",
         replace_existing=True,
     )
+    from app.services.laporan.job import laporan_job
+    scheduler.add_job(
+        laporan_job,
+        trigger="cron",
+        minute=30,  # tiap jam, idempoten: di hari gajian terbit ±00.30 UTC (07.30 WIB), setelah job snapshot 00.05
+        id="laporan",
+        replace_existing=True,
+        max_instances=1,
+    )
     scheduler.start()
     logger.info("Scheduler started — monthly snapshot + pending reminders + hourly user summaries + recurring")
 

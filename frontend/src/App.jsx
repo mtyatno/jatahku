@@ -16,6 +16,8 @@ import Analytics from './pages/Analytics';
 import Admin from './pages/Admin';
 import Upgrade from './pages/Upgrade';
 import Settings from './pages/Settings';
+import Laporan from './pages/Laporan';
+import LaporanDetail from './pages/LaporanDetail';
 import Bagikan from './pages/Bagikan';
 import RuangKelola from './pages/RuangKelola';
 
@@ -38,6 +40,8 @@ export default function App() {
             <Route path="/allocate" element={<Allocate />} />
             <Route path="/langganan" element={<Langganan />} />
             <Route path="/analytics" element={<Analytics />} />
+            <Route path="/laporan" element={<Laporan />} />
+            <Route path="/laporan/:id" element={<LaporanDetail />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/upgrade" element={<Upgrade />} />
             <Route path="/settings" element={<Settings />} />

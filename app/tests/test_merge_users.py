@@ -36,6 +36,8 @@ def make_db():
             return FakeResult(tgt_mem)  # target sudah anggota household yang dipertahankan
         if sql(stmt).startswith("SELECT proof_rule_votes"):
             return FakeResult(rows=[])  # source belum pernah memberi suara koreksi Kotak Struk
+        if sql(stmt).startswith("SELECT reports.id, reports.data"):
+            return FakeResult(rows=[])  # tidak ada laporan beku yang memuat catatan source
         return FakeResult()
 
     db = MagicMock()
@@ -94,6 +96,10 @@ class MergeUsersCleanupTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_source_payment_orders_moved_to_target(self):
         self.assert_before_user_delete("UPDATE payment_orders", {SRC_ID, TGT_ID})
+
+    async def test_report_rows_of_source_looked_up_before_user(self):
+        # Ruling R15: `pencatat_id` source di laporan beku dialihkan ke target selagi id source masih dikenal.
+        self.assert_before_user_delete("SELECT reports.id, reports.data", {str(SRC_ID)})
 
 
 if __name__ == "__main__":

@@ -125,9 +125,10 @@ di sesi itu.
 ## Recompute dan kunci
 
 - **`household_lock(household_id)`**: satu `asyncio.Lock` per household, dipegang semua penulis kunci snapshot
-  `(envelope_id, year, month)` di proses ini: `recompute_history`, job harian, dan `POST /snapshots/run` (penyesuaian
-  17). Kunci dalam proses cukup karena API berjalan sebagai satu proses uvicorn dengan scheduler di dalamnya. Tidak
-  re-entrant. Dict kuncinya tumbuh satu entri per household (kecil, dibiarkan).
+  `(envelope_id, year, month)` di proses ini: `recompute_history`, job harian, `POST /snapshots/run` (penyesuaian
+  17), dan job laporan berkala, yang me-refresh paksa snapshot periode yang baru tutup sebelum membangun laporan
+  (`docs/laporan-berkala.md`). Kunci dalam proses cukup karena API berjalan sebagai satu proses uvicorn dengan
+  scheduler di dalamnya. Tidak re-entrant. Dict kuncinya tumbuh satu entri per household (kecil, dibiarkan).
 - **`current_payday(household_id) -> int | None`**: tanggal terbaru di DB lewat sesi sendiri, hanya-baca. NULL →
   `pick_payday(member_rows)` tanpa menulis; household yang sudah dihapus (merge, hapus akun) → None.
 - **`recompute_history(household_id, periods)`**: `async with household_lock`, baca `current_payday` DI DALAM kunci,

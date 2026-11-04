@@ -190,6 +190,7 @@ html[data-theme*="-dark"] .bg-green-50  { background-color: #052e16 !important; 
 html[data-theme*="-dark"] .text-green-700 { color: #86efac !important; }
 
 /* Red/danger states */
+html[data-theme*="-dark"] .text-danger-600 { color: #fca5a5 !important; }
 html[data-theme*="-dark"] .bg-red-50    { background-color: #450a0a !important; }
 html[data-theme*="-dark"] .border-red-200 { border-color: #7f1d1d !important; }
 

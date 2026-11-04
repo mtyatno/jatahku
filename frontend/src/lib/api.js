@@ -459,6 +459,44 @@ class ApiClient {
     return res.ok ? res.json() : [];
   }
 
+  // Laporan berkala. Nama berkas PDF selalu dari `nama_file` di JSON (CORS tidak membuka Content-Disposition).
+  async getLaporanList({ limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (limit != null) params.set('limit', limit);
+    if (offset != null) params.set('offset', offset);
+    const qs = params.toString();
+    const res = await this.request(`/laporan${qs ? `?${qs}` : ''}`);
+    if (!res.ok) throw new Error('Gagal memuat laporan');
+    return res.json();
+  }
+
+  async getLaporan(id) {
+    const res = await this.request(`/laporan/${encodeURIComponent(id)}`);
+    if (res.status === 404) throw new Error('Laporan tidak ditemukan');
+    if (!res.ok) throw new Error('Gagal memuat laporan');
+    return res.json();
+  }
+
+  // Mengembalikan Response mentah: pemanggil (laporanView.unduhPdf) menangani 200/409/429/503.
+  unduhLaporanPdf(id) {
+    return this.request(`/laporan/${encodeURIComponent(id)}/pdf`);
+  }
+
+  async getLaporanPengaturan() {
+    const res = await this.request('/user/laporan-pengaturan');
+    if (!res.ok) throw new Error('Gagal memuat pengaturan laporan');
+    return res.json();
+  }
+
+  // 422 membawa `detail` berupa kalimat siap tampil; 429 berbadan {error}.
+  async simpanLaporanPengaturan(body) {
+    const res = await this.request('/user/laporan-pengaturan', { method: 'PUT', body: JSON.stringify(body) });
+    const data = await res.json().catch(() => null);
+    if (res.ok) return data;
+    const detail = typeof data?.detail === 'string' && data.detail ? data.detail : null;
+    throw new Error(detail || (res.status === 429 ? 'Terlalu sering mengubah kata sandi. Coba lagi nanti.' : 'Gagal menyimpan kata sandi laporan'));
+  }
+
   async getDailySpending(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
     if (periodStart) params.set('period_start', periodStart);
