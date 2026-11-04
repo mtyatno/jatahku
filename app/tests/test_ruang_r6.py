@@ -31,7 +31,7 @@ from app.services.dashboard import registry, sources
 if HAS_AIOSQLITE:
     from sqlalchemy import select
 
-    from app.models.models import DashboardLayout, Household, RuangAudit, RuangUndangan
+    from app.models.models import DashboardLayout, Household, HouseholdMember, HouseholdRole, RuangAudit, RuangUndangan
 
 KARTU_KARYAWAN = [c.key for c in registry.KARYAWAN]
 KARTU_UMUM = [c.key for c in registry.CORE]
@@ -45,7 +45,14 @@ def _items(keys):
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
 class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
     # Fixture dan pembantu yang sama dengan R5 (tanpa mewarisi tes R5, supaya tidak berjalan dua kali).
-    asyncSetUp = r5.RuangPeranTests.asyncSetUp
+    async def asyncSetUp(self):
+        # Batas laju `/ruang/gabung` (10/menit per IP) disimpan di memori proses: tanpa reset, tes undangan yang
+        # berjalan berurutan saling menghabiskan jatahnya (429).
+        from app.api.routes import ruang_kelola
+        ruang_kelola.limiter.reset()
+        self.addCleanup(ruang_kelola.limiter.reset)
+        await r5.RuangPeranTests.asyncSetUp(self)
+
     _isi = r5.RuangPeranTests._isi
     _req = r5.RuangPeranTests._req
     _batasan = r5.RuangPeranTests._batasan
@@ -77,7 +84,7 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
         for user, header in ((self.me, self.nusa_id), (self.ani, self.nusa_id), (self.me, None), (self.rina, None)):
             r = await self._req("GET", "/dashboard/layout", header=header, user=user)
             self.assertEqual(r.json()["untuk"], "umum")
-            self.assertEqual([i["card"] for i in r.json()["items"]], [i["card"] for i in registry.template("beranda")])
+            self.assertEqual([i["card"] for i in r.json()["items"]], [i["card"] for i in registry.template("beranda", karyawan=False)])
             r = await self._req("GET", "/dashboard/cards", header=header, user=user)
             self.assertFalse({c["key"] for c in r.json()} & set(KARTU_KARYAWAN))
 
@@ -103,6 +110,25 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
         # Satu instans dari tata letak tersimpan pun tidak bisa memuat kartu umum.
         r = await self._req("GET", "/dashboard/data/a1", header=self.nusa_id, user=self.dewi)
         self.assertEqual(r.json()["shape"], "inti")   # a1 template karyawan = Catat
+
+    async def test_pemanggil_langsung_tidak_bisa_lupa_peran(self):
+        """Review keamanan PR #185 temuan 2: `batch.jalankan` dan `layout.ambil` menentukan peran sendiri dari
+        (user, ruang), jadi pemanggil baru (U4, U6, H2) tidak bisa membuka kartu umum untuk karyawan karena lupa
+        meneruskan peran."""
+        from app.services.dashboard import batch, layout
+        async with self.Session() as db:
+            dewi = await db.get(type(self.dewi), self.dewi.id)
+            p = await batch.tentukan_periode(dewi, None)
+            hasil = await batch.jalankan(dewi, db, p, _items(KARTU_UMUM), household_id=self.nusa_id)
+            doc = await layout.ambil(db, self.dewi.id, self.nusa_id, "beranda")
+            umum = await batch.jalankan(self.me, db, p, _items(["core.kpi.sisa_bebas"]), household_id=self.nusa_id)
+        self.assertEqual({v["error"]["kode"] for v in hasil["data"].values()}, {"khusus_admin"})
+        self.assertNotIn("6840000", str(hasil))
+        self.assertEqual((doc["untuk"], [i["card"] for i in doc["items"]]), ("karyawan", KARTU_KARYAWAN))
+        self.assertNotIn("error", umum["data"]["k0"])   # pemilik tetap mendapat kartu umum
+        for fungsi, argumen in ((registry.katalog, ()), (registry.template, ("beranda",))):
+            with self.assertRaises(TypeError):   # tanpa nilai bawaan: peran wajib disebut
+                fungsi(*argumen)
 
     async def test_karyawan_tidak_bisa_menyimpan_kartu_umum(self):
         r = await self._req("GET", "/dashboard/layout", header=self.nusa_id, user=self.dewi)
@@ -209,6 +235,14 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
         r = await self._req("PUT", "/dashboard/layout", {"if_version": 3, "items": items}, header=self.nusa_id,
                             user=self.dewi)
         self.assertEqual(r.status_code, 200, r.text)
+        # Isi klien untuk instans itu diabaikan: ukuran dan pengaturan tetap salinan server (review PR #185 no. 3).
+        items[0].update(size="M", settings={"limit": 5}, hidden=True)
+        r = await self._req("PUT", "/dashboard/layout", {"if_version": 4, "items": items}, header=self.nusa_id,
+                            user=self.dewi)
+        self.assertEqual(r.status_code, 200, r.text)
+        lama = r.json()["layout"]["items"][0]
+        self.assertEqual((lama["card"], lama["size"], lama["settings"], lama["hidden"], lama["visible"]),
+                         ("core.kpi.sisa_bebas", "S", {}, False, False))
 
     async def test_keluar_membuang_tata_letak(self):
         r = await self._simpan_satu(self.dewi)
@@ -272,6 +306,64 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 404)
         async with self.Session() as db:
             self.assertIsNone((await db.get(RuangUndangan, u.id)).dicabut_at)
+
+    # Review keamanan PR #185, temuan 1: kode buatan admin yang kehilangan haknya tidak boleh berlaku lagi.
+    async def _undang(self, oleh, peran_kode="admin"):
+        r = await self._req("POST", f"/ruang/{self.nusa_id}/undangan", {"peran": peran_kode}, user=oleh)
+        self.assertEqual(r.status_code, 201, r.text)
+        return r.json()["kode"]
+
+    async def test_kode_pembuat_yang_dikeluarkan_tidak_berlaku(self):
+        """P1: Ani (admin) membuat kode admin, lalu dikeluarkan pemilik → kodenya mati, juga bila dipakai Ani sendiri."""
+        kode = await self._undang(self.ani)
+        kode_member = await self._undang(self.ani, "member")
+        r = await self._req("DELETE", f"/ruang/{self.nusa_id}/anggota/{self.ani.id}", user=self.me)
+        self.assertEqual(r.status_code, 204, r.text)
+        for k in (kode, kode_member):
+            for siapa in (self.ani, self.orang):
+                r = await self._req("POST", "/ruang/gabung", {"kode": k}, user=siapa)
+                self.assertEqual(r.status_code, 400, (k, siapa.name, r.text))
+        r = await self._req("GET", f"/ruang/{self.nusa_id}/undangan", user=self.me)
+        self.assertEqual(r.json(), [])
+        self.assertEqual(await self._hitung(RuangAudit, RuangAudit.aksi == "undangan_dicabut"), 2)
+
+    async def test_kode_pembuat_yang_keluar_sendiri_tidak_berlaku(self):
+        kode = await self._undang(self.ani)
+        r = await self._req("DELETE", f"/ruang/{self.nusa_id}/anggota/{self.ani.id}", user=self.ani)
+        self.assertEqual(r.status_code, 204, r.text)
+        r = await self._req("POST", "/ruang/gabung", {"kode": kode}, user=self.ani)
+        self.assertEqual(r.status_code, 400, r.text)
+
+    async def test_kode_pembuat_yang_diturunkan_tidak_berlaku(self):
+        """P2: Ani diturunkan ke karyawan → kode admin buatannya dicabut; kode pemilik tetap berlaku."""
+        kode = await self._undang(self.ani)
+        kode_pemilik = await self._undang(self.me, "member")
+        r = await self._req("PATCH", f"/ruang/{self.nusa_id}/anggota/{self.ani.id}", {"peran": "member"}, user=self.me)
+        self.assertEqual(r.status_code, 200, r.text)
+        r = await self._req("POST", "/ruang/gabung", {"kode": kode}, user=self.orang)
+        self.assertEqual(r.status_code, 400, r.text)
+        r = await self._req("GET", f"/ruang/{self.nusa_id}/undangan", user=self.me)
+        self.assertEqual([u["kode"] for u in r.json()], [kode_pemilik])
+        r = await self._req("POST", "/ruang/gabung", {"kode": kode_pemilik}, user=self.orang)
+        self.assertEqual((r.status_code, r.json()["peran"]), (200, "member"), r.text)
+
+    async def test_kode_yang_pembuatnya_bukan_lagi_pengelola_ditolak_saat_gabung(self):
+        """Lapis kedua di `/ruang/gabung`: kode yang belum sempat dicabut (mis. peran diubah langsung di DB, atau akun
+        pembuat dihapus sehingga `dibuat_oleh` NULL) tetap ditolak."""
+        kode = await self._undang(self.ani)
+        async with self.Session() as db:
+            m = (await db.execute(select(HouseholdMember).where(
+                HouseholdMember.household_id == self.nusa_id, HouseholdMember.user_id == self.ani.id))).scalar_one()
+            m.role = HouseholdRole.member
+            db.add(RuangUndangan(household_id=self.nusa_id, kode="RUTANPAPEMB1", peran="admin", dibuat_oleh=None,
+                                 kedaluwarsa=datetime.now(timezone.utc) + timedelta(days=1)))
+            await db.commit()
+        for k in (kode, "RUTANPAPEMB1"):
+            r = await self._req("POST", "/ruang/gabung", {"kode": k}, user=self.orang)
+            self.assertEqual(r.status_code, 400, (k, r.text))
+        async with self.Session() as db:
+            self.assertIsNone((await db.execute(select(RuangUndangan.dipakai_at).where(
+                RuangUndangan.kode == kode))).scalar_one())   # tidak terklaim
 
     async def test_ganti_nama_ruang_dan_nama_di_log(self):
         r = await self._req("PATCH", f"/ruang/{self.nusa_id}", {"nama": "  Dapur   Nusa Jaya "}, user=self.ani)

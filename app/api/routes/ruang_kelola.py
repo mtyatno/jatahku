@@ -21,7 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -32,6 +32,7 @@ from app.models.models import (
     Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, RuangAudit, RuangBatasan, RuangDraf,
     RuangUndangan, User,
 )
+from app.api.routes.ruang import RuangBuat
 from app.services import peran
 from app.services.dashboard import layout as dashboard_layout
 from app.services.ruang import RuangAktif, RuangDitolak, ruang_usaha_dibuka
@@ -40,6 +41,7 @@ router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)   # pola sama dengan auth.py (in-memory per instance)
 
 UNDANGAN_HARI = 7
+UNDANGAN_DAFTAR_MAKS = 50
 TIDAK_ADA = "Ruang tidak ditemukan"
 
 
@@ -83,6 +85,20 @@ async def _baris_batasan(db: AsyncSession, rid: UUID, uid: UUID, buat: bool = Fa
     return row
 
 
+async def _cabut_undangan_milik(db: AsyncSession, rid: UUID, uid: UUID, actor_id: UUID, alasan: str) -> int:
+    """Cabut undangan aktif buatan `uid` di ruang ini (pembuatnya dikeluarkan, keluar, atau diturunkan; review keamanan
+    PR #185 temuan 1). Ikut commit pemanggil; satu baris log `undangan_dicabut` per kode."""
+    rows = (await db.execute(select(RuangUndangan).where(
+        RuangUndangan.household_id == rid, RuangUndangan.dibuat_oleh == uid,
+        RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
+    ))).scalars().all()
+    now = datetime.now(timezone.utc)
+    for u in rows:
+        u.dicabut_at = now
+        peran.audit(db, rid, actor_id, "undangan_dicabut", uid, peran=u.peran, alasan=alasan)
+    return len(rows)
+
+
 # ── Anggota ────────────────────────────────────────────────────────────────
 @router.get("/ruang/{rid}/anggota")
 async def daftar_anggota(rid: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -119,6 +135,8 @@ async def ubah_anggota(rid: UUID, uid: UUID, req: UbahAnggota, user: User = Depe
     rincian = {}
     if req.peran is not None and req.peran != _peran(m):
         rincian["peran"] = {"dari": _peran(m), "ke": req.peran}
+        if req.peran == HouseholdRole.member.value:   # admin diturunkan: kode buatannya tidak berlaku lagi
+            await _cabut_undangan_milik(db, rid, uid, user.id, "pembuat_diturunkan")
         m.role = HouseholdRole(req.peran)
         # R6: Beranda mengikuti peran baru (template Karyawan atau Beranda umum), bukan tata letak peran lama.
         await dashboard_layout.hapus_milik(db, uid, rid)
@@ -150,6 +168,7 @@ async def keluarkan_anggota(rid: UUID, uid: UUID, user: User = Depends(get_curre
     if _peran(m) == HouseholdRole.owner.value:
         raise _tolak("khusus_admin", "Pemilik ruang tidak bisa keluar atau dikeluarkan.")
     n = await peran.batalkan_draf_anggota(db, rid, uid)
+    await _cabut_undangan_milik(db, rid, uid, user.id, "pembuat_keluar")
     b = await _baris_batasan(db, rid, uid)
     if b is not None:
         await db.delete(b)
@@ -232,17 +251,16 @@ def _utc(t: datetime | None) -> datetime | None:
 async def daftar_undangan(rid: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Undangan yang masih bisa dipakai (belum dipakai, belum dicabut, belum kedaluwarsa), terbaru dulu (R6)."""
     await _ruang_kelola(db, user, rid)
-    now = datetime.now(timezone.utc)
     rows = (await db.execute(
         select(RuangUndangan, User.name).outerjoin(User, User.id == RuangUndangan.dibuat_oleh)
         .where(RuangUndangan.household_id == rid, RuangUndangan.dipakai_at.is_(None),
-               RuangUndangan.dicabut_at.is_(None))
-        .order_by(RuangUndangan.created_at.desc())
+               RuangUndangan.dicabut_at.is_(None), RuangUndangan.kedaluwarsa > datetime.now(timezone.utc))
+        .order_by(RuangUndangan.created_at.desc()).limit(UNDANGAN_DAFTAR_MAKS)
     )).all()
     return [{"id": str(u.id), "kode": u.kode, "peran": u.peran, "dibuat_oleh": nama,
              "kedaluwarsa": _utc(u.kedaluwarsa).isoformat(),
              "dibuat": _utc(u.created_at).isoformat() if u.created_at else None}
-            for u, nama in rows if _utc(u.kedaluwarsa) > now]
+            for u, nama in rows]
 
 
 @router.delete("/ruang/{rid}/undangan/{undangan_id}", status_code=204)
@@ -269,16 +287,8 @@ async def cabut_undangan(rid: UUID, undangan_id: UUID, user: User = Depends(get_
 
 
 # ── Nama ruang ─────────────────────────────────────────────────────────────
-class UbahRuang(BaseModel):
-    nama: str = Field(min_length=1, max_length=60)
-
-    @field_validator("nama")
-    @classmethod
-    def _rapikan(cls, v: str) -> str:
-        v = " ".join(v.split())
-        if not v:
-            raise ValueError("Nama ruang wajib diisi")
-        return v
+class UbahRuang(RuangBuat):
+    """Aturan nama sama dengan membuat ruang (1–`NAMA_MAKS` huruf, spasi dirapikan)."""
 
 
 @router.patch("/ruang/{rid}")
@@ -322,6 +332,11 @@ async def gabung_ruang(request: Request, req: GabungBody, user: User = Depends(g
     role, _ = await peran.peran_di_ruang(db, user.id, hh.id)
     if role is not None:
         raise HTTPException(status_code=400, detail="Kamu sudah anggota ruang ini.")
+    # Kode hanya berlaku selama pembuatnya masih owner/admin ruang ini (review keamanan PR #185 temuan 1): menutup juga
+    # kode yang belum sempat dicabut, dan kode yang akun pembuatnya sudah dihapus (`dibuat_oleh` NULL).
+    pembuat, _ = await peran.peran_di_ruang(db, u.dibuat_oleh, hh.id) if u.dibuat_oleh else (None, None)
+    if pembuat not in (HouseholdRole.owner.value, HouseholdRole.admin.value):
+        raise HTTPException(status_code=400, detail=PESAN_KODE)
     # Klaim kode secara atomik: dua akun dengan kode yang sama, hanya satu yang masuk.
     klaim = await db.execute(update(RuangUndangan).where(
         RuangUndangan.id == u.id, RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
