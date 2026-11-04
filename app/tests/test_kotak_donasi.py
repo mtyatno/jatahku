@@ -290,6 +290,36 @@ class MergeDonationTests(DonasiBase):
         self.assertEqual(await self.count(ProofSample), 0)
         self.assertEqual(await self.count(ProofSampleConsent), 0)   # target tidak mewarisi persetujuan source
 
+    async def test_merge_moves_decided_by_to_target(self):
+        """Sampel milik user ketiga yang diputuskan source (admin) tetap ada; jejak keputusannya pindah ke target, sama
+        dengan `ProofRule.decided_by` (merge.py langkah 7c/7d)."""
+        from app.services.merge import merge_users
+        async with self.Session() as db:
+            hh_src, hh_tgt = Household(name="Rumah A"), Household(name="Rumah B")
+            db.add_all([hh_src, hh_tgt])
+            await db.flush()
+            db.add_all([HouseholdMember(user_id=self.user.id, household_id=hh_src.id, role=HouseholdRole.owner),
+                        HouseholdMember(user_id=self.other.id, household_id=hh_tgt.id, role=HouseholdRole.owner)])
+            await db.commit()
+        third = User(name="Citra Lestari")
+        async with self.Session() as db:
+            db.add(third)
+            await db.flush()
+            mine = ProofSample(user_id=third.id, item_id=uuid.uuid4(), doc_type="qris", trigger="nominal",
+                               lines=list(LINES), today=date(2026, 11, 2), status="disetujui", decided_at=T0,
+                               decided_by=self.user.id)
+            theirs = ProofSample(user_id=third.id, item_id=uuid.uuid4(), doc_type="transfer", trigger="tanggal",
+                                 lines=list(LINES), today=date(2026, 11, 2), status="disetujui", decided_at=T0,
+                                 decided_by=self.admin.id)
+            db.add_all([mine, theirs])
+            await db.commit()
+        async with self.Session() as db:
+            result = await merge_users(self.user.id, self.other.id, hh_tgt.id, db)
+        self.assertEqual(result["status"], "merged")
+        async with self.Session() as db:
+            got = {s.id: s.decided_by for s in (await db.execute(select(ProofSample))).scalars()}
+        self.assertEqual(got, {mine.id: self.other.id, theirs.id: self.admin.id})
+
     async def test_merge_keeps_target_choice(self):
         from app.services.merge import merge_users
         async with self.Session() as db:

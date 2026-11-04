@@ -57,6 +57,15 @@ class BuildConfigTests(unittest.TestCase):
         self.assertEqual(cfg["features"], FEATURES)
         self.assertTrue(cfg["links"]["privacy"].startswith("https://"))
 
+    def test_kotak_donasi_listed_and_off_by_default(self):
+        # Donasi contoh Kotak Struk (tahap 2, K1/G1): saklar terdaftar, bawaan mati di semua platform.
+        self.assertIs(FEATURES["kotak_donasi"], False)
+        for platform in ("web", "android", "ios"):
+            with self.subTest(platform):
+                self.assertIs(build_config(ClientInfo(platform, "1.0.0", "abc"))["features"]["kotak_donasi"], False)
+        on = build_config(ClientInfo("web", "0.1.0", "abc"), {"features": {"kotak_donasi": {"web": True}}})
+        self.assertIs(on["features"]["kotak_donasi"], True)
+
     def test_unknown_client_behaves_like_web(self):
         cfg = build_config(UNKNOWN)
         self.assertEqual(cfg["client"]["platform"], "unknown")
