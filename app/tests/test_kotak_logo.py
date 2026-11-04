@@ -81,7 +81,7 @@ class LogoKeyTests(unittest.TestCase):
                 self.assertIsNone(key_of([first, "Pembayaran Berhasil", "Nominal Rp50.000"]))
         # Nama satu kata lolos bentuk kandidat, tetapi tidak pernah bila itu nama yang dikenal di bukti itu (kerangka),
         # dan suaranya ditolak (`learn_app_choice`, AppChoiceTests).
-        self.assertEqual(key_of(["Bambang", "Pembayaran Berhasil"]), "logo:bambang")
+        self.assertEqual(key_of(["Bambang", "Pembayaran Berhasil"]), "logo:bambang")   # sisa, lihat tes residual
         self.assertIsNone(key_of(["Bambang", "Pembayaran Berhasil"], {"bambang"}))
         lay = build_layout(["Bambang", "Pembayaran Berhasil", "Nominal Rp10.000"], unknown_doc(name="Bambang"),
                            Secrets(), user_name=None)
@@ -89,6 +89,30 @@ class LogoKeyTests(unittest.TestCase):
         lay = build_layout(["Bambang", "Pembayaran Berhasil", "Nominal Rp10.000"], unknown_doc(), Secrets(),
                            user_name="Bambang Wijaya")
         self.assertIsNone(lay)
+
+    def test_one_word_candidate_followed_by_amount_or_date_is_a_name(self):
+        # Review M2a temuan 1, putusan pengendali (b): logo aplikasi diikuti judul; nama penerima besar diikuti
+        # nominalnya atau tanggal. Bilah status di antaranya dilewati.
+        self.assertIsNone(key_of(["Andi", "Rp50.000", "Transfer Berhasil"]))
+        self.assertIsNone(key_of(["Siti", "12 Okt 2026", "Rp50.000"]))
+        self.assertIsNone(key_of(["Siti", "09:41", "LTE", "Rp50.000", "Transfer Berhasil"]))
+        self.assertIsNone(key_of(["09:41", "Andi", "Nominal Rp50.000"]))
+        self.assertEqual(key_of(["NEWPAY", "Pembayaran Berhasil", "Total Rp50.000"]), "logo:newpay")
+        self.assertEqual(key_of(["NEWPAY", "Detail Transaksi", "Rp50.000"]), "logo:newpay")
+        self.assertEqual(key_of(["NEWPAY"]), "logo:newpay")   # tanpa baris berikutnya: tidak ada tanda nama
+        # Harga yang diterima: logo aplikasi satu kata yang langsung diikuti nominal tidak berkunci (tanpa kerangka,
+        # tanpa pertanyaan "Aplikasi apa ini?").
+        self.assertIsNone(key_of(["NEWPAY", "Rp50.000", "Pembayaran Berhasil"]))
+        # Kandidat dua kata (dengan kata logo/penyedia) tetap aturan lama.
+        self.assertEqual(key_of(["Bank Raya", "Rp50.000", "Transfer Berhasil"]), "logo:bank raya")
+
+    def test_residual_first_name_before_title_is_a_key_masked_in_admin(self):
+        # Sisa yang diterima (review M2a temuan 1): nama depan satu kata yang diikuti baris judul tetap menjadi kunci
+        # logo bila pembaca tidak mengenalinya sebagai nama (pihak lawan/pengirim/merchant/user). Pertahanannya: suara
+        # ditolak bila kata itu nama yang dikenal (`learn_app_choice`), ambang 2 user, persetujuan pemilik, dan
+        # penyamaran kunci logo di tab Suara Admin (M3d, K15) yang menjadi GERBANG RILIS tahap 2.
+        self.assertEqual(key_of(["Andi", "Transfer Berhasil", "Rp50.000"]), "logo:andi")
+        self.assertIsNone(key_of(["Andi", "Transfer Berhasil", "Rp50.000"], {"andi"}))
 
     def test_logo_word(self):
         self.assertEqual(logo_word("logo:newpay"), "newpay")
@@ -158,6 +182,26 @@ class LogoReadKeyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(ruled.reader, plain.reader)
                     self.assertEqual(ruled.parsed.doc.to_json(), plain.parsed.doc.to_json())
         self.assertGreater(compared, 5)
+
+
+class UnknownReaderLogoRulesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_reader_ignores_logo_keyed_label_rules_until_m2b(self):
+        # Review M2a temuan 3, pilihan pengendali "tunda ke M2b": aturan label berkunci `logo:<kata>` belum dipakai
+        # pembaca mana pun (juga `UnknownReader`), karena di sini pembaca belum tahu apakah aturan `logo` kunci itu
+        # masih disetujui. Tanpa itu label "biaya" akan dibaca sebagai total Rp2.500 berkeyakinan tinggi.
+        from app.services.kotak_struk.readers.unknown import UnknownReader
+        lines = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "Biaya Rp2.500", "31/10/2026 10:00"]
+        self.assertEqual(key_of(lines), "logo:newpay")
+        plain = await UnknownReader().parse(TextDoc(lines=lines, kind=KIND_IMAGE), ParseContext(today=TODAY))
+        rules = {"logo:newpay": {"label_total": ["biaya"], "label_pihak": [], "label_tanggal": ["tanggal"]}}
+        ruled = await UnknownReader().parse(TextDoc(lines=lines, kind=KIND_IMAGE), ParseContext(today=TODAY, rules=rules))
+        self.assertEqual(ruled.doc.to_json(), plain.doc.to_json())
+        self.assertEqual(ruled.doc.amounts.total, 50000)
+        # Kunci profil tetap dipakai seperti tahap 1 (pembanding: aturannya sungguh bisa menggigit).
+        jago = ["Jago Syariah", "Pembayaran Berhasil", "Nominal Rp50.000", "Biaya Rp2.500", "31/10/2026 10:00"]
+        got = await UnknownReader().parse(TextDoc(lines=jago, kind=KIND_IMAGE),
+                                          ParseContext(today=TODAY, rules={"jago": rules["logo:newpay"]}))
+        self.assertEqual((got.doc.amounts.total, got.doc.confidence["total"]), (2500, "tinggi"))
 
 
 class VotesForLogoTests(unittest.TestCase):
@@ -291,6 +335,18 @@ class AppChoiceTests(DbBase):
                 self.assertTrue(await self.answer(item, "bsi", a, user_name=user_name))
                 self.assertEqual(await self.votes(), [])
                 self.assertEqual((await self.meta(item))["app_choice"], "bsi")   # dijawab: tidak ditanya lagi
+        # Nama bersambung tanda baca (review M2a temuan 2).
+        for name, cols, user_name, description in (
+                ("titik", dict(lay=wahyu, merchant="WAHYU.N"), None, None),
+                ("tanda hubung", dict(lay=wahyu), "Wahyu-Nugroho", None),
+                ("koma di keterangan", dict(lay=wahyu, status="tercatat"), None, "kirim ke wahyu,arisan"),
+                ("garis miring", dict(lay=wahyu, document=doc(total=50000, name="Wahyu/arisan")), None, None)):
+            with self.subTest(name):
+                if description:
+                    cols["transaction_ids"] = [await self.txn(description)]
+                item = await self.scan(a, **cols)
+                self.assertTrue(await self.answer(item, "bsi", a, user_name=user_name))
+                self.assertEqual(await self.votes(), [])
         # Pembanding: nama lain, dan kata pendamping ("bank") di keterangan bukan nama logo.
         item = await self.scan(a, lay=wahyu, document=doc(total=50000, name="SITI"), merchant="Toko Sinar",
                                status="tercatat", transaction_ids=[await self.txn("transfer bank ke Siti")])

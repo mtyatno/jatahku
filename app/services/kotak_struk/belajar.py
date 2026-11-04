@@ -55,6 +55,7 @@ dari status lama.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -362,9 +363,13 @@ def app_logo(item) -> str | None:
 
 def _logo_is_known_name(word: str, names: Iterable[str | None]) -> bool:
     """Kata logo (selain kata pendamping logo seperti "bank", "mobile") muncul sebagai kata di salah satu nama/teks
-    `names` sesudah `normalize_name` (keterangan tercatat, pihak lawan, merchant terbaca, nama user; K8)."""
+    `names` (sesudah `normalize_name`, atau dipisah pada tanda baca) (keterangan tercatat, pihak lawan, merchant
+    terbaca, nama user; K8)."""
     own = [w for w in word.split() if w not in LOGO_WORDS] or word.split()
-    known = {w for name in names for w in normalize_name(name).split()}
+    # Juga dipisah pada tanda baca (review M2a temuan 2): `normalize_name` melepas tanda baca tanpa spasi, jadi
+    # "WAHYU.N", "Wahyu-Nugroho", "ke wahyu,arisan" tidak memuat kata "wahyu" di sana.
+    known = {w for name in names
+             for w in (*normalize_name(name).split(), *re.findall(r"[a-z]+", (name or "").lower()))}
     return bool(set(own) & known)
 
 

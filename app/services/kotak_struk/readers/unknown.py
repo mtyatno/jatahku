@@ -79,8 +79,9 @@ class UnknownReader:
     @staticmethod
     def _learned(doc: TextDoc, ctx: ParseContext) -> Parsed | None:
         """Bukti tak dikenal dari aplikasi yang punya aturan belajar `label_total` yang disetujui (kunci dari
-        `kerangka.rule_key`: kunci profil, mis. resi tagihan Jago, atau kunci `logo:<kata>` aplikasi tak berprofil; hanya
-        pembaca ini yang memakai kunci logo) dan label itu menemukan nominal: total itu,
+        `kerangka.rule_key`: hanya kunci profil, mis. resi tagihan Jago; aturan label berkunci `logo:<kata>` baru dibaca di
+        M2b, dan hanya selagi aturan `logo` kunci itu disetujui; review M2a temuan 3) dan label itu menemukan nominal:
+        total itu,
         keyakinan `tinggi` (spec §5), sebelum LLM cadangan dan `_app_receipt_total` (teksnya terbaca; aturan yang
         disetujui lebih dipercaya dari tebakan). Tanggal dari label aturan `label_tanggal` bila ada, selain itu tebakan
         biasa (tepat satu tanggal tercetak). Status tetap hanya dari judul (`parse`). None bila tanpa aturan atau labelnya
@@ -88,7 +89,7 @@ class UnknownReader:
         if not ctx.rules:
             return None
         lines = pc.clean_lines(doc.lines)
-        learned, _ = learned_profile(lines, detect_issuer(lines), ctx.rules, allow_logo=True)
+        learned, _ = learned_profile(lines, detect_issuer(lines), ctx.rules)
         body = pc.body_lines(lines)
         total = learned_amount(body, learned.total)
         if total is None:

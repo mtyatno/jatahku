@@ -134,8 +134,8 @@ class RuleKeyTests(unittest.TestCase):
             with self.subTest(lines=lines):
                 self.assertIsNone(build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(),
                                                user_name=None))
-        lay = build_layout(["KilatPay", "Total Rp150.000"], transfer_doc(doc_type="tidak_dikenali", issuer=None),
-                           Secrets(), user_name=None)
+        lay = build_layout(["KilatPay", "Pembayaran Berhasil", "Total Rp150.000"],
+                           transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(), user_name=None)
         self.assertEqual(lay["key"], "logo:kilatpay")
 
     def test_logo_key_for_unknown_app_and_none_for_status_bar_or_name(self):
@@ -144,7 +144,10 @@ class RuleKeyTests(unittest.TestCase):
         self.assertEqual(rule_key(["KilatPay", "Pembayaran Berhasil", "Rp10.000"], None, forbidden_words=set()),
                          "logo:kilatpay")
         # Bilah status (jam, panah) dilewati.
-        self.assertEqual(rule_key(["10:57", "↑", "KilatPay", "Rp10.000"], None, forbidden_words=set()), "logo:kilatpay")
+        self.assertEqual(rule_key(["10:57", "↑", "KilatPay", "Pembayaran Berhasil", "Rp10.000"], None,
+                                  forbidden_words=set()), "logo:kilatpay")
+        # Kata tunggal yang langsung diikuti nominal (bilah status dilewati) lebih mungkin nama: bukan logo (fix M2a 1).
+        self.assertIsNone(rule_key(["10:57", "↑", "KilatPay", "Rp10.000"], None, forbidden_words=set()))
         self.assertIsNone(rule_key(["10:57", "Transfer Berhasil", "Nominal Rp10.000"], None, forbidden_words=set()))
         # Nama pihak lawan/user tidak pernah jadi kunci.
         self.assertIsNone(rule_key(["BUDI SANTOSO", "Transfer Berhasil", "Rp10.000"], None,
@@ -214,7 +217,7 @@ class BuildLayoutTests(unittest.TestCase):
     def test_logo_key_only_for_unknown_documents(self):
         # Kunci logo hanya untuk tidak_dikenali (QRIS/transfer tanpa profil sering diawali nama merchant, spec §2), dan
         # baris logonya sendiri tidak menjadi entri. Tanpa `LOGO_KEYS` (tahap 1): tanpa profil tidak ada kerangka.
-        lines = ["KilatPay", "Kopi Susu 1 25.000", "Total Rp25.000", "Bayar QRIS"]
+        lines = ["KilatPay", "Pembayaran Berhasil", "Kopi Susu 1 25.000", "Total Rp25.000", "Bayar QRIS"]
         for doc_type in ("qris", "transfer"):
             self.assertIsNone(build_layout(lines, transfer_doc(doc_type=doc_type, issuer=None), Secrets(), user_name=None))
         with patch.object(kerangka, "LOGO_KEYS", False):
@@ -222,7 +225,7 @@ class BuildLayoutTests(unittest.TestCase):
                                            user_name=None))
         lay = build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(), user_name=None)
         self.assertEqual(lay["key"], "logo:kilatpay")
-        self.assertEqual([e["i"] for e in lay["lines"]], [1, 2])   # baris logo (0) bukan entri nama
+        self.assertEqual([e["i"] for e in lay["lines"]], [1, 2, 3])   # baris logo (0) bukan entri nama
 
     def test_value_on_its_own_line_takes_the_label_above_only_when_it_is_a_label(self):
         lines = ["GoPay", "Total Bayar", "Rp12.500", "BUDI", "Rp1.000", "Tanggal & waktu transaksi",

@@ -214,19 +214,36 @@ def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: s
     """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Selain itu (hanya dengan `LOGO_KEYS` dan
     `allow_logo`) `logo:<kata>` dari baris logo: baris pertama di antara LOGO_LINES baris bersih teratas yang kata-katanya
     (huruf kecil) lolos `logo_candidate` dan tanpa kata `forbidden_words`. Baris di atasnya hanya boleh bilah status
-    (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Selain itu None (tanpa
-    kerangka dan tanpa suara). Pembaca QRIS/transfer memanggilnya tanpa kunci logo (`profiles.learned_profile`)."""
+    (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Kandidat SATU kata juga
+    ditolak bila baris isi berikutnya (bilah status dilewati) baris nominal atau tanggal (`_after_name`, review M2a
+    temuan 1): logo aplikasi diikuti judul ("Transfer Berhasil", "Detail Transaksi"), nama penerima besar diikuti
+    nominalnya. Selain itu None (tanpa kerangka dan tanpa suara). Pembaca QRIS/transfer memanggilnya tanpa kunci logo
+    (`profiles.learned_profile`)."""
     if profile is not None:
         return profile.key
     if not (LOGO_KEYS and allow_logo):
         return None
-    for line in pc.clean_lines(lines)[:LOGO_LINES]:
+    clean = pc.clean_lines(lines)
+    for i, line in enumerate(clean[:LOGO_LINES]):
         lowered = [w.lower() for w in line.split()]
-        if logo_candidate(lowered) and not _is_status(line) and not set(lowered) & forbidden_words:
+        if (logo_candidate(lowered) and not _is_status(line) and not set(lowered) & forbidden_words
+                and not (len(lowered) == 1 and _after_name(clean[i + 1:]))):
             return LOGO_PREFIX + " ".join(lowered)
         if _TEXT_LINE.search(line):
             return None   # baris teks pertama bukan logo: tidak ada logo
     return None
+
+
+def _after_name(rest: list[str]) -> bool:
+    """Baris isi pertama di `rest` (bilah status seperti "09:41", "LTE", panah dilewati) adalah baris nominal atau
+    tanggal: kata tunggal di atasnya lebih mungkin nama penerima daripada logo aplikasi (harga yang diterima: logo
+    aplikasi yang langsung diikuti nominal tidak berkunci)."""
+    for line in rest:
+        if _MONEY.search(line) or find_date(line):
+            return True
+        if _TEXT_LINE.search(line):
+            return False
+    return False
 
 
 # ── baris ───────────────────────────────────────────────────────────────────

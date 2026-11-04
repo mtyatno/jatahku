@@ -253,8 +253,9 @@ def with_learned(profile: AppProfile | None, learned: Learned) -> AppProfile | N
 def learned_profile(lines: list[str], profile: AppProfile | None, rules: dict | None, *,
                     allow_logo: bool = False) -> tuple[Learned, AppProfile | None]:
     """(label aturan, profil berlabel aturan) untuk satu bukti: kunci aturan dari `kerangka.rule_key` (kunci profil; kunci
-    `logo:<kata>` hanya dengan `allow_logo`, yang hanya dipakai `UnknownReader`: QRIS/transfer tanpa profil sering
-    diawali nama merchant, jadi tidak pernah berkunci logo saat membaca; pre-flight A16 §3), lalu `learned_for` dan
+    `logo:<kata>` hanya dengan `allow_logo`, yang belum dipakai pembaca mana pun: M2b membukanya hanya untuk
+    `UnknownReader` dan hanya bila aturan `logo` kunci itu disetujui (review M2a temuan 3); QRIS/transfer tanpa profil
+    sering diawali nama merchant, jadi tidak pernah berkunci logo saat membaca; pre-flight A16 §3), lalu `learned_for` dan
     `with_learned`. Tanpa aturan: `(Learned(), profile)` tanpa menghitung kunci apa pun. Pembaca hanya memakai label
     aturannya: total (`learned_total`), tanggal (`learned_paid_at`), dan nama penerima (`learned_party`); nilai lain dan
     status dibaca dengan profil asli (review L3 I-1)."""
