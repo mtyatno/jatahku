@@ -30,7 +30,7 @@ import { chatDiRuang, getRuangAktif, pilihanRuang } from '../lib/ruangAktif';
 import { aksesRuang, catatKaryawan, jenisDariAksi, menuUntuk, peranBerubah, ruteBoleh } from '../lib/ruangPeran';
 import { clearCache, loadCache, saveCache } from '../lib/localCache';
 import { kunciCacheBeranda } from '../lib/dashboardRegistry';
-import CatatKaryawan from './CatatKaryawan';
+import CatatCepat from './CatatCepat';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -633,10 +633,18 @@ export default function Layout() {
   const moreActions = karyawan ? opsiKaryawan.slice(1) : MORE_ACTIONS;
   const catatUtama = karyawan ? opsiKaryawan[0]?.key : 'expense';
   const aksi = karyawan ? (opsiKaryawan.length ? aksiKaryawan(fabAction) : null) : fabAction;
-  const aksiLama = karyawan ? null : fabAction;   // form lama hanya untuk peran selain karyawan
-  const selesaiKaryawan = (hasil) => {
+  // Plugin R7: di ruang usaha, Catat pengeluaran membuka lembar Catat cepat (karyawan selalu; pemilik/admin kecuali
+  // foto struk). "Form lengkap" dari lembar itu membuka form lama (`expense-lengkap`, `income`).
+  const cepatPengelola = !karyawan && akses.usaha && fabAction === 'expense' && !actionPayload?.photo;
+  const lembarCepat = karyawan
+    ? (aksi?.startsWith('karyawan-') ? jenisDariAksi(aksi) : null)
+    : (cepatPengelola ? 'pengeluaran' : null);
+  // Form lama hanya untuk peran selain karyawan.
+  const aksiLama = karyawan || cepatPengelola ? null : (fabAction === 'expense-lengkap' ? 'expense' : fabAction);
+  const selesaiCepat = (hasil) => {
     closeAction();
-    showNotice(hasil.hasil === 'menunggu' ? 'Tersimpan · menunggu persetujuan admin' : 'Tercatat');
+    showNotice(hasil.hasil === 'menunggu' ? 'Tersimpan · menunggu persetujuan admin'
+      : (hasil.pesan && hasil.pesan !== 'Tercatat.' ? hasil.pesan : 'Tercatat'));
   };
   const squareBtn = 'w-[var(--nav-h)] h-[var(--nav-h)] shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
@@ -874,7 +882,7 @@ export default function Layout() {
               {aksiLama === 'income' && <><Icon name="income" size={22} /> Income baru</>}
               {aksiLama === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
               {aksiLama === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
-              {aksi.startsWith('karyawan-') && <><Icon name="plus" size={22} /> Catat di {ruang.aktif?.nama}</>}
+              {lembarCepat && <><Icon name="plus" size={22} /> Catat cepat · {ruang.aktif?.nama}</>}
               {ENVELOPE_FIELD[aksiLama] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[aksiLama].title}</>}
             </h3>
             {aksiLama === 'expense' && (
@@ -889,9 +897,11 @@ export default function Layout() {
             )}
             {aksiLama === 'balance' && <BalanceCheck onClose={closeAction} />}
             {ENVELOPE_FIELD[aksiLama] && <EnvelopeFieldConfirm kind={aksiLama} payload={actionPayload || {}} onClose={closeAction} />}
-            {aksi.startsWith('karyawan-') && (
-              <CatatKaryawan jenisAwal={jenisDariAksi(aksi)} jenisBoleh={akses.jenisCatatan}
-                onDone={selesaiKaryawan} onCancel={closeAction} />
+            {lembarCepat && (
+              <CatatCepat ruang={ruang.aktif} jenisAwal={lembarCepat}
+                jenisBoleh={karyawan ? akses.jenisCatatan : ['pengeluaran', 'penjualan']}
+                onDone={selesaiCepat} onCancel={closeAction}
+                onFormLengkap={karyawan ? undefined : (j) => setFabAction(j === 'penjualan' ? 'income' : 'expense-lengkap')} />
             )}
           </div>
         </div>

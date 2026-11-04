@@ -35,11 +35,16 @@ class ApiClient {
   }
 
   async request(path, options = {}) {
+    const { ruangKeluarga = false, ...fetchOptions } = options;
+    options = fetchOptions;
     const isFormData = options.body instanceof FormData;
     // Ruang yang sedang dibuka (Plugin R4): header dikirim di setiap permintaan; server yang memutuskan.
-    const headers = withRuangHeader(isFormData
+    // `ruangKeluarga: true` (R7, tawaran pengeluaran pribadi di Catat cepat): sengaja tanpa header = ruang keluarga
+    // user sendiri, hanya untuk permintaan yang dipilih user untuk ruang keluarganya.
+    const dasar = isFormData
       ? { ...options.headers }
-      : { 'Content-Type': 'application/json', ...options.headers });
+      : { 'Content-Type': 'application/json', ...options.headers };
+    const headers = ruangKeluarga ? dasar : withRuangHeader(dasar);
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -110,6 +115,35 @@ class ApiClient {
   tolakDraf(rid, id, alasan) { return this.ruangKirim(`/ruang/${rid}/persetujuan/${id}/tolak`, 'POST', { alasan: alasan || null }); }
   logRuang(rid, limit = 50) { return this.ruangKirim(`/ruang/${rid}/audit?limit=${limit}`); }
   catatKaryawan(path, body) { return this.ruangKirim(path, 'POST', body); }
+  // Kamus ruang (R7): owner/admin.
+  kamusRuang(rid, q = '') {
+    const qs = q ? `&q=${encodeURIComponent(q)}` : '';
+    return this.ruangKirim(`/ruang/${rid}/kamus?limit=200${qs}`);
+  }
+  hapusKamus(rid, id) { return this.ruangKirim(`/ruang/${rid}/kamus/${id}`, 'DELETE'); }
+
+  // Catat cepat (R7, 04-kontrak-api.md §3): saran amplop + sumber + aturan batasan untuk nominal itu. Ruang dari header
+  // (ruang aktif), atau ruang keluarga user sendiri bila `ruangKeluarga` (tawaran pengeluaran pribadi).
+  async saranCatat({ description, amount }, { ruangKeluarga = false } = {}) {
+    try {
+      const res = await this.request('/transactions/suggest-envelope', {
+        method: 'POST', ruangKeluarga,
+        body: JSON.stringify({ description, ...(amount ? { amount } : {}) }),
+      });
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
+  // Catat di ruang keluarga dari Catat cepat ruang usaha (tawaran pribadi). Ruang tulis tetap dari amplopnya (R3).
+  async catatDiRuangKeluarga(body) {
+    try {
+      const res = await this.request('/transactions/', { method: 'POST', ruangKeluarga: true, body: JSON.stringify(body) });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
 
   // Unggah FormData lewat XHR supaya progres unggah terlapor (fetch tidak bisa).
   // Token + header klien dirakit ulang di setiap kirim: setelah refresh, kirim ulang memakai token baru.

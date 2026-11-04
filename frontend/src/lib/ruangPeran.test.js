@@ -113,6 +113,8 @@ test('labelAudit', () => {
     'Saya mengganti nama ruang menjadi B');
   assert.equal(labelAudit({ aksi: 'undangan_dicabut', oleh_nama: 'Saya', rincian: { peran: 'admin' } }),
     'Saya mencabut undangan Admin');
+  assert.equal(labelAudit({ aksi: 'kata_dihapus', oleh_nama: 'Ani', rincian: { kata: 'kardus', amplop: 'Operasional' } }),
+    'Ani menghapus kata "kardus" (Operasional) dari kamus ruang');
 });
 
 test('peranBerubah: hanya bila peran di ruang aktif berbeda atau ruangnya hilang', () => {
