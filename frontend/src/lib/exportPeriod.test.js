@@ -58,13 +58,13 @@ test('getExportFilename: generates formatted filenames for CSV and PDF', () => {
 });
 
 // ── getExportButtonLabel ─────────────────────────────────────────
-test('getExportButtonLabel: prefixes label with "Laporan " avoiding duplication', () => {
-  assert.equal(getExportButtonLabel('Agustus 2026'), 'Laporan Agustus 2026');
-  assert.equal(getExportButtonLabel('01 Agu – 31 Agu 2026'), 'Laporan 01 Agu – 31 Agu 2026');
-  assert.equal(getExportButtonLabel('Laporan Agustus 2026'), 'Laporan Agustus 2026');
-  assert.equal(getExportButtonLabel(''), 'Laporan');
-  assert.equal(getExportButtonLabel(null), 'Laporan');
-  assert.equal(getExportButtonLabel(undefined), 'Laporan');
+test('getExportButtonLabel: "Ekspor" plus periode, tanpa awalan Laporan ganda', () => {
+  assert.equal(getExportButtonLabel('Agustus 2026'), 'Ekspor Agustus 2026');
+  assert.equal(getExportButtonLabel('01 Agu – 31 Agu 2026'), 'Ekspor 01 Agu – 31 Agu 2026');
+  assert.equal(getExportButtonLabel('Laporan Agustus 2026'), 'Ekspor Agustus 2026');
+  assert.equal(getExportButtonLabel(''), 'Ekspor');
+  assert.equal(getExportButtonLabel(null), 'Ekspor');
+  assert.equal(getExportButtonLabel(undefined), 'Ekspor');
 });
 
 // ── resolveActivePeriod & findPeriodIndex ────────────────────────
