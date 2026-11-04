@@ -75,8 +75,8 @@ Diputuskan sesi yang membangun layarnya, dicatat di `SESI-LOG.md` sebagai keputu
 - Sidebar disembunyikan saat Mode Atur, atau tetap tampil dengan grid lebih sempit? (Mode Atur, setelah beta)
 - Bottom nav 6 item, atau "Lainnya" menggantikan Langganan? (R4, H3)
 - Penanda sumber kartu tampil selalu, atau hanya di Mode Atur? (U4)
-- Antrean persetujuan untuk admin: cukup di Pengaturan ruang seperti mockup, atau juga sebagai kartu di Beranda pemilik? (R6)
-- Batas nominal cukup per catatan, atau perlu juga batas harian per karyawan? (R5)
+- ~~Antrean persetujuan untuk admin: cukup di Pengaturan ruang seperti mockup, atau juga sebagai kartu di Beranda pemilik? (R6)~~ Diputuskan 4 Nov (R6): di halaman Anggota ruang, plus angka penanda di menu Anggota; kartu di Beranda usaha dinilai di U4.
+- ~~Batas nominal cukup per catatan, atau perlu juga batas harian per karyawan? (R5)~~ Diputuskan 4 Nov (R6, review PR #175 no. 10): per catatan saja selama beta. Catatan yang dipecah tetap terlihat admin beserta pencatatnya, dan limit harian amplop yang ada tetap membatasi totalnya; dinilai lagi dari data beta.
 - Pertanyaan tentang kanal chat, peran, dan batasan ada di bagian B.
 
 ## B. Ruang usaha: kanal chat, pencatatan, dan anggota

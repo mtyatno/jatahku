@@ -24,6 +24,7 @@ from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -31,13 +32,16 @@ from app.models.models import (
     Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, RuangAudit, RuangBatasan, RuangDraf,
     RuangUndangan, User,
 )
+from app.api.routes.ruang import RuangBuat
 from app.services import peran
+from app.services.dashboard import layout as dashboard_layout
 from app.services.ruang import RuangAktif, RuangDitolak, ruang_usaha_dibuka
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)   # pola sama dengan auth.py (in-memory per instance)
 
 UNDANGAN_HARI = 7
+UNDANGAN_DAFTAR_MAKS = 50
 TIDAK_ADA = "Ruang tidak ditemukan"
 
 
@@ -81,6 +85,21 @@ async def _baris_batasan(db: AsyncSession, rid: UUID, uid: UUID, buat: bool = Fa
     return row
 
 
+async def _cabut_undangan_milik(db: AsyncSession, rid: UUID, uid: UUID, actor_id: UUID, alasan: str) -> int:
+    """Cabut undangan aktif buatan `uid` di ruang ini (pembuatnya dikeluarkan, keluar, atau diturunkan; review keamanan
+    PR #185 temuan 1). Ikut commit pemanggil; satu baris log `undangan_dicabut` per kode. UPDATE bersyarat seperti
+    `cabut_undangan`: kode yang sedang diklaim `/ruang/gabung` pada saat yang sama tidak ikut tercatat dicabut."""
+    hasil = await db.execute(update(RuangUndangan).where(
+        RuangUndangan.household_id == rid, RuangUndangan.dibuat_oleh == uid,
+        RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
+    ).values(dicabut_at=datetime.now(timezone.utc)).returning(RuangUndangan.peran)
+        .execution_options(synchronize_session=False))
+    dicabut = [p for (p,) in hasil.all()]
+    for p in dicabut:
+        peran.audit(db, rid, actor_id, "undangan_dicabut", uid, peran=p, alasan=alasan)
+    return len(dicabut)
+
+
 # ── Anggota ────────────────────────────────────────────────────────────────
 @router.get("/ruang/{rid}/anggota")
 async def daftar_anggota(rid: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -117,7 +136,11 @@ async def ubah_anggota(rid: UUID, uid: UUID, req: UbahAnggota, user: User = Depe
     rincian = {}
     if req.peran is not None and req.peran != _peran(m):
         rincian["peran"] = {"dari": _peran(m), "ke": req.peran}
+        if req.peran == HouseholdRole.member.value:   # admin diturunkan: kode buatannya tidak berlaku lagi
+            await _cabut_undangan_milik(db, rid, uid, user.id, "pembuat_diturunkan")
         m.role = HouseholdRole(req.peran)
+        # R6: Beranda mengikuti peran baru (template Karyawan atau Beranda umum), bukan tata letak peran lama.
+        await dashboard_layout.hapus_milik(db, uid, rid)
     if "jabatan" in req.model_fields_set:
         b = await _baris_batasan(db, rid, uid, buat=True)
         rincian["jabatan"] = req.jabatan
@@ -146,9 +169,11 @@ async def keluarkan_anggota(rid: UUID, uid: UUID, user: User = Depends(get_curre
     if _peran(m) == HouseholdRole.owner.value:
         raise _tolak("khusus_admin", "Pemilik ruang tidak bisa keluar atau dikeluarkan.")
     n = await peran.batalkan_draf_anggota(db, rid, uid)
+    await _cabut_undangan_milik(db, rid, uid, user.id, "pembuat_keluar")
     b = await _baris_batasan(db, rid, uid)
     if b is not None:
         await db.delete(b)
+    await dashboard_layout.hapus_milik(db, uid, rid)
     await db.delete(m)
     peran.audit(db, rid, user.id, aksi, uid, peran=_peran(m), draf_dibatalkan=n)
     await db.commit()
@@ -219,6 +244,67 @@ async def buat_undangan(rid: UUID, req: UndanganBody, user: User = Depends(get_c
     return {"kode": u.kode, "peran": u.peran, "kedaluwarsa": kedaluwarsa.isoformat()}
 
 
+def _utc(t: datetime | None) -> datetime | None:
+    return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
+
+
+@router.get("/ruang/{rid}/undangan")
+async def daftar_undangan(rid: UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Undangan yang masih bisa dipakai (belum dipakai, belum dicabut, belum kedaluwarsa), terbaru dulu (R6)."""
+    await _ruang_kelola(db, user, rid)
+    rows = (await db.execute(
+        select(RuangUndangan, User.name).outerjoin(User, User.id == RuangUndangan.dibuat_oleh)
+        .where(RuangUndangan.household_id == rid, RuangUndangan.dipakai_at.is_(None),
+               RuangUndangan.dicabut_at.is_(None), RuangUndangan.kedaluwarsa > datetime.now(timezone.utc))
+        .order_by(RuangUndangan.created_at.desc()).limit(UNDANGAN_DAFTAR_MAKS)
+    )).all()
+    return [{"id": str(u.id), "kode": u.kode, "peran": u.peran, "dibuat_oleh": nama,
+             "kedaluwarsa": _utc(u.kedaluwarsa).isoformat(),
+             "dibuat": _utc(u.created_at).isoformat() if u.created_at else None}
+            for u, nama in rows]
+
+
+@router.delete("/ruang/{rid}/undangan/{undangan_id}", status_code=204)
+async def cabut_undangan(rid: UUID, undangan_id: UUID, user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Cabut kode yang belum dipakai (R6; review R5 #9). Kode yang dicabut ditolak `/ruang/gabung`. Sudah dipakai
+    → 409; sudah dicabut → 204 tanpa perubahan; undangan ruang lain → 404."""
+    await _ruang_kelola(db, user, rid)
+    u = (await db.execute(select(RuangUndangan).where(
+        RuangUndangan.id == undangan_id, RuangUndangan.household_id == rid))).scalar_one_or_none()
+    if u is None:
+        raise HTTPException(status_code=404, detail="Undangan tidak ditemukan")
+    if u.dicabut_at is not None:
+        return
+    # Atomik terhadap `/ruang/gabung`: kode yang sedang diklaim tidak bisa sekaligus dicabut.
+    hasil = await db.execute(update(RuangUndangan).where(
+        RuangUndangan.id == u.id, RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
+    ).values(dicabut_at=datetime.now(timezone.utc)))
+    if hasil.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Undangan ini sudah dipakai.")
+    peran.audit(db, rid, user.id, "undangan_dicabut", peran=u.peran)
+    await db.commit()
+
+
+# ── Nama ruang ─────────────────────────────────────────────────────────────
+class UbahRuang(RuangBuat):
+    """Aturan nama sama dengan membuat ruang (1–`NAMA_MAKS` huruf, spasi dirapikan)."""
+
+
+@router.patch("/ruang/{rid}")
+async def ubah_ruang(rid: UUID, req: UbahRuang, user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    """Ganti nama ruang usaha (R6): owner dan admin. Tutup/hapus ruang usaha belum ada."""
+    await _ruang_kelola(db, user, rid)
+    hh = await db.get(Household, rid)
+    if hh.name != req.nama:
+        peran.audit(db, rid, user.id, "ruang_diubah", nama={"dari": hh.name, "ke": req.nama})
+        hh.name = req.nama
+        await db.commit()
+    return {"id": str(rid), "nama": hh.name}
+
+
 class GabungBody(BaseModel):
     kode: str = Field(min_length=4, max_length=20)
 
@@ -247,6 +333,11 @@ async def gabung_ruang(request: Request, req: GabungBody, user: User = Depends(g
     role, _ = await peran.peran_di_ruang(db, user.id, hh.id)
     if role is not None:
         raise HTTPException(status_code=400, detail="Kamu sudah anggota ruang ini.")
+    # Kode hanya berlaku selama pembuatnya masih owner/admin ruang ini (review keamanan PR #185 temuan 1): menutup juga
+    # kode yang belum sempat dicabut, dan kode yang akun pembuatnya sudah dihapus (`dibuat_oleh` NULL).
+    pembuat, _ = await peran.peran_di_ruang(db, u.dibuat_oleh, hh.id) if u.dibuat_oleh else (None, None)
+    if pembuat not in (HouseholdRole.owner.value, HouseholdRole.admin.value):
+        raise HTTPException(status_code=400, detail=PESAN_KODE)
     # Klaim kode secara atomik: dua akun dengan kode yang sama, hanya satu yang masuk.
     klaim = await db.execute(update(RuangUndangan).where(
         RuangUndangan.id == u.id, RuangUndangan.dipakai_at.is_(None), RuangUndangan.dicabut_at.is_(None),
@@ -288,13 +379,7 @@ async def persetujuan_saya(user: User = Depends(get_current_user), db: AsyncSess
     """Draf milik user di ruang aktif: yang menunggu, plus yang diputus 14 hari terakhir."""
     if not hid:
         return []
-    batas = datetime.now(timezone.utc) - timedelta(days=14)
-    rows = (await db.execute(
-        select(RuangDraf).where(RuangDraf.household_id == hid, RuangDraf.user_id == user.id,
-                                (RuangDraf.status == peran.ST_MENUNGGU) | (RuangDraf.updated_at >= batas))
-        .order_by(RuangDraf.created_at.desc()).limit(50)
-    )).scalars().all()
-    return [_draf_api(d, user.name) for d in rows]
+    return [_draf_api(d, user.name) for d in await peran.draf_saya(db, user.id, hid)]
 
 
 async def _klaim_draf(db: AsyncSession, rid: UUID, draf_id: UUID, ke: str) -> RuangDraf:
@@ -379,10 +464,15 @@ async def tolak_draf(rid: UUID, draf_id: UUID, req: TolakBody | None = None, use
 async def log_audit(rid: UUID, limit: int = Query(50, ge=1, le=200), user: User = Depends(get_current_user),
                     db: AsyncSession = Depends(get_db)):
     await _ruang_kelola(db, user, rid)
+    oleh, anggota = aliased(User), aliased(User)
     rows = (await db.execute(
-        select(RuangAudit).where(RuangAudit.household_id == rid)
+        select(RuangAudit, oleh.name, anggota.name)
+        .outerjoin(oleh, oleh.id == RuangAudit.actor_id).outerjoin(anggota, anggota.id == RuangAudit.target_user_id)
+        .where(RuangAudit.household_id == rid)
         .order_by(RuangAudit.created_at.desc(), RuangAudit.id).limit(limit)
-    )).scalars().all()
+    )).all()
+    # `oleh_nama`, `anggota_nama` (R6, aditif): nama untuk log di halaman ruang; akun terhapus → null.
     return [{"aksi": a.aksi, "oleh": str(a.actor_id) if a.actor_id else None,
              "anggota": str(a.target_user_id) if a.target_user_id else None, "rincian": a.rincian,
-             "waktu": a.created_at.isoformat() if a.created_at else None} for a in rows]
+             "waktu": a.created_at.isoformat() if a.created_at else None,
+             "oleh_nama": n_oleh, "anggota_nama": n_anggota} for a, n_oleh, n_anggota in rows]

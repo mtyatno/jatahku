@@ -60,6 +60,9 @@ export function pilihanRuang(daftar, aktifId) {
     bawaan,
     aktif,
     bolehBuat: !!daftar?.boleh_buat_usaha,
+    // Gabung ruang usaha lewat kode undangan (R6): user di flag `ruang_usaha_users`, yang terlihat dari boleh membuat
+    // atau sudah punya ruang usaha (di luar flag ruang usaha tidak pernah tampil).
+    bolehGabung: !!daftar?.boleh_buat_usaha || items.some(r => r.jenis === 'usaha'),
     tampil: items.length > 1 || !!daftar?.boleh_buat_usaha,
   };
 }

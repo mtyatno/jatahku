@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import { parseTransactionsQuery, periodIndexFor } from '../lib/advisorAction';
 import { formatCurrency, formatShort } from '../lib/utils';
@@ -110,12 +110,16 @@ export default function Transactions() {
     if (q.date) setTimeTab('all');
   }, [location.search]);
 
+  // Karyawan ruang usaha (R6): hanya catatannya sendiri; AI Advisor tertutup untuknya (server 403), jadi tidak dimuat.
+  const karyawan = !!(useOutletContext() || {}).akses?.karyawan;
+
   useEffect(() => {
+    if (karyawan) return undefined;
     let batal = false;
     api.getAdvisorTransaksi(advisorQuery({ envelope: filter, date: dateFilter, timeTab, today: localDateStr() }))
       .then(p => { if (!batal) { setAdvisorPage(p); setAdvisorHidden([]); } });
     return () => { batal = true; };
-  }, [filter, dateFilter, timeTab, refreshTick, advisorTick]);
+  }, [filter, dateFilter, timeTab, refreshTick, advisorTick, karyawan]);
 
   useEffect(() => {
     const onHidden = (e) => { const k = e.detail?.kunci; if (k) setAdvisorHidden(h => [...h, k]); };

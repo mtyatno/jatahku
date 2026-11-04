@@ -61,7 +61,8 @@ Dua endpoint lama yang menerima id household dari klien dibatasi ke ruang keluar
      "paket": null, "jam_kerja": null},
     {"id": "…", "nama": "Dapur Nusa", "jenis": "usaha", "peran": "owner", "jumlah_anggota": 3,
      "paket": null,       // ADR-P12, P13: {"status": "uji_coba", "sampai": "2026-12-31"} mulai H1/V1; null sampai saat itu
-     "jam_kerja": null}   // R5: untuk member, jadwalnya sendiri bila diatur admin
+     "jam_kerja": null,   // R5: untuk member, jadwalnya sendiri bila diatur admin
+     "jenis_catatan": null}   // R6 (aditif): untuk member, jenis yang boleh dicatat (menu Catat); null untuk peran lain
   ],
   "boleh_buat_usaha": true                    // flag terbuka untuk user ini dan belum mencapai batas (R4)
 }
@@ -92,16 +93,29 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 //        batasan hanya untuk peran member (bawaan bila belum pernah diatur); owner dan admin → null
 // POST   /ruang/{id}/undangan {"peran": "member" | "admin"} → 201 {"kode": "RU…", "peran", "kedaluwarsa"}
 //        sekali pakai, berlaku 7 hari (tabel ruang_undangan; bukan households.invite_code)
+// GET    /ruang/{id}/undangan → [{"id", "kode", "peran", "dibuat_oleh": "<nama>" | null, "kedaluwarsa", "dibuat"}]
+//        (R6) hanya yang masih bisa dipakai: belum dipakai, belum dicabut, belum kedaluwarsa; terbaru dulu
+// DELETE /ruang/{id}/undangan/{undangan_id} → 204   (R6) mencabut kode; `/ruang/gabung` lalu menolaknya (400);
+//        sudah dipakai → 409; sudah dicabut → 204 tanpa perubahan; undangan ruang lain → 404; log `undangan_dicabut`
+// PATCH  /ruang/{id} {"nama"} → {"id", "nama"}   (R6) owner dan admin; nama 1–60 huruf (spasi dirapikan), selain itu
+//        422; log `ruang_diubah`. Tutup atau hapus ruang usaha belum ada.
 // POST   /ruang/gabung {"kode"} → {"id", "nama", "jenis": "usaha", "peran"}
-//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP
+//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP;
+//        kode hanya berlaku selama pembuatnya masih owner/admin ruang itu, selain itu 400 (R6, review #185): pembuat
+//        yang dikeluarkan, keluar, atau diturunkan ke karyawan juga membuat kodenya dicabut (log `undangan_dicabut`)
 // PATCH  /ruang/{id}/anggota/{user_id} {"peran"?: "member" | "admin", "jabatan"?} → {"user_id", "peran"}
+//        admin boleh mengubah, menaikkan, menurunkan, dan mengeluarkan admin lain; hanya owner yang terlindung (ADR-P4).
+//        R6: ganti peran membuang tata letak Beranda anggota itu di ruang ini (Beranda berikutnya = template peran baru)
 // DELETE /ruang/{id}/anggota/{user_id} → 204   // owner/admin mengeluarkan, atau anggota keluar sendiri (bukan owner);
-//        akses hilang seketika; catatan lama tetap milik ruang; draf yang menunggu → dibatalkan; batasannya dihapus
+//        akses hilang seketika; catatan lama tetap milik ruang; draf yang menunggu → dibatalkan; batasannya dan tata
+//        letak Berandanya di ruang ini dihapus (R6)
 // PUT    /ruang/{id}/anggota/{user_id}/batasan → batasan tersimpan (isi di bawah); hanya peran member, selain itu 422;
 //        amplop bukan milik ruang itu → 422; jam_kerja tidak sah → 422
-// GET    /ruang/{id}/audit?limit=50 → [{"aksi", "oleh", "anggota", "rincian", "waktu"}]
+// GET    /ruang/{id}/audit?limit=50 → [{"aksi", "oleh", "anggota", "rincian", "waktu", "oleh_nama", "anggota_nama"}]
+//        (nama: R6, aditif; akun terhapus → null)
 //        aksi: undangan_dibuat, anggota_bergabung, anggota_diubah, anggota_keluar, anggota_dikeluarkan,
-//        batasan_diubah, draf_disetujui, draf_ditolak, catatan_dihapus, reset_ruang (jumlah catatan per pencatat, tanpa nominal)
+//        batasan_diubah, draf_disetujui, draf_ditolak, catatan_dihapus, reset_ruang (jumlah catatan per pencatat, tanpa nominal),
+//        undangan_dicabut, ruang_diubah (R6)
 
 // batasan per anggota (hanya untuk peran member; owner dan admin tanpa batasan)
 // Bawaan bila admin belum mengatur: dua jenis, semua amplop, tanpa batas nominal dan foto, hari_sama, lihat_saldo false,
@@ -130,8 +144,9 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 | `DELETE /transactions/{id}` | Hanya catatan miliknya, dalam `jendela_ubah`; selain itu 403 `jendela_ubah_lewat`. Tercatat di log audit (`catatan_dihapus`) |
 | `POST /incomes/` | Jenis `penjualan`, amplop alokasi, lalu alokasi harus sama dengan nominal (sisa tidak boleh jatuh ke Tabungan: 422 `alokasi_tidak_penuh`), batas nominal; di atas batas → 202 draf. Field baru `client_ref` (aditif): kiriman ulang → 202 dengan status draf terbaru. Notifikasi target dari penjualan karyawan dikirim ke owner |
 | `GET /persetujuan/saya` | Draf miliknya |
+| `GET`/`PUT /dashboard/layout`, `GET /dashboard/cards`, `POST /dashboard/data`, `GET /dashboard/data/{id}` | R6: hanya kartu karyawan (§4, "Beranda karyawan"); kartu umum → `khusus_admin` per kartu, tanpa memuat datanya |
 
-Semua route lain (amplop, grup, transfer, target, langganan, cocokkan saldo, analitik, ekspor, Beranda, AI Advisor, reset, …) → 403 `khusus_admin`. Beranda template "Karyawan" dan penyaringan per kartu menyusul di R6.
+Semua route lain (amplop, grup, transfer, target, langganan, cocokkan saldo, analitik, ekspor, AI Advisor, reset, …) → 403 `khusus_admin`.
 
 Antrean persetujuan — **v1 (R5)**, ADR-P18. Draf disimpan terpisah (`ruang_draf`) dan tidak mengubah saldo; saat disetujui, draf dicatat lewat jalur pencatatan yang sama (`catat_transaksi` / `catat_pemasukan`) atas nama pencatat asli, jadi aturan amplop, dana, limit harian, kunci, dan struk tetap berlaku; hanya batasan karyawan yang tidak dicek lagi.
 
@@ -303,6 +318,35 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 
 `aksi` hanya menunjuk aksi terdaftar: `{"kind": "route", "payload": {"to": "/p/buku_usaha/laba-rugi"}}`, `{"kind": "form", …}`, atau alur `/advisor/plan` untuk pemindahan dana. Kartu plugin (H2, U4) wajib mengisi field bentuknya sendiri; kartu inti boleh hanya membawa `sumber` sampai teksnya dipindah ke templat server.
 
+**Beranda karyawan (R6).** Setiap kartu menyatakan `untuk`: `umum` (semua kartu inti) atau `karyawan`. Karyawan = peran
+`member` di ruang usaha (`peran.batasan_karyawan`); semua peran lain, termasuk anggota ruang keluarga, memakai kartu umum.
+Server menyaring di setiap route `/dashboard/*`:
+
+```jsonc
+// GET /dashboard/layout (dan "layout" di jawaban PUT) → + "untuk": "karyawan" | "umum" (aditif). Karyawan: "enabled" selalu true (Beranda lama
+// memanggil endpoint yang tertutup untuknya) dan template "Karyawan" (registry.TEMPLATE_KARYAWAN, a1–a6, ukuran M).
+// Instans tersimpan yang kartunya bukan untuk peran ini → "visible": false, "alasan": "khusus_admin" (karyawan)
+// atau "khusus_karyawan" (peran lain); datanya ditolak. Saat menyimpan, instans itu boleh dikirim balik dan disimpan
+// dari salinan server (ukuran, pengaturan, dan sembunyikan dari klien diabaikan).
+// GET /dashboard/cards → karyawan: hanya kartu karyawan; peran lain: hanya kartu umum (katalog ruang keluarga tetap).
+// PUT /dashboard/layout → kartu yang bukan untuk peran ini: 422 kartu_tidak_dikenal.
+// POST /dashboard/data → kartu umum untuk karyawan: {"error": {"kode": "khusus_admin"}} per kartu, penyedianya tidak
+// dipanggil; kartu karyawan untuk peran lain: {"error": {"kode": "kartu_tidak_dikenal"}}. `periode` diabaikan
+// kartu karyawan (selalu hari ini, zona user).
+```
+
+| Kartu (`untuk: karyawan`) | `shape` | Isi |
+| --- | --- | --- |
+| `core.karyawan.catat` | inti | `jenis_catatan`, `amplop` (`[{id, nama, emoji}]` yang diizinkan, tanpa anggaran) |
+| `core.karyawan.hari_ini` | inti | `tanggal`, `pengeluaran` dan `penjualan` `{jumlah, total}` miliknya hari ini, `jenis_catatan` |
+| `core.karyawan.menunggu` | list | `items` drafnya (menunggu + diputus 14 hari): `{id, jenis, judul, nominal, status, subjudul: alasan, dibuat}`; `menunggu`, `total_item` |
+| `core.karyawan.catatan_hari_ini` | list | `items` catatannya hari ini: `{id, jenis, judul, subjudul: nama amplop, emoji, nominal, waktu, boleh_hapus}` (hapus hanya transaksi, dalam `jendela_ubah`); `total_item`, `jendela_ubah` |
+| `core.karyawan.batasan` | inti | `batasan` (bentuk §2 tanpa `amplop_ids`), `amplop` (`null` = semua amplop) |
+| `core.karyawan.ruang_terpisah` | alert | `tone`, `judul`, `isi`: catatan pribadi tetap di ruang keluarganya (ADR-P2, P4) |
+
+Catatan dan draf hanya milik karyawan itu sendiri di ruang itu; tidak ada saldo, total ruang, atau catatan anggota lain.
+Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
+
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
 ## 5. Fitur Tambahan / plugin (H1, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti)**; `contributions` masih v0 (H3)
@@ -412,7 +456,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `ruang_usaha_belum_dibuka` | 403 | `POST /ruang` oleh user di luar flag `ruang_usaha_users` (R4) |
 | `batas_ruang_usaha` | 409 | `POST /ruang` saat user sudah memiliki 3 ruang usaha (R4) |
 | `di_luar_jam_kerja` | 403 | Ruang usaha dibuka di luar jam kerja anggota; body juga berisi `buka_lagi` (R5) |
-| `khusus_admin` | 403 | Karyawan di ruang usaha memakai route di luar `KARYAWAN_BOLEH`, atau aksi admin lain (mengubah owner) (R5); member mengatur Fitur Tambahan (H1) |
+| `khusus_admin` | 403 / per kartu | Karyawan di ruang usaha memakai route di luar `KARYAWAN_BOLEH`, atau aksi admin lain (mengubah owner) (R5); member mengatur Fitur Tambahan (H1); kartu umum di `POST /dashboard/data` untuk karyawan (R6) |
 | `nominal_tidak_sah` | per baris | Baris antrean offline bernominal nol atau negatif (R5; jalur tunggal dan pemasukan: 422 validasi) |
 | `amplop_tidak_diizinkan` | 403 | Amplop tidak termasuk batasan anggota |
 | `jenis_tidak_diizinkan` | 403 | Jenis catatan tidak termasuk batasan anggota |
