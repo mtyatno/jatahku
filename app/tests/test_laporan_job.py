@@ -88,12 +88,14 @@ def bahan_laporan(nama: str, *, aktif: bool = True) -> BahanLaporan:
         terpakai=terpakai, akhir=alokasi - terpakai, rollover=alokasi - terpakai, ditutup=False,
         alokasi_per_hari={PS: alokasi} if aktif else {}, terpakai_lalu=[None, None, None],
     )
+    id_penerima = f"id-{nama.lower()}"
     transaksi = [TransaksiPeriode(
         id="trx-1", amplop_id="amp-1", tanggal=okt(5), jumlah=terpakai, keterangan="Belanja", pencatat=nama,
-        milik_penerima=True, penyesuaian=False, tagihan=False,
+        pencatat_id=id_penerima, milik_penerima=True, penyesuaian=False, tagihan=False,
     )] if aktif else []
     return BahanLaporan(
-        penerima_nama=nama, rumah_nama="Rumah Ani", periode_mulai=PS, periode_akhir=PE, payday=1,
+        penerima_nama=nama, penerima_id=id_penerima, rumah_nama="Rumah Ani", periode_mulai=PS, periode_akhir=PE,
+        payday=1,
         angka_per=HARI_TERBIT, amplop=[amplop], transaksi=transaksi, pemasukan=[], tagihan_berikut=[], target=[],
         streak_saat_ini=0, terpakai_lalu_total=[None, None, None],
     )
@@ -782,7 +784,8 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
         )
         keluar_kebutuhan = [m for m in ani["mutasi"] if m["arah"] == "keluar" and m["amplop"] == "Kebutuhan"]
         self.assertIn({"tanggal": "2026-10-20", "arah": "keluar", "amplop": "Kebutuhan", "keterangan": "Listrik",
-                       "jumlah": "75000.00", "pencatat": "Ani", "penyesuaian": False}, keluar_kebutuhan)
+                       "jumlah": "75000.00", "pencatat": "Ani", "pencatat_id": str(self.ANI), "penyesuaian": False},
+                      keluar_kebutuhan)
         self.assertEqual(sum(D(m["jumlah"]) for m in keluar_kebutuhan), D("225000.00"))
         self.assertEqual((ani["ringkasan"]["pemasukan"], ani["ringkasan"]["terpakai"]), ("3000000.00", "245000.00"))
         self.assertEqual([a["terpakai"] for a in laporan[self.BUDI].data["amplop"]], ["225000.00", "30000.00"])

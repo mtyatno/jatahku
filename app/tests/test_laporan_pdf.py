@@ -34,7 +34,7 @@ from pypdfium2 import PdfiumError
 
 from app.services.laporan import pdf
 from app.services.laporan.susun import PemasukanPeriode, TagihanBerikut, TargetTabungan, susun_bulanan
-from app.tests.test_laporan_susun import amplop_kecil, bahan, bahan_kosong, d, txn
+from app.tests.test_laporan_susun import ID_ANI, ID_BUDI, amplop_kecil, bahan, bahan_kosong, d, txn
 
 D = Decimal
 KATA_SANDI = "rahasia123"
@@ -362,6 +362,17 @@ class RenderPdfTests(unittest.TestCase):
         data = copy.deepcopy(DATA)
         pdf.render_pdf(data, KATA_SANDI)
         self.assertEqual(data, DATA)
+
+    def test_pencatat_id_tidak_pernah_tercetak(self):
+        # Ruling R15: id pencatat dibekukan hanya untuk menganonimkan baris saat pencatatnya menghapus akun.
+        baris = DATA["mutasi"] + DATA["terbesar"] + DATA["langganan"]["terbayar"]
+        self.assertEqual({b["pencatat_id"] for b in baris}, {ID_ANI, ID_BUDI})  # prasyarat: id ada di data
+        semua = " ".join(self.halaman)
+        for nilai in (ID_ANI, ID_BUDI):
+            with self.subTest(nilai):
+                self.assertNotIn(nilai, semua)
+                self.assertNotIn(nilai.rsplit("-", 1)[-1], semua)  # juga bukan potongan yang terbungkus ke baris lain
+        self.assertIsNone(re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", semua))
 
     def test_kunci_email_tidak_dibaca(self):
         # `email` adalah isi badan email (tahap 2); PDF tidak boleh bergantung padanya.

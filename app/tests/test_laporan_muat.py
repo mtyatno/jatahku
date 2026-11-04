@@ -317,6 +317,7 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([a.nama for a in bahan.amplop], ["Kebutuhan", "Tabungan Ani", "Liburan", "Pulsa"])
         self.assertEqual((bahan.penerima_nama, bahan.rumah_nama, bahan.periode_mulai, bahan.periode_akhir,
                           bahan.payday, bahan.angka_per), ("Ani", "Rumah Ani", PS, PE, 1, ANGKA_PER))
+        self.assertEqual(bahan.penerima_id, str(self.A))  # teks, seperti `pencatat_id` (Ruling R15)
 
     async def test_lingkup_anggota_lain_memakai_amplop_pribadinya_sendiri(self):
         bahan = await self.muat("b")
@@ -327,7 +328,7 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
         # Amplop pribadi yang ditutup tetap baris bagi pemiliknya: snapshot_values(56.000, -6.000, 50.000, rollover).
         self.assertEqual((cb.pribadi, cb.ditutup, cb.awal, cb.alokasi, cb.terpakai, cb.akhir, cb.rollover),
                          (True, True, D(50_000), D(-6_000), D(50_000), D(0), D(0)))
-        self.assertEqual((bahan.penerima_nama, bahan.rumah_nama), ("Budi", "Rumah Ani"))
+        self.assertEqual((bahan.penerima_nama, bahan.penerima_id, bahan.rumah_nama), ("Budi", str(self.B), "Rumah Ani"))
 
     async def test_amplop_yang_dibuat_setelah_periode_tidak_ikut(self):
         """Ruling R8: refresh paksa snapshot sebelum laporan dibangun (Task 5) memberi snapshot nol pada amplop yang
@@ -507,10 +508,12 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
     async def test_transaksi_hanya_jendela_amplop_baris_urut_tanggal(self):
         t = self.t
 
+        id_user = {"Ani": str(self.A), "Budi": str(self.B)}
+
         def baris(kode, amplop, tanggal, jumlah, ket, pencatat="Ani", milik=True, penyesuaian=False, tagihan=False):
             return TransaksiPeriode(id=t[kode], amplop_id=str(amplop), tanggal=tanggal, jumlah=D(jumlah),
-                                    keterangan=ket, pencatat=pencatat, milik_penerima=milik,
-                                    penyesuaian=penyesuaian, tagihan=tagihan)
+                                    keterangan=ket, pencatat=pencatat, pencatat_id=id_user[pencatat],
+                                    milik_penerima=milik, penyesuaian=penyesuaian, tagihan=tagihan)
 
         self.assertEqual((await self.muat("a")).transaksi, [
             baris("t1", self.S, okt(1), 100_000, "Belanja bulanan"),
@@ -527,6 +530,22 @@ class MuatBahanTests(unittest.IsolatedAsyncioTestCase):
             baris("t9", self.S, okt(20), 40_000, "Penyesuaian saldo", penyesuaian=True),
             baris("t10", self.S, okt(31), 25_000, "Makan malam"),
         ])
+
+    async def test_pencatat_id_dari_user_transaksi_juga_mantan_anggota(self):
+        # Ruling R15: id pencatat = `transactions.user_id` apa adanya (teks), bukan ditebak dari nama (nama tidak unik).
+        # Catatan yang sudah dianonimkan hapus akun membawa id "Mantan anggota", sama dengan namanya.
+        from app.services.account_deletion import FORMER_MEMBER_ID, FORMER_MEMBER_NAME
+        async with self.Session() as db:
+            db.add(User(id=FORMER_MEMBER_ID, name=FORMER_MEMBER_NAME, email="deleted_mantan-anggota@jatahku.com"))
+            db.add(Transaction(envelope_id=self.S, user_id=FORMER_MEMBER_ID, amount=D(1_000),
+                               description="Transaksi mantan anggota", transaction_date=okt(16)))
+            await db.commit()
+            pencatat = dict((await db.execute(select(Transaction.id, Transaction.user_id))).all())
+        ani = (await self.muat("a")).transaksi
+        self.assertEqual({t.id: t.pencatat_id for t in ani}, {t.id: str(pencatat[uuid.UUID(t.id)]) for t in ani})
+        mantan = [t for t in ani if t.pencatat == FORMER_MEMBER_NAME]
+        self.assertEqual([t.pencatat_id for t in mantan], [str(FORMER_MEMBER_ID)])
+        self.assertEqual({type(t.pencatat_id) for t in ani}, {str})
 
     async def test_penanda_tagihan_dan_penyesuaian(self):
         ani = (await self.muat("a")).transaksi

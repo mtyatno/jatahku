@@ -37,6 +37,14 @@ Bisa `null`:
 Urutan: `amplop` dan `banding.amplop` menurut bahan; `harian` menurut tanggal; `terbesar` menurut jumlah;
 `terbayar`, `jatuh_tempo`, dan `mutasi` menurut tanggal. Seri selalu menurut urutan masukan (pengurutan stabil);
 di hari yang sama baris `masuk` mendahului baris `keluar` di `mutasi`.
+
+`pencatat_id` (Ruling R15, tambahan di versi 1 tanpa menaikkan `versi`): id user (teks UUID) yang mencatat baris itu,
+di setiap baris yang memuat nama atau teks seorang pencatat: `terbesar[]`, `langganan.terbayar[]` (namanya dari
+keterangan pembayaran), dan `mutasi[]` (baris `masuk` = penerima, yang mencatat pemasukannya sendiri). Dibekukan, tidak
+pernah ditampilkan: bila pencatat itu menghapus akun, `pencatat.anonimkan_pencatat` menulis ulang persis baris-baris itu
+di laporan penerima lain (nama tidak unik, jadi tidak bisa jadi kuncinya). Di baris seperti itu `pencatat` = nama
+pencatat dan `keterangan`/`nama` = teks catatannya; baris benda rumah tanpa pencatat tersimpan (`amplop[]`,
+`langganan.jatuh_tempo[]`, `sorotan.target[]`) tidak membawanya.
 """
 from collections import defaultdict
 from dataclasses import dataclass
@@ -84,14 +92,16 @@ class AmplopPeriode:
 
 @dataclass(frozen=True)
 class TransaksiPeriode:
-    """Satu pengeluaran di jendela laporan. `keterangan` sudah tersamar; `milik_penerima`: dicatat penerima
-    sendiri; `penyesuaian`: baris cocokkan saldo; `tagihan`: dibuat tombol Bayar langganan."""
+    """Satu pengeluaran di jendela laporan. `keterangan` sudah tersamar; `pencatat`/`pencatat_id`: nama dan id user
+    (teks) yang mencatatnya, wajib (Ruling R15); `milik_penerima`: dicatat penerima sendiri; `penyesuaian`: baris
+    cocokkan saldo; `tagihan`: dibuat tombol Bayar langganan."""
     id: str
     amplop_id: str
     tanggal: date
     jumlah: Decimal
     keterangan: str
     pencatat: str
+    pencatat_id: str
     milik_penerima: bool
     penyesuaian: bool
     tagihan: bool
@@ -125,10 +135,12 @@ class TargetTabungan:
 @dataclass(frozen=True)
 class BahanLaporan:
     """Semua masukan `susun_bulanan` untuk satu penerima dan satu periode; `angka_per` = tanggal terbit.
+    `penerima_id`: id user penerima (teks), pencatat baris pemasukan di `mutasi` (Ruling R15); wajib.
     `terpakai_lalu_total`: total terpakai tiga periode sebelumnya, terlama dulu (p-3, p-2, p-1), atas SEMUA amplop
     lingkup penerima yang punya snapshot periode itu, termasuk amplop yang bukan baris di `amplop` (sudah ditutup
     atau dihapus); `None` bila tak satu pun amplop lingkup punya snapshot periode itu. Wajib, tanpa nilai bawaan."""
     penerima_nama: str
+    penerima_id: str
     rumah_nama: str
     periode_mulai: date
     periode_akhir: date
@@ -324,6 +336,7 @@ def _terbesar(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> list[dic
             "keterangan": t.keterangan,
             "jumlah": uang(t.jumlah),
             "pencatat": t.pencatat,
+            "pencatat_id": t.pencatat_id,
         }
         for t in terbesar
     ]
@@ -337,8 +350,10 @@ def _nama_tagihan(keterangan: str) -> str:
 
 
 def _langganan(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> dict:
-    """`terbayar`: transaksi bertanda `tagihan` (bukan tebakan dari teks), menurut tanggal. `jatuh_tempo`: tagihan
-    periode berikutnya menurut tanggal; amplop di luar bahan tetap tampil dengan nama amplop null."""
+    """`terbayar`: transaksi bertanda `tagihan` (bukan tebakan dari teks), menurut tanggal; namanya dari keterangan
+    pembayarnya, jadi barisnya membawa `pencatat_id` pembayar. `jatuh_tempo`: tagihan periode berikutnya menurut
+    tanggal; amplop di luar bahan tetap tampil dengan nama amplop null. Langganan tidak menyimpan pembuatnya, jadi
+    baris jatuh tempo tanpa `pencatat_id`."""
     terbayar = sorted((t for t in bahan.transaksi if t.tagihan), key=lambda t: t.tanggal)
     jatuh_tempo = sorted(bahan.tagihan_berikut, key=lambda b: b.tanggal)
     return {
@@ -348,6 +363,7 @@ def _langganan(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> dict:
                 "nama": _nama_tagihan(t.keterangan),
                 "amplop": per_id[t.amplop_id].nama,
                 "jumlah": uang(t.jumlah),
+                "pencatat_id": t.pencatat_id,
             }
             for t in terbayar
         ],
@@ -399,6 +415,7 @@ def _mutasi(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> list[dict]
             "keterangan": p.keterangan,
             "jumlah": uang(p.jumlah),
             "pencatat": bahan.penerima_nama,
+            "pencatat_id": bahan.penerima_id,
             "penyesuaian": False,
         })
         for p in bahan.pemasukan
@@ -410,6 +427,7 @@ def _mutasi(bahan: BahanLaporan, per_id: dict[str, AmplopPeriode]) -> list[dict]
             "keterangan": t.keterangan,
             "jumlah": uang(t.jumlah),
             "pencatat": t.pencatat,
+            "pencatat_id": t.pencatat_id,
             "penyesuaian": bool(t.penyesuaian),
         })
         for t in bahan.transaksi

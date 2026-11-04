@@ -30,6 +30,12 @@ from app.services.laporan.susun import (
 D = Decimal
 PS, PE = date(2026, 10, 1), date(2026, 10, 31)
 UANG = re.compile(r"^-?\d+\.\d{2}$")
+# Id user pencatat (Ruling R15: dibekukan bersama baris, tidak pernah ditampilkan). Bentuk UUID seperti yang ditulis
+# pemuat (`str(user.id)`), supaya tes PDF bisa memastikan tidak ada id seperti ini yang tercetak.
+ID_ANI = "0a0a0a0a-0000-4000-8000-00000000a111"
+ID_BUDI = "0b0b0b0b-0000-4000-8000-00000000b222"
+ID_CITRA = "0c0c0c0c-0000-4000-8000-00000000c333"
+ID_PENCATAT = {"Ani": ID_ANI, "Budi": ID_BUDI, "Citra": ID_CITRA}
 
 
 def d(n: int) -> date:
@@ -60,12 +66,15 @@ def amplop_kecil(id: str, nama: str, awal, terpakai, **ubah) -> AmplopPeriode:
 
 
 def txn(**ubah) -> TransaksiPeriode:
-    """Satu transaksi 10.000 di amplop "env-s" pada 2 Okt yang dicatat penerima; `ubah` menimpa kolom mana pun."""
+    """Satu transaksi 10.000 di amplop "env-s" pada 2 Okt yang dicatat penerima; `ubah` menimpa kolom mana pun.
+    Tanpa `pencatat_id` di `ubah`, id pencatat diambil dari namanya (`ID_PENCATAT`), seperti pemuat yang membaca
+    nama dan id dari baris `users` yang sama."""
     nilai = dict(
         id="t", amplop_id="env-s", tanggal=d(2), jumlah=D(10_000), keterangan="Makan", pencatat="Ani",
         milik_penerima=True, penyesuaian=False, tagihan=False,
     )
     nilai.update(ubah)
+    nilai.setdefault("pencatat_id", ID_PENCATAT.get(nilai["pencatat"]))
     return TransaksiPeriode(**nilai)
 
 
@@ -115,7 +124,7 @@ def bahan(**ubah) -> BahanLaporan:
     karena seluruh lingkup bahan dasar adalah baris; tes pembanding mengisinya sendiri).
     """
     nilai = dict(
-        penerima_nama="Ani", rumah_nama="Rumah Ani", periode_mulai=PS, periode_akhir=PE, payday=1,
+        penerima_nama="Ani", penerima_id=ID_ANI, rumah_nama="Rumah Ani", periode_mulai=PS, periode_akhir=PE, payday=1,
         angka_per=date(2026, 11, 1),
         amplop=_amplop_dasar(), transaksi=_transaksi_dasar(),
         pemasukan=[PemasukanPeriode(d(2), D(5_000_000), "Gaji"), PemasukanPeriode(d(15), D(500_000), "Freelance")],
@@ -165,9 +174,10 @@ HARIAN_DASAR = {
 
 
 def _mutasi(tanggal, arah, amplop_nama, keterangan, jumlah, pencatat, penyesuaian=False) -> dict:
+    """Satu baris mutasi; `pencatat_id` = id pencatat menurut namanya (`ID_PENCATAT`)."""
     return {
         "tanggal": tanggal, "arah": arah, "amplop": amplop_nama, "keterangan": keterangan, "jumlah": jumlah,
-        "pencatat": pencatat, "penyesuaian": penyesuaian,
+        "pencatat": pencatat, "pencatat_id": ID_PENCATAT[pencatat], "penyesuaian": penyesuaian,
     }
 
 
@@ -206,18 +216,19 @@ def data_dasar() -> dict:
         "hari_terboros": {"tanggal": "2026-10-10", "terpakai": "250000.00"},
         "terbesar": [
             {"tanggal": "2026-10-10", "amplop": "Kebutuhan", "keterangan": "Belanja mingguan",
-             "jumlah": "250000.00", "pencatat": "Ani"},
+             "jumlah": "250000.00", "pencatat": "Ani", "pencatat_id": ID_ANI},
             {"tanggal": "2026-10-02", "amplop": "Kebutuhan", "keterangan": "Belanja bulanan",
-             "jumlah": "150000.00", "pencatat": "Ani"},
+             "jumlah": "150000.00", "pencatat": "Ani", "pencatat_id": ID_ANI},
             {"tanggal": "2026-10-12", "amplop": "Kebutuhan", "keterangan": "Listrik",
-             "jumlah": "100000.00", "pencatat": "Ani"},
+             "jumlah": "100000.00", "pencatat": "Ani", "pencatat_id": ID_ANI},
             {"tanggal": "2026-10-12", "amplop": "Jajan", "keterangan": "🔄 Netflix",
-             "jumlah": "54000.00", "pencatat": "Ani"},
+             "jumlah": "54000.00", "pencatat": "Ani", "pencatat_id": ID_ANI},
             {"tanggal": "2026-10-03", "amplop": "Kebutuhan", "keterangan": "Makan siang",
-             "jumlah": "50000.00", "pencatat": "Budi"},
+             "jumlah": "50000.00", "pencatat": "Budi", "pencatat_id": ID_BUDI},
         ],
         "langganan": {
-            "terbayar": [{"tanggal": "2026-10-12", "nama": "Netflix", "amplop": "Jajan", "jumlah": "54000.00"}],
+            "terbayar": [{"tanggal": "2026-10-12", "nama": "Netflix", "amplop": "Jajan", "jumlah": "54000.00",
+                          "pencatat_id": ID_ANI}],
             "jatuh_tempo": [
                 {"tanggal": "2026-11-05", "nama": "Listrik", "amplop": "Kebutuhan", "jumlah": "100000.00"},
                 {"tanggal": "2026-11-12", "nama": "Netflix", "amplop": "Jajan", "jumlah": "54000.00"},
@@ -277,12 +288,14 @@ class BentukDataTests(unittest.TestCase):
             self.assertEqual(set(baris), {"tanggal", "terpakai"})
         self.assertEqual(set(data["hari_terboros"]), {"tanggal", "terpakai"})
         for baris in data["terbesar"]:
-            self.assertEqual(set(baris), {"tanggal", "amplop", "keterangan", "jumlah", "pencatat"})
+            self.assertEqual(set(baris), {"tanggal", "amplop", "keterangan", "jumlah", "pencatat", "pencatat_id"})
         self.assertEqual(set(data["langganan"]), {"terbayar", "jatuh_tempo"})
-        for bagian in ("terbayar", "jatuh_tempo"):
+        # Terbayar = transaksi (punya pencatat, Ruling R15); jatuh tempo = langganan rumah, tanpa pencatat tersimpan.
+        for bagian, kunci in [("terbayar", {"tanggal", "nama", "amplop", "jumlah", "pencatat_id"}),
+                              ("jatuh_tempo", {"tanggal", "nama", "amplop", "jumlah"})]:
             self.assertTrue(data["langganan"][bagian])
             for baris in data["langganan"][bagian]:
-                self.assertEqual(set(baris), {"tanggal", "nama", "amplop", "jumlah"})
+                self.assertEqual(set(baris), kunci)
         self.assertEqual(
             set(data["sorotan"]),
             {"hari_mencatat", "beruntun_terpanjang", "streak_saat_ini", "amplop_aman", "target"},
@@ -291,7 +304,8 @@ class BentukDataTests(unittest.TestCase):
             self.assertEqual(set(baris), {"nama", "target", "terkumpul", "persen"})
         for baris in data["mutasi"]:
             self.assertEqual(
-                set(baris), {"tanggal", "arah", "amplop", "keterangan", "jumlah", "pencatat", "penyesuaian"}
+                set(baris),
+                {"tanggal", "arah", "amplop", "keterangan", "jumlah", "pencatat", "pencatat_id", "penyesuaian"},
             )
         self.assertEqual(
             set(data["email"]),
@@ -848,7 +862,7 @@ class TerbesarTests(unittest.TestCase):
         self.assertEqual([t["jumlah"] for t in terbesar], ["90000.00", "80000.00", "70000.00", "50000.00", "30000.00"])
         self.assertEqual(terbesar[0], {
             "tanggal": "2026-10-02", "amplop": "Kebutuhan", "keterangan": "b", "jumlah": "90000.00",
-            "pencatat": "Ani",
+            "pencatat": "Ani", "pencatat_id": ID_ANI,
         })
 
     def test_seri_mengikuti_urutan_masukan(self):
@@ -875,7 +889,7 @@ class TerbesarTests(unittest.TestCase):
         ])
         self.assertEqual(susun_bulanan(isi)["terbesar"], [{
             "tanggal": "2026-10-02", "amplop": "Jajan", "keterangan": "Transaksi privat",
-            "jumlah": "10000.00", "pencatat": "Budi",
+            "jumlah": "10000.00", "pencatat": "Budi", "pencatat_id": ID_BUDI,
         }])
 
 
@@ -885,7 +899,8 @@ class LanggananTests(unittest.TestCase):
             amplop=[amplop()], transaksi=[txn(keterangan="🔄 Netflix", tagihan=True, jumlah=D(54_000))]
         )
         self.assertEqual(susun_bulanan(isi)["langganan"]["terbayar"], [
-            {"tanggal": "2026-10-02", "nama": "Netflix", "amplop": "Kebutuhan", "jumlah": "54000.00"},
+            {"tanggal": "2026-10-02", "nama": "Netflix", "amplop": "Kebutuhan", "jumlah": "54000.00",
+             "pencatat_id": ID_ANI},
         ])
 
     def test_terbayar_menurut_penanda_tagihan_bukan_menurut_teks_dan_urut_tanggal(self):
@@ -896,14 +911,18 @@ class LanggananTests(unittest.TestCase):
             txn(id="4", amplop_id="env-s", tanggal=d(9), jumlah=D(120_000), keterangan="Transaksi privat",
                 tagihan=True),
             txn(id="5", amplop_id="env-s", tanggal=d(20), jumlah=D(90_000), keterangan="Bayar 🔄 Hosting",
-                tagihan=True),
+                tagihan=True, pencatat="Budi", milik_penerima=False),
         ])
         # Tanpa tagihan=True tidak masuk (Gym); keterangan tersamar atau tanpa penanda di awal dipakai apa adanya.
         self.assertEqual(susun_bulanan(isi)["langganan"]["terbayar"], [
-            {"tanggal": "2026-10-05", "nama": "Spotify", "amplop": "Jajan", "jumlah": "55000.00"},
-            {"tanggal": "2026-10-09", "nama": "Transaksi privat", "amplop": "Kebutuhan", "jumlah": "120000.00"},
-            {"tanggal": "2026-10-12", "nama": "Netflix", "amplop": "Jajan", "jumlah": "54000.00"},
-            {"tanggal": "2026-10-20", "nama": "Bayar 🔄 Hosting", "amplop": "Kebutuhan", "jumlah": "90000.00"},
+            {"tanggal": "2026-10-05", "nama": "Spotify", "amplop": "Jajan", "jumlah": "55000.00",
+             "pencatat_id": ID_ANI},
+            {"tanggal": "2026-10-09", "nama": "Transaksi privat", "amplop": "Kebutuhan", "jumlah": "120000.00",
+             "pencatat_id": ID_ANI},
+            {"tanggal": "2026-10-12", "nama": "Netflix", "amplop": "Jajan", "jumlah": "54000.00",
+             "pencatat_id": ID_ANI},
+            {"tanggal": "2026-10-20", "nama": "Bayar 🔄 Hosting", "amplop": "Kebutuhan", "jumlah": "90000.00",
+             "pencatat_id": ID_BUDI},
         ])
 
     def test_hanya_satu_penanda_di_awal_dibuang(self):
@@ -1025,7 +1044,7 @@ class MutasiTests(unittest.TestCase):
 
     def test_baris_masuk_tanpa_amplop_dengan_pencatat_penerima(self):
         isi = bahan(pemasukan=[PemasukanPeriode(d(2), D("1500000.5"), "Gaji")], penerima_nama="Citra",
-                    transaksi=[], tagihan_berikut=[], target=[])
+                    penerima_id=ID_CITRA, transaksi=[], tagihan_berikut=[], target=[])
         self.assertEqual(
             susun_bulanan(isi)["mutasi"],
             [_mutasi("2026-10-02", "masuk", None, "Gaji", "1500000.50", "Citra", penyesuaian=False)],
@@ -1056,6 +1075,71 @@ class MutasiTests(unittest.TestCase):
         self.assertTrue(tanggal == sorted(tanggal), "mutasi tidak urut tanggal")
         self.assertEqual(sum((Decimal(h["terpakai"]) for h in data["harian"]), D(0)), D("3000"))
         self.assertEqual(len(data["terbesar"]), 5)
+
+
+class PencatatIdTests(unittest.TestCase):
+    """Ruling R15: baris yang memuat nama atau teks seorang pencatat membawa `pencatat_id` (id user, teks UUID), supaya
+    baris itu bisa dianonimkan di laporan beku penerima lain bila pencatatnya menghapus akun. Nama tidak unik, jadi
+    tidak bisa jadi kuncinya. Id tidak pernah ditampilkan (halaman dan PDF membaca kunci yang lain)."""
+
+    def bahan_campur(self):
+        """Ani penerima; baris dari Ani dan Budi di setiap jenis baris berpencatat, termasuk tagihan Budi."""
+        return bahan(transaksi=[
+            *_transaksi_dasar(),
+            txn(id="b-tagihan", amplop_id="env-s", tanggal=d(14), jumlah=D(20_000), keterangan="🔄 Spotify",
+                pencatat="Budi", milik_penerima=False, tagihan=True),
+        ])
+
+    def test_setiap_jenis_baris_berpencatat_membawa_pencatat_id(self):
+        data = susun_bulanan(self.bahan_campur())
+        keluar = [m for m in data["mutasi"] if m["arah"] == "keluar"]
+        jenis = {
+            "terbesar": data["terbesar"],
+            "langganan.terbayar": data["langganan"]["terbayar"],
+            "mutasi masuk": [m for m in data["mutasi"] if m["arah"] == "masuk"],
+            "mutasi keluar": keluar,
+        }
+        for nama, baris in jenis.items():
+            with self.subTest(nama):
+                self.assertTrue(baris)  # fixture memuat jenis baris ini
+                for b in baris:
+                    self.assertIn("pencatat_id", b)
+        # Nilainya id pencatat transaksi itu; baris masuk = penerima (pemasukan yang dicatatnya sendiri).
+        self.assertEqual([t["pencatat_id"] for t in data["terbesar"]], [ID_ANI] * 4 + [ID_BUDI])
+        self.assertEqual([(t["nama"], t["pencatat_id"]) for t in data["langganan"]["terbayar"]],
+                         [("Netflix", ID_ANI), ("Spotify", ID_BUDI)])
+        self.assertEqual({m["pencatat_id"] for m in jenis["mutasi masuk"]}, {ID_ANI})
+        self.assertEqual({(m["pencatat"], m["pencatat_id"]) for m in keluar}, {("Ani", ID_ANI), ("Budi", ID_BUDI)})
+
+    def test_tidak_ada_nama_atau_teks_catatan_tanpa_pencatat_id(self):
+        # Pagar untuk baris baru: setiap kamus yang memuat `pencatat` atau `keterangan` (nama atau teks pencatat)
+        # membawa `pencatat_id`, di mana pun letaknya di `data`.
+        def kamus(nilai, jalur):
+            if isinstance(nilai, dict):
+                yield jalur, nilai
+                for k, v in nilai.items():
+                    yield from kamus(v, f"{jalur}.{k}")
+            elif isinstance(nilai, list):
+                for i, v in enumerate(nilai):
+                    yield from kamus(v, f"{jalur}[{i}]")
+
+        diperiksa = 0
+        for jalur, isi in kamus(susun_bulanan(self.bahan_campur()), "data"):
+            if {"pencatat", "keterangan"} & set(isi):
+                diperiksa += 1
+                self.assertIn("pencatat_id", isi, jalur)
+        self.assertGreater(diperiksa, 10)
+
+    def test_baris_benda_rumah_tanpa_pencatat_id(self):
+        # Amplop, target, dan langganan (jatuh tempo) tidak menyimpan siapa pembuatnya; hapus akun di aplikasi juga
+        # membiarkan nama amplop bersama, target, dan langganan rumah. Tanpa pencatat, tanpa `pencatat_id`.
+        data = susun_bulanan(self.bahan_campur())
+        for jalur, baris in [("amplop", data["amplop"]), ("jatuh_tempo", data["langganan"]["jatuh_tempo"]),
+                             ("target", data["sorotan"]["target"])]:
+            with self.subTest(jalur):
+                self.assertTrue(baris)
+                for b in baris:
+                    self.assertNotIn("pencatat_id", b)
 
 
 class EmailTests(unittest.TestCase):
@@ -1185,16 +1269,25 @@ class KontrakBahanTests(unittest.TestCase):
             "ditutup", "alokasi_per_hari", "terpakai_lalu",
         ])
         self.assertEqual(nama(TransaksiPeriode), [
-            "id", "amplop_id", "tanggal", "jumlah", "keterangan", "pencatat", "milik_penerima", "penyesuaian",
-            "tagihan",
+            "id", "amplop_id", "tanggal", "jumlah", "keterangan", "pencatat", "pencatat_id", "milik_penerima",
+            "penyesuaian", "tagihan",
         ])
         self.assertEqual(nama(PemasukanPeriode), ["tanggal", "jumlah", "keterangan"])
         self.assertEqual(nama(TagihanBerikut), ["tanggal", "nama", "amplop_id", "jumlah"])
         self.assertEqual(nama(TargetTabungan), ["nama", "amplop_id", "target"])
         self.assertEqual(nama(BahanLaporan), [
-            "penerima_nama", "rumah_nama", "periode_mulai", "periode_akhir", "payday", "angka_per", "amplop",
-            "transaksi", "pemasukan", "tagihan_berikut", "target", "streak_saat_ini", "terpakai_lalu_total",
+            "penerima_nama", "penerima_id", "rumah_nama", "periode_mulai", "periode_akhir", "payday", "angka_per",
+            "amplop", "transaksi", "pemasukan", "tagihan_berikut", "target", "streak_saat_ini", "terpakai_lalu_total",
         ])
+
+    def test_id_pencatat_dan_penerima_wajib_tanpa_nilai_bawaan(self):
+        # Ruling R15: id yang lupa diisi pemuat akan beku sebagai null, dan baris itu tak pernah bisa dianonimkan saat
+        # pencatatnya menghapus akun. Wajib, supaya pemuat yang lupa gagal saat membangun bahan, bukan diam-diam.
+        for kelas, nama_kolom in [(TransaksiPeriode, "pencatat_id"), (BahanLaporan, "penerima_id")]:
+            with self.subTest(kelas=kelas.__name__):
+                kolom = {f.name: f for f in dataclasses.fields(kelas)}[nama_kolom]
+                self.assertIs(kolom.default, dataclasses.MISSING)
+                self.assertIs(kolom.default_factory, dataclasses.MISSING)
 
     def test_terpakai_lalu_total_wajib_tanpa_nilai_bawaan(self):
         # Ruling R3: pemuat harus mengisinya (bukan bawaan [None, None, None] yang diam-diam menghapus pembanding).

@@ -27,6 +27,12 @@ Household:
   owner pindah ke anggota tertua. Peta merchant di amplop bersama tetap,
   `last_user_id` user ini dikosongkan.
 
+Laporan berkala beku milik user lain (anggota serumah, sekarang atau dulu) yang memuat
+catatan user ini: baris yang `pencatat_id`-nya user ini dianonimkan seperti catatan hidupnya
+(nama -> "Mantan anggota", keterangan -> "Transaksi mantan anggota" / "Pemasukan mantan
+anggota", "Transaksi privat" tetap; nominal tetap), di mana pun household-nya sekarang
+(Ruling R15, `laporan/pencatat.py`). Satu-satunya perubahan `data` laporan setelah terbit.
+
 "Mantan anggota" satu baris `users` bersama (FORMER_MEMBER_ID), bukan anggota household
 mana pun dan tidak bisa login. Email berawalan `deleted_` supaya scheduler, admin, dan
 email notifikasi melewatinya (konvensi yang sudah ada).
@@ -51,6 +57,7 @@ from app.models.models import (
     UserEnvelopeKeyword, UserStreak,
 )
 from app.services.kotak_struk import belajar
+from app.services.laporan.pencatat import anonimkan_pencatat
 
 logger = logging.getLogger("jatahku.account_deletion")
 
@@ -212,6 +219,11 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     stray = list((await db.execute(select(Envelope.id).where(Envelope.owner_id == uid))).scalars())
     await _delete_envelopes(db, stray)
     await _anonymize_leftovers(db, uid)
+    # Catatan yang sama di laporan beku milik user lain (Ruling R15). Di luar `_anonymize_leftovers`, yang berhenti
+    # lebih awal bila tak ada catatan hidup tersisa: laporan bisa memuat catatan yang sudah dihapus atau household yang
+    # ikut terhapus di atas. Laporan user ini sendiri dilewati (dihapus di daftar tingkat user di bawah).
+    await anonimkan_pencatat(db, uid, id_pengganti=str(FORMER_MEMBER_ID), nama_pengganti=FORMER_MEMBER_NAME,
+                             teks_pengeluaran=ANON_TXN_DESC, teks_pemasukan=ANON_INCOME_DESC)
 
     # Suara belajar Kotak Struk: dihapus lalu aturan yang pernah dipilih dihitung ulang (spec 2026-11-01 §8); jejak
     # keputusan admin di aturan dikosongkan eksplisit (FK SET NULL tidak selalu ada, mis. SQLite).

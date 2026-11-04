@@ -8,7 +8,9 @@ Privasi (kontrak visibilitas household, AGENTS.md) ditegakkan di sini, bukan di 
 - keterangan transaksi hanya lewat `visibility.masked_description`; penanda tombol Bayar (`BILL_MARKER`) hanya dibaca
   dari keterangan yang boleh dilihat penerima, supaya awalan keterangan privat anggota lain tidak bocor;
 - pemasukan hanya yang dicatat penerima sendiri (`pemasukan.filter_pemasukan_user`, definisi yang sama dengan
-  analitik), dan hanya pemasukan nyata (nominal di atas 0, jadi bukan transfer antar-amplop).
+  analitik), dan hanya pemasukan nyata (nominal di atas 0, jadi bukan transfer antar-amplop);
+- id pencatat (`TransaksiPeriode.pencatat_id` = `transactions.user_id`, `BahanLaporan.penerima_id` untuk pemasukan)
+  ikut dibekukan (Ruling R15): hapus akun memakainya untuk menganonimkan catatan pencatat itu di laporan penerima lain.
 Agregat (terpakai, alokasi) menghitung semua transaksi di amplop lingkup, termasuk yang privat dan penyesuaian.
 
 Angka ("satu sumber angka", tanpa rumus baru): per amplop dari `monthly_snapshots` kunci (tahun, bulan) awal periode;
@@ -95,6 +97,7 @@ async def muat_bahan(db, user, household, period_start: date, period_end: date, 
     ]
     return BahanLaporan(
         penerima_nama=user.name,
+        penerima_id=str(user.id),
         rumah_nama=household.name,
         periode_mulai=period_start,
         periode_akhir=period_end,
@@ -212,7 +215,8 @@ async def _alokasi_per_hari(db, env_ids: list, ps: date, pe: date) -> dict:
 async def _transaksi(db, user, env_ids: list, ps: date, pe: date) -> list[TransaksiPeriode]:
     """Transaksi tidak terhapus di amplop baris dalam jendela (himpunan `calculate_envelope_balance`), keterangan
     sudah disamarkan untuk `user`. Gabungan ke `users` untuk nama pencatat tidak membuang baris: `user_id` wajib
-    dan ber-FK (hapus akun memindahkan catatan ke "Mantan anggota")."""
+    dan ber-FK (hapus akun memindahkan catatan ke "Mantan anggota"). `pencatat_id` = `user_id` itu sebagai teks
+    (Ruling R15), kunci untuk menganonimkan baris beku bila pencatatnya kelak menghapus akun."""
     if not env_ids:
         return []
     hasil = []
@@ -234,6 +238,7 @@ async def _transaksi(db, user, env_ids: list, ps: date, pe: date) -> list[Transa
             jumlah=txn.amount,
             keterangan=masked_description(user.id, txn),
             pencatat=pencatat,
+            pencatat_id=str(txn.user_id),
             milik_penerima=str(txn.user_id) == str(user.id),
             penyesuaian=txn.balance_check_id is not None,
             tagihan=can_view_description(user.id, txn) and (txn.description or "").startswith(BILL_MARKER),

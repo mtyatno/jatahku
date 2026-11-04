@@ -11,6 +11,7 @@ from app.models.models import (
     PendingTransaction, PaymentOrder, ProofRule, Report, ReportSettings,
 )
 from app.services.kotak_struk import belajar
+from app.services.laporan.pencatat import alihkan_pencatat
 
 from app.services.ruang import keanggotaan_keluarga, ruang_keluarga_id
 
@@ -220,6 +221,11 @@ async def merge_users(
         update(ReportSettings).where(ReportSettings.user_id == source_user_id)
         .values(user_id=target_user_id)
     )
+
+    # 2e. Catatan sumber di laporan beku (milik target sesudah 2c, atau anggota lain; Ruling R15): `pencatat_id`
+    # sumber → target, nama dan teks tetap seperti saat terbit. Tanpa ini barisnya menunjuk akun yang dihapus di
+    # langkah 8, dan hapus akun target kelak tidak bisa menganonimkannya.
+    await alihkan_pencatat(db, source_user_id, target_user_id)
 
     # 3. Reassign personal envelopes → target
     await db.execute(
