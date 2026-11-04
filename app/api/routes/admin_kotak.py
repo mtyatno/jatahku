@@ -39,8 +39,8 @@ from app.core.database import get_db
 from app.core.deps import require_admin
 from app.models.models import ProofRule, ProofRuleVote, User
 from app.services.kotak_struk import belajar
-from app.services.kotak_struk.config import APP_NEW
-from app.services.kotak_struk.kerangka import ARAH_JUDUL, ARAH_KE, LOGO_PREFIX, arah_token_ok, logo_word
+from app.services.kotak_struk.config import APP_NEW, ARAH_FLOWS
+from app.services.kotak_struk.kerangka import ARAH_JUDUL, ARAH_KE, arah_token_ok, logo_word
 from app.services.kotak_struk.kerangka import words as label_words   # normalisasi kata yang sama dengan safe_label
 from app.services.kotak_struk.readers.profiles import PROFILES
 
@@ -67,7 +67,10 @@ EXAMPLE_VALUE = {
 
 # Contoh jenis tahap 2 (M3d): nama aplikasi (nilai `logo`) dan arah uang (nilai `arah`) dari daftar tetap.
 APP_EXAMPLE = {**{p.key: p.label for p in PROFILES}, APP_NEW: "Aplikasi baru"}
-FLOW_EXAMPLE = {"top_up": "Top-up", "masuk": "Uang masuk", "antar_rekening_sendiri": "Rekening sendiri"}
+_FLOW_TEXT = {"top_up": "Top-up", "masuk": "Uang masuk", "antar_rekening_sendiri": "Rekening sendiri"}
+# Dibangun dari ARAH_FLOWS: flow baru tanpa teks -> KeyError saat impor (gagal keras, bukan "…" diam-diam).
+FLOW_EXAMPLE = {flow: _FLOW_TEXT[flow] for flow in ARAH_FLOWS}
+_PROFILE_KEYS = frozenset(p.key for p in PROFILES)
 MASKED_LOGO_KEY = "logo:*"
 
 StatusFilter = Literal["menunggu", "disetujui", "ditolak", "dicabut", "semua"]
@@ -182,11 +185,12 @@ def rule_warning(kind: str, value: str) -> bool:
 
 
 def vote_key(kind: str, rule_key: str) -> str:
-    """Kunci yang ditampilkan tab Suara (K15): kunci `arah` hanya aplikasinya (bagian sebelum "|"), dan kunci logo
-    (`logo:<kata>`, juga sebagai aplikasi kunci arah) menjadi `logo:*` untuk jenis apa pun. Kunci profil apa adanya."""
+    """Kunci yang ditampilkan tab Suara (K15): kunci `arah` hanya aplikasinya (bagian sebelum "|"); lalu hanya kunci
+    profil yang tampil apa adanya (daftar izin), selain itu `logo:*` untuk jenis apa pun: kunci logo (`logo:<kata>`,
+    juga sebagai aplikasi kunci arah) dan data tangan/rusak ("LOGO:andi", " logo:andi")."""
     if kind == belajar.KIND_ARAH or "|" in rule_key:
         rule_key = rule_key.split("|", 1)[0]
-    return MASKED_LOGO_KEY if rule_key.startswith(LOGO_PREFIX) else rule_key
+    return rule_key if rule_key in _PROFILE_KEYS else MASKED_LOGO_KEY
 
 
 def _rule_out(rule: ProofRule, decided_by_name: str | None) -> ProofRuleOut:

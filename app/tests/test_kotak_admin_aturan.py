@@ -696,7 +696,75 @@ class LogoArahVotesTests(AdminRulesBase):
         self.assertEqual(vote_key("arah", "logo:newpay|judul:top up"), "logo:*")
         self.assertEqual(vote_key("arah", "gopay"), "gopay")
         self.assertEqual(vote_key("label_total", "gopay"), "gopay")
-        self.assertEqual(vote_key("label_total", "mystery_app"), "mystery_app")
+        # Daftar izin (review M3d nit 2): hanya kunci profil tampil; data tangan/rusak selalu tersamar.
+        for key in ("mystery_app", "LOGO:andi", " logo:andi", "Logo:andi", "andi", "", "GOPAY"):
+            self.assertEqual(vote_key("label_total", key), "logo:*", key)
+        self.assertEqual(vote_key("arah", "LOGO:andi|judul:top up"), "logo:*")
+        self.assertEqual(vote_key("arah", "andi|ke:gopay topu"), "logo:*")
+
+    async def test_hand_entered_odd_keys_never_shown(self):
+        await self.vote("bsi", self.user, kind="logo", key="LOGO:andi")
+        await self.vote("nominal", self.user2, kind="label_total", key="siti rahma")
+        res = await self.c.get("/admin/kotak/votes")
+        self.assertEqual(res.json()["rows"], [{"rule_key": "logo:*", "kind": "label_total", "users": 1, "values": 1},
+                                              {"rule_key": "logo:*", "kind": "logo", "users": 1, "values": 1}])
+        for secret in ("andi", "ANDI", "siti", "rahma"):
+            self.assertNotIn(secret, res.text)
+
+
+class ClientVocabularyTests(unittest.TestCase):
+    """`frontend/src/lib/proofRules.js` menyalin label arah uang dan kosakata kata kunci contoh dari server (review M3d
+    nit 1, 3; pola `test_kotak_bot.test_app_choices_match_profiles`): salinan harus sama persis."""
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        cls.source = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "proofRules.js").read_text(
+            encoding="utf-8")
+
+    def js_set(self, name):
+        import re
+        m = re.search(rf"const {name} = new Set\(\((.*?)\)\.split\(' '\)\);", self.source, re.S)
+        self.assertIsNotNone(m, name)
+        return set("".join(re.findall(r"'([^']*)'", m.group(1))).split(" "))
+
+    def js_int(self, name):
+        import re
+        return int(re.search(rf"const {name} = (\d+);", self.source).group(1))
+
+    def test_flow_labels_cover_exactly_arah_flows(self):
+        import re
+        from app.api.routes import admin_kotak
+        from app.services.kotak_struk.config import ARAH_FLOWS
+        table = re.search(r"const FLOW_LABEL = \{(.*?)\};", self.source, re.S).group(1)
+        self.assertEqual(re.findall(r"(?:^|,)\s*([a-z_]+):", table), list(ARAH_FLOWS))
+        self.assertEqual(list(admin_kotak.FLOW_EXAMPLE), list(ARAH_FLOWS))
+        # Teks klien = teks contoh server.
+        texts = dict(re.findall(r"([a-z_]+): '([^']*)'", table))
+        self.assertEqual(texts, admin_kotak.FLOW_EXAMPLE)
+
+    def test_server_flow_labels_fail_loudly_on_a_missing_flow(self):
+        import importlib
+        from app.api.routes import admin_kotak
+        from app.services.kotak_struk import config
+        with patch.object(config, "ARAH_FLOWS", (*config.ARAH_FLOWS, "flow_baru")):
+            with self.assertRaises(KeyError):
+                importlib.reload(admin_kotak)
+        importlib.reload(admin_kotak)
+        self.assertEqual(list(admin_kotak.FLOW_EXAMPLE), list(config.ARAH_FLOWS))
+
+    def test_keyword_vocabulary_matches_kerangka(self):
+        import re
+        from app.services.kotak_struk import config, kerangka
+        plain = lambda words: {w for w in words if re.fullmatch(r"[a-z]+", w)}
+        self.assertEqual(self.js_set("LOGO_COMPANIONS"), plain(kerangka.LOGO_COMPANIONS))
+        self.assertEqual(self.js_set("JUDUL_WORDS"), plain(kerangka.TITLE_WORDS - kerangka.ARAH_STATUS_WORDS))
+        self.assertEqual(self.js_set("ARAH_GENERIC"), plain(kerangka.ARAH_GENERIC))
+        self.assertEqual(self.js_set("ARAH_PARTY_WORDS"), plain(kerangka.ARAH_PARTY_WORDS))
+        self.assertEqual(self.js_set("TOP_UP_WORDS"), plain(kerangka.TOP_UP_WORDS))
+        for name in ("LOGO_MAX_WORDS", "LOGO_MIN_LETTERS", "TITLE_MAX_WORDS", "ARAH_KE_MIN_WORDS", "ARAH_KE_MAX_WORDS"):
+            self.assertEqual(self.js_int(name), getattr(kerangka, name), name)
+        self.assertEqual(self.js_int("KEY_MAX"), config.KEY_MAX)
 
 
 class LogoArahDecisionTests(AdminRulesBase):

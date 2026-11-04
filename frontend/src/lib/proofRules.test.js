@@ -96,6 +96,24 @@ test('syntheticExample logo dan arah (M3d): dari jenis, kunci, nilai sendiri; hu
     'Kata kunci "…" → Top-up', 'Kata kunci "…" → Uang masuk', 'Kata kunci "…" → Top-up',
   ]);
   for (const t of broken) assert.doesNotMatch(t, /\d|siti|andi|budi|toString/i);
+  // Data tangan berbentuk huruf tetapi di luar pemeriksaan server (review M3d nit 1): nama orang tidak pernah tampil.
+  const hand = [
+    ex('logo', 'logo:siti rahma', 'bsi'), ex('logo', 'logo:ab', 'bsi'), ex('logo', 'logo:bank raya mobile', 'bsi'),
+    ex('logo', 'logo:bank bank', 'bsi'), ex('arah', 'gopay|ke:andi topup', 'top_up'),
+    ex('arah', 'gopay|ke:topup', 'top_up'), ex('arah', 'gopay|ke:top up', 'top_up'),
+    ex('arah', 'gopay|ke:gopay top up saldo', 'top_up'), ex('arah', 'gopay|judul:andi', 'top_up'),
+    ex('arah', 'gopay|judul:transfer', 'top_up'), ex('arah', 'gopay|judul:top top', 'top_up'),
+    ex('arah', 'gopay|judul:top up isi saldo ke gopay dana', 'top_up'),
+  ];
+  assert.deepEqual(hand, [
+    'Logo "…" → BSI', 'Logo "…" → BSI', 'Logo "…" → BSI', 'Logo "…" → BSI', ...Array(8).fill('Kata kunci "…" → Top-up'),
+  ]);
+  for (const t of hand) assert.doesNotMatch(t, /SITI|RAHMA|ANDI|andi/);
+  // Bentuk sah tetap tampil (pembanding).
+  assert.equal(ex('logo', 'logo:bank raya', 'bsi'), 'Logo "BANK RAYA" → BSI');
+  assert.equal(ex('logo', 'logo:andi', 'bsi'), 'Logo "ANDI" → BSI');   // sisa M2a yang diterima: peringatan logo
+  assert.equal(ex('arah', 'gopay|ke:gopay top up', 'top_up'), 'Penerima "GOPAY TOP UP…" → Top-up');
+  assert.equal(ex('arah', 'gopay|judul:top up saldo', 'top_up'), 'Judul "top up saldo" → Top-up');
   assert.equal(ex('logo', 'logo:newpay', ''), null);
   assert.equal(ex('arah', 'gopay|judul:top up', null), null);
 });
@@ -111,6 +129,11 @@ test('ruleAppLabel dan voteKey: kunci arah = aplikasinya; logo:* tersamar', () =
   assert.equal(voteKey('arah', 'logo:newpay|judul:top up'), 'logo:*');
   assert.equal(voteKey('label_total', 'gopay'), 'gopay');
   assert.equal(voteKey('label_total', null), null);
+  // Daftar izin (review M3d nit 2): hanya kunci profil; data tangan/rusak tersamar.
+  for (const key of ['mystery_app', 'LOGO:andi', ' logo:andi', 'andi', 'GOPAY', 'toString', '__proto__']) {
+    assert.equal(voteKey('label_total', key), 'logo:*', key);
+  }
+  assert.equal(voteKey('arah', 'LOGO:andi|judul:top up'), 'logo:*');
 });
 
 test('ruleRows logo dan arah: label jenis, nilai terbaca, contoh, peringatan nama orang untuk setiap logo', () => {
