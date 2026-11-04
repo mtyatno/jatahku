@@ -59,5 +59,5 @@ ARAH_FLOWS = ("top_up", "masuk", "antar_rekening_sendiri")   # alasan "Bukan pen
 # --- Donasi contoh (tahap 2, plan 2026-11-04 Global Constraints; pre-flight A16 G2, G6) ---
 SAMPLE_MAX_LINES = 80                     # baris tersamar per sampel donasi
 SAMPLE_LINE_MAX = 200                     # karakter per baris sampel
-SAMPLE_TTL = timedelta(days=30)           # sampel menunggu (sejak dibuat) dan disetujui (sejak diputuskan) dihapus
+SAMPLE_TTL = timedelta(days=7)            # sampel menunggu (sejak dibuat) dan disetujui (sejak diputuskan) dihapus
 SAMPLE_TYPES = LAYOUT_TYPES               # doc_type yang boleh menyumbang baris (struk belanja tidak)

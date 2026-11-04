@@ -1348,6 +1348,61 @@ class DonationRecordingTests(DonationMixin, TxnBase):
         self.assertEqual(((await self.get(other.id)).channel_meta["app_choice"], len(await self.samples())), ("bsi", 1))
         self.assertTrue(await self.sql_null_lines(other.id))
 
+    @contextlib.contextmanager
+    def written(self):
+        """Pernyataan SQL (spasi dirapatkan) yang dijalankan di dalam blok."""
+        seen = []
+        hook = lambda *a: seen.append(" ".join(a[2].split()))   # noqa: E731
+        event.listen(self.engine.sync_engine, "before_cursor_execute", hook)
+        try:
+            yield seen
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", hook)
+
+    def assert_consent_locked_before_item(self, seen):
+        consent = [i for i, s in enumerate(seen) if s.startswith("SELECT") and "FROM proof_sample_consents" in s]
+        item = [i for i, s in enumerate(seen) if s.startswith("UPDATE receipt_scans")]
+        self.assertTrue(consent and item, seen)
+        self.assertLess(consent[0], item[0], seen)
+
+    async def test_lock_order_consent_before_item(self):
+        # Review M1c temuan 5: lewati dan jawaban aplikasi mengunci persetujuan sebelum baris item (urutan yang sama
+        # dengan `forget_user`), supaya penarikan bersamaan tidak deadlock.
+        item = await self.ready_gopay()
+        await self.captured(item.id)
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, item.id, self.a.id, "bukan_pengeluaran",
+                                                           alasan="top_up"))
+        self.assert_consent_locked_before_item(seen)
+        self.assertEqual(len(await self.samples()), 1)
+        app_item = await self.ready(NEWPAY)
+        await self.captured(app_item.id)
+        with self.written() as seen:
+            async with self.Session() as db:
+                got = await db.get(ReceiptScan, app_item.id)
+                self.assertTrue(await record_mod.choose_app(db, got, "bsi", user_id=self.a.id, user_name="Ani"))
+                await db.commit()
+        self.assert_consent_locked_before_item(seen)
+        lock_select = next(i for i, s in enumerate(seen) if s.startswith("SELECT receipt_scans.channel_meta"))
+        self.assertLess(next(i for i, s in enumerate(seen) if "FROM proof_sample_consents" in s), lock_select)
+        self.assertEqual(len(await self.samples()), 2)
+        # Tanpa baris tersamar (bukan pendonor): tidak ada kunci persetujuan.
+        await self.enable_donation(consent=False)
+        plain = await self.ready_gopay()
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, plain.id, self.a.id, "batal"))
+        self.assertFalse([s for s in seen if "proof_sample_consents" in s], seen)
+        # "Nominal salah" (`keep_sample`): baris dibiarkan, tanpa kunci di lewati (donasi menyusul di bot).
+        await self.enable_donation()
+        kept = await self.ready_gopay()
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, kept.id, self.a.id, "batal", keep_sample=True))
+        self.assertFalse([s for s in seen if "proof_sample_consents" in s], seen)
+        self.assertTrue((await self.get(kept.id)).sample_lines)
+
     async def test_without_capture_nothing_is_read_or_stored(self):
         # Tanpa baris tersamar (user tidak setuju saat dibaca): donasi tidak membaca saklar/persetujuan sama sekali.
         await self.enable_donation(consent=False)

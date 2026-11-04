@@ -179,8 +179,11 @@ class ConsentApiTests(DonasiBase):
         r = await self.client.put("/user/kotak-donasi", json={"consented": False})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"available": True, "consented": False, "consented_at": None})
-        # Semua sampel user (menunggu DAN disetujui), persetujuannya, dan baris di itemnya hilang (SQL NULL).
-        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.user.id), 0)
+        # Sampel menunggu, persetujuan, dan baris di itemnya hilang (SQL NULL); yang sudah disetujui pemilik tetap
+        # (keputusan pemilik, M1c fix 2; berumur SAMPLE_TTL).
+        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.user.id), 1)
+        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.user.id,
+                                          ProofSample.status == "disetujui"), 1)
         self.assertEqual(await self.count(ProofSampleConsent, ProofSampleConsent.user_id == self.user.id), 0)
         self.assertTrue(await self.sql_null_sample_lines(item))
         self.assertTrue(await self.sql_null_sample_lines(done))
@@ -199,7 +202,8 @@ class ConsentApiTests(DonasiBase):
         r = await self.client.put("/user/kotak-donasi", json={"consented": False})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"available": False, "consented": False, "consented_at": None})
-        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.user.id), 0)
+        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == self.user.id,
+                                          ProofSample.status != "disetujui"), 0)
         self.assertTrue(await self.sql_null_sample_lines(item))
         # Menarik tanpa persetujuan sebelumnya juga boleh (idempoten).
         self.assertEqual((await self.client.put("/user/kotak-donasi", json={"consented": False})).status_code, 200)
@@ -255,15 +259,22 @@ class DonasiServiceTests(DonasiBase):
             await db.rollback()
         self.assertEqual(await self.count(ProofSampleConsent), 1)
 
-    async def test_set_consent_off_forgets_everything(self):
+    async def test_set_consent_off_keeps_only_approved_samples(self):
+        # Keputusan pemilik (M1c fix 2): menarik persetujuan menyisakan sampel `disetujui`; menunggu/ditolak, baris
+        # persetujuan, dan baris tersamar hilang. `forget_user` bawaan (hapus akun, gabung akun) menghapus semuanya.
         from app.services.kotak_struk import donasi
         item, _ = await self.add_samples(self.user, statuses=("menunggu", "disetujui", "ditolak"))
         async with self.Session() as db:
             self.assertIsNone(await donasi.set_consent(db, self.user.id, False, now=T0))
             self.assertFalse(await donasi.consented(db, self.user.id))
             await db.commit()
-        self.assertEqual(await self.count(ProofSample), 0)
+        async with self.Session() as db:
+            self.assertEqual(list((await db.execute(select(ProofSample.status))).scalars()), ["disetujui"])
         self.assertTrue(await self.sql_null_sample_lines(item))
+        async with self.Session() as db:
+            await donasi.forget_user(db, self.user.id)
+            await db.commit()
+        self.assertEqual(await self.count(ProofSample), 0)
 
     async def test_forget_user_only_touches_that_user(self):
         from app.services.kotak_struk import donasi

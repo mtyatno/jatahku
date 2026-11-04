@@ -175,6 +175,9 @@ async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, re
     meta = {**(row.channel_meta or {}), "skip_reason": reason}
     if alasan is not None:
         meta["skip_alasan"] = alasan
+    if row.sample_lines and not keep_sample:
+        # Urutan kunci (review M1c temuan 5): persetujuan sebelum baris item, sama dengan `donasi.forget_user`.
+        await donasi.lock_consent(db, user_id)
     done = await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)))
@@ -347,6 +350,9 @@ async def choose_app(db: AsyncSession, item: ReceiptScan, choice: str, *, user_i
     keduanya): `belajar.learn_app_choice` (sekali per item, suara `logo`), lalu bila jawabannya tersimpan, donasi
     contoh `aplikasi` (`donasi.donate`, truth `app`). `belajar` tidak mengimpor `donasi`; kaitnya di sini. Tidak
     meng-commit (pemanggil meng-commit); galat donasi ditelan. True bila jawabannya tersimpan."""
+    if item.sample_lines:
+        # Urutan kunci (review M1c temuan 5): persetujuan sebelum `learn_app_choice` mengunci baris item.
+        await donasi.lock_consent(db, user_id)
     if not await belajar.learn_app_choice(db, item, choice, user_id=user_id, user_name=user_name):
         return False
     if item.sample_lines:

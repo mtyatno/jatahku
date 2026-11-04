@@ -247,10 +247,10 @@ class SamplePurgeTests(MaintenanceBase):
         gone = [await self.sample("menunggu", created=old),
                 await self.sample("disetujui", created=old, decided=old)]
         kept = [await self.sample("menunggu", created=young),
-                await self.sample("menunggu", created=NOW - SAMPLE_TTL),              # tepat 30 hari
+                await self.sample("menunggu", created=NOW - SAMPLE_TTL),              # tepat 7 hari
                 await self.sample("disetujui", created=old, decided=young),          # umur dari keputusan
                 await self.sample("ditolak", created=old, decided=old)]              # dihapus saat diputuskan (M1d)
-        self.assertEqual(SAMPLE_TTL, timedelta(days=30))
+        self.assertEqual(SAMPLE_TTL, timedelta(days=7))   # keputusan pemilik
         self.assertEqual(await maintenance.purge_samples(self.db, now=NOW), len(gone))
         self.assertEqual(await self.remaining(), {k.hex for k in kept})
         self.assertFalse(self.db.in_transaction())   # commit sendiri

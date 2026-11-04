@@ -8,16 +8,19 @@ Bagian M1a: saklar, persetujuan, dan lupa. Bagian M1b: `sample_lines` (baris ter
 M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tinjauan `proof_samples`).
 - `donation_available`: saklar menyala (web).
 - `consented` / `set_consent`: satu baris `proof_sample_consents` per user; menyalakan idempoten (waktu pertama tetap),
-  mematikan = menghapus baris itu dan `forget_user`.
+  mematikan = menghapus baris itu dan `forget_user(keep_approved=True)` (sampel yang sudah disetujui pemilik tetap).
 - `sample_lines` (M1b, pre-flight A16 §2, K5, G6): dari teks OCR dan hasil baca SEBELUM disamarkan (titik yang sama
   dengan kerangka tata letak worker), hanya dipanggil worker untuk user yang setuju saat saklar menyala.
 - `correction_trigger` / `donate` (M1c, pre-flight A16 §2 "Trigger points", K3, G7): titik koreksi yang sudah ada
   (`record.mark_recorded`, `record.skip_item`, `record.choose_app`, bot "Nominal salah") memanggil `donate`; koreksi
   memindahkan `sample_lines` ke `proof_samples` (status `menunggu`), selain itu (bacaan benar, `batal`/`duplikat`,
   persetujuan ditarik, saklar mati) baris itu dikosongkan. Pembersihan umur sampel: `maintenance.purge_samples`.
-- `forget_user` (G4): semua `proof_samples` user (juga yang disetujui), persetujuannya, dan `receipt_scans.sample_lines`
-  miliknya. Dipakai saat menarik persetujuan, hapus akun (`account_deletion.delete_account`), dan gabung akun
-  (`merge.merge_users`, source; persetujuan tidak diwariskan ke target).
+- `forget_user` (G4): persetujuan user, `proof_samples`-nya, dan `receipt_scans.sample_lines` miliknya. Hapus akun
+  (`account_deletion.delete_account`) dan gabung akun (`merge.merge_users`, source; persetujuan tidak diwariskan ke
+  target) menghapus SEMUA sampel; menarik persetujuan menyisakan sampel yang sudah `disetujui` (keputusan pemilik).
+- Urutan kunci (review M1c temuan 1, 5): selalu baris persetujuan SEBELUM `receipt_scans`. `forget_user` menghapus
+  persetujuan lebih dulu; pendonor yang mengunci baris item (lewati, jawaban aplikasi) mengambil kunci persetujuan
+  (`lock_consent`) sebelum itu.
 
 Tidak ada fungsi di sini yang meng-commit; pemanggil (route, hapus akun, gabung akun) meng-commit. Modul ini tidak
 menanyakan keanggotaan household (`test_ruang_pagar`).
@@ -72,6 +75,18 @@ def _locked_consent(user_id: uuid.UUID):
     return select(ProofSampleConsent.user_id).where(ProofSampleConsent.user_id == user_id).with_for_update(read=True)
 
 
+async def lock_consent(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Ambil kunci FOR SHARE baris persetujuan user (bila ada) sampai transaksi pemanggil selesai, SEBELUM pemanggil
+    mengunci baris `receipt_scans` (review M1c temuan 5: urutan kunci sama dengan `forget_user`, persetujuan lalu
+    item, supaya lewati/jawaban aplikasi dan penarikan bersamaan tidak saling menunggu). SAVEPOINT; tidak pernah
+    melempar (galat -> log jenis galat saja); tidak meng-commit."""
+    try:
+        async with db.begin_nested():
+            await db.execute(_locked_consent(user_id))
+    except Exception as exc:
+        log.warning("kunci persetujuan donasi Kotak Struk tidak diambil (%s)", type(exc).__name__)
+
+
 async def still_consented(db: AsyncSession, user_id: uuid.UUID) -> bool:
     """Saklar menyala DAN persetujuan user masih ada, dibaca dengan kunci FOR SHARE sampai transaksi pemanggil selesai.
     Dipakai tepat sebelum menulis baris tersamar (worker `_store`) atau sampel (`donate`)."""
@@ -89,11 +104,12 @@ async def consented_at(db: AsyncSession, user_id: uuid.UUID) -> datetime | None:
 async def set_consent(db: AsyncSession, user_id: uuid.UUID, on: bool, *, now: datetime) -> datetime | None:
     """Nyalakan (`on`) atau tarik persetujuan donasi contoh. Menyalakan idempoten: baris yang sudah ada tidak diubah
     (waktu persetujuan pertama tetap), dua permintaan bersamaan tidak menggagalkan satu sama lain (SAVEPOINT);
-    mengembalikan waktu persetujuan. Menarik: baris persetujuan dihapus dan `forget_user` (semua sampel dan baris
-    tersamar user ini); mengembalikan None. Tidak memeriksa saklar (route yang menolak menyalakan saat saklar mati) dan
+    mengembalikan waktu persetujuan. Menarik: `forget_user(keep_approved=True)` (baris persetujuan, sampel
+    `menunggu`/`ditolak`, dan baris tersamar user ini dihapus; sampel yang sudah `disetujui` pemilik tetap sampai
+    SAMPLE_TTL); mengembalikan None. Tidak memeriksa saklar (route yang menolak menyalakan saat saklar mati) dan
     tidak meng-commit."""
     if not on:
-        await forget_user(db, user_id)
+        await forget_user(db, user_id, keep_approved=True)
         return None
     current = await consented_at(db, user_id)
     if current is not None:
@@ -107,16 +123,20 @@ async def set_consent(db: AsyncSession, user_id: uuid.UUID, on: bool, *, now: da
     return await consented_at(db, user_id)
 
 
-async def forget_user(db: AsyncSession, user_id: uuid.UUID) -> None:
-    """Lupakan semua donasi user ini (G4): hapus semua `proof_samples`-nya (menunggu, disetujui, ditolak), baris
-    persetujuannya, dan kosongkan `receipt_scans.sample_lines` miliknya (SQL NULL). Sampel milik user lain yang pernah
+async def forget_user(db: AsyncSession, user_id: uuid.UUID, *, keep_approved: bool = False) -> None:
+    """Lupakan donasi user ini (G4): hapus baris persetujuannya, `proof_samples`-nya (menunggu, disetujui, ditolak;
+    `keep_approved`: yang `disetujui` tetap, keputusan pemilik saat menarik persetujuan), dan kosongkan
+    `receipt_scans.sample_lines` miliknya (SQL NULL). Hapus akun dan gabung akun memakai bawaan (semua). Sampel milik user lain yang pernah
     ia putuskan sebagai admin tidak disentuh (pemanggil hapus akun mengosongkan `decided_by`). Tidak meng-commit.
 
     Urutan (review M1c temuan 1): baris persetujuan DIHAPUS LEBIH DULU. Pendonor yang sedang memegang kunci FOR SHARE
     (`still_consented`) membuat DELETE ini menunggu sampai ia commit; pernyataan berikutnya (READ COMMITTED: snapshot
     baru) lalu menghapus sampel dan baris tersamar yang baru di-commit itu."""
     await db.execute(delete(ProofSampleConsent).where(ProofSampleConsent.user_id == user_id))
-    await db.execute(delete(ProofSample).where(ProofSample.user_id == user_id))
+    samples = delete(ProofSample).where(ProofSample.user_id == user_id)
+    if keep_approved:
+        samples = samples.where(ProofSample.status != "disetujui")
+    await db.execute(samples)
     await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.user_id == user_id, ReceiptScan.sample_lines.is_not(None))

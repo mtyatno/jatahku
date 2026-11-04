@@ -39,7 +39,7 @@ class ConstantsTests(unittest.TestCase):
     def test_donation_constants(self):
         # Kotak Struk belajar tahap 2 (plan 2026-11-04, Global Constraints).
         self.assertEqual((K.SAMPLE_MAX_LINES, K.SAMPLE_LINE_MAX), (80, 200))
-        self.assertEqual(K.SAMPLE_TTL, timedelta(days=30))
+        self.assertEqual(K.SAMPLE_TTL, timedelta(days=7))   # keputusan pemilik (M1c fix 2)
         self.assertEqual(K.SAMPLE_TYPES, K.LAYOUT_TYPES)
         self.assertEqual((K.APP_NEW, K.ARAH_FLOWS, K.KEY_MAX), ("baru", ("top_up", "masuk", "antar_rekening_sendiri"), 60))
 
