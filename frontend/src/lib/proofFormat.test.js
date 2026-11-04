@@ -4,7 +4,7 @@ import {
   ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
   parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
   savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText, readOnlyNotice, needsRecheck,
-  recheckOutcome, APP_CHOICES, appQuestion, appChoiceOutcome,
+  recheckOutcome, APP_CHOICES, appQuestion, appChoiceOutcome, SKIP_REASONS, skipReasonChoices, skipBody,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -564,4 +564,64 @@ test('appChoiceOutcome: ok → terima kasih; 409/404 → teks server; selain itu
   assert.deepEqual(appChoiceOutcome({ ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } }),
     { kind: 'error', text: 'Koneksi gagal, coba lagi' });
   assert.deepEqual(appChoiceOutcome(null), { kind: 'error', text: 'Gagal mengirim. Coba lagi.' });
+});
+
+// ── Tahap 2 M3c: alasan "Bukan pengeluaran" ─────────────────────────────────────────────────────────────────────
+
+test('SKIP_REASONS (M3c): tiga arah uang server (ARAH_FLOWS) + Lainnya tanpa alasan', () => {
+  assert.deepEqual(SKIP_REASONS.map(r => [r.alasan, r.label]), [
+    ['top_up', 'Top-up saldo sendiri'], ['masuk', 'Uang masuk'], ['antar_rekening_sendiri', 'Ke rekening sendiri'],
+    [null, 'Lainnya'],
+  ]);
+});
+
+test('skipReasonChoices (M3c): saran server di urutan pertama dan ditandai; tanpa saran urutan tetap', () => {
+  const order = item => skipReasonChoices(item).map(c => c.alasan);
+  assert.deepEqual(order(ITEM), ['top_up', 'masuk', 'antar_rekening_sendiri', null]);
+  assert.ok(skipReasonChoices(ITEM).every(c => !c.suggested));
+  for (const flow of ['top_up', 'masuk', 'antar_rekening_sendiri']) {
+    const choices = skipReasonChoices(withFlags({ skip_suggestion: flow }));
+    assert.equal(choices[0].alasan, flow);
+    assert.equal(choices[0].suggested, true);
+    assert.equal(choices.filter(c => c.suggested).length, 1);
+    assert.equal(choices.length, 4);
+    assert.deepEqual(new Set(choices.map(c => c.alasan)), new Set(SKIP_REASONS.map(r => r.alasan)));
+    assert.equal(choices[choices.length - 1].label, 'Lainnya');
+  }
+  // Saran yang tidak dikenal (data rusak) tidak mengubah urutan dan tidak ditandai.
+  for (const bad of ['keluar', 'bukan', '', 42, null]) {
+    assert.deepEqual(order(withFlags({ skip_suggestion: bad })), ['top_up', 'masuk', 'antar_rekening_sendiri', null]);
+  }
+  // Pemanggil tidak bisa mengubah daftar bersama.
+  skipReasonChoices(ITEM)[0].label = 'x';
+  assert.equal(SKIP_REASONS[0].label, 'Top-up saldo sendiri');
+});
+
+test('skipReasonChoices (M3c): kosong bila "Bukan pengeluaran" tidak ditawarkan (skipActions)', () => {
+  assert.deepEqual(skipReasonChoices({ ...ITEM, status: 'tercatat' }), []);
+  assert.deepEqual(skipReasonChoices(ITEM, { blockedReason: 'Bukti ini sudah tercatat.' }), []);
+  assert.deepEqual(skipReasonChoices(ITEM, { queued: true }), []);
+  assert.deepEqual(skipReasonChoices(withFlags({ blocked: 'sudah_tercatat', skip_suggestion: 'top_up' })), []);
+  assert.deepEqual(skipReasonChoices(null), []);
+  assert.equal(skipReasonChoices(withFlags({ duplicate_of: { kind: 'soft' } })).length, 4);
+});
+
+test('skipBody (M3c): alasan hanya bila ada dan dikenal; Lainnya = body lama; tidak ada field lain', () => {
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'top_up'), { reason: 'bukan_pengeluaran', alasan: 'top_up' });
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'masuk'), { reason: 'bukan_pengeluaran', alasan: 'masuk' });
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'antar_rekening_sendiri'),
+    { reason: 'bukan_pengeluaran', alasan: 'antar_rekening_sendiri' });
+  const lainnya = SKIP_REASONS.find(r => r.label === 'Lainnya');
+  assert.deepEqual(skipBody('bukan_pengeluaran', lainnya.alasan), { reason: 'bukan_pengeluaran' });
+  assert.deepEqual(skipBody('bukan_pengeluaran'), { reason: 'bukan_pengeluaran' });
+  for (const bad of ['', 'keluar', 'TOP_UP', 0, {}, ['top_up']]) {
+    assert.deepEqual(skipBody('bukan_pengeluaran', bad), { reason: 'bukan_pengeluaran' });
+  }
+  // Alasan hanya bersama Bukan pengeluaran (server menolak kombinasi lain dengan 422).
+  assert.deepEqual(skipBody('duplikat', 'top_up'), { reason: 'duplikat' });
+  assert.deepEqual(skipBody('duplikat'), { reason: 'duplikat' });
+  for (const c of skipReasonChoices(withFlags({ skip_suggestion: 'masuk' }))) {
+    assert.deepEqual(Object.keys(skipBody('bukan_pengeluaran', c.alasan)).sort(),
+      c.alasan ? ['alasan', 'reason'] : ['reason']);
+  }
 });

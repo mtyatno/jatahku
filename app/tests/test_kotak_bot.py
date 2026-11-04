@@ -126,6 +126,7 @@ class FakeDb:
         self.items, self.executed, self.rowcount = {}, [], 1
         self.commit = AsyncMock()
         self.rollback = AsyncMock()
+        self.refresh = AsyncMock()
 
     async def __aenter__(self):
         return self
@@ -381,7 +382,7 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.text().endswith("ℹ️ Ini top-up saldo, bukan pengeluaran."))
         key = next(d for d in datas(self.keyboard()) if d.startswith("ko_"))[3:]
         self.assertEqual([[b.text for b in row] for row in self.keyboard()], [["Oke, lewati", "Tetap catat"]])
-        self.assertEqual(datas(self.keyboard()), [f"kx_{DETAIL_QRIS['id']}", f"ko_{key}"])
+        self.assertEqual(datas(self.keyboard()), [f"kx_{DETAIL_QRIS['id']}_y", f"ko_{key}"])
         # "Tetap catat" → tombol amplop dengan sesi tombol yang sama
         query = await self.press(f"ko_{key}")
         text = query.edit_message_text.call_args.args[0]
@@ -483,15 +484,31 @@ class BotFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.created_request().data, self.created_request().content_type), (b"\x89PNG x", "image/png"))
 
     async def test_skip_buttons_skip_with_reason(self):
-        for data, reason in [(f"kx_{DETAIL_QRIS['id']}", "bukan_pengeluaran"), (f"kd_{DETAIL_QRIS['id']}", "duplikat")]:
-            with self.subTest(data):
+        await self.send_photo(detail=DETAIL_QRIS)
+        item_id = DETAIL_QRIS["id"]
+        # "Sama, lewati" (`kd_`) tidak berubah: satu ketukan, tanpa alasan.
+        query = await self.press(f"kd_{item_id}")
+        self.skip.assert_awaited_once_with(self.db, UUID(item_id), UID, "duplikat")
+        self.assertEqual(query.edit_message_text.call_args.args[0], "❌ Dilewati.")
+        # "Bukan pengeluaran" (`kx_`, tahap 2 M3c): pilihan alasan dulu, lalu lewati dengan alasan itu.
+        self.skip.reset_mock()
+        query = await self.press(f"kx_{item_id}")
+        self.skip.assert_not_awaited()
+        self.assertEqual(query.edit_message_text.call_args.args[0], "Kenapa bukan pengeluaran?")
+        for suffix, alasan in [("t", "top_up"), ("m", "masuk"), ("s", "antar_rekening_sendiri"), ("l", None)]:
+            with self.subTest(suffix):
                 self.skip.reset_mock()
-                query = await self.press(data)
-                self.skip.assert_awaited_once_with(self.db, UUID(DETAIL_QRIS["id"]), UID, reason)
+                query = await self.press(f"kx_{item_id}_{suffix}")
+                self.skip.assert_awaited_once_with(self.db, UUID(item_id), UID, "bukan_pengeluaran", alasan=alasan)
                 self.assertEqual(query.edit_message_text.call_args.args[0], "❌ Dilewati.")
+        # "Oke, lewati" (`_y`): alasan = arah uang item (sama dengan saran, jadi tanpa suara).
+        self.skip.reset_mock()
+        self.item.document = {**self.item.document, "flow": "masuk"}
+        await self.press(f"kx_{item_id}_y")
+        self.skip.assert_awaited_once_with(self.db, UUID(item_id), UID, "bukan_pengeluaran", alasan="masuk")
         self.skip.return_value = False
-        query = await self.press(f"kx_{DETAIL_QRIS['id']}")
-        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini tidak bisa dilewati.")
+        query = await self.press(f"kx_{item_id}_t")
+        self.assertTrue(query.edit_message_text.call_args.args[0].startswith("⚠️ Bukti ini tidak bisa dilewati."))
 
     async def test_note_button_asks_for_text_and_remembers_message(self):
         await self.send_photo(detail=DETAIL_QRIS)
@@ -1248,7 +1265,7 @@ class KotakBotDbTests(TxnBase):
             self.assertEqual((await db.execute(select(func.count()).select_from(MerchantEnvelopeMap))).scalar(), 0)
 
     async def test_cancel_and_skip_buttons_move_items_out_of_the_inbox(self):
-        for data_of, reason in [(lambda i: f"struk_no_{i}", "batal"), (lambda i: f"kx_{i}", "bukan_pengeluaran"),
+        for data_of, reason in [(lambda i: f"struk_no_{i}", "batal"), (lambda i: f"kx_{i}_l", "bukan_pengeluaran"),
                                 (lambda i: f"kd_{i}", "duplikat")]:
             item = await self.ready_qris()
             with self.subTest(reason):
@@ -1258,9 +1275,13 @@ class KotakBotDbTests(TxnBase):
                 self.assertIn(query.edit_message_text.call_args.args[0], ("❌ Dilewati.", "❌ Struk dibatalkan."))
         recorded = await self.ready_qris()
         await self.set(recorded.id, status="tercatat")
-        query = await self.tap(f"kx_{recorded.id}")
-        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini tidak bisa dilewati.")
+        for data in (f"kx_{recorded.id}", f"kx_{recorded.id}_t", f"kx_{recorded.id}_y"):
+            with self.subTest(data=data):
+                query = await self.tap(data)
+                self.assertTrue(query.edit_message_text.call_args.args[0].startswith("⚠️ Bukti ini tidak bisa dilewati."))
         self.assertEqual((await self.get(recorded.id)).status, "tercatat")
+        query = await self.tap(f"kd_{recorded.id}")   # "Sama, lewati" tidak berubah
+        self.assertEqual(query.edit_message_text.call_args.args[0], "⚠️ Bukti ini tidak bisa dilewati.")
 
     async def test_store_receipt_cancel_keeps_discard_feedback(self):
         await self.send(STORE_LINES)
@@ -1513,7 +1534,7 @@ class KotakBotDbTests(TxnBase):
 
     async def test_note_pending_then_skipped_typing_goes_to_nlp(self):
         await self.ask_note()
-        await self.tap(f"kx_{self.items[-1]}")
+        await self.tap(f"kx_{self.items[-1]}_m")
         self.assertEqual((await self.get(self.items[-1])).status, "dilewati")
         await self.assert_typing_reaches_nlp()
 
@@ -2264,7 +2285,7 @@ class KotakBotDbTests(TxnBase):
     async def test_only_fix_writes_the_key_for_layout_types(self):
         """Review L2b m-2/m-3: "Batal" (`struk_no_`) dan "Bukan pengeluaran"/"Duplikat" tidak menulis kunci; "Nominal
         salah" menulisnya juga untuk item tidak dikenali (LAYOUT_TYPES, bukan hanya QRIS/transfer)."""
-        for data in ("struk_no_{}", "kx_{}", "kd_{}"):
+        for data in ("struk_no_{}", "kx_{}_l", "kd_{}"):
             item = await self.fix_vote_item()
             with self.subTest(data=data):
                 await self.tap(data.format(item.id))
@@ -2545,6 +2566,225 @@ class KotakBotDbTests(TxnBase):
         stale = await web_adapter.run_action(user, msg_id, lainnya)
         self.assertEqual(stale[0], {"type": "toast", "text": web_adapter.STALE_BUTTON})
         self.assertEqual(await self.votes(), [("logo", "logo:newpay", "baru", self.a.id)])
+
+    # --- M3c: alasan "Bukan pengeluaran" dua langkah (`kx_`), "Oke, lewati" satu ketukan (`kx_{id}_y`) -------------
+
+    REASON_ROWS = [["Top-up saldo sendiri", "Uang masuk"], ["Ke rekening sendiri", "Lainnya"], ["↩️ Kembali"]]
+
+    def reason_rows(self, call):
+        return [[(b.text, b.callback_data) for b in row] for row in keyboard_of(call)]
+
+    async def approve_topup_rule(self):
+        from app.models.models import ProofRule
+        from app.services.kotak_struk import belajar
+        from app.tests.test_kotak_arah import TOPUP_RULE
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+        async with self.Session() as db:
+            db.add(ProofRule(kind="arah", rule_key=TOPUP_RULE, value="top_up", users=2, households=2,
+                             status="disetujui", decided_at=NOW))
+            await db.commit()
+
+    async def send_topup(self):
+        """Bukti ShopeePay "GOPAY TOPU-…" rekaan (kerangka berkunci profil dengan token arah `ke:gopay topu`)."""
+        from app.tests.test_kotak_arah import TOPUP_LINES
+        await self.send(TOPUP_LINES)
+        item_id = self.items[-1]
+        got = await self.get(item_id)
+        self.assertEqual((got.layout["key"], got.layout["arah"]), ("shopeepay", ["ke:gopay topu"]))
+        return item_id
+
+    async def test_not_expense_asks_why_in_two_steps_and_back(self):
+        await self.send()
+        item_id = self.items[-1]
+        first_text, first_rows = self.texts()[-1], self.reason_rows(self.status.edit_text.call_args)
+        self.assertIn(("🚫 Bukan pengeluaran", f"kx_{item_id}"), first_rows[-1])
+        query = await self.tap(f"kx_{item_id}")
+        call = query.edit_message_text.call_args
+        self.assertEqual(call.args[0], "Kenapa bukan pengeluaran?")
+        rows = self.reason_rows(call)
+        self.assertEqual([[t for t, _ in row] for row in rows], self.REASON_ROWS)
+        self.assertEqual([d for row in rows for _, d in row],
+                         [f"kx_{item_id}_{s}" for s in ("t", "m", "s", "l", "k")])
+        self.assertTrue(all(len(d.encode()) <= 64 for row in rows for _, d in row))
+        self.assertEqual(((await self.get(item_id)).status, await self.votes()), ("siap", []))   # belum dilewati
+        # Akhiran tidak dikenal → pertanyaan yang sama, tanpa melewati.
+        for data in (f"kx_{item_id}_x", f"kx_{item_id}_tt", f"kx_{item_id}_", f"kx_{item_id}_Y"):
+            with self.subTest(data=data):
+                again = (await self.tap(data)).edit_message_text.call_args
+                self.assertEqual((again.args[0], self.reason_rows(again)), (call.args[0], rows))
+        self.assertEqual((await self.get(item_id)).status, "siap")
+        # Kembali: pesan amplop dirender ulang (teks dan bentuk tombol sama, sesi tombol baru), tombolnya masih mencatat.
+        back = (await self.tap(f"kx_{item_id}_k")).edit_message_text.call_args
+        self.assertEqual(back.args[0], first_text)
+        self.assertEqual([[t for t, _ in row] for row in self.reason_rows(back)],
+                         [[t for t, _ in row] for row in first_rows])
+        makan = next(d for row in self.reason_rows(back) for t, d in row if "Makan" in t)
+        await self.tap(makan)
+        [txn] = await self.txns()
+        self.assertEqual(((await self.get(item_id)).status, txn.amount), ("tercatat", D("25000")))
+
+    async def test_each_reason_skips_once_and_stores_alasan(self):
+        for suffix, alasan in [("t", "top_up"), ("m", "masuk"), ("s", "antar_rekening_sendiri"), ("l", None)]:
+            item = await self.ready_qris()
+            with self.subTest(alasan=alasan):
+                await self.tap(f"kx_{item.id}")
+                query = await self.tap(f"kx_{item.id}_{suffix}")
+                self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_SKIPPED)
+                self.assertIsNone(query.edit_message_text.call_args.kwargs.get("reply_markup"))
+                got = await self.get(item.id)
+                self.assertEqual((got.status, got.channel_meta["skip_reason"], got.channel_meta.get("skip_alasan")),
+                                 ("dilewati", "bukan_pengeluaran", alasan))
+                # Ketukan kedua (tombol yang sama, atau alasan lain): tidak bisa dilewati lagi, alasan tidak berubah.
+                again = await self.tap(f"kx_{item.id}_m")
+                self.assertTrue(again.edit_message_text.call_args.args[0].startswith("⚠️ Bukti ini tidak bisa dilewati."))
+                self.assertEqual((await self.get(item.id)).channel_meta.get("skip_alasan"), alasan)
+        self.assertEqual(await self.txns(), [])
+
+    async def test_reason_votes_arah_only_when_it_differs_from_the_read_flow(self):
+        """K14: alasan ≠ arah terbaca (`keluar`) → satu suara `arah` lewat `learn_from_skip`; "Lainnya" tanpa suara."""
+        from app.tests.test_kotak_arah import TOPUP_RULE
+        lainnya = await self.send_topup()
+        await self.tap(f"kx_{lainnya}_l")
+        self.assertEqual(((await self.get(lainnya)).status, await self.votes()), ("dilewati", []))
+        item_id = await self.send_topup()
+        self.assertEqual((await self.get(item_id)).document["flow"], "keluar")
+        await self.tap(f"kx_{item_id}")
+        await self.tap(f"kx_{item_id}_t")
+        self.assertEqual(await self.votes(), [("arah", TOPUP_RULE, "top_up", self.a.id)])
+        self.assertEqual((await self.get(item_id)).channel_meta["skip_alasan"], "top_up")
+
+    async def test_suggestion_skip_is_one_tap_without_a_vote(self):
+        """"Oke, lewati" pada tawaran (aturan arah disetujui): `kx_{id}_y`, satu ketukan, alasan = arah item, tanpa suara
+        karena alasan sama dengan arah terbaca (K14)."""
+        await self.approve_topup_rule()
+        item_id = await self.send_topup()
+        self.assertEqual(self.reason_rows(self.status.edit_text.call_args)[0][0], ("Oke, lewati", f"kx_{item_id}_y"))
+        query = await self.tap(self.button("Oke, lewati"))
+        self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_SKIPPED)
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["skip_alasan"]), ("dilewati", "top_up"))
+        self.assertEqual((await self.votes(), await self.txns()), ([], []))
+
+    async def test_old_kx_button_from_before_deploy_opens_the_choice(self):
+        """Tombol `kx_{id}` dari pesan lama (sebelum M3c: "Oke, lewati" dan "🚫 Bukan pengeluaran") membuka pilihan."""
+        await self.approve_topup_rule()
+        item_id = await self.send_topup()
+        query = await self.tap(f"kx_{item_id}")
+        self.assertEqual(query.edit_message_text.call_args.args[0], "Kenapa bukan pengeluaran?")
+        # Saran server di urutan pertama.
+        self.assertEqual(self.reason_rows(query.edit_message_text.call_args)[0][0],
+                         ("Top-up saldo sendiri", f"kx_{item_id}_t"))
+        self.assertEqual((await self.get(item_id)).status, "siap")
+        await self.tap(f"kx_{item_id}_m")
+        self.assertEqual((await self.get(item_id)).channel_meta["skip_alasan"], "masuk")
+
+    async def test_suggested_reason_comes_first_in_the_bot_choice(self):
+        item = await self.ready_qris()
+        await self.set(item.id, document={**(await self.get(item.id)).document, "flow": "antar_rekening_sendiri"})
+        rows = self.reason_rows((await self.tap(f"kx_{item.id}")).edit_message_text.call_args)
+        self.assertEqual([[t for t, _ in row] for row in rows],
+                         [["Ke rekening sendiri", "Top-up saldo sendiri"], ["Uang masuk", "Lainnya"], ["↩️ Kembali"]])
+        self.assertEqual(rows[0][0], ("Ke rekening sendiri", f"kx_{item.id}_s"))
+
+    async def test_reason_choice_refused_for_other_users_items_and_bad_ids(self):
+        theirs = await self.ready(CORPUS[0]["lines"], owner=self.b)
+        for data in (f"kx_{theirs.id}", f"kx_{theirs.id}_t", f"kx_{theirs.id}_y", f"kx_{theirs.id}_k",
+                     "kx_bukan-id", "kx_bukan-id_t", f"kx_{uuid4()}", "kx_"):
+            with self.subTest(data=data):
+                query = await self.tap(data)
+                call = query.edit_message_text.call_args
+                self.assertEqual((call.args[0], call.kwargs.get("reply_markup")), ("⚠️ Bukti ini tidak bisa dilewati.", None))
+        self.assertEqual((await self.get(theirs.id)).status, "siap")
+
+    async def test_recorded_elsewhere_while_choosing_shows_the_result(self):
+        """Pilihan dibuka di Telegram, bukti dicatat di kartu web, lalu alasan/Kembali: peringatan (kecuali Kembali) +
+        pesan hasil saat ini, bukan jalan buntu; tidak ada yang dilewati."""
+        await self.send()
+        item_id = self.items[-1]
+        await self.tap(f"kx_{item_id}")
+        await self.tap(self.button("Makan"))   # tombol amplop pesan lama: mencatat (seperti web)
+        self.assertEqual((await self.get(item_id)).status, "tercatat")
+        query = await self.tap(f"kx_{item_id}_t")
+        text = query.edit_message_text.call_args.args[0]
+        self.assertTrue(text.startswith("⚠️ Bukti ini tidak bisa dilewati.\n\n✅ Bukti ini sudah tercatat"), text)
+        back = (await self.tap(f"kx_{item_id}_k")).edit_message_text.call_args.args[0]
+        self.assertTrue(back.startswith("✅ Bukti ini sudah tercatat"), back)
+        self.assertEqual(((await self.get(item_id)).status, len(await self.txns())), ("tercatat", 1))
+        # Masih `siap` tetapi dilewati di tempat lain: peringatan + "Dilewati."
+        item = await self.ready_qris()
+        await self.tap(f"kx_{item.id}")
+        await self.set(item.id, status="dilewati")
+        text = (await self.tap(f"kx_{item.id}")).edit_message_text.call_args.args[0]
+        self.assertEqual(text, f"⚠️ Bukti ini tidak bisa dilewati.\n\n{receipt_cmd.MSG_SKIPPED}")
+
+    async def test_skip_with_reason_never_fails_when_learning_raises(self):   # Review Focus 3 lewat bot
+        from app.services.kotak_struk import belajar
+        item_id = await self.send_topup()
+        with patch.object(belajar, "learn_from_skip", new=AsyncMock(side_effect=RuntimeError("suara rusak"))), \
+                self.assertLogs("app.services.kotak_struk.record", level="WARNING"):
+            query = await self.tap(f"kx_{item_id}_t")
+        self.assertEqual(query.edit_message_text.call_args.args[0], receipt_cmd.MSG_SKIPPED)
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["skip_alasan"]), ("dilewati", "top_up"))
+        self.assertEqual((await self.votes(), await self.txns()), ([], []))
+
+    async def test_rule_suggestion_keeps_the_soft_duplicate_question_after_record_anyway(self):
+        """Review M3b temuan 1: aturan arah (tawaran lewati) + transaksi manual yang mirip. "Tetap catat" tidak boleh
+        menghilangkan pertanyaan duplikat lunak: sesudahnya "🤔 Mirip …" dengan "Sama, lewati"/"Beda, catat", lalu
+        "Beda, catat" → amplop, satu transaksi."""
+        await self.approve_topup_rule()
+        await self.add_txn(amount=25000, description="isi saldo", created_at=PAID, on=PAID.date())
+        item_id = await self.send_topup()
+        self.assertIn("ℹ️ Ini top-up saldo, bukan pengeluaran.", self.texts()[-1])
+        self.assertEqual([[b.text for b in row] for row in self.rows()], [["Oke, lewati", "Tetap catat"]])
+        soft = (await self.tap(self.button("Tetap catat"))).edit_message_text.call_args
+        self.assertIn('🤔 Mirip "isi saldo"', soft.args[0])
+        self.assertEqual([[b.text for b in row] for row in keyboard_of(soft)], [["Sama, lewati", "Beda, catat"]])
+        different = next(b.callback_data for row in keyboard_of(soft) for b in row if b.text == "Beda, catat")
+        envelopes = (await self.tap(different)).edit_message_text.call_args
+        self.assertTrue(envelopes.args[0].endswith("Masuk ke amplop mana?"), envelopes.args[0])
+        makan = next(b.callback_data for row in keyboard_of(envelopes) for b in row if "Makan" in b.text)
+        await self.tap(makan)
+        self.assertEqual(len(await self.txns()), 2)   # transaksi manual + bukti ini, sekali
+        self.assertEqual((await self.get(item_id)).status, "tercatat")
+
+    async def test_rule_suggestion_then_same_skips_as_duplicate(self):
+        """Lanjutan temuan M3b-1: "Sama, lewati" pada pertanyaan duplikat lunak sesudah "Tetap catat" = duplikat."""
+        await self.approve_topup_rule()
+        await self.add_txn(amount=25000, description="isi saldo", created_at=PAID, on=PAID.date())
+        other = await self.send_topup()
+        soft = (await self.tap(self.button("Tetap catat"))).edit_message_text.call_args
+        same = next(b.callback_data for row in keyboard_of(soft) for b in row if b.text == "Sama, lewati")
+        await self.tap(same)
+        got = await self.get(other)
+        self.assertEqual((got.status, got.channel_meta["skip_reason"]), ("dilewati", "duplikat"))
+
+    async def test_web_chat_replays_the_reason_choice(self):
+        user = SimpleNamespace(id=self.a.id, name="Ani")
+        with patch.object(waiter, "wait_for_item", new=self.worker_inline(CORPUS[0]["lines"])):
+            ops = await web_adapter.run_photo(user, JPG + uuid4().bytes, "image/jpeg")
+        item_id = self.items[-1]
+        msg_id, reading = ops[0]["id"], ops[-1]
+        ask = next(b["data"] for row in reading["buttons"] for b in row if b["text"] == "🚫 Bukan pengeluaran")
+        self.assertEqual(ask, f"kx_{item_id}")
+        [edit] = await web_adapter.run_action(user, msg_id, ask)
+        self.assertEqual((edit["type"], edit["text"]), ("edit", "Kenapa bukan pengeluaran?"))
+        self.assertEqual([b["text"] for row in edit["buttons"] for b in row],
+                         [t for row in self.REASON_ROWS for t in row])
+        self.assertEqual((await self.get(item_id)).status, "siap")
+        masuk = next(b["data"] for row in edit["buttons"] for b in row if b["text"] == "Uang masuk")
+        ops = await web_adapter.run_action(user, msg_id, masuk)
+        self.assertEqual(ops[-1]["text"], receipt_cmd.MSG_SKIPPED)
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["skip_alasan"]), ("dilewati", "masuk"))
+        # Tombol pesan yang sudah diganti (amplop, alasan lain) tidak bisa ditekan lagi.
+        makan = next(b["data"] for row in reading["buttons"] for b in row if "Makan" in b["text"])
+        for data in (makan, masuk):
+            stale = await web_adapter.run_action(user, msg_id, data)
+            self.assertEqual(stale[0], {"type": "toast", "text": web_adapter.STALE_BUTTON})
+        self.assertEqual(await self.txns(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

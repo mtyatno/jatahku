@@ -223,6 +223,32 @@ export function skipActions(item, { blockedReason = null, queued = false } = {})
   return [SKIP_NOT_EXPENSE];
 }
 
+// Alasan "Bukan pengeluaran" (tahap 2 M3c): tiga arah uang server (config.ARAH_FLOWS, `SkipIn.alasan`) + "Lainnya"
+// (tanpa alasan = perilaku lama). Alasan yang berbeda dengan arah terbaca menjadi suara `arah` di server (K14).
+export const SKIP_REASONS = Object.freeze([
+  Object.freeze({ alasan: 'top_up', label: 'Top-up saldo sendiri' }),
+  Object.freeze({ alasan: 'masuk', label: 'Uang masuk' }),
+  Object.freeze({ alasan: 'antar_rekening_sendiri', label: 'Ke rekening sendiri' }),
+  Object.freeze({ alasan: null, label: 'Lainnya' }),
+]);
+const ALASAN = new Set(SKIP_REASONS.map(r => r.alasan).filter(Boolean));
+
+// Pilihan alasan untuk "Bukan pengeluaran": saran server (`flags.skip_suggestion`) di urutan pertama dan ditandai
+// `suggested`; kosong bila kartu tidak menawarkan "Bukan pengeluaran" (`skipActions`, opsi yang sama).
+export function skipReasonChoices(item, opts = {}) {
+  if (!item || !skipActions(item, opts).some(s => s.reason === SKIP_NOT_EXPENSE.reason)) return [];
+  const hint = item.flags?.skip_suggestion;
+  const first = ALASAN.has(hint) ? SKIP_REASONS.find(r => r.alasan === hint) : null;
+  const ordered = first ? [first, ...SKIP_REASONS.filter(r => r !== first)] : SKIP_REASONS;
+  return ordered.map(r => ({ ...r, suggested: r === first }));
+}
+
+// Body `POST /kotak-struk/{id}/lewati` (`api.kotakSkip`): `{reason}`, ditambah `alasan` hanya bila dikenal dan hanya
+// bersama "bukan_pengeluaran" (server menolak kombinasi lain dengan 422). Tidak pernah memuat field lain.
+export function skipBody(reason, alasan) {
+  return reason === SKIP_NOT_EXPENSE.reason && ALASAN.has(alasan) ? { reason, alasan } : { reason };
+}
+
 const no = reason => ({ ok: false, reason });
 
 // Status yang sudah selesai (item disegarkan induk sesudah dicatat/dilewati/kedaluwarsa di tempat lain). Struk belanja

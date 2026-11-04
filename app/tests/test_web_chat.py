@@ -301,6 +301,37 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await web_adapter.run_action(self.user, "aa11", f"ka_{item_id}_5")
         self.assertEqual(seen, [item_id, f"{item_id}_5"])
 
+    async def test_skip_reason_buttons_replay_through_bot_callbacks(self):
+        """Tahap 2 M3c: "Bukan pengeluaran" (`kx_`) dua langkah memakai `bot_callbacks()` sungguhan (pola `^k[nxdoa]_`
+        tidak berubah); tombol alasan pesan yang diedit tercatat untuk pesan itu, tombol amplop lama tidak lagi."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        item_id = "11111111-2222-4333-8444-555555555555"
+        self.redis.store[btn_key(self.user, "aa11")] = json.dumps([f"kx_{item_id}", "t_ab12_0"])
+        seen = []
+
+        async def fake_skip_action(query, tg_user, arg):
+            seen.append(arg)
+            if arg == item_id:
+                rows = [[InlineKeyboardButton("Top-up saldo sendiri", callback_data=f"kx_{item_id}_t"),
+                         InlineKeyboardButton("Lainnya", callback_data=f"kx_{item_id}_l")]]
+                await query.edit_message_text("Kenapa bukan pengeluaran?", reply_markup=InlineKeyboardMarkup(rows))
+            else:
+                await query.edit_message_text("❌ Dilewati.")
+
+        with patch.object(receipt_cmd, "_skip_action", new=fake_skip_action):
+            ops = await web_adapter.run_action(self.user, "aa11", f"kx_{item_id}")
+            self.assertEqual((ops[-1]["type"], ops[-1]["text"]), ("edit", "Kenapa bukan pengeluaran?"))
+            self.assertEqual(json.loads(self.redis.store[btn_key(self.user, "aa11")]),
+                             [f"kx_{item_id}_t", f"kx_{item_id}_l"])
+            ops = await web_adapter.run_action(self.user, "aa11", f"kx_{item_id}_t")
+            self.assertEqual(ops[-1]["text"], "❌ Dilewati.")
+            self.assertNotIn(btn_key(self.user, "aa11"), self.redis.store)   # edit tanpa tombol: semua tombol habis
+            for data in ("t_ab12_0", f"kx_{item_id}_l"):   # tombol pesan sebelum diedit, alasan lain
+                stale = await web_adapter.run_action(self.user, "aa11", data)
+                self.assertEqual(stale[0]["text"], web_adapter.STALE_BUTTON)
+        self.assertEqual(seen, [item_id, f"{item_id}_t"])
+        self.assertTrue(all(len(f"kx_{item_id}_{s}".encode()) <= 64 for s in "tmslyk"))
+
     async def test_telegram_only_callback_is_rejected_even_if_issued(self):
         self.redis.store[btn_key(self.user, "aa11")] = json.dumps(["merge_x", "unlink_y"])
         cb = AsyncMock()

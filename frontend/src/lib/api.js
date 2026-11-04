@@ -5,6 +5,7 @@ import { withClientHeader } from './clientInfo';
 import { xhrUpload, sendWithRefresh } from './xhrUpload';
 import { clearSharesOnLogout } from './shareInbox';
 import { pendingCountOf } from './pendingProofs';
+import { skipBody } from './proofFormat';
 import { isRuangDitolak, setRuangAktif, withRuangHeader, RUANG_HEADER } from './ruangAktif';
 import { native } from '../native';
 
@@ -634,12 +635,13 @@ class ApiClient {
     return null;
   }
 
-  // Lewati item siap/gagal; reason: bukan_pengeluaran | duplikat | batal. 409 bila statusnya lain.
-  async kotakSkip(id, reason) {
+  // Lewati item siap/gagal; reason: bukan_pengeluaran | duplikat | batal; alasan (opsional, hanya bersama
+  // bukan_pengeluaran): top_up | masuk | antar_rekening_sendiri (proofFormat.skipBody). 409 bila statusnya lain.
+  async kotakSkip(id, reason, alasan) {
     try {
       const res = await this.request(`/kotak-struk/${encodeURIComponent(id)}/lewati`, {
         method: 'POST',
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify(skipBody(reason, alasan)),
       });
       return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
     } catch {
