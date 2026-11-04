@@ -4,6 +4,65 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## H2 · PluginContext dan titik ekstensi server · 2026-11-04 · pemilik produk + Claude
+
+**Selesai** (status review, PR #186, issue #150; **wajib review keamanan terpisah sebelum merge**: "review PR #186 terhadap 03-workflow.md bagian keamanan")
+- Keputusan pemilik produk (4 Nov, "lanjut" atas empat usulan pembukaan sesi): **A** audit = setiap tulis/kiriman dan setiap penolakan izin, baca yang diizinkan tidak dicatat per panggilan; **B** metode tulis SDK (`record_income`, `record_expense`, `propose_fund_move`) ditambah di U2 bersama pemakai pertamanya; **C** notifikasi plugin tanpa migrasi (`NotificationType.system`, judul berawalan nama ruang, preferensi per jenis di U6); **D** `form_fields` hanya validasi + hook di H2, disambungkan ke body transaksi/pemasukan di U2; perintah bot plugin dijalankan per ruang yang memasang plugin, berawalan nama ruang.
+- `app/plugins/sdk/`: `Plugin` (dekorator `kartu`, `cek`, `aturan_advisor`, `perintah_bot`, `job`, `field_form`, masing-masing dengan `izin=`), `PluginContext` beku dengan sesi DB privat: izin = `granted_permissions` instalasi ∩ manifest ∩ `izin=` fungsi di setiap panggilan; `envelopes`/`transactions`/`incomes`/`income`/`members` lewat `visibility.py` (amplop pribadi orang lain tidak pernah, deskripsi privat tersamar); karyawan (member di ruang usaha) ditolak data keuangan `khusus_admin`; job tanpa user hanya amplop bersama dan semua deskripsi tersamar; penolakan dan kiriman dicatat di `plugin_audit_log` lewat sesi sendiri (penolakan sama sekali per jam per proses). `Saran`, `AksiRoute`, `RencanaPengeluaran`, `NilaiTidakSah`; nominal `Decimal`.
+- `host/kode.py`: impor plugin diperiksa AST **sebelum** kode dijalankan (hanya `app.plugins.sdk`, paket sendiri, plugin di `requires`; `importlib`, `__import__`, `._db` ditolak), kode dimuat dari `__init__.py` (`plugin = Plugin("<id>")`), lalu dicocokkan dua arah dengan manifest dan izinnya. `registry.py` memuatnya di kedua mode (ketat: gagal; start: plugin dan pemakainya dilewati). Plugin tanpa `__init__.py` hanya manifest.
+- `host/titik.py`, satu pintu inti → plugin, semua lewat `siklus.aktif_dengan_instalasi` (baru) dan kembali tanpa kueri bila belum ada plugin yang menyumbang ke titik itu:
+  - `cards`: `kartu_ruang` + `data_kartu`; tata letak dan batch menerima `plugin=` (`dashboard/{registry,layout,batch}.py`, route `dashboard.py`); kartu plugin tidak aktif diparkir / `kartu_tidak_dikenal`; payload diperiksa `rapikan_kartu` (field asing, float, batas baris, aksi hanya `route` ke `/p/<id>`).
+  - `checks`: `expense_rules.peringatan_plugin` dipanggil `check_expense` (bot, `BehaviorCheckResult.peringatan`) dan `catat_transaksi` (web, field `peringatan` di respons 201); tidak untuk karyawan, tidak pernah memblokir.
+  - `advisor_rules`: `saran_advisor` → `Insight(asal=plugin)` slot `daftar` saja; `select.pilih_daftar` membatasi `daftar_per_plugin` = 1; `render` memakai teks jadi dan label aksi plugin; `advisor_cache` ikut menghapus cache saat `PluginInstallation` berubah; cache yang dilayani disaring `saring_payload_advisor` (saklar darurat, flag).
+  - `bot_commands`: `handlers.bot_commands()` = `perintah_plugin()` + `perintah_inti()` (`app/bot/plugin_cmd.py`); `titik.perintah` per ruang, `audience` dicek saat dipanggil, flag ruang usaha, jam kerja karyawan; teks polos.
+  - `notifications`: `ctx.notify` → `kirim_notifikasi`: owner/admin yang plugin-nya aktif untuk mereka, jam tenang (`proaktif.jam_tenang`), maksimal 2 per plugin per penerima per hari + 1 per `kunci` (Redis `plugin:notif:*`, mati = tidak mengirim), link hanya `/p/<id>`.
+  - `jobs`: `scheduler.plugin_jobs` (menit 23 tiap jam) → `jalankan_job`: jadwal `hourly` / `daily HH:00` di zona waktu pemilik ruang, klaim Redis sekali per periode, sesi DB sendiri.
+  - `nlp_kamus`: `txn_nlp.find_best_envelope` mencoba kamus plugin aktif sebelum kamus kategori inti (hanya bila ada `user_id`).
+  - `form_fields`: `periksa_field` (tipe bawaan + fungsi plugin; 422 `field_tidak_sah`).
+- Manifest (Plugin API 1.1.0): `contributes.checks`, `contributes.nlp_kamus`, jadwal job baku, kode aturan advisor `XX-01` dengan domain di luar `DOMAIN_ADVISOR_INTI`.
+- Tes `app/tests/test_plugin_sdk.py` (37): kode/impor/pencocokan, manifest 1.1, pemeriksa keluaran, batas per plugin, tanpa plugin tanpa kerja (db=None), konteks (visibilitas, irisan izin + audit, beku, karyawan, job, pemasukan ruang lain), HTTP Beranda (tata letak, data, jeda, saklar, flag, ruang lain, karyawan 403), peringatan web + bot, advisor (ruang, karyawan, cache, `get_dashboard`), perintah bot (audience, ruang usaha tertutup, gagal, handler teks polos), job + notifikasi (penerima, jam tenang, kunci, batas, Redis mati, link, jenis), kamus, field form. `test_plugin_host`: perintah inti dibandingkan dengan `perintah_inti()`. `test_ruang_pagar`: `plugins/host/titik.py: 3` dengan alasan.
+- Dokumen: kontrak §0 (`peringatan`), §5 (titik ekstensi server v1), §7 (`field_tidak_sah`); `AGENTS.md` aturan 4; `00-indeks.md` (fase, peta kode); `PROGRESS.md`.
+- Tes: unittest 2785 lulus (1 dilewati) · node --test 654 lulus · build ok · Migrasi: tidak berlaku (model dan migrasi tidak disentuh) · validator manifest: OK (0 plugin) · `openapi_cek`: tanpa perubahan memutus.
+- Deploy R8 (#177, `195c17f`): terverifikasi tayang (run 41785622123). Checklist R8 di `AGENTS.md` (`ruang_paritas` sesudah deploy) dan PR kecil "R8 tayang" (`PROGRESS.md` R8 masih `review`) belum dikerjakan.
+
+**Digantung**
+- Metode tulis SDK (`record_income`, `record_expense`, `propose_fund_move`) dengan `client_ref` dan audit tulis: U2 (keputusan B). `funds:move` tetap lewat `/advisor/plan` → `/advisor/execute`.
+- `form_fields` belum disambungkan ke `POST /transactions/` dan `POST /incomes/`, dan penyimpanannya di tabel plugin belum ada: U2 (keputusan D).
+- Peringatan `checks` hanya di `POST /transactions/` (web) dan `check_expense` (bot, belum ditampilkan bot; ruang keluarga belum punya plugin). `POST /transactions/batch` dan pemasukan belum.
+- Akses plugin ke tabelnya sendiri (`p_<id>_*`) lewat SDK: U1, bersama tabel pertama. Sekarang plugin tidak punya sesi DB sama sekali.
+- `bot_callbacks` plugin belum didaftarkan; menu perintah Telegram per chat per peran (scope chat): U6.
+- Notifikasi untuk karyawan (ADR-P19), preferensi per jenis notifikasi, dan email: U6. `Notification.type` plugin = `system`.
+- `GET /dashboard/cards` belum memuat kartu plugin; frontend belum menggambar kartu plugin: H3 (`GET /plugins/contributions`).
+- Titik `settings` (form JSON Schema + validasi server) belum ada; `pasang` tetap menolak `pengaturan`. `ctx.settings()` membaca `plugin_installations.settings` apa adanya.
+- Job pembersih arsip (ADR-P15, pemberitahuan 7 hari + hapus `p_*`) masih belum dijadwalkan: butuh tabel plugin (U1).
+- Saran plugin dari cache yang disaring (saklar darurat/flag) hanya dibuang; `sisa` tidak dinaikkan ke `items` sampai cache dihitung ulang (paling lama sampai ganti hari atau ada tulis data keuangan).
+- Batas laju tulis per plugin per ruang (01-kajian "Penegakan") menyusul bersama metode tulis (U2).
+
+**Jebakan**
+- **PR R6 (#185) dibuka bersamaan (4 Nov 15.25) dan menyentuh file yang sama:** `routes/dashboard.py`, `dashboard/{registry,layout,batch}.py`, `test_ruang_pagar.py`, `AGENTS.md`, dan dokumen plugin. R6 menambah argumen posisi ke-5 `karyawan` di `layout.efektif/ambil/simpan` dan `karyawan=` di `batch.jalankan`, sama dengan `plugin=` dari H2; R6 juga membuka `/dashboard/*` untuk karyawan (`KARYAWAN_BOLEH`) dengan saringan `registry.boleh(definisi, karyawan)`. PR yang di-merge kedua harus menggabungkan keduanya (sebaiknya argumen keyword: `plugin=`, `karyawan=`), menjaga kartu plugin tetap tidak untuk karyawan (`CardDef` plugin = kartu umum → `khusus_admin`; `PluginContext` juga menolak data keuangan untuk karyawan), dan mengganti tes H2 `test_kartu_saklar_flag_dan_ruang_lain` yang sekarang mengharapkan 403 untuk karyawan.
+- `test_ruang_pagar` menghitung `HouseholdMember.user_id ==`: peran di satu ruang pakai `ruang.keanggotaan`; kueri baru butuh baris `DIIZINKAN` dengan alasan.
+- `test_plugin_host` membandingkan `PERINTAH_INTI` dengan `perintah_inti()`, bukan `bot_commands()` (yang kini ikut memuat perintah plugin).
+- Jalur web pengeluaran tidak memanggil `check_expense` (memakai `check_behavior` langsung), jadi peringatan plugin dipanggil terpisah di `catat_transaksi`. Jalur baru wajib memanggil `expense_rules.peringatan_plugin` juga.
+- Tes yang memakai kartu/plugin di ruang usaha butuh `AppSetting ruang_usaha_users` dan `plugin_<id>_users`; audit plugin memakai sesi sendiri, jadi tes memasang `pakai_sesi(Session)`.
+- Fungsi plugin yang ditolak izin di kartu Beranda tercatat sebagai `logger.exception` di batch (jejak lengkap) lalu `gagal_memuat`; itu tanda bug plugin, bukan galat inti.
+- `npm run build` mengubah `frontend/dist/`: `git checkout -- frontend/dist` sebelum commit.
+
+**Keputusan kecil**
+- Plugin API 1.1.0 (minor): manifest yang memakai `checks`/`nlp_kamus` sebaiknya menyatakan `>=1.1 <2.0`.
+- Pemeriksaan impor/`._db` menjaga disiplin T1 (kode sendiri yang direview), bukan sandbox; mitra (T2) butuh isolasi sungguhan.
+- Plugin dengan kode wajib lengkap (setiap kontribusi server punya fungsi); plugin tanpa kode hanya manifest, kontribusi servernya tidak berbuat apa-apa.
+- Nominal dari plugin harus `int`/`Decimal` (float ditolak), dikirim sebagai string desimal; `bar` 0–1 boleh pecahan.
+- Batas: 3 peringatan total (2 per plugin), 5 saran per aturan, 1 saran per plugin di daftar, 2 notifikasi per plugin per penerima per hari, kartu `list` ≤ 8 / `table` ≤ 10 baris / `series` ≤ 62 titik.
+- Fungsi plugin di jalur permintaan tidak diberi timeout (membatalkan kueri di sesi permintaan bisa merusak sesinya); yang lewat 150 ms dicatat di log.
+- Perintah bot di luar plugin aktif menjawab "Perintah ini belum tersedia di ruangmu." (tanpa nama plugin, supaya plugin yang belum dirilis tidak bisa ditebak).
+
+**Cara melanjutkan**
+- Review keamanan terpisah: "review PR #186 terhadap 03-workflow.md bagian keamanan" (gerbang "Plugin sebagai tamu": izin di setiap panggilan, audit, validator menolak perintah tulis dan impor inti).
+- Merge tanpa migrasi; tidak ada langkah VPS. Sesudah merge: `/cek-deploy <PR>`.
+- Berikutnya `/sesi-plugin H3` (butuh H2, B2, R4) atau `/sesi-plugin R6`.
+
+---
+
 ## R8 · Prive dua sisi · 2026-11-01 · pemilik produk + Claude
 
 **Selesai** (status review, PR #177; issue #148; **wajib review keamanan terpisah sebelum merge** atas keputusan pemilik 1 Nov, walau di rencana tidak bertanda "review": ini satu-satunya jalur tulis lintas ruang dan bagian gerbang "Ruang keluarga tetap pribadi")
