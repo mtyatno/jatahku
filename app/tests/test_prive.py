@@ -22,7 +22,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import importlib.util
 import pathlib
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -258,11 +258,24 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         besok = (self.today + timedelta(days=1)).isoformat()
         await self._ditolak(self.me, self._body(tanggal=besok), 400)
 
-    async def test_tanggal_lampau_dipakai(self):
-        kemarin = self.today - timedelta(days=1)
-        r = await self._post(self.me, self._body(tanggal=kemarin.isoformat()))
+    def _awal_periode(self):
+        from app.core.period import get_budget_period
+        return get_budget_period(1, date.today())[0]
+
+    async def test_tanggal_awal_periode_dipakai(self):
+        awal = self._awal_periode()
+        r = await self._post(self.me, self._body(tanggal=awal.isoformat()))
         self.assertEqual(r.status_code, 201, r.text)
-        self.assertTrue(all(i.income_date == kemarin for i in await self._prive_rows()))
+        self.assertTrue(all(i.income_date == awal for i in await self._prive_rows()))
+
+    async def test_tanggal_sebelum_periode_ditolak(self):
+        # Review keamanan #177: tanggal mundur ke periode lalu melewati cek sisa amplop (rollover sudah dihitung).
+        sebelum = self._awal_periode() - timedelta(days=1)
+        r = await self._ditolak(self.me, self._body(tanggal=sebelum.isoformat()), 400)
+        self.assertIn("awal periode berjalan", r.json()["detail"])
+        jauh = self.today - timedelta(days=40)
+        await self._ditolak(self.me, self._body(tanggal=jauh.isoformat(), jumlah="1000000"), 400)
+        self.assertEqual(await self._sisa(self.me, self.usaha_id, "Prive"), D("1000000"))
 
     async def test_tanpa_ruang_keluarga_ditolak(self):
         await self._ditolak(self.yatim, self._body(self.env_yatim), 400, prive.KODE_TANPA_KELUARGA)
@@ -287,8 +300,58 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(await self._prive_rows()), 4)
 
     async def test_ref_tidak_tertukar_dengan_transaksi(self):
-        self.redis.store[f"txnref:{self.me.id}:ref-x"] = "00000000-0000-0000-0000-000000000001"
+        txn_key = f"txnref:{self.me.id}:ref-x"
+        self.redis.store[txn_key] = "00000000-0000-0000-0000-000000000001"
         r = await self._post(self.me, self._body(client_ref="ref-x"))
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(len(await self._prive_rows()), 2)
+        # Kunci transaksi utuh; kunci prive di ruang nama sendiri, tidak ada kunci `txnref:…:prive:…`.
+        self.assertEqual(self.redis.store[txn_key], "00000000-0000-0000-0000-000000000001")
+        self.assertIn(f"priveref:{self.me.id}:ref-x", self.redis.store)
+        self.assertFalse([k for k in self.redis.store if k.startswith(f"txnref:{self.me.id}:prive")])
+
+    async def test_redis_mati_fail_closed(self):
+        async def mati(*a, **k):
+            raise ConnectionError("redis mati")
+        with patch.object(self.redis, "set", mati), patch.object(self.redis, "get", mati):
+            r = await self._post(self.me, self._body(client_ref="ref-mati"))
+        self.assertEqual(r.status_code, 503, r.text)
+        self.assertEqual(await self._prive_rows(), [])
+        self.assertEqual(await self._sisa(self.me, self.usaha_id, "Prive"), D("1000000"))
+
+    async def test_simpan_hasil_gagal_tidak_mencatat(self):
+        asli = self.redis.set
+
+        async def set_(k, v, nx=False, ex=None):
+            if v != "pending":
+                raise ConnectionError("redis putus sebelum commit")
+            return await asli(k, v, nx=nx, ex=ex)
+        with patch.object(self.redis, "set", set_):
+            r = await self._post(self.me, self._body(client_ref="ref-putus"))
+        self.assertEqual(r.status_code, 503, r.text)
+        self.assertEqual(await self._prive_rows(), [])
+        ulang = await self._post(self.me, self._body(client_ref="ref-putus"))
+        self.assertEqual(ulang.status_code, 201, ulang.text)
+        self.assertEqual(len(await self._prive_rows()), 2)
+
+    async def test_tanpa_client_ref_tanpa_redis(self):
+        async def mati(*a, **k):
+            raise ConnectionError("redis mati")
+        with patch.object(self.redis, "set", mati), patch.object(self.redis, "get", mati):
+            r = await self._post(self.me, self._body())
+        self.assertEqual(r.status_code, 201, r.text)
+
+    async def test_kunci_basi_dianggap_belum_tercatat(self):
+        import json
+        palsu = {"keluar": {"income_id": "00000000-0000-0000-0000-0000000000aa"}}
+        self.redis.store[f"priveref:{self.me.id}:ref-basi"] = json.dumps(palsu)
+        r = await self._post(self.me, self._body(client_ref="ref-basi"))
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(len(await self._prive_rows()), 2)
+
+    async def test_notifikasi_gagal_tetap_201(self):
+        with patch("app.services.goal_notify.notify_goals_reached", side_effect=RuntimeError("smtp")):
+            r = await self._post(self.me, self._body(client_ref="ref-notif"))
         self.assertEqual(r.status_code, 201, r.text)
         self.assertEqual(len(await self._prive_rows()), 2)
 

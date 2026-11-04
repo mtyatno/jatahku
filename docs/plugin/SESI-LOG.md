@@ -15,8 +15,14 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Tes: unittest 2416 (1 gagal = `test_basic_quota_bot_fund_shift_finishes_started_input`, gagal juga di `main`) · node --test 628 lulus · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16: ok · `openapi_cek`: tanpa perubahan memutus.
 - Deploy R4 (#174, `2125226`): terverifikasi tayang (run 41295031430).
 
+- **Review keamanan terpisah (4 Nov):** minta perubahan; kontrol akses lulus. Semua temuan dikerjakan di branch ini:
+  1. **Sedang:** prive bertanggal mundur melewati cek sisa amplop (alokasi jatuh ke periode yang rollover-nya sudah dihitung; PoC 3× Rp1 jt bertanggal 40 hari lalu dari amplop Rp1 jt lolos). Sekarang tanggal hanya di periode berjalan (`get_budget_period(payday user, date.today())`, sumber yang sama dengan `compute_envelope_summaries`); bawaan `min(hari ini user, akhir periode)`.
+  2. **Rendah:** idempotensi fail-open padahal prive tidak bisa dibatalkan. Sekarang `strict=True` (`RedisTidakTersedia` → 503), pemeriksaan `client_ref` di bawah kunci household, dan hasil disimpan ke Redis **sebelum** commit (commit gagal → kunci dihapus; kunci yang menunjuk baris tak ada = basi).
+  3. **Rendah:** ruang nama kunci: `idempotency._key` kini punya `scope`; prive memakai `priveref:{user}:{ref}`, transaksi/advisor tetap `txnref`.
+  4. **Rendah:** `notify_goals_reached` sesudah commit dibungkus try (tidak lagi 500 sesudah commit).
+  - Tes +7 (30): tanggal sebelum periode (termasuk PoC 40 hari), awal periode boleh, Redis mati → 503 tanpa baris, simpan hasil gagal → 503 tanpa baris lalu kirim ulang 201, tanpa `client_ref` tidak butuh Redis, kunci basi, notifikasi gagal → 201; ruang nama kunci. Tiga tes baru dibuktikan gagal di route lama. unittest 2739 lulus · `openapi_cek` tanpa perubahan memutus.
+
 **Digantung**
-- **Review keamanan terpisah** belum dijalankan (lihat "Cara melanjutkan").
 - UI prive (menu Catat ▾ "Prive ke Rumah tangga", FAB di HP) belum ada; R8 hanya server. Riwayat pemasukan web melewati sisi keluar (`type: "transfer"`, `transfer: null`) — tampilkan saat UI ruang usaha digarap.
 - Hapus/batalkan prive belum ada (tidak ada endpoint hapus pemasukan sama sekali). Bila ditambah: hapus kedua sisi bersama; penghubung dua baris belum ada (hanya tanggal, nominal, keterangan).
 - Sisi masuk dihitung `Income.amount > 0`, jadi ikut meredam pengingat gajian (`payday_reminder.py`) dan masuk total pemasukan analitik ruang keluarga. Dianggap benar (prive = gaji pemilik), tetapi belum diputuskan pemilik produk.
@@ -35,7 +41,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Kirim ulang `client_ref` mengembalikan jawaban tersimpan tanpa memeriksa ulang peran (sama dengan `advisor/execute`); kunci Redis per user, jadi user lain tidak bisa memakainya.
 
 **Cara melanjutkan**
-- Review keamanan dengan sesi Claude Code terpisah: "review PR #177 terhadap 03-workflow.md bagian keamanan" (gerbang "Ruang tidak pernah dari body", "Batasan ditegakkan di server", "Ruang keluarga tetap pribadi"). Temuan dikerjakan di branch ini sebelum merge.
+- Review ulang singkat: "review ulang PR #177 terhadap 03-workflow.md bagian keamanan, fokus batas tanggal periode dan idempotensi fail-closed". Lalu merge.
 - Merge: tanpa migrasi; checklist "Plugin R8" di `AGENTS.md` (`ruang_paritas` sesudah deploy). Lalu Gerbang R bisa dinilai lulus (R2, R3, R8).
 - Berikutnya `/sesi-plugin R5` (peran, batasan, persetujuan; migrasi, review) atau `/sesi-plugin H1`.
 
