@@ -355,7 +355,7 @@ class VotesForLogoTests(unittest.TestCase):
     def test_kinds_and_choices(self):
         self.assertEqual(belajar.KINDS, ("label_total", "label_pihak", "label_tanggal"))
         self.assertEqual(belajar.KIND_LOGO, "logo")
-        self.assertEqual(belajar.ALL_KINDS, (*belajar.KINDS, "logo"))
+        self.assertEqual(belajar.ALL_KINDS, (*belajar.KINDS, "logo", "arah"))   # `arah` sejak M3a
         self.assertEqual(APP_NEW, "baru")
         self.assertEqual(belajar.APP_CHOICES, frozenset(PROFILE_KEYS) | {"baru"})
         self.assertEqual(len(belajar.APP_CHOICES), 13)

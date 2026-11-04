@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,14 @@ class SuggestIn(BaseModel):
 
 class SkipIn(BaseModel):
     reason: Literal["bukan_pengeluaran", "duplikat", "batal"]
+    # Tahap 2 (M3a): alasan "Bukan pengeluaran" (suara aturan `arah`); opsional, hanya bersama `bukan_pengeluaran`.
+    alasan: Literal["top_up", "masuk", "antar_rekening_sendiri"] | None = None
+
+    @model_validator(mode="after")
+    def _alasan_only_for_not_expense(self):
+        if self.alasan is not None and self.reason != record.SKIP_NOT_EXPENSE:
+            raise ValueError(record.MSG_ALASAN_ONLY_NOT_EXPENSE)
+        return self
 
 
 class AppChoiceIn(BaseModel):
@@ -155,9 +163,14 @@ async def suggest(item_id: UUID, body: SuggestIn, user: User = Depends(get_curre
 async def skip_item(item_id: UUID, body: SkipIn, user: User = Depends(get_current_user),
                     db: AsyncSession = Depends(get_db)):
     """Item `siap`/`gagal` -> `dilewati` (`record.skip_item`, sama dengan tombol bot): pencatatan dan melewati tidak
-    mungkin sama-sama menang."""
+    mungkin sama-sama menang. `alasan` (opsional, hanya dengan `bukan_pengeluaran`; selain itu 422) menjadi suara
+    aturan `arah` bila beda dari arah yang terbaca; galat suara tidak pernah menggagalkan lewati."""
     item = await _owned_item(db, item_id, user)
-    if not await record.skip_item(db, item_id, user.id, body.reason):
+    try:
+        skipped = await record.skip_item(db, item_id, user.id, body.reason, alasan=body.alasan)
+    except ValueError as exc:   # pertahanan; `SkipIn` sudah menolaknya
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not skipped:
         raise HTTPException(status_code=409, detail=MSG_CANNOT_SKIP)
     await db.refresh(item)
     return await item_detail(db, item, user)

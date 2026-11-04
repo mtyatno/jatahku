@@ -20,6 +20,7 @@ terbaca tetap MSG_EXPIRED (bagikan lagi).
 import logging
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -29,7 +30,7 @@ from app.models.models import Envelope, MerchantEnvelopeMap, ReceiptScan, Transa
 from app.services.expense_rules import after_expense_recorded
 from app.services.kotak_struk import belajar, dedup
 from app.services.kotak_struk.config import (
-    LAYOUT_TYPES, PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
+    ARAH_FLOWS, LAYOUT_TYPES, PROOF_TYPES, ST_DILEWATI, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, ST_TERCATAT,
 )
 from app.services.kotak_struk.document import Counterparty, DokumenBayar
 from app.services.kotak_struk.merchants import _find_merchant, learnable_text, merchant_for_item, upsert_household_merchant
@@ -136,27 +137,52 @@ async def claim_failure_detail(db: AsyncSession, item_id: uuid.UUID, user_id: uu
     return MSG_NOT_READY
 
 
-async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, reason: str) -> bool:
+SKIP_NOT_EXPENSE = "bukan_pengeluaran"
+MSG_ALASAN_ONLY_NOT_EXPENSE = "Alasan hanya untuk Bukan pengeluaran"
+
+
+async def skip_item(db: AsyncSession, item_id: uuid.UUID, user_id: uuid.UUID, reason: str, *,
+                    alasan: str | None = None) -> bool:
     """Item `siap`/`gagal` milik user -> `dilewati`, alasan di `channel_meta.skip_reason` (bukan_pengeluaran |
     duplikat | batal). Satu UPDATE bersyarat: pencatatan (`claim_for_recording` mengubah `siap` -> `tercatat` dengan
     cara yang sama) dan melewati tidak mungkin sama-sama menang. True bila berhasil (sudah di-commit); False bila item
-    tidak ada, milik user lain, atau statusnya lain (tidak ada yang diubah)."""
-    meta = (await db.execute(
-        select(ReceiptScan.channel_meta).where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id)
+    tidak ada, milik user lain, atau statusnya lain (tidak ada yang diubah).
+
+    `alasan` (tahap 2 M3a; ARAH_FLOWS: top_up | masuk | antar_rekening_sendiri) hanya bersama `bukan_pengeluaran`,
+    selain itu `ValueError` (MSG_ALASAN_ONLY_NOT_EXPENSE; rute 422) sebelum apa pun dibaca. Disimpan di
+    `channel_meta.skip_alasan`; sesudah UPDATE berhasil dan sebelum commit, `belajar.learn_from_skip` mencatat suara
+    `arah` (savepoint sendiri) dalam commit yang sama. Galat suara tidak pernah menggagalkan lewati (Review Focus 3)."""
+    if alasan is not None and (reason != SKIP_NOT_EXPENSE or alasan not in ARAH_FLOWS):
+        raise ValueError(MSG_ALASAN_ONLY_NOT_EXPENSE)
+    row = (await db.execute(
+        select(ReceiptScan.channel_meta, ReceiptScan.layout, ReceiptScan.document, ReceiptScan.doc_type,
+               ReceiptScan.household_id)
+        .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id)
     )).first()
-    if meta is None:
+    if row is None:
         return False
+    meta = {**(row.channel_meta or {}), "skip_reason": reason}
+    if alasan is not None:
+        meta["skip_alasan"] = alasan
     done = await db.execute(
         update(ReceiptScan)
         .where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id, ReceiptScan.status.in_((ST_SIAP, ST_GAGAL)))
-        .values(status=ST_DILEWATI, channel_meta={**(meta[0] or {}), "skip_reason": reason})
+        .values(status=ST_DILEWATI, channel_meta=meta)
         .execution_options(synchronize_session=False)
     )
     if done.rowcount != 1:
         return False
+    if alasan is not None:
+        # Suara `arah` dari kerangka item (dibaca bersama channel_meta; kerangka dan dokumen tidak berubah sesudah item
+        # terbaca). `learn_from_skip` menelan galatnya sendiri; pagar ini juga untuk galat di luarnya.
+        try:
+            item = SimpleNamespace(id=item_id, layout=row.layout, document=row.document, doc_type=row.doc_type,
+                                   household_id=row.household_id)
+            await belajar.learn_from_skip(db, item, alasan, user_id=user_id)
+        except Exception:
+            log.warning("suara arah untuk item Kotak Struk %s gagal; item tetap dilewati", item_id, exc_info=True)
+        # Kait donasi contoh (`donasi.donate`, "lewati", truth={flow: alasan}) menyusul di M1c, di sini sebelum commit.
     await db.commit()
-    # Kait belajar dari "bukan pengeluaran" (suara `arah`, alasan top-up/uang masuk/rekening sendiri) menyusul di
-    # tahap 2 (plan 2026-11-01 M3, pre-flight K7); tahap 1 tidak memberi suara dari melewati item.
     return True
 
 

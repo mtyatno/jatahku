@@ -25,12 +25,14 @@ from app.core.database import Base
 from app.models.models import Household, HouseholdMember, HouseholdRole, ProofRule, ProofRuleVote, User
 from app.services.kotak_struk import belajar, maintenance, merchants
 from app.services.kotak_struk.belajar import (
-    Final, Vote, forget_user, learn_from_correction, next_status, record_votes, recount, votes_for,
+    Final, Vote, forget_user, learn_from_correction, learn_from_skip, next_status, record_votes, recount, votes_for,
+    votes_for_skip,
 )
-from app.services.kotak_struk.config import RULE_MIN_USERS
+from app.services.kotak_struk.config import ARAH_FLOWS, KEY_MAX, RULE_MIN_USERS
 from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
-from app.services.kotak_struk.kerangka import LABEL_WORDS, TITLE_WORDS, build_layout
+from app.services.kotak_struk import kerangka
+from app.services.kotak_struk.kerangka import ARAH_PARTY_WORDS, LABEL_WORDS, TITLE_WORDS, build_layout
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
 from app.services.kotak_struk.readers.base import ParseContext, Secrets
@@ -728,7 +730,8 @@ class PrivacyTests(DbBase):
         """Setiap daftar sapuan (kedua saklar): kerangka dari pembaca sungguhan, setiap koreksi yang mungkin, oleh dua
         user (jadi aturan terbentuk). Suara dan aturan hanya memuat jenis, kunci aplikasi, dan label kosakata: tanpa
         digit, tanpa `#`, tanpa kata nama pihak lawan/pengirim/user sampel itu."""
-        built = voted = 0
+        built = voted = arah_layouts = arah_voted = 0
+        arah_tokens_seen: set[str] = set()
         async with self.Session() as db:
             for case in SWEEP:
                 for enabled in (False, True):
@@ -753,6 +756,21 @@ class PrivacyTests(DbBase):
                                 self.assertFalse(words & forbidden, v)
                         for user in self.users[:2]:
                             voted += await learn_from_correction(db, item, f, user_id=user.id)
+                    # Tahap 2 M3a: setiap alasan "Bukan pengeluaran" oleh dua user (suara `arah`).
+                    if lay.get("arah"):
+                        arah_layouts += 1
+                        arah_tokens_seen.update(lay["arah"])
+                    for alasan in ARAH_FLOWS:
+                        for v in votes_for_skip(lay, item.document, alasan):
+                            with self.subTest(id=case["id"], on=enabled, vote=v):
+                                token = v.rule_key.split("|", 1)[1]
+                                words = set(token.split(":", 1)[1].split())
+                                if token.startswith("judul:"):
+                                    self.assertFalse(words & forbidden, v)
+                                else:   # kata penerima hanya kosakata penyedia/top-up (K9)
+                                    self.assertLessEqual(words, ARAH_PARTY_WORDS, v)
+                        for user in self.users[:2]:
+                            arah_voted += await learn_from_skip(db, item, alasan, user_id=user.id)
             await db.commit()
             vote_rows = (await db.execute(select(ProofRuleVote))).scalars().all()
             rule_rows = (await db.execute(select(ProofRule))).scalars().all()
@@ -760,12 +778,24 @@ class PrivacyTests(DbBase):
         self.assertGreater(voted, 20)
         self.assertGreater(len(rule_rows), 5)   # dua user: suara yang sama menjadi aturan
         self.assertEqual({r.kind for r in rule_rows} | {v.kind for v in vote_rows} <= {"label_total", "label_pihak",
-                                                                                        "label_tanggal"}, True)
+                                                                                        "label_tanggal", "arah"}, True)
+        self.assertGreater(arah_layouts, 0)
+        self.assertGreater(arah_voted, 0)
+        self.assertIn("arah", {r.kind for r in rule_rows})
+        if os.environ.get("KOTAK_ARAH_REPORT"):
+            print("arah", arah_layouts, arah_voted, sorted(arah_tokens_seen))
         for row in [*vote_rows, *rule_rows]:
             with self.subTest(row=(row.kind, row.rule_key, row.value)):
                 for text in (row.kind, row.rule_key, row.value):
                     self.assertNotRegex(text, r"\d")
                     self.assertNotIn("#", text)
+                if row.kind == "arah":   # `{app}|{token}`: kunci profil + token kosakata, nilai flow (M3a)
+                    app, token = row.rule_key.split("|", 1)
+                    self.assertIn(app, PROFILE_KEYS)
+                    self.assertTrue(kerangka.arah_token_ok(token), token)
+                    self.assertIn(row.value, ARAH_FLOWS)
+                    self.assertLessEqual(len(row.rule_key), KEY_MAX)
+                    continue
                 # Tanpa aturan `logo` yang disetujui tidak pernah kunci `logo:` (review L2 M-1; tahap 2 K8).
                 self.assertIn(row.rule_key, PROFILE_KEYS)
                 if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1, R-1)

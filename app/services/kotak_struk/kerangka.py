@@ -8,7 +8,8 @@ memuat STRUKTUR:
         {"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000},
         {"i": 7, "label": "tanggal", "kind": "tanggal", "date": "2026-10-31"},
         {"i": 3, "label": "ditransfer ke", "kind": "nama", "h": "<HMAC nama ternormalisasi>"},
-        {"i": 1, "label": None, "kind": "judul", "words": ["transfer", "berhasil"]}]}
+        {"i": 1, "label": None, "kind": "judul", "words": ["transfer", "berhasil"]}],
+     "arah": []}
 
 - `i` = indeks baris di `clean_lines(lines)`; paling banyak LAYOUT_MAX_LINES entri, urut `i`.
 - Label hanya dari kosakata label (`LABEL_WORDS`), digit diganti `#`, tanpa kata nama pihak lawan/pengirim/user
@@ -19,6 +20,8 @@ memuat STRUKTUR:
   >= 1000 hanya di bawah label uang) dan tidak pernah di bawah label nomor (rekening, no, ref, id, NPWP, VA, HP, ...)
   atau di baris alamat: nomor berbentuk angka tidak pernah tersimpan sebagai nominal.
 - Kata judul hanya kata kosakata (label, status, arah uang, nama aplikasi), tanpa kata nama.
+- `arah` (tahap 2 M3a, `arah_tokens`): token arah uang untuk suara/aturan `arah`, hanya kosakata: `judul:<kata judul
+  tanpa kata status>` dan `ke:<kata terdepan penerima: penyedia + kata top-up>` ("ke:gopay topu"); daftar, boleh kosong.
 - Hanya `doc_type` di LAYOUT_TYPES (QRIS, transfer, tidak dikenali) dengan kunci aturan (`rule_key`) yang punya
   kerangka: kunci profil aplikasi yang dikenal, atau (tahap 2, `LOGO_KEYS`, hanya `tidak_dikenali`) kunci
   `logo:<kata>` dari baris logo aplikasi tak dikenal. Baris teratas bukti tak dikenal bisa nama orang atau merchant
@@ -370,6 +373,91 @@ def _profile_of(doc: DokumenBayar, lines: list[str]) -> AppProfile | None:
     return detect_issuer(lines)
 
 
+# ── token arah uang (tahap 2 M3a; spec §2 baris `arah`, pre-flight A16 §4, K9) ─────────────────────────────
+
+# Kata top-up di nama penerima ("GOPAY TOPU-SXXXX" pada bukti ShopeePay, "OVO Top Up ...") dan di judul.
+TOP_UP_WORDS: frozenset[str] = frozenset({"top", "up", "topup", "topu", "isi", "saldo", "deposit", "reload"})
+# Kata penerima yang boleh menjadi token `ke:`: nama penyedia (bank/e-wallet), kata penanda profil aplikasi, dan kata
+# top-up. Kata penanda berhuruf < 3 ("m" dari "m-bca") tidak.
+ARAH_PARTY_WORDS: frozenset[str] = (
+    frozenset(MONEY_PROVIDERS)
+    | frozenset(w for p in PROFILES for m in p.markers for w in re.findall(r"[a-z]+", m) if len(w) >= 3)
+    | TOP_UP_WORDS)
+# Kata judul yang terlalu umum untuk membedakan arah uang: judul yang hanya memuat kata ini tidak memberi token.
+ARAH_GENERIC: frozenset[str] = frozenset({"transfer", "pembayaran", "bayar", "transaksi", "payment", "transaction",
+                                          "kirim", "uang", "ke", "dari", "qris", "nominal", "total", "rekening"})
+# Kata status di judul (dibuang dari token `judul:`): status bukan arah uang ("Transfer Berhasil" -> tanpa token).
+ARAH_STATUS_WORDS: frozenset[str] = (
+    frozenset(w for w in TITLE_WORDS if pc.classify_status(w))
+    | frozenset({"berhasil", "sukses", "success", "successful", "gagal", "failed", "tidak", "belum", "pending",
+                 "diproses", "processing", "dibatalkan", "ditolak", "batal", "rejected", "cancelled", "canceled",
+                 "void", "telah", "sedang", "selesai"}))
+ARAH_JUDUL = "judul:"
+ARAH_KE = "ke:"
+ARAH_KE_MAX_WORDS = 3
+ARAH_KE_MIN_WORDS = 2
+_ARAH_PROVIDER_WORDS = ARAH_PARTY_WORDS - TOP_UP_WORDS
+
+
+def _judul_ok(words: list[str]) -> bool:
+    return (1 <= len(words) <= TITLE_MAX_WORDS and all(w in TITLE_WORDS and w not in ARAH_STATUS_WORDS for w in words)
+            and any(w not in ARAH_GENERIC for w in words))
+
+
+def _ke_ok(words: list[str]) -> bool:
+    return (ARAH_KE_MIN_WORDS <= len(words) <= ARAH_KE_MAX_WORDS and all(w in ARAH_PARTY_WORDS for w in words)
+            and any(w in TOP_UP_WORDS for w in words) and any(w in _ARAH_PROVIDER_WORDS for w in words))
+
+
+def arah_token_ok(token) -> bool:
+    """Token arah berbentuk sah (pagar kedua untuk suara): `judul:<kata>` (1-6 kata judul kosakata, tanpa kata status,
+    paling sedikit satu kata di luar ARAH_GENERIC) atau `ke:<kata>` (2-3 kata ARAH_PARTY_WORDS, paling sedikit satu
+    kata penyedia/penanda dan satu kata TOP_UP_WORDS); huruf kecil, satu spasi. Selain itu (teks lain, kata nama,
+    digit) False."""
+    if not isinstance(token, str):
+        return False
+    for prefix, ok in ((ARAH_JUDUL, _judul_ok), (ARAH_KE, _ke_ok)):
+        if token.startswith(prefix):
+            words = token[len(prefix):].split(" ")
+            return ok(words)
+    return False
+
+
+def _judul_token(clean: list[str], forbidden: set[str]) -> str | None:
+    """Token `judul:` dari entri judul kerangka (baris judul status/top-up/uang masuk di HEADER_LINES baris teratas,
+    kata kosakata `TITLE_WORDS` tanpa kata nama), tanpa kata status; None bila tidak ada atau hanya kata umum."""
+    for i, line in enumerate(clean[:HEADER_LINES]):
+        entry = _entry(i, line, clean[i - 1] if i else None, forbidden)
+        if entry is not None and entry["kind"] == "judul":
+            words = [w for w in entry["words"] if w not in ARAH_STATUS_WORDS]
+            return ARAH_JUDUL + " ".join(words) if _judul_ok(words) else None
+    return None
+
+
+def _ke_token(name: str | None) -> str | None:
+    """Token `ke:` dari kata TERDEPAN nama penerima selama kata itu ARAH_PARTY_WORDS (paling banyak 3; kata lain,
+    termasuk yang memuat digit, menghentikannya): "GOPAY TOPU-SXXXX Axxxxxxx" -> "ke:gopay topu". Nama orang yang
+    diawali/bergabung dengan nama penyedia ("Shopeepaysitxx Amixxxxx", "GOPAY SITI AMINAH") tidak pernah memberi
+    token: kata nama bukan kosakata, dan tanpa kata top-up tidak ada token."""
+    words: list[str] = []
+    for w in re.findall(r"[a-z0-9]+", (name or "").lower()):
+        if w not in ARAH_PARTY_WORDS or len(words) == ARAH_KE_MAX_WORDS:
+            break
+        words.append(w)
+    return ARAH_KE + " ".join(words) if _ke_ok(words) else None
+
+
+def arah_tokens(lines: list[str], doc: DokumenBayar) -> list[str]:
+    """Token arah uang satu bukti (kerangka `"arah"`, suara dan aturan `arah`), hanya kata kosakata, paling banyak satu
+    `judul:` lalu satu `ke:` (lihat `_judul_token`, `_ke_token`). `lines` = `clean_lines` baris OCR. Murni dan hanya
+    bergantung pada (`lines`, `doc`): worker (kerangka) dan pembaca (M3b, sesudah `apply_flow`) menghitungnya sama
+    persis. Kata nama yang dibaca dari bukti itu (pihak lawan, pengirim, merchant) tidak pernah masuk judul; nama user
+    tidak dipakai di sini (pembaca tidak mengenalnya), jadi kata judul hanya kosakata."""
+    clean = pc.clean_lines(lines)
+    forbidden = _forbidden_words(clean, doc, _profile_of(doc, clean), None)
+    return [t for t in (_judul_token(clean, forbidden), _ke_token(doc.counterparty.name)) if t]
+
+
 def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_name: str | None) -> dict | None:
     """Kerangka aman satu bukti (lihat docstring modul). None bila `doc.doc_type` bukan LAYOUT_TYPES, tanpa kunci aturan
     (aplikasi tak dikenal tanpa baris logo yang sah), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
@@ -395,4 +483,5 @@ def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
         entry = _entry(i, line, clean[i - 1] if i else None, forbidden)
         if entry is not None:
             entries.append(entry)
-    return {"v": LAYOUT_VERSION, "key": key, "lines": entries}
+    # `arah` (tahap 2 M3a): kunci tambahan versi 1; kerangka lama tanpa kunci ini tidak memberi suara `arah`.
+    return {"v": LAYOUT_VERSION, "key": key, "lines": entries, "arah": arah_tokens(clean, doc)}

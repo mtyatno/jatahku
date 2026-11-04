@@ -424,6 +424,7 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
         # logo, jadi setiap daftar juga dibaca dengan baris teratas tambahan: logo rekaan ("NEWPAY"), nama orang dua kata
         # ("Siti Aminah", bukan kandidat), dan nama depan user ("Rina" dengan user Rina Wulandari).
         logo_keys = {}   # varian -> [(id, saklar, kunci)]
+        arah_seen = {}   # varian -> [(id, saklar, token)] (tahap 2 M3a)
         variants = (("asli", None, None), ("logo", "NEWPAY", None), ("orang", "Siti Aminah", None),
                     ("user", "Rina", "Rina Wulandari"))
         for case, (variant, top, user) in ((c, v) for c in SWEEP for v in variants):
@@ -440,11 +441,21 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
                 built += 1
                 with self.subTest(id=case["id"], variant=variant, on=enabled):
                     self.assertNotRegex(without_values(lay), r"\d{6,}")
+                    self.assertLessEqual(set(lay), {"v", "key", "lines", "arah"})
+                    clean = pc.clean_lines(lines)
+                    # Token arah (M3a, K9): hanya kosakata, dan pembaca menghitung ulang persis sama dari (baris, dok).
+                    self.assertIsInstance(lay["arah"], list)
+                    self.assertEqual(lay["arah"], kerangka.arah_tokens(clean, doc))
+                    self.assertLessEqual(sum(t.startswith("judul:") for t in lay["arah"]), 1)
+                    self.assertLessEqual(sum(t.startswith("ke:") for t in lay["arah"]), 1)
+                    for t in lay["arah"]:
+                        arah_seen.setdefault(variant, []).append((case["id"], enabled, t))
+                        self.assertTrue(kerangka.arah_token_ok(t), t)
+                        self.assertNotRegex(t, r"\d")
                     if lay["key"].startswith("logo:"):
                         logo_keys.setdefault(variant, []).append((case["id"], enabled, lay["key"]))
                         self.assertEqual(doc.doc_type, "tidak_dikenali")
                         self.assertIsNotNone(kerangka.logo_word(lay["key"]))
-                    clean = pc.clean_lines(lines)
                     # Setiap nominal tercetak sebagai uang di barisnya, tidak di bawah/di samping label nomor.
                     for e in lay["lines"]:
                         if e["kind"] == "nominal":
@@ -459,6 +470,14 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     name_words = {w for n in names for w in normalize_name(n).split()} | set(SWEEP_PERSON_WORDS)
                     for t in plain_texts(lay):
                         self.assertFalse(set(re.findall(r"[a-z]+", t.lower())) & name_words, t)
+                    for t in lay["arah"]:
+                        words = set(t.split(":", 1)[1].split())
+                        if t.startswith("judul:"):   # kata judul: kosakata judul, tanpa kata nama
+                            self.assertFalse(words & name_words, t)
+                            self.assertLessEqual(words, kerangka.TITLE_WORDS, t)
+                        else:   # kata penerima: hanya penyedia + kata top-up (nama tidak pernah, K9)
+                            self.assertLessEqual(words, kerangka.ARAH_PARTY_WORDS, t)
+                            self.assertFalse(words & (name_words - kerangka.ARAH_PARTY_WORDS), t)
                     for e in lay["lines"]:
                         if e.get("label"):
                             words = [w.strip(".,:;()'&/-") for w in e["label"].split()]
@@ -479,6 +498,12 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(logo_keys.get("logo", [])), 20)
         self.assertEqual({k for _, _, k in logo_keys["logo"]}, {"logo:newpay"})
         self.assertEqual((logo_keys.get("orang", []), logo_keys.get("user", [])), ([], []))
+        # Laporan M3a: token arah yang muncul di sapuan (semuanya kosakata, diperiksa di atas).
+        self.assertTrue(arah_seen.get("asli"))
+        self.assertLessEqual({t for _, _, t in arah_seen["asli"]}, {t for v in arah_seen.values() for _, _, t in v})
+        if os.environ.get("KOTAK_ARAH_REPORT"):
+            for variant, seen in arah_seen.items():
+                print(variant, len({(i, on) for i, on, _ in seen}), sorted({t for _, _, t in seen}))
         text = json.dumps(SWEEP).lower()
         self.assertTrue(all(w in text for w in SWEEP_PERSON_WORDS))   # nama-nama itu memang tercetak di sapuan
 

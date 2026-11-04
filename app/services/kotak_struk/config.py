@@ -54,3 +54,4 @@ FIX_TTL_S = 300                           # bot menunggu nominal pengganti sesud
 LAYOUT_TYPES = {"qris", "transfer", "tidak_dikenali"}   # doc_type yang mendapat kerangka (struk belanja tidak)
 KEY_MAX = 60                              # panjang kolom rule_key / value aturan belajar (dulu `belajar.KEY_MAX`)
 APP_NEW = "baru"                          # jawaban "Aplikasi apa ini?": aplikasi yang belum berprofil (tahap 2, K6)
+ARAH_FLOWS = ("top_up", "masuk", "antar_rekening_sendiri")   # alasan "Bukan pengeluaran" = nilai aturan `arah` (M3a)

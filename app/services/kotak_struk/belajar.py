@@ -20,6 +20,11 @@ tidak pernah teks bebas. Suara ditolak bila kata logonya nama yang dikenal di bu
 lawan, merchant terbaca, nama user). Aturan `logo` yang disetujui dimuat `approved_rules` untuk pembaca tidak dikenali
 (M2b: hanya penerbit `doc.issuer` dan kunci label belajarnya; status, pihak, referensi tidak pernah).
 
+Jenis tahap 2 `arah` (M3a; spec §2, pre-flight A16 K9, K14): "Bukan pengeluaran" dengan alasan (top-up / uang masuk /
+rekening sendiri, ARAH_FLOWS) pada QRIS/transfer berprofil (`learn_from_skip`): kunci `{app}|{token}` dengan token
+kosakata dari kerangka (`kerangka.arah_tokens`: `judul:<kata>`, `ke:<kata>`), nilai alasannya; hanya bila alasan beda
+dari arah yang terbaca. Aturan `arah` yang disetujui hanya menjadi saran (M3b).
+
 - `label_total`: nominal akhir berbeda dari total terbaca (juga bila total tidak terbaca) dan tercetak di baris
   `nominal` berlabel. Label biaya/potongan/saldo (`NOT_TOTAL_WORDS`) tidak pernah menjadi label total. Tepat satu label
   -> suara; beberapa -> label berkata awal "total" bila tepat satu; selain itu tanpa suara (G3). Nominal ketikan yang
@@ -69,9 +74,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import ProofRule, ProofRuleVote, ReceiptScan, Transaction
 from app.services.kotak_struk.config import (
-    APP_NEW, KEY_MAX, LAYOUT_LABEL_MAX, LAYOUT_TYPES, RULE_CACHE_S, RULE_MIN_USERS, ST_SIAP, ST_TERCATAT,
+    APP_NEW, ARAH_FLOWS, KEY_MAX, LAYOUT_LABEL_MAX, LAYOUT_TYPES, PROOF_TYPES, RULE_CACHE_S, RULE_MIN_USERS, ST_SIAP,
+    ST_TERCATAT,
 )
-from app.services.kotak_struk.kerangka import LOGO_WORDS, logo_word, safe_label
+from app.services.kotak_struk.kerangka import ARAH_JUDUL, ARAH_KE, LOGO_WORDS, arah_token_ok, logo_word, safe_label
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.readers.profiles import PROFILES, Learned, learned_for  # noqa: F401 (diekspor ulang, L3)
@@ -83,7 +89,8 @@ KIND_PIHAK = "label_pihak"
 KIND_TANGGAL = "label_tanggal"
 KINDS = (KIND_TOTAL, KIND_PIHAK, KIND_TANGGAL)   # jenis label: bentuk `approved_rules` untuk pembaca
 KIND_LOGO = "logo"                               # tahap 2 (M2a): kunci `logo:<kata>` -> kunci profil | APP_NEW
-ALL_KINDS = (*KINDS, KIND_LOGO)                  # semua jenis (Admin, rekonsiliasi); KIND_ARAH menyusul (M3a)
+KIND_ARAH = "arah"                               # tahap 2 (M3a): kunci `{app}|{token}` -> ARAH_FLOWS
+ALL_KINDS = (*KINDS, KIND_LOGO, KIND_ARAH)       # semua jenis (Admin, rekonsiliasi)
 
 ST_MENUNGGU = "menunggu"
 ST_DISETUJUI = "disetujui"
@@ -344,6 +351,63 @@ async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id
         return len(votes)
     except Exception:
         log.warning("suara koreksi untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
+        return 0
+
+
+# ── "Bukan pengeluaran" dengan alasan (tahap 2 M3a; spec §2 baris `arah`, §4.2 butir 4; pre-flight A16 K9, K14) ──
+
+def votes_for_skip(layout: dict | None, document: dict | None, alasan: str | None, *,
+                   approved_logo: frozenset[str] = frozenset()) -> list[Vote]:
+    """Suara `arah` dari satu lewati "Bukan pengeluaran" dengan alasan `alasan` (ARAH_FLOWS). Murni. Tidak ada suara
+    bila: alasan bukan ARAH_FLOWS; alasan sama dengan `document.flow` (K14: mengiyakan bacaan bukan koreksi); kunci
+    kerangka bukan kunci profil (kunci `logo:` hanya bila ada di `approved_logo`, K8); `document.doc_type` bukan
+    PROOF_TYPES; kerangka tanpa `"arah"` (kerangka lama) atau rusak. Satu suara per token yang sah (`arah_token_ok`):
+    `Vote("arah", "{key}|{token}", alasan)` bila panjang kuncinya <= KEY_MAX; paling banyak satu `judul:` dan satu
+    `ke:` (yang pertama)."""
+    if alasan not in ARAH_FLOWS or not isinstance(layout, dict) or not isinstance(document, dict):
+        return []
+    if document.get("flow") == alasan or document.get("doc_type") not in PROOF_TYPES:
+        return []
+    key = layout.get("key")
+    if not _valid_key(key, logo_ok=isinstance(key, str) and key in approved_logo):
+        return []
+    tokens = layout.get("arah")
+    if not isinstance(tokens, list):
+        return []
+    votes: list[Vote] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if not arah_token_ok(token):
+            continue
+        prefix = ARAH_JUDUL if token.startswith(ARAH_JUDUL) else ARAH_KE
+        rule_key = f"{key}|{token}"
+        if prefix in seen or len(rule_key) > KEY_MAX:
+            continue
+        seen.add(prefix)
+        votes.append(Vote(KIND_ARAH, rule_key, alasan))
+    return votes
+
+
+async def learn_from_skip(db: AsyncSession, item, alasan: str | None, *, user_id: uuid.UUID) -> int:
+    """Suara `arah` dari item Kotak Struk `item` yang dilewati sebagai "Bukan pengeluaran" dengan alasan `alasan`
+    (`record.skip_item`); jumlah suara yang dicatat. Seperti `learn_from_correction`: hanya item berkerangka; tulisan di
+    SAVEPOINT sendiri; tidak meng-commit (pemanggil meng-commit bersama lewati); tidak menyentuh item atau transaksi;
+    tidak pernah melempar (galat -> log tanpa isi bukti + 0). Kunci `logo:` hanya sesudah aturan `logo`-nya disetujui
+    (`approved_logo_keys`; dalam praktik tidak pernah: kunci logo hanya untuk `tidak_dikenali`, bukan PROOF_TYPES)."""
+    item_id = getattr(item, "id", None)
+    try:
+        if not item.layout or item.doc_type not in LAYOUT_TYPES:
+            return 0
+        key = item.layout.get("key") if isinstance(item.layout, dict) else None
+        approved_logo = (await approved_logo_keys(db) if isinstance(key, str) and logo_word(key) else frozenset())
+        votes = votes_for_skip(item.layout, item.document, alasan, approved_logo=approved_logo)
+        if not votes:
+            return 0
+        async with db.begin_nested():
+            await record_votes(db, votes, user_id=user_id, household_id=item.household_id)
+        return len(votes)
+    except Exception:
+        log.warning("suara arah untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
         return 0
 
 
