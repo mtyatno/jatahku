@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import { api } from '../lib/api';
 import { jenisLabel, peranLabel, setRuangAktif } from '../lib/ruangAktif';
@@ -54,21 +55,63 @@ function BuatRuang({ onBatal }) {
   );
 }
 
+// Gabung ke ruang usaha dengan kode undangan dari pemilik/admin (Plugin R6; endpoint R5 `POST /ruang/gabung`).
+// Ruang keluarga tidak berubah; sesudah bergabung, ruang usaha itu langsung dibuka.
+function GabungRuang({ onBatal }) {
+  const [kode, setKode] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!kode.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    const { ok, data } = await api.gabungRuang(kode.trim());
+    if (ok && data?.id) { pindah(data.id, null); return; }
+    setSaving(false);
+    setError(typeof data?.detail === 'string' ? data.detail : 'Gagal bergabung. Coba lagi.');
+  };
+  return (
+    <form onSubmit={submit} className="px-3 py-2 flex flex-col gap-2">
+      <label className="text-[13px] font-semibold" style={{ color: 'var(--text)' }} htmlFor="ruang-gabung-kode">
+        Kode undangan ruang usaha
+      </label>
+      <input id="ruang-gabung-kode" autoFocus maxLength={20} value={kode} onChange={e => setKode(e.target.value.toUpperCase())}
+        placeholder="RU…" autoCapitalize="characters" autoComplete="off" className="input text-sm font-mono tracking-wider" />
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+        Dari pemilik atau admin ruang. Ruang keluargamu tetap terpisah dan tidak terlihat oleh mereka.
+      </p>
+      {error && <p className="text-xs" style={{ color: '#DC2626' }}>{error}</p>}
+      <div className="flex gap-2">
+        <button type="button" onClick={onBatal} className="btn-outline flex-1 text-sm">Batal</button>
+        <button type="submit" disabled={saving || !kode.trim()} className="btn-primary flex-1 text-sm disabled:opacity-50">
+          {saving ? '...' : 'Gabung'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function RuangPicker({ pilihan, variant = 'sidebar' }) {
   const [open, setOpen] = useState(false);
   const [buat, setBuat] = useState(false);
+  const [gabung, setGabung] = useState(false);
   const ref = useRef(null);
+  const navigate = useNavigate();
+  const tutup = () => { setOpen(false); setBuat(false); setGabung(false); };
 
   useEffect(() => {
     if (!open) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setBuat(false); } };
-    const onKey = (e) => { if (e.key === 'Escape') { setOpen(false); setBuat(false); } };
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setBuat(false); setGabung(false); } };
+    const onKey = (e) => { if (e.key === 'Escape') { setOpen(false); setBuat(false); setGabung(false); } };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  const { items, aktif, bawaan, bolehBuat } = pilihan;
+  const { items, aktif, bawaan, bolehBuat, bolehGabung } = pilihan;
+  const form = buat || gabung;
+  const kelola = aktif?.jenis === 'usaha' && (aktif.peran === 'owner' || aktif.peran === 'admin');
   if (!aktif) return null;
   const header = variant === 'header';
 
@@ -97,9 +140,9 @@ export default function RuangPicker({ pilihan, variant = 'sidebar' }) {
         <div role="menu" aria-label="Pilih ruang"
           className={`absolute z-[60] mt-2 rounded-xl py-2 shadow-lg ${header ? 'left-0 w-72 max-w-[calc(100vw-2rem)]' : 'left-0 right-0'}`}
           style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
-          {!buat && items.map(r => (
+          {!form && items.map(r => (
             <button key={r.id} type="button" role="menuitemradio" aria-checked={r.id === aktif.id}
-              onClick={() => { setOpen(false); if (r.id !== aktif.id) pindah(r.id, bawaan); }}
+              onClick={() => { tutup(); if (r.id !== aktif.id) pindah(r.id, bawaan); }}
               className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-black/5" style={{ color: 'var(--text)' }}>
               <RuangIcon jenis={r.jenis} />
               <span className="min-w-0 flex-1">
@@ -111,16 +154,33 @@ export default function RuangPicker({ pilihan, variant = 'sidebar' }) {
               {r.id === aktif.id && <Icon name="check" size={16} weight="bold" />}
             </button>
           ))}
-          {!buat && bolehBuat && (
+          {!form && (kelola || bolehBuat || bolehGabung) && (
             <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border)' }}>
-              <button type="button" role="menuitem" onClick={() => setBuat(true)}
-                className="w-full text-left px-3 py-2 flex items-center gap-3 text-sm font-semibold hover:bg-black/5"
-                style={{ color: 'var(--brand-600)' }}>
-                <Icon name="plus" size={18} weight="bold" /> Buat ruang usaha
-              </button>
+              {kelola && (
+                <button type="button" role="menuitem" onClick={() => { tutup(); navigate('/ruang'); }}
+                  className="w-full text-left px-3 py-2 flex items-center gap-3 text-sm font-semibold hover:bg-black/5"
+                  style={{ color: 'var(--text)' }}>
+                  <Icon name="users" size={18} /> Anggota {aktif.nama}
+                </button>
+              )}
+              {bolehBuat && (
+                <button type="button" role="menuitem" onClick={() => setBuat(true)}
+                  className="w-full text-left px-3 py-2 flex items-center gap-3 text-sm font-semibold hover:bg-black/5"
+                  style={{ color: 'var(--brand-600)' }}>
+                  <Icon name="plus" size={18} weight="bold" /> Buat ruang usaha
+                </button>
+              )}
+              {bolehGabung && (
+                <button type="button" role="menuitem" onClick={() => setGabung(true)}
+                  className="w-full text-left px-3 py-2 flex items-center gap-3 text-sm font-semibold hover:bg-black/5"
+                  style={{ color: 'var(--brand-600)' }}>
+                  <Icon name="link" size={18} /> Gabung dengan kode
+                </button>
+              )}
             </div>
           )}
           {buat && <BuatRuang onBatal={() => setBuat(false)} />}
+          {gabung && <GabungRuang onBatal={() => setGabung(false)} />}
         </div>
       )}
     </div>

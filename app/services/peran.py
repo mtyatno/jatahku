@@ -366,10 +366,10 @@ async def catatan_hari_ini(db: AsyncSession, user, household_id, batasan: Batasa
         except PeranDitolak:
             return False
 
-    items = [{"id": str(i), "jenis": JENIS_PENGELUARAN, "judul": d, "subjudul": f"{e or ''} {n}".strip(),
+    items = [{"id": str(i), "jenis": JENIS_PENGELUARAN, "judul": d, "subjudul": n, "emoji": e or "",
               "nominal": int(a), "waktu": c.isoformat() if c else None, "boleh_hapus": _hapus(c)}
              for i, d, a, c, n, e in txn]
-    items += [{"id": str(i), "jenis": JENIS_PENJUALAN, "judul": d, "subjudul": None, "nominal": int(a),
+    items += [{"id": str(i), "jenis": JENIS_PENJUALAN, "judul": d, "subjudul": None, "emoji": "", "nominal": int(a),
                "waktu": c.isoformat() if c else None, "boleh_hapus": False} for i, d, a, c in inc]
     items.sort(key=lambda x: x["waktu"] or "", reverse=True)
     ringkas = {j: {"jumlah": sum(1 for x in items if x["jenis"] == j),

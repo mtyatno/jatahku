@@ -85,11 +85,13 @@ test('pilihanRuang: aktif dari pilihan, selain itu ruang keluarga', () => {
   assert.equal(pilihanRuang(DAFTAR, null).aktif.id, KELUARGA);
   assert.equal(pilihanRuang(DAFTAR, '33333333-3333-4333-8333-333333333333').aktif.id, KELUARGA);
   assert.equal(pilihanRuang(DAFTAR, null).tampil, true);
+  assert.equal(pilihanRuang(DAFTAR, null).bolehGabung, true);
 });
 
 test('pilihanRuang: user di luar flag tidak melihat pemilih', () => {
   const p = pilihanRuang({ bawaan: KELUARGA, items: [DAFTAR.items[0]], boleh_buat_usaha: false }, null);
   assert.equal(p.tampil, false);
+  assert.equal(p.bolehGabung, false);
   assert.equal(pilihanRuang(null, null).tampil, false);
   assert.equal(pilihanRuang(null, null).aktif, null);
   // Flag terbuka tapi belum punya ruang usaha: pemilih tampil untuk membuatnya.

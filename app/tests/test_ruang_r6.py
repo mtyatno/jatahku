@@ -161,8 +161,8 @@ class RuangR6Tests(unittest.IsolatedAsyncioTestCase):
                          ({"jumlah": 1, "total": 50000}, {"jumlah": 1, "total": 100000}))
         self.assertEqual((menunggu["menunggu"], [(d["judul"], d["nominal"], d["status"]) for d in menunggu["items"]]),
                          (1, [("ayam 40kg", 2500000, "menunggu")]))
-        self.assertEqual(sorted((c["judul"], c["jenis"], c["boleh_hapus"]) for c in catatan["items"]),
-                         [("kardus", "pengeluaran", True), ("nasi box", "penjualan", False)])
+        self.assertEqual(sorted((c["judul"], c["jenis"], c["subjudul"], c["boleh_hapus"]) for c in catatan["items"]),
+                         [("kardus", "pengeluaran", "Bahan", True), ("nasi box", "penjualan", None, False)])
         self.assertEqual((batasan["batasan"]["batas_nominal"], [a["nama"] for a in batasan["amplop"]]),
                          (1000000, ["Bahan"]))
         self.assertNotIn("amplop_ids", batasan["batasan"])

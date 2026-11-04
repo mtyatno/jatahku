@@ -14,7 +14,7 @@ const ITEM_HEIGHT = 'var(--nav-h)';
 
 const AVATAR_COLORS = ['var(--brand-400)', '#A5A8F7', '#F5B84A', '#F59AAE', '#7DD3FC'];
 
-function NavItem({ to, icon, label, badge, end }) {
+function NavItem({ to, icon, label, badge, badgeLabel = 'perlu dibayar', end }) {
   return (
     <NavLink to={to} end={end}
       className={({ isActive }) =>
@@ -29,7 +29,7 @@ function NavItem({ to, icon, label, badge, end }) {
       {badge > 0 && (
         <span className="min-w-[22px] h-[22px] px-1.5 rounded-full text-xs font-bold inline-flex items-center justify-center"
           style={{ background: '#E24B4A', color: '#fff' }}
-          aria-label={`${badge} perlu dibayar`}>
+          aria-label={`${badge} ${badgeLabel}`}>
           {badge}
         </span>
       )}
@@ -79,7 +79,7 @@ export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, m
       <div role="navigation" aria-label="Menu utama" className="flex flex-col gap-0.5">
         {items.map(item => (
           <NavItem key={item.to} {...item} end={item.to === '/'}
-            badge={item.to === '/langganan' ? langgananBadge : 0} />
+            badge={item.badge ?? (item.to === '/langganan' ? langgananBadge : 0)} />
         ))}
         {isAdmin && <NavItem to="/admin" icon="admin" label="Admin" />}
       </div>
