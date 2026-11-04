@@ -310,11 +310,18 @@ Plugin R2 (#166) juga sudah di `main`, dan fase ini digabung di atasnya (penyesu
   `cmd_invite`. `membership` di modul siklus kini diteruskan ke `ruang.keanggotaan_keluarga`, tanpa kueri sendiri;
   `POST /snapshots/recompute` memakai ruang tulis R2 dan menghitung izinnya untuk household itu; profil tetap ruang
   keluarga.
-- **Terbuka (sesudah R2, sebelum ruang usaha bisa dibuka di R4) — call site masih membaca `user.payday_day`.** R2
-  meneruskan `household_id` ruang aktif ke services, tetapi jendela periode (ringkasan amplop, analitik, export) masih
-  dihitung dari `user.payday_day`, cermin ruang KELUARGA, juga saat header membuka ruang lain. Bacalah
-  `households.payday_day` ruang aktif (`household_payday`); sesudahnya cermin `users.payday_day` bisa dipensiunkan.
-  Hari ini laten: belum ada klien yang mengirim header dan belum ada ruang usaha.
+- **Saldo per ruang: selesai (temuan review keamanan PR #177).** `household_cycle.payday_ruang(db, user, hid)`:
+  ruang keluarga = `users.payday_day` (angka lama tidak berubah), ruang usaha = `households.payday_day` ruang itu
+  (bulan kalender). Dipakai `compute_envelope_summaries` bila pemanggil tidak memberi `payday_day` (ringkasan amplop,
+  geser dana, cocokkan saldo, rencana dana; prive memberi siklus ruang usaha sendiri), cek perilaku saat mencatat
+  pengeluaran (`behavior.check_behavior`, dari ruang amplop), dan periode batal cek saldo. Tes
+  `test_siklus_ruang_usaha.py` (owner bergajian tgl 25).
+- **Terbuka — tampilan dan laporan di ruang usaha masih membaca `user.payday_day`:** analitik (`analytics.py`), export,
+  riwayat pemasukan (`GET /incomes/`), jendela bayar langganan (`recurring.py`, `recurring_status.py`), AI Advisor
+  (`advisor/context.py`, `snapshot.py`), dan pemakaian di profil. Tidak memindah uang, tetapi periode yang ditampilkan
+  untuk owner/admin yang gajian keluarganya bukan tgl 1 tidak sama dengan bulan kalender ruang usaha. Pakai
+  `payday_ruang` di sesi yang menyentuh tampilan ruang usaha (R6, U3, U4); sesudah semuanya, cermin `users.payday_day`
+  bisa dipensiunkan.
 
 Yang masih harus dikerjakan rencana ruang usaha:
 
