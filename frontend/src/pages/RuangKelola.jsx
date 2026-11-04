@@ -3,7 +3,8 @@
 // di kanan (tersimpan otomatis dan tercatat di log ruang), undangan, nama ruang, dan log.
 //
 // Server memeriksa semua hak (04-kontrak-api.md §2): admin tidak bisa mengubah pemilik; batasan hanya untuk karyawan.
-// Kamus kata ruang (R7) belum ada di sini.
+// Kata yang dipelajari (kamus ruang, R7): daftar dan hapus; menghapus juga membuang kata yang sama milik anggota untuk
+// amplop itu, dan tercatat di log ruang.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -236,7 +237,7 @@ function FormBatasan({ rid, anggota, amplopDaftar, onTersimpan }) {
           <label className="label" htmlFor="foto-nota">Wajib foto nota di atas (Rp)</label>
           <input id="foto-nota" className="input font-mono" inputMode="numeric" placeholder="Tidak wajib"
             value={ribuan(form.foto_nota_di_atas)} onChange={e => ubah({ foto_nota_di_atas: digit(e.target.value) })} />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Foto nota dari Kotak Struk; karyawan bisa melampirkannya setelah Catat cepat hadir.</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Lampiran foto nota untuk karyawan belum tersedia: catatannya di atas nominal ini ditolak, jadi admin yang mencatat.</p>
         </div>
       </div>
 
@@ -438,6 +439,84 @@ function Undangan({ rid, undangan, onBerubah }) {
   );
 }
 
+// ── Kata yang dipelajari (kamus ruang, R7) ─────────────────────────────────
+const KAMUS_RINGKAS = 12;
+
+function KamusRuang({ rid, namaRuang, onBerubah }) {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState('');
+  const [semua, setSemua] = useState(false);
+  const [galat, setGalat] = useState('');
+
+  const muat = useCallback(async (cari) => {
+    const r = await api.kamusRuang(rid, cari);
+    if (!r.ok) { setGalat(pesan(r, 'Kata yang dipelajari belum bisa dimuat.')); return; }
+    setGalat('');
+    setData(r.data);
+  }, [rid]);
+
+  useEffect(() => {
+    const t = setTimeout(() => muat(q.trim()), q ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [muat, q]);
+
+  const hapus = async (k) => {
+    if (!window.confirm(`Hapus "${k.kata}" → ${k.amplop}? Anggota tidak lagi mendapat tebakan ini.`)) return;
+    const r = await api.hapusKamus(rid, k.id);
+    if (!r.ok && r.status !== 404) { setGalat(pesan(r, 'Gagal menghapus kata.')); return; }
+    await muat(q.trim());
+    onBerubah?.();
+  };
+
+  const items = data?.items || [];
+  const tampil = semua ? items : items.slice(0, KAMUS_RINGKAS);
+  return (
+    <Bagian judul="Kata yang dipelajari"
+      aksi={data ? <span className="text-sm" style={{ color: 'var(--text-muted)' }}>{data.total} kata</span> : null}>
+      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+        Dari catatan anggota di {namaRuang}. Dipakai semua anggota untuk menebak amplop, sesudah kata masing-masing;
+        tidak pernah dipakai di ruang keluarga.
+      </p>
+      {(data?.total || 0) > KAMUS_RINGKAS && (
+        <input type="search" className="input mt-3" placeholder="Cari kata" aria-label="Cari kata yang dipelajari"
+          value={q} onChange={e => setQ(e.target.value)} maxLength={100} />
+      )}
+      <Pesan teks={galat} galat />
+      {data && items.length === 0 && (
+        <p className="text-sm mt-3" style={{ color: 'var(--text-muted)' }}>
+          {q ? 'Tidak ada kata yang cocok.' : 'Belum ada. Kata bertambah saat anggota mencatat pengeluaran di ruang ini.'}
+        </p>
+      )}
+      {items.length > 0 && (
+        <ul className="mt-3 divide-y" style={{ borderColor: 'var(--border)' }}>
+          {tampil.map(k => (
+            <li key={k.id} className="py-2 flex items-center gap-3 text-sm min-w-0">
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 min-w-0" style={{ color: 'var(--text)' }}>
+                  <b className="truncate">{k.kata}</b>
+                  <span aria-hidden="true" style={{ color: 'var(--text-muted)' }}>→</span>
+                  <EnvelopeIcon value={k.emoji} size={16} />
+                  <span className="truncate">{k.amplop}</span>
+                </span>
+                <span className="block truncate text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {k.kali}× · diajarkan {k.diajarkan_oleh || 'mantan anggota'}
+                </span>
+              </span>
+              <button type="button" onClick={() => hapus(k)} className="text-xs font-semibold shrink-0" style={{ color: '#DC2626' }}
+                aria-label={`Hapus kata ${k.kata} untuk ${k.amplop}`}>Hapus</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {items.length > KAMUS_RINGKAS && (
+        <button type="button" onClick={() => setSemua(v => !v)} className="text-sm font-semibold mt-2" style={{ color: 'var(--brand-600)' }}>
+          {semua ? 'Ringkas' : `Lihat semua (${items.length})`}
+        </button>
+      )}
+    </Bagian>
+  );
+}
+
 // ── Halaman ─────────────────────────────────────────────────────────────────
 export default function RuangKelola() {
   const { user } = useAuth();
@@ -547,6 +626,9 @@ export default function RuangKelola() {
         </div>
       </div>
 
+      <KamusRuang rid={rid} namaRuang={nama || 'ruang ini'}
+        onBerubah={() => api.logRuang(rid).then(l => { if (l.ok) setLog(l.data); })} />
+
       <Bagian judul="Log ruang"
         aksi={<button type="button" onClick={() => setLihatLog(v => !v)} className="text-sm font-semibold" style={{ color: 'var(--brand-600)' }}>
           {lihatLog ? 'Sembunyikan' : `Lihat (${log.length})`}
@@ -561,7 +643,7 @@ export default function RuangKelola() {
             ))}
           </ul>
         ) : (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Setiap perubahan anggota, batasan, undangan, dan persetujuan tercatat di sini.</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Setiap perubahan anggota, batasan, undangan, persetujuan, dan kata yang dihapus tercatat di sini.</p>
         )}
       </Bagian>
     </div>

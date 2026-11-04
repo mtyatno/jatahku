@@ -13,6 +13,7 @@ from app.models.models import (
     RecurringTransaction, EnvelopeGroup, MonthlySnapshot,
 )
 from app.services.advisor import build_allocation_distribution, build_envelope_distribution
+from app.services.pemasukan import filter_pemasukan_user
 from app.services.reserved import envelope_reserved
 from app.services.ruang import RuangAktif
 
@@ -170,15 +171,10 @@ async def _net_alloc_by_category(hid, user, period_start, period_end, db) -> tup
 
 
 async def _income_totals(hid, user, period_start, period_end, db) -> tuple[Decimal, int, int]:
-    """Return (total_income, income_count, transfer_count) for the period."""
+    """Return (total_income, income_count, transfer_count) for the period. Kondisinya definisi bersama
+    `pemasukan.filter_pemasukan_user` (juga dipakai laporan berkala)."""
     result = await db.execute(
-        select(Income.amount).where(
-            Income.household_id == hid,
-            Income.user_id == user.id,
-            Income.income_date >= period_start,
-            Income.income_date <= period_end,
-            Income.balance_check_id.is_(None),
-        )
+        select(Income.amount).where(*filter_pemasukan_user(hid, user.id, period_start, period_end))
     )
     total = Decimal("0")
     income_count = 0

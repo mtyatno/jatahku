@@ -314,5 +314,26 @@ class ChatBatasTests(_BatasHttp):
         self.assertEqual(r.status_code, 200, r.text)
 
 
+class SaranBatasTests(_BatasHttp):
+    """Saran amplop (Plugin R7, review keamanan PR #191 temuan 2): `/transactions/suggest-envelope` 60/menit dan
+    `/suggest-envelopes` 20/menit per user, supaya kamus ruang tidak bisa disisir sekaligus. Ani dan Budi tanpa
+    household: route menjawab kosong, yang diuji hanya batasnya."""
+
+    router, prefix, limiter = transactions.router, "/transactions", transactions.limiter
+
+    def siapkan_stub(self):
+        pass
+
+    async def test_batas_saran_per_user(self):
+        ani = {"Authorization": f"Bearer {create_access_token(str(self.ani.id))}"}
+        budi = {"Authorization": f"Bearer {create_access_token(str(self.budi.id))}"}
+        for path, body, batas in (("/transactions/suggest-envelope", {"description": "kopi"}, 60),
+                                  ("/transactions/suggest-envelopes", {"descriptions": ["kopi"]}, 20)):
+            with self.subTest(path=path):
+                kode = [(await self.klien.post(path, json=body, headers=ani)).status_code for _ in range(batas + 1)]
+                self.assertEqual(kode, [200] * batas + [429])
+                self.assertEqual((await self.klien.post(path, json=body, headers=budi)).status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@
 - Redis key prefix: `link:webapp:{code}`, `txn:{key}`, `sub:{key}`
 - Scheduler: hourly per-user timezone-aware dispatch
 - Siklus anggaran milik household: households.payday_day (owner menentukan), users.payday_day = cermin untuk ruang keluarga; penulis tunggal services/household_cycle.py
+- Laporan berkala: laporan beku per user di tabel reports (job tiap jam :30), PDF fpdf2 AES-256 dibuat saat diminta dengan kata sandi laporan terenkripsi (REPORT_SECRET_KEY di .env); tidak ada file laporan di disk
 - DMARC: `none` (not quarantine) for inbox delivery
 - SMTP: localhost:587 with auth (noreply@jatahku.com); kredensial hanya di `/opt/jatahku/.env` (`SMTP_*`, lihat `app/core/config.py`), tidak pernah di kode — repo ini publik
 

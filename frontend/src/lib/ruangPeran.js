@@ -23,13 +23,17 @@ export function aksesRuang(aktif) {
 // Halaman yang dibuka karyawan. Halaman lain memanggil endpoint yang tertutup untuknya (403 `khusus_admin`).
 export const RUTE_KARYAWAN = ['/', '/transactions', '/settings'];
 export const RUTE_KELOLA = '/ruang';
+// Halaman milik pribadi user yang endpoint-nya tidak membaca ruang aktif (laporan berkala: `/laporan`,
+// `/laporan/:id`). Tetap terbuka di ruang mana pun supaya tautan notifikasi laporan tidak dialihkan ke Beranda,
+// tetapi tidak ikut menu karyawan (menu memakai RUTE_KARYAWAN).
+const RUTE_PRIBADI = ['/laporan'];
 
 /** Boleh membuka `path` di ruang aktif ini? Selain itu Layout mengarahkan ke Beranda. */
 export function ruteBoleh(path, akses) {
   const p = (path || '/').replace(/\/+$/, '') || '/';
   if (p === RUTE_KELOLA) return !!akses?.pengelola;
   if (!akses?.karyawan) return true;
-  return RUTE_KARYAWAN.includes(p);
+  return RUTE_KARYAWAN.includes(p) || RUTE_PRIBADI.some(r => p === r || p.startsWith(`${r}/`));
 }
 
 /** Menu (bottom nav dan sidebar) untuk peran ini. Pengelola ruang usaha mendapat "Anggota" dengan angka antrean
@@ -210,6 +214,7 @@ export function labelAudit(a) {
     case 'catatan_dihapus': return `${oleh} menghapus catatannya`;
     case 'reset_ruang': return `${oleh} mereset data ruang`;
     case 'ruang_diubah': return `${oleh} mengganti nama ruang menjadi ${r.nama?.ke || ''}`.trim();
+    case 'kata_dihapus': return `${oleh} menghapus kata "${r.kata || ''}"${r.amplop ? ` (${r.amplop})` : ''} dari kamus ruang`;
     default: return `${oleh}: ${a?.aksi || 'perubahan'}`;
   }
 }

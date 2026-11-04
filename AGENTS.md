@@ -233,6 +233,32 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    `\d household_members` memuat `uq_household_members_user_household`; Beranda, daftar pemasukan, dan geser dana di
    bot tetap jalan.
 
+## Deploy Checklist — Plugin R7: Catat cepat dan kamus per ruang (d7r7k4a1m9c3)
+Menambah satu tabel baru `ruang_kamus`, route `GET`/`DELETE /ruang/{id}/kamus`, field aditif di
+`POST /transactions/suggest-envelope(s)` (`sumber`, `aturan`, request `amount`), lembar Catat cepat di ruang usaha, dan
+bagian "Kata yang dipelajari" di halaman Anggota (04-kontrak-api.md §2, §3). **Tidak ada kolom baru di tabel lama**, jadi
+tidak ada jendela 500: `lifespan` (`create_all`) membuat tabel yang sama saat restart dan migrasinya idempoten
+(`if_not_exists`). Kamus hanya diisi dan dibaca di ruang usaha (flag `ruang_usaha_users`); ruang keluarga, bot, dan
+Catat lama tidak berubah selain satu kueri tambahan yang kosong saat kata user tidak cocok. Tanpa paket atau `.env`.
+1. Sebelum merge: `alembic current` di VPS = `967a27d0c15d` (laporan berkala tahap 1). Bila belum, jalankan checklist
+   "Laporan berkala tahap 1 (967a27d0c15d)" dulu (migrasi R7 menginduk ke sana; di-rebase 5 Nov sesudah #190).
+2. Merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`), tunggu deploy; `api.jatahku.com/health` → commit baru;
+   `ls /opt/jatahku/app/alembic/versions/ | grep d7r7k4a1m9c3`.
+3. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `households`/`envelopes`/
+   `users` milik `postgres`, FK ke sana butuh hak REFERENCES: jalankan sebagai postgres; cek dengan query di checklist
+   Kotak Struk); `alembic current` harus `d7r7k4a1m9c3`. Lalu `sudo systemctl restart jatahku` dan jalankan ulang job
+   deploy yang gagal.
+4. Verifikasi: `sudo -u postgres psql jatahku_db -c '\d ruang_kamus'` (unik `uq_ruang_kamus`, indeks
+   `ix_ruang_kamus_household_keyword`); `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -m
+   app.scripts.ruang_paritas` → kode keluar 0; catat lewat bot dan web di ruang keluarga seperti biasa → saran amplop
+   sama seperti sebelumnya; `sudo -u postgres psql jatahku_db -c "SELECT COUNT(*) FROM ruang_kamus k JOIN households h
+   ON h.id = k.household_id WHERE h.type <> 'usaha'"` → 0 (juga kapan pun sesudahnya).
+5. Uji dua akun di ruang usaha (flag): pemilik mencatat "kardus 125rb" ke Operasional lewat Catat cepat → karyawan
+   mengetik "kardus 50 pcs 125rb" → tebakan Operasional dengan "Kamus <ruang> · diajarkan <pemilik>"; karyawan mengetik
+   kata yang biasa ia catat di ruang keluarganya (mis. "pulsa 50rb") → tawaran "Catat di ruang keluarga" → tercatat di
+   ruang keluarganya, tidak di ruang usaha; pemilik: halaman Anggota → "Kata yang dipelajari" → hapus "kardus" → log
+   ruang "menghapus kata".
+
 ## Deploy Checklist — Plugin R6: halaman Anggota dan Beranda karyawan (tanpa migrasi) — sudah jalan 2026-11-04
 Halaman Anggota (`/ruang`), Beranda template "Karyawan", menu dan Catat per peran, gabung ruang dengan kode di pemilih
 ruang, daftar/cabut undangan, ganti nama ruang. Semuanya hanya di ruang usaha, jadi di balik flag `ruang_usaha_users`;
@@ -541,6 +567,75 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    saklar, uji HP, PR `share_target`, pemantauan 2 minggu; rollback = saklar mati, migrasi tidak di-downgrade): ikuti
    urutan di `docs/kotak-struk.md` bagian "Menyalakan saklar"; jangan disalin ke sini.
 
+## Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)
+Branch `feat/laporan-berkala` (label `migrasi`): tabel `reports` dan `report_settings`, kolom `users.email_verified_at`,
+job `laporan_job` (tiap jam menit 30), API `/laporan*` dan `/user/laporan-pengaturan`, halaman `/laporan`, Pengaturan →
+Laporan, dan tombol top bar "Ekspor". Migrasi **idempoten**: `lifespan` (`create_all` + `LAPORAN_DDL`) membuat tabel dan
+kolom yang sama saat API restart, dan kolom `users` nullable, jadi tidak ada jendela 500; migrasinya tetap harus
+dijalankan, kalau tidak `deploy.sh` berakhir exit 2. **Paket baru dan kunci `.env` baru.** Detail perilaku, batasan, dan
+pemulihan: `docs/laporan-berkala.md`.
+Sebelum merge (aman untuk kode lama):
+1. Paket (deploy tidak meng-install paket; tanpa ini **API gagal start**, karena `main.py` mengimpor route laporan yang
+   mengimpor fpdf2 dan cryptography): `sudo -u jatahku /opt/jatahku/venv/bin/pip install fpdf2==2.8.9 cryptography==50.0.2`
+   (ikut terpasang: Pillow, fonttools, defusedxml). Cek:
+   `sudo -u jatahku /opt/jatahku/venv/bin/python -c "import fpdf, cryptography; from fpdf.enums import EncryptionMethod; print(fpdf.__version__, cryptography.__version__, EncryptionMethod.AES_256)"`
+   → `2.8.9 50.0.2 EncryptionMethod.AES_256`. Lalu `sudo systemctl restart jatahku` dan `POST /auth/login` dengan email
+   asal → 401, bukan 500 (kode lama tetap jalan dengan `cryptography` baru).
+2. Kunci kata sandi laporan: tambahkan `REPORT_SECRET_KEY=<kunci Fernet>` ke `/opt/jatahku/.env`, dibuat dengan
+   `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` memakai python venv
+   (cryptography pasti ada di sana). Tanpa menampilkan kuncinya di layar (`\n` di depan: baris terakhir `.env` yang tanpa
+   akhir baris tidak tersambung dengan kunci):
+   ```bash
+   sudo sh -c 'printf "\nREPORT_SECRET_KEY=%s\n" "$(/opt/jatahku/venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")" >> /opt/jatahku/.env'
+   sudo grep -c '^REPORT_SECRET_KEY=.' /opt/jatahku/.env   # → 1
+   ```
+   Isi **sekali** dan jangan diganti: kunci lain membuat kata sandi laporan yang tersimpan tak terbaca (user diminta
+   mengatur ulang; rotasi di luar cakupan). Jangan pernah menulis kunci ini di repo atau log. Kode lama mengabaikannya
+   (`extra="ignore"`).
+3. Hak tabel: restart pertama menjalankan `create_all` (dua tabel ber-FK ke `users` dan `households`) dan `LAPORAN_DDL`
+   (`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at`) sebagai user DB aplikasi, jadi `jatahku` harus pemilik
+   `users` (`bisa_alter` = t) dan boleh REFERENCES `users` dan `households` (`bisa_fk` = t); kalau tidak, API gagal start.
+   Pakai query di checklist Kotak Struk Bagian A dengan `IN ('users','households','alembic_version')`. Bila ada yang
+   bukan `jatahku`, sebagai `postgres`: `ALTER TABLE <tabel> OWNER TO jatahku;` sebelum merge.
+Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
+4. Tunggu deploy (`api.jatahku.com/health` → `commit` baru; run boleh berakhir "Deploy GAGAL" karena migrasi tertinggal).
+   `ls /opt/jatahku/app/alembic/versions/ | grep 967a27d0c15d`; `alembic current` harus `e7b3d5a9c1f4` (Kotak Struk
+   belajar) sebelum upgrade. Masih `a7e3c1f5d9b2`: jalankan checklist "Kotak Struk belajar lintas user (e7b3d5a9c1f4)"
+   dulu (migrasi ini menginduk ke sana). Revisi lain = main sudah punya migrasi yang lebih baru: berhenti,
+   `down_revision` PR ini harus disesuaikan dulu (satu head).
+5. `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic upgrade head` (bila `users`/`households` milik
+   `postgres`, jalankan sebagai postgres); `alembic current` harus `967a27d0c15d`. Lalu `sudo systemctl restart jatahku`
+   dan jalankan ulang job deploy yang gagal (langkah 5 "Urutan merge PR bermigrasi").
+6. Log restart tanpa peringatan kunci: `sudo journalctl -u jatahku --since "10 min ago" | grep -c "REPORT_SECRET_KEY"` → 0
+   (ada = kunci kosong atau tidak valid: kata sandi dan PDF laporan menjawab 503; perbaiki `.env`, restart).
+7. Verifikasi skema: `sudo -u postgres psql jatahku_db -c '\d reports'` (unik `uq_reports_user_jenis_periode`, indeks
+   `ix_reports_email_antrean`, FK `user_id` ON DELETE CASCADE dan `household_id` ON DELETE SET NULL, `data` jsonb),
+   `sudo -u postgres psql jatahku_db -c '\d report_settings'` (PK `user_id`, tiga toggle `DEFAULT true NOT NULL`), dan
+   kolom baru di `users` (pipa `| grep` di shell, di luar psql):
+   `sudo -u postgres psql jatahku_db -c '\d users' | grep email_verified_at` → satu baris dengan tipe
+   `timestamp with time zone`.
+8. Uji di Postgres sungguhan dengan akun sendiri (jalur JSONB `->>` dan `FOR NO KEY UPDATE` baru diuji di PostgreSQL 16
+   lokal): di desktop buka `jatahku.com/laporan` → daftar tampil (`GET /laporan` 200; kosong = "Belum ada laporan. …"),
+   lalu Pengaturan → 📄 Laporan → "Atur kata sandi" → "Kata sandi laporan disimpan" dan status "Kata sandi laporan sudah
+   diatur." (`PUT /user/laporan-pengaturan` 200). `journalctl -u jatahku --since "10 min ago" | grep -i laporan` tanpa
+   traceback. Tombol top bar bernama "Ekspor".
+9. **Laporan pertama bisa terbit di jam :30 pertama sesudah restart**, bukan menunggu gajian berikutnya: household yang
+   periodenya tutup ≤ 7 hari lalu langsung mendapat laporan beserta lonceng dan Telegram (gajian tanggal 1: "Laporan
+   Oktober 2026" bila tayang paling lambat 7 Nov 2026). Setelah jam :30 itu: `journalctl -u jatahku --since "1 hour ago"
+   | grep -i laporan` → baris `N laporan terbit`, tanpa `gagal`/`ditunda`; bila akun sendiri ikut, buka laporannya dan
+   unduh PDF: terbuka dengan kata sandi laporan, tidak tanpa kata sandi.
+10. Hari gajian berikutnya ±07:30 WIB (job :30 sesudah snapshot 00:05 UTC): `journalctl -u jatahku | grep -i laporan`
+    dan `/laporan` berisi laporan periode yang baru tutup. Household yang gagal dicoba ulang tiap jam selama 7 hari;
+    menjalankan job manual dan mengirim ulang notifikasi: `docs/laporan-berkala.md` bagian "Pemulihan".
+- **Menaikkan versi fpdf2:** `app/services/laporan/pdf.py` memakai bagian dalam fpdf2 (membersihkan cache glyph
+  `SubsetMap.pick/get_glyph` dan menutup berkas font di `finally` setiap render; `StandardSecurityHandler.prepare_string`
+  untuk memeriksa kata sandi). Periksa lagi keduanya, lalu jalankan `app.tests.test_laporan_pdf`, sebelum mengganti pin.
+- **Rollback:** revert PR. Jangan `alembic downgrade` (membuang laporan yang sudah terbit dan kata sandi laporan); tabel
+  dan kolom baru boleh tetap ada (kode lama tidak memetakannya). Sesudah revert tayang, berkas revisi `967a27d0c15d`
+  hilang dari server sehingga `alembic current` gagal dan `deploy.sh` berhenti; tandai ulang ke parent-nya:
+  `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic stamp --purge e7b3d5a9c1f4` (`--purge`
+  mengosongkan `alembic_version` dulu, jadi revisi yang tak dikenal tidak dicari), lalu jalankan ulang job deploy.
+
 ## Aplikasi mobile (WAJIB untuk semua sesi mobile)
 Dokumen: `docs/mobile/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`). Buka sesi dengan `/sesi <kode>`, tutup dengan `/tutup-sesi`. Satu paket = satu branch `mobile/<wbs>-*` = satu PR; status di `docs/mobile/PROGRESS.md`, serah-terima di `docs/mobile/SESI-LOG.md`.
 1. **Satu bundle, satu UI.** Web, Android, iOS memakai `frontend/` yang sama. Perbedaan platform hanya di `frontend/src/native/`; komponen tidak boleh memeriksa `Capacitor`, user agent, `display-mode`, atau hostname.
@@ -564,7 +659,7 @@ Dokumen: `docs/plugin/` (mulai dari `00-indeks.md`; keputusan di `02-adr.md`, be
 5. **Tabel plugin** memakai awalan `p_<id>_`, kolom wajib (`id`, `household_id`, `created_by`, `created_at`, `updated_at`, `deleted_at`), indeks diawali `household_id`, enum sebagai `String`, JSON lewat `JSON().with_variant(JSONB(), "postgresql")`, dan tidak ada DDL saat plugin dipasang (tabel dibuat migrasi).
 6. **Satu sumber angka.** Angka Buku Usaha hanya dihitung di `app/plugins/buku_usaha/metrics.py`; kartu, laporan, chat, dan AI Advisor membacanya, frontend hanya memformat. Angka inti tetap dari `app/services/advisor/metrics.py` dan layanan yang sudah ada.
 7. **Teks dari templat.** Kalimat untuk web, chat web, dan Telegram dirakit dari templat yang sama, seperti aturan `render.py` di AI Advisor.
-8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang.
+8. **Tidak ada kueri lintas ruang** selain Prive (`POST /prive`, `app/api/routes/prive.py`: asal dari amplop, hanya owner ruang usaha; tujuan selalu ruang keluarga pemanggil; dua sisi `incomes.kind = prive` dalam satu commit lewat `fund_shift.record_prive`). Data, kamus kata, dan saran dari ruang keluarga tidak pernah dipakai di ruang usaha, dan sebaliknya. Kontrak visibilitas household (`visibility.py`) tetap berlaku di dalam setiap ruang. Kamus ruang (R7, `RuangKamus`): hanya dibaca untuk ruang usaha yang sedang dicari (`txn_nlp.cari_amplop`, gerbang jenis ruang di kueri) dan hanya ditulis dari catatan web bukan-privat ke amplop bersama ruang usaha (`save_learned_keywords(kamus_ruang=True)`; bot dan Kotak Struk tidak). Tawaran "pengeluaran pribadi" di Catat cepat bukan kueri lintas ruang: klien membuat permintaan terpisah tanpa header ruang (ruang keluarga user sendiri), dan server tidak menyimpannya.
 9. **Ekspor memakai escape dari PR #136** (HTML, CSP, anti formula-injection) untuk setiap laporan dan CSV baru.
 - **Flag (AppSetting, daftar `user_id` atau `*`):** `beranda_registry_users` (B2–B3), `ruang_usaha_users` (sejak R4), `plugin_buku_usaha_users` (sejak U1; umumnya `plugin_<id>_users`, dibaca host); saklar darurat `plugin_saklar_darurat` (H1, daftar id plugin). Yang belum siap selalu di balik flag, karena merge ke `main` berarti deploy produksi.
 - **Migrasi:** sesi bertanda migrasi memberi label `migrasi`, menambah checklist deploy di file ini, dan mengikuti "Urutan merge PR bermigrasi"; workflow "Migrasi" harus hijau.

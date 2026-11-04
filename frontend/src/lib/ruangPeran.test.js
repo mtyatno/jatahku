@@ -34,6 +34,17 @@ test('ruteBoleh: karyawan hanya Beranda, Transaksi, Pengaturan; halaman Anggota 
   assert.equal(ruteBoleh('/analytics', aksesRuang(USAHA_ADMIN)), true);
 });
 
+test('ruteBoleh: laporan berkala milik pribadi tetap terbuka untuk karyawan, tanpa masuk menunya', () => {
+  // Endpoint /laporan tidak membaca ruang aktif, jadi tautan notifikasi laporan tetap bisa dibuka dari ruang usaha.
+  const k = aksesRuang(KARYAWAN);
+  for (const p of ['/laporan', '/laporan/', '/laporan/2b0f5a52-1c3d-4e5f-8a9b-0c1d2e3f4a5b']) {
+    assert.equal(ruteBoleh(p, k), true, p);
+  }
+  for (const p of ['/laporanku', '/laporan-lama']) assert.equal(ruteBoleh(p, k), false, p);
+  const menu = [...MENU, { to: '/laporan', label: 'Laporan' }];
+  assert.deepEqual(menuUntuk(menu, k).map(i => i.to), ['/', '/transactions']);
+});
+
 test('menuUntuk: karyawan menu tersaring, pengelola usaha mendapat Anggota dengan angka antrean', () => {
   assert.deepEqual(menuUntuk(MENU, aksesRuang(KARYAWAN)).map(i => i.to), ['/', '/transactions']);
   const kelola = menuUntuk(MENU, aksesRuang(USAHA_OWNER), { menunggu: 3 });
@@ -102,6 +113,8 @@ test('labelAudit', () => {
     'Saya mengganti nama ruang menjadi B');
   assert.equal(labelAudit({ aksi: 'undangan_dicabut', oleh_nama: 'Saya', rincian: { peran: 'admin' } }),
     'Saya mencabut undangan Admin');
+  assert.equal(labelAudit({ aksi: 'kata_dihapus', oleh_nama: 'Ani', rincian: { kata: 'kardus', amplop: 'Operasional' } }),
+    'Ani menghapus kata "kardus" (Operasional) dari kamus ruang');
 });
 
 test('peranBerubah: hanya bila peran di ruang aktif berbeda atau ruangnya hilang', () => {

@@ -104,6 +104,9 @@ class User(TimestampMixin, Base):
     # Diisi saat logout-all. Token lama tanpa `sid` (sebelum auth_sessions) tidak
     # punya iat, jadi semuanya ditolak bila kolom ini terisi.
     tokens_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Waktu `email` terakhir diverifikasi (laporan berkala). NULL = belum atau tidak lagi
+    # terverifikasi, mis. setelah email diganti. DDL Postgres: services/laporan/schema.py.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     household_memberships: Mapped[list["HouseholdMember"]] = relationship(
@@ -771,6 +774,65 @@ class DashboardLayout(Base):
     )
 
 
+# --- Laporan berkala (spec 2026-11-01-laporan-berkala-design, bagian 2) ---
+
+# Nilai `reports.jenis` (String, bukan SAEnum, supaya jenis baru tidak butuh migrasi enum).
+# Kuartalan dan tahunan menyusul di tahap 3.
+JENIS_BULANAN = "bulanan"
+
+
+class Report(Base):
+    """Satu laporan periodik yang sudah terbit untuk satu user. Isinya (`data`, JSON beku)
+    dibangun sekali saat terbit, jadi halaman, PDF, dan email memakai angka yang sama.
+
+    Unik per (user, jenis, awal periode): job penerbitan yang jalan dua kali tidak membuat
+    laporan dobel. `household_id` = ruang keluarga saat terbit; NULL bila household-nya sudah
+    dihapus (laporan mantan anggota tetap ada). Kolom `email_*` = antrean pengiriman tahap 2;
+    tahap 1 membiarkan `email_status` NULL. Tabelnya dibuat `create_all`; kolom
+    `users.email_verified_at` lewat LAPORAN_DDL (services/laporan/schema.py)."""
+    __tablename__ = "reports"
+    __table_args__ = (
+        UniqueConstraint("user_id", "jenis", "periode_mulai", name="uq_reports_user_jenis_periode"),
+        Index("ix_reports_email_antrean", "email_status", "email_terakhir_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    household_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("households.id", ondelete="SET NULL"), nullable=True
+    )
+    jenis: Mapped[str] = mapped_column(String(16))  # JENIS_BULANAN | kuartalan | tahunan
+    periode_mulai: Mapped[date] = mapped_column(Date)
+    periode_akhir: Mapped[date] = mapped_column(Date)
+    payday_day: Mapped[int] = mapped_column(Integer)  # tanggal gajian rumah saat terbit
+    data: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))  # beku, ada `versi` skema
+    terbit_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Antrean email (tahap 2): menunggu | mengirim | terkirim | gagal | dilewati; NULL di tahap 1.
+    email_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Alasan dilewati/gagal: belum_verifikasi | dimatikan | tanpa_email | smtp.
+    email_alasan: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    email_percobaan: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    email_terakhir_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_terkirim_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReportSettings(Base):
+    """Pengaturan laporan per user: satu baris, dibuat saat pertama kali diubah (tanpa baris =
+    bawaan). `kata_sandi_enc` = kata sandi PDF laporan, terenkripsi Fernet
+    (services/laporan/rahasia.py); NULL = belum diatur. Tidak pernah dikembalikan API."""
+    __tablename__ = "report_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    kata_sandi_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    kuartalan_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))  # hanya Pro
+    tahunan_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))  # hanya Pro
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 # --- Ruang usaha: peran, batasan, persetujuan (Plugin R5, docs/plugin/04-kontrak-api.md §2, ADR-P4, P17, P18) ---
 # Hanya tabel baru (tidak ada kolom baru di tabel lama), jadi model lama tidak 500 sebelum migrasi c5r5a8e2d417
 # jalan; `create_all` saat start membuat tabel yang sama dan migrasinya idempoten.
@@ -858,6 +920,26 @@ class RuangAudit(Base):
     target_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     rincian: Mapped[dict] = mapped_column(_JSON_R5, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RuangKamus(TimestampMixin, Base):
+    """Kamus ruang usaha (Plugin R7, ADR-P5): kata → amplop yang diajarkan anggota mana pun dari catatan yang
+    tersimpan, dipakai semua anggota ruang itu sesudah kata user sendiri. Hanya diisi untuk ruang `usaha`; tidak
+    pernah dibaca di ruang lain (`app/services/txn_nlp.py`). Admin melihat dan menghapus di halaman Anggota.
+    Tabel baru saja (migrasi d7r7k4a1m9c3): `create_all` saat start membuat tabel yang sama."""
+    __tablename__ = "ruang_kamus"
+    __table_args__ = (
+        UniqueConstraint("household_id", "keyword", "envelope_id", name="uq_ruang_kamus"),
+        Index("ix_ruang_kamus_household_keyword", "household_id", "keyword"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    keyword: Mapped[str] = mapped_column(String(100))
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id", ondelete="CASCADE"))
+    count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    diajarkan_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"),
+                                                             nullable=True)   # pengajar terakhir
 
 
 # --- Plugin H1: host plugin (docs/plugin/01-kajian.md "Tabel pengelola", ADR-P9, P11, P15) ---

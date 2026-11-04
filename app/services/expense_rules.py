@@ -72,14 +72,18 @@ async def peringatan_plugin(db, user, envelope, amount, description: str = "") -
     return await titik.peringatan_pengeluaran(db, user, envelope, amount, description)
 
 
-async def after_expense_recorded(db, user, envelope_id, description: str, learn_text: str | None = None):
+async def after_expense_recorded(db, user, envelope_id, description: str, learn_text: str | None = None, *,
+                                 kamus_ruang: bool = False):
     """Efek best-effort setelah pengeluaran tercatat (dan di-commit): streak
     disiplin dan pembelajaran kata kunci → amplop. Tidak pernah menggagalkan
     transaksi. Mengembalikan hasil streak (atau None) untuk ditampilkan bot.
 
     `learn_text` (Kotak Struk): None → kata kunci dipelajari dari `description` (perilaku
     lama); string → dari string itu; string kosong → tidak belajar kata kunci (streak tetap).
-    Untuk bukti bayar, server mengisinya dengan catatan user saja (`learn_text_for_item`)."""
+    Untuk bukti bayar, server mengisinya dengan catatan user saja (`learn_text_for_item`).
+
+    `kamus_ruang` (Plugin R7): juga mengajari kamus ruang usaha (`txn_nlp.ajari_kamus_ruang`). Bawaan mati: hanya
+    jalur web untuk catatan bukan-privat yang menyalakannya; bot (ruang keluarga) dan Kotak Struk tidak."""
     streak = None
     try:
         from app.services.streak import record_activity
@@ -89,7 +93,8 @@ async def after_expense_recorded(db, user, envelope_id, description: str, learn_
     try:
         from app.services.txn_nlp import save_learned_keywords
         if learn_text is None or learn_text:
-            await save_learned_keywords(user.id, description if learn_text is None else learn_text, envelope_id, db)
+            await save_learned_keywords(user.id, description if learn_text is None else learn_text, envelope_id, db,
+                                        kamus_ruang=kamus_ruang)
         await db.commit()
     except Exception:
         pass

@@ -2,14 +2,17 @@
 
 Yang dihapus permanen: baris `users`, sesi login (semua perangkat langsung keluar),
 notifikasi, preferensi, streak, kata kunci amplop, scan struk (termasuk item Kotak
-Struk), order pembayaran, transaksi tertunda, dan foto profil/bukti bayar di disk.
+Struk), order pembayaran, transaksi tertunda, laporan berkala beserta pengaturannya
+(termasuk kata sandi PDF laporan), dan foto profil/bukti bayar di disk.
 Berkas Kotak Struk dari item yang belum selesai tidak dihapus di sini: barisnya ikut
 terhapus, lalu penyapu berkas yatim (scheduler `kotak_maintenance`) menghapus berkasnya.
 
 Household:
 - Hanya user ini anggotanya → household dihapus utuh (amplop, transaksi, pemasukan,
   alokasi, langganan, target, snapshot, cocokkan saldo, merchant rumah tangga dan
-  peta merchant → amplop).
+  peta merchant → amplop). Laporan berkala yang menunjuk household itu tetapi milik
+  user lain (dulu anggota, kini sudah pindah) tidak ikut terhapus: `household_id`-nya
+  dikosongkan, isinya beku dan tetap milik pemiliknya.
 - Ada anggota lain → amplop pribadi user dihapus (beserta baris peta merchant ke
   amplop itu; merchant-nya tetap milik household); catatannya di amplop bersama
   dianonimkan ke user "Mantan anggota" (keterangan diganti, nominal tetap) supaya
@@ -23,6 +26,13 @@ Household:
   nominal tetap (0); hanya pemasukan tanpa alokasi sama sekali yang dibuang. Peran
   owner pindah ke anggota tertua. Peta merchant di amplop bersama tetap,
   `last_user_id` user ini dikosongkan.
+
+Laporan berkala beku milik user lain (anggota serumah, sekarang atau dulu) yang memuat
+catatan user ini: baris yang `pencatat_id`-nya user ini dianonimkan seperti catatan hidupnya
+(nama -> "Mantan anggota", keterangan -> "Transaksi mantan anggota" / "Pemasukan mantan
+anggota", "Transaksi privat" tetap; nominal tetap), di mana pun household-nya sekarang
+(Ruling R15, `laporan/pencatat.py`). Selain ini, `data` laporan setelah terbit hanya diubah
+gabung akun (`merge_users` mengalihkan `pencatat_id` sumber ke target; nama tetap beku).
 
 "Mantan anggota" satu baris `users` bersama (FORMER_MEMBER_ID), bukan anggota household
 mana pun dan tidak bisa login. Email berawalan `deleted_` supaya scheduler, admin, dan
@@ -44,9 +54,11 @@ from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
     HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
     Notification, NotificationPreference, PaymentOrder, PendingTransaction, ProofRule, ProofRuleVote,
-    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Transaction, User, UserEnvelopeKeyword, UserStreak,
+    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings, RuangKamus, Transaction, User,
+    UserEnvelopeKeyword, UserStreak,
 )
 from app.services.kotak_struk import belajar
+from app.services.laporan.pencatat import anonimkan_pencatat
 
 logger = logging.getLogger("jatahku.account_deletion")
 
@@ -96,7 +108,7 @@ async def _delete_envelopes(db: AsyncSession, env_ids: list) -> None:
     if not env_ids:
         return
     for model in (Allocation, Transaction, PendingTransaction, RecurringTransaction,
-                  Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap):
+                  Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap, RuangKamus):
         await db.execute(delete(model).where(model.envelope_id.in_(env_ids)))
     await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
@@ -113,6 +125,9 @@ async def _delete_household(db: AsyncSession, hid) -> None:
     await db.execute(delete(Income).where(Income.household_id == hid))
     await db.execute(delete(BalanceCheck).where(BalanceCheck.household_id == hid))
     await db.execute(delete(EnvelopeGroup).where(EnvelopeGroup.household_id == hid))
+    # Laporan berkala menunjuk household (FK SET NULL): laporan mantan anggota tetap ada dan tautannya dilepas
+    # eksplisit, tidak bergantung pada aksi FK. Laporan user ini sendiri dihapus di daftar tingkat user.
+    await db.execute(update(Report).where(Report.household_id == hid).values(household_id=None))
     await db.execute(delete(HouseholdMember).where(HouseholdMember.household_id == hid))
     await db.execute(delete(Household).where(Household.id == hid))
 
@@ -205,16 +220,24 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     stray = list((await db.execute(select(Envelope.id).where(Envelope.owner_id == uid))).scalars())
     await _delete_envelopes(db, stray)
     await _anonymize_leftovers(db, uid)
+    # Catatan yang sama di laporan beku milik user lain (Ruling R15). Di luar `_anonymize_leftovers`, yang berhenti
+    # lebih awal bila tak ada catatan hidup tersisa: laporan bisa memuat catatan yang sudah dihapus atau household yang
+    # ikut terhapus di atas. Laporan user ini sendiri dilewati (dihapus di daftar tingkat user di bawah).
+    await anonimkan_pencatat(db, uid, id_pengganti=str(FORMER_MEMBER_ID), nama_pengganti=FORMER_MEMBER_NAME,
+                             teks_pengeluaran=ANON_TXN_DESC, teks_pemasukan=ANON_INCOME_DESC)
 
     # Suara belajar Kotak Struk: dihapus lalu aturan yang pernah dipilih dihitung ulang (spec 2026-11-01 §8); jejak
     # keputusan admin di aturan dikosongkan eksplisit (FK SET NULL tidak selalu ada, mis. SQLite).
     await belajar.forget_user(db, uid)
     await db.execute(update(ProofRule).where(ProofRule.decided_by == uid).values(decided_by=None))
     for model in (PendingTransaction, Notification, NotificationPreference, UserStreak,
-                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, ProofRuleVote, PaymentOrder, AuthSession):
+                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, ProofRuleVote, PaymentOrder, AuthSession,
+                  Report, ReportSettings):
         await db.execute(delete(model).where(model.user_id == uid))
     # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
     await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))
+    # Kamus ruang usaha (R7) tetap milik ruang; nama pengajar dikosongkan eksplisit.
+    await db.execute(update(RuangKamus).where(RuangKamus.diajarkan_oleh == uid).values(diajarkan_oleh=None))
     await db.flush()
     await db.execute(delete(User).where(User.id == uid))
     await db.commit()

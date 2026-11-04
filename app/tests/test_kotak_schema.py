@@ -150,13 +150,16 @@ class MigrationTests(unittest.TestCase):
                                  {(n, c, u) for (n, t, c, u) in indexes if t == model.__tablename__})
 
     def test_single_head_after_plugin_h1(self):
-        """Migrasi ini menyusul Plugin H1 (a7e3c1f5d9b2) dan menjadi satu-satunya head."""
+        """Migrasi ini menyusul Plugin H1 (a7e3c1f5d9b2) sebagai satu-satunya anaknya, dan Alembic tetap punya satu head
+        yang garisnya melewati migrasi ini (migrasi sesudahnya boleh menyusul, mis. laporan berkala 967a27d0c15d)."""
         from alembic.config import Config
         from alembic.script import ScriptDirectory
         cfg = Config(str(REPO / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO / "alembic"))   # tidak bergantung folder kerja
         script = ScriptDirectory.from_config(cfg)
-        self.assertEqual(script.get_heads(), ["e7b3d5a9c1f4"])
+        heads = script.get_heads()
+        self.assertEqual(len(heads), 1, heads)
+        self.assertIn("e7b3d5a9c1f4", [r.revision for r in script.iterate_revisions(heads[0], "base")])
         children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
                     if "down_revision: Union[str, None] = 'a7e3c1f5d9b2'" in p.read_text(encoding="utf-8")]
         self.assertEqual(children, [MIGRATION.name])
