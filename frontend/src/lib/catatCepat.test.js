@@ -24,6 +24,7 @@ test('labelSumber: setiap tebakan menyebut asalnya', () => {
     'Kamus ruang ini · diajarkan anggota · 2×');   // akun pengajar terhapus
   assert.equal(labelSumber({ jenis: 'kata_saya', kali: 3 }), 'Kata yang kamu ajarkan · 3×');
   assert.equal(labelSumber({ jenis: 'kamus_kategori' }), 'Kamus kategori bawaan');
+  assert.equal(labelSumber({ jenis: 'kamus_plugin' }), 'Kamus Fitur Tambahan');
   assert.equal(labelSumber({ jenis: 'nama_amplop' }), 'Nama amplop di catatanmu');
   assert.equal(labelSumber(null), '');
   assert.equal(labelSumber({ jenis: 'kontak' }), '');                            // U5: belum dikenal → kosong

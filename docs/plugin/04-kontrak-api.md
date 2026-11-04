@@ -226,7 +226,7 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
 {
   "envelope_id": "…", "envelope_name": "Operasional", "confident": true,          // field lama, tetap
   "sumber": {"jenis": "kamus_ruang", "kali": 4, "diajarkan_oleh": "Bagas", "oleh_saya": false} | null,
-  //   jenis: kata_saya | kamus_ruang | kamus_kategori | nama_amplop (U5 menambah kontak, kamus plugin)
+  //   jenis: kata_saya | kamus_ruang | kamus_plugin (titik `nlp_kamus`, H2) | kamus_kategori | nama_amplop (U5 menambah kontak)
   //   kali: kata_saya dan kamus_ruang; diajarkan_oleh/oleh_saya: hanya kamus_ruang (nama null bila pengajarnya
   //   pemanggil sendiri atau akunnya terhapus)
   "aturan": [{"kode": "foto_nota", "teks": "Wajib foto nota di atas Rp300.000."},
@@ -239,7 +239,8 @@ Nominal diurai di perangkat (`parseAmount.js`, kasusnya sama dengan bot) dan dik
 ```
 
 Urutan cocok (`txn_nlp.cari_amplop`): kata yang dipelajari user sendiri (amplop di ruang ini) → kamus ruang (hanya bila
-ruang di header bertipe usaha; gerbangnya di kueri) → kamus kategori bawaan → nama amplop di keterangan. Karyawan:
+ruang di header bertipe usaha; gerbangnya di kueri) → kamus Fitur Tambahan yang aktif di ruang itu (H2, `nlp_kamus`) →
+kamus kategori bawaan → nama amplop di keterangan. Karyawan:
 hanya amplop yang diizinkan menjadi kandidat, jadi amplop terkunci tidak menutupi tebakan berikutnya; amplop terkunci
 tidak dikirim (daftar amplop karyawan dari `GET /envelopes/` sudah hanya yang diizinkan).
 
@@ -452,7 +453,7 @@ Plugin menyumbang lewat kode di `app/plugins/<id>/__init__.py` (`plugin = Plugin
 - **AI Advisor (`advisor_rules`).** Saran plugin masuk kartu AI Advisor (`GET /advisor/dashboard`, `advisor.items`/`sisa`) dengan bentuk item yang sama, `aturan` berupa kode plugin (mis. `BU-01`), aksi hanya `{"kind": "route", "label", "payload": {"to": "/p/<id>…"}}`. Maksimal 1 saran per plugin di `items` (`daftar_per_plugin`), tidak pernah chip KPI inti, tidak untuk karyawan. Dismiss memakai `kunci` yang sama seperti saran inti.
 - **Perintah bot (`bot_commands`).** Telegram dan chat web: perintah baca plugin dijawab satu pesan per ruang yang memasang plugin itu, berawalan `[Nama ruang]`. `audience: admin` hanya owner/admin (karyawan: "Laporan <ruang> hanya untuk admin ruang."); tanpa ruang yang aktif: "Perintah ini belum tersedia di ruangmu." Teks polos, tanpa tombol.
 - **Notifikasi (`notifications`).** Lewat `ctx.notify`, **hanya dari job** (konteks tanpa user; review keamanan #186): lonceng (`type` = `system`) dan Telegram, judul berawalan `[Nama ruang]`, `link` hanya `/p/<id>…`; hanya owner/admin ruang yang plugin-nya aktif untuk mereka; tidak pada jam tenang 21.00–07.00 waktu penerima; maksimal 2 per plugin per penerima per hari dan 1 per `kunci`. Tidak ada preferensi per jenis notifikasi sampai U6.
-- **Kamus Catat cepat (`nlp_kamus`).** Saran amplop (`POST /transactions/suggest-envelope(s)`, Kotak Struk) di ruang yang memasang plugin mencoba kamus plugin sebelum kamus kategori inti. Tidak dipakai di ruang lain.
+- **Kamus Catat cepat (`nlp_kamus`).** Saran amplop (`POST /transactions/suggest-envelope(s)`, Kotak Struk) di ruang yang memasang plugin mencoba kamus plugin sesudah kata user dan kamus ruang (R7), sebelum kamus kategori inti (`sumber.jenis = kamus_plugin`, §3). Tidak dipakai di ruang lain.
 - **Field form (`form_fields`).** Validasi server `titik.periksa_field` untuk body `{"<plugin_id>": {"<key>": nilai}}`; field di luar plugin aktif atau manifest → 422 `field_tidak_sah`. Belum disambungkan ke body transaksi/pemasukan (U2).
 - **Job (`jobs`)** dan **cek (`checks`)**: tanpa permukaan API selain `peringatan` di §0.
 

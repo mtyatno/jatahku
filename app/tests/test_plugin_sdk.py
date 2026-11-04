@@ -1056,6 +1056,22 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
             env, _ = await find_best_envelope("beli gula pasir", self.usaha, db)    # tanpa user: tanpa kamus plugin
             self.assertIsNone(env)
 
+    async def test_kamus_ruang_sebelum_kamus_plugin(self):
+        """R7: urutan kata user → kamus ruang → kamus plugin → kamus kategori; sumber tebakan kamus plugin terpisah."""
+        from app.models.models import RuangKamus
+        from app.services.txn_nlp import cari_amplop
+        async with self.Session() as db:
+            t = await cari_amplop("beli gula pasir", self.usaha, db, self.pemilik.id)
+            self.assertEqual((t.envelope.name, t.sumber), ("Bahan Baku", "kamus_plugin"))
+            op = Envelope(household_id=self.usaha, name="Operasional", budget_amount=D("1"))
+            db.add(op)
+            await db.flush()
+            db.add(RuangKamus(household_id=self.usaha, keyword="gula", envelope_id=op.id, count=2,
+                              diajarkan_oleh=self.pemilik.id))
+            await db.commit()
+            t = await cari_amplop("beli gula pasir", self.usaha, db, self.pemilik.id)
+            self.assertEqual((t.envelope.name, t.sumber, t.kali), ("Operasional", "kamus_ruang", 2))
+
     async def test_periksa_field(self):
         async with self.Session() as db:
             out = await titik.periksa_field(db, self.pemilik, self.usaha, "transaction",

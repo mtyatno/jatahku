@@ -33,6 +33,7 @@ export function labelSumber(sumber, namaRuang = 'ruang ini') {
       const oleh = sumber.oleh_saya ? 'kamu' : (sumber.diajarkan_oleh || 'anggota');
       return `Kamus ${namaRuang} · diajarkan ${oleh}${kali}`;
     }
+    case 'kamus_plugin': return 'Kamus Fitur Tambahan';
     case 'kamus_kategori': return 'Kamus kategori bawaan';
     case 'nama_amplop': return 'Nama amplop di catatanmu';
     default: return '';
