@@ -16,6 +16,15 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Dokumen: kontrak §2 (undangan, nama ruang, log, `jenis_catatan`, tabel karyawan), §4 ("Beranda karyawan"), §7; ADR-P4; `05-desain-buku-usaha.md` A4; `AGENTS.md` aturan 3 + checklist R6; `00-indeks.md`; `PROGRESS.md` (R6 review, Gerbang R).
 - Deploy R8 (#177, `195c17f`) terverifikasi tayang (run 41785622123).
 
+- **Review keamanan terpisah (4 Nov):** minta perubahan; gerbang `/dashboard/*` untuk karyawan dinilai benar. Semua temuan dikerjakan di branch ini, dengan tes yang gagal di kode sebelumnya dan uji mutasi:
+  1. **Merah:** kode undangan buatan admin tetap berlaku setelah admin itu dikeluarkan, keluar, atau diturunkan (bisa masuk lagi sebagai admin dan melihat laba/kas selama 7 hari). Sekarang `/ruang/gabung` menolak kode yang pembuatnya bukan lagi owner/admin ruang itu (juga `dibuat_oleh` NULL), dan keluar/dikeluarkan/diturunkan mencabut undangan aktif buatan anggota itu dalam commit yang sama (`undangan_dicabut`, `alasan`). Tes P1, P2, keluar sendiri, lapis kedua di gabung.
+  2. **Keamanan:** nilai bawaan `karyawan=None/False` membuat pemanggil yang lupa mendapat tampilan admin. Sekarang `batch.jalankan` dan `layout.ambil`/`simpan` menghitung peran sendiri dari (user, ruang) lewat `layout.peran_karyawan`; `registry.katalog`, `template`, `layout.efektif`, `validasi`, `_rapikan` tanpa nilai bawaan. Tes pemanggilan langsung.
+  3. Kirim balik instans peran lain kini dari salinan server (ukuran/pengaturan klien diabaikan).
+  4. Cache Beranda per peran (`cacheKeyLayout/Data(uid, 'karyawan')`); BerandaKaryawan membuang cache umum ruang itu; `Layout.jsx` membuang semua cache Beranda ruang aktif bila peran berubah (`peranBerubah`).
+  5. `daftar_undangan` menyaring kedaluwarsa di SQL + batas 50; `UbahRuang` mewarisi `RuangBuat` (`NAMA_MAKS`); `CardDef.untuk` divalidasi terhadap `UNTUK`.
+  - Tes `/ruang/gabung` di R6 mereset batas laju (`ruang_kelola.limiter.reset()`): batas 10/menit di memori proses terbawa antar tes.
+  - Sesudah perbaikan: unittest 2766 lulus · node --test 663 lulus · build ok · `openapi_cek` tanpa perubahan memutus.
+
 **Digantung**
 - Kamus kata ruang di halaman Anggota dan Catat cepat yang menggantikan `CatatKaryawan`: R7. Foto nota untuk karyawan (Kotak Struk di ruang usaha) juga R7; sampai itu, batasan "wajib foto nota" membuat catatan karyawan di atas nominal itu ditolak 422 `perlu_foto_nota` (panel batasan menyebutnya).
 - Tutup/hapus ruang usaha belum ada (keputusan 4).
@@ -44,7 +53,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Warna status draf per tema (kontras A2 butir 10); angka antrean merah #DC2626.
 
 **Cara melanjutkan**
-- Review keamanan terpisah: "review PR #185 terhadap 03-workflow.md bagian keamanan, fokus gerbang 'Karyawan tidak melihat laporan' (`/dashboard/*` untuk karyawan, `registry.boleh`, sumber kartu karyawan) dan undangan/ganti nama".
+- Review ulang singkat: "review ulang PR #185 terhadap 03-workflow.md bagian keamanan, fokus perbaikan temuan 1 (undangan pembuat yang kehilangan hak) dan 2 (peran dihitung di batch/layout)".
 - Merge: tanpa migrasi; checklist "Plugin R6" di `AGENTS.md` (`ruang_paritas` + uji dua akun).
 - Berikutnya `/sesi-plugin R7` (Catat cepat dan kamus per ruang; butuh R6) atau `/sesi-plugin H2`.
 

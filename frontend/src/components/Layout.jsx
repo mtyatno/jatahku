@@ -27,8 +27,9 @@ import UpdateRequired from './UpdateRequired';
 import { AppConfigProvider, useAppConfigLoader } from '../hooks/useAppConfig';
 import { isUpdateRequired } from '../lib/appConfig';
 import { chatDiRuang, getRuangAktif, pilihanRuang } from '../lib/ruangAktif';
-import { aksesRuang, catatKaryawan, jenisDariAksi, menuUntuk, ruteBoleh } from '../lib/ruangPeran';
-import { loadCache, saveCache } from '../lib/localCache';
+import { aksesRuang, catatKaryawan, jenisDariAksi, menuUntuk, peranBerubah, ruteBoleh } from '../lib/ruangPeran';
+import { clearCache, loadCache, saveCache } from '../lib/localCache';
+import { kunciCacheBeranda } from '../lib/dashboardRegistry';
 import CatatKaryawan from './CatatKaryawan';
 
 function QuickAddEnvelope({ onClose }) {
@@ -520,7 +521,13 @@ export default function Layout() {
   useEffect(() => {
     if (!user) return;
     const muat = () => api.daftarRuang().then(({ ok, data }) => {
-      if (ok && data) { setRuangDaftar(data); saveCache('ruang_daftar', data); return; }
+      if (ok && data) {
+        // Peran di ruang aktif berubah (mis. admin diturunkan): buang cache Beranda ruang ini dari peran lama.
+        if (peranBerubah(loadCache('ruang_daftar'), data, getRuangAktif())) kunciCacheBeranda(user.id).forEach(k => clearCache(k));
+        setRuangDaftar(data);
+        saveCache('ruang_daftar', data);
+        return;
+      }
       // Gagal tanpa cache (mis. offline di kunjungan pertama): jangan menahan halaman selamanya.
       setRuangDaftar(d => d || { bawaan: null, items: [], boleh_buat_usaha: false });
     });

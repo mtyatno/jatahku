@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   aksesRuang, batasanDariForm, catatKaryawan, formDariBatasan, galatForm, hasilCatat, jenisDariAksi, labelAudit,
-  menuUntuk, payloadCatat, ringkasBatasan, ringkasHari, ruteBoleh,
+  menuUntuk, payloadCatat, peranBerubah, ringkasBatasan, ringkasHari, ruteBoleh,
 } from './ruangPeran.js';
 
 const KELUARGA = { id: 'k', jenis: 'rumah_tangga', peran: 'owner' };
@@ -102,4 +102,13 @@ test('labelAudit', () => {
     'Saya mengganti nama ruang menjadi B');
   assert.equal(labelAudit({ aksi: 'undangan_dicabut', oleh_nama: 'Saya', rincian: { peran: 'admin' } }),
     'Saya mencabut undangan Admin');
+});
+
+test('peranBerubah: hanya bila peran di ruang aktif berbeda atau ruangnya hilang', () => {
+  const d = (peran) => ({ items: [{ id: 'k', peran: 'owner' }, { id: 'u', peran }] });
+  assert.equal(peranBerubah(d('admin'), d('member'), 'u'), true);
+  assert.equal(peranBerubah(d('admin'), { items: [{ id: 'k', peran: 'owner' }] }, 'u'), true);
+  assert.equal(peranBerubah(d('admin'), d('admin'), 'u'), false);
+  assert.equal(peranBerubah(null, d('member'), 'u'), false);
+  assert.equal(peranBerubah(d('admin'), d('member'), null), false);
 });

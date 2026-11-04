@@ -100,7 +100,9 @@ Semua `/ruang/{id}/…` hanya untuk ruang **usaha** (ruang keluarga tetap lewat 
 // PATCH  /ruang/{id} {"nama"} → {"id", "nama"}   (R6) owner dan admin; nama 1–60 huruf (spasi dirapikan), selain itu
 //        422; log `ruang_diubah`. Tutup atau hapus ruang usaha belum ada.
 // POST   /ruang/gabung {"kode"} → {"id", "nama", "jenis": "usaha", "peran"}
-//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP
+//        tidak mengubah ruang keluarga user; kode dipakai/kedaluwarsa/salah → 400; sudah anggota → 400; 10/menit per IP;
+//        kode hanya berlaku selama pembuatnya masih owner/admin ruang itu, selain itu 400 (R6, review #185): pembuat
+//        yang dikeluarkan, keluar, atau diturunkan ke karyawan juga membuat kodenya dicabut (log `undangan_dicabut`)
 // PATCH  /ruang/{id}/anggota/{user_id} {"peran"?: "member" | "admin", "jabatan"?} → {"user_id", "peran"}
 //        admin boleh mengubah, menaikkan, menurunkan, dan mengeluarkan admin lain; hanya owner yang terlindung (ADR-P4).
 //        R6: ganti peran membuang tata letak Beranda anggota itu di ruang ini (Beranda berikutnya = template peran baru)
@@ -321,10 +323,11 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 Server menyaring di setiap route `/dashboard/*`:
 
 ```jsonc
-// GET /dashboard/layout → + "untuk": "karyawan" | "umum" (aditif). Karyawan: "enabled" selalu true (Beranda lama
+// GET /dashboard/layout (dan "layout" di jawaban PUT) → + "untuk": "karyawan" | "umum" (aditif). Karyawan: "enabled" selalu true (Beranda lama
 // memanggil endpoint yang tertutup untuknya) dan template "Karyawan" (registry.TEMPLATE_KARYAWAN, a1–a6, ukuran M).
 // Instans tersimpan yang kartunya bukan untuk peran ini → "visible": false, "alasan": "khusus_admin" (karyawan)
-// atau "khusus_karyawan" (peran lain); datanya ditolak, dan boleh dikirim balik apa adanya saat menyimpan.
+// atau "khusus_karyawan" (peran lain); datanya ditolak. Saat menyimpan, instans itu boleh dikirim balik dan disimpan
+// dari salinan server (ukuran, pengaturan, dan sembunyikan dari klien diabaikan).
 // GET /dashboard/cards → karyawan: hanya kartu karyawan; peran lain: hanya kartu umum (katalog ruang keluarga tetap).
 // PUT /dashboard/layout → kartu yang bukan untuk peran ini: 422 kartu_tidak_dikenal.
 // POST /dashboard/data → kartu umum untuk karyawan: {"error": {"kode": "khusus_admin"}} per kartu, penyedianya tidak

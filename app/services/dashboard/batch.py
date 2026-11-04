@@ -90,8 +90,11 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     return data
 
 
-async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id, karyawan=None) -> dict:
-    """`karyawan` = batasan karyawan di ruang ini (`peran.batasan_karyawan`), None untuk peran lain."""
+async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
+    """Peran ditentukan di sini dari (user, ruang), bukan dari pemanggil (review keamanan PR #185 temuan 2): karyawan
+    di ruang usaha hanya mendapat kartu karyawan, apa pun pemanggilnya (route, skrip, plugin nanti)."""
+    from app.services import peran
+    karyawan = await peran.batasan_karyawan(db, user.id, household_id) if household_id else None
     mulai = time.perf_counter()
     sumber = Sumber(user=user, db=db, periode=periode, hid=household_id, karyawan=karyawan)
     data = {item["id"]: await satu_kartu(sumber, item) for item in items}

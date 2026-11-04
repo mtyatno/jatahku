@@ -62,6 +62,10 @@ class CardDef:
     validasi: Callable[[dict], dict] = field(default=_tanpa_pengaturan, compare=False)
     untuk: str = "umum"                 # umum | karyawan (R6)
 
+    def __post_init__(self):
+        if self.untuk not in UNTUK:
+            raise ValueError(f"{self.key}: untuk={self.untuk!r} bukan salah satu {UNTUK}")
+
     def katalog(self) -> dict:
         """Satu baris `GET /dashboard/cards` (04-kontrak-api.md §4)."""
         return {
@@ -164,11 +168,13 @@ def boleh(definisi: CardDef | None, karyawan: bool) -> bool:
     return definisi is not None and (definisi.untuk == "karyawan") == bool(karyawan)
 
 
-def katalog(karyawan: bool = False) -> list[dict]:
+# `karyawan` tanpa nilai bawaan (review keamanan PR #185 temuan 2): pemanggil yang lupa menyebut peran gagal keras,
+# bukan diam-diam mendapat kartu umum.
+def katalog(karyawan: bool) -> list[dict]:
     return [c.katalog() for c in REGISTRY.values() if boleh(c, karyawan)]
 
 
-def template(surface: str, karyawan: bool = False) -> list[dict]:
+def template(surface: str, karyawan: bool) -> list[dict]:
     """Salinan baru template bawaan (dokumen bisa diubah pemanggil)."""
     if surface != "beranda":
         return []

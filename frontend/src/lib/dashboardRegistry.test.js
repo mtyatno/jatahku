@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   breakpointOf, deviceMatches, groupsOf, itemsForData, visibleItems, packRows, rowTemplate, rowGapAbove, rowKind,
-  sumberPertama, cacheKeyData,
+  sumberPertama, cacheKeyData, cacheKeyLayout, kunciCacheBeranda,
 } from './dashboardRegistry.js';
 
 // Template Beranda dari server (registry.TEMPLATE_BERANDA): 6 KPI, Cocokkan saldo, Pengeluaran harian,
@@ -112,6 +112,11 @@ test('sumber pertama dari respons batch', () => {
 
 test('kunci cache per user', () => {
   assert.notEqual(cacheKeyData('u1'), cacheKeyData('u2'));
+  // R6: Beranda karyawan memakai kunci sendiri; kunci umum tidak berubah sejak B2.
+  assert.equal(cacheKeyData('u1'), 'beranda_data:u1');
+  assert.notEqual(cacheKeyData('u1', 'karyawan'), cacheKeyData('u1'));
+  assert.notEqual(cacheKeyLayout('u1', 'karyawan'), cacheKeyLayout('u1'));
+  assert.equal(new Set(kunciCacheBeranda('u1')).size, 4);
 });
 
 test('pilih Beranda: flag dari server, atau dipaksa lewat ?beranda=', async () => {

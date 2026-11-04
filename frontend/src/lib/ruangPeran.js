@@ -118,6 +118,16 @@ export function ringkasBatasan(b, amplop = null) {
   return baris;
 }
 
+/** Peran user di ruang `aktifId` berubah antara daftar ruang tersimpan dan yang baru (mis. admin diturunkan): cache
+ *  Beranda ruang itu dibuang supaya angka dari peran lama tidak tersisa di perangkat (review PR #185 no. 4). */
+export function peranBerubah(lama, baru, aktifId) {
+  if (!lama || !baru || !aktifId) return false;
+  const cari = (d) => (Array.isArray(d.items) ? d.items.find(r => r.id === aktifId) : null);
+  const a = cari(lama);
+  const b = cari(baru);
+  return !!a && (!b || a.peran !== b.peran);
+}
+
 // ── Form batasan di halaman Anggota ────────────────────────────────────────
 /** Batasan API → isian form (angka sebagai teks, jam kerja punya saklar sendiri). */
 export function formDariBatasan(b) {

@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models.models import DashboardLayout
+from app.services import peran
 from app.services.dashboard import registry
 
 
@@ -25,7 +26,7 @@ def _422(kode: str, detail: str) -> GalatTataLetak:
     return GalatTataLetak(422, kode, detail)
 
 
-def efektif(surface: str, items: list[dict], parked: list[dict], version: int, karyawan: bool = False) -> dict:
+def efektif(surface: str, items: list[dict], parked: list[dict], version: int, *, karyawan: bool) -> dict:
     """Tata letak yang benar-benar tampil. Instans yang definisinya tidak ada lagi dipindah ke
     `parked` (posisinya kembali bila kartunya ada lagi). Semua instans yang tersisa dikirim,
     termasuk yang `visible: false`, dan wajib dikirim balik saat menyimpan.
@@ -47,7 +48,7 @@ def efektif(surface: str, items: list[dict], parked: list[dict], version: int, k
             baris.update(visible=False, alasan="khusus_admin" if karyawan else "khusus_karyawan")
         aktif.append(baris)
     return {"surface": surface, "schema_version": registry.SCHEMA_VERSION, "version": version,
-            "items": aktif, "parked": parkir}
+            "items": aktif, "parked": parkir, "untuk": "karyawan" if karyawan else "umum"}
 
 
 async def _muat(db, user_id, household_id, surface) -> DashboardLayout | None:
@@ -57,11 +58,18 @@ async def _muat(db, user_id, household_id, surface) -> DashboardLayout | None:
     ))).scalar_one_or_none()
 
 
-async def ambil(db, user_id, household_id, surface: str, karyawan: bool = False) -> dict:
+async def peran_karyawan(db, user_id, household_id) -> bool:
+    """Karyawan (peran `member` di ruang usaha) di ruang ini? Dihitung di sini, bukan diterima dari pemanggil
+    (review keamanan PR #185 temuan 2)."""
+    return household_id is not None and await peran.batasan_karyawan(db, user_id, household_id) is not None
+
+
+async def ambil(db, user_id, household_id, surface: str) -> dict:
+    karyawan = await peran_karyawan(db, user_id, household_id)
     row = await _muat(db, user_id, household_id, surface)
     if row is None:
-        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan)
-    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan)
+        return efektif(surface, registry.template(surface, karyawan), [], 0, karyawan=karyawan)
+    return efektif(surface, row.items or [], row.parked or [], row.version, karyawan=karyawan)
 
 
 async def hapus_milik(db, user_id, household_id) -> None:
@@ -72,7 +80,7 @@ async def hapus_milik(db, user_id, household_id) -> None:
         DashboardLayout.user_id == user_id, DashboardLayout.household_id == household_id))
 
 
-def _rapikan(item, karyawan: bool = False) -> dict:
+def _rapikan(item, *, karyawan: bool) -> dict:
     """Satu instans dari klien → bentuk tersimpan, atau 422."""
     if not isinstance(item, dict):
         raise _422("instans_tidak_sah", "Bentuk kartu tidak dikenali.")
@@ -104,18 +112,23 @@ def _rapikan(item, karyawan: bool = False) -> dict:
     return rapi
 
 
-def validasi(items: list, removed: list, sekarang: dict, karyawan: bool = False) -> tuple[list[dict], list[dict]]:
+def validasi(items: list, removed: list, sekarang: dict, *, karyawan: bool) -> tuple[list[dict], list[dict]]:
     """(items tersimpan, parked tersimpan) dari kiriman klien terhadap tata letak efektif `sekarang`.
     Kartu yang bukan untuk peran ini ditolak (`kartu_tidak_dikenal`), kecuali instans lama yang dikirim balik
-    apa adanya (`visible: false` di `sekarang`), supaya dokumen tidak kehilangan instans saat peran berganti."""
+    (`visible: false` di `sekarang`), supaya dokumen tidak kehilangan instans saat peran berganti. Instans lama itu
+    disimpan dari salinan server, bukan dari isi klien (ukuran dan pengaturannya tidak bisa diubah; review PR #185 no. 3)."""
     if len(items) > registry.MAX_ITEMS:
         raise _422("terlalu_banyak", f"Beranda paling banyak {registry.MAX_ITEMS} kartu.")
-    lama = {i["id"]: i["card"] for i in sekarang["items"] if not i.get("visible", True)}
+    lama = {i["id"]: i for i in sekarang["items"] if not i.get("visible", True)}
 
     def _satu(item):
-        if isinstance(item, dict) and item.get("id") in lama and lama[item["id"]] == item.get("card"):
-            return _rapikan(item, not karyawan)   # instans peran lain yang dikirim balik; datanya tetap ditolak
-        return _rapikan(item, karyawan)
+        if isinstance(item, dict) and item.get("id") in lama and lama[item["id"]]["card"] == item.get("card"):
+            asli = lama[item["id"]]
+            tersimpan = {k: asli[k] for k in ("id", "card", "size", "hidden", "devices")}
+            if asli.get("settings"):
+                tersimpan["settings"] = asli["settings"]
+            return tersimpan
+        return _rapikan(item, karyawan=karyawan)
 
     baru = [_satu(i) for i in items]
     ids = [i["id"] for i in baru]
@@ -134,12 +147,12 @@ def validasi(items: list, removed: list, sekarang: dict, karyawan: bool = False)
     return baru, parked
 
 
-async def simpan(db, user_id, household_id, surface: str, if_version: int,
-                 items: list, removed: list, karyawan: bool = False) -> dict:
-    sekarang = await ambil(db, user_id, household_id, surface, karyawan)
+async def simpan(db, user_id, household_id, surface: str, if_version: int, items: list, removed: list) -> dict:
+    sekarang = await ambil(db, user_id, household_id, surface)
+    karyawan = sekarang["untuk"] == "karyawan"
     if if_version != sekarang["version"]:
         raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
-    baru, parked = validasi(items, removed, sekarang, karyawan)
+    baru, parked = validasi(items, removed, sekarang, karyawan=karyawan)
     versi = if_version + 1
     if if_version == 0:
         db.add(DashboardLayout(user_id=user_id, household_id=household_id, surface=surface,
@@ -162,4 +175,4 @@ async def simpan(db, user_id, household_id, surface: str, if_version: int,
             await db.rollback()
             raise GalatTataLetak(409, "versi_beda", "Beranda sudah diubah di tempat lain. Muat ulang, lalu ulangi.")
         await db.commit()
-    return efektif(surface, baru, parked, versi, karyawan)
+    return efektif(surface, baru, parked, versi, karyawan=karyawan)

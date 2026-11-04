@@ -15,7 +15,7 @@ import '../cards/karyawan';
 import { Icon } from '../components/Icon';
 import { useIsPhone } from '../components/AdvisorChip';
 import { localDateStr } from '../lib/kpiVisuals';
-import { loadCache, saveCache } from '../lib/localCache';
+import { clearCache, loadCache, saveCache } from '../lib/localCache';
 import { cacheKeyData, cacheKeyLayout, itemsForData } from '../lib/dashboardRegistry';
 
 const GAGAL = { error: { kode: 'gagal_memuat', detail: 'Data kartu ini belum bisa dimuat. Coba lagi sebentar.' } };
@@ -53,8 +53,16 @@ export default function BerandaKaryawan() {
   const uid = user?.id;
   const ruangNama = ruang?.aktif?.nama;
 
-  const [layout, setLayout] = useState(() => (uid ? loadCache(cacheKeyLayout(uid)) : null));
-  const [resp, setResp] = useState(() => (uid ? loadCache(cacheKeyData(uid)) : null));
+  // Cache sendiri untuk peran karyawan; cache Beranda umum ruang ini (dari peran lama) dibuang (review PR #185 no. 4).
+  const kunciLayout = uid ? cacheKeyLayout(uid, 'karyawan') : null;
+  const kunciData = uid ? cacheKeyData(uid, 'karyawan') : null;
+  const [layout, setLayout] = useState(() => (kunciLayout ? loadCache(kunciLayout) : null));
+  const [resp, setResp] = useState(() => (kunciData ? loadCache(kunciData) : null));
+  useEffect(() => {
+    if (!uid) return;
+    clearCache(cacheKeyLayout(uid));
+    clearCache(cacheKeyData(uid));
+  }, [uid]);
   const [tutup, setTutup] = useState(null);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick(t => t + 1), []);
@@ -71,7 +79,7 @@ export default function BerandaKaryawan() {
     let live = true;
     api.ruangKirim('/dashboard/layout?surface=beranda').then(({ ok, data }) => {
       if (!live) return;
-      if (ok && data) { setTutup(null); setLayout(data); saveCache(cacheKeyLayout(uid), data); return; }
+      if (ok && data) { setTutup(null); setLayout(data); saveCache(kunciLayout, data); return; }
       if (data?.kode === 'di_luar_jam_kerja') setTutup({ detail: data.detail, bukaLagi: data.buka_lagi });
     });
     return () => { live = false; };
@@ -85,9 +93,9 @@ export default function BerandaKaryawan() {
     const ini = ++seq.current;
     api.ruangKirim('/dashboard/data', 'POST', { periode: null, items }).then(({ ok, data }) => {
       if (ini !== seq.current) return;
-      if (ok && data) { setResp(data); if (uid) saveCache(cacheKeyData(uid), data); return; }
+      if (ok && data) { setResp(data); if (kunciData) saveCache(kunciData, data); return; }
       if (data?.kode === 'di_luar_jam_kerja') { setTutup({ detail: data.detail, bukaLagi: data.buka_lagi }); return; }
-      const cached = uid ? loadCache(cacheKeyData(uid)) : null;
+      const cached = kunciData ? loadCache(kunciData) : null;
       setResp(cached || { data: Object.fromEntries(items.map(i => [i.id, GAGAL])) });
     });
     // itemsKey mewakili `items` (lihat BerandaRegistry).
