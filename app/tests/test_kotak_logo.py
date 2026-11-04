@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from app.models.models import Envelope, ProofRule, ProofRuleVote, ReceiptScan, Transaction
 from app.services.kotak_struk import belajar, kerangka, merchants, record
@@ -551,12 +552,15 @@ class AppChoiceTests(DbBase):
                                  "gopay": {"label_total": ["dibayar"], "label_pihak": [], "label_tanggal": []},
                                  "logo:newpay": {"label_total": [], "label_pihak": [], "label_tanggal": [],
                                                  "logo": ["baru"]}})
-        # Nilai `logo` urut pendukung terbanyak (lalu yang lebih dulu disetujui, lalu teksnya).
-        await add("logo", "logo:newpay", "jago", users=3)
+        # Satu nilai `logo` disetujui per kunci (G8): basis data menolak yang kedua (indeks ux_proof_rules_satu_nilai);
+        # nilai yang dicabut tidak dimuat.
+        with self.assertRaises(IntegrityError):
+            await add("logo", "logo:newpay", "jago", users=3)
+        await add("logo", "logo:newpay", "jago", status="dicabut", users=3)
         await add("label_total", "logo:newpay", "biaya")
         _, rules = await keys()
         self.assertEqual(rules["logo:newpay"], {"label_total": ["biaya"], "label_pihak": [], "label_tanggal": [],
-                                                "logo": ["jago", "baru"]})
+                                                "logo": ["baru"]})
         # Galat database: kosong, bukan melempar.
         belajar.invalidate_rules_cache()
         broken = AsyncMock()

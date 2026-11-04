@@ -717,11 +717,13 @@ class ApprovedRulesCacheTests(DbBase):
         ARAH_FLOWS; baris lain (data lama/tangan) dilewati. Kunci label tetap berbentuk tahap 1."""
         await self.add("label_total", "gopay", "dibayar")
         await self.add("arah", "shopeepay|ke:gopay topu", "top_up")
-        await self.add("arah", "gopay|judul:top up", "masuk", users=2)
+        # Satu nilai `disetujui` per kunci arah (G8, indeks ux_proof_rules_satu_nilai); nilai yang dicabut tidak dimuat.
+        await self.add("arah", "gopay|judul:top up", "masuk", users=2, status="dicabut")
         await self.add("arah", "gopay|judul:top up", "top_up", users=3)
         await self.add("arah", "bca_mobile|judul:dana masuk", "antar_rekening_sendiri", status="menunggu")
-        for key, value in (("shopeepay|ke:gopay topu", "keluar"),          # nilai bukan ARAH_FLOWS
-                           ("shopeepay|ke:gopay topu", "siti aminah"),
+        # Kunci sah lain (satu nilai disetujui per kunci, G8) dengan nilai di luar ARAH_FLOWS.
+        for key, value in (("dana|judul:top up", "keluar"),                # nilai bukan ARAH_FLOWS
+                           ("ovo|judul:top up", "siti aminah"),
                            ("logo:newpay|judul:top up", "top_up"),          # kunci logo: pembaca tidak pernah
                            ("tokoku|judul:top up", "top_up"),               # bukan kunci profil
                            ("gopay|judul:siti aminah", "masuk"),            # kata nama, bukan kosakata
@@ -734,7 +736,7 @@ class ApprovedRulesCacheTests(DbBase):
             await self.add("arah", key, value)
         self.assertEqual(await self.approved(), {
             "gopay": rule(["dibayar"]),
-            "gopay|judul:top up": {"arah": ["top_up", "masuk"]},
+            "gopay|judul:top up": {"arah": ["top_up"]},
             "shopeepay|ke:gopay topu": {"arah": ["top_up"]},
         })
 

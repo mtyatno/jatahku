@@ -827,6 +827,43 @@ class LogoArahDecisionTests(AdminRulesBase):
         self.assertEqual(str(cm.exception), belajar.MSG_RULE_KEY_TAKEN)
         self.assertNotIsInstance(cm.exception, belajar.RuleBelowThreshold)
 
+    async def test_database_refuses_second_approved_value(self):   # M3d carry -> M1a: indeks parsial G8
+        from sqlalchemy.exc import IntegrityError
+        for kind, key, first, second in (("logo", "logo:newpay", "bsi", "jago"),
+                                          ("arah", "gopay|judul:top up", "top_up", "masuk")):
+            with self.subTest(kind=kind):
+                await self.rule(first, kind=kind, key=key, status="disetujui")
+                with self.assertRaises(IntegrityError):
+                    await self.rule(second, kind=kind, key=key, status="disetujui")
+                # Status lain untuk kunci itu tetap boleh berdampingan.
+                for st in ("menunggu", "ditolak", "dicabut"):
+                    await self.rule(f"{second}_{st}"[:60], kind=kind, key=key, status=st)
+        # Jenis label tidak dibatasi indeks.
+        await self.rule("total bayar", status="disetujui")
+        await self.rule("jumlah", status="disetujui")
+
+    async def test_racing_approval_is_409_not_500(self):
+        """Dua persetujuan bersamaan (READ COMMITTED): NOT EXISTS di UPDATE bersyarat tidak melihat persetujuan yang
+        belum di-commit, jadi yang kedua ditolak indeks unik. Ditiru dengan NOT EXISTS yang selalu lolos: `decide`
+        menangkap IntegrityError di SAVEPOINT -> RuleKeyTaken (409), sesi tetap bisa dipakai, aturan kedua utuh."""
+        import sqlalchemy as sa
+        a = await self.rule("bsi", kind="logo", key="logo:newpay", status="disetujui")
+        b = await self.rule("jago", kind="logo", key="logo:newpay")
+        with patch.object(belajar, "_approved_sibling", lambda rule: sa.false()):
+            async with self.Session() as db:
+                with self.assertRaises(belajar.RuleKeyTaken) as cm:
+                    await belajar.decide(db, b.id, "setujui", by=self.admin.id, note=None, now=T0)
+                self.assertEqual(str(cm.exception), belajar.MSG_RULE_KEY_TAKEN)
+                # Sesi pemanggil utuh sesudah savepoint dibatalkan.
+                self.assertEqual((await db.execute(select(ProofRule.status).where(ProofRule.id == a.id))).scalar(),
+                                 "disetujui")
+            with patch.object(belajar, "invalidate_rules_cache") as inv:
+                res = await self.act(b.id, "setujui")
+            self.assertEqual((res.status_code, res.json()["detail"]), (409, belajar.MSG_RULE_KEY_TAKEN))
+            inv.assert_not_called()
+        stored = await self.get_rule(b.id)
+        self.assertEqual((stored.status, stored.decided_at, stored.decided_by), ("menunggu", None, None))
+
 
 class LogoArahEndToEndTests(AdminRulesBase):
     """Setujui -> pembaca memakai aturan (lewat `approved_rules` dari database) -> cabut -> pembaca berhenti, dengan

@@ -70,6 +70,7 @@ from typing import Iterable, Iterator
 
 from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -564,8 +565,10 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
     `note`. `RuleNotFound` bila id tidak ada, `RuleBelowThreshold` bila status sah tetapi pendukung kurang,
     `RuleKeyTaken` (G8, M3d) bila aturan `logo`/`arah` (SINGLE_VALUE_KINDS) yang mau disetujui punya saudara (jenis dan
     kunci sama, nilai lain) yang masih `disetujui`, `RuleConflict` bila transisinya tidak sah. Syarat G8 ada di UPDATE
-    bersyarat itu sendiri (NOT EXISTS), bukan pemeriksaan terpisah sebelumnya. Mencabut dan menolak tidak pernah
-    terhalang G8. Tidak meng-commit; pemanggil juga membatalkan cache aturan."""
+    bersyarat itu sendiri (NOT EXISTS), bukan pemeriksaan terpisah sebelumnya; dua persetujuan bersamaan yang sama-sama
+    lolos NOT EXISTS ditolak indeks unik parsial `ux_proof_rules_satu_nilai` (UPDATE di SAVEPOINT, IntegrityError ->
+    `RuleKeyTaken`). Mencabut dan menolak tidak pernah terhalang G8. Tidak meng-commit; pemanggil juga membatalkan cache
+    aturan."""
     decision = DECISIONS.get(action)
     if decision is not None:
         status, allowed = decision
@@ -576,11 +579,20 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
             conditions.append(ProofRule.users >= RULE_MIN_USERS)
             conditions.append(~_approved_sibling(ProofRule))
         if allowed:
-            done = await db.execute(
-                update(ProofRule).where(*conditions)
-                .values(status=status, decided_at=now, decided_by=by, note=note)
-                .execution_options(synchronize_session=False)
-            )
+            try:
+                # SAVEPOINT: indeks unik parsial `ux_proof_rules_satu_nilai` (G8, migrasi c9e4a7f2b5d8) menolak
+                # persetujuan yang balapan dengan persetujuan lain untuk kunci yang sama (NOT EXISTS di atas belum
+                # melihat yang belum di-commit) -> 409, bukan 500; sesi pemanggil tetap utuh.
+                async with db.begin_nested():
+                    done = await db.execute(
+                        update(ProofRule).where(*conditions)
+                        .values(status=status, decided_at=now, decided_by=by, note=note)
+                        .execution_options(synchronize_session=False)
+                    )
+            except IntegrityError:
+                if status != ST_DISETUJUI:
+                    raise
+                raise RuleKeyTaken(MSG_RULE_KEY_TAKEN) from None
             if done.rowcount == 1:
                 return (await db.execute(select(ProofRule).where(ProofRule.id == rule_id)
                                          .execution_options(populate_existing=True))).scalar_one()
