@@ -18,7 +18,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | R3 (review) | #143 | Ruang dari objek saat menulis | 2 Ruang usaha | 3 | R2 | selesai | Pemilik produk + Claude | #171 | 2026-11-01 | 2026-11-01 |
 | R4 | #144 | Membuat dan berpindah ruang | 2 Ruang usaha | 3,5 | R3 | selesai | Pemilik produk + Claude | #174 | 2026-11-01 | 2026-11-01 |
 | R5 (migrasi, review) | #145 | Peran, batasan, persetujuan di server | 2 Ruang usaha | 4 | R3 | selesai | Pemilik produk + Claude | #175 | 2026-11-01 | 2026-11-04 |
-| R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | review | Pemilik produk + Claude | (PR ini) | 2026-11-04 | |
+| R6 | #146 | Halaman Anggota dan batasan, Beranda karyawan | 2 Ruang usaha | 3,5 | R4, R5, B2 | review | Pemilik produk + Claude | #185 | 2026-11-04 | |
 | R7 (migrasi, review) | #147 | Catat cepat dan kamus per ruang | 2 Ruang usaha | 4 | R3, R6 | belum | | | | |
 | R8 | #148 | Prive dua sisi | 2 Ruang usaha | 2,5 | R3 | review | Pemilik produk + Claude | #177 | 2026-11-01 | |
 | H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | selesai | Pemilik produk + Claude | #176 | 2026-11-01 | 2026-11-04 |

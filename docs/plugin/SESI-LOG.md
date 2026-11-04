@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## R6 · Halaman Anggota dan batasan, Beranda karyawan · 2026-11-04 · pemilik produk + Claude
 
-**Selesai** (status review, PR (PR ini); issue #146; label `review-keamanan` atas usulan pembukaan sesi walau rencana tidak bertanda review: R6 membuka `/dashboard/*` untuk karyawan, bagian gerbang "Karyawan tidak melihat laporan")
+**Selesai** (status review, PR #185; issue #146; label `review-keamanan` atas usulan pembukaan sesi walau rencana tidak bertanda review: R6 membuka `/dashboard/*` untuk karyawan, bagian gerbang "Karyawan tidak melihat laporan")
 - Keputusan pemilik produk (4 Nov, "lanjut" atas lima usulan pembukaan sesi): **(1)** admin boleh mengundang admin, menaikkan, menurunkan, dan mengeluarkan admin lain; hanya owner terlindung — dicatat di ADR-P4 (review #175 no. 8). **(2)** Tanpa batas kumulatif harian karyawan selama beta (no. 10; A4 dicoret). **(3)** Antrean persetujuan di halaman Anggota + angka di menu; kartu Beranda usaha dinilai di U4 (A4). **(4)** Daftar/cabut undangan dan ganti nama ruang masuk R6; tutup/hapus ruang usaha ditunda. **(5)** Kartu Catat karyawan membuka form Catat — dikerjakan dengan form karyawan sendiri (lihat keputusan kecil).
 - Server: `registry.CardDef.untuk` (`umum` | `karyawan`), enam kartu `core.karyawan.*`, `TEMPLATE_KARYAWAN`, `registry.boleh`. `layout.py` (template per peran, `visible: false` + `alasan` untuk kartu peran lain, `PUT` menolak kartu peran lain kecuali instans lama dikirim balik, `hapus_milik`), `batch.satu_kartu` (kartu umum untuk karyawan → `khusus_admin` tanpa memanggil penyedia), `routes/dashboard.py` (`untuk` di `GET /layout`, karyawan selalu `enabled`, katalog per peran, `GET /cards` kini memakai `ruang_aktif`), lima route dashboard di `KARYAWAN_BOLEH`. Sumber `amplop_diizinkan` (handler `list_envelopes`), `draf_saya`, `catatan_hari_ini` (`peran.py`; `GET /persetujuan/saya` memakai `draf_saya`).
 - `ruang_kelola.py`: `GET`/`DELETE /ruang/{id}/undangan` (cabut atomik terhadap `/ruang/gabung`), `PATCH /ruang/{id}` (nama), ganti peran dan keluar membuang tata letak Beranda anggota di ruang itu, `oleh_nama`/`anggota_nama` di log. `GET /ruang`: `jenis_catatan` untuk karyawan.
@@ -44,7 +44,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Warna status draf per tema (kontras A2 butir 10); angka antrean merah #DC2626.
 
 **Cara melanjutkan**
-- Review keamanan terpisah: "review PR #N terhadap 03-workflow.md bagian keamanan, fokus gerbang 'Karyawan tidak melihat laporan' (`/dashboard/*` untuk karyawan, `registry.boleh`, sumber kartu karyawan) dan undangan/ganti nama".
+- Review keamanan terpisah: "review PR #185 terhadap 03-workflow.md bagian keamanan, fokus gerbang 'Karyawan tidak melihat laporan' (`/dashboard/*` untuk karyawan, `registry.boleh`, sumber kartu karyawan) dan undangan/ganti nama".
 - Merge: tanpa migrasi; checklist "Plugin R6" di `AGENTS.md` (`ruang_paritas` + uji dua akun).
 - Berikutnya `/sesi-plugin R7` (Catat cepat dan kamus per ruang; butuh R6) atau `/sesi-plugin H2`.
 
