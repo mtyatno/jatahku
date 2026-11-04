@@ -23,28 +23,43 @@ SELALU `warning` (periksa bukan nama orang; satu kata maupun dua kata); aturan `
 nilai kedua untuk kunci `logo`/`arah` yang masih punya nilai `disetujui` -> 409 (G8, `belajar.RuleKeyTaken`).
 
 Daftar dibaca langsung dari tabel, bukan dari cache pembaca `approved_rules` (hanya yang disetujui, tanpa hitungan).
+
+Tinjauan sampel donasi (tahap 2 M1d; pre-flight A16 §2 "Admin review -> corpus", K4, K5, K17):
+- `GET /admin/kotak/samples?status=` — sampel per status (bawaan `menunggu`; `semua`) + jumlah per status. Tiap baris:
+  baris tersamar dengan tanda `periksa` (`samaran.needs_review`), koreksi user (`truth`), dan `reading` = pembaca
+  SEKARANG pada baris itu tanpa aturan (`donasi.read_lines`). Tidak pernah memuat `user_id`/`item_id`.
+- `POST .../{id}/setujui` — baris editan pemilik disamarkan lagi; masih bernomor panjang/email/nomor rekening -> 422
+  "Masih ada ... di baris N". Hanya dari `menunggu` (409 selain itu).
+- `POST .../{id}/tolak` — baris DIHAPUS (G2; ruling M1d: sampel `ditolak` tidak pernah ada, tab Ditolak selalu kosong,
+  kunci `counts.ditolak` tetap untuk bentuknya). `DELETE .../{id}` — 204, sesudah entri disalin ke korpus.
+- `GET .../{id}/korpus` — entri korpus siap salin (hanya `disetujui`): pemilik mengunduhnya lalu menjalankan
+  `kotak_corpus add --dari-donasi <berkas>` di checkout lokal dan membuka PR (K4; tidak pernah di VPS).
+Semua keputusan di-commit di route; tidak ada cache.
 """
+import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import require_admin
-from app.models.models import ProofRule, ProofRuleVote, User
-from app.services.kotak_struk import belajar
-from app.services.kotak_struk.config import APP_NEW, ARAH_FLOWS
+from app.models.models import ProofRule, ProofRuleVote, ProofSample, User
+from app.services.kotak_struk import belajar, donasi, samaran
+from app.services.kotak_struk.config import APP_NEW, ARAH_FLOWS, SAMPLE_LINE_MAX, SAMPLE_MAX_LINES
 from app.services.kotak_struk.kerangka import ARAH_JUDUL, ARAH_KE, arah_token_ok, logo_word
 from app.services.kotak_struk.kerangka import words as label_words   # normalisasi kata yang sama dengan safe_label
 from app.services.kotak_struk.readers.profiles import PROFILES
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 NOTE_MAX = 200   # = kolom proof_rules.note String(200); `decide` tidak memotong
 
@@ -292,3 +307,281 @@ async def list_votes(
     out = [ProofVoteRow(rule_key=k, kind=kind, users=len(u), values=len(v)) for (k, kind), (u, v) in groups.items()]
     out.sort(key=lambda r: (-r.users, r.rule_key, r.kind))
     return ProofVotesResponse(rows=out)
+
+
+# ── Tinjauan sampel donasi (tahap 2 M1d) ────────────────────────────────────
+
+SAMPLE_USER_NAME_MAX = 60   # = kolom proof_samples.user_name String(60)
+SampleStatusFilter = Literal["menunggu", "disetujui", "ditolak", "semua"]
+
+
+def _no_format_chars(v: str | None, what: str) -> str | None:
+    if v is not None and any(unicodedata.category(ch) in ("Cc", "Cf") for ch in v):
+        raise ValueError(f"{what} tidak boleh memuat karakter kontrol")
+    return v
+
+
+def _trimmed(v):
+    if isinstance(v, str):
+        v = v.strip()
+        return v or None
+    return v
+
+
+class SampleCounts(BaseModel):
+    menunggu: int = 0
+    disetujui: int = 0
+    ditolak: int = 0
+
+
+class SampleLineOut(BaseModel):
+    text: str
+    periksa: bool
+
+
+class SampleReadingOut(BaseModel):
+    """Hasil pembaca dalam bentuk `expect` korpus (`paid_at` ISO dengan zona WIB)."""
+    doc_type: Optional[str] = None
+    issuer: Optional[str] = None
+    total: Optional[int] = None
+    paid_at: Optional[str] = None
+    counterparty: Optional[str] = None
+    status: Optional[str] = None
+    flow: Optional[str] = None
+
+
+class ProofSampleOut(BaseModel):
+    id: UUID
+    doc_type: str
+    rule_key: Optional[str] = None
+    app_label: Optional[str] = None
+    trigger: str
+    lines: list[SampleLineOut]
+    user_name: Optional[str] = None
+    truth: Optional[dict] = None
+    reading: Optional[SampleReadingOut] = None
+    today: date
+    status: str
+    created_at: datetime
+    decided_at: Optional[datetime] = None
+    decided_by_name: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ProofSamplesResponse(BaseModel):
+    counts: SampleCounts
+    samples: list[ProofSampleOut]
+
+
+class SampleApproveIn(BaseModel):
+    """Baris editan pemilik, nama samaran user, catatan; field lain (status, user_id, ...) ditolak 422. `user_name`
+    tidak dikirim = nama samaran yang tersimpan tetap; null/kosong = dikosongkan."""
+    model_config = ConfigDict(extra="forbid")
+
+    lines: list[str] = Field(min_length=1, max_length=SAMPLE_MAX_LINES)
+    user_name: Optional[str] = Field(default=None, max_length=SAMPLE_USER_NAME_MAX)
+    note: Optional[str] = Field(default=None, max_length=NOTE_MAX)
+    # Ruling M1d: sampel `ditolak` tidak pernah ada, jadi hanya `menunggu`.
+    from_status: Optional[Literal["menunggu"]] = None
+
+    @field_validator("lines")
+    @classmethod
+    def _line_limits(cls, v):
+        """Tiap baris <= SAMPLE_LINE_MAX; tanpa baris baru, NUL, atau karakter kontrol lain (tab boleh: OCR)."""
+        for i, line in enumerate(v, 1):
+            if len(line) > SAMPLE_LINE_MAX:
+                raise ValueError(f"Baris {i} lebih dari {SAMPLE_LINE_MAX} karakter")
+            if any(unicodedata.category(ch) == "Cc" and ch != "\t" for ch in line):
+                raise ValueError(f"Baris {i} memuat karakter kontrol")
+        return v
+
+    @field_validator("user_name", "note", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        return _trimmed(v)
+
+    @field_validator("user_name")
+    @classmethod
+    def _user_name_chars(cls, v):
+        return _no_format_chars(v, "Nama samaran")
+
+    @field_validator("note")
+    @classmethod
+    def _note_chars(cls, v):
+        return _no_format_chars(v, "Catatan")
+
+
+class SampleRejectIn(BaseModel):
+    """Catatan (tidak disimpan: barisnya dihapus) dan status yang dilihat admin; field lain 422."""
+    model_config = ConfigDict(extra="forbid")
+
+    note: Optional[str] = Field(default=None, max_length=NOTE_MAX)
+    from_status: Optional[Literal["menunggu"]] = None
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def _trim(cls, v):
+        return _trimmed(v)
+
+    @field_validator("note")
+    @classmethod
+    def _note_chars(cls, v):
+        return _no_format_chars(v, "Catatan")
+
+
+class SampleDeletedOut(BaseModel):
+    deleted: bool
+
+
+class CorpusEntry(BaseModel):
+    """Satu sampel korpus (`app/tests/fixtures/kotak/corpus.json`); `user_name` tidak ada bila kosong."""
+    id: str
+    real: bool
+    reviewed: bool
+    today: str
+    user_name: Optional[str] = None
+    lines: list[str]
+    expect: SampleReadingOut
+
+
+class CorpusEntryOut(BaseModel):
+    entry: CorpusEntry
+    truth: Optional[dict] = None
+    gated_diff: list[str]
+
+
+def app_label(rule_key: str | None, truth: dict | None) -> str | None:
+    """Nama aplikasi untuk pemilik: label profil dari kunci kerangka, lalu jawaban "Aplikasi apa ini?" (`truth.app`),
+    lalu kata logo kunci `logo:<kata>` (`Logo "NEWPAY"`); selain itu None."""
+    if rule_key in _PROFILE_KEYS:
+        return APP_EXAMPLE[rule_key]
+    answer = truth.get("app") if isinstance(truth, dict) else None
+    if isinstance(answer, str) and answer in APP_EXAMPLE:
+        return APP_EXAMPLE[answer]
+    word = logo_word(rule_key)
+    return f'Logo "{word.upper()}"' if word else None
+
+
+async def _reading(sample: ProofSample) -> SampleReadingOut | None:
+    """Pembaca sekarang pada baris sampel; galat pembaca -> None (dicatat tanpa isi bukti)."""
+    try:
+        return SampleReadingOut(**await donasi.read_lines(sample.lines or [], today=sample.today,
+                                                          user_name=sample.user_name))
+    except Exception as exc:
+        log.warning("pembacaan sampel donasi %s gagal (%s)", sample.id, type(exc).__name__)
+        return None
+
+
+async def _sample_out(sample: ProofSample, decided_by_name: str | None) -> ProofSampleOut:
+    lines = [str(x) for x in (sample.lines or [])]
+    return ProofSampleOut(
+        id=sample.id, doc_type=sample.doc_type, rule_key=sample.rule_key,
+        app_label=app_label(sample.rule_key, sample.truth), trigger=sample.trigger,
+        lines=[SampleLineOut(text=x, periksa=samaran.needs_review(x)) for x in lines], user_name=sample.user_name,
+        truth=sample.truth if isinstance(sample.truth, dict) else None, reading=await _reading(sample),
+        today=sample.today, status=sample.status, created_at=sample.created_at, decided_at=sample.decided_at,
+        decided_by_name=decided_by_name, note=sample.note,
+    )
+
+
+def _sample_error(e: Exception) -> HTTPException:
+    if isinstance(e, donasi.SampleNotFound):
+        return HTTPException(status_code=404, detail=str(e))
+    if isinstance(e, donasi.SampleLineSecret):
+        return HTTPException(status_code=422, detail=str(e))
+    return HTTPException(status_code=409, detail=str(e))
+
+
+_SAMPLE_ERRORS = (donasi.SampleNotFound, donasi.SampleConflict, donasi.SampleLineSecret)
+
+
+@router.get("/samples", response_model=ProofSamplesResponse)
+async def list_samples(
+    status: SampleStatusFilter = Query("menunggu"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sampel donasi per status, urut yang lebih dulu dibuat. Tanpa id user/item."""
+    counts = SampleCounts()
+    for st, n in (await db.execute(select(ProofSample.status, func.count()).group_by(ProofSample.status))).all():
+        if st in donasi.SAMPLE_STATUSES:
+            setattr(counts, st, n)
+    q = (select(ProofSample, User.name).outerjoin(User, User.id == ProofSample.decided_by)
+         .order_by(ProofSample.created_at.asc(), ProofSample.id.asc()))
+    if status != "semua":
+        q = q.where(ProofSample.status == status)
+    rows = (await db.execute(q)).all()
+    return ProofSamplesResponse(counts=counts, samples=[await _sample_out(s, name) for s, name in rows])
+
+
+@router.post("/samples/{sample_id}/setujui", response_model=ProofSampleOut)
+async def approve_sample(
+    sample_id: UUID,
+    body: SampleApproveIn,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Setujui sampel `menunggu` dengan baris editan pemilik (disamarkan lagi di server)."""
+    try:
+        sample = await donasi.approve_sample(
+            db, sample_id, lines=body.lines, by=admin.id, now=datetime.now(timezone.utc), note=body.note,
+            user_name=body.user_name, set_user_name="user_name" in body.model_fields_set)
+    except _SAMPLE_ERRORS as e:
+        raise _sample_error(e)
+    out = await _sample_out(sample, admin.name)
+    await db.commit()
+    return out
+
+
+@router.post("/samples/{sample_id}/tolak", response_model=SampleDeletedOut)
+async def reject_sample(
+    sample_id: UUID,
+    body: Optional[SampleRejectIn] = Body(None),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tolak sampel `menunggu`: barisnya dihapus (tidak ada isi yang disimpan)."""
+    try:
+        await donasi.reject_sample(db, sample_id)
+    except _SAMPLE_ERRORS as e:
+        raise _sample_error(e)
+    await db.commit()
+    return SampleDeletedOut(deleted=True)
+
+
+@router.delete("/samples/{sample_id}", status_code=204, response_class=Response)
+async def delete_sample(
+    sample_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hapus sampel (sesudah entri disalin ke korpus)."""
+    try:
+        await donasi.delete_sample(db, sample_id)
+    except _SAMPLE_ERRORS as e:
+        raise _sample_error(e)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/samples/{sample_id}/korpus", response_model=CorpusEntryOut)
+async def sample_corpus_entry(
+    sample_id: UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Entri korpus siap salin dari sampel yang disetujui: `expect` = pembaca sekarang pada baris yang disetujui,
+    `gated_diff` = total/tanggal/status yang berbeda dari koreksi user (K17)."""
+    try:
+        sample = await donasi.get_sample(db, sample_id)
+    except _SAMPLE_ERRORS as e:
+        raise _sample_error(e)
+    if sample.status != donasi.ST_SAMPLE_APPROVED:
+        raise HTTPException(status_code=409, detail="Sampel belum disetujui")
+    expect = await donasi.read_lines(sample.lines or [], today=sample.today, user_name=sample.user_name)
+    truth = sample.truth if isinstance(sample.truth, dict) else None
+    out = CorpusEntryOut(entry=CorpusEntry(**donasi.corpus_entry(sample, expect)), truth=truth,
+                         gated_diff=donasi.gated_diff(expect, truth))
+    # `user_name` kosong tidak dikirim (load_corpus menolak `"user_name": null`); field lain tetap, juga null di expect.
+    return JSONResponse(out.model_dump(mode="json", exclude={"entry": {"user_name"}} if out.entry.user_name is None
+                                       else None))

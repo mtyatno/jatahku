@@ -6,6 +6,7 @@ sampel nyata (`real: true`) hanya bila sudah ditinjau manusia (`reviewed: true`)
 memuat 4 struk Indomaret asli dari `app/tests/fixtures/receipt_ocr_lines.json` (harus tetap `struk_belanja`).
 
     python -m app.scripts.kotak_corpus add <file> --id <id> [--real] [--user-name NAMA] [--corpus PATH]
+    python -m app.scripts.kotak_corpus add --dari-donasi <berkas.json> [--id ID] [--tahan] [--corpus PATH]
     python -m app.scripts.kotak_corpus eval [--real-only] [--corpus PATH]
 
 `add` mengekstrak teks (OCR untuk gambar, lapisan teks/OCR untuk PDF, `.txt` apa adanya), menyamarkan
@@ -14,6 +15,11 @@ tiap baris (`mask_line`), menjalankan pembaca pada baris tersamar, lalu menambah
 >= 6 digit di luar bentuk yang dibiarkan (dihitung seluruh baris, lihat `needs_review`) dicetak sebagai
 `PERIKSA baris N`. Periksa baris dan `expect` dengan bukti aslinya, samarkan nama orang pribadi (juga `user_name`),
 lalu set `"reviewed": true`. Id berawalan `indomaret-` dicadangkan untuk struk Indomaret.
+
+`add --dari-donasi` menambahkan entri yang diunduh dari Admin (donasi contoh, sudah ditinjau pemilik) di checkout lokal:
+`expect` dihitung ulang dengan pembaca saat ini dan dibandingkan dengan koreksi user (`truth`). Beda total/tanggal/
+status keluar dengan kode 3 tanpa menulis (sampel seperti itu membuat gerbang rilis merah), kecuali `--tahan`
+(ditulis `reviewed: false`).
 
 `eval` mencetak hasil per sampel dan ringkasan, lalu keluar dengan kode 1 bila gerbang rilis tidak
 lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak. `--real-only`: hanya sampel nyata yang
@@ -48,6 +54,9 @@ from app.services.kotak_struk.registry import read_document  # noqa: E402
 # Penyamaran (`mask_line`, `needs_review`, `MIN_RUN_DIGITS`) tinggal di modul murni `samaran` (A16 K2: worker memakainya
 # untuk baris donasi contoh); diekspor ulang di sini untuk `add` dan tes yang sudah ada.
 from app.services.kotak_struk.samaran import MIN_RUN_DIGITS, mask_line, needs_review  # noqa: E402,F401
+# `expect_from` (bentuk `expect`) dan beda koreksi user vs pembaca tinggal di `donasi` (A16 M1d): entri korpus dari Admin
+# dan `add --dari-donasi` memakai satu bentuk.
+from app.services.kotak_struk.donasi import expect_from, gated_diff, truth_diff  # noqa: E402,F401
 
 _FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 DEFAULT_CORPUS = _FIXTURES / "kotak" / "corpus.json"
@@ -357,17 +366,6 @@ def _content_type(path: Path) -> str | None:
     return guessed if guessed and guessed.startswith("image/") else None
 
 
-def expect_from(doc) -> dict:
-    """Hasil pembaca dalam bentuk `expect` korpus (urutan kunci seperti spec §7a)."""
-    paid_at = doc.paid_at
-    if paid_at is not None:
-        paid_at = (paid_at.astimezone(WIB) if paid_at.tzinfo else paid_at.replace(tzinfo=WIB)).isoformat(timespec="seconds")
-    return {
-        "doc_type": doc.doc_type, "issuer": doc.issuer or None, "total": doc.amounts.total, "paid_at": paid_at,
-        "counterparty": doc.counterparty.name or None, "status": doc.status, "flow": doc.flow,
-    }
-
-
 def _err(message: str) -> int:
     print(message, file=sys.stderr)
     return 2
@@ -386,6 +384,14 @@ _LIMITS_REMINDER = ("Yang tidak terdeteksi alat ini, cek sendiri: nomor yang ter
 
 
 def cmd_add(args) -> int:
+    if args.dari_donasi:
+        if args.file or args.real or args.user_name:
+            return _err("--dari-donasi tidak dipakai bersama berkas bukti, --real, atau --user-name.")
+        return cmd_add_donation(args)
+    if args.tahan:
+        return _err("--tahan hanya untuk --dari-donasi.")
+    if not args.file or not args.id:
+        return _err("add butuh berkas bukti dan --id (atau --dari-donasi <berkas.json>).")
     corpus_path = Path(args.corpus)
     try:
         samples = load_corpus(corpus_path)   # sebelum ekstraksi: salah ketik --corpus tidak membuang waktu OCR
@@ -437,6 +443,91 @@ def cmd_add(args) -> int:
         print('Periksa baris dan expect dengan bukti aslinya, lalu set "reviewed": true.')
     print(_NAME_REMINDER)
     print(_LIMITS_REMINDER)
+    return 0
+
+
+EXIT_READER_DIFFERS = 3   # pembaca beda dengan koreksi user pada field gerbang (K17); korpus tidak diubah
+
+_DONATION_KEYS = ("id", "real", "reviewed", "today", "user_name", "lines", "expect")
+
+
+def _load_donation(path: Path) -> tuple[dict, dict | None]:
+    """(entri, truth) dari berkas unduhan Admin: `{entry, truth, gated_diff}` utuh atau entri saja. Rusak -> CorpusError."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise CorpusError(f"berkas donasi tidak bisa dibaca: {path} ({e})") from e
+    except ValueError as e:
+        raise CorpusError(f"berkas donasi rusak: {path} ({e})") from e
+    if isinstance(data, dict) and "entry" in data:
+        entry, truth = data["entry"], data.get("truth")
+    else:
+        entry, truth = data, None
+    if not isinstance(entry, dict):
+        raise CorpusError(f"berkas donasi rusak: {path} (entry harus objek)")
+    if truth is not None and not isinstance(truth, dict):
+        raise CorpusError(f"berkas donasi rusak: {path} (truth harus objek atau null)")
+    return dict(entry), truth
+
+
+def cmd_add_donation(args) -> int:
+    """`add --dari-donasi <berkas.json>` (A16 M1d; K4, K17): entri dari Admin divalidasi (`_sample_problem`, id unik,
+    awalan Indomaret ditolak), `expect` dihitung ulang dengan pembaca saat ini, beda dengan koreksi user dicetak. Beda
+    total/tanggal/status -> keluar 3 tanpa menulis, kecuali `--tahan` (ditulis `reviewed: false`, pola A14); tanpa beda
+    gerbang -> `reviewed: true`. Berkas korpus tidak berubah bila gagal."""
+    corpus_path = Path(args.corpus)
+    try:
+        samples = load_corpus(corpus_path)
+        entry, truth = _load_donation(Path(args.dari_donasi))
+    except CorpusError as e:
+        return _err(str(e))
+    if args.id:
+        entry["id"] = args.id
+    if entry.get("user_name") is None:
+        entry.pop("user_name", None)
+    problem = _sample_problem(entry)
+    if problem:
+        return _err(f"entri donasi tidak sah: {problem}")
+    if any(s.get("id") == entry["id"] for s in samples):
+        return _err(f"id {entry['id']!r} sudah ada di {corpus_path}; pakai --id lain.")
+
+    old_expect = entry["expect"]
+    expect = expect_from(asyncio.run(_read(entry)))   # pembaca saat ini, tanpa aturan, seperti `eval`
+    diffs = truth_diff(expect, truth)
+    gated = gated_diff(expect, truth)
+    lines = entry["lines"]
+    print(f"Entri donasi {entry['id']} ({len(lines)} baris):")
+    for i, line in enumerate(lines, 1):
+        print(f"  {i:>2}. {line}")
+    for i, line in enumerate(lines, 1):
+        if needs_review(line):
+            print(f"PERIKSA baris {i}: {line}")
+    print("expect (hasil pembaca saat ini):")
+    print("  " + _dumps(expect))
+    if old_expect != expect:
+        print("Catatan: expect dihitung ulang dengan pembaca saat ini (beda dengan berkas unduhan).")
+    if truth is None:
+        print("Berkas tanpa truth (koreksi user): beda pembaca tidak bisa diperiksa.")
+    for field, want, got in diffs:
+        mark = "gerbang" if field in gated else "tidak digerbang"
+        print(f"Beda {field} ({mark}): koreksi user {_dumps(want)}, terbaca {_dumps(got)}")
+    if gated and not args.tahan:
+        print("Pembaca beda dengan koreksi user pada " + ", ".join(gated) + " — korpus tidak diubah. Perbaiki pembaca "
+              "di PR yang sama, atau jalankan lagi dengan --tahan (ditulis reviewed: false).", file=sys.stderr)
+        for field, want, got in diffs:
+            if field in gated:
+                print(f"  {field}: koreksi user {_dumps(want)}, terbaca {_dumps(got)}", file=sys.stderr)
+        return EXIT_READER_DIFFERS
+
+    entry["reviewed"] = not gated
+    entry["expect"] = expect
+    sample = {k: entry[k] for k in _DONATION_KEYS if k in entry}
+    sample.update({k: v for k, v in entry.items() if k not in sample})
+    write_corpus(corpus_path, [*samples, sample])
+    print(f"Sampel {sample['id']} ditambahkan ke {corpus_path} (reviewed: {_dumps(sample['reviewed'])}).")
+    if gated:
+        print("Ditahan (reviewed: false): set \"reviewed\": true sesudah pembaca diperbaiki.")
+    print(_NAME_REMINDER)
     return 0
 
 
@@ -511,8 +602,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="perintah", required=True)
     a = sub.add_parser("add", help="tambahkan satu bukti (tersamar) ke korpus")
-    a.add_argument("file")
-    a.add_argument("--id", required=True)
+    a.add_argument("file", nargs="?", help="bukti (.txt, .pdf, gambar); wajib dengan --id, kecuali --dari-donasi")
+    a.add_argument("--id", help="id sampel (wajib untuk berkas bukti; untuk --dari-donasi mengganti id entri)")
+    a.add_argument("--dari-donasi", metavar="BERKAS",
+                   help="entri korpus .json dari Admin \"Unduh entri korpus\" (donasi contoh)")
+    a.add_argument("--tahan", action="store_true",
+                   help="dengan --dari-donasi: tetap tulis walau pembaca beda dengan koreksi user (reviewed: false)")
     a.add_argument("--real", action="store_true", help="bukti nyata (perlu ditinjau sebelum dievaluasi)")
     a.add_argument("--user-name", help="nama akun user untuk cek arah 'antar rekening sendiri' (pakai nama samaran)")
     a.add_argument("--corpus", default=str(DEFAULT_CORPUS))

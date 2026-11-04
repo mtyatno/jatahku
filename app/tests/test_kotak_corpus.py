@@ -1067,6 +1067,130 @@ class CliTests(unittest.TestCase):
         self.assertIn("5 sampel (0 sintetis, 1 nyata, 4 struk Indomaret)", out)
 
 
+# Entri korpus karangan seperti unduhan Admin "Unduh entri korpus" (A16 M1d, `GET /admin/kotak/samples/{id}/korpus`).
+DONATED_LINES = ["Transfer Berhasil", "26 Okt 2026, 09:30 WIB", "Penerima", "BUDI SANTOSO", "Bank Tujuan BRI",
+                 "Rekening Tujuan …4567", "Nominal Rp150.000", "No. Ref …5678", "Ref …5678 …1234"]
+DONATED_EXPECT = {"doc_type": "transfer", "issuer": None, "total": 150000, "paid_at": "2026-10-26T09:30:00+07:00",
+                  "counterparty": "BUDI SANTOSO", "status": "berhasil", "flow": "keluar"}
+
+
+def _donation(**truth):
+    entry = {"id": "donasi-transfer-0a1b2c3d", "real": True, "reviewed": True, "today": "2026-10-27",
+             "user_name": "ANDI PRATAMA", "lines": list(DONATED_LINES), "expect": dict(DONATED_EXPECT)}
+    return {"entry": entry, "truth": {"total": 150000, "date": "2026-10-26", "flow": None, "app": None, **truth},
+            "gated_diff": []}
+
+
+class DonationCliTests(unittest.TestCase):
+    """`add --dari-donasi <berkas>` (A16 M1d, K4, K17): entri dari Admin ditambahkan di checkout lokal (salinan korpus
+    sintetis di folder sementara, seperti CliTests)."""
+    setUp = CliTests.setUp
+    run_main = CliTests.run_main
+
+    def write_json(self, name, value):
+        path = self.txt.with_name(name)
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def add(self, value, *extra, name="entri.json"):
+        return self.run_main("add", "--dari-donasi", str(self.write_json(name, value)), *extra,
+                             "--corpus", str(self.corpus))
+
+    def test_without_difference_writes_reviewed_true(self):
+        code, out, err = self.add(_donation())
+        self.assertEqual(code, 0, err)
+        samples = load_corpus(self.corpus)
+        sample = samples[-1]
+        self.assertEqual(list(sample), ["id", "real", "reviewed", "today", "user_name", "lines", "expect"])
+        self.assertEqual((sample["id"], sample["real"], sample["reviewed"]), ("donasi-transfer-0a1b2c3d", True, True))
+        self.assertEqual(sample["lines"], DONATED_LINES)
+        self.assertEqual(sample["expect"], DONATED_EXPECT)
+        self.assertIn("PERIKSA baris 9: Ref …5678 …1234", out)
+        self.assertEqual(out.count("PERIKSA"), 1)
+        self.assertEqual(self.corpus.read_text(encoding="utf-8"), format_corpus(samples))
+        # Sampel nyata yang ditinjau ikut gerbang rilis: tetap lulus.
+        self.assertEqual(self.run_main("eval", "--corpus", str(self.corpus))[0], 0)
+
+    def test_bare_entry_and_id_override(self):
+        entry = _donation()["entry"]
+        code, out, err = self.add(entry, "--id", "real-transfer-donasi-01")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(load_corpus(self.corpus)[-1]["id"], "real-transfer-donasi-01")
+        self.assertIn("tanpa truth", out)
+
+    def test_expect_recomputed_with_the_current_reader(self):
+        value = _donation()
+        value["entry"]["expect"] = {**DONATED_EXPECT, "counterparty": "NAMA LAMA"}
+        code, out, _ = self.add(value)
+        self.assertEqual(code, 0)
+        self.assertEqual(load_corpus(self.corpus)[-1]["expect"], DONATED_EXPECT)
+        self.assertIn("expect dihitung ulang", out)
+
+    def test_gated_difference_exits_3_and_leaves_the_corpus(self):
+        before = self.corpus.read_bytes()
+        code, out, err = self.add(_donation(total=125000, flow="top_up"))
+        self.assertEqual(code, 3)
+        self.assertIn("total", err)
+        self.assertIn("125000", err)
+        self.assertIn("--tahan", err)
+        self.assertIn("flow", out)                 # beda arah dicetak, tidak digerbang
+        self.assertEqual(self.corpus.read_bytes(), before)
+        code, _, _ = self.add(_donation(date="2026-10-25"))
+        self.assertEqual(code, 3)
+        self.assertEqual(self.corpus.read_bytes(), before)
+
+    def test_tahan_writes_reviewed_false(self):
+        code, out, err = self.add(_donation(total=125000), "--tahan")
+        self.assertEqual(code, 0, err)
+        sample = load_corpus(self.corpus)[-1]
+        self.assertEqual((sample["reviewed"], sample["expect"]["total"]), (False, 150000))
+        code, out, _ = self.run_main("eval", "--corpus", str(self.corpus))
+        self.assertEqual(code, 0)
+        self.assertIn("1 sampel nyata belum ditinjau", out)
+
+    def test_flow_only_difference_is_not_gated(self):
+        code, _, err = self.add(_donation(flow="top_up"))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(load_corpus(self.corpus)[-1]["reviewed"])
+
+    def test_invalid_entries_exit_2_and_leave_the_corpus(self):
+        before = self.corpus.read_bytes()
+        broken = self.txt.with_name("rusak.json")
+        broken.write_text('{"entry": {', encoding="utf-8")
+        cases = {
+            "id-indomaret": (_donation()["entry"] | {"id": "indomaret-s1"}, "indomaret-"),
+            "id-ganda": (_donation()["entry"] | {"id": "sint-qris-1"}, "sint-qris-1"),
+            "lines": (_donation()["entry"] | {"lines": "Transfer Berhasil"}, "lines"),
+            "real": (_donation()["entry"] | {"real": "true"}, "real"),
+            "today": (_donation()["entry"] | {"today": "27-10-2026"}, "today"),
+            "bukan-objek": ([1, 2], "entry"),
+        }
+        for name, (value, message) in cases.items():
+            with self.subTest(name):
+                code, _, err = self.add(value, name=f"{name}.json")
+                self.assertEqual(code, 2)
+                self.assertIn(message, err)
+        code, _, err = self.run_main("add", "--dari-donasi", str(broken), "--corpus", str(self.corpus))
+        self.assertEqual(code, 2)
+        self.assertIn("rusak", err)
+        code, _, err = self.run_main("add", "--dari-donasi", str(broken.with_name("tidak-ada.json")),
+                                     "--corpus", str(self.corpus))
+        self.assertEqual(code, 2)
+        code, _, err = self.add(_donation(), "--id", "indomaret-x")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.corpus.read_bytes(), before)
+
+    def test_plain_add_still_needs_a_file_and_an_id(self):
+        before = self.corpus.read_bytes()
+        for argv in (("add", "--id", "x-1"), ("add", str(self.txt)),
+                     ("add", str(self.txt), "--id", "x-1", "--dari-donasi", str(self.txt))):
+            with self.subTest(argv):
+                code, _, err = self.run_main(*argv, "--corpus", str(self.corpus))
+                self.assertEqual(code, 2)
+                self.assertTrue(err)
+        self.assertEqual(self.corpus.read_bytes(), before)
+
+
 class ScriptEnvironmentTests(unittest.TestCase):
     def test_runs_without_database_settings_in_the_environment(self):
         env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "JWT_SECRET")}

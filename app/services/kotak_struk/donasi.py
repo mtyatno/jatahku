@@ -5,7 +5,8 @@ meninjaunya di Admin dan menyalin yang disetujui ke korpus pembaca. Semuanya di 
 (bawaan mati, pre-flight A16 K1/G1): kebijakan privasi yang tayang harus memuat paragraf donasi dulu.
 
 Bagian M1a: saklar, persetujuan, dan lupa. Bagian M1b: `sample_lines` (baris tersamar yang ditangkap worker). Bagian
-M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tinjauan `proof_samples`).
+M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tinjauan `proof_samples`). Bagian M1d:
+tinjauan Admin dan entri korpus.
 - `donation_available`: saklar menyala (web).
 - `consented` / `set_consent`: satu baris `proof_sample_consents` per user; menyalakan idempoten (waktu pertama tetap),
   mematikan = menghapus baris itu dan `forget_user(keep_approved=True)` (sampel yang sudah disetujui pemilik tetap).
@@ -15,6 +16,10 @@ M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tin
   (`record.mark_recorded`, `record.skip_item`, `record.choose_app`, bot "Nominal salah") memanggil `donate`; koreksi
   memindahkan `sample_lines` ke `proof_samples` (status `menunggu`), selain itu (bacaan benar, `batal`/`duplikat`,
   persetujuan ditarik, saklar mati) baris itu dikosongkan. Pembersihan umur sampel: `maintenance.purge_samples`.
+- Tinjauan Admin (M1d, pre-flight A16 §2 "Admin review -> corpus", K4, K17): `approve_sample` (baris editan disamarkan
+  lagi dan diperiksa `approved_lines`), `reject_sample` (menghapus baris: sampel `ditolak` tidak pernah ada),
+  `delete_sample`, `read_lines` (pembaca sekarang tanpa aturan), `corpus_entry`, `truth_diff`/`gated_diff` (dipakai juga
+  `kotak_corpus add --dari-donasi`).
 - `forget_user` (G4): persetujuan user, `proof_samples`-nya, dan `receipt_scans.sample_lines` miliknya. Hapus akun
   (`account_deletion.delete_account`) dan gabung akun (`merge.merge_users`, source; persetujuan tidak diwariskan ke
   target) menghapus SEMUA sampel; menarik persetujuan menyisakan sampel yang sudah `disetujui` (keputusan pemilik).
@@ -22,7 +27,7 @@ M1c: `correction_trigger` dan `donate` (koreksi memindahkan baris ke antrean tin
   persetujuan lebih dulu; pendonor yang mengunci baris item (lewati, jawaban aplikasi) mengambil kunci persetujuan
   (`lock_consent`) sebelum itu.
 
-Tidak ada fungsi di sini yang meng-commit; pemanggil (route, hapus akun, gabung akun) meng-commit. Modul ini tidak
+Tidak ada fungsi di sini yang meng-commit; pemanggil (route, hapus akun, gabung akun) meng-commit. Tidak ada cache. Modul ini tidak
 menanyakan keanggotaan household (`test_ruang_pagar`).
 """
 from __future__ import annotations
@@ -47,9 +52,9 @@ from app.services.kotak_struk.config import PROOF_TYPES, SAMPLE_LINE_MAX, SAMPLE
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
 from app.services.kotak_struk.readers import proof_common as pc
-from app.services.kotak_struk.readers.base import Secrets
+from app.services.kotak_struk.readers.base import ParseContext, Secrets
 from app.services.kotak_struk.readers.labels import WIB
-from app.services.kotak_struk.registry import looks_like_proof
+from app.services.kotak_struk.registry import looks_like_proof, read_document
 
 log = logging.getLogger(__name__)
 
@@ -377,3 +382,151 @@ async def _clear_lines(db: AsyncSession, item_id) -> None:
         update(ReceiptScan).where(ReceiptScan.id == item_id).values(sample_lines=null())
         .execution_options(synchronize_session=False)
     )
+
+
+# ── Tinjauan Admin -> entri korpus (M1d) ────────────────────────────────────
+
+ST_SAMPLE_APPROVED = "disetujui"
+SAMPLE_STATUSES = (ST_SAMPLE_WAITING, ST_SAMPLE_APPROVED, "ditolak")   # `ditolak` tidak pernah tersimpan (ruling M1d)
+GATED_FIELDS = ("total", "date", "status")                              # gerbang rilis korpus (K17)
+TRUTH_FIELDS = ("total", "date", "flow", "status")
+CORPUS_ID_PREFIX = "donasi-"
+
+
+class SampleNotFound(LookupError):
+    def __init__(self):
+        super().__init__("Sampel tidak ditemukan")
+
+
+class SampleConflict(Exception):
+    """Status sampel tidak sesuai keputusan (sudah diputuskan, atau belum disetujui); pesannya aman ditampilkan."""
+
+
+class SampleLineSecret(ValueError):
+    """Baris editan pemilik masih memuat nomor/alamat yang tidak boleh masuk korpus; pesannya aman ditampilkan."""
+
+
+def approved_lines(lines: list[str]) -> list[str]:
+    """Baris editan pemilik yang siap disimpan: `samaran.mask_line` diterapkan lagi pada setiap baris, lalu aturan
+    yang sama dengan penangkapan (`_holds_secret` tanpa nilai rahasia bukti, yang tidak lagi diketahui): deret >= 6 digit,
+    alamat email, atau nomor berkelompok ribuan >= 10 digit di luar Rp/IDR -> `SampleLineSecret` dengan nomor baris
+    (mulai 1). Murni."""
+    masked = [samaran.mask_line(line) for line in lines]
+    for i, line in enumerate(masked, 1):
+        if _LONG_DIGITS.search(line):
+            raise SampleLineSecret(f"Masih ada nomor panjang di baris {i}")
+        if _EMAIL.search(line):
+            raise SampleLineSecret(f"Masih ada alamat email di baris {i}")
+        if _grouped_account(line):
+            raise SampleLineSecret(f"Masih ada nomor rekening di baris {i}")
+    return masked
+
+
+async def get_sample(db: AsyncSession, sample_id: uuid.UUID) -> ProofSample:
+    sample = (await db.execute(select(ProofSample).where(ProofSample.id == sample_id))).scalar_one_or_none()
+    if sample is None:
+        raise SampleNotFound()
+    return sample
+
+
+async def _missing_or_conflict(db: AsyncSession, sample_id: uuid.UUID, message: str):
+    if (await db.execute(select(exists().where(ProofSample.id == sample_id)))).scalar():
+        raise SampleConflict(message)
+    raise SampleNotFound()
+
+
+async def approve_sample(db: AsyncSession, sample_id: uuid.UUID, *, lines: list[str], by: uuid.UUID, now: datetime,
+                         note: str | None = None, user_name: str | None = None, set_user_name: bool = False
+                         ) -> ProofSample:
+    """Setujui sampel `menunggu` dengan baris editan pemilik (`approved_lines`: disamarkan lagi, nomor/email tersisa ->
+    `SampleLineSecret`, tanpa perubahan apa pun). `set_user_name`: nama samaran user diganti `user_name` (None =
+    dikosongkan); selain itu yang tersimpan tetap. UPDATE bersyarat status `menunggu` (dua keputusan bersamaan tidak
+    saling menimpa); bukan `menunggu` -> `SampleConflict`, tidak ada -> `SampleNotFound`. Tidak meng-commit."""
+    masked = approved_lines(lines)
+    values = {"lines": masked, "status": ST_SAMPLE_APPROVED, "decided_at": now, "decided_by": by, "note": note}
+    if set_user_name:
+        values["user_name"] = user_name
+    res = await db.execute(
+        update(ProofSample).where(ProofSample.id == sample_id, ProofSample.status == ST_SAMPLE_WAITING)
+        .values(**values).execution_options(synchronize_session=False))
+    if (res.rowcount or 0) != 1:
+        await _missing_or_conflict(db, sample_id, "Sampel sudah diputuskan")
+    sample = await get_sample(db, sample_id)
+    await db.refresh(sample)
+    return sample
+
+
+async def reject_sample(db: AsyncSession, sample_id: uuid.UUID) -> None:
+    """Tolak sampel `menunggu` = hapus barisnya (G2, ruling M1d: tidak ada isi yang disimpan; sampel `ditolak` tidak
+    pernah ada). Bukan `menunggu` -> `SampleConflict`, tidak ada -> `SampleNotFound`. Tidak meng-commit."""
+    res = await db.execute(delete(ProofSample).where(ProofSample.id == sample_id,
+                                                     ProofSample.status == ST_SAMPLE_WAITING))
+    if (res.rowcount or 0) != 1:
+        await _missing_or_conflict(db, sample_id, "Sampel sudah diputuskan")
+
+
+async def delete_sample(db: AsyncSession, sample_id: uuid.UUID) -> None:
+    """Hapus sampel status apa pun (sesudah entri disalin ke korpus); tidak ada -> `SampleNotFound`. Tidak meng-commit."""
+    res = await db.execute(delete(ProofSample).where(ProofSample.id == sample_id))
+    if (res.rowcount or 0) != 1:
+        raise SampleNotFound()
+
+
+def expect_from(doc) -> dict:
+    """Hasil pembaca dalam bentuk `expect` korpus (urutan kunci seperti spec §7a). Dipindah dari
+    `app/scripts/kotak_corpus.py` (diekspor ulang di sana) supaya Admin dan `add` memakai satu bentuk."""
+    paid_at = doc.paid_at
+    if paid_at is not None:
+        paid_at = (paid_at.astimezone(WIB) if paid_at.tzinfo else paid_at.replace(tzinfo=WIB)).isoformat(timespec="seconds")
+    return {
+        "doc_type": doc.doc_type, "issuer": doc.issuer or None, "total": doc.amounts.total, "paid_at": paid_at,
+        "counterparty": doc.counterparty.name or None, "status": doc.status, "flow": doc.flow,
+    }
+
+
+async def read_lines(lines: list[str], *, today: date, user_name: str | None) -> dict:
+    """Pembaca SEKARANG pada baris sampel, TANPA aturan belajar, dalam bentuk `expect`: konteks seperti
+    `kotak_corpus.sample_context` (`today` sampel, nama samaran user) dan pembacaan seperti `kotak_corpus.eval`
+    (`kind` gambar, saklar bukti menyala). Hasilnya sama dengan `expect` yang dihitung `add --dari-donasi`."""
+    res = await read_document(TextDoc(lines=list(lines), kind=KIND_IMAGE),
+                              ParseContext(today=today, user_name=user_name), proofs_enabled=True)
+    return expect_from(res.parsed.doc)
+
+
+def _wib_day(paid_at) -> str | None:
+    if not isinstance(paid_at, str) or not paid_at:
+        return None
+    try:
+        moment = datetime.fromisoformat(paid_at)
+    except ValueError:
+        return None
+    return (moment.astimezone(WIB).date() if moment.tzinfo else moment.date()).isoformat()
+
+
+def truth_diff(expect: dict, truth: dict | None) -> list[tuple[str, object, object]]:
+    """Beda koreksi user (`truth`, G7) dengan hasil pembaca (`expect`): `(field, truth, terbaca)` untuk total, tanggal
+    (hari WIB `paid_at`), arah, dan status bila `truth` memuatnya (bukan None). Murni."""
+    truth = truth if isinstance(truth, dict) else {}
+    expect = expect if isinstance(expect, dict) else {}
+    read = {"total": expect.get("total"), "date": _wib_day(expect.get("paid_at")), "flow": expect.get("flow"),
+            "status": expect.get("status")}
+    return [(f, truth[f], read[f]) for f in TRUTH_FIELDS if truth.get(f) is not None and truth[f] != read[f]]
+
+
+def gated_diff(expect: dict, truth: dict | None) -> list[str]:
+    """Field gerbang rilis korpus (total, tanggal, status) yang berbeda antara koreksi user dan pembaca: sampel
+    `reviewed: true` seperti itu membuat `test_real_corpus_meets_release_gate` merah (K17)."""
+    return [f for f, _t, _r in truth_diff(expect, truth) if f in GATED_FIELDS]
+
+
+def corpus_entry(sample: ProofSample, expect: dict) -> dict:
+    """Entri korpus dari sampel yang disetujui (urutan kunci fixture): `id` = `donasi-<doc_type>-<8 hex id sampel>`,
+    `real`/`reviewed` true (pemilik sudah meninjau), `today`, `user_name` (nama samaran; tidak ada bila kosong),
+    `lines`, `expect` (pembaca sekarang). Tanpa id user/item."""
+    entry = {"id": f"{CORPUS_ID_PREFIX}{sample.doc_type or 'bukti'}-{sample.id.hex[:8]}", "real": True,
+             "reviewed": True, "today": sample.today.isoformat()}
+    if sample.user_name:
+        entry["user_name"] = sample.user_name
+    entry["lines"] = list(sample.lines or [])
+    entry["expect"] = expect
+    return entry
