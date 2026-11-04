@@ -31,7 +31,7 @@ dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal �
 (`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
 
 "Aplikasi apa ini?" (belajar lintas user tahap 2, Task M2c): pesan struk untuk bukti tidak dikenali yang boleh
-ditanya (`flags.ask_app`, bukan bukti gagal/pending) mendapat baris "🏷️ Aplikasi apa ini?" (`ka_{item_id}`) di bawah
+ditanya (`flags.ask_app`, bukan bukti yang transaksinya gagal) mendapat baris "🏷️ Aplikasi apa ini?" (`ka_{item_id}`) di bawah
 baris kedua. Ketukannya mengedit pesan menjadi pertanyaan "Logo di bukti: {flags.app_logo}. Aplikasi apa ini?" dengan
 12 aplikasi berprofil (`ka_{item_id}_{i}`, i = indeks `PROFILES`, 3 per baris), "Lainnya" (`ka_{item_id}_n`) dan
 "↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `belajar.learn_app_choice` (satu suara per item,
@@ -546,7 +546,8 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
 def _app_logo(detail: dict) -> str | None:
     """Kata logo untuk "Aplikasi apa ini?" (`flags.app_logo`, huruf besar dari server; tidak pernah dari teks OCR lain)
     bila item boleh ditanya: `flags.ask_app` (server: siap/tercatat, tidak dikenali, kerangka berkunci logo, belum
-    dijawab) dan bukan bukti yang transaksinya gagal/pending (`blocked` transaksi_gagal). Selain itu None."""
+    dijawab) dan bukan bukti yang transaksinya gagal (`blocked` transaksi_gagal; bukti pending tetap ditanya). Selain
+    itu None."""
     flags = detail.get("flags") or {}
     if flags.get("ask_app") is not True or flags.get("blocked") == view.BLOCKED_FAILED:
         return None
@@ -909,8 +910,10 @@ async def _app_action(query, tg_user, arg: str) -> None:
     """`ka_{item_id}` → pertanyaan (`_app_question`); `ka_{item_id}_{i|n}` → jawaban: `belajar.learn_app_choice` (satu
     suara per item) + commit, lalu pesan hasil dirender ulang (`_result_reply`: tanpa tombol aplikasi, tombol amplop
     tetap, sesi tombol baru); `ka_{item_id}_k` → pesan hasil dirender ulang tanpa menjawab. Akhiran lain → pertanyaan
-    lagi. Item milik user lain / tidak ada, tidak bisa ditanya (sudah dijawab, bukti gagal/pending), atau jawaban
-    ditolak → MSG_APP_REFUSED tanpa tombol. Tidak pernah mencatat atau melewati item."""
+    lagi. Item milik user ini yang tidak bisa ditanya lagi (dijawab di kartu web, bukti gagal, dilewati/kedaluwarsa
+    di tempat lain) atau jawabannya ditolak → pesan hasil dirender ulang (tombol amplop tetap bila masih `siap`),
+    diawali MSG_APP_REFUSED kecuali untuk Kembali. Item milik user lain / tidak ada / id rusak → MSG_APP_REFUSED tanpa
+    tombol. Tidak pernah mencatat atau melewati item."""
     from app.bot.handlers import get_or_create_user
 
     raw_id, _, suffix = arg.partition("_")
@@ -920,16 +923,21 @@ async def _app_action(query, tg_user, arg: str) -> None:
         user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
         item = await _own_item(db, item_id, user)
         logo = _app_logo(await view.item_detail(db, item, user)) if item is not None else None
-        if logo is not None:
-            choice = _app_choice(suffix)
-            if suffix == APP_BACK:
-                text, markup = await _result_reply(db, user, item)
-            elif choice is None:
-                text, markup = _app_question(item.id, logo)
-            elif await belajar.learn_app_choice(db, item, choice, user_id=user.id, user_name=user.name):
-                await db.commit()
-                await db.refresh(item)
-                text, markup = await _result_reply(db, user, item)
+        choice = _app_choice(suffix)
+        if item is None:
+            pass
+        elif suffix == APP_BACK:
+            text, markup = await _result_reply(db, user, item)
+        elif logo is not None and choice is None:
+            text, markup = _app_question(item.id, logo)
+        elif logo is not None and await belajar.learn_app_choice(db, item, choice, user_id=user.id,
+                                                                 user_name=user.name):
+            await db.commit()
+            await db.refresh(item)
+            text, markup = await _result_reply(db, user, item)
+        else:   # tidak bisa ditanya lagi / jawaban ditolak: pesan hasil tetap bisa dipakai mencatat
+            text, markup = await _result_reply(db, user, item)
+            text = f"{MSG_APP_REFUSED}\n\n{text}"
     await query.edit_message_text(text, reply_markup=markup)
 
 

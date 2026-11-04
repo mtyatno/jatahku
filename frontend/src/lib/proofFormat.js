@@ -332,7 +332,7 @@ export function skipOutcome(res) {
 // Pertanyaan "Aplikasi apa ini?" (tahap 2 M2c) → null atau { logo, text, choices }. Hanya bila server menandai item
 // boleh ditanya (`flags.ask_app` true: tidak dikenali, kerangka berkunci logo, belum dijawab) dan memberi kata logonya
 // (`flags.app_logo`; kata itu tidak pernah diambil dari teks lain), untuk item siap atau tercatat (jawabannya tidak
-// mencatat apa pun). Bukti yang transaksinya gagal/pending (`blocked` transaksi_gagal) tidak ditanya.
+// mencatat apa pun). Bukti yang transaksinya gagal (`blocked` transaksi_gagal) tidak ditanya; bukti pending tetap ditanya.
 export function appQuestion(item) {
   const flags = item?.flags;
   if (flags?.ask_app !== true || flags.blocked === 'transaksi_gagal') return null;

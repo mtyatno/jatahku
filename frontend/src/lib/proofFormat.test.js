@@ -529,7 +529,7 @@ test('APP_CHOICES: 12 kunci ISSUER_LABEL (urutan tabel) + Lainnya', () => {
   assert.equal(new Set(APP_CHOICES.map(c => c.key)).size, 13);
 });
 
-test('appQuestion: hanya dengan ask_app dan kata logo, siap/tercatat, tidak untuk bukti gagal/pending', () => {
+test('appQuestion: hanya dengan ask_app dan kata logo, siap/tercatat, tidak untuk bukti gagal', () => {
   assert.deepEqual(appQuestion(ASK), { logo: 'NEWPAY', text: 'Logo di bukti: NEWPAY. Aplikasi apa ini?', choices: APP_CHOICES });
   // Sudah tercatat (blocked sudah_tercatat): masih boleh dijawab, jawabannya tidak mencatat apa pun.
   assert.equal(appQuestion({ ...withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'sudah_tercatat' }, ASK), status: 'tercatat' }).logo, 'NEWPAY');
@@ -540,7 +540,8 @@ test('appQuestion: hanya dengan ask_app dan kata logo, siap/tercatat, tidak untu
   // Kata logo hanya dari server; tanpa kata logo tidak ada yang ditanyakan (tidak pernah dari teks OCR lain).
   assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: null }, ASK)), null);
   assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: '  ' }, ASK)), null);
-  // Bukti yang transaksinya gagal/pending (blokir) tidak ditanya.
+  // Bukti yang transaksinya gagal (blocked transaksi_gagal) tidak ditanya; bukti pending tetap ditanya (tanpa blokir).
+  assert.equal(appQuestion(withDoc({ status: 'pending' }, ASK))?.logo, 'NEWPAY');
   assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'transaksi_gagal' }, ASK)), null);
   for (const status of ['diterima', 'diproses', 'gagal', 'dilewati', 'kedaluwarsa']) {
     assert.equal(appQuestion({ ...ASK, status }), null, status);

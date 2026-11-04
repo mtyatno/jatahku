@@ -2320,6 +2320,17 @@ class KotakBotDbTests(TxnBase):
         call = query.edit_message_text.call_args
         self.assertEqual((call.args[0], call.kwargs.get("reply_markup")), (MSG_APP_REFUSED, None))
 
+    def assert_refused_result(self, query, *, warned=True, envelopes=True):
+        """Item milik user ini yang tidak bisa ditanya lagi: pesan hasil dirender ulang (tombol amplop bila masih `siap`),
+        tanpa tombol aplikasi; diawali peringatan kecuali untuk Kembali. Mengembalikan teks dan data tombolnya."""
+        query.edit_message_text.assert_awaited_once()
+        call = query.edit_message_text.call_args
+        text, data = call.args[0], datas(keyboard_of(call))
+        self.assertEqual(text.startswith(f"{MSG_APP_REFUSED}\n\n"), warned, text)
+        self.assertEqual([d for d in data if d.startswith("ka_")], [])
+        self.assertEqual(bool([d for d in data if d.startswith("t_")]), envelopes, data)
+        return text, data
+
     def app_rows(self, call):
         return [[(b.text, b.callback_data) for b in row] for row in keyboard_of(call)]
 
@@ -2341,7 +2352,9 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual(self.rows(), [])
         for data in (f"ka_{failed}", f"ka_{failed}_0", f"ka_{failed}_n"):
             with self.subTest(data=data):
-                self.assert_refused(await self.tap(data))
+                text, data_ = self.assert_refused_result(await self.tap(data), envelopes=False)
+                self.assertEqual(data_, [])   # bukti gagal: pemberitahuan saja, tanpa tombol
+                self.assertIn("gagal", text)
         self.assertEqual(await self.votes(), [])
         self.assertIsNone(((await self.get(failed)).channel_meta or {}).get("app_choice"))
 
@@ -2388,10 +2401,12 @@ class KotakBotDbTests(TxnBase):
         self.assertEqual([d for d in data if d.startswith("ka_")], [])
         self.assertEqual(data[-2:], [f"struk_fix_{item_id}", f"struk_no_{item_id}"])
         makan = next(b.callback_data for row in keyboard_of(answer) for b in row if "Makan" in b.text)
-        # Jawaban kedua (lain atau sama), tombol pertanyaan lama: ditolak, tetap satu suara.
+        # Jawaban kedua (lain atau sama), tombol pertanyaan lama: ditolak dengan pesan hasil (tombol amplop tetap), tetap
+        # satu suara.
         for data_ in (f"ka_{item_id}_n", f"ka_{item_id}_{jago}", f"ka_{item_id}"):
             with self.subTest(data=data_):
-                self.assert_refused(await self.tap(data_))
+                text, _ = self.assert_refused_result(await self.tap(data_))
+                self.assertEqual(text, f"{MSG_APP_REFUSED}\n\n{first_text}")
         self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
         self.assertEqual((await self.get(item_id)).channel_meta["app_choice"], "jago")
         # Tombol amplop dari pesan sesudah menjawab mencatat tepat sekali (nominal tanpa label kurang yakin: ditanya dulu,
@@ -2405,6 +2420,59 @@ class KotakBotDbTests(TxnBase):
         got = await self.get(item_id)
         self.assertEqual((got.status, got.transaction_ids), ("tercatat", [str(txn.id)]))
         self.assertEqual(await self.votes(), [("logo", "logo:newpay", "jago", self.a.id)])
+
+    async def answer_elsewhere(self, item_id, choice="gopay"):
+        """Jawaban dari kartu web (rute yang sama memanggil `belajar.learn_app_choice` lalu commit)."""
+        from app.services.kotak_struk import belajar
+        async with self.Session() as db:
+            item = await db.get(ReceiptScan, item_id)
+            self.assertTrue(await belajar.learn_app_choice(db, item, choice, user_id=self.a.id, user_name="Ani"))
+            await db.commit()
+
+    async def test_answered_elsewhere_then_back_keeps_the_envelope_buttons(self):
+        """Review M2c temuan 1: pertanyaan dibuka di Telegram, dijawab di kartu web, lalu Kembali: pesan hasil dengan
+        tombol amplop (tanpa peringatan dan tanpa tombol aplikasi), tanpa suara kedua, item tetap `siap`."""
+        item_id = await self.send_newpay()
+        first_text = self.texts()[-1]
+        await self.tap(f"ka_{item_id}")
+        await self.answer_elsewhere(item_id)
+        text, data = self.assert_refused_result(await self.tap(f"ka_{item_id}_k"), warned=False)
+        self.assertEqual(text, first_text)
+        self.assertEqual(data[-2:], [f"struk_fix_{item_id}", f"struk_no_{item_id}"])
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "gopay", self.a.id)])
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["app_choice"]), ("siap", "gopay"))
+
+    async def test_answered_elsewhere_then_answer_keeps_the_envelope_buttons(self):
+        """Seperti di atas, lalu sebuah pilihan (`_0`): peringatan + pesan hasil dengan tombol amplop; suara tetap satu
+        (jawaban web), item tetap `siap`, dan tombol amplopnya masih mencatat."""
+        item_id = await self.send_newpay()
+        first_text = self.texts()[-1]
+        await self.tap(f"ka_{item_id}")
+        await self.answer_elsewhere(item_id)
+        query = await self.tap(f"ka_{item_id}_0")
+        text, _ = self.assert_refused_result(query)
+        self.assertEqual(text, f"{MSG_APP_REFUSED}\n\n{first_text}")
+        self.assertEqual(await self.votes(), [("logo", "logo:newpay", "gopay", self.a.id)])
+        got = await self.get(item_id)
+        self.assertEqual((got.status, got.channel_meta["app_choice"]), ("siap", "gopay"))
+        makan = next(b.callback_data for row in keyboard_of(query.edit_message_text.call_args) for b in row
+                     if "Makan" in b.text)
+        asked = (await self.tap(makan)).edit_message_text.call_args
+        [yes] = [d for d in datas(keyboard_of(asked)) if d.startswith("ky_")]
+        await self.tap(yes)
+        self.assertEqual([t.amount for t in await self.txns()], [D("50000")])
+
+    async def test_skipped_elsewhere_then_answer_says_so(self):
+        """Dilewati di tempat lain: pesan hasil "Dilewati." (tanpa tombol) diawali peringatan; Kembali tanpa peringatan."""
+        item_id = await self.send_newpay()
+        await self.tap(f"ka_{item_id}")
+        await self.set(item_id, status="dilewati")
+        text, data = self.assert_refused_result(await self.tap(f"ka_{item_id}_n"), envelopes=False)
+        self.assertEqual((text, data), (f"{MSG_APP_REFUSED}\n\n{receipt_cmd.MSG_SKIPPED}", []))
+        text, data = self.assert_refused_result(await self.tap(f"ka_{item_id}_k"), warned=False, envelopes=False)
+        self.assertEqual((text, data), (receipt_cmd.MSG_SKIPPED, []))
+        self.assertEqual(await self.votes(), [])
 
     async def test_lainnya_votes_baru(self):
         item_id = await self.send_newpay()
