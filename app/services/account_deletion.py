@@ -31,7 +31,8 @@ Laporan berkala beku milik user lain (anggota serumah, sekarang atau dulu) yang 
 catatan user ini: baris yang `pencatat_id`-nya user ini dianonimkan seperti catatan hidupnya
 (nama -> "Mantan anggota", keterangan -> "Transaksi mantan anggota" / "Pemasukan mantan
 anggota", "Transaksi privat" tetap; nominal tetap), di mana pun household-nya sekarang
-(Ruling R15, `laporan/pencatat.py`). Satu-satunya perubahan `data` laporan setelah terbit.
+(Ruling R15, `laporan/pencatat.py`). Selain ini, `data` laporan setelah terbit hanya diubah
+gabung akun (`merge_users` mengalihkan `pencatat_id` sumber ke target; nama tetap beku).
 
 "Mantan anggota" satu baris `users` bersama (FORMER_MEMBER_ID), bukan anggota household
 mana pun dan tidak bisa login. Email berawalan `deleted_` supaya scheduler, admin, dan
