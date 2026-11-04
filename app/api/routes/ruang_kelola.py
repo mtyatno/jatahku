@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -30,7 +30,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
     Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, RuangAudit, RuangBatasan, RuangDraf,
-    RuangUndangan, User,
+    RuangKamus, RuangUndangan, User, UserEnvelopeKeyword,
 )
 from app.api.routes.ruang import RuangBuat
 from app.services import peran
@@ -42,6 +42,7 @@ limiter = Limiter(key_func=get_remote_address)   # pola sama dengan auth.py (in-
 
 UNDANGAN_HARI = 7
 UNDANGAN_DAFTAR_MAKS = 50
+KAMUS_DAFTAR_MAKS = 500
 TIDAK_ADA = "Ruang tidak ditemukan"
 
 
@@ -457,6 +458,53 @@ async def tolak_draf(rid: UUID, draf_id: UUID, req: TolakBody | None = None, use
     peran.audit(db, rid, admin_id, "draf_ditolak", d.user_id, draf_id=draf_id, jenis=d.jenis)
     await db.commit()
     return {"draf_id": str(draf_id), "status": peran.ST_DITOLAK}
+
+
+# ── Kamus ruang (R7) ───────────────────────────────────────────────────────
+@router.get("/ruang/{rid}/kamus")
+async def daftar_kamus(rid: UUID, q: str | None = Query(None, max_length=100),
+                       limit: int = Query(200, ge=1, le=KAMUS_DAFTAR_MAKS), user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Kata yang dipelajari di ruang usaha ini (ADR-P5), untuk owner dan admin: paling sering dulu. `q` menyaring kata
+    yang memuat teks itu. `total` = semua kata di ruang ini (sebelum `q` dan `limit`)."""
+    await _ruang_kelola(db, user, rid)
+    syarat = [RuangKamus.household_id == rid]
+    total = (await db.execute(select(func.count()).select_from(RuangKamus).where(*syarat))).scalar_one()
+    teks = (q or "").strip().lower()
+    if teks:
+        syarat.append(RuangKamus.keyword.contains(teks, autoescape=True))
+    rows = (await db.execute(
+        select(RuangKamus, Envelope.name, Envelope.emoji, User.name)
+        .join(Envelope, Envelope.id == RuangKamus.envelope_id)
+        .outerjoin(User, User.id == RuangKamus.diajarkan_oleh)
+        .where(*syarat, Envelope.household_id == rid)
+        .order_by(RuangKamus.count.desc(), RuangKamus.keyword, RuangKamus.id).limit(limit)
+    )).all()
+    return {"total": total, "items": [
+        {"id": str(k.id), "kata": k.keyword, "envelope_id": str(k.envelope_id), "amplop": nama_amplop,
+         "emoji": emoji, "kali": k.count, "diajarkan_oleh": pengajar,
+         "diubah": _utc(k.updated_at).isoformat() if k.updated_at else None}
+        for k, nama_amplop, emoji, pengajar in rows]}
+
+
+@router.delete("/ruang/{rid}/kamus/{kamus_id}", status_code=204)
+async def hapus_kamus(rid: UUID, kamus_id: UUID, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Hapus satu kata → amplop dari kamus ruang (owner/admin). Kata user yang sama untuk amplop itu ikut dihapus,
+    supaya pengajarnya juga tidak lagi mendapat tebakan itu (keputusan R7 C). Kata ruang lain → 404."""
+    await _ruang_kelola(db, user, rid)
+    k = (await db.execute(select(RuangKamus).where(
+        RuangKamus.id == kamus_id, RuangKamus.household_id == rid))).scalar_one_or_none()
+    if k is None:
+        raise HTTPException(status_code=404, detail="Kata tidak ditemukan")
+    kata, eid = k.keyword, k.envelope_id
+    nama_amplop = (await db.execute(select(Envelope.name).where(Envelope.id == eid))).scalar_one_or_none()
+    await db.execute(delete(UserEnvelopeKeyword).where(
+        UserEnvelopeKeyword.keyword == kata, UserEnvelopeKeyword.envelope_id == eid,
+        UserEnvelopeKeyword.envelope_id.in_(select(Envelope.id).where(Envelope.household_id == rid))))
+    await db.delete(k)
+    peran.audit(db, rid, user.id, "kata_dihapus", kata=kata, envelope_id=str(eid), amplop=nama_amplop)
+    await db.commit()
 
 
 # ── Log audit ──────────────────────────────────────────────────────────────

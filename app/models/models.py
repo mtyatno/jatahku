@@ -922,6 +922,26 @@ class RuangAudit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class RuangKamus(TimestampMixin, Base):
+    """Kamus ruang usaha (Plugin R7, ADR-P5): kata → amplop yang diajarkan anggota mana pun dari catatan yang
+    tersimpan, dipakai semua anggota ruang itu sesudah kata user sendiri. Hanya diisi untuk ruang `usaha`; tidak
+    pernah dibaca di ruang lain (`app/services/txn_nlp.py`). Admin melihat dan menghapus di halaman Anggota.
+    Tabel baru saja (migrasi d7r7k4a1m9c3): `create_all` saat start membuat tabel yang sama."""
+    __tablename__ = "ruang_kamus"
+    __table_args__ = (
+        UniqueConstraint("household_id", "keyword", "envelope_id", name="uq_ruang_kamus"),
+        Index("ix_ruang_kamus_household_keyword", "household_id", "keyword"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    keyword: Mapped[str] = mapped_column(String(100))
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id", ondelete="CASCADE"))
+    count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    diajarkan_oleh: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"),
+                                                             nullable=True)   # pengajar terakhir
+
+
 # --- Plugin H1: host plugin (docs/plugin/01-kajian.md "Tabel pengelola", ADR-P9, P11, P15) ---
 
 class PluginInstallation(Base):

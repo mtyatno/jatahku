@@ -241,6 +241,21 @@ def cek_catat(batasan: Batasan | None, *, jenis: str, amplop_ids, jumlah: Decima
     return batasan.batas_nominal is not None and jumlah > batasan.batas_nominal
 
 
+def aturan_catatan(batasan: Batasan | None, jumlah: Decimal | None) -> list[dict]:
+    """Batasan yang akan berlaku untuk satu catatan karyawan senilai `jumlah`, untuk ditampilkan sebelum simpan
+    (Catat cepat, R7; `aturan` di `/transactions/suggest-envelope`). Hanya tampilan: penegakannya tetap `cek_catat`.
+    Kosong untuk owner/admin (batasan None) atau bila nominal belum diketahui."""
+    if batasan is None or jumlah is None:
+        return []
+    out = []
+    if batasan.foto_nota_di_atas is not None and jumlah > batasan.foto_nota_di_atas:
+        out.append({"kode": "foto_nota", "teks": f"Wajib foto nota di atas {_rp(batasan.foto_nota_di_atas)}."})
+    if batasan.batas_nominal is not None and jumlah > batasan.batas_nominal:
+        out.append({"kode": "persetujuan",
+                    "teks": f"Di atas batasmu {_rp(batasan.batas_nominal)}: menunggu persetujuan admin."})
+    return out
+
+
 def pesan_persetujuan(batasan: Batasan) -> str:
     return f"Batas catatanmu {_rp(batasan.batas_nominal)}. Catatan ini menunggu persetujuan admin."
 
