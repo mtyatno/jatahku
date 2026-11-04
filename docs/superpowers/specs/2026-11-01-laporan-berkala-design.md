@@ -36,7 +36,8 @@ yang berlaku.
 ## Penyesuaian saat eksekusi (1–4 Nov 2026)
 
 Review per tugas menghasilkan keputusan berikut ("ruling" di catatan eksekusi; daftar lengkap R1–R13 di lampiran
-rencana). Yang di sini mengubah perilaku dari bagian di bawah atau dari rencana, dan diuji di tugasnya.
+rencana; R15 dan R16 dari review akhir seluruh branch). Yang di sini mengubah perilaku dari bagian di bawah atau dari
+rencana, dan diuji di tugasnya.
 
 - **R2, tagihan berikut** (bagian 2c butir 6): `langganan.jatuh_tempo` hanya untuk amplop yang menjadi baris laporan;
   tagihan di amplop yang dibuat sesudah periode tutup tidak ikut (jarang dalam jendela 7 hari).
@@ -64,6 +65,19 @@ rencana). Yang di sini mengubah perilaku dari bagian di bawah atau dari rencana,
   dari access token yang sah, `kunci_per_user` di `app/core/rate_limit.py`; selainnya alamat IP), bukan hash teks header
   Authorization, yang bisa diakali dengan menulis ulang header atau login ulang. Kunci yang sama dipasang untuk
   `/transactions/transcribe` dan chat web lewat PR keamanan terpisah (#187) sebelum fitur ini.
+- **R15, anggota yang menghapus akun di laporan beku** (bagian 2c, 2e, 8): baris `data` yang memuat nama atau teks
+  seorang pencatat (`terbesar[]`, `langganan.terbayar[]`, `mutasi[]`) membawa `pencatat_id` (id user, tambahan di versi
+  1; `versi` tetap 1), tidak pernah ditampilkan. Hapus akun menulis ulang persis baris yang `pencatat_id`-nya akun itu di
+  laporan milik user lain seperti catatan hidupnya ("Mantan anggota", "Transaksi mantan anggota"/"Pemasukan mantan
+  anggota"; "Transaksi privat" tetap; angka tidak berubah), dan gabung akun mengalihkan `pencatat_id` sumber ke target
+  (`app/services/laporan/pencatat.py`). Ini satu-satunya pengecualian yang disetujui untuk "beku" (bagian 2e): janji hapus
+  akun (#170) mendahului; nama tidak unik, jadi tanpa id baris itu tak pernah bisa dianonimkan kelak. Benda rumah tanpa
+  pembuat tersimpan (amplop, target, langganan jatuh tempo) dibiarkan, sama dengan hapus akun di aplikasi.
+- **R16, keandalan dan tampilan** (bagian 3, 5, 6d): lonceng dan `notified_at` disimpan dalam satu transaksi (klaim
+  `notified_at IS NULL`), Telegram sekali sesudahnya, best-effort; di akhir setiap jalan job menyapu laporan yang belum
+  diberi tahu dan terbit ≤ 7 hari lalu (tanpa lonceng kedua, tanpa Telegram berulang). Snapshot yang belum ada di hari
+  terakhir jendela dicatat WARNING bila household beraktivitas. Arsip `/laporan` memuat 24 per halaman dengan "Tampilkan
+  lebih banyak", dan Pengaturan → Laporan punya tautan "Lihat laporan" (pintu masuk di HP selain notifikasi).
 
 ## 1. Tujuan dan keputusan
 

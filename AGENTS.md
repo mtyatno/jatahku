@@ -581,7 +581,10 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
    (ada = kunci kosong atau tidak valid: kata sandi dan PDF laporan menjawab 503; perbaiki `.env`, restart).
 7. Verifikasi skema: `sudo -u postgres psql jatahku_db -c '\d reports'` (unik `uq_reports_user_jenis_periode`, indeks
    `ix_reports_email_antrean`, FK `user_id` ON DELETE CASCADE dan `household_id` ON DELETE SET NULL, `data` jsonb),
-   `-c '\d report_settings'` (PK `user_id`, tiga toggle `DEFAULT true NOT NULL`), `-c '\d users' | grep email_verified_at`.
+   `sudo -u postgres psql jatahku_db -c '\d report_settings'` (PK `user_id`, tiga toggle `DEFAULT true NOT NULL`), dan
+   kolom baru di `users` (pipa `| grep` di shell, di luar psql):
+   `sudo -u postgres psql jatahku_db -c '\d users' | grep email_verified_at` → satu baris dengan tipe
+   `timestamp with time zone`.
 8. Uji di Postgres sungguhan dengan akun sendiri (jalur JSONB `->>` dan `FOR NO KEY UPDATE` baru diuji di PostgreSQL 16
    lokal): di desktop buka `jatahku.com/laporan` → daftar tampil (`GET /laporan` 200; kosong = "Belum ada laporan. …"),
    lalu Pengaturan → 📄 Laporan → "Atur kata sandi" → "Kata sandi laporan disimpan" dan status "Kata sandi laporan sudah

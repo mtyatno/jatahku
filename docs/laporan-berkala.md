@@ -22,6 +22,7 @@ status berubah.
 | `app/services/laporan/hitung.py` | fungsi murni: judul, nama file, status amplop, "pernah lewat batas", beruntun, persen, uang, sorotan |
 | `app/services/laporan/susun.py` | dataclass bahan + `susun_bulanan` → `data` v1 (murni, tanpa DB) |
 | `app/services/laporan/muat.py` | SATU-SATUNYA pembaca DB untuk isi laporan → `BahanLaporan`; lingkup dan penyamaran ditegakkan di sini |
+| `app/services/laporan/pencatat.py` | SATU-SATUNYA penulis ulang `data` setelah terbit: anonimisasi saat hapus akun, `pencatat_id` saat gabung akun (Ruling R15) |
 | `app/services/pemasukan.py` | filter pemasukan bersama (analitik `_income_totals` dan laporan) |
 | `app/services/laporan/job.py` | `laporan_job` (penerbitan per household) dan notifikasi |
 | `app/services/laporan/pdf.py` + `app/assets/fonts/` | PDF dari `data`, AES-256, Noto Sans (OFL) |
@@ -57,7 +58,10 @@ tiap jam pada menit 30, `max_instances=1`) dengan tanggal server (UTC), dan idem
    baru tutup = `get_closed_periods(payday, today, 1)`, sama dengan job snapshot. Lewati bila periode itu berakhir lebih
    dari `JENDELA_TERBIT_HARI` = 7 hari lalu.
 2. Prasyarat: ada ≥ 1 snapshot kunci periode itu di antara amplop household, artinya job snapshot 00:05 sudah
-   memprosesnya. Belum ada → ditunda ke jam berikutnya (log DEBUG).
+   memprosesnya. Belum ada → ditunda ke jam berikutnya (log DEBUG). Di hari terakhir jendela (7 hari setelah periode
+   tutup), household yang punya transaksi atau alokasi di periode itu dicatat WARNING (Ruling R16: `… masih belum punya
+   snapshot di hari terakhir jendela terbit; laporan periode ini tidak akan terbit …`), karena laporannya hilang bila
+   snapshot tidak dibuat hari itu.
 3. Calon penerima: anggota yang belum punya laporan bulanan periode itu dan `penerima_layak`: email tidak berawalan
    `deleted_`/`banned_` (akun tanpa email, hanya Telegram, tetap layak) dan akun dibuat paling lambat akhir periode
    (tanggal UTC). Tanpa calon, atau tanpa transaksi maupun alokasi di jendela pada amplop household mana pun, berhenti
@@ -71,10 +75,20 @@ tiap jam pada menit 30, `max_instances=1`) dengan tanggal server (UTC), dan idem
    ada laporan kosong) → `Report` dengan `data = susun_bulanan(bahan)`. Satu commit untuk semua anggota household; log
    INFO `household=… payday=… periode … → …: N laporan terbit`.
 
-Setelah kunci dilepas, tiap laporan baru diberi tahu lewat `notification_service.kirim` (lonceng selalu, Telegram bila
-tertaut), lalu `notified_at` diisi. Judul `"{judul} siap"`, pesan `"Lihat bagaimana periode kemarin berjalan."`, tautan
-`/laporan/{id}`; teks Telegram memuat tautan penuh `{APP_URL}/laporan/{id}` ("Buka laporan"). Tanpa nominal. Kegagalan satu
-household dicatat dan tidak menghentikan yang lain; household itu dicoba lagi jam berikutnya selama jendela 7 hari.
+Setelah kunci dilepas, tiap laporan baru diberi tahu (`kirim_notifikasi_laporan`, Ruling R16): lonceng dan `notified_at`
+disimpan dalam **satu transaksi**, didahului UPDATE bersyarat `notified_at IS NULL` yang harus mengenai tepat satu baris
+(proses lain yang bersamaan tidak bisa ikut membuat lonceng); sesudah commit, Telegram (bila tertaut) dikirim **sekali**
+lewat `notification_service.kirim(permukaan=("telegram",))`, best-effort. Judul `"{judul} siap"`, pesan `"Lihat
+bagaimana periode kemarin berjalan."`, tautan `/laporan/{id}`; teks Telegram memuat tautan penuh `{APP_URL}/laporan/{id}`
+("Buka laporan"). Tanpa nominal. Kegagalan satu household dicatat dan tidak menghentikan yang lain; household itu dicoba
+lagi jam berikutnya selama jendela 7 hari.
+
+**Sapu notifikasi** (`kirim_notifikasi_tertunda`, akhir setiap jalan): laporan yang `notified_at`-nya masih NULL dan
+`terbit_at`-nya paling awal 00:00 UTC tujuh hari sebelum hari job diberi tahu lewat jalur yang sama, terlama dulu;
+laporan yang sudah dicoba di jalan itu dilewati (tidak dicoba dua kali dalam satu jam). Jadi galat DB atau restart di
+antara commit laporan dan notifikasinya tersusulkan jam berikutnya, tanpa lonceng kedua; Telegram yang gagal permanen
+(bot diblokir) tidak dikirim ulang karena `notified_at` sudah terisi bersama lonceng. Log INFO `N notifikasi laporan
+yang tertinggal dikirim`; galat per laporan `logger.exception`, dicoba lagi jam berikutnya sampai keluar jendela.
 
 **Jam terbit.** Di hari gajian, job snapshot jalan 00:05 UTC (07:05 WIB), jadi laporan normalnya terbit ±00:30 UTC
 (07:30 WIB, 08:30 WITA, 09:30 WIT). Server mati beberapa hari: laporan tertinggal tetap terbit selama periodenya tutup
@@ -104,17 +118,24 @@ Kunci `data` (uang = teks dua desimal, tanggal ISO, persen bilangan bulat, tanpa
 | `amplop[]` | `id, nama, emoji, jenis (bersama/pribadi), tujuan, awal, alokasi, terpakai, akhir, rollover, status, pernah_lewat_batas, ditutup`. Status berurutan: `tabungan` (purpose `saving`/`sinking_fund`), `lewat_batas` (akhir < 0), `kosong` (awal ≤ 0), `hampir_habis` (terpakai ≥ 70% awal), selain itu `aman`. `pernah_lewat_batas`: saldo harian (rollover masuk + alokasi menurut `income_date` − belanja menurut `transaction_date`) pernah < 0. |
 | `banding` | Total periode lalu, rata-rata 3 periode sebelumnya, `persen_perubahan`, dan per amplop. Total dari terpakai SEMUA amplop lingkup yang punya snapshot periode itu, juga yang kini ditutup (Ruling R3), supaya tren tidak melompat saat amplop dibuat atau ditutup. |
 | `harian[]`, `hari_terboros` | Terpakai per hari untuk setiap hari di jendela (nol ikut), hari terbesar. |
-| `terbesar[]` | 5 pengeluaran terbesar (bukan penyesuaian): tanggal, amplop, keterangan tersamar, jumlah, pencatat. |
-| `langganan` | `terbayar[]`: transaksi berpenanda tombol Bayar (`"🔄 "`) di jendela (keputusan rencana 2); `jatuh_tempo[]`: langganan aktif di amplop baris dengan `next_run` di periode berikutnya (Ruling R2). |
+| `terbesar[]` | 5 pengeluaran terbesar (bukan penyesuaian): tanggal, amplop, keterangan tersamar, jumlah, pencatat, `pencatat_id`. |
+| `langganan` | `terbayar[]`: transaksi berpenanda tombol Bayar (`"🔄 "`) di jendela (keputusan rencana 2), namanya dari keterangan pembayaran, dengan `pencatat_id` pembayarnya; `jatuh_tempo[]`: langganan aktif di amplop baris dengan `next_run` di periode berikutnya (Ruling R2), tanpa `pencatat_id` (langganan tidak menyimpan pembuatnya). |
 | `sorotan` | `hari_mencatat`, `beruntun_terpanjang` (catatan penerima sendiri, bukan penyesuaian), `streak_saat_ini` (`streak.get_streak`, 0 bila sudah putus: Ruling R7), `amplop_aman[]` (nama amplop selain tabungan, kosong, dan lewat batas yang tidak pernah lewat batas: Ruling R6), `target[]` (target tabungan; terkumpul = saldo akhir amplopnya). |
-| `mutasi[]` | Pemasukan penerima + semua transaksi di amplop baris, urut tanggal (masuk sebelum keluar di hari yang sama): `tanggal, arah, amplop, keterangan, jumlah, pencatat, penyesuaian`. Σ keluar per amplop = terpakai amplop itu. |
+| `mutasi[]` | Pemasukan penerima + semua transaksi di amplop baris, urut tanggal (masuk sebelum keluar di hari yang sama): `tanggal, arah, amplop, keterangan, jumlah, pencatat, pencatat_id, penyesuaian`. Σ keluar per amplop = terpakai amplop itu. |
 | `email` | Ringkasan tanpa nominal untuk body email tahap 2 (persen terpakai, jumlah amplop aman dan lewat batas, tren, satu kalimat sorotan); dihitung dan dibekukan sejak tahap 1 (keputusan rencana 5), belum dipakai. |
 
 Nilai `null` yang sah (persen tanpa penyebut, pembanding tanpa snapshot, `hari_terboros`, amplop tagihan berikut, dll.)
 didaftar di docstring `susun.py`; halaman dan PDF menampilkannya "—" dan tidak pernah menghitung ulang.
 
+**`pencatat_id`** (Ruling R15; ditambahkan di versi 1, `versi` tetap 1 karena hanya bertambah): id user (teks UUID)
+yang mencatat baris itu, di setiap baris yang memuat nama atau teks seorang pencatat (`terbesar[]`,
+`langganan.terbayar[]`, `mutasi[]`; baris `masuk` = penerima). Dibekukan untuk hapus dan gabung akun (bagian Privasi),
+tidak pernah ditampilkan di halaman maupun PDF. Nama tidak unik, jadi tidak bisa menggantikannya.
+
 **Beku.** Setelah terbit, `data` tidak pernah diubah: transaksi bertanggal mundur, edit, atau recompute riwayat
-sesudahnya tidak mengubah laporan yang sudah terbit.
+sesudahnya tidak mengubah laporan yang sudah terbit. Satu-satunya pengecualian: hapus akun menganonimkan catatan
+anggota yang menghapus akun di laporan anggota lain, dan gabung akun mengalihkan `pencatat_id` (Ruling R15, bagian
+Privasi); angka tidak pernah berubah.
 
 ## Privasi
 
@@ -124,6 +145,24 @@ sesudahnya tidak mengubah laporan yang sudah terbit.
 - Endpoint hanya melayani laporan milik pemanggil: satu kueri `id` + `user_id`; "tidak ada" dan "milik orang lain"
   sama-sama 404 dengan kueri yang sama. Anggota satu rumah pun tidak bisa membuka laporan anggota lain.
 - Nominal hanya di aplikasi dan di PDF ber-AES-256; notifikasi dan Telegram tanpa nominal.
+- **Hapus akun** (Ruling R15, `pencatat.anonimkan_pencatat` dari `account_deletion.delete_account`, setelah catatan
+  hidupnya dianonimkan dan sebelum baris `users` dihapus): di laporan beku milik user **lain** (anggota serumah sekarang
+  atau dulu, juga laporan yang household-nya ikut terhapus), persis baris yang `pencatat_id`-nya akun itu ditulis ulang
+  seperti catatan hidupnya: `pencatat` → "Mantan anggota", `pencatat_id` → id Mantan anggota, `keterangan` (dan `nama`
+  tagihan terbayar) → "Transaksi mantan anggota" (baris masuk: "Pemasukan mantan anggota"); "Transaksi privat" tetap
+  "Transaksi privat", seperti aplikasi menampilkan catatan privat yang sudah dianonimkan. Angka, tanggal, dan amplop
+  tidak berubah; baris tagihan tetap di `langganan.terbayar` walau catatan hidupnya kehilangan penanda tombol Bayar.
+  Laporan akun itu sendiri ikut terhapus. Ini satu-satunya perubahan `data` setelah terbit. Laporan dicari dengan
+  `CAST(data AS TEXT) LIKE '%<id>%'` (memindai tabel `reports`; ringan di skala sekarang), lalu barisnya dipilih menurut
+  `pencatat_id` di Python dan disimpan sebagai objek baru (UPDATE).
+- **Gabung akun** (`pencatat.alihkan_pencatat` dari `merge.merge_users`, langkah 2e): `pencatat_id` sumber → target di
+  semua laporan (termasuk laporan sumber yang pindah ke target); nama dan teks tetap seperti saat terbit. Hapus akun
+  target kelak ikut menganonimkan baris yang dicatat sumber.
+- **`pencatat_id` di respons** `GET /laporan/{id}` (di dalam `data`) tidak membuka hal baru: id anggota serumah sudah
+  terlihat satu sama lain lewat `GET /household/members` dan `/household/leaderboard` (`user_id`) dan `GET /transactions/`
+  (`user_id` setiap transaksi di amplop bersama). Halaman dan PDF tidak pernah menampilkannya (dijaga tes PDF).
+- Nama amplop, target tabungan, dan langganan (`jatuh_tempo`) tidak menyimpan pembuatnya, dan hapus akun di aplikasi
+  juga membiarkannya (benda rumah); salinan bekunya di laporan ikut dibiarkan.
 
 ## Kata sandi laporan dan PDF
 
@@ -158,16 +197,20 @@ keduanya setiap menaikkan versi fpdf2.
 
 ## Halaman web
 
-- **Desktop (≥ 1024 px):** menu "Laporan" di sidebar setelah Analitik; `/laporan` arsip (terbaru di atas); `/laporan/:id`
-  laporan lengkap bagian 1–8 (grafik recharts, mutasi 50 baris per langkah dengan "Tampilkan lebih banyak").
+- **Desktop (≥ 1024 px):** menu "Laporan" di sidebar setelah Analitik; `/laporan` arsip (terbaru di atas, 24 per
+  halaman dengan "Tampilkan lebih banyak" yang hilang setelah halaman yang tidak penuh; laporan yang sama tidak tampil
+  dua kali bila ada yang terbit di antara dua muatan); `/laporan/:id` laporan lengkap bagian 1–8 (grafik recharts,
+  mutasi 50 baris per langkah dengan "Tampilkan lebih banyak").
 - **HP dan tablet (< 1024 px):** `/laporan/:id` tampil sebagai layar ringkas (judul, periode, angka utama, sorotan, tren,
-  tombol besar "Unduh PDF"). Di tahap 1 tidak ada menu laporan di HP; layar ini dibuka dari lonceng atau tautan Telegram.
+  tombol besar "Unduh PDF"). Tidak ada menu laporan di HP; layar ini dibuka dari lonceng, tautan Telegram, atau arsip
+  `/laporan` lewat tautan "Lihat laporan" di Pengaturan → 📄 Laporan.
 - **Banner** "Atur kata sandi laporan untuk mengunduh PDF." (tautan `/settings#laporan`) bila kata sandi belum diatur
   (banner email belum terverifikasi menyusul di tahap 2).
 - **Unduh:** 200 → `native.files.save` dengan nama dari `nama_file` di JSON (CORS tidak membuka `Content-Disposition`);
   409 → dialog kata sandi, lalu diulang sekali; 429 → "Terlalu sering mengunduh. Coba lagi sebentar lagi."
-- **Pengaturan → 📄 Laporan** (`#laporan`): status kata sandi dan formulir "Atur kata sandi"/"Ganti kata sandi". Toggle
-  email, kuartalan, dan tahunan belum tampil di tahap 1.
+- **Pengaturan → 📄 Laporan** (`#laporan`): status kata sandi, formulir "Atur kata sandi"/"Ganti kata sandi", dan
+  tautan "Lihat laporan" ke `/laporan` (tetap tampil bila pengaturan gagal dimuat). Toggle email, kuartalan, dan tahunan
+  belum tampil di tahap 1.
 - Tombol top bar ekspor manual (PDF/CSV) kini bernama "Ekspor" / "Ekspor {periode}".
 
 ## API
@@ -213,15 +256,20 @@ Semua endpoint baru, jadi API hanya bertambah (`openapi_cek` bersih). Nama tidak
 - **Anggota yang bergabung sesudah periode** tetap menerima laporan periode itu bila akunnya dibuat sebelum periode
   berakhir (kelayakan memakai tanggal akun, bukan tanggal bergabung); isinya amplop bersama (dan amplop pribadinya bila
   ada).
-- **Notifikasi yang gagal tidak dicoba ulang:** `notified_at` tetap NULL, laporannya tetap ada di `/laporan`. Restart
-  tepat di antara commit laporan dan pengiriman juga menghilangkan notifikasinya. Kirim ulang manual: bagian
-  "Pemulihan".
+- **Notifikasi** (Ruling R16): yang gagal atau terputus restart disusulkan sapu tiap jam selama 7 hari sejak laporan
+  terbit; sesudah itu tidak lagi (kirim manual: bagian "Pemulihan"). Telegram best-effort dan paling banyak sekali per
+  laporan: gagal tidak diulang, dan restart tepat di antara commit lonceng dan pengiriman Telegram melewatkan Telegram
+  laporan itu (lonceng tetap ada).
 - **Cache advisor** household dikosongkan setelah refresh walau refresh itu melaporkan error (tidak berbahaya: hanya
   dihitung ulang).
 - **Gerbang refresh R9** menghitung aktivitas di semua amplop household, termasuk amplop pribadi anggota lain: bila hanya
   amplop itu yang beraktivitas dan ada calon tanpa aktivitas, refresh paksa berjalan tiap jam sampai jendela 7 hari
   habis (hanya biaya; laporan kosong tetap tidak terbit).
-- **Snapshot yang belum ada** hanya dicatat di level DEBUG, juga di hari terakhir jendela.
+- **Snapshot yang belum ada** dicatat DEBUG; WARNING hanya di hari terakhir jendela dan hanya untuk household yang
+  beraktivitas di periode itu, satu baris tiap jam sepanjang hari itu.
+- **Hapus akun dan nama buatan anggota:** nama amplop bersama, target tabungan, dan langganan yang dibuat anggota yang
+  menghapus akun tetap terbaca, di aplikasi maupun di laporan beku (`amplop[]`, `sorotan`, `langganan.jatuh_tempo[]`):
+  tabelnya tidak menyimpan pembuat.
 - **Deskripsi beku:** transaksi yang ditandai privat sesudah laporan terbit tetap terbaca di laporan lama penerima lain.
   **Tanggal gajian diubah** dalam 7 hari sesudah periode tutup: laporan yang sudah terbit tetap; laporan berikutnya
   mengikuti siklus baru. **Jam server UTC:** transaksi bertanggal hari gajian yang dicatat sebelum 07:00 WIB tetap masuk
@@ -249,7 +297,9 @@ Semua endpoint baru, jadi API hanya bertambah (`openapi_cek` bersih). Nama tidak
   Keluaran terakhir `{'terbit': N, 'gagal': M}`. Jalankan **tanpa** argumen tanggal: `laporan_job(today=<tanggal lampau>)`
   melewati jendela 7 hari dan me-refresh paksa periode yang sudah punya snapshot penerus, sehingga rantai rollover
   sesudahnya tidak lagi cocok.
-- **Kirim ulang notifikasi** laporan yang `notified_at`-nya NULL (laporan yang sudah diberi tahu dilewati):
+- **Kirim ulang notifikasi** laporan yang `notified_at`-nya NULL. Dalam 7 hari sejak terbit sapu job melakukannya
+  sendiri tiap jam; perintah ini untuk yang lebih lama. Laporan yang sudah diberi tahu dilewati, dan lonceng tidak pernah
+  dobel:
   ```bash
   sudo -u postgres psql jatahku_db -c "SELECT id, terbit_at FROM reports WHERE notified_at IS NULL ORDER BY terbit_at"
   cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/python -c "import asyncio, uuid; \
@@ -263,13 +313,18 @@ Semua endpoint baru, jadi API hanya bertambah (`openapi_cek` bersih). Nama tidak
 
 - Backend (tanpa Postgres): `test_laporan_model` (tabel, DDL, lifespan, revisi alembic termasuk bawaan server),
   `test_laporan_rahasia`, `test_laporan_hitung`, `test_laporan_susun`, `test_laporan_muat` (SQLite: lingkup, penyamaran,
-  R2/R3/R8), `test_laporan_job` (unit + ujung ke ujung SQLite: refresh R4, idempoten, jendela, notifikasi),
-  `test_laporan_pdf` (pypdfium2: terbuka hanya dengan kata sandi, multi-halaman, emoji), `test_laporan_api` (IDOR, 409/503,
-  kata sandi tidak pernah dikembalikan, batas frekuensi per user), `test_laporan_akun` (hapus dan gabung akun),
-  `test_rate_limit`.
-- Frontend: `node --test src/lib/*.test.js` (`laporanView`, `laporanFormat`, `exportPeriod`), lalu `npm run build`.
+  R2/R3/R8), `test_laporan_job` (unit + ujung ke ujung SQLite: refresh R4, idempoten, jendela, notifikasi, sapu dan
+  WARNING R16), `test_laporan_pdf` (pypdfium2: terbuka hanya dengan kata sandi, multi-halaman, emoji, `pencatat_id` tidak
+  tercetak), `test_laporan_api` (IDOR, 409/503, kata sandi tidak pernah dikembalikan, batas frekuensi per user),
+  `test_laporan_akun` (hapus dan gabung akun; R15: anonimisasi laporan beku anggota lain dibandingkan dengan susunan
+  ulang dari catatan hidup, pengalihan `pencatat_id`), `test_rate_limit`.
+- Frontend: `node --test src/lib/*.test.js` (`laporanView` termasuk halaman daftar, `laporanFormat`, `exportPeriod`),
+  lalu `npm run build`.
 - PostgreSQL 16 nyata (4 Nov 2026, klaster sementara): `cek-migrasi.sh`; perbandingan skema migrasi vs lifespan; dan
   tes ber-SQLite (`test_laporan_model` integrasi, `test_laporan_muat`, ujung ke ujung `test_laporan_job`,
   `test_laporan_api`, `test_laporan_akun`; 110 tes) dijalankan ulang di Postgres. Semua lulus kecuali lima tes yang
   memeriksa SQL khas SQLite (`PRAGMA foreign_keys`, `JSON_EXTRACT`); di Postgres daftar laporan memakai
-  `data ->> 'judul'` dan simpan kata sandi memakai `FOR NO KEY UPDATE`, keduanya jalan.
+  `data ->> 'judul'` dan simpan kata sandi memakai `FOR NO KEY UPDATE`, keduanya jalan. Gelombang perbaikan akhir (R15,
+  R16): `test_laporan_akun`, `test_laporan_muat`, dan ujung ke ujung `test_laporan_job` (termasuk sapu notifikasi)
+  dijalankan ulang di PostgreSQL 16; lulus kecuali empat tes `PRAGMA foreign_keys` yang sudah diketahui. Penyaring
+  `CAST(data AS TEXT) LIKE` dan penulisan ulang JSONB jalan.
