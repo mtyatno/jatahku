@@ -12,6 +12,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { loadCache, saveCache } from '../lib/localCache';
 import { cacheKeyLayout, paksaDariUrl, pilihBeranda } from '../lib/dashboardRegistry';
+import { adaKartuPlugin } from '../lib/pluginHost';
 import BerandaLama from './BerandaLama';
 import BerandaRegistry from './BerandaRegistry';
 import BerandaKaryawan from './BerandaKaryawan';
@@ -19,7 +20,7 @@ import BerandaKaryawan from './BerandaKaryawan';
 export default function Dashboard() {
   const { user } = useAuth();
   const { search } = useLocation();
-  const { akses } = useOutletContext() || {};
+  const { akses, plugin } = useOutletContext() || {};
   const uid = user?.id;
   const [layout, setLayout] = useState(() => (uid ? loadCache(cacheKeyLayout(uid)) : null));
   // Peran dari GET /ruang menang bila sudah ada (tata letak di cache bisa milik peran lama).
@@ -37,7 +38,10 @@ export default function Dashboard() {
   }, [uid, karyawan]);
 
   if (karyawan) return <BerandaKaryawan />;
-  const pilihan = pilihBeranda(layout, paksaDariUrl(search));
+  const paksa = paksaDariUrl(search);
+  // Kartu Fitur Tambahan hanya dikenal Beranda registry (Plugin H3): tata letak yang memuatnya selalu digambar registry,
+  // walau user di luar flag `beranda_registry_users`.
+  const pilihan = !paksa && adaKartuPlugin(layout, plugin?.kontribusi) ? 'registry' : pilihBeranda(layout, paksa);
   if (pilihan === 'memuat') return <div className="text-center py-12 text-gray-400">Loading...</div>;
   return pilihan === 'registry' ? <BerandaRegistry layout={layout} /> : <BerandaLama />;
 }

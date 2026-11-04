@@ -124,8 +124,10 @@ async def get_cards(
     hid: RuangAktif,
 ):
     # Kartu umum untuk semua peran kecuali karyawan ruang usaha; karyawan hanya kartu karyawan (R6).
+    # Kartu Fitur Tambahan yang aktif di ruang ini ikut (H3); karyawan tidak pernah (kartu plugin selalu umum).
     # Kartu laporan usaha khusus admin menyusul (U4).
-    return registry.katalog(await _karyawan(db, user.id, hid))
+    karyawan = await _karyawan(db, user.id, hid)
+    return registry.katalog(karyawan, plugin=None if karyawan else await _kartu_plugin(db, user, hid))
 
 
 @router.post("/data")

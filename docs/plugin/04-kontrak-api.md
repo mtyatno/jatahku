@@ -356,9 +356,9 @@ Bentuk deklaratif (`shape`), digambar komponen inti (`01-kajian.md`, "Bentuk dat
 | `shape` | Field |
 | --- | --- |
 | `kpi` | `value`, `unit` (`rp`, `persen`, `hari`, `angka`), `suffix`, `bar` (0–1, opsional), `footer`, `tone` (`ok`, `info`, `warn`, `danger`), `chip` |
-| `progress` | `items`: `[{"label", "value", "target", "tone"}]` |
+| `progress` | `items`: `[{"label", "value", "target", "tone"}]` — web menggambar `value`/`target` sebagai rupiah (H3) |
 | `list` | `items` (maks. 8): `[{"judul", "subjudul", "nominal", "status", "aksi"}]` |
-| `table` | `columns`, `rows` (maks. 10) |
+| `table` | `columns`, `rows` (maks. 10) — web: kolom pertama label apa adanya; kolom lain yang berisi angka diberi pemisah ribuan (H3), jadi label seperti tahun ditaruh di kolom pertama atau ditulis sebagai teks berhuruf |
 | `series` | `x` (label), `series` (1–3: `[{"nama", "values"}]`), `acuan` (opsional) |
 | `alert` | `tone`, `judul`, `isi`, `aksi` |
 | `inti` | `sumber` saja |
@@ -396,7 +396,7 @@ Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H2, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti) dan titik ekstensi server (H2)**; `contributions` masih v0 (H3)
+## 5. Fitur Tambahan / plugin (H1, H2, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), dan `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan)**
 
 Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
@@ -417,7 +417,11 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
   "diperbaiki": false,               // saklar darurat menyala: tampilkan "Sedang diperbaiki"
   "boleh_kelola": true}]             // owner/admin; tombol pasang/jeda/copot hanya tampilan, server tetap memeriksa
 
-// POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang   body opsional {"pengaturan": {}}
+// POST /ruang/{ruang_id}/plugins/{plugin_id}/pasang   body opsional {"pengaturan": {}, "izin": ["incomes:read", …]}
+// `izin` (H3, aditif): kode izin yang ditampilkan di layar izin saat user menekan Pasang/Pulihkan (urutan bebas,
+// maks. 40). Beda dengan izin manifest sekarang → 409 `izin_berubah` dan tidak ada yang tersimpan; tanpa field = klien
+// lama, izin manifest dicatat seperti H1. Diperiksa hanya saat pasang baru atau pulihkan, sesudah flag, saklar darurat,
+// jenis ruang, `butuh`, dan bentrok; pasang ulang plugin yang sudah terpasang tetap idempoten. Web selalu mengirimnya.
 // POST /ruang/{ruang_id}/plugins/{plugin_id}/lanjut | /jeda
 // → {"plugin": "buku_usaha", "status": "aktif", "arsip_sampai": null, "izin_diberikan": ["incomes:read", …]}
 // POST /ruang/{ruang_id}/plugins/{plugin_id}/copot
@@ -441,23 +445,43 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
 - Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (tidak peka huruf besar-kecil) (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
 
 ```jsonc
-// GET /plugins/contributions → kontribusi aktif untuk ruang aktif dan peran user (H3, masih v0)
+// GET /plugins/contributions → kontribusi plugin aktif untuk ruang aktif (header) dan user ini (H3, v1)
 {
+  "plugins": [{"id": "buku_usaha", "nama": "Buku Usaha", "ikon": "book"}],      // plugin aktif: label sumber kartu/menu
   "nav": [{"plugin": "buku_usaha", "grup": "usaha", "label": "Buku Usaha", "route": "/p/buku_usaha", "ikon": "book"}],
-  "quick_actions": [{"plugin": "buku_usaha", "key": "buku_usaha.penjualan", "label": "Penjualan", "form": "penjualan"}],
-  "pages": [{"plugin": "buku_usaha", "route": "/p/buku_usaha"}],
-  "cards": ["buku_usaha.omzet", "…"],
+  "quick_actions": [{"plugin": "buku_usaha", "key": "buku_usaha.penjualan", "label": "Penjualan", "ikon": "book"}],
+  "pages": [{"plugin": "buku_usaha", "route": "/p/buku_usaha", "judul": "Buku Usaha"}],
+  "cards": [{"key": "buku_usaha.omzet", "plugin": "buku_usaha", "judul": "Omzet", "shape": "kpi",
+             "sizes": ["S", "M"], "size_bawaan": "S", "bawaan": true}],
   "form_fields": [{"plugin": "buku_usaha", "target": "transaction", "key": "kontak_id", "type": "reference", "label": "Pemasok"}]
 }
-// Sumbernya `siklus.aktif_di_ruang()` (H1): hanya plugin berstatus aktif, tanpa saklar darurat, dengan flag user aktif.
-// Plugin dijeda, dicopot, atau dimatikan server → tidak ada kontribusinya sama sekali.
+// Tanpa household → semua daftar kosong.
 ```
+
+- **Sumber.** `siklus.aktif_di_ruang()` (H1): hanya plugin berstatus `active`, tanpa saklar darurat, dengan flag user
+  aktif. Plugin dijeda, terpasang tanpa wizard selesai, dicopot, atau dimatikan server → tidak ada kontribusinya sama
+  sekali. Isi dari manifest: `nav` hanya halaman yang menyatakan `nav` (`usaha` | `lainnya`), `pages` semua halaman,
+  `quick_actions` maks. 2 per plugin, ikon = ikon plugin. `cards` hanya kartu yang punya fungsi kartu di kode server
+  (`titik.kartu_ruang`, sumber yang sama dengan tata letak dan data Beranda), jadi kartu yang tercantum selalu bisa
+  dimuat. Perubahan bentuk dari v0: `plugins` baru, `cards` berisi objek (bukan kunci saja), `quick_actions` tanpa
+  `form` (web membuka form dari `src/plugins/<id>` per `key`).
+- **Peran.** Karyawan ruang usaha: 403 `khusus_admin` (route di luar `KARYAWAN_BOLEH`); selama H3 karyawan tidak mendapat
+  kontribusi plugin apa pun (keputusan pembukaan sesi H3). Anggota ruang keluarga mendapat kontribusi plugin aktif ruang
+  itu. Header ruang lain → 403 `ruang_tidak_diizinkan` (resolver R2).
+- **Kartu di katalog Beranda.** `GET /dashboard/cards` kini ikut memuat kartu plugin yang aktif di ruang header (asal =
+  id plugin, `refresh_on` kosong; web memuat ulang kartu plugin pada `jatahku:txn-added` dan
+  `jatahku:envelope-updated`), tidak pernah untuk karyawan.
+- **Web (H3).** Menu grup "Usaha"/"Lainnya" di sidebar dan lembar "Lainnya" (item ke-6 bottom nav HP, hanya bila ada
+  `nav`); aksi cepat di menu Catat ▾ (grup per plugin) dan FAB; rute `/p/<id>/*` lazy (pesan bila plugin tidak aktif atau
+  halamannya belum ada di bundle); kartu plugin dari `src/plugins/<id>/cards.js` atau renderer bentuk deklaratif;
+  halaman Fitur Tambahan `/fitur-tambahan` (katalog, layar izin, pasang, lanjut, jeda, copot, pulihkan, tawaran kartu
+  lewat `PUT /dashboard/layout`). Aksi `route` kartu dan saran AI Advisor plugin (`payload.to`) membuka `/p/<id>…`.
 
 ### Titik ekstensi server — **v1 (H2, PR plugin/h2-plugin-context)**
 
 Plugin menyumbang lewat kode di `app/plugins/<id>/__init__.py` (`plugin = Plugin("<id>")` dari `app.plugins.sdk`), dicocokkan dengan manifest saat start dan di CI. Izin per jenis fungsi: kartu, cek, aturan advisor, perintah bot, dan field form hanya izin baca; `notifications:send` hanya untuk job. Data yang dibaca plugin mengikuti kontrak visibilitas: amplop pribadi anggota lain tidak terbaca, deskripsi transaksi privat tersamar, dan di ruang keluarga plugin hanya membaca pemasukan milik viewer (seperti `GET /incomes/`; job tanpa user tidak membaca pemasukan ruang keluarga). Tidak ada endpoint baru; endpoint inti yang berubah perilaku:
 
-- **Kartu (`cards`) di `/dashboard/*`.** `GET`/`PUT /dashboard/layout`, `POST /dashboard/data`, dan `GET /dashboard/data/{id}` mengenal kartu plugin (`<id>.<nama>`) yang **aktif di ruang header untuk user itu** (`siklus.aktif_di_ruang`). Kartu plugin yang tidak aktif (dijeda, dicopot, saklar darurat, flag dicabut) diperlakukan seperti kartu yang definisinya hilang: diparkir di `GET /dashboard/layout`, `kartu_tidak_dikenal` di `PUT` dan di galat per kartu. Data kartu plugin berbentuk deklaratif (§4: `kpi`, `progress`, `list`, `table`, `series`, `alert`, tidak pernah `inti`) dan diperiksa server sebelum dikirim: field asing, nominal float, daftar lebih panjang dari batas, atau aksi selain `route` ke `/p/<id>…` → galat kartu `gagal_memuat`. Nominal `Decimal` dikirim sebagai string desimal. `GET /dashboard/cards` belum memuat kartu plugin (H3, lewat `GET /plugins/contributions`).
+- **Kartu (`cards`) di `/dashboard/*`.** `GET`/`PUT /dashboard/layout`, `POST /dashboard/data`, dan `GET /dashboard/data/{id}` mengenal kartu plugin (`<id>.<nama>`) yang **aktif di ruang header untuk user itu** (`siklus.aktif_di_ruang`). Kartu plugin yang tidak aktif (dijeda, dicopot, saklar darurat, flag dicabut) diperlakukan seperti kartu yang definisinya hilang: diparkir di `GET /dashboard/layout`, `kartu_tidak_dikenal` di `PUT` dan di galat per kartu. Data kartu plugin berbentuk deklaratif (§4: `kpi`, `progress`, `list`, `table`, `series`, `alert`, tidak pernah `inti`) dan diperiksa server sebelum dikirim: field asing, nominal float, daftar lebih panjang dari batas, atau aksi selain `route` ke `/p/<id>…` → galat kartu `gagal_memuat`. Nominal `Decimal` dikirim sebagai string desimal. Sejak H3 `GET /dashboard/cards` juga memuat kartu plugin aktif (§5).
 - **AI Advisor (`advisor_rules`).** Saran plugin masuk kartu AI Advisor (`GET /advisor/dashboard`, `advisor.items`/`sisa`) dengan bentuk item yang sama, `aturan` berupa kode plugin (mis. `BU-01`), aksi hanya `{"kind": "route", "label", "payload": {"to": "/p/<id>…"}}`. Maksimal 1 saran per plugin di `items` (`daftar_per_plugin`), tidak pernah chip KPI inti, tidak untuk karyawan. Dismiss memakai `kunci` yang sama seperti saran inti.
 - **Perintah bot (`bot_commands`).** Telegram dan chat web: perintah baca plugin dijawab satu pesan per ruang yang memasang plugin itu, berawalan `[Nama ruang]`. `audience: admin` hanya owner/admin (karyawan: "Laporan <ruang> hanya untuk admin ruang."); tanpa ruang yang aktif: "Perintah ini belum tersedia di ruangmu." Teks polos, tanpa tombol.
 - **Notifikasi (`notifications`).** Lewat `ctx.notify`, **hanya dari job** (konteks tanpa user; review keamanan #186): lonceng (`type` = `system`) dan Telegram, judul berawalan `[Nama ruang]`, `link` hanya `/p/<id>…`; hanya owner/admin ruang yang plugin-nya aktif untuk mereka; tidak pada jam tenang 21.00–07.00 waktu penerima; maksimal 2 per plugin per penerima per hari dan 1 per `kunci`. Tidak ada preferensi per jenis notifikasi sampai U6.
@@ -531,6 +555,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `butuh_plugin` | 409 | Plugin yang dibutuhkan belum aktif di ruang ini (H1) |
 | `bentrok_plugin` | 409 | Bentrok dengan plugin yang terpasang (H1) |
 | `dibutuhkan_plugin_lain` | 409 | Plugin lain di ruang ini masih membutuhkannya (H1) |
+| `izin_berubah` | 409 | Daftar izin yang disetujui di layar izin (`pasang` body `izin`) beda dengan manifest sekarang; muat ulang lalu setujui lagi (H3) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |

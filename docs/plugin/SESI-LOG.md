@@ -4,6 +4,57 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## H3 · Host di frontend dan halaman Fitur Tambahan · 2026-11-04 · pemilik produk + Claude
+
+**Selesai** (PR #192, branch `plugin/h3-fitur-tambahan`; issue #151; tanpa migrasi, tidak bertanda review; di-merge atas permintaan pemilik produk 5 Nov sesudah R7 #191 dan laporan berkala #190)
+- Keputusan pemilik produk (4 Nov, "lanjut" tanpa koreksi atas enam usulan pembukaan sesi): **A** persetujuan izin terikat ke daftar izin yang ditampilkan (`izin` di body `pasang`, 409 `izin_berubah`; menutup catatan review H1 #176); **B** karyawan tidak mendapat kontribusi plugin apa pun di H3 (route tetap di luar `KARYAWAN_BOLEH`, web tidak memanggilnya); **C** bottom nav tetap 5 item, item ke-6 "Lainnya" hanya bila ruang aktif punya menu plugin (pertanyaan A4 diputuskan); **D** pintu Fitur Tambahan di kaki sidebar (di atas Pengaturan) dan kartu di Pengaturan untuk HP, hanya bila katalog ruang aktif tidak kosong; **E** tawaran kartu sesudah pasang (kartu `bawaan` tercentang) lewat `PUT /dashboard/layout`, layar copot menjelaskan arsip 90 hari dan menawarkan ekspor (tombol unduh menunggu U1); **F** tanpa plugin nyata: plugin fixture di tes server, API dipalsukan di browser.
+- Server: `GET /plugins/contributions` (`siklus.kontribusi` dari `aktif_di_ruang` + `titik.kartu_ruang`): `plugins`, `nav` (halaman ber-`nav`), `quick_actions`, `pages`, `cards` (hanya yang punya fungsi kartu), `form_fields`; `pasang` menerima `izin` (maks. 40 kode, ≤ 60 huruf) dan `siklus._cek_izin_disetujui` dipanggil sesudah flag, saklar, jenis ruang, `butuh`, dan bentrok (juga saat pulihkan; pasang ulang plugin terpasang tetap idempoten); `GET /dashboard/cards` memuat kartu plugin aktif (`registry.katalog(karyawan, plugin=)`), tidak untuk karyawan.
+- Web: `lib/pluginHost.js` (pembantu murni + tes: rapikan kontribusi dengan rute hanya `/p/<plugin itu>`, menu per grup, aksi Catat per plugin, tombol katalog per status/peran/saklar, body pasang, tawaran kartu dan body `PUT` tata letak, format nilai kartu); `plugins/index.js` (`PLUGIN_WEB` kosong sampai U1), `useKontribusi.js`, `kartu.jsx`, `PluginPage.jsx`; `cards/plugin/KartuDeklaratif.jsx` (kpi, progress, list, table, series dengan tabel tersembunyi untuk pembaca layar, alert; penanda "puzzle + nama plugin", desain A2 butir 3); `CardRegistry.gantiKartuPlugin`; `pages/FiturTambahan.jsx` (katalog + panel, layar izin, pasang/lanjut/jeda/copot/pulihkan, tawaran kartu, pesan galat per tema); `Layout.jsx` (grup aksi plugin di menu Catat ▾ dan FAB, lembar Lainnya, konteks Outlet `plugin`, form aksi lazy), `Sidebar.jsx` (grup Usaha, pintu Fitur Tambahan), `Dashboard.jsx` (Beranda registry bila tata letak memuat kartu plugin aktif), `BerandaRegistry.jsx`, `Settings.jsx`, `App.jsx` (rute lazy `/fitur-tambahan`, `/p/:pluginId/*`), `advisorAction.safeRoute` (`/p/<id>`), aksi `route` membaca `payload.to`; ikon `puzzle`, `more`.
+- Tes: `app/tests/test_plugin_h3.py` (19: bentuk kontribusi murni; pengelola; karyawan 403; per ruang (ruang keluarga, ruang usaha lain, ruang orang lain 403); dijeda/terpasang/arsip/saklar/flag → kosong; ruang usaha di luar flag; izin sama urutan bebas, beda → 409 tanpa baris dan audit, tanpa field tetap jalan, pulihkan butuh izin terbaru, pasang ulang idempoten, tidak membocorkan plugin di luar flag, body dibatasi, karyawan 403; katalog kartu pengelola/karyawan/dijeda). Uji mutasi: buang `_cek_izin_disetujui` → 2 gagal; kartu plugin untuk karyawan di katalog → 1 gagal. `src/lib/pluginHost.test.js` (13).
+- Diperiksa di browser (Playwright + Chrome, API dipalsukan, dev server): pemilik 1440 px terang/gelap dan 390 px terang/gelap; 8 kartu deklaratif, grup Usaha, menu Catat dengan grup Buku Usaha (aksi tanpa form → `/p/buku_usaha?aksi=…`), aksi kartu → `/p/buku_usaha/arus-kas`, pasang lewat layar izin (body `izin`, ruang dari path), tawaran kartu (`PUT` mengirim balik semua instans + kartu baru), jeda, copot, 409 tampil, lembar Lainnya dan FAB di HP, tanpa geser horizontal di 390 px; karyawan tidak memanggil `/plugins*` dan dialihkan dari `/fitur-tambahan` dan `/p/…`; ruang keluarga tanpa plugin tetap 5 item nav, tanpa grup dan pintu. Modul web sementara (dihapus sebelum commit) membuktikan halaman lazy, kartu kustom, dan form aksi di modal.
+- Dokumen: kontrak §4 (catatan render web), §5 (`contributions` v1, `izin`, kartu di katalog), §7 (`izin_berubah`); `AGENTS.md` aturan 4 (web); `00-indeks.md` (fase, peta kode); `05-desain-buku-usaha.md` A4 (bottom nav); `PROGRESS.md`.
+- Tes: unittest 2846 lulus (1 dilewati) pada 4 Nov ±20.40 WIB; diulang saat tutup sesi 5 Nov 03.45 WIB: 2845 lulus, 1 gagal `test_plugin_sdk.SdkDbTests.test_job_dan_notifikasi` — gagal sama persis di `main` (`a2f010a`), lihat "Temuan di luar scope" · node --test 701 lulus (`src/lib` 676) · build ok · Migrasi: tidak berlaku (model dan migrasi tidak disentuh) · validator manifest: OK (0 plugin) · `openapi_cek`: tanpa perubahan memutus.
+
+**Temuan di luar scope (tidak dikerjakan di H3)**
+- `test_plugin_sdk.test_job_dan_notifikasi` (H2) bergantung jam dinding: tes menjalankan `titik.jalankan_job(now=08.23 WIB)`, tetapi `ctx.notify` → `titik.kirim_notifikasi` memeriksa jam tenang dengan `datetime.now()` sungguhan (`now` dari job tidak diteruskan ke konteks). Antara 21.00 dan 07.00 WIB tidak ada yang terkirim dan tes gagal; CI GitHub yang berjalan pada jam itu (14.00–24.00 UTC) ikut merah. Produksi tidak terdampak: scheduler memanggil `jalankan_job()` dengan waktu sungguhan, jadi kedua jam sama. Perbaikan kecil yang diusulkan (PR terpisah, menyentuh kode H2 yang sudah direview): simpan `now` job di keadaan konteks dan pakai di `kirim_notifikasi`, atau bekukan jam di tes.
+- Workflow "Tes" PR #192 (run 41909865131, 20.52 UTC) merah dengan 3 tes, semuanya gagal sama di `main` `a2f010a` pada jam itu: tes H2 di atas, plus `test_prive.test_pemilik_mencatat_dua_sisi` (R8) dan `test_ruang_r6.test_isi_kartu_karyawan_hanya_miliknya` (R6). Dua yang terakhir memakai `date.today()` mesin (runner GitHub = UTC) sedangkan server memakai tanggal zona user (WIB): antara 17.00 dan 24.00 UTC tanggal keduanya beda, jadi tes gagal di CI tetapi lulus di mesin WIB (`TZ=UTC` di `main` memperlihatkannya). Perbaikan yang diusulkan (PR terpisah): tes memakai tanggal zona user (`ZoneInfo("Asia/Jakarta")`) atau membekukan jam. Jalankan ulang workflow "Tes" di luar 14.00–24.00 UTC sebelum merge.
+
+**Digantung**
+- Modul web Buku Usaha (`src/plugins/buku_usaha/`, entri `PLUGIN_WEB`: halaman, `cards.js`, form aksi): U1–U4. Halaman plugin menerima `?aksi=<key>` dari aksi cepat tanpa form; plugin yang memakainya harus menanganinya.
+- Wizard pengaturan (`contributes.setup`): status `terpasang` hanya punya tombol Lanjutkan (= wizard dilewati). Wizard Buku Usaha (5 amplop bawaan) di U1.
+- Tombol unduh di layar copot: menunggu endpoint ekspor U1; unduhan lewat `api` (header Authorization dan ruang), bukan `<a href>`.
+- `form_fields` sudah ada di kontribusi tetapi belum digambar di form transaksi/pemasukan: U2 (bersama penyimpanannya).
+- Aksi plugin untuk karyawan (mis. Penjualan Buku Usaha) lewat Catat cepat: R7/U5. Notifikasi dan kontribusi lain untuk karyawan tetap tidak ada.
+- Ikon per halaman/menu belum ada di manifest: semua item menu dan aksi plugin memakai ikon plugin.
+- `refresh_on` kartu plugin belum dari manifest: web memuat ulang pada `jatahku:txn-added` dan `jatahku:envelope-updated`.
+- Menambah kartu hanya di akhir Beranda; mengatur posisi menunggu Mode Atur (setelah beta). Penanda sumber kartu selalu tampil; pertanyaan A4 "selalu atau hanya di Mode Atur" tetap untuk U4.
+- **Penyatuan dengan R7 #191 (5 Nov):** R7 di-merge lebih dulu; `main` digabung ke branch H3. `Layout.jsx`: impor `CatatCepat` (R7 menghapus `CatatKaryawan`) + impor plugin; `aksiLama`/`lembarCepat`/`selesaiCepat` versi R7 lalu baris plugin H3; judul modal `lembarCepat` (R7) + `aksiPlugin` (H3). `00-indeks.md`: paragraf R7 + H3. `SESI-LOG.md`: kedua entri. #190 (laporan berkala) bergabung bersih.
+
+**Jebakan**
+- Saat uji mutasi, `git checkout -- <file>` mengembalikan file ke `main` dan ikut membuang perubahan sesi yang belum di-commit. Pakai salinan cadangan file, bukan `git checkout`.
+- `git fetch origin <branch lain>` menimpa `FETCH_HEAD`: sesudah mengambil branch PR lain untuk merge percobaan, bandingkan dengan `origin/main` (ambil dengan `git fetch origin main:refs/remotes/origin/main`), bukan `FETCH_HEAD`.
+- `CardRegistry` global modul: kartu plugin didaftarkan (`gantiKartuPlugin`) **sebelum** state kontribusi berubah, dan memo `items` di `BerandaRegistry` ikut kunci kartu plugin; tanpa itu kartu plugin tidak terkenali di render pertama.
+- Beranda lama (flag `beranda_registry_users` mati) tidak mengenal kartu plugin, jadi `Dashboard.jsx` memaksa Beranda registry bila tata letak memuat kartu plugin aktif (kecuali `?beranda=lama|registry`).
+- `api.ruangKirim` menjawab `status: 0` saat jaringan putus: `useKontribusi` mempertahankan kontribusi dan katalog yang ada; jawaban server lain (403, 404) = kosong. Cache otomatis per ruang (akhiran ruang dari `localCache`), kuncinya per user.
+- Tabel deklaratif: angka di kolom selain kolom pertama diberi pemisah ribuan; teks yang seluruhnya angka (mis. tahun) di kolom itu juga ikut diformat.
+- Dev server + Playwright: galat "Service worker registration failed" dan `ERR_TUNNEL_CONNECTION_FAILED` (font Google) wajar di lingkungan uji; bukan galat aplikasi.
+- `npm run build` mengubah `frontend/dist/`: `git checkout -- frontend/dist` sebelum commit.
+
+**Keputusan kecil**
+- Bentuk `contributions` v1 (beda dari v0): `plugins` baru (nama dan ikon untuk label sumber), `cards` berisi objek (`key`, `plugin`, `judul`, `shape`, `sizes`, `size_bawaan`, `bawaan`), `quick_actions` tanpa `form` (web mencari form di `PLUGIN_WEB[<id>].aksi[<key>]`; tanpa form → halaman utama plugin dengan `?aksi=`).
+- Web membersihkan kontribusi lagi (`rapikanKontribusi`): rute hanya `/p/<plugin itu>`, grup hanya `usaha`/`lainnya`, maks. 2 aksi per plugin, kunci kartu/aksi berawalan id plugin.
+- Tombol katalog: tersedia → Pasang; terpasang → Lanjutkan, Jeda, Copot; aktif → Jeda, Copot; dijeda → Lanjutkan, Copot; arsip → Pulihkan; saklar darurat → hanya Jeda/Copot; anggota bukan pengelola → tanpa tombol.
+- Tawaran kartu: id instans `p1`, `p2`, …; kartu yang sudah ada atau diparkir tidak ditambah; satu kali coba ulang saat `versi_beda`.
+- `progress` digambar sebagai rupiah (`value` / `target`); `series` berupa garis SVG sederhana tanpa pustaka grafik.
+- Item "Lainnya" menyala di `/analytics`, `/p/…`, dan `/fitur-tambahan`.
+
+**Cara melanjutkan**
+- Tidak bertanda review dan tanpa migrasi: merge oleh pemilik produk, tanpa langkah VPS; tidak ada yang berubah untuk user sampai plugin pertama (U1). Catatan review H1 yang digantung (persetujuan izin) kini tertutup; pemilik boleh meminta review keamanan terpisah bila ingin.
+- Sesudah merge: `/cek-deploy 192`. Selama migrasi R7 (`d7r7k4a1m9c3`) belum dijalankan di VPS, run deploy berakhir "Deploy GAGAL" di pemeriksaan migrasi walau API sudah menjalankan commit baru; jalankan checklist "Plugin R7" langkah 3, lalu "Re-run failed jobs" pada run deploy terbaru.
+- Berikutnya `/sesi-plugin U1` (butuh H3, R5; Gerbang H) atau `/sesi-plugin R7`.
+
+---
+
 ## R7 · Catat cepat dan kamus per ruang · 2026-11-04 · pemilik produk + Claude
 
 **Selesai** (status review, PR #191; issue #147; label `migrasi`, `review-keamanan`; menunggu review sesi keamanan terpisah)

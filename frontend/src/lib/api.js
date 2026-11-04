@@ -145,6 +145,16 @@ class ApiClient {
     }
   }
 
+  // Fitur Tambahan (Plugin H1/H3, 04-kontrak-api.md §5). Katalog dan kontribusi untuk ruang aktif (header); pasang,
+  // lanjut, jeda, copot dengan ruang dari path. Semua mengembalikan { ok, status, data }.
+  katalogPlugin() { return this.ruangKirim('/plugins'); }
+  kontribusiPlugin() { return this.ruangKirim('/plugins/contributions'); }
+  aksiPlugin(rid, pluginId, aksi, body = undefined) {
+    return this.ruangKirim(`/ruang/${rid}/plugins/${pluginId}/${aksi}`, 'POST', body);
+  }
+  kartuBeranda() { return this.ruangKirim('/dashboard/cards'); }
+  simpanTataLetak(body) { return this.ruangKirim('/dashboard/layout', 'PUT', body); }
+
   // Unggah FormData lewat XHR supaya progres unggah terlapor (fetch tidak bisa).
   // Token + header klien dirakit ulang di setiap kirim: setelah refresh, kirim ulang memakai token baru.
   async uploadForm(path, formData, { onProgress, onUploaded, timeoutMs } = {}) {
