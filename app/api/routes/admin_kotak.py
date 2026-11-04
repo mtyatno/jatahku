@@ -105,8 +105,10 @@ class RuleDecisionIn(BaseModel):
     @field_validator("note")
     @classmethod
     def _no_control_chars(cls, v):
-        """NUL dan karakter kontrol lain (baris baru, tab, C1) -> 422, bukan galat database (review L4a m-3)."""
-        if v is not None and any(unicodedata.category(ch) == "Cc" for ch in v):
+        """NUL dan karakter kontrol lain (baris baru, tab, C1) -> 422, bukan galat database (review L4a m-3). Juga karakter
+        format tak terlihat (kategori `Cf`: U+200B, U+202E, U+FEFF, ...) yang bisa menyembunyikan atau membalik catatan di
+        layar Admin (pre-flight A16 n-2)."""
+        if v is not None and any(unicodedata.category(ch) in ("Cc", "Cf") for ch in v):
             raise ValueError("Catatan tidak boleh memuat karakter kontrol")
         return v
 

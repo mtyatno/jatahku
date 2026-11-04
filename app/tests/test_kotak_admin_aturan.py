@@ -279,6 +279,20 @@ class DecisionTests(AdminRulesBase):
         res = await self.act(r.id, "setujui", {"note": "\n  cocok  \t"})
         self.assertEqual((res.status_code, res.json()["note"]), (200, "cocok"))
 
+    async def test_note_with_format_chars_is_422(self):
+        # Pre-flight n-2: karakter format tak terlihat (kategori Unicode `Cf`: spasi lebar nol, pembalik arah teks, BOM,
+        # penyambung kata, tanda hubung lunak) bisa menyembunyikan atau membalik catatan di layar Admin.
+        r = await self.rule("total bayar")
+        for note in ("a​b", "‮abc", "﻿cocok", "kata⁠kata", "lu­nak", "‍"):
+            res = await self.act(r.id, "setujui", {"note": note})
+            self.assertEqual(res.status_code, 422, repr(note))
+            self.assertIn("Catatan tidak boleh memuat karakter kontrol", res.text, repr(note))
+        stored = await self.get_rule(r.id)
+        self.assertEqual((stored.status, stored.note), ("menunggu", None))
+        # Huruf beraksen dan simbol biasa tetap boleh.
+        res = await self.act(r.id, "setujui", {"note": "cocok ✓ — café"})
+        self.assertEqual((res.status_code, res.json()["note"]), (200, "cocok ✓ — café"))
+
     async def test_note_is_trimmed_before_the_length_check(self):
         r = await self.rule("total bayar")
         res = await self.act(r.id, "setujui", {"note": "a" * 195 + " " * 10})
