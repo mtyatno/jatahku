@@ -333,7 +333,7 @@ dicatat `Email verifikasi terkirim` / `Email verifikasi gagal dikirim (<jenis ga
 | `PUT /user/laporan-pengaturan` | Badan `{"kata_sandi": "…"}` (hanya kata sandi) → bentuk GET. 422: `detail` kalimat siap tampil untuk panjang dan karakter, atau daftar `{type, loc, msg}` untuk badan salah bentuk; 503 `kunci_belum_diatur`; 429 (5/jam). |
 | `PATCH /user/laporan-pengaturan` | (tahap 2) Badan `{"email_on": true\|false}`, semua field opsional; hanya yang dikirim berubah, kata sandi tidak tersentuh → bentuk GET. Badan kosong, `null`, atau field asing → 422. Menyalakan `email_on` menghidupkan lagi laporan `dilewati` karena `dimatikan` yang terbit ≤ 7 hari lalu. 30/jam per user, ember terpisah dari PUT. Tahap 3 menambah `kuartalan_on`/`tahunan_on` di sini. |
 | `POST /user/email/verifikasi` | (tahap 2) Kirim tautan verifikasi ke email akun pemanggil → `{"status": "terkirim"}`. Tanpa email → 422 `tanpa_email`; sudah terverifikasi → 409 `sudah_terverifikasi`; SMTP gagal → 502 `gagal_kirim` (semua `{detail, kode}`); 3/jam per user. |
-| `GET /auth/verifikasi-email?token=` | (tahap 2, tanpa login) Selalu 303 ke `{APP_URL}/settings?email_verifikasi=<hasil>#laporan` dengan `Cache-Control: no-store` dan `Referrer-Policy: no-referrer`: `berhasil` (menulis `email_verified_at` dan menghidupkan lagi laporan 7 hari terakhir yang `dilewati` karena `belum_verifikasi`/`tanpa_email`), `berubah` (alamat akun sudah berganti sejak tautan dikirim; tidak ada yang ditulis), atau `tidak_berlaku` (token rusak, kedaluwarsa, bertujuan lain, atau user tidak ada: tidak dibedakan). 30/menit per IP. |
+| `GET /auth/verifikasi-email?token=` | (tahap 2, tanpa login) Selalu 303 ke `{APP_URL}/settings?email_verifikasi=<hasil>#laporan` dengan `Cache-Control: no-store`: `berhasil` (menulis `email_verified_at` dan menghidupkan lagi laporan 7 hari terakhir yang `dilewati` karena `belum_verifikasi`/`tanpa_email`), `berubah` (alamat akun sudah berganti sejak tautan dikirim; tidak ada yang ditulis), atau `tidak_berlaku` (token rusak, kedaluwarsa, bertujuan lain, atau user tidak ada: tidak dibedakan). 30/menit per IP. |
 | `GET /laporan/berhenti-email?token=` | (tahap 2, tanpa login) Halaman konfirmasi "Berhenti menerima email laporan?" (200); token tidak sah atau akun tidak ada → halaman "Tautan tidak berlaku" (400). **Tidak pernah mengubah apa pun.** 30/menit per IP. |
 | `POST /laporan/berhenti-email?token=` | (tahap 2, tanpa login) Mematikan `email_on` (membuat baris `report_settings` bila belum ada) → halaman "Email laporan dimatikan" (200), atau 400 "Tautan tidak berlaku". Menerima tombol halaman dan one-click RFC 8058 (`List-Unsubscribe=One-Click`); badan tidak dibaca; aman diulang. 30/menit per IP. |
 
@@ -364,7 +364,9 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   = tujuan (`verifikasi_email`, `berhenti_email_laporan`). Token login menolak `type` selain `access` (dan refresh
   `refresh`), jadi token tujuan tidak pernah lolos sebagai sesi, dan sebaliknya. Verifikasi berlaku 24 jam dan
   membawa alamat; berhenti tanpa `exp`, hanya mematikan satu saklar milik user itu. Token tidak pernah dicatat di log.
-  Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store` dan `Referrer-Policy: no-referrer`.
+  Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store`. `Referrer-Policy` adalah header global
+  `strict-origin-when-cross-origin` (`SecurityHeadersMiddleware`, `app/main.py`): ke origin lain hanya origin yang
+  terkirim, jadi token di path atau query tidak pernah keluar lewat `Referer`.
 - **Email hanya ke alamat terverifikasi**, dibaca ulang dari `users` tepat sebelum mengirim (email diganti sesudah
   terbit tidak mengirim ke alamat baru yang belum terverifikasi). Email laporan tanpa nominal; PDF ber-AES-256 dengan kata
   sandi laporan user.

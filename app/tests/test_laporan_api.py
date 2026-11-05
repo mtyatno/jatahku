@@ -1294,6 +1294,25 @@ class TanpaLoginTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(r.status_code, 401, r.text)
 
 
+class KepalaHalamanBertokenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_no_store_dan_referrer_policy_dari_middleware(self):
+        """Ruling F-3: halaman yang alamatnya memuat token menjawab `Cache-Control: no-store`; `Referrer-Policy` datang
+        dari SecurityHeadersMiddleware (`strict-origin-when-cross-origin`: lintas origin hanya origin yang terkirim,
+        tanpa path dan query bertoken). Aplikasi asli (`app.main`); token tidak sah, jadi tanpa kueri database."""
+        from app.main import app
+        sebelumnya = auth_route.limiter.enabled
+        auth_route.limiter.enabled = False
+        self.addCleanup(setattr, auth_route.limiter, "enabled", sebelumnya)
+        klien = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        self.addAsyncCleanup(klien.aclose)
+        for jalur, status in (("/laporan/berhenti-email", 400), ("/auth/verifikasi-email", 303)):
+            with self.subTest(jalur=jalur):
+                r = await klien.get(jalur, params={"token": "x"}, follow_redirects=False)
+                self.assertEqual(r.status_code, status, r.text)
+                self.assertEqual(r.headers["cache-control"], "no-store")
+                self.assertEqual(r.headers["referrer-policy"], "strict-origin-when-cross-origin")
+
+
 class PemasanganTests(unittest.TestCase):
     def test_rute_terdaftar_di_aplikasi(self):
         from fastapi.routing import APIRoute

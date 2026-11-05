@@ -288,7 +288,9 @@ async def daftar_laporan(
 # Dideklarasikan SEBELUM `/{report_id}`: kalau tidak, "berhenti-email" ditelan sebagai report_id (422).
 # GET hanya menampilkan konfirmasi dan tidak mengubah apa pun (pemindai tautan di layanan email membuka GET); hanya POST
 # (tombol halaman dan one-click RFC 8058) mematikan `email_on`. Batas 30/menit per IP (kunci bawaan limiter).
-_KEPALA_HALAMAN = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}   # alamatnya memuat token
+# Alamat halaman memuat token: jangan disimpan cache. `Referrer-Policy` dipasang global oleh SecurityHeadersMiddleware
+# (`strict-origin-when-cross-origin`): ke origin lain hanya origin yang terkirim, tanpa path dan query bertoken.
+_KEPALA_HALAMAN = {"Cache-Control": "no-store"}
 
 
 def _halaman(html: str, status: int = 200) -> HTMLResponse:

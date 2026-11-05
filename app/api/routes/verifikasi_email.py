@@ -82,9 +82,11 @@ async def kirim_tautan_verifikasi(
 
 
 def _balik(hasil: str) -> RedirectResponse:
+    """303 ke Pengaturan dengan hasilnya; alamat tujuan tidak memuat token. Jawaban ini (alamat asalnya bertoken) tidak
+    disimpan cache. `Referrer-Policy` dari SecurityHeadersMiddleware (`strict-origin-when-cross-origin`): perujuk yang
+    sampai ke Pengaturan (origin lain) paling banyak origin API, tanpa path dan query bertoken."""
     url = f"{get_settings().APP_URL}/settings?email_verifikasi={quote(hasil)}#laporan"
-    # Alamat ini tidak memuat token; header tambahan menjaga agar halaman tujuan tidak pernah membawa tautan asal.
-    return RedirectResponse(url, status_code=303, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    return RedirectResponse(url, status_code=303, headers={"Cache-Control": "no-store"})
 
 
 @auth_router.get(
