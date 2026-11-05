@@ -118,9 +118,10 @@ _TERLALU_SERING = {"description": "Lebih dari 30 permintaan per menit."}
     responses={
         200: {"description": 'Halaman konfirmasi "Verifikasi email kamu"; tombol "Verifikasi email" mengirim POST ke '
                              "alamat yang sama. Tidak mengubah apa pun."},
-        303: {"description": "Tanpa halaman, dialihkan ke `/settings?email_verifikasi=<hasil>#laporan`: `tidak_berlaku` "
-                             "(token tidak sah atau akun tidak ada), `berubah` (alamat akun berganti sejak tautan "
-                             "dikirim), atau `berhasil` (alamat ini sudah terverifikasi). Tidak mengubah apa pun."},
+        303: {"description": "Tanpa halaman, dialihkan ke `/settings?email_verifikasi=<hasil>#laporan`: "
+                             "`tidak_berlaku` (token tidak sah atau akun tidak ada), `berubah` (alamat akun berganti "
+                             "sejak tautan dikirim), atau `berhasil` (alamat ini sudah terverifikasi). Tidak mengubah "
+                             "apa pun."},
         429: _TERLALU_SERING,
     },
 )
