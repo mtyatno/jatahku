@@ -3,6 +3,9 @@
 Satu `Sumber` per permintaan (satu snapshot), penyedia dijalankan berurutan di satu sesi
 database. Galat satu penyedia hanya mengisi `error` kartunya. Anggaran: batch p95 ≤ 500 ms,
 penyedia ≤ 150 ms; yang lewat dicatat di log dengan nama kartunya (01-kajian.md, "Penyedia data").
+
+Kartu plugin (H2): definisinya dari `plugin=` (kartu aktif di ruang ini, `titik.kartu_ruang`); datanya dari
+fungsi plugin lewat `PluginContext` (`titik.data_kartu`), diperiksa bentuknya sebelum dikirim.
 """
 from __future__ import annotations
 
@@ -23,6 +26,8 @@ ANGGARAN_PENYEDIA_MS = 150
 PESAN = {
     "kartu_tidak_dikenal": "Kartu ini tidak tersedia.",
     "gagal_memuat": "Data kartu ini belum bisa dimuat. Coba lagi sebentar.",
+    "khusus_admin": "Kartu ini hanya untuk pemilik dan admin ruang.",
+    "ruang_tidak_diizinkan": "Ruang ini tidak bisa dibuka dari akunmu.",
 }
 
 
@@ -57,12 +62,26 @@ def _galat(kode: str, detail: str | None = None) -> dict:
     return {"error": {"kode": kode, "detail": detail or PESAN[kode]}}
 
 
-async def satu_kartu(sumber: Sumber, item: dict) -> dict:
+async def _penyedia_plugin(sumber: Sumber, definisi, settings: dict) -> dict:
+    from app.plugins.host import titik
+    return await titik.data_kartu(sumber.db, sumber.user, sumber.hid, definisi, settings, sumber.periode)
+
+
+async def satu_kartu(sumber: Sumber, item: dict, plugin: dict | None = None) -> dict:
     """Data satu instans, atau `{"error": {...}}`. Tidak pernah melempar."""
-    definisi = registry.get(item.get("card"))
-    penyedia = PROVIDERS.get(item.get("card"))
+    definisi = registry.get(item.get("card"), plugin)
+    if definisi is not None and definisi.asal != "inti":
+        async def penyedia(s, settings, _d=definisi):
+            return await _penyedia_plugin(s, _d, settings)
+    else:
+        penyedia = PROVIDERS.get(item.get("card"))
     if definisi is None or penyedia is None:
         return _galat("kartu_tidak_dikenal")
+    # R6: karyawan hanya kartu karyawan (kartu umum memuat laba, kas, saldo); selain karyawan tidak memuat kartu
+    # karyawan. Penyedia tidak dipanggil sama sekali untuk kartu yang bukan haknya.
+    karyawan = sumber.karyawan is not None
+    if not registry.boleh(definisi, karyawan):
+        return _galat("khusus_admin" if karyawan else "kartu_tidak_dikenal")
     try:
         settings = definisi.validasi(item.get("settings") or {})
     except registry.PengaturanTidakSah as exc:
@@ -84,10 +103,23 @@ async def satu_kartu(sumber: Sumber, item: dict) -> dict:
     return data
 
 
-async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id) -> dict:
+async def jalankan(user, db, periode: Periode, items: list[dict], *, household_id,
+                   plugin: dict | None = None) -> dict:
+    """Peran ditentukan di sini dari keanggotaan (user, ruang), bukan dari pemanggil (review keamanan PR #185): user
+    yang bukan anggota ruang itu tidak mendapat data apa pun (`ruang_tidak_diizinkan` per kartu), dan karyawan di
+    ruang usaha hanya kartu karyawan, juga di dalam `atas_izin_pengelola()`. Lewat HTTP, `ruang_aktif` sudah
+    memeriksa keanggotaan; ini untuk pemanggil langsung (skrip, plugin H2).
+    `plugin` = kartu plugin yang aktif di ruang ini untuk user ini (`titik.kartu_ruang`, H2); selalu kartu umum."""
+    from app.services import peran
+    from app.services.dashboard.layout import peran_beranda
+    untuk = await peran_beranda(db, user.id, household_id)
+    karyawan = await peran.batasan_anggota(db, user.id, household_id) if untuk == "karyawan" else None
     mulai = time.perf_counter()
-    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id)
-    data = {item["id"]: await satu_kartu(sumber, item) for item in items}
+    sumber = Sumber(user=user, db=db, periode=periode, hid=household_id, karyawan=karyawan)
+    if untuk is None:
+        data = {item["id"]: _galat("ruang_tidak_diizinkan") for item in items}
+    else:
+        data = {item["id"]: await satu_kartu(sumber, item, plugin) for item in items}
     ms = (time.perf_counter() - mulai) * 1000
     if ms > ANGGARAN_BATCH_MS:
         terlama = ", ".join(f"{n} {t:.0f}" for n, t in sorted(sumber.waktu.items(), key=lambda x: -x[1])[:3])

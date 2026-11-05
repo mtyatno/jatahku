@@ -7,7 +7,11 @@
 3. skor (§5) dan penekanan 1–8;
 4. dismiss (§9): disembunyikan kecuali tone naik atau rupiah terdampak naik ≥ 50%;
 5. chip per kartu KPI (urutan §7) dan daftar kartu AI Advisor (maks 3, 1 per amplop
-   kecuali danger, 2 per domain), sisanya "+N saran lain", kosong → satu kabar baik.
+   kecuali danger, 2 per domain, 1 per Fitur Tambahan), sisanya "+N saran lain", kosong → satu kabar baik.
+
+Plugin H2 (titik `advisor_rules`): insight plugin (`asal` = id plugin) ikut skor dan urutan yang sama, tetapi
+hanya di slot `daftar` (tidak pernah chip KPI inti: `URUTAN_KPI` hanya kode inti) dan dibatasi
+`daftar_per_plugin` per plugin, supaya kartu AI Advisor tidak didominasi satu plugin.
 
 Keputusan kecil S3 (juga di SESI-LOG.md):
 - Chip mengikuti urutan prioritas kartu; di dalam satu aturan, skor tertinggi.
@@ -224,9 +228,13 @@ def pilih_daftar(insights: list[Insight], ctx: Konteks) -> tuple[list[Insight], 
     calon.sort(key=kunci_urut)
     tampil, sisa = [], []
     per_domain: dict[str, int] = {}
+    per_plugin: dict[str, int] = {}
     amplop: set[str] = set()
     for ins in calon:
         if len(tampil) >= k.daftar_maks:
+            sisa.append(ins)
+            continue
+        if ins.asal != "inti" and per_plugin.get(ins.asal, 0) >= k.daftar_per_plugin:
             sisa.append(ins)
             continue
         if ins.amplop_id and ins.tone != "danger" and ins.amplop_id in amplop:
@@ -237,6 +245,8 @@ def pilih_daftar(insights: list[Insight], ctx: Konteks) -> tuple[list[Insight], 
             continue
         tampil.append(ins)
         per_domain[ins.domain] = per_domain.get(ins.domain, 0) + 1
+        if ins.asal != "inti":
+            per_plugin[ins.asal] = per_plugin.get(ins.asal, 0) + 1
         if ins.amplop_id:
             amplop.add(ins.amplop_id)
     return tampil, sisa

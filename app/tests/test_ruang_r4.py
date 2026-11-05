@@ -104,7 +104,7 @@ class RuangR4Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([x["id"] for x in body["items"]], [str(self.rumah_id)])
         self.assertEqual(body["items"][0], {
             "id": str(self.rumah_id), "nama": "Rumah Yatno", "jenis": "rumah_tangga", "peran": "owner",
-            "jumlah_anggota": 1, "paket": None, "jam_kerja": None,
+            "jumlah_anggota": 1, "paket": None, "jam_kerja": None, "jenis_catatan": None,
         })
         self.assertFalse(body["boleh_buat_usaha"])
         self.assertNotIn(str(usaha_id), r.text)

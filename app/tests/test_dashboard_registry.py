@@ -151,7 +151,7 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
     async def batch(self, items=None, periode=None, user=None):
         self.current = user or self.me
         items = items if items is not None else [
-            {"id": i["id"], "card": i["card"], "settings": {}} for i in registry.template("beranda")
+            {"id": i["id"], "card": i["card"], "settings": {}} for i in registry.template("beranda", karyawan=False)
         ]
         return await self.client.post("/dashboard/data", json={"periode": periode, "items": items})
 
@@ -183,15 +183,17 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(set(c.sizes) <= set(registry.SIZES), c.key)
             self.assertIn(c.shape, registry.SHAPES, c.key)
             self.assertTrue(c.key.startswith("core."), c.key)
-        ids = [i["id"] for i in registry.template("beranda")]
+        ids = [i["id"] for i in registry.template("beranda", karyawan=False)]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue(all(i["card"] in registry.REGISTRY for i in registry.template("beranda")))
+        self.assertTrue(all(i["card"] in registry.REGISTRY for i in registry.template("beranda", karyawan=False)))
 
     async def test_katalog(self):
         r = await self.client.get("/dashboard/cards")
         self.assertEqual(r.status_code, 200)
         keys = [c["key"] for c in r.json()]
-        self.assertEqual(keys, list(registry.REGISTRY))
+        # Katalog ruang keluarga tidak berubah sejak B1: semua kartu umum; kartu karyawan (R6) tidak ikut.
+        self.assertEqual(keys, [k for k, c in registry.REGISTRY.items() if c.untuk == "umum"])
+        self.assertEqual(keys[:15], [c.key for c in registry.CORE])
         jatah = r.json()[0]
         self.assertEqual((jatah["judul"], jatah["asal"], jatah["hak"], jatah["size_bawaan"]),
                          ("Jatah hari ini", "inti", "ok", "S"))
@@ -337,7 +339,7 @@ class DashboardRegistryTests(unittest.IsolatedAsyncioTestCase):
         r = await self.client.get("/dashboard/layout")
         doc = r.json()
         self.assertEqual((doc["surface"], doc["version"], doc["schema_version"]), ("beranda", 0, 1))
-        self.assertEqual([i["card"] for i in doc["items"]], [i["card"] for i in registry.template("beranda")])
+        self.assertEqual([i["card"] for i in doc["items"]], [i["card"] for i in registry.template("beranda", karyawan=False)])
         self.assertTrue(all(i["visible"] for i in doc["items"]))
         async with self.Session() as db:
             self.assertIsNone((await db.execute(select(DashboardLayout))).scalar_one_or_none(),

@@ -25,7 +25,7 @@ from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
     RecurringTransaction, Notification, NotificationPreference,
     HouseholdMember, Household, HouseholdType,
-    Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword,
+    Goal, MonthlySnapshot, PendingTransaction, EnvelopeGroup, UserEnvelopeKeyword, RuangKamus,
     UserStreak, BalanceCheck,
 )
 from app.services.plan_limits import di_luar_ruang_usaha
@@ -612,6 +612,7 @@ async def reset_data(
         await db.execute(delete(MonthlySnapshot).where(MonthlySnapshot.envelope_id.in_(env_ids)))
         await db.execute(delete(RecurringTransaction).where(RecurringTransaction.envelope_id.in_(env_ids)))
         await db.execute(delete(UserEnvelopeKeyword).where(UserEnvelopeKeyword.envelope_id.in_(env_ids)))
+        await db.execute(delete(RuangKamus).where(RuangKamus.envelope_id.in_(env_ids)))   # R7: kamus ruang usaha
         await db.execute(delete(Envelope).where(Envelope.id.in_(env_ids)))
 
     # Hanya pemasukan user di ruang yang di-reset. Dulu semua pemasukan user di household mana pun

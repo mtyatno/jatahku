@@ -37,11 +37,11 @@ export function getExportFilename(type = 'csv', params = {}) {
   return `jatahku_export.${ext}`;
 }
 
+// Label periode yang diawali kata "Laporan" utuh tidak menjadi "Ekspor Laporan …"; awalan kata lain ("Laporanku")
+// dibiarkan.
 export function getExportButtonLabel(label) {
-  const trimmed = (label || '').trim();
-  if (!trimmed) return 'Laporan';
-  if (trimmed.startsWith('Laporan')) return trimmed;
-  return `Laporan ${trimmed}`;
+  const trimmed = (label || '').trim().replace(/^Laporan(?:\s+|$)/, '');
+  return trimmed ? `Ekspor ${trimmed}` : 'Ekspor';
 }
 
 export function resolveActivePeriod(periods = [], { periodStart, periodEnd, periodLabel } = {}) {

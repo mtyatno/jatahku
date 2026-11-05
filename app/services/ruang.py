@@ -164,6 +164,13 @@ KARYAWAN_BOLEH = {
     "app.api.routes.transactions.suggest_envelopes",
     "app.api.routes.incomes.create_income",            # penjualan: batasan di `cek_catat`
     "app.api.routes.ruang_kelola.persetujuan_saya",           # draf miliknya (Beranda karyawan)
+    # R6, Beranda template "Karyawan": route menyaring per peran (`registry.boleh`): katalog, template, tata letak,
+    # dan data hanya kartu karyawan; kartu umum (laba, kas, saldo) → `khusus_admin` per kartu tanpa memuat datanya.
+    "app.api.routes.dashboard.get_layout",
+    "app.api.routes.dashboard.put_layout",
+    "app.api.routes.dashboard.get_cards",
+    "app.api.routes.dashboard.post_data",
+    "app.api.routes.dashboard.get_data_instance",
 }
 
 

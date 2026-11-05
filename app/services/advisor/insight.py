@@ -51,6 +51,7 @@ class KonstantaAturan:
     yakin_sedang_txn: int = 5
     daftar_maks: int = 3                              # §7 kartu AI Advisor
     daftar_per_domain: int = 2
+    daftar_per_plugin: int = 1                        # Plugin H2: insight satu Fitur Tambahan di kartu AI Advisor
     redam_danger: int = 1                             # §7 peredaman chip
     redam_warn: int = 2
     # §2: CTA "Batas harian" baru dirilis setelah Pikir-Pikir Fase 1 menjadikan limit harian
@@ -106,6 +107,9 @@ class Insight:
     amplop_id: str | None = None   # batas "1 per amplop" di daftar
     rincian: list["Insight"] = field(default_factory=list)  # insight lain yang diserap (penekanan)
     skor: Decimal = ZERO
+    # Plugin H2: "inti", atau id plugin (aturan advisor plugin, `app/plugins/host/titik.ke_insight`). Insight plugin
+    # hanya di slot `daftar`, teksnya sudah jadi di `data["_teks"]` (templat plugin), aksinya hanya route.
+    asal: str = "inti"
 
     @property
     def id(self) -> str:

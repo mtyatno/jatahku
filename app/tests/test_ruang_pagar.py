@@ -41,6 +41,10 @@ DIIZINKAN = {
     "api/routes/user_settings.py": 1,    # peran user di ruang yang di-reset
     "bot/household_cmd.py": 1,           # cek sudah anggota household tujuan
     "scripts/ruang_paritas.py": 1,       # meniru kueri lama untuk dibandingkan
+    # Plugin H2: (1) perintah bot plugin = laporan per ruang milik user yang memasang plugin (ADR-P2, berawalan nama
+    # ruang); (2) penerima notifikasi plugin = owner/admin ruang tertentu (join); (3) pemilik ruang tertentu untuk
+    # zona waktu dan flag job plugin (join). Peran di satu ruang memakai `ruang.keanggotaan`.
+    "plugins/host/titik.py": 3,
 }
 
 
@@ -140,6 +144,10 @@ class PagarSumberTests(unittest.TestCase):
             ("PATCH", "/ruang/{rid}/anggota/{uid}"), ("DELETE", "/ruang/{rid}/anggota/{uid}"),
             ("PUT", "/ruang/{rid}/anggota/{uid}/batasan"), ("POST", "/ruang/{rid}/undangan"),
             ("POST", "/ruang/{rid}/persetujuan/{draf_id}/setujui"), ("POST", "/ruang/{rid}/persetujuan/{draf_id}/tolak"),
+            # R6: cabut undangan dan ganti nama ruang, sama (`_ruang_kelola`).
+            ("DELETE", "/ruang/{rid}/undangan/{undangan_id}"), ("PATCH", "/ruang/{rid}"),
+            # R7: hapus kata kamus ruang, sama (`_ruang_kelola`; kata ruang lain 404).
+            ("DELETE", "/ruang/{rid}/kamus/{kamus_id}"),
             # H1: ruang dari path (`_ruang_kelola` → `ruang_objek`, lalu peran owner/admin).
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/pasang"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),

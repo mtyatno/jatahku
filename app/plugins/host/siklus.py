@@ -153,14 +153,48 @@ async def aktif_di_ruang(db: AsyncSession, household_id: UUID, user_id) -> list[
     """Plugin yang kontribusinya boleh tampil di ruang ini untuk user ini: berstatus `active`, tidak
     terkena saklar darurat, flag user aktif, dan masih dimuat registry. Dipakai H2/H3 (kartu, menu,
     perintah, job) — plugin dijeda, dicopot, atau dimatikan server tidak meninggalkan apa pun."""
+    return [m for m, _ in await aktif_dengan_instalasi(db, household_id, user_id)]
+
+
+async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID,
+                                 user_id) -> list[tuple[Manifest, PluginInstallation]]:
+    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2."""
     mati = await saklar_mati(db)
     hasil = []
     for pid, inst in sorted((await _instalasi_ruang(db, household_id)).items()):
         m = registry().get(pid)
         if inst.status != ACTIVE or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
             continue
-        hasil.append(m)
+        hasil.append((m, inst))
     return hasil
+
+
+def kontribusi(aktif: list[Manifest], kartu: dict) -> dict:
+    """`GET /plugins/contributions` (H3): menu, aksi cepat, halaman, kartu, dan field form plugin yang aktif.
+
+    `aktif` = `aktif_di_ruang` untuk (ruang, user); `kartu` = `titik.kartu_ruang` (key → CardDef), sumber yang sama
+    dengan tata letak dan batch Beranda, jadi kartu yang tercantum di sini selalu bisa dimuat datanya. Plugin dijeda,
+    dicopot, dimatikan server, atau di luar flag tidak muncul sama sekali. Rute selalu `/p/<id>…` (manifest)."""
+    out = {"plugins": [], "nav": [], "quick_actions": [], "pages": [], "cards": [], "form_fields": []}
+    for m in aktif:
+        c = m.contributes
+        out["plugins"].append({"id": m.id, "nama": m.name, "ikon": m.icon})
+        for h in c.pages:
+            out["pages"].append({"plugin": m.id, "route": h.route, "judul": h.title})
+            if h.nav:
+                out["nav"].append({"plugin": m.id, "grup": h.nav, "label": h.title, "route": h.route, "ikon": m.icon})
+        for a in c.quick_actions:
+            out["quick_actions"].append({"plugin": m.id, "key": a.key, "label": a.label, "ikon": m.icon})
+        for k in c.cards:
+            d = kartu.get(k.key)
+            if d is None:           # plugin tanpa kode kartu: tidak bisa dimuat, jadi tidak ditawarkan
+                continue
+            out["cards"].append({"key": k.key, "plugin": m.id, "judul": k.title, "shape": k.shape,
+                                 "sizes": list(k.sizes), "size_bawaan": k.sizes[0], "bawaan": k.default})
+        for f in c.form_fields:
+            out["form_fields"].append({"plugin": m.id, "target": f.target, "key": f.key, "type": f.type,
+                                       "label": f.label})
+    return out
 
 
 # ── tulis ───────────────────────────────────────────────────────────────
@@ -208,8 +242,19 @@ async def _cek_boleh_menyala(db: AsyncSession, household_id: UUID, jenis_ruang: 
         raise _galat(409, "bentrok_plugin", f"{m.name} tidak bisa dipakai bersama {nama}.")
 
 
+def _cek_izin_disetujui(m: Manifest, izin: list[str] | None) -> None:
+    """Persetujuan terikat ke daftar izin yang dilihat user di layar izin (H3; review PR #176, digantung H1).
+
+    `izin` = kode izin yang ditampilkan saat user menekan Pasang/Pulihkan. Bila manifest berubah di antaranya (rilis
+    baru menambah atau membuang izin), server menolak alih-alih mencatat izin yang belum pernah dilihat user.
+    `None` = klien lama tanpa field ini (API hanya bertambah); web selalu mengirimnya."""
+    if izin is not None and set(izin) != set(m.permissions):
+        raise _galat(409, "izin_berubah",
+                     f"Izin {m.name} berubah sejak halaman ini dibuka. Muat ulang, lalu periksa izinnya lagi.")
+
+
 async def pasang(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m: Manifest,
-                 *, pengaturan: dict | None = None) -> PluginInstallation:
+                 *, pengaturan: dict | None = None, izin: list[str] | None = None) -> PluginInstallation:
     """Pasang baru, atau pulihkan dari arsip. Sudah terpasang/aktif/dijeda → dikembalikan apa adanya."""
     if pengaturan:
         # Form pengaturan dari JSON Schema + validasi server adalah titik `settings` (H2/U1).
@@ -221,6 +266,7 @@ async def pasang(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m
     if not await boleh_dilihat(db, m, user.id):
         raise _plugin_tidak_ada()
     await _cek_boleh_menyala(db, household_id, jenis_ruang, m)
+    _cek_izin_disetujui(m, izin)
 
     tujuan = INSTALLED if m.contributes.setup else ACTIVE
     if inst is None:

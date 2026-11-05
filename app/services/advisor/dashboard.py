@@ -97,20 +97,21 @@ def _tz(user) -> ZoneInfo:
 # ── susun (murni) ───────────────────────────────────────────────────────
 def analisa(snap, *, now_local: datetime, dismiss: dict | None = None,
             km: Konstanta = KM_DEFAULT, ks: KonstantaSinyal = KS_DEFAULT,
-            ka: KonstantaAturan = KA_DEFAULT):
-    """Snapshot → (Konteks, Seleksi): metrik, sinyal, semua aturan, lalu seleksi."""
+            ka: KonstantaAturan = KA_DEFAULT, tambahan: list | tuple = ()):
+    """Snapshot → (Konteks, Seleksi): metrik, sinyal, semua aturan, lalu seleksi.
+    `tambahan`: insight aturan advisor Fitur Tambahan (Plugin H2), sudah dihitung pemanggil; ikut seleksi yang sama."""
     m = compute_metrics(snap, km)
     s = compute_signals(snap, m, ks)
     ctx = Konteks(snap=snap, m=m, s=s, jam=now_local.hour, k=ka)
-    insights = [ins for ev in EVALUATOR for ins in ev(ctx)]
+    insights = [ins for ev in EVALUATOR for ins in ev(ctx)] + list(tambahan)
     return ctx, pilih(ctx, insights, dismiss)
 
 
 def susun_dashboard(snap, *, now_local: datetime, dismiss: dict | None = None,
                     km: Konstanta = KM_DEFAULT, ks: KonstantaSinyal = KS_DEFAULT,
-                    ka: KonstantaAturan = KA_DEFAULT) -> tuple[dict, dict]:
+                    ka: KonstantaAturan = KA_DEFAULT, tambahan: list | tuple = ()) -> tuple[dict, dict]:
     """(payload kontrak, meta {id insight: {"tone", "rupiah"}} untuk dismiss)."""
-    ctx, sel = analisa(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
+    ctx, sel = analisa(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka, tambahan=tambahan)
     m = ctx.m
     payload = {
         "enabled": True,
@@ -141,7 +142,10 @@ async def _hitung(user, db, now_local: datetime, pengaturan: dict, *, household_
     snap = await load_snapshot(user, db, today=now_local.date(), household_id=household_id)
     km, ks, ka = bangun_konstanta(pengaturan.get(KONSTANTA_KEY))
     dismiss = await advisor_cache.muat_dismiss(snap.viewer_id)
-    payload, meta = susun_dashboard(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka)
+    from app.plugins.host import titik
+    tambahan = await titik.saran_advisor(db, user, household_id)   # Plugin H2; [] tanpa plugin, tanpa kueri
+    payload, meta = susun_dashboard(snap, now_local=now_local, dismiss=dismiss, km=km, ks=ks, ka=ka,
+                                    tambahan=tambahan)
     return payload, meta, snap
 
 
@@ -154,7 +158,9 @@ async def get_dashboard(user, db, now: datetime | None = None, *, household_id) 
     if hid:
         cached = await advisor_cache.ambil(hid, user.id)
         if cached and cached.get("payload", {}).get("generated_at", "")[:10] == now_local.date().isoformat():
-            return cached["payload"]
+            # Plugin H2: saran Fitur Tambahan yang sudah tidak aktif (saklar darurat, flag) tidak ikut dari cache.
+            from app.plugins.host import titik
+            return await titik.saring_payload_advisor(db, user, household_id, cached["payload"])
     sebelum = set(await advisor_cache.muat_dismiss(user.id)) if hid else set()
     payload, meta, snap = await _hitung(user, db, now_local, pengaturan, household_id=household_id)
     # Dismiss/Urungkan yang terjadi selama menghitung (#91): jangan simpan payload basi ke cache,

@@ -2,6 +2,8 @@
 // query halaman, dan hitungan lembar rencana. Murni (tanpa DOM/React) supaya
 // bisa dites dengan node --test. Kontrak: docs/ai-advisor/04-kontrak-api.md.
 
+import { RUTE_PLUGIN_RE } from './pluginHost.js';
+
 // Aksi FAB lama: event masih boleh membawa string ini saja.
 export const LEGACY_ACTIONS = ['expense', 'envelope', 'income', 'langganan', 'balance', 'chat'];
 
@@ -52,6 +54,9 @@ export function safeRoute(path) {
   try { u = new URL(path, 'https://jatahku.invalid'); } catch { return null; }
   if (u.origin !== 'https://jatahku.invalid') return null;
   const p = u.pathname.length > 1 ? u.pathname.replace(/\/+$/, '') : u.pathname;
+  // Halaman Fitur Tambahan `/p/<id>/…` (Plugin H3): tujuan aksi kartu dan saran AI Advisor plugin (`payload.to`).
+  // Plugin yang tidak aktif di ruang ini menampilkan pesan, bukan halamannya (PluginPage).
+  if (RUTE_PLUGIN_RE.test(p)) return p + u.search;
   return ROUTE_PATHS.includes(p) ? p + u.search : null;
 }
 

@@ -120,8 +120,13 @@ export function sumberPertama(data, nama) {
   return undefined;
 }
 
-export const cacheKeyLayout = (userId) => `beranda_layout:${userId}`;
-export const cacheKeyData = (userId) => `beranda_data:${userId}`;
+// Cache Beranda per user, per ruang (akhiran ruang dari localCache), dan per peran (R6): Beranda karyawan tidak pernah
+// memakai cache Beranda umum (angka laba/kas) sebagai isi awal atau cadangan offline. Kunci umum tetap seperti B2.
+const akhiranPeran = (untuk) => (untuk === 'karyawan' ? ':karyawan' : '');
+export const cacheKeyLayout = (userId, untuk = 'umum') => `beranda_layout:${userId}${akhiranPeran(untuk)}`;
+export const cacheKeyData = (userId, untuk = 'umum') => `beranda_data:${userId}${akhiranPeran(untuk)}`;
+/** Semua kunci cache Beranda user ini (kedua peran), untuk dibersihkan saat perannya di ruang aktif berubah. */
+export const kunciCacheBeranda = (userId) => ['umum', 'karyawan'].flatMap(u => [cacheKeyLayout(userId, u), cacheKeyData(userId, u)]);
 
 /**
  * Beranda mana yang digambar (Plugin B3). `paksa` dari query `?beranda=lama|registry` dipakai untuk

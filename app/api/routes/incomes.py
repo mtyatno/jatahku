@@ -132,6 +132,11 @@ async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: 
         draf = await peran.draf_dari_ref(db, user.id, req.client_ref)
         if draf is not None:   # kiriman ulang (temuan 6): status draf terbaru, tanpa draf atau pemasukan kedua
             from app.api.routes.transactions import jawaban_draf
+            try:   # draf ruang/jenis/amplop lain dengan ref yang sama tidak pernah menjadi jawaban (#191 temuan 1)
+                peran.cek_ref_draf(draf, household_id=hid, jenis=peran.JENIS_PENJUALAN,
+                                   envelope_id=req.allocations[0].envelope_id if req.allocations else None)
+            except peran.PeranDitolak as exc:
+                raise RuangDitolak.dari_peran(exc)
             return jawaban_draf(draf)
     try:
         perlu = peran.cek_catat(batasan, jenis=peran.JENIS_PENJUALAN,

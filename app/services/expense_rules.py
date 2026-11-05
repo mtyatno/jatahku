@@ -13,6 +13,9 @@ Urutan cek (check_expense):
 3. check_behavior: kunci amplop, dana (belum didanai / tidak cukup), limit
    harian. Cooling period tidak lagi menahan pencatatan (Pikir-Pikir Fase 0).
    Struk/bukti periode lalu yang dicatat di tanggalnya: PAST_PERIOD_IGNORED.
+4. Plugin H2 (titik `checks`): bila lolos, peringatan Fitur Tambahan yang aktif di
+   ruang amplop itu (`peringatan_plugin`) — hanya peringatan, tidak pernah memblokir.
+   Jalur web (`routes/transactions.catat_transaksi`) memanggil `peringatan_plugin` yang sama.
 """
 from decimal import Decimal
 
@@ -44,7 +47,7 @@ def is_spendable(env) -> bool:
 
 
 async def check_expense(envelope, user, amount: Decimal, db, *,
-                        skip_plan_limit: bool = False) -> BehaviorCheckResult:
+                        skip_plan_limit: bool = False, description: str = "") -> BehaviorCheckResult:
     """Semua aturan sebelum pengeluaran dicatat. check_type tambahan di luar
     check_behavior: "not_spendable" dan "plan_limit".
 
@@ -56,17 +59,31 @@ async def check_expense(envelope, user, amount: Decimal, db, *,
         ok, msg = await check_transaction_limit(user, db, household_id=getattr(envelope, "household_id", None))
         if not ok:
             return BehaviorCheckResult.blocked("plan_limit", msg)
-    return await check_behavior(envelope.id, user.id, Decimal(amount), db)
+    hasil = await check_behavior(envelope.id, user.id, Decimal(amount), db)
+    if hasil.allowed:
+        hasil.peringatan = await peringatan_plugin(db, user, envelope, amount, description)
+    return hasil
 
 
-async def after_expense_recorded(db, user, envelope_id, description: str, learn_text: str | None = None):
+async def peringatan_plugin(db, user, envelope, amount, description: str = "") -> list[str]:
+    """Peringatan dari titik `checks` plugin yang aktif di ruang amplop itu (Plugin H2). Tidak pernah memblokir
+    dan tidak pernah melempar; tanpa plugin yang mendaftarkan cek, kembali seketika tanpa kueri."""
+    from app.plugins.host import titik
+    return await titik.peringatan_pengeluaran(db, user, envelope, amount, description)
+
+
+async def after_expense_recorded(db, user, envelope_id, description: str, learn_text: str | None = None, *,
+                                 kamus_ruang: bool = False):
     """Efek best-effort setelah pengeluaran tercatat (dan di-commit): streak
     disiplin dan pembelajaran kata kunci → amplop. Tidak pernah menggagalkan
     transaksi. Mengembalikan hasil streak (atau None) untuk ditampilkan bot.
 
     `learn_text` (Kotak Struk): None → kata kunci dipelajari dari `description` (perilaku
     lama); string → dari string itu; string kosong → tidak belajar kata kunci (streak tetap).
-    Untuk bukti bayar, server mengisinya dengan catatan user saja (`learn_text_for_item`)."""
+    Untuk bukti bayar, server mengisinya dengan catatan user saja (`learn_text_for_item`).
+
+    `kamus_ruang` (Plugin R7): juga mengajari kamus ruang usaha (`txn_nlp.ajari_kamus_ruang`). Bawaan mati: hanya
+    jalur web untuk catatan bukan-privat yang menyalakannya; bot (ruang keluarga) dan Kotak Struk tidak."""
     streak = None
     try:
         from app.services.streak import record_activity
@@ -76,7 +93,8 @@ async def after_expense_recorded(db, user, envelope_id, description: str, learn_
     try:
         from app.services.txn_nlp import save_learned_keywords
         if learn_text is None or learn_text:
-            await save_learned_keywords(user.id, description if learn_text is None else learn_text, envelope_id, db)
+            await save_learned_keywords(user.id, description if learn_text is None else learn_text, envelope_id, db,
+                                        kamus_ruang=kamus_ruang)
         await db.commit()
     except Exception:
         pass

@@ -6,8 +6,9 @@
 Kode keluar 0 = semua manifest sah; 1 = ada galat (dicetak satu per baris). Dijalankan di workflow "Tes"
 (langkah "Validator manifest plugin") dan lewat `app/tests/test_plugin_host.py`.
 
-Pemeriksaan bahwa setiap pemanggilan `PluginContext` sesuai izin yang dideklarasikan menyusul di H2,
-bersama `PluginContext` itu sendiri.
+H2: untuk plugin yang punya kode (`__init__.py`), juga memeriksa impor (hanya `app.plugins.sdk`, paket sendiri,
+dan plugin di `requires`; `host/kode.py`), memuat kodenya, dan mencocokkan setiap fungsi terdaftar dengan manifest
+serta izinnya. Izin juga ditegakkan saat berjalan: `PluginContext` menolak panggilan di luar izin fungsi itu.
 """
 import pathlib
 import sys

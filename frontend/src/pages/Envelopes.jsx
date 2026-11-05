@@ -11,6 +11,8 @@ import { envelopeRow } from '../lib/envelopeRow';
 import { errorText } from '../lib/balanceCheck';
 import { needsClassification, suggestClassification, PURPOSE_OPTIONS } from '../lib/envelopeClassification';
 import ClassificationBackfill from '../components/ClassificationBackfill';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { BREAKPOINT_DESKTOP } from '../lib/laporanView';
 
 const EMOJIS = ['🍜','🚗','🎬','📱','💰','🏠','📚','🎮','👕','🏥','✈️','🎁','🐱','📁'];
 
@@ -678,18 +680,6 @@ function AdvisorStripV2({ strip, leadingIcon }) {
   );
 }
 
-function useMediaQuery(query) {
-  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mql = window.matchMedia(query);
-    const onChange = () => setMatches(mql.matches);
-    onChange();
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, [query]);
-  return matches;
-}
-
 const ROW_AMOUNT_CLS = { safe: 'text-brand-600', warning: 'text-amber-500', danger: 'text-danger-400', muted: 'text-gray-400' };
 const ROW_NOTE_CLS = { muted: 'text-gray-500', safe: 'text-brand-600', warning: 'text-amber-600', danger: 'text-danger-400' };
 
@@ -848,7 +838,7 @@ const JENIS_TITLE = 'Jenis pengeluaran grup: Harian ikut jatah harian AI Advisor
 
 function CompactEnvelopeList({ sections, goals, onRenameGroup, onDeleteGroup, onJenisGroup, ...actions }) {
   const [openId, setOpenId] = useState(null);
-  const wide = useMediaQuery('(min-width: 1024px)');
+  const wide = useMediaQuery(BREAKPOINT_DESKTOP);
 
   const header = (sec) => sec.name && (
     <div className="group flex items-center justify-between gap-2 px-1 mb-2">

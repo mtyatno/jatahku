@@ -21,7 +21,8 @@ rincian Scan Struk di Admin; tombol PDF, banner, tips Settings, dan isi `/bagika
 (tabel di "Saklar fitur"). Menu Bagikan Android butuh `share_target` di manifest: PR kecil terpisah sesudah saklar
 menyala (keputusan pemilik produk 28 Okt 2026). **4 Nov 2026:** saklar menyala dan langkah 2–6 "Menyalakan saklar"
 selesai (pemilik produk); `share_target` ditambahkan ke manifest (branch `feat/share-target`, langkah 7).
-**Tahap 2 belajar lintas user** (branch `feat/kotak-belajar-2`, satu PR berlabel `migrasi`, revisi `c9e4a7f2b5d8`;
+**Tahap 2 belajar lintas user** (branch `feat/kotak-belajar-2`, satu PR berlabel `migrasi`, revisi `c9e4a7f2b5d8` di atas
+`d7r7k4a1m9c3` (Plugin R7);
 rencana `docs/superpowers/plans/2026-11-04-kotak-belajar-tahap-2.md`, keputusan pemilik produk 5 Nov 2026): donasi
 contoh (opt-in di Settings, saklar baru `features.kotak_donasi`, bawaan **mati**), aturan `logo` ("Aplikasi apa
 ini?") dan aturan `arah` (alasan "Bukan pengeluaran"); bagian "Belajar lintas user" dan "Donasi contoh", checklist
@@ -1319,7 +1320,8 @@ lintas user (e7b3d5a9c1f4)".
 
 Tahap 2 belajar lintas user (migrasi `c9e4a7f2b5d8`: kolom `receipt_scans.sample_lines`, tabel `proof_sample_consents` dan
 `proof_samples`, indeks unik parsial `ux_proof_rules_satu_nilai`) juga tanpa paket, folder, atau `.env` baru; migrasinya
-bukan hanya penanda revisi (indeks G8 hanya dibuat `alembic upgrade head`). Checklist-nya `AGENTS.md` "Deploy Checklist —
+bukan hanya penanda revisi (indeks G8 hanya dibuat `alembic upgrade head`); `alembic current` harus `d7r7k4a1m9c3`
+sebelum upgrade (bila belum, jalankan migrasi sebelumnya dulu sesuai checklist-nya). Checklist-nya `AGENTS.md` "Deploy Checklist —
 Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)", termasuk urutan menyalakan `kotak_donasi`.
 
 ## Alat korpus dan gerbang rilis

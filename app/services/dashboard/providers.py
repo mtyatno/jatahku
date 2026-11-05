@@ -155,3 +155,55 @@ async def langganan(s: Sumber, _settings: dict) -> dict:
 @provider("core.papan_disiplin")
 async def papan_disiplin(s: Sumber, _settings: dict) -> dict:
     return {"shape": "list", "sumber": {"papan": await s.papan()}}
+
+
+# ── Kartu karyawan (R6). Dipanggil hanya bila `s.karyawan` ada (batch.satu_kartu menolak selain itu). ──
+MAKS_LIST = 8   # bentuk `list`: maks. 8 item (04-kontrak-api.md §4)
+
+
+def _amplop_ringkas(daftar: list) -> list[dict]:
+    """Nama amplop saja; anggaran dari `GET /envelopes/` tidak diteruskan ke kartu karyawan."""
+    return [{"id": a["id"], "nama": a["name"], "emoji": a.get("emoji") or ""} for a in daftar]
+
+
+@provider("core.karyawan.catat")
+async def karyawan_catat(s: Sumber, _settings: dict) -> dict:
+    return {"shape": "inti", "jenis_catatan": list(s.karyawan.jenis_catatan),
+            "amplop": _amplop_ringkas(await s.amplop_diizinkan())}
+
+
+@provider("core.karyawan.hari_ini")
+async def karyawan_hari_ini(s: Sumber, _settings: dict) -> dict:
+    c = await s.catatan_hari_ini()
+    return {"shape": "inti", "tanggal": c["tanggal"], "pengeluaran": c["pengeluaran"], "penjualan": c["penjualan"],
+            "jenis_catatan": list(s.karyawan.jenis_catatan)}
+
+
+@provider("core.karyawan.menunggu")
+async def karyawan_menunggu(s: Sumber, _settings: dict) -> dict:
+    draf = await s.draf_saya()
+    items = [{"id": d["id"], "jenis": d["jenis"], "judul": d["keterangan"], "nominal": d["jumlah"],
+              "status": d["status"], "subjudul": d["alasan"], "dibuat": d["dibuat"]} for d in draf]
+    return {"shape": "list", "items": items[:MAKS_LIST],
+            "menunggu": sum(1 for d in draf if d["status"] == "menunggu"), "total_item": len(items)}
+
+
+@provider("core.karyawan.catatan_hari_ini")
+async def karyawan_catatan_hari_ini(s: Sumber, _settings: dict) -> dict:
+    c = await s.catatan_hari_ini()
+    return {"shape": "list", "items": c["items"][:MAKS_LIST], "total_item": len(c["items"]),
+            "jendela_ubah": s.karyawan.jendela_ubah}
+
+
+@provider("core.karyawan.batasan")
+async def karyawan_batasan(s: Sumber, _settings: dict) -> dict:
+    b = s.karyawan.ke_api()
+    amplop = None if b.pop("amplop_ids") is None else _amplop_ringkas(await s.amplop_diizinkan())
+    return {"shape": "inti", "batasan": b, "amplop": amplop}
+
+
+@provider("core.karyawan.ruang_terpisah")
+async def karyawan_ruang_terpisah(_s: Sumber, _settings: dict) -> dict:
+    return {"shape": "alert", "tone": "info", "judul": "Ruang keluargamu terpisah",
+            "isi": "Catatan pribadi dan tabunganmu tetap di ruang keluargamu, dan pemilik serta admin ruang ini "
+                   "tidak bisa melihatnya. Chat Telegram selalu mencatat ke ruang keluargamu."}

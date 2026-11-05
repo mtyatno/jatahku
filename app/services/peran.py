@@ -47,7 +47,26 @@ PESAN = {
     "amplop_tidak_diizinkan": "Amplop ini tidak termasuk yang diizinkan admin untukmu.",
     "jenis_tidak_diizinkan": "Admin belum mengizinkanmu mencatat jenis ini di ruang ini.",
     "jendela_ubah_lewat": "Catatan ini sudah tidak bisa diubah atau dihapus. Minta admin bila perlu.",
+    "client_ref_bentrok": "Kode kiriman ini sudah dipakai catatan lain (ruang, jenis, atau amplop berbeda). "
+                          "Muat ulang untuk melihat catatan itu, lalu catat lagi bila perlu.",
 }
+
+# Review keamanan PR #191 temuan 1: satu `client_ref` hanya untuk satu catatan. Kiriman ulang dengan ref yang sama
+# hanya menjawab catatan/draf lama bila ruang, jenis, dan amplopnya sama; selain itu 409 `client_ref_bentrok`, supaya
+# klien tidak pernah menerima catatan ruang lain sebagai jawaban (mis. "tercatat di ruang keluargamu" padahal draf
+# ruang usaha).
+REF_BENTROK = "client_ref_bentrok"
+
+
+def ref_bentrok() -> "PeranDitolak":
+    return PeranDitolak(REF_BENTROK, status_code=409)
+
+
+def cek_ref_draf(draf, *, household_id, jenis: str, envelope_id=None) -> None:
+    """Draf dari `client_ref` yang sama boleh dijawab ulang hanya untuk catatan yang sama. Melempar `PeranDitolak`."""
+    if (draf.household_id != household_id or draf.jenis != jenis
+            or (envelope_id is not None and draf.envelope_id != envelope_id)):
+        raise ref_bentrok()
 
 
 class PeranDitolak(Exception):
@@ -137,6 +156,15 @@ async def peran_di_ruang(db: AsyncSession, user_id, household_id) -> tuple[str |
     return role, str(row[1])
 
 
+async def batasan_anggota(db: AsyncSession, user_id, household_id) -> Batasan:
+    """Batasan tersimpan untuk anggota ini (bawaan bila admin belum mengatur), tanpa melihat izin pengelola. Untuk
+    tampilan milik karyawan sendiri (Beranda karyawan, R6); penegakan memakai `batasan_karyawan`."""
+    row = (await db.execute(
+        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
+    )).scalar_one_or_none()
+    return _dari_baris(row)
+
+
 async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan | None:
     """Batasan yang berlaku untuk user di ruang ini, atau None bila tidak dibatasi (ruang keluarga, owner, admin,
     bukan anggota, atau sedang menyetujui draf)."""
@@ -145,10 +173,7 @@ async def batasan_karyawan(db: AsyncSession, user_id, household_id) -> Batasan |
     role, jenis = await peran_di_ruang(db, user_id, household_id)
     if role != HouseholdRole.member.value or jenis != HouseholdType.USAHA:
         return None
-    row = (await db.execute(
-        select(RuangBatasan).where(RuangBatasan.household_id == household_id, RuangBatasan.user_id == user_id)
-    )).scalar_one_or_none()
-    return _dari_baris(row)
+    return await batasan_anggota(db, user_id, household_id)
 
 
 # ── Jam kerja (ADR-P17) ─────────────────────────────────────────────────────
@@ -235,6 +260,21 @@ def cek_catat(batasan: Batasan | None, *, jenis: str, amplop_ids, jumlah: Decima
     return batasan.batas_nominal is not None and jumlah > batasan.batas_nominal
 
 
+def aturan_catatan(batasan: Batasan | None, jumlah: Decimal | None) -> list[dict]:
+    """Batasan yang akan berlaku untuk satu catatan karyawan senilai `jumlah`, untuk ditampilkan sebelum simpan
+    (Catat cepat, R7; `aturan` di `/transactions/suggest-envelope`). Hanya tampilan: penegakannya tetap `cek_catat`.
+    Kosong untuk owner/admin (batasan None) atau bila nominal belum diketahui."""
+    if batasan is None or jumlah is None:
+        return []
+    out = []
+    if batasan.foto_nota_di_atas is not None and jumlah > batasan.foto_nota_di_atas:
+        out.append({"kode": "foto_nota", "teks": f"Wajib foto nota di atas {_rp(batasan.foto_nota_di_atas)}."})
+    if batasan.batas_nominal is not None and jumlah > batasan.batas_nominal:
+        out.append({"kode": "persetujuan",
+                    "teks": f"Di atas batasmu {_rp(batasan.batas_nominal)}: menunggu persetujuan admin."})
+    return out
+
+
 def pesan_persetujuan(batasan: Batasan) -> str:
     return f"Batas catatanmu {_rp(batasan.batas_nominal)}. Catatan ini menunggu persetujuan admin."
 
@@ -317,6 +357,70 @@ async def buat_draf(db: AsyncSession, *, household_id, user_id, jenis: str, amou
         raise
     await db.refresh(draf)
     return draf
+
+
+DRAF_DIPUTUS_HARI = 14
+
+
+async def draf_saya(db: AsyncSession, user_id, household_id, limit: int = 50) -> list[RuangDraf]:
+    """Draf milik user di satu ruang: yang menunggu, plus yang diputus 14 hari terakhir (terbaru dulu).
+    Dipakai `GET /persetujuan/saya` dan kartu Beranda karyawan (R6)."""
+    batas = datetime.now(timezone.utc) - timedelta(days=DRAF_DIPUTUS_HARI)
+    return list((await db.execute(
+        select(RuangDraf).where(RuangDraf.household_id == household_id, RuangDraf.user_id == user_id,
+                                (RuangDraf.status == ST_MENUNGGU) | (RuangDraf.updated_at >= batas))
+        .order_by(RuangDraf.created_at.desc()).limit(limit)
+    )).scalars().all())
+
+
+async def catatan_hari_ini(db: AsyncSession, user, household_id, batasan: Batasan | None,
+                           sekarang: datetime | None = None) -> dict:
+    """Catatan yang dibuat user sendiri hari ini (jam dibuat, zona user) di satu ruang: pengeluaran (transaksi di amplop ruang
+    itu) dan penjualan (pemasukan bernilai > 0). Tidak memuat catatan anggota lain, saldo, atau total ruang.
+    `boleh_hapus` mengikuti jendela ubah (hanya transaksi; pemasukan tidak punya jalur hapus). Kartu Beranda
+    karyawan (R6)."""
+    from app.models.models import Envelope, Income, Transaction
+    try:
+        zona = ZoneInfo(getattr(user, "timezone", None) or ZONA_BAWAAN)
+    except Exception:
+        zona = ZoneInfo(ZONA_BAWAAN)
+    sekarang = sekarang or datetime.now(timezone.utc)
+    hari = sekarang.astimezone(zona).date()
+    # "Hari ini" = jam dibuat di zona user, sama dengan jendela ubah, bukan `transaction_date`/`income_date`:
+    # catatan tanpa tanggal diberi tanggal jam server (UTC), jadi yang dicatat pukul 00.00–07.00 WIB bertanggal
+    # kemarin dan dulu hilang dari kartu ini.
+    awal = datetime.combine(hari, time.min, tzinfo=zona).astimezone(timezone.utc)
+    akhir = datetime.combine(hari + timedelta(days=1), time.min, tzinfo=zona).astimezone(timezone.utc)
+    txn = (await db.execute(
+        select(Transaction.id, Transaction.description, Transaction.amount, Transaction.created_at,
+               Envelope.name, Envelope.emoji)
+        .join(Envelope, Envelope.id == Transaction.envelope_id)
+        .where(Envelope.household_id == household_id, Transaction.user_id == user.id,
+               Transaction.created_at >= awal, Transaction.created_at < akhir,
+               Transaction.is_deleted == False)  # noqa: E712
+    )).all()
+    inc = (await db.execute(
+        select(Income.id, Income.description, Income.amount, Income.created_at)
+        .where(Income.household_id == household_id, Income.user_id == user.id,
+               Income.created_at >= awal, Income.created_at < akhir, Income.amount > 0)
+    )).all()
+
+    def _hapus(dibuat) -> bool:
+        try:
+            cek_jendela_ubah(batasan, milik_sendiri=True, dibuat=dibuat, sekarang=sekarang)
+            return True
+        except PeranDitolak:
+            return False
+
+    items = [{"id": str(i), "jenis": JENIS_PENGELUARAN, "judul": d, "subjudul": n, "emoji": e or "",
+              "nominal": int(a), "waktu": c.isoformat() if c else None, "boleh_hapus": _hapus(c)}
+             for i, d, a, c, n, e in txn]
+    items += [{"id": str(i), "jenis": JENIS_PENJUALAN, "judul": d, "subjudul": None, "emoji": "", "nominal": int(a),
+               "waktu": c.isoformat() if c else None, "boleh_hapus": False} for i, d, a, c in inc]
+    items.sort(key=lambda x: x["waktu"] or "", reverse=True)
+    ringkas = {j: {"jumlah": sum(1 for x in items if x["jenis"] == j),
+                   "total": sum(x["nominal"] for x in items if x["jenis"] == j)} for j in JENIS_SEMUA}
+    return {"tanggal": hari.isoformat(), "items": items, **ringkas}
 
 
 async def batalkan_draf_anggota(db: AsyncSession, household_id, user_id) -> int:

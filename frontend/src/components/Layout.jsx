@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
@@ -27,6 +27,15 @@ import UpdateRequired from './UpdateRequired';
 import { AppConfigProvider, useAppConfigLoader } from '../hooks/useAppConfig';
 import { isUpdateRequired } from '../lib/appConfig';
 import { chatDiRuang, getRuangAktif, pilihanRuang } from '../lib/ruangAktif';
+import { aksesRuang, catatKaryawan, jenisDariAksi, menuUntuk, peranBerubah, ruteBoleh } from '../lib/ruangPeran';
+import { clearCache, loadCache, saveCache } from '../lib/localCache';
+import { kunciCacheBeranda } from '../lib/dashboardRegistry';
+import CatatCepat from './CatatCepat';
+import { useKontribusiPlugin } from '../plugins/useKontribusi';
+import { webPlugin } from '../plugins';
+import {
+  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, halamanUtama, kontribusiUntuk, menuPlugin,
+} from '../lib/pluginHost';
 
 function QuickAddEnvelope({ onClose }) {
   const [envelopes, setEnvelopes] = useState([]);
@@ -330,10 +339,69 @@ const SIDEBAR_ICONS = { '/': 'grid', '/transactions': 'listbullets', '/allocate'
 const sidebarItems = [
   ...navItems.map(item => ({ ...item, icon: SIDEBAR_ICONS[item.to] || item.icon })),
   { to: '/analytics', label: 'Analitik', icon: 'chartpie' },
+  { to: '/laporan', label: 'Laporan', icon: 'file' },
 ];
 
 // Aksi lain di samping tombol "Catat" (top bar desktop); di HP lewat FAB.
 const MORE_ACTIONS = FAB_OPTIONS.filter(o => o.key !== 'expense');
+
+// Form aksi cepat Fitur Tambahan (Plugin H3): komponen lazy dari `src/plugins/<id>` (`aksi`).
+function FormAksiPlugin({ Form, onDone, onCancel }) {
+  return (
+    <Suspense fallback={<div className="text-center py-8 text-gray-400">Loading...</div>}>
+      <Form onDone={onDone} onCancel={onCancel} />
+    </Suspense>
+  );
+}
+
+// Lembar "Lainnya" di HP (Plugin H3, desain A2 butir 8): muncul sebagai item ke-6 bottom nav hanya bila ruang aktif punya
+// menu Fitur Tambahan. Berisi Analitik, menu plugin per grup, dan pintu Fitur Tambahan.
+function ItemLainnya({ to, icon, label, end = false, onClose }) {
+  return (
+    <NavLink to={to} end={end} onClick={onClose}
+      className="flex items-center gap-3 rounded-xl px-3 py-3 text-[15px] font-medium hover:bg-black/5"
+      style={({ isActive }) => ({ color: isActive ? 'var(--brand-600)' : 'var(--text)' })}>
+      <Icon name={icon} size={22} /> {label}
+    </NavLink>
+  );
+}
+
+function LembarLainnya({ grup, fiturTambahan, onClose }) {
+  useEffect(() => {
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [onClose]);
+  return (
+    <div className="lg:hidden fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="Menu lainnya">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute inset-x-0 bottom-0 rounded-t-2xl px-4 pt-3 pb-8 shadow-xl max-h-[80vh] overflow-y-auto"
+        style={{ background: 'var(--card-bg, #fff)' }}>
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full" style={{ background: 'var(--border)' }} aria-hidden="true" />
+        <ItemLainnya onClose={onClose} to="/analytics" icon="chartpie" label="Analitik" />
+        {grup.map(g => (
+          <div key={g.judul} className="mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+            <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{g.judul}</p>
+            {g.items.map(i => <ItemLainnya onClose={onClose} key={i.to} to={i.to} icon={i.icon} label={i.label} end={i.end} />)}
+          </div>
+        ))}
+        {fiturTambahan && (
+          <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+            <ItemLainnya onClose={onClose} to={RUTE_FITUR} icon="puzzle" label="Fitur Tambahan" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Karyawan (Plugin R6): pintu masuk lama (foto struk, CTA, ?struk=1) membuka form Catat karyawan; aksi lain tidak
+// untuknya (server menolak), jadi tidak dibuka sama sekali.
+function aksiKaryawan(key) {
+  if (key === 'expense') return 'karyawan-pengeluaran';
+  if (key === 'income') return 'karyawan-penjualan';
+  return key && key.startsWith('karyawan-') ? key : null;
+}
 
 const TOPBAR_HEIGHT = 88;
 
@@ -367,9 +435,22 @@ export default function Layout() {
   const location = useLocation();
   const appConfig = useAppConfigLoader();
   // Ruang (Plugin R4): daftar dari `GET /ruang`; pilihan tersimpan di perangkat (`lib/ruangAktif.js`).
-  const [ruangDaftar, setRuangDaftar] = useState(null);
+  // Daftar terakhir dari cache (per ruang), supaya menu karyawan sudah benar sebelum jawaban datang (R6).
+  const [ruangDaftar, setRuangDaftar] = useState(() => loadCache('ruang_daftar'));
   const ruang = pilihanRuang(ruangDaftar, getRuangAktif());
   const chat = chatDiRuang(ruang.aktif);   // ADR-P16: chat selalu ruang keluarga
+  // Peran di ruang aktif (R6): karyawan → menu dan Catat tersaring; pemilik/admin ruang usaha → menu Anggota.
+  const akses = aksesRuang(ruang.aktif);
+  const [menunggu, setMenunggu] = useState(0);
+  // Ruang selain ruang keluarga terpilih tapi perannya belum diketahui (kunjungan pertama, tanpa cache): halaman
+  // ditahan sampai GET /ruang menjawab, supaya karyawan tidak membuka halaman yang memanggil endpoint tertutup.
+  const menungguPeran = !ruangDaftar && !!getRuangAktif();
+  // Fitur Tambahan (Plugin H3): kontribusi plugin aktif di ruang ini; karyawan tidak pernah (keputusan H3 B).
+  const pluginState = useKontribusiPlugin({ userId: user?.id, karyawan: akses.karyawan, menungguPeran });
+  const kontribusi = kontribusiUntuk(pluginState.kontribusi, akses);
+  const fiturTambahan = pluginState.katalogAda && !akses.karyawan;
+  const [lainnyaOpen, setLainnyaOpen] = useState(false);
+  const tutupLainnya = useCallback(() => setLainnyaOpen(false), []);
 
   const openChat = () => { if (!chat.tampil) return; setFabMenu(false); setChatMounted(true); setChatOpen(true); };
   const closeChat = useCallback(() => setChatOpen(false), []);
@@ -457,7 +538,8 @@ export default function Layout() {
           return;
         }
         case 'route': {
-          const path = safeRoute(payload.path ?? payload.url);
+          // `to`: aksi saran AI Advisor dan kartu Fitur Tambahan, selalu ke halaman plugin `/p/<id>…` (Plugin H2/H3).
+          const path = safeRoute(payload.path ?? payload.url ?? payload.to);
           if (path) navigate(path);
           return;
         }
@@ -501,12 +583,38 @@ export default function Layout() {
 
   useEffect(() => {
     if (!user) return;
-    api.daftarRuang().then(({ ok, data }) => { if (ok && data) setRuangDaftar(data); });
+    const muat = () => api.daftarRuang().then(({ ok, data }) => {
+      if (ok && data) {
+        // Peran di ruang aktif berubah (mis. admin diturunkan): buang cache Beranda ruang ini dari peran lama.
+        if (peranBerubah(loadCache('ruang_daftar'), data, getRuangAktif())) kunciCacheBeranda(user.id).forEach(k => clearCache(k));
+        setRuangDaftar(data);
+        saveCache('ruang_daftar', data);
+        return;
+      }
+      // Gagal tanpa cache (mis. offline di kunjungan pertama): jangan menahan halaman selamanya.
+      setRuangDaftar(d => d || { bawaan: null, items: [], boleh_buat_usaha: false });
+    });
+    muat();
+    window.addEventListener('jatahku:ruang-berubah', muat);   // nama ruang diganti (halaman Anggota, R6)
+    return () => window.removeEventListener('jatahku:ruang-berubah', muat);
   }, [user]);
 
-  // Badge Langganan (telat + belum bayar periode ini) dan Papan disiplin untuk sidebar.
+  // Angka antrean persetujuan di menu Anggota (pemilik/admin ruang usaha; keputusan R6 untuk pertanyaan A4).
   useEffect(() => {
-    if (!user) return undefined;
+    if (!user || !akses.pengelola || !akses.ruangId) return undefined;
+    const rid = akses.ruangId;
+    const load = () => api.daftarPersetujuan(rid).then(({ ok, data }) => { if (ok && Array.isArray(data)) setMenunggu(data.length); });
+    load();
+    const events = ['jatahku:draf-baru', 'jatahku:draf-diputus', 'focus'];
+    events.forEach(e => window.addEventListener(e, load));
+    return () => events.forEach(e => window.removeEventListener(e, load));
+  }, [user, akses.pengelola, akses.ruangId]);
+
+  // Badge Langganan (telat + belum bayar periode ini) dan Papan disiplin untuk sidebar.
+  // Karyawan ruang usaha tidak melihat keduanya (server menolak, R5).
+  const karyawan = akses.karyawan;
+  useEffect(() => {
+    if (!user || karyawan || menungguPeran) { setLanggananBadge(0); setLeaderboard([]); return undefined; }
     const load = () => {
       api.getRecurring().then(items => setLanggananBadge(
         (items || []).filter(i => i.is_active !== false && (i.status === 'overdue' || i.status === 'due')).length,
@@ -519,7 +627,7 @@ export default function Layout() {
     load();
     window.addEventListener('jatahku:txn-added', load);
     return () => window.removeEventListener('jatahku:txn-added', load);
-  }, [user]);
+  }, [user, karyawan, menungguPeran]);
 
   // Pintasan PWA / tautan: ?chat=1 membuka chat bot.
   useEffect(() => {
@@ -573,21 +681,66 @@ export default function Layout() {
     );
   }
   if (!user) return <Navigate to="/login" />;
+  // Halaman yang bukan untuk peran ini (mis. Amplop untuk karyawan, Anggota di ruang keluarga) → Beranda.
+  if (ruangDaftar && !ruteBoleh(location.pathname, akses)) return <Navigate to="/" replace />;
 
   const initial = user.name ? user.name.charAt(0).toUpperCase() : '?';
   const firstName = (user.name || '').trim().split(/\s+/)[0] || 'kamu';
+  // Aksi cepat Fitur Tambahan (A2 butir 4): form plugin di modal bila ada di `src/plugins/<id>`, selain itu halaman
+  // plugin dengan `?aksi=<key>`. Karyawan tidak pernah punya aksi plugin (keputusan H3 B).
+  const grupAksiPlugin = karyawan ? [] : aksiCatatPlugin(kontribusi);
+  const aksiPluginDatar = grupAksiPlugin.flatMap(g => g.aksi);
+  const formAksiPlugin = (kunci) => {
+    const a = aksiPluginDatar.find(x => x.key === kunci);
+    return a ? webPlugin(a.plugin)?.aksi?.[a.aksi] || null : null;
+  };
   const openAction = (key) => {
-    setCatatMenu(false); setFabMenu(false); setActionPayload(null); setFabAction(key);
+    setCatatMenu(false); setFabMenu(false); setActionPayload(null);
+    if (aksiDariKunci(key) && !formAksiPlugin(key)) {
+      const a = aksiPluginDatar.find(x => x.key === key);
+      const halaman = a ? halamanUtama(kontribusi, a.plugin) : null;
+      if (halaman) navigate(`${halaman}?aksi=${encodeURIComponent(a.aksi)}`);
+      return;
+    }
+    setFabAction(key);
   };
   const closeAction = () => { setFabAction(null); setActionPayload(null); };
+  const opsiKaryawan = catatKaryawan(akses);
+  const fabOptions = karyawan ? opsiKaryawan : [...FAB_OPTIONS, ...aksiPluginDatar];
+  const moreActions = karyawan ? opsiKaryawan.slice(1) : MORE_ACTIONS;
+  const catatUtama = karyawan ? opsiKaryawan[0]?.key : 'expense';
+  const aksi = karyawan ? (opsiKaryawan.length ? aksiKaryawan(fabAction) : null) : fabAction;
+  // Plugin R7: di ruang usaha, Catat pengeluaran membuka lembar Catat cepat (karyawan selalu; pemilik/admin kecuali
+  // foto struk). "Form lengkap" dari lembar itu membuka form lama (`expense-lengkap`, `income`).
+  const cepatPengelola = !karyawan && akses.usaha && fabAction === 'expense' && !actionPayload?.photo;
+  const lembarCepat = karyawan
+    ? (aksi?.startsWith('karyawan-') ? jenisDariAksi(aksi) : null)
+    : (cepatPengelola ? 'pengeluaran' : null);
+  // Form lama hanya untuk peran selain karyawan.
+  const aksiLama = karyawan || cepatPengelola ? null : (fabAction === 'expense-lengkap' ? 'expense' : fabAction);
+  // Aksi cepat Fitur Tambahan (Plugin H3): form plugin di modal; menu plugin per grup; item "Lainnya" di HP.
+  const aksiPlugin = aksiLama && aksiDariKunci(aksiLama) ? aksiPluginDatar.find(x => x.key === aksiLama) || null : null;
+  const FormPlugin = aksiPlugin ? formAksiPlugin(aksiPlugin.key) : null;
+  const menuPlug = menuPlugin(kontribusi);
+  const grupMenuPlugin = [
+    { judul: 'Usaha', items: menuPlug.usaha },
+    { judul: 'Lainnya', items: menuPlug.lainnya },
+  ].filter(g => g.items.length);
+  const adaLainnya = !karyawan && adaMenuPlugin(kontribusi);
+  const selesaiCepat = (hasil) => {
+    closeAction();
+    showNotice(hasil.hasil === 'menunggu' ? 'Tersimpan · menunggu persetujuan admin'
+      : (hasil.pesan && hasil.pesan !== 'Tercatat.' ? hasil.pesan : 'Tercatat'));
+  };
   const squareBtn = 'w-[var(--nav-h)] h-[var(--nav-h)] shrink-0 rounded-xl inline-flex items-center justify-center transition-colors';
   const squareStyle = { background: 'var(--card-bg)', border: '1px solid var(--border)', color: 'var(--text-muted)' };
 
   return (
     <AppConfigProvider value={appConfig}>
     <div className="min-h-screen bg-page">
-      <Sidebar items={sidebarItems} langgananBadge={langgananBadge} leaderboard={leaderboard}
+      <Sidebar items={menuUntuk(sidebarItems, akses, { menunggu })} langgananBadge={langgananBadge} leaderboard={leaderboard}
         isAdmin={!!user?.is_admin} mode={mode} onToggleMode={toggleMode}
+        grupPlugin={karyawan ? [] : grupMenuPlugin} fiturTambahan={fiturTambahan}
         ruangSlot={ruang.tampil ? <RuangPicker pilihan={ruang} /> : null} />
 
       <div className="lg:pl-[var(--sidebar-w)]" style={{ '--sidebar-w': `${SIDEBAR_WIDTH}px` }}>
@@ -613,31 +766,49 @@ export default function Layout() {
           <div className={`${squareBtn} [&>div>button]:p-2`} style={squareStyle}>
             <NotificationBell />
           </div>
+          {catatUtama && (
           <div className="relative flex" ref={catatRef}>
-            <button type="button" onClick={() => openAction('expense')}
-              className="h-[var(--nav-h)] px-4 rounded-l-xl inline-flex items-center gap-2 text-[15px] font-bold transition-opacity hover:opacity-90"
+            <button type="button" onClick={() => openAction(catatUtama)}
+              className={`h-[var(--nav-h)] px-4 ${moreActions.length ? 'rounded-l-xl' : 'rounded-xl'} inline-flex items-center gap-2 text-[15px] font-bold transition-opacity hover:opacity-90`}
               style={{ background: 'var(--brand-400)', color: '#0f172a' }}>
               <Icon name="plus" size={18} weight="bold" /> Catat
             </button>
+            {moreActions.length > 0 && (
             <button type="button" onClick={() => setCatatMenu(m => !m)} aria-expanded={catatMenu} aria-haspopup="menu"
-              aria-label="Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo"
+              aria-label={karyawan ? 'Catat lainnya: penjualan'
+                : `Catat lainnya: pemasukan, amplop, langganan, cocokkan saldo${aksiPluginDatar.map(a => `, ${a.label}`).join('')}`}
               className="h-[var(--nav-h)] w-10 rounded-r-xl inline-flex items-center justify-center transition-opacity hover:opacity-90"
               style={{ background: 'var(--brand-400)', color: '#0f172a', borderLeft: '1px solid rgba(15,23,42,0.18)' }}>
               <Icon name="chevron" size={14} weight="bold" />
             </button>
+            )}
             {catatMenu && (
               <div role="menu" className="absolute right-0 top-[calc(var(--nav-h)+8px)] w-60 rounded-xl py-2 shadow-lg z-50"
                 style={{ background: 'var(--card-bg)', border: '1px solid var(--border)' }}>
-                {MORE_ACTIONS.map(opt => (
+                {moreActions.map(opt => (
                   <button key={opt.key} type="button" role="menuitem" onClick={() => openAction(opt.key)}
                     className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 hover:bg-black/5"
                     style={{ color: 'var(--text)' }}>
                     <Icon name={opt.icon} size={18} /> {opt.label}
                   </button>
                 ))}
+                {/* Grup per Fitur Tambahan, maksimal 2 aksi (desain A2 butir 4). */}
+                {grupAksiPlugin.map(g => (
+                  <div key={g.plugin} role="group" aria-label={g.nama} className="mt-1 pt-1" style={{ borderTop: '1px solid var(--border)' }}>
+                    <p className="px-4 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{g.nama}</p>
+                    {g.aksi.map(opt => (
+                      <button key={opt.key} type="button" role="menuitem" onClick={() => openAction(opt.key)}
+                        className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3 hover:bg-black/5"
+                        style={{ color: 'var(--text)' }}>
+                        <Icon name={opt.icon} size={18} /> {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -713,25 +884,37 @@ export default function Layout() {
         </div>
       </header>
 
-      {/* Bottom nav HP & tablet — 5 item; layar lebar memakai sidebar */}
+      {/* Bottom nav HP & tablet — 5 item; layar lebar memakai sidebar. Item ke-6 "Lainnya" hanya bila ruang aktif punya
+          menu Fitur Tambahan (keputusan H3 C), supaya tampilan user tanpa plugin tidak berubah. */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-50">
         <div className="flex justify-around py-2">
-          {navItems.map(item => (
+          {menuUntuk(navItems, akses, { kelola: false }).map(item => (
             <NavLink key={item.to} to={item.to} end={item.to === '/'}
               className={({ isActive }) =>
-                `flex flex-col items-center gap-0.5 px-2 py-1 text-xs font-medium transition-colors ${
+                `flex flex-col items-center gap-0.5 ${adaLainnya ? 'px-1' : 'px-2'} py-1 text-xs font-medium transition-colors ${
                   isActive ? 'text-brand-600' : 'text-gray-400'
                 }`}>
               <Icon name={item.icon} size={22} />{item.label}
             </NavLink>
           ))}
+          {adaLainnya && (
+            <button type="button" onClick={() => setLainnyaOpen(true)} aria-haspopup="dialog" aria-expanded={lainnyaOpen}
+              className={`flex flex-col items-center gap-0.5 px-1 py-1 text-xs font-medium transition-colors ${
+                lainnyaOpen || location.pathname === '/analytics' || location.pathname.startsWith('/p/') || location.pathname === RUTE_FITUR
+                  ? 'text-brand-600' : 'text-gray-400'}`}>
+              <Icon name="more" size={22} />Lainnya
+            </button>
+          )}
         </div>
       </nav>
+      {lainnyaOpen && adaLainnya && <LembarLainnya grup={grupMenuPlugin} fiturTambahan={fiturTambahan} onClose={tutupLainnya} />}
 
-      <TelegramPrompt />
+      {!karyawan && !menungguPeran && <TelegramPrompt />}
       <OfflineQueueCenter />
-      <PendingProofsBanner />
-      <main className="max-w-6xl lg:max-w-[1520px] mx-auto lg:mx-0 px-4 lg:px-8 py-6 lg:py-8 pb-24 lg:pb-10"><Outlet context={{ topbarSlot }} /></main>
+      {!karyawan && !menungguPeran && <PendingProofsBanner />}
+      <main className="max-w-6xl lg:max-w-[1520px] mx-auto lg:mx-0 px-4 lg:px-8 py-6 lg:py-8 pb-24 lg:pb-10">{menungguPeran
+        ? <div className="text-center py-12 text-gray-400">Loading...</div>
+        : <Outlet context={{ topbarSlot, ruang, akses, plugin: { ...pluginState, kontribusi, katalogAda: fiturTambahan } }} />}</main>
       </div>
       {/* Global FAB — speed dial */}
       {fabMenu && (
@@ -750,10 +933,11 @@ export default function Layout() {
               <Icon name="chat" size={24} weight="fill" />
             </button>
           )}
+          {fabOptions.length > 0 && (
           <div className="pointer-events-auto relative">
             {fabMenu && (
               <div className="absolute bottom-16 right-0 flex flex-col-reverse items-end gap-3 pb-2">
-                {FAB_OPTIONS.map((opt, i) => (
+                {fabOptions.map((opt, i) => (
                   <button
                     key={opt.key}
                     onClick={() => openAction(opt.key)}
@@ -767,7 +951,7 @@ export default function Layout() {
               </div>
             )}
             <button
-              onClick={() => setFabMenu(m => !m)}
+              onClick={() => (fabOptions.length === 1 ? openAction(fabOptions[0].key) : setFabMenu(m => !m))}
               className={`w-14 h-14 rounded-2xl text-white flex items-center justify-center transition-all active:scale-95 ${!fabMenu ? 'hover:scale-105' : ''}`}
               style={{ background: 'linear-gradient(145deg,#1D9E75,#0F6E56)', boxShadow: '0 10px 24px -8px rgba(15,110,86,0.6)' }}
               title={fabMenu ? 'Tutup menu' : 'Menu cepat'}
@@ -776,6 +960,7 @@ export default function Layout() {
               <Icon name={fabMenu ? 'close' : 'plus'} size={26} weight="bold" />
             </button>
           </div>
+          )}
         </div>
       </div>
       {chatMounted && chat.tampil && <ChatPanel open={chatOpen} onClose={closeChat} draft={chatDraftState} ruangLabel={chat.label} />}
@@ -799,29 +984,41 @@ export default function Layout() {
         </div>
       )}
       {/* Modals for speed dial actions */}
-      {fabAction && (
+      {aksi && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={closeAction}>
           <div key={actionSeq} className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="font-display font-bold text-lg mb-4 flex items-center gap-2">
-              {fabAction === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
-              {fabAction === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
-              {fabAction === 'income' && <><Icon name="income" size={22} /> Income baru</>}
-              {fabAction === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
-              {fabAction === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
-              {ENVELOPE_FIELD[fabAction] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[fabAction].title}</>}
+              {aksiLama === 'expense' && <><Icon name="expense" size={22} /> Catat pengeluaran</>}
+              {aksiLama === 'envelope' && <><Icon name="envelope" size={22} /> Amplop baru</>}
+              {aksiLama === 'income' && <><Icon name="income" size={22} /> Income baru</>}
+              {aksiLama === 'langganan' && <><Icon name="langganan" size={22} /> Langganan</>}
+              {aksiLama === 'balance' && <><Icon name="balance" size={22} /> Cocokkan saldo</>}
+              {lembarCepat && <><Icon name="plus" size={22} /> Catat cepat · {ruang.aktif?.nama}</>}
+              {aksiPlugin && <><Icon name={aksiPlugin.icon} size={22} /> {aksiPlugin.label}</>}
+              {ENVELOPE_FIELD[aksiLama] && <><Icon name="envelope" size={22} /> {ENVELOPE_FIELD[aksiLama].title}</>}
             </h3>
-            {fabAction === 'expense' && (
+            {aksiLama === 'expense' && (
               <MultiAddTransaction onSaved={closeAction} onCancel={closeAction}
                 initialPhoto={actionPayload?.photo} photoMode={actionPayload?.photoMode} />
             )}
-            {fabAction === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
-            {fabAction === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
-            {fabAction === 'langganan' && (
+            {aksiLama === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
+            {aksiLama === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
+            {aksiLama === 'langganan' && (
               <CombinedLanggananModal onClose={closeAction} focusId={actionPayload?.focusId} mode={actionPayload?.mode}
                 prefill={actionPayload?.prefill} />
             )}
-            {fabAction === 'balance' && <BalanceCheck onClose={closeAction} />}
-            {ENVELOPE_FIELD[fabAction] && <EnvelopeFieldConfirm kind={fabAction} payload={actionPayload || {}} onClose={closeAction} />}
+            {aksiLama === 'balance' && <BalanceCheck onClose={closeAction} />}
+            {ENVELOPE_FIELD[aksiLama] && <EnvelopeFieldConfirm kind={aksiLama} payload={actionPayload || {}} onClose={closeAction} />}
+            {lembarCepat && (
+              <CatatCepat ruang={ruang.aktif} jenisAwal={lembarCepat}
+                jenisBoleh={karyawan ? akses.jenisCatatan : ['pengeluaran', 'penjualan']}
+                onDone={selesaiCepat} onCancel={closeAction}
+                onFormLengkap={karyawan ? undefined : (j) => setFabAction(j === 'penjualan' ? 'income' : 'expense-lengkap')} />
+            )}
+            {FormPlugin && (
+              <FormAksiPlugin Form={FormPlugin} onCancel={closeAction}
+                onDone={(pesan) => { closeAction(); window.dispatchEvent(new CustomEvent('jatahku:txn-added')); if (pesan) showNotice(pesan); }} />
+            )}
           </div>
         </div>
       )}

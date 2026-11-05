@@ -179,7 +179,8 @@ class MigrationTests(unittest.TestCase):
                 self.assertIs(kwargs.get("if_exists"), True)
 
     def test_single_head_after_kotak_belajar(self):
-        """Tahap 2 (c9e4a7f2b5d8) menyusul tahap 1 (e7b3d5a9c1f4), yang menyusul Plugin H1 (a7e3c1f5d9b2); satu head."""
+        """Tahap 2 (c9e4a7f2b5d8) menyusul Plugin R7 (d7r7k4a1m9c3, di atas laporan berkala 967a27d0c15d, yang menyusul
+        tahap 1 e7b3d5a9c1f4, yang menyusul Plugin H1 a7e3c1f5d9b2); satu head."""
         from alembic.config import Config
         from alembic.script import ScriptDirectory
         cfg = Config(str(REPO / "alembic.ini"))
@@ -191,7 +192,26 @@ class MigrationTests(unittest.TestCase):
             return [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
                     if f"down_revision: Union[str, None] = '{parent}'" in p.read_text(encoding="utf-8")]
         self.assertEqual(children("a7e3c1f5d9b2"), [MIGRATION.name])
-        self.assertEqual(children("e7b3d5a9c1f4"), [MIGRATION_2.name])
+        self.assertEqual(children("d7r7k4a1m9c3"), [MIGRATION_2.name])
+        self.assertEqual(children("e7b3d5a9c1f4"), ["967a27d0c15d_laporan_berkala.py"])
+        # Rantai dari head ke Plugin H1 (iterate_revisions tidak memuat batas bawahnya).
+        self.assertEqual([r.revision for r in script.iterate_revisions("c9e4a7f2b5d8", "a7e3c1f5d9b2")],
+                         ["c9e4a7f2b5d8", "d7r7k4a1m9c3", "967a27d0c15d", "e7b3d5a9c1f4"])
+
+    def test_single_head_after_plugin_h1(self):
+        """Migrasi ini menyusul Plugin H1 (a7e3c1f5d9b2) sebagai satu-satunya anaknya, dan Alembic tetap punya satu head
+        yang garisnya melewati migrasi ini (migrasi sesudahnya boleh menyusul, mis. laporan berkala 967a27d0c15d)."""
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        cfg = Config(str(REPO / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO / "alembic"))   # tidak bergantung folder kerja
+        script = ScriptDirectory.from_config(cfg)
+        heads = script.get_heads()
+        self.assertEqual(len(heads), 1, heads)
+        self.assertIn("e7b3d5a9c1f4", [r.revision for r in script.iterate_revisions(heads[0], "base")])
+        children = [p.name for p in (REPO / "alembic" / "versions").glob("*.py")
+                    if "down_revision: Union[str, None] = 'a7e3c1f5d9b2'" in p.read_text(encoding="utf-8")]
+        self.assertEqual(children, [MIGRATION.name])
 
 
 class DonationMigrationTests(unittest.TestCase):
@@ -199,7 +219,7 @@ class DonationMigrationTests(unittest.TestCase):
 
     def test_migration_is_idempotent(self):
         mod = _load(MIGRATION_2)
-        self.assertEqual((mod.revision, mod.down_revision), ("c9e4a7f2b5d8", "e7b3d5a9c1f4"))
+        self.assertEqual((mod.revision, mod.down_revision), ("c9e4a7f2b5d8", "d7r7k4a1m9c3"))
         self.assertIn("Idempoten", mod.__doc__)
         first, second = _run_with(mod, "upgrade"), _run_with(mod, "upgrade")
         self.assertEqual(first.statements, KOTAK_DDL)   # termasuk sample_lines; sumber yang sama dengan lifespan

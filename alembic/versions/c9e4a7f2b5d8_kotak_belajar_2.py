@@ -19,7 +19,7 @@ ini aman dijalankan sebelum ATAU sesudah deploy dan tidak ada jendela 500 (kolom
 Indeks G8 pada tabel lama hanya dibuat migrasi ini; tanpanya pemeriksaan NOT EXISTS di `decide` tetap berlaku.
 
 Revision ID: c9e4a7f2b5d8
-Revises: e7b3d5a9c1f4
+Revises: d7r7k4a1m9c3
 Create Date: 2026-11-05
 """
 from typing import Sequence, Union
@@ -31,7 +31,7 @@ from sqlalchemy.dialects import postgresql
 from app.services.kotak_struk.schema import KOTAK_DDL
 
 revision: str = 'c9e4a7f2b5d8'
-down_revision: Union[str, None] = 'e7b3d5a9c1f4'
+down_revision: Union[str, None] = 'd7r7k4a1m9c3'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -1,15 +1,17 @@
 import logging
 from uuid import UUID
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, exists, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from app.models.models import (
     User, Household, HouseholdMember, Envelope,
     Transaction, Income, Allocation, MonthlySnapshot,
     RecurringTransaction, Goal, BalanceCheck,
     Notification, NotificationPreference, UserStreak,
-    PendingTransaction, PaymentOrder, ProofRule, ProofSample,
+    PendingTransaction, PaymentOrder, ProofRule, ProofSample, Report, ReportSettings,
 )
 from app.services.kotak_struk import belajar, donasi
+from app.services.laporan.pencatat import alihkan_pencatat
 
 from app.services.ruang import keanggotaan_keluarga, ruang_keluarga_id
 
@@ -187,6 +189,44 @@ async def merge_users(
         .values(user_id=target_user_id)
     )
 
+    # 2c. Reassign source's reports (laporan berkala) → target. `reports.user_id` FK CASCADE: tanpa langkah ini
+    # DELETE users di langkah 8 ikut membuang laporan sumber. Laporan yang periodenya sudah ada di target
+    # (kunci unik user + jenis + awal periode) dibuang lebih dulu; milik target tidak disentuh.
+    laporan_target = aliased(Report)
+    await db.execute(
+        delete(Report).where(
+            Report.user_id == source_user_id,
+            exists().where(
+                laporan_target.user_id == target_user_id,
+                laporan_target.jenis == Report.jenis,
+                laporan_target.periode_mulai == Report.periode_mulai,
+            ),
+        )
+    )
+    await db.execute(
+        update(Report).where(Report.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+
+    # 2d. Pengaturan laporan (satu baris per user, user_id = kunci utama; FK CASCADE seperti 2c): pindah ke target
+    # bila target belum punya, selain itu milik sumber dibuang dan milik target tidak disentuh.
+    pengaturan_target = aliased(ReportSettings)
+    await db.execute(
+        delete(ReportSettings).where(
+            ReportSettings.user_id == source_user_id,
+            exists().where(pengaturan_target.user_id == target_user_id),
+        )
+    )
+    await db.execute(
+        update(ReportSettings).where(ReportSettings.user_id == source_user_id)
+        .values(user_id=target_user_id)
+    )
+
+    # 2e. Catatan sumber di laporan beku (milik target sesudah 2c, atau anggota lain; Ruling R15): `pencatat_id`
+    # sumber → target, nama dan teks tetap seperti saat terbit. Tanpa ini barisnya menunjuk akun yang dihapus di
+    # langkah 8, dan hapus akun target kelak tidak bisa menganonimkannya.
+    await alihkan_pencatat(db, source_user_id, target_user_id)
+
     # 3. Reassign personal envelopes → target
     await db.execute(
         update(Envelope).where(Envelope.owner_id == source_user_id)
@@ -210,6 +250,13 @@ async def merge_users(
         # Move balance checks (log cocokkan saldo) from discarded household
         await db.execute(
             update(BalanceCheck).where(BalanceCheck.household_id == discard_hh_id)
+            .values(household_id=keep_household_id)
+        )
+
+        # Move reports (laporan berkala) from discarded household. Tanpa ini FK SET NULL melepas tautannya saat
+        # household dihapus di bawah.
+        await db.execute(
+            update(Report).where(Report.household_id == discard_hh_id)
             .values(household_id=keep_household_id)
         )
 

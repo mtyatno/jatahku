@@ -14,7 +14,7 @@ const ITEM_HEIGHT = 'var(--nav-h)';
 
 const AVATAR_COLORS = ['var(--brand-400)', '#A5A8F7', '#F5B84A', '#F59AAE', '#7DD3FC'];
 
-function NavItem({ to, icon, label, badge, end }) {
+function NavItem({ to, icon, label, badge, badgeLabel = 'perlu dibayar', end }) {
   return (
     <NavLink to={to} end={end}
       className={({ isActive }) =>
@@ -29,7 +29,7 @@ function NavItem({ to, icon, label, badge, end }) {
       {badge > 0 && (
         <span className="min-w-[22px] h-[22px] px-1.5 rounded-full text-xs font-bold inline-flex items-center justify-center"
           style={{ background: '#E24B4A', color: '#fff' }}
-          aria-label={`${badge} perlu dibayar`}>
+          aria-label={`${badge} ${badgeLabel}`}>
           {badge}
         </span>
       )}
@@ -62,7 +62,19 @@ function Leaderboard({ members }) {
   );
 }
 
-export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, mode, onToggleMode, ruangSlot = null }) {
+// Menu Fitur Tambahan (Plugin H3, desain A2 butir 2): grup "Usaha" (dan "Lainnya") di bawah menu inti; pintu Fitur
+// Tambahan di kaki sidebar, di atas Pengaturan, hanya bila ruang aktif punya katalog.
+function GrupMenu({ judul, items }) {
+  return (
+    <div role="group" aria-label={judul} className="flex flex-col gap-0.5" style={{ marginTop: 'clamp(6px, 1.6vh, 14px)' }}>
+      <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{judul}</p>
+      {items.map(item => <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} end={item.end} />)}
+    </div>
+  );
+}
+
+export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, mode, onToggleMode, ruangSlot = null,
+  grupPlugin = [], fiturTambahan = false }) {
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 flex-col px-4 overflow-hidden"
       style={{
@@ -79,16 +91,24 @@ export default function Sidebar({ items, langgananBadge, leaderboard, isAdmin, m
       <div role="navigation" aria-label="Menu utama" className="flex flex-col gap-0.5">
         {items.map(item => (
           <NavItem key={item.to} {...item} end={item.to === '/'}
-            badge={item.to === '/langganan' ? langgananBadge : 0} />
+            badge={item.badge ?? (item.to === '/langganan' ? langgananBadge : 0)} />
         ))}
         {isAdmin && <NavItem to="/admin" icon="admin" label="Admin" />}
       </div>
+
+      {grupPlugin.map(g => <GrupMenu key={g.judul} judul={g.judul} items={g.items} />)}
 
       <div className="flex-1 min-h-3" />
 
       {leaderboard.length > 0 && <Leaderboard members={leaderboard} />}
 
-      <div className="flex items-center gap-1" style={{ borderTop: '1px solid var(--border)', marginTop: 'clamp(8px, 2vh, 20px)', paddingTop: 'clamp(6px, 1.6vh, 16px)' }}>
+      {fiturTambahan && (
+        <div style={{ marginTop: 'clamp(8px, 2vh, 20px)' }}>
+          <NavItem to="/fitur-tambahan" icon="puzzle" label="Fitur Tambahan" />
+        </div>
+      )}
+
+      <div className="flex items-center gap-1" style={{ borderTop: '1px solid var(--border)', marginTop: fiturTambahan ? 'clamp(4px, 1vh, 8px)' : 'clamp(8px, 2vh, 20px)', paddingTop: 'clamp(6px, 1.6vh, 16px)' }}>
         <div className="flex-1 min-w-0">
           <NavItem to="/settings" icon="settings" label="Pengaturan" />
         </div>

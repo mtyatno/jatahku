@@ -36,11 +36,16 @@ class ApiClient {
   }
 
   async request(path, options = {}) {
+    const { ruangKeluarga = false, ...fetchOptions } = options;
+    options = fetchOptions;
     const isFormData = options.body instanceof FormData;
     // Ruang yang sedang dibuka (Plugin R4): header dikirim di setiap permintaan; server yang memutuskan.
-    const headers = withRuangHeader(isFormData
+    // `ruangKeluarga: true` (R7, tawaran pengeluaran pribadi di Catat cepat): sengaja tanpa header = ruang keluarga
+    // user sendiri, hanya untuk permintaan yang dipilih user untuk ruang keluarganya.
+    const dasar = isFormData
       ? { ...options.headers }
-      : { 'Content-Type': 'application/json', ...options.headers });
+      : { 'Content-Type': 'application/json', ...options.headers };
+    const headers = ruangKeluarga ? dasar : withRuangHeader(dasar);
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -82,14 +87,74 @@ class ApiClient {
   }
 
   async buatRuang(nama) {
+    return this.ruangKirim('/ruang', 'POST', { nama });
+  }
+
+  // Anggota, undangan, batasan, persetujuan, log (Plugin R5–R6, 04-kontrak-api.md §2). Ruang dari path; server
+  // memeriksa peran owner/admin. Semua mengembalikan { ok, status, data } (data = JSON atau { detail }).
+  async ruangKirim(path, method = 'GET', body = undefined) {
     try {
-      const res = await this.request('/ruang', { method: 'POST', body: JSON.stringify({ nama }) });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, data };
+      const res = await this.request(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      const data = res.status === 204 ? null : await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
     } catch {
-      return { ok: false, data: { detail: 'Terjadi kesalahan jaringan' } };
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
     }
   }
+
+  gabungRuang(kode) { return this.ruangKirim('/ruang/gabung', 'POST', { kode }); }
+  ubahRuang(rid, nama) { return this.ruangKirim(`/ruang/${rid}`, 'PATCH', { nama }); }
+  ruangAnggota(rid) { return this.ruangKirim(`/ruang/${rid}/anggota`); }
+  ubahAnggota(rid, uid, isi) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}`, 'PATCH', isi); }
+  keluarkanAnggota(rid, uid) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}`, 'DELETE'); }
+  aturBatasan(rid, uid, batasan) { return this.ruangKirim(`/ruang/${rid}/anggota/${uid}/batasan`, 'PUT', batasan); }
+  daftarUndangan(rid) { return this.ruangKirim(`/ruang/${rid}/undangan`); }
+  buatUndangan(rid, peran) { return this.ruangKirim(`/ruang/${rid}/undangan`, 'POST', { peran }); }
+  cabutUndangan(rid, id) { return this.ruangKirim(`/ruang/${rid}/undangan/${id}`, 'DELETE'); }
+  daftarPersetujuan(rid) { return this.ruangKirim(`/ruang/${rid}/persetujuan`); }
+  setujuiDraf(rid, id) { return this.ruangKirim(`/ruang/${rid}/persetujuan/${id}/setujui`, 'POST'); }
+  tolakDraf(rid, id, alasan) { return this.ruangKirim(`/ruang/${rid}/persetujuan/${id}/tolak`, 'POST', { alasan: alasan || null }); }
+  logRuang(rid, limit = 50) { return this.ruangKirim(`/ruang/${rid}/audit?limit=${limit}`); }
+  catatKaryawan(path, body) { return this.ruangKirim(path, 'POST', body); }
+  // Kamus ruang (R7): owner/admin.
+  kamusRuang(rid, q = '') {
+    const qs = q ? `&q=${encodeURIComponent(q)}` : '';
+    return this.ruangKirim(`/ruang/${rid}/kamus?limit=200${qs}`);
+  }
+  hapusKamus(rid, id) { return this.ruangKirim(`/ruang/${rid}/kamus/${id}`, 'DELETE'); }
+
+  // Catat cepat (R7, 04-kontrak-api.md §3): saran amplop + sumber + aturan batasan untuk nominal itu. Ruang dari header
+  // (ruang aktif), atau ruang keluarga user sendiri bila `ruangKeluarga` (tawaran pengeluaran pribadi).
+  async saranCatat({ description, amount }, { ruangKeluarga = false } = {}) {
+    try {
+      const res = await this.request('/transactions/suggest-envelope', {
+        method: 'POST', ruangKeluarga,
+        body: JSON.stringify({ description, ...(amount ? { amount } : {}) }),
+      });
+      if (res.ok) return res.json();
+    } catch {}
+    return null;
+  }
+
+  // Catat di ruang keluarga dari Catat cepat ruang usaha (tawaran pribadi). Ruang tulis tetap dari amplopnya (R3).
+  async catatDiRuangKeluarga(body) {
+    try {
+      const res = await this.request('/transactions/', { method: 'POST', ruangKeluarga: true, body: JSON.stringify(body) });
+      return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
+  }
+
+  // Fitur Tambahan (Plugin H1/H3, 04-kontrak-api.md §5). Katalog dan kontribusi untuk ruang aktif (header); pasang,
+  // lanjut, jeda, copot dengan ruang dari path. Semua mengembalikan { ok, status, data }.
+  katalogPlugin() { return this.ruangKirim('/plugins'); }
+  kontribusiPlugin() { return this.ruangKirim('/plugins/contributions'); }
+  aksiPlugin(rid, pluginId, aksi, body = undefined) {
+    return this.ruangKirim(`/ruang/${rid}/plugins/${pluginId}/${aksi}`, 'POST', body);
+  }
+  kartuBeranda() { return this.ruangKirim('/dashboard/cards'); }
+  simpanTataLetak(body) { return this.ruangKirim('/dashboard/layout', 'PUT', body); }
 
   // Unggah FormData lewat XHR supaya progres unggah terlapor (fetch tidak bisa).
   // Token + header klien dirakit ulang di setiap kirim: setelah refresh, kirim ulang memakai token baru.
@@ -437,6 +502,44 @@ class ApiClient {
   async getPeriods(count = 12) {
     const res = await this.request(`/analytics/periods?count=${count}`);
     return res.ok ? res.json() : [];
+  }
+
+  // Laporan berkala. Nama berkas PDF selalu dari `nama_file` di JSON (CORS tidak membuka Content-Disposition).
+  async getLaporanList({ limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (limit != null) params.set('limit', limit);
+    if (offset != null) params.set('offset', offset);
+    const qs = params.toString();
+    const res = await this.request(`/laporan${qs ? `?${qs}` : ''}`);
+    if (!res.ok) throw new Error('Gagal memuat laporan');
+    return res.json();
+  }
+
+  async getLaporan(id) {
+    const res = await this.request(`/laporan/${encodeURIComponent(id)}`);
+    if (res.status === 404) throw new Error('Laporan tidak ditemukan');
+    if (!res.ok) throw new Error('Gagal memuat laporan');
+    return res.json();
+  }
+
+  // Mengembalikan Response mentah: pemanggil (laporanView.unduhPdf) menangani 200/409/429/503.
+  unduhLaporanPdf(id) {
+    return this.request(`/laporan/${encodeURIComponent(id)}/pdf`);
+  }
+
+  async getLaporanPengaturan() {
+    const res = await this.request('/user/laporan-pengaturan');
+    if (!res.ok) throw new Error('Gagal memuat pengaturan laporan');
+    return res.json();
+  }
+
+  // 422 membawa `detail` berupa kalimat siap tampil; 429 berbadan {error}.
+  async simpanLaporanPengaturan(body) {
+    const res = await this.request('/user/laporan-pengaturan', { method: 'PUT', body: JSON.stringify(body) });
+    const data = await res.json().catch(() => null);
+    if (res.ok) return data;
+    const detail = typeof data?.detail === 'string' && data.detail ? data.detail : null;
+    throw new Error(detail || (res.status === 429 ? 'Terlalu sering mengubah kata sandi. Coba lagi nanti.' : 'Gagal menyimpan kata sandi laporan'));
   }
 
   async getDailySpending(periodStart = null, periodEnd = null) {

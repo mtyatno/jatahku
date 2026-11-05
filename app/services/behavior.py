@@ -53,6 +53,7 @@ class BehaviorCheckResult:
         self.reason = None
         self.check_type = None  # "locked", "not_funded", "insufficient", "daily_limit"
         self.details = {}
+        self.peringatan: list[str] = []   # Plugin H2: peringatan Fitur Tambahan (tidak pernah memblokir)
 
     @staticmethod
     def ok():

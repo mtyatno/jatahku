@@ -1,4 +1,5 @@
 import logging
+from typing import Annotated
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime
@@ -17,7 +18,9 @@ from app.models.models import (
     User, Transaction, Envelope, HouseholdType, TransactionSource
 )
 from app.services.behavior import BehaviorCheckResult, check_behavior
-from app.services.expense_rules import NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable
+from app.services.expense_rules import (
+    NOT_SPENDABLE_MSG, PAST_PERIOD_IGNORED, after_expense_recorded, is_spendable, peringatan_plugin,
+)
 from app.services.kotak_struk.config import PDF_MAX_BYTES
 from app.services.kotak_struk.record import (
     NotRecordable, after_recorded, check_recordable, claim_failure_detail, claim_for_recording, heal_recorded,
@@ -86,14 +89,26 @@ class TransactionResponse(BaseModel):
 class TransactionCreateResponse(TransactionResponse):
     # Basic: kuota bulan ini habis sesudah input ini → pemberitahuan untuk user.
     quota_notice: str | None = None
+    # Plugin H2: peringatan Fitur Tambahan (titik `checks`), hanya informasi; null bila tidak ada.
+    peringatan: list[str] | None = None
+
+
+# Review keamanan PR #191 temuan 2: saran amplop dibatasi (panjang, jumlah, frekuensi per user), supaya kamus ruang tidak
+# bisa disisir sekaligus. Panjang = kolom `description` transaksi.
+SARAN_TEKS_MAKS = 500
+SARAN_JUMLAH_MAKS = 100
+BATAS_SARAN = "60/minute"
+BATAS_SARAN_BANYAK = "20/minute"
 
 
 class SuggestEnvelopeRequest(BaseModel):
-    description: str
+    description: str = Field(max_length=SARAN_TEKS_MAKS)
+    # R7 (opsional): nominal yang sudah diurai klien (parseAmount.js), untuk `aturan` batasan karyawan.
+    amount: Decimal | None = Field(default=None, ge=0)
 
 
 class BatchSuggestEnvelopeRequest(BaseModel):
-    descriptions: list[str]
+    descriptions: list[Annotated[str, Field(max_length=SARAN_TEKS_MAKS)]] = Field(max_length=SARAN_JUMLAH_MAKS)
 
 
 class BatchSuggestEnvelopeResult(BaseModel):
@@ -163,11 +178,12 @@ class BatchTransactionResult(BaseModel):
     quota_notice: str | None = None
 
 
-async def _created(txn, user, db, after=None, *, household_id) -> TransactionCreateResponse:
+async def _created(txn, user, db, after=None, *, household_id, peringatan: list[str] | None = None) -> TransactionCreateResponse:
     """Respons simpan: dibangun SEBELUM `after` (efek sesudah commit, async tanpa argumen), karena pemulihan sesi di
     dalamnya meng-expire `txn`; pemberitahuan kuota dihitung sesudahnya (`user` dimuat ulang oleh pemulihan itu),
     untuk ruang transaksinya (`household_id`): catatan di ruang usaha tidak memakai kuota Basic (ADR-P13)."""
     out = TransactionCreateResponse.model_validate(txn)
+    out.peringatan = peringatan or None
     if after is not None:
         await after()
     out.quota_notice = await quota_notice_after_input(user, db, household_id=household_id)
@@ -191,15 +207,18 @@ async def _receipt_item_error(db, user, rid: UUID) -> str | None:
 
 
 async def _after_saved(db, user, receipt_item_id: UUID | None, *, transaction_id: UUID, envelope_id: UUID,
-                       description: str) -> None:
+                       description: str, is_private: bool = True) -> None:
     """Sesudah commit: streak + belajar kata kunci (hook yang sama dengan bot); untuk item Kotak Struk juga menandainya
     `tercatat` (`record.after_recorded`: best-effort, pemulihan sesinya di sana). Hanya id dan keterangan yang
-    diberikan: pemulihan sesi meng-expire objek transaksinya."""
+    diberikan: pemulihan sesi meng-expire objek transaksinya.
+
+    R7: catatan bukan-privat juga mengajari kamus ruang (hanya bila amplopnya amplop bersama di ruang usaha). Catatan
+    privat tidak, karena kamus ruang terlihat oleh admin. Bawaan `is_private=True` = tidak mengajari (gagal-tertutup)."""
     if receipt_item_id:
         await after_recorded(db, user, receipt_item_id, transaction_id=transaction_id, envelope_id=envelope_id,
                              description=description)
     else:
-        await after_expense_recorded(db, user, envelope_id, description)
+        await after_expense_recorded(db, user, envelope_id, description, kamus_ruang=not is_private)
 
 
 async def _check_row(db, user, row) -> tuple[date | None, BehaviorCheckResult]:
@@ -253,6 +272,8 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     if existing_ref:
         existing = await db.get(Transaction, UUID(existing_ref))
         if existing and existing.user_id == user.id:
+            if existing.envelope_id != req.envelope_id:   # satu ref = satu catatan (review #191 temuan 1)
+                raise RuangDitolak.dari_peran(peran.ref_bentrok())
             heal = None
             if req.receipt_item_id:
                 async def heal():
@@ -261,8 +282,13 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
         await idempotency.forget(user.id, req.client_ref)  # transaksinya sudah tidak ada
     if not peran.izin_pengelola_aktif():
         draf = await peran.draf_dari_ref(db, user.id, req.client_ref)   # kiriman ulang catatan yang menjadi draf
-        if draf is not None and draf.status != peran.ST_DISETUJUI:
-            return jawaban_draf(draf)
+        if draf is not None:
+            try:   # draf ruang/jenis/amplop lain dengan ref yang sama tidak pernah menjadi jawaban (#191 temuan 1)
+                peran.cek_ref_draf(draf, household_id=hid, jenis=peran.JENIS_PENGELUARAN, envelope_id=req.envelope_id)
+            except peran.PeranDitolak as exc:
+                raise RuangDitolak.dari_peran(exc)
+            if draf.status != peran.ST_DISETUJUI:
+                return jawaban_draf(draf)
     if req.receipt_item_id:
         receipt_error = await _receipt_item_error(db, user, req.receipt_item_id)
         if receipt_error:
@@ -328,6 +354,8 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
             raise HTTPException(status_code=403, detail=daily_limit_message(envelope.name, check.details))
         else:
             raise HTTPException(status_code=403, detail=check.reason or "Transaksi tidak bisa dicatat.")
+    # Plugin H2: peringatan Fitur Tambahan (aturan bersama dengan bot, `expense_rules`), sebelum simpan.
+    peringatan = await peringatan_plugin(db, user, envelope, req.amount, req.description)
 
     if not await idempotency.reserve(user.id, req.client_ref):
         raise HTTPException(status_code=409, detail="Transaksi ini sedang diproses. Coba lagi sebentar.")
@@ -360,8 +388,8 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     # Streak + pembelajaran kata kunci (best-effort) — hook yang sama dengan bot — dan penandaan item Kotak Struk.
     async def after():
         await _after_saved(db, user, req.receipt_item_id, transaction_id=txn.id, envelope_id=txn.envelope_id,
-                           description=txn.description)
-    return await _created(txn, user, db, after=after, household_id=hid)
+                           description=txn.description, is_private=bool(req.is_private))
+    return await _created(txn, user, db, after=after, household_id=hid, peringatan=peringatan)
 
 
 async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID, *, karyawan: bool = False):
@@ -373,45 +401,87 @@ async def _ruang_transaksi(db: AsyncSession, user: User, txn_id: UUID, *, karyaw
     return await ruang_objek(db, user, hid, karyawan=karyawan)
 
 
+_SARAN_KOSONG = {"envelope_id": None, "envelope_name": None, "confident": False, "sumber": None}
+
+
+async def _sumber_api(db: AsyncSession, user: User, t, *, karyawan: bool) -> dict | None:
+    """`sumber` saran amplop (R7, 04-kontrak-api.md §3). Nama pengajar kamus ruang hanya nama tampilan anggota.
+    Karyawan (review keamanan PR #191 temuan 2, keputusan pemilik produk 5 Nov): kamus ruang tanpa pengajar dan
+    hitungan, supaya saran tidak bisa dipakai menebak siapa mencatat apa dan seberapa sering."""
+    if t.sumber is None:
+        return None
+    if karyawan and t.sumber == "kamus_ruang":
+        return {"jenis": t.sumber}
+    out = {"jenis": t.sumber}
+    if t.kali is not None:
+        out["kali"] = t.kali
+    if t.sumber == "kamus_ruang":
+        out["oleh_saya"] = t.diajarkan_oleh == user.id
+        out["diajarkan_oleh"] = None
+        if t.diajarkan_oleh is not None and t.diajarkan_oleh != user.id:
+            out["diajarkan_oleh"] = (await db.execute(
+                select(User.name).where(User.id == t.diajarkan_oleh))).scalar_one_or_none()
+    return out
+
+
 @router.post("/suggest-envelope")
+@limiter.limit(BATAS_SARAN, key_func=kunci_per_user)
 async def suggest_envelope(
+    request: Request,
     req: SuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
     hid: RuangAktif,
 ):
-    from app.services.txn_nlp import find_best_envelope
+    """Saran amplop untuk Catat (ruang dari header: saran tidak menulis apa pun). R7: urutan kata user → kamus ruang
+    usaha → kamus kategori (`txn_nlp.cari_amplop`); karyawan hanya mendapat amplop yang diizinkan, dan `aturan`
+    batasannya untuk `amount`. Field lama tetap."""
+    from app.services.txn_nlp import cari_amplop
+    batasan = await peran.batasan_karyawan(db, user.id, hid) if hid else None
+    aturan = peran.aturan_catatan(batasan, req.amount)
     if not hid or not req.description.strip():
-        return {"envelope_id": None, "envelope_name": None, "confident": False}
-    envelope, confident = await find_best_envelope(req.description, hid, db, user.id)
-    batasan = await peran.batasan_karyawan(db, user.id, hid)
+        return {**_SARAN_KOSONG, "aturan": aturan}
+    boleh = batasan.amplop_ids if batasan is not None else None
+    t = await cari_amplop(req.description, hid, db, user.id, amplop_boleh=boleh)
+    envelope = t.envelope
     if not envelope or (batasan is not None and not batasan.boleh_amplop(envelope.id)):
-        return {"envelope_id": None, "envelope_name": None, "confident": False}
-    return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)}
+        return {**_SARAN_KOSONG, "aturan": aturan}
+    return {"envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(t.confident),
+            "sumber": await _sumber_api(db, user, t, karyawan=batasan is not None), "aturan": aturan}
 
 
 @router.post("/suggest-envelopes")
+@limiter.limit(BATAS_SARAN_BANYAK, key_func=kunci_per_user)
 async def suggest_envelopes(
+    request: Request,
     req: BatchSuggestEnvelopeRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     *,
     hid: RuangAktif,
 ):
-    from app.services.txn_nlp import find_best_envelope
+    return await saran_amplop_banyak(req, user, db, hid=hid)
+
+
+async def saran_amplop_banyak(req: BatchSuggestEnvelopeRequest, user: User, db: AsyncSession, *, hid):
+    """Isi `POST /suggest-envelopes` tanpa batas frekuensi (route di atas), untuk pemanggil di server dan tes."""
+    from app.services.txn_nlp import cari_amplop
     if not hid:
         return {"results": [{"index": i, "envelope_id": None, "envelope_name": None, "confident": False} for i in range(len(req.descriptions))]}
 
     batasan = await peran.batasan_karyawan(db, user.id, hid)
+    boleh = batasan.amplop_ids if batasan is not None else None
     results = []
     for i, desc in enumerate(req.descriptions):
         if not desc or not desc.strip():
             results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
             continue
-        envelope, confident = await find_best_envelope(desc, hid, db, user.id)
+        t = await cari_amplop(desc, hid, db, user.id, amplop_boleh=boleh)
+        envelope = t.envelope
         if envelope and (batasan is None or batasan.boleh_amplop(envelope.id)):
-            results.append({"index": i, "envelope_id": str(envelope.id), "envelope_name": envelope.name, "confident": bool(confident)})
+            results.append({"index": i, "envelope_id": str(envelope.id), "envelope_name": envelope.name,
+                            "confident": bool(t.confident), "sumber": {"jenis": t.sumber} if t.sumber else None})
         else:
             results.append({"index": i, "envelope_id": None, "envelope_name": None, "confident": False})
     return {"results": results}
@@ -456,13 +526,25 @@ async def batch_create_transactions(
                                                   error="Sedang diproses, coba lagi sebentar"))
             continue
         if existing_ref:  # sudah tercatat di kiriman sebelumnya → jangan buat lagi
-            if item.receipt_item_id:
-                prior = await db.get(Transaction, UUID(existing_ref))
-                if prior is not None:
-                    await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
+            prior = await db.get(Transaction, UUID(existing_ref))
+            if prior is not None and prior.envelope_id != item.envelope_id:   # satu ref = satu catatan (#191 t1)
+                bentrok = peran.ref_bentrok()
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                      error=bentrok.detail, kode=bentrok.kode))
+                continue
+            if item.receipt_item_id and prior is not None:
+                await heal_recorded(db, user, item.receipt_item_id, prior.id, prior.envelope_id)
             results.append(BatchTransactionResult(index=i, ok=True, id=UUID(existing_ref), description=item.description))
             continue
         draf = await peran.draf_dari_ref(db, user.id, item.client_ref)
+        if draf is not None:
+            try:   # draf ruang/jenis/amplop lain dengan ref yang sama tidak pernah menjadi jawaban (#191 temuan 1)
+                peran.cek_ref_draf(draf, household_id=ruang_baris[i], jenis=peran.JENIS_PENGELUARAN,
+                                   envelope_id=item.envelope_id)
+            except peran.PeranDitolak as exc:
+                results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                      error=exc.detail, kode=exc.kode))
+                continue
         if draf is not None and draf.status != peran.ST_DISETUJUI:   # kiriman ulang catatan yang menjadi draf
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
                                                   error="Catatan ini menunggu persetujuan admin.",
@@ -580,7 +662,7 @@ async def batch_create_transactions(
         await db.refresh(txn)
 
         await _after_saved(db, user, item.receipt_item_id, transaction_id=txn_id, envelope_id=txn_envelope_id,
-                           description=item.description)
+                           description=item.description, is_private=bool(item.is_private))
 
         results.append(BatchTransactionResult(index=i, ok=True, id=txn_id, description=item.description))
 
