@@ -635,6 +635,12 @@ class ReceiptScan(Base):
     # None ditulis sebagai SQL NULL (bukan JSON 'null'), supaya `layout IS NOT NULL` hanya menemukan kerangka sungguhan.
     layout: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
+    # Baris teks bukti TERSAMAR untuk donasi contoh (tahap 2, kotak_struk/donasi.py): hanya untuk user yang setuju dan
+    # hanya saat saklar `features.kotak_donasi` menyala. Tidak pernah dikirim ke klien (bukan bagian `document`, tidak
+    # pernah di `view.item_detail`); koreksi memindahkannya ke `proof_samples`, selain itu dihapus bersama `layout`;
+    # menarik persetujuan, hapus akun, dan gabung akun mengosongkannya. `none_as_null` seperti `layout`.
+    sample_lines: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
 
     # Satu unggahan (upload_id dari klien) hanya satu item per user. Nama sama dengan di
     # KOTAK_DDL, jadi DDL startup tidak membuat indeks ganda di basis data baru.
@@ -693,6 +699,9 @@ class ProofRuleVote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+_SATU_NILAI = "status = 'disetujui' AND kind IN ('logo', 'arah')"   # syarat indeks parsial ux_proof_rules_satu_nilai
+
+
 class ProofRule(Base):
     """Aturan belajar bukti bayar: suara yang didukung >= RULE_MIN_USERS user berbeda, menunggu keputusan pemilik di
     Admin. `users`/`households` = pendukung berbeda, dihitung ulang tiap suara (dan saat user dilupakan); status
@@ -702,6 +711,10 @@ class ProofRule(Base):
     __table_args__ = (
         UniqueConstraint("kind", "rule_key", "value", name="uq_proof_rule"),
         Index("ix_proof_rules_status", "status"),
+        # G8 (tahap 2): jenis `logo`/`arah` paling banyak satu nilai `disetujui` per kunci. `belajar.decide` sudah
+        # memeriksanya di UPDATE bersyarat; indeks ini menutup balapan dua persetujuan bersamaan (migrasi c9e4a7f2b5d8).
+        Index("ux_proof_rules_satu_nilai", "kind", "rule_key", unique=True,
+              postgresql_where=text(_SATU_NILAI), sqlite_where=text(_SATU_NILAI)),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -710,6 +723,48 @@ class ProofRule(Base):
     value: Mapped[str] = mapped_column(String(60))
     users: Mapped[int] = mapped_column(Integer)
     households: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class ProofSampleConsent(Base):
+    """Persetujuan opt-in donasi contoh Kotak Struk (tahap 2, Settings): ada baris = user setuju teks bukti TERSAMAR
+    yang ia koreksi dikirim ke antrean tinjauan pemilik. Menarik persetujuan menghapus baris ini beserta sampel yang
+    belum disetujui dan baris tersamar user itu (yang `disetujui` tetap sampai SAMPLE_TTL; kotak_struk/donasi.py
+    `set_consent`/`forget_user`); tidak diwariskan saat gabung akun."""
+    __tablename__ = "proof_sample_consents"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    consented_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProofSample(Base):
+    """Sampel donasi: baris bukti TERSAMAR (nomor panjang disamarkan, nama yang dikenal diganti nama samaran) dari
+    koreksi user yang setuju, menunggu tinjauan pemilik di Admin; yang disetujui diunduh pemilik sebagai entri korpus.
+    `item_id` tanpa FK (item boleh kedaluwarsa lebih dulu), satu sampel per item. `trigger`: nominal | tanggal |
+    tidak_dikenali | arah | aplikasi | nominal_bot. `truth`: koreksi user `{total, date, flow, app}`. Status menunggu |
+    disetujui (Tolak menghapus baris, jadi `ditolak` tidak pernah tersimpan); berumur SAMPLE_TTL (7 hari). Hapus akun
+    dan gabung akun menghapus semua sampel user itu; menarik persetujuan menyisakan yang `disetujui`."""
+    __tablename__ = "proof_samples"
+    __table_args__ = (
+        UniqueConstraint("item_id", name="uq_proof_sample_item"),
+        Index("ix_proof_samples_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    rule_key: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    doc_type: Mapped[str] = mapped_column(String(30))
+    trigger: Mapped[str] = mapped_column(String(20))
+    lines: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    user_name: Mapped[str | None] = mapped_column(String(60), nullable=True)   # nama samaran user, bukan nama asli
+    truth: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
+    today: Mapped[date] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(12))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

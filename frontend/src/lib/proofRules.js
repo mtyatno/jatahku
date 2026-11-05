@@ -8,7 +8,9 @@
 import { ISSUER_LABEL } from './proofFormat.js';
 import { wibDate, shortDate } from './receiptScan.js';
 
-export const KIND_LABEL = { label_total: 'Nominal', label_pihak: 'Nama penerima', label_tanggal: 'Tanggal' };
+export const KIND_LABEL = {
+  label_total: 'Nominal', label_pihak: 'Nama penerima', label_tanggal: 'Tanggal', logo: 'Aplikasi', arah: 'Arah uang',
+};
 
 export const RULE_TABS = [
   { key: 'menunggu', label: 'Menunggu' },
@@ -24,9 +26,68 @@ export const RULE_MIN_USERS = 2;   // = server config.RULE_MIN_USERS: setujui di
 export const THRESHOLD_HINT = `Belum didukung ${RULE_MIN_USERS} user`;
 
 export const WARNING_TEXT = 'Label ini mirip kata status/metode — periksa contohnya.';
+// Setiap aturan `logo` (tahap 2 M3d): kata logo bisa saja nama depan orang (server `warning` selalu true untuk logo).
+export const LOGO_WARNING_TEXT = 'Kata logo bisa saja nama depan orang — periksa bukan nama orang.';
 
 // Nilai tersamar per jenis (= server admin_kotak.EXAMPLE_VALUE): tanpa angka sama sekali.
 const EXAMPLE_VALUE = { label_total: 'Rp##.###', label_pihak: 'NAMA PENERIMA', label_tanggal: '## Okt ####' };
+
+// Jenis tahap 2 (M3d): nilai `logo` = kunci profil atau `baru`; nilai `arah` = flow (server config.ARAH_FLOWS).
+const APP_NEW_LABEL = 'Aplikasi baru';
+// Kuncinya = server config.ARAH_FLOWS (dipin test_kotak_admin_aturan.ClientVocabularyTests).
+const FLOW_LABEL = { top_up: 'Top-up', masuk: 'Uang masuk', antar_rekening_sendiri: 'Rekening sendiri' };
+const VALUE_TITLE = { logo: 'Aplikasi', arah: 'Arah uang' };
+const VALUE_NOUN = { logo: 'aplikasi', arah: 'alasan' };
+const MASKED_LOGO_KEY = 'logo:*';
+// Bentuk kata yang boleh tampil di contoh: kata huruf kecil ASCII, satu spasi, tanpa kata berulang. Selain itu "…".
+const PLAIN_WORDS = /^[a-z]+(?: [a-z]+)*$/;
+const KEY_MAX = 60;   // = server config.KEY_MAX
+// Kosakata kata kunci contoh (salinan server kerangka, dipin test_kotak_admin_aturan.ClientVocabularyTests): klien
+// menampilkan kata kunci hanya bila bentuknya lolos pemeriksaan yang sama dengan server (`logo_word` tanpa kata
+// label/status, `arah_token_ok` persis), jadi data tangan seperti "logo:siti rahma" atau "ke:andi topup" → "…".
+// = kerangka.LOGO_COMPANIONS: logo dua kata hanya bila salah satunya kata ini.
+const LOGO_COMPANIONS = new Set((
+  'allo app bank banking bca bjb bni bpd bri bsi btn btpn by cimb danamon digital flip hsbc isaku ' +
+  'jenius krom linkaja mandiri maybank mega mobile muamalat nagari neo niaga ocbc panin permata sakuku ' +
+  'sinarmas superbank syariah uob'
+).split(' '));
+// = kerangka.TITLE_WORDS - ARAH_STATUS_WORDS (kata huruf saja): kata token `judul:`.
+const JUDUL_WORDS = new Set((
+  'admin akun allo amount anda app asal atas bank banking bayar bca berita biaya bjb blu bni bpd bri ' +
+  'brimo bsi btn btpn by byond catatan charge cimb dana danamon dari date debit deposit dibayar digital ' +
+  'dikirim discount diskon diterima ditransfer donasi fee flip from gopay harga hsbc id idr isaku isi ' +
+  'jago jam jenis jenius jumlah ke keluar kembali kepada keterangan kirim kota krom layanan linkaja ' +
+  'livin location lokasi mandiri masuk maybank mega merchant metode mobile muamalat mybca nagari nama ' +
+  'name neo niaga nmid no nominal nomor ocbc ongkir order ovo paid pajak panin payment pembayaran ' +
+  'pembelian penarikan penerima pengirim pengiriman permata potongan ppn promo pukul purchase qris ' +
+  'recipient ref reference referensi refund rekening rp rrn sakuku saldo seabank service setoran ' +
+  'shopeepay sinarmas sn status subtotal sumber superbank syariah tagihan tanggal tax terima terkirim ' +
+  'terpakai time tip tips to toko top total transaction transaksi transfer tujuan uang uob up voucher ' +
+  'waktu withdrawal wondr'
+).split(' '));
+// = kerangka.ARAH_GENERIC: token `judul:` butuh satu kata di luar ini.
+const ARAH_GENERIC = new Set((
+  'admin asal atas bayar berita biaya catatan dari id jam jumlah ke kepada keterangan kirim kota ' +
+  'location lokasi merchant nama name no nominal nomor payment pembayaran penerima pengirim pukul qris ' +
+  'recipient ref referensi rekening status sumber tagihan tanggal toko total transaction transaksi ' +
+  'transfer tujuan uang waktu'
+).split(' '));
+// = kerangka.ARAH_PARTY_WORDS: kata token `ke:`.
+const ARAH_PARTY_WORDS = new Set((
+  'allo bank bca bjb blu bni bpd bri brimo bsi btn btpn byond cimb dana danamon deposit flip gopay hsbc ' +
+  'isaku isi jago jenius krom linkaja livin mandiri maybank mega muamalat mybca nagari neo niaga ocbc ' +
+  'ovo panin permata reload sakuku saldo seabank shopeepay sinarmas superbank top topu topup uob up ' +
+  'wondr'
+).split(' '));
+// = kerangka.TOP_UP_WORDS: token `ke:` butuh satu kata ini dan satu kata penyedia (sisanya).
+const TOP_UP_WORDS = new Set((
+  'deposit isi reload saldo top topu topup up'
+).split(' '));
+const LOGO_MAX_WORDS = 2;   // = kerangka.LOGO_MAX_WORDS
+const LOGO_MIN_LETTERS = 3;   // = kerangka.LOGO_MIN_LETTERS
+const TITLE_MAX_WORDS = 6;   // = kerangka.TITLE_MAX_WORDS
+const ARAH_KE_MIN_WORDS = 2;   // = kerangka.ARAH_KE_MIN_WORDS
+const ARAH_KE_MAX_WORDS = 3;   // = kerangka.ARAH_KE_MAX_WORDS
 
 // Transisi G5: setujui ← menunggu|ditolak|dicabut; tolak ← menunggu; cabut ← disetujui.
 const ACTIONS = { menunggu: ['setujui', 'tolak'], disetujui: ['cabut'], ditolak: ['setujui'], dicabut: ['setujui'] };
@@ -58,20 +119,92 @@ const time = v => {
 };
 const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-// "GoPay"; `logo:x` → "Aplikasi baru: x"; kunci lain (profil yang belum diberi label di klien) apa adanya.
+// "GoPay"; `logo:x` → "Aplikasi baru: x"; `logo:*` (tab Suara, tersamar) → "Aplikasi baru (logo disamarkan)";
+// kunci arah `{app}|…` → label aplikasinya; kunci lain (profil yang belum diberi label di klien) apa adanya.
 export function ruleAppLabel(ruleKey) {
   if (!isText(ruleKey)) return '–';
+  if (ruleKey.includes('|')) return ruleAppLabel(ruleKey.slice(0, ruleKey.indexOf('|')));
   if (own(ISSUER_LABEL, ruleKey)) return ISSUER_LABEL[ruleKey];
+  if (ruleKey === MASKED_LOGO_KEY) return 'Aplikasi baru (logo disamarkan)';
   if (ruleKey.startsWith('logo:') && ruleKey.length > 5) return `Aplikasi baru: ${ruleKey.slice(5)}`;
   return ruleKey;
 }
 
-// "Total bayar Rp##.###" dari label dan jenis aturan saja (field lain, termasuk `example` server, tidak dipakai).
+// Kunci baris Suara (= server admin_kotak.vote_key, K15): kunci arah → aplikasinya; kunci yang bukan kunci profil
+// (`ISSUER_LABEL`: kunci logo, juga data tangan seperti "LOGO:andi") → `logo:*` (daftar izin, bukan daftar tolak).
+// Server sudah menyamarkannya; klien mengulanginya supaya server lama pun tidak pernah menampilkan kata logo/token arah.
+export function voteKey(kind, ruleKey) {
+  if (!isText(ruleKey)) return null;
+  const key = kind === 'arah' || ruleKey.includes('|') ? ruleKey.split('|')[0] : ruleKey;
+  return own(ISSUER_LABEL, key) ? key : MASKED_LOGO_KEY;
+}
+
+// Kata-kata `v` (huruf kecil, satu spasi, tanpa kata berulang, <= KEY_MAX), atau null.
+function plainWords(v) {
+  if (typeof v !== 'string' || !v || v.length > KEY_MAX || !PLAIN_WORDS.test(v)) return null;
+  const words = v.split(' ');
+  return new Set(words).size === words.length ? words : null;
+}
+
+// = server kerangka.logo_word (tanpa pemeriksaan kata label/status, yang tidak membuat nama orang lolos): 1-2 kata,
+// >= LOGO_MIN_LETTERS huruf; dua kata hanya bila salah satunya kata pendamping logo/penyedia.
+function logoWordOk(word) {
+  const words = plainWords(word);
+  if (!words || words.length > LOGO_MAX_WORDS || words.join('').length < LOGO_MIN_LETTERS) return false;
+  return words.length === 1 || words.some(w => LOGO_COMPANIONS.has(w));
+}
+
+// = server kerangka._judul_ok / _ke_ok.
+function judulOk(text) {
+  const words = plainWords(text);
+  return !!words && words.length <= TITLE_MAX_WORDS && words.every(w => JUDUL_WORDS.has(w))
+    && words.some(w => !ARAH_GENERIC.has(w));
+}
+function keOk(text) {
+  const words = plainWords(text);
+  return !!words && words.length >= ARAH_KE_MIN_WORDS && words.length <= ARAH_KE_MAX_WORDS
+    && words.every(w => ARAH_PARTY_WORDS.has(w)) && words.some(w => TOP_UP_WORDS.has(w))
+    && words.some(w => !TOP_UP_WORDS.has(w));
+}
+const appValueLabel = v => (v === 'baru' ? APP_NEW_LABEL : own(ISSUER_LABEL, v) ? ISSUER_LABEL[v] : null);
+const flowLabel = v => (own(FLOW_LABEL, v) ? FLOW_LABEL[v] : null);
+
+// `Logo "NEWPAY" → BSI` (kata logo dari kunci, huruf besar; `baru` → "Aplikasi baru").
+function logoExample(ruleKey, value) {
+  const word = typeof ruleKey === 'string' && ruleKey.startsWith('logo:') ? ruleKey.slice(5) : null;
+  return `Logo "${logoWordOk(word) ? word.toUpperCase() : '…'}" → ${appValueLabel(value) ?? '…'}`;
+}
+
+// `Judul "top up" → Top-up` / `Penerima "GOPAY TOPU…" → Top-up` (token `ke:` = awal nama penerima, jadi "…").
+function arahExample(ruleKey, value) {
+  const flow = flowLabel(value) ?? '…';
+  const token = typeof ruleKey === 'string' && ruleKey.includes('|') ? ruleKey.slice(ruleKey.indexOf('|') + 1) : '';
+  if (token.startsWith('judul:') && judulOk(token.slice(6))) return `Judul "${token.slice(6)}" → ${flow}`;
+  if (token.startsWith('ke:') && keOk(token.slice(3))) return `Penerima "${token.slice(3).toUpperCase()}…" → ${flow}`;
+  return `Kata kunci "…" → ${flow}`;
+}
+
+// Contoh SINTETIS dari jenis, kunci, dan nilai aturan saja (field lain, termasuk `example` server, tidak dipakai):
+// label → "Total bayar Rp##.###"; logo → `Logo "NEWPAY" → BSI`; arah → `Penerima "GOPAY TOPU…" → Top-up`.
 export function syntheticExample(rule) {
   const value = rule?.value;
   if (!isText(value)) return null;
+  if (rule.kind === 'logo') return logoExample(rule.rule_key, value);
+  if (rule.kind === 'arah') return arahExample(rule.rule_key, value);
   const label = value[0].toUpperCase() + value.slice(1);
   return `${label} ${own(EXAMPLE_VALUE, rule.kind) ? EXAMPLE_VALUE[rule.kind] : '…'}`;
+}
+
+// Nilai aturan untuk dibaca: logo → nama aplikasi, arah → arah uang; label (dan nilai di luar daftar) apa adanya.
+function valueText(rule) {
+  if (rule.kind === 'logo') return appValueLabel(rule.value) ?? rule.value;
+  if (rule.kind === 'arah') return flowLabel(rule.value) ?? rule.value;
+  return rule.value;
+}
+
+function warningText(rule) {
+  if (rule.kind === 'logo') return LOGO_WARNING_TEXT;
+  return rule.warning === true ? WARNING_TEXT : null;
 }
 
 export function ruleActions(status) {
@@ -131,7 +264,8 @@ function compare(tab) {
 }
 
 // Baris satu tab (status) → [{id, status, kind, app, label, example, support, date, meta, note, warning, threshold,
-// actions}] (`meta` = support · date; `threshold` = petunjuk di bawah ambang atau null);
+// actions, valueLabel}] (`meta` = support · date; `threshold` = petunjuk di bawah ambang atau null; `valueLabel` =
+// judul nilai: "Label", atau "Aplikasi"/"Arah uang" untuk jenis tahap 2, yang `label`-nya nama aplikasi/arah uang);
 // tab "suara"/tidak dikenal → []; respons tanpa daftar → null. Baris rusak dilewati, tidak pernah melempar.
 export function ruleRows(resp, tab) {
   if (!Array.isArray(resp?.rules)) return null;
@@ -145,35 +279,44 @@ export function ruleRows(resp, tab) {
       status: r.status,
       kind: own(KIND_LABEL, r.kind) ? KIND_LABEL[r.kind] : r.kind,
       app: ruleAppLabel(r.rule_key),
-      label: r.value,
+      label: valueText(r),
       example: syntheticExample(r),
       support,
       date,
       meta: date ? `${support} · ${date}` : support,
       note: typeof r.note === 'string' && r.note.trim() ? r.note.trim() : null,
-      warning: r.warning === true ? WARNING_TEXT : null,
+      warning: warningText(r),
       threshold: below ? THRESHOLD_TEXT[r.status === 'disetujui' ? 'disetujui' : 'other'] : null,
       actions: rowActions(r.status, r.users),
+      valueLabel: own(VALUE_TITLE, r.kind) ? VALUE_TITLE[r.kind] : 'Label',
     };
   });
 }
 
-// Tab "Suara": hanya angka (user berbeda, label berbeda) per aplikasi dan jenis; field lain diabaikan.
-// Urut user terbanyak, lalu aplikasi, lalu urutan jenis. Respons tanpa `rows` → null.
+// Tab "Suara": hanya angka (user berbeda, label berbeda) per aplikasi dan jenis; field lain diabaikan. Kunci
+// disamarkan `voteKey` (kata logo dan token arah tidak pernah tampil). Urut user terbanyak, lalu aplikasi, lalu urutan
+// jenis. Respons tanpa `rows` → null.
 const KIND_ORDER = Object.keys(KIND_LABEL);
 export function voteRows(resp) {
   if (!Array.isArray(resp?.rows)) return null;
   const kindRank = k => (KIND_ORDER.includes(k) ? KIND_ORDER.indexOf(k) : KIND_ORDER.length);
+  const seen = new Map();   // kunci React unik juga bila penyamaran menggabungkan baris (server lama)
+  const uniqueKey = (key) => {
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return n ? `${key}#${n}` : key;
+  };
   return resp.rows.filter(r => isObj(r) && isText(r.rule_key) && isText(r.kind)).map((r) => {
     const users = count(r.users);
     const values = count(r.values);
+    const ruleKey = voteKey(r.kind, r.rule_key);
     return {
-      key: `${r.rule_key}|${r.kind}`,
-      app: ruleAppLabel(r.rule_key),
+      key: uniqueKey(`${ruleKey}|${r.kind}`),
+      app: ruleAppLabel(ruleKey),
       kind: own(KIND_LABEL, r.kind) ? KIND_LABEL[r.kind] : r.kind,
       users,
       values,
-      text: `${users} user · ${values} label`,
+      text: `${users} user · ${values} ${own(VALUE_NOUN, r.kind) ? VALUE_NOUN[r.kind] : 'label'}`,
       _rank: kindRank(r.kind),
     };
   }).sort((a, b) => b.users - a.users || a.app.localeCompare(b.app) || a._rank - b._rank || byText(a.key, b.key))

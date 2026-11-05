@@ -6,6 +6,7 @@ sampel nyata (`real: true`) hanya bila sudah ditinjau manusia (`reviewed: true`)
 memuat 4 struk Indomaret asli dari `app/tests/fixtures/receipt_ocr_lines.json` (harus tetap `struk_belanja`).
 
     python -m app.scripts.kotak_corpus add <file> --id <id> [--real] [--user-name NAMA] [--corpus PATH]
+    python -m app.scripts.kotak_corpus add --dari-donasi <berkas.json> [--id ID] [--tahan] [--corpus PATH]
     python -m app.scripts.kotak_corpus eval [--real-only] [--corpus PATH]
 
 `add` mengekstrak teks (OCR untuk gambar, lapisan teks/OCR untuk PDF, `.txt` apa adanya), menyamarkan
@@ -14,6 +15,11 @@ tiap baris (`mask_line`), menjalankan pembaca pada baris tersamar, lalu menambah
 >= 6 digit di luar bentuk yang dibiarkan (dihitung seluruh baris, lihat `needs_review`) dicetak sebagai
 `PERIKSA baris N`. Periksa baris dan `expect` dengan bukti aslinya, samarkan nama orang pribadi (juga `user_name`),
 lalu set `"reviewed": true`. Id berawalan `indomaret-` dicadangkan untuk struk Indomaret.
+
+`add --dari-donasi` menambahkan entri yang diunduh dari Admin (donasi contoh, sudah ditinjau pemilik) di checkout lokal:
+baris harus sudah tersamar (aturan persetujuan Admin), `expect` dihitung ulang dengan pembaca saat ini lalu nilai koreksi
+user (`truth`) menggantikannya. Pembaca beda dengan koreksi user keluar dengan kode 3 tanpa menulis (sampel seperti itu
+membuat gerbang rilis merah), kecuali `--tahan` (ditulis dengan nilai koreksi user dan `reviewed: false`).
 
 `eval` mencetak hasil per sampel dan ringkasan, lalu keluar dengan kode 1 bila gerbang rilis tidak
 lulus (atau tidak ada sampel), 2 bila berkas korpus tidak ada atau rusak. `--real-only`: hanya sampel nyata yang
@@ -45,6 +51,14 @@ from app.services.kotak_struk.extract import KIND_IMAGE, ExtractError, TextDoc, 
 from app.services.kotak_struk.readers.base import ParseContext  # noqa: E402
 from app.services.kotak_struk.readers.labels import WIB  # noqa: E402
 from app.services.kotak_struk.registry import read_document  # noqa: E402
+# Penyamaran (`mask_line`, `needs_review`, `MIN_RUN_DIGITS`) tinggal di modul murni `samaran` (A16 K2: worker memakainya
+# untuk baris donasi contoh); diekspor ulang di sini untuk `add` dan tes yang sudah ada.
+from app.services.kotak_struk.samaran import MIN_RUN_DIGITS, mask_line, needs_review  # noqa: E402,F401
+# `expect_from` (bentuk `expect`) dan beda koreksi user vs pembaca tinggal di `donasi` (A16 M1d): entri korpus dari Admin
+# dan `add --dari-donasi` memakai satu bentuk.
+from app.services.kotak_struk.donasi import (  # noqa: E402,F401
+    SampleLineSecret, approved_lines, confirmed_expect, expect_from, gated_diff, pseudonym_ok, truth_diff,
+)
 
 _FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 DEFAULT_CORPUS = _FIXTURES / "kotak" / "corpus.json"
@@ -65,199 +79,6 @@ _GATE_LABELS = {
     "doc_type_pct": "doc_type benar",
 }
 
-
-# ── Penyamaran ──────────────────────────────────────────────────────────────
-
-MIN_RUN_DIGITS = 6
-
-_MONTH_WORDS = {
-    "januari", "january", "jan", "februari", "february", "feb", "peb", "maret", "march", "mar", "april", "apr",
-    "mei", "may", "juni", "june", "jun", "juli", "july", "jul", "agustus", "august", "agu", "ags", "aug",
-    "september", "sept", "sep", "oktober", "october", "okt", "oct", "november", "nopember", "nov", "nop",
-    "desember", "december", "des", "dec",
-}
-
-_HWS = r"[^\S\r\n]"                    # spasi horizontal jenis apa pun: spasi, NBSP, U+202F, U+2009, tab, ...
-_DASH = "\\-\u2010-\u2015\u2212"       # isi kelas karakter: "-", U+2010..U+2015, U+2212 (minus)
-# Pemisah di dalam satu deret digit: <= 2 spasi (OCR menyambung kotak dengan dua spasi), satu strip jenis apa pun
-# (boleh diapit satu spasi), atau satu titik/koma.
-_RUN_SEP = rf"(?:{_HWS}{{1,2}}|{_HWS}?[{_DASH}]{_HWS}?|[.,])"
-_DIGIT_RUN = re.compile(rf"\d+(?:{_RUN_SEP}\d+)*")
-
-# Nominal berkelompok ribuan yang ketat: kelompok pertama 1-3 digit dan tidak berawalan 0, sisanya tepat 3, pemisah
-# konsisten, desimal 2 digit opsional dengan pemisah yang lain (1.500.000 / 150,000.00 / 1.500.000,00).
-# "081.234.567.890" dan "0.123.456.789" bukan nominal.
-_THOUSANDS = r"(?!0)\d{1,3}(?P<g>[.,])\d{3}(?:(?P=g)\d{3})*(?:(?!(?P=g))[.,]\d{2})?"
-_NUM_END = rf"(?![.,]?\d)(?![{_DASH}]\d)"   # tidak bersambung ke digit lain
-_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
-# NMID QRIS (publik): "ID" + >= 10 digit, hanya di baris berlabel NMID.
-_NMID = re.compile(rf"(?<![A-Za-z0-9])ID{_HWS}?\d{{10,}}", re.IGNORECASE)
-# Nominal langsung sesudah Rp/IDR: nominal ribuan ketat, atau angka tanpa kelompok <= 9 digit (Rp 999.999.999) yang
-# tidak berawalan 0 + digit ("Rp 0" dan "Rp 0,00" tetap nominal; "Rp 081234567" bukan).
-_CURRENCY = re.compile(
-    rf"(?<![A-Za-z])(?:rp|idr){_HWS}*[.:]?{_HWS}*(?:{_THOUSANDS}|(?!0\d)\d{{1,9}}(?:[.,]\d{{2}})?){_NUM_END}",
-    re.IGNORECASE)
-# Tanggal angka dengan pemisah yang sama: d-m-y, d/m/y, d.m.y (tahun 2 atau 4 digit) dan y-m-d. Tidak boleh
-# menempel pada deret angka lain ("1234-12-10-26" bukan tanggal, melainkan nomor yang harus disamarkan).
-_DATE_DMY = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})([-/.])(\d{{1,2}})\2(\d{{4}}|\d{{2}})(?![/.{_DASH}]?\d)")
-_DATE_YMD = re.compile(rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{4}})([-/.])(\d{{1,2}})\2(\d{{1,2}})(?![/.{_DASH}]?\d)")
-# Tanggal dengan nama bulan di depan ("Oct 26 2026", "Okt 26, 2026"): hari dan tahun hanya dipisah spasi.
-_DATE_MDY = re.compile(r"(?<![A-Za-z])([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)")
-# Tanggal dengan nama bulan di tengah ("26 Okt 2026", "26-Okt-2026", "26Okt2026"; pemisah seperti labels._DMY_NAME
-# pembaca). Hari dan tahunnya tidak membentuk satu deret, jadi mask_line tidak mengubahnya; sebagai rentang yang
-# dibiarkan, 6 digitnya tidak dihitung PERIKSA dan deret di sampingnya tidak menyeret harinya.
-_NAME_DATE_SEP = rf"(?:{_HWS}|[.,/-])*"
-_DATE_DMY_NAME = re.compile(
-    rf"(?<!\d)(?<!\d[/.{_DASH}])(\d{{1,2}})(?:st|nd|rd|th)?{_NAME_DATE_SEP}([A-Za-z]{{3,9}}){_NAME_DATE_SEP}(\d{{4}})"
-    rf"(?![/.{_DASH}]?\d)")
-# Jam: 08:12, 08:12:33, 08.12.33.
-_TIME = re.compile(r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?(?!\d|[:.]\d)")
-# Nominal ribuan ketat tanpa Rp. Tidak boleh menempel strip pada deret lain ("01.234.567.8-901.000").
-_GROUPED = re.compile(rf"(?<![\d.,])(?<!\d[{_DASH}]){_THOUSANDS}{_NUM_END}")
-
-
-def _year_ok(year: str) -> bool:
-    return len(year) == 2 or 1900 <= int(year) <= 2099
-
-
-def _dmy_ok(m: re.Match) -> bool:
-    return 1 <= int(m.group(1)) <= 31 and 1 <= int(m.group(3)) <= 12 and _year_ok(m.group(4))
-
-
-def _ymd_ok(m: re.Match) -> bool:
-    return _year_ok(m.group(1)) and 1 <= int(m.group(3)) <= 12 and 1 <= int(m.group(4)) <= 31
-
-
-def _mdy_ok(m: re.Match) -> bool:
-    return m.group(1).lower() in _MONTH_WORDS and 1 <= int(m.group(2)) <= 31 and _year_ok(m.group(3))
-
-
-def _dmy_name_ok(m: re.Match) -> bool:
-    return 1 <= int(m.group(1)) <= 31 and m.group(2).lower() in _MONTH_WORDS and _year_ok(m.group(3))
-
-
-def _time_ok(m: re.Match) -> bool:
-    return int(m.group(1)) <= 23 and int(m.group(2)) <= 59 and int(m.group(3) or 0) <= 59
-
-
-# Urutan = prioritas: rentang yang ditemukan lebih dulu menang bila bertumpang tindih.
-_KEEP = (
-    (_CURRENCY, None), (_DATE_DMY, _dmy_ok), (_DATE_YMD, _ymd_ok), (_DATE_MDY, _mdy_ok),
-    (_DATE_DMY_NAME, _dmy_name_ok), (_TIME, _time_ok), (_GROUPED, None),
-)
-
-
-def _kept_spans(line: str) -> list[tuple[int, int]]:
-    rules = (((_NMID, None),) if _NMID_LINE.search(line) else ()) + _KEEP
-    spans: list[tuple[int, int]] = []
-    for rx, valid in rules:
-        for m in rx.finditer(line):
-            if valid is not None and not valid(m):
-                continue
-            start, end = m.span()
-            if all(end <= s or start >= e for s, e in spans):
-                spans.append((start, end))
-    return sorted(spans)
-
-
-def _mask_runs(text: str) -> str:
-    def repl(m: re.Match) -> str:
-        digits = re.sub(r"\D", "", m.group())
-        return "…" + digits[-4:] if len(digits) >= MIN_RUN_DIGITS else m.group()
-    return _DIGIT_RUN.sub(repl, text)
-
-
-def mask_line(line: str) -> str:
-    """Samarkan nomor rekening, nomor referensi, nomor HP, dan deret angka panjang lain di satu baris.
-
-    Deret >= 6 digit (kelompoknya boleh dipisah <= 2 spasi jenis apa pun, satu strip jenis apa pun, atau satu
-    titik/koma) menjadi `…` + 4 digit terakhirnya. Dibiarkan: nominal ribuan yang ketat (1.500.000, 150,000.00),
-    nominal langsung sesudah Rp/IDR (ribuan ketat atau <= 9 digit), tanggal (d-m-y, d/m/y, d.m.y, y-m-d,
-    "Oct 26 2026", "26 Okt 2026"), jam, dan NMID (`ID` + >= 10 digit) di baris berlabel NMID. Teks yang sudah
-    tersamar (`…4567`, `****1234`) tidak berubah."""
-    out, pos = [], 0
-    for start, end in _kept_spans(line):
-        out.append(_mask_runs(line[pos:start]))
-        out.append(line[start:end])
-        pos = end
-    out.append(_mask_runs(line[pos:]))
-    return "".join(out)
-
-
-# Huruf yang sering dibaca OCR dari angka (0 1 5 8 2 6 9), dalam deret 1-3 huruf yang tidak menempel huruf lain:
-# "S6", "BB", "lO" — bukan bagian kata ("SOSIS", "TID…", "WIB").
-_LOOKALIKE_RUN = re.compile(r"(?<![^\W\d_])[OoDlIiSsBZGgq]{1,3}(?![^\W\d_])")
-# Tepat satu karakter ini masih menyambung jam / nominal ke potongan nomor di sebelahnya: "/", "_", ":", ".", ",",
-# dan semua strip yang mask_line anggap pemisah deret (_DASH).
-_GLUE = re.compile(rf"[/_:.,{_DASH}]")
-_HWS_RX = re.compile(_HWS)
-
-
-def _is_time(text: str) -> bool:
-    """Berbentuk jam yang sah (08:12, 08.12.33, juga "12.10.26" yang bisa tanggal d.m.yy); "24.12.34" hanya tanggal."""
-    m = _TIME.fullmatch(text)
-    return bool(m and _time_ok(m))
-
-
-def _skip_spaces(blank: str, i: int, step: int, spaces: int) -> int:
-    """Indeks sesudah melewati <= `spaces` spasi horizontal dari blank[i] ke arah `step`."""
-    while spaces and 0 <= i < len(blank) and _HWS_RX.fullmatch(blank[i]):
-        i, spaces = i + step, spaces - 1
-    return i
-
-
-def _number_at(blank: str, i: int, step: int, lookalike: set[int], spaces: int = 0) -> bool:
-    """Apakah ke arah `step` dari blank[i] — langsung, atau lewat tepat satu pemisah `_GLUE`, masing-masing boleh
-    didahului <= `spaces` spasi — ada digit, awal penanda `…dddd`, atau huruf mirip angka lepas. `blank` sudah
-    mengosongkan rentang yang dibiarkan, jadi tetangga yang bagian dari tanggal/nominal/jam lain tidak terlihat."""
-    i = _skip_spaces(blank, i, step, spaces)
-    if 0 <= i < len(blank) and _GLUE.fullmatch(blank[i]):
-        i = _skip_spaces(blank, i + step, step, spaces)
-    return 0 <= i < len(blank) and (blank[i].isdecimal() or blank[i] == "…" or i in lookalike)
-
-
-def _is_number_fragment(line: str, blank: str, start: int, end: int, lookalike: set[int]) -> bool:
-    """Rentang yang dibiarkan line[start:end] berbentuk jam atau nominal ribuan tanpa Rp/IDR, dan menempel potongan
-    nomor: jam langsung atau lewat satu pemisah ("…4903/09:45", "S6:25"); nominal tanpa Rp juga lewat 1-2 spasi di
-    sekitar pemisah itu — celah antarkelompok sebuah nomor yang satu celahnya terbaca OCR sebagai titik/koma
-    ("703.123 …6700", "182.222 8783", "…5678 - 901.000"). Nominal langsung sesudah Rp/IDR tetap nominal."""
-    piece = line[start:end]
-    if _is_time(piece):
-        spaces = 0
-    elif _GROUPED.fullmatch(piece):
-        spaces = 2
-    else:
-        return False
-    return _number_at(blank, start - 1, -1, lookalike, spaces) or _number_at(blank, end, 1, lookalike, spaces)
-
-
-def needs_review(line: str) -> bool:
-    """Jaring pengaman untuk tinjauan manusia (tidak pernah memblokir): hitungan seluruh baris sesudah `mask_line`.
-
-    Rentang yang dibiarkan (nominal, tanggal, jam, NMID) dikosongkan — kecuali yang berupa potongan nomor
-    (`_is_number_fragment`): jam yang menempel digit, penanda `…dddd`, atau huruf mirip angka lepas, langsung atau
-    lewat satu pemisah `_GLUE`, dan nominal ribuan tanpa Rp/IDR yang menempel begitu atau lewat 1-2 spasi (juga di
-    kedua sisi pemisah itu, re-review A13 I1-r4); digitnya tetap dihitung. Lalu dihitung: tiap digit 1 (penanda `…dddd` = 4) dan tiap huruf mirip angka (`_LOOKALIKE_RUN`)
-    yang menempel digit atau penanda 1 ("8BB…2796", "ID…5678"). Baris ditandai bila jumlahnya >= MIN_RUN_DIGITS.
-    Kata, spasi, dan tanda baca di antaranya tidak memisahkan: "Ref …5678 …1234" dan "ID Transaksi A1B2C3D4"
-    ditandai (ruling A13 fix round 4) — salah tanda hanya satu lirikan di tinjauan A14, sedangkan yang lolos masuk
-    ke korpus."""
-    spans = _kept_spans(line)
-    chars = list(line)
-    for start, end in spans:
-        chars[start:end] = " " * (end - start)
-    blank = "".join(chars)
-    lookalike = {i for m in _LOOKALIKE_RUN.finditer(blank) for i in range(*m.span())}
-    for start, end in spans:
-        if _is_number_fragment(line, blank, start, end, lookalike):
-            chars[start:end] = line[start:end]
-    text = "".join(chars)
-    count = sum(c.isdecimal() for c in text)
-    for m in _LOOKALIKE_RUN.finditer(text):
-        a, b = m.span()
-        if (a > 0 and text[a - 1].isdecimal()) or (b < len(text) and (text[b] == "…" or text[b].isdecimal())):
-            count += b - a
-    return count >= MIN_RUN_DIGITS
 
 
 # ── Evaluasi ────────────────────────────────────────────────────────────────
@@ -547,17 +368,6 @@ def _content_type(path: Path) -> str | None:
     return guessed if guessed and guessed.startswith("image/") else None
 
 
-def expect_from(doc) -> dict:
-    """Hasil pembaca dalam bentuk `expect` korpus (urutan kunci seperti spec §7a)."""
-    paid_at = doc.paid_at
-    if paid_at is not None:
-        paid_at = (paid_at.astimezone(WIB) if paid_at.tzinfo else paid_at.replace(tzinfo=WIB)).isoformat(timespec="seconds")
-    return {
-        "doc_type": doc.doc_type, "issuer": doc.issuer or None, "total": doc.amounts.total, "paid_at": paid_at,
-        "counterparty": doc.counterparty.name or None, "status": doc.status, "flow": doc.flow,
-    }
-
-
 def _err(message: str) -> int:
     print(message, file=sys.stderr)
     return 2
@@ -576,6 +386,14 @@ _LIMITS_REMINDER = ("Yang tidak terdeteksi alat ini, cek sendiri: nomor yang ter
 
 
 def cmd_add(args) -> int:
+    if args.dari_donasi:
+        if args.file or args.real or args.user_name:
+            return _err("--dari-donasi tidak dipakai bersama berkas bukti, --real, atau --user-name.")
+        return cmd_add_donation(args)
+    if args.tahan:
+        return _err("--tahan hanya untuk --dari-donasi.")
+    if not args.file or not args.id:
+        return _err("add butuh berkas bukti dan --id (atau --dari-donasi <berkas.json>).")
     corpus_path = Path(args.corpus)
     try:
         samples = load_corpus(corpus_path)   # sebelum ekstraksi: salah ketik --corpus tidak membuang waktu OCR
@@ -627,6 +445,105 @@ def cmd_add(args) -> int:
         print('Periksa baris dan expect dengan bukti aslinya, lalu set "reviewed": true.')
     print(_NAME_REMINDER)
     print(_LIMITS_REMINDER)
+    return 0
+
+
+EXIT_READER_DIFFERS = 3   # pembaca beda dengan koreksi user pada field gerbang (K17); korpus tidak diubah
+
+_DONATION_KEYS = ("id", "real", "reviewed", "today", "user_name", "lines", "expect")
+
+
+def _load_donation(path: Path) -> tuple[dict, dict | None]:
+    """(entri, truth) dari berkas unduhan Admin: `{entry, truth, gated_diff}` utuh atau entri saja. Rusak -> CorpusError."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise CorpusError(f"berkas donasi tidak bisa dibaca: {path} ({e})") from e
+    except ValueError as e:
+        raise CorpusError(f"berkas donasi rusak: {path} ({e})") from e
+    if isinstance(data, dict) and "entry" in data:
+        entry, truth = data["entry"], data.get("truth")
+    else:
+        entry, truth = data, None
+    if not isinstance(entry, dict):
+        raise CorpusError(f"berkas donasi rusak: {path} (entry harus objek)")
+    if truth is not None and not isinstance(truth, dict):
+        raise CorpusError(f"berkas donasi rusak: {path} (truth harus objek atau null)")
+    return dict(entry), truth
+
+
+def cmd_add_donation(args) -> int:
+    """`add --dari-donasi <berkas.json>` (A16 M1d; K4, K17): entri dari Admin divalidasi (`_sample_problem`, id unik,
+    awalan Indomaret ditolak, nama user hanya nama samaran, baris sudah tersamar dan lolos aturan persetujuan Admin
+    `donasi.approved_lines`), `expect` dihitung ulang dengan pembaca saat ini lalu nilai koreksi user (`truth`)
+    menggantikannya (`donasi.confirmed_expect`). Pembaca beda dengan koreksi user (field apa pun) -> keluar 3 tanpa
+    menulis, kecuali `--tahan` (ditulis dengan nilai koreksi user dan `reviewed: false`, pola A14: perbaiki pembaca, lalu
+    set `reviewed: true`); tanpa beda -> `reviewed: true`. Hanya kunci sampel korpus yang ditulis (kunci lain dibuang),
+    `real` selalu true. Berkas korpus tidak berubah bila gagal."""
+    corpus_path = Path(args.corpus)
+    try:
+        samples = load_corpus(corpus_path)
+        entry, truth = _load_donation(Path(args.dari_donasi))
+    except CorpusError as e:
+        return _err(str(e))
+    if args.id:
+        entry["id"] = args.id
+    if entry.get("user_name") is None:
+        entry.pop("user_name", None)
+    problem = _sample_problem(entry)
+    if problem:
+        return _err(f"entri donasi tidak sah: {problem}")
+    if any(s.get("id") == entry["id"] for s in samples):
+        return _err(f"id {entry['id']!r} sudah ada di {corpus_path}; pakai --id lain.")
+    if not pseudonym_ok(entry.get("user_name")):
+        return _err(f"entri donasi tidak sah: Nama user harus nama samaran ({_dumps(entry['user_name'])}).")
+    lines = entry["lines"]
+    try:
+        masked = approved_lines(lines)   # aturan yang sama dengan persetujuan Admin
+    except SampleLineSecret as e:
+        return _err(f"entri donasi tidak sah: {e}. Samarkan barisnya, lalu jalankan lagi.")
+    for i, (line, clean) in enumerate(zip(lines, masked), 1):
+        if line != clean:   # mask_line hanya mengubah deret digit panjang
+            return _err(f"entri donasi tidak sah: Masih ada nomor panjang di baris {i}. Samarkan barisnya "
+                        f"(mis. {_dumps(clean)}), lalu jalankan lagi.")
+    dropped = sorted(k for k in entry if k not in _DONATION_KEYS)
+
+    old_expect = entry["expect"]
+    read = expect_from(asyncio.run(_read(entry)))   # pembaca saat ini, tanpa aturan, seperti `eval`
+    diffs = truth_diff(read, truth)
+    expect = confirmed_expect(read, truth)
+    print(f"Entri donasi {entry['id']} ({len(lines)} baris):")
+    for i, line in enumerate(lines, 1):
+        print(f"  {i:>2}. {line}")
+    for i, line in enumerate(lines, 1):
+        if needs_review(line):
+            print(f"PERIKSA baris {i}: {line}")
+    print("expect (hasil pembaca saat ini, dengan nilai koreksi user):")
+    print("  " + _dumps(expect))
+    if old_expect != expect:
+        print("Catatan: expect dihitung ulang dengan pembaca saat ini (beda dengan berkas unduhan).")
+    if truth is None:
+        print("Berkas tanpa truth (koreksi user): beda pembaca tidak bisa diperiksa.")
+    for field, want, got in diffs:
+        print(f"Beda {field}: koreksi user {_dumps(want)}, terbaca {_dumps(got)}")
+    if dropped:
+        print("Kunci yang tidak ditulis ke korpus: " + ", ".join(dropped))
+    if diffs and not args.tahan:
+        print("Pembaca beda dengan koreksi user pada " + ", ".join(f for f, _w, _g in diffs) + " — korpus tidak "
+              "diubah. Perbaiki pembaca di PR yang sama, atau jalankan lagi dengan --tahan (ditulis dengan nilai koreksi "
+              "user, reviewed: false).", file=sys.stderr)
+        for field, want, got in diffs:
+            print(f"  {field}: koreksi user {_dumps(want)}, terbaca {_dumps(got)}", file=sys.stderr)
+        return EXIT_READER_DIFFERS
+
+    entry.update({"real": True, "reviewed": not diffs, "expect": expect})
+    sample = {k: entry[k] for k in _DONATION_KEYS if k in entry}
+    write_corpus(corpus_path, [*samples, sample])
+    print(f"Sampel {sample['id']} ditambahkan ke {corpus_path} (reviewed: {_dumps(sample['reviewed'])}).")
+    if diffs:
+        print("Ditahan (reviewed: false): expect memakai nilai koreksi user; perbaiki pembaca sampai sampel ini lulus "
+              "eval, lalu set \"reviewed\": true.")
+    print(_NAME_REMINDER)
     return 0
 
 
@@ -701,8 +618,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="perintah", required=True)
     a = sub.add_parser("add", help="tambahkan satu bukti (tersamar) ke korpus")
-    a.add_argument("file")
-    a.add_argument("--id", required=True)
+    a.add_argument("file", nargs="?", help="bukti (.txt, .pdf, gambar); wajib dengan --id, kecuali --dari-donasi")
+    a.add_argument("--id", help="id sampel (wajib untuk berkas bukti; untuk --dari-donasi mengganti id entri)")
+    a.add_argument("--dari-donasi", metavar="BERKAS",
+                   help="entri korpus .json dari Admin \"Unduh entri korpus\" (donasi contoh)")
+    a.add_argument("--tahan", action="store_true",
+                   help="dengan --dari-donasi: tetap tulis walau pembaca beda dengan koreksi user (reviewed: false)")
     a.add_argument("--real", action="store_true", help="bukti nyata (perlu ditinjau sebelum dievaluasi)")
     a.add_argument("--user-name", help="nama akun user untuk cek arah 'antar rekening sendiri' (pakai nama samaran)")
     a.add_argument("--corpus", default=str(DEFAULT_CORPUS))

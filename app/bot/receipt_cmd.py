@@ -28,7 +28,28 @@ Nominal ketikan sesudah "Nominal salah" (plan 2026-11-01 Task L2b, pre-flight K4
 QRIS/transfer/tidak dikenali menyimpan `kotak:fix:{id user chat}` = id item (TTL `FIX_TTL_S`). Pesan teks berikutnya
 user itu dalam FIX_TTL_S (`note_fix_amount`, dari handlers.handle_message sesudah `capture_note`; perintah, foto, tombol,
 dan catatan tidak menghabiskan kunci) mengambil kunci itu sekali; satu nominal → suara koreksi nominal untuk item
-(`belajar.learn_from_correction`). Ketikannya tetap ke NLP dan dicatat persis seperti biasa, tidak tertaut ke item.
+(`belajar.learn_from_correction`) dan donasi contoh `nominal_bot` (`donasi.donate`). Ketikannya tetap ke NLP dan
+dicatat persis seperti biasa, tidak tertaut ke item.
+
+"Aplikasi apa ini?" (belajar lintas user tahap 2, Task M2c): pesan struk untuk bukti tidak dikenali yang boleh
+ditanya (`flags.ask_app`, bukan bukti yang transaksinya gagal) mendapat baris "🏷️ Aplikasi apa ini?" (`ka_{item_id}`) di bawah
+baris kedua. Ketukannya mengedit pesan menjadi pertanyaan "Logo di bukti: {flags.app_logo}. Aplikasi apa ini?" dengan
+12 aplikasi berprofil (`ka_{item_id}_{i}`, i = indeks `PROFILES`, 3 per baris), "Lainnya" (`ka_{item_id}_n`) dan
+"↩️ Kembali" (`ka_{item_id}_k`, pesan hasil dirender ulang). Jawaban → `record.choose_app` (satu suara per item,
+tidak mencatat dan tidak mengubah status) lalu pesan hasil dirender ulang tanpa tombol aplikasi; tombol amplop tetap.
+
+"Bukan pengeluaran" dua langkah (tahap 2 M3c, pre-flight K11): "🚫 Bukan pengeluaran" (`kx_{item_id}_c{key}`, kunci
+sesi tombol amplop) mengedit pesan menjadi "Kenapa bukan pengeluaran?" dengan "Top-up saldo sendiri" (`kx_{item_id}_t`),
+"Uang masuk" (`_m`), "Ke rekening sendiri" (`_s`), "Lainnya" (`_l`, lewati tanpa alasan = perilaku lama) dan
+"↩️ Kembali" (`_k{key}`, tombol amplop sesi yang sama dirender ulang, catatan 📝 tetap); arah uang item (saran) di
+urutan pertama. Catatan yang ditunggu ("✏️ Tambah catatan") hanya dihapus saat benar-benar melewati. "Oke, lewati" pada tawaran lewati = `kx_{item_id}_y`: satu
+ketukan, alasan = arah uang item (sama dengan bacaan, jadi tanpa suara, K14). Akhiran lain dan tombol `kx_{item_id}`
+dari pesan sebelum M3c membuka pilihan. Lewati = `record.skip_item(..., alasan=...)` (suara `arah` hanya bila alasan
+berbeda dengan arah terbaca; galatnya tidak pernah menggagalkan lewati). `kd_` ("Sama, lewati") tidak berubah.
+
+Tawaran lewati dan duplikat lunak sekaligus (review M3b temuan 1): "Tetap catat" pada tawaran lewati masih menanyakan
+duplikat lunaknya ("🤔 Mirip …", "Sama, lewati"/"Beda, catat"); payload `txn:{key}` mengingat pertanyaan yang sedang
+ditampilkan ("asked"), payload lama tanpa "asked" = perilaku lama (langsung tombol amplop).
 """
 import asyncio
 import json
@@ -46,13 +67,14 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.core.period import document_date_kind, get_budget_period
 from app.models.models import ReceiptScan, User
-from app.services.kotak_struk import belajar, intake, record, view, waiter
+from app.services.kotak_struk import belajar, donasi, intake, record, view, waiter
 from app.services.kotak_struk.config import (
-    FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI, ST_DIPROSES,
-    ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
+    APP_NEW, ARAH_FLOWS, FIX_TTL_S, IMAGE_MAX_BYTES, LAYOUT_TYPES, NOTE_TTL_S, PDF_MAX_BYTES, PROOF_TYPES, ST_DILEWATI,
+    ST_DIPROSES, ST_DITERIMA, ST_GAGAL, ST_KEDALUWARSA, ST_SIAP, WAIT_BOT_S,
 )
 from app.services.kotak_struk.merchants import display_name
 from app.services.kotak_struk.readers.labels import WIB
+from app.services.kotak_struk.readers.profiles import PROFILES
 
 logger = logging.getLogger("jatahku.bot")
 
@@ -97,6 +119,30 @@ ASK_AMOUNT = "Nominal {amount} belum pasti — cek dengan {noun}. Sudah benar?"
 BTN_AMOUNT_OK = "✅ Ya, catat ke {emoji} {name}"
 AMOUNT_OK = "ky"                  # callback `ky_{key}_{idx}`: nominal dikonfirmasi, catat ke amplop idx
 TXN_LOCK = "txnlock:{}"           # kunci sesi tombol yang sama dengan tombol amplop (handlers.handle_txn_callback)
+
+# "Aplikasi apa ini?" (Task M2c): callback `ka_{item_id}` (pertanyaan), `ka_{item_id}_{i}` (indeks PROFILES),
+# `ka_{item_id}_n` (Lainnya = APP_NEW), `ka_{item_id}_k` (Kembali). Paling panjang 3 + 36 + 1 + 2 = 42 <= 64.
+BTN_ASK_APP = "🏷️ Aplikasi apa ini?"
+ASK_APP = "Logo di bukti: {logo}. Aplikasi apa ini?"
+MSG_APP_REFUSED = "⚠️ Aplikasi bukti ini tidak bisa dipilih."
+APP_OTHER = "n"
+APP_BACK = "k"
+APP_PER_ROW = 3
+
+# "Bukan pengeluaran" dua langkah (Task M3c, K11): `kx_{item_id}_c{key}` (pertanyaan, dari tombol amplop sesi `key`;
+# `kx_{item_id}` dari pesan lama), `kx_{item_id}_{t|m|s}` (alasan), `kx_{item_id}_l` (Lainnya: tanpa alasan),
+# `kx_{item_id}_y` (tawaran: alasan = arah item), `kx_{item_id}_k{key}` (Kembali ke sesi tombol `key`, catatannya
+# tetap; `kx_{item_id}_k` tanpa sesi). Paling panjang 3 + 36 + 2 + 8 = 49 <= 64.
+ASK_SKIP_REASON = "Kenapa bukan pengeluaran?"
+SKIP_REASONS = (("t", "top_up", "Top-up saldo sendiri"), ("m", "masuk", "Uang masuk"),
+                ("s", "antar_rekening_sendiri", "Ke rekening sendiri"))
+SKIP_OTHER = "l"
+SKIP_OFFERED = "y"
+SKIP_BACK = "k"
+SKIP_ASK = "c"
+_SESSION_KEY = re.compile(r"[0-9a-f]{4,16}")   # `secrets.token_hex(4)`: kunci sesi tombol `txn:{key}`
+SKIP_PER_ROW = 2
+MSG_CANNOT_SKIP = f"⚠️ {record.MSG_CANNOT_SKIP}."
 
 PROOF_LABEL = {"qris": "QRIS", "transfer": "Transfer"}
 PAY_STATUS = {"berhasil": "Berhasil", "pending": "Pending"}
@@ -252,11 +298,12 @@ def _prompt(detail: dict) -> str:
     return "ready"
 
 
-def _ready_only(detail: dict) -> dict:
-    """Detail tanpa tawaran lewati (user sudah memilih "Tetap catat"/"Beda, catat" atau menulis catatan)."""
+def _ready_only(detail: dict, *, keep_soft: bool = False) -> dict:
+    """Detail tanpa tawaran lewati (user sudah memilih "Tetap catat"/"Beda, catat" atau menulis catatan). `keep_soft`:
+    yang dijawab hanya tawaran lewati ("Tetap catat"), jadi pertanyaan duplikat lunak (bila ada) masih ditanyakan."""
     flags = dict(detail.get("flags") or {})
     flags["skip_suggestion"] = None
-    if (flags.get("duplicate_of") or {}).get("kind") == "soft":
+    if not keep_soft and (flags.get("duplicate_of") or {}).get("kind") == "soft":
         flags["duplicate_of"] = None
     return {**detail, "flags": flags}
 
@@ -384,12 +431,14 @@ async def forget_note(tg_user_id) -> bool:
 
 # ── pesan hasil ─────────────────────────────────────────────────────────────
 
-def _second_row(payload: dict) -> list:
+def _second_row(payload: dict, key: str | None = None) -> list:
     """Baris tombol di bawah amplop (atau pertanyaan tanggal): bukti "Bukan pengeluaran" + "Batal", struk "Nominal
-    salah" + "Batal"."""
+    salah" + "Batal". "Bukan pengeluaran" membawa kunci sesi tombol (`kx_{item_id}_c{key}`) supaya Kembali dari
+    pilihan alasan kembali ke sesi yang sama (catatan tetap)."""
     if payload.get("kind") == "proof":
         item_id = payload["item_id"]
-        return [InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=f"kx_{item_id}"),
+        ask = f"kx_{item_id}_{SKIP_ASK}{key}" if key else f"kx_{item_id}"
+        return [InlineKeyboardButton("🚫 Bukan pengeluaran", callback_data=ask),   # pilihan alasan (M3c)
                 InlineKeyboardButton("❌ Batal", callback_data=f"struk_no_{item_id}")]
     scan_id = payload["scan_id"]
     return [InlineKeyboardButton("✏️ Nominal salah", callback_data=f"struk_fix_{scan_id}"),
@@ -425,7 +474,7 @@ def _envelope_reply(key: str, payload: dict, reading: str, labels: list[str],
     rows = [[InlineKeyboardButton(label, callback_data=f"t_{key}_{i}")] for i, label in enumerate(labels)]
     if proof:
         rows.append([InlineKeyboardButton("✏️ Tambah catatan", callback_data=f"kn_{key}")])
-    rows.append(_second_row(payload))
+    rows.append(_second_row(payload, key))
     return f"{reading}\n\n{ASK_ENVELOPE}", InlineKeyboardMarkup(rows)
 
 
@@ -437,7 +486,7 @@ def _date_question(key: str, payload: dict, reading: str, doc_day: date, today: 
     ask = ASK_DATE.format(noun=noun, doc=short_date(doc_day, today), period=period_label(*period, today))
     rows = [[InlineKeyboardButton(BTN_DATE_TODAY.format(day=short_date(today, today)), callback_data=f"kt_{key}_h"),
              InlineKeyboardButton(BTN_DATE_DOC.format(day=short_date(doc_day, today)), callback_data=f"kt_{key}_d")],
-            _second_row(payload)]
+            _second_row(payload, key)]
     return f"{reading}\n\n{ask}", InlineKeyboardMarkup(rows)
 
 
@@ -519,7 +568,41 @@ async def _store_reply(db, user, item, detail) -> tuple[str, InlineKeyboardMarku
     reading = (f"🧾 Struk {merchant} · {_fmt_date(result.get('date'))}\n"
                f"Total: {_rp(total)}  {conf}"
                + (f"\n\n{summary}" if summary else ""))
-    return await _dated_reply(txn_key, payload, payday_day, reading, labels)
+    text, markup = await _dated_reply(txn_key, payload, payday_day, reading, labels)
+    if _app_logo(detail) is not None:   # di bawah baris kedua; tombol amplop/tanggal tidak berubah
+        markup = InlineKeyboardMarkup([*markup.inline_keyboard,
+                                       [InlineKeyboardButton(BTN_ASK_APP, callback_data=f"ka_{item.id}")]])
+    return text, markup
+
+
+def _app_logo(detail: dict) -> str | None:
+    """Kata logo untuk "Aplikasi apa ini?" (`flags.app_logo`, huruf besar dari server; tidak pernah dari teks OCR lain)
+    bila item boleh ditanya: `flags.ask_app` (server: siap/tercatat, tidak dikenali, kerangka berkunci logo, belum
+    dijawab) dan bukan bukti yang transaksinya gagal (`blocked` transaksi_gagal; bukti pending tetap ditanya). Selain
+    itu None."""
+    flags = detail.get("flags") or {}
+    if flags.get("ask_app") is not True or flags.get("blocked") == view.BLOCKED_FAILED:
+        return None
+    logo = flags.get("app_logo")
+    return logo.strip() or None if isinstance(logo, str) else None
+
+
+def _app_choice(suffix: str) -> str | None:
+    """Akhiran tombol jawaban → nilai suara: indeks `PROFILES` → kunci profil, `n` → APP_NEW; lainnya None."""
+    if suffix == APP_OTHER:
+        return APP_NEW
+    if suffix.isdigit() and str(int(suffix)) == suffix and int(suffix) < len(PROFILES):
+        return PROFILES[int(suffix)].key
+    return None
+
+
+def _app_question(item_id, logo: str) -> tuple[str, InlineKeyboardMarkup]:
+    """Langkah kedua "Aplikasi apa ini?": 12 aplikasi berprofil (3 per baris), lalu "Lainnya" dan "↩️ Kembali"."""
+    buttons = [InlineKeyboardButton(p.label, callback_data=f"ka_{item_id}_{i}") for i, p in enumerate(PROFILES)]
+    rows = [buttons[i:i + APP_PER_ROW] for i in range(0, len(buttons), APP_PER_ROW)]
+    rows.append([InlineKeyboardButton("Lainnya", callback_data=f"ka_{item_id}_{APP_OTHER}"),
+                 InlineKeyboardButton("↩️ Kembali", callback_data=f"ka_{item_id}_{APP_BACK}")])
+    return ASK_APP.format(logo=logo), InlineKeyboardMarkup(rows)
 
 
 async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -552,9 +635,10 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
         "confidence": ((detail.get("document") or {}).get("confidence") or {}).get("total"), "noun": "bukti",
     }
     if prompt in ("skip", "soft"):   # tawaran lewati dulu; tanggal ditanyakan sesudah "Tetap catat"/"Beda, catat"
+        payload["asked"] = prompt    # "Tetap catat" (skip) masih menanyakan duplikat lunak; "Beda, catat" (soft) tidak
         await _save_payload(key, payload)
         if prompt == "skip":
-            rows = [[InlineKeyboardButton("Oke, lewati", callback_data=f"kx_{item_id}"),
+            rows = [[InlineKeyboardButton("Oke, lewati", callback_data=f"kx_{item_id}_{SKIP_OFFERED}"),
                      InlineKeyboardButton("Tetap catat", callback_data=f"ko_{key}")]]
         else:
             rows = [[InlineKeyboardButton("Sama, lewati", callback_data=f"kd_{item_id}"),
@@ -570,6 +654,7 @@ async def _proof_reply(db, user, detail, *, recorded=None, key=None, note=None) 
 
 async def _result_reply(db, user, item, *, key=None, note=None, ready=False) -> tuple[str, InlineKeyboardMarkup | None]:
     """Pesan hasil untuk item yang sudah selesai dibaca. `ready`: langsung tombol amplop (tanpa tawaran lewati);
+    `ready="skip"`: hanya tawaran lewati yang sudah dijawab ("Tetap catat"), duplikat lunak masih ditanyakan;
     `key`/`note`: sesi tombol yang sudah ada dan catatan user. Item yang sudah selesai di tempat lain (dilewati di
     web, kedaluwarsa) hanya dikabari tanpa tombol catat — dirender ulang chat web (`reply_item_result`); kirim ulang
     file yang sama di bot membuka item baru, jadi jalur bot tidak pernah sampai ke sini dengan status itu."""
@@ -585,7 +670,7 @@ async def _result_reply(db, user, item, *, key=None, note=None, ready=False) -> 
         return MSG_EXPIRED, None
     detail = await view.item_detail(db, item, user, note=note)
     if ready:
-        detail = _ready_only(detail)
+        detail = _ready_only(detail, keep_soft=ready == "skip")
     flags = detail.get("flags") or {}
     recorded = (await view.recorded_summary(db, item, user, flags)
                 if flags.get("blocked") == view.BLOCKED_RECORDED else None)
@@ -795,19 +880,22 @@ async def reply_item_result(message, user_id, item_id) -> bool:
 # ── tombol ──────────────────────────────────────────────────────────────────
 
 async def handle_kotak_callback(update, context):
-    """kn_{key} tambah catatan · kx_{item_id} bukan pengeluaran · kd_{item_id} duplikat (lewati) ·
-    ko_{key} tetap catat (tampilkan tombol amplop). ko_ menulis ulang `txn:{key}`, jadi memakai kunci sesi tombol
-    (`_txn_lock`) sampai pesannya diedit; sedang dipakai → "Sedang diproses..."."""
+    """kn_{key} tambah catatan · kx_{item_id}[_{pilihan}] bukan pengeluaran (`_skip_action`) · kd_{item_id} duplikat
+    (lewati) ·
+    ko_{key} tetap catat (tampilkan tombol amplop) · ka_{item_id}[_{pilihan}] "Aplikasi apa ini?" (`_app_action`).
+    ko_ menulis ulang `txn:{key}`, jadi memakai kunci sesi tombol (`_txn_lock`) sampai pesannya diedit; sedang dipakai →
+    "Sedang diproses..."."""
     query = update.callback_query
     action, _, arg = (query.data or "").partition("_")
-    lock = await _txn_lock(arg) if action == "ko" else None
+    session = arg if action == "ko" else _back_key(arg) if action == "kx" else None   # Kembali `kx_` juga menulis ulang
+    lock = await _txn_lock(session) if session else None
     if lock is False:
         await query.answer("Sedang diproses...")
         return
     try:
         await _kotak_action(update, query, action, arg)
     finally:
-        await _txn_unlock(arg, lock)
+        await _txn_unlock(session, lock)
 
 
 async def _kotak_action(update, query, action: str, arg: str) -> None:
@@ -816,14 +904,21 @@ async def _kotak_action(update, query, action: str, arg: str) -> None:
     await query.answer()
     tg_user = update.effective_user
 
-    if action in ("kx", "kd"):
+    if action == "ka":
+        await _app_action(query, tg_user, arg)
+        return
+
+    if action == "kx":   # catatan yang ditunggu dihapus hanya saat benar-benar melewati (`_skip_action`)
+        await _skip_action(query, tg_user, arg)
+        return
+
+    if action == "kd":
         await forget_note(tg_user.id)
         item_id = _uuid(arg)
         async with AsyncSessionLocal() as db:
             user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
-            reason = "bukan_pengeluaran" if action == "kx" else "duplikat"
-            done = item_id is not None and await record.skip_item(db, item_id, user.id, reason)
-        await query.edit_message_text(MSG_SKIPPED if done else f"⚠️ {record.MSG_CANNOT_SKIP}.")
+            done = item_id is not None and await record.skip_item(db, item_id, user.id, "duplikat")
+        await query.edit_message_text(MSG_SKIPPED if done else MSG_CANNOT_SKIP)
         return
 
     payload = await _load_payload(arg)
@@ -846,8 +941,129 @@ async def _kotak_action(update, query, action: str, arg: str) -> None:
             if item is None:
                 text, markup = MSG_SESSION_EXPIRED, None
             else:
-                text, markup = await _result_reply(db, user, item, key=arg, note=payload.get("note"), ready=True)
+                # "Tetap catat" pada tawaran lewati: duplikat lunak masih ditanyakan (review M3b temuan 1).
+                ready = "skip" if payload.get("asked") == "skip" else True
+                text, markup = await _result_reply(db, user, item, key=arg, note=payload.get("note"), ready=ready)
         await query.edit_message_text(text, reply_markup=markup)
+
+
+def _skip_alasan(suffix: str, item) -> tuple[bool, str | None]:
+    """(lewati sekarang?, alasan) untuk akhiran `kx_{item_id}_{akhiran}`: t/m/s → alasan itu; l (Lainnya) → tanpa
+    alasan; y ("Oke, lewati" pada tawaran) → arah uang item bila salah satu ARAH_FLOWS, selain itu tanpa alasan. Akhiran
+    lain (termasuk tanpa akhiran dan Kembali) → (False, None)."""
+    for code, alasan, _ in SKIP_REASONS:
+        if suffix == code:
+            return True, alasan
+    if suffix == SKIP_OTHER:
+        return True, None
+    if suffix == SKIP_OFFERED:
+        flow = (item.document or {}).get("flow") if isinstance(item.document, dict) else None
+        return True, flow if flow in ARAH_FLOWS else None
+    return False, None
+
+
+def _session_of(suffix: str, code: str) -> str | None:
+    """Kunci sesi tombol di akhiran `{code}{key}` (`c{key}` pertanyaan, `k{key}` Kembali), None bila tidak ada/rusak."""
+    rest = suffix[len(code):] if suffix.startswith(code) else ""
+    return rest if _SESSION_KEY.fullmatch(rest) else None
+
+
+def _back_key(arg: str) -> str | None:
+    """Kunci sesi Kembali `kx_{item_id}_k{key}` (dikunci seperti "Tetap catat" karena menulis ulang `txn:{key}`)."""
+    return _session_of(arg.partition("_")[2], SKIP_BACK)
+
+
+def _skip_question(item, key: str | None = None) -> tuple[str, InlineKeyboardMarkup]:
+    """"Kenapa bukan pengeluaran?": tiga alasan (arah uang item, bila salah satunya, di urutan pertama) + "Lainnya",
+    lalu "↩️ Kembali" (membawa kunci sesi tombol asal bila ada)."""
+    flow = (item.document or {}).get("flow") if isinstance(item.document, dict) else None
+    reasons = sorted(SKIP_REASONS, key=lambda r: r[1] != flow)
+    buttons = [InlineKeyboardButton(label, callback_data=f"kx_{item.id}_{code}") for code, _, label in reasons]
+    buttons.append(InlineKeyboardButton("Lainnya", callback_data=f"kx_{item.id}_{SKIP_OTHER}"))
+    rows = [buttons[i:i + SKIP_PER_ROW] for i in range(0, len(buttons), SKIP_PER_ROW)]
+    rows.append([InlineKeyboardButton("↩️ Kembali", callback_data=f"kx_{item.id}_{SKIP_BACK}{key or ''}")])
+    return ASK_SKIP_REASON, InlineKeyboardMarkup(rows)
+
+
+async def _skip_action(query, tg_user, arg: str) -> None:
+    """`kx_{item_id}[_c{key}]` (dan akhiran tidak dikenal) → pertanyaan alasan (`_skip_question`);
+    `kx_{item_id}_{t|m|s|l|y}` → catatan yang ditunggu dihapus (`forget_note`), lalu `record.skip_item(...,
+    "bukan_pengeluaran", alasan=...)` → MSG_SKIPPED; `kx_{item_id}_k[{key}]` → pesan amplop dirender ulang
+    (`_result_reply` ready: user datang dari tombol amplop) dengan sesi tombol `key` dan catatannya bila payload-nya
+    masih ada dan milik item ini, selain itu sesi baru. Membuka pilihan dan Kembali tidak menyentuh catatan yang
+    ditunggu: ketikannya tetap menjadi catatan (`capture_note` mengedit pesan ini kembali ke tombol amplop). Item
+    milik user ini yang tidak bisa dilewati lagi (tercatat, dilewati, kedaluwarsa di tempat lain) → MSG_CANNOT_SKIP +
+    pesan hasil saat ini (tombol amplop bila masih `siap`), Kembali tanpa peringatan. Item milik user lain / tidak ada / id rusak → MSG_CANNOT_SKIP tanpa
+    tombol. Tidak pernah mencatat; lewati hanya lewat `skip_item` (satu UPDATE bersyarat)."""
+    from app.bot.handlers import get_or_create_user
+
+    raw_id, _, suffix = arg.partition("_")
+    text, markup = MSG_CANNOT_SKIP, None
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        item = await _own_item(db, _uuid(raw_id), user)
+        now, alasan = _skip_alasan(suffix, item) if item is not None else (False, None)
+        back = suffix == SKIP_BACK or _session_of(suffix, SKIP_BACK) is not None
+        if item is None:
+            pass
+        elif back:
+            key = _session_of(suffix, SKIP_BACK)
+            try:
+                payload = await _load_payload(key) if key else None
+            except Exception:   # Redis mati: sesi baru, seperti tanpa kunci
+                payload = None
+            if payload is None or payload.get("item_id") != str(item.id):
+                key, payload = None, {}
+            text, markup = await _result_reply(db, user, item, key=key, note=payload.get("note"), ready=True)
+        elif item.status not in (ST_SIAP, ST_GAGAL):
+            text, markup = await _result_reply(db, user, item)
+            text = f"{MSG_CANNOT_SKIP}\n\n{text}"
+        elif not now:
+            text, markup = _skip_question(item, _session_of(suffix, SKIP_ASK))
+        else:
+            await forget_note(tg_user.id)   # melewati: ketikan berikutnya bukan catatan lagi
+            if await record.skip_item(db, item.id, user.id, "bukan_pengeluaran", alasan=alasan):
+                text = MSG_SKIPPED
+            else:   # kalah dari pencatatan/lewati di tempat lain di antara baca dan UPDATE
+                await db.refresh(item)
+                text, markup = await _result_reply(db, user, item)
+                text = f"{MSG_CANNOT_SKIP}\n\n{text}"
+    await query.edit_message_text(text, reply_markup=markup)
+
+
+async def _app_action(query, tg_user, arg: str) -> None:
+    """`ka_{item_id}` → pertanyaan (`_app_question`); `ka_{item_id}_{i|n}` → jawaban: `record.choose_app` (satu
+    suara per item, donasi contoh `aplikasi`) + commit, lalu pesan hasil dirender ulang (`_result_reply`: tanpa tombol
+    aplikasi, tombol amplop
+    tetap, sesi tombol baru); `ka_{item_id}_k` → pesan hasil dirender ulang tanpa menjawab. Akhiran lain → pertanyaan
+    lagi. Item milik user ini yang tidak bisa ditanya lagi (dijawab di kartu web, bukti gagal, dilewati/kedaluwarsa
+    di tempat lain) atau jawabannya ditolak → pesan hasil dirender ulang (tombol amplop tetap bila masih `siap`),
+    diawali MSG_APP_REFUSED kecuali untuk Kembali. Item milik user lain / tidak ada / id rusak → MSG_APP_REFUSED tanpa
+    tombol. Tidak pernah mencatat atau melewati item."""
+    from app.bot.handlers import get_or_create_user
+
+    raw_id, _, suffix = arg.partition("_")
+    item_id = _uuid(raw_id)
+    text, markup = MSG_APP_REFUSED, None
+    async with AsyncSessionLocal() as db:
+        user = await get_or_create_user(str(tg_user.id), tg_user.first_name, db)
+        item = await _own_item(db, item_id, user)
+        logo = _app_logo(await view.item_detail(db, item, user)) if item is not None else None
+        choice = _app_choice(suffix)
+        if item is None:
+            pass
+        elif suffix == APP_BACK:
+            text, markup = await _result_reply(db, user, item)
+        elif logo is not None and choice is None:
+            text, markup = _app_question(item.id, logo)
+        elif logo is not None and await record.choose_app(db, item, choice, user_id=user.id, user_name=user.name):
+            await db.commit()
+            await db.refresh(item)
+            text, markup = await _result_reply(db, user, item)
+        else:   # tidak bisa ditanya lagi / jawaban ditolak: pesan hasil tetap bisa dipakai mencatat
+            text, markup = await _result_reply(db, user, item)
+            text = f"{MSG_APP_REFUSED}\n\n{text}"
+    await query.edit_message_text(text, reply_markup=markup)
 
 
 async def handle_date_callback(update, context):
@@ -1011,7 +1227,9 @@ async def handle_struk_callback(update, context):
         learnable = kotak and item.doc_type in LAYOUT_TYPES
         try:
             if kotak:
-                skipped = await record.skip_item(db, item_id, user.id, "batal")
+                # "Nominal salah" bukti berkerangka: baris donasi dibiarkan untuk `note_fix_amount` (M1c).
+                skipped = await record.skip_item(db, item_id, user.id, "batal",
+                                                 keep_sample=action == "fix" and learnable)
             if store:
                 await apply_feedback(user, scan_id, db, saved=False, wrong=(action == "fix"))
         except Exception as exc:  # best-effort
@@ -1062,7 +1280,8 @@ async def note_fix_amount(update, text: str) -> None:
     """Pesan teks pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`: perintah,
     foto, tombol, dan catatan yang ditangkap tidak menghabiskan kunci): kunci `FIX_KEY` diambil sekali (`getdel`); satu
     nominal (`fix_amount`) → suara koreksi nominal untuk item itu (`belajar.learn_from_correction` dengan
-    `Final(nominal, None, None, hari ini WIB)`) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
+    `Final(nominal, None, None, hari ini WIB)`; kunci `logo:` dengan `approved_logo` seperti jalur web) dan donasi contoh `nominal_bot` (`donasi.donate`, truth total; baris
+    tersamar dikosongkan bila tidak disimpan) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
     belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks: pemanggil selalu lanjut ke NLP, yang
     mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa suara, diam-diam seperti
     `capture_note` (log debug; peringatan hanya untuk galat sesudah kunci terbaca)."""
@@ -1089,7 +1308,17 @@ async def note_fix_amount(update, text: str) -> None:
             if item is None:
                 return
             final = belajar.Final(amount, None, None, belajar.today_wib())
-            if await belajar.learn_from_correction(db, item, final, user_id=user.id):
+            # Kunci `logo:<kata>` hanya mendapat suara label sesudah aturan `logo`-nya disetujui (K8), sama dengan
+            # jalur web `record._learn_correction` (review akhir A16 temuan 2).
+            key = item.layout.get("key") if isinstance(item.layout, dict) else None
+            approved_logo = (await belajar.approved_logo_keys(db) if isinstance(key, str) and key.startswith("logo:")
+                             else frozenset())
+            voted = await belajar.learn_from_correction(db, item, final, user_id=user.id, approved_logo=approved_logo)
+            sample = bool(item.sample_lines)
+            if sample:   # galat donasi ditelan `donate`; suara di atas tetap di-commit
+                await donasi.donate(db, item, donasi.correction_trigger(item, None, typed_amount=amount),
+                                    truth=donasi.truth_of(total=amount), now=datetime.now(timezone.utc))
+            if voted or sample:
                 await db.commit()
     except Exception:
         logger.warning("suara Nominal salah tidak dicatat", exc_info=True)

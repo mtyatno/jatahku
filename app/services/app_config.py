@@ -38,6 +38,7 @@ FEATURES: dict[str, bool] = {
     "receipt_inbox": False,  # Kotak Struk (FS.8)
     "push": False,           # push native (3.5)
     "biometric_lock": False, # kunci biometrik (3.6)
+    "kotak_donasi": False,   # donasi contoh Kotak Struk (tahap 2; nyala sesudah paragraf privasi tayang, K1)
 }
 
 DEFAULTS: dict = {

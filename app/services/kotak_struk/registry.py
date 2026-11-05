@@ -11,13 +11,14 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from app.services.kotak_struk import checks as cross_checks
-from app.services.kotak_struk.config import PROOF_TYPES, READER_THRESHOLD
+from app.services.kotak_struk import kerangka
+from app.services.kotak_struk.config import ARAH_FLOWS, PROOF_TYPES, READER_THRESHOLD
 from app.services.kotak_struk.readers.base import Check, DocReader, ParseContext, Parsed
 from app.services.kotak_struk.readers.proof_common import (
     clean_lines, has_header_status_title, has_item_lines, has_status_title, has_success_title, is_app_receipt,
     looks_like_store_text, read_labelled_failure,
 )
-from app.services.kotak_struk.readers.profiles import logo_profile
+from app.services.kotak_struk.readers.profiles import learned_arah, logo_profile
 from app.services.kotak_struk.readers.qris import QrisReader
 from app.services.kotak_struk.readers.struk_belanja import StrukBelanjaReader
 from app.services.kotak_struk.readers.transfer import TransferReader
@@ -98,11 +99,33 @@ def _apply_labelled_failure(parsed: Parsed, doc: TextDoc) -> None:
         d.evidence.append(f"Bukti menyebut status {labelled}")
 
 
+ARAH_EVIDENCE = "Arah uang dari aturan belajar"
+
+
+def _apply_learned_arah(parsed: Parsed, doc: TextDoc, ctx: ParseContext) -> None:
+    """Aturan `arah` yang disetujui (tahap 2 M3b; spec 2026-11-01 §5 "`arah`", pre-flight A16 K10): bukti QRIS/transfer
+    berprofil (`doc.issuer` kunci profil) yang SESUDAH `apply_flow` masih `keluar` mendapat arah aturan
+    (`profiles.learned_arah` atas `kerangka.arah_tokens`, dihitung sama persis dengan kerangka worker) bila nilainya
+    ARAH_FLOWS, ditambah bukti "Arah uang dari aturan belajar". Hanya saran: arah selain `keluar` (antar rekening sendiri,
+    uang masuk, top-up yang terbaca) tidak pernah diubah, dan tidak pernah menjadi `keluar`; status, cek, nomor referensi,
+    dan dedup tidak membaca arah; item tetap `siap` dan tetap bisa dicatat ("Tetap catat"/Simpan). Pemanggil hanya
+    memanggilnya dengan saklar bukti menyala."""
+    d = parsed.doc
+    if not ctx.rules or d.doc_type not in PROOF_TYPES or not d.issuer or d.flow != "keluar":
+        return
+    flow = learned_arah(ctx.rules, d.issuer, kerangka.arah_tokens(clean_lines(doc.lines), d))
+    if flow in ARAH_FLOWS:
+        d.flow = flow
+        d.evidence.append(ARAH_EVIDENCE)
+
+
 async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool) -> ReadResult:
     """Baca `doc` dengan pembaca terbaik, lalu status berlabel, arah uang, dan cek silang. Aturan belajar
     (`ctx.rules`, spec 2026-11-01 §5) hanya sampai ke `parse` pembaca bukti (QRIS, transfer) dan pembaca tidak dikenali,
     dan hanya bila saklar bukti bayar menyala (saklar mati = perilaku lama). Pembaca struk belanja, arah uang, dan cek
-    silang (status gagal/pending, nominal, tanggal) selalu menerima konteks TANPA aturan."""
+    silang (status gagal/pending, nominal, tanggal) selalu menerima konteks TANPA aturan. Satu-satunya pengecualian arah
+    uang (tahap 2 M3b): sesudah `apply_flow`, aturan `arah` yang disetujui hanya mengubah `keluar` menjadi saran bukan
+    pengeluaran (`_apply_learned_arah`); cek tetap dihitung dengan konteks tanpa aturan."""
     reader: DocReader | None = None
     best = 0.0
     for candidate in readers_for(proofs_enabled):
@@ -115,6 +138,8 @@ async def read_document(doc: TextDoc, ctx: ParseContext, *, proofs_enabled: bool
     parsed = await reader.parse(doc, ctx if proofs_enabled and reader is not _STRUK_BELANJA else plain)
     _apply_labelled_failure(parsed, doc)
     cross_checks.apply_flow(parsed, plain)
+    if proofs_enabled:
+        _apply_learned_arah(parsed, doc, ctx)
     found = [*reader.checks(parsed, plain), *cross_checks.common_checks(parsed, plain)]
     parsed.doc.checks = [c.as_dict() for c in found]
     return ReadResult(parsed=parsed, checks=found, reader=reader.name)

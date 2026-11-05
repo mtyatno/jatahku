@@ -373,10 +373,10 @@ def _proof_corrected(parsed_total, paid_at: datetime | None, txn) -> bool:
 
 async def _kotak_breakdown(db: AsyncSession, since: datetime) -> dict:
     """Rincian Kotak Struk untuk Admin (spec §7d butir 4), dihitung di Python dari item periode ini (baris lama tanpa
-    status tidak ikut): jumlah per `doc_type`, jumlah `tidak_dikenali`, dan per `issuer` (`document->>'issuer'`)
-    total/tercatat/dikoreksi. Dikoreksi: struk belanja = outcome `corrected`; jenis lain = item tercatat yang
-    transaksinya (id pertama di `transaction_ids` yang masih ada) berbeda nominal/tanggal dari hasil baca. Transaksi
-    dibaca per ID_CHUNK id."""
+    status tidak ikut): jumlah per `doc_type`, jumlah `tidak_dikenali`, dan per `issuer` (`document->>'issuer'`, tanpa
+    item `tidak_dikenali`) total/tercatat/dikoreksi. Dikoreksi: struk belanja = outcome `corrected`; jenis lain = item
+    tercatat yang transaksinya (id pertama di `transaction_ids` yang masih ada) berbeda nominal/tanggal dari hasil baca.
+    Transaksi dibaca per ID_CHUNK id."""
     rows = (await db.execute(
         select(ReceiptScan.doc_type, ReceiptScan.status, ReceiptScan.outcome,
                ReceiptScan.document["issuer"].as_string(), ReceiptScan.parsed_total, ReceiptScan.paid_at,
@@ -392,7 +392,9 @@ async def _kotak_breakdown(db: AsyncSession, since: datetime) -> dict:
             by_doc_type[doc_type] = by_doc_type.get(doc_type, 0) + 1
         if doc_type == "tidak_dikenali":
             unrecognized += 1
-        if issuer:
+        # Bukti tak dikenal dengan penerbit dari aturan `logo` (tahap 2, M2b) tidak dihitung per penerbit: angka itu
+        # untuk ketepatan pembaca aplikasinya (QRIS/transfer), bukan bukti yang dibaca pembaca tidak dikenali.
+        if issuer and doc_type != "tidak_dikenali":
             ids = _txn_ids(txn_ids) if status == ST_TERCATAT and doc_type != "struk_belanja" else []
             issued.append((str(issuer), doc_type, status, outcome, parsed_total, paid_at, ids))
 

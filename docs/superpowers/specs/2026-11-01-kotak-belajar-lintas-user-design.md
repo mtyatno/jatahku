@@ -179,6 +179,30 @@ Gerbang §7c (korpus ≥ 95% pada 12 aplikasi) **diganti** oleh keputusan pemili
 - Aturan `logo` untuk aplikasi yang belum berprofil (user memberi nama aplikasi pada bukti `tidak_dikenali`).
 - Top-up e-wallet sendiri (`top_up`) dari aturan `arah` yang terkumpul.
 
+> **Catatan as-built tahap 2 (5 Nov 2026; teks yang disetujui di atas tidak diubah).** Dikerjakan di branch
+> `feat/kotak-belajar-2`, satu PR berlabel `migrasi`, revisi `c9e4a7f2b5d8` (rencana
+> `docs/superpowers/plans/2026-11-04-kotak-belajar-tahap-2.md`; keputusan pengendali dari pre-flight
+> `.superpowers/sdd/2026-10-26-bagikan-ke-jatahku/a16-preflight.md` K1–K17, G1–G12). Yang dirinci atau berbeda dari
+> butir di atas: donasi di balik saklar baru `features.kotak_donasi`, dinyalakan sesudah paragraf privasi donasi tayang
+> (K1); `mask_line` pindah ke `samaran.py` dan nama yang dikenal diganti nama samaran sudah di worker (K2, K5); pemicu =
+> koreksi apa pun, juga bukti tidak dikenali yang dipastikan, alasan/aplikasi yang dipilih, dan bot "Nominal salah" (K3);
+> pemilik mengunduh entri korpus dari Admin dan menjalankan `kotak_corpus add --dari-donasi` di checkout lokal lalu PR,
+> tidak di VPS (K4); `expect` memakai koreksi user dan beda pembaca keluar 3 kecuali `--tahan` (`reviewed: false`) (K17);
+> nilai `logo` hanya 12 kunci profil atau `baru`, tanpa teks bebas (K6); aturan `logo` hanya di pembaca tidak dikenali
+> (penerbit dan kunci label, tidak pernah status/dedup; K7), kandidat logo ketat dan suara label untuk aplikasi baru baru
+> sesudah aturan logonya disetujui (K8); token `arah` hanya kosakata, `judul:` dan `ke:` (top-up ShopeePay "Kirim Ke
+> GOPAY TOPU-…"; K9), dipakai sesudah `apply_flow`, hanya `keluar` → saran, hanya aplikasi berprofil, saklar
+> `receipt_inbox` menyala (K10); `kx_` dua langkah, "Oke, lewati" = `kx_{id}_y` (K11); tanpa suara `arah` bila alasan sama
+> dengan bacaan (K14); tab Suara menyamarkan kunci logo dan token arah (K15); L6 m-7 tidak termasuk (K16); satu nilai
+> disetujui per kunci `logo`/`arah`, dijaga indeks unik parsial `ux_proof_rules_satu_nilai` (G8). Keputusan pemilik produk
+> 5 Nov 2026: teks persetujuan Settings (judul "Bantu Jatahku membaca bukti bayar"; isi kalimat pemilik ditambah "Teks
+> bukti yang sudah disamarkan dikirim ke pengelola untuk ditinjau; bisa dimatikan kapan saja."), paragraf `privacy.html`
+> disetujui (ditambah satu kalimat bahwa contoh yang disetujui disimpan di repositori kode yang terbuka untuk umum, hanya
+> teks tersamar dengan nama samaran; review akhir A16 temuan 3), retensi sampel **7 hari** (bukan 30 hari draf pre-flight G2), menarik persetujuan menyisakan sampel yang sudah
+> disetujui (hapus akun dan gabung akun tetap menghapus semuanya). Keputusan pengendali M1d: Tolak menghapus sampel, jadi
+> status `ditolak` tidak pernah tersimpan. Rincian: `docs/kotak-struk.md` "Belajar lintas user" dan "Donasi contoh";
+> checklist `AGENTS.md` "Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)".
+
 ## 11. Risiko dan mitigasi
 | Risiko | Mitigasi |
 |---|---|

@@ -4,6 +4,7 @@ import { formatCurrency, formatShort } from '../lib/utils';
 import { docTypeLine, issuerRows } from '../lib/scanStats';
 import { pendingBadge, hasRulesSection } from '../lib/proofRules';
 import ProofRulesSection from '../components/ProofRulesSection';
+import ProofSamplesSection from '../components/ProofSamplesSection';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
 
 function formatDate(isoStr) {
@@ -1486,6 +1487,7 @@ function ReceiptScanCard() {
         </div>
       )}
       {hasRulesSection(s) && <ProofRulesSection onLoaded={setRules} />}
+      {hasRulesSection(s) && <ProofSamplesSection />}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete, or_, exists
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from app.api.routes.auth import limiter
 from app.core.config import get_settings
@@ -19,6 +19,7 @@ from app.services.household_cycle import payday_context, set_household_payday
 from app.services.email_service import (
     send_account_deleted_email, send_account_deletion_email, send_password_changed_email,
 )
+from app.services.kotak_struk import donasi
 from app.services.image_upload import PROFILE_PIC_MAX_BYTES, read_image_upload, save_upload
 from app.models.models import (
     User, Envelope, Transaction, Allocation, Income,
@@ -428,6 +429,52 @@ async def confirm_account_deletion(
         raise HTTPException(400, "Link tidak valid atau sudah kadaluarsa")
     await _delete_and_notify(db, user, background_tasks)
     return {"status": "deleted"}
+
+
+class KotakDonasiOut(BaseModel):
+    """Donasi contoh Kotak Struk (tahap 2): `available` = saklar `features.kotak_donasi` menyala; `consented` dan
+    `consented_at` = persetujuan user ini (None bila belum atau sudah ditarik)."""
+    available: bool
+    consented: bool
+    consented_at: datetime | None = None
+
+
+class KotakDonasiIn(BaseModel):
+    """Nyalakan (`true`) atau tarik (`false`) persetujuan donasi contoh. Field lain ditolak (422)."""
+    model_config = ConfigDict(extra="forbid")
+    consented: StrictBool
+
+
+async def _kotak_donasi_out(db: AsyncSession, user_id) -> KotakDonasiOut:
+    since = await donasi.consented_at(db, user_id)
+    return KotakDonasiOut(available=await donasi.donation_available(db), consented=since is not None,
+                          consented_at=since)
+
+
+@router.get("/kotak-donasi", response_model=KotakDonasiOut)
+async def get_kotak_donasi(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Status donasi contoh Kotak Struk untuk Settings. Tetap menjawab saat saklar mati (`available: false`), supaya
+    user yang sudah setuju tetap bisa menariknya."""
+    return await _kotak_donasi_out(db, user.id)
+
+
+@router.put("/kotak-donasi", response_model=KotakDonasiOut)
+async def put_kotak_donasi(
+    body: KotakDonasiIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Nyalakan atau tarik persetujuan donasi contoh. Menyalakan saat saklar `kotak_donasi` mati -> 409 "Donasi contoh
+    belum dibuka"; menarik selalu boleh dan menghapus sampel yang belum disetujui serta baris tersamar user ini
+    (sampel `disetujui` tetap sampai SAMPLE_TTL; kotak_struk/donasi.py `set_consent`)."""
+    if body.consented and not await donasi.donation_available(db):
+        raise HTTPException(status_code=409, detail="Donasi contoh belum dibuka")
+    await donasi.set_consent(db, user.id, body.consented, now=datetime.now(timezone.utc))
+    await db.commit()
+    return await _kotak_donasi_out(db, user.id)
 
 
 @router.post("/logout-all")

@@ -8,11 +8,22 @@ kotak_struk/kerangka.py) -> paling banyak satu suara per jenis (`proof_rule_vote
 `proof_rules` dihitung ulang; mulai RULE_MIN_USERS (2) user berbeda aturan dibuat berstatus `menunggu`, dan hanya
 keputusan pemilik di Admin (`decide`) yang mengubah statusnya.
 
-Jenis aturan tahap 1 (K7): `label_total`, `label_pihak`, `label_tanggal`. Kunci aturan = kunci kerangka, tahap 1 hanya
-kunci profil aplikasi yang dikenal (`gopay`, `jago`, ...); kunci `logo:<kata>` ditolak di sini juga (bisa nama orang;
-tahap 2 M2 membukanya bersama pemeriksaannya). Nilai aturan = label kosakata dari kerangka: hanya baris BERLABEL, tanpa
-`#` (digit tersamar), lolos `kerangka.safe_label` lagi. Nama, nomor, nominal, dan tanggal tidak pernah masuk tabel; nama
-hanya dicocokkan lewat HMAC.
+Jenis aturan tahap 1 (K7): `label_total`, `label_pihak`, `label_tanggal`. Kunci aturan = kunci kerangka: kunci profil
+aplikasi yang dikenal (`gopay`, `jago`, ...), atau kunci `logo:<kata>` aplikasi tak berprofil, yang untuk suara label
+hanya sah sesudah aturan `logo` kunci itu disetujui (`approved_logo`; pre-flight A16 K8: kata teratas bisa nama orang).
+Nilai aturan = label kosakata dari kerangka: hanya baris BERLABEL, tanpa `#` (digit tersamar), lolos
+`kerangka.safe_label` lagi. Nama, nomor, nominal, dan tanggal tidak pernah masuk tabel; nama hanya dicocokkan lewat HMAC.
+
+Jenis tahap 2 `logo` (M2a; spec §2, pre-flight A16 K6, K8): jawaban "Aplikasi apa ini?" pada bukti `tidak_dikenali`
+berkunci logo (`learn_app_choice`): kunci `logo:<kata>`, nilai salah satu dari 12 kunci profil atau APP_NEW ("baru");
+tidak pernah teks bebas. Suara ditolak bila kata logonya nama yang dikenal di bukti itu (keterangan tercatat, pihak
+lawan, merchant terbaca, nama user). Aturan `logo` yang disetujui dimuat `approved_rules` untuk pembaca tidak dikenali
+(M2b: hanya penerbit `doc.issuer` dan kunci label belajarnya; status, pihak, referensi tidak pernah).
+
+Jenis tahap 2 `arah` (M3a; spec §2, pre-flight A16 K9, K14): "Bukan pengeluaran" dengan alasan (top-up / uang masuk /
+rekening sendiri, ARAH_FLOWS) pada QRIS/transfer berprofil (`learn_from_skip`): kunci `{app}|{token}` dengan token
+kosakata dari kerangka (`kerangka.arah_tokens`: `judul:<kata>`, `ke:<kata>`), nilai alasannya; hanya bila alasan beda
+dari arah yang terbaca. Aturan `arah` yang disetujui hanya menjadi saran (M3b).
 
 - `label_total`: nominal akhir berbeda dari total terbaca (juga bila total tidak terbaca) dan tercetak di baris
   `nominal` berlabel. Label biaya/potongan/saldo (`NOT_TOTAL_WORDS`) tidak pernah menjadi label total. Tepat satu label
@@ -50,6 +61,7 @@ dari status lama.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -58,11 +70,16 @@ from typing import Iterable, Iterator
 
 from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.models.models import ProofRule, ProofRuleVote
-from app.services.kotak_struk.config import LAYOUT_LABEL_MAX, LAYOUT_TYPES, RULE_CACHE_S, RULE_MIN_USERS
-from app.services.kotak_struk.kerangka import safe_label
+from app.models.models import ProofRule, ProofRuleVote, ReceiptScan, Transaction
+from app.services.kotak_struk.config import (
+    APP_NEW, ARAH_FLOWS, KEY_MAX, LAYOUT_LABEL_MAX, LAYOUT_TYPES, PROOF_TYPES, RULE_CACHE_S, RULE_MIN_USERS, ST_SIAP,
+    ST_TERCATAT,
+)
+from app.services.kotak_struk.kerangka import ARAH_JUDUL, ARAH_KE, LOGO_WORDS, arah_token_ok, logo_word, safe_label
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers.labels import WIB
 from app.services.kotak_struk.readers.profiles import PROFILES, Learned, learned_for  # noqa: F401 (diekspor ulang, L3)
@@ -72,7 +89,10 @@ log = logging.getLogger(__name__)
 KIND_TOTAL = "label_total"
 KIND_PIHAK = "label_pihak"
 KIND_TANGGAL = "label_tanggal"
-KINDS = (KIND_TOTAL, KIND_PIHAK, KIND_TANGGAL)
+KINDS = (KIND_TOTAL, KIND_PIHAK, KIND_TANGGAL)   # jenis label: bentuk `approved_rules` untuk pembaca
+KIND_LOGO = "logo"                               # tahap 2 (M2a): kunci `logo:<kata>` -> kunci profil | APP_NEW
+KIND_ARAH = "arah"                               # tahap 2 (M3a): kunci `{app}|{token}` -> ARAH_FLOWS
+ALL_KINDS = (*KINDS, KIND_LOGO, KIND_ARAH)       # semua jenis (Admin, rekonsiliasi)
 
 ST_MENUNGGU = "menunggu"
 ST_DISETUJUI = "disetujui"
@@ -89,11 +109,16 @@ DECISIONS: dict[str, tuple[str, frozenset[str]]] = {
 MSG_RULE_NOT_FOUND = "Aturan tidak ditemukan"
 MSG_RULE_CONFLICT = "Aturan ini tidak bisa diubah ke status itu"
 MSG_RULE_BELOW_THRESHOLD = f"Aturan belum didukung {RULE_MIN_USERS} user"
+MSG_RULE_KEY_TAKEN = "Kunci ini sudah punya aturan yang disetujui; cabut dulu"
+# Jenis dengan SATU nilai disetujui per kunci (G8, M3d): satu logo = satu aplikasi, satu token arah = satu arah uang.
+# Jenis label boleh beberapa label disetujui per kunci (tahap 1).
+SINGLE_VALUE_KINDS = frozenset({KIND_LOGO, KIND_ARAH})
 
-KEY_MAX = 60                 # panjang kolom rule_key / value
 NAME_NGRAM_MAX = 6           # kata nama terpanjang (sama dengan kerangka.NAME_MAX_WORDS)
 DESCRIPTION_WORDS_MAX = 40   # kata keterangan yang dicocokkan (keterangan transaksi pendek)
 _PROFILE_KEYS = frozenset(p.key for p in PROFILES)
+APP_CHOICES = frozenset(_PROFILE_KEYS | {APP_NEW})   # nilai aturan `logo` (K6): kunci profil atau "baru"
+APP_ASK_STATUSES = (ST_SIAP, ST_TERCATAT)            # item yang boleh ditanya "Aplikasi apa ini?"
 
 # `label_pihak` hanya untuk label yang menamai penerima (review L2 I-1). Kata label sudah huruf kecil (`safe_label`).
 PARTY_WORDS = frozenset({"penerima", "ke", "kepada", "tujuan", "merchant", "toko", "nama", "name", "recipient", "to",
@@ -139,6 +164,10 @@ class RuleBelowThreshold(RuleConflict):
     """Setujui aturan yang pendukungnya kurang dari RULE_MIN_USERS (review L4a m-6) -> 409."""
 
 
+class RuleKeyTaken(RuleConflict):
+    """Setujui nilai kedua untuk kunci `logo`/`arah` yang sudah punya nilai `disetujui` (G8, M3d) -> 409."""
+
+
 def today_wib() -> date:
     """Hari ini menurut WIB (sama dengan worker: `ParseContext.today`)."""
     return datetime.now(WIB).date()
@@ -153,10 +182,12 @@ def _votable(label) -> bool:
             and safe_label(label, forbidden_words=set()) == label)
 
 
-def _valid_key(key) -> bool:
-    """Tahap 1: hanya kunci profil aplikasi (review L2 M-1). Kunci `logo:<kata>` bisa memuat nama orang; M2 membukanya
-    lagi bersama pemeriksaan logo di sini."""
-    return isinstance(key, str) and len(key) <= KEY_MAX and key in _PROFILE_KEYS
+def _valid_key(key, *, logo_ok: bool) -> bool:
+    """Kunci aturan yang sah: kunci profil aplikasi (review L2 M-1), atau kunci `logo:<kata>` berbentuk kandidat yang sah
+    (`kerangka.logo_word`, <= KEY_MAX) hanya bila `logo_ok` (kunci logo bisa memuat nama orang; K8)."""
+    if not isinstance(key, str) or len(key) > KEY_MAX:
+        return False
+    return key in _PROFILE_KEYS or (logo_ok and logo_word(key) is not None)
 
 
 def _words(label: str) -> set[str]:
@@ -216,10 +247,16 @@ def _ngrams(words: list[str], longest: int) -> Iterator[str]:
             yield " ".join(words[i:i + n])
 
 
-def votes_for(layout: dict | None, document: dict | None, merchant: str | None, final: Final) -> list[Vote]:
+def votes_for(layout: dict | None, document: dict | None, merchant: str | None, final: Final, *,
+              approved_logo: frozenset[str] = frozenset()) -> list[Vote]:
     """Suara dari satu pencatatan (lihat docstring modul): paling banyak satu per jenis, urut label_total,
-    label_pihak, label_tanggal. Murni (hanya HMAC). Kerangka tanpa kunci yang sah, rusak, atau kosong -> []."""
-    if not isinstance(layout, dict) or not _valid_key(layout.get("key")):
+    label_pihak, label_tanggal. Murni (hanya HMAC). Kerangka tanpa kunci yang sah, rusak, atau kosong -> []. Kunci
+    `logo:<kata>` hanya bila ada di `approved_logo` (kunci yang aturan `logo`-nya disetujui, `approved_logo_keys`; K8:
+    suara label untuk aplikasi baru hanya sesudah aplikasinya disetujui pemilik)."""
+    if not isinstance(layout, dict):
+        return []
+    key = layout.get("key")
+    if not _valid_key(key, logo_ok=isinstance(key, str) and key in approved_logo):
         return []
     key = layout["key"]
     document = document if isinstance(document, dict) else {}
@@ -305,16 +342,18 @@ async def record_votes(db: AsyncSession, votes: Iterable[Vote], *, user_id: uuid
         await recount(db, vote.kind, vote.rule_key, vote.value)
 
 
-async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id: uuid.UUID) -> int:
+async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id: uuid.UUID,
+                                approved_logo: frozenset[str] = frozenset()) -> int:
     """Suara dari pencatatan item Kotak Struk `item` dengan nilai akhir `final`; jumlah suara yang dicatat. Tidak jalan
-    bila `item.layout` kosong atau `item.doc_type` bukan LAYOUT_TYPES (struk belanja tidak pernah). Tulisan di
-    SAVEPOINT sendiri; tidak meng-commit (pemanggil meng-commit bersama penandaan item); tidak menyentuh item atau
-    transaksi. Tidak pernah melempar: galat -> log peringatan + 0, savepoint dibatalkan, sesi pemanggil tetap utuh."""
+    bila `item.layout` kosong atau `item.doc_type` bukan LAYOUT_TYPES (struk belanja tidak pernah). `approved_logo`:
+    kunci logo yang boleh diberi suara label (`votes_for`). Tulisan di SAVEPOINT sendiri; tidak meng-commit (pemanggil
+    meng-commit bersama penandaan item); tidak menyentuh item atau transaksi. Tidak pernah melempar: galat -> log
+    peringatan + 0, savepoint dibatalkan, sesi pemanggil tetap utuh."""
     item_id = getattr(item, "id", None)
     try:
         if not item.layout or item.doc_type not in LAYOUT_TYPES:
             return 0
-        votes = votes_for(item.layout, item.document, item.merchant, final)
+        votes = votes_for(item.layout, item.document, item.merchant, final, approved_logo=approved_logo)
         if not votes:
             return 0
         async with db.begin_nested():
@@ -323,6 +362,149 @@ async def learn_from_correction(db: AsyncSession, item, final: Final, *, user_id
     except Exception:
         log.warning("suara koreksi untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
         return 0
+
+
+# ── "Bukan pengeluaran" dengan alasan (tahap 2 M3a; spec §2 baris `arah`, §4.2 butir 4; pre-flight A16 K9, K14) ──
+
+def votes_for_skip(layout: dict | None, document: dict | None, alasan: str | None, *,
+                   approved_logo: frozenset[str] = frozenset()) -> list[Vote]:
+    """Suara `arah` dari satu lewati "Bukan pengeluaran" dengan alasan `alasan` (ARAH_FLOWS). Murni. Tidak ada suara
+    bila: alasan bukan ARAH_FLOWS; alasan sama dengan `document.flow` (K14: mengiyakan bacaan bukan koreksi); kunci
+    kerangka bukan kunci profil (kunci `logo:` hanya bila ada di `approved_logo`, K8); `document.doc_type` bukan
+    PROOF_TYPES; kerangka tanpa `"arah"` (kerangka lama) atau rusak. Satu suara per token yang sah (`arah_token_ok`):
+    `Vote("arah", "{key}|{token}", alasan)` bila panjang kuncinya <= KEY_MAX; paling banyak satu `judul:` dan satu
+    `ke:` (yang pertama)."""
+    if alasan not in ARAH_FLOWS or not isinstance(layout, dict) or not isinstance(document, dict):
+        return []
+    if document.get("flow") == alasan or document.get("doc_type") not in PROOF_TYPES:
+        return []
+    key = layout.get("key")
+    if not _valid_key(key, logo_ok=isinstance(key, str) and key in approved_logo):
+        return []
+    tokens = layout.get("arah")
+    if not isinstance(tokens, list):
+        return []
+    votes: list[Vote] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if not arah_token_ok(token):
+            continue
+        prefix = ARAH_JUDUL if token.startswith(ARAH_JUDUL) else ARAH_KE
+        rule_key = f"{key}|{token}"
+        if prefix in seen or len(rule_key) > KEY_MAX:
+            continue
+        seen.add(prefix)
+        votes.append(Vote(KIND_ARAH, rule_key, alasan))
+    return votes
+
+
+async def learn_from_skip(db: AsyncSession, item, alasan: str | None, *, user_id: uuid.UUID) -> int:
+    """Suara `arah` dari item Kotak Struk `item` yang dilewati sebagai "Bukan pengeluaran" dengan alasan `alasan`
+    (`record.skip_item`); jumlah suara yang dicatat. Seperti `learn_from_correction`: hanya item berkerangka; tulisan di
+    SAVEPOINT sendiri; tidak meng-commit (pemanggil meng-commit bersama lewati); tidak menyentuh item atau transaksi;
+    tidak pernah melempar (galat -> log tanpa isi bukti + 0). Kunci `logo:` hanya sesudah aturan `logo`-nya disetujui
+    (`approved_logo_keys`; dalam praktik tidak pernah: kunci logo hanya untuk `tidak_dikenali`, bukan PROOF_TYPES)."""
+    item_id = getattr(item, "id", None)
+    try:
+        # Jenis dicek lebih dulu (review M3a temuan 5): hanya QRIS/transfer yang bisa memberi suara, jadi aturan logo
+        # tidak perlu dibaca untuk jenis lain.
+        if not item.layout or item.doc_type not in PROOF_TYPES:
+            return 0
+        key = item.layout.get("key") if isinstance(item.layout, dict) else None
+        approved_logo = (await approved_logo_keys(db) if isinstance(key, str) and logo_word(key) else frozenset())
+        votes = votes_for_skip(item.layout, item.document, alasan, approved_logo=approved_logo)
+        if not votes:
+            return 0
+        async with db.begin_nested():
+            await record_votes(db, votes, user_id=user_id, household_id=item.household_id)
+        return len(votes)
+    except Exception:
+        log.warning("suara arah untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
+        return 0
+
+
+# ── "Aplikasi apa ini?" (tahap 2 M2a; spec §2 baris `logo`, pre-flight A16 §3, K6, K8, G9, G10) ─────────────
+
+def app_logo(item) -> str | None:
+    """Kata logo yang boleh ditanyakan ke user untuk item ini ("Aplikasi apa ini?"), atau None: hanya item
+    `siap`/`tercatat` berjenis `tidak_dikenali` dengan kerangka berkunci `logo:<kata>` yang sah (G9: tanpa kandidat
+    tidak ada yang bisa dipelajari) dan belum dijawab (`channel_meta.app_choice`). Murni."""
+    if getattr(item, "status", None) not in APP_ASK_STATUSES or getattr(item, "doc_type", None) != "tidak_dikenali":
+        return None
+    layout = getattr(item, "layout", None)
+    meta = getattr(item, "channel_meta", None)
+    if not isinstance(layout, dict) or (isinstance(meta, dict) and meta.get("app_choice")):
+        return None
+    return logo_word(layout.get("key"))
+
+
+def _logo_is_known_name(word: str, names: Iterable[str | None]) -> bool:
+    """Kata logo (selain kata pendamping logo seperti "bank", "mobile") muncul sebagai kata di salah satu nama/teks
+    `names` (sesudah `normalize_name`, atau dipisah pada tanda baca) (keterangan tercatat, pihak lawan, merchant
+    terbaca, nama user; K8)."""
+    own = [w for w in word.split() if w not in LOGO_WORDS] or word.split()
+    # Juga dipisah pada tanda baca (review M2a temuan 2): `normalize_name` melepas tanda baca tanpa spasi, jadi
+    # "WAHYU.N", "Wahyu-Nugroho", "ke wahyu,arisan" tidak memuat kata "wahyu" di sana.
+    known = {w for name in names
+             for w in (*normalize_name(name).split(), *re.findall(r"[a-z]+", (name or "").lower()))}
+    return bool(set(own) & known)
+
+
+async def _recorded_descriptions(db: AsyncSession, item) -> list[str]:
+    """Keterangan transaksi yang tercatat dari item ini (bila ada)."""
+    ids = []
+    for raw in getattr(item, "transaction_ids", None) or ():
+        try:
+            ids.append(uuid.UUID(str(raw)))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return []
+    return [d for d in (await db.execute(
+        select(Transaction.description).where(Transaction.id.in_(ids)))).scalars().all() if d]
+
+
+async def learn_app_choice(db: AsyncSession, item, choice: str, *, user_id: uuid.UUID, user_name: str | None) -> bool:
+    """Simpan jawaban "Aplikasi apa ini?" untuk item Kotak Struk `item` (milik `user_id`; pemanggil sudah memeriksa
+    pemiliknya): `channel_meta.app_choice = choice` (sekali per item), dan suara `Vote("logo", <kunci logo>, choice)` +
+    `recount` (aturan `menunggu` mulai RULE_MIN_USERS user). True bila jawabannya tersimpan; False bila item tidak bisa
+    ditanya (`app_logo` None: bukan `tidak_dikenali` berkunci logo, status lain, sudah dijawab), `choice` bukan
+    APP_CHOICES, atau galat. Suara TIDAK dicatat (jawaban tetap tersimpan) bila kata logonya nama yang dikenal di bukti
+    ini: keterangan transaksi tercatat, `document.counterparty.name`, `item.merchant`, atau `user_name` (K8; L1 I-1
+    opsi B). Tidak membuat transaksi, tidak mengubah status item, tidak dibaca pencatatan/dedup. SAVEPOINT sendiri
+    (baris item dikunci `FOR UPDATE` supaya dua jawaban bersamaan tidak sama-sama menang); tidak meng-commit; tidak
+    pernah melempar (galat -> log tanpa isi bukti + False). Kait donasi contoh (`donasi.donate`, "aplikasi") ada di
+    pemanggilnya `record.choose_app` (rute dan bot), supaya modul ini tidak mengimpor `donasi`."""
+    item_id = getattr(item, "id", None)
+    try:
+        if choice not in APP_CHOICES:
+            return False
+        word = app_logo(item)
+        if word is None:
+            return False
+        key = item.layout["key"]
+        async with db.begin_nested():
+            meta = (await db.execute(
+                select(ReceiptScan.channel_meta).where(ReceiptScan.id == item_id, ReceiptScan.user_id == user_id)
+                .with_for_update()
+            )).first()
+            if meta is None or (isinstance(meta[0], dict) and meta[0].get("app_choice")):
+                return False
+            document = item.document if isinstance(item.document, dict) else {}
+            counterparty = document.get("counterparty") if isinstance(document.get("counterparty"), dict) else {}
+            names = [*await _recorded_descriptions(db, item), counterparty.get("name"), item.merchant, user_name]
+            await db.execute(
+                update(ReceiptScan).where(ReceiptScan.id == item_id)
+                .values(channel_meta={**(meta[0] or {}), "app_choice": choice})
+                .execution_options(synchronize_session=False)
+            )
+            if not _logo_is_known_name(word, names):
+                await record_votes(db, [Vote(KIND_LOGO, key, choice)], user_id=user_id,
+                                   household_id=item.household_id)
+        return True
+    except Exception:
+        log.warning("jawaban aplikasi untuk item Kotak Struk %s tidak dicatat", item_id, exc_info=True)
+        return False
 
 
 async def reconcile_rules(db: AsyncSession) -> int:
@@ -381,7 +563,12 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
     status itu saja: tolak lalu setujui bersamaan dari `menunggu` -> yang kedua gagal, walaupun `ditolak` -> setujui
     sah. Setujui juga mensyaratkan `users >= RULE_MIN_USERS` (review L4a m-6). Mengisi `decided_at`, `decided_by`,
     `note`. `RuleNotFound` bila id tidak ada, `RuleBelowThreshold` bila status sah tetapi pendukung kurang,
-    `RuleConflict` bila transisinya tidak sah. Tidak meng-commit; pemanggil juga membatalkan cache aturan."""
+    `RuleKeyTaken` (G8, M3d) bila aturan `logo`/`arah` (SINGLE_VALUE_KINDS) yang mau disetujui punya saudara (jenis dan
+    kunci sama, nilai lain) yang masih `disetujui`, `RuleConflict` bila transisinya tidak sah. Syarat G8 ada di UPDATE
+    bersyarat itu sendiri (NOT EXISTS), bukan pemeriksaan terpisah sebelumnya; dua persetujuan bersamaan yang sama-sama
+    lolos NOT EXISTS ditolak indeks unik parsial `ux_proof_rules_satu_nilai` (UPDATE di SAVEPOINT, IntegrityError ->
+    `RuleKeyTaken`). Mencabut dan menolak tidak pernah terhalang G8. Tidak meng-commit; pemanggil juga membatalkan cache
+    aturan."""
     decision = DECISIONS.get(action)
     if decision is not None:
         status, allowed = decision
@@ -390,22 +577,44 @@ async def decide(db: AsyncSession, rule_id: uuid.UUID, action: str, *, by: uuid.
         conditions = [ProofRule.id == rule_id, ProofRule.status.in_(sorted(allowed))]
         if status == ST_DISETUJUI:
             conditions.append(ProofRule.users >= RULE_MIN_USERS)
+            conditions.append(~_approved_sibling(ProofRule))
         if allowed:
-            done = await db.execute(
-                update(ProofRule).where(*conditions)
-                .values(status=status, decided_at=now, decided_by=by, note=note)
-                .execution_options(synchronize_session=False)
-            )
+            try:
+                # SAVEPOINT: indeks unik parsial `ux_proof_rules_satu_nilai` (G8, migrasi c9e4a7f2b5d8) menolak
+                # persetujuan yang balapan dengan persetujuan lain untuk kunci yang sama (NOT EXISTS di atas belum
+                # melihat yang belum di-commit) -> 409, bukan 500; sesi pemanggil tetap utuh.
+                async with db.begin_nested():
+                    done = await db.execute(
+                        update(ProofRule).where(*conditions)
+                        .values(status=status, decided_at=now, decided_by=by, note=note)
+                        .execution_options(synchronize_session=False)
+                    )
+            except IntegrityError:
+                if status != ST_DISETUJUI:
+                    raise
+                raise RuleKeyTaken(MSG_RULE_KEY_TAKEN) from None
             if done.rowcount == 1:
                 return (await db.execute(select(ProofRule).where(ProofRule.id == rule_id)
                                          .execution_options(populate_existing=True))).scalar_one()
     current = (await db.execute(select(ProofRule.status, ProofRule.users).where(ProofRule.id == rule_id))).one_or_none()
     if current is None:
         raise RuleNotFound(MSG_RULE_NOT_FOUND)
-    if decision is not None and decision[0] == ST_DISETUJUI and current.status in allowed \
-            and current.users < RULE_MIN_USERS:
-        raise RuleBelowThreshold(MSG_RULE_BELOW_THRESHOLD)
+    if decision is not None and decision[0] == ST_DISETUJUI and current.status in allowed:
+        if current.users < RULE_MIN_USERS:
+            raise RuleBelowThreshold(MSG_RULE_BELOW_THRESHOLD)
+        if (await db.execute(select(_approved_sibling(ProofRule)).where(ProofRule.id == rule_id))).scalar():
+            raise RuleKeyTaken(MSG_RULE_KEY_TAKEN)
     raise RuleConflict(MSG_RULE_CONFLICT)
+
+
+def _approved_sibling(rule):
+    """EXISTS: aturan lain dengan jenis dan kunci yang sama dengan `rule` (berkorelasi), berstatus `disetujui`, untuk
+    jenis SINGLE_VALUE_KINDS saja (G8). Jenis label: selalu False."""
+    other = aliased(ProofRule)
+    return (select(other.id)
+            .where(other.kind == rule.kind, other.rule_key == rule.rule_key, other.id != rule.id,
+                   other.status == ST_DISETUJUI, other.kind.in_(sorted(SINGLE_VALUE_KINDS)))
+            .correlate(rule).exists())
 
 
 # ── aturan yang disetujui untuk pembaca (L3) ────────────────────────────────
@@ -422,34 +631,79 @@ def invalidate_rules_cache() -> None:
     _rules_generation += 1
 
 
-def _copy_rules(rules: dict) -> dict[str, dict[str, list[str]]]:
-    return {key: {kind: list(values) for kind, values in kinds.items()} for key, kinds in rules.items()}
+# Jenis yang dimuat cache aturan: label, `logo`, dan `arah` (pembaca lewat `approved_rules`, dan `approved_logo_keys`).
+_CACHED_KINDS = (*KINDS, KIND_LOGO, KIND_ARAH)
 
 
-async def approved_rules(db: AsyncSession) -> dict[str, dict[str, list[str]]]:
-    """Aturan berstatus `disetujui` untuk pembaca: `{rule_key: {"label_total": [...], "label_pihak": [...],
-    "label_tanggal": [...]}}`, label urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui (`decided_at`),
-    lalu teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database:
-    log peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba lagi), kueri di
-    SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
+def _arah_key_ok(rule_key) -> bool:
+    """Kunci aturan `arah` yang boleh dibaca pembaca (M3b): `{kunci profil}|{token}` dengan token yang lolos
+    pemeriksaan kosakata sisi suara (`kerangka.arah_token_ok`: `judul:<kata>` atau `ke:<kata>`), <= KEY_MAX. Kunci logo
+    tidak pernah (pembaca hanya memakai aturan arah untuk `doc.issuer` kunci profil)."""
+    if not isinstance(rule_key, str) or len(rule_key) > KEY_MAX or "|" not in rule_key:
+        return False
+    app, token = rule_key.split("|", 1)
+    return app in _PROFILE_KEYS and arah_token_ok(token)
+
+
+async def _approved(db: AsyncSession) -> dict[str, dict[str, list[str]]] | None:
+    """Semua aturan `disetujui` berjenis `_CACHED_KINDS` (`{rule_key: {kind: [nilai]}}`, urutan `approved_rules`), dari
+    cache modul bila masih segar. Aturan `logo` hanya untuk kunci logo yang sah (`logo_word`) dan nilai pilihan
+    (`APP_CHOICES`: kunci profil atau "baru", K6); aturan `arah` hanya untuk kunci `{profil}|{token}` yang sah
+    (`_arah_key_ok`) dan nilai ARAH_FLOWS; selain itu (data lama/tangan) dilewati. None bila database galat (log
+    peringatan; tidak disimpan di cache). Hasilnya objek cache: pemanggil tidak boleh mengubahnya."""
     global _rules_cache
     cached = _rules_cache
     if cached is not None and _clock() - cached[0] < RULE_CACHE_S:
-        return _copy_rules(cached[1])
+        return cached[1]
     generation = _rules_generation
     try:
         async with db.begin_nested():
             rows = (await db.execute(
                 select(ProofRule.rule_key, ProofRule.kind, ProofRule.value)
-                .where(ProofRule.status == ST_DISETUJUI, ProofRule.kind.in_(KINDS))
+                .where(ProofRule.status == ST_DISETUJUI, ProofRule.kind.in_(_CACHED_KINDS))
                 .order_by(ProofRule.users.desc(), ProofRule.decided_at.asc(), ProofRule.value.asc())
             )).all()
     except Exception:
         log.warning("aturan belajar Kotak Struk tidak bisa dimuat; bukti dibaca tanpa aturan", exc_info=True)
-        return {}
+        return None
     rules: dict[str, dict[str, list[str]]] = {}
     for rule_key, kind, value in rows:
-        rules.setdefault(rule_key, {k: [] for k in KINDS})[kind].append(value)
+        if kind == KIND_LOGO and (value not in APP_CHOICES or not logo_word(rule_key)):
+            continue
+        if kind == KIND_ARAH and (value not in ARAH_FLOWS or not _arah_key_ok(rule_key)):
+            continue
+        if kind in _CACHED_KINDS:
+            rules.setdefault(rule_key, {})
+            rules[rule_key].setdefault(kind, []).append(value)
     if generation == _rules_generation:
         _rules_cache = (_clock(), rules)
-    return _copy_rules(rules)
+    return rules
+
+
+async def approved_rules(db: AsyncSession) -> dict[str, dict[str, list[str]]]:
+    """Aturan berstatus `disetujui` untuk pembaca: `{rule_key: {"label_total": [...], "label_pihak": [...],
+    "label_tanggal": [...]}}`, ditambah `"logo": [nilai]` hanya untuk kunci `logo:<kata>` yang punya aturan `logo`
+    disetujui (tahap 2, M2b: nilai kunci profil atau "baru"; `profiles.learned_logo`), dan `{"arah": [flow]}` untuk
+    kunci `{kunci profil}|{token arah}` yang punya aturan `arah` disetujui (tahap 2, M3b: token lolos kosakata
+    `kerangka.arah_token_ok`, nilai ARAH_FLOWS; `profiles.learned_arah`; baris lain dilewati). Kunci lain berbentuk
+    tahap 1 persis (tanpa `"logo"`/`"arah"`). Nilai urut pendukung (`users`) terbanyak, lalu yang lebih dulu disetujui
+    (`decided_at`), lalu teksnya. Cache modul RULE_CACHE_S detik (jam monotonic); `invalidate_rules_cache` membuangnya. Galat database: log
+    peringatan dan `{}` (pembaca tetap jalan tanpa aturan; tidak disimpan di cache, jadi dicoba lagi), kueri di
+    SAVEPOINT sendiri supaya sesi pemanggil tetap bisa dipakai. Tidak meng-commit."""
+    rules = await _approved(db)
+    out: dict[str, dict[str, list[str]]] = {}
+    for rule_key, kinds in (rules or {}).items():
+        if any(kinds.get(k) for k in (*KINDS, KIND_LOGO)):
+            out[rule_key] = {k: list(kinds.get(k, ())) for k in KINDS}
+            if kinds.get(KIND_LOGO):
+                out[rule_key][KIND_LOGO] = list(kinds[KIND_LOGO])
+        if kinds.get(KIND_ARAH):
+            out.setdefault(rule_key, {})[KIND_ARAH] = list(kinds[KIND_ARAH])
+    return out
+
+
+async def approved_logo_keys(db: AsyncSession) -> frozenset[str]:
+    """Kunci `logo:<kata>` yang punya aturan `logo` berstatus `disetujui` (cache yang sama dengan `approved_rules`):
+    hanya kunci ini yang boleh diberi suara label (`votes_for(approved_logo=...)`, K8). Galat database: kosong."""
+    rules = await _approved(db)
+    return frozenset(key for key, kinds in (rules or {}).items() if kinds.get(KIND_LOGO) and logo_word(key))
