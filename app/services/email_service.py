@@ -11,6 +11,11 @@ from app.core.config import get_settings
 
 logger = logging.getLogger("jatahku.email")
 
+# Batas waktu (detik) setiap operasi soket SMTP: sambung, sapaan, STARTTLS, DATA. Server yang macet tidak boleh menahan
+# pemanggil selamanya; antrean email laporan berjalan di dalam `laporan_job` (max_instances=1), jadi kiriman yang tak
+# pernah kembali menghentikan penerbitan laporan berikutnya. Batas yang terlampaui menjadi galat kiriman biasa.
+SMTP_TIMEOUT = 30
+
 
 
 def h(value) -> str:
@@ -40,7 +45,7 @@ def _deliver(to_email: str, msg) -> None:
     s = get_settings()
     if not s.SMTP_PASSWORD:
         raise RuntimeError("SMTP_PASSWORD kosong di .env, email tidak dikirim")
-    with smtplib.SMTP(s.SMTP_HOST, s.SMTP_PORT) as server:
+    with smtplib.SMTP(s.SMTP_HOST, s.SMTP_PORT, timeout=SMTP_TIMEOUT) as server:
         server.ehlo()
         server.starttls()
         server.login(s.SMTP_USER, s.SMTP_PASSWORD)

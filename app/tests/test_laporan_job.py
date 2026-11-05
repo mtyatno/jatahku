@@ -1160,7 +1160,7 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
 
         laporan = {r.user_id: r for r in await self.semua(Report)}
         ani, budi = laporan[self.ANI], laporan[self.BUDI]
-        self.assertEqual((ani.email_status, ani.email_alasan, ani.email_percobaan), ("terkirim", None, 0))
+        self.assertEqual((ani.email_status, ani.email_alasan, ani.email_percobaan), ("terkirim", None, 1))  # klaim = 1
         self.assertIsNotNone(ani.email_terkirim_at)
         self.assertEqual((budi.email_status, budi.email_alasan, budi.email_terkirim_at),
                          ("dilewati", "belum_verifikasi", None))

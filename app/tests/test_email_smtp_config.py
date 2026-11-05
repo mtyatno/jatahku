@@ -33,7 +33,7 @@ class SmtpSettingsTests(unittest.TestCase):
                 patch.object(email_service.smtplib, "SMTP", smtp_cls):
             ok = email_service.send_email("a@b.test", "Halo", "<p>x</p>")
         self.assertTrue(ok)
-        smtp_cls.assert_called_once_with("mail.test", 2525)
+        smtp_cls.assert_called_once_with("mail.test", 2525, timeout=30)
         server.login.assert_called_once_with("kirim@contoh.test", "rahasia-dari-env")
         from_addr, to_addr, raw = server.sendmail.call_args.args
         self.assertEqual(from_addr, "kirim@contoh.test")
@@ -46,8 +46,26 @@ class SmtpSettingsTests(unittest.TestCase):
                 patch.object(email_service.smtplib, "SMTP", smtp_cls):
             ok = email_service.send_data_backup_email("a@b.test", "Budi", {"x": 1}, "backup.json")
         self.assertTrue(ok)
-        smtp_cls.assert_called_once_with("mail.test", 2525)
+        smtp_cls.assert_called_once_with("mail.test", 2525, timeout=30)
         server.login.assert_called_once_with("kirim@contoh.test", "rahasia-dari-env")
+
+    def test_setiap_email_memakai_batas_waktu_smtp(self):
+        # Ruling R-T3-1: server SMTP yang macet (sapaan, STARTTLS, DATA) tidak boleh menahan pemanggil selamanya;
+        # antrean email laporan berjalan di dalam `laporan_job` (max_instances=1), jadi kiriman yang tak pernah kembali
+        # menghentikan penerbitan laporan berikutnya. Semua email lewat `_deliver`.
+        self.assertEqual(getattr(email_service, "SMTP_TIMEOUT", None), 30)
+        for nama, kirim in (
+            ("send_email", lambda: email_service.send_email("a@b.test", "Halo", "<p>x</p>")),
+            ("backup", lambda: email_service.send_data_backup_email("a@b.test", "Budi", {}, "backup.json")),
+            ("laporan", lambda: email_service.send_laporan_email("a@b.test", "S", "<p>h</p>", "t", "https://u",
+                                                                 pdf_bytes=b"%PDF", filename="l.pdf")),
+        ):
+            with self.subTest(nama):
+                smtp_cls, _server = _smtp_mock()
+                with patch.object(email_service, "get_settings", return_value=_settings()), \
+                        patch.object(email_service.smtplib, "SMTP", smtp_cls):
+                    self.assertTrue(kirim())
+                self.assertEqual(smtp_cls.call_args.kwargs.get("timeout"), 30)
 
     def test_missing_password_never_connects(self):
         for send in (

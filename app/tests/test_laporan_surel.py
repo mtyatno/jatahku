@@ -9,7 +9,8 @@ import email
 import unittest
 import uuid
 from decimal import Decimal
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from app.core import security
 from app.core.config import get_settings
@@ -192,6 +193,21 @@ class KirimLaporan(unittest.TestCase):
         self.assertFalse(hasil)
         self.assertNotIn("rahasia@b.id", "\n".join(log.output))
         self.assertTrue(any(r.levelname == "ERROR" for r in log.records))
+
+    def test_smtp_macet_berhenti_di_batas_waktu_dan_mengembalikan_false(self):
+        # Ruling R-T3-1: `_deliver` menyambung dengan batas waktu; batas waktu yang terlampaui (di sini dilempar
+        # tiruan `smtplib.SMTP`) menjadi False biasa, tanpa alamat di log, jadi antrean menghitungnya sebagai percobaan.
+        smtp_cls = MagicMock(side_effect=TimeoutError("timed out"))
+        setelan = SimpleNamespace(SMTP_HOST="mail.test", SMTP_PORT=2525, SMTP_USER="kirim@contoh.test",
+                                  SMTP_PASSWORD="rahasia-smtp", SMTP_FROM="kirim@contoh.test", SMTP_FROM_NAME="Jatahku")
+        with patch.object(email_service, "get_settings", return_value=setelan), \
+                patch.object(email_service.smtplib, "SMTP", smtp_cls), \
+                self.assertLogs("jatahku.email", level="ERROR") as log:
+            hasil = email_service.send_laporan_email("rahasia@b.id", "S", "<p>h</p>", "t", self.URL)
+        self.assertFalse(hasil)
+        self.assertEqual(smtp_cls.call_args.kwargs.get("timeout"), 30)
+        self.assertNotIn("rahasia@b.id", "\n".join(log.output))
+        self.assertIn("TimeoutError", "\n".join(log.output))
 
     def test_log_sukses_tanpa_alamat(self):
         with patch.object(email_service, "_deliver", lambda to, msg: None):
