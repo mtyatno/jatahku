@@ -296,6 +296,18 @@ class GoogleTests(DasarVerifikasi):
         self.assertEqual(user.email_verified_at, TERVERIFIKASI.replace(tzinfo=None)
                          if user.email_verified_at.tzinfo is None else TERVERIFIKASI)
 
+    async def test_google_link_email_beda_belum_terverifikasi_tetap_tidak(self):
+        async with self.Session() as db:
+            u = await self.buat(db, "Lama", "lama@example.com", terverifikasi=False)
+            await db.commit()
+        with self.google():   # Google membawa budi@example.com, akun memegang lama@example.com
+            r = await self.klien.post("/auth/google/link", json={"credential": "x"}, headers=self.masuk(u))
+        self.assertEqual(r.status_code, 200, r.text)
+        user = await self.baca(u.id)
+        self.assertEqual(user.email, "lama@example.com")
+        self.assertEqual(user.google_id, "g-1")
+        self.assertIsNone(user.email_verified_at)
+
     async def test_google_link_email_sama_belum_terverifikasi_jadi_terverifikasi(self):
         async with self.Session() as db:
             u = await self.buat(db, "Sama", "budi@example.com", terverifikasi=False)
