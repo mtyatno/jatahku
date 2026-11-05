@@ -145,6 +145,23 @@ class TautanBerhenti(unittest.TestCase):
                       surel.halaman_tautan_tak_berlaku())
 
 
+class HalamanVerifikasi(unittest.TestCase):
+    def test_konfirmasi_tanpa_skrip_alamat_dan_token_di_escape(self):
+        token = '"><script>alert(1)</script>'
+        hal = surel.halaman_konfirmasi_verifikasi(token, "<b>o'neil</b>@example.com")
+        self.assertIn("<!DOCTYPE html>", hal)
+        self.assertNotIn("<script", hal.lower())
+        self.assertNotIn(token, hal)
+        self.assertIn("<title>Verifikasi email kamu · Jatahku</title>", hal)
+        self.assertIn("<h1>Verifikasi email kamu</h1>", hal)
+        self.assertIn("<p>Klik tombol di bawah untuk memverifikasi &lt;b&gt;o&#x27;neil&lt;/b&gt;@example.com sebagai "
+                      "alamat penerima laporan Jatahku.</p>", hal)
+        self.assertNotIn("<b>o'neil</b>", hal)
+        self.assertIn('<form method="post" action="/auth/verifikasi-email?token='
+                      '%22%3E%3Cscript%3Ealert%281%29%3C%2Fscript%3E">', hal)
+        self.assertIn('<button type="submit">Verifikasi email</button></form>', hal)
+
+
 class KirimLaporan(unittest.TestCase):
     URL = "https://api.jatahku.com/laporan/berhenti-email?token=t"
 

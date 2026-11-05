@@ -1,4 +1,5 @@
-"""Isi email laporan berkala, email verifikasi, dan halaman berhenti berlangganan (tahap 2, Task 2).
+"""Isi email laporan berkala, email verifikasi, halaman berhenti berlangganan (tahap 2, Task 2), dan halaman konfirmasi
+verifikasi email (Ruling F-4).
 
 Semua fungsi murni (tanpa DB atau SMTP). Email laporan hanya memuat `data.judul` dan `data.email` (persen, hitungan
 amplop, tren, sorotan): tidak ada nominal rupiah. Isi dari user atau data selalu lewat `email_service.h`.
@@ -119,6 +120,18 @@ def halaman_konfirmasi_berhenti(token: str) -> str:
         "Berhenti menerima email laporan?",
         f'<p>{h("Email laporan Jatahku untuk akun ini akan dimatikan. Laporan tetap terbit di aplikasi.")}</p>'
         f'<form method="post" action="{aksi}"><button type="submit">{h("Berhenti berlangganan")}</button></form>',
+    )
+
+
+def halaman_konfirmasi_verifikasi(token: str, email: str) -> str:
+    """Halaman GET tautan verifikasi (Ruling F-4): hanya meminta konfirmasi, karena pemindai tautan di layanan email
+    membuka GET. Tombol mengirim POST ke alamat yang sama (token di query), dan hanya POST yang memverifikasi."""
+    aksi = h(f"/auth/verifikasi-email?token={quote(token, safe='')}")
+    inti = f"Klik tombol di bawah untuk memverifikasi {email} sebagai alamat penerima laporan Jatahku."
+    return _halaman(
+        "Verifikasi email kamu",
+        f'<p>{h(inti)}</p>'
+        f'<form method="post" action="{aksi}"><button type="submit">{h("Verifikasi email")}</button></form>',
     )
 
 

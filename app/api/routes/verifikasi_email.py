@@ -1,25 +1,29 @@
-"""API verifikasi email penerima laporan berkala (tahap 2, Task 4).
+"""API verifikasi email penerima laporan berkala (tahap 2, Task 4; Ruling F-4).
 
 Dua router, keduanya dipasang di main.py: `user_router` di `/user` (`POST /user/email/verifikasi`: kirim tautan) dan
-`auth_router` di `/auth` (`GET /auth/verifikasi-email?token=`: buka tautan dari email, tanpa login). Semua endpoint
-baru, jadi API hanya bertambah.
+`auth_router` di `/auth` (`/auth/verifikasi-email?token=`, tanpa login: `GET` = tautan di email, menampilkan halaman
+konfirmasi; `POST` = tombol "Verifikasi email" di halaman itu). Semua endpoint baru, jadi API hanya bertambah.
 
 Yang dijaga di sini (tes: app/tests/test_verifikasi_email_api.py):
 - Tautan hanya dikirim ke alamat akun pemanggil sendiri, dengan token bertujuan 24 jam (services/verifikasi_email.py).
   Kiriman lewat `email_service.send_verifikasi_email` di thread: lognya tanpa alamat. Log di sini hanya teks tetap
   dan id user; tidak pernah alamat, token, atau tautan.
-- Membuka tautan memverifikasi alamat yang ada DI TOKEN: bila alamat akun sudah berganti sejak tautan dikirim hasilnya
-  `berubah` dan tidak ada yang ditulis. Token salah, kedaluwarsa, bertujuan lain, atau user sudah tidak ada: sama,
+- `GET` tidak pernah menulis apa pun: pemindai tautan di layanan email membuka GET (pola berhenti berlangganan). Hanya
+  `POST` yang memverifikasi. Halaman konfirmasi hanya tampil bila tautannya masih bisa memverifikasi; selainnya kedua
+  metode langsung 303 ke Pengaturan dengan hasilnya.
+- Yang diverifikasi alamat yang ada DI TOKEN: bila alamat akun sudah berganti sejak tautan dikirim hasilnya `berubah`
+  dan tidak ada yang ditulis. Token salah, kedaluwarsa, bertujuan lain, atau user sudah tidak ada: sama,
   `tidak_berlaku` (tanpa membedakan, agar tidak membocorkan keberadaan akun).
 - Berhasil juga menghidupkan lagi laporan 7 hari terakhir yang dilewati karena email belum terverifikasi.
-- Batas: kirim 3/jam per user (`kunci_per_user`), buka tautan 30/menit per IP.
+- Batas: kirim 3/jam per user (`kunci_per_user`); `GET` dan `POST` tautan masing-masing 30/menit per IP dalam ember
+  terpisah, jadi pemindai yang menghabiskan jatah GET tidak memblokir tombol.
 """
 import asyncio
 import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -89,23 +93,67 @@ def _balik(hasil: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303, headers={"Cache-Control": "no-store"})
 
 
-@auth_router.get(
-    "/verifikasi-email",
-    status_code=303,
-    responses={303: {"description": "Dialihkan ke `/settings?email_verifikasi=berhasil|tidak_berlaku|berubah#laporan`."},
-              429: {"description": "Lebih dari 30 permintaan per menit."}},
-)
-@limiter.limit("30/minute")
-async def buka_tautan_verifikasi(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+async def _baca_tautan(db: AsyncSession, token: str) -> tuple[str | None, User | None, str | None]:
+    """(hasil, user, email di token). `hasil` None bila tautan masih bisa memverifikasi `user`; selainnya
+    `tidak_berlaku` (token tidak sah atau user sudah tidak ada) atau `berubah` (alamat akun berganti sejak tautan
+    dikirim), tanpa user dan email. Hanya membaca."""
     terbaca = ve.baca_token_verifikasi(token)
     if terbaca is None:
-        return _balik(HASIL_TIDAK_BERLAKU)
+        return HASIL_TIDAK_BERLAKU, None, None
     user_id, email = terbaca
     user = await db.get(User, user_id)
     if user is None:
-        return _balik(HASIL_TIDAK_BERLAKU)
+        return HASIL_TIDAK_BERLAKU, None, None
     if not ve.sama_email(user.email, email):
-        return _balik(HASIL_BERUBAH)
+        return HASIL_BERUBAH, None, None
+    return None, user, email
+
+
+_TERLALU_SERING = {"description": "Lebih dari 30 permintaan per menit."}
+
+
+@auth_router.get(
+    "/verifikasi-email",
+    response_class=HTMLResponse,
+    responses={
+        200: {"description": 'Halaman konfirmasi "Verifikasi email kamu"; tombol "Verifikasi email" mengirim POST ke '
+                             "alamat yang sama. Tidak mengubah apa pun."},
+        303: {"description": "Tanpa halaman, dialihkan ke `/settings?email_verifikasi=<hasil>#laporan`: `tidak_berlaku` "
+                             "(token tidak sah atau akun tidak ada), `berubah` (alamat akun berganti sejak tautan "
+                             "dikirim), atau `berhasil` (alamat ini sudah terverifikasi). Tidak mengubah apa pun."},
+        429: _TERLALU_SERING,
+    },
+)
+@limiter.shared_limit("30/minute", scope="verifikasi_email_get")   # ember GET dan POST terpisah (satu URL)
+async def halaman_verifikasi_email(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Tautan di email. Tidak pernah menulis apa pun (pemindai tautan di layanan email membuka GET): halaman konfirmasi
+    (200) bila tautannya masih bisa memverifikasi; selainnya 303 ke Pengaturan."""
+    hasil, user, email = await _baca_tautan(db, token)
+    if hasil is not None:
+        return _balik(hasil)
+    if user.email_verified_at is not None:   # alamat yang sama sudah terverifikasi: tidak ada yang perlu ditekan
+        return _balik(HASIL_BERHASIL)
+    return HTMLResponse(surel.halaman_konfirmasi_verifikasi(token, email), headers={"Cache-Control": "no-store"})
+
+
+@auth_router.post(
+    "/verifikasi-email",
+    status_code=303,
+    response_class=RedirectResponse,
+    responses={
+        303: {"description": "Dialihkan ke `/settings?email_verifikasi=berhasil|tidak_berlaku|berubah#laporan`; "
+                             "`berhasil` = alamat di token terverifikasi (juga bila sudah sebelumnya)."},
+        429: _TERLALU_SERING,
+    },
+)
+@limiter.shared_limit("30/minute", scope="verifikasi_email_post")
+async def konfirmasi_verifikasi_email(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Tombol "Verifikasi email" di halaman konfirmasi (badan tidak dibaca). Memverifikasi alamat di token, menghidupkan
+    lagi laporan yang dilewati karena email belum terverifikasi, lalu 303 ke Pengaturan. Aman diulang: yang sudah
+    terverifikasi tetap `berhasil` dan waktunya tidak berubah."""
+    hasil, user, _email = await _baca_tautan(db, token)
+    if hasil is not None:
+        return _balik(hasil)
     ve.tandai_terverifikasi(user)
     await antrean_email.hidupkan_lagi(
         db, user.id, (antrean_email.ALASAN_BELUM_VERIFIKASI, antrean_email.ALASAN_TANPA_EMAIL),
