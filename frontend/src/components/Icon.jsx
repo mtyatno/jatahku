@@ -24,6 +24,8 @@ import {
   Storefront,
   // Fitur Tambahan (Plugin H3): ikon bawaan plugin di manifest dan menu "Lainnya" di HP
   PuzzlePiece, DotsThreeOutline,
+  // Unduh data Fitur Tambahan (Plugin U1)
+  DownloadSimple,
 } from '@phosphor-icons/react';
 
 const DEFAULT_WEIGHT = 'duotone';
@@ -111,6 +113,7 @@ const UI = {
   alarm: Alarm,
   puzzle: PuzzlePiece,
   more: DotsThreeOutline,
+  download: DownloadSimple,
 };
 
 // Envelope category icons — tokens stored in env.emoji going forward
