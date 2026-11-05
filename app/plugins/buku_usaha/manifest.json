@@ -1,0 +1,33 @@
+{
+  "id": "buku_usaha",
+  "name": "Buku Usaha",
+  "version": "0.1.0",
+  "publisher": "Jatahku",
+  "description": "Pembukuan ringan untuk ruang usaha: kontak pelanggan dan pemasok, jenis pemasukan, alokasi omzet, laba rugi, dan kartu usaha di Beranda.",
+  "icon": "book",
+  "category": "usaha",
+  "engines": {"plugin_api": ">=1.2 <2.0"},
+  "space_types": ["usaha"],
+  "permissions": ["envelopes:read"],
+  "entities": [
+    "p_buku_usaha_kontak",
+    "p_buku_usaha_income_meta",
+    "p_buku_usaha_txn_meta",
+    "p_buku_usaha_alokasi"
+  ],
+  "contributes": {
+    "pages": [
+      {"route": "/p/buku_usaha", "title": "Buku Usaha", "nav": "usaha"}
+    ],
+    "setup": true,
+    "routes": [
+      {"method": "GET", "path": "/pengaturan"},
+      {"method": "GET", "path": "/kontak"},
+      {"method": "POST", "path": "/kontak"},
+      {"method": "PATCH", "path": "/kontak/{id}"},
+      {"method": "DELETE", "path": "/kontak/{id}"}
+    ]
+  },
+  "entitlement": {"sku": "bundle.usaha", "trial_days": 30},
+  "data_lifecycle": {"on_disable": "read_only", "on_uninstall": "archive_90_days", "export": ["csv", "json"]}
+}
