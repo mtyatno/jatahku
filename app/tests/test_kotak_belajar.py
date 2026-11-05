@@ -25,14 +25,17 @@ from app.core.database import Base
 from app.models.models import Household, HouseholdMember, HouseholdRole, ProofRule, ProofRuleVote, User
 from app.services.kotak_struk import belajar, maintenance, merchants
 from app.services.kotak_struk.belajar import (
-    Final, Vote, forget_user, learn_from_correction, next_status, record_votes, recount, votes_for,
+    Final, Vote, forget_user, learn_from_correction, learn_from_skip, next_status, record_votes, recount, votes_for,
+    votes_for_skip,
 )
-from app.services.kotak_struk.config import RULE_MIN_USERS
+from app.services.kotak_struk.config import ARAH_FLOWS, KEY_MAX, RULE_MIN_USERS
+from app.services.kotak_struk.document import Amounts, Counterparty, DokumenBayar
 from app.services.kotak_struk.extract import KIND_IMAGE, TextDoc
-from app.services.kotak_struk.kerangka import LABEL_WORDS, TITLE_WORDS, build_layout
+from app.services.kotak_struk import kerangka
+from app.services.kotak_struk.kerangka import ARAH_PARTY_WORDS, LABEL_WORDS, TITLE_WORDS, build_layout
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
-from app.services.kotak_struk.readers.base import ParseContext
+from app.services.kotak_struk.readers.base import ParseContext, Secrets
 from app.services.kotak_struk.readers.profiles import PROFILES, detect_issuer
 from app.services.kotak_struk.registry import read_document
 
@@ -254,6 +257,22 @@ class ReviewFixVotesTests(_Quiet):
                 votes = votes_for(lay, doc(name="BUDI"), None, final(description="arisan Siti Rahayu"))
                 self.assertEqual(votes, [Vote("label_pihak", "gopay", label)] if label in self.PARTY else [])
 
+    def test_kepada_label_votes_label_pihak_and_atas_nama_alone_does_not(self):
+        # Pre-flight L2 R-2: "kepada" ada di PARTY_WORDS sejak tahap 1 tetapi tidak pernah cocok (kerangka memberi label
+        # None). Kini label "Kepada" masuk kerangka dan menjadi suara penerima; "Atas Nama" masuk kerangka tetapi bukan
+        # label penerima ("nama" lemah, "atas" bukan kata penerima).
+        read = {"amounts": {"total": 10000}, "counterparty": {"name": "BUDI"}}
+        for printed, expected in (("Kepada", [Vote("label_pihak", "gopay", "kepada")]), ("Atas Nama", [])):
+            with self.subTest(printed=printed):
+                lines = ["GoPay", "Transfer Berhasil", printed, "SITI RAHAYU", "Jumlah Rp10.000"]
+                built = build_layout(lines, DokumenBayar(doc_type="transfer", issuer="gopay",
+                                                         counterparty=Counterparty(name="BUDI"),
+                                                         amounts=Amounts(total=10000)), Secrets(), user_name=None)
+                labels = [e["label"] for e in built["lines"] if e["kind"] == "nama"]
+                self.assertEqual(labels, [printed.lower()])
+                self.assertEqual(votes_for(built, read, None, final(10000, description="Transfer ke Siti Rahayu")),
+                                 expected)
+
     def test_lone_nama_label_is_not_a_recipient(self):
         # Review L2 R-1: Jago PLN "NAMA: PT CONTOH DAYA" (pemilik meter, sering user sendiri) dan "Nama Acquirer" /
         # "Nama Pengakuisisi Gopay" (kerangka memecahnya menjadi label "nama" + nilai) tidak pernah suara penerima.
@@ -274,7 +293,8 @@ class ReviewFixVotesTests(_Quiet):
                 self.assertEqual(votes_for(lay, doc(name="BUDI SANTOSO"), None, final(description=description)), [])
 
     def test_logo_keys_never_vote(self):
-        # Kunci logo bisa nama orang ("logo:wahyu nugroho"): tahap 1 hanya kunci profil (M-1).
+        # Kunci logo bisa nama orang ("logo:wahyu nugroho"): tanpa aturan `logo` yang disetujui hanya kunci profil (M-1;
+        # tahap 2 K8: `approved_logo`, test_kotak_logo).
         for key in ("logo:wahyu nugroho", "logo:gopay", "logo:byond", "wahyu", "GOPAY"):
             with self.subTest(key=key):
                 lay = layout(nominal(2, "nominal", 50000), nama(3, "penerima", "SITI"), key=key)
@@ -710,7 +730,8 @@ class PrivacyTests(DbBase):
         """Setiap daftar sapuan (kedua saklar): kerangka dari pembaca sungguhan, setiap koreksi yang mungkin, oleh dua
         user (jadi aturan terbentuk). Suara dan aturan hanya memuat jenis, kunci aplikasi, dan label kosakata: tanpa
         digit, tanpa `#`, tanpa kata nama pihak lawan/pengirim/user sampel itu."""
-        built = voted = 0
+        built = voted = arah_layouts = arah_voted = 0
+        arah_tokens_seen: set[str] = set()
         async with self.Session() as db:
             for case in SWEEP:
                 for enabled in (False, True):
@@ -735,6 +756,21 @@ class PrivacyTests(DbBase):
                                 self.assertFalse(words & forbidden, v)
                         for user in self.users[:2]:
                             voted += await learn_from_correction(db, item, f, user_id=user.id)
+                    # Tahap 2 M3a: setiap alasan "Bukan pengeluaran" oleh dua user (suara `arah`).
+                    if lay.get("arah"):
+                        arah_layouts += 1
+                        arah_tokens_seen.update(lay["arah"])
+                    for alasan in ARAH_FLOWS:
+                        for v in votes_for_skip(lay, item.document, alasan):
+                            with self.subTest(id=case["id"], on=enabled, vote=v):
+                                token = v.rule_key.split("|", 1)[1]
+                                words = set(token.split(":", 1)[1].split())
+                                if token.startswith("judul:"):
+                                    self.assertFalse(words & forbidden, v)
+                                else:   # kata penerima hanya kosakata penyedia/top-up (K9)
+                                    self.assertLessEqual(words, ARAH_PARTY_WORDS, v)
+                        for user in self.users[:2]:
+                            arah_voted += await learn_from_skip(db, item, alasan, user_id=user.id)
             await db.commit()
             vote_rows = (await db.execute(select(ProofRuleVote))).scalars().all()
             rule_rows = (await db.execute(select(ProofRule))).scalars().all()
@@ -742,13 +778,26 @@ class PrivacyTests(DbBase):
         self.assertGreater(voted, 20)
         self.assertGreater(len(rule_rows), 5)   # dua user: suara yang sama menjadi aturan
         self.assertEqual({r.kind for r in rule_rows} | {v.kind for v in vote_rows} <= {"label_total", "label_pihak",
-                                                                                        "label_tanggal"}, True)
+                                                                                        "label_tanggal", "arah"}, True)
+        self.assertGreater(arah_layouts, 0)
+        self.assertGreater(arah_voted, 0)
+        self.assertIn("arah", {r.kind for r in rule_rows})
+        if os.environ.get("KOTAK_ARAH_REPORT"):
+            print("arah", arah_layouts, arah_voted, sorted(arah_tokens_seen))
         for row in [*vote_rows, *rule_rows]:
             with self.subTest(row=(row.kind, row.rule_key, row.value)):
                 for text in (row.kind, row.rule_key, row.value):
                     self.assertNotRegex(text, r"\d")
                     self.assertNotIn("#", text)
-                self.assertIn(row.rule_key, PROFILE_KEYS)   # tahap 1: tidak pernah kunci `logo:` (review L2 M-1)
+                if row.kind == "arah":   # `{app}|{token}`: kunci profil + token kosakata, nilai flow (M3a)
+                    app, token = row.rule_key.split("|", 1)
+                    self.assertIn(app, PROFILE_KEYS)
+                    self.assertTrue(kerangka.arah_token_ok(token), token)
+                    self.assertIn(row.value, ARAH_FLOWS)
+                    self.assertLessEqual(len(row.rule_key), KEY_MAX)
+                    continue
+                # Tanpa aturan `logo` yang disetujui tidak pernah kunci `logo:` (review L2 M-1; tahap 2 K8).
+                self.assertIn(row.rule_key, PROFILE_KEYS)
                 if row.kind == "label_pihak":   # hanya label penerima (review L2 I-1, R-1)
                     self.assertTrue(belajar._party_label(row.value), row.value)
                     self.assertNotIn(row.value, {"nama", "name"})
@@ -772,8 +821,9 @@ class PrivacyTests(DbBase):
 
 # Bukti transfer GoPay rekaan (sama dengan test_kotak_aturan_pembaca.GOPAY_MISREAD): hari ini saldo "Rp50.000" terbaca
 # sebagai total (`sedang`); total sebenarnya di bawah "Jumlah Kirim Uang". Tahap 1 tidak punya kunci `logo:` (review L1
-# I-1, `kerangka.LOGO_KEYS` mati), jadi "aplikasi yang belum dikenal pembaca" di sini adalah aplikasi BERPROFIL (kunci
-# `gopay`) yang tata letaknya belum dipahami pembaca: hanya bukti berkunci profil yang mendapat kerangka dan suara.
+# I-1; tahap 2 kunci logo baru memberi suara label sesudah aturan `logo`-nya disetujui, test_kotak_logo), jadi
+# "aplikasi yang belum dikenal pembaca" di sini adalah aplikasi BERPROFIL (kunci `gopay`) yang tata letaknya belum
+# dipahami pembaca: hanya bukti berkunci profil yang mendapat kerangka dan suara.
 E2E_TRANSFER = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "BUDI SANTOSO", "Saldo GoPay", "Rp50.000",
                 "Jumlah Kirim Uang", "Rp12.500", "Tanggal 26 Okt 2026 08:12"]
 E2E_FAILED = ["GoPay", "Transfer Gagal", *E2E_TRANSFER[2:]]
@@ -1178,6 +1228,562 @@ class NoteStatusWithDateTests(unittest.IsolatedAsyncioTestCase):
             # Pembanding: catatan dengan kata lain tetap tidak memblokir.
             res = await read([*TRANSFER_LAYOUT, "Keterangan: arisan gagal 26/10/2026"])
             self.assertEqual(status_levels(res), {})
+
+
+# ── tahap 2 M5: invarian ujung ke ujung belajar lintas user (plan 2026-11-04 Task M5) ─
+
+# Bukti transfer GoPay rekaan (nama, rekening, referensi, nominal karangan): dibaca Rp75.000; user mengoreksinya.
+T2_GOPAY = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "HENDRA WIJAYA", "BCA 9876543210", "Jumlah Kirim Uang",
+            "Rp75.000", "Tanggal 25 Okt 2026 09:15", "No. Ref 987654321098"]
+T2_DAY = date(2026, 10, 25)   # tanggal bukti GoPay (dicatat apa adanya: koreksinya hanya nominal)
+T2_GOPAY_2 = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "YUSUF RAHMAN", "BRI 1122334455", "Jumlah Kirim Uang",
+              "Rp40.000", "Tanggal 25 Okt 2026 10:20", "No. Ref 112233445566"]
+# Aplikasi tak berprofil rekaan "NEWPAY" (baris judul sesudah logo: kandidat kunci logo, ruling M2a).
+T2_NEWPAY = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp60.000", "27/10/2026 10:00"]
+T2_NEWPAY_FAILED = ["NEWPAY", "Pembayaran Gagal", "Nominal Rp60.000", "27/10/2026 10:00"]
+T2_LOGO_RULE = ("logo", "logo:newpay", "bsi")
+T2_ARAH_RULE = ("arah", "shopeepay|ke:gopay topu", "top_up")
+# Hari baca: sesudah semua tanggal bukti (sampel ShopeePay korpus bertanggal 31 Okt), supaya tidak ada cek "masa depan".
+T2_NOW = datetime(2026, 11, 1, 3, 0, tzinfo=timezone.utc)
+T2_USERS = ("Yohana Kristanti", "Bagas Prasetyo", "Melati Anggraini")
+# Kata nama karangan di bukti dan nama user (>= 4 huruf). Sampel ShopeePay korpus sudah disamarkan.
+T2_NAME_WORDS = {"hendra", "wijaya", "yusuf", "rahman", "yohana", "kristanti", "bagas", "prasetyo", "melati",
+                 "anggraini", "pemilik"}
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class EndToEndTahap2Tests(unittest.IsolatedAsyncioTestCase):
+    """Tahap 2 lewat jalur sungguhan (intake -> worker OCR palsu -> route web / handler bot yang sama dengan chat web ->
+    `record` -> suara/donasi -> API Admin -> cache aturan -> worker berikutnya), SQLite. Empat skenario plan M5:
+    donasi contoh (hanya user yang setuju, saklar menyala), aturan `logo`, aturan `arah` (hanya saran), privasi
+    (tanpa nomor/nama, pembersihan 24 jam dan 7 hari, hapus akun). Keputusan pemilik 5 Nov 2026: sampel berumur 7 hari,
+    menarik persetujuan menyisakan sampel yang sudah disetujui, Tolak menghapus."""
+
+    async def asyncSetUp(self):
+        import shutil
+        import tempfile
+        from decimal import Decimal
+        import httpx
+        from fastapi import Depends, FastAPI
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import StaticPool
+        from unittest.mock import MagicMock
+        from app.api.routes import admin_kotak, kotak_struk, user_settings
+        from app.api.routes import transactions as txn_route
+        from app.bot import handlers, receipt_cmd
+        from app.core.database import get_db
+        from app.core.deps import get_current_user
+        from app.models.models import Allocation, Envelope, Income
+        from app.services.kotak_struk import intake, waiter
+        from app.tests import test_kotak_api as kapi
+        from app.tests.fakes import fixed_date
+        from app.tests.test_web_chat import FakeRedis as ChatRedis
+
+        asyncio.get_running_loop().slow_callback_duration = 5.0
+        self.kapi = kapi
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.kotak = os.path.join(self.dir, "kotak")
+        self.engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool,
+                                          connect_args={"check_same_thread": False})
+        self.addAsyncCleanup(self.engine.dispose)
+        event.listen(self.engine.sync_engine, "connect", lambda conn, _rec: setattr(conn, "isolation_level", None))
+        event.listen(self.engine.sync_engine, "begin", lambda conn: conn.exec_driver_sql("BEGIN"))
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
+
+        # Tiga user di tiga rumah tangga berbeda (pemilik, amplop Makan berdana, Telegram tertaut) + pemilik aplikasi.
+        self.users, self.env = [], []
+        async with self.Session() as db:
+            for n, name in enumerate(T2_USERS):
+                # Gajian tanggal 25: semua bukti (25-31 Okt) di periode berjalan, bot tidak menanyakan tanggal.
+                user = User(name=name, telegram_id=str(701 + n), payday_day=25)
+                hh = Household(name=f"Rumah {name}", payday_day=25)
+                db.add_all([user, hh])
+                await db.flush()
+                env = Envelope(household_id=hh.id, name="Makan")
+                db.add_all([HouseholdMember(user_id=user.id, household_id=hh.id, role=HouseholdRole.owner), env])
+                await db.flush()
+                income = Income(household_id=hh.id, user_id=user.id, amount=Decimal("5000000"), description="Gaji",
+                                income_date=date.today())
+                db.add(income)
+                await db.flush()
+                db.add(Allocation(income_id=income.id, envelope_id=env.id, amount=Decimal("1000000")))
+                self.users.append(user)
+                self.env.append(env)
+            self.admin = User(name="Pemilik", is_admin=True)
+            db.add(self.admin)
+            await db.commit()
+        self.current = self.users[0]
+
+        app = FastAPI()
+        app.include_router(txn_route.router, prefix="/transactions")
+        app.include_router(kotak_struk.router, prefix="/kotak-struk")
+        app.include_router(user_settings.router, prefix="/user")
+        app.include_router(admin_kotak.router, prefix="/admin/kotak", tags=["admin"])
+        app.state.limiter = txn_route.limiter
+
+        async def _db():
+            async with self.Session() as db:
+                yield db
+
+        async def _user(db=Depends(get_db)):   # user di sesi permintaan, seperti produksi
+            return await db.get(User, self.current.id)
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_current_user] = _user
+        self.c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        self.addAsyncCleanup(self.c.aclose)
+
+        self.redis = ChatRedis()
+        self.bot = MagicMock(edit_message_text=AsyncMock())
+        self.bot_items = []
+        real_create = intake.create_item
+
+        async def spy_create(db, req, **kw):
+            item, created = await real_create(db, req, **kw)
+            self.bot_items.append(item.id)
+            return item, created
+
+        settings = SimpleNamespace(KOTAK_DIR=self.kotak, REDIS_URL="redis://tes")
+        for p in (patch("app.services.kotak_struk.intake.get_settings", return_value=settings),
+                  patch("redis.asyncio.from_url", return_value=self.redis),
+                  patch.object(merchants, "_warned_no_key", True),
+                  patch.object(waiter, "publish_done", new_callable=AsyncMock),
+                  patch.object(receipt_cmd, "date", fixed_date(T2_NOW.date())),
+                  patch.object(handlers, "AsyncSessionLocal", new=self.Session),
+                  patch.object(receipt_cmd, "AsyncSessionLocal", new=self.Session),
+                  patch.object(intake, "create_item", new=spy_create)):
+            p.start()
+            self.addCleanup(p.stop)
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+
+    # --- pembantu: kanal web --------------------------------------------
+
+    async def share(self, user, lines):
+        """Bagikan bukti lewat PWA (intake sungguhan, berkas unik) lalu baca dengan worker sungguhan; item `siap`."""
+        from app.services.kotak_struk.intake import IntakeRequest, create_item
+        from app.services.kotak_struk.worker import process_item
+        kapi = self.kapi
+        async with self.Session() as db:
+            req = IntakeRequest(await db.get(User, user.id), "pwa_share", data=kapi.JPG + uuid.uuid4().bytes,
+                                content_type="image/jpeg")
+            item, _ = await create_item(db, req, redis=self.redis, kotak_dir=self.kotak, now=T2_NOW)
+        status = await process_item(item.id, session_factory=self.Session, extract=kapi.fake_extract(lines),
+                                    now=T2_NOW, proofs_enabled=True)
+        self.assertEqual(status, "siap")
+        return await self.item(item.id)
+
+    async def item(self, item_id):
+        from app.models.models import ReceiptScan
+        async with self.Session() as db:
+            return await db.get(ReceiptScan, item_id)
+
+    def env_of(self, user):
+        return self.env[next(i for i, u in enumerate(self.users) if u.id == user.id)]
+
+    async def record(self, user, item, amount, desc, *, ref, on=None):
+        """Simpan di kartu bukti web: POST /transactions dengan `receipt_item_id` (`on`: tanggal transaksi)."""
+        self.current = user
+        body = {"envelope_id": str(self.env_of(user).id), "amount": amount, "description": desc, "client_ref": ref,
+                "receipt_item_id": str(item.id)}
+        if on is not None:
+            body["transaction_date"] = on.isoformat()
+        return await self.c.post("/transactions/", json=body)
+
+    async def as_user(self, user, method, url, **kw):
+        self.current = user
+        return await self.c.request(method, url, **kw)
+
+    async def set_flag(self, on: bool):
+        from app.models.models import AppSetting
+        async with self.Session() as db:
+            row = await db.get(AppSetting, "app_config")
+            value = json.dumps({"features": {"kotak_donasi": {"web": on}}})
+            if row is None:
+                db.add(AppSetting(key="app_config", value=value))
+            else:
+                row.value = value
+            await db.commit()
+
+    async def approve_rule(self, key):
+        self.current = self.admin
+        listed = (await self.c.get("/admin/kotak/rules")).json()["rules"]
+        row = next(r for r in listed if (r["kind"], r["rule_key"], r["value"]) == key)
+        self.assertEqual((row["status"], row["users"], row["households"]), ("menunggu", 2, 2))
+        r = await self.c.post(f"/admin/kotak/rules/{row['id']}/setujui", json={"from_status": "menunggu"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((await self.rule_rows())[key].status, "disetujui")
+
+    # --- pembantu: bot (handler yang sama dengan chat web) ----------------
+
+    def tg(self, user):
+        return SimpleNamespace(id=int(user.telegram_id), first_name=user.name.split()[0])
+
+    async def bot_send(self, user, lines):
+        """Foto ke bot: intake sungguhan, penunggu menjalankan worker sungguhan (OCR palsu). Mengembalikan pesan status
+        (diedit menjadi pesan hasil) dan id itemnya."""
+        from app.bot import handlers
+        from app.services.kotak_struk import waiter
+        from app.services.kotak_struk.worker import process_item
+        kapi = self.kapi
+
+        async def wait(item_id, timeout_s, **kw):
+            await process_item(item_id, session_factory=self.Session, extract=kapi.fake_extract(lines), now=T2_NOW,
+                               proofs_enabled=True)
+            return await self.item(item_id)
+
+        status = SimpleNamespace(message_id=501, edit_text=AsyncMock(), delete=AsyncMock())
+        photo = bytearray(kapi.JPG + uuid.uuid4().bytes)
+        tg_file = SimpleNamespace(download_as_bytearray=AsyncMock(return_value=photo))
+        message = SimpleNamespace(photo=[SimpleNamespace(get_file=AsyncMock(return_value=tg_file))], document=None,
+                                  sticker=None, voice=None, audio=None, text=None,
+                                  reply_text=AsyncMock(return_value=status))
+        update_ = SimpleNamespace(message=message, effective_user=self.tg(user),
+                                  effective_chat=SimpleNamespace(id=int(user.telegram_id) * 10))
+        with patch.object(waiter, "wait_for_item", new=wait):
+            await handlers.handle_non_text(update_, SimpleNamespace(bot=self.bot))
+        return status, self.bot_items[-1]
+
+    async def tap(self, user, data):
+        from app.bot import handlers
+        query = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(),
+                                message=SimpleNamespace(message_id=501, reply_text=AsyncMock()),
+                                from_user=self.tg(user))
+        update_ = SimpleNamespace(callback_query=query, effective_user=query.from_user,
+                                  effective_chat=SimpleNamespace(id=int(user.telegram_id) * 10))
+        handler = next(h for pattern, h in handlers.bot_callbacks() if re.match(pattern, data))
+        await handler(update_, SimpleNamespace(bot=self.bot))
+        return query
+
+    @staticmethod
+    def buttons(call):
+        markup = call.kwargs.get("reply_markup")
+        return [[(b.text, b.callback_data) for b in row] for row in (markup.inline_keyboard if markup else [])]
+
+    def button(self, call, label):
+        return next(data for row in self.buttons(call) for text, data in row if label in text)
+
+    # --- pembantu: isi database -----------------------------------------
+
+    async def rows(self, model, *where):
+        async with self.Session() as db:
+            return list((await db.execute(select(model).where(*where))).scalars().all())
+
+    async def rule_rows(self) -> dict:
+        return {(r.kind, r.rule_key, r.value): r for r in await self.rows(ProofRule)}
+
+    async def votes(self) -> list:
+        return sorted((v.kind, v.rule_key, v.value, str(v.user_id)) for v in await self.rows(ProofRuleVote))
+
+    async def txn_count(self, user=None) -> int:
+        from app.models.models import Transaction
+        where = [Transaction.user_id == user.id] if user is not None else []
+        async with self.Session() as db:
+            return (await db.execute(select(func.count()).select_from(Transaction).where(*where))).scalar_one()
+
+    async def samples(self, status=None) -> list:
+        from app.models.models import ProofSample
+        where = [ProofSample.status == status] if status else []
+        return sorted(await self.rows(ProofSample, *where), key=lambda s: s.created_at)
+
+    @staticmethod
+    def utc(dt):
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+    # --- skenario -------------------------------------------------------
+
+    async def scenario_donation(self):
+        """1. Saklar menyala; A setuju, B tidak; bukti GoPay yang sama, nominal dikoreksi -> satu sampel (A), B tanpa
+        baris; Admin menyetujui dengan baris editan; entri korpus lolos `load_corpus`; A menarik persetujuan ->
+        antrean menunggu kosong, sampel yang disetujui tetap. Mengembalikan sampel yang disetujui."""
+        from app.models.models import ProofSample, ProofSampleConsent
+        from app.scripts import kotak_corpus
+        ani, budi, _ = self.users
+        await self.set_flag(True)
+        r = await self.as_user(ani, "PUT", "/user/kotak-donasi", json={"consented": True})
+        self.assertEqual((r.status_code, r.json()["consented"]), (200, True), r.text)
+        self.assertFalse((await self.as_user(budi, "GET", "/user/kotak-donasi")).json()["consented"])
+
+        got = {u.id: await self.share(u, T2_GOPAY) for u in (ani, budi)}
+        for u in (ani, budi):
+            self.assertEqual((got[u.id].doc_type, got[u.id].layout["key"], got[u.id].document["amounts"]["total"]),
+                             ("transfer", "gopay", 75000))
+        self.assertTrue(got[ani.id].sample_lines)
+        self.assertIsNone(got[budi.id].sample_lines)   # tanpa persetujuan: tidak ada baris yang ditangkap
+        captured = list(got[ani.id].sample_lines)
+        self.assertIn("BUDI SANTOSO", captured)   # pihak lawan diganti nama samaran oleh worker
+        second = await self.share(ani, T2_GOPAY_2)
+
+        # Koreksi nominal lewat Simpan: satu transaksi per item, sampel hanya untuk A (kirim ulang tidak menggandakan).
+        for n, u in enumerate((ani, budi)):
+            for _ in range(2):
+                r = await self.record(u, got[u.id], 70000, "Transfer ke HENDRA WIJAYA", ref=f"don-{n}", on=T2_DAY)
+                self.assertEqual(r.status_code, 201, r.text)
+        r = await self.record(ani, second, 45000, "Transfer ke YUSUF RAHMAN", ref="don-2", on=T2_DAY)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((await self.txn_count(ani), await self.txn_count(budi)), (2, 1))
+        waiting = await self.samples()
+        self.assertEqual([(s.user_id, s.item_id, s.status, s.trigger) for s in waiting],
+                         [(ani.id, got[ani.id].id, "menunggu", "nominal"), (ani.id, second.id, "menunggu", "nominal")])
+        self.assertEqual(waiting[0].lines, captured)
+        self.assertEqual(waiting[0].truth, {"total": 70000, "date": "2026-10-25", "flow": "keluar", "app": None})
+        for it in (got[ani.id], got[budi.id], second):
+            row = await self.item(it.id)
+            self.assertEqual((row.status, row.sample_lines), ("tercatat", None))
+
+        # Admin: antrean menunggu memuat dua sampel A, tanpa id user/item.
+        self.current = self.admin
+        listed = (await self.c.get("/admin/kotak/samples")).json()
+        self.assertEqual((listed["counts"]["menunggu"], len(listed["samples"])), (2, 2))
+        self.assertNotIn(str(ani.id), json.dumps(listed))
+        first = next(s for s in listed["samples"] if s["id"] == str(waiting[0].id))
+        lines = [line["text"] for line in first["lines"]]
+        self.assertEqual(lines, captured)
+        # Pemilik mengganti nama samaran pihak lawan dengan nama samaran lain dan menyetujui.
+        edited = [line.replace("BUDI SANTOSO", "SITI AMINAH") for line in lines]
+        self.assertNotEqual(edited, lines)
+        r = await self.c.post(f"/admin/kotak/samples/{first['id']}/setujui",
+                              json={"lines": edited, "user_name": "Andi Pratama"})
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "disetujui"), r.text)
+        r = await self.c.get(f"/admin/kotak/samples/{first['id']}/korpus")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertNotIn(str(ani.id), r.text)
+        body = r.json()
+        entry = body["entry"]
+        self.assertEqual((entry["reviewed"], entry["lines"], entry["user_name"]), (True, edited, "Andi Pratama"))
+        self.assertEqual((entry["expect"]["total"], body["gated_diff"]), (70000, ["total"]))   # koreksi user (K17)
+        path = Path(self.dir) / "corpus.json"
+        kotak_corpus.write_corpus(path, [entry])
+        self.assertEqual(kotak_corpus.load_corpus(path), [entry])
+
+        # A menarik persetujuan: sampel menunggu dan persetujuan hilang; yang sudah disetujui tetap.
+        r = await self.as_user(ani, "PUT", "/user/kotak-donasi", json={"consented": False})
+        self.assertEqual((r.status_code, r.json()["consented"]), (200, False))
+        self.current = self.admin
+        listed = (await self.c.get("/admin/kotak/samples")).json()
+        self.assertEqual((listed["counts"]["menunggu"], listed["samples"]), (0, []))
+        [approved] = await self.samples()
+        self.assertEqual((approved.id, approved.status, approved.lines), (waiting[0].id, "disetujui", edited))
+        self.assertEqual(await self.rows(ProofSampleConsent), [])
+        self.assertEqual([s.user_id for s in await self.rows(ProofSample)], [ani.id])
+        return approved
+
+    async def scenario_logo(self):
+        """2. Dua user (rumah tangga berbeda) menjawab "BSI" untuk bukti NEWPAY: A lewat kartu web, B lewat tombol bot
+        `ka_` -> aturan `logo` menunggu 2 user; disetujui; bukti user ketiga -> penerbit `bsi`, selain itu sama dengan
+        bacaan tanpa aturan; versi gagalnya tetap diblokir."""
+        from app.services.kotak_struk.readers.profiles import PROFILES
+        from app.services.kotak_struk.record import MSG_BLOCKED
+        ani, budi, citra = self.users
+        txns = await self.txn_count()
+        plain = await self.share(ani, T2_NEWPAY)
+        self.assertEqual((plain.doc_type, plain.layout["key"], plain.document["issuer"]),
+                         ("tidak_dikenali", "logo:newpay", None))
+        self.current = ani
+        flags = (await self.c.get(f"/kotak-struk/{plain.id}")).json()["flags"]
+        self.assertEqual((flags["ask_app"], flags["app_logo"]), (True, "NEWPAY"))
+        r = await self.c.post(f"/kotak-struk/{plain.id}/aplikasi", json={"app": "bsi"})
+        self.assertEqual((r.status_code, r.json()), (200, {"app": "bsi", "ask_app": False}), r.text)
+        self.assertEqual(await self.rule_rows(), {})   # satu user: suara saja
+
+        status, bot_item = await self.bot_send(budi, T2_NEWPAY)
+        result = status.edit_text.call_args
+        self.assertEqual(self.button(result, "Aplikasi apa ini?"), f"ka_{bot_item}")
+        question = (await self.tap(budi, f"ka_{bot_item}")).edit_message_text.call_args
+        bsi = next(data for row in self.buttons(question) for text, data in row
+                   if data == f"ka_{bot_item}_{[p.key for p in PROFILES].index('bsi')}")
+        await self.tap(budi, bsi)
+        self.assertEqual(await self.votes(), sorted([(*T2_LOGO_RULE, str(ani.id)), (*T2_LOGO_RULE, str(budi.id))]))
+        rules = await self.rule_rows()
+        self.assertEqual(set(rules), {T2_LOGO_RULE})
+        self.assertEqual((rules[T2_LOGO_RULE].status, rules[T2_LOGO_RULE].users, rules[T2_LOGO_RULE].households),
+                         ("menunggu", 2, 2))
+        for it in (plain.id, bot_item):   # menjawab tidak mencatat dan tidak mengubah status
+            self.assertEqual((await self.item(it)).status, "siap")
+        self.assertEqual(await self.txn_count(), txns)
+
+        await self.approve_rule(T2_LOGO_RULE)
+        third = await self.share(citra, T2_NEWPAY)
+        self.assertEqual(third.document["issuer"], "bsi")
+        same = ("doc_type", "status", "parser", "ref_hash", "counterparty_key", "paid_at", "confidence")
+        self.assertEqual({c: getattr(third, c) for c in same}, {c: getattr(plain, c) for c in same})
+        self.assertEqual({**third.document, "issuer": None}, plain.document)   # cek, status, nominal: sama
+        # Pembanding langsung: pembaca tanpa aturan pada teks yang sama.
+        bare = await read_document(TextDoc(lines=list(T2_NEWPAY), kind=KIND_IMAGE),
+                                   ParseContext(today=TODAY, user_name=citra.name), proofs_enabled=True)
+        self.assertEqual(([c.as_dict() for c in bare.checks], bare.parsed.doc.status),
+                         (third.document["checks"], third.document["status"]))
+
+        failed = await self.share(citra, T2_NEWPAY_FAILED)
+        self.assertEqual((failed.document["status"], failed.document["issuer"]), ("gagal", "bsi"))
+        r = await self.record(citra, failed, 60000, "NEWPAY", ref="logo-gagal")
+        self.assertEqual((r.status_code, r.json()["detail"]), (409, MSG_BLOCKED))
+        self.assertEqual(((await self.item(failed.id)).status, await self.txn_count()), ("siap", txns))
+
+    async def scenario_arah(self):
+        """3. Dua user melewati bukti top-up ShopeePay korpus dengan alasan `top_up` (A di web, B lewat `kx_` bot) ->
+        aturan `arah` menunggu; disetujui; user ketiga -> saran `top_up`, item `siap`, bot menawarkan "Oke, lewati" dan
+        "Tetap catat", Simpan mencatat tepat satu transaksi."""
+        from app.tests.test_kotak_arah import corpus_sample
+        ani, budi, citra = self.users
+        txns = await self.txn_count()
+        lines = corpus_sample("real-shopeepay-topup-01")["lines"]
+        web = await self.share(ani, lines)
+        self.assertEqual((web.doc_type, web.layout["key"], web.layout["arah"], web.document["flow"]),
+                         ("transfer", "shopeepay", ["ke:gopay topu"], "keluar"))
+        r = await self.as_user(ani, "POST", f"/kotak-struk/{web.id}/lewati",
+                               json={"reason": "bukan_pengeluaran", "alasan": "top_up"})
+        self.assertEqual((r.status_code, r.json()["status"]), (200, "dilewati"), r.text)
+
+        status, bot_item = await self.bot_send(budi, lines)
+        ask = self.button(status.edit_text.call_args, "Bukan pengeluaran")
+        self.assertTrue(ask.startswith(f"kx_{bot_item}_c"), ask)
+        reasons = (await self.tap(budi, ask)).edit_message_text.call_args
+        self.assertEqual(self.button(reasons, "Top-up saldo sendiri"), f"kx_{bot_item}_t")
+        await self.tap(budi, f"kx_{bot_item}_t")
+        got = await self.item(bot_item)
+        self.assertEqual((got.status, got.channel_meta["skip_reason"], got.channel_meta["skip_alasan"]),
+                         ("dilewati", "bukan_pengeluaran", "top_up"))
+        rules = await self.rule_rows()
+        self.assertEqual((rules[T2_ARAH_RULE].status, rules[T2_ARAH_RULE].users), ("menunggu", 2))
+        self.assertEqual(await self.txn_count(), txns)
+
+        await self.approve_rule(T2_ARAH_RULE)
+        status, third = await self.bot_send(citra, lines)
+        result = status.edit_text.call_args
+        self.assertIn("ℹ️ Ini top-up saldo, bukan pengeluaran.", result.args[0])
+        self.assertEqual([[text for text, _ in row] for row in self.buttons(result)], [["Oke, lewati", "Tetap catat"]])
+        got = await self.item(third)
+        self.assertEqual((got.status, got.document["flow"]), ("siap", "top_up"))
+        self.current = citra
+        detail = (await self.c.get(f"/kotak-struk/{third}")).json()
+        self.assertEqual((detail["status"], detail["flags"]["skip_suggestion"], detail["flags"]["blocked"]),
+                         ("siap", "top_up", None))
+        # Simpan di web tetap mencatat (tanpa lewati otomatis): tepat satu transaksi, kirim ulang tidak menggandakan.
+        total = got.document["amounts"]["total"]
+        for _ in range(2):
+            r = await self.record(citra, got, total, "Top-up GoPay", ref="arah-1")
+            self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.txn_count(), txns + 1)
+        got = await self.item(third)
+        self.assertEqual((got.status, len(got.transaction_ids)), ("tercatat", 1))
+        # Tombol bot lama sesudah tercatat di web: "Tetap catat" lalu amplop tidak mencatat lagi.
+        keep = (await self.tap(citra, self.button(result, "Tetap catat"))).edit_message_text.call_args
+        for row in self.buttons(keep):
+            for _, data in row:
+                if data and data.startswith("t_"):
+                    await self.tap(citra, data)
+        self.assertEqual(await self.txn_count(), txns + 1)
+
+    # --- tes ------------------------------------------------------------
+
+    async def test_donation_end_to_end(self):
+        approved = await self.scenario_donation()
+        decided = self.utc(approved.decided_at)
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_samples(db, now=decided + timedelta(days=6, hours=23)), 0)
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_samples(db, now=decided + timedelta(days=7, minutes=1)), 1)
+        self.assertEqual(await self.samples(), [])
+
+    async def test_logo_end_to_end(self):
+        await self.scenario_logo()
+
+    async def test_arah_end_to_end(self):
+        await self.scenario_arah()
+
+    async def test_privacy_end_to_end(self):
+        """4. Sesudah skenario 1-3: `layout`, `proof_rule_votes`, `proof_rules`, `proof_samples` tanpa deret >= 6 digit
+        dan tanpa kata nama; `purge_layouts` 24 jam mengosongkan `layout` dan `sample_lines`; hapus akun A menghapus
+        sampel, persetujuan, dan suaranya lalu menghitung ulang aturan; `purge_samples` 7 hari."""
+        from app.models.models import ProofSample, ProofSampleConsent, ReceiptScan
+        from app.services.account_deletion import delete_account
+        ani, budi, citra = self.users
+        await self.scenario_donation()
+        await self.scenario_logo()
+        await self.scenario_arah()
+        # Lagi: A dan C setuju; C mengoreksi nominal (sampel menunggu); A menekan "Nominal salah" di bot (baris tetap
+        # di item yang dilewati `batal` sampai nominal diketik).
+        for u in (ani, citra):
+            r = await self.as_user(u, "PUT", "/user/kotak-donasi", json={"consented": True})
+            self.assertEqual(r.status_code, 200, r.text)
+        mine = await self.share(citra, T2_GOPAY)
+        r = await self.record(citra, mine, 71000, "Transfer ke HENDRA WIJAYA", ref="priv-1", on=T2_DAY)
+        self.assertEqual(r.status_code, 201, r.text)
+        kept = await self.share(ani, T2_GOPAY_2)
+        captured = list(kept.sample_lines)
+        await self.tap(ani, f"struk_fix_{kept.id}")
+        kept = await self.item(kept.id)
+        self.assertEqual((kept.status, kept.sample_lines), ("dilewati", captured))
+
+        items = await self.rows(ReceiptScan)
+        layouts = [it.layout for it in items if it.layout]
+        self.assertGreaterEqual(len(layouts), 10)
+        for lay in layouts:
+            stripped = json.dumps({**lay, "lines": [{k: v for k, v in e.items() if k not in ("amount", "date", "h")}
+                                                    for e in lay["lines"]]}, ensure_ascii=False)
+            self.assertNotRegex(stripped, r"\d{6,}")
+            self.assertFalse(set(re.findall(r"[a-z]+", stripped.lower())) & T2_NAME_WORDS, stripped)
+        for it in items:
+            if it.sample_lines:
+                dumped = json.dumps(it.sample_lines, ensure_ascii=False)
+                self.assertNotRegex(dumped, r"\d{6,}")
+                self.assertFalse(set(re.findall(r"[a-z]+", dumped.lower())) & T2_NAME_WORDS, dumped)
+        votes = await self.rows(ProofRuleVote)
+        rules = await self.rows(ProofRule)
+        samples = await self.samples()
+        self.assertTrue(votes and rules)
+        self.assertEqual(sorted(s.status for s in samples), ["disetujui", "menunggu"])
+        for text in [*(f"{v.kind} {v.rule_key} {v.value}" for v in votes),
+                     *(f"{r.kind} {r.rule_key} {r.value} {r.note or ''}" for r in rules),
+                     *(json.dumps([s.rule_key, s.doc_type, s.trigger, s.lines, s.user_name, s.truth, s.note],
+                                  ensure_ascii=False) for s in samples)]:
+            self.assertNotRegex(text, r"\d{6,}")
+            self.assertFalse(set(re.findall(r"[a-z]+", text.lower())) & T2_NAME_WORDS, text)
+
+        # Kerangka dan baris donasi item selesai dikosongkan 24 jam sesudah dibaca; item terbuka tidak disentuh.
+        now = T2_NOW
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_layouts(db, now=now + timedelta(hours=23)), 0)
+        self.assertEqual((await self.item(kept.id)).sample_lines, captured)
+        async with self.Session() as db:
+            self.assertGreater(await maintenance.purge_layouts(db, now=now + timedelta(hours=25)), 0)
+        for it in await self.rows(ReceiptScan):
+            with self.subTest(item=str(it.id), status=it.status):
+                if it.status in ("tercatat", "dilewati"):
+                    self.assertEqual((it.layout, it.sample_lines), (None, None))
+                else:
+                    self.assertEqual(it.status, "siap")
+                    self.assertIsNotNone(it.layout)
+        async with self.Session() as db:
+            nulls = (await db.execute(select(func.count()).select_from(ReceiptScan).where(
+                ReceiptScan.status.in_(("tercatat", "dilewati")),
+                ReceiptScan.layout.is_(None), ReceiptScan.sample_lines.is_(None)))).scalar_one()
+        self.assertEqual(nulls, len([it for it in items if it.status in ("tercatat", "dilewati")]))
+
+        # Hapus akun A: sampel (juga yang disetujui), persetujuan, dan suaranya hilang; aturan dihitung ulang (yang
+        # disetujui tetap `disetujui`, keputusan pemilik).
+        async with self.Session() as db:
+            await delete_account(db, await db.get(User, ani.id))
+        self.assertEqual(await self.rows(ProofSample, ProofSample.user_id == ani.id), [])
+        self.assertEqual([c.user_id for c in await self.rows(ProofSampleConsent)], [citra.id])
+        self.assertEqual(await self.rows(ProofRuleVote, ProofRuleVote.user_id == ani.id), [])
+        rules = await self.rule_rows()
+        for key in (T2_LOGO_RULE, T2_ARAH_RULE):
+            self.assertEqual((rules[key].status, rules[key].users, rules[key].households), ("disetujui", 1, 1))
+        # Sampel C: tetap sampai SAMPLE_TTL (7 hari) sejak dibuat, lalu dihapus pemeliharaan.
+        [left] = await self.samples()
+        self.assertEqual((left.user_id, left.status), (citra.id, "menunggu"))
+        created = self.utc(left.created_at)
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_samples(db, now=created + timedelta(days=6, hours=23)), 0)
+        async with self.Session() as db:
+            self.assertEqual(await maintenance.purge_samples(db, now=created + timedelta(days=7, minutes=1)), 1)
+        self.assertEqual(await self.samples(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

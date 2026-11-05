@@ -26,11 +26,11 @@ from app.api.routes.transactions import _read_receipt_upload, run_receipt_scan
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.models import (
-    Allocation, Envelope, Income, MerchantEnvelopeMap, ProofRuleVote, ReceiptScan, Transaction, User,
-    UserEnvelopeKeyword,
+    Allocation, AppSetting, Envelope, Income, MerchantEnvelopeMap, ProofRuleVote, ProofSample, ProofSampleConsent,
+    ReceiptScan, Transaction, User, UserEnvelopeKeyword,
 )
 from app.services.expense_rules import NOT_SPENDABLE_MSG
-from app.services.kotak_struk import belajar, maintenance
+from app.services.kotak_struk import belajar, donasi, maintenance, samaran
 from app.services.kotak_struk import record as record_mod
 from app.services.kotak_struk import waiter as waiter_mod
 from app.services.kotak_struk.extract import PdfLocked
@@ -409,6 +409,45 @@ class RecordWithReceiptItemTests(TxnBase):
         self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
         self.assertEqual(await self.learned_keywords(), {"bakso"})   # tanpa "siti"/"aminah"
         self.assertEqual(await self.map_count(), 2)                  # peta merchant: Makan 1 -> 2
+
+    async def test_arah_rule_never_records_or_skips(self):   # Review Focus 5 (tahap 2 M3b)
+        """Aturan `arah` disetujui (top-up ShopeePay -> GoPay): worker sungguhan membaca `top_up` dan item tetap `siap`
+        (tidak pernah dilewati atau dicatat otomatis); detail menyarankan bukan pengeluaran tanpa blokir; POST
+        /transactions dengan `receipt_item_id` tetap 201 dan mencatat tepat satu transaksi, kirim kedua 409."""
+        from app.models.models import ProofRule
+        from app.services.kotak_struk import view
+        from app.tests.test_kotak_arah import TOPUP_LINES, TOPUP_RULE
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+        async with self.Session() as db:
+            db.add(ProofRule(kind="arah", rule_key=TOPUP_RULE, value="top_up", users=2, households=2,
+                             status="disetujui", decided_at=NOW))
+            await db.commit()
+        item = await self.ready(TOPUP_LINES)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.doc_type, got.document["issuer"], got.document["flow"]),
+                         ("siap", "transfer", "shopeepay", "top_up"))
+        self.assertIn("Arah uang dari aturan belajar", got.document["evidence"])
+        self.assertEqual(got.transaction_ids or [], [])
+        self.assertEqual(got.layout["arah"], ["ke:gopay topu"])
+        async with self.Session() as db:
+            detail = await view.item_detail(db, await db.get(ReceiptScan, item.id), await db.get(User, self.a.id))
+        self.assertEqual((detail["status"], detail["flags"]["skip_suggestion"], detail["flags"]["blocked"]),
+                         ("siap", "top_up", None))
+        self.assertEqual(await self.count(Transaction), 0)
+        r = await self.post(item, ref="arah1", desc="top up gopay", amount=25000)
+        self.assertEqual(r.status_code, 201, r.text)
+        row = await self.get(item.id)
+        self.assertEqual((row.status, row.transaction_ids), ("tercatat", [r.json()["id"]]))
+        again = await self.post(item, ref="arah2", desc="top up gopay", amount=25000)
+        self.assertEqual((again.status_code, again.json()["detail"]), (409, MSG_RECORDED))
+        self.assertEqual(await self.count(Transaction), 1)
+        # Mengiyakan bacaan bukan koreksi (K14): tidak ada suara arah dari pencatatan ini.
+        self.assertEqual(await self.votes_of_kind("arah"), [])
+
+    async def votes_of_kind(self, kind):
+        async with self.Session() as db:
+            return (await db.execute(select(ProofRuleVote).where(ProofRuleVote.kind == kind))).scalars().all()
 
     async def test_second_record_of_same_proof_is_409_but_resend_is_same(self):
         item = await self.ready_qris()
@@ -1078,6 +1117,303 @@ class CorrectionLearningTests(TxnBase):
             r = await self.post(item, ref="a", desc="ROTI (Alfamart)", amount=15000)
         self.assertEqual(r.status_code, 201, r.text)
         self.assertEqual((spy.await_count, await self.votes()), (0, []))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Donasi contoh (tahap 2 M1c): koreksi dari user yang setuju memindahkan baris tersamar ke antrean tinjauan.
+
+NEWPAY = ["NEWPAY", "Pembayaran Berhasil", "Nominal Rp50.000", "27/10/2026 10:00"]   # aplikasi karangan tanpa profil
+
+
+class DonationMixin:
+    """Pembantu donasi contoh untuk tes di atas TxnBase (juga dipakai test_kotak_bot)."""
+
+    async def enable_donation(self, user=None, *, flag=True, consent=True):
+        """Saklar `kotak_donasi` dan persetujuan `user` (bawaan Ani); worker sungguhan lalu menangkap baris tersamar."""
+        user = user or self.a
+        async with self.Session() as db:
+            row = await db.get(AppSetting, "app_config")
+            value = json.dumps({"features": {"kotak_donasi": {"web": flag}}})
+            if row is None:
+                db.add(AppSetting(key="app_config", value=value))
+            else:
+                row.value = value
+            have = await db.get(ProofSampleConsent, user.id)
+            if consent and have is None:
+                db.add(ProofSampleConsent(user_id=user.id, consented_at=NOW))
+            elif not consent and have is not None:
+                await db.delete(have)
+            await db.commit()
+
+    async def samples(self):
+        async with self.Session() as db:
+            return list((await db.execute(select(ProofSample).order_by(ProofSample.created_at))).scalars())
+
+    async def only_sample(self):
+        found = await self.samples()
+        self.assertEqual(len(found), 1, [s.trigger for s in found])
+        return found[0]
+
+    async def sql_null_lines(self, item_id):
+        async with self.Session() as db:
+            return (await db.execute(select(ReceiptScan.sample_lines.is_(None)).where(ReceiptScan.id == item_id))
+                    ).scalar_one()
+
+    async def captured(self, item_id):
+        lines = (await self.get(item_id)).sample_lines
+        self.assertTrue(lines)
+        return lines
+
+    async def ready_gopay(self, *, misread=True):
+        """GOPAY_TRANSFER: total terbaca Rp11.000; `misread` = pembaca salah membaca Rp10.000 (lihat di atas)."""
+        item = await self.ready(GOPAY_TRANSFER)
+        got = await self.get(item.id)
+        self.assertEqual((got.doc_type, got.layout["key"], got.document["amounts"]["total"]), ("transfer", "gopay", 11000))
+        if misread:
+            await self.set(item.id, document={**got.document, "amounts": {**got.document["amounts"], "total": 10000}})
+        return item
+
+
+@unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class DonationRecordingTests(DonationMixin, TxnBase):
+    """`record.mark_recorded`, `record.skip_item`, dan `record.choose_app` memanggil `donasi.donate` (Review Focus 1, 3)."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await self.enable_donation()
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+
+    async def test_corrected_amount_moves_lines_to_queue(self):
+        item = await self.ready_gopay()                               # total terbaca 10.000
+        lines = await self.captured(item.id)
+        r = await self.post(item, ref="r1", desc="kirim", amount=12500)   # koreksi
+        self.assertEqual(r.status_code, 201, r.text)
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.status, sample.truth["total"]), ("nominal", "menunggu", 12500))
+        async with self.Session() as db:
+            txn_date = (await db.execute(select(Transaction.transaction_date))).scalar_one()
+        self.assertEqual(sample.truth, {"total": 12500, "date": txn_date.isoformat(), "flow": "keluar", "app": None})
+        self.assertEqual((sample.user_id, sample.item_id, sample.rule_key, sample.doc_type, sample.lines),
+                         (self.a.id, item.id, "gopay", "transfer", lines))
+        self.assertEqual(sample.user_name, samaran.pseudonymise([], {"user": "Ani"})[1])
+        self.assertNotIn("Ani", sample.user_name)
+        self.assertEqual(sample.today, NOW.astimezone(timezone(timedelta(hours=7))).date())   # hari baca WIB
+        self.assertIsNone((await self.get(item.id)).sample_lines)
+        self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual((await self.get(item.id)).status, "tercatat")
+
+    async def test_date_correction_donates_tanggal(self):
+        item = await self.ready_gopay(misread=False)
+        r = await self.post(item, ref="r1", desc="kirim", amount=11000, transaction_date="2026-10-20")
+        self.assertEqual(r.status_code, 201, r.text)
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.truth["date"]), ("tanggal", "2026-10-20"))
+
+    async def test_correct_read_or_batal_donates_nothing(self):
+        item = await self.ready_gopay(misread=False)
+        await self.captured(item.id)
+        r = await self.post(item, ref="r1", desc="kirim", amount=11000)   # bacaan benar
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertTrue(await self.sql_null_lines(item.id))
+        for reason in ("batal", "duplikat"):
+            with self.subTest(reason=reason):
+                other = await self.ready_gopay()
+                await self.captured(other.id)
+                async with self.Session() as db:
+                    self.assertTrue(await record_mod.skip_item(db, other.id, self.a.id, reason))
+                got = await self.get(other.id)
+                self.assertEqual((got.status, got.channel_meta["skip_reason"]), ("dilewati", reason))
+                self.assertTrue(await self.sql_null_lines(other.id))
+        self.assertEqual(await self.samples(), [])
+
+    async def test_tidak_dikenali_confirmation_donates(self):
+        item = await self.ready_unknown()
+        await self.captured(item.id)
+        self.assertEqual((await self.get(item.id)).document["amounts"]["total"], 12000)
+        r = await self.post(item, ref="r1", desc="bayar", amount=12000)   # nominal sama: tetap konfirmasi bukti tak dikenal
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual((await self.only_sample()).trigger, "tidak_dikenali")
+        skipped = await self.ready_unknown()
+        async with self.Session() as db:
+            self.assertTrue(await record_mod.skip_item(db, skipped.id, self.a.id, "bukan_pengeluaran"))
+        self.assertEqual([s.trigger for s in await self.samples()], ["tidak_dikenali", "tidak_dikenali"])
+        self.assertTrue(await self.sql_null_lines(skipped.id))
+
+    async def test_skip_with_alasan_donates_arah(self):
+        item = await self.ready_gopay(misread=False)
+        async with self.Session() as db:
+            self.assertTrue(await record_mod.skip_item(db, item.id, self.a.id, "bukan_pengeluaran", alasan="top_up"))
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.truth), ("arah", {"total": None, "date": None, "flow": "top_up",
+                                                                    "app": None}))
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.channel_meta["skip_alasan"], got.sample_lines), ("dilewati", "top_up", None))
+
+    async def test_donation_never_affects_recording(self):        # Review Focus 3
+        # 1. `donate` melempar: tetap 201, satu transaksi, item tercatat.
+        item = await self.ready_gopay()
+        with patch.object(donasi, "donate", AsyncMock(side_effect=RuntimeError("x"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            r = await self.post(item, ref="d1", desc="kirim", amount=12500)
+        self.assertEqual(r.status_code, 201, r.text)
+        got = await self.get(item.id)
+        self.assertEqual((got.status, got.transaction_ids, await self.count(Transaction)), ("tercatat", [r.json()["id"]], 1))
+        # 2. Galat database di sisip sampel (Postgres: transaksi aborted sampai savepoint dibatalkan): penandaan tetap.
+        broken = await self.ready_gopay()
+        with postgres_abort(self.engine, "INSERT INTO proof_samples") as state, \
+                self.assertLogs("app.services.kotak_struk.donasi", "WARNING") as logs:
+            r = await self.post(broken, ref="d2", desc="kirim", amount=12500)
+        self.assertEqual((state["left"], r.status_code), (0, 201))
+        self.assertTrue(all("BUDI" not in line and r.exc_info is None for line, r in zip(logs.output, logs.records)))
+        got = await self.get(broken.id)
+        self.assertEqual((got.status, got.transaction_ids), ("tercatat", [r.json()["id"]]))
+        # 3. Lewati dengan `donate` melempar: tetap dilewati.
+        skipped = await self.ready_gopay()
+        async with self.Session() as db:
+            with patch.object(donasi, "donate", AsyncMock(side_effect=RuntimeError("x"))), \
+                    self.assertLogs(RECORD_LOG, "WARNING"):
+                self.assertTrue(await record_mod.skip_item(db, skipped.id, self.a.id, "bukan_pengeluaran",
+                                                           alasan="top_up"))
+        self.assertEqual((await self.get(skipped.id)).status, "dilewati")
+        self.assertEqual(await self.samples(), [])
+        # 4. Kirim ulang `client_ref` yang sama (juga batch): tetap satu transaksi dan satu sampel.
+        fresh = await self.ready_gopay()
+        first = await self.post(fresh, ref="d4", desc="kirim", amount=12500)
+        for _ in range(2):
+            again = await self.post(fresh, ref="d4", desc="kirim", amount=12500)
+            self.assertEqual(again.json()["id"], first.json()["id"])
+        line = {"envelope_id": str(self.env["Makan"].id), "amount": 12500, "description": "kirim", "client_ref": "d4",
+                "receipt_item_id": str(fresh.id)}
+        self.assertTrue((await self.c.post("/transactions/batch", json={"items": [line]})).json()[0]["ok"])
+        self.assertEqual([s.item_id for s in await self.samples()], [fresh.id])
+        self.assertEqual(await self.count(Transaction), 3)
+
+    async def test_heal_after_lost_marking_donates_once(self):
+        item = await self.ready_gopay()
+        with patch.object(record_mod, "mark_recorded", AsyncMock(side_effect=RuntimeError("commit gagal"))), \
+                self.assertLogs(RECORD_LOG, "WARNING"):
+            first = await self.post(item, ref="h1", desc="kirim", amount=12500)
+        self.assertEqual((first.status_code, await self.samples()), (201, []))
+        for _ in range(2):
+            await self.post(item, ref="h1", desc="kirim", amount=12500)
+        self.assertEqual([(s.item_id, s.trigger) for s in await self.samples()], [(item.id, "nominal")])
+
+    async def test_consent_withdrawn_after_capture_stores_nothing(self):
+        # Review M1b temuan 5: persetujuan ditarik selagi bukti dibaca (`forget_user` mendahului `_store`), lalu koreksi.
+        item = await self.ready_gopay()
+        await self.captured(item.id)
+        await self.enable_donation(consent=False)
+        r = await self.post(item, ref="w1", desc="kirim", amount=12500)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(await self.samples(), [])
+        self.assertTrue(await self.sql_null_lines(item.id))
+        # Juga lewat lewati, dan saat saklar dimatikan sesudah ditangkap.
+        await self.enable_donation()
+        for flag, consent in ((True, False), (False, True)):
+            with self.subTest(flag=flag, consent=consent):
+                await self.enable_donation()
+                other = await self.ready_gopay()
+                await self.captured(other.id)
+                await self.enable_donation(flag=flag, consent=consent)
+                async with self.Session() as db:
+                    self.assertTrue(await record_mod.skip_item(db, other.id, self.a.id, "bukan_pengeluaran",
+                                                               alasan="top_up"))
+                self.assertTrue(await self.sql_null_lines(other.id))
+        self.assertEqual(await self.samples(), [])
+
+    async def test_app_choice_donates_once(self):
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")   # rute Kotak Struk
+        self.addAsyncCleanup(c.aclose)
+        item = await self.ready(NEWPAY)
+        self.assertEqual((await self.get(item.id)).layout["key"], "logo:newpay")
+        lines = await self.captured(item.id)
+        r = await c.post(f"/kotak-struk/{item.id}/aplikasi", json={"app": "bsi"})
+        self.assertEqual(r.status_code, 200, r.text)
+        sample = await self.only_sample()
+        self.assertEqual((sample.trigger, sample.truth, sample.rule_key, sample.doc_type, sample.lines),
+                         ("aplikasi", {"total": None, "date": None, "flow": None, "app": "bsi"}, "logo:newpay",
+                          "tidak_dikenali", lines))
+        self.assertTrue(await self.sql_null_lines(item.id))
+        self.assertEqual((await c.post(f"/kotak-struk/{item.id}/aplikasi", json={"app": "baru"})).status_code, 409)
+        r = await self.post(item, ref="a1", desc="bayar", amount=50000)   # dicatat sesudahnya: tetap satu sampel
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(len(await self.samples()), 1)
+        # Tanpa persetujuan: jawaban tetap tersimpan (suara logo), tanpa sampel, baris dikosongkan.
+        await self.enable_donation()
+        other = await self.ready(NEWPAY)
+        await self.captured(other.id)
+        await self.enable_donation(consent=False)
+        self.assertEqual((await c.post(f"/kotak-struk/{other.id}/aplikasi", json={"app": "bsi"})).status_code, 200)
+        self.assertEqual(((await self.get(other.id)).channel_meta["app_choice"], len(await self.samples())), ("bsi", 1))
+        self.assertTrue(await self.sql_null_lines(other.id))
+
+    @contextlib.contextmanager
+    def written(self):
+        """Pernyataan SQL (spasi dirapatkan) yang dijalankan di dalam blok."""
+        seen = []
+        hook = lambda *a: seen.append(" ".join(a[2].split()))   # noqa: E731
+        event.listen(self.engine.sync_engine, "before_cursor_execute", hook)
+        try:
+            yield seen
+        finally:
+            event.remove(self.engine.sync_engine, "before_cursor_execute", hook)
+
+    def assert_consent_locked_before_item(self, seen):
+        consent = [i for i, s in enumerate(seen) if s.startswith("SELECT") and "FROM proof_sample_consents" in s]
+        item = [i for i, s in enumerate(seen) if s.startswith("UPDATE receipt_scans")]
+        self.assertTrue(consent and item, seen)
+        self.assertLess(consent[0], item[0], seen)
+
+    async def test_lock_order_consent_before_item(self):
+        # Review M1c temuan 5: lewati dan jawaban aplikasi mengunci persetujuan sebelum baris item (urutan yang sama
+        # dengan `forget_user`), supaya penarikan bersamaan tidak deadlock.
+        item = await self.ready_gopay()
+        await self.captured(item.id)
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, item.id, self.a.id, "bukan_pengeluaran",
+                                                           alasan="top_up"))
+        self.assert_consent_locked_before_item(seen)
+        self.assertEqual(len(await self.samples()), 1)
+        app_item = await self.ready(NEWPAY)
+        await self.captured(app_item.id)
+        with self.written() as seen:
+            async with self.Session() as db:
+                got = await db.get(ReceiptScan, app_item.id)
+                self.assertTrue(await record_mod.choose_app(db, got, "bsi", user_id=self.a.id, user_name="Ani"))
+                await db.commit()
+        self.assert_consent_locked_before_item(seen)
+        lock_select = next(i for i, s in enumerate(seen) if s.startswith("SELECT receipt_scans.channel_meta"))
+        self.assertLess(next(i for i, s in enumerate(seen) if "FROM proof_sample_consents" in s), lock_select)
+        self.assertEqual(len(await self.samples()), 2)
+        # Tanpa baris tersamar (bukan pendonor): tidak ada kunci persetujuan.
+        await self.enable_donation(consent=False)
+        plain = await self.ready_gopay()
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, plain.id, self.a.id, "batal"))
+        self.assertFalse([s for s in seen if "proof_sample_consents" in s], seen)
+        # "Nominal salah" (`keep_sample`): baris dibiarkan, tanpa kunci di lewati (donasi menyusul di bot).
+        await self.enable_donation()
+        kept = await self.ready_gopay()
+        with self.written() as seen:
+            async with self.Session() as db:
+                self.assertTrue(await record_mod.skip_item(db, kept.id, self.a.id, "batal", keep_sample=True))
+        self.assertFalse([s for s in seen if "proof_sample_consents" in s], seen)
+        self.assertTrue((await self.get(kept.id)).sample_lines)
+
+    async def test_without_capture_nothing_is_read_or_stored(self):
+        # Tanpa baris tersamar (user tidak setuju saat dibaca): donasi tidak membaca saklar/persetujuan sama sekali.
+        await self.enable_donation(consent=False)
+        item = await self.ready_gopay()
+        self.assertIsNone((await self.get(item.id)).sample_lines)
+        await self.enable_donation()
+        with patch.object(donasi, "still_consented", AsyncMock(return_value=True)) as spy:
+            r = await self.post(item, ref="n1", desc="kirim", amount=12500)
+        self.assertEqual(r.status_code, 201, r.text)
+        spy.assert_not_awaited()
+        self.assertEqual(await self.samples(), [])
 
 
 # ──────────────────────────────────────────────────────────────────────────────

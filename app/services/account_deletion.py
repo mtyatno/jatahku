@@ -2,8 +2,9 @@
 
 Yang dihapus permanen: baris `users`, sesi login (semua perangkat langsung keluar),
 notifikasi, preferensi, streak, kata kunci amplop, scan struk (termasuk item Kotak
-Struk), order pembayaran, transaksi tertunda, laporan berkala beserta pengaturannya
-(termasuk kata sandi PDF laporan), dan foto profil/bukti bayar di disk.
+Struk), persetujuan dan sampel donasi contoh Kotak Struk, order pembayaran, transaksi
+tertunda, laporan berkala beserta pengaturannya (termasuk kata sandi PDF laporan), dan
+foto profil/bukti bayar di disk.
 Berkas Kotak Struk dari item yang belum selesai tidak dihapus di sini: barisnya ikut
 terhapus, lalu penyapu berkas yatim (scheduler `kotak_maintenance`) menghapus berkasnya.
 
@@ -54,10 +55,10 @@ from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, EnvelopeGroup, Goal, Household,
     HouseholdMember, HouseholdMerchant, HouseholdRole, Income, MerchantEnvelopeMap, MonthlySnapshot,
     Notification, NotificationPreference, PaymentOrder, PendingTransaction, ProofRule, ProofRuleVote,
-    ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings, RuangKamus, Transaction, User,
-    UserEnvelopeKeyword, UserStreak,
+    ProofSample, ProofSampleConsent, ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings,
+    RuangKamus, Transaction, User, UserEnvelopeKeyword, UserStreak,
 )
-from app.services.kotak_struk import belajar
+from app.services.kotak_struk import belajar, donasi
 from app.services.laporan.pencatat import anonimkan_pencatat
 
 logger = logging.getLogger("jatahku.account_deletion")
@@ -230,9 +231,13 @@ async def delete_account(db: AsyncSession, user: User) -> list[str]:
     # keputusan admin di aturan dikosongkan eksplisit (FK SET NULL tidak selalu ada, mis. SQLite).
     await belajar.forget_user(db, uid)
     await db.execute(update(ProofRule).where(ProofRule.decided_by == uid).values(decided_by=None))
+    # Donasi contoh (tahap 2, G4): semua sampel (juga yang disetujui), persetujuan, dan baris tersamar user ini; sampel
+    # user lain yang pernah ia putuskan sebagai admin tetap, jejaknya dikosongkan.
+    await donasi.forget_user(db, uid)
+    await db.execute(update(ProofSample).where(ProofSample.decided_by == uid).values(decided_by=None))
     for model in (PendingTransaction, Notification, NotificationPreference, UserStreak,
-                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, ProofRuleVote, PaymentOrder, AuthSession,
-                  Report, ReportSettings):
+                  UserEnvelopeKeyword, ReceiptScan, ReceiptLearnVote, ProofRuleVote, ProofSampleConsent, ProofSample,
+                  PaymentOrder, AuthSession, Report, ReportSettings):
         await db.execute(delete(model).where(model.user_id == uid))
     # Peta merchant yang tersisa (amplop bersama) tetap milik household; jejak user dikosongkan eksplisit.
     await db.execute(update(MerchantEnvelopeMap).where(MerchantEnvelopeMap.last_user_id == uid).values(last_user_id=None))

@@ -25,7 +25,7 @@ from sqlalchemy import or_, select, update
 from app.models.models import ReceiptScan, User
 from app.services import receipt_scan
 from app.services.app_config import feature_enabled
-from app.services.kotak_struk import belajar, waiter
+from app.services.kotak_struk import belajar, donasi, waiter
 from app.services.kotak_struk.config import (
     ITEM_EXPIRY, MAX_ATTEMPTS, PROOF_TYPES, STALE_PROCESSING, ST_DITERIMA, ST_DIPROSES, ST_GAGAL, ST_SIAP,
 )
@@ -222,13 +222,25 @@ def _layout(text: TextDoc, doc, secrets, user_name: str | None) -> dict | None:
         return None
 
 
-def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None) -> _Outcome:
+def _sample(text: TextDoc, doc, secrets, user_name: str | None) -> list[str] | None:
+    """Baris tersamar donasi contoh (kolom `sample_lines`, `donasi.sample_lines`) dari baris OCR dan hasil baca SEBELUM
+    disamarkan, seperti `_layout`. Galat apa pun -> None + peringatan berisi jenis galatnya saja; item tetap `siap`."""
+    try:
+        return donasi.sample_lines(text.lines, doc, secrets, user_name=user_name)
+    except Exception as exc:
+        log.warning("baris donasi Kotak Struk tidak dibuat (%s)", type(exc).__name__)
+        return None
+
+
+def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None, sample: bool = False) -> _Outcome:
     """Hasil baca -> nilai kolom `receipt_scans`. Nomor rekening, NMID, dan nomor referensi hanya
     masuk sebagai kunci/HMAC; Dokumen Bayar hanya memuat versi tersamarnya. `user_name` (nama user) hanya dipakai
-    supaya kerangka tata letak tidak memuat namanya."""
+    supaya kerangka tata letak dan baris donasi tidak memuat namanya. `sample` (user setuju donasi contoh dan saklar
+    `kotak_donasi` menyala, dibaca `process_item`): baris tersamar masuk `sample_lines`; selain itu kolom itu None."""
     parsed = res.parsed
     doc, extra, secrets = parsed.doc, parsed.extra, parsed.secrets
     layout = _layout(text, doc, secrets, user_name)
+    sample_lines = _sample(text, doc, secrets, user_name) if sample else None
     # Cabang berdasarkan jenis dokumen, bukan nama pembaca: penyelamatan LLM berpembaca
     # "tidak_dikenali" tetap struk belanja.
     store_receipt = doc.doc_type == "struk_belanja"
@@ -278,6 +290,7 @@ def _outcome(res: ReadResult, text: TextDoc, *, user_name: str | None = None) ->
         "paid_at": paid_at,
         "pages": text.pages,
         "layout": layout,
+        "sample_lines": sample_lines,
     }
     return _Outcome(columns, cp.name, cp.city, unread_proof)
 
@@ -289,6 +302,17 @@ async def _store(factory, item_id: uuid.UUID, out: _Outcome, now: datetime) -> s
             return STATUS_MISSING
         path = item.file_path
         siap = item.status in _WAITING
+        if siap and out.columns.get("sample_lines"):
+            # Persetujuan dibaca ulang tepat sebelum baris tersamar ditulis (review M1c catatan 4): ditarik selagi
+            # bukti dibaca -> tanpa baris. Kunci FOR SHARE (`donasi.still_consented`) sampai commit di bawah.
+            try:   # savepoint: galat baca tidak merusak sesi; kunci baris tetap sampai commit
+                async with db.begin_nested():
+                    keep = await donasi.still_consented(db, item.user_id)
+            except Exception as exc:
+                log.warning("persetujuan donasi Kotak Struk tidak terbaca ulang (%s)", type(exc).__name__)
+                keep = False
+            if not keep:
+                out.columns["sample_lines"] = None
         if siap:  # selain itu user sudah melewati/menghapusnya selagi dibaca: hasilnya dibuang
             for column, value in out.columns.items():
                 setattr(item, column, value)
@@ -354,7 +378,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
     terduga, akan dicoba lagi selama `attempts` < MAX_ATTEMPTS), status lama bila item bukan lagi
     `diterima`/`diproses` (tidak disentuh), atau "hilang" bila itemnya sudah tidak ada.
     `proofs_enabled=None`: ikuti saklar fitur `receipt_inbox` (web). Saklar menyala: aturan belajar yang disetujui
-    (`belajar.approved_rules`, cache 5 menit, galat = tanpa aturan) dimuat di sesi yang sama ke `ParseContext.rules`."""
+    (`belajar.approved_rules`, cache 5 menit, galat = tanpa aturan) dimuat di sesi yang sama ke `ParseContext.rules`.
+    Donasi contoh: saklar `kotak_donasi` dan persetujuan user dibaca di sesi yang sama; keduanya ya -> `sample_lines`."""
     factory = session_factory or _default_factory()
     extract = extract or extract_text
     now = _aware(now or _utcnow())
@@ -373,6 +398,13 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
             proofs_enabled = await feature_enabled(db, "receipt_inbox", "web")
         # Aturan belajar yang disetujui (cache 5 menit; galat -> tanpa aturan). Saklar bukti mati = perilaku lama.
         rules = await belajar.approved_rules(db) if proofs_enabled else {}
+        # Donasi contoh (tahap 2): hanya saklar `kotak_donasi` menyala DAN user setuju; saklar mati = tanpa kueri lain.
+        # Galat membaca persetujuan = tanpa donasi (bukti tetap dibaca).
+        try:
+            donate = await donasi.donation_available(db) and await donasi.consented(db, user_id)
+        except Exception as exc:
+            log.warning("persetujuan donasi Kotak Struk tidak terbaca (%s)", type(exc).__name__)
+            donate = False
     plan = str(getattr(user, "plan", None) or "basic")
 
     try:
@@ -396,7 +428,8 @@ async def process_item(item_id: uuid.UUID, *, session_factory=None, extract=None
             rules=rules,
         )
         res = await read_document(text, ctx, proofs_enabled=proofs_enabled)
-        return await _store(factory, item_id, _outcome(res, text, user_name=getattr(user, "name", None)), now)
+        out = _outcome(res, text, user_name=getattr(user, "name", None), sample=donate)
+        return await _store(factory, item_id, out, now)
     except ExtractError as exc:
         return await _fail(factory, item_id, exc.user_message, now)
     except Exception:

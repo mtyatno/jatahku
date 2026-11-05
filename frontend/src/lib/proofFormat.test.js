@@ -4,7 +4,7 @@ import {
   ISSUER_LABEL, proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText,
   parseAmountInput, saveAmount, proofDate, descriptionFor, envelopeChoices, effectiveEnvelope, skipActions, canSave,
   savePayload, saveOutcome, skipOutcome, createSharedLoader, pendingBannerText, readOnlyNotice, needsRecheck,
-  recheckOutcome,
+  recheckOutcome, APP_CHOICES, appQuestion, appChoiceOutcome, SKIP_REASONS, skipReasonChoices, skipBody,
 } from './proofFormat.js';
 
 // Hari ini dan periode berjalan dipasang tetap (tidak membaca jam): 26 Okt masih di periode 25 Okt–24 Nov.
@@ -516,4 +516,112 @@ test('needsRecheck dan recheckOutcome (R2): struk belanja dibaca ulang tepat seb
   assert.deepEqual(recheckOutcome(null), { kind: 'error', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
   assert.deepEqual(recheckOutcome(undefined, { resend: true }), { kind: 'uncertain', text: 'Koneksi terputus. Coba lagi — tidak akan tercatat dua kali.' });
   assert.deepEqual(recheckOutcome({ id: 'i1', status: 'tercatat' }, { resend: true }), { kind: 'blocked', text: 'Struk ini sudah tercatat.' });
+});
+
+// "Aplikasi apa ini?" (tahap 2 M2c): bukti tidak dikenali berkunci logo (`flags.ask_app`, `flags.app_logo` dari server).
+const ASK = withFlags({ ask_app: true, app_logo: 'NEWPAY' }, typed('tidak_dikenali'));
+
+test('APP_CHOICES: 12 kunci ISSUER_LABEL (urutan tabel) + Lainnya', () => {
+  assert.equal(APP_CHOICES.length, 13);
+  assert.deepEqual(APP_CHOICES.map(c => c.key), [...Object.keys(ISSUER_LABEL), 'baru']);
+  assert.deepEqual(APP_CHOICES.slice(0, 12).map(c => c.label), Object.values(ISSUER_LABEL));
+  assert.deepEqual(APP_CHOICES[12], { key: 'baru', label: 'Lainnya' });
+  assert.equal(new Set(APP_CHOICES.map(c => c.key)).size, 13);
+});
+
+test('appQuestion: hanya dengan ask_app dan kata logo, siap/tercatat, tidak untuk bukti gagal', () => {
+  assert.deepEqual(appQuestion(ASK), { logo: 'NEWPAY', text: 'Logo di bukti: NEWPAY. Aplikasi apa ini?', choices: APP_CHOICES });
+  // Sudah tercatat (blocked sudah_tercatat): masih boleh dijawab, jawabannya tidak mencatat apa pun.
+  assert.equal(appQuestion({ ...withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'sudah_tercatat' }, ASK), status: 'tercatat' }).logo, 'NEWPAY');
+  // Tanpa ask_app (bentuk lama tanpa field, false, atau sudah dijawab) → tidak ditanya.
+  assert.equal(appQuestion(typed('tidak_dikenali')), null);
+  assert.equal(appQuestion(withFlags({ ask_app: false, app_logo: 'NEWPAY' }, ASK)), null);
+  assert.equal(appQuestion(withFlags({ ask_app: 'true', app_logo: 'NEWPAY' }, ASK)), null);
+  // Kata logo hanya dari server; tanpa kata logo tidak ada yang ditanyakan (tidak pernah dari teks OCR lain).
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: null }, ASK)), null);
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: '  ' }, ASK)), null);
+  // Bukti yang transaksinya gagal (blocked transaksi_gagal) tidak ditanya; bukti pending tetap ditanya (tanpa blokir).
+  assert.equal(appQuestion(withDoc({ status: 'pending' }, ASK))?.logo, 'NEWPAY');
+  assert.equal(appQuestion(withFlags({ ask_app: true, app_logo: 'NEWPAY', blocked: 'transaksi_gagal' }, ASK)), null);
+  for (const status of ['diterima', 'diproses', 'gagal', 'dilewati', 'kedaluwarsa']) {
+    assert.equal(appQuestion({ ...ASK, status }), null, status);
+  }
+  assert.equal(appQuestion(null), null);
+  assert.equal(appQuestion({ ...ASK, flags: null }), null);
+});
+
+test('appChoiceOutcome: ok → terima kasih; 409/404 → teks server; selain itu galat yang bisa dicoba lagi', () => {
+  assert.deepEqual(appChoiceOutcome({ ok: true, status: 200, data: { app: 'jago', ask_app: false } }),
+    { kind: 'ok', text: 'Terima kasih, dicatat.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 409, data: { detail: 'Aplikasi bukti ini tidak bisa dipilih' } }),
+    { kind: 'conflict', text: 'Aplikasi bukti ini tidak bisa dipilih.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 409, data: { detail: 'Pesan lain dari server' } }),
+    { kind: 'conflict', text: 'Pesan lain dari server.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 404, data: {} }),
+    { kind: 'conflict', text: 'Aplikasi bukti ini tidak bisa dipilih.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 422, data: { detail: [{ msg: 'x' }] } }),
+    { kind: 'error', text: 'Gagal mengirim. Coba lagi.' });
+  assert.deepEqual(appChoiceOutcome({ ok: false, status: 0, data: { detail: 'Koneksi gagal, coba lagi' } }),
+    { kind: 'error', text: 'Koneksi gagal, coba lagi' });
+  assert.deepEqual(appChoiceOutcome(null), { kind: 'error', text: 'Gagal mengirim. Coba lagi.' });
+});
+
+// ── Tahap 2 M3c: alasan "Bukan pengeluaran" ─────────────────────────────────────────────────────────────────────
+
+test('SKIP_REASONS (M3c): tiga arah uang server (ARAH_FLOWS) + Lainnya tanpa alasan', () => {
+  assert.deepEqual(SKIP_REASONS.map(r => [r.alasan, r.label]), [
+    ['top_up', 'Top-up saldo sendiri'], ['masuk', 'Uang masuk'], ['antar_rekening_sendiri', 'Ke rekening sendiri'],
+    [null, 'Lainnya'],
+  ]);
+});
+
+test('skipReasonChoices (M3c): saran server di urutan pertama dan ditandai; tanpa saran urutan tetap', () => {
+  const order = item => skipReasonChoices(item).map(c => c.alasan);
+  assert.deepEqual(order(ITEM), ['top_up', 'masuk', 'antar_rekening_sendiri', null]);
+  assert.ok(skipReasonChoices(ITEM).every(c => !c.suggested));
+  for (const flow of ['top_up', 'masuk', 'antar_rekening_sendiri']) {
+    const choices = skipReasonChoices(withFlags({ skip_suggestion: flow }));
+    assert.equal(choices[0].alasan, flow);
+    assert.equal(choices[0].suggested, true);
+    assert.equal(choices.filter(c => c.suggested).length, 1);
+    assert.equal(choices.length, 4);
+    assert.deepEqual(new Set(choices.map(c => c.alasan)), new Set(SKIP_REASONS.map(r => r.alasan)));
+    assert.equal(choices[choices.length - 1].label, 'Lainnya');
+  }
+  // Saran yang tidak dikenal (data rusak) tidak mengubah urutan dan tidak ditandai.
+  for (const bad of ['keluar', 'bukan', '', 42, null]) {
+    assert.deepEqual(order(withFlags({ skip_suggestion: bad })), ['top_up', 'masuk', 'antar_rekening_sendiri', null]);
+  }
+  // Pemanggil tidak bisa mengubah daftar bersama.
+  skipReasonChoices(ITEM)[0].label = 'x';
+  assert.equal(SKIP_REASONS[0].label, 'Top-up saldo sendiri');
+});
+
+test('skipReasonChoices (M3c): kosong bila "Bukan pengeluaran" tidak ditawarkan (skipActions)', () => {
+  assert.deepEqual(skipReasonChoices({ ...ITEM, status: 'tercatat' }), []);
+  assert.deepEqual(skipReasonChoices(ITEM, { blockedReason: 'Bukti ini sudah tercatat.' }), []);
+  assert.deepEqual(skipReasonChoices(ITEM, { queued: true }), []);
+  assert.deepEqual(skipReasonChoices(withFlags({ blocked: 'sudah_tercatat', skip_suggestion: 'top_up' })), []);
+  assert.deepEqual(skipReasonChoices(null), []);
+  assert.equal(skipReasonChoices(withFlags({ duplicate_of: { kind: 'soft' } })).length, 4);
+});
+
+test('skipBody (M3c): alasan hanya bila ada dan dikenal; Lainnya = body lama; tidak ada field lain', () => {
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'top_up'), { reason: 'bukan_pengeluaran', alasan: 'top_up' });
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'masuk'), { reason: 'bukan_pengeluaran', alasan: 'masuk' });
+  assert.deepEqual(skipBody('bukan_pengeluaran', 'antar_rekening_sendiri'),
+    { reason: 'bukan_pengeluaran', alasan: 'antar_rekening_sendiri' });
+  const lainnya = SKIP_REASONS.find(r => r.label === 'Lainnya');
+  assert.deepEqual(skipBody('bukan_pengeluaran', lainnya.alasan), { reason: 'bukan_pengeluaran' });
+  assert.deepEqual(skipBody('bukan_pengeluaran'), { reason: 'bukan_pengeluaran' });
+  for (const bad of ['', 'keluar', 'TOP_UP', 0, {}, ['top_up']]) {
+    assert.deepEqual(skipBody('bukan_pengeluaran', bad), { reason: 'bukan_pengeluaran' });
+  }
+  // Alasan hanya bersama Bukan pengeluaran (server menolak kombinasi lain dengan 422).
+  assert.deepEqual(skipBody('duplikat', 'top_up'), { reason: 'duplikat' });
+  assert.deepEqual(skipBody('duplikat'), { reason: 'duplikat' });
+  for (const c of skipReasonChoices(withFlags({ skip_suggestion: 'masuk' }))) {
+    assert.deepEqual(Object.keys(skipBody('bukan_pengeluaran', c.alasan)).sort(),
+      c.alasan ? ['alasan', 'reason'] : ['reason']);
+  }
 });

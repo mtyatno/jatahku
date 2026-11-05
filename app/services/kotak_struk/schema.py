@@ -3,7 +3,8 @@
 `create_all` membuat tabel baru (`household_merchants`, `merchant_envelope_map`)
 tapi tidak pernah mengubah tabel yang sudah ada, dan deploy tidak menjalankan
 alembic. Daftar ini dijalankan di `lifespan` (app/main.py) dan oleh migrasi
-alembic a7c4e2b9d1f3 dan e7b3d5a9c1f4 (kolom `layout`). Semua statement idempoten; nama indeks sama dengan
+alembic a7c4e2b9d1f3, e7b3d5a9c1f4 (kolom `layout`), dan c9e4a7f2b5d8
+(kolom `sample_lines`). Semua statement idempoten; nama indeks sama dengan
 konvensi SQLAlchemy (`ix_<tabel>_<kolom>`) supaya basis data baru dari
 `create_all` tidak mendapat indeks ganda.
 """
@@ -34,6 +35,8 @@ _COLUMNS: list[tuple[str, str]] = [
     ("transaction_ids", "JSONB"),
     # Kerangka tata letak bukti (belajar lintas user, migrasi e7b3d5a9c1f4): tanpa nama/nomor, dihapus 24 jam.
     ("layout", "JSONB"),
+    # Baris tersamar donasi contoh (tahap 2, migrasi c9e4a7f2b5d8): hanya user yang setuju, saklar kotak_donasi.
+    ("sample_lines", "JSONB"),
 ]
 
 _INDEXED = ("status", "household_id", "file_sha256", "ref_hash", "counterparty_key")

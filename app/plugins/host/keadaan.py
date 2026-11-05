@@ -37,6 +37,7 @@ class Keadaan:
     pengaturan: dict = field(default_factory=dict)
     sumber: str = ""
     penghitung: dict = field(default_factory=lambda: {"notify": 0})
+    sekarang: Any = None              # jam acuan (job: jam jadwalnya); None = jam sungguhan
 
 
 _KEADAAN: dict[int, tuple["weakref.ref", Keadaan, Any]] = {}

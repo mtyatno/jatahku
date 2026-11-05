@@ -8,7 +8,8 @@ memuat STRUKTUR:
         {"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000},
         {"i": 7, "label": "tanggal", "kind": "tanggal", "date": "2026-10-31"},
         {"i": 3, "label": "ditransfer ke", "kind": "nama", "h": "<HMAC nama ternormalisasi>"},
-        {"i": 1, "label": None, "kind": "judul", "words": ["transfer", "berhasil"]}]}
+        {"i": 1, "label": None, "kind": "judul", "words": ["transfer", "berhasil"]}],
+     "arah": []}
 
 - `i` = indeks baris di `clean_lines(lines)`; paling banyak LAYOUT_MAX_LINES entri, urut `i`.
 - Label hanya dari kosakata label (`LABEL_WORDS`), digit diganti `#`, tanpa kata nama pihak lawan/pengirim/user
@@ -19,10 +20,14 @@ memuat STRUKTUR:
   >= 1000 hanya di bawah label uang) dan tidak pernah di bawah label nomor (rekening, no, ref, id, NPWP, VA, HP, ...)
   atau di baris alamat: nomor berbentuk angka tidak pernah tersimpan sebagai nominal.
 - Kata judul hanya kata kosakata (label, status, arah uang, nama aplikasi), tanpa kata nama.
+- `arah` (tahap 2 M3a, `arah_tokens`): token arah uang untuk suara/aturan `arah`, hanya kosakata: `judul:<kata judul
+  tanpa kata status>` dan `ke:<kata terdepan penerima: penyedia + kata top-up>` ("ke:gopay topu"); daftar, boleh kosong.
 - Hanya `doc_type` di LAYOUT_TYPES (QRIS, transfer, tidak dikenali) dengan kunci aturan (`rule_key`) yang punya
-  kerangka. Tahap 1: kunci hanya profil aplikasi yang dikenal (`LOGO_KEYS = False`); kunci `logo:<kata>` (baris logo
-  aplikasi tak dikenal) baru dinyalakan di tahap 2 (M2) bersama konfirmasi user, karena baris teratas bukti tak dikenal
-  bisa nama orang atau merchant. Struk belanja tidak pernah punya kerangka.
+  kerangka: kunci profil aplikasi yang dikenal, atau (tahap 2, `LOGO_KEYS`, hanya `tidak_dikenali`) kunci
+  `logo:<kata>` dari baris logo aplikasi tak dikenal. Baris teratas bukti tak dikenal bisa nama orang atau merchant
+  (review L1 I-1), jadi kandidatnya ketat (`logo_candidate`, pre-flight A16 K8: satu kata, atau dua kata hanya bila
+  salah satunya kata logo/penyedia: "Bank Raya", bukan "Siti Aminah"), dan suara `logo` ditolak bila katanya nama yang
+  dikenal (`belajar.learn_app_choice`). Struk belanja tidak pernah punya kerangka.
 
 Batas yang diketahui (spec §8; dicatat untuk dokumen L7): kata nama yang KEBETULAN juga kata kosakata ("Dana", "Mega",
 "Toko", "Admin") bisa bertahan di label atau judul bila pembaca tidak membaca nama itu sebagai pihak lawan/pengirim
@@ -35,7 +40,9 @@ from __future__ import annotations
 
 import re
 
-from app.services.kotak_struk.config import LAYOUT_LABEL_MAX, LAYOUT_LABEL_WORDS, LAYOUT_MAX_LINES, LAYOUT_TYPES
+from app.services.kotak_struk.config import (
+    KEY_MAX, LAYOUT_LABEL_MAX, LAYOUT_LABEL_WORDS, LAYOUT_MAX_LINES, LAYOUT_TYPES,
+)
 from app.services.kotak_struk.document import DokumenBayar
 from app.services.kotak_struk.merchants import hmac_hex, normalize_name
 from app.services.kotak_struk.readers import proof_common as pc
@@ -49,20 +56,26 @@ from app.services.receipt_parser import amounts_in
 
 LAYOUT_VERSION = 1
 HEADER_LINES = 4          # judul hanya dari baris-baris teratas (selaras proof_common.HEADER_LINES)
-LOGO_KEYS = False         # tahap 1 tanpa kunci `logo:<kata>` (keputusan review L1 I-1); M2 menyalakannya
+LOGO_KEYS = True          # tahap 2 (M2a): kunci `logo:<kata>` untuk bukti tak dikenal, kandidat ketat (K8)
 LOGO_LINES = 3            # kunci logo dari baris-baris teratas (G4)
 LOGO_MIN_LETTERS = 3
+LOGO_PREFIX = "logo:"
+LOGO_MAX_WORDS = 2
+# Kata yang membuat kandidat DUA kata sah: kata pendamping logo dan nama penyedia ("Bank Raya", "Kilat Syariah").
+LOGO_COMPANIONS: frozenset[str] = frozenset(LOGO_WORDS) | frozenset(MONEY_PROVIDERS)
 TITLE_MAX_WORDS = 6
 NAME_MAX_WORDS = 6
 
 _EDGE = " \t:：;,.|·•-–—_/\\"           # tanda baca ujung label
 _WORD_PUNCT = ".,:;()'\"&/-–!?*•·"       # tanda baca yang dilepas dari kata sebelum dicocokkan
 
-# Kata label kurasi (G2), di luar kata dari GENERIC_LABELS dan label profil aplikasi.
+# Kata label kurasi (G2), di luar kata dari GENERIC_LABELS dan label profil aplikasi. "kepada" dan "atas" (label penerima
+# "Kepada" dan "Atas Nama"; pre-flight A16 L2 R-2): label "Kepada" kini bisa menjadi suara `label_pihak`; "Atas Nama"
+# masuk kerangka tetapi bukan label penerima (`belajar._party_label`: "nama" lemah, "atas" bukan kata penerima).
 _CURATED = (
     "jumlah kirim uang bayar pembayaran total nominal transfer ke dari tujuan penerima nama merchant toko tanggal waktu "
     "selesai transaksi biaya admin layanan saldo terpakai dibayar debit sumber metode jenis keterangan catatan tagihan "
-    "harga subtotal amount date time paid payment recipient to from name rp idr qris"
+    "harga subtotal amount date time paid payment recipient to from name rp idr qris kepada atas"
 )
 
 
@@ -74,8 +87,12 @@ def _word(w: str) -> str:
     return w.strip(_WORD_PUNCT).lower()
 
 
-def _words(text: str) -> list[str]:
+def words(text: str) -> list[str]:
+    """Kata huruf kecil tanpa tanda baca tepi, seperti yang dicocokkan `safe_label` (juga dipakai peringatan Admin)."""
     return [w for w in (_word(x) for x in text.split()) if w]
+
+
+_words = words   # alias lama; nama publiknya `words` (pre-flight A16 n-1)
 
 
 def _label_words() -> frozenset[str]:
@@ -165,31 +182,71 @@ def _is_status(text: str) -> bool:
                 or transfer_reader.TOP_UP.search(text) or transfer_reader.INCOMING.search(text))
 
 
-def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: set[str]) -> str | None:
-    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Tahap 1 (`LOGO_KEYS = False`): selain itu None.
-    Dengan `LOGO_KEYS` (M2): `logo:<kata>` dari baris logo: baris pertama
-    di antara LOGO_LINES baris bersih teratas yang 1-2 kata, hanya huruf, >= 3 huruf, bukan label/kata status/kata
-    `LABEL_WORDS`, dan bukan kata `forbidden_words`; huruf kecil, <= LAYOUT_LABEL_MAX. Baris di atasnya hanya boleh bilah
-    status (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Selain itu None
-    (tanpa kerangka dan tanpa suara)."""
+def logo_candidate(words: list[str]) -> bool:
+    """Kata-kata (huruf kecil) sebuah baris logo boleh menjadi kunci `logo:` (pre-flight A16 K8): 1-2 kata, hanya huruf
+    ASCII, bersama >= LOGO_MIN_LETTERS huruf, <= LAYOUT_LABEL_MAX karakter; satu kata, atau dua kata hanya bila salah
+    satunya kata logo/penyedia (`LOGO_COMPANIONS`: "bank raya" ya, "siti aminah" tidak); paling sedikit satu kata di luar
+    kata pendamping logo (`LOGO_WORDS`: "bank digital", "mobile" bukan nama aplikasi); tidak ada kata `LABEL_WORDS`
+    (baris label pasti memuatnya) kecuali kata pendamping/penyedia itu ("bank"); dan bukan kata status. Nama satu kata
+    ("Bambang") lolos di sini: ditolak oleh `forbidden_words` saat membuat kerangka dan oleh pemeriksaan nama saat
+    suara `logo` (`belajar.learn_app_choice`)."""
+    if not 1 <= len(words) <= LOGO_MAX_WORDS or not all(w.isascii() and w.isalpha() and w == w.lower() for w in words):
+        return False
+    text = " ".join(words)
+    if sum(len(w) for w in words) < LOGO_MIN_LETTERS or len(text) > LAYOUT_LABEL_MAX:
+        return False
+    if len(words) == 2 and not set(words) & LOGO_COMPANIONS:
+        return False
+    if all(w in LOGO_WORDS for w in words) or set(words) & (LABEL_WORDS - LOGO_COMPANIONS):
+        return False
+    return not _is_status(text)
+
+
+def logo_word(key) -> str | None:
+    """Kata logo kunci `logo:<kata>` ("logo:newpay" -> "newpay"), hanya bila bentuknya kandidat yang sah
+    (`logo_candidate`, huruf kecil, satu spasi, <= KEY_MAX). Kunci profil, kunci rusak, dan selain teks: None."""
+    if not isinstance(key, str) or not key.startswith(LOGO_PREFIX) or len(key) > KEY_MAX:
+        return None
+    word = key[len(LOGO_PREFIX):]
+    words = word.split(" ")
+    return word if logo_candidate(words) else None
+
+
+def rule_key(lines: list[str], profile: AppProfile | None, *, forbidden_words: set[str],
+             allow_logo: bool = True) -> str | None:
+    """Kunci aturan (G4): `profile.key` bila aplikasinya dikenal. Selain itu (hanya dengan `LOGO_KEYS` dan
+    `allow_logo`) `logo:<kata>` dari baris logo: baris pertama di antara LOGO_LINES baris bersih teratas yang kata-katanya
+    (huruf kecil) lolos `logo_candidate` dan tanpa kata `forbidden_words`. Baris di atasnya hanya boleh bilah status
+    (tanpa kata >= 4 huruf): logo selalu di atas, dan baris teks di bawah judul bisa nama orang. Kandidat SATU kata juga
+    ditolak bila baris isi berikutnya (bilah status dilewati) baris nominal atau tanggal (`_after_name`, review M2a
+    temuan 1): logo aplikasi diikuti judul ("Transfer Berhasil", "Detail Transaksi"), nama penerima besar diikuti
+    nominalnya. Selain itu None (tanpa kerangka dan tanpa suara). Pembaca QRIS/transfer memanggilnya tanpa kunci logo
+    (`profiles.learned_profile`)."""
     if profile is not None:
         return profile.key
-    if not LOGO_KEYS:
+    if not (LOGO_KEYS and allow_logo):
         return None
-    for line in pc.clean_lines(lines)[:LOGO_LINES]:
-        words = line.split()
-        candidate = (1 <= len(words) <= 2 and all(w.isascii() and w.isalpha() for w in words)
-                     and sum(len(w) for w in words) >= LOGO_MIN_LETTERS)
-        if candidate:
-            lowered = [w.lower() for w in words]
-            key = " ".join(lowered)
-            # Baris label pasti memuat kata LABEL_WORDS, jadi cek kosakata juga menolak baris label.
-            if (len(key) <= LAYOUT_LABEL_MAX and not _is_status(line)
-                    and not set(lowered) & (LABEL_WORDS | forbidden_words)):
-                return f"logo:{key}"
+    clean = pc.clean_lines(lines)
+    for i, line in enumerate(clean[:LOGO_LINES]):
+        lowered = [w.lower() for w in line.split()]
+        if (logo_candidate(lowered) and not _is_status(line) and not set(lowered) & forbidden_words
+                and not (len(lowered) == 1 and _after_name(clean[i + 1:]))):
+            return LOGO_PREFIX + " ".join(lowered)
         if _TEXT_LINE.search(line):
             return None   # baris teks pertama bukan logo: tidak ada logo
     return None
+
+
+def _after_name(rest: list[str]) -> bool:
+    """Baris isi pertama di `rest` (bilah status seperti "09:41", "LTE", panah dilewati) adalah baris nominal atau
+    tanggal: kata tunggal di atasnya lebih mungkin nama penerima daripada logo aplikasi (harga yang diterima: logo
+    aplikasi yang langsung diikuti nominal tidak berkunci)."""
+    for line in rest:
+        if _MONEY.search(line) or find_date(line):
+            return True
+        if _TEXT_LINE.search(line):
+            return False
+    return False
 
 
 # ── baris ───────────────────────────────────────────────────────────────────
@@ -316,9 +373,110 @@ def _profile_of(doc: DokumenBayar, lines: list[str]) -> AppProfile | None:
     return detect_issuer(lines)
 
 
+# ── token arah uang (tahap 2 M3a; spec §2 baris `arah`, pre-flight A16 §4, K9) ─────────────────────────────
+
+# Kata top-up di nama penerima ("GOPAY TOPU-SXXXX" pada bukti ShopeePay, "OVO Top Up ...") dan di judul.
+TOP_UP_WORDS: frozenset[str] = frozenset({"top", "up", "topup", "topu", "isi", "saldo", "deposit", "reload"})
+# Kata penerima yang boleh menjadi token `ke:`: nama penyedia (bank/e-wallet), kata penanda profil aplikasi, dan kata
+# top-up. Kata penanda berhuruf < 3 ("m" dari "m-bca") tidak.
+ARAH_PARTY_WORDS: frozenset[str] = (
+    frozenset(MONEY_PROVIDERS)
+    | frozenset(w for p in PROFILES for m in p.markers for w in re.findall(r"[a-z]+", m) if len(w) >= 3)
+    | TOP_UP_WORDS)
+# Kata judul yang terlalu umum untuk membedakan arah uang: judul yang hanya memuat kata ini tidak memberi token. Termasuk
+# kata label kolom (review M3a temuan 1: "Penerima Transfer ...", "Tujuan Transfer", "Pembayaran Tagihan" bukan arah
+# uang), juga kata lokasi ("kota", "lokasi", "location"; review M3a nit: "Kirim Uang ke Toko Kota"). Kata arah (top,
+# up, isi, saldo, masuk, terima, setoran, penarikan, refund, deposit) dan nama penyedia tidak.
+ARAH_GENERIC: frozenset[str] = frozenset(
+    "transfer pembayaran bayar transaksi payment transaction kirim uang ke dari qris nominal total rekening "
+    "penerima pengirim tujuan kepada nama name recipient atas asal sumber tagihan merchant toko jumlah status "
+    "keterangan catatan berita tanggal waktu jam pukul nomor no id ref referensi biaya admin kota lokasi location"
+    .split())
+# Kata status di judul (dibuang dari token `judul:`): status bukan arah uang ("Transfer Berhasil" -> tanpa token).
+ARAH_STATUS_WORDS: frozenset[str] = (
+    frozenset(w for w in TITLE_WORDS if pc.classify_status(w))
+    | frozenset({"berhasil", "sukses", "success", "successful", "gagal", "failed", "tidak", "belum", "pending",
+                 "diproses", "processing", "dibatalkan", "ditolak", "batal", "rejected", "cancelled", "canceled",
+                 "void", "telah", "sedang", "selesai"}))
+ARAH_JUDUL = "judul:"
+ARAH_KE = "ke:"
+ARAH_KE_MAX_WORDS = 3
+ARAH_KE_MIN_WORDS = 2
+_ARAH_PROVIDER_WORDS = ARAH_PARTY_WORDS - TOP_UP_WORDS
+
+
+_ARAH_WORD = re.compile(r"[a-z]+")
+
+
+def _plain_words(words: list[str]) -> bool:
+    """Kata huruf kecil ASCII saja (tanpa "#", "-", digit) dan tanpa kata berulang (review M3a temuan 2)."""
+    return all(_ARAH_WORD.fullmatch(w) for w in words) and len(set(words)) == len(words)
+
+
+def _judul_ok(words: list[str]) -> bool:
+    return (1 <= len(words) <= TITLE_MAX_WORDS and _plain_words(words)
+            and all(w in TITLE_WORDS and w not in ARAH_STATUS_WORDS for w in words)
+            and any(w not in ARAH_GENERIC for w in words))
+
+
+def _ke_ok(words: list[str]) -> bool:
+    return (ARAH_KE_MIN_WORDS <= len(words) <= ARAH_KE_MAX_WORDS and _plain_words(words)
+            and all(w in ARAH_PARTY_WORDS for w in words)
+            and any(w in TOP_UP_WORDS for w in words) and any(w in _ARAH_PROVIDER_WORDS for w in words))
+
+
+def arah_token_ok(token) -> bool:
+    """Token arah berbentuk sah (pagar kedua untuk suara): `judul:<kata>` (1-6 kata judul kosakata, tanpa kata status,
+    paling sedikit satu kata di luar ARAH_GENERIC) atau `ke:<kata>` (2-3 kata ARAH_PARTY_WORDS, paling sedikit satu
+    kata penyedia/penanda dan satu kata TOP_UP_WORDS); huruf kecil, satu spasi. Selain itu (teks lain, kata nama,
+    digit) False."""
+    if not isinstance(token, str):
+        return False
+    for prefix, ok in ((ARAH_JUDUL, _judul_ok), (ARAH_KE, _ke_ok)):
+        if token.startswith(prefix):
+            words = token[len(prefix):].split(" ")
+            return ok(words)
+    return False
+
+
+def _judul_token(clean: list[str], forbidden: set[str]) -> str | None:
+    """Token `judul:` dari entri judul kerangka (baris judul status/top-up/uang masuk di HEADER_LINES baris teratas,
+    kata kosakata `TITLE_WORDS` tanpa kata nama), tanpa kata status; None bila tidak ada atau hanya kata umum."""
+    for i, line in enumerate(clean[:HEADER_LINES]):
+        entry = _entry(i, line, clean[i - 1] if i else None, forbidden)
+        if entry is not None and entry["kind"] == "judul":
+            words = [w for w in entry["words"] if w not in ARAH_STATUS_WORDS]
+            return ARAH_JUDUL + " ".join(words) if _judul_ok(words) else None
+    return None
+
+
+def _ke_token(name: str | None) -> str | None:
+    """Token `ke:` dari kata TERDEPAN nama penerima selama kata itu ARAH_PARTY_WORDS (paling banyak 3; kata lain,
+    termasuk yang memuat digit, menghentikannya): "GOPAY TOPU-SXXXX Axxxxxxx" -> "ke:gopay topu". Nama orang yang
+    diawali/bergabung dengan nama penyedia ("Shopeepaysitxx Amixxxxx", "GOPAY SITI AMINAH") tidak pernah memberi
+    token: kata nama bukan kosakata, dan tanpa kata top-up tidak ada token."""
+    words: list[str] = []
+    for w in re.findall(r"[a-z0-9]+", (name or "").lower()):
+        if w not in ARAH_PARTY_WORDS or len(words) == ARAH_KE_MAX_WORDS:
+            break
+        words.append(w)
+    return ARAH_KE + " ".join(words) if _ke_ok(words) else None
+
+
+def arah_tokens(lines: list[str], doc: DokumenBayar) -> list[str]:
+    """Token arah uang satu bukti (kerangka `"arah"`, suara dan aturan `arah`), hanya kata kosakata, paling banyak satu
+    `judul:` lalu satu `ke:` (lihat `_judul_token`, `_ke_token`). `lines` = `clean_lines` baris OCR. Murni dan hanya
+    bergantung pada (`lines`, `doc`): worker (kerangka) dan pembaca (M3b, sesudah `apply_flow`) menghitungnya sama
+    persis. Kata nama yang dibaca dari bukti itu (pihak lawan, pengirim, merchant) tidak pernah masuk judul; nama user
+    tidak dipakai di sini (pembaca tidak mengenalnya), jadi kata judul hanya kosakata."""
+    clean = pc.clean_lines(lines)
+    forbidden = _forbidden_words(clean, doc, _profile_of(doc, clean), None)
+    return [t for t in (_judul_token(clean, forbidden), _ke_token(doc.counterparty.name)) if t]
+
+
 def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_name: str | None) -> dict | None:
     """Kerangka aman satu bukti (lihat docstring modul). None bila `doc.doc_type` bukan LAYOUT_TYPES, tanpa kunci aturan
-    (tahap 1: aplikasi tak dikenal), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
+    (aplikasi tak dikenal tanpa baris logo yang sah), atau berkunci logo padahal bukan `tidak_dikenali`. `lines` = baris OCR mentah
     (`TextDoc.lines`); `doc`/`secrets` = hasil pembaca SEBELUM disamarkan worker."""
     if doc.doc_type not in LAYOUT_TYPES:
         return None
@@ -328,10 +486,10 @@ def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
     key = rule_key(clean, profile, forbidden_words=forbidden)
     # Kunci logo hanya untuk bukti tak dikenal (spec §2): QRIS/transfer tanpa profil aplikasi sering diawali nama merchant,
     # dan nama merchant tidak pernah dipelajari lintas user.
-    if key is None or (key.startswith("logo:") and doc.doc_type != "tidak_dikenali"):
+    if key is None or (key.startswith(LOGO_PREFIX) and doc.doc_type != "tidak_dikenali"):
         return None
     logo_line = None if profile is not None else next(
-        (i for i, line in enumerate(clean[:LOGO_LINES]) if f"logo:{line.lower()}" == key), None)
+        (i for i, line in enumerate(clean[:LOGO_LINES]) if LOGO_PREFIX + " ".join(line.lower().split()) == key), None)
     entries = []
     for i, line in enumerate(clean):
         if len(entries) >= LAYOUT_MAX_LINES:
@@ -341,4 +499,5 @@ def build_layout(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
         entry = _entry(i, line, clean[i - 1] if i else None, forbidden)
         if entry is not None:
             entries.append(entry)
-    return {"v": LAYOUT_VERSION, "key": key, "lines": entries}
+    # `arah` (tahap 2 M3a): kunci tambahan versi 1; kerangka lama tanpa kunci ini tidak memberi suara `arah`.
+    return {"v": LAYOUT_VERSION, "key": key, "lines": entries, "arah": arah_tokens(clean, doc)}
