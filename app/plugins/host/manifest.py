@@ -59,7 +59,7 @@ PERINTAH_INTI = frozenset({
 })
 POLA_CALLBACK_INTI = (
     r"^lock_", r"^delrec_", r"^recpay_", r"^recskip_", r"^recstop_", r"^addsub_", r"^merge_", r"^unlink_", r"^cool_",
-    r"^checkin_", r"^tpl_", r"^k[nxdo]_", r"^kt_", r"^t_", r"^ky_", r"^batch_", r"^bshift_", r"^blimit_", r"^struk_",
+    r"^checkin_", r"^tpl_", r"^k[nxdoa]_", r"^kt_", r"^t_", r"^ky_", r"^batch_", r"^bshift_", r"^blimit_", r"^struk_",
     r"^intentlearn:", r"^dlimit:", r"^fshift:", r"^sim:", r"^tanya:",
 )
 

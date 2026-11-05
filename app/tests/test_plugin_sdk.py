@@ -954,6 +954,19 @@ class SdkDbTests(unittest.IsolatedAsyncioTestCase):
         await self.set_status("paused")
         self.assertEqual(await titik.jalankan_job(datetime(2026, 11, 5, 1, 23, tzinfo=timezone.utc)), 0)
 
+    async def test_notifikasi_job_memakai_jam_jadwal(self):
+        """Notifikasi dari job disaring dengan jam jadwal job, bukan jam sungguhan. Dulu `ctx.notify` membaca jam
+        sungguhan, sehingga `test_job_dan_notifikasi` merah setiap kali CI berjalan pukul 21.00–07.00 WIB (jam tenang)."""
+        class _JamTenang(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                malam = datetime(2026, 11, 4, 15, 30, tzinfo=timezone.utc)      # 22.30 WIB
+                return malam.astimezone(tz) if tz else malam.replace(tzinfo=None)
+        pagi = datetime(2026, 11, 4, 1, 23, tzinfo=timezone.utc)                  # 08.23 WIB
+        with patch.object(titik, "datetime", _JamTenang):
+            self.assertEqual(await titik.jalankan_job(pagi), 1)
+        self.assertEqual(sorted(t[0] for t in self.terkirim), ["Admin", "Pemilik"])
+
     async def test_notifikasi_penyaring(self):
         async with self.Session() as db:
             c = await self.ctx(db, None, "job", "pagi")

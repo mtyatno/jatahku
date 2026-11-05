@@ -11,6 +11,10 @@ LINES_PATH = FIXTURES / "sweep_lines.json"
 SNAPSHOT_PATH = FIXTURES / "sweep_snapshot.json"
 SWEEP = json.loads(LINES_PATH.read_text(encoding="utf-8"))
 TAGS = {"store", "store_void", "store_pending", "proof", "failed", "pending", "probe"}
+# `known_l6e` (review L6 m-2): struk kecil berlogo yang SENGAJA disimpan seperti bukti bayar (tanpa rincian dan merchant) —
+# harga privasi L6e (`registry.looks_like_proof`: baris logo aplikasi di 2 baris pertama). Tidak bertanda `store` karena
+# invarian "struk tidak berubah" memang tidak berlaku; penyimpangannya dipin persis di `known` supaya harganya terlihat.
+L6E = "known_l6e"
 SWITCHES = ("off", "on")
 _BUILT: dict = {}   # satu sapuan untuk semua tes modul ini (sekitar 2 detik)
 
@@ -72,7 +76,15 @@ class SweepFixtureTests(unittest.TestCase):
                     self.assertTrue(tag in TAGS or re.fullmatch(r"known_[a-z0-9_]+", tag), tag)
                 # struk yang memang gagal/pending bertag store_void/store_pending, bukan store
                 self.assertFalse("store" in tags and {"failed", "pending"} & tags)
-                if known(e):
+                if L6E in tags:
+                    self.assertFalse({"store", "failed", "pending"} & tags, "known_l6e bukan struk biasa (bukan store)")
+                    self.assertEqual(known(e), [L6E])
+                    self.assertRegex(e.get("note") or "", r"L6e", "known_l6e butuh alasan tertulis (harga privasi L6e)")
+                    self.assertRegex(e.get("note") or "", r"privasi")
+                    deviations = e.get("known")
+                    self.assertIsInstance(deviations, dict)
+                    self.assertEqual(set(deviations), set(SWITCHES), "harga L6e berlaku di kedua saklar")
+                elif known(e):
                     self.assertTrue({"store", "failed", "pending"} & tags, "known_* tanpa invarian yang membacanya")
                     self.assertTrue((e.get("note") or "").strip(), "known_* butuh alasan tertulis di `note`")
                     deviations = e.get("known")
@@ -122,6 +134,23 @@ class SweepTests(unittest.IsolatedAsyncioTestCase):
         for e in SWEEP:
             if "store" in e["tags"]:
                 check_switches(self, e, self.got[e["id"]], store_problems)
+
+    async def test_known_l6e_shapes_pinned(self):
+        """Review L6 m-2: bentuk struk kecil berlogo ("BCA / TOKO MAJU / …", "KANTIN / BNI / …", "gopay / Pesanan / …",
+        EDC "BRI / … / SALE / …") ada di sapuan, hasilnya = snapshot, dan penyimpangannya dari struk belanja persis
+        `known` (dianggap bukti bayar, rincian dan merchant tidak disimpan). Bila L6e kelak menyimpan struk ini, tes
+        meminta tag dihapus."""
+        snapshot = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        cases = [e for e in SWEEP if L6E in e["tags"]]
+        self.assertGreaterEqual(len(cases), 4)
+        firsts = {tuple(x.lower() for x in e["lines"][:2]) for e in cases}
+        for pair in (("bca", "toko maju"), ("kantin", "bni"), ("gopay", "pesanan"), ("bri", "toko maju")):
+            self.assertIn(pair, firsts)
+        for e in cases:
+            with self.subTest(e["id"]):
+                self.assertIn(e["id"], snapshot)
+                self.assertEqual(self.got[e["id"]], snapshot[e["id"]])
+            check_switches(self, e, self.got[e["id"]], store_problems)
 
     async def test_failed_proofs_stay_blocked(self):
         """Setiap `failed`: `status_gagal: block` di kedua saklar; setiap `pending`: `status_pending: warn` (atau block

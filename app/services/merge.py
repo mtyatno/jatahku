@@ -8,9 +8,9 @@ from app.models.models import (
     Transaction, Income, Allocation, MonthlySnapshot,
     RecurringTransaction, Goal, BalanceCheck,
     Notification, NotificationPreference, UserStreak,
-    PendingTransaction, PaymentOrder, ProofRule, Report, ReportSettings,
+    PendingTransaction, PaymentOrder, ProofRule, ProofSample, Report, ReportSettings,
 )
-from app.services.kotak_struk import belajar
+from app.services.kotak_struk import belajar, donasi
 from app.services.laporan.pencatat import alihkan_pencatat
 
 from app.services.ruang import keanggotaan_keluarga, ruang_keluarga_id
@@ -331,6 +331,13 @@ async def merge_users(
     await belajar.forget_user(db, source_user_id)
     await db.execute(
         update(ProofRule).where(ProofRule.decided_by == source_user_id)
+        .values(decided_by=target_user_id)
+    )
+    # 7d. Donasi contoh Kotak Struk milik source dilupakan (tahap 2, G4): sampel, persetujuan, dan baris tersamar.
+    # Persetujuan tidak diwariskan; target tetap dengan pilihannya sendiri. Jejak keputusan admin pindah ke target.
+    await donasi.forget_user(db, source_user_id)
+    await db.execute(
+        update(ProofSample).where(ProofSample.decided_by == source_user_id)
         .values(decided_by=target_user_id)
     )
 

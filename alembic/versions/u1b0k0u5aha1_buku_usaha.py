@@ -12,7 +12,7 @@ permanen (CASCADE): meta tanpa induk tidak berarti. `created_by` SET NULL (hapus
 Unik per ruang hanya di antara baris hidup (`deleted_at IS NULL`).
 
 Revision ID: u1b0k0u5aha1
-Revises: d7r7k4a1m9c3
+Revises: c9e4a7f2b5d8
 Create Date: 2026-11-05
 """
 from typing import Sequence, Union
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'u1b0k0u5aha1'
-down_revision: Union[str, None] = 'd7r7k4a1m9c3'
+down_revision: Union[str, None] = 'c9e4a7f2b5d8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

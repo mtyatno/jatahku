@@ -8830,6 +8830,62 @@
    "unread_proof": false
   }
  },
+ "l6e-bca-toko-maju": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": true
+  }
+ },
+ "l6e-edc-bri-sale": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 15000,
+   "unread_proof": true
+  }
+ },
  "l6e-gopay-order-status-gagal": {
   "off": {
    "checks": {
@@ -8859,6 +8915,34 @@
    "reader": "tidak_dikenali",
    "status": "gagal",
    "total": 50000,
+   "unread_proof": true
+  }
+ },
+ "l6e-gopay-pesanan": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 30000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 30000,
    "unread_proof": true
   }
  },
@@ -9019,6 +9103,34 @@
    "reader": "struk_belanja",
    "status": "gagal",
    "total": 10000,
+   "unread_proof": true
+  }
+ },
+ "l6e-kantin-bni-terpisah": {
+  "off": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 25000,
+   "unread_proof": true
+  },
+  "on": {
+   "checks": {},
+   "counterparty": null,
+   "doc_type": "struk_belanja",
+   "issuer": null,
+   "lines": 0,
+   "merchant": null,
+   "paid_date": null,
+   "reader": "struk_belanja",
+   "status": "berhasil",
+   "total": 25000,
    "unread_proof": true
   }
  },

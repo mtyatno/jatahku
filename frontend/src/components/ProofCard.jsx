@@ -5,12 +5,14 @@ import { currentPeriod, proofBlockReason, wibToday } from '../lib/receiptScan';
 import {
   proofHeader, paidLabel, proofWarnings, proofTotal, amountEditable, amountHint, amountFieldText, proofDate, descriptionFor,
   displayNameOf, envelopeChoices, effectiveEnvelope, skipActions, canSave, savePayload, saveOutcome, skipOutcome,
-  createSharedLoader, readOnlyNotice, needsRecheck, recheckOutcome,
+  createSharedLoader, readOnlyNotice, needsRecheck, recheckOutcome, appQuestion, appChoiceOutcome, skipReasonChoices,
 } from '../lib/proofFormat';
 import { READ_WAIT_MS, withTimeout } from '../lib/shareInbox';
 import { EnvelopeIcon, Icon } from './Icon';
 
 const NOTE_DEBOUNCE_MS = 600;
+const OTHER_REASON = 'lainnya';   // radio "Lainnya" (alasan null: lewati tanpa alasan, perilaku lama)
+const reasonValue = choice => choice.alasan ?? OTHER_REASON;
 
 // Periode berjalan untuk aturan tanggal dokumen: satu permintaan untuk semua kartu yang terbuka (disimpan 1 menit).
 const loadPeriod = createSharedLoader(async () => currentPeriod(await api.getPeriods(1)));
@@ -31,7 +33,7 @@ const chipClass = selected => `inline-flex items-center gap-1.5 min-h-[36px] px-
 // total dokumen. Aturannya di lib/proofFormat.js. Tidak ada geser dana dan tidak ada antrean offline di kartu ini.
 // - envelopes: daftar amplop (api.getEnvelopeSummary/getEnvelopes); yang ditawarkan disaring proofFormat.envelopeChoices.
 // - queued: simpanan item ini masih di antrean offline (form Catat): kartu hanya-baca, tanpa Simpan dan tombol lewati.
-// - onSaved({ item, transaction, quotaNotice }) sesudah tercatat; onSkipped({ item, reason, detail }) sesudah dilewati;
+// - onSaved({ item, transaction, quotaNotice }) sesudah tercatat; onSkipped({ item, reason, alasan, detail }) sesudah dilewati;
 //   onBlocked({ item, text }) bila server menolak simpan/lewati (409/404), atau cek ulang struk belanja mendapati struk
 //   itu sudah tercatat/dilewati: kartu terkunci, tidak ada tindakan lagi.
 // Isian (termasuk client_ref) hidup per item: kartu yang dipakai ulang untuk item lain mulai dari awal.
@@ -59,6 +61,14 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
   const [renameText, setRenameText] = useState('');
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameError, setRenameError] = useState('');
+  const [appPick, setAppPick] = useState('');       // "Aplikasi apa ini?": pilihan di <select>
+  const [appBusy, setAppBusy] = useState(false);
+  const [appResult, setAppResult] = useState(null); // appChoiceOutcome terakhir
+  const appBusyRef = useRef(false);
+  const [reasonOpen, setReasonOpen] = useState(false);   // pilihan alasan "Bukan pengeluaran" (M3c)
+  const [reasonPick, setReasonPick] = useState('');       // nilai radio: alasan, atau OTHER_REASON untuk Lainnya
+  const reasonFirstRef = useRef(null);
+  const reasonToggleRef = useRef(null);
   const busyRef = useRef(false);
   const sentRef = useRef(null);    // payload yang hasilnya belum pasti: dikirim ulang persis sama
   const noteSeq = useRef(0);
@@ -119,6 +129,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
   const dates = proofDate(item, form);
   const warnings = proofWarnings(item, { blockedReason });
   const skips = skipActions(item, { blockedReason, queued });
+  const reasons = skipReasonChoices(item, { blockedReason, queued });
   const blockedText = blockedReason || proofBlockReason(item.flags);
   const editable = amountEditable(item);
   const uncertain = failure?.kind === 'uncertain';
@@ -183,18 +194,19 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
     }
   };
 
-  const skip = async (reason) => {
+  const skip = async (reason, alasan = null) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy('skip');
     setFailure(null);
-    const out = skipOutcome(await api.kotakSkip(item.id, reason));
+    const out = skipOutcome(await api.kotakSkip(item.id, reason, alasan));
     busyRef.current = false;
     if (!mounted.current) return;
     setBusy(null);
     if (out.kind === 'skipped') {
+      setReasonOpen(false);
       setDone({ kind: 'skipped' });
-      onSkipped?.({ item, reason, detail: out.item });
+      onSkipped?.({ item, reason, alasan, detail: out.item });
     } else if (out.kind === 'blocked') {
       setBlockedReason(out.text);
       onBlocked?.({ item, text: out.text });
@@ -202,6 +214,67 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
       setFailure(out);
     }
   };
+
+  // "Bukan pengeluaran" (M3c): membuka pilihan alasan (saran server terpilih lebih dulu); "Lewati" mengirim satu
+  // permintaan `kotakSkip(id, 'bukan_pengeluaran', alasan)`, "Lainnya" tanpa alasan. Esc/Batal menutup.
+  const openReasons = () => {
+    setFailure(null);
+    const suggested = reasons.find(c => c.suggested);
+    setReasonPick(suggested ? reasonValue(suggested) : '');
+    setReasonOpen(true);
+  };
+  const closeReasons = () => {
+    setReasonOpen(false);
+    reasonToggleRef.current?.focus();
+  };
+  useEffect(() => {
+    if (reasonOpen) reasonFirstRef.current?.focus();
+  }, [reasonOpen]);
+  const sendReason = (e) => {
+    e.preventDefault();
+    const choice = reasons.find(c => reasonValue(c) === reasonPick);
+    if (!choice || locked || !online) return;
+    skip('bukan_pengeluaran', choice.alasan);
+  };
+
+  // "Aplikasi apa ini?": satu permintaan; terpisah dari Simpan/lewati (tidak mengunci isian, tidak membaca ulang item).
+  const sendApp = async (e) => {
+    e.preventDefault();
+    if (appBusyRef.current || !appPick) return;
+    appBusyRef.current = true;
+    setAppBusy(true);
+    setAppResult(null);
+    const out = appChoiceOutcome(await api.kotakChooseApp(item.id, appPick));
+    appBusyRef.current = false;
+    if (!mounted.current) return;
+    setAppBusy(false);
+    setAppResult(out);
+  };
+
+  const question = appQuestion(item);
+  const appClosed = appResult?.kind === 'ok' || appResult?.kind === 'conflict';
+  const appBlock = question && (
+    <div className="rounded-xl border border-gray-200 px-3 py-2">
+      {appClosed ? (
+        <p role="status" className={`text-sm ${appResult.kind === 'ok' ? 'text-brand-600' : 'text-gray-500'}`}>{appResult.text}</p>
+      ) : (
+        <form onSubmit={sendApp} className="space-y-1.5">
+          <label htmlFor={`${ids}-app`} className="block text-sm text-gray-700">{question.text}</label>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select id={`${ids}-app`} className="input py-1.5 flex-1 min-w-[10rem]" value={appPick}
+              onChange={e => { setAppResult(null); setAppPick(e.target.value); }} disabled={appBusy}>
+              <option value="">Pilih aplikasi</option>
+              {question.choices.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            <button type="submit" disabled={appBusy || !appPick || !online} className="btn-outline disabled:opacity-50">
+              {appBusy ? 'Mengirim…' : 'Kirim'}
+            </button>
+          </div>
+          {appResult?.kind === 'error' && <p className="text-xs text-red-600" role="alert">{appResult.text}</p>}
+        </form>
+      )}
+    </div>
+  );
 
   const startRename = () => {
     setRenameText(name);
@@ -237,6 +310,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           </p>
           <p className="text-xs text-gray-500 truncate">{[header.badge, name, when].filter(Boolean).join(' · ')}</p>
           {done.quotaNotice && <p className="text-xs text-amber-600">{done.quotaNotice}</p>}
+          {appBlock && done.kind === 'saved' && <div className="pt-2">{appBlock}</div>}
         </div>
       </section>
     );
@@ -252,6 +326,7 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           <p className="text-xs text-gray-500 truncate">{[total ? rupiah(total) : null, name, when].filter(Boolean).join(' · ')}</p>
         )}
         <p className={`text-sm ${READ_ONLY_TEXT[readOnly.tone] || ''}`}>{readOnly.text}</p>
+        {appBlock && <div className="pt-2">{appBlock}</div>}
       </section>
     );
   }
@@ -272,6 +347,8 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_PILL[header.statusTone] || ''}`}>{header.statusText}</span>
         )}
       </div>
+
+      {appBlock}
 
       {editable ? (
         <div>
@@ -425,13 +502,47 @@ function ProofCardInner({ item, envelopes, queued = false, onSaved, onSkipped, o
           </button>
         ))}
         <span className="flex-1" />
-        {otherSkips.map(s => (
+        {otherSkips.map(s => (s.reason === 'bukan_pengeluaran' && reasons.length ? (
+          <button key={s.reason} ref={reasonToggleRef} type="button" disabled={locked || !online}
+            aria-expanded={reasonOpen} aria-controls={`${ids}-reasons`}
+            onClick={() => (reasonOpen ? closeReasons() : openReasons())}
+            className="text-sm text-gray-500 hover:text-gray-700 underline px-2 py-2 disabled:opacity-50">
+            {s.label}
+          </button>
+        ) : (
           <button key={s.reason} type="button" disabled={locked || !online} onClick={() => skip(s.reason)}
             className="text-sm text-gray-500 hover:text-gray-700 underline px-2 py-2 disabled:opacity-50">
             {s.label}
           </button>
-        ))}
+        )))}
       </div>
+      {reasonOpen && reasons.length > 0 && (
+        <form id={`${ids}-reasons`} onSubmit={sendReason}
+          onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeReasons(); } }}
+          className="rounded-xl border border-gray-200 px-3 py-2 space-y-2">
+          <fieldset disabled={locked} className="space-y-1">
+            <legend className="text-sm text-gray-700 mb-1">Kenapa bukan pengeluaran?</legend>
+            {reasons.map((c, i) => (
+              <label key={reasonValue(c)} className="flex items-center gap-2 min-h-[36px] text-sm text-gray-700">
+                <input ref={i === 0 ? reasonFirstRef : undefined} type="radio" name={`${ids}-reason-pick`}
+                  value={reasonValue(c)} checked={reasonPick === reasonValue(c)}
+                  onChange={() => setReasonPick(reasonValue(c))} />
+                <span>{c.label}</span>
+                {c.suggested && <span className="text-xs text-gray-500">(disarankan)</span>}
+              </label>
+            ))}
+          </fieldset>
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={locked || !online || !reasonPick} className="btn-outline disabled:opacity-50">
+              {busy === 'skip' ? 'Melewati…' : 'Lewati'}
+            </button>
+            <button type="button" onClick={closeReasons} disabled={busy === 'skip'}
+              className="text-sm text-gray-500 hover:text-gray-700 px-2 py-2 disabled:opacity-50">
+              Batal
+            </button>
+          </div>
+        </form>
+      )}
       <p id={`${ids}-reason`} className="text-xs text-gray-500 empty:hidden" aria-live="polite">{reasonShown}</p>
     </section>
   );

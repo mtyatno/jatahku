@@ -16,12 +16,16 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy import text
+
 from app.core.config import get_settings
 from app.core.database import Base
-from app.models.models import Envelope, Household, HouseholdMember, HouseholdRole, ReceiptScan, Transaction, User
+from app.models.models import (
+    Envelope, Household, HouseholdMember, HouseholdRole, ProofSample, ReceiptScan, Transaction, User,
+)
 from app.services import scheduler as scheduler_mod
 from app.services.kotak_struk import maintenance
-from app.services.kotak_struk.config import LAYOUT_TTL
+from app.services.kotak_struk.config import LAYOUT_TTL, SAMPLE_TTL
 from app.services.kotak_struk.maintenance import delete_orphan_files, expire_items, purge_layouts
 from app.services.receipt_scan import accuracy_stats
 
@@ -154,6 +158,7 @@ class ExpireItemsTests(MaintenanceBase):
 # ── kerangka tata letak (A15 L1) ─────────────────────────────────────────────
 
 LAYOUT = {"v": 1, "key": "gopay", "lines": [{"i": 6, "label": "jumlah kirim uang", "kind": "nominal", "amount": 10000}]}
+SAMPLE = ["GoPay", "Transfer Berhasil", "Ke BUDI SANTOSO", "Rp10.000"]   # baris donasi karangan, sudah tersamar
 
 
 class LayoutPurgeTests(MaintenanceBase):
@@ -194,6 +199,66 @@ class LayoutPurgeTests(MaintenanceBase):
         fresh = await self.item(status="siap", expires_at=NOW + timedelta(days=1), layout=LAYOUT)
         self.assertEqual(await expire_items(self.db, now=NOW), 1)
         self.assertEqual([(await self.get(i.id)).layout for i in (expired, fresh)], [None, LAYOUT])
+
+
+    async def test_purge_and_expire_clear_sample_lines(self):
+        # Donasi contoh (tahap 2 M1b): baris tersamar ikut dihapus bersama kerangka, juga pada item tanpa kerangka.
+        old = NOW - LAYOUT_TTL - timedelta(minutes=1)
+        done = [await self.item(status=s, sample_lines=SAMPLE, processed_at=old) for s in ("tercatat", "dilewati",
+                                                                                       "kedaluwarsa")]
+        both = await self.item(status="tercatat", layout=LAYOUT, sample_lines=SAMPLE, processed_at=old)
+        kept = [await self.item(status=s, sample_lines=SAMPLE, processed_at=old) for s in ("diterima", "siap", "gagal")]
+        young = await self.item(status="tercatat", sample_lines=SAMPLE, processed_at=NOW - timedelta(hours=23))
+        self.assertEqual(await purge_layouts(self.db, now=NOW), len(done) + 1)
+        for it in [*done, both]:
+            got = await self.get(it.id)
+            self.assertEqual((got.sample_lines, got.layout), (None, None))
+        for it in [*kept, young]:
+            self.assertEqual((await self.get(it.id)).sample_lines, SAMPLE)
+        self.assertEqual(await purge_layouts(self.db, now=NOW), 0)
+        expired = await self.item(status="siap", expires_at=NOW - timedelta(minutes=1), sample_lines=SAMPLE)
+        fresh = await self.item(status="siap", expires_at=NOW + timedelta(days=1), sample_lines=SAMPLE)
+        self.assertEqual(await expire_items(self.db, now=NOW), 1)   # item `kept` tanpa expires_at tidak kedaluwarsa
+        self.assertEqual([(await self.get(i.id)).sample_lines for i in (expired, fresh)], [None, SAMPLE])
+        # SQL NULL, bukan JSON 'null'.
+        async with self.Session() as db:
+            raw = (await db.execute(text("SELECT COUNT(*) FROM receipt_scans WHERE sample_lines IS NOT NULL"))).scalar()
+        self.assertEqual(raw, len(kept) + 2)
+
+# ── sampel donasi contoh (tahap 2 G2) ────────────────────────────────────────
+
+class SamplePurgeTests(MaintenanceBase):
+    async def sample(self, status, *, created, decided=None):
+        async with self.Session() as db:
+            row = ProofSample(user_id=self.user_id, item_id=uuid.uuid4(), doc_type="transfer", trigger="nominal",
+                              lines=list(SAMPLE), today=date(2026, 10, 1), status=status, created_at=created,
+                              decided_at=decided)
+            db.add(row)
+            await db.commit()
+            return row.id
+
+    async def remaining(self):
+        async with self.Session() as db:
+            return set((await db.execute(text("SELECT id FROM proof_samples"))).scalars())
+
+    async def test_purge_samples_ttl(self):
+        old = NOW - SAMPLE_TTL - timedelta(minutes=1)
+        young = NOW - SAMPLE_TTL + timedelta(minutes=1)
+        gone = [await self.sample("menunggu", created=old),
+                await self.sample("disetujui", created=old, decided=old)]
+        kept = [await self.sample("menunggu", created=young),
+                await self.sample("menunggu", created=NOW - SAMPLE_TTL),              # tepat 7 hari
+                await self.sample("disetujui", created=old, decided=young),          # umur dari keputusan
+                await self.sample("ditolak", created=old, decided=old)]              # dihapus saat diputuskan (M1d)
+        self.assertEqual(SAMPLE_TTL, timedelta(days=7))   # keputusan pemilik
+        self.assertEqual(await maintenance.purge_samples(self.db, now=NOW), len(gone))
+        self.assertEqual(await self.remaining(), {k.hex for k in kept})
+        self.assertFalse(self.db.in_transaction())   # commit sendiri
+        self.assertEqual(await maintenance.purge_samples(self.db, now=NOW), 0)
+        # `now` di zona lain atau tanpa zona (UTC) memberi hasil sama.
+        for now in (NOW.astimezone(WIB), NOW.replace(tzinfo=None)):
+            await self.sample("menunggu", created=old)
+            self.assertEqual(await maintenance.purge_samples(self.db, now=now), 1)
 
 
 # ── file yatim ───────────────────────────────────────────────────────────────
@@ -298,14 +363,35 @@ class _FakeSession:
 
 
 class SchedulerJobTests(unittest.IsolatedAsyncioTestCase):
-    def patches(self, *, expire, orphans, layouts=None, rules=None):
+    def patches(self, *, expire, orphans, layouts=None, rules=None, samples=None):
         stack = contextlib.ExitStack()
         stack.enter_context(patch("app.core.database.AsyncSessionLocal", lambda: _FakeSession()))
         stack.enter_context(patch.object(maintenance, "expire_items", expire))
         stack.enter_context(patch.object(maintenance, "delete_orphan_files", orphans))
         stack.enter_context(patch.object(maintenance, "purge_layouts", layouts or AsyncMock(return_value=0)))
         stack.enter_context(patch.object(maintenance, "reconcile_proof_rules", rules or AsyncMock(return_value=0)))
+        stack.enter_context(patch.object(maintenance, "purge_samples", samples or AsyncMock(return_value=0)))
         return stack
+
+    async def test_sample_purge_runs_as_its_own_step(self):
+        # Langkah 5 (tahap 2 G2): sampel donasi berumur dihapus walau semua langkah lain gagal; galatnya tidak
+        # menghentikan job dan tidak melewatkan langkah lain.
+        down = dict(expire=AsyncMock(side_effect=RuntimeError("db mati")), orphans=AsyncMock(side_effect=OSError("disk")),
+                    layouts=AsyncMock(side_effect=RuntimeError("db mati")), rules=AsyncMock(side_effect=RuntimeError("x")))
+        samples = AsyncMock(return_value=3)
+        with self.patches(**down, samples=samples), self.assertLogs("jatahku.scheduler", level="INFO") as logs:
+            await scheduler_mod.kotak_maintenance()
+        samples.assert_awaited_once()
+        self.assertIn("now", samples.await_args.kwargs)
+        self.assertTrue(any(r.levelname == "INFO" and "3 sampel donasi dihapus" in r.getMessage() for r in logs.records))
+
+        rules = AsyncMock(return_value=0)
+        with self.patches(expire=AsyncMock(return_value=0), orphans=AsyncMock(return_value=0), rules=rules,
+                          samples=AsyncMock(side_effect=RuntimeError("db mati"))), \
+                self.assertLogs("jatahku.scheduler", level="ERROR") as logs:
+            await scheduler_mod.kotak_maintenance()
+        rules.assert_awaited_once()
+        self.assertTrue(any("purge_samples" in r.getMessage() for r in logs.records))
 
     async def test_rule_reconcile_runs_as_its_own_step(self):
         # Langkah 4 (review L2 M-2): aturan belajar disamakan dengan suaranya tiap jam, walau langkah lain gagal, dan
@@ -391,6 +477,16 @@ class StatsTests(MaintenanceBase):
         await self.item(status="siap", doc_type="tidak_dikenali", document={})
         s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
         self.assertEqual((s["by_doc_type"]["qris"], s["unrecognized"], s["by_issuer"]["bca_mobile"]["total"]), (1, 1, 1))
+
+    async def test_unknown_proof_with_logo_issuer_not_counted_per_issuer(self):
+        # M2b: bukti tak dikenal yang penerbitnya dari aturan `logo` (mis. `bsi`) tidak mencampur angka pembaca BSI.
+        await self.item(status="siap", doc_type="qris", document={"issuer": "bsi"})
+        await self.recorded("bsi", doc_type="tidak_dikenali", parsed_total=45000, paid_at=NOW,
+                            txns=[await self.txn(50000, date(2026, 10, 26))])
+        await self.item(status="siap", doc_type="tidak_dikenali", document={"issuer": "jago"})
+        s = await accuracy_stats(self.db, since=NOW - timedelta(days=1))
+        self.assertEqual(s["by_issuer"], {"bsi": {"total": 1, "recorded": 0, "corrected": 0}})
+        self.assertEqual((s["by_doc_type"], s["unrecognized"]), ({"qris": 1, "tidak_dikenali": 2}, 2))
 
     async def test_breakdown_counts_only_this_period_and_kotak_rows(self):
         await self.item(status="siap", doc_type="qris", document={"issuer": "bca_mobile"})

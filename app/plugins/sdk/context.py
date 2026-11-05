@@ -379,7 +379,7 @@ class PluginContext(metaclass=_KelasBeku):
             await _host.tolak(k, "notifications:send", "batas_notify")
         k.penghitung["notify"] += 1
         from app.plugins.host import titik
-        return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis)
+        return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis, now=k.sekarang)
 
 
 class DataPlugin(metaclass=_KelasBeku):

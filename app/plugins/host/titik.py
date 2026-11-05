@@ -90,14 +90,16 @@ def _pengguna(user) -> PenggunaView | None:
 
 
 def konteks(db, m: Manifest, inst: PluginInstallation, ruang: Household, d: Pendaftaran, *,
-            viewer=None, peran: str = "sistem", sumber: str, boleh_tulis: bool = False) -> PluginContext:
+            viewer=None, peran: str = "sistem", sumber: str, sekarang: datetime | None = None,
+            boleh_tulis: bool = False) -> PluginContext:
     """Konteks untuk satu panggilan fungsi plugin; `viewer` = objek `User` pemicu (atau None untuk job).
+    `sekarang` = jam acuan panggilan itu (job: jam jadwalnya), dipakai penyaring notifikasi; None = jam sungguhan.
     `boleh_tulis` (U1): hanya rute non-GET boleh menulis tabel plugin sendiri lewat `ctx.data()`."""
     return keadaan.buat(
         db=db, plugin_id=m.id, nama_plugin=m.name, ruang_id=ruang.id, nama_ruang=ruang.name or "",
         jenis_ruang=ruang.type or HouseholdType.RUMAH_TANGGA, viewer=_pengguna(viewer), peran=peran,
         izin=izin_efektif(inst, m, d), jenis_notifikasi=frozenset(m.contributes.notifications),
-        pengaturan=dict(inst.settings or {}), sumber=sumber,
+        pengaturan=dict(inst.settings or {}), sumber=sumber, sekarang=sekarang,
         entitas=frozenset(m.entities), boleh_tulis=boleh_tulis,
     )
 
@@ -647,7 +649,7 @@ async def jalankan_job(now: datetime | None = None) -> int:
                 if inst is None or inst.status != siklus.ACTIVE:
                     continue
                 d = reg.kode_plugin(pid).ambil("job", key)
-                ctx = konteks(db, m, inst, await _ruang(db, hid), d, sumber=f"job:{key}")
+                ctx = konteks(db, m, inst, await _ruang(db, hid), d, sumber=f"job:{key}", sekarang=now)
                 await panggil(ctx, d.fn)
                 jalan += 1
         except Exception:

@@ -1875,7 +1875,7 @@ def bot_callbacks() -> list:
         (r"^cool_", handle_cooling_callback),
         (r"^checkin_", handle_checkin_callback),
         (r"^tpl_", handle_template_callback),
-        (r"^k[nxdo]_", handle_kotak_callback),
+        (r"^k[nxdoa]_", handle_kotak_callback),
         (r"^kt_", handle_date_callback),
         (r"^t_", handle_txn_callback),
         (r"^ky_", handle_txn_callback),   # "Ya, catat" nominal kurang yakin (receipt_cmd.amount_question)

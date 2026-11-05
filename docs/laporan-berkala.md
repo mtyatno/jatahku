@@ -7,11 +7,11 @@ laporan yang diatur user sendiri. Lonceng dan Telegram memberi tahu saat laporan
 tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`. "Ruling Rn" di bawah menunjuk keputusan saat
 eksekusi rencana, yang dicatat di spec bagian "Penyesuaian saat eksekusi".
 
-**Status (4 Nov 2026).** Tahap 1 (inti) selesai di kode di branch `feat/laporan-berkala`; PR berlabel `migrasi` belum
-di-merge, jadi belum tayang. Revisi alembic `967a27d0c15d`. Langkah sebelum dan sesudah merge ada di `AGENTS.md`,
-"Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)". Tahap 2 (email, verifikasi email, berhenti berlangganan)
-dan tahap 3 (kuartalan dan tahunan untuk Pro) mendapat rencana sendiri setelah tahap 1 tayang. Perbarui bagian ini saat
-status berubah.
+**Status (5 Nov 2026).** Tahap 1 (inti) tayang 5 Nov 2026: PR #190 (squash `56ddf74`), revisi alembic `967a27d0c15d`
+dan checklist deploy di `AGENTS.md` ("Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)") dijalankan pemilik.
+Job pertama (5 Nov 04.30 WIB) menerbitkan 21 laporan untuk rumah yang periodenya tutup ≤ 7 hari sebelumnya (gajian
+tanggal 1 dan 30), semuanya diberi tahu. Tahap 2 (email, verifikasi email, berhenti berlangganan) dan tahap 3 (kuartalan
+dan tahunan untuk Pro) mendapat rencana sendiri. Perbarui bagian ini saat status berubah.
 
 ## Peta kode
 

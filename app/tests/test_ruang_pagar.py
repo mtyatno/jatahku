@@ -173,6 +173,8 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/kotak-struk/"),                         # unggah bukti: ruang keluarga di intake (R7)
             ("POST", "/kotak-struk/{item_id}/saran"),          # item milik user (`_owned_item`)
             ("POST", "/kotak-struk/{item_id}/lewati"),         # item milik user (`_owned_item`)
+            ("POST", "/kotak-struk/{item_id}/aplikasi"),       # item milik user (`_owned_item`; K13)
+            ("PUT", "/user/kotak-donasi"),                     # persetujuan donasi milik user (A16 M1a; juga awalan /user/)
             ("POST", "/transactions/scan-receipt"),            # baca struk lewat Kotak Struk (ruang keluarga, R7)
             ("POST", "/transactions/scan-receipt/{scan_id}/feedback"),  # scan milik user
             ("POST", "/transactions/transcribe"),              # suara → teks, tanpa data ruang

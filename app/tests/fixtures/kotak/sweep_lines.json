@@ -9509,5 +9509,118 @@
   ],
   "user_name": null,
   "source": "test_kotak_kalibrasi.py EvidenceMaskingEdgesTests (L6 fix 1, review m-3)"
+ },
+ {
+  "id": "l6e-bca-toko-maju",
+  "tags": [
+   "known_l6e"
+  ],
+  "lines": [
+   "BCA",
+   "TOKO MAJU",
+   "KOPI 15.000",
+   "ROTI 10.000",
+   "TOTAL 25.000"
+  ],
+  "user_name": null,
+  "source": "task-L6-review.md m-2 (bentuk karangan; pre-flight A16 §1, plan tahap 2 M0)",
+  "note": "Review L6 m-2: harga privasi L6e (registry.looks_like_proof: baris logo aplikasi di 2 baris pertama tanpa pola struk belanja = slip bukti). Struk kecil 1-2 barang berlogo bank/e-wallet di atas disimpan seperti bukti bayar: teks, rincian, dan merchant tidak disimpan (aman untuk privasi, slip bernomor rekening tidak bocor), tetapi toko kehilangan rinciannya. Diterima di L6; dipin di sini supaya harganya terlihat. Bukan `store`: invarian struk tidak berubah memang tidak berlaku.",
+  "known": {
+   "off": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ],
+   "on": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ]
+  }
+ },
+ {
+  "id": "l6e-kantin-bni-terpisah",
+  "tags": [
+   "known_l6e"
+  ],
+  "lines": [
+   "KANTIN",
+   "BNI",
+   "NASI GORENG 20.000",
+   "ES TEH 5.000",
+   "TOTAL 25.000"
+  ],
+  "user_name": null,
+  "source": "task-L6-review.md m-2 (bentuk karangan; pre-flight A16 §1, plan tahap 2 M0)",
+  "note": "Review L6 m-2: harga privasi L6e (registry.looks_like_proof: baris logo aplikasi di 2 baris pertama tanpa pola struk belanja = slip bukti). Struk kecil 1-2 barang berlogo bank/e-wallet di atas disimpan seperti bukti bayar: teks, rincian, dan merchant tidak disimpan (aman untuk privasi, slip bernomor rekening tidak bocor), tetapi toko kehilangan rinciannya. Diterima di L6; dipin di sini supaya harganya terlihat. Bukan `store`: invarian struk tidak berubah memang tidak berlaku.",
+  "known": {
+   "off": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ],
+   "on": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ]
+  }
+ },
+ {
+  "id": "l6e-gopay-pesanan",
+  "tags": [
+   "known_l6e"
+  ],
+  "lines": [
+   "gopay",
+   "Pesanan",
+   "2 items",
+   "KOPI SUSU 18.000",
+   "ROTI BAKAR 12.000",
+   "Total 30.000"
+  ],
+  "user_name": null,
+  "source": "task-L6-review.md m-2 (bentuk karangan; pre-flight A16 §1, plan tahap 2 M0)",
+  "note": "Review L6 m-2: harga privasi L6e (registry.looks_like_proof: baris logo aplikasi di 2 baris pertama tanpa pola struk belanja = slip bukti). Struk kecil 1-2 barang berlogo bank/e-wallet di atas disimpan seperti bukti bayar: teks, rincian, dan merchant tidak disimpan (aman untuk privasi, slip bernomor rekening tidak bocor), tetapi toko kehilangan rinciannya. Diterima di L6; dipin di sini supaya harganya terlihat. Bukan `store`: invarian struk tidak berubah memang tidak berlaku.",
+  "known": {
+   "off": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ],
+   "on": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ]
+  }
+ },
+ {
+  "id": "l6e-edc-bri-sale",
+  "tags": [
+   "known_l6e"
+  ],
+  "lines": [
+   "BRI",
+   "TOKO MAJU",
+   "SALE",
+   "KOPI 15.000",
+   "TOTAL RP 15.000"
+  ],
+  "user_name": null,
+  "source": "task-L6-review.md m-2 (bentuk karangan; pre-flight A16 §1, plan tahap 2 M0)",
+  "note": "Review L6 m-2: harga privasi L6e (registry.looks_like_proof: baris logo aplikasi di 2 baris pertama tanpa pola struk belanja = slip bukti). Struk kecil 1-2 barang berlogo bank/e-wallet di atas disimpan seperti bukti bayar: teks, rincian, dan merchant tidak disimpan (aman untuk privasi, slip bernomor rekening tidak bocor), tetapi toko kehilangan rinciannya. Diterima di L6; dipin di sini supaya harganya terlihat. Bukan `store`: invarian struk tidak berubah memang tidak berlaku.",
+  "known": {
+   "off": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ],
+   "on": [
+    "dianggap bukti bayar",
+    "tanpa rincian",
+    "tanpa merchant"
+   ]
+  }
  }
 ]

@@ -45,7 +45,9 @@ JPG = b"\xff\xd8\xff\xe0jpeg"
 NOW = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)
 PAID = datetime(2026, 10, 26, 1, 12, 33, tzinfo=timezone.utc)   # 08:12 WIB; SQLite menyimpan jam dinding apa adanya
 QRIS_KEY = "nmid:ID1024358806544"
-NO_FLAGS = {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": []}
+# `ask_app`/`app_logo`: field tambahan tahap 2 (M2a, "Aplikasi apa ini?"); bentuk lama tidak berubah.
+NO_FLAGS = {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": [], "ask_app": False,
+            "app_logo": None}
 
 
 class FakeRedis:
@@ -224,7 +226,7 @@ class KotakApiTests(ApiBase):
         d = (await self.c.get(f"/kotak-struk/{item.id}")).json()
         self.assertEqual(d["description_preview"], "Siti Aminah (QRIS)")
         self.assertEqual((d["suggestion"]["envelope_name"], d["suggestion"]["confident"]), ("Makan", True))
-        self.assertEqual(d["flags"], {"duplicate_of": None, "skip_suggestion": None, "blocked": None, "warnings": []})
+        self.assertEqual(d["flags"], NO_FLAGS)
         self.assertEqual(d["merchant"]["name"], "Siti Aminah")
         # bentuk lengkap spec 5d
         self.assertEqual(set(d), {"id", "status", "doc_type", "source", "created_at", "paid_at", "document", "merchant",

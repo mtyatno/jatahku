@@ -15,6 +15,14 @@ export const ISSUER_LABEL = {
   seabank: 'SeaBank', blu: 'blu', gopay: 'GoPay', ovo: 'OVO', dana: 'DANA', shopeepay: 'ShopeePay',
 };
 
+// "Aplikasi apa ini?" (tahap 2 M2c): 12 kunci profil (urutan tabel di atas = urutan `PROFILES` server, dipin
+// test_kotak_bot.test_app_choices_match_profiles) + "Lainnya" (`baru`, server config.APP_NEW). Nilai yang dikirim
+// `api.kotakChooseApp`.
+export const APP_CHOICES = [
+  ...Object.entries(ISSUER_LABEL).map(([key, label]) => ({ key, label })),
+  { key: 'baru', label: 'Lainnya' },
+];
+
 const KIND_LABEL = { qris: 'QRIS', transfer: 'Transfer', struk_belanja: 'Struk belanja', tidak_dikenali: 'Bukti bayar' };
 
 const STATUS = {
@@ -215,6 +223,32 @@ export function skipActions(item, { blockedReason = null, queued = false } = {})
   return [SKIP_NOT_EXPENSE];
 }
 
+// Alasan "Bukan pengeluaran" (tahap 2 M3c): tiga arah uang server (config.ARAH_FLOWS, `SkipIn.alasan`) + "Lainnya"
+// (tanpa alasan = perilaku lama). Alasan yang berbeda dengan arah terbaca menjadi suara `arah` di server (K14).
+export const SKIP_REASONS = Object.freeze([
+  Object.freeze({ alasan: 'top_up', label: 'Top-up saldo sendiri' }),
+  Object.freeze({ alasan: 'masuk', label: 'Uang masuk' }),
+  Object.freeze({ alasan: 'antar_rekening_sendiri', label: 'Ke rekening sendiri' }),
+  Object.freeze({ alasan: null, label: 'Lainnya' }),
+]);
+const ALASAN = new Set(SKIP_REASONS.map(r => r.alasan).filter(Boolean));
+
+// Pilihan alasan untuk "Bukan pengeluaran": saran server (`flags.skip_suggestion`) di urutan pertama dan ditandai
+// `suggested`; kosong bila kartu tidak menawarkan "Bukan pengeluaran" (`skipActions`, opsi yang sama).
+export function skipReasonChoices(item, opts = {}) {
+  if (!item || !skipActions(item, opts).some(s => s.reason === SKIP_NOT_EXPENSE.reason)) return [];
+  const hint = item.flags?.skip_suggestion;
+  const first = ALASAN.has(hint) ? SKIP_REASONS.find(r => r.alasan === hint) : null;
+  const ordered = first ? [first, ...SKIP_REASONS.filter(r => r !== first)] : SKIP_REASONS;
+  return ordered.map(r => ({ ...r, suggested: r === first }));
+}
+
+// Body `POST /kotak-struk/{id}/lewati` (`api.kotakSkip`): `{reason}`, ditambah `alasan` hanya bila dikenal dan hanya
+// bersama "bukan_pengeluaran" (server menolak kombinasi lain dengan 422). Tidak pernah memuat field lain.
+export function skipBody(reason, alasan) {
+  return reason === SKIP_NOT_EXPENSE.reason && ALASAN.has(alasan) ? { reason, alasan } : { reason };
+}
+
 const no = reason => ({ ok: false, reason });
 
 // Status yang sudah selesai (item disegarkan induk sesudah dicatat/dilewati/kedaluwarsa di tempat lain). Struk belanja
@@ -319,6 +353,30 @@ export function skipOutcome(res) {
   const detail = detailOf(res);
   if (res?.status === 409 || res?.status === 404) return { kind: 'blocked', text: sentence(detail) || 'Bukti ini tidak bisa dilewati.' };
   return { kind: 'error', text: detail || 'Koneksi gagal, coba lagi' };
+}
+
+// Pertanyaan "Aplikasi apa ini?" (tahap 2 M2c) → null atau { logo, text, choices }. Hanya bila server menandai item
+// boleh ditanya (`flags.ask_app` true: tidak dikenali, kerangka berkunci logo, belum dijawab) dan memberi kata logonya
+// (`flags.app_logo`; kata itu tidak pernah diambil dari teks lain), untuk item siap atau tercatat (jawabannya tidak
+// mencatat apa pun). Bukti yang transaksinya gagal (`blocked` transaksi_gagal) tidak ditanya; bukti pending tetap ditanya.
+export function appQuestion(item) {
+  const flags = item?.flags;
+  if (flags?.ask_app !== true || flags.blocked === 'transaksi_gagal') return null;
+  if (item.status !== 'siap' && item.status !== 'tercatat') return null;
+  const logo = typeof flags.app_logo === 'string' ? flags.app_logo.trim() : '';
+  if (!logo) return null;
+  return { logo, text: `Logo di bukti: ${logo}. Aplikasi apa ini?`, choices: APP_CHOICES };
+}
+
+// Hasil `api.kotakChooseApp` → ok (terima kasih; item tidak dibaca ulang) | conflict (409/404: teks server, pertanyaan
+// ditutup) | error (bisa dicoba lagi).
+export function appChoiceOutcome(res) {
+  if (res?.ok) return { kind: 'ok', text: 'Terima kasih, dicatat.' };
+  const detail = detailOf(res);
+  if (res?.status === 409 || res?.status === 404) {
+    return { kind: 'conflict', text: sentence(detail) || 'Aplikasi bukti ini tidak bisa dipilih.' };
+  }
+  return { kind: 'error', text: detail || 'Gagal mengirim. Coba lagi.' };
 }
 
 // Satu permintaan bersama untuk banyak kartu (mis. periode berjalan): panggilan bersamaan memakai janji yang sama,

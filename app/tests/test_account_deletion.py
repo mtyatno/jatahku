@@ -13,6 +13,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import importlib.util
 import tempfile
 import unittest
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -27,7 +28,8 @@ from app.core.database import Base, get_db
 from app.models.models import (
     Allocation, AuthSession, BalanceCheck, Envelope, Household, HouseholdMember, HouseholdMerchant,
     HouseholdRole, Income, IncomeKind, MerchantEnvelopeMap, Notification, NotificationPreference, PaymentOrder,
-    PendingTransaction, ProofRule, ProofRuleVote, RecurringTransaction, Transaction, User, UserStreak,
+    PendingTransaction, ProofRule, ProofRuleVote, ProofSample, ProofSampleConsent, ReceiptScan, RecurringTransaction,
+    Transaction, User, UserStreak,
 )
 from app.services import account_deletion
 from app.services.account_deletion import FORMER_MEMBER_ID
@@ -656,6 +658,45 @@ class AccountDeletionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_account_forgets_votes_and_recounts_without_fk_actions(self):
         await self.learning_scenario(fk=False)
+
+    async def donation_scenario(self, *, fk: bool):
+        """Donasi contoh Kotak Struk (tahap 2, G4): persetujuan, semua sampel (menunggu dan disetujui), dan baris
+        tersamar user yang dihapus hilang; sampel yang pernah diputuskan user itu (admin) tetap, `decided_by` kosong.
+        Varian tanpa FK membuktikan penghapusan eksplisit."""
+        uid, _hid, _ = await self.add_user("Sari", "sari@example.com")
+        other, _ohid, _ = await self.add_user("Budi", "budi@example.com")
+        lines = ["gopay", "Ke TOKO CONTOH", "Total Rp12.500"]   # karangan
+        async with self.Session() as db:
+            for user in (uid, other):
+                db.add(ProofSampleConsent(user_id=user))
+                db.add(ReceiptScan(user_id=user, status="siap", doc_type="qris", sample_lines=list(lines)))
+                for st in ("menunggu", "disetujui"):
+                    db.add(ProofSample(user_id=user, item_id=uuid.uuid4(), doc_type="qris", trigger="nominal",
+                                       lines=list(lines), today=date(2026, 11, 2), status=st))
+            # Sampel milik Budi yang disetujui oleh Sari (admin).
+            db.add(ProofSample(user_id=other, item_id=uuid.uuid4(), doc_type="transfer", trigger="tanggal",
+                               lines=list(lines), today=date(2026, 11, 2), status="disetujui", decided_by=uid))
+            await db.commit()
+        await self.foreign_keys(fk)
+
+        await self.client.delete("/user/account", headers=self.auth(await self.login("sari@example.com")))
+
+        self.assertIsNone(await self.get(User, uid))
+        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == uid), 0)
+        self.assertEqual(await self.count(ProofSampleConsent, ProofSampleConsent.user_id == uid), 0)
+        self.assertEqual(await self.count(ReceiptScan, ReceiptScan.user_id == uid), 0)
+        # Milik Budi utuh; jejak keputusan Sari dikosongkan.
+        self.assertEqual(await self.count(ProofSample, ProofSample.user_id == other), 3)
+        self.assertEqual(await self.count(ProofSampleConsent, ProofSampleConsent.user_id == other), 1)
+        self.assertEqual(await self.count(ProofSample, ProofSample.decided_by.is_not(None)), 0)
+        self.assertEqual(await self.count(ReceiptScan, ReceiptScan.user_id == other,
+                                          ReceiptScan.sample_lines.is_not(None)), 1)
+
+    async def test_delete_account_forgets_donation(self):
+        await self.donation_scenario(fk=True)
+
+    async def test_delete_account_forgets_donation_without_fk_actions(self):
+        await self.donation_scenario(fk=False)
 
     async def test_former_member_cannot_be_deleted(self):
         await self.shared_household()

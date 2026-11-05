@@ -118,28 +118,36 @@ class SafeLabelTests(unittest.TestCase):
 
 
 class RuleKeyTests(unittest.TestCase):
-    def test_tahap_1_has_only_profile_keys(self):
-        # Review L1 I-1: baris teratas bukti tak dikenal bisa nama orang/merchant; tanpa kunci `logo:` sampai M2.
-        self.assertIs(kerangka.LOGO_KEYS, False)
+    def test_logo_keys_only_from_strict_candidates(self):
+        # Review L1 I-1, pre-flight A16 K8 (tahap 2 M2a): baris teratas bukti tak dikenal bisa nama orang/merchant;
+        # kunci `logo:` hanya dari kandidat ketat (dua kata hanya bersama kata logo/penyedia).
+        self.assertIs(kerangka.LOGO_KEYS, True)
         self.assertEqual(rule_key(["GoPay", "Rp10.000"], GOPAY, forbidden_words=set()), "gopay")
-        for lines in (["KilatPay", "Pembayaran Berhasil", "Rp10.000"], ["09:41", "Siti Aminah", "Kirim Uang Berhasil"],
-                      ["10:57 LTE", "Wahyu Nugroho", "Rp50.000"], ["Bambang", "Pembayaran Berhasil"]):
+        for lines in (["09:41", "Siti Aminah", "Kirim Uang Berhasil"], ["10:57 LTE", "Wahyu Nugroho", "Rp50.000"],
+                      ["RIZKY PRATAMA", "Bukti Transfer"]):
             with self.subTest(lines=lines):
                 self.assertIsNone(rule_key(lines, None, forbidden_words=set()))
+        # Nama satu kata lolos bentuknya (ditolak lewat nama yang dikenal: kerangka dan suara `logo`).
+        self.assertEqual(rule_key(["Bambang", "Pembayaran Berhasil"], None, forbidden_words=set()), "logo:bambang")
         for lines in (["09:41", "Siti Aminah", "Kirim Uang Berhasil", "Nominal Rp50.000"],
-                      ["RIZKY PRATAMA", "Bukti Transfer", "Total Rp150.000"], ["KilatPay", "Total Rp150.000"]):
+                      ["RIZKY PRATAMA", "Bukti Transfer", "Total Rp150.000"]):
             with self.subTest(lines=lines):
                 self.assertIsNone(build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(),
                                                user_name=None))
+        lay = build_layout(["KilatPay", "Pembayaran Berhasil", "Total Rp150.000"],
+                           transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(), user_name=None)
+        self.assertEqual(lay["key"], "logo:kilatpay")
 
-    @patch.object(kerangka, "LOGO_KEYS", True)
     def test_logo_key_for_unknown_app_and_none_for_status_bar_or_name(self):
-        """Logika kunci logo untuk M2 (saklar `LOGO_KEYS`)."""
+        """Logika kunci logo (tahap 2 M2a, `LOGO_KEYS` menyala)."""
         self.assertEqual(rule_key(["GoPay", "Rp10.000"], GOPAY, forbidden_words=set()), "gopay")
         self.assertEqual(rule_key(["KilatPay", "Pembayaran Berhasil", "Rp10.000"], None, forbidden_words=set()),
                          "logo:kilatpay")
         # Bilah status (jam, panah) dilewati.
-        self.assertEqual(rule_key(["10:57", "↑", "KilatPay", "Rp10.000"], None, forbidden_words=set()), "logo:kilatpay")
+        self.assertEqual(rule_key(["10:57", "↑", "KilatPay", "Pembayaran Berhasil", "Rp10.000"], None,
+                                  forbidden_words=set()), "logo:kilatpay")
+        # Kata tunggal yang langsung diikuti nominal (bilah status dilewati) lebih mungkin nama: bukan logo (fix M2a 1).
+        self.assertIsNone(rule_key(["10:57", "↑", "KilatPay", "Rp10.000"], None, forbidden_words=set()))
         self.assertIsNone(rule_key(["10:57", "Transfer Berhasil", "Nominal Rp10.000"], None, forbidden_words=set()))
         # Nama pihak lawan/user tidak pernah jadi kunci.
         self.assertIsNone(rule_key(["BUDI SANTOSO", "Transfer Berhasil", "Rp10.000"], None,
@@ -151,11 +159,15 @@ class RuleKeyTests(unittest.TestCase):
         # Logo baru di bawah judul/baris teks lain bukan logo (baris teks di atasnya bisa nama orang).
         self.assertIsNone(rule_key(["Transfer Berhasil", "KILATPAY", "Rp10.000"], None, forbidden_words=set()))
 
-    @patch.object(kerangka, "LOGO_KEYS", True)
     def test_logo_key_is_lower_case_and_short(self):
-        self.assertEqual(rule_key(["Kilat Pay", "Rp10.000"], None, forbidden_words=set()), "logo:kilat pay")
+        # Dua kata hanya bersama kata logo/penyedia (K8): "Kilat Pay" bukan kandidat, "Kilat Syariah" ya.
+        self.assertIsNone(rule_key(["Kilat Pay", "Rp10.000"], None, forbidden_words=set()))
+        self.assertEqual(rule_key(["Kilat Syariah", "Rp10.000"], None, forbidden_words=set()), "logo:kilat syariah")
+        self.assertEqual(rule_key(["KILAT  BANK", "Rp10.000"], None, forbidden_words=set()), "logo:kilat bank")
         self.assertIsNone(rule_key(["Abcdefghijklmnopqrstu Vwxyzabcdefghijklmnop", "Rp1.000"], None,
                                    forbidden_words=set()))
+        self.assertIsNone(rule_key(["Abcdefghijklmnopqrstuvwxyzabcdefgh Syariah", "Rp1.000"], None,
+                                   forbidden_words=set()))   # > 40 karakter
 
 
 class BuildLayoutTests(unittest.TestCase):
@@ -203,17 +215,17 @@ class BuildLayoutTests(unittest.TestCase):
             self.assertNotIn(tail, json.dumps(lay))
 
     def test_logo_key_only_for_unknown_documents(self):
-        # Tahap 1: tanpa profil aplikasi tidak ada kerangka sama sekali. Dengan `LOGO_KEYS` (M2): kunci logo hanya untuk
-        # tidak_dikenali (QRIS/transfer tanpa profil sering diawali nama merchant, spec §2), dan baris logonya sendiri
-        # tidak menjadi entri.
-        lines = ["KilatPay", "Kopi Susu 1 25.000", "Total Rp25.000", "Bayar QRIS"]
-        for doc_type in ("qris", "transfer", "tidak_dikenali"):
+        # Kunci logo hanya untuk tidak_dikenali (QRIS/transfer tanpa profil sering diawali nama merchant, spec §2), dan
+        # baris logonya sendiri tidak menjadi entri. Tanpa `LOGO_KEYS` (tahap 1): tanpa profil tidak ada kerangka.
+        lines = ["KilatPay", "Pembayaran Berhasil", "Kopi Susu 1 25.000", "Total Rp25.000", "Bayar QRIS"]
+        for doc_type in ("qris", "transfer"):
             self.assertIsNone(build_layout(lines, transfer_doc(doc_type=doc_type, issuer=None), Secrets(), user_name=None))
-        with patch.object(kerangka, "LOGO_KEYS", True):
-            self.assertIsNone(build_layout(lines, transfer_doc(doc_type="qris", issuer=None), Secrets(), user_name=None))
-            lay = build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(), user_name=None)
+        with patch.object(kerangka, "LOGO_KEYS", False):
+            self.assertIsNone(build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(),
+                                           user_name=None))
+        lay = build_layout(lines, transfer_doc(doc_type="tidak_dikenali", issuer=None), Secrets(), user_name=None)
         self.assertEqual(lay["key"], "logo:kilatpay")
-        self.assertEqual([e["i"] for e in lay["lines"]], [1, 2])   # baris logo (0) bukan entri nama
+        self.assertEqual([e["i"] for e in lay["lines"]], [1, 2, 3])   # baris logo (0) bukan entri nama
 
     def test_value_on_its_own_line_takes_the_label_above_only_when_it_is_a_label(self):
         lines = ["GoPay", "Total Bayar", "Rp12.500", "BUDI", "Rp1.000", "Tanggal & waktu transaksi",
@@ -232,6 +244,18 @@ class BuildLayoutTests(unittest.TestCase):
         self.assertEqual(got, [(1, "nama", "ditransfer ke", hmac_hex("budi hartono")),
                                (2, "nama", "nama merchant", hmac_hex(normalize_name("WARUNG BAKSO PAK DI"))),
                                (3, "nama", "ke", hmac_hex("siti"))])
+
+    def test_kepada_and_atas_nama_are_labels(self):
+        # Pre-flight L2 R-2: "Kepada" dan "Atas Nama" kini kata label; nilainya tetap hanya HMAC.
+        for printed, label in (("Kepada", "kepada"), ("Atas Nama", "atas nama"), ("KEPADA:", "kepada")):
+            with self.subTest(printed=printed):
+                lines = ["GoPay", "Transfer Berhasil", printed, "SITI RAHAYU", "Jumlah Rp10.000"]
+                lay = build_layout(lines, transfer_doc(name="SITI RAHAYU", total=10000), Secrets(), user_name=None)
+                by_i = {e["i"]: e for e in lay["lines"]}
+                self.assertNotIn(2, by_i)   # baris label tanpa nilai bukan entri
+                self.assertEqual(by_i[3], {"i": 3, "label": label, "kind": "nama", "h": hmac_hex("siti rahayu")})
+                self.assertNotIn("siti", json.dumps(lay).lower())
+        self.assertTrue({"kepada", "atas"} <= LABEL_WORDS)
 
     def test_title_words_hold_no_name_and_only_in_the_header(self):
         lines = ["GoPay", "Transfer ke BUDI Berhasil", "Top Up Saldo", "Nominal Rp10.000", "Pembayaran Berhasil"]
@@ -351,6 +375,16 @@ class PublicReaderNamesTests(unittest.TestCase):
         src = Path(kerangka.__file__).read_text(encoding="utf-8")
         self.assertNotRegex(src, r"(?:pc|transfer_reader|labels)\._[a-z_A-Z]+|import _")
 
+    def test_words_is_public_and_same_as_private(self):
+        # Pre-flight n-1: peringatan Admin (`admin_kotak.has_warning`) memakai normalisasi kata yang sama dengan
+        # `safe_label` lewat nama publik `kerangka.words`; alias `_words` tetap untuk pemanggil lama.
+        self.assertIs(kerangka._words, kerangka.words)
+        self.assertEqual(kerangka.words("  (Status) Bayar:  keterangan, "), ["status", "bayar", "keterangan"])
+        self.assertEqual(kerangka.words(" .. "), [])
+        src = (Path(kerangka.__file__).parents[2] / "api" / "routes" / "admin_kotak.py").read_text(encoding="utf-8")
+        self.assertRegex(src, r"from app\.services\.kotak_struk\.kerangka import words\b")
+        self.assertNotRegex(src, r"import _words")
+
     def test_store_receipt_has_no_layout(self):
         doc = DokumenBayar(doc_type="struk_belanja", counterparty=Counterparty(name="ALFAMART"))
         self.assertIsNone(build_layout(["ALFAMART", "ROTI 1 15.000", "Total Belanja 15.000"], doc, Secrets(),
@@ -386,19 +420,42 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
         cases = [c for c in SWEEP if {"proof", "probe"} & set(c["tags"])]
         self.assertGreater(len(cases), 150)
         built = 0
-        for case in SWEEP:
+        # Tahap 2 (M2a, Review Focus 6): kunci logo. Daftar sapuan sendiri tidak punya aplikasi tak berprofil dengan baris
+        # logo, jadi setiap daftar juga dibaca dengan baris teratas tambahan: logo rekaan ("NEWPAY"), nama orang dua kata
+        # ("Siti Aminah", bukan kandidat), dan nama depan user ("Rina" dengan user Rina Wulandari).
+        logo_keys = {}   # varian -> [(id, saklar, kunci)]
+        arah_seen = {}   # varian -> [(id, saklar, token)] (tahap 2 M3a)
+        variants = (("asli", None, None), ("logo", "NEWPAY", None), ("orang", "Siti Aminah", None),
+                    ("user", "Rina", "Rina Wulandari"))
+        for case, (variant, top, user) in ((c, v) for c in SWEEP for v in variants):
+            lines = [top, *case["lines"]] if top else list(case["lines"])
+            user_name = user or case.get("user_name")
             for enabled in (False, True):
-                text = TextDoc(lines=list(case["lines"]), kind=KIND_IMAGE)
-                res = await read_document(text, ParseContext(today=TODAY, user_name=case.get("user_name")),
+                text = TextDoc(lines=list(lines), kind=KIND_IMAGE)
+                res = await read_document(text, ParseContext(today=TODAY, user_name=user_name),
                                           proofs_enabled=enabled)
                 doc, secrets = res.parsed.doc, res.parsed.secrets
-                lay = build_layout(case["lines"], doc, secrets, user_name=case.get("user_name"))
+                lay = build_layout(lines, doc, secrets, user_name=user_name)
                 if lay is None:
                     continue
                 built += 1
-                with self.subTest(id=case["id"], on=enabled):
+                with self.subTest(id=case["id"], variant=variant, on=enabled):
                     self.assertNotRegex(without_values(lay), r"\d{6,}")
-                    clean = pc.clean_lines(case["lines"])
+                    self.assertLessEqual(set(lay), {"v", "key", "lines", "arah"})
+                    clean = pc.clean_lines(lines)
+                    # Token arah (M3a, K9): hanya kosakata, dan pembaca menghitung ulang persis sama dari (baris, dok).
+                    self.assertIsInstance(lay["arah"], list)
+                    self.assertEqual(lay["arah"], kerangka.arah_tokens(clean, doc))
+                    self.assertLessEqual(sum(t.startswith("judul:") for t in lay["arah"]), 1)
+                    self.assertLessEqual(sum(t.startswith("ke:") for t in lay["arah"]), 1)
+                    for t in lay["arah"]:
+                        arah_seen.setdefault(variant, []).append((case["id"], enabled, t))
+                        self.assertTrue(kerangka.arah_token_ok(t), t)
+                        self.assertNotRegex(t, r"\d")
+                    if lay["key"].startswith("logo:"):
+                        logo_keys.setdefault(variant, []).append((case["id"], enabled, lay["key"]))
+                        self.assertEqual(doc.doc_type, "tidak_dikenali")
+                        self.assertIsNotNone(kerangka.logo_word(lay["key"]))
                     # Setiap nominal tercetak sebagai uang di barisnya, tidak di bawah/di samping label nomor.
                     for e in lay["lines"]:
                         if e["kind"] == "nominal":
@@ -409,10 +466,18 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
                             if not e["label"] and not re.search(r"\d", above):
                                 self.assertFalse(ID_WORDS.search(above), (above, line))
                     names = [doc.counterparty.name, pc.read_sender_name(clean, detect_issuer(clean)),
-                             case.get("user_name")]
+                             user_name, pc.read_name(pc.body_lines(clean), detect_issuer(clean), "merchant")]
                     name_words = {w for n in names for w in normalize_name(n).split()} | set(SWEEP_PERSON_WORDS)
                     for t in plain_texts(lay):
                         self.assertFalse(set(re.findall(r"[a-z]+", t.lower())) & name_words, t)
+                    for t in lay["arah"]:
+                        words = set(t.split(":", 1)[1].split())
+                        if t.startswith("judul:"):   # kata judul: kosakata judul, tanpa kata nama
+                            self.assertFalse(words & name_words, t)
+                            self.assertLessEqual(words, kerangka.TITLE_WORDS, t)
+                        else:   # kata penerima: hanya penyedia + kata top-up (nama tidak pernah, K9)
+                            self.assertLessEqual(words, kerangka.ARAH_PARTY_WORDS, t)
+                            self.assertFalse(words & (name_words - kerangka.ARAH_PARTY_WORDS), t)
                     for e in lay["lines"]:
                         if e.get("label"):
                             words = [w.strip(".,:;()'&/-") for w in e["label"].split()]
@@ -426,6 +491,19 @@ class LayoutPrivacyTests(unittest.IsolatedAsyncioTestCase):
                     for t in plain_texts(lay):
                         self.assertNotRegex(t, r"\d", t)
         self.assertGreater(built, 20)   # sapuan benar-benar menghasilkan kerangka
+        # Kata logo kunci ikut diperiksa di atas (`plain_texts`) terhadap nama pihak lawan/pengirim/merchant/user/sapuan.
+        # Laporan M2a: daftar sapuan asli 0 kerangka berkunci logo (semua aplikasinya berprofil); varian logo rekaan
+        # membentuknya; nama orang dua kata dan nama user tidak pernah.
+        self.assertEqual(logo_keys.get("asli", []), [])
+        self.assertGreater(len(logo_keys.get("logo", [])), 20)
+        self.assertEqual({k for _, _, k in logo_keys["logo"]}, {"logo:newpay"})
+        self.assertEqual((logo_keys.get("orang", []), logo_keys.get("user", [])), ([], []))
+        # Laporan M3a: token arah yang muncul di sapuan (semuanya kosakata, diperiksa di atas).
+        self.assertTrue(arah_seen.get("asli"))
+        self.assertLessEqual({t for _, _, t in arah_seen["asli"]}, {t for v in arah_seen.values() for _, _, t in v})
+        if os.environ.get("KOTAK_ARAH_REPORT"):
+            for variant, seen in arah_seen.items():
+                print(variant, len({(i, on) for i, on, _ in seen}), sorted({t for _, _, t in seen}))
         text = json.dumps(SWEEP).lower()
         self.assertTrue(all(w in text for w in SWEEP_PERSON_WORDS))   # nama-nama itu memang tercetak di sapuan
 
