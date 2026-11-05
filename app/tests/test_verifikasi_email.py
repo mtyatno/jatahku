@@ -10,10 +10,11 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
+import calendar
 import importlib.util
 import re
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -31,7 +32,7 @@ from app.core.database import Base, get_db
 from app.core.security import (
     create_access_token, create_purpose_token, create_refresh_token, decode_purpose_token,
 )
-from app.models.models import Household, HouseholdMember, HouseholdRole, User, email_normal
+from app.models.models import Household, HouseholdMember, HouseholdRole, Report, User, email_normal
 from app.services import verifikasi_email as ve
 
 configure_mappers()
@@ -115,6 +116,25 @@ class DasarVerifikasi(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def masuk(user) -> dict:
         return {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
+
+    async def laporan_dilewati(self, user, hari=2, alasan="belum_verifikasi", bulan=10):
+        """Laporan bulanan `user` (periode bulan `bulan` 2026; satu laporan per bulan per user) yang terbit `hari` hari
+        lalu dan `dilewati` karena `alasan`."""
+        async with self.Session() as db:
+            r = Report(
+                user_id=user.id, jenis="bulanan", periode_mulai=date(2026, bulan, 1),
+                periode_akhir=date(2026, bulan, calendar.monthrange(2026, bulan)[1]),
+                payday_day=1, data={}, terbit_at=datetime.now(timezone.utc) - timedelta(days=hari),
+                email_status="dilewati", email_alasan=alasan,
+            )
+            db.add(r)
+            await db.commit()
+            return r.id
+
+    async def status_laporan(self, rid):
+        async with self.Session() as db:
+            r = (await db.execute(select(Report).where(Report.id == rid))).scalar_one()
+            return r.email_status, r.email_alasan
 
 
 class NormalisasiTests(unittest.TestCase):
@@ -269,12 +289,14 @@ class GoogleTests(DasarVerifikasi):
 
     async def test_google_id_dengan_email_beda_tidak_memverifikasi(self):
         async with self.Session() as db:
-            await self.buat(db, "Budi", "lama@example.com", terverifikasi=False, google_id="g-1")
+            lama = await self.buat(db, "Budi", "lama@example.com", terverifikasi=False, google_id="g-1")
             await db.commit()
+        rid = await self.laporan_dilewati(lama)
         with self.google():   # akun Google berganti email: alamat di Jatahku tidak ikut terverifikasi
             r = await self.klien.post("/auth/google", json={"credential": "x"})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertIsNone((await self.baca(email="lama@example.com")).email_verified_at)
+        self.assertEqual(await self.status_laporan(rid), ("dilewati", "belum_verifikasi"))   # Ruling F-6
 
     async def test_google_link_mengisi_email_terverifikasi(self):
         async with self.Session() as db:
@@ -301,6 +323,7 @@ class GoogleTests(DasarVerifikasi):
         async with self.Session() as db:
             u = await self.buat(db, "Lama", "lama@example.com", terverifikasi=False)
             await db.commit()
+        rid = await self.laporan_dilewati(u)
         with self.google():   # Google membawa budi@example.com, akun memegang lama@example.com
             r = await self.klien.post("/auth/google/link", json={"credential": "x"}, headers=self.masuk(u))
         self.assertEqual(r.status_code, 200, r.text)
@@ -308,15 +331,58 @@ class GoogleTests(DasarVerifikasi):
         self.assertEqual(user.email, "lama@example.com")
         self.assertEqual(user.google_id, "g-1")
         self.assertIsNone(user.email_verified_at)
+        self.assertEqual(await self.status_laporan(rid), ("dilewati", "belum_verifikasi"))   # Ruling F-6
 
     async def test_google_link_email_sama_belum_terverifikasi_jadi_terverifikasi(self):
         async with self.Session() as db:
             u = await self.buat(db, "Sama", "budi@example.com", terverifikasi=False)
             await db.commit()
+        rid = await self.laporan_dilewati(u)
         with self.google():
             r = await self.klien.post("/auth/google/link", json={"credential": "x"}, headers=self.masuk(u))
         self.assertEqual(r.status_code, 200, r.text)
         self.assertIsNotNone((await self.baca(u.id)).email_verified_at)
+        self.assertEqual(await self.status_laporan(rid), ("menunggu", None))   # Ruling F-6
+
+    # --- Ruling F-6: verifikasi lewat Google menghidupkan lagi laporan yang dilewati, seperti tombol verifikasi ---
+
+    async def test_google_email_terdaftar_menghidupkan_lagi_laporan_7_hari(self):
+        async with self.Session() as db:
+            budi = await self.buat(db, "Budi", "budi@example.com", terverifikasi=False)
+            await db.commit()
+        belum = await self.laporan_dilewati(budi, hari=2)
+        tanpa_email = await self.laporan_dilewati(budi, hari=6, alasan="tanpa_email", bulan=9)
+        tua = await self.laporan_dilewati(budi, hari=30, bulan=8)
+        dimatikan = await self.laporan_dilewati(budi, hari=2, alasan="dimatikan", bulan=7)
+        with self.google():
+            r = await self.klien.post("/auth/google", json={"credential": "x"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIsNotNone((await self.baca(budi.id)).email_verified_at)
+        self.assertEqual(await self.status_laporan(belum), ("menunggu", None))
+        self.assertEqual(await self.status_laporan(tanpa_email), ("menunggu", None))
+        self.assertEqual(await self.status_laporan(tua), ("dilewati", "belum_verifikasi"))
+        self.assertEqual(await self.status_laporan(dimatikan), ("dilewati", "dimatikan"))
+
+    async def test_google_id_email_sama_menghidupkan_lagi(self):
+        async with self.Session() as db:
+            budi = await self.buat(db, "Budi", "budi@example.com", terverifikasi=False, google_id="g-1")
+            await db.commit()
+        rid = await self.laporan_dilewati(budi)
+        with self.google():
+            r = await self.klien.post("/auth/google", json={"credential": "x"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(await self.status_laporan(rid), ("menunggu", None))
+
+    async def test_google_link_mengisi_email_menghidupkan_lagi_laporan_tanpa_email(self):
+        async with self.Session() as db:
+            tanpa = User(name="Tanpa", telegram_id="9")
+            db.add(tanpa)
+            await db.commit()
+        rid = await self.laporan_dilewati(tanpa, alasan="tanpa_email")
+        with self.google():
+            r = await self.klien.post("/auth/google/link", json={"credential": "x"}, headers=self.masuk(tanpa))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(await self.status_laporan(rid), ("menunggu", None))
 
 
 class PagarTests(unittest.TestCase):

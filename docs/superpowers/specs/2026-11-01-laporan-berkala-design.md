@@ -133,6 +133,8 @@ dijabarkan di `docs/laporan-berkala.md` bagian "Email laporan".
   argumen yang terlupa tidak pernah mencetak token tanpa kedaluwarsa.
 - **F-3, tanpa `Referrer-Policy: no-referrer` per halaman:** header global `strict-origin-when-cross-origin` selalu
   menimpanya dan sudah membuang path dan query bertoken lintas origin; halaman bertoken tetap `Cache-Control: no-store`.
+- **F-6, verifikasi lewat Google juga menghidupkan lagi laporan yang dilewati** (keputusan rencana 2): login atau tautan
+  Google yang memverifikasi alamat akun yang sudah ada menjalankan `hidupkan_lagi` seperti tombol "Verifikasi email".
 
 ## 1. Tujuan dan keputusan
 

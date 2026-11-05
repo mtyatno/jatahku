@@ -9,11 +9,10 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
-import calendar
 import html
 import re
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -68,25 +67,6 @@ class ApiVerifikasiDasar(DasarVerifikasi):
     async def konfirmasi(self, token, **kw):
         """POST tombol "Verifikasi email" di halaman konfirmasi."""
         return await self.klien2.post("/auth/verifikasi-email", params={"token": token}, follow_redirects=False, **kw)
-
-    async def laporan_dilewati(self, user, hari=2, alasan="belum_verifikasi", bulan=10):
-        """Laporan bulanan `user` (periode bulan `bulan` 2026; satu laporan per bulan per user) yang terbit `hari` hari
-        lalu dan `dilewati` karena `alasan`."""
-        async with self.Session() as db:
-            r = Report(
-                user_id=user.id, jenis="bulanan", periode_mulai=date(2026, bulan, 1),
-                periode_akhir=date(2026, bulan, calendar.monthrange(2026, bulan)[1]),
-                payday_day=1, data={}, terbit_at=datetime.now(timezone.utc) - timedelta(days=hari),
-                email_status="dilewati", email_alasan=alasan,
-            )
-            db.add(r)
-            await db.commit()
-            return r.id
-
-    async def status_laporan(self, rid):
-        async with self.Session() as db:
-            r = (await db.execute(select(Report).where(Report.id == rid))).scalar_one()
-            return r.email_status, r.email_alasan
 
 
 class KirimTautanTests(ApiVerifikasiDasar):

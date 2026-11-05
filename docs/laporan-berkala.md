@@ -285,7 +285,9 @@ mati) → klaim basi dikembalikan langkah 1 dan email terkirim dua kali; dipilih
 **Laporan yang dilewati dihidupkan lagi** (`hidupkan_lagi`, keputusan rencana 2), hanya yang terbit ≤
 `JENDELA_TERBIT_HARI` = 7 hari lalu: verifikasi berhasil → alasan `belum_verifikasi` dan `tanpa_email` kembali `menunggu`;
 `email_on` dinyalakan (PATCH) → alasan `dimatikan`. Yang lebih tua tidak dikirim. Percobaan yang sudah terpakai dan
-`email_terakhir_at` tidak direset (jeda 55 menit tetap berlaku).
+`email_terakhir_at` tidak direset (jeda 55 menit tetap berlaku). Verifikasi lewat Google juga menghidupkan lagi (Ruling
+F-6): login atau tautan Google yang memverifikasi alamat akun yang sudah ada (alamatnya sama dengan email Google)
+menjalankan `hidupkan_lagi` yang sama dalam transaksinya; alamat yang berbeda tidak memverifikasi dan tidak menghidupkan.
 
 **Berhenti berlangganan.** Setiap email memuat tautan `{API_URL}/laporan/berhenti-email?token=…` (token bertujuan
 `berhenti_email_laporan`, klaim `sub`, **tanpa `exp`**: tautan di email lama harus tetap berfungsi). `GET` hanya
