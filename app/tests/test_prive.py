@@ -22,13 +22,11 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import importlib.util
 import pathlib
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal as D
 from unittest.mock import patch
-from zoneinfo import ZoneInfo
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
-JKT = ZoneInfo("Asia/Jakarta")
 
 if HAS_AIOSQLITE:
     import httpx
@@ -62,7 +60,9 @@ class PriveTests(unittest.IsolatedAsyncioTestCase):
         p = patch("redis.asyncio.from_url", return_value=self.redis)
         p.start()
         self.addCleanup(p.stop)
-        self.today = datetime.now(JKT).date()
+        # Sumber "hari ini" yang sama dengan route prive dan `compute_envelope_summaries`: tanggal mesin (server
+        # produksi UTC). Dulu tanggal WIB, sehingga tes merah di runner CI (UTC) pukul 17.00–24.00 UTC.
+        self.today = date.today()
 
         async with self.Session() as db:
             def user(nama):
