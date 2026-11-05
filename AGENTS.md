@@ -661,13 +661,15 @@ Sebelum merge:
 Setelah merge:
 3. Tunggu deploy hijau (`api.jatahku.com/health` → `commit` baru; `jatahku.com/version.json` → commit yang sama).
 4. Pengaturan → 📄 Laporan: status "Email … belum terverifikasi." (atau banner di `/laporan`) → "Kirim tautan verifikasi" →
-   "Tautan verifikasi dikirim ke …" → buka tautan di email → kembali ke Pengaturan dengan "Email terverifikasi. Laporan
-   berikutnya juga dikirim ke email." dan status "Email … terverifikasi.". Tautan yang sama dibuka lagi tetap berakhir di
-   Pengaturan tanpa mengubah apa pun. Akun Google dengan email yang sama sudah terverifikasi sendiri sesudah login Google.
+   "Tautan verifikasi dikirim ke …" → buka tautan di email → halaman "Verifikasi email kamu" (membukanya belum mengubah
+   apa pun: Pengaturan di tab lain, dimuat ulang, masih "belum terverifikasi") → tekan "Verifikasi email" → kembali ke
+   Pengaturan dengan "Email terverifikasi. Laporan berikutnya juga dikirim ke email." dan status "Email …
+   terverifikasi.". Tautan yang sama dibuka lagi langsung berakhir di Pengaturan dengan pesan yang sama, tanpa halaman
+   dan tanpa mengubah apa pun. Akun Google dengan email yang sama sudah terverifikasi sendiri sesudah login Google.
 5. Log tanpa alamat (jalankan sesudah langkah 4, lalu lagi sesudah jam :30 yang mengirim email):
-   `sudo journalctl -u jatahku --since "1 hour ago" | grep -i "email laporan"` → hanya id laporan/user, angka, dan teks
-   tetap (mis. `Email laporan terkirim`, `email laporan: N terkirim, …`); tanpa traceback. Tidak ada alamat:
-   `sudo journalctl -u jatahku --since "1 hour ago" | grep -i "email laporan" | grep -c '@'` → 0, dan
+   `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan"` → hanya id laporan/user,
+   angka, dan teks tetap (mis. `Email laporan terkirim`, `email laporan: N terkirim, …`); tanpa traceback. Tidak ada
+   alamat: `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan" | grep -c '@'` → 0, dan
    `sudo journalctl -u jatahku --since "1 hour ago" | grep -i "verifikasi" | grep -c '@'` → 0.
 6. Laporan pertama yang terkirim: **laporan yang terbit sebelum merge tidak pernah diemail** (`email_status` NULL, tahap 1),
    jadi tunggu laporan baru. Hari gajian berikutnya ±07:30 WIB (job :30 sesudah snapshot 00:05 UTC): email "Laporan … ·

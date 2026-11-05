@@ -108,8 +108,8 @@ rancangan yang disetujui; bila berbeda, butir di sini dan di "Penyesuaian saat e
 
 ## Penyesuaian saat eksekusi tahap 2 (5 Nov 2026)
 
-Review per tugas (Task 1–8, subagent-driven) menghasilkan keputusan berikut; diuji di tugasnya dan dijabarkan di
-`docs/laporan-berkala.md` bagian "Email laporan".
+Review per tugas (Task 1–8, subagent-driven) dan review akhir (F-n) menghasilkan keputusan berikut; diuji di tugasnya dan
+dijabarkan di `docs/laporan-berkala.md` bagian "Email laporan".
 
 - **R-T3-1, batas waktu SMTP 30 detik** untuk setiap email (`email_service.SMTP_TIMEOUT`, di `_deliver`): antrean berjalan
   di dalam job per jam (`max_instances=1`), jadi server SMTP yang macet harus gagal cepat dan tidak menahan jam berikutnya.
@@ -127,6 +127,12 @@ Review per tugas (Task 1–8, subagent-driven) menghasilkan keputusan berikut; d
 - **Pesan `?email_verifikasi=` tampil sekali:** reload ambil-alih service worker (`controllerchange`) atau browser yang
   logout (dialihkan ke login) dapat menghilangkannya; verifikasinya sudah berhasil dan baris status di kartu menunjukkan
   hasilnya. Dicatat di "Batasan yang diketahui" dokumen operasional.
+- **F-4, tautan verifikasi: GET menampilkan konfirmasi, POST (tombol "Verifikasi email") memverifikasi** (mengganti GET
+  yang memverifikasi di bagian 6a dan 7): pemindai tautan di layanan email membuka GET; pola berhenti berlangganan.
+- **F-2, `berlaku` token bertujuan wajib disebut** (`berlaku=None` = tanpa `exp`) dan tujuan `access`/`refresh` ditolak:
+  argumen yang terlupa tidak pernah mencetak token tanpa kedaluwarsa.
+- **F-3, tanpa `Referrer-Policy: no-referrer` per halaman:** header global `strict-origin-when-cross-origin` selalu
+  menimpanya dan sudah membuang path dan query bertoken lintas origin; halaman bertoken tetap `Cache-Control: no-store`.
 
 ## 1. Tujuan dan keputusan
 

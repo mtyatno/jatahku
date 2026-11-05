@@ -7,8 +7,8 @@ dikirim ke email yang sudah diverifikasi, dengan PDF terlampir. Desain dan keput
 `docs/superpowers/specs/2026-11-01-laporan-berkala-design.md` (Project doc `claude/laporan-berkala-desain.md`); rencana
 tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`; rencana tahap 2:
 `docs/superpowers/plans/2026-11-05-laporan-berkala-tahap-2.md`. "Ruling Rn" di bawah menunjuk keputusan saat eksekusi
-rencana tahap 1, "R-T3-n" keputusan tahap 2; keduanya dicatat di spec ("Penyesuaian saat eksekusi" dan "Penyesuaian
-saat eksekusi tahap 2").
+rencana tahap 1, "R-T3-n" dan "F-n" keputusan tahap 2 (review per tugas dan review akhir); keduanya dicatat di spec
+("Penyesuaian saat eksekusi" dan "Penyesuaian saat eksekusi tahap 2").
 
 **Status (5 Nov 2026).** Tahap 1 (inti) tayang 5 Nov 2026: PR #190 (squash `56ddf74`), revisi alembic `967a27d0c15d`
 dan checklist deploy di `AGENTS.md` ("Deploy Checklist — Laporan berkala tahap 1 (967a27d0c15d)") dijalankan pemilik.
@@ -31,13 +31,13 @@ rencana sendiri. Perbarui bagian ini saat status berubah.
 | `app/services/pemasukan.py` | filter pemasukan bersama (analitik `_income_totals` dan laporan) |
 | `app/services/laporan/job.py` | `laporan_job` (penerbitan per household), notifikasi, lalu memanggil antrean email |
 | `app/services/laporan/antrean_email.py` | antrean email: `status_awal`, `proses_antrean_email` (klaim, coba ulang), `lampiran_untuk`, `hidupkan_lagi` |
-| `app/services/laporan/surel.py` | fungsi murni: isi email laporan dan verifikasi, tautan dan halaman berhenti berlangganan |
+| `app/services/laporan/surel.py` | fungsi murni: isi email laporan dan verifikasi, tautan dan halaman berhenti berlangganan, halaman konfirmasi verifikasi |
 | `app/services/verifikasi_email.py` | token verifikasi (24 jam), `sama_email`, `tandai_terverifikasi` |
 | `app/services/email_service.py` | satu-satunya tempat SMTP: `send_laporan_email` (MIME + PDF + List-Unsubscribe), `send_verifikasi_email`, `SMTP_TIMEOUT` |
-| `app/core/security.py` | `create_purpose_token` / `decode_purpose_token`: token bertujuan (klaim `type`) |
+| `app/core/security.py` | `create_purpose_token` / `decode_purpose_token`: token bertujuan (klaim `type`; `berlaku` wajib disebut) |
 | `app/services/laporan/pdf.py` + `app/assets/fonts/` | PDF dari `data`, AES-256, Noto Sans (OFL) |
 | `app/api/routes/laporan.py` | `/laporan`, `/laporan/{id}`, `/laporan/{id}/pdf`, `/laporan/berhenti-email`, `/user/laporan-pengaturan` (GET, PUT, PATCH) |
-| `app/api/routes/verifikasi_email.py` | `POST /user/email/verifikasi` (kirim tautan) dan `GET /auth/verifikasi-email` (buka tautan) |
+| `app/api/routes/verifikasi_email.py` | `POST /user/email/verifikasi` (kirim tautan), `GET /auth/verifikasi-email` (tautan di email: halaman konfirmasi, tidak menulis) dan `POST /auth/verifikasi-email` (tombol "Verifikasi email") |
 | `app/core/rate_limit.py` | `kunci_per_user`: kunci batas frekuensi per user yang terautentikasi |
 | `frontend/src/lib/laporanView.js`, `lib/laporanFormat.js` | helper murni halaman dan alur unduh (diuji `node --test`) |
 | `frontend/src/pages/Laporan.jsx`, `LaporanDetail.jsx`, `components/laporan/*`, `components/LaporanSettings.jsx` | UI (kartu Pengaturan memuat status email, tautan verifikasi, dan saklar email) |
@@ -48,7 +48,7 @@ rencana sendiri. Perbarui bagian ini saat status berubah.
 |---|---|
 | `reports` | Satu laporan yang sudah terbit. `user_id` (FK `users`, ON DELETE CASCADE), `household_id` (FK `households`, ON DELETE SET NULL: laporan mantan anggota tetap ada saat household dihapus), `jenis` (`bulanan`; `kuartalan`/`tahunan` di tahap 3), `periode_mulai`/`periode_akhir`, `payday_day` (tanggal gajian rumah saat terbit), `data` (JSONB beku), `terbit_at` (bawaan `now()`), `notified_at`, dan kolom antrean email tahap 2 (`email_status`, `email_alasan`, `email_percobaan` bawaan 0, `email_terakhir_at`, `email_terkirim_at`). Unik `uq_reports_user_jenis_periode (user_id, jenis, periode_mulai)`; indeks `ix_reports_email_antrean (email_status, email_terakhir_at)`. Tahap 1 membiarkan `email_status` NULL. |
 | `report_settings` | Satu baris per user (kunci utama `user_id`, FK CASCADE), dibuat saat kata sandi pertama kali disimpan atau saklar email pertama kali diubah (PATCH, atau berhenti berlangganan); tanpa baris = bawaan. `kata_sandi_enc` (token Fernet; NULL = belum diatur), `email_on` (bisa diubah sejak tahap 2), `kuartalan_on`, `tahunan_on` (bawaan true; belum bisa diubah, tahap 3), `updated_at`. |
-| `users.email_verified_at` | TIMESTAMPTZ NULL tanpa bawaan: NULL = belum (atau tidak lagi) terverifikasi. Diisi (tahap 2) oleh tautan verifikasi email dan oleh login/tautan Google yang emailnya sama dengan email akun (Google menjamin `email_verified`); dikosongkan oleh event model `User.email` (`app/models/models.py`): jalur apa pun yang mengganti `users.email` lewat atribut ORM (route, bot, admin) mengosongkannya bila alamatnya benar-benar berganti (beda huruf besar-kecil atau spasi saja tidak). UPDATE Core atas kolom email tidak lewat event itu; tes pagar melarangnya. |
+| `users.email_verified_at` | TIMESTAMPTZ NULL tanpa bawaan: NULL = belum (atau tidak lagi) terverifikasi. Diisi (tahap 2) oleh tombol "Verifikasi email" di halaman tautan verifikasi (POST) dan oleh login/tautan Google yang emailnya sama dengan email akun (Google menjamin `email_verified`); dikosongkan oleh event model `User.email` (`app/models/models.py`): jalur apa pun yang mengganti `users.email` lewat atribut ORM (route, bot, admin) mengosongkannya bila alamatnya benar-benar berganti (beda huruf besar-kecil atau spasi saja tidak). UPDATE Core atas kolom email tidak lewat event itu; tes pagar melarangnya. |
 
 Tahap 2 tanpa migrasi: semua kolom email di `reports` dan `email_verified_at` sudah ada sejak revisi `967a27d0c15d`.
 `reports.email_status` (`String(16)`): `menunggu`, `mengirim`, `terkirim`, `gagal`, `dilewati`; `email_alasan`
@@ -229,10 +229,16 @@ Laporan yang terbit dikirim ke `users.email` bila alamatnya **terverifikasi** (`
 **Verifikasi.** `POST /user/email/verifikasi` (tombol "Kirim tautan verifikasi") mengirim email "Verifikasi email Jatahku
 kamu" lewat `email_service.send_verifikasi_email` ke alamat akun pemanggil sendiri. Tautannya
 `{API_URL}/auth/verifikasi-email?token=…`; token JWT (`JWT_SECRET`) bertujuan `verifikasi_email` dengan klaim `sub` (id
-user) dan `email` (huruf kecil), berlaku 24 jam. Membuka tautan memverifikasi alamat **yang ada di token**: bila alamat
-akun sudah berganti sejak tautan dikirim (`sama_email` membandingkan strip + huruf kecil) hasilnya `berubah` dan tidak ada
-yang ditulis. Login atau tautan Google dengan email yang sama dengan email akun juga memverifikasi (Google menjamin
-alamatnya). Mengganti email lewat jalur ORM mana pun mengosongkan verifikasi (bagian Model data).
+user) dan `email` (huruf kecil), berlaku 24 jam. **Membuka tautan (GET) tidak mengubah apa pun** (Ruling F-4): pemindai
+tautan di layanan email membuka GET, jadi yang tampil halaman "Verifikasi email kamu" ("Klik tombol di bawah untuk
+memverifikasi {email} sebagai alamat penerima laporan Jatahku.") dengan tombol "Verifikasi email". Tombol itu mengirim
+POST ke alamat yang sama; hanya POST yang memverifikasi, lalu 303 ke Pengaturan (`?email_verifikasi=berhasil`). Pola ini
+sama dengan tautan berhenti berlangganan. Yang diverifikasi alamat **yang ada di token**: bila alamat akun sudah berganti
+sejak tautan dikirim (`sama_email` membandingkan strip + huruf kecil) hasilnya `berubah` dan tidak ada yang ditulis.
+Tautan yang tidak perlu atau tidak bisa dikonfirmasi tidak menampilkan halaman: GET langsung 303 dengan `tidak_berlaku`,
+`berubah`, atau `berhasil` (alamat ini sudah terverifikasi). Login atau tautan Google dengan email yang sama dengan email
+akun juga memverifikasi (Google menjamin alamatnya). Mengganti email lewat jalur ORM mana pun mengosongkan verifikasi
+(bagian Model data).
 
 **Isi email laporan** (`surel.isi_email_laporan`, fungsi murni; semua isi dari user atau data lewat `email_service.h`):
 subjek `"{judul} · Jatahku"`; sapaan `"Hai {nama},"` dan `"{judul} sudah terbit."`; baris `"Anggaran terpakai: {persen}%"`
@@ -289,13 +295,16 @@ menerima email laporan?" → "Email laporan dimatikan" ("Laporan tetap terbit di
 di Pengaturan → Laporan."), dan "Tautan tidak berlaku" (400). Menyalakan lagi: saklar "Kirim laporan ke email".
 
 **Log** (hanya id laporan/user, angka, dan teks tetap; tidak pernah alamat, kata sandi, token, atau isi laporan; galat
-SMTP hanya dengan nama jenisnya karena pesannya bisa memuat alamat). Semuanya cocok dengan `grep -i "email laporan"`:
-`Email laporan terkirim` / `Email laporan gagal dikirim (<jenis galat>)` (`email_service`), `email laporan: N terkirim, …`,
-`email laporan <id> gagal pada percobaan ke-N; tidak dicoba lagi (alasan smtp)`, `email laporan <id> masih berstatus
-mengirim lebih dari 30 menit …`, dan peringatan lampiran (`… email laporan dikirim tanpa lampiran PDF`). Email verifikasi
+SMTP hanya dengan nama jenisnya karena pesannya bisa memuat alamat). Setiap baris log email laporan memuat "email laporan"
+atau "PDF laporan", jadi `grep -iE "email laporan|PDF laporan"` menangkap semuanya: `Email laporan terkirim` / `Email
+laporan gagal dikirim (<jenis galat>)` (`email_service`), `email laporan: N terkirim, …`, `email laporan <id> gagal pada
+percobaan ke-N; tidak dicoba lagi (alasan smtp)`, `email laporan <id> masih berstatus mengirim lebih dari 30 menit …`,
+`email laporan <id> gagal diproses …`, peringatan lampiran (`… email laporan dikirim tanpa lampiran PDF`), dan `PDF laporan
+<id> gagal dibuat (<jenis galat>); email dikirim tanpa lampiran` (hanya cocok dengan pola kedua). Pola kedua juga menangkap
+peringatan startup `REPORT_SECRET_KEY kosong atau tidak valid: kata sandi dan PDF laporan nonaktif`. Email verifikasi
 dicatat `Email verifikasi terkirim` / `Email verifikasi gagal dikirim (<jenis galat>)` dan `Tautan verifikasi email user
-<id> gagal dikirim`, tanpa alamat (karena itu `send_verifikasi_email`, bukan `send_email`, yang mencatat "Email sent to
-<alamat>").
+<id> gagal dikirim` (cocok dengan `grep -i verifikasi`), tanpa alamat (karena itu `send_verifikasi_email`, bukan
+`send_email`, yang mencatat "Email sent to <alamat>").
 
 ## Halaman web
 
@@ -318,8 +327,9 @@ dicatat `Email verifikasi terkirim` / `Email verifikasi gagal dikirim (<jenis ga
   juga tanpa email atau tanpa verifikasi, supaya pilihan user tersimpan untuk saat emailnya siap), status kata sandi,
   formulir "Atur kata sandi"/"Ganti kata sandi", dan tautan "Lihat laporan" ke `/laporan` (tetap tampil bila pengaturan
   gagal dimuat). Saklar kuartalan dan tahunan belum tampil (tahap 3).
-- **Pesan sesudah tautan verifikasi** (`?email_verifikasi=berhasil|tidak_berlaku|berubah`): ditampilkan sekali di atas
-  kartu, lalu parameter dihapus dari URL (hash dan query lain tetap). Bunyinya di `laporanView.js` (`pesanVerifikasi`).
+- **Pesan sesudah verifikasi lewat tautan** (`?email_verifikasi=berhasil|tidak_berlaku|berubah`, dari tombol "Verifikasi
+  email" atau dari tautan yang langsung dialihkan): ditampilkan sekali di atas kartu, lalu parameter dihapus dari URL
+  (hash dan query lain tetap). Bunyinya di `laporanView.js` (`pesanVerifikasi`).
 - Tombol top bar ekspor manual (PDF/CSV) kini bernama "Ekspor" / "Ekspor {periode}".
 
 ## API
@@ -333,7 +343,8 @@ dicatat `Email verifikasi terkirim` / `Email verifikasi gagal dikirim (<jenis ga
 | `PUT /user/laporan-pengaturan` | Badan `{"kata_sandi": "…"}` (hanya kata sandi) → bentuk GET. 422: `detail` kalimat siap tampil untuk panjang dan karakter, atau daftar `{type, loc, msg}` untuk badan salah bentuk; 503 `kunci_belum_diatur`; 429 (5/jam). |
 | `PATCH /user/laporan-pengaturan` | (tahap 2) Badan `{"email_on": true\|false}`, semua field opsional; hanya yang dikirim berubah, kata sandi tidak tersentuh → bentuk GET. Badan kosong, `null`, atau field asing → 422. Menyalakan `email_on` menghidupkan lagi laporan `dilewati` karena `dimatikan` yang terbit ≤ 7 hari lalu. 30/jam per user, ember terpisah dari PUT. Tahap 3 menambah `kuartalan_on`/`tahunan_on` di sini. |
 | `POST /user/email/verifikasi` | (tahap 2) Kirim tautan verifikasi ke email akun pemanggil → `{"status": "terkirim"}`. Tanpa email → 422 `tanpa_email`; sudah terverifikasi → 409 `sudah_terverifikasi`; SMTP gagal → 502 `gagal_kirim` (semua `{detail, kode}`); 3/jam per user. |
-| `GET /auth/verifikasi-email?token=` | (tahap 2, tanpa login) Selalu 303 ke `{APP_URL}/settings?email_verifikasi=<hasil>#laporan` dengan `Cache-Control: no-store`: `berhasil` (menulis `email_verified_at` dan menghidupkan lagi laporan 7 hari terakhir yang `dilewati` karena `belum_verifikasi`/`tanpa_email`), `berubah` (alamat akun sudah berganti sejak tautan dikirim; tidak ada yang ditulis), atau `tidak_berlaku` (token rusak, kedaluwarsa, bertujuan lain, atau user tidak ada: tidak dibedakan). 30/menit per IP. |
+| `GET /auth/verifikasi-email?token=` | (tahap 2, tanpa login; tautan di email) **Tidak pernah mengubah apa pun** (Ruling F-4). Halaman konfirmasi "Verifikasi email kamu" dengan tombol "Verifikasi email" (200, `Cache-Control: no-store`) bila tautan masih bisa memverifikasi; selainnya 303 ke `{APP_URL}/settings?email_verifikasi=<hasil>#laporan` (`no-store`): `tidak_berlaku` (token rusak, kedaluwarsa, bertujuan lain, atau user tidak ada: tidak dibedakan), `berubah` (alamat akun sudah berganti sejak tautan dikirim), atau `berhasil` (alamat ini sudah terverifikasi). 30/menit per IP. |
+| `POST /auth/verifikasi-email?token=` | (tahap 2, tanpa login; tombol "Verifikasi email") Selalu 303 ke `{APP_URL}/settings?email_verifikasi=<hasil>#laporan` (`no-store`): `berhasil` (menulis `email_verified_at` dan menghidupkan lagi laporan 7 hari terakhir yang `dilewati` karena `belum_verifikasi`/`tanpa_email`), `berubah` atau `tidak_berlaku` (seperti GET; tidak ada yang ditulis). Badan tidak dibaca; aman diulang (yang sudah terverifikasi tetap `berhasil`, waktunya tidak berubah). 30/menit per IP, ember terpisah dari GET. |
 | `GET /laporan/berhenti-email?token=` | (tahap 2, tanpa login) Halaman konfirmasi "Berhenti menerima email laporan?" (200); token tidak sah atau akun tidak ada → halaman "Tautan tidak berlaku" (400). **Tidak pernah mengubah apa pun.** 30/menit per IP. |
 | `POST /laporan/berhenti-email?token=` | (tahap 2, tanpa login) Mematikan `email_on` (membuat baris `report_settings` bila belum ada) → halaman "Email laporan dimatikan" (200), atau 400 "Tautan tidak berlaku". Menerima tombol halaman dan one-click RFC 8058 (`List-Unsubscribe=One-Click`); badan tidak dibaca; aman diulang. 30/menit per IP. |
 
@@ -356,17 +367,24 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   selama satu jam.
 - `REPORT_SECRET_KEY` dan kata sandi laporan tidak pernah di log, respons, atau repo; tidak ada berkas laporan di disk.
 - **Tahap 2, batas frekuensi** (slowapi, memori proses): kirim tautan verifikasi 3/jam per user; `PATCH
-  /user/laporan-pengaturan` 30/jam per user (ember sendiri, tidak memakan 5/jam PUT kata sandi); `GET
-  /auth/verifikasi-email` 30/menit per IP; `GET` dan `POST /laporan/berhenti-email` masing-masing 30/menit per IP dalam
-  **ember terpisah** (`shared_limit` scope `berhenti_email_get` dan `berhenti_email_post`), supaya pemindai tautan yang
-  membuka GET tidak menghabiskan jatah POST one-click.
+  /user/laporan-pengaturan` 30/jam per user (ember sendiri, tidak memakan 5/jam PUT kata sandi); `GET` dan `POST
+  /auth/verifikasi-email`, serta `GET` dan `POST /laporan/berhenti-email`, masing-masing 30/menit per IP dalam **ember
+  terpisah** (`shared_limit` scope `verifikasi_email_get`/`verifikasi_email_post` dan
+  `berhenti_email_get`/`berhenti_email_post`), supaya pemindai tautan yang membuka GET tidak menghabiskan jatah tombol
+  halaman atau POST one-click.
+- **Tautan dari email tidak bertindak lewat GET** (keputusan rencana 4, Ruling F-4): verifikasi dan berhenti
+  berlangganan sama-sama GET = halaman konfirmasi yang tidak mengubah apa pun, POST = tindakannya. Pemindai tautan di
+  layanan email (mis. Safe Links) membuka GET, tidak menekan tombol.
 - **Token bertujuan** (`create_purpose_token`/`decode_purpose_token`, `app/core/security.py`): JWT `JWT_SECRET`, klaim `type`
   = tujuan (`verifikasi_email`, `berhenti_email_laporan`). Token login menolak `type` selain `access` (dan refresh
-  `refresh`), jadi token tujuan tidak pernah lolos sebagai sesi, dan sebaliknya. Verifikasi berlaku 24 jam dan
-  membawa alamat; berhenti tanpa `exp`, hanya mematikan satu saklar milik user itu. Token tidak pernah dicatat di log.
-  Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store`. `Referrer-Policy` adalah header global
-  `strict-origin-when-cross-origin` (`SecurityHeadersMiddleware`, `app/main.py`): ke origin lain hanya origin yang
-  terkirim, jadi token di path atau query tidak pernah keluar lewat `Referer`.
+  `refresh`), jadi token tujuan tidak pernah lolos sebagai sesi, dan sebaliknya; kedua fungsi juga menolak tujuan
+  `access`/`refresh` (`ValueError`). `berlaku` wajib disebut (Ruling F-2): `berlaku=None` (tanpa `exp`) hanya bila
+  diminta terang-terangan, yaitu token berhenti. Verifikasi berlaku 24 jam dan membawa alamat; berhenti tanpa `exp`, hanya
+  mematikan satu saklar milik user itu. Kode aplikasi tidak pernah mencatat token (log akses nginx dan uvicorn mencatat
+  URL lengkap: bagian Batasan). Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store`.
+  `Referrer-Policy` adalah header global `strict-origin-when-cross-origin` (`SecurityHeadersMiddleware`, `app/main.py`;
+  Ruling F-3): ke origin lain hanya origin yang terkirim, jadi token di path atau query tidak pernah keluar lewat
+  `Referer`.
 - **Email hanya ke alamat terverifikasi**, dibaca ulang dari `users` tepat sebelum mengirim (email diganti sesudah
   terbit tidak mengirim ke alamat baru yang belum terverifikasi). Email laporan tanpa nominal; PDF ber-AES-256 dengan kata
   sandi laporan user.
@@ -386,9 +404,17 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
 - **Pesan `?email_verifikasi=` bisa hilang:** pesannya ditampilkan sekali. Reload ambil-alih service worker (aplikasi
   memuat ulang saat `controllerchange`) atau browser yang sedang logout (dialihkan ke login) dapat menghilangkannya;
   verifikasinya sendiri sudah berhasil, dan baris status di kartu ("Email … terverifikasi.") menunjukkan hasilnya.
-- **Pemindai tautan** yang membuka tautan verifikasi (GET) memverifikasi alamat tanpa user mengkliknya: tautan itu hanya
-  dikirim ke alamat user sendiri, jadi dampaknya hanya mempercepat apa yang memang diminta. Tautan berhenti aman karena
-  GET tidak mengubah apa pun.
+- **Tautan verifikasi dibuka saat login di akun lain** (mis. browser bersama): yang diverifikasi user pada token, bukan
+  yang sedang login, tetapi pesan `?email_verifikasi=` tampil di Pengaturan akun yang sedang login (pesannya hanya dari
+  parameter URL). Baris status di kartu tetap menunjukkan status akun yang dilihat.
+- **Token ada di log akses:** nginx dan uvicorn mencatat URL lengkap, termasuk `?token=`; siapa pun yang bisa membaca log
+  itu bisa memakai tautannya. Token verifikasi kedaluwarsa dalam 24 jam dan hanya memverifikasi alamat yang memang
+  tercatat di akun itu; token berhenti tidak kedaluwarsa, tetapi hanya bisa mematikan email laporan (menyalakannya lagi
+  hanya dari Pengaturan).
+- **Tombol ditekan orang yang tidak meminta:** pemilik alamat yang menerima email verifikasi yang tidak pernah dimintanya
+  (mis. akun didaftarkan orang lain dengan alamatnya) lalu tetap menekan "Verifikasi email" memverifikasi alamat itu, dan
+  laporan akun tersebut mulai dikirim ke sana; emailnya meminta mengabaikan bila tidak meminta. Pemindai tautan tidak lagi
+  bisa melakukannya (GET hanya menampilkan halaman konfirmasi).
 - **Alokasi bertanggal mundur ke amplop baru** (Ruling R8): alokasi ke amplop yang dibuat sesudah periode tutup (mis.
   amplop "Tabungan" yang dibuat otomatis oleh pemasukan bertanggal mundur) tidak tampil sebagai baris, padahal
   pemasukannya tetap dihitung di `ringkasan.pemasukan`.
@@ -462,8 +488,9 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   punya batas umur terbit). Syaratnya masih berlaku saat dikirim: user punya email **terverifikasi** dan `email_on`; bila
   tidak, laporan menjadi `dilewati` lagi dengan alasannya. Jangan menyentuh `mengirim` (sedang berjalan; klaim basi > 30
   menit dikembalikan sendiri) dan `terkirim` (akan terkirim dua kali). Penyebab `gagal` biasanya SMTP: periksa dulu
-  `journalctl -u jatahku | grep -i "email laporan"` dan kredensial `SMTP_*` di `.env`. Menjalankan antrean manual: perintah
-  job di atas (`laporan_job()` ikut menjalankannya; hasilnya sekarang `{'terbit': N, 'gagal': M, 'email': {...}}`).
+  `journalctl -u jatahku | grep -iE "email laporan|PDF laporan"` dan kredensial `SMTP_*` di `.env`. Menjalankan antrean
+  manual: perintah job di atas (`laporan_job()` ikut menjalankannya; hasilnya sekarang `{'terbit': N, 'gagal': M,
+  'email': {...}}`).
 - **`REPORT_SECRET_KEY` hilang atau tidak valid** (startup mencatat peringatannya; PUT dan unduh 503): isi kunci di
   `.env`, lalu `sudo systemctl restart jatahku`. Kunci **lain** dari sebelumnya membuat kata sandi tersimpan tak terbaca:
   user diminta mengatur ulang (409 dan banner), laporannya sendiri tidak terpengaruh.
@@ -478,9 +505,11 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   `test_laporan_akun` (hapus dan gabung akun; R15: anonimisasi laporan beku anggota lain dibandingkan dengan susunan
   ulang dari catatan hidup, pengalihan `pencatat_id`), `test_rate_limit`.
 - Tahap 2: `test_laporan_antrean_email` (SQLite berkas: klaim, coba ulang, klaim basi, dua jalan bersamaan, lampiran
-  jatuh dengan anggun, log tanpa alamat), `test_laporan_surel` (isi, tanpa "Rp", halaman berhenti), `test_verifikasi_email`
-  (token, penjaga `email_verified_at`), `test_verifikasi_email_api`, serta tambahan di `test_laporan_api` (PATCH, berhenti
-  email GET/POST, batas frekuensi), `test_laporan_job` (status awal, antrean dalam job), `test_email_smtp_config`
+  jatuh dengan anggun, log tanpa alamat), `test_laporan_surel` (isi, tanpa "Rp", halaman berhenti dan halaman
+  konfirmasi verifikasi), `test_verifikasi_email` (token, juga tanpa `aiosqlite`; penjaga `email_verified_at`),
+  `test_verifikasi_email_api` (kirim tautan; GET konfirmasi tanpa INSERT/UPDATE/DELETE, POST memverifikasi, ember
+  GET/POST terpisah), serta tambahan di `test_laporan_api` (PATCH, berhenti email GET/POST, batas frekuensi, header
+  halaman bertoken lewat `app.main`), `test_laporan_job` (status awal, antrean dalam job), `test_email_smtp_config`
   (`SMTP_TIMEOUT`), dan `test_google_auth`.
 - Frontend: `node --test src/lib/*.test.js src/native/*.test.js` (`laporanView` termasuk halaman daftar, banner, status
   email, pesan verifikasi; `laporanFormat`, `exportPeriod`), lalu `npm run build`.
