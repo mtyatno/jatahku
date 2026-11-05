@@ -53,7 +53,9 @@ GOPAY_LINES = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "RUDI HARTONO", "M
                "Rp10.000", "Tanggal 31 Okt 2026", "No. Ref 123456789012", "Sumber Dana", "Rina Wulandari"]
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
                "Non Tunai (QRIS) 45.400"]
-_NMID_SPAN = re.compile(r"(?<![A-Za-z0-9])ID\s?\d{10,}", re.IGNORECASE)
+# NMID yang boleh tetap utuh: "ID" + tepat 13 digit tepat sesudah label NMID, kemunculan pertama (dirumuskan ulang di sini,
+# tidak memakai `samaran._NMID`).
+_NMID_SPAN = re.compile(r"(?<=nmid)\W{0,3}ID\s?\d{13}(?![.,]?\d)", re.IGNORECASE)
 PSEUDONYM_WORDS = {"andi", "pratama", "budi", "santoso", "siti", "aminah", "toko", "contoh"}
 
 
@@ -496,8 +498,8 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
             with_sample += bool(got)
             dumped = "\n".join(got or [])
             # NMID publik (`ID` + >= 10 digit) di baris berlabel NMID boleh tetap utuh, seperti `mask_line`; sisanya tidak.
-            nmid_kept += sum(bool(_NMID_SPAN.search(line)) for line in got or [] if "nmid" in line.lower())
-            no_nmid = "\n".join(_NMID_SPAN.sub(" ", line) if "nmid" in line.lower() else line for line in got or [])
+            nmid_kept += sum(bool(_NMID_SPAN.search(line)) for line in got or [])
+            no_nmid = "\n".join(_NMID_SPAN.sub(" ", line, count=1) for line in got or [])
             with self.subTest(case=case_id, proofs=proofs):
                 self.assertNotRegex(no_nmid, r"\d{6,}")
                 for value in (*secrets.ref_values, secrets.account_number, secrets.nmid):
@@ -664,6 +666,31 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_long_digits("Rekening 1234567890123"))
         self.assertFalse(_long_digits("NMID ID1020123456789"))
         self.assertTrue(_long_digits("Merchant ID1020123456789"))   # tanpa label NMID: bukan rentang yang dibiarkan
+
+    def test_only_the_first_13_digit_id_right_after_the_nmid_label_is_kept(self):
+        # Review tindak lanjut A16 (nomor rekaan): bentuk lain disamarkan saat penangkapan dan tidak lolos utuh saat
+        # persetujuan; `_long_digits` (baris mentah) menghitungnya.
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        from app.services.kotak_struk.donasi import _long_digits, approved_lines, sample_lines
+        doc = DokumenBayar(doc_type="qris", counterparty=Counterparty(name=None))
+        masked = {
+            "NMID ID 081234567890": "NMID ID …7890",
+            "Akun ID9876543210987 (cek NMID)": "Akun ID…0987 (cek NMID)",
+            "Terminal ID1234567890 NMID": "Terminal ID…7890 NMID",
+            "NMID ID" + "1" * 29: "NMID ID…1111",
+            "NMID ID1234567890123 ID9876543210987": "NMID ID1234567890123 ID…0987",
+        }
+        kept = ["NMID ID1234567890123", "NMID: ID1234567890123"]
+        lines = ["Pembayaran Berhasil", *masked, *kept]
+        got = sample_lines(lines, doc, Secrets(nmid="ID9876543210987"), user_name=None)
+        self.assertEqual(got, ["Pembayaran Berhasil", *masked.values(), *kept])
+        self.assertEqual(approved_lines(lines), ["Pembayaran Berhasil", *masked.values(), *kept])
+        for line in masked:
+            with self.subTest(line):
+                self.assertTrue(_long_digits(line))
+        for line in kept:
+            with self.subTest(line):
+                self.assertFalse(_long_digits(line))
 
 
 class ApprovedLinesTests(unittest.TestCase):

@@ -239,12 +239,21 @@ class MaskLineTests(unittest.TestCase):
         self.assertKept(["Rp 0", "Rp 0,00", "Diskon Rp0", "Total Rp 1.500.000", "Rp 10.000"])
 
     def test_nmid_kept_only_on_an_nmid_line(self):
-        self.assertKept(["NMID ID1024358806544", "NMID: ID 1024358806544", "nmid : ID1024358806544"])
+        self.assertKept(["NMID ID1024358806544", "NMID: ID 1024358806544", "nmid : ID1024358806544",
+                         "NMID ID1234567890123", "NMID: ID1234567890123", "QRIS NMID: ID1234567890123 A01"])
         self.assertMasked({
             "Transaction ID2026102612345678": "Transaction ID…5678",
             "User ID081234567890": "User ID…7890",
             "ID1024358806544": "ID…6544",
             "NMID ID123456789": "NMID ID…6789",          # 9 digit: bukan NMID
+            # Review tindak lanjut A16: hanya "ID" + tepat 13 digit, tepat sesudah label NMID, kemunculan pertama.
+            "NMID ID 081234567890": "NMID ID …7890",     # 12 digit
+            "NMID ID" + "1" * 29: "NMID ID…1111",        # 29 digit
+            "Akun ID9876543210987 (cek NMID)": "Akun ID…0987 (cek NMID)",   # label sesudah nilai
+            "Terminal ID1234567890 NMID": "Terminal ID…7890 NMID",
+            "NMID ID1234567890123 ID9876543210987": "NMID ID1234567890123 ID…0987",   # nilai kedua
+            "NMID ID1234567890123-456": "NMID ID…3456",  # bersambung ke digit lain
+            "Ref NMID x ID1234567890123": "Ref NMID x ID…0123",   # ada kata di antara label dan nilai
             # "ID" di dalam kata lain di baris NMID bukan NMID.
             "NMID ID1024358806544 TID1234567890": "NMID ID1024358806544 TID…7890",
         })
@@ -435,10 +444,14 @@ class ReviewFlagTests(unittest.TestCase):
         self.assertFalse(needs_review("Ref …4567/Rp25.000"))
         self.assertFalse(needs_review("Ref …4567,26/10/2026"))
         self.assertFalse(needs_review("26/10/2026-…4567"))
-        self.assertFalse(needs_review("NMID …4567/ID1024358806544"))
+        self.assertFalse(needs_review("NMID ID1024358806544/…4567"))
         # Tetangga yang bagian dari rentang lain yang dibiarkan bukan penyambung — juga bila hurufnya mirip angka
         # ("ID" di dalam NMID).
-        self.assertFalse(needs_review("NMID 08:12:33/ID1024358806544"))
+        self.assertFalse(needs_review("NMID ID1024358806544/08:12:33"))
+        # NMID yang tidak tepat sesudah labelnya bukan rentang yang dibiarkan (review tindak lanjut A16): disamarkan dan
+        # ditandai.
+        self.assertTrue(needs_review("NMID …4567/ID1024358806544"))
+        self.assertTrue(needs_review("NMID 08:12:33/ID1024358806544"))
         for line in CLEAN_TIME_FORMS:
             with self.subTest(line):
                 self.assertEqual(mask_line(line), line)      # premis: bentuk bersih tidak berubah

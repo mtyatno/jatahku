@@ -154,7 +154,6 @@ async def forget_user(db: AsyncSession, user_id: uuid.UUID, *, keep_approved: bo
 # ── Baris tersamar (M1b) ────────────────────────────────────────────────────
 
 _LONG_DIGITS = re.compile(r"\d{%d,}" % samaran.MIN_RUN_DIGITS)
-_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 GROUPED_MIN_DIGITS = 10
 _GROUPED_NUMBER = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?![\d])")
@@ -204,11 +203,12 @@ def _known_names(clean: list[str], doc: DokumenBayar, user_name: str | None) -> 
 
 
 def _long_digits(line: str) -> bool:
-    """Deret >= MIN_RUN_DIGITS digit di luar NMID publik (`ID` + >= 10 digit di baris berlabel NMID, rentang yang sama
-    yang dibiarkan `samaran.mask_line`). Dipakai penangkapan dan persetujuan Admin, supaya baris NMID ikut tersimpan
-    seperti `mask_line` membiarkannya (review akhir A16, verifikasi gelombang perbaikan)."""
-    if samaran._NMID_LINE.search(line):
-        line = samaran._NMID.sub(" ", line)
+    """Deret >= MIN_RUN_DIGITS digit di luar NMID publik (`samaran.nmid_span`: `ID` + tepat 13 digit tepat sesudah
+    label NMID, kemunculan pertama; rentang yang sama yang dibiarkan `samaran.mask_line`). Dipakai penangkapan dan
+    persetujuan Admin, supaya baris NMID ikut tersimpan seperti `mask_line` membiarkannya (review akhir A16)."""
+    span = samaran.nmid_span(line)
+    if span:
+        line = line[:span[0]] + " " + line[span[1]:]
     return bool(_LONG_DIGITS.search(line))
 
 
@@ -232,7 +232,7 @@ def _holds_secret(line: str, secrets: Secrets) -> bool:
         return True
     digits = re.sub(r"\D", "", line)
     values = [*secrets.ref_values, secrets.account_number]
-    if not _NMID_LINE.search(line):
+    if samaran.nmid_span(line) is None:   # NMID publik yang dibiarkan `mask_line` boleh tetap
         values.append(secrets.nmid)
     for value in values:
         value = (value or "").strip()

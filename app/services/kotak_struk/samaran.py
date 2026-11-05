@@ -35,9 +35,6 @@ _DIGIT_RUN = re.compile(rf"\d+(?:{_RUN_SEP}\d+)*")
 # "081.234.567.890" dan "0.123.456.789" bukan nominal.
 _THOUSANDS = r"(?!0)\d{1,3}(?P<g>[.,])\d{3}(?:(?P=g)\d{3})*(?:(?!(?P=g))[.,]\d{2})?"
 _NUM_END = rf"(?![.,]?\d)(?![{_DASH}]\d)"   # tidak bersambung ke digit lain
-_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
-# NMID QRIS (publik): "ID" + >= 10 digit, hanya di baris berlabel NMID.
-_NMID = re.compile(rf"(?<![A-Za-z0-9])ID{_HWS}?\d{{10,}}", re.IGNORECASE)
 # Nominal langsung sesudah Rp/IDR: nominal ribuan ketat, atau angka tanpa kelompok <= 9 digit (Rp 999.999.999) yang
 # tidak berawalan 0 + digit ("Rp 0" dan "Rp 0,00" tetap nominal; "Rp 081234567" bukan).
 _CURRENCY = re.compile(
@@ -60,6 +57,10 @@ _DATE_DMY_NAME = re.compile(
 _TIME = re.compile(r"(?<![\d:.])(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?(?!\d|[:.]\d)")
 # Nominal ribuan ketat tanpa Rp. Tidak boleh menempel strip pada deret lain ("01.234.567.8-901.000").
 _GROUPED = re.compile(rf"(?<![\d.,])(?<!\d[{_DASH}]){_THOUSANDS}{_NUM_END}")
+# NMID QRIS (publik): "ID" + tepat 13 digit tepat sesudah label NMID (paling banyak 3 tanda baca/spasi di antaranya);
+# hanya kemunculan PERTAMA di baris yang dibiarkan (`nmid_span`). Nilai "ID…" lain, juga 12 atau 29 digit, label di
+# belakang nilai ("Terminal ID1234567890 NMID"), atau nilai kedua di baris yang sama disamarkan seperti deret biasa.
+_NMID = re.compile(rf"(?<![A-Za-z])nmid\W{{0,3}}(?<![A-Za-z0-9])(ID{_HWS}?\d{{13}}){_NUM_END}", re.IGNORECASE)
 
 
 def _year_ok(year: str) -> bool:
@@ -93,10 +94,16 @@ _KEEP = (
 )
 
 
+def nmid_span(line: str) -> tuple[int, int] | None:
+    """Rentang nilai NMID publik yang dibiarkan di baris ini (kemunculan pertama `_NMID`), atau None."""
+    m = _NMID.search(line)
+    return m.span(1) if m else None
+
+
 def _kept_spans(line: str) -> list[tuple[int, int]]:
-    rules = (((_NMID, None),) if _NMID_LINE.search(line) else ()) + _KEEP
-    spans: list[tuple[int, int]] = []
-    for rx, valid in rules:
+    nmid = nmid_span(line)
+    spans: list[tuple[int, int]] = [nmid] if nmid else []
+    for rx, valid in _KEEP:
         for m in rx.finditer(line):
             if valid is not None and not valid(m):
                 continue
@@ -119,7 +126,7 @@ def mask_line(line: str) -> str:
     Deret >= 6 digit (kelompoknya boleh dipisah <= 2 spasi jenis apa pun, satu strip jenis apa pun, atau satu
     titik/koma) menjadi `…` + 4 digit terakhirnya. Dibiarkan: nominal ribuan yang ketat (1.500.000, 150,000.00),
     nominal langsung sesudah Rp/IDR (ribuan ketat atau <= 9 digit), tanggal (d-m-y, d/m/y, d.m.y, y-m-d,
-    "Oct 26 2026", "26 Okt 2026"), jam, dan NMID (`ID` + >= 10 digit) di baris berlabel NMID. Teks yang sudah
+    "Oct 26 2026", "26 Okt 2026"), jam, dan NMID (`ID` + tepat 13 digit tepat sesudah label NMID, kemunculan pertama; `nmid_span`). Teks yang sudah
     tersamar (`…4567`, `****1234`) tidak berubah."""
     out, pos = [], 0
     for start, end in _kept_spans(line):

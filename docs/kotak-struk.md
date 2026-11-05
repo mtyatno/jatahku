@@ -557,8 +557,9 @@ dikosongkan). Antrean Admin tetap bisa ditinjau, diunduh, dan dihapus.
   `samaran.mask_line` (deret ≥ 6 digit menjadi `…dddd`; nominal, tanggal, jam, dan NMID dibiarkan) →
   `samaran.pseudonymise`: setiap kata nama yang dikenal diganti kata nama samaran perannya (`samaran.PSEUDONYMS`: pihak
   lawan "BUDI SANTOSO", pengirim "SITI AMINAH", merchant terbaca "TOKO CONTOH", user "ANDI PRATAMA") → baris yang masih
-  memuat nilai rahasia bukti (referensi, rekening, NMID di luar baris NMID), deret ≥ 6 digit (NMID publik `ID` + ≥ 10
-  digit di baris berlabel NMID tidak dihitung, jadi baris NMID ikut tersimpan seperti `mask_line` membiarkannya), alamat
+  memuat nilai rahasia bukti (referensi, rekening, NMID di luar baris NMID), deret ≥ 6 digit (NMID publik tidak
+  dihitung: hanya `ID` + tepat 13 digit tepat sesudah label NMID, kemunculan pertama di baris, `samaran.nmid_span`; bentuk
+  lain, juga nilai `ID…` kedua di baris itu, disamarkan `mask_line`; jadi baris NMID ikut tersimpan), alamat
   email, atau nomor berkelompok ribuan ≥ 10 digit yang tidak langsung sesudah Rp/IDR dibuang seluruhnya ("Total
   1.234.567.890" tanpa Rp ikut terbuang). Nomor yang terpecah per baris juga: baris yang hanya potongan 2–5 digit (boleh
   dipisah spasi/strip) langsung sesudah baris yang berakhiran label nomor (rekening/rek/no/nomor/va/virtual account/
@@ -628,7 +629,10 @@ dibaca pembaca sebagai pihak lawan, pengirim, merchant, atau user (mis. nama di 
 sekaligus nama; angka di bawah 6 digit (PIN, kode area, kode pos, RT/RW); 4 digit terakhir nomor tersamar; nomor
 berkelompok ≤ 9 digit tanpa Rp; referensi huruf-angka pendek dan angka bergaris miring (ditandai PERIKSA; ≥ 10 digit di
 satu baris ditolak saat Setujui, lihat di atas); alamat jalan (ditandai); email yang disamarkan penulisnya
-("nama[at]domain"). Email asli dan nomor berkelompok ≥ 10 digit tanpa Rp/IDR dibuang bersama barisnya.
+("nama[at]domain"); NMID QRIS (dibiarkan utuh karena publik), padahal NMID bisa dicari ke nama merchant terdaftar,
+yang untuk merchant perorangan (warung, penjual satu orang) sering nama orang — belum ada pemetaan NMID → nama merchant
+yang ikut disamarkan, jadi pemilik menimbang baris NMID merchant perorangan sebelum Setujui. Email asli dan nomor
+berkelompok ≥ 10 digit tanpa Rp/IDR dibuang bersama barisnya.
 
 **Umur dan penghapusan** (G2, G4):
 - `proof_samples` berumur `SAMPLE_TTL` = **7 hari** (keputusan pemilik 5 Nov 2026; draf pre-flight 30 hari):
