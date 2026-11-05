@@ -24,7 +24,7 @@ Dua jalur boleh berjalan bersamaan setelah F0: Beranda registry (B1–B3) dan ru
 | H1 (migrasi, review) | #149 | Host inti | 3 Host plugin | 4 | B1, R3 | selesai | Pemilik produk + Claude | #176 | 2026-11-01 | 2026-11-04 |
 | H2 (review) | #150 | PluginContext dan titik ekstensi server | 3 Host plugin | 4 | H1 | selesai | Pemilik produk + Claude | #186 | 2026-11-04 | 2026-11-04 |
 | H3 | #151 | Host di frontend dan halaman Fitur Tambahan | 3 Host plugin | 3,5 | H2, B2, R4 | selesai | Pemilik produk + Claude | #192 | 2026-11-04 | 2026-11-05 |
-| U1 (migrasi, review) | #152 | Kerangka Buku Usaha dan Kontak | 4 Buku Usaha | 3,5 | H3, R5 | review | Pemilik produk + Claude | | 2026-11-05 | |
+| U1 (migrasi, review) | #152 | Kerangka Buku Usaha dan Kontak | 4 Buku Usaha | 3,5 | H3, R5 | review | Pemilik produk + Claude | #196 | 2026-11-05 | |
 | U2 | #153 | Penjualan dan alokasi omzet | 4 Buku Usaha | 3,5 | U1 | belum | | | | |
 | U3 | #154 | Laba rugi dan laporan | 4 Buku Usaha | 3,5 | U2, R8 | belum | | | | |
 | U4 | #155 | Kartu Beranda dan arus kas | 4 Buku Usaha | 3,5 | U3, B3 | belum | | | | |
