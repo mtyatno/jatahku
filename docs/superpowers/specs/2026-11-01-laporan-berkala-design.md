@@ -2,9 +2,9 @@
 
 **Tanggal:** 1 Nov 2026
 **Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026.
-**Tahap 1 diimplementasikan (belum tayang)** di branch `feat/laporan-berkala` (4 Nov 2026, di atas main `7faa202`):
-revisi alembic `967a27d0c15d`; PR berlabel `migrasi` menunggu merge dan checklist deploy di `AGENTS.md` ("Laporan berkala
-tahap 1"). Perilaku final tahap 1: `docs/laporan-berkala.md`. Yang berubah dari desain ini tercatat di "Penyesuaian saat
+**Tahap 1 tayang 5 Nov 2026:** PR #190 (squash `56ddf74`), revisi alembic `967a27d0c15d` dan checklist deploy di
+`AGENTS.md` ("Laporan berkala tahap 1") dijalankan pemilik; job pertama (5 Nov 04.30 WIB) menerbitkan 21 laporan, semuanya
+diberi tahu, dan unduh PDF berkata sandi dicoba pemilik. Perilaku final tahap 1: `docs/laporan-berkala.md`. Yang berubah dari desain ini tercatat di "Penyesuaian saat
 menyusun rencana" dan "Penyesuaian saat eksekusi" di bawah; keputusan pemilik produk 1–12 tidak berubah. Tahap 2 dan 3
 belum dimulai. Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
 **Dasar:** `main` setelah siklus household (#169) dan penandaan checklist-nya (#173). Siklus anggaran milik household
