@@ -51,12 +51,12 @@ def jago_transfer(name_lines, provider, *, status_lines=(), footer=JAGO_FOOTER):
 class RealSamplesTests(unittest.IsolatedAsyncioTestCase):
     """Ketujuh sampel nyata terbaca sesuai kebenarannya (expect diisi tangan dari gambar dan jawaban pemilik)."""
 
-    def test_samples_are_in_the_corpus_unreviewed_with_pseudonyms(self):
+    def test_samples_are_in_the_corpus_reviewed_with_pseudonyms(self):
         for sample_id in REAL_IDS:
             with self.subTest(sample_id):
                 s = BY_ID[sample_id]
                 self.assertTrue(s["real"])
-                self.assertIs(s["reviewed"], False)            # pemilik produk yang meninjau dan membaliknya
+                self.assertIs(s["reviewed"], True)             # ditinjau pemilik produk 4 Nov 2026
                 self.assertEqual(s["today"], "2026-10-30")
                 self.assertEqual(s["user_name"], USER)
 
@@ -499,11 +499,11 @@ def gopay_transfer(fee_line="Biaya admin  Gratis!", *, status="Selesai", extra=(
 
 
 class GopaySamplesTests(unittest.IsolatedAsyncioTestCase):
-    def test_samples_are_in_the_corpus_unreviewed_with_pseudonyms(self):
+    def test_samples_are_in_the_corpus_reviewed_with_pseudonyms(self):
         for sample_id in GOPAY_IDS:
             with self.subTest(sample_id):
                 s = BY_ID[sample_id]
-                self.assertEqual((s["real"], s["reviewed"], s["today"], s["user_name"]), (True, False, "2026-10-31", USER))
+                self.assertEqual((s["real"], s["reviewed"], s["today"], s["user_name"]), (True, True, "2026-10-31", USER))
 
     def test_every_field_reads_as_the_truth_with_the_flag_on(self):
         result = evaluate([BY_ID[i] for i in GOPAY_IDS])
@@ -1147,13 +1147,19 @@ class ShopeePaySamplesTests(unittest.IsolatedAsyncioTestCase):
     """Tiga bukti ShopeePay (QRIS, kirim ke GoPay sendiri, kirim ke Jago orang lain); bukti ketiga dicatat dua kali: oleh
     pengirim (keluar) dan oleh penerima (uang masuk)."""
 
-    def test_samples_are_in_the_corpus_unreviewed_with_pseudonyms(self):
+    def test_samples_are_in_the_corpus_reviewed_with_pseudonyms(self):
         for sample_id in SHOPEEPAY_IDS:
             with self.subTest(sample_id):
                 s = BY_ID[sample_id]
                 user = USER if sample_id == "real-shopeepay-masuk-01" else SITI
-                self.assertEqual((s["real"], s["reviewed"], s["today"], s["user_name"]), (True, False, "2026-10-31", user))
+                # Top-up ShopeePay→GoPay sendiri ditahan (reviewed false): pembaca membacanya `keluar`, kebenarannya
+                # `top_up`; aturan `arah` yang dipelajari hanya menyarankan ke user, tidak mengubah bacaan. Balik ke true
+                # saat pembaca sendiri belajar membacanya `top_up` — gerbang `eval --real-only` tetap hidup dengan 14 sampel.
+                reviewed = sample_id != "real-shopeepay-topup-01"
+                self.assertEqual((s["real"], s["reviewed"], s["today"], s["user_name"]), (True, reviewed, "2026-10-31", user))
         self.assertEqual(BY_ID["real-shopeepay-transfer-01"]["lines"], BY_ID["real-shopeepay-masuk-01"]["lines"])
+        real = [s for s in BY_ID.values() if s["real"]]
+        self.assertEqual((len(real), [s["id"] for s in real if not s["reviewed"]]), (15, ["real-shopeepay-topup-01"]))
 
     def test_every_field_reads_as_the_truth_with_the_flag_on(self):
         result = evaluate([BY_ID[i] for i in SHOPEEPAY_IDS])
