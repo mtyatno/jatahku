@@ -154,7 +154,6 @@ async def forget_user(db: AsyncSession, user_id: uuid.UUID, *, keep_approved: bo
 # ── Baris tersamar (M1b) ────────────────────────────────────────────────────
 
 _LONG_DIGITS = re.compile(r"\d{%d,}" % samaran.MIN_RUN_DIGITS)
-_NMID_LINE = re.compile(r"nmid", re.IGNORECASE)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 GROUPED_MIN_DIGITS = 10
 _GROUPED_NUMBER = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?![\d])")
@@ -203,6 +202,16 @@ def _known_names(clean: list[str], doc: DokumenBayar, user_name: str | None) -> 
             "user": user_name}
 
 
+def _long_digits(line: str) -> bool:
+    """Deret >= MIN_RUN_DIGITS digit di luar NMID publik (`samaran.nmid_span`: `ID` + tepat 13 digit tepat sesudah
+    label NMID, kemunculan pertama; rentang yang sama yang dibiarkan `samaran.mask_line`). Dipakai penangkapan dan
+    persetujuan Admin, supaya baris NMID ikut tersimpan seperti `mask_line` membiarkannya (review akhir A16)."""
+    span = samaran.nmid_span(line)
+    if span:
+        line = line[:span[0]] + " " + line[span[1]:]
+    return bool(_LONG_DIGITS.search(line))
+
+
 def _grouped_account(line: str) -> bool:
     """Ada nomor berkelompok ribuan >= GROUPED_MIN_DIGITS digit yang tidak langsung sesudah Rp/IDR ("Rek 1.234.567.890":
     `mask_line` membiarkannya karena berbentuk nominal). "Rp 1.234.567" tetap."""
@@ -213,16 +222,17 @@ def _grouped_account(line: str) -> bool:
 
 
 def _holds_secret(line: str, secrets: Secrets) -> bool:
-    """Baris masih memuat nilai rahasia (nomor referensi, rekening, NMID di luar baris berlabel NMID), deret >= 6 digit,
-    alamat email, atau nomor berkelompok ribuan >= 10 digit di luar Rp/IDR (review M1b temuan 2, 3).
+    """Baris masih memuat nilai rahasia (nomor referensi, rekening, NMID di luar baris berlabel NMID), deret >= 6 digit
+    (`_long_digits`: NMID publik di baris berlabel NMID tidak dihitung), alamat email, atau nomor berkelompok ribuan
+    >= 10 digit di luar Rp/IDR (review M1b temuan 2, 3).
 
     Dua aturan terakhir (email, nomor berkelompok) juga harus diterapkan pemeriksaan persetujuan Admin (M1d) pada baris
     editan, bersama `\\d{6,}`."""
-    if _LONG_DIGITS.search(line) or _EMAIL.search(line) or _grouped_account(line):
+    if _long_digits(line) or _EMAIL.search(line) or _grouped_account(line):
         return True
     digits = re.sub(r"\D", "", line)
     values = [*secrets.ref_values, secrets.account_number]
-    if not _NMID_LINE.search(line):
+    if samaran.nmid_span(line) is None:   # NMID publik yang dibiarkan `mask_line` boleh tetap
         values.append(secrets.nmid)
     for value in values:
         value = (value or "").strip()
@@ -331,7 +341,11 @@ def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | 
     total = amounts.get("total")
     if total is None or final.amount != total:
         return TRIGGER_NOMINAL
-    if final.txn_date is not None and final.txn_date != final.today and final.txn_date != belajar._doc_date(document):
+    # "Hari ini" menurut dua jam: WIB (`final.today`) dan jam server (`date.today()`, bawaan tanggal transaksi di
+    # rute web dan bot). Keduanya sama di produksi (zona WIB); di CI (UTC) berbeda antara 00.00–07.00 WIB, dan
+    # transaksi bertanggal hari ini bukan koreksi tanggal.
+    if (final.txn_date is not None and final.txn_date not in (final.today, date.today())
+            and final.txn_date != belajar._doc_date(document)):
         return TRIGGER_TANGGAL
     if doc_type == "tidak_dikenali":
         return TRIGGER_TIDAK_DIKENALI
@@ -452,13 +466,13 @@ def pseudonym_ok(name: str | None) -> bool:
 
 def approved_lines(lines: list[str]) -> list[str]:
     """Baris editan pemilik yang siap disimpan: `samaran.mask_line` diterapkan lagi pada setiap baris, lalu aturan
-    yang sama dengan penangkapan (`_holds_secret` tanpa nilai rahasia bukti, yang tidak lagi diketahui): deret >= 6 digit,
-    alamat email, nomor berkelompok ribuan >= 10 digit di luar Rp/IDR, atau >= SPLIT_NUMBER_DIGITS digit di luar
-    rentang yang dibiarkan (nominal, tanggal, jam, NMID; nomor terpecah "Ref 1234/5678/9012") -> `SampleLineSecret`
-    dengan nomor baris (mulai 1). Murni."""
+    yang sama dengan penangkapan (`_holds_secret` tanpa nilai rahasia bukti, yang tidak lagi diketahui): deret >= 6 digit
+    (`_long_digits`, NMID publik tidak dihitung), alamat email, nomor berkelompok ribuan >= 10 digit di luar Rp/IDR, atau
+    >= SPLIT_NUMBER_DIGITS digit di luar rentang yang dibiarkan (nominal, tanggal, jam, NMID; nomor terpecah
+    "Ref 1234/5678/9012") -> `SampleLineSecret` dengan nomor baris (mulai 1). Murni."""
     masked = [samaran.mask_line(line) for line in lines]
     for i, line in enumerate(masked, 1):
-        if _LONG_DIGITS.search(line):
+        if _long_digits(line):
             raise SampleLineSecret(f"Masih ada nomor panjang di baris {i}")
         if _EMAIL.search(line):
             raise SampleLineSecret(f"Masih ada alamat email di baris {i}")
