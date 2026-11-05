@@ -154,14 +154,14 @@ class BukaTautanTests(ApiVerifikasiDasar):
                          datetime(2026, 10, 5, 3, 0))
 
     async def test_tautan_kedaluwarsa_dan_type_lain(self):
-        kedaluwarsa = create_purpose_token(str(self.baru.id), ve.TUJUAN_VERIFIKASI, timedelta(seconds=-5),
+        kedaluwarsa = create_purpose_token(str(self.baru.id), ve.TUJUAN_VERIFIKASI, berlaku=timedelta(seconds=-5),
                                            email="baru@example.com")
-        lain = create_purpose_token(str(self.baru.id), "berhenti_email_laporan", timedelta(hours=1),
+        lain = create_purpose_token(str(self.baru.id), "berhenti_email_laporan", berlaku=timedelta(hours=1),
                                     email="baru@example.com")
         akses = create_access_token(str(self.baru.id))
         refresh = create_refresh_token(str(self.baru.id))
         hantu = create_purpose_token("00000000-0000-0000-0000-000000000001", ve.TUJUAN_VERIFIKASI,
-                                     timedelta(hours=1), email="x@example.com")
+                                     berlaku=timedelta(hours=1), email="x@example.com")
         rid = await self.laporan_dilewati(self.baru)
         for t in (kedaluwarsa, lain, akses, refresh, hantu, "", "bukan-token"):
             r = await self.buka(t)

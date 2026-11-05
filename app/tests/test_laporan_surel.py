@@ -8,6 +8,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 import email
 import unittest
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -119,10 +120,11 @@ class TautanBerhenti(unittest.TestCase):
 
     def test_token_lain_ditolak(self):
         uid = str(uuid.uuid4())
-        tok = security.create_purpose_token(uid, "verifikasi_email")
+        tok = security.create_purpose_token(uid, "verifikasi_email", berlaku=timedelta(hours=1), email="a@b.id")
         self.assertIsNone(surel.baca_token_berhenti(tok))
         self.assertIsNone(surel.baca_token_berhenti("sampah"))
-        self.assertIsNone(surel.baca_token_berhenti(security.create_purpose_token("bukan-uuid", surel.TUJUAN_BERHENTI)))
+        self.assertIsNone(surel.baca_token_berhenti(
+            security.create_purpose_token("bukan-uuid", surel.TUJUAN_BERHENTI, berlaku=None)))
 
     def test_halaman_tanpa_skrip_dan_token_di_escape(self):
         token = '"><script>alert(1)</script>'

@@ -1051,7 +1051,7 @@ class SaklarEmailTests(ApiDasar):
     (`GET`/`POST /laporan/berhenti-email`, tanpa login, token bertanda tangan)."""
 
     def token(self, user):
-        return create_purpose_token(str(user.id), "berhenti_email_laporan")
+        return create_purpose_token(str(user.id), "berhenti_email_laporan", berlaku=None)
 
     async def atur_laporan(self, user, status, alasan=None, terbit=None, periode=OKT):
         """Laporan `user` dengan status antrean email `status` (terbit sekarang bila `terbit` kosong)."""
@@ -1207,8 +1207,9 @@ class SaklarEmailTests(ApiDasar):
             "token access": create_access_token(str(self.ani.id)),
             "acak": "bukan-token",
             "kosong": "",
-            "tujuan lain": create_purpose_token(str(self.ani.id), "verifikasi_email"),
-            "bukan uuid": create_purpose_token("bukan-uuid", "berhenti_email_laporan"),
+            "tujuan lain": create_purpose_token(str(self.ani.id), "verifikasi_email", berlaku=timedelta(hours=1),
+                                                email="ani@example.com"),
+            "bukan uuid": create_purpose_token("bukan-uuid", "berhenti_email_laporan", berlaku=None),
         }
         for nama, token in kasus.items():
             for metode in ("get", "post"):

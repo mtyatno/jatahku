@@ -3,7 +3,7 @@
 `users.email_verified_at` dikosongkan oleh event ORM pada `User.email` bila alamat berganti, lewat setiap jalur
 penulis yang nyata (route asli, HTTP httpx + SQLite in-memory, token akses asli); Google mengisinya sesudah email
 diisi; token bertujuan tidak pernah lolos sebagai access/refresh.
-Butuh `aiosqlite`; dilewati bila tidak ada.
+Tes yang memakai database butuh `aiosqlite` dan dilewati bila tidak ada; tes normalisasi, token, dan pagar tetap jalan.
 Run: python -m unittest app.tests.test_verifikasi_email -v
 """
 import os
@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import httpx
 import jwt
@@ -337,9 +338,14 @@ class PagarTests(unittest.TestCase):
         self.assertEqual(pelanggar, [])
 
 
-class TokenTests(DasarVerifikasi):
+UID = "00000000-0000-0000-0000-000000000001"
+
+
+class TokenTests(unittest.TestCase):
+    """Token bertujuan murni (Ruling F-2): tanpa database, jadi juga jalan tanpa `aiosqlite`."""
+
     def test_token_verifikasi_bolak_balik(self):
-        user = SimpleNamespace(id="00000000-0000-0000-0000-000000000001", email=" Ani@X.id ")
+        user = SimpleNamespace(id=UID, email=" Ani@X.id ")
         tautan = ve.tautan_verifikasi(user)
         awal = f"{get_settings().API_URL}/auth/verifikasi-email?token="
         self.assertTrue(tautan.startswith(awal))
@@ -349,39 +355,76 @@ class TokenTests(DasarVerifikasi):
         self.assertAlmostEqual(klaim["exp"] - datetime.now(timezone.utc).timestamp(), 86400, delta=60)
 
     def test_token_kedaluwarsa_ditolak(self):
-        token = create_purpose_token("00000000-0000-0000-0000-000000000001", ve.TUJUAN_VERIFIKASI,
-                                     timedelta(seconds=-5), email="a@x.id")
+        token = create_purpose_token(UID, ve.TUJUAN_VERIFIKASI, berlaku=timedelta(seconds=-5), email="a@x.id")
         self.assertIsNone(ve.baca_token_verifikasi(token))
         self.assertIsNone(decode_purpose_token(token, ve.TUJUAN_VERIFIKASI))
 
     def test_token_type_lain_ditolak(self):
-        uid = "00000000-0000-0000-0000-000000000001"
-        for token in (create_access_token(uid), create_refresh_token(uid),
-                      create_purpose_token(uid, "berhenti_email_laporan")):
+        for token in (create_access_token(UID), create_refresh_token(UID),
+                      create_purpose_token(UID, "berhenti_email_laporan", berlaku=None)):
             self.assertIsNone(ve.baca_token_verifikasi(token))
             self.assertIsNone(decode_purpose_token(token, ve.TUJUAN_VERIFIKASI))
 
     def test_token_cacat_ditolak(self):
-        uid = "00000000-0000-0000-0000-000000000001"
         secret = get_settings().JWT_SECRET
         tanpa_sub = jwt.encode({"type": ve.TUJUAN_VERIFIKASI, "email": "a@x.id",
                                 "exp": datetime.now(timezone.utc) + timedelta(hours=1)}, secret, algorithm="HS256")
-        tanpa_exp = create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, None, email="a@x.id")
-        tanpa_email = create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, timedelta(hours=1))
-        sub_buruk = create_purpose_token("bukan-uuid", ve.TUJUAN_VERIFIKASI, timedelta(hours=1), email="a@x.id")
-        palsu = jwt.encode({"sub": uid, "type": ve.TUJUAN_VERIFIKASI, "email": "a@x.id"}, "kunci-lain",
-                           algorithm="HS256")
-        for token in (tanpa_sub, tanpa_exp, tanpa_email, sub_buruk, palsu, "bukan.token.jwt", ""):
+        tanpa_exp = create_purpose_token(UID, ve.TUJUAN_VERIFIKASI, berlaku=None, email="a@x.id")
+        tanpa_email = create_purpose_token(UID, ve.TUJUAN_VERIFIKASI, berlaku=timedelta(hours=1))
+        sub_buruk = create_purpose_token("bukan-uuid", ve.TUJUAN_VERIFIKASI, berlaku=timedelta(hours=1),
+                                         email="a@x.id")
+        for token in (tanpa_sub, tanpa_exp, tanpa_email, sub_buruk, "bukan.token.jwt", ""):
             self.assertIsNone(ve.baca_token_verifikasi(token))
 
-    def test_klaim_tidak_menimpa_sub_type(self):
-        token = create_purpose_token("u1", "x", timedelta(hours=1), sub="lain", type="access")
+    def test_tanda_tangan_kunci_lain_ditolak(self):
+        # Klaim lengkap dan belum kedaluwarsa: satu-satunya beda dengan token yang sah adalah kunci penandatangannya.
+        cfg = get_settings()
+        klaim = {"sub": UID, "type": ve.TUJUAN_VERIFIKASI, "email": "a@x.id",
+                 "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
+        sah = jwt.encode(klaim, cfg.JWT_SECRET, algorithm=cfg.JWT_ALGORITHM)
+        palsu = jwt.encode(klaim, "kunci-lain", algorithm=cfg.JWT_ALGORITHM)
+        self.assertEqual(ve.baca_token_verifikasi(sah), (UUID(UID), "a@x.id"))
+        self.assertIsNone(decode_purpose_token(palsu, ve.TUJUAN_VERIFIKASI))
+        self.assertIsNone(ve.baca_token_verifikasi(palsu))
+
+    def test_tanpa_exp_bolak_balik(self):
+        # `berlaku=None` (bentuk token berhenti berlangganan): tanpa klaim `exp`, tetap terbaca.
+        token = create_purpose_token(UID, "berhenti_email_laporan", berlaku=None)
+        self.assertNotIn("exp", jwt.decode(token, options={"verify_signature": False}))
+        klaim = decode_purpose_token(token, "berhenti_email_laporan")
+        self.assertEqual((klaim["sub"], klaim["type"]), (UID, "berhenti_email_laporan"))
+        self.assertNotIn("exp", klaim)
+
+    def test_berlaku_wajib_disebut(self):
+        # Argumen yang terlupa tidak pernah mencetak token tanpa kedaluwarsa: `berlaku` keyword tanpa bawaan.
+        with self.assertRaises(TypeError):
+            create_purpose_token(UID, ve.TUJUAN_VERIFIKASI, email="a@x.id")
+        with self.assertRaises(TypeError):
+            create_purpose_token(UID, ve.TUJUAN_VERIFIKASI, timedelta(hours=1), email="a@x.id")
+
+    def test_tujuan_access_refresh_ditolak(self):
+        for tujuan, token_sesi in (("access", create_access_token(UID)), ("refresh", create_refresh_token(UID))):
+            with self.subTest(tujuan=tujuan):
+                for berlaku in (timedelta(hours=1), None):
+                    with self.assertRaises(ValueError):
+                        create_purpose_token(UID, tujuan, berlaku=berlaku)
+                for token in (token_sesi, ""):
+                    with self.assertRaises(ValueError):
+                        decode_purpose_token(token, tujuan)
+
+    def test_klaim_tidak_menimpa_sub_type_exp(self):
+        token = create_purpose_token("u1", "x", berlaku=timedelta(hours=1), sub="lain", type="access")
         klaim = decode_purpose_token(token, "x")
         self.assertEqual((klaim["sub"], klaim["type"]), ("u1", "x"))
+        tanpa_exp = create_purpose_token("u1", "x", berlaku=None, exp=datetime.now(timezone.utc) + timedelta(days=1))
+        self.assertNotIn("exp", decode_purpose_token(tanpa_exp, "x"))
 
+
+class TokenLoginTests(DasarVerifikasi):
     async def test_token_bertujuan_tidak_bisa_login(self):
         for tujuan in (ve.TUJUAN_VERIFIKASI, "berhenti_email_laporan"):
-            token = create_purpose_token(str(self.ani.id), tujuan, timedelta(hours=1), email="ani@example.com")
+            token = create_purpose_token(str(self.ani.id), tujuan, berlaku=timedelta(hours=1),
+                                         email="ani@example.com")
             r = await self.klien.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(r.status_code, 401, tujuan)
             r = await self.klien.post("/auth/refresh", json={"refresh_token": token})

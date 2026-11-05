@@ -24,7 +24,7 @@ def tandai_terverifikasi(user, sekarang: datetime | None = None) -> None:
 
 def tautan_verifikasi(user) -> str:
     token = create_purpose_token(
-        str(user.id), TUJUAN_VERIFIKASI, BERLAKU_VERIFIKASI, email=email_normal(user.email),
+        str(user.id), TUJUAN_VERIFIKASI, berlaku=BERLAKU_VERIFIKASI, email=email_normal(user.email),
     )
     return f"{get_settings().API_URL}/auth/verifikasi-email?token={token}"
 

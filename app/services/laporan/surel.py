@@ -86,7 +86,7 @@ def isi_email_verifikasi(nama: str, email: str, tautan: str) -> tuple[str, str, 
 
 def tautan_berhenti(user_id) -> str:
     """Tautan berhenti berlangganan di setiap email laporan; token terikat user dan tidak pernah kedaluwarsa."""
-    token = create_purpose_token(str(user_id), TUJUAN_BERHENTI)
+    token = create_purpose_token(str(user_id), TUJUAN_BERHENTI, berlaku=None)
     return f"{get_settings().API_URL}/laporan/berhenti-email?token={quote(token, safe='')}"
 
 
