@@ -548,7 +548,8 @@ Buku Usaha tidak aktif di ruang itu. Bentuk U2–U4 masih v0.
 // POST   /p/buku_usaha/kontak {"nama", "peran", "telepon"?, "catatan"?} → 201 {kontak}
 //        nama 1–120 (spasi dirapikan), peran pelanggan|pemasok, telepon 5–29 angka/spasi/./- (boleh +), catatan ≤ 500;
 //        salah → 422 `nilai_tidak_sah`; nama+peran sudah ada (tanpa peka huruf) → 409 `kontak_ganda`
-// PATCH  /p/buku_usaha/kontak/{id} {kolom yang berubah} → {kontak}; DELETE /p/buku_usaha/kontak/{id} → 204 (hapus lunak)
+// PATCH  /p/buku_usaha/kontak/{id} {kolom yang berubah} → {kontak}; DELETE /p/buku_usaha/kontak/{id} → 204 (hapus lunak;
+//        dibuang permanen sesudah 30 hari oleh job `plugin_jobs`)
 //        kontak ruang lain atau sudah dihapus → 404 `kontak_tidak_ada`
 // `total_bulan_ini` (v0) menyusul bersama `income_meta` dan `metrics.py` (U2–U3), aditif.
 

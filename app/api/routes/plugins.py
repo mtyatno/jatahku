@@ -247,13 +247,16 @@ async def rute_plugin(
         raise RuangDitolak(kode="ruang_tidak_ada", detail="Ruang tidak ditemukan.", status_code=404)
     body = None
     if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+        panjang = request.headers.get("content-length")
+        if panjang and panjang.isdigit() and int(panjang) > MAKS_BODY_RUTE:
+            raise RuangDitolak(kode="body_terlalu_besar", detail="Isian terlalu besar.", status_code=413)
         mentah = await request.body()
         if len(mentah) > MAKS_BODY_RUTE:
             raise RuangDitolak(kode="body_terlalu_besar", detail="Isian terlalu besar.", status_code=413)
         if mentah.strip():
             try:
                 body = json.loads(mentah)
-            except ValueError:
+            except (ValueError, RecursionError):      # review #196 saran 4: JSON sangat bersarang → 422, bukan 500
                 raise RuangDitolak(kode="body_bukan_json", detail="Isian tidak terbaca.", status_code=422)
             if not isinstance(body, (dict, list)):
                 raise RuangDitolak(kode="body_bukan_json", detail="Isian tidak terbaca.", status_code=422)

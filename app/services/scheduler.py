@@ -383,6 +383,14 @@ async def plugin_jobs():
             logger.info(f"plugin: {n} job dijalankan")
     except Exception:
         logger.exception("plugin_jobs gagal")
+    try:
+        # U1 (review #196 temuan 3): baris data plugin yang dihapus lunak > 30 hari dibuang permanen.
+        from app.plugins.host import siklus
+        n = await siklus.bersihkan_terhapus()
+        if n:
+            logger.info(f"plugin: {n} baris terhapus dibuang permanen")
+    except Exception:
+        logger.exception("plugin_jobs: bersihkan_terhapus gagal")
 
 
 def start_scheduler():

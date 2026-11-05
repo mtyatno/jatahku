@@ -109,6 +109,30 @@ class TabelPluginAturanTests(unittest.TestCase):
             Manifest.model_validate(mf(entities=["p_buku_usaha_kontak"]))
 
 
+class TemuanReview196Tests(unittest.TestCase):
+    """Review keamanan #196 temuan 1: awalan tabel bermakna ganda."""
+
+    def test_id_awalan_dan_entitas_ganda_ditolak(self):
+        with tempfile.TemporaryDirectory() as d:
+            for pid, ent in (("buku", ["p_buku_usaha_kontak"]), ("buku_usaha", [])):
+                sub = pathlib.Path(d) / pid
+                sub.mkdir()
+                (sub / "manifest.json").write_text(json.dumps(mf(id=pid, entities=ent, contributes={})))
+            with self.assertRaises(ManifestTidakSah) as cm:
+                muat(pathlib.Path(d), ketat=True)
+            galat = "\n".join(cm.exception.galat)
+            self.assertIn("id 'buku' menjadi awalan id plugin 'buku_usaha'", galat)
+
+    def test_entitas_unik_antarplugin(self):
+        from app.plugins.host.registry import periksa_antarplugin
+        a = Manifest.model_validate(mf(id="satu", entities=[], contributes={}))
+        b = Manifest.model_validate(mf(id="dua", entities=[], contributes={}))
+        object.__setattr__(a, "entities", ["p_x_y"])
+        object.__setattr__(b, "entities", ["p_x_y"])
+        galat = periksa_antarplugin({"satu": a, "dua": b})
+        self.assertIn("entitas 'p_x_y' sudah dipakai plugin", "\n".join(sum(galat.values(), [])))
+
+
 # ── 2. manifest dan SDK ──────────────────────────────────────────────────
 class RuteManifestTests(unittest.TestCase):
     def test_bentuk_rute(self):
@@ -445,6 +469,55 @@ class U1DbTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         self.assertEqual(await self.baris_kontak(termasuk_terhapus=True), [])
         self.assertEqual([k.nama for k in await self.baris_kontak(self.usaha2)], ["B"])
+
+    async def test_pembersih_tanpa_manifest_tidak_menghapus(self):
+        """Review #196 temuan 2: manifest tidak dimuat saat pembersih jalan → baris instalasi dan data tetap."""
+        await self.pasang_aktif()
+        await self.kontak_baru("Bu Sari")
+        await self.aksi("copot")
+        with pakai_registry(muat(pathlib.Path(tempfile.mkdtemp()))):
+            async with self.Session() as db:
+                hapus = await siklus.bersihkan_kedaluwarsa(db, now=datetime.now(timezone.utc) + timedelta(days=91))
+                await db.commit()
+        self.assertEqual(hapus, [])
+        async with self.Session() as db:
+            self.assertIsNotNone(await siklus.instalasi(db, self.usaha, "buku_usaha"))
+        self.assertEqual(len(await self.baris_kontak()), 1)
+        # Manifest kembali: pembersih menghapus keduanya.
+        async with self.Session() as db:
+            hapus = await siklus.bersihkan_kedaluwarsa(db, now=datetime.now(timezone.utc) + timedelta(days=91))
+            await db.commit()
+        self.assertEqual(hapus, [(self.usaha, "buku_usaha")])
+        self.assertEqual(await self.baris_kontak(termasuk_terhapus=True), [])
+
+    async def test_hapus_lunak_berbatas_waktu_dan_batas_menghitung_terhapus(self):
+        """Review #196 temuan 3."""
+        from unittest import mock
+        await self.pasang_aktif()
+        a = await self.kontak_baru("Lama")
+        b = await self.kontak_baru("Baru")
+        await self.p("DELETE", f"/kontak/{a['id']}", status=204)
+        await self.p("DELETE", f"/kontak/{b['id']}", status=204)
+        async with self.Session() as db:
+            await db.execute(sa.update(BukuUsahaKontak).where(BukuUsahaKontak.nama == "Lama")
+                             .values(deleted_at=datetime.now(timezone.utc) - timedelta(days=31)))
+            await db.commit()
+        self.assertEqual(await siklus.bersihkan_terhapus(), 1)
+        self.assertEqual([k.nama for k in await self.baris_kontak(termasuk_terhapus=True)], ["Baru"])
+        # Batas baris menghitung baris terhapus: tambah-hapus berulang tidak menumpuk tanpa batas.
+        with mock.patch.object(data_plugin, "BATAS_BARIS_RUANG", 2):
+            await self.kontak_baru("Satu")
+            r = await self.p("POST", "/kontak", status=422, json={"nama": "Dua", "peran": "pelanggan"})
+            self.assertEqual(r.json()["kode"], "nilai_tidak_sah")
+
+    async def test_json_bersarang_422(self):
+        """Review #196 saran 4: JSON sangat bersarang → 422, bukan 500; Content-Length besar ditolak sebelum dibaca."""
+        await self.pasang_aktif()
+        r = await self.p("POST", "/kontak", status=422, content=b"[" * 30000 + b"]" * 30000,
+                         headers={"Content-Type": "application/json"})
+        self.assertEqual(r.json()["kode"], "body_bukan_json")
+        r = await self.p("POST", "/kontak", hid=False, status=422, content=b"[" * 30000 + b"]" * 30000)
+        self.assertEqual(r.json()["kode"], "body_bukan_json")
 
     # ── 5. isolasi ──
     async def test_isolasi_antar_ruang(self):

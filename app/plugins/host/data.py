@@ -14,6 +14,9 @@ di manifest (`entities`); semua baca-tulis lewat fungsi di modul ini, yang meneg
   boleh dilihat viewer, pemasukan, transaksi, anggota ruang); selain itu `NilaiTidakSah` (422).
 - **Tulis hanya dari endpoint plugin** (`rute` non-GET, dipicu owner/admin) dan diaudit di `plugin_audit_log` dalam
   transaksi database yang sama (tanpa nilai kolom). Kartu, cek, saran, perintah bot, field form, dan job hanya membaca.
+- **Hapus lunak berbatas waktu.** Baris `deleted_at` dibuang permanen sesudah `HARI_SIMPAN_TERHAPUS` hari oleh
+  `siklus.bersihkan_terhapus` (job tiap jam); batas baris per ruang menghitung baris terhapus juga, supaya tambah-hapus
+  berulang tidak menumpuk data pribadi.
 - **Karyawan tidak membaca data plugin** (`khusus_admin`), seperti data keuangan di `PluginContext` (ADR-P3): kontak
   pelanggan dan pemasok adalah data usaha.
 """
@@ -21,7 +24,7 @@ from __future__ import annotations
 
 import re
 import uuid as _uuid_mod
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
@@ -35,7 +38,8 @@ WAJIB = ("id", "household_id", "created_by", "created_at", "updated_at", "delete
 TERSEMBUNYI = ("household_id", "deleted_at")          # tidak pernah dikembalikan ke plugin atau ekspor
 FK_INTI = {"households", "users", "envelopes", "transactions", "incomes"}
 BATAS_BARIS = 1000                                    # baris maksimal per panggilan baca
-BATAS_BARIS_RUANG = 20_000                            # baris hidup maksimal per tabel per ruang
+BATAS_BARIS_RUANG = 20_000                            # baris (termasuk yang dihapus lunak) maksimal per tabel per ruang
+HARI_SIMPAN_TERHAPUS = 30                             # baris hapus lunak dibuang permanen sesudah ini (review #196 temuan 3)
 
 
 def _tabel_ada(nama: str) -> Table | None:
@@ -242,15 +246,21 @@ def _hidup(t: Table, k: keadaan.Keadaan):
     return (t.c.household_id == k.ruang_id) & t.c.deleted_at.is_(None)
 
 
+def _pendek(k: keadaan.Keadaan, nama: str) -> str:
+    """Nama entitas tanpa awalan `p_<id>_` untuk audit (`action` ≤ 30 huruf; review #196 saran 5)."""
+    awalan = f"p_{k.plugin_id}_"
+    return nama[len(awalan):] if nama.startswith(awalan) else nama
+
+
 async def _boleh_baca(k: keadaan.Keadaan, nama: str) -> None:
     if keadaan.karyawan(k):
-        await keadaan.tolak(k, f"data:{nama}"[:40], "khusus_admin")
+        await keadaan.tolak(k, f"data:{_pendek(k, nama)}"[:24], "khusus_admin")
 
 
 async def _boleh_tulis(k: keadaan.Keadaan, nama: str) -> None:
     await _boleh_baca(k, nama)
     if not k.boleh_tulis or k.viewer is None:
-        await keadaan.tolak(k, f"data:{nama}"[:40], "hanya_baca")
+        await keadaan.tolak(k, f"data:{_pendek(k, nama)}"[:24], "hanya_baca")
 
 
 def _audit(k: keadaan.Keadaan, aksi: str, t: Table, id_baris, kolom=()) -> None:
@@ -341,7 +351,9 @@ async def tambah(k, nama: str, nilai: dict) -> dict:
                 and c.name not in bersih:
             raise _Galat.nilai(f"{c.name} wajib diisi.")
     await _cek_rujukan(k, t, bersih)
-    ada = int((await k.db.execute(select(func.count()).select_from(t).where(_hidup(t, k)))).scalar() or 0)
+    ada = int((await k.db.execute(
+        select(func.count()).select_from(t).where(t.c.household_id == k.ruang_id)   # termasuk yang dihapus lunak
+    )).scalar() or 0)
     if ada >= BATAS_BARIS_RUANG:
         raise _Galat.nilai("Data ini sudah mencapai batas untuk satu ruang.")
     rid = _uuid_mod.uuid4()
@@ -442,6 +454,16 @@ async def hapus_rujukan(db, tujuan: str, ids) -> None:
                 await db.execute(update(t).where(c.in_(ids)).values({c.name: None}))
             else:
                 await db.execute(delete(t).where(c.in_(ids)))
+
+
+async def bersihkan_terhapus(db, *, hari: int = HARI_SIMPAN_TERHAPUS, now: datetime | None = None) -> int:
+    """Hapus permanen baris `deleted_at` lebih lama dari `hari` hari di semua tabel `p_*` (semua ruang). Anak dulu
+    (urutan terbalik `sorted_tables`): rujukan yang boleh NULL sudah dilepas FK SET NULL / `hapus_rujukan`."""
+    batas = (now or _sekarang()) - timedelta(days=hari)
+    n = 0
+    for t in reversed(_semua_tabel_plugin()):
+        n += (await db.execute(delete(t).where(t.c.deleted_at.is_not(None), t.c.deleted_at < batas))).rowcount or 0
+    return n
 
 
 async def lepas_pembuat(db, user_id) -> None:

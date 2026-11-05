@@ -18,6 +18,14 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Dokumen: kontrak §5 (katalog `ekspor`, `copot.ekspor`, endpoint ekspor, "Endpoint plugin" v1), §6 (pengaturan + Kontak v1), §7 (9 kode baru); `AGENTS.md` aturan 4–5, flag, perintah tes, checklist deploy "Plugin U1"; `00-indeks.md` (fase, peta kode); `PROGRESS.md` (U1 review, Gerbang H); workflow Tes (`node --test` plugin).
 - Tes: unittest 3259 (1 dilewati, 1 gagal = `test_plugin_sdk.test_job_dan_notifikasi`, bergantung jam dinding 21.00–07.00 WIB, sama di `main`; lihat catatan H3) · node --test 738 lulus (`src/lib` + `src/native` + `src/plugins`) · build ok · `cek-migrasi.sh origin/main` di PostgreSQL 16 ok (upgrade, check, downgrade, upgrade) · validator manifest: OK (1 plugin: buku_usaha) · `openapi_cek`: tanpa perubahan memutus.
 
+**Review keamanan (sesi terpisah, 6 Nov): Request Changes → dikerjakan di branch ini**
+- Temuan 1 (awalan tabel bermakna ganda: plugin `buku` bisa mengaku `p_buku_usaha_kontak`): `registry.periksa_antarplugin` menolak id plugin yang menjadi awalan id plugin lain dan entitas yang dinyatakan dua plugin. Tes `TemuanReview196Tests`.
+- Temuan 2 (pembersih arsip menghapus baris instalasi walau manifest tidak dimuat → data `p_*` tertinggal lalu muncul lagi saat pasang ulang): baris dibiarkan, galat dicatat, dicoba lagi pada jalan berikutnya. Tes `test_pembersih_tanpa_manifest_tidak_menghapus`.
+- Temuan 3 (hapus lunak menyimpan data pribadi tanpa batas; batas baris hanya menghitung baris hidup): `data.bersihkan_terhapus` membuang baris `deleted_at` > 30 hari di semua tabel `p_*`, dipanggil `scheduler.plugin_jobs` tiap jam; `BATAS_BARIS_RUANG` kini menghitung baris terhapus. Tes `test_hapus_lunak_berbatas_waktu_dan_batas_menghitung_terhapus`. Batas laju per plugin tetap digantung (batas baris + body 64 KB menahan penumpukan).
+- Saran 4 (JSON sangat bersarang → `RecursionError` → 500): `Content-Length` > 64 KB ditolak sebelum dibaca; `RecursionError` → 422 `body_bukan_json`. Tes `test_json_bersarang_422`.
+- Saran 5 (audit `tolak:data:p_buku_usaha_…` terpotong 30 huruf): nama entitas tanpa awalan plugin (`tolak:data:income_meta`).
+- Catatan 6 untuk U6: `ctx.data()` di job (viewer None) boleh membaca data plugin; saat ADR-P19 membuka notifikasi untuk karyawan, teks notifikasi dari job tidak boleh memuat data kontak.
+
 **Temuan di luar scope (tidak dikerjakan di U1)**
 - Di HP, FAB chat/Catat (`fixed bottom-24`) menutupi ±48 px konten terbawah halaman karena `main` hanya `pb-24` (setinggi bottom nav): tombol sekunder di dasar halaman mana pun (mis. "Lewati" wizard, "Batal") bisa tertutup sampai user menggulir mentok — tidak bisa karena halaman sudah mentok. Perbaikan kecil di `Layout.jsx` (`pb-40` di HP, atau FAB hanya saat halaman punya ruang) di PR terpisah; di sesi ini tombol "Buat … dan mulai" (kiri) tidak terdampak.
 - `test_job_dan_notifikasi` (H2) tetap gagal pada jam 21.00–07.00 WIB (catatan H3); jalankan ulang workflow "Tes" di luar 14.00–24.00 UTC.
@@ -29,7 +37,6 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Titik `settings` (form JSON Schema) masih belum ada; `pasang` tetap menolak `pengaturan`.
 - Izin yang bertambah di manifest baru (U2 akan menambah `incomes:write` dll.) belum memicu persetujuan ulang untuk instalasi aktif: `granted_permissions` tetap yang lama sampai pulihkan/pasang ulang — U2 harus memutuskan (layar "izin baru" atau perintah pemilik).
 - Batas laju tulis per plugin per ruang (01-kajian "Penegakan"): belum; sementara batas 20.000 baris hidup per tabel per ruang dan body 64 KB.
-- Hapus permanen baris yang dihapus lunak (`deleted_at` terisi) sebelum arsip habis: tidak ada (ikut terhapus saat arsip dibersihkan atau ruang dihapus).
 
 **Jebakan**
 - **Penyatuan dengan `main` 5 Nov (#194 fix CI malam, #195 docs, #197 Kotak Struk tahap 2):** empat konflik aditif (`keadaan.Keadaan` field `sekarang` + `entitas`/`boleh_tulis`; `titik.konteks` parameter `sekarang` + `boleh_tulis`; `context.notify` meneruskan `now=k.sekarang` di atas kelas `DataPlugin`; impor `donasi` + `data_plugin` di `account_deletion.py`), semuanya dipertahankan dua-duanya. Migrasi U1 dipindah induknya dari `d7r7k4a1m9c3` ke `c9e4a7f2b5d8` supaya tetap satu head Alembic (checklist U1 langkah 1 ikut berubah).
