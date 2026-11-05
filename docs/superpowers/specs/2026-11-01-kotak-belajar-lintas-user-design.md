@@ -197,7 +197,8 @@ Gerbang §7c (korpus ≥ 95% pada 12 aplikasi) **diganti** oleh keputusan pemili
 > disetujui per kunci `logo`/`arah`, dijaga indeks unik parsial `ux_proof_rules_satu_nilai` (G8). Keputusan pemilik produk
 > 5 Nov 2026: teks persetujuan Settings (judul "Bantu Jatahku membaca bukti bayar"; isi kalimat pemilik ditambah "Teks
 > bukti yang sudah disamarkan dikirim ke pengelola untuk ditinjau; bisa dimatikan kapan saja."), paragraf `privacy.html`
-> disetujui, retensi sampel **7 hari** (bukan 30 hari draf pre-flight G2), menarik persetujuan menyisakan sampel yang sudah
+> disetujui (ditambah satu kalimat bahwa contoh yang disetujui disimpan di repositori kode yang terbuka untuk umum, hanya
+> teks tersamar dengan nama samaran; review akhir A16 temuan 3), retensi sampel **7 hari** (bukan 30 hari draf pre-flight G2), menarik persetujuan menyisakan sampel yang sudah
 > disetujui (hapus akun dan gabung akun tetap menghapus semuanya). Keputusan pengendali M1d: Tolak menghapus sampel, jadi
 > status `ditolak` tidak pernah tersimpan. Rincian: `docs/kotak-struk.md` "Belajar lintas user" dan "Donasi contoh";
 > checklist `AGENTS.md` "Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)".

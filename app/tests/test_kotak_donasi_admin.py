@@ -190,18 +190,21 @@ class ListSamplesTests(SamplesBase):
 class ApproveTests(SamplesBase):
     async def test_approve_remasks_and_refuses_numbers(self):        # Review Focus 2
         s = await self.sample()
-        edited = [*LINES, "Ke 1234567890", "1234 5678 9012", "Total Rp 1.234.567"]
+        edited = [*LINES, "Ke 1234567890", "1234 5678 9012", "Total Rp 1.234.567", "Rp 1.234.567.890",
+                  "26/10/2026 10:11:12 123.456"]
         r = await self.approve(s.id, lines=edited)
         self.assertEqual(r.status_code, 200, r.text)
         stored = (await self.get(s.id)).lines
-        self.assertEqual(stored[-3:], ["Ke …7890", "…9012", "Total Rp 1.234.567"])
-        self.assertEqual([x["text"] for x in r.json()["lines"]][-3:], stored[-3:])
+        self.assertEqual(stored[-5:], ["Ke …7890", "…9012", "Total Rp 1.234.567", "Rp 1.234.567.890",
+                                       "26/10/2026 10:11:12 123.456"])
+        self.assertEqual([x["text"] for x in r.json()["lines"]][-5:], stored[-5:])
         self.assertNotIn("1234567890", json.dumps(stored))
         refused = {
             "NMID ID1024358806544": "Masih ada nomor panjang di baris 2",    # lolos mask_line (baris NMID), tetap >= 6 digit
             "Total Rp 1500000": "Masih ada nomor panjang di baris 2",
             "Email andi.contoh@contoh.id": "Masih ada alamat email di baris 2",
             "Rek 1.234.567.890": "Masih ada nomor rekening di baris 2",
+            "Ref 1234/5678/9012": "Masih ada nomor panjang di baris 2",     # review akhir A16 temuan 1: >= 10 digit
         }
         for line, message in refused.items():
             with self.subTest(line):

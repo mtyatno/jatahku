@@ -622,6 +622,36 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
         # Tidak ada baris tersisa: None, bukan daftar kosong.
         self.assertIsNone(sample_lines(["Ref A1B2C3D4E5"], doc, secrets, user_name=None))
 
+    def test_split_account_chunks_after_a_number_label_dropped(self):
+        # Review akhir A16 temuan 1: nomor rekening terpecah jadi potongan <= 5 digit di baris sendiri-sendiri (rekaan).
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        from app.services.kotak_struk.donasi import sample_lines
+        doc = DokumenBayar(doc_type="transfer", counterparty=Counterparty(name=None))
+        lines = ["Transfer Berhasil", "No Rekening", "1234", "5678", "9012", "Virtual Account:", "88 12", "3456-7",
+                 "Meja", "1234", "Nominal Rp 50.000", "No.", "7", "Kartu", "4321", "12345678"]
+        self.assertEqual(sample_lines(lines, doc, Secrets(), user_name=None),
+                         ["Transfer Berhasil", "No Rekening", "Virtual Account:", "Meja", "1234", "Nominal Rp 50.000",
+                          "No.", "7", "Kartu", "…5678"])
+
+
+class ApprovedLinesTests(unittest.TestCase):
+    """`approved_lines` (Admin setujui dan `kotak_corpus add --dari-donasi`) menolak baris dengan >= 10 digit di luar
+    rentang yang dibiarkan (nominal Rp, tanggal, jam, NMID): review akhir A16 temuan 1."""
+
+    def test_ten_digits_outside_kept_spans_refused(self):
+        from app.services.kotak_struk.donasi import SampleLineSecret, approved_lines
+        for line in ("Ref 1234/5678/9012", "Ref …5678 …1234 …9012", "No 12345 Kode 67890"):
+            with self.subTest(line):
+                with self.assertRaises(SampleLineSecret) as cm:
+                    approved_lines(["Transfer Berhasil", line])
+                self.assertEqual(str(cm.exception), "Masih ada nomor panjang di baris 2")
+
+    def test_amounts_dates_times_and_short_numbers_accepted(self):
+        from app.services.kotak_struk.donasi import approved_lines
+        lines = ["Rp 1.234.567.890", "26/10/2026 10:11:12 123.456", "Total Rp 1.500.000 26-10-2026 08:12:33 WIB",
+                 "Ref …5678 …1234", "Meja 12 Kursi 3456", "1234/5678/9"]
+        self.assertEqual(approved_lines(lines), lines)
+
 
 class WorkerDonationTests(DonasiBase):
     """Penangkapan di worker: hanya saklar `kotak_donasi` menyala DAN user setuju (Review Focus 1)."""

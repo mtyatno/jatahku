@@ -159,6 +159,13 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 GROUPED_MIN_DIGITS = 10
 _GROUPED_NUMBER = re.compile(r"(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?(?![\d])")
 _AFTER_CURRENCY = re.compile(r"(?:rp|idr)\s*[.:]?\s*$", re.IGNORECASE)
+# Review akhir A16 temuan 1: nomor yang terpecah. Baris yang hanya potongan 2-5 digit (boleh dipisah spasi/strip)
+# langsung sesudah baris berakhiran label nomor ("No Rekening" / "1234" / "5678") dibuang saat penangkapan; baris
+# editan Admin dengan >= SPLIT_NUMBER_DIGITS digit di luar rentang yang dibiarkan ("Ref 1234/5678/9012") ditolak.
+SPLIT_NUMBER_DIGITS = 10
+_NUMBER_LABEL_END = re.compile(
+    r"(?<![^\W\d_])(?:rekening|rek|no|nomor|va|virtual\s+account|kartu|card|nik|hp|telp|telepon)\W*$", re.IGNORECASE)
+_DIGIT_CHUNK = re.compile(r"\d[\d \-]*")
 
 
 # Kata kosakata label/status/arah uang (bukan nama). Kata penyedia/logo/penanda aplikasi di `kerangka.TITLE_WORDS`
@@ -235,15 +242,35 @@ def sample_lines(lines: list[str], doc: DokumenBayar, secrets: Secrets, *, user_
     Hanya bukti bayar (G6): `doc.doc_type` di SAMPLE_TYPES, atau teks yang tampak bukti (`looks_like_proof`; bukti yang
     dibaca pembaca struk); struk belanja biasa tidak pernah. `lines` = baris OCR mentah, `doc`/`secrets` = hasil pembaca
     SEBELUM disamarkan worker. Langkah: `clean_lines` -> `samaran.mask_line` -> `samaran.pseudonymise` (nama pihak lawan,
-    pengirim, merchant terbaca, user) -> baris yang masih memuat nilai `secrets` atau deret >= 6 digit dibuang -> paling
+    pengirim, merchant terbaca, user) -> baris yang masih memuat nilai `secrets` atau deret >= 6 digit dibuang, juga
+    potongan nomor 2-5 digit sesaat sesudah baris berakhiran label nomor ("No Rekening" / "1234") -> paling
     banyak SAMPLE_MAX_LINES baris, masing-masing SAMPLE_LINE_MAX karakter. None juga bila tidak ada baris tersisa."""
     if doc.doc_type not in SAMPLE_TYPES and not looks_like_proof(TextDoc(lines=list(lines), kind=KIND_IMAGE)):
         return None
     clean = pc.clean_lines(lines)
     masked = [samaran.mask_line(line) for line in clean]
     named, _user = samaran.pseudonymise(masked, _known_names(clean, doc, user_name))
-    kept = [line[:SAMPLE_LINE_MAX] for line in named if not _holds_secret(line, secrets)]
+    kept: list[str] = []
+    for line in named:
+        if _holds_secret(line, secrets) or (kept and _number_chunk(line) and _NUMBER_LABEL_END.search(kept[-1])):
+            continue
+        kept.append(line[:SAMPLE_LINE_MAX])
     return kept[:SAMPLE_MAX_LINES] or None
+
+
+def _number_chunk(line: str) -> bool:
+    """Baris yang hanya potongan nomor 2-5 digit, boleh dipisah spasi/strip ("1234", "88 12", "3456-7")."""
+    text = line.strip()
+    return bool(_DIGIT_CHUNK.fullmatch(text)) and text[-1].isdigit() and 2 <= sum(c.isdigit() for c in text) <= 5
+
+
+def _digits_outside_kept(line: str) -> int:
+    """Jumlah digit desimal di luar rentang yang dibiarkan `samaran.mask_line` (nominal, tanggal, jam, NMID); penanda
+    `…dddd` dihitung digitnya."""
+    chars = list(line)
+    for start, end in samaran._kept_spans(line):
+        chars[start:end] = " " * (end - start)
+    return sum(c.isdecimal() for c in chars)
 
 
 # ── Koreksi -> antrean tinjauan (M1c) ───────────────────────────────────────
@@ -426,8 +453,9 @@ def pseudonym_ok(name: str | None) -> bool:
 def approved_lines(lines: list[str]) -> list[str]:
     """Baris editan pemilik yang siap disimpan: `samaran.mask_line` diterapkan lagi pada setiap baris, lalu aturan
     yang sama dengan penangkapan (`_holds_secret` tanpa nilai rahasia bukti, yang tidak lagi diketahui): deret >= 6 digit,
-    alamat email, atau nomor berkelompok ribuan >= 10 digit di luar Rp/IDR -> `SampleLineSecret` dengan nomor baris
-    (mulai 1). Murni."""
+    alamat email, nomor berkelompok ribuan >= 10 digit di luar Rp/IDR, atau >= SPLIT_NUMBER_DIGITS digit di luar
+    rentang yang dibiarkan (nominal, tanggal, jam, NMID; nomor terpecah "Ref 1234/5678/9012") -> `SampleLineSecret`
+    dengan nomor baris (mulai 1). Murni."""
     masked = [samaran.mask_line(line) for line in lines]
     for i, line in enumerate(masked, 1):
         if _LONG_DIGITS.search(line):
@@ -436,6 +464,8 @@ def approved_lines(lines: list[str]) -> list[str]:
             raise SampleLineSecret(f"Masih ada alamat email di baris {i}")
         if _grouped_account(line):
             raise SampleLineSecret(f"Masih ada nomor rekening di baris {i}")
+        if _digits_outside_kept(line) >= SPLIT_NUMBER_DIGITS:   # "Ref 1234/5678/9012" (review akhir A16 temuan 1)
+            raise SampleLineSecret(f"Masih ada nomor panjang di baris {i}")
     return masked
 
 

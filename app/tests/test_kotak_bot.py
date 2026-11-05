@@ -2263,7 +2263,8 @@ class KotakBotDbTests(DonationMixin, TxnBase):
         self.assertEqual(spy.await_count, 1)
         final = spy.await_args.args[2]
         self.assertEqual(final, belajar.Final(11000, None, None, belajar.today_wib()))
-        self.assertEqual(spy.await_args.kwargs, {"user_id": self.a.id})
+        # Kunci profil ("gopay"): tanpa kueri aturan logo (review akhir A16 temuan 2).
+        self.assertEqual(spy.await_args.kwargs, {"user_id": self.a.id, "approved_logo": frozenset()})
         self.assertNotIn("kotak:fix:42", self.redis.store)
         # Kunci ditulis dengan TTL FIX_TTL_S.
         item2 = await self.fix_vote_item()
@@ -2497,6 +2498,38 @@ class KotakBotDbTests(DonationMixin, TxnBase):
         self.assertEqual(await self.samples(), [])
         self.assertTrue(await self.sql_null_lines(item.id))
         self.assertEqual(await self.votes(), [(*AMOUNT_VOTE, self.a.id)])
+
+    async def fix_newpay(self, *, approved):
+        """Bukti `NEWPAY` (tidak dikenali, kunci `logo:newpay`) yang totalnya salah dibaca Rp40.000; yang benar Rp50.000
+        ("Nominal"). `approved`: aturan `logo` kunci itu sudah disetujui (dibuat sesudah dibaca, pembaca tidak berubah)."""
+        from app.models.models import ProofRule
+        from app.services.kotak_struk import belajar
+        await self.enable_donation()
+        item_id = await self.send_newpay()
+        got = await self.get(item_id)
+        await self.set(item_id, document={**got.document, "amounts": {**got.document["amounts"], "total": 40000}})
+        belajar.invalidate_rules_cache()
+        self.addCleanup(belajar.invalidate_rules_cache)
+        if approved:
+            async with self.Session() as db:
+                db.add(ProofRule(kind="logo", rule_key="logo:newpay", value="baru", users=2, households=2,
+                                 status="disetujui", decided_at=NOW))
+                await db.commit()
+        await self.tap(f"struk_fix_{item_id}")
+        await self.type_text("transfer budi 50rb")
+        return item_id
+
+    async def test_bot_fix_amount_votes_label_for_an_approved_logo_key(self):
+        # Review akhir A16 temuan 2: sama dengan jalur web (`record._learn_correction`), suara label kunci logo hanya
+        # sesudah aturan `logo` kunci itu disetujui (K8).
+        item_id = await self.fix_newpay(approved=True)
+        self.assertEqual(await self.votes(), [("label_total", "logo:newpay", "nominal", self.a.id)])
+        self.assertEqual([(s.item_id, s.trigger) for s in await self.samples()], [(item_id, "nominal_bot")])
+
+    async def test_bot_fix_amount_no_label_vote_for_an_unapproved_logo_key(self):
+        item_id = await self.fix_newpay(approved=False)
+        self.assertEqual(await self.votes(), [])
+        self.assertEqual([(s.item_id, s.trigger) for s in await self.samples()], [(item_id, "nominal_bot")])
 
     async def test_bot_cancel_and_duplicate_clear_lines(self):
         await self.enable_donation()

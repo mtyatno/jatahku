@@ -1167,6 +1167,7 @@ class DonationCliTests(unittest.TestCase):
             "NMID ID1024358806544": "Masih ada nomor panjang di baris 10",
             "Email budi@contoh.id": "Masih ada alamat email di baris 10",
             "Rek 1.234.567.890": "Masih ada nomor rekening di baris 10",
+            "Ref 1234/5678/9012": "Masih ada nomor panjang di baris 10",   # review akhir A16 temuan 1
         }
         for line, message in cases.items():
             with self.subTest(line):

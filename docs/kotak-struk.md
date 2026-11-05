@@ -533,7 +533,9 @@ dikosongkan). Antrean Admin tetap bisa ditinjau, diunduh, dan dihapus.
   "Bagikan bukti bayar" dan sebelum kartu Google. Teks persetujuan (keputusan pemilik 5 Nov 2026, apa adanya): "Bantu
   Jatahku menjadi lebih tepat dalam membaca berbagai model dan bentuk bukti bayar (struk) dari berbagai bank dan layanan
   keuangan di seluruh Indonesia. Teks bukti yang sudah disamarkan dikirim ke pengelola untuk ditinjau; bisa dimatikan
-  kapan saja." Teks lengkap selalu terlihat sebelum menyalakan.
+  kapan saja." Teks lengkap selalu terlihat sebelum menyalakan. Teks kartu ini sengaja teks singkat milik pemilik;
+  pengungkapan lengkap (termasuk contoh yang disetujui disimpan di repositori kode yang terbuka untuk umum, hanya teks
+  tersamar dan nama samaran) ada di paragraf "Donasi contoh (opsional)" `privacy.html` (review akhir A16 temuan 3).
 - Saklar `role="switch"`; status "Aktif sejak {tgl}" (hari WIB persetujuan) atau "Mati"; sudah setuju tetapi saklar
   fitur mati: "Donasi contoh sedang ditutup; kamu tetap bisa mematikannya.". Pesan: "Terima kasih, bantuanmu aktif.",
   "Dimatikan. Contoh yang belum ditinjau sudah dihapus.", 409 → teks server, "Koneksi gagal, coba lagi.", lainnya
@@ -1213,7 +1215,7 @@ Catatan: teks ini teks spec §8 yang sudah disetujui pemilik. Tahap 1 belum bela
 adanya (tahap 2 langsung menyusul, keputusan pemilik §12.4); membuang frasa itu hanya bila tahap 2 ditunda.
 
 Paragraf tahap 2 untuk `privacy.html` (disetujui pemilik produk 5 Nov 2026; retensi 7 hari, sampel yang sudah ditinjau
-tetap sesudah persetujuan ditarik), dipasang **sebelum** saklar `kotak_donasi` dinyalakan, di bawah paragraf "Belajar
+tetap sesudah persetujuan ditarik; kalimat repositori publik ditambahkan review akhir A16 temuan 3), dipasang **sebelum** saklar `kotak_donasi` dinyalakan, di bawah paragraf "Belajar
 dari koreksi", dengan cara pasang yang sama (file sumber yang dipasang ulang `deploy.sh`, lalu `public_html`). Kalimat
 terakhir paragraf "Belajar dari koreksi" ("teks hasil bacanya tidak disimpan") tetap benar untuk user yang tidak setuju;
 paragraf ini pengecualian opt-in (K1). Cek: `curl -s https://jatahku.com/privacy.html | grep -c "Donasi contoh"` → 1.
@@ -1222,9 +1224,11 @@ paragraf ini pengecualian opt-in (K1). Cek: `curl -s https://jatahku.com/privacy
 <p><strong>Donasi contoh (opsional).</strong> Bila Anda mengaktifkan "Bantu Jatahku membaca bukti bayar" di Pengaturan,
 saat Anda mengoreksi hasil pembacaan bukti bayar, teks bukti itu dikirim ke pengelola Jatahku untuk ditinjau: nomor
 rekening, nomor referensi, dan nomor HP sudah disamarkan, dan nama yang kami kenali diganti nama samaran. Pengelola
-mengganti nama yang tersisa lalu memakainya sebagai contoh pengujian pembacaan. Contoh yang belum ditinjau dihapus dalam
-7 hari; contoh yang sudah ditinjau hanya memuat teks yang sudah disamarkan. Gambar bukti tidak pernah dikirim. Anda bisa
-mematikannya kapan saja, dan contoh yang belum ditinjau ikut dihapus.</p>
+mengganti nama yang tersisa lalu memakainya sebagai contoh pengujian pembacaan. Contoh yang sudah disetujui disimpan
+sebagai contoh uji di repositori kode Jatahku yang terbuka untuk umum, hanya berupa teks yang sudah disamarkan dengan nama
+samaran, tanpa gambar, nama asli, atau nomor. Contoh yang belum ditinjau dihapus dalam 7 hari; contoh yang sudah
+ditinjau hanya memuat teks yang sudah disamarkan. Gambar bukti tidak pernah dikirim. Anda bisa mematikannya kapan saja,
+dan contoh yang belum ditinjau ikut dihapus.</p>
 ```
 
 Baris DPIA ringkas (tambahan untuk tabel belajar; baris kedua tahap 2):

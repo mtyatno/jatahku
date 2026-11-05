@@ -1280,7 +1280,7 @@ async def note_fix_amount(update, text: str) -> None:
     """Pesan teks pertama user sesudah "✏️ Nominal salah" (handlers.handle_message, sesudah `capture_note`: perintah,
     foto, tombol, dan catatan yang ditangkap tidak menghabiskan kunci): kunci `FIX_KEY` diambil sekali (`getdel`); satu
     nominal (`fix_amount`) → suara koreksi nominal untuk item itu (`belajar.learn_from_correction` dengan
-    `Final(nominal, None, None, hari ini WIB)`) dan donasi contoh `nominal_bot` (`donasi.donate`, truth total; baris
+    `Final(nominal, None, None, hari ini WIB)`; kunci `logo:` dengan `approved_logo` seperti jalur web) dan donasi contoh `nominal_bot` (`donasi.donate`, truth total; baris
     tersamar dikosongkan bila tidak disimpan) lalu commit. Item milik user lain / tidak ada / tanpa kerangka / struk
     belanja → tanpa suara. Tidak pernah melempar dan tidak pernah menahan teks: pemanggil selalu lanjut ke NLP, yang
     mencatat ketikan itu seperti biasa (tidak tertaut ke item). Redis mati → tanpa suara, diam-diam seperti
@@ -1308,7 +1308,12 @@ async def note_fix_amount(update, text: str) -> None:
             if item is None:
                 return
             final = belajar.Final(amount, None, None, belajar.today_wib())
-            voted = await belajar.learn_from_correction(db, item, final, user_id=user.id)
+            # Kunci `logo:<kata>` hanya mendapat suara label sesudah aturan `logo`-nya disetujui (K8), sama dengan
+            # jalur web `record._learn_correction` (review akhir A16 temuan 2).
+            key = item.layout.get("key") if isinstance(item.layout, dict) else None
+            approved_logo = (await belajar.approved_logo_keys(db) if isinstance(key, str) and key.startswith("logo:")
+                             else frozenset())
+            voted = await belajar.learn_from_correction(db, item, final, user_id=user.id, approved_logo=approved_logo)
             sample = bool(item.sample_lines)
             if sample:   # galat donasi ditelan `donate`; suara di atas tetap di-commit
                 await donasi.donate(db, item, donasi.correction_trigger(item, None, typed_amount=amount),
