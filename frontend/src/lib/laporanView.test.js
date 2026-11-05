@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BREAKPOINT_DESKTOP, tampilanLaporan, labelStatus, angkaUtama, trenTeks, bannerLaporan, unduhPdf,
+  BREAKPOINT_DESKTOP, tampilanLaporan, labelStatus, angkaUtama, trenTeks, bannerLaporan, statusEmail, pesanVerifikasi, unduhPdf,
   HALAMAN_LAPORAN, isiHalaman, masihAdaHalaman, gabungLaporan,
 } from './laporanView.js';
 
@@ -89,6 +89,32 @@ test('bannerLaporan', () => {
   assert.equal(bannerLaporan({ kata_sandi_diatur: true }), null);
   assert.equal(bannerLaporan(null), null);
   assert.equal(bannerLaporan(undefined), null);
+});
+
+test('bannerLaporan email: kata sandi lebih dulu, lalu verifikasi email', () => {
+  const email = { teks: 'Verifikasi email untuk menerima laporan lewat email.', tautan: '/settings#laporan' };
+  const dasar = { kata_sandi_diatur: true, email: 'a@b.id', email_terverifikasi: false, email_on: true };
+  assert.deepEqual(bannerLaporan(dasar), email);
+  assert.equal(bannerLaporan({ ...dasar, email_terverifikasi: true }), null);
+  assert.equal(bannerLaporan({ ...dasar, email_on: false }), null);
+  assert.equal(bannerLaporan({ ...dasar, email: null }), null);
+  assert.equal(bannerLaporan({ ...dasar, kata_sandi_diatur: false }).teks, 'Atur kata sandi laporan untuk mengunduh PDF.');
+});
+
+test('statusEmail', () => {
+  assert.deepEqual(statusEmail({ email: null }), { teks: 'Belum ada email di akun ini. Laporan tetap terbit di aplikasi dan Telegram.', bisaVerifikasi: false });
+  assert.deepEqual(statusEmail({ email: 'a@b.id', email_terverifikasi: false }), { teks: 'Email a@b.id belum terverifikasi.', bisaVerifikasi: true });
+  assert.deepEqual(statusEmail({ email: 'a@b.id', email_terverifikasi: true }), { teks: 'Email a@b.id terverifikasi.', bisaVerifikasi: false });
+  assert.equal(statusEmail(null).bisaVerifikasi, false);
+});
+
+test('pesanVerifikasi', () => {
+  assert.deepEqual(pesanVerifikasi('berhasil'), { teks: 'Email terverifikasi. Laporan berikutnya juga dikirim ke email.', jenis: 'sukses' });
+  assert.deepEqual(pesanVerifikasi('tidak_berlaku'), { teks: 'Tautan verifikasi tidak berlaku atau sudah kedaluwarsa. Kirim tautan baru.', jenis: 'galat' });
+  assert.deepEqual(pesanVerifikasi('berubah'), { teks: 'Alamat email akunmu sudah berubah sejak tautan dikirim. Kirim tautan baru.', jenis: 'galat' });
+  assert.equal(pesanVerifikasi('asing'), null);
+  assert.equal(pesanVerifikasi(null), null);
+  assert.equal(pesanVerifikasi('toString'), null);
 });
 
 test('unduhPdf 200: simpan dengan nama_file dari JSON', async () => {

@@ -67,10 +67,37 @@ export function gabungLaporan(lama, baru) {
   return [...sebelumnya, ...(baru || []).filter((l) => !ada.has(l.id))];
 }
 
-// null = tidak ada banner (kata sandi sudah diatur, atau pengaturan belum termuat).
+// null = tidak ada banner. Kata sandi belum diatur didahulukan; sesudahnya banner verifikasi email
+// (email ada, belum terverifikasi, dan pengiriman email dinyalakan).
 export function bannerLaporan(pengaturan) {
-  if (!pengaturan || pengaturan.kata_sandi_diatur) return null;
-  return { teks: 'Atur kata sandi laporan untuk mengunduh PDF.', tautan: '/settings#laporan' };
+  if (!pengaturan) return null;
+  if (!pengaturan.kata_sandi_diatur) {
+    return { teks: 'Atur kata sandi laporan untuk mengunduh PDF.', tautan: '/settings#laporan' };
+  }
+  if (pengaturan.email && !pengaturan.email_terverifikasi && pengaturan.email_on) {
+    return { teks: 'Verifikasi email untuk menerima laporan lewat email.', tautan: '/settings#laporan' };
+  }
+  return null;
+}
+
+export function statusEmail(pengaturan) {
+  const email = pengaturan?.email;
+  if (!email) {
+    return { teks: 'Belum ada email di akun ini. Laporan tetap terbit di aplikasi dan Telegram.', bisaVerifikasi: false };
+  }
+  if (pengaturan.email_terverifikasi) return { teks: `Email ${email} terverifikasi.`, bisaVerifikasi: false };
+  return { teks: `Email ${email} belum terverifikasi.`, bisaVerifikasi: true };
+}
+
+const PESAN_VERIFIKASI = {
+  berhasil: { teks: 'Email terverifikasi. Laporan berikutnya juga dikirim ke email.', jenis: 'sukses' },
+  tidak_berlaku: { teks: 'Tautan verifikasi tidak berlaku atau sudah kedaluwarsa. Kirim tautan baru.', jenis: 'galat' },
+  berubah: { teks: 'Alamat email akunmu sudah berubah sejak tautan dikirim. Kirim tautan baru.', jenis: 'galat' },
+};
+
+// Nilai `?email_verifikasi=` sesudah membuka tautan verifikasi; kode asing = tidak ada pesan.
+export function pesanVerifikasi(kode) {
+  return Object.hasOwn(PESAN_VERIFIKASI, kode) ? { ...PESAN_VERIFIKASI[kode] } : null;
 }
 
 async function bacaJson(res) {
