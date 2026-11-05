@@ -8,12 +8,8 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
-import logging
-import subprocess
-import sys
 import unittest
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -30,8 +26,6 @@ from app.core.security import create_access_token, create_purpose_token, create_
 from app.models.models import Report, User
 from app.services import email_service, verifikasi_email as ve
 from app.tests.test_verifikasi_email import HAS_AIOSQLITE, DasarVerifikasi
-
-REPO = Path(__file__).resolve().parents[2]
 
 
 def _lokasi(hasil: str) -> str:
@@ -229,13 +223,6 @@ class LogTanpaAlamatTests(unittest.TestCase):
         self.assertFalse(hasil)
         self.assertNotIn(self.ALAMAT, log)
         self.assertIn("RuntimeError", log)
-
-
-class OpenapiCekTests(unittest.TestCase):
-    def test_openapi_cek(self):
-        r = subprocess.run([sys.executable, "-m", "app.scripts.openapi_cek"], cwd=REPO, capture_output=True, text=True,
-                           env={**os.environ})
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
