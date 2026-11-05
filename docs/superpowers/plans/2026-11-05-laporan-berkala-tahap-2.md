@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** dieksekusi 5 Nov 2026 (subagent-driven, Task 1–8 di branch `feat/laporan-berkala-email`); menunggu review akhir dan merge. Keputusan eksekusi: spec bagian "Penyesuaian saat eksekusi tahap 2".
+
 **Goal:** Laporan yang terbit dikirim ke email user yang terverifikasi: ringkasan tanpa nominal di body, PDF berkata sandi
 sebagai lampiran, antrean dengan coba ulang, verifikasi email, dan berhenti berlangganan satu klik.
 

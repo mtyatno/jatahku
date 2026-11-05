@@ -1,12 +1,12 @@
 # Laporan berkala — desain
 
 **Tanggal:** 1 Nov 2026
-**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026.
+**Status:** desain disetujui pemilik produk di chat, bagian 1–5 (1 Nov 2026); spec tertulis disetujui 1 Nov 2026. Tahap 2 (email) diimplementasi 5 Nov 2026 di branch `feat/laporan-berkala-email` (belum tayang; menunggu review akhir dan merge).
 **Tahap 1 tayang 5 Nov 2026:** PR #190 (squash `56ddf74`), revisi alembic `967a27d0c15d` dan checklist deploy di
 `AGENTS.md` ("Laporan berkala tahap 1") dijalankan pemilik; job pertama (5 Nov 04.30 WIB) menerbitkan 21 laporan, semuanya
 diberi tahu, dan unduh PDF berkata sandi dicoba pemilik. Perilaku final tahap 1: `docs/laporan-berkala.md`. Yang berubah dari desain ini tercatat di "Penyesuaian saat
-menyusun rencana" dan "Penyesuaian saat eksekusi" di bawah; keputusan pemilik produk 1–12 tidak berubah. Tahap 2 dan 3
-belum dimulai. Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
+menyusun rencana" dan "Penyesuaian saat eksekusi" di bawah; keputusan pemilik produk 1–12 tidak berubah. Tahap 3
+belum dimulai; tahap 2 lihat Status di atas. Rencana tahap 1: `docs/superpowers/plans/2026-11-01-laporan-berkala-tahap-1.md`.
 **Dasar:** `main` setelah siklus household (#169) dan penandaan checklist-nya (#173). Siklus anggaran milik household
 (`households.payday_day`, penulis tunggal `app/services/household_cycle.py`, lihat `docs/siklus-household.md`), dan
 `monthly_snapshots.allocated_amount`/`spent_amount` terisi untuk seluruh riwayat.
@@ -81,6 +81,52 @@ rencana, dan diuji di tugasnya.
   diberi tahu dan terbit ≤ 7 hari lalu (tanpa lonceng kedua, tanpa Telegram berulang). Snapshot yang belum ada di hari
   terakhir jendela dicatat WARNING bila household beraktivitas. Arsip `/laporan` memuat 24 per halaman dengan "Tampilkan
   lebih banyak", dan Pengaturan → Laporan punya tautan "Lihat laporan" (pintu masuk di HP selain notifikasi).
+
+## Penyesuaian saat menyusun rencana tahap 2 (5 Nov 2026)
+
+Membaca kode saat menyusun rencana tahap 2 menghasilkan tujuh keputusan berikut (rencana
+`docs/superpowers/plans/2026-11-05-laporan-berkala-tahap-2.md`, bagian "Keputusan rencana"). Bagian 6 dan 7 di bawah tetap
+rancangan yang disetujui; bila berbeda, butir di sini dan di "Penyesuaian saat eksekusi tahap 2" yang berlaku.
+
+1. **Saklar lewat `PATCH /user/laporan-pengaturan`** (body semua opsional, 30/jam per user), bukan PUT: `PUT` tetap hanya
+   kata sandi (5/jam); batas 5/jam untuk kata sandi tidak boleh ikut memakan saklar. API tetap hanya bertambah; tahap 3
+   menambah `kuartalan_on`/`tahunan_on` ke PATCH ini. Spec bagian 7 menulis keduanya di PUT.
+2. **Laporan yang dilewati dihidupkan lagi** (bagian 6b: dikirim bila email terverifikasi, `email_on`, dan belum pernah
+   dikirim): verifikasi berhasil → laporan `dilewati` dengan alasan `belum_verifikasi` atau `tanpa_email` yang terbit ≤
+   `JENDELA_TERBIT_HARI` (7) hari lalu kembali `menunggu`; `email_on` dinyalakan → alasan `dimatikan` begitu juga. Yang
+   lebih tua tidak dikirim.
+3. **Jeda coba ulang 55 menit** untuk "paling cepat 1 jam" (bagian 6c): job jalan tiap jam di menit 30, jadi 60 menit tepat
+   bisa meleset beberapa detik dan menunda satu jam lagi.
+4. **`GET /laporan/berhenti-email` tidak pernah mengubah apa pun**: pemindai tautan di layanan email membuka GET. Hanya
+   POST (tombol halaman dan one-click RFC 8058) mematikan `email_on`.
+5. **Klaim kirim** `menunggu → mengirim` dengan `UPDATE … WHERE email_status = 'menunggu'` (cek rowcount), pola klaim
+   notifikasi R16: job terjadwal dan jalan manual dari shell tidak mengirim dua kali.
+6. **Lampiran jatuh dengan anggun:** token kata sandi tak terbaca atau kata sandi yang kini ditolak → tanpa lampiran,
+   baris "atur kata sandi" (sama dengan 409 di unduh); kunci server tidak ada atau galat PDF tak terduga → tanpa lampiran,
+   baris "unduh di aplikasi". Email tetap terkirim.
+7. **Laporan tahap 1 (`email_status` NULL) tidak pernah dikirim** (keputusan rencana tahap 1 butir 3).
+
+## Penyesuaian saat eksekusi tahap 2 (5 Nov 2026)
+
+Review per tugas (Task 1–8, subagent-driven) menghasilkan keputusan berikut; diuji di tugasnya dan dijabarkan di
+`docs/laporan-berkala.md` bagian "Email laporan".
+
+- **R-T3-1, batas waktu SMTP 30 detik** untuk setiap email (`email_service.SMTP_TIMEOUT`, di `_deliver`): antrean berjalan
+  di dalam job per jam (`max_instances=1`), jadi server SMTP yang macet harus gagal cepat dan tidak menahan jam berikutnya.
+- **R-T3-2, setiap klaim adalah satu percobaan** (mengganti "percobaan tidak bertambah saat klaim basi dikembalikan" di
+  rencana): UPDATE klaim mengisi `mengirim`, `email_terakhir_at` = waktu sebenarnya, dan `email_percobaan` + 1, sehingga
+  `email_percobaan` menghitung klaim (kiriman pertama yang berhasil terbaca 1). Klaim `mengirim` basi (> 30 menit) atau
+  gagal yang sudah mencapai 3 percobaan menjadi `gagal`/`smtp` dengan satu log error; tulis hasil hanya mendarat bila
+  klaimnya masih milik jalan itu. Paling banyak 3 kiriman per laporan.
+- **Email verifikasi lewat `email_service.send_verifikasi_email`** (log tanpa alamat), bukan `send_email`, yang mencatat
+  "Email sent to <alamat>".
+- **`GET` dan `POST /laporan/berhenti-email`** masing-masing 30/menit per IP dalam ember terpisah: GET pemindai tautan tidak
+  bisa menghabiskan jatah POST one-click.
+- **Saklar "Kirim laporan ke email" selalu tampil dan bisa dinyalakan**, juga tanpa email atau tanpa email terverifikasi
+  (pilihan user tersimpan untuk saat emailnya siap).
+- **Pesan `?email_verifikasi=` tampil sekali:** reload ambil-alih service worker (`controllerchange`) atau browser yang
+  logout (dialihkan ke login) dapat menghilangkannya; verifikasinya sudah berhasil dan baris status di kartu menunjukkan
+  hasilnya. Dicatat di "Batasan yang diketahui" dokumen operasional.
 
 ## 1. Tujuan dan keputusan
 
