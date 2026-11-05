@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import logging
+import re
 import unittest
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -40,7 +41,7 @@ from app.api.routes import auth as auth_route, laporan as laporan_route
 from app.core.database import Base, get_db
 from app.core.deps import get_current_user
 from app.core.rate_limit import kunci_per_user
-from app.core.security import create_access_token
+from app.core.security import create_access_token, create_purpose_token
 from app.models.models import (
     JENIS_BULANAN, Household, HouseholdMember, HouseholdRole, Report, ReportSettings, User,
 )
@@ -1045,6 +1046,214 @@ class BatasFrekuensiTests(ApiDasar):
 
 
 @unittest.skipUnless(HAS_AIOSQLITE, "butuh aiosqlite")
+class SaklarEmailTests(ApiDasar):
+    """Task 5 (tahap 2): `PATCH /user/laporan-pengaturan` (saklar email) dan berhenti berlangganan satu klik
+    (`GET`/`POST /laporan/berhenti-email`, tanpa login, token bertanda tangan)."""
+
+    def token(self, user):
+        return create_purpose_token(str(user.id), "berhenti_email_laporan")
+
+    async def atur_laporan(self, user, status, alasan=None, terbit=None, periode=OKT):
+        """Laporan `user` dengan status antrean email `status` (terbit sekarang bila `terbit` kosong)."""
+        id_laporan = await self.buat_laporan(user, periode, terbit=terbit or datetime.now(timezone.utc))
+        async with self.Session() as db:
+            await db.execute(update(Report).where(Report.id == id_laporan).values(
+                email_status=status, email_alasan=alasan))
+            await db.commit()
+        return id_laporan
+
+    async def status_email(self, id_laporan):
+        async with self.Session() as db:
+            baris = await db.get(Report, id_laporan)
+            return baris.email_status, baris.email_alasan
+
+    async def email_on(self, user) -> bool:
+        return (await self.klien.get("/user/laporan-pengaturan")).json()["email_on"]
+
+    # --- PATCH ---
+
+    async def test_patch_email_on(self):
+        await self.atur_sandi()
+        awal = (await self.baris_pengaturan(self.ani)).kata_sandi_enc
+        r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(set(r.json()), BENTUK_PENGATURAN)
+        self.assertFalse(r.json()["email_on"])
+        self.assertTrue(r.json()["kata_sandi_diatur"])
+        r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": True})
+        self.assertTrue(r.json()["email_on"])
+        self.assertEqual(await self.jumlah_pengaturan(), 1)
+        self.assertEqual((await self.baris_pengaturan(self.ani)).kata_sandi_enc, awal)
+
+    async def test_patch_membuat_baris_sekali_tanpa_kata_sandi(self):
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+        r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["kata_sandi_diatur"])
+        self.assertEqual(await self.jumlah_pengaturan(), 1)
+        self.assertIsNone((await self.baris_pengaturan(self.ani)).kata_sandi_enc)
+        self.assertEqual(await self.email_on(self.ani), False)
+
+    async def test_patch_tetap_menjawab_kata_sandi_tak_terpakai_false(self):
+        await self.simpan_token(self.ani, "bukan-token-fernet")
+        r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["kata_sandi_diatur"])
+
+    async def test_put_kata_sandi_tidak_menyentuh_saklar(self):
+        await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        await self.atur_sandi()
+        self.assertFalse((await self.baris_pengaturan(self.ani)).email_on)
+
+    async def test_patch_kosong_dan_field_asing_422(self):
+        for badan in ({}, {"kuartalan_on": False}, {"email_on": False, "x": 1}, {"email_on": None}, {"email_on": "ya"}):
+            with self.subTest(badan=badan):
+                r = await self.klien.patch("/user/laporan-pengaturan", json=badan)
+                self.assertEqual(r.status_code, 422, r.text)
+                self.assertNotIn("\"input\"", r.text)
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+
+    async def test_patch_tidak_memakai_batas_kata_sandi(self):
+        self.app.dependency_overrides.pop(get_current_user)
+        h = masuk(create_access_token(str(self.ani.id)))
+        auth_route.limiter.reset()
+        auth_route.limiter.enabled = True
+        for n in range(6):
+            r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": n % 2 == 0}, headers=h)
+            self.assertEqual(r.status_code, 200, f"PATCH ke-{n + 1}: {r.text}")
+        for n in range(5):
+            r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": f"sandi-ke-{n}-xx"}, headers=h)
+            self.assertEqual(r.status_code, 200, f"PUT ke-{n + 1}: {r.text}")
+        r = await self.klien.put("/user/laporan-pengaturan", json={"kata_sandi": "sandi-ke-6-xx"}, headers=h)
+        self.assertEqual(r.status_code, 429)
+
+    async def test_patch_batas_30_per_jam_per_user(self):
+        batas = auth_route.limiter._route_limits[f"{laporan_route.__name__}.ubah_pengaturan_laporan"]
+        self.assertEqual([str(b.limit) for b in batas], ["30 per 1 hour"])
+        self.assertIs(batas[0].key_func, kunci_per_user)
+
+    async def test_patch_menyalakan_menghidupkan_lagi(self):
+        await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        baru = await self.atur_laporan(self.ani, "dilewati", "dimatikan")
+        tua = await self.atur_laporan(self.ani, "dilewati", "dimatikan", terbit=datetime.now(timezone.utc) - timedelta(days=9), periode=SEP)
+        lain = await self.atur_laporan(self.ani, "dilewati", "belum_verifikasi", periode=AGS)
+        punya_budi = await self.atur_laporan(self.budi, "dilewati", "dimatikan")
+        r = await self.klien.patch("/user/laporan-pengaturan", json={"email_on": True})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(await self.status_email(baru), ("menunggu", None))
+        self.assertEqual(await self.status_email(tua), ("dilewati", "dimatikan"))
+        self.assertEqual(await self.status_email(lain), ("dilewati", "belum_verifikasi"))
+        self.assertEqual(await self.status_email(punya_budi), ("dilewati", "dimatikan"))
+
+    async def test_patch_mematikan_tidak_mengubah_antrean(self):
+        menunggu = await self.atur_laporan(self.ani, "menunggu")
+        await self.klien.patch("/user/laporan-pengaturan", json={"email_on": False})
+        self.assertEqual(await self.status_email(menunggu), ("menunggu", None))
+
+    # --- berhenti berlangganan ---
+
+    async def test_get_berhenti_tidak_mengubah(self):
+        await self.klien.patch("/user/laporan-pengaturan", json={"email_on": True})
+        self.app.dependency_overrides.pop(get_current_user)   # tanpa login
+        token = self.token(self.ani)
+        r = await self.klien.get("/laporan/berhenti-email", params={"token": token})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.headers["content-type"].startswith("text/html"))
+        self.assertIn("Berhenti menerima email laporan?", r.text)
+        self.assertIn("<form", r.text)
+        self.assertTrue((await self.baris_pengaturan(self.ani)).email_on)
+
+    async def test_get_berhenti_tanpa_baris_tidak_membuat_baris(self):
+        r = await self.klien.get("/laporan/berhenti-email", params={"token": self.token(self.ani)})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+
+    async def test_post_berhenti_mematikan(self):
+        self.app.dependency_overrides.pop(get_current_user)   # tanpa login
+        id_laporan = await self.buat_laporan(self.ani, OKT)
+        token = self.token(self.ani)
+        r = await self.klien.post("/laporan/berhenti-email", params={"token": token})   # tanpa badan
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.headers["content-type"].startswith("text/html"))
+        self.assertIn("Email laporan dimatikan", r.text)
+        self.assertFalse((await self.baris_pengaturan(self.ani)).email_on)
+        self.assertEqual(await self.jumlah_pengaturan(), 1)
+        # Ulang dengan body one-click RFC 8058: tetap 200 dan tetap mati.
+        r = await self.klien.post("/laporan/berhenti-email", params={"token": token},
+                                  content="List-Unsubscribe=One-Click",
+                                  headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse((await self.baris_pengaturan(self.ani)).email_on)
+        # Form tombol halaman: ikuti persis alamat di `action`.
+        r = await self.klien.get("/laporan/berhenti-email", params={"token": token})
+        aksi = re.search(r'action="([^"]+)"', r.text).group(1).replace("&amp;", "&")
+        r = await self.klien.post(aksi, content="", headers={"Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(r.status_code, 200, r.text)
+        # Hanya user pada token; laporan di aplikasi tetap bisa dibuka.
+        self.assertIsNone(await self.baris_pengaturan(self.budi))
+        self.app.dependency_overrides[get_current_user] = lambda: self.ani
+        self.assertEqual((await self.klien.get(f"/laporan/{id_laporan}")).status_code, 200)
+
+    async def test_post_berhenti_hanya_mematikan_email_on(self):
+        await self.atur_sandi()
+        await self.klien.post("/laporan/berhenti-email", params={"token": self.token(self.ani)})
+        baris = await self.baris_pengaturan(self.ani)
+        self.assertFalse(baris.email_on)
+        self.assertIsNotNone(baris.kata_sandi_enc)
+        self.assertTrue(baris.kuartalan_on and baris.tahunan_on)
+
+    async def test_berhenti_token_salah_400(self):
+        kasus = {
+            "token access": create_access_token(str(self.ani.id)),
+            "acak": "bukan-token",
+            "kosong": "",
+            "tujuan lain": create_purpose_token(str(self.ani.id), "verifikasi_email"),
+            "bukan uuid": create_purpose_token("bukan-uuid", "berhenti_email_laporan"),
+        }
+        for nama, token in kasus.items():
+            for metode in ("get", "post"):
+                with self.subTest(nama=nama, metode=metode):
+                    r = await getattr(self.klien, metode)("/laporan/berhenti-email", params={"token": token})
+                    self.assertEqual(r.status_code, 400, r.text)
+                    self.assertIn("Tautan tidak berlaku", r.text)
+        r = await self.klien.get("/laporan/berhenti-email")   # tanpa parameter token
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+
+    async def test_berhenti_user_terhapus_400(self):
+        token = self.token(self.cici)
+        async with self.Session() as db:
+            await db.execute(HouseholdMember.__table__.delete().where(HouseholdMember.user_id == self.cici.id))
+            await db.execute(User.__table__.delete().where(User.id == self.cici.id))
+            await db.commit()
+        for metode in ("get", "post"):
+            with self.subTest(metode=metode):
+                r = await getattr(self.klien, metode)("/laporan/berhenti-email", params={"token": token})
+                self.assertEqual(r.status_code, 400, r.text)
+        self.assertEqual(await self.jumlah_pengaturan(), 0)
+
+    async def test_rute_berhenti_tidak_tertelan_report_id(self):
+        r = await self.klien.get("/laporan/berhenti-email", params={"token": "x"})
+        self.assertNotEqual(r.status_code, 422)
+        self.assertEqual(r.status_code, 400)
+        id_laporan = await self.buat_laporan(self.ani, OKT)   # `/laporan/{uuid}` tetap jalan
+        self.assertEqual((await self.klien.get(f"/laporan/{id_laporan}")).status_code, 200)
+
+    async def test_berhenti_batas_30_per_menit_per_ip_untuk_get_dan_post(self):
+        batas = auth_route.limiter._route_limits
+        for nama in ("halaman_berhenti_email", "berhenti_email"):
+            with self.subTest(nama=nama):
+                b = batas[f"{laporan_route.__name__}.{nama}"]
+                self.assertEqual([str(x.limit) for x in b], ["30 per 1 minute"])
+        auth_route.limiter.reset()
+        auth_route.limiter.enabled = True
+        for metode in ("get", "post"):
+            kode = [(await getattr(self.klien, metode)("/laporan/berhenti-email", params={"token": "x"})).status_code
+                    for _ in range(31)]
+            self.assertEqual(kode[:30], [400] * 30, metode)
+            self.assertEqual(kode[30], 429, metode)
+
+
 class TanpaLoginTests(unittest.IsolatedAsyncioTestCase):
     async def test_semua_endpoint_butuh_login(self):
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -1073,9 +1282,12 @@ class TanpaLoginTests(unittest.IsolatedAsyncioTestCase):
         for metode, jalur in [
             ("GET", "/laporan"), ("GET", f"/laporan/{uid}"), ("GET", f"/laporan/{uid}/pdf"),
             ("GET", "/user/laporan-pengaturan"), ("PUT", "/user/laporan-pengaturan"),
+            ("PATCH", "/user/laporan-pengaturan"),
         ]:
             with self.subTest(metode=metode, jalur=jalur):
                 kirim = {"json": {"kata_sandi": SANDI}} if metode == "PUT" else {}
+                if metode == "PATCH":
+                    kirim = {"json": {"email_on": False}}
                 for header in ({}, {"Authorization": "Bearer bukan-token"}):
                     r = await klien.request(metode, jalur, headers=header, **kirim)
                     self.assertEqual(r.status_code, 401, r.text)

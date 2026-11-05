@@ -169,6 +169,7 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/transactions/scan-receipt"),            # baca struk lewat Kotak Struk (ruang keluarga, R7)
             ("POST", "/transactions/scan-receipt/{scan_id}/feedback"),  # scan milik user
             ("POST", "/transactions/transcribe"),              # suara → teks, tanpa data ruang
+            ("POST", "/laporan/berhenti-email"),               # token bertanda tangan satu user, tanpa data ruang
             ("POST", "/snapshots/run"), ("POST", "/snapshots/daily-summary"),        # admin
             ("POST", "/snapshots/weekly-summary"), ("POST", "/snapshots/process-recurring"),  # admin
         }
