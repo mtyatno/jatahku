@@ -374,7 +374,7 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   halaman atau POST one-click.
 - **Tautan dari email tidak bertindak lewat GET** (keputusan rencana 4, Ruling F-4): verifikasi dan berhenti
   berlangganan sama-sama GET = halaman konfirmasi yang tidak mengubah apa pun, POST = tindakannya. Pemindai tautan di
-  layanan email (mis. Safe Links) membuka GET, tidak menekan tombol.
+  layanan email (mis. Safe Links) membuka GET dan umumnya tidak mengirim formulir; halamannya tanpa skrip.
 - **Token bertujuan** (`create_purpose_token`/`decode_purpose_token`, `app/core/security.py`): JWT `JWT_SECRET`, klaim `type`
   = tujuan (`verifikasi_email`, `berhenti_email_laporan`). Token login menolak `type` selain `access` (dan refresh
   `refresh`), jadi token tujuan tidak pernah lolos sebagai sesi, dan sebaliknya; kedua fungsi juga menolak tujuan
@@ -413,8 +413,8 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   hanya dari Pengaturan).
 - **Tombol ditekan orang yang tidak meminta:** pemilik alamat yang menerima email verifikasi yang tidak pernah dimintanya
   (mis. akun didaftarkan orang lain dengan alamatnya) lalu tetap menekan "Verifikasi email" memverifikasi alamat itu, dan
-  laporan akun tersebut mulai dikirim ke sana; emailnya meminta mengabaikan bila tidak meminta. Pemindai tautan tidak lagi
-  bisa melakukannya (GET hanya menampilkan halaman konfirmasi).
+  laporan akun tersebut mulai dikirim ke sana; emailnya meminta mengabaikan bila tidak meminta. Pemindai tautan yang
+  hanya membuka tautan tidak lagi memverifikasi (GET hanya menampilkan halaman konfirmasi).
 - **Alokasi bertanggal mundur ke amplop baru** (Ruling R8): alokasi ke amplop yang dibuat sesudah periode tutup (mis.
   amplop "Tabungan" yang dibuat otomatis oleh pemasukan bertanggal mundur) tidak tampil sebagai baris, padahal
   pemasukannya tetap dihitung di `ringkasan.pemasukan`.
