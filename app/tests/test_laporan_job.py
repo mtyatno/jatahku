@@ -9,8 +9,13 @@ terikat di `app/services/laporan/job.py`: `current_payday`, `create_monthly_snap
 `self.kejadian`: urutan langkah beserta household yang kuncinya sedang dipegang. Kunci household terikat ke event loop
 tempat ia pertama kali diperebutkan, jadi setiap tes memakai id household baru.
 
-`UjungKeUjungTests` menjalankan job di SQLite dengan `current_payday`, refresh snapshot, pemuat, dan `kirim` yang
-asli (`AsyncSessionLocal` diganti di setiap modul yang mengikatnya); fixture-nya dijelaskan di kelas itu.
+`UjungKeUjungTests` menjalankan job di SQLite dengan `current_payday`, refresh snapshot, pemuat, `kirim`, dan antrean
+email yang asli (`AsyncSessionLocal` diganti di setiap modul yang mengikatnya; hanya pengirim SMTP yang dipalsukan);
+fixture-nya dijelaskan di kelas itu.
+
+Tahap 2, Task 3: status email diisi saat terbit (`antrean_email.status_awal`, pengaturan semua calon dalam satu kueri)
+dan `laporan_job` menjalankan `proses_antrean_email` sesudah sapu notifikasi, di luar kunci household. Antreannya
+sendiri diuji di `test_laporan_antrean_email`; di tes unit job ia diganti tiruan yang mencatat kejadian "email".
 Run: python -m unittest app.tests.test_laporan_job -v
 """
 import os
@@ -19,6 +24,7 @@ os.environ.setdefault("JWT_SECRET", "test-secret")
 
 import asyncio
 import importlib.util
+import inspect
 import unittest
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -33,18 +39,19 @@ from sqlalchemy.orm import configure_mappers
 from app.core.database import Base
 from app.models.models import (
     Allocation, Envelope, Household, HouseholdMember, HouseholdRole, HouseholdType, Income, MonthlySnapshot,
-    Notification, NotificationType, Report, Transaction, User,
+    Notification, NotificationType, Report, ReportSettings, Transaction, User,
 )
-from app.services import household_cycle, notification_service, rollover
+from app.services import email_service, household_cycle, notification_service, rollover
 from app.services import scheduler as scheduler_mod
 from app.services.advisor import advisor_cache
-from app.services.laporan import job
+from app.services.laporan import antrean_email, job
 from app.services.laporan.muat import muat_bahan
 from app.services.laporan.susun import AmplopPeriode, BahanLaporan, TransaksiPeriode, susun_bulanan
 from app.tests.fakes import FakeResult, db_with, fixed_date, sql
 
 configure_mappers()
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
+KIRIM_LAPORAN_ASLI = email_service.send_laporan_email   # tanda tangan untuk membaca argumen pengirim tiruan
 
 D = Decimal
 UTC = timezone.utc
@@ -52,6 +59,8 @@ PS, PE = date(2026, 10, 1), date(2026, 10, 31)  # periode yang baru tutup untuk 
 HARI_TERBIT = date(2026, 11, 1)
 PESAN = "Lihat bagaimana periode kemarin berjalan."
 TANPA_ERROR = {"processed": 2, "snapshots_created": 2, "errors": []}
+KOSONG = {"terkirim": 0, "gagal": 0, "dilewati": 0, "dicoba_lagi": 0}  # antrean email tanpa kiriman
+TERVERIFIKASI = datetime(2026, 10, 2, tzinfo=UTC)
 _OTOMATIS = object()
 
 
@@ -101,10 +110,12 @@ def bahan_laporan(nama: str, *, aktif: bool = True) -> BahanLaporan:
     )
 
 
-def skrip_rumah(rumah: Household, anggota: list[User], *, snapshot=True, sudah=(), beraktivitas=True) -> list:
-    """Hasil kueri sesi persiapan `terbitkan_household` untuk satu household, berurutan: prasyarat snapshot periode,
+def skrip_rumah(rumah: Household, anggota: list[User], *, snapshot=True, sudah=(), beraktivitas=True,
+                pengaturan=()) -> list:
+    """Hasil kueri `terbitkan_household` untuk satu household, berurutan. Sesi persiapan: prasyarat snapshot periode,
     anggota (`member_rows`), `User` anggota, id user yang sudah punya laporan periode itu, aktivitas household di
-    jendela, household. Langkah yang tidak tercapai (job berhenti lebih awal) tidak memakai hasilnya."""
+    jendela, household. Sesi pembangunan: baris `report_settings` para calon (`pengaturan`, bawaan tidak ada). Langkah
+    yang tidak tercapai (job berhenti lebih awal) tidak memakai hasilnya."""
     return [
         FakeResult(value=uuid.uuid4() if snapshot else None),
         FakeResult(rows=[(HouseholdRole.member, datetime(2026, 1, 5, tzinfo=UTC), u.id, u.name, 1) for u in anggota]),
@@ -112,6 +123,7 @@ def skrip_rumah(rumah: Household, anggota: list[User], *, snapshot=True, sudah=(
         FakeResult(rows=list(sudah)),
         FakeResult(value=beraktivitas),
         FakeResult(value=rumah),
+        FakeResult(rows=list(pengaturan)),
     ]
 
 
@@ -152,7 +164,8 @@ class PenerimaLayakTests(unittest.TestCase):
 
 class JobTestCase(unittest.IsolatedAsyncioTestCase):
     """Dasar tes unit job. Semua IO tiruan dan tidak pernah menunda, jadi satu-satunya yang bisa membuat job menunggu
-    adalah kunci household."""
+    adalah kunci household. Antrean email (`proses_antrean_email`) tiruan: mencatat kejadian "email" dan menjawab
+    `KOSONG` kecuali tes mengganti `self.antrean`."""
 
     def pasang(self, hasil, *, rumah, payday=1, refresh=None, bahan=None):
         """`hasil`: hasil kueri berurutan untuk semua sesi job. `rumah`: id household yang kuncinya dicatat.
@@ -194,6 +207,10 @@ class JobTestCase(unittest.IsolatedAsyncioTestCase):
             self.catat("sapu")
             return 0
 
+        async def antrean(*args, **kwargs):
+            self.catat("email")
+            return dict(KOSONG)
+
         self.db = db_with()
         self.db.execute = AsyncMock(side_effect=execute)
         self.db.commit = AsyncMock(side_effect=lambda: self.catat("commit"))
@@ -203,6 +220,7 @@ class JobTestCase(unittest.IsolatedAsyncioTestCase):
         self.muat = AsyncMock(side_effect=muat)
         self.notifikasi = AsyncMock(side_effect=notifikasi)
         self.sapu = AsyncMock(side_effect=sapu)
+        self.antrean = AsyncMock(side_effect=antrean)
         self.enterContext(patch.object(job, "AsyncSessionLocal", lambda: FakeSession(self.db)))
         self.enterContext(patch.object(job, "current_payday", self.current_payday))
         self.enterContext(patch.object(job, "create_monthly_snapshots", self.refresh))
@@ -210,6 +228,7 @@ class JobTestCase(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(job, "muat_bahan", self.muat))
         self.enterContext(patch.object(job, "kirim_notifikasi_laporan", self.notifikasi))
         self.enterContext(patch.object(job, "kirim_notifikasi_tertunda", self.sapu))
+        self.enterContext(patch.object(job, "proses_antrean_email", self.antrean))
 
     def catat(self, nama: str):
         terkunci = frozenset(h for h in self.rumah if household_cycle.household_lock(h).locked())
@@ -247,7 +266,8 @@ class TerbitkanHouseholdTests(JobTestCase):
                 self.assertEqual(r.data, susun_bulanan(bahan_laporan(user.name)))  # data dari bahan anggota itu
                 self.assertEqual((r.data["judul"], r.data["penerima"]["nama"], r.data["ringkasan"]["terpakai"]),
                                  ("Laporan Oktober 2026", user.name, "100000.00"))
-                self.assertIsNone(r.email_status)  # tahap 1: antrean email tidak diisi
+                # Tahap 2: status email diisi saat terbit; email keduanya belum terverifikasi.
+                self.assertEqual((r.email_status, r.email_alasan), ("dilewati", "belum_verifikasi"))
                 self.assertIsNone(r.notified_at)   # diisi setelah notifikasi terkirim, di luar kunci
         self.assertEqual(self.muat.await_args_list, [
             call(self.db, ani, rumah, PS, PE, 1, HARI_TERBIT),
@@ -270,6 +290,40 @@ class TerbitkanHouseholdTests(JobTestCase):
             self.assertIn(bagian, teks)
         self.assertEqual(sorted(params(sudah_ada).values(), key=str),
                          sorted([[ani.id, budi.id], "bulanan", PS], key=str))
+
+    async def test_terbit_mengisi_status_email(self):
+        # Tahap 2 (spec 6c): saat terbit `email_status` = `menunggu`, atau `dilewati` dengan alasannya. Pengaturan semua
+        # calon dibaca dalam SATU kueri; tanpa baris = bawaan (email_on). Laporan yang tidak dibangun (tanpa aktivitas)
+        # tentu tanpa status.
+        rumah = rumah_tangga()
+        ani, budi, citra, dewi, eko, fajar = (
+            orang("Ani"), orang("Budi"), orang("Citra", email=None), orang("Dewi"), orang("Eko"), orang("Fajar"),
+        )
+        for u in (ani, dewi, eko, fajar):
+            u.email_verified_at = TERVERIFIKASI   # sesudah email: event model mengosongkannya saat email diisi
+        pengaturan = [
+            ReportSettings(user_id=dewi.id, kata_sandi_enc=None, email_on=False, kuartalan_on=True, tahunan_on=True),
+            ReportSettings(user_id=eko.id, kata_sandi_enc="token-tersimpan", email_on=True, kuartalan_on=True,
+                           tahunan_on=True),
+        ]
+        anggota = [ani, budi, citra, dewi, eko, fajar]
+        self.pasang(skrip_rumah(rumah, anggota, pengaturan=pengaturan), rumah=[rumah.id],
+                    bahan={fajar.id: bahan_laporan("Fajar", aktif=False)})
+
+        ids = await job.terbitkan_household(rumah.id, HARI_TERBIT)
+
+        self.assertEqual(len(ids), 5)
+        self.assertEqual({r.user_id: (r.email_status, r.email_alasan) for r in self.laporan_baru()}, {
+            ani.id: ("menunggu", None),               # terverifikasi, tanpa baris pengaturan
+            budi.id: ("dilewati", "belum_verifikasi"),
+            citra.id: ("dilewati", "tanpa_email"),   # hanya Telegram
+            dewi.id: ("dilewati", "dimatikan"),
+            eko.id: ("menunggu", None),               # baris pengaturan dengan email_on
+        })
+        [kueri] = [s for s in self.pernyataan if "report_settings" in norm(sql(s))]
+        self.assertIn("FROM report_settings WHERE report_settings.user_id IN", norm(sql(kueri)))
+        self.assertEqual(list(params(kueri).values()), [[u.id for u in anggota]])
+        self.assertEqual(len(self.pernyataan), 7)   # 6 kueri persiapan + 1 untuk pengaturan semua calon
 
     async def test_jendela_tujuh_hari(self):
         kasus = [
@@ -443,9 +497,10 @@ class TerbitkanHouseholdTests(JobTestCase):
         self.refresh.assert_awaited_once_with(PS, PE, force=True, household_ids=[rumah.id])
         self.invalidate.assert_awaited_once_with(rumah.id)
         di_dalam = frozenset({rumah.id})
-        self.assertEqual(self.kejadian[-6:], [
+        self.assertEqual(self.kejadian[-7:], [
             ("sql", di_dalam),  # household (persiapan terakhir)
             ("refresh", di_dalam), ("invalidate", di_dalam),
+            ("sql", di_dalam),  # pengaturan laporan para calon (status email)
             ("muat Ani", di_dalam), ("muat Budi", di_dalam), ("commit", di_dalam),
         ])
 
@@ -467,7 +522,7 @@ class LaporanJobTests(JobTestCase):
     async def test_ruang_usaha_tidak_diproses(self):
         self.pasang([FakeResult(rows=[])], rumah=[])
 
-        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
 
         [pilih] = self.pernyataan
         teks = norm(sql(pilih))
@@ -487,15 +542,17 @@ class LaporanJobTests(JobTestCase):
             self.assertFalse(tugas.done())
             self.assertEqual(self.urutan(), ["sql"])  # baru memilih household; tanggal gajian belum dibaca
 
-        self.assertEqual(await asyncio.wait_for(tugas, timeout=1), {"terbit": 2, "gagal": 0})
+        self.assertEqual(await asyncio.wait_for(tugas, timeout=1), {"terbit": 2, "gagal": 0, "email": KOSONG})
         di_dalam, di_luar = frozenset({rumah.id}), frozenset()
         self.assertEqual(self.kejadian[1:], [
             ("payday", di_dalam),
             *[("sql", di_dalam)] * 6,  # prasyarat, anggota, user, laporan lama, aktivitas, household
             ("refresh", di_dalam), ("invalidate", di_dalam),
+            ("sql", di_dalam),         # pengaturan laporan para calon (status email)
             ("muat Ani", di_dalam), ("muat Budi", di_dalam), ("commit", di_dalam),
             ("notifikasi", di_luar), ("notifikasi", di_luar),  # setelah kunci dilepas
             ("sapu", di_luar),                                  # notifikasi yang tertinggal, setelah semua household
+            ("email", di_luar),                                 # antrean email, paling akhir
         ])
         self.assertEqual(self.notifikasi.await_args_list, [call(r.id) for r in self.laporan_baru()])
         self.assertFalse(kunci.locked())
@@ -511,7 +568,7 @@ class LaporanJobTests(JobTestCase):
         with self.assertLogs("jatahku.laporan", "ERROR") as logs:
             hasil = await job.laporan_job(HARI_TERBIT)
 
-        self.assertEqual(hasil, {"terbit": 1, "gagal": 1})
+        self.assertEqual(hasil, {"terbit": 1, "gagal": 1, "email": KOSONG})
         [laporan] = self.laporan_baru()
         self.assertEqual((laporan.user_id, laporan.household_id), (budi.id, rumah2.id))
         self.db.commit.assert_awaited_once()  # household pertama tidak menyimpan apa pun
@@ -530,7 +587,7 @@ class LaporanJobTests(JobTestCase):
         with self.assertLogs("jatahku.laporan", "ERROR") as logs:
             hasil = await job.laporan_job(HARI_TERBIT)
 
-        self.assertEqual(hasil, {"terbit": 0, "gagal": 1})
+        self.assertEqual(hasil, {"terbit": 0, "gagal": 1, "email": KOSONG})
         self.muat.assert_not_awaited()
         self.db.add.assert_not_called()
         self.db.commit.assert_not_awaited()
@@ -545,7 +602,7 @@ class LaporanJobTests(JobTestCase):
         # Jam berikutnya refresh berhasil: laporan terbit.
         self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
 
-        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 1, "gagal": 0})
+        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 1, "gagal": 0, "email": KOSONG})
 
     async def test_notifikasi_gagal_tidak_membatalkan_terbit(self):
         rumah, ani, budi = rumah_tangga(), orang("Ani"), orang("Budi")
@@ -555,7 +612,7 @@ class LaporanJobTests(JobTestCase):
         with self.assertLogs("jatahku.laporan", "ERROR") as logs:
             hasil = await job.laporan_job(HARI_TERBIT)
 
-        self.assertEqual(hasil, {"terbit": 2, "gagal": 0})
+        self.assertEqual(hasil, {"terbit": 2, "gagal": 0, "email": KOSONG})
         pertama, kedua = [r.id for r in self.laporan_baru()]
         self.assertEqual(self.notifikasi.await_args_list, [call(pertama), call(kedua)])
         [catatan] = logs.records
@@ -576,22 +633,23 @@ class LaporanJobTests(JobTestCase):
         with self.assertLogs("jatahku.laporan", "ERROR"):
             hasil = await job.laporan_job(HARI_TERBIT)
 
-        self.assertEqual(hasil, {"terbit": 2, "gagal": 1})
+        self.assertEqual(hasil, {"terbit": 2, "gagal": 1, "email": KOSONG})
         dicoba = frozenset(r.id for r in self.laporan_baru())
         self.assertEqual(len(dicoba), 2)
         self.sapu.assert_awaited_once_with(HARI_TERBIT, kecuali=dicoba)
-        self.assertEqual(self.urutan()[-1], "sapu")
+        self.assertEqual(self.urutan()[-2:], ["sapu", "email"])
 
     async def test_sapu_yang_gagal_hanya_dicatat(self):
         self.pasang([FakeResult(rows=[])], rumah=[])
         self.sapu.side_effect = RuntimeError("koneksi putus")
 
         with self.assertLogs("jatahku.laporan", "ERROR") as logs:
-            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
 
         [catatan] = logs.records
         self.assertIn("sapu notifikasi", catatan.getMessage())
         self.assertIsNotNone(catatan.exc_info)
+        self.antrean.assert_awaited_once_with()   # sapu yang gagal tidak menghentikan antrean email
 
     async def test_tanpa_tanggal_memakai_tanggal_server(self):
         # Scheduler memanggil `laporan_job()` tanpa argumen: tanggal server hari itu.
@@ -599,9 +657,52 @@ class LaporanJobTests(JobTestCase):
         self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
         self.enterContext(patch.object(job, "date", fixed_date(date(2026, 11, 7))))
 
-        self.assertEqual(await job.laporan_job(), {"terbit": 1, "gagal": 0})
+        self.assertEqual(await job.laporan_job(), {"terbit": 1, "gagal": 0, "email": KOSONG})
 
         self.assertEqual(self.muat.await_args.args[3:], (PS, PE, 1, date(2026, 11, 7)))
+
+    async def test_laporan_job_menjalankan_antrean(self):
+        # Tahap 2: sesudah sapu notifikasi, di luar kunci household, job menjalankan antrean email tanpa argumen
+        # (`sekarang` = waktu server) dan mencatat satu baris INFO ringkasan berisi angka saja. Hasilnya ikut di
+        # kembalian job di bawah "email".
+        rumah, ani = rumah_tangga(), orang("Ani")
+        self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
+        email = {"terkirim": 2, "gagal": 1, "dilewati": 3, "dicoba_lagi": 4}
+        self.antrean.side_effect = None
+        self.antrean.return_value = email
+
+        with self.assertLogs("jatahku.laporan", "INFO") as logs:
+            hasil = await job.laporan_job(HARI_TERBIT)
+
+        self.assertEqual(hasil, {"terbit": 1, "gagal": 0, "email": email})
+        self.antrean.assert_awaited_once_with()
+        ringkasan = [c.getMessage() for c in logs.records if c.getMessage().startswith("email laporan:")]
+        self.assertEqual(ringkasan, ["email laporan: 2 terkirim, 1 gagal, 3 dilewati, 4 dicoba lagi"])
+        self.assertEqual([c.levelname for c in logs.records if c.getMessage() in ringkasan], ["INFO"])
+
+    async def test_antrean_tanpa_kiriman_tidak_mencatat_ringkasan(self):
+        # Seperti sapu notifikasi: tiap jam tanpa kiriman tidak menambah baris log.
+        rumah, ani = rumah_tangga(), orang("Ani")
+        self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
+
+        with self.assertLogs("jatahku.laporan", "INFO") as logs:   # "1 laporan terbit"
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 1, "gagal": 0, "email": KOSONG})
+
+        self.assertEqual([c.getMessage() for c in logs.records if c.getMessage().startswith("email laporan:")], [])
+
+    async def test_antrean_yang_gagal_hanya_dicatat(self):
+        # Galat di luar satu laporan (mis. database putus saat memilih antrean) tidak menggagalkan job; laporannya
+        # tetap di antrean untuk jam berikutnya.
+        rumah, ani = rumah_tangga(), orang("Ani")
+        self.pasang([FakeResult(rows=[rumah.id]), *skrip_rumah(rumah, [ani])], rumah=[rumah.id])
+        self.antrean.side_effect = RuntimeError("koneksi putus")
+
+        with self.assertLogs("jatahku.laporan", "ERROR") as logs:
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 1, "gagal": 0, "email": KOSONG})
+
+        [catatan] = logs.records
+        self.assertIn("antrean email", catatan.getMessage())
+        self.assertIsNotNone(catatan.exc_info)
 
 
 class NotifikasiTests(unittest.IsolatedAsyncioTestCase):
@@ -829,10 +930,12 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-        for modul in (job, rollover, household_cycle, notification_service):  # setiap modul yang mengikat namanya
+        for modul in (job, rollover, household_cycle, notification_service, antrean_email):  # yang mengikat namanya
             self.enterContext(patch.object(modul, "AsyncSessionLocal", self.Session))
         self.invalidate = AsyncMock()
         self.enterContext(patch.object(advisor_cache, "invalidate", self.invalidate))  # tanpa Redis
+        self.pengirim = MagicMock(return_value=True)   # tanpa SMTP; antrean email selebihnya asli
+        self.enterContext(patch.object(email_service, "send_laporan_email", self.pengirim))
         async with self.Session() as db:
             await self._isi(db)
             await db.commit()
@@ -932,7 +1035,7 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         snapshot_w, snapshot_f = await self.id_snapshot_okt(self.W), await self.id_snapshot_okt(self.F)
 
-        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0})
+        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0, "email": KOSONG})
 
         laporan = {r.user_id: r for r in await self.semua(Report)}
         self.assertEqual(set(laporan), {self.ANI, self.BUDI})  # bukan Citra, Dewi (warung), Eko, Fajar
@@ -941,8 +1044,9 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
                              (self.H, "bulanan", PS, PE, 1))
             self.assertEqual(r.data["judul"], "Laporan Oktober 2026")
             self.assertEqual(r.data["angka_per"], "2026-11-01")
-            self.assertIsNone(r.email_status)
+            self.assertEqual((r.email_status, r.email_alasan), ("dilewati", "belum_verifikasi"))
             self.assertIsNotNone(r.notified_at)
+        self.pengirim.assert_not_called()
 
         # Transaksi bertanggal mundur ada di mutasi DAN di terpakai: refresh menyegarkan snapshot sebelum dimuat.
         ani = laporan[self.ANI].data
@@ -986,7 +1090,7 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
 
         # Jam berikutnya: tidak ada laporan atau notifikasi baru, dan buku besar H tidak ditulis ulang.
         snapshot_h = await self.id_snapshot_okt(self.H)
-        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
         self.assertEqual(len(await self.semua(Report)), 2)
         self.assertEqual(len(await self.semua(Notification)), 2)
         self.assertEqual(await self.id_snapshot_okt(self.H), snapshot_h)
@@ -1006,7 +1110,7 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
             return await asli(report_id)
 
         with patch.object(job, "kirim_notifikasi_laporan", gagal_sekali), self.assertLogs("jatahku.laporan", "ERROR"):
-            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0})
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0, "email": KOSONG})
 
         laporan = {r.id: r for r in await self.semua(Report)}
         self.assertEqual([i for i, r in laporan.items() if r.notified_at is None], [panggilan[0]])
@@ -1014,7 +1118,7 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(panggilan), 2)  # yang gagal tidak dicoba lagi oleh sapu di jam yang sama
 
         for _ in range(3):
-            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
 
         notifikasi = await self.semua(Notification)
         self.assertEqual(sorted(n.link for n in notifikasi), sorted(f"/laporan/{i}" for i in laporan))  # satu per laporan
@@ -1033,14 +1137,45 @@ class UjungKeUjungTests(unittest.IsolatedAsyncioTestCase):
         self.enterContext(patch.object(notification_service, "settings", SimpleNamespace(TELEGRAM_BOT_TOKEN="tes")))
 
         with self.assertLogs("jatahku.notify", "ERROR"):
-            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0})
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 2, "gagal": 0, "email": KOSONG})
         for _ in range(3):
-            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0})
+            self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
 
         bot.return_value.send_message.assert_awaited_once()  # hanya Ani yang tertaut; sekali, walau gagal
         self.assertEqual(bot.return_value.send_message.await_args.kwargs["chat_id"], 5550001)
         self.assertEqual(len(await self.semua(Notification)), 2)
         self.assertTrue(all(r.notified_at is not None for r in await self.semua(Report)))
+
+    async def test_laporan_job_menjalankan_antrean_sqlite(self):
+        # Tahap 2 ujung ke ujung: Ani terverifikasi, Budi belum. Laporan Ani terbit `menunggu` dan terkirim di jalan
+        # yang sama (antrean sesudah sapu); laporan Budi terbit `dilewati`/`belum_verifikasi` dan tidak pernah dikirim.
+        # Jam berikutnya tidak ada kiriman kedua.
+        await rollover.create_monthly_snapshots(PS, PE, household_ids=[self.H, self.W, self.F])
+        async with self.Session() as db:
+            (await db.get(User, self.ANI)).email_verified_at = TERVERIFIKASI
+            await db.commit()
+
+        self.assertEqual(await job.laporan_job(HARI_TERBIT),
+                         {"terbit": 2, "gagal": 0, "email": {**KOSONG, "terkirim": 1}})
+
+        laporan = {r.user_id: r for r in await self.semua(Report)}
+        ani, budi = laporan[self.ANI], laporan[self.BUDI]
+        self.assertEqual((ani.email_status, ani.email_alasan, ani.email_percobaan), ("terkirim", None, 0))
+        self.assertIsNotNone(ani.email_terkirim_at)
+        self.assertEqual((budi.email_status, budi.email_alasan, budi.email_terkirim_at),
+                         ("dilewati", "belum_verifikasi", None))
+        self.pengirim.assert_called_once()
+        kiriman = inspect.signature(KIRIM_LAPORAN_ASLI).bind(*self.pengirim.call_args.args,
+                                                             **self.pengirim.call_args.kwargs)
+        kiriman.apply_defaults()
+        self.assertEqual(
+            {k: kiriman.arguments[k] for k in ("to_email", "subject", "pdf_bytes", "filename")},
+            {"to_email": "ani@contoh.id", "subject": "Laporan Oktober 2026 · Jatahku", "pdf_bytes": None,
+             "filename": None},   # kata sandi belum diatur: tanpa lampiran
+        )
+
+        self.assertEqual(await job.laporan_job(HARI_TERBIT), {"terbit": 0, "gagal": 0, "email": KOSONG})
+        self.pengirim.assert_called_once()
 
     async def test_sapu_hanya_laporan_yang_terbit_dalam_tujuh_hari(self):
         async with self.Session() as db:
