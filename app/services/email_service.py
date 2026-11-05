@@ -78,6 +78,27 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         return False
 
 
+def send_verifikasi_email(to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+    """Kirim email verifikasi alamat. Terpisah dari `send_email` karena log di sana memuat alamat tujuan; di sini log
+    hanya teks tetap dan nama jenis galat (pesan galat SMTP bisa memuat alamat). Tanpa header List-Unsubscribe:
+    email transaksional satu kali. Tidak pernah melempar; False bila gagal."""
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = _from_header()
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain="jatahku.com")
+        msg.attach(MIMEText(text_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+        _deliver(to_email, msg)
+        logger.info("Email verifikasi terkirim")
+        return True
+    except Exception as e:
+        logger.error("Email verifikasi gagal dikirim (%s)", type(e).__name__)
+        return False
+
+
 def email_template(title: str, body_html: str, cta_text: str = None, cta_url: str = None, footer_html: str = None):
     """Generate branded HTML email. `title`, `cta_text`, `cta_url` = teks biasa (di-escape di sini);
     `body_html` = HTML, jadi pemanggil wajib meng-escape isinya dengan h(). `footer_html` = HTML siap pakai
