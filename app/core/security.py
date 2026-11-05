@@ -52,3 +52,26 @@ def decode_token(token: str) -> dict | None:
         # Header JWT berupa JSON bersarang ribuan tingkat: `json.loads` milik PyJWT melempar RecursionError, bukan
         # ValueError (yang diubah PyJWT menjadi DecodeError). Token seperti itu tidak sah: None, jadi 401, bukan 500.
         return None
+
+
+def create_purpose_token(user_id: str, tujuan: str, berlaku: timedelta | None = None, **klaim) -> str:
+    """Token bertujuan (verifikasi email, berhenti email laporan): klaim `type` = `tujuan`, jadi tidak pernah lolos
+    sebagai access (`get_current_user`, `kunci_per_user`) atau refresh (rotasi). `berlaku` None → tanpa `exp`.
+    `klaim` tidak boleh menimpa `sub`/`type`/`exp`."""
+    payload = {k: v for k, v in klaim.items() if k not in ("sub", "type", "exp")}
+    payload.update({"sub": user_id, "type": tujuan})
+    if berlaku is not None:
+        payload["exp"] = datetime.now(timezone.utc) + berlaku
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_purpose_token(token: str, tujuan: str) -> dict | None:
+    """Klaim token bila tanda tangan sah, belum kedaluwarsa, `type` == `tujuan`, dan `sub` berupa str tak kosong;
+    selainnya None."""
+    payload = decode_token(token)
+    if not isinstance(payload, dict) or payload.get("type") != tujuan:
+        return None
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub:
+        return None
+    return payload

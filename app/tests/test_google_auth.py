@@ -79,18 +79,20 @@ class GoogleLoginTests(unittest.IsolatedAsyncioTestCase):
         return await route.google_login.__wrapped__(request(), route.GoogleCredentialRequest(credential="tok"), db)
 
     async def test_known_google_account_logs_in(self):
-        user = SimpleNamespace(id=uuid.uuid4(), google_id="g-1")
+        user = SimpleNamespace(id=uuid.uuid4(), google_id="g-1", email="budi@example.com", email_verified_at=None)
         db = db_with(FakeResult(user))
         res = await self.call(db)
         self.assertTrue(res.access_token)
+        self.assertIsNotNone(user.email_verified_at)
         self.assertIsNotNone(user.last_login)
         db.commit.assert_awaited_once()
 
     async def test_existing_email_account_gets_linked(self):
-        user = SimpleNamespace(id=uuid.uuid4(), google_id=None, email="budi@example.com")
+        user = SimpleNamespace(id=uuid.uuid4(), google_id=None, email="budi@example.com", email_verified_at=None)
         db = db_with(FakeResult(None), FakeResult(user))
         await self.call(db)
         self.assertEqual(user.google_id, "g-1")
+        self.assertIsNotNone(user.email_verified_at)
         db.commit.assert_awaited_once()
 
     async def test_new_user_gets_account_and_household(self):
@@ -135,10 +137,11 @@ class GoogleLinkTests(unittest.IsolatedAsyncioTestCase):
         return await route.google_link.__wrapped__(request(), route.GoogleCredentialRequest(credential="tok"), user, db)
 
     async def test_links_and_fills_missing_email_for_bot_user(self):
-        user = SimpleNamespace(id=uuid.uuid4(), email=None, google_id=None)
+        user = SimpleNamespace(id=uuid.uuid4(), email=None, google_id=None, email_verified_at=None)
         db = db_with(FakeResult(None), FakeResult(None))
         res = await self.link(user, db)
         self.assertEqual((user.google_id, user.email), ("g-1", "budi@example.com"))
+        self.assertIsNotNone(user.email_verified_at)
         self.assertEqual(res["status"], "linked")
 
     async def test_keeps_email_when_another_account_owns_it(self):
@@ -149,7 +152,7 @@ class GoogleLinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((user.google_id, user.email), ("g-1", None))
 
     async def test_rejects_google_account_owned_by_someone_else(self):
-        user = SimpleNamespace(id=uuid.uuid4(), email="a@x.com", google_id=None)
+        user = SimpleNamespace(id=uuid.uuid4(), email="a@x.com", google_id=None, email_verified_at=None)
         db = db_with(FakeResult(SimpleNamespace(id=uuid.uuid4())))
         with self.assertRaises(HTTPException) as e:
             await self.link(user, db)
