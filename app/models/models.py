@@ -1023,3 +1023,83 @@ class PluginAuditLog(Base):
     action: Mapped[str] = mapped_column(String(30))
     detail: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- Plugin U1: tabel Buku Usaha (docs/plugin/01-kajian.md "Aturan wajib untuk setiap tabel plugin", AGENTS.md aturan 5) ---
+
+class PluginTabelMixin:
+    """Kolom wajib setiap tabel plugin `p_<id>_*`. Plugin tidak pernah memakai model ini langsung: kodenya hanya lewat
+    `ctx.data("<entitas>")` (`app/plugins/host/data.py`), yang selalu menyaring `household_id` ruang konteks, mengisi
+    `created_by` dari user pemicu, dan menghapus lunak (`deleted_at`). Hapus permanen hanya oleh host (pembersih arsip
+    90 hari, hapus ruang). Dijaga `test_plugin_u1.TabelPluginAturanTests` (kolom, indeks diawali `household_id`, FK)."""
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    household_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+def _unik_hidup(nama: str, *kolom: str) -> Index:
+    """Unik di antara baris yang belum dihapus lunak (baris terhapus tidak menghalangi data baru yang sama)."""
+    return Index(nama, *kolom, unique=True,
+                 postgresql_where=text("deleted_at IS NULL"), sqlite_where=text("deleted_at IS NULL"))
+
+
+class BukuUsahaKontak(PluginTabelMixin, Base):
+    """Pelanggan dan pemasok satu ruang usaha (U1). `peran` = pelanggan | pemasok."""
+    __tablename__ = "p_buku_usaha_kontak"
+    __table_args__ = (
+        Index("ix_p_buku_usaha_kontak_household_peran_nama", "household_id", "peran", "nama"),
+    )
+
+    nama: Mapped[str] = mapped_column(String(120))
+    peran: Mapped[str] = mapped_column(String(20))
+    telepon: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    catatan: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class BukuUsahaIncomeMeta(PluginTabelMixin, Base):
+    """Jenis usaha satu pemasukan (U2): penjualan | modal | pinjaman | lain, dan pelanggannya. Hanya penjualan yang
+    dihitung omzet (U3). 1:1 dengan `incomes`; ikut terhapus bila pemasukannya dihapus (meta tanpa induk tidak
+    berarti, dan hapus akun menghapus pemasukan)."""
+    __tablename__ = "p_buku_usaha_income_meta"
+    __table_args__ = (
+        _unik_hidup("uq_p_buku_usaha_income_meta_income", "household_id", "income_id"),
+        Index("ix_p_buku_usaha_income_meta_household_kontak", "household_id", "kontak_id"),
+    )
+
+    income_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("incomes.id", ondelete="CASCADE"))
+    jenis: Mapped[str] = mapped_column(String(20))
+    kontak_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("p_buku_usaha_kontak.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class BukuUsahaTxnMeta(PluginTabelMixin, Base):
+    """Pemasok, akun beban, dan proyek satu pengeluaran (U2–U3). 1:1 dengan `transactions`."""
+    __tablename__ = "p_buku_usaha_txn_meta"
+    __table_args__ = (
+        _unik_hidup("uq_p_buku_usaha_txn_meta_transaction", "household_id", "transaction_id"),
+        Index("ix_p_buku_usaha_txn_meta_household_kontak", "household_id", "kontak_id"),
+    )
+
+    transaction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("transactions.id", ondelete="CASCADE"))
+    kontak_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("p_buku_usaha_kontak.id", ondelete="SET NULL"), nullable=True
+    )
+    akun: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    proyek: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+
+class BukuUsahaAlokasi(PluginTabelMixin, Base):
+    """Aturan alokasi omzet (U2): persen penjualan yang masuk ke tiap amplop ruang usaha; total 100."""
+    __tablename__ = "p_buku_usaha_alokasi"
+    __table_args__ = (
+        _unik_hidup("uq_p_buku_usaha_alokasi_envelope", "household_id", "envelope_id"),
+    )
+
+    envelope_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("envelopes.id", ondelete="CASCADE"))
+    persen: Mapped[Decimal] = mapped_column(Numeric(5, 2))

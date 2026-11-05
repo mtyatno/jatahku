@@ -6,7 +6,8 @@ dilewati), memvalidasi skemanya (`manifest.py`), lalu aturan antarplugin:
 - nama folder = `id`, `id` unik;
 - `requires` ada, tidak melingkar, dan mendukung semua jenis ruang plugin yang membutuhkannya;
 - `conflicts` merujuk plugin yang ada;
-- prefix callback bot, nama perintah bot, kode aturan advisor, dan kunci flag unik di seluruh plugin.
+- prefix callback bot, nama perintah bot, kode aturan advisor, dan kunci flag unik di seluruh plugin;
+- (U1) setiap tabel di `entities` ada sebagai model dan memenuhi aturan tabel plugin (`host/data.py`).
 
 Dua mode:
 - **ketat** (validator CI, tes): galat apa pun = gagal. CI tidak pernah meloloskan manifest rusak.
@@ -175,9 +176,22 @@ def muat_semua_kode(folder: pathlib.Path, plugins: dict[str, Manifest]) -> tuple
     return hasil, galat
 
 
+def periksa_entitas(plugins: dict[str, Manifest]) -> dict[str, list[str]]:
+    """U1: setiap `entities` manifest ada sebagai model dan memenuhi aturan tabel plugin (`host/data.py`)."""
+    from app.plugins.host import data
+    galat = {}
+    for pid, m in plugins.items():
+        salah = data.periksa_entitas(m)
+        if salah:
+            galat[pid] = salah
+    return galat
+
+
 def muat(folder: pathlib.Path = FOLDER_PLUGIN, *, ketat: bool = False) -> Registry:
     plugins, galat = baca_folder(folder)
     antar = periksa_antarplugin(plugins)
+    for pid, daftar in periksa_entitas(plugins).items():
+        antar.setdefault(pid, []).extend(daftar)
     for pid, daftar in sorted(antar.items()):
         galat.extend(f"{pid}: {p}" for p in daftar)
     # Kode hanya dimuat untuk plugin yang lolos aturan antarplugin.

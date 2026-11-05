@@ -17,9 +17,11 @@ atribut dunder (kecuali `__name__`, `__doc__`, `__init__`,
 direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.py`), dan kelasnya juga menolak
 ditambal atau diturunkan saat berjalan.
 
-Izin per jenis fungsi (`IZIN_PER_JENIS`, review #186 temuan 1): kartu, cek, aturan advisor, perintah bot, dan field
-form hanya membaca; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data bersama). Izin
-tulis belum dibuka untuk titik mana pun (U2). Dicek di sini saat memuat dan lagi saat berjalan (`titik.izin_efektif`).
+Izin per jenis fungsi (`IZIN_PER_JENIS`, review #186 temuan 1): kartu, cek, aturan advisor, perintah bot, field form,
+dan rute (U1) hanya membaca data inti; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data
+bersama). Izin tulis data inti belum dibuka untuk titik mana pun (U2). Dicek di sini saat memuat dan lagi saat berjalan
+(`titik.izin_efektif`). Tabel plugin sendiri (`entities`) dibaca-tulis lewat `ctx.data()` tanpa izin manifest: tulis
+hanya dari rute non-GET (`host/data.py`).
 """
 from __future__ import annotations
 
@@ -62,6 +64,7 @@ IZIN_PER_JENIS: dict[str, frozenset[str]] = {
     "perintah_bot": IZIN_BACA,          # ADR-P2: chat tidak pernah menulis
     "field_form": IZIN_BACA,
     "job": IZIN_BACA | {"notifications:send"},
+    "rute": IZIN_BACA,                  # U1: tabel sendiri lewat ctx.data() tanpa izin; tulis inti menyusul U2
 }
 
 
@@ -219,6 +222,7 @@ def _kontribusi(m: Manifest) -> dict[str, set[str]]:
         "perintah_bot": {b.command for b in c.bot_commands},
         "job": {j.key for j in c.jobs},
         "field_form": {f"{f.target}.{f.key}" for f in c.form_fields},
+        "rute": {r.key for r in c.routes},
     }
 
 

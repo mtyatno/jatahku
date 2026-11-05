@@ -37,6 +37,10 @@ class Keadaan:
     pengaturan: dict = field(default_factory=dict)
     sumber: str = ""
     penghitung: dict = field(default_factory=lambda: {"notify": 0})
+    # U1: tabel plugin yang boleh dibaca lewat `ctx.data()` (manifest `entities`), dan apakah konteks ini boleh
+    # menulis ke sana (hanya endpoint plugin non-GET; kartu, cek, saran, bot, field, job hanya membaca).
+    entitas: frozenset[str] = frozenset()
+    boleh_tulis: bool = False
 
 
 _KEADAAN: dict[int, tuple["weakref.ref", Keadaan, Any]] = {}
