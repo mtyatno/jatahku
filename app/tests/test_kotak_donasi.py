@@ -896,6 +896,7 @@ class CorrectionTriggerTests(unittest.TestCase):
         cases = [
             (_item(), Final(10000, doc_day, "kirim", today), None),             # bacaan benar
             (_item(), Final(10000, today, "kirim", today), None),               # dicatat hari ini
+            (_item(), Final(10000, date.today(), "kirim", today), None),        # hari ini menurut jam server (CI UTC)
             (_item(), Final(12500, doc_day, "kirim", today), "nominal"),
             (_item(total=None), Final(10000, doc_day, None, today), "nominal"),  # total tidak terbaca
             (_item(), Final(None, doc_day, None, today), "nominal"),            # nominal pecahan

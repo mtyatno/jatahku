@@ -341,7 +341,11 @@ def correction_trigger(item, final: belajar.Final | None, *, skip_reason: str | 
     total = amounts.get("total")
     if total is None or final.amount != total:
         return TRIGGER_NOMINAL
-    if final.txn_date is not None and final.txn_date != final.today and final.txn_date != belajar._doc_date(document):
+    # "Hari ini" menurut dua jam: WIB (`final.today`) dan jam server (`date.today()`, bawaan tanggal transaksi di
+    # rute web dan bot). Keduanya sama di produksi (zona WIB); di CI (UTC) berbeda antara 00.00–07.00 WIB, dan
+    # transaksi bertanggal hari ini bukan koreksi tanggal.
+    if (final.txn_date is not None and final.txn_date not in (final.today, date.today())
+            and final.txn_date != belajar._doc_date(document)):
         return TRIGGER_TANGGAL
     if doc_type == "tidak_dikenali":
         return TRIGGER_TIDAK_DIKENALI
