@@ -557,10 +557,13 @@ dikosongkan). Antrean Admin tetap bisa ditinjau, diunduh, dan dihapus.
   `samaran.mask_line` (deret ≥ 6 digit menjadi `…dddd`; nominal, tanggal, jam, dan NMID dibiarkan) →
   `samaran.pseudonymise`: setiap kata nama yang dikenal diganti kata nama samaran perannya (`samaran.PSEUDONYMS`: pihak
   lawan "BUDI SANTOSO", pengirim "SITI AMINAH", merchant terbaca "TOKO CONTOH", user "ANDI PRATAMA") → baris yang masih
-  memuat nilai rahasia bukti (referensi, rekening, NMID di luar baris NMID), deret ≥ 6 digit, alamat email, atau nomor
-  berkelompok ribuan ≥ 10 digit yang tidak langsung sesudah Rp/IDR dibuang seluruhnya ("Total 1.234.567.890" tanpa Rp
-  ikut terbuang) → paling banyak 80 baris (`SAMPLE_MAX_LINES`) × 200 karakter (`SAMPLE_LINE_MAX`). Tanpa baris tersisa →
-  NULL.
+  memuat nilai rahasia bukti (referensi, rekening, NMID di luar baris NMID), deret ≥ 6 digit (NMID publik `ID` + ≥ 10
+  digit di baris berlabel NMID tidak dihitung, jadi baris NMID ikut tersimpan seperti `mask_line` membiarkannya), alamat
+  email, atau nomor berkelompok ribuan ≥ 10 digit yang tidak langsung sesudah Rp/IDR dibuang seluruhnya ("Total
+  1.234.567.890" tanpa Rp ikut terbuang). Nomor yang terpecah per baris juga: baris yang hanya potongan 2–5 digit (boleh
+  dipisah spasi/strip) langsung sesudah baris yang berakhiran label nomor (rekening/rek/no/nomor/va/virtual account/
+  kartu/card/nik/hp/telp/telepon) dibuang ("No Rekening" / "1234" / "5678" → hanya "No Rekening") → paling banyak 80
+  baris (`SAMPLE_MAX_LINES`) × 200 karakter (`SAMPLE_LINE_MAX`). Tanpa baris tersisa → NULL.
 - Tebakan pihak lawan yang hanya kata judul/aplikasi bukan nama; di tebakan campuran hanya kata label dikecualikan, jadi
   kata bank/aplikasi yang juga nama orang ("Mega", "Neo", "Jago") ikut diganti nama samaran; "Dana" tetap (kata label).
 - Disimpan di kolom `receipt_scans.sample_lines` (JSONB NULL), bukan di `document`, tidak pernah dikirim ke klien
@@ -597,7 +600,12 @@ pemicu, tabel "Hasil baca" (pembaca sekarang pada baris itu, tanpa aturan; `dona
 (baris yang beda ditandai), dan baris bertanda PERIKSA (`samaran.needs_review`).
 - **Menunggu**: baris bisa diedit (satu baris per baris bukti; ganti nama yang tersisa), nama samaran user dipilih dari 4
   nama samaran atau "Tanpa nama", catatan opsional ≤ 200. **Setujui**: server menyamarkan lagi (`mask_line`) dan menolak
-  422 "Masih ada nomor panjang di baris N" / "Masih ada alamat email di baris N" / "Masih ada nomor rekening di baris N";
+  422 "Masih ada nomor panjang di baris N" / "Masih ada alamat email di baris N" / "Masih ada nomor rekening di baris N".
+  "Nomor panjang" juga bila satu baris memuat ≥ 10 digit di luar rentang yang dibiarkan (nominal Rp/IDR dan ribuan,
+  tanggal, jam, NMID di baris NMID), digit di dalam penanda `…dddd` ikut dihitung: "Ref 1234/5678/9012", baris nominal
+  tanpa Rp yang tidak berkelompok ("Nominal 50000 Biaya 2500 Total 52500"), dan baris dengan tiga penanda tersamar
+  ("Ref …5678 …1234 …9012") ditolak; pemilik menyunting baris itu (hapus satu penanda, tambahkan "Rp", atau buang
+  barisnya). Aturan yang sama dipakai `kotak_corpus add --dari-donasi` (exit 2);
   `user_name` hanya kata nama samaran (422 "Nama user harus nama samaran"); hanya dari `menunggu` (409 "Sampel sudah
   diputuskan"). **Tolak** (dengan konfirmasi): barisnya **dihapus**, jadi sampel `ditolak` tidak pernah ada (ruling M1d;
   `counts.ditolak` tetap ada untuk bentuk respons, selalu 0); penolakan tidak bisa dibatalkan, koreksi user berikutnya
@@ -618,9 +626,9 @@ pemicu, tabel "Hasil baca" (pembaca sekarang pada baris itu, tanpa aturan; `dona
 **Yang tetap sampai ke pemilik tanpa tersamar** (diganti pemilik di Admin sebelum Setujui; review M1b): nama yang tidak
 dibaca pembaca sebagai pihak lawan, pengirim, merchant, atau user (mis. nama di baris tanpa label; K5); "Dana" sebagai label
 sekaligus nama; angka di bawah 6 digit (PIN, kode area, kode pos, RT/RW); 4 digit terakhir nomor tersamar; nomor
-berkelompok ≤ 9 digit tanpa Rp; referensi huruf-angka pendek dan angka bergaris miring (ditandai PERIKSA); alamat jalan
-(ditandai); email yang disamarkan penulisnya ("nama[at]domain"). Email asli dan nomor berkelompok ≥ 10 digit tanpa Rp/IDR
-dibuang bersama barisnya.
+berkelompok ≤ 9 digit tanpa Rp; referensi huruf-angka pendek dan angka bergaris miring (ditandai PERIKSA; ≥ 10 digit di
+satu baris ditolak saat Setujui, lihat di atas); alamat jalan (ditandai); email yang disamarkan penulisnya
+("nama[at]domain"). Email asli dan nomor berkelompok ≥ 10 digit tanpa Rp/IDR dibuang bersama barisnya.
 
 **Umur dan penghapusan** (G2, G4):
 - `proof_samples` berumur `SAMPLE_TTL` = **7 hari** (keputusan pemilik 5 Nov 2026; draf pre-flight 30 hari):

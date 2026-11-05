@@ -1164,7 +1164,7 @@ class DonationCliTests(unittest.TestCase):
         before = self.corpus.read_bytes()
         cases = {
             "Rekening Tujuan 1234567890": "Masih ada nomor panjang di baris 10",
-            "NMID ID1024358806544": "Masih ada nomor panjang di baris 10",
+            "NMID ID1024358806544 Total Rp 1500000": "Masih ada nomor panjang di baris 10",   # NMID publik saja yang bebas
             "Email budi@contoh.id": "Masih ada alamat email di baris 10",
             "Rek 1.234.567.890": "Masih ada nomor rekening di baris 10",
             "Ref 1234/5678/9012": "Masih ada nomor panjang di baris 10",   # review akhir A16 temuan 1

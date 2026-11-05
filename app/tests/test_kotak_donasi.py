@@ -53,6 +53,7 @@ GOPAY_LINES = ["GoPay", "Transfer Berhasil", "Ditransfer ke", "RUDI HARTONO", "M
                "Rp10.000", "Tanggal 31 Okt 2026", "No. Ref 123456789012", "Sumber Dana", "Rina Wulandari"]
 STORE_LINES = ["ALFAMART", "14-10-2026 08:15", "ROTI 1 15.000", "SUSU 2 30.400", "Total Belanja 45.400",
                "Non Tunai (QRIS) 45.400"]
+_NMID_SPAN = re.compile(r"(?<![A-Za-z0-9])ID\s?\d{10,}", re.IGNORECASE)
 PSEUDONYM_WORDS = {"andi", "pratama", "budi", "santoso", "siti", "aminah", "toko", "contoh"}
 
 
@@ -488,17 +489,20 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
     async def test_samples_hold_no_long_digits_or_known_names(self):   # Review Focus 2
         from app.services.kotak_struk.donasi import sample_lines
         from app.services.kotak_struk.merchants import normalize_name
-        cases = with_sample = 0
+        cases = with_sample = nmid_kept = 0
         async for case_id, proofs, lines, doc, secrets, user_name in _sweep_cases():
             cases += 1
             got = sample_lines(lines, doc, secrets, user_name=user_name)
             with_sample += bool(got)
             dumped = "\n".join(got or [])
+            # NMID publik (`ID` + >= 10 digit) di baris berlabel NMID boleh tetap utuh, seperti `mask_line`; sisanya tidak.
+            nmid_kept += sum(bool(_NMID_SPAN.search(line)) for line in got or [] if "nmid" in line.lower())
+            no_nmid = "\n".join(_NMID_SPAN.sub(" ", line) if "nmid" in line.lower() else line for line in got or [])
             with self.subTest(case=case_id, proofs=proofs):
-                self.assertNotRegex(dumped, r"\d{6,}")
+                self.assertNotRegex(no_nmid, r"\d{6,}")
                 for value in (*secrets.ref_values, secrets.account_number, secrets.nmid):
                     if value and len(value) >= 4:
-                        self.assertNotIn(value.lower(), dumped.lower())
+                        self.assertNotIn(value.lower(), no_nmid.lower())
                 words = normalize_name(dumped).split()
                 for word in _known_name_words(lines, doc, user_name):
                     self.assertNotIn(word, words)
@@ -507,6 +511,7 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(len(line) <= K.SAMPLE_LINE_MAX for line in got or []))
         self.assertGreater(cases, 600)              # 330 daftar x 2 posisi saklar
         self.assertGreater(with_sample, cases * 0.9)   # hampir semua bukti menghasilkan baris
+        self.assertGreater(nmid_kept, 0)               # baris NMID ikut tersimpan (verifikasi gelombang perbaikan A16)
 
     async def test_store_receipt_has_no_sample(self):
         # G6: struk belanja biasa tidak pernah (jenis `struk_belanja` dan teksnya tidak tampak bukti bayar). Daftar sapuan
@@ -613,8 +618,8 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
         secrets = Secrets(ref_values=["A1B2C3D4E5"], account_number="98AB76CD", nmid="ID1234567890123")
         lines = ["Transfer Berhasil", "Ref A1B2C3D4E5", "Rekening 98ab76cd", "Total Rp150000", "Total Rp150.000",
                  "NMID ID1234567890123", "Merchant ID1234567890123"]
-        self.assertEqual(sample_lines(lines, doc, secrets, user_name=None),
-                         ["Transfer Berhasil", "Total Rp150.000", "Merchant ID…0123"])
+        self.assertEqual(sample_lines(lines, doc, secrets, user_name=None),   # NMID publik di baris berlabel NMID tetap
+                         ["Transfer Berhasil", "Total Rp150.000", "NMID ID1234567890123", "Merchant ID…0123"])
         many = ["Transfer Berhasil"] + [f"Baris {'x' * 300}"] + [f"Catatan {n}" for n in range(200)]
         got = sample_lines(many, doc, Secrets(), user_name=None)
         self.assertEqual(len(got), K.SAMPLE_MAX_LINES)
@@ -632,6 +637,33 @@ class SampleLinesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sample_lines(lines, doc, Secrets(), user_name=None),
                          ["Transfer Berhasil", "No Rekening", "Virtual Account:", "Meja", "1234", "Nominal Rp 50.000",
                           "No.", "7", "Kartu", "…5678"])
+
+    def test_nmid_line_kept_as_the_approve_rule_keeps_it(self):
+        # Verifikasi gelombang perbaikan A16: `\d{6,}` dulu membuang baris NMID sebelum pengecualian NMID tercapai, padahal
+        # `mask_line` membiarkan NMID publik (`ID` + >= 10 digit) di baris berlabel NMID. Nomor rekaan.
+        from app.services.kotak_struk.document import Counterparty, DokumenBayar
+        from app.services.kotak_struk.donasi import SampleLineSecret, approved_lines, sample_lines
+        doc = DokumenBayar(doc_type="qris", counterparty=Counterparty(name=None))
+        lines = ["Pembayaran Berhasil", "NMID : ID1020123456789", "NMID: ID 1020123456789 A01",
+                 "NMID ID1020123456789 Ref 7654321", "Rekening 1234567890123", "Akun ID1020123456789",
+                 "NMID 1020123456789", "Total Rp 25.000"]
+        got = sample_lines(lines, doc, Secrets(nmid="ID1020123456789"), user_name=None)
+        self.assertEqual(got, ["Pembayaran Berhasil", "NMID : ID1020123456789", "NMID: ID 1020123456789 A01",
+                               "NMID ID1020123456789 Ref …4321", "Rekening …0123", "Akun ID…6789", "NMID …6789",
+                               "Total Rp 25.000"])
+        self.assertEqual(approved_lines(got), got)   # disetujui tanpa suntingan: aturan yang sama dengan penangkapan
+        # Rekening 13 digit yang lolos `mask_line` (berkelompok ribuan) tetap dibuang saat penangkapan dan ditolak saat
+        # persetujuan; deret panjang di samping NMID pun tetap dihitung.
+        self.assertEqual(sample_lines(["Pembayaran Berhasil", "NMID ID1020123456789", "Rekening 1.234.567.890.123"], doc,
+                                      Secrets(), user_name=None),
+                         ["Pembayaran Berhasil", "NMID ID1020123456789"])
+        with self.assertRaises(SampleLineSecret):
+            approved_lines(["NMID ID1020123456789", "Rekening 1.234.567.890.123"])
+        from app.services.kotak_struk.donasi import _long_digits
+        self.assertTrue(_long_digits("NMID ID1020123456789 1234567"))
+        self.assertTrue(_long_digits("Rekening 1234567890123"))
+        self.assertFalse(_long_digits("NMID ID1020123456789"))
+        self.assertTrue(_long_digits("Merchant ID1020123456789"))   # tanpa label NMID: bukan rentang yang dibiarkan
 
 
 class ApprovedLinesTests(unittest.TestCase):
