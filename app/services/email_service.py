@@ -73,15 +73,18 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str = Non
         return False
 
 
-def email_template(title: str, body_html: str, cta_text: str = None, cta_url: str = None):
+def email_template(title: str, body_html: str, cta_text: str = None, cta_url: str = None, footer_html: str = None):
     """Generate branded HTML email. `title`, `cta_text`, `cta_url` = teks biasa (di-escape di sini);
-    `body_html` = HTML, jadi pemanggil wajib meng-escape isinya dengan h()."""
+    `body_html` = HTML, jadi pemanggil wajib meng-escape isinya dengan h(). `footer_html` = HTML siap pakai
+    (pemanggil meng-escape), disisipkan di kaki di atas "Setiap rupiah ada jatahnya."."""
     cta_block = ""
     if cta_text and cta_url:
         cta_block = f'''
         <tr><td style="padding:24px 0 0">
           <a href="{h(cta_url)}" style="display:inline-block;background:#0F6E56;color:#fff;padding:12px 32px;border-radius:12px;text-decoration:none;font-weight:600;font-size:14px">{h(cta_text)}</a>
         </td></tr>'''
+
+    footer_block = footer_html or ""
 
     return f'''<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -99,6 +102,7 @@ def email_template(title: str, body_html: str, cta_text: str = None, cta_url: st
     {cta_block}
   </td></tr>
   <tr><td style="padding:24px 32px;border-top:1px solid #E8E8E4;text-align:center">
+    {footer_block}
     <p style="margin:0;font-size:12px;color:#888780">Setiap rupiah ada jatahnya.</p>
     <p style="margin:4px 0 0;font-size:11px;color:#B4B2A9">
       <a href="https://jatahku.com" style="color:#0F6E56;text-decoration:none">jatahku.com</a> · 
@@ -261,3 +265,35 @@ def send_account_deleted_email(to_email: str, name: str) -> bool:
         <p>Terima kasih sudah memakai Jatahku.</p>''',
     )
     return send_email(to_email, "Akun Jatahku kamu sudah dihapus", html)
+
+
+def send_laporan_email(to_email: str, subject: str, html_body: str, text_body: str, unsubscribe_url: str,
+                       pdf_bytes: bytes | None = None, filename: str | None = None) -> bool:
+    """Kirim email laporan berkala: bagian alternative (teks + HTML) dan, bila ada, lampiran PDF. Header
+    List-Unsubscribe memuat tautan berhenti (RFC 8058 one-click) dan mailto. Log tanpa alamat, token, atau isi."""
+    try:
+        msg = MIMEMultipart("mixed")
+        msg["From"] = _from_header()
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain="jatahku.com")
+        msg["List-Unsubscribe"] = f"<{unsubscribe_url}>, <mailto:{get_settings().SMTP_FROM}?subject=unsubscribe>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+
+        body_part = MIMEMultipart("alternative")
+        body_part.attach(MIMEText(text_body, "plain", "utf-8"))
+        body_part.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(body_part)
+
+        if pdf_bytes is not None:
+            lampiran = MIMEApplication(pdf_bytes, _subtype="pdf")
+            lampiran.add_header("Content-Disposition", "attachment", filename=filename or "laporan.pdf")
+            msg.attach(lampiran)
+
+        _deliver(to_email, msg)
+        logger.info("Email laporan terkirim")
+        return True
+    except Exception as e:
+        logger.error("Email laporan gagal dikirim (%s)", type(e).__name__)
+        return False
