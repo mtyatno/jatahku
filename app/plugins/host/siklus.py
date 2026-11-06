@@ -21,12 +21,15 @@ boleh (arah yang aman).
 Hak (`entitlements`) hanya dibaca untuk katalog; selama beta tidak ada yang ditolak (ADR-P13, keputusan
 R3 B). Penegakan `butuh_paket_usaha` (402) menyusul di V1.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 from app.models.models import AppSetting, Entitlement, Household, PluginAuditLog, PluginInstallation
 from app.plugins.host.manifest import Manifest
@@ -142,6 +145,8 @@ async def katalog(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, 
             "izin": m.izin_tampil(),
             "kartu": [{"key": k.key, "judul": k.title, "bawaan": k.default} for k in m.contributes.cards],
             "hak": await hak(db, household_id, m),
+            # U1: format unduhan data plugin (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`); [] bila plugin tanpa data.
+            "ekspor": list(m.data_lifecycle.export) if m.entities else [],
             "butuh": list(m.requires),
             "diperbaiki": m.id in mati,
             "boleh_kelola": boleh_kelola,
@@ -156,14 +161,17 @@ async def aktif_di_ruang(db: AsyncSession, household_id: UUID, user_id) -> list[
     return [m for m, _ in await aktif_dengan_instalasi(db, household_id, user_id)]
 
 
-async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID,
-                                 user_id) -> list[tuple[Manifest, PluginInstallation]]:
-    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2."""
+async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID, user_id, *,
+                                 termasuk_terpasang: bool = False) -> list[tuple[Manifest, PluginInstallation]]:
+    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2.
+    `termasuk_terpasang` (U1): hanya untuk rute GET plugin, supaya wizard pasang bisa membaca pengaturan plugin yang
+    masih `installed`; kontribusi lain tetap butuh `active`."""
     mati = await saklar_mati(db)
+    boleh = (ACTIVE, INSTALLED) if termasuk_terpasang else (ACTIVE,)
     hasil = []
     for pid, inst in sorted((await _instalasi_ruang(db, household_id)).items()):
         m = registry().get(pid)
-        if inst.status != ACTIVE or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
+        if inst.status not in boleh or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
             continue
         hasil.append((m, inst))
     return hasil
@@ -371,20 +379,44 @@ async def copot(db: AsyncSession, user, household_id: UUID, m: Manifest) -> Plug
 
 
 async def bersihkan_kedaluwarsa(db: AsyncSession, now: datetime | None = None) -> list[tuple[UUID, str]]:
-    """Hapus baris instalasi yang arsipnya lewat `purge_after`. Mengembalikan (ruang, plugin) yang dihapus.
+    """Hapus baris instalasi yang arsipnya lewat `purge_after`, beserta semua data `p_<id>_*` ruang itu (U1,
+    `host/data.py`). Mengembalikan (ruang, plugin) yang dihapus.
 
-    BELUM dijadwalkan di H1: ADR-P15 mewajibkan pemberitahuan 7 hari sebelum penghapusan, dan penghapusan
-    data `p_<id>_*` lewat hook plugin. Keduanya datang bersama plugin pertama (H2 `notifications`/`jobs`,
-    U1 tabel Buku Usaha); job harian memanggil fungsi ini sesudahnya."""
+    BELUM dijadwalkan: ADR-P15 mewajibkan pemberitahuan 7 hari sebelum penghapusan (job + notifikasi H2), baru relevan
+    90 hari sesudah copot pertama. Plugin yang manifestnya sedang tidak dimuat (deploy rusak): barisnya TIDAK dihapus
+    dan dicatat sebagai galat, supaya datanya tidak tertinggal tanpa catatan."""
     now = now or _sekarang()
     rows = (await db.execute(select(PluginInstallation).where(
         PluginInstallation.status == UNINSTALLED,
         PluginInstallation.purge_after.is_not(None),
     ))).scalars().all()
-    hapus = [r for r in rows if _aware(r.purge_after) <= now]
-    for r in hapus:
-        _audit(db, r.household_id, r.plugin_id, None, "bersihkan", dari=UNINSTALLED)
+    from app.plugins.host import data as data_plugin
+    hapus = []
+    for r in rows:
+        if _aware(r.purge_after) > now:
+            continue
+        m = registry().get(r.plugin_id)
+        if m is None:
+            # Review #196 temuan 2: tanpa manifest, data `p_<id>_*` tidak bisa dihapus dengan pasti; baris instalasi
+            # dibiarkan supaya arsipnya tidak "hilang" dari catatan dan job mencoba lagi (ADR-P15, hak hapus UU PDP).
+            log.error("plugin %s tidak dimuat; arsip ruang %s belum bisa dibersihkan", r.plugin_id, r.household_id)
+            continue
+        baris = await data_plugin.hapus_data_ruang(db, m, r.household_id)
+        _audit(db, r.household_id, r.plugin_id, None, "bersihkan", dari=UNINSTALLED, baris=baris)
+        hapus.append(r)
     if hapus:
         await db.execute(delete(PluginInstallation).where(PluginInstallation.id.in_([r.id for r in hapus])))
         await db.flush()
     return [(r.household_id, r.plugin_id) for r in hapus]
+
+
+async def bersihkan_terhapus(hari: int = 30) -> int:
+    from app.plugins.host import keadaan
+    """Hapus permanen baris plugin yang sudah dihapus lunak lebih dari `hari` hari (review #196 temuan 3: data pribadi
+    kontak yang dihapus admin tidak boleh tersimpan tanpa batas). Dipanggil job `plugin_jobs` tiap jam (idempoten,
+    murah). Mengembalikan jumlah baris."""
+    from app.plugins.host import data as data_plugin
+    async with keadaan.sesi() as db:
+        n = await data_plugin.bersihkan_terhapus(db, hari=hari)
+        await db.commit()
+    return n

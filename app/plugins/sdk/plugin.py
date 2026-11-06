@@ -31,7 +31,9 @@ JENIS = {
     "perintah_bot": "bot_commands",
     "job": "jobs",
     "field_form": "form_fields",
+    "rute": "routes",            # U1: endpoint plugin `/p/<id>/…`
 }
+METODE_RUTE = ("GET", "POST", "PATCH", "PUT", "DELETE")
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,14 @@ class Plugin(metaclass=_KelasBeku):
     def field_form(self, target: str, key: str, *, izin=()):
         """`async fn(ctx, nilai) -> nilai_bersih` atau `raise NilaiTidakSah("pesan")`. Validasi saja (disimpan di U2)."""
         return self._dekor("field_form", f"{target}.{key}", izin)
+
+    def rute(self, metode: str, pola: str, *, izin=()):
+        """`async fn(ctx, Permintaan) -> data JSON | Jawaban` untuk `<metode> /p/<id><pola>` (U1). Pola seperti
+        manifest `routes` (mis. `"/kontak/{id}"`). Hanya owner/admin ruang yang plugin-nya aktif; ruang dari header
+        (`ruang_aktif`). Non-GET boleh menulis tabel plugin sendiri lewat `ctx.data()`."""
+        if metode not in METODE_RUTE:
+            raise ValueError(f"metode rute '{metode}' harus salah satu {METODE_RUTE}")
+        return self._dekor("rute", f"{metode} {pola}", izin)
 
     # ── dibaca host ──
     def ambil(self, jenis: str, kunci: str) -> Pendaftaran | None:

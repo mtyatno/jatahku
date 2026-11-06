@@ -6,7 +6,9 @@ dilewati), memvalidasi skemanya (`manifest.py`), lalu aturan antarplugin:
 - nama folder = `id`, `id` unik;
 - `requires` ada, tidak melingkar, dan mendukung semua jenis ruang plugin yang membutuhkannya;
 - `conflicts` merujuk plugin yang ada;
-- prefix callback bot, nama perintah bot, kode aturan advisor, dan kunci flag unik di seluruh plugin.
+- prefix callback bot, nama perintah bot, kode aturan advisor, dan kunci flag unik di seluruh plugin;
+- (U1) setiap tabel di `entities` ada sebagai model dan memenuhi aturan tabel plugin (`host/data.py`); entitas unik
+  antarplugin dan tidak ada id plugin yang menjadi awalan id plugin lain (`p_buku_` vs `p_buku_usaha_`).
 
 Dua mode:
 - **ketat** (validator CI, tes): galat apa pun = gagal. CI tidak pernah meloloskan manifest rusak.
@@ -138,6 +140,15 @@ def periksa_antarplugin(plugins: dict[str, Manifest]) -> dict[str, list[str]]:
     unik("perintah bot", lambda m: [c.command for c in m.contributes.bot_commands])
     unik("aturan advisor", lambda m: m.contributes.advisor_rules)
     unik("flag", lambda m: [m.flag_key])
+    # U1 (review #196 temuan 1): awalan tabel `p_<id>_` harus tak bermakna ganda. Id plugin boleh memakai `_`, jadi
+    # plugin `buku` bisa mengaku memiliki `p_buku_usaha_kontak` milik `buku_usaha` — id yang menjadi awalan id lain
+    # ditolak, dan setiap entitas hanya boleh dinyatakan satu plugin.
+    ids = sorted(plugins)
+    for pid in ids:
+        for lain in ids:
+            if lain != pid and lain.startswith(pid + "_"):
+                salah(pid, f"id '{pid}' menjadi awalan id plugin '{lain}' (awalan tabel p_{pid}_ bermakna ganda)")
+    unik("entitas", lambda m: m.entities)
     return galat
 
 
@@ -175,9 +186,22 @@ def muat_semua_kode(folder: pathlib.Path, plugins: dict[str, Manifest]) -> tuple
     return hasil, galat
 
 
+def periksa_entitas(plugins: dict[str, Manifest]) -> dict[str, list[str]]:
+    """U1: setiap `entities` manifest ada sebagai model dan memenuhi aturan tabel plugin (`host/data.py`)."""
+    from app.plugins.host import data
+    galat = {}
+    for pid, m in plugins.items():
+        salah = data.periksa_entitas(m)
+        if salah:
+            galat[pid] = salah
+    return galat
+
+
 def muat(folder: pathlib.Path = FOLDER_PLUGIN, *, ketat: bool = False) -> Registry:
     plugins, galat = baca_folder(folder)
     antar = periksa_antarplugin(plugins)
+    for pid, daftar in periksa_entitas(plugins).items():
+        antar.setdefault(pid, []).extend(daftar)
     for pid, daftar in sorted(antar.items()):
         galat.extend(f"{pid}: {p}" for p in daftar)
     # Kode hanya dimuat untuk plugin yang lolos aturan antarplugin.

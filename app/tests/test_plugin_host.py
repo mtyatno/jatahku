@@ -37,7 +37,7 @@ DASAR = {
     "engines": {"plugin_api": ">=1.0 <2.0"},
     "space_types": ["usaha"],
     "permissions": ["incomes:read", "incomes:write"],
-    "entities": ["p_uji_catatan"],
+    "entities": [],     # U1: entitas harus ada sebagai model (tabel dibuat migrasi); diuji di test_plugin_u1
     "contributes": {
         "cards": [{"key": "uji.omzet", "title": "Omzet", "shape": "kpi", "sizes": ["S", "M"], "default": True}],
         "pages": [{"route": "/p/uji", "title": "Uji", "nav": "usaha"}],

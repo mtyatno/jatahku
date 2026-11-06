@@ -155,6 +155,19 @@ export function butuhBelumAktif(p, katalog) {
   return arr(p?.butuh).filter(id => status[id]?.status !== 'aktif').map(id => status[id]?.nama || id);
 }
 
+/** Format unduhan data plugin dari katalog (U1): tombol unduh tampil bila ada data dan plugin pernah terpasang. */
+export function formatEkspor(p) {
+  if (!p || !['aktif', 'terpasang', 'dijeda', 'arsip'].includes(p.status)) return [];
+  return arr(p.ekspor).filter(f => f === 'csv' || f === 'json');
+}
+
+/** Nama berkas dari header Content-Disposition server, atau cadangan (nama aneh ditolak). */
+export function namaBerkasUnduhan(contentDisposition, cadangan) {
+  const m = /filename="([^"]+)"/.exec(String(contentDisposition || ''));
+  const nama = m ? m[1] : '';
+  return /^[\w.-]+$/.test(nama) ? nama : cadangan;
+}
+
 /** Jawaban server → pesan untuk user. */
 export function pesanGalat(status, body) {
   const detail = typeof body?.detail === 'string' ? body.detail : '';

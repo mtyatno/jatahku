@@ -397,7 +397,7 @@ Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H2, H3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), dan `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan)**
+## 5. Fitur Tambahan / plugin (H1, H2, H3, U1) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan), dan endpoint plugin + ekspor data (U1, PR plugin/u1-kerangka-buku-usaha)**
 
 Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
@@ -414,6 +414,7 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
   "izin": [{"kode": "incomes:write", "teks": "Mencatat pemasukan"}],   // dari manifest versi sekarang
   "kartu": [{"key": "buku_usaha.omzet", "judul": "Omzet", "bawaan": true}],
   "hak": {"status": "uji_coba", "sampai": null},   // gratis | uji_coba | aktif; belum menolak apa pun selama beta (ADR-P13)
+  "ekspor": ["csv", "json"],         // U1: format unduhan data plugin (manifest data_lifecycle.export); [] bila tanpa data
   "butuh": [],                       // id plugin yang harus aktif lebih dulu
   "diperbaiki": false,               // saklar darurat menyala: tampilkan "Sedang diperbaiki"
   "boleh_kelola": true}]             // owner/admin; tombol pasang/jeda/copot hanya tampilan, server tetap memeriksa
@@ -426,7 +427,17 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
 // POST /ruang/{ruang_id}/plugins/{plugin_id}/lanjut | /jeda
 // → {"plugin": "buku_usaha", "status": "aktif", "arsip_sampai": null, "izin_diberikan": ["incomes:read", …]}
 // POST /ruang/{ruang_id}/plugins/{plugin_id}/copot
-// → {"plugin": "buku_usaha", "status": "arsip", "arsip_sampai": "2027-01-30", "izin_diberikan": [], "ekspor": null}
+// → {"plugin": "buku_usaha", "status": "arsip", "arsip_sampai": "2027-01-30", "izin_diberikan": [],
+//    "ekspor": {"csv": "/ruang/<id>/plugins/buku_usaha/ekspor?format=csv", "json": "…?format=json"}}   // null bila tanpa data
+
+// GET /ruang/{ruang_id}/plugins/{plugin_id}/ekspor?format=json|csv   (U1; ruang dari path, owner/admin)
+//   Semua baris hidup tabel plugin (`entities`) di ruang itu, boleh saat aktif, terpasang, dijeda, atau arsip (ADR-P15:
+//   layar copot selalu menawarkan ekspor). Belum pernah terpasang di ruang ini → 404 `plugin_tidak_aktif`; format di luar
+//   manifest → 404 `format_tidak_tersedia`. Setiap unduhan dicatat di `plugin_audit_log` (aksi `ekspor`, jumlah baris).
+//   json → attachment {"plugin", "versi", "ruang_id", "dibuat", "data": {"<entitas>": [baris…]}}; nominal Decimal sebagai
+//   string, UUID dan waktu sebagai teks; tanpa `household_id` dan `deleted_at`.
+//   csv  → ZIP satu berkas `<entitas>.csv` per tabel (BOM UTF-8); sel teks berawalan = + - @ diberi kutip
+//   (anti formula-injection PR #136). Nama berkas: jatahku-<plugin>-<YYYYMMDD-HHMM>.json|zip.
 ```
 
 | Aksi | Dari | Ke | Catatan |
@@ -442,7 +453,7 @@ Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Uru
 - Perubahan plugin di satu ruang diserialkan (kunci baris `households` sampai commit), jadi `requires`, `conflicts`, dan `dibutuhkan_plugin_lain` tetap benar walau dua permintaan datang bersamaan.
 - Jeda/copot ditolak bila plugin lain di ruang ini masih membutuhkannya (409 `dibutuhkan_plugin_lain`): jeda bila pemakainya terpasang/aktif, copot bila pemakainya belum dicopot.
 - `pengaturan` yang tidak kosong → 422 `pengaturan_tidak_sah` sampai titik `settings` (form dari JSON Schema + validasi server) ada di H2/U1. Pilihan kartu Beranda saat pasang (`kartu` di v0) dihapus dari body: klien menambah kartu lewat `PUT /dashboard/layout` (H3).
-- `ekspor` bernilai `null` sampai endpoint `GET /ruang/{id}/plugins/{plugin_id}/ekspor?format=csv|json` ada (U1, bersama data plugin pertama; escape dan anti formula-injection dari PR #136).
+- `ekspor` (U1): tautan unduhan per format manifest; `null` untuk plugin tanpa `entities`. Web memakai tombol unduh lewat `api` (header Authorization dan ruang), bukan `<a href>`.
 - Saklar darurat: `AppSetting plugin_saklar_darurat` = id plugin dipisah koma (tidak peka huruf besar-kecil) (`PUT /admin/settings/plugin_saklar_darurat?value=buku_usaha`). Dibaca setiap permintaan, jadi berlaku seketika; status per ruang tidak berubah.
 
 ```jsonc
@@ -490,15 +501,57 @@ Plugin menyumbang lewat kode di `app/plugins/<id>/__init__.py` (`plugin = Plugin
 - **Field form (`form_fields`).** Validasi server `titik.periksa_field` untuk body `{"<plugin_id>": {"<key>": nilai}}`; field di luar plugin aktif atau manifest → 422 `field_tidak_sah`. Belum disambungkan ke body transaksi/pemasukan (U2).
 - **Job (`jobs`)** dan **cek (`checks`)**: tanpa permukaan API selain `peringatan` di §0.
 
-## 6. Buku Usaha (U1–U4)
+### Endpoint plugin `/p/<plugin_id>/…` — **v1 (U1, PR plugin/u1-kerangka-buku-usaha)**
 
-Semua di bawah `/p/buku_usaha/`; 404 `plugin_tidak_aktif` bila Buku Usaha tidak terpasang atau dijeda di ruang itu. Bentuk di bagian ini paling mungkin berubah saat sesi U menetapkannya.
+Plugin yang punya halaman butuh data: manifest `contributes.routes` (`[{"method": "GET", "path": "/kontak/{id}"}]`,
+maks. 30) dan fungsi `@plugin.rute("GET", "/kontak/{id}")` → `async (ctx, Permintaan) -> data JSON | Jawaban(data, status)`.
+Host melayani semuanya lewat satu route `/{plugin_id}/{path}` di awalan `/p` (`app/api/routes/plugins.py` →
+`titik.jalankan_rute`):
+
+- **Ruang dari header** (`ruang_aktif`), seperti baca; tanpa household → 404 `ruang_tidak_ada`. Karyawan ruang usaha
+  → 403 `khusus_admin` (gerbang R5, route di luar `KARYAWAN_BOLEH`); anggota ruang keluarga boleh (bila plugin
+  rumah tangga ada). `ruang_id` di body/query diabaikan: plugin hanya mendapat `ctx.ruang_id` dari host.
+- **Urutan:** plugin dikenal (404 `plugin_tidak_ada`) → aktif di ruang ini untuk user ini (404 `plugin_tidak_aktif`:
+  dijeda, dicopot, saklar darurat, atau flag, tidak dibedakan; status `terpasang` membuka rute **GET saja**, supaya
+  wizard pasang bisa membaca pengaturannya) → rute cocok (404 `rute_tidak_ada`) → fungsi plugin.
+- **Body** JSON ≤ 64 KB (413 `body_terlalu_besar`, 422 `body_bukan_json`); query ≤ 20 parameter, nilai pertama ≤ 200
+  huruf (422 `query_terlalu_banyak`). `Permintaan`: `metode`, `path` (parameter pola), `query`, `body`.
+- **Jawaban:** status 200 (bawaan) atau `Jawaban(data, 201|202|204)`; nilai dirapikan host: `Decimal` → string
+  desimal, UUID/tanggal → teks, float ditolak (500 `plugin_gagal`).
+- **Galat plugin:** `GalatRute(status 4xx, kode, detail)` apa adanya (`kode` huruf kecil ≤ 40, `detail` ≤ 300);
+  `NilaiTidakSah("…")` → 422 `nilai_tidak_sah`; izin ditolak → 403 `khusus_admin` / `tanpa_izin`; galat lain → 500
+  `plugin_gagal` (jejak di log, tidak pernah detail internal).
+- **Data plugin** hanya lewat `ctx.data("<entitas>")` (tabel `entities` manifest, `app/plugins/host/data.py`): `cari`,
+  `ambil`, `hitung`, `tambah`, `ubah`, `hapus` (lunak). Selalu disaring ruang konteks dan `deleted_at IS NULL`; baris
+  ruang lain = tidak ada. Tulis hanya dari rute non-GET; kartu, cek, saran, bot, field form, dan job hanya membaca
+  (`hanya_baca`). Setiap tulis dicatat di `plugin_audit_log` (`data:tambah|ubah|hapus`, tabel + id + nama kolom,
+  tanpa nilai) dalam transaksi yang sama. Kolom `id`, `household_id`, `created_by`, waktu, `deleted_at` milik host.
+- Izin data inti di rute hanya baca (`IZIN_PER_JENIS["rute"]`); metode tulis inti (`record_income` dll.) tetap U2.
+
+## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha)**
+
+Semua di bawah `/p/buku_usaha/` (endpoint plugin §5: ruang dari header, owner/admin); 404 `plugin_tidak_aktif` bila
+Buku Usaha tidak aktif di ruang itu. Bentuk U2–U4 masih v0.
 
 ```jsonc
+// Pengaturan (U1) — dipakai wizard pasang (boleh saat `terpasang`) dan kepala halaman
+// GET /p/buku_usaha/pengaturan → {"ruang": "Dapur Nusa",
+//   "amplop_bawaan": [{"nama": "Bahan", "emoji": "🥬", "tujuan": "expense", "keterangan": "…", "ada": true, "envelope_id": "…"},
+//                     … Operasional (expense), Prive, Laba ditahan, Pajak (saving)],   // `ada` = amplop bersama bernama sama sudah ada
+//   "jumlah_kontak": {"pelanggan": 3, "pemasok": 2}}
+//   Amplop bawaan dibuat KLIEN lewat `POST /envelopes/` inti atas nama user (plugin tidak menulis data inti di U1):
+//   expense dengan `budget_amount` yang diisi user (aturan inti: > 0), saving tanpa anggaran. Lalu `lanjut` → aktif.
+
 // Kontak (U1)
-// GET    /p/buku_usaha/kontak?peran=pelanggan|pemasok&q= → [{"id", "nama", "peran", "telepon", "catatan", "total_bulan_ini"}]
+// GET    /p/buku_usaha/kontak?peran=pelanggan|pemasok&q=   → [{"id", "nama", "peran", "telepon", "catatan", "dibuat", "diubah"}]
+//        urut nama; `q` dicari di nama dan telepon (tanpa peka huruf); maks. 200; `peran` lain → 422 `peran_tidak_dikenal`
 // POST   /p/buku_usaha/kontak {"nama", "peran", "telepon"?, "catatan"?} → 201 {kontak}
-// PATCH  /p/buku_usaha/kontak/{id} · DELETE /p/buku_usaha/kontak/{id}   — hapus lunak (deleted_at)
+//        nama 1–120 (spasi dirapikan), peran pelanggan|pemasok, telepon 5–29 angka/spasi/./- (boleh +), catatan ≤ 500;
+//        salah → 422 `nilai_tidak_sah`; nama+peran sudah ada (tanpa peka huruf) → 409 `kontak_ganda`
+// PATCH  /p/buku_usaha/kontak/{id} {kolom yang berubah} → {kontak}; DELETE /p/buku_usaha/kontak/{id} → 204 (hapus lunak;
+//        dibuang permanen sesudah 30 hari oleh job `plugin_jobs`)
+//        kontak ruang lain atau sudah dihapus → 404 `kontak_tidak_ada`
+// `total_bulan_ini` (v0) menyusul bersama `income_meta` dan `metrics.py` (U2–U3), aditif.
 
 // Alokasi omzet (U2) — owner, admin
 // GET /p/buku_usaha/alokasi → {"aturan": [{"envelope_id", "nama", "persen": 45}]}
@@ -557,6 +610,13 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `bentrok_plugin` | 409 | Bentrok dengan plugin yang terpasang (H1) |
 | `dibutuhkan_plugin_lain` | 409 | Plugin lain di ruang ini masih membutuhkannya (H1) |
 | `izin_berubah` | 409 | Daftar izin yang disetujui di layar izin (`pasang` body `izin`) beda dengan manifest sekarang; muat ulang lalu setujui lagi (H3) |
+| `rute_tidak_ada` | 404 | Endpoint plugin tidak ada di manifest `routes` atau tidak punya fungsi (U1) |
+| `nilai_tidak_sah` | 422 | Isian endpoint plugin ditolak plugin atau host (`NilaiTidakSah`; U1) |
+| `tanpa_izin` | 403 | Fungsi plugin memakai izin yang tidak diberikan (U1; karyawan tetap `khusus_admin`) |
+| `plugin_gagal` | 500 | Fungsi plugin melempar galat atau mengembalikan nilai yang tidak sah; jejak di log (U1) |
+| `body_terlalu_besar`, `body_bukan_json`, `query_terlalu_banyak` | 413 / 422 / 422 | Batas permintaan endpoint plugin (U1) |
+| `format_tidak_tersedia` | 404 | Format ekspor data plugin di luar manifest (U1) |
+| `kontak_ganda`, `kontak_tidak_ada`, `peran_tidak_dikenal` | 409 / 404 / 422 | Kontak Buku Usaha (U1, §6) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |

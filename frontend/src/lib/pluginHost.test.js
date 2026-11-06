@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, bodyPasang,
-  bodyTambahKartu, butuhBelumAktif, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin, namaPlugin,
-  pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
+  bodyTambahKartu, butuhBelumAktif, formatEkspor, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin,
+  namaBerkasUnduhan, namaPlugin, pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
 } from './pluginHost.js';
 import { safeRoute } from './advisorAction.js';
 
@@ -183,4 +183,16 @@ test('Beranda registry dipaksa bila tata letak memuat kartu plugin aktif', () =>
   assert.ok(!adaKartuPlugin({ items: [{ card: 'buku_usaha.omzet', visible: false }] }, k));
   assert.ok(!adaKartuPlugin({ items: [{ card: 'core.kpi.jatah' }] }, k));
   assert.ok(!adaKartuPlugin({ items: [{ card: 'buku_usaha.omzet' }] }, KONTRIBUSI_KOSONG));
+});
+
+test('U1: format ekspor dan nama berkas unduhan', () => {
+  assert.deepEqual(formatEkspor({ status: 'aktif', ekspor: ['csv', 'json', 'xml'] }), ['csv', 'json']);
+  assert.deepEqual(formatEkspor({ status: 'arsip', ekspor: ['json'] }), ['json']);
+  assert.deepEqual(formatEkspor({ status: 'tersedia', ekspor: ['json'] }), []);
+  assert.deepEqual(formatEkspor({ status: 'aktif' }), []);
+  assert.deepEqual(formatEkspor(null), []);
+  assert.equal(namaBerkasUnduhan('attachment; filename="jatahku-buku_usaha-20261105-0600.zip"', 'x.zip'),
+    'jatahku-buku_usaha-20261105-0600.zip');
+  assert.equal(namaBerkasUnduhan('attachment; filename="../etc/passwd"', 'x.zip'), 'x.zip');
+  assert.equal(namaBerkasUnduhan(null, 'x.json'), 'x.json');
 });

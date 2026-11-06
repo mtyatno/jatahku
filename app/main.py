@@ -179,6 +179,7 @@ app.include_router(ruang_routes.router, prefix="/ruang", tags=["ruang"])
 app.include_router(ruang_kelola.router, tags=["ruang"])   # R5: /ruang/{id}/…, /ruang/gabung, /persetujuan/saya
 app.include_router(plugins.router, prefix="/plugins", tags=["plugins"])
 app.include_router(plugins.ruang_router, prefix="/ruang", tags=["plugins"])
+app.include_router(plugins.p_router, prefix="/p", tags=["plugins"])        # U1: endpoint plugin /p/<id>/…
 app.include_router(prive.router, prefix="/prive", tags=["prive"])
 app.include_router(laporan.router, prefix="/laporan", tags=["laporan"])
 app.include_router(laporan.pengaturan_router, prefix="/user", tags=["laporan"])
