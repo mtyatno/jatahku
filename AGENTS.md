@@ -646,6 +646,45 @@ Setelah merge (ikuti "Urutan merge PR bermigrasi", label `migrasi`):
   `cd /opt/jatahku/app && sudo -u jatahku /opt/jatahku/venv/bin/alembic stamp --purge e7b3d5a9c1f4` (`--purge`
   mengosongkan `alembic_version` dulu, jadi revisi yang tak dikenal tidak dicari), lalu jalankan ulang job deploy.
 
+## Deploy Checklist — Laporan berkala tahap 2: email (tanpa migrasi)
+Branch `feat/laporan-berkala-email`: laporan yang terbit dikirim ke email terverifikasi (ringkasan tanpa nominal, PDF
+berkata sandi terlampir), antrean email dengan coba ulang di dalam `laporan_job`, verifikasi email, berhenti berlangganan
+satu klik, dan saklar "Kirim laporan ke email" di Pengaturan → Laporan. **Tanpa migrasi, paket, atau `.env` baru** (kolom
+email sudah dibuat tahap 1), jadi tidak ada langkah alembic dan tidak ada jendela 500. Detail perilaku, batasan, dan
+pemulihan: `docs/laporan-berkala.md` bagian "Email laporan" dan "Pemulihan".
+Sebelum merge:
+1. SMTP hidup: minta email reset password ke akun sendiri dari halaman Login ("Lupa password?") → email tiba. Tanpa
+   ini tautan verifikasi dan laporan tidak terkirim (`SMTP_PASSWORD` kosong di `.env` = kiriman gagal: tombol verifikasi menjawab 502, laporan berstatus `gagal`).
+2. `API_URL` dan `APP_URL` di `/opt/jatahku/.env` kosong (bawaan `https://api.jatahku.com` dan `https://jatahku.com`)
+   atau berisi URL produksi itu: `sudo grep -E '^(API_URL|APP_URL)=' /opt/jatahku/.env` → tanpa keluaran, atau hanya dua
+   URL tersebut. Nilai lain membuat tautan di email salah alamat.
+Setelah merge:
+3. Tunggu deploy hijau (`api.jatahku.com/health` → `commit` baru; `jatahku.com/version.json` → commit yang sama).
+4. Pengaturan → 📄 Laporan: status "Email … belum terverifikasi." (atau banner di `/laporan`) → "Kirim tautan verifikasi" →
+   "Tautan verifikasi dikirim ke …" → buka tautan di email → halaman "Verifikasi email kamu" (membukanya belum mengubah
+   apa pun: Pengaturan di tab lain, dimuat ulang, masih "belum terverifikasi") → tekan "Verifikasi email" → kembali ke
+   Pengaturan dengan "Email terverifikasi. Laporan berikutnya juga dikirim ke email." dan status "Email …
+   terverifikasi.". Tautan yang sama dibuka lagi langsung berakhir di Pengaturan dengan pesan yang sama, tanpa halaman
+   dan tanpa mengubah apa pun. Akun Google dengan email yang sama sudah terverifikasi sendiri sesudah login Google.
+5. Log tanpa alamat (jalankan sesudah langkah 4, lalu lagi sesudah jam :30 yang mengirim email):
+   `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan"` → hanya id laporan/user,
+   angka, dan teks tetap (mis. `Email laporan terkirim`, `email laporan: N terkirim, …`); tanpa traceback. Tidak ada
+   alamat: `sudo journalctl -u jatahku --since "1 hour ago" | grep -iE "email laporan|PDF laporan" | grep -c '@'` → 0, dan
+   `sudo journalctl -u jatahku --since "1 hour ago" | grep -i "verifikasi" | grep -c '@'` → 0.
+6. Laporan pertama yang terkirim: **laporan yang terbit sebelum merge tidak pernah diemail** (`email_status` NULL, tahap 1),
+   jadi tunggu laporan baru. Hari gajian berikutnya ±07:30 WIB (job :30 sesudah snapshot 00:05 UTC): email "Laporan … ·
+   Jatahku" tiba di akun yang terverifikasi, badan tanpa nominal rupiah, PDF terlampir terbuka dengan kata sandi laporan
+   (tidak tanpa kata sandi), tombol "Lihat laporan" membuka `/laporan/<id>`. Status: `sudo -u postgres psql jatahku_db -c
+   "SELECT email_status, email_alasan, COUNT(*) FROM reports WHERE terbit_at > now() - interval '2 days' GROUP BY 1, 2"`
+   (`terkirim`; `dilewati` + `belum_verifikasi`/`tanpa_email`/`dimatikan` untuk yang tidak berhak; `gagal` = periksa
+   SMTP, lalu "kirim ulang email" di `docs/laporan-berkala.md` bagian "Pemulihan").
+7. Tautan "Berhenti berlangganan" di email: halaman "Berhenti menerima email laporan?" (membukanya tidak mengubah apa pun:
+   saklar di Pengaturan masih menyala) → tombol "Berhenti berlangganan" → "Email laporan dimatikan" → saklar "Kirim
+   laporan ke email" mati; nyalakan lagi di Pengaturan → menyala dan tersimpan (muat ulang halaman, tetap menyala).
+- **Rollback:** revert PR. Tanpa migrasi, tidak ada yang perlu dikembalikan; kolom email di `reports` tetap ada dan tidak
+  dipakai kode lama. Laporan berstatus `menunggu`/`mengirim` tidak terkirim lagi sesudah revert (kode lama tidak punya
+  antrean) dan dikirim bila kode tahap 2 dipasang lagi.
+
 ## Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)
 Tahap 2 belajar lintas user (branch `feat/kotak-belajar-2`, label `migrasi`): kolom `receipt_scans.sample_lines` (JSONB
 NULL, lewat `KOTAK_DDL`), tabel `proof_sample_consents` dan `proof_samples` (unik `uq_proof_sample_item`, indeks
