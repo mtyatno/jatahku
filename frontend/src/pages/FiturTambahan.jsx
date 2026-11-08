@@ -13,7 +13,7 @@ import { Icon } from '../components/Icon';
 import { loadCache, saveCache } from '../lib/localCache';
 import { cacheKeyLayout } from '../lib/dashboardRegistry';
 import {
-  STATUS_LABEL, aksiApi, bodyPasang, bodyTambahKartu, butuhBelumAktif, formatEkspor, pesanGalat, tawaranKartu,
+  STATUS_LABEL, aksiApi, bodyIzinBaru, bodyPasang, bodyTambahKartu, butuhBelumAktif, formatEkspor, izinBaru, pesanGalat, tawaranKartu,
   tombolUntuk, urutkanKatalog,
 } from '../lib/pluginHost';
 import { EVENT_PLUGIN_BERUBAH } from '../plugins/useKontribusi';
@@ -317,6 +317,13 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
       : `${p.nama} aktif lagi di ${ruangNama}.` });
   };
 
+  // U2: rilis baru meminta izin tambahan untuk instalasi yang sudah ada; status tidak berubah.
+  const setujuiIzin = async () => {
+    const hasil = await jalankan('izin', bodyIzinBaru(p));
+    if (!hasil) return;
+    setPesan({ teks: `Izin baru ${p.nama} disetujui. Fitur barunya bisa dipakai sekarang.` });
+  };
+
   const copot = async () => {
     const hasil = await jalankan('copot');
     if (!hasil) return;
@@ -348,6 +355,22 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
         <p className="text-sm mt-3 rounded-xl px-3 py-2" style={kotak('awas', gelap)}>
           {p.nama} sedang diperbaiki tim Jatahku. Menu dan kartunya disembunyikan sementara; datamu aman.
         </p>
+      )}
+      {izinBaru(p).length > 0 && !langkah && (
+        <div className="mt-3 rounded-xl px-3 py-3" style={kotak('awas', gelap)} role="region" aria-label="Izin baru">
+          <p className="text-sm font-semibold">Pembaruan {p.nama} meminta izin baru:</p>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {izinBaru(p).map(i => (
+              <li key={i.kode} className="flex items-start gap-2 text-sm">
+                <Icon name="check" size={16} className="shrink-0 mt-0.5" /> {i.teks}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs mt-1.5">Sebelum disetujui, fitur yang memakainya belum bisa dipakai. Data ruang lain tetap tidak terbaca.</p>
+          <button type="button" className="btn-primary !py-2 mt-2 disabled:opacity-50" disabled={sibuk || !rid} onClick={setujuiIzin}>
+            {sibuk ? 'Memproses…' : 'Setujui izin baru'}
+          </button>
+        </div>
       )}
       {p.status === 'arsip' && p.arsip_sampai && (
         <p className="text-sm mt-3" style={{ color: 'var(--text-muted)' }}>
@@ -393,7 +416,7 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Tidak meminta akses ke data ruang.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {p.izin.map(i => (
+                {(p.izin_diberikan.length ? p.izin.filter(i => p.izin_diberikan.includes(i.kode)) : p.izin).map(i => (
                   <li key={i.kode} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text)' }}>
                     <Icon name="lock" size={16} className="shrink-0 mt-0.5" color="var(--text-muted)" /> {i.teks}
                   </li>

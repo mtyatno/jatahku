@@ -32,6 +32,7 @@ JENIS = {
     "job": "jobs",
     "field_form": "form_fields",
     "rute": "routes",            # U1: endpoint plugin `/p/<id>/…`
+    "simpan_field": "form_fields",   # U2: simpan isian form plugin sesudah catatan inti dibuat (opsional per target)
 }
 METODE_RUTE = ("GET", "POST", "PATCH", "PUT", "DELETE")
 
@@ -98,8 +99,15 @@ class Plugin(metaclass=_KelasBeku):
         return self._dekor("job", key, izin)
 
     def field_form(self, target: str, key: str, *, izin=()):
-        """`async fn(ctx, nilai) -> nilai_bersih` atau `raise NilaiTidakSah("pesan")`. Validasi saja (disimpan di U2)."""
+        """`async fn(ctx, nilai) -> nilai_bersih` atau `raise NilaiTidakSah("pesan")`. Validasi saja; penyimpanan lewat
+        `simpan_field(target)` (U2)."""
         return self._dekor("field_form", f"{target}.{key}", izin)
+
+    def simpan_field(self, target: str, *, izin=()):
+        """`async fn(ctx, target_id: UUID, nilai: dict) -> None` (U2): menyimpan isian field plugin (`{key: nilai
+        bersih}` dari `field_form`) untuk catatan inti `target` yang baru dibuat (mis. transaksi), lewat `ctx.data()`,
+        di commit yang sama dengan catatannya. Galat (`NilaiTidakSah` atau lainnya) membatalkan catatan intinya."""
+        return self._dekor("simpan_field", target, izin)
 
     def rute(self, metode: str, pola: str, *, izin=()):
         """`async fn(ctx, Permintaan) -> data JSON | Jawaban` untuk `<metode> /p/<id><pola>` (U1). Pola seperti

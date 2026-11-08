@@ -18,8 +18,8 @@ direview), bukan sandbox; keadaan `PluginContext` sendiri ada di host (`keadaan.
 ditambal atau diturunkan saat berjalan.
 
 Izin per jenis fungsi (`IZIN_PER_JENIS`, review #186 temuan 1): kartu, cek, aturan advisor, perintah bot, field form,
-dan rute (U1) hanya membaca data inti; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data
-bersama). Izin tulis data inti belum dibuka untuk titik mana pun (U2). Dicek di sini saat memuat dan lagi saat berjalan
+dan simpan field hanya membaca data inti; mengirim notifikasi hanya dari job (konteks tanpa user, yang hanya melihat data
+bersama). Satu-satunya tulis inti: `incomes:write` untuk rute (U2, `host/inti.py`). Dicek di sini saat memuat dan lagi saat berjalan
 (`titik.izin_efektif`). Tabel plugin sendiri (`entities`) dibaca-tulis lewat `ctx.data()` tanpa izin manifest: tulis
 hanya dari rute non-GET (`host/data.py`).
 """
@@ -64,7 +64,10 @@ IZIN_PER_JENIS: dict[str, frozenset[str]] = {
     "perintah_bot": IZIN_BACA,          # ADR-P2: chat tidak pernah menulis
     "field_form": IZIN_BACA,
     "job": IZIN_BACA | {"notifications:send"},
-    "rute": IZIN_BACA,                  # U1: tabel sendiri lewat ctx.data() tanpa izin; tulis inti menyusul U2
+    # U1: tabel sendiri lewat ctx.data() tanpa izin. U2: rute boleh menulis pemasukan inti (`ctx.catat_pemasukan`,
+    # hanya non-GET oleh owner/admin, `host/inti.py`).
+    "rute": IZIN_BACA | {"incomes:write"},
+    "simpan_field": IZIN_BACA,          # U2: hanya tabel plugin sendiri (`ctx.data()`), di commit catatan inti
 }
 
 
@@ -223,7 +226,11 @@ def _kontribusi(m: Manifest) -> dict[str, set[str]]:
         "job": {j.key for j in c.jobs},
         "field_form": {f"{f.target}.{f.key}" for f in c.form_fields},
         "rute": {r.key for r in c.routes},
+        "simpan_field": {f.target for f in c.form_fields},
     }
+
+# Kontribusi yang fungsinya opsional: plugin boleh punya field tanpa penyimpanan sendiri (mis. validasi saja).
+_OPSIONAL = {"simpan_field"}
 
 
 def cocokkan(m: Manifest, p: Plugin) -> list[str]:
@@ -238,7 +245,7 @@ def cocokkan(m: Manifest, p: Plugin) -> list[str]:
         ada = {d.kunci for d in p.semua(jenis)}
         for k in sorted(ada - harus[jenis]):
             galat.append(f"{jenis} '{k}' didaftarkan di kode tetapi tidak ada di manifest ({JENIS[jenis]})")
-        for k in sorted(harus[jenis] - ada):
+        for k in sorted(harus[jenis] - ada if jenis not in _OPSIONAL else ()):
             galat.append(f"{JENIS[jenis]} '{k}' di manifest tidak punya fungsi (@plugin.{jenis})")
     for d in p.semua():
         lebih = set(d.izin) - izin_manifest

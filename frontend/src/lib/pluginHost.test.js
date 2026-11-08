@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  bodyIzinBaru, bodyTambahan, fieldUntuk, izinBaru,
   KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, bodyPasang,
   bodyTambahKartu, butuhBelumAktif, formatEkspor, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin,
   namaBerkasUnduhan, namaPlugin, pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
@@ -195,4 +196,31 @@ test('U1: format ekspor dan nama berkas unduhan', () => {
     'jatahku-buku_usaha-20261105-0600.zip');
   assert.equal(namaBerkasUnduhan('attachment; filename="../etc/passwd"', 'x.zip'), 'x.zip');
   assert.equal(namaBerkasUnduhan(null, 'x.json'), 'x.json');
+});
+
+test('izin baru hanya untuk instalasi yang ada dan pengelola (U2)', () => {
+  const p = { boleh_kelola: true, status: 'aktif', izin_baru: ['incomes:write'],
+    izin: [{ kode: 'envelopes:read', teks: 'Membaca amplop' }, { kode: 'incomes:write', teks: 'Mencatat pemasukan' }] };
+  assert.deepEqual(izinBaru(p), [{ kode: 'incomes:write', teks: 'Mencatat pemasukan' }]);
+  assert.deepEqual(bodyIzinBaru(p), { izin: ['envelopes:read', 'incomes:write'] });   // semua yang dilihat
+  assert.deepEqual(izinBaru({ ...p, boleh_kelola: false }), []);
+  assert.deepEqual(izinBaru({ ...p, status: 'arsip' }), []);
+  assert.deepEqual(izinBaru({ ...p, izin_baru: undefined }), []);
+});
+
+test('field form plugin per target dan body tambahan (U2)', () => {
+  const k = { form_fields: [
+    { plugin: 'bu', target: 'transaction', key: 'pemasok', type: 'reference', label: 'Pemasok' },
+    { plugin: 'bu', target: 'transaction', key: 'akun', type: 'select', label: 'Akun', options: ['Sewa', 'Gaji'] },
+    { plugin: 'bu', target: 'transaction', key: 'rusak', type: 'select', label: 'R' },
+    { plugin: 'bu', target: 'income', key: 'x', type: 'text', label: 'X' },
+    { plugin: 'bu', target: 'transaction', key: 'aneh', type: 'html', label: 'A' },
+  ] };
+  const f = fieldUntuk(k, 'transaction');
+  assert.deepEqual(f.map(x => x.key), ['pemasok', 'akun']);
+  assert.equal(bodyTambahan(f, {}), null);
+  assert.equal(bodyTambahan(f, { 'bu.akun': '', 'bu.pemasok': null }), null);
+  assert.deepEqual(bodyTambahan(f, { 'bu.akun': 'Sewa', 'bu.pemasok': 'id-1' }), { bu: { pemasok: 'id-1', akun: 'Sewa' } });
+  assert.deepEqual(bodyTambahan(f, { 'bu.akun': 'Hiburan', 'bu.pemasok': 'id-1' }), { bu: { pemasok: 'id-1' } });
+  assert.deepEqual(fieldUntuk(null, 'transaction'), []);
 });

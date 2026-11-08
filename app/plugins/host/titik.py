@@ -681,7 +681,7 @@ def tebak_kamus(kamus: list[tuple[str, list[str]]], deskripsi: str) -> str | Non
     return None
 
 
-# ── form_fields (validasi; disimpan di U2) ───────────────────────────────
+# ── form_fields (validasi H2; disimpan lewat simpan_field U2) ───────────────────────────────
 def _field_tidak_sah(detail: str):
     return siklus._galat(422, "field_tidak_sah", detail)
 
@@ -715,7 +715,7 @@ async def periksa_field(db, user, household_id, target: str, kiriman: dict) -> d
         raise _field_tidak_sah("Isian tambahan tidak sah.")
     peran = await _peran(db, user.id, household_id)
     ruang = await _ruang(db, household_id)
-    if peran is None or ruang is None:
+    if peran is None or ruang is None or _karyawan(ruang.type, peran):   # karyawan tanpa kontribusi plugin (H3 B)
         raise _field_tidak_sah("Isian tambahan tidak tersedia di ruang ini.")
     per_plugin: dict[str, dict[str, _Aktif]] = {}
     for a in await _fungsi_aktif(db, household_id, user.id, "field_form",
@@ -734,12 +734,50 @@ async def periksa_field(db, user, household_id, target: str, kiriman: dict) -> d
                 bersih.setdefault(pid, {})[key] = None       # field plugin selalu opsional
                 continue
             nilai = _nilai_bawaan(spec.type, nilai)
+            if spec.type == "select" and nilai not in spec.options:   # U2: pilihan dari manifest
+                raise _field_tidak_sah(f"{spec.label}: pilihan tidak dikenali.")
             ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"field:{target}.{key}")
             try:
                 bersih.setdefault(pid, {})[key] = await panggil(ctx, a.d.fn, nilai)
             except NilaiTidakSah as exc:
                 raise _field_tidak_sah(f"{spec.label}: {str(exc)[:120] or 'tidak sah'}")
     return bersih
+
+
+async def simpan_field(db, user, household_id, target: str, target_id, bersih: dict) -> None:
+    """U2: nilai bersih dari `periksa_field` disimpan plugin pemiliknya (`@plugin.simpan_field(target)`) untuk catatan
+    inti `target_id` yang baru di-flush, di sesi dan commit yang sama. Plugin tanpa fungsi simpan untuk target itu
+    dilewati (field validasi saja). Galat membatalkan catatan intinya: `NilaiTidakSah` → 422 `field_tidak_sah`,
+    lainnya → 500 `plugin_gagal` (log). Isian yang semuanya kosong tidak memanggil plugin."""
+    from app.services.ruang import RuangDitolak
+    bersih = {pid: {k: v for k, v in isian.items() if v is not None} for pid, isian in (bersih or {}).items()}
+    bersih = {pid: isian for pid, isian in bersih.items() if isian}
+    if not bersih:
+        return
+    peran = await _peran(db, user.id, household_id)
+    ruang = await _ruang(db, household_id)
+    if peran is None or ruang is None or _karyawan(ruang.type, peran):
+        raise _field_tidak_sah("Isian tambahan tidak tersedia di ruang ini.")
+    for a in await _fungsi_aktif(db, household_id, user.id, "simpan_field",
+                                 lambda m: {f.target for f in m.contributes.form_fields if f.target == target}):
+        isian = bersih.get(a.m.id)
+        if not isian:
+            continue
+        ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"simpan:{target}",
+                      boleh_tulis=True)
+        mulai = time.perf_counter()
+        try:
+            await panggil(ctx, a.d.fn, target_id, dict(isian))
+        except NilaiTidakSah as exc:
+            raise _field_tidak_sah(str(exc)[:200] or "Isian tambahan tidak sah.")
+        except RuangDitolak:
+            raise
+        except Exception:
+            log.exception("simpan field plugin %s '%s' gagal", a.m.id, target)
+            raise RuangDitolak(kode="plugin_gagal", detail=f"{a.m.name} sedang bermasalah. Coba lagi nanti.",
+                               status_code=500)
+        finally:
+            _waktu(mulai, a.m, a.d)
 
 
 # ── routes (endpoint plugin, U1) ─────────────────────────────────────────

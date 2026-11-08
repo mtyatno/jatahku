@@ -103,8 +103,13 @@ async def create_income(
     return await catat_pemasukan(req, user, db, hid)
 
 
-async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: UUID):
-    """Jalur pencatatan pemasukan (route di atas, dan persetujuan draf R5 di dalam `peran.atas_izin_pengelola`)."""
+async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: UUID, *, commit: bool = True,
+                          income_date: date | None = None):
+    """Jalur pencatatan pemasukan (route di atas, persetujuan draf R5 di dalam `peran.atas_izin_pengelola`, dan
+    `ctx.catat_pemasukan` Fitur Tambahan lewat `app/plugins/host/inti.py`).
+
+    `commit=False` (Plugin U2): hanya flush, supaya data plugin masuk dalam commit yang sama milik pemanggil; notifikasi
+    goal dititipkan ke `setelah_commit` dan dijalankan pemanggil sesudah commit-nya. `income_date` None = hari ini."""
     # Validate allocations don't exceed income
     total_allocated = sum(a.amount for a in req.allocations)
     if total_allocated > req.amount:
@@ -169,6 +174,8 @@ async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: 
         description=req.source,
         kind=req.kind,
     )
+    if income_date is not None:
+        income.income_date = income_date
     db.add(income)
     await db.flush()
 
@@ -196,15 +203,23 @@ async def catat_pemasukan(req: IncomeCreate, user: User, db: AsyncSession, hid: 
         ))
         alloc_details.append({"envelope": "Tabungan", "emoji": "💰", "amount": str(remainder), "auto": True})
 
-    await db.commit()
-    # Notifikasi target (berisi angka) untuk pemilik ruang bila pencatatnya karyawan, juga saat draf disetujui
-    # (review PR #175, temuan 4). Peran dibaca langsung, karena `batasan` None di dalam persetujuan.
-    penerima = user
-    role, jenis = await peran.peran_di_ruang(db, user.id, hid)
-    if role == "member" and jenis == "usaha":
-        penerima = await peran.owner_ruang(db, hid)
-    if penerima is not None:
-        await notify_goals_reached(db, penerima, goals_before)
+    async def _notif():
+        # Notifikasi target (berisi angka) untuk pemilik ruang bila pencatatnya karyawan, juga saat draf disetujui
+        # (review PR #175, temuan 4). Peran dibaca langsung, karena `batasan` None di dalam persetujuan.
+        penerima = user
+        role, jenis = await peran.peran_di_ruang(db, user.id, hid)
+        if role == "member" and jenis == "usaha":
+            penerima = await peran.owner_ruang(db, hid)
+        if penerima is not None:
+            await notify_goals_reached(db, penerima, goals_before)
+
+    if commit:
+        await db.commit()
+        await _notif()
+    else:
+        await db.flush()
+        from app.services import setelah_commit
+        setelah_commit.titip(db, _notif)
 
     return IncomeResponse(
         id=income.id,

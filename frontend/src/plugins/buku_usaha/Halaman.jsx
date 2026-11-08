@@ -1,12 +1,13 @@
 // Halaman Buku Usaha `/p/buku_usaha/*` (Plugin U1; 05-desain-buku-usaha.md artboard "Halaman Buku Usaha").
 //
-// U1 hanya tab Kontak (pelanggan dan pemasok). Tab Alokasi omzet (U2) dan Laba rugi (U3) menyusul di sesinya sendiri.
+// Tab Kontak (U1, pelanggan dan pemasok) dan Alokasi omzet (U2, `TabAlokasi.jsx`). Laba rugi (U3) menyusul.
 // Semua data dari `/p/buku_usaha/*` (ruang dari header, server memeriksa peran dan status plugin); di sini tampilan,
 // saringan lokal, dan validasi yang sama dengan server sebelum mengirim (`bukuUsaha.js`).
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Icon } from '../../components/Icon';
+import TabAlokasi from './TabAlokasi';
 import {
   MAKS_CATATAN, MAKS_NAMA, PERAN_KONTAK, PLUGIN_ID, bodyUbahKontak, hitungKontak, pesanKontakGalat, rapikanKontak,
   saringKontak, urutkanKontak, validasiKontak,
@@ -14,7 +15,7 @@ import {
 
 const TAB = [
   { id: 'kontak', label: 'Kontak' },
-  { id: 'alokasi', label: 'Alokasi omzet', nanti: 'U2' },
+  { id: 'alokasi', label: 'Alokasi omzet' },
   { id: 'laba-rugi', label: 'Laba rugi', nanti: 'U3' },
 ];
 const KOSONG = { nama: '', peran: 'pelanggan', telepon: '', catatan: '' };
@@ -170,7 +171,7 @@ function TabKontak({ ruangNama }) {
         <div>
           <h2 id="bu-kontak" className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>Kontak</h2>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {hitung.pelanggan} pelanggan · {hitung.pemasok} pemasok. Dipilih di form penjualan dan pengeluaran mulai versi berikutnya.
+            {hitung.pelanggan} pelanggan · {hitung.pemasok} pemasok. Pelanggan dipilih di form penjualan, pemasok di form pengeluaran.
           </p>
         </div>
         {mode !== 'tambah' && (
@@ -275,7 +276,8 @@ export default function Halaman({ subpath = '', plugin }) {
           </Link>
         ))}
       </nav>
-      {aktif.id === 'kontak' ? <TabKontak ruangNama={ruangNama} /> : <TabNanti tab={aktif} />}
+      {aktif.id === 'kontak' ? <TabKontak ruangNama={ruangNama} />
+        : aktif.id === 'alokasi' ? <TabAlokasi ruangNama={ruangNama} /> : <TabNanti tab={aktif} />}
     </div>
   );
 }

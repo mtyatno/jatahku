@@ -136,3 +136,113 @@ export function rencanaAmplop(baris, namaAda = []) {
   }
   return { rencana, kurang };
 }
+
+// ── U2: alokasi omzet ───────────────────────────────────────────────────
+
+/** Rupiah untuk tampilan (nominal dari server berupa teks desimal; tidak pernah dihitung ulang di sini). */
+export function rupiah(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 'Rp0';
+  return `Rp${Math.round(n).toLocaleString('id-ID')}`;
+}
+
+/** Persen dari teks/angka server ("45.00" → "45"; "33.50" → "33.5"). */
+export function persenTampil(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : '';
+}
+
+/**
+ * Jawaban `GET/PUT /p/buku_usaha/alokasi` → baris editor: aturan tersimpan, atau saran 45/30/15/9/1 bila belum ada;
+ * plus amplop bersama yang belum dipakai (untuk "Tambah amplop").
+ */
+export function barisAlokasi(data) {
+  const sumber = arr(data?.tersimpan ? data?.aturan : (arr(data?.aturan).length ? data.aturan : data?.saran));
+  const baris = sumber.filter(a => a && typeof a.envelope_id === 'string').map(a => ({
+    envelope_id: a.envelope_id, nama: teks(a.nama, 50), emoji: teks(a.emoji, 4), persen: persenTampil(a.persen),
+  }));
+  const dipakai = new Set(baris.map(b => b.envelope_id));
+  const sisa = arr(data?.amplop).filter(a => a && typeof a.envelope_id === 'string' && !dipakai.has(a.envelope_id))
+    .map(a => ({ envelope_id: a.envelope_id, nama: teks(a.nama, 50), emoji: teks(a.emoji, 4), persen: '' }));
+  return { baris, sisa, siap: !!data?.siap, tersimpan: !!data?.tersimpan };
+}
+
+const PERSEN_RE = /^\d{1,3}([.,]\d{1,2})?$/;
+
+/** Total persen dalam seperseratus (bilangan bulat, supaya 33.33 + 33.33 + 33.34 tepat 100). */
+export function totalPersen(baris) {
+  return arr(baris).reduce((t, b) => {
+    const s = String(b?.persen ?? '').trim().replace(',', '.');
+    return PERSEN_RE.test(s) ? t + Math.round(Number(s) * 100) : t;
+  }, 0) / 100;
+}
+
+/** Validasi editor alokasi dengan aturan server → { ok, pesan, body }. */
+export function validasiAlokasi(baris) {
+  const list = arr(baris);
+  if (!list.length) return { ok: false, pesan: 'Tambahkan minimal satu amplop.' };
+  if (list.length > 10) return { ok: false, pesan: 'Paling banyak 10 amplop.' };
+  const aturan = [];
+  for (const b of list) {
+    const s = String(b?.persen ?? '').trim().replace(',', '.');
+    if (!PERSEN_RE.test(s) || Number(s) <= 0 || Number(s) > 100) {
+      return { ok: false, pesan: `Persen ${b?.nama || 'amplop'} harus lebih dari 0 dan paling banyak 100 (maks. 2 desimal).` };
+    }
+    aturan.push({ envelope_id: b.envelope_id, persen: s });
+  }
+  const total = totalPersen(list);
+  if (total !== 100) return { ok: false, pesan: `Total harus 100%, sekarang ${total.toLocaleString('id-ID')}%.` };
+  return { ok: true, pesan: '', body: { aturan } };
+}
+
+// ── U2: penjualan dan jenis pemasukan ───────────────────────────────────
+export const JENIS_PEMASUKAN = Object.freeze([
+  { id: 'penjualan', label: 'Penjualan', bantu: 'Dibagi otomatis menurut alokasi omzet; dihitung sebagai omzet.' },
+  { id: 'modal', label: 'Modal pemilik', bantu: 'Setoran modal. Bukan omzet; masuk satu amplop.' },
+  { id: 'pinjaman', label: 'Pinjaman', bantu: 'Uang pinjaman. Bukan omzet; masuk satu amplop.' },
+  { id: 'lain', label: 'Lain-lain', bantu: 'Pemasukan lain di luar penjualan; masuk satu amplop.' },
+]);
+const JENIS_ID = new Set(JENIS_PEMASUKAN.map(j => j.id));
+export const AMPLOP_BAWAAN_NON_PENJUALAN = 'Laba ditahan';
+
+/**
+ * Form penjualan → { ok, galat, body } untuk `POST /p/buku_usaha/penjualan` (aturan sama dengan server).
+ * `hariIni` = 'YYYY-MM-DD' lokal; tanggal tidak boleh sesudahnya.
+ */
+export function validasiPenjualan(form, hariIni) {
+  const galat = {};
+  const jenis = JENIS_ID.has(form?.jenis) ? form.jenis : 'penjualan';
+  const jumlah = digitSaja(form?.jumlah);
+  if (!(Number(jumlah) > 0)) galat.jumlah = 'Isi jumlah lebih dari nol.';
+  const tanggal = String(form?.tanggal || '');
+  if (tanggal && !/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) galat.tanggal = 'Tanggal tidak terbaca.';
+  else if (tanggal && hariIni && tanggal > hariIni) galat.tanggal = 'Tanggal tidak boleh sesudah hari ini.';
+  const keterangan = rapiNama(form?.keterangan);
+  if (keterangan.length > 200) galat.keterangan = 'Keterangan paling banyak 200 karakter.';
+  if (jenis !== 'penjualan' && !form?.envelope_id) galat.envelope_id = 'Pilih amplop tujuan.';
+  const body = { jumlah, jenis };
+  if (tanggal) body.tanggal = tanggal;
+  if (keterangan) body.keterangan = keterangan;
+  if (jenis === 'penjualan' && form?.kontak_id) body.kontak_id = form.kontak_id;
+  if (jenis !== 'penjualan' && form?.envelope_id) body.envelope_id = form.envelope_id;
+  return { ok: Object.keys(galat).length === 0, galat, body };
+}
+
+/** Amplop bawaan untuk jenis selain penjualan: Laba ditahan bila ada, selain itu kosong (user memilih). */
+export function amplopBawaanNonPenjualan(amplop) {
+  const a = arr(amplop).find(x => rapiNama(x?.nama).toLowerCase() === AMPLOP_BAWAAN_NON_PENJUALAN.toLowerCase());
+  return a ? a.envelope_id : '';
+}
+
+/** Jawaban server penjualan/alokasi → pesan untuk user. `perlu` menandai tindakan lanjutan untuk tombol. */
+export function pesanUsahaGalat(status, body) {
+  const detail = typeof body?.detail === 'string' ? body.detail : '';
+  const kode = body?.kode;
+  if (status === 0) return { teks: 'Koneksi terputus. Coba lagi.' };
+  if (kode === 'alokasi_belum_diatur') return { teks: 'Atur alokasi omzet dulu (total 100%) supaya penjualan bisa dibagi otomatis.', perlu: 'alokasi' };
+  if (kode === 'tanpa_izin') return { teks: 'Buku Usaha perlu izin baru untuk mencatat pemasukan. Setujui di Fitur Tambahan.', perlu: 'izin' };
+  if (kode === 'plugin_tidak_aktif') return { teks: 'Buku Usaha tidak aktif di ruang ini. Buka Fitur Tambahan untuk melanjutkannya.', perlu: 'fitur' };
+  if (kode === 'khusus_admin') return { teks: 'Hanya pemilik dan admin ruang yang bisa mencatat ini.' };
+  if (kode === 'alokasi_bukan_100') return { teks: detail || 'Total alokasi harus 100%.' };
+  return { teks: detail || 'Belum berhasil. Coba lagi sebentar.' };
+}

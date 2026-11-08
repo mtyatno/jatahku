@@ -62,6 +62,10 @@ class TransactionCreate(BaseModel):
     client_ref: str | None = Field(default=None, max_length=64)
     # Item Kotak Struk yang dicatat transaksi ini (aturan: spec "Bagikan ke Jatahku" 5d).
     receipt_item_id: UUID | None = None
+    # Plugin U2 (aditif): isian field Fitur Tambahan `{plugin_id: {key: nilai}}` (manifest `form_fields`, target
+    # `transaction`), mis. pemasok dan akun Buku Usaha. Divalidasi `titik.periksa_field`, disimpan plugin
+    # (`simpan_field`) di commit yang sama dengan transaksinya. Karyawan tidak punya field plugin (422).
+    tambahan: dict | None = None
 
     @field_validator("description")
     @classmethod
@@ -311,6 +315,12 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     # Aturan bersama web + Telegram (app/services/expense_rules.py)
     if not is_spendable(envelope):
         raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
+    # Plugin U2: field Fitur Tambahan diperiksa sebelum apa pun disimpan (juga sebelum draf: karyawan tidak punya field
+    # plugin, jadi kirimannya ditolak dan draf tidak pernah membawa isian plugin).
+    tambahan = {}
+    if req.tambahan:
+        from app.plugins.host import titik
+        tambahan = await titik.periksa_field(db, user, hid, "transaction", req.tambahan)
     # R5: batasan karyawan di ruang usaha (jenis, amplop, foto nota); di atas batas nominal → draf, bukan transaksi.
     batasan = await peran.batasan_karyawan(db, user.id, hid)
     try:
@@ -377,6 +387,10 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
             is_private=req.is_private,
         )
         db.add(txn)
+        if tambahan:   # U2: isian Fitur Tambahan masuk (atau batal) bersama transaksinya
+            await db.flush()
+            from app.plugins.host import titik
+            await titik.simpan_field(db, user, hid, "transaction", txn.id, tambahan)
         await db.commit()   # transaksi dan klaimnya masuk (atau batal) bersama
     except Exception:
         await idempotency.release(user_id, req.client_ref)

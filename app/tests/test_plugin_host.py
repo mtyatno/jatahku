@@ -361,7 +361,7 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
         r = await self.aksi("pasang")
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json(), {"plugin": "uji", "status": "aktif", "arsip_sampai": None,
-                                    "izin_diberikan": ["incomes:read", "incomes:write"]})
+                                    "izin_diberikan": ["incomes:read", "incomes:write"], "izin_baru": []})
         self.assertEqual((await self.aksi("pasang")).json()["status"], "aktif")       # idempoten
         self.assertEqual((await self.katalog())["uji"]["status"], "aktif")
 
