@@ -45,6 +45,8 @@ from app.plugins.sdk import Plugin
 
 HAS_AIOSQLITE = importlib.util.find_spec("aiosqlite") is not None
 FOLDER_BU = pathlib.Path(__file__).resolve().parents[1] / "plugins" / "buku_usaha"
+# Izin manifest Buku Usaha versi sekarang (layar izin mengirim yang dilihat; U2 menambah `incomes:write`).
+IZIN_BU = json.loads((FOLDER_BU / "manifest.json").read_text())["permissions"]
 
 MF = {
     "id": "uji", "name": "Uji", "version": "1.0.0", "publisher": "Jatahku", "description": "Plugin uji U1",
@@ -170,7 +172,8 @@ class RuteManifestTests(unittest.TestCase):
             p.rute("HEAD", "/x")
 
     def test_izin_rute_hanya_baca(self):
-        self.assertEqual(kode_mod.IZIN_PER_JENIS["rute"], kode_mod.IZIN_BACA)
+        # U2: satu-satunya izin tulis inti untuk rute adalah `incomes:write` (host/inti.py); tulis inti lain tetap ditolak.
+        self.assertEqual(kode_mod.IZIN_PER_JENIS["rute"], kode_mod.IZIN_BACA | {"incomes:write"})
         m = Manifest.model_validate(mf(permissions=["envelopes:read", "envelopes:write"]))
         p = Plugin("uji")
 
@@ -197,9 +200,11 @@ class RuteManifestTests(unittest.TestCase):
         self.assertIsNotNone(reg.kode_plugin("buku_usaha"))
         self.assertEqual(kode_mod.periksa_impor(FOLDER_BU, m), [])
         # Belum ada kartu, cek, saran, bot, job, kamus: titik ekstensi lain tidak bekerja karena plugin ini (U4–U6).
-        for jenis in ("kartu", "cek", "aturan_advisor", "perintah_bot", "job", "field_form"):
+        # U2 menambah field form pengeluaran beserta penyimpanannya.
+        for jenis in ("kartu", "cek", "aturan_advisor", "perintah_bot", "job"):
             self.assertFalse(reg.punya(jenis), jenis)
-        self.assertTrue(reg.punya("rute"))
+        for jenis in ("rute", "field_form", "simpan_field"):
+            self.assertTrue(reg.punya(jenis), jenis)
 
     def test_cocok_pola(self):
         from app.plugins.host.titik import _cocok_pola
@@ -313,7 +318,7 @@ class U1DbTests(unittest.IsolatedAsyncioTestCase):
         return r.json()
 
     async def pasang_aktif(self, hid=None):
-        out = await self.aksi("pasang", hid, {"izin": ["envelopes:read"]})
+        out = await self.aksi("pasang", hid, {"izin": IZIN_BU})
         self.assertEqual(out["status"], "terpasang")       # wizard
         out = await self.aksi("lanjut", hid)
         self.assertEqual(out["status"], "aktif")
@@ -366,7 +371,7 @@ class U1DbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r.status_code, r.json()["kode"]), (404, "plugin_tidak_aktif"))
 
         # Pasang → terpasang (wizard): belum ada kontribusi; rute GET boleh (wizard membaca pengaturan), tulis 404.
-        out = await self.aksi("pasang", body={"izin": ["envelopes:read"]})
+        out = await self.aksi("pasang", body={"izin": IZIN_BU})
         self.assertEqual(out["status"], "terpasang")
         self.assertEqual(await self.kontribusi(), siklus.kontribusi([], {}))
         self.assertEqual((await self.p("GET", "/pengaturan", status=200)).json()["jumlah_kontak"],
@@ -435,7 +440,7 @@ class U1DbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([x["nama"] for x in r.json()["data"]["kontak"]], ["Bu Sari", "UD Sumber Unggas"])
 
         # Pulihkan (pasang pada arsip) → terpasang lagi (wizard), lanjut → data kembali utuh.
-        out = await self.aksi("pasang", body={"izin": ["envelopes:read"]})
+        out = await self.aksi("pasang", body={"izin": IZIN_BU})
         self.assertEqual(out["status"], "terpasang")
         self.assertEqual((await self.aksi("lanjut"))["status"], "aktif")
         self.assertEqual([x["id"] for x in (await self.p("GET", "/kontak", status=200)).json()], [k1["id"], k2["id"]])

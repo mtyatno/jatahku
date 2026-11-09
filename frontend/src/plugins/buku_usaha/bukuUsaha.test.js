@@ -99,3 +99,54 @@ test('wizard: baris dari pengaturan dan rencana amplop', () => {
   assert.deepEqual(barisWizard(null), []);
   assert.deepEqual(rencanaAmplop(null), { rencana: [], kurang: [] });
 });
+
+// ── U2 ──
+import {
+  amplopBawaanNonPenjualan, barisAlokasi, persenTampil, pesanUsahaGalat, rupiah, totalPersen, validasiAlokasi,
+  validasiPenjualan,
+} from './bukuUsaha.js';
+
+test('alokasi: saran bila belum tersimpan, aturan bila tersimpan, sisa amplop', () => {
+  const amplop = [{ envelope_id: 'a', nama: 'Bahan' }, { envelope_id: 'b', nama: 'Prive' }, { envelope_id: 'c', nama: 'Kas' }];
+  const belum = barisAlokasi({ tersimpan: false, aturan: [], saran: [{ envelope_id: 'a', nama: 'Bahan', persen: 45 },
+    { envelope_id: 'b', nama: 'Prive', persen: 55 }], amplop });
+  assert.deepEqual(belum.baris.map(b => [b.envelope_id, b.persen]), [['a', '45'], ['b', '55']]);
+  assert.deepEqual(belum.sisa.map(b => b.envelope_id), ['c']);
+  const sudah = barisAlokasi({ tersimpan: true, siap: true, aturan: [{ envelope_id: 'c', nama: 'Kas', persen: '100.00' }],
+    saran: [{ envelope_id: 'a' }], amplop });
+  assert.deepEqual(sudah.baris.map(b => b.persen), ['100']);
+  assert.equal(sudah.siap, true);
+  assert.equal(persenTampil('33.50'), '33.5');
+});
+
+test('alokasi: total tepat dan validasi seperti server', () => {
+  const b = (...p) => p.map((persen, i) => ({ envelope_id: String(i), nama: `A${i}`, persen }));
+  assert.equal(totalPersen(b('33.33', '33,33', '33.34')), 100);
+  assert.deepEqual(validasiAlokasi(b('45', '30', '15', '9', '1')).body.aturan.map(a => a.persen), ['45', '30', '15', '9', '1']);
+  assert.match(validasiAlokasi(b('60', '39')).pesan, /Total harus 100%, sekarang 99%/);
+  assert.equal(validasiAlokasi(b('0', '100')).ok, false);
+  assert.equal(validasiAlokasi(b('1.234', '98.766')).ok, false);
+  assert.equal(validasiAlokasi([]).ok, false);
+  assert.equal(validasiAlokasi(b(...Array(11).fill('1'))).ok, false);
+});
+
+test('penjualan: body per jenis', () => {
+  const ok = validasiPenjualan({ jenis: 'penjualan', jumlah: '1.000.001', kontak_id: 'k1', envelope_id: 'x',
+    tanggal: '2026-11-08', keterangan: '  nasi   box ' }, '2026-11-09');
+  assert.deepEqual(ok.body, { jumlah: '1000001', jenis: 'penjualan', tanggal: '2026-11-08', keterangan: 'nasi box', kontak_id: 'k1' });
+  const modal = validasiPenjualan({ jenis: 'modal', jumlah: '5000000', kontak_id: 'k1', envelope_id: 'e1' }, '2026-11-09');
+  assert.deepEqual(modal.body, { jumlah: '5000000', jenis: 'modal', envelope_id: 'e1' });
+  assert.ok(validasiPenjualan({ jenis: 'pinjaman', jumlah: '1' }).galat.envelope_id);
+  assert.ok(validasiPenjualan({ jumlah: '0' }).galat.jumlah);
+  assert.ok(validasiPenjualan({ jumlah: '1', tanggal: '2026-11-10' }, '2026-11-09').galat.tanggal);
+  assert.equal(validasiPenjualan({ jenis: 'hibah', jumlah: '1' }).body.jenis, 'penjualan');
+});
+
+test('penjualan: amplop bawaan, pesan galat, rupiah', () => {
+  assert.equal(amplopBawaanNonPenjualan([{ envelope_id: 'x', nama: 'laba  ditahan' }]), 'x');
+  assert.equal(amplopBawaanNonPenjualan([{ envelope_id: 'x', nama: 'Kas' }]), '');
+  assert.equal(pesanUsahaGalat(422, { kode: 'alokasi_belum_diatur' }).perlu, 'alokasi');
+  assert.equal(pesanUsahaGalat(403, { kode: 'tanpa_izin' }).perlu, 'izin');
+  assert.equal(pesanUsahaGalat(422, { kode: 'nilai_tidak_sah', detail: 'Tanggal salah.' }).teks, 'Tanggal salah.');
+  assert.equal(rupiah('1000001.00'), 'Rp1.000.001');
+});

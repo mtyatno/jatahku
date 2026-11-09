@@ -125,7 +125,18 @@ def ke_api(m: Manifest, inst: PluginInstallation | None) -> dict:
         "status": STATUS_API[status],
         "arsip_sampai": arsip.date().isoformat() if arsip else None,
         "izin_diberikan": list(inst.granted_permissions or []) if inst is not None and status != UNINSTALLED else [],
+        # U2 (aditif): izin di manifest versi sekarang yang belum disetujui instalasi ini (rilis baru menambah izin).
+        # Tidak pernah diberikan diam-diam: owner/admin menyetujuinya lewat `POST …/izin`; sebelum itu fungsi yang
+        # memakainya ditolak `tanpa_izin`.
+        "izin_baru": izin_baru(m, inst),
     }
+
+
+def izin_baru(m: Manifest, inst: PluginInstallation | None) -> list[str]:
+    if inst is None or inst.status == UNINSTALLED:
+        return []
+    diberikan = set(inst.granted_permissions or [])
+    return [p for p in m.permissions if p not in diberikan]
 
 
 async def katalog(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, *, boleh_kelola: bool) -> list[dict]:
@@ -200,8 +211,10 @@ def kontribusi(aktif: list[Manifest], kartu: dict) -> dict:
             out["cards"].append({"key": k.key, "plugin": m.id, "judul": k.title, "shape": k.shape,
                                  "sizes": list(k.sizes), "size_bawaan": k.sizes[0], "bawaan": k.default})
         for f in c.form_fields:
-            out["form_fields"].append({"plugin": m.id, "target": f.target, "key": f.key, "type": f.type,
-                                       "label": f.label})
+            ff = {"plugin": m.id, "target": f.target, "key": f.key, "type": f.type, "label": f.label}
+            if f.options:                     # U2, aditif: pilihan field `select`
+                ff["options"] = list(f.options)
+            out["form_fields"].append(ff)
     return out
 
 
@@ -328,6 +341,28 @@ async def lanjut(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m
     dari, inst.status, inst.disabled_reason = inst.status, ACTIVE, None
     _audit(db, household_id, m.id, user.id, "lanjut", dari=dari, ke=ACTIVE)
     await db.flush()
+    return inst
+
+
+async def setujui_izin(db: AsyncSession, user, household_id: UUID, m: Manifest, izin: list[str]) -> PluginInstallation:
+    """U2: owner/admin menyetujui izin manifest versi sekarang untuk instalasi yang sudah ada (terpasang, aktif, atau
+    dijeda), tanpa mengubah statusnya. `izin` = daftar yang dilihat user di layar persetujuan; beda dengan manifest →
+    409 `izin_berubah` (sama dengan pasang). Butuh flag rollout user, seperti pasang dan lanjut. Izin yang dibuang
+    manifest ikut hilang dari `granted_permissions`."""
+    await _kunci_ruang(db, household_id)
+    inst = await instalasi(db, household_id, m.id, kunci=True)
+    if inst is None or inst.status == UNINSTALLED:
+        raise await _tidak_terpasang(db, user, m)
+    if not await boleh_dilihat(db, m, user.id):
+        raise _plugin_tidak_ada()
+    if izin is None:
+        raise _galat(422, "izin_wajib", "Daftar izin yang disetujui wajib dikirim.")
+    _cek_izin_disetujui(m, izin)
+    lama = sorted(inst.granted_permissions or [])
+    if lama != sorted(m.permissions):
+        inst.granted_permissions = list(m.permissions)
+        _audit(db, household_id, m.id, user.id, "izin", dari=lama, ke=list(m.permissions), versi=m.version)
+        await db.flush()
     return inst
 
 

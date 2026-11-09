@@ -23,7 +23,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # 1.1 (H2): `PluginContext` (`app/plugins/sdk/`), `contributes.checks`, `contributes.nlp_kamus`, jadwal job baku.
 # 1.2 (U1): `contributes.routes` + `@plugin.rute`, `ctx.data()` untuk tabel `entities` (tanpa izin baru: tabel milik
 #           plugin sendiri, tulis hanya dari rute non-GET), ekspor data plugin (`data_lifecycle.export`).
-PLUGIN_API_VERSION = (1, 2, 0)
+# 1.3 (U2): `ctx.catat_pemasukan` (`incomes:write` untuk rute), `@plugin.simpan_field(target)`, `options` untuk field
+#           `select`, persetujuan izin baru untuk instalasi yang sudah ada (`POST …/izin`).
+PLUGIN_API_VERSION = (1, 3, 0)
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")
@@ -147,6 +149,21 @@ class FieldForm(_Ketat):
     type: Literal["text", "number", "reference", "select"]
     label: str = Field(min_length=1, max_length=40)
     entity: str | None = None
+    # U2: pilihan untuk `select` (wajib di sana, dilarang di jenis lain); nilai dikirim apa adanya.
+    options: list[str] = Field(default=[], max_length=30)
+
+    @model_validator(mode="after")
+    def _cek_options(self):
+        if self.type == "select":
+            if not self.options:
+                raise ValueError(f"field '{self.key}': `select` butuh `options`")
+            if len(set(self.options)) != len(self.options) or any(not o.strip() or len(o) > 40 for o in self.options):
+                raise ValueError(f"field '{self.key}': `options` harus unik, 1–40 karakter")
+        elif self.options:
+            raise ValueError(f"field '{self.key}': `options` hanya untuk `select`")
+        if self.type == "reference" and not self.entity:
+            raise ValueError(f"field '{self.key}': `reference` butuh `entity`")
+        return self
 
 
 class Job(_Ketat):

@@ -160,6 +160,8 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/jeda"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/copot"),
+            # U2: setujui izin baru, sama (`_ruang_kelola`).
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/izin"),
         }
         tulis = {("POST", "/household/invite")}
         # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,

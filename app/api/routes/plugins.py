@@ -131,6 +131,27 @@ async def lanjut_plugin(
     return siklus.ke_api(m, inst)
 
 
+class IzinIn(BaseModel):
+    # U2: kode izin yang ditampilkan di layar "izin baru". Beda dengan manifest sekarang → 409 `izin_berubah`.
+    izin: list[Annotated[str, StringConstraints(max_length=60)]] = Field(max_length=40)
+
+
+@ruang_router.post("/{ruang_id}/plugins/{plugin_id}/izin")
+async def izin_plugin(
+    ruang_id: str,
+    body: IzinIn,
+    plugin_id: str = _PLUGIN_ID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Setujui izin baru (manifest versi sekarang) untuk instalasi yang sudah ada; status tidak berubah (U2)."""
+    hid, _ = await _ruang_kelola(db, user, ruang_id)
+    m = siklus.manifest_atau_404(plugin_id)
+    inst = await siklus.setujui_izin(db, user, hid, m, body.izin)
+    await db.commit()
+    return siklus.ke_api(m, inst)
+
+
 @ruang_router.post("/{ruang_id}/plugins/{plugin_id}/jeda")
 async def jeda_plugin(
     ruang_id: str,
@@ -267,8 +288,14 @@ async def rute_plugin(
         if len(query) >= MAKS_QUERY_RUTE or len(k) > 40:
             raise RuangDitolak(kode="query_terlalu_banyak", detail="Permintaan tidak sah.", status_code=422)
         query[k] = v[:200]
-    hasil = await titik.jalankan_rute(db, user, hid, plugin_id, request.method, "/" + path, query, body)
-    await db.commit()
+    from app.services import setelah_commit
+    try:
+        hasil = await titik.jalankan_rute(db, user, hid, plugin_id, request.method, "/" + path, query, body)
+    except BaseException:
+        setelah_commit.buang(db)
+        raise
+    await db.commit()            # tulisan plugin (ctx.data) dan tulisan inti (ctx.catat_pemasukan, U2) sekaligus
+    await setelah_commit.jalankan(db)
     if hasil.status == 204:
         return Response(status_code=204)
     return JSONResponse(status_code=hasil.status, content=hasil.data)

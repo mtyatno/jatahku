@@ -14,7 +14,7 @@ Plugin diperlakukan sebagai tamu (01-kajian.md "Penegakan"):
   Di ruang usaha pemasukan adalah data usaha: owner, admin, dan job melihat semuanya.
 - **Karyawan.** Di ruang usaha, peran `member` adalah karyawan (R5): data keuangan (amplop, transaksi, pemasukan)
   ditolak `khusus_admin` (ADR-P3), seperti tolak-bawaan R5 di route.
-- **Audit.** Penolakan izin dan setiap kiriman yang sampai (notifikasi; tulis menyusul U2) dicatat di
+- **Audit.** Penolakan izin, setiap kiriman yang sampai (notifikasi), dan setiap tulisan inti (U2: pemasukan) dicatat di
   `plugin_audit_log` lewat sesi DB sendiri, supaya tetap tercatat walau permintaan pemanggil dibatalkan. Baca yang
   diizinkan tidak dicatat per panggilan (keputusan pemilik produk 4 Nov, H2). Penolakan yang sama dicatat sekali per
   jam per proses.
@@ -362,6 +362,19 @@ class PluginContext(metaclass=_KelasBeku):
             .where(HouseholdMember.household_id == k.ruang_id).order_by(User.name)
         )).all()
         return [AnggotaView(user_id=uid, nama=nama or "", peran=str(getattr(r, "value", r))) for uid, nama, r in rows]
+
+    # ── tulis inti (U2) ──
+    async def catat_pemasukan(self, *, jumlah: Decimal, keterangan: str, tanggal: date | None = None,
+                              pembagian: list[tuple[UUID, Decimal]]) -> dict:
+        """`incomes:write`, hanya dari `rute` non-GET oleh owner/admin: satu pemasukan di ruang ini lewat jalur
+        pemasukan inti, dibagi persis ke `pembagian` [(envelope_id, jumlah)] (total harus sama dengan `jumlah`; amplop
+        harus amplop aktif ruang ini yang terlihat viewer). Masuk dalam commit yang sama dengan tulisan `ctx.data()`
+        di rute itu. `tanggal` None = hari ini; tidak boleh sesudah hari ini atau lebih dari setahun ke belakang.
+        Mengembalikan `{"income_id", "jumlah", "tanggal", "pembagian": [{"envelope_id", "nama", "jumlah"}]}`;
+        isian salah → `NilaiTidakSah`."""
+        from app.plugins.host import inti
+        return await inti.catat_pemasukan(self, jumlah=jumlah, keterangan=keterangan, tanggal=tanggal,
+                                          pembagian=pembagian)
 
     # ── kirim ──
     async def notify(self, jenis: str, judul: str, isi: str, *, link: str | None = None,
