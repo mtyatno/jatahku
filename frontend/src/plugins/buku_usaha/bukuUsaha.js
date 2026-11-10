@@ -141,9 +141,9 @@ export function rencanaAmplop(baris, namaAda = []) {
 
 /** Rupiah untuk tampilan (nominal dari server berupa teks desimal; tidak pernah dihitung ulang di sini). */
 export function rupiah(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 'Rp0';
-  return `Rp${Math.round(n).toLocaleString('id-ID')}`;
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n === 0) return 'Rp0';
+  return `${n < 0 ? '-' : ''}Rp${Math.abs(n).toLocaleString('id-ID')}`;     // rugi: "-Rp840.000" (sama dengan PDF)
 }
 
 /** Persen dari teks/angka server ("45.00" → "45"; "33.50" → "33.5"). */
@@ -246,4 +246,118 @@ export function pesanUsahaGalat(status, body) {
   if (kode === 'sedang_diproses') return { teks: 'Catatan ini masih diproses. Tunggu sebentar, lalu cek daftar pemasukan.' };
   if (kode === 'alokasi_bukan_100') return { teks: detail || 'Total alokasi harus 100%.' };
   return { teks: detail || 'Belum berhasil. Coba lagi sebentar.' };
+}
+
+// ── U3: laba rugi dan laporan ───────────────────────────────────────────
+// Angka dan rasio dihitung server (`app/plugins/buku_usaha/metrics.py`, aturan 6); di sini hanya format dan bentuk.
+const NAMA_BULAN = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September',
+  'Oktober', 'November', 'Desember'];
+const BLN = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const PERIODE_RE = /^(\d{4})-(\d{2})$/;
+export const BELUM_BERAKUN = 'Belum berakun';
+export const DI_LUAR_LABA_RUGI = Object.freeze([
+  { id: 'prive', label: 'Prive', bantu: 'Diambil pemilik ke ruang keluarga' },
+  { id: 'modal', label: 'Modal pemilik', bantu: 'Setoran modal' },
+  { id: 'pinjaman', label: 'Pinjaman', bantu: 'Uang pinjaman yang masuk' },
+  { id: 'lain', label: 'Pemasukan lain', bantu: 'Di luar penjualan' },
+]);
+
+/** '2026-10' → 'Oktober 2026' ('' bila tidak terbaca). */
+export function labelPeriode(p) {
+  const m = PERIODE_RE.exec(String(p || ''));
+  const bl = m ? Number(m[2]) : 0;
+  return m && bl >= 1 && bl <= 12 ? `${NAMA_BULAN[bl]} ${m[1]}` : '';
+}
+
+/** '2026-10-01' → '1 Okt 2026'. */
+export function tanggalPendek(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${Number(m[3])} ${BLN[Number(m[2])]} ${m[1]}` : '';
+}
+
+/** Pilihan periode: bulan ini lalu `n − 1` bulan sebelumnya, terbaru dulu. `hariIni` = 'YYYY-MM-DD' lokal. */
+export function pilihanPeriode(hariIni, n = 12) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(hariIni || ''));
+  if (!m) return [];
+  let th = Number(m[1]);
+  let bl = Number(m[2]);
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    out.push(`${th}-${String(bl).padStart(2, '0')}`);
+    bl -= 1;
+    if (bl === 0) { bl = 12; th -= 1; }
+  }
+  return out;
+}
+
+/** Rasio dari server ('0.2539') → '25,4%'; null/rusak → '—'. */
+export function persenRasio(r) {
+  if (r === null || r === undefined || r === '') return '—';
+  const n = Number(r);
+  if (!Number.isFinite(n)) return '—';
+  const p = Math.round(n * 1000) / 10;
+  return `${(Object.is(p, -0) ? 0 : p).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
+}
+
+/**
+ * Perubahan dari bulan lalu ('0.0908') → { teks: '+9,1%', arah: 'naik' | 'turun' | 'tetap' }; null bila bulan lalu nol.
+ * Arah hanya arah angka; baik-buruknya (beban naik = buruk) diputuskan tampilan.
+ */
+export function perubahanTampil(r) {
+  if (r === null || r === undefined || r === '') return null;
+  const n = Number(r);
+  if (!Number.isFinite(n)) return null;
+  const p = Math.round(n * 1000) / 10;
+  if (p === 0) return { teks: '0%', arah: 'tetap' };
+  const angka = Math.abs(p).toLocaleString('id-ID', { maximumFractionDigits: 1 });
+  return p > 0 ? { teks: `+${angka}%`, arah: 'naik' } : { teks: `−${angka}%`, arah: 'turun' };
+}
+
+/** Jawaban `GET /p/buku_usaha/laba-rugi` → bentuk aman untuk tampilan (entri rusak dibuang, nominal tetap teks). */
+export function rapikanLabaRugi(d) {
+  if (!d || typeof d !== 'object' || !PERIODE_RE.test(String(d.periode || ''))) return null;
+  const uang = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '0');
+  const luar = new Map(arr(d.di_luar_laba_rugi).filter(x => x && typeof x.jenis === 'string').map(x => [x.jenis, x]));
+  return {
+    periode: d.periode,
+    mulai: teks(d.mulai, 10),
+    akhir: teks(d.akhir, 10),
+    berjalan: !!d.berjalan,
+    omzet: uang(d.omzet),
+    jumlahPenjualan: Number.isInteger(d.jumlah_penjualan) ? d.jumlah_penjualan : 0,
+    tanpaJenis: { jumlah: uang(d.omzet_tanpa_jenis?.jumlah), banyak: Number(d.omzet_tanpa_jenis?.banyak) || 0 },
+    beban: arr(d.beban).filter(b => b && typeof b.akun === 'string').map(b => ({
+      akun: teks(b.akun, 60), jumlah: uang(b.jumlah), banyak: Number(b.banyak) || 0,
+      porsi: Math.min(1, Math.max(0, Number(b.porsi) || 0)),
+    })),
+    bebanTotal: uang(d.beban_total),
+    laba: uang(d.laba),
+    margin: d.margin ?? null,
+    priveDariLaba: d.prive_dari_laba ?? null,
+    diLuar: DI_LUAR_LABA_RUGI.map(j => ({ ...j, jumlah: uang(luar.get(j.id)?.jumlah), banyak: Number(luar.get(j.id)?.banyak) || 0 })),
+    banding: {
+      periode: teks(d.banding?.periode, 7), omzet: uang(d.banding?.omzet), bebanTotal: uang(d.banding?.beban_total),
+      laba: uang(d.banding?.laba), margin: d.banding?.margin ?? null,
+    },
+    perubahan: {
+      omzet: perubahanTampil(d.perubahan?.omzet), bebanTotal: perubahanTampil(d.perubahan?.beban_total),
+      laba: perubahanTampil(d.perubahan?.laba),
+    },
+  };
+}
+
+/** Jalur laporan berkas: `/laporan?periode=…&format=pdf|csv` (format lain tidak pernah dikirim). */
+export function pathLaporan(periode, format) {
+  const f = format === 'csv' ? 'csv' : 'pdf';
+  return `/laporan?periode=${encodeURIComponent(periode)}&format=${f}`;
+}
+
+/** Galat laba rugi/laporan → pesan; `perlu: 'izin'` menampilkan tautan ke Fitur Tambahan. */
+export function pesanLabaRugiGalat(status, body) {
+  const kode = body?.kode;
+  if (kode === 'tanpa_izin') {
+    return { teks: 'Laba rugi butuh izin baru untuk membaca transaksi dan pemasukan ruang ini. Setujui di Fitur Tambahan.', perlu: 'izin' };
+  }
+  if (kode === 'khusus_admin') return { teks: 'Laba rugi hanya untuk pemilik dan admin ruang.' };
+  return pesanUsahaGalat(status, body);
 }
