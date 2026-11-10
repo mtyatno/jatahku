@@ -196,7 +196,8 @@ def halaman_konfirmasi_berhenti(token: str) -> str:
 
 def halaman_konfirmasi_verifikasi(token: str, email: str) -> str:
     """Halaman GET tautan verifikasi (Ruling F-4): hanya meminta konfirmasi, karena pemindai tautan di layanan email
-    membuka GET. Tombol mengirim POST ke alamat yang sama (token di query), dan hanya POST yang memverifikasi."""
+    membuka GET. Tombol mengirim POST ke alamat yang sama (token di query), dan hanya POST yang memverifikasi.
+    `email` = alamat akun dari database (token tidak memuat alamat, hanya sidiknya)."""
     aksi = h(f"/auth/verifikasi-email?token={quote(token, safe='')}")
     inti = f"Klik tombol di bawah untuk memverifikasi {email} sebagai alamat penerima laporan Jatahku."
     return _halaman(

@@ -9,6 +9,7 @@ import os
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 
+import base64
 import html
 import re
 import unittest
@@ -81,7 +82,16 @@ class KirimTautanTests(ApiVerifikasiDasar):
         self.assertEqual(subjek, "Verifikasi email Jatahku kamu")
         tautan = next(w for w in teks.split() if "/auth/verifikasi-email?token=" in w)
         token = parse_qs(urlparse(tautan).query)["token"][0]
-        self.assertEqual(ve.baca_token_verifikasi(token), (self.baru.id, "baru@example.com"))
+        user_id, sidik = ve.baca_token_verifikasi(token)
+        self.assertEqual(user_id, self.baru.id)
+        self.assertTrue(ve.cocok_email("baru@example.com", sidik))
+        # Alamat tampil di isi email (untuk penerimanya), tetapi tidak terbaca dari tautan.
+        self.assertIn("baru@example.com", teks)
+        self.assertNotIn("baru@example.com", tautan)
+        badan = token.split(".")[1]
+        isi_token = base64.urlsafe_b64decode(badan + "=" * (-len(badan) % 4))
+        self.assertNotIn(b"@", isi_token)
+        self.assertNotIn(b"baru", isi_token)
 
     async def test_sudah_terverifikasi_409(self):
         with patch.object(email_service, "send_verifikasi_email", return_value=True) as kirim:
@@ -145,14 +155,18 @@ class TautanVerifikasiTests(ApiVerifikasiDasar):
 
     def token_tidak_sah(self) -> dict:
         uid = str(self.baru.id)
+        sidik = ve.sidik_email("baru@example.com")
         return {
-            "kedaluwarsa": create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, berlaku=timedelta(seconds=-5),
-                                                email="baru@example.com"),
+            "kedaluwarsa": create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, berlaku=timedelta(seconds=-5), eh=sidik),
+            # Bentuk sebelum PR ini: alamat di klaim `email`, tanpa sidik. Ditolak walau belum 24 jam.
+            "bentuk lama (klaim email)": create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, berlaku=timedelta(hours=1),
+                                                              email="baru@example.com"),
+            "tanpa exp": create_purpose_token(uid, ve.TUJUAN_VERIFIKASI, berlaku=None, eh=sidik),
             "tujuan lain": create_purpose_token(uid, "berhenti_email_laporan", berlaku=None),
             "access": create_access_token(uid),
             "refresh": create_refresh_token(uid),
             "user tidak ada": create_purpose_token("00000000-0000-0000-0000-000000000001", ve.TUJUAN_VERIFIKASI,
-                                                   berlaku=timedelta(hours=1), email="x@example.com"),
+                                                   berlaku=timedelta(hours=1), eh=ve.sidik_email("x@example.com")),
             "kosong": "",
             "acak": "bukan-token",
         }
@@ -305,6 +319,26 @@ class TautanVerifikasiTests(ApiVerifikasiDasar):
         self.assertEqual((r.status_code, r.headers["location"]), (303, _lokasi("berhasil")))
         self.assertEqual((await self.baca(self.baru.id)).email_verified_at, waktu)
         self.assertEqual(await self.baris_laporan(rid), sebelum)
+
+    async def test_halaman_menampilkan_alamat_dari_database_bukan_dari_token(self):
+        # Token hanya membawa sidik. Alamat di halaman = yang tersimpan di akun (tanpa spasi tepi), apa adanya.
+        token = self.token(self.baru)
+        await self.ganti_email(self.baru, " Baru@Example.COM ")
+        r = await self.buka(token)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn("<p>Klik tombol di bawah untuk memverifikasi Baru@Example.COM sebagai alamat penerima "
+                      "laporan Jatahku.</p>", r.text)
+        self.assertNotIn("baru@example.com", r.text)
+
+    async def test_token_sah_milik_user_lain_tidak_memverifikasi_alamat_ini(self):
+        # Sidik terikat alamat: token untuk alamat lain dengan `sub` user ini hasilnya `berubah`, tanpa tulisan.
+        token = create_purpose_token(str(self.baru.id), ve.TUJUAN_VERIFIKASI, berlaku=timedelta(hours=1),
+                                     eh=ve.sidik_email("lain@example.com"))
+        for permintaan in (self.buka(token), self.konfirmasi(token)):
+            r, tulis = await self.dengan_tulisan(permintaan)
+            self.assertEqual((r.status_code, r.headers["location"]), (303, _lokasi("berubah")))
+            self.assertEqual(tulis, [])
+        self.assertIsNone((await self.baca(self.baru.id)).email_verified_at)
 
     async def test_email_beda_huruf_tetap_bisa_diverifikasi(self):
         token = self.token(self.baru)
