@@ -37,8 +37,10 @@ function WhatIsDeleted() {
 export default function HapusAkun() {
   const { user, logout } = useAuth();
   // Token dibaca sekali lalu dihapus dari address bar (riwayat peramban, tangkapan layar); lihat lib/urlToken.js.
-  const [token] = useState(() => bacaToken(window.location.search));
+  // Karena token tidak lagi di URL, "Minta link baru" kembali ke formulir dengan membuang token dari state.
+  const [token, setToken] = useState(() => bacaToken(window.location.search));
   useEffect(() => { hapusTokenDariUrl(window); }, []);
+  const mintaLinkBaru = () => { setToken(null); setError(''); setConfirm(''); };
 
   const [email, setEmail] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -103,7 +105,7 @@ export default function HapusAkun() {
             </button>
           </form>
           {error && (
-            <Link to="/hapus-akun" className="text-sm text-brand-600 hover:underline block text-center">Minta link baru →</Link>
+            <Link to="/hapus-akun" onClick={mintaLinkBaru} className="text-sm text-brand-600 hover:underline block text-center">Minta link baru →</Link>
           )}
         </div>
       </Shell>
