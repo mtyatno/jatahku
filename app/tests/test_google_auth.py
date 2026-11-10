@@ -1,5 +1,8 @@
 """Masuk/daftar dengan Google: verifikasi token & alur /auth/google, /auth/google/link, /auth/google/unlink.
 
+Laporan yang dilewati dihidupkan lagi saat Google memverifikasi alamat akun yang sudah ada (Ruling F-6): di sini
+`antrean_email.hidupkan_lagi` dipalsukan dan argumen serta urutannya (sebelum commit) diperiksa; efeknya di database
+diuji di app/tests/test_verifikasi_email.py (GoogleTests).
 Run: python -m unittest app.tests.test_google_auth -v
 """
 import os
@@ -16,10 +19,25 @@ from fastapi import HTTPException
 from app.api.routes import auth as route
 from app.models.models import User, Household, HouseholdMember
 from app.services.google_auth import verify_google_credential
+from app.services.laporan import antrean_email
 from app.tests.fakes import FakeResult, db_with
 
 CLIENT_ID = "123.apps.googleusercontent.com"
 CLAIMS = {"sub": "g-1", "email": "budi@example.com", "name": "Budi"}
+ALASAN_HIDUP_LAGI = ("belum_verifikasi", "tanpa_email")   # sama dengan POST /auth/verifikasi-email
+
+
+def palsukan_hidupkan_lagi() -> AsyncMock:
+    """`antrean_email.hidupkan_lagi` palsu untuk satu tes (dipulihkan `patch.stopall` di cleanup tes)."""
+    return patch.object(antrean_email, "hidupkan_lagi", AsyncMock(return_value=0)).start()
+
+
+def urutan(hidupkan: AsyncMock, db):
+    """Pencatat urutan `hidupkan_lagi` dan `db.commit`: keduanya satu transaksi, revival sebelum commit."""
+    induk = MagicMock()
+    induk.attach_mock(hidupkan, "hidupkan_lagi")
+    induk.attach_mock(db.commit, "commit")
+    return lambda: [c[0] for c in induk.mock_calls]
 
 
 class FakeHttp:
@@ -74,23 +92,40 @@ class GoogleLoginTests(unittest.IsolatedAsyncioTestCase):
         self.verify = p2.start()
         p1.start()
         self.addCleanup(patch.stopall)
+        self.hidupkan = palsukan_hidupkan_lagi()
 
     async def call(self, db):
         return await route.google_login.__wrapped__(request(), route.GoogleCredentialRequest(credential="tok"), db)
 
     async def test_known_google_account_logs_in(self):
-        user = SimpleNamespace(id=uuid.uuid4(), google_id="g-1")
+        user = SimpleNamespace(id=uuid.uuid4(), google_id="g-1", email="budi@example.com", email_verified_at=None)
         db = db_with(FakeResult(user))
+        catatan = urutan(self.hidupkan, db)
         res = await self.call(db)
         self.assertTrue(res.access_token)
+        self.assertIsNotNone(user.email_verified_at)
         self.assertIsNotNone(user.last_login)
         db.commit.assert_awaited_once()
+        self.hidupkan.assert_awaited_once_with(db, user.id, ALASAN_HIDUP_LAGI)
+        self.assertEqual(catatan(), ["hidupkan_lagi", "commit"])
 
     async def test_existing_email_account_gets_linked(self):
-        user = SimpleNamespace(id=uuid.uuid4(), google_id=None, email="budi@example.com")
+        user = SimpleNamespace(id=uuid.uuid4(), google_id=None, email="budi@example.com", email_verified_at=None)
         db = db_with(FakeResult(None), FakeResult(user))
+        catatan = urutan(self.hidupkan, db)
         await self.call(db)
         self.assertEqual(user.google_id, "g-1")
+        self.assertIsNotNone(user.email_verified_at)
+        db.commit.assert_awaited_once()
+        self.hidupkan.assert_awaited_once_with(db, user.id, ALASAN_HIDUP_LAGI)
+        self.assertEqual(catatan(), ["hidupkan_lagi", "commit"])
+
+    async def test_google_account_with_other_email_is_not_verified_nor_revived(self):
+        user = SimpleNamespace(id=uuid.uuid4(), google_id="g-1", email="lama@example.com", email_verified_at=None)
+        db = db_with(FakeResult(user))
+        await self.call(db)
+        self.assertIsNone(user.email_verified_at)
+        self.hidupkan.assert_not_awaited()
         db.commit.assert_awaited_once()
 
     async def test_new_user_gets_account_and_household(self):
@@ -110,6 +145,7 @@ class GoogleLoginTests(unittest.IsolatedAsyncioTestCase):
         member = next(o for o in added if isinstance(o, HouseholdMember))
         self.assertEqual(member.user_id, user.id)
         db.commit.assert_awaited_once()
+        self.hidupkan.assert_not_awaited()   # akun baru belum punya laporan
 
     async def test_disabled_without_client_id(self):
         with patch.object(route, "get_settings", return_value=settings("")):
@@ -130,16 +166,21 @@ class GoogleLinkTests(unittest.IsolatedAsyncioTestCase):
         patch.object(route, "get_settings", return_value=settings()).start()
         patch.object(route, "verify_google_credential", AsyncMock(return_value=dict(CLAIMS))).start()
         self.addCleanup(patch.stopall)
+        self.hidupkan = palsukan_hidupkan_lagi()
 
     async def link(self, user, db):
         return await route.google_link.__wrapped__(request(), route.GoogleCredentialRequest(credential="tok"), user, db)
 
     async def test_links_and_fills_missing_email_for_bot_user(self):
-        user = SimpleNamespace(id=uuid.uuid4(), email=None, google_id=None)
+        user = SimpleNamespace(id=uuid.uuid4(), email=None, google_id=None, email_verified_at=None)
         db = db_with(FakeResult(None), FakeResult(None))
+        catatan = urutan(self.hidupkan, db)
         res = await self.link(user, db)
         self.assertEqual((user.google_id, user.email), ("g-1", "budi@example.com"))
+        self.assertIsNotNone(user.email_verified_at)
         self.assertEqual(res["status"], "linked")
+        self.hidupkan.assert_awaited_once_with(db, user.id, ALASAN_HIDUP_LAGI)
+        self.assertEqual(catatan(), ["hidupkan_lagi", "commit"])
 
     async def test_keeps_email_when_another_account_owns_it(self):
         user = SimpleNamespace(id=uuid.uuid4(), email=None, google_id=None)
@@ -147,9 +188,18 @@ class GoogleLinkTests(unittest.IsolatedAsyncioTestCase):
         db = db_with(FakeResult(None), FakeResult(other))
         await self.link(user, db)
         self.assertEqual((user.google_id, user.email), ("g-1", None))
+        self.hidupkan.assert_not_awaited()
+
+    async def test_link_with_other_email_is_not_verified_nor_revived(self):
+        user = SimpleNamespace(id=uuid.uuid4(), email="lama@example.com", google_id=None, email_verified_at=None)
+        db = db_with(FakeResult(None))
+        await self.link(user, db)
+        self.assertEqual((user.google_id, user.email, user.email_verified_at), ("g-1", "lama@example.com", None))
+        self.hidupkan.assert_not_awaited()
+        db.commit.assert_awaited_once()
 
     async def test_rejects_google_account_owned_by_someone_else(self):
-        user = SimpleNamespace(id=uuid.uuid4(), email="a@x.com", google_id=None)
+        user = SimpleNamespace(id=uuid.uuid4(), email="a@x.com", google_id=None, email_verified_at=None)
         db = db_with(FakeResult(SimpleNamespace(id=uuid.uuid4())))
         with self.assertRaises(HTTPException) as e:
             await self.link(user, db)
