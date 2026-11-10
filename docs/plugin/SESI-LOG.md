@@ -21,8 +21,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Kontrak `/laporan` 202 + `job_id` (v0) diturunkan ke lampiran langsung (keputusan D); dicatat di 04-kontrak-api.md §6.
 
 **Digantung**
-- **Keputusan C (pengeluaran privat anggota) menunggu jawaban pemilik:** terpasang = ikut beban di "Belum berakun" tanpa akun/keterangan, supaya laba cocok dengan saldo amplop. Alternatif: dibuang dari beban, atau baris sendiri "Privat anggota" terpisah dari "Belum berakun" (butuh penanda di `ringkas.py`). Jawab sebelum merge.
-- **Usulan D (menunggu pemilik):** pilihan privat sekarang juga tampil di ruang usaha (`shouldShowPrivateToggle` hanya memeriksa jumlah anggota dan amplop bersama, tidak memeriksa jenis ruang), jadi admin atau karyawan bisa menyembunyikan keterangan pengeluaran usaha dari pemilik. Usul: server menolak `is_private` di ruang usaha (transaksi, batch, draf karyawan) dan web menyembunyikan tombolnya. Itu mengubah pencatatan inti, jadi dibuat sebagai PR kecil terpisah sesudah U3; transaksi privat lama tetap ditangani seperti A.
+- **Keputusan C dan keputusan privat, diputuskan pemilik 11 Nov:** pilihan privat dimatikan di ruang usaha (pengeluaran usaha harus terbuka bagi pemilik dan admin), sebagai PR kecil terpisah sesudah U3. Untuk transaksi privat yang sudah ada, U3 tetap memakai A: nominal ikut beban di "Belum berakun", tanpa akun/keterangan. Latar: pilihan privat sekarang juga tampil di ruang usaha (`shouldShowPrivateToggle` hanya memeriksa jumlah anggota dan amplop bersama, tidak jenis ruang).
 - Review keamanan terpisah disarankan (sesi tidak bertanda review, tetapi menambah jalur baca data dan keluaran berkas untuk plugin); belum dijalankan.
 
 **Jebakan**
@@ -32,7 +31,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Validator kode plugin menolak `.format(...)` dan `compile` (termasuk `re.compile`); `teks.t` mengisi templat dengan `re.sub`, periode memakai `re.fullmatch`.
 
 **Cara melanjutkan**
-- Pemilik produk: jawab keputusan C; bila perlu ubah, satu baris di `metrics.hitung_bulan` (buang) atau penanda di `ringkas.py` (baris sendiri) + tes.
+- Sesudah U3: PR kecil "privat dimatikan di ruang usaha" (keputusan privat 11 Nov).
 - Opsional: "review PR #204 terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
 - Merge tanpa migrasi; `/cek-deploy <PR>`. Sesudah tayang: setujui izin baru Buku Usaha, buka tab Laba rugi, unduh PDF/CSV satu bulan, coba dengan akun karyawan (403).
 - Berikutnya `/sesi-plugin U4` (kartu Beranda, butuh U3 + B3) atau `/sesi-plugin U5`.
