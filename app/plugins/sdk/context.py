@@ -92,6 +92,7 @@ class TransaksiView:
     tanggal: date
     sumber: str
     milik_sendiri: bool
+    meta: dict | None = None      # U3: baris tabel pendamping plugin (`pendamping=`), None bila tidak ada/tersamar
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,17 @@ class PemasukanView:
     deskripsi: str
     tanggal: date
     jenis: str                    # incomes.kind (mis. "prive")
+    meta: dict | None = None      # U3: baris tabel pendamping plugin (`pendamping=`), None bila tidak ada
+
+
+@dataclass(frozen=True)
+class RingkasanView:
+    """Satu kelompok `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` (U3): nilai kelompok sesuai urutan `per`,
+    jumlah nominal, banyak catatan, dan (pemasukan) jumlah alokasinya."""
+    kunci: tuple
+    jumlah: Decimal
+    banyak: int
+    dialokasikan: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -149,6 +161,32 @@ class Jawaban:
     """Keluaran fungsi `rute` bila status atau header perlu diatur; selain itu fungsi cukup mengembalikan data JSON."""
     data: Any
     status: int = 200
+
+
+@dataclass(frozen=True)
+class TabelLaporan:
+    """Satu tabel di `Laporan` (U3). Sel: teks, `Decimal` (rupiah), `int` (banyak), `date`, atau None (kosong).
+    `total` = baris penutup bercetak tebal (opsional)."""
+    judul: str
+    kolom: tuple
+    baris: tuple = ()
+    total: tuple | None = None
+    catatan: str = ""
+
+
+@dataclass(frozen=True)
+class Laporan:
+    """Keluaran `rute` GET berupa berkas unduhan (U3). Plugin hanya memberi isi; host menggambarnya menjadi PDF (teks
+    PDF lewat fpdf2, bukan HTML) atau CSV (anti formula-injection, PR #136) dan mengirimnya sebagai lampiran
+    (`app/plugins/host/berkas.py`). `nama_berkas` tanpa ekstensi; host merapikannya dan menambah awalan `jatahku-`.
+    `ringkasan` = pasangan (label, nilai) di kepala laporan; nilai berupa sel seperti di `TabelLaporan`."""
+    format: str                   # "pdf" | "csv"
+    nama_berkas: str
+    judul: str
+    subjudul: str = ""
+    ringkasan: tuple = ()
+    tabel: tuple = ()
+    catatan: tuple = ()
 
 
 class GalatRute(Exception):
@@ -201,9 +239,9 @@ def _pemasukan_terlihat(k, Income):
     return Income.user_id == uid
 
 
-def _pemasukan(i) -> PemasukanView:
+def _pemasukan(i, meta: dict | None = None) -> PemasukanView:
     return PemasukanView(id=i.id, user_id=i.user_id, jumlah=Decimal(i.amount), deskripsi=i.description,
-                         tanggal=i.income_date, jenis=i.kind or "")
+                         tanggal=i.income_date, jenis=i.kind or "", meta=meta)
 
 
 class PluginContext(metaclass=_KelasBeku):
@@ -304,40 +342,71 @@ class PluginContext(metaclass=_KelasBeku):
                            anggaran=Decimal(e.budget_amount or 0), pribadi=e.owner_id is not None,
                            dikunci=bool(e.is_locked)) for e in rows]
 
-    async def transactions(self, mulai: date, akhir: date, *, amplop_id: UUID | None = None) -> list[TransaksiView]:
-        """`transactions:read`: transaksi (tidak terhapus) di amplop yang boleh dilihat, `mulai` ≤ tanggal ≤ `akhir`.
-        Deskripsi privat anggota lain tersamar; agregat (nominal) tetap utuh (kontrak visibilitas)."""
+    async def transactions(self, mulai: date, akhir: date, *, amplop_id: UUID | None = None,
+                           pendamping: str | None = None, hanya_bersama: bool = False) -> list[TransaksiView]:
+        """`transactions:read`: transaksi (tidak terhapus) di amplop yang boleh dilihat, `mulai` ≤ tanggal ≤ `akhir`,
+        terbaru dulu, paling banyak `BATAS_BARIS`. Deskripsi privat anggota lain tersamar; agregat (nominal) tetap utuh
+        (kontrak visibilitas). Untuk angka pakai `ringkas_transaksi` (tidak terpotong).
+
+        U3: `pendamping` = entitas plugin ini yang 1:1 dengan transaksi (mis. "txn_meta"): barisnya (tanpa kolom host)
+        di `meta`; None bila tidak ada atau deskripsinya tersamar. `hanya_bersama` = amplop bersama saja."""
         k = _k(self)
         await _host.perlu(k, "transactions:read")
         from app.models.models import Envelope, Transaction
         from app.services.visibility import masked_description
         uid = _uid(k)
+        terlihat = Envelope.owner_id.is_(None) if hanya_bersama else _amplop_terlihat(k, Envelope)
         q = (select(Transaction).join(Envelope, Envelope.id == Transaction.envelope_id)
-             .where(Envelope.household_id == k.ruang_id, _amplop_terlihat(k, Envelope),
+             .where(Envelope.household_id == k.ruang_id, terlihat,
                     Transaction.is_deleted.is_(False),
                     Transaction.transaction_date >= mulai, Transaction.transaction_date <= akhir))
         if amplop_id is not None:
             q = q.where(Transaction.envelope_id == amplop_id)
+        from app.plugins.host import ringkas
+        q, ambil_meta = ringkas.gabung_pendamping(k, q, pendamping, "transactions", Transaction.id)
         rows = (await k.db.execute(
             q.order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc()).limit(BATAS_BARIS)
-        )).scalars().all()
+        )).all()
         return [TransaksiView(id=t.id, amplop_id=t.envelope_id, user_id=t.user_id, jumlah=Decimal(t.amount),
                               deskripsi=masked_description(uid, t), tanggal=t.transaction_date,
                               sumber=str(getattr(t.source, "value", t.source)),
-                              milik_sendiri=uid is not None and str(t.user_id) == str(uid))
-                for t in rows]
+                              milik_sendiri=uid is not None and str(t.user_id) == str(uid),
+                              meta=None if ringkas.privat_orang_lain(uid, t) else ambil_meta(r))
+                for r in rows for t in (r[0],)]
 
-    async def incomes(self, mulai: date, akhir: date) -> list[PemasukanView]:
-        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`. Di ruang keluarga hanya milik viewer."""
+    async def incomes(self, mulai: date, akhir: date, *, pendamping: str | None = None) -> list[PemasukanView]:
+        """`incomes:read`: pemasukan ruang ini, `mulai` ≤ tanggal ≤ `akhir`, terbaru dulu, paling banyak `BATAS_BARIS`.
+        Di ruang keluarga hanya milik viewer. U3: `pendamping` = entitas plugin ini yang 1:1 dengan pemasukan (mis.
+        "income_meta"), barisnya di `meta`."""
         k = _k(self)
         await _host.perlu(k, "incomes:read")
         from app.models.models import Income
-        rows = (await k.db.execute(
-            select(Income).where(Income.household_id == k.ruang_id, _pemasukan_terlihat(k, Income),
+        from app.plugins.host import ringkas
+        q = select(Income).where(Income.household_id == k.ruang_id, _pemasukan_terlihat(k, Income),
                                  Income.income_date >= mulai, Income.income_date <= akhir)
-            .order_by(Income.income_date.desc(), Income.created_at.desc()).limit(BATAS_BARIS)
-        )).scalars().all()
-        return [_pemasukan(i) for i in rows]
+        q, ambil_meta = ringkas.gabung_pendamping(k, q, pendamping, "incomes", Income.id)
+        rows = (await k.db.execute(
+            q.order_by(Income.income_date.desc(), Income.created_at.desc()).limit(BATAS_BARIS)
+        )).all()
+        return [_pemasukan(r[0], ambil_meta(r)) for r in rows]
+
+    async def ringkas_transaksi(self, mulai: date, akhir: date, *, per=(),
+                                hanya_bersama: bool = False) -> list[RingkasanView]:
+        """`transactions:read` (U3): jumlah dan banyak transaksi per kelompok, dihitung database (tidak terpotong).
+        `per`: "bulan", "amplop", atau "<entitas pendamping>.<kolom>" (mis. "txn_meta.akun"), paling banyak 3.
+        Kelompok pendamping transaksi yang tersamar bagi viewer bernilai None. Lihat `app/plugins/host/ringkas.py`."""
+        k = _k(self)
+        await _host.perlu(k, "transactions:read")
+        from app.plugins.host import ringkas
+        return await ringkas.ringkas_transaksi(k, mulai, akhir, per=per, hanya_bersama=hanya_bersama)
+
+    async def ringkas_pemasukan(self, mulai: date, akhir: date, *, per=()) -> list[RingkasanView]:
+        """`incomes:read` (U3): jumlah, banyak, dan jumlah alokasi pemasukan per kelompok. `per`: "bulan", "jenis"
+        (`incomes.kind`), atau "<entitas pendamping>.<kolom>" (mis. "income_meta.jenis"), paling banyak 3."""
+        k = _k(self)
+        await _host.perlu(k, "incomes:read")
+        from app.plugins.host import ringkas
+        return await ringkas.ringkas_pemasukan(k, mulai, akhir, per=per)
 
     async def income(self, income_id: UUID) -> PemasukanView | None:
         """`incomes:read`: satu pemasukan yang boleh dilihat; None bila tidak ada, milik ruang lain, atau (di ruang
