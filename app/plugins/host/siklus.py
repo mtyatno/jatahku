@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 log = logging.getLogger(__name__)
 
 from app.models.models import AppSetting, Entitlement, Household, PluginAuditLog, PluginInstallation
-from app.plugins.host.manifest import Manifest
+from app.plugins.host.manifest import IZIN_TULIS, Manifest
 from app.plugins.host.registry import registry
 from app.services.advisor.dashboard import flag_aktif
 from app.services.ruang import RuangDitolak
@@ -268,7 +268,10 @@ def _cek_izin_disetujui(m: Manifest, izin: list[str] | None) -> None:
 
     `izin` = kode izin yang ditampilkan saat user menekan Pasang/Pulihkan. Bila manifest berubah di antaranya (rilis
     baru menambah atau membuang izin), server menolak alih-alih mencatat izin yang belum pernah dilihat user.
-    `None` = klien lama tanpa field ini (API hanya bertambah); web selalu mengirimnya."""
+    `None` = klien lama tanpa field ini (API hanya bertambah); web selalu mengirimnya. Untuk plugin dengan izin tulis
+    (`IZIN_TULIS`, mis. `incomes:write`) daftar ini wajib: tanpa daftar → 422 `izin_wajib` (review PR #201 T4)."""
+    if izin is None and set(m.permissions) & IZIN_TULIS:
+        raise _galat(422, "izin_wajib", f"Periksa dan setujui izin {m.name} dulu.")
     if izin is not None and set(izin) != set(m.permissions):
         raise _galat(409, "izin_berubah",
                      f"Izin {m.name} berubah sejak halaman ini dibuka. Muat ulang, lalu periksa izinnya lagi.")

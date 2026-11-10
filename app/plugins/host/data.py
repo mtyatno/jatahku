@@ -39,12 +39,28 @@ TERSEMBUNYI = ("household_id", "deleted_at")          # tidak pernah dikembalika
 FK_INTI = {"households", "users", "envelopes", "transactions", "incomes"}
 BATAS_BARIS = 1000                                    # baris maksimal per panggilan baca
 BATAS_BARIS_RUANG = 20_000                            # baris (termasuk yang dihapus lunak) maksimal per tabel per ruang
+# Tabel pendamping 1:1 data inti (unik hidup per `transactions`/`incomes`, mis. `txn_meta`, `income_meta`) tidak kena
+# batas per ruang: jumlah barisnya mengikuti data inti (yang punya kuota sendiri), dan menolaknya justru membatalkan
+# pencatatan inti sesudah ±20.000 transaksi (review PR #201 temuan T1).
+INDUK_PENDAMPING = {"transactions", "incomes"}
 HARI_SIMPAN_TERHAPUS = 30                             # baris hapus lunak dibuang permanen sesudah ini (review #196 temuan 3)
 
 
 def _tabel_ada(nama: str) -> Table | None:
     import app.models.models  # noqa: F401 — daftarkan tabel ke metadata
     return Base.metadata.tables.get(nama)
+
+
+def pendamping_inti(t: Table) -> bool:
+    """Tabel berisi paling banyak satu baris hidup per baris `transactions`/`incomes`: ada indeks unik (household_id,
+    kolom FK ke tabel itu). Lihat `INDUK_PENDAMPING`."""
+    for ix in t.indexes:
+        if not ix.unique:
+            continue
+        kolom = [c for c in ix.columns if c.name != "household_id"]
+        if len(kolom) == 1 and any(fk.column.table.name in INDUK_PENDAMPING for fk in kolom[0].foreign_keys):
+            return True
+    return False
 
 
 # ── aturan tabel (dicek saat memuat manifest dan di tes) ─────────────────
@@ -351,11 +367,12 @@ async def tambah(k, nama: str, nilai: dict) -> dict:
                 and c.name not in bersih:
             raise _Galat.nilai(f"{c.name} wajib diisi.")
     await _cek_rujukan(k, t, bersih)
-    ada = int((await k.db.execute(
-        select(func.count()).select_from(t).where(t.c.household_id == k.ruang_id)   # termasuk yang dihapus lunak
-    )).scalar() or 0)
-    if ada >= BATAS_BARIS_RUANG:
-        raise _Galat.nilai("Data ini sudah mencapai batas untuk satu ruang.")
+    if not pendamping_inti(t):
+        ada = int((await k.db.execute(
+            select(func.count()).select_from(t).where(t.c.household_id == k.ruang_id)   # termasuk yang dihapus lunak
+        )).scalar() or 0)
+        if ada >= BATAS_BARIS_RUANG:
+            raise _Galat.nilai("Data ini sudah mencapai batas untuk satu ruang.")
     rid = _uuid_mod.uuid4()
     sekarang = _sekarang()
     await k.db.execute(insert(t).values(id=rid, household_id=k.ruang_id, created_by=k.viewer.id,

@@ -534,7 +534,13 @@ Host melayani semuanya lewat satu route `/{plugin_id}/{path}` di awalan `/p` (`a
   (`catat_pemasukan(commit=False)`, `kind = pemasukan`), jadi pemasukan, pembagian, tulisan `ctx.data()`, dan audit
   `inti:pemasukan` (id + jumlah amplop, tanpa nominal) masuk dalam **satu commit** route `/p`; galat di tengah = tidak
   ada apa pun. Notifikasi goal dijalankan sesudah commit (`app/services/setelah_commit.py`). Tidak ada metode tulis
-  inti lain.
+  inti lain. **Review #201:** `client_ref` opsional (1–64 huruf, angka, `_.:-`; kunci Redis per user, plugin, dan ruang,
+  pola `services/idempotency.py`): kirim ulang sesudah tercatat mengembalikan pemasukan lama dengan `ulang: true` tanpa
+  menulis apa pun, kiriman yang masih diproses → 409 `sedang_diproses`, kunci dilepas bila permintaan gagal (titipan
+  `setelah_commit.titip_gagal`); nominal dengan eksponen > 15 → `NilaiTidakSah` (bukan 500).
+- Batas `BATAS_BARIS_RUANG` (20.000 baris per tabel per ruang) tidak berlaku untuk tabel pendamping 1:1 data inti
+  (indeks unik household + FK ke `transactions`/`incomes`, mis. `txn_meta`, `income_meta`; `data.pendamping_inti`):
+  jumlahnya mengikuti data inti (review #201 T1).
 
 ### Field form Fitur Tambahan di form inti — **v1 (U2, PR plugin/u2-penjualan-alokasi)**
 
@@ -547,7 +553,9 @@ Host melayani semuanya lewat satu route `/{plugin_id}/{path}` di awalan `/p` (`a
   tanpa transaksi. Nilai bersih disimpan plugin pemiliknya (`@plugin.simpan_field("transaction")`, `async (ctx,
   target_id, nilai)`, hanya `ctx.data()` tabel sendiri) sesudah transaksi di-flush dan sebelum commit: gagal → 422
   `field_tidak_sah` (`NilaiTidakSah`) atau 500 `plugin_gagal`, transaksi batal dan kunci `client_ref` dilepas. Isian yang
-  semuanya `null` tidak memanggil plugin. Belum di `/transactions/batch` (antrean offline mengirim tanpa `tambahan`),
+  semuanya `null` tidak memanggil plugin. Pengeluaran di amplop pribadi (`owner_id`) atau `is_private: true` dengan
+  `tambahan` → 422 `field_tidak_sah` (data plugin terbaca owner/admin lewat ekspor; review #201 T3); web tidak
+  menampilkan isiannya. Belum di `/transactions/batch` (antrean offline mengirim tanpa `tambahan`),
   persetujuan draf, Catat cepat, atau ubah transaksi.
 
 ### Izin baru untuk instalasi yang sudah ada — **v1 (U2)**
@@ -556,7 +564,9 @@ Host melayani semuanya lewat satu route `/{plugin_id}/{path}` di awalan `/p` (`a
   manifest versi sekarang yang belum ada di `granted_permissions` instalasi itu (kosong untuk yang belum/sudah tidak
   terpasang). Izin baru **tidak pernah diberikan diam-diam**: fungsi yang memakainya ditolak 403 `tanpa_izin`.
 - `POST /ruang/{id}/plugins/{plugin_id}/izin {"izin": [semua kode izin yang dilihat]}` (owner/admin, flag rollout user,
-  instalasi terpasang/aktif/dijeda; status tidak berubah) → jawaban siklus. Daftar beda dengan manifest → 409
+  instalasi terpasang/aktif/dijeda; status tidak berubah) → jawaban siklus. Pasang dan pulihkan plugin dengan izin
+  tulis (`IZIN_TULIS`: semua izin selain `*:read`) juga wajib membawa `izin`; tanpa itu → 422 `izin_wajib` (review
+  #201 T4; plugin baca-saja tetap boleh tanpa daftar untuk klien lama). Daftar beda dengan manifest → 409
   `izin_berubah`; tanpa `izin` → 422; belum terpasang atau arsip → 404 `plugin_tidak_aktif`. Diaudit `izin` (dari, ke,
   versi). Izin yang dibuang manifest ikut hilang.
 
@@ -600,16 +610,19 @@ Buku Usaha tidak aktif di ruang itu. Alokasi, penjualan, dan field pengeluaran v
 // pinjaman | lain (satu amplop: `envelope_id`, bawaan amplop bernama "Laba ditahan").
 // POST /p/buku_usaha/penjualan/pratinjau {"jumlah", "jenis"?, "envelope_id"?} → {"jenis", "jumlah",
 //   "pembagian": [{"envelope_id", "nama", "emoji", "persen": "45.00" | null, "jumlah": "450001.00"}]}   // tidak menulis
-// POST /p/buku_usaha/penjualan {"jumlah", "jenis"?, "envelope_id"?, "tanggal"? (YYYY-MM-DD), "kontak_id"?, "keterangan"?}
-//   → 201 {"income_id", "jenis", "jumlah", "tanggal", "keterangan", "kontak": {"id", "nama"} | null, "pembagian": [...]}
+// POST /p/buku_usaha/penjualan {"jumlah", "jenis"?, "envelope_id"?, "tanggal"? (YYYY-MM-DD), "kontak_id"?, "keterangan"?,
+//   "client_ref"?} → 201 {"income_id", "jenis", "jumlah", "tanggal", "keterangan", "kontak": {"id", "nama"} | null,
+//   "pembagian": [...], "ulang": false}. Kirim ulang dengan `client_ref` yang sudah tercatat → 200 catatan lama dengan
+//   "ulang": true (keterangan null, persen null); masih diproses → 409 sedang_diproses (review #201 T5).
 //   Pemasukan inti (`kind = pemasukan`) lewat `ctx.catat_pemasukan` + `income_meta` (jenis, pelanggan) dalam satu commit.
 //   Pembagian: tiap bagian dibulatkan ke bawah per rupiah, sisa (termasuk sen) ke persen terbesar; total selalu persis.
 //   Galat: jumlah ≤ 0 / bukan angka, tanggal sesudah hari ini atau > 1 tahun lalu, kolom asing, pelanggan untuk jenis
 //   selain penjualan, `envelope_id` untuk penjualan → 422 nilai_tidak_sah; jenis lain → 422 jenis_tidak_dikenal;
 //   aturan belum siap → 422 alokasi_belum_diatur; amplop jenis lain tidak ada → 422 amplop_tidak_ada / amplop_wajib;
 //   kontak bukan pelanggan ruang ini → 422 kontak_tidak_ada; izin `incomes:write` belum disetujui → 403 tanpa_izin.
-//   Keterangan kosong → label jenis (+ " · <pelanggan>"). Tanpa `client_ref` (U2: tombol dikunci selama mengirim, sama
-//   dengan /incomes owner/admin); penjualan karyawan tetap lewat /incomes inti (tanpa meta sampai U3/U5).
+//   Keterangan kosong → label jenis (+ " · <pelanggan>"). Web mengirim `client_ref` yang sama selama isian form tidak
+//   berubah dan mengunci ruang tujuan saat form dibuka; penjualan karyawan tetap lewat /incomes inti (tanpa meta sampai
+//   U3/U5).
 
 // Field pengeluaran (U2) — v1, `tambahan` di `POST /transactions/` (§5 "Field form"):
 //   {"buku_usaha": {"pemasok": "<id kontak pemasok ruang ini>", "akun": "Bahan baku" | "Gaji" | "Sewa" |
@@ -670,7 +683,8 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `format_tidak_tersedia` | 404 | Format ekspor data plugin di luar manifest (U1) |
 | `kontak_ganda`, `kontak_tidak_ada`, `peran_tidak_dikenal` | 409 / 404 / 422 | Kontak Buku Usaha (U1, §6) |
 | `alokasi_belum_diatur`, `amplop_tidak_ada`, `amplop_wajib`, `jenis_tidak_dikenal` | 422 | Penjualan dan alokasi omzet Buku Usaha (U2, §6) |
-| `izin_wajib` | 422 | `POST …/izin` tanpa daftar izin (U2, §5) |
+| `izin_wajib` | 422 | `POST …/izin` tanpa daftar izin (U2, §5); pasang/pulihkan plugin berizin tulis tanpa daftar izin (review #201) |
+| `sedang_diproses` | 409 | Pemasukan plugin dengan `client_ref` yang sama masih diproses (review #201, §5) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |

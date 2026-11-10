@@ -365,16 +365,18 @@ class PluginContext(metaclass=_KelasBeku):
 
     # ── tulis inti (U2) ──
     async def catat_pemasukan(self, *, jumlah: Decimal, keterangan: str, tanggal: date | None = None,
-                              pembagian: list[tuple[UUID, Decimal]]) -> dict:
+                              pembagian: list[tuple[UUID, Decimal]], client_ref: str | None = None) -> dict:
         """`incomes:write`, hanya dari `rute` non-GET oleh owner/admin: satu pemasukan di ruang ini lewat jalur
         pemasukan inti, dibagi persis ke `pembagian` [(envelope_id, jumlah)] (total harus sama dengan `jumlah`; amplop
         harus amplop aktif ruang ini yang terlihat viewer). Masuk dalam commit yang sama dengan tulisan `ctx.data()`
         di rute itu. `tanggal` None = hari ini; tidak boleh sesudah hari ini atau lebih dari setahun ke belakang.
-        Mengembalikan `{"income_id", "jumlah", "tanggal", "pembagian": [{"envelope_id", "nama", "jumlah"}]}`;
-        isian salah → `NilaiTidakSah`."""
+        Mengembalikan `{"income_id", "jumlah", "tanggal", "pembagian": [{"envelope_id", "nama", "jumlah"}],
+        "ulang"}`; isian salah → `NilaiTidakSah`. `client_ref` (1–64 huruf, angka, `_.:-`) = kunci kirim ulang dari
+        klien: bila sudah tercatat, pemasukan lama dikembalikan dengan `ulang: True` dan plugin tidak boleh menulis
+        datanya lagi; bila masih diproses → 409 `sedang_diproses`."""
         from app.plugins.host import inti
         return await inti.catat_pemasukan(self, jumlah=jumlah, keterangan=keterangan, tanggal=tanggal,
-                                          pembagian=pembagian)
+                                          pembagian=pembagian, client_ref=client_ref)
 
     # ── kirim ──
     async def notify(self, jenis: str, judul: str, isi: str, *, link: str | None = None,

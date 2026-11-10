@@ -291,3 +291,13 @@ export function bodyTambahan(fields, nilai) {
   }
   return Object.keys(out).length ? out : null;
 }
+
+/**
+ * Isian Fitur Tambahan hanya untuk pengeluaran yang terlihat pengelola ruang: tidak untuk amplop pribadi (`owner_id`)
+ * atau transaksi bertanda pribadi, karena data plugin terbaca owner/admin (server menolak 422, review #201 T3).
+ * Amplop belum dipilih = isian tetap tampil.
+ */
+export function isianBolehUntuk(envelope, privat) {
+  // `/envelopes/summary` memberi `is_personal`, `/envelopes/` memberi `owner_id`: keduanya dicek.
+  return !privat && (envelope == null || (envelope.owner_id == null && !envelope.is_personal));
+}

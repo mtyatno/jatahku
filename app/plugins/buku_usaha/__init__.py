@@ -263,7 +263,7 @@ async def _pembagian(ctx, jenis: str, jumlah, envelope_id) -> list[dict]:
 def _isi_pemasukan(body) -> dict:
     if not isinstance(body, dict):
         raise NilaiTidakSah("Isian pemasukan tidak terbaca.")
-    asing = set(body) - {"jumlah", "jenis", "envelope_id", "tanggal", "kontak_id", "keterangan"}
+    asing = set(body) - {"jumlah", "jenis", "envelope_id", "tanggal", "kontak_id", "keterangan", "client_ref"}
     if asing:
         raise NilaiTidakSah("Isian pemasukan memuat kolom yang tidak dikenal.")
     eid = body.get("envelope_id")
@@ -284,7 +284,8 @@ async def pratinjau_penjualan(ctx, req):
 @plugin.rute("POST", "/penjualan", izin=["envelopes:read", "incomes:write"])
 async def catat_penjualan(ctx, req):
     """Satu pemasukan usaha: pemasukan inti dibagi ke amplop (`ctx.catat_pemasukan`) dan `income_meta` (jenis,
-    pelanggan) dalam satu commit. Pelanggan hanya untuk penjualan."""
+    pelanggan) dalam satu commit. Pelanggan hanya untuk penjualan. `client_ref` dari klien: kirim ulang yang sudah
+    tercatat menjawab 200 dengan catatan lama, tanpa menulis apa pun (review #201 T5)."""
     isi = _isi_pemasukan(req.body)
     jenis, jumlah = isi["jenis"], isi["jumlah"]
     kontak = None
@@ -299,14 +300,33 @@ async def catat_penjualan(ctx, req):
     ket = al.keterangan(jenis, req.body.get("keterangan"), kontak["nama"] if kontak else None)
     bagian = await _pembagian(ctx, jenis, jumlah, isi["envelope_id"])
     hasil = await ctx.catat_pemasukan(jumlah=jumlah, keterangan=ket, tanggal=tgl,
-                                      pembagian=[(b["envelope_id"], b["jumlah"]) for b in bagian])
+                                      pembagian=[(b["envelope_id"], b["jumlah"]) for b in bagian],
+                                      client_ref=req.body.get("client_ref"))
+    if hasil["ulang"]:
+        return await _penjualan_lama(ctx, hasil)
     await ctx.data("income_meta").tambah({"income_id": hasil["income_id"], "jenis": jenis,
                                           "kontak_id": kontak["id"] if kontak else None})
     return Jawaban({
         "income_id": hasil["income_id"], "jenis": jenis, "jumlah": jumlah, "tanggal": hasil["tanggal"],
         "keterangan": ket, "kontak": {"id": kontak["id"], "nama": kontak["nama"]} if kontak else None,
-        "pembagian": bagian,
+        "pembagian": bagian, "ulang": False,
     }, 201)
+
+
+async def _penjualan_lama(ctx, hasil) -> Jawaban:
+    """Jawaban kirim ulang: catatan yang sudah tersimpan (jenis dan pelanggan dari `income_meta`)."""
+    meta = (await ctx.data("income_meta").cari(saring={"income_id": hasil["income_id"]}, batas=1) or [None])[0]
+    jenis = meta["jenis"] if meta else "penjualan"
+    kontak = await ctx.data("kontak").ambil(meta["kontak_id"]) if meta and meta["kontak_id"] else None
+    amplop = await _amplop_bersama(ctx)
+    return Jawaban({
+        "income_id": hasil["income_id"], "jenis": jenis, "jumlah": hasil["jumlah"], "tanggal": hasil["tanggal"],
+        "keterangan": None, "kontak": {"id": kontak["id"], "nama": kontak["nama"]} if kontak else None,
+        "pembagian": [{"envelope_id": b["envelope_id"], "nama": b["nama"],
+                       "emoji": getattr(amplop.get(str(b["envelope_id"])), "emoji", None), "persen": None,
+                       "jumlah": b["jumlah"]} for b in hasil["pembagian"]],
+        "ulang": True,
+    }, 200)
 
 
 # ── U2: pemasok dan akun beban di form pengeluaran ───────────────────────

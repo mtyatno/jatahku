@@ -293,6 +293,12 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
 
     # ── pembantu ──
     async def aksi(self, aksi, plugin="uji", ruang_id=None, **kw):
+        # Layar izin web selalu mengirim daftar izin yang dilihat; wajib untuk plugin berizin tulis (review #201 T4).
+        if aksi == "pasang" and "json" not in kw:
+            from app.plugins.host.registry import registry
+            m = registry().get(plugin)
+            if m is not None:
+                kw["json"] = {"izin": list(m.permissions)}
         return await self.client.post(f"/ruang/{ruang_id or self.usaha}/plugins/{plugin}/{aksi}", **kw)
 
     async def katalog(self, ruang_id=None):
@@ -434,7 +440,7 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_header_tidak_menentukan_ruang_tulis(self):
         """Ruang tulis hanya dari path: header ruang lain diabaikan untuk pasang."""
-        r = await self.client.post(f"/ruang/{self.usaha}/plugins/uji/pasang",
+        r = await self.client.post(f"/ruang/{self.usaha}/plugins/uji/pasang", json={"izin": ["incomes:read", "incomes:write"]},
                                    headers={"X-Jatahku-Ruang": str(self.rumah)})
         self.assertEqual(r.json()["status"], "aktif")
         async with self.Session() as db:
@@ -501,7 +507,18 @@ class HostHttpTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pengaturan_belum_diterima(self):
         self.galat(await self.aksi("pasang", json={"pengaturan": {"a": 1}}), 422, "pengaturan_tidak_sah")
-        self.assertEqual((await self.aksi("pasang", json={"pengaturan": {}})).status_code, 200)
+        self.assertEqual((await self.aksi("pasang", json={"pengaturan": {}, "izin": ["incomes:read", "incomes:write"]})
+                          ).status_code, 200)
+
+    async def test_izin_tulis_wajib_daftar_izin(self):
+        """Review #201 T4: plugin berizin tulis tidak bisa dipasang atau dipulihkan tanpa daftar izin yang dilihat."""
+        self.galat(await self.aksi("pasang", json={}), 422, "izin_wajib")
+        self.assertEqual(await self.audit(), [])
+        await self.aksi("pasang")
+        await self.aksi("copot")
+        self.galat(await self.aksi("pasang", json={}), 422, "izin_wajib")             # pulihkan juga
+        async with self.Session() as db:
+            self.assertEqual((await siklus.instalasi(db, self.usaha, "uji")).status, "uninstalled")
 
     # ── saklar darurat ──
     async def test_saklar_darurat(self):

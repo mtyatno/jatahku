@@ -30,6 +30,8 @@ def angka(v, nama: str, *, tempat: int = 2) -> Decimal:
         raise NilaiTidakSah(f"{nama} harus angka.")
     if not d.is_finite():
         raise NilaiTidakSah(f"{nama} harus angka.")
+    if d.adjusted() > 15:      # di atas Numeric(15, 2); juga mencegah `quantize` melempar (review #201 temuan T2)
+        raise NilaiTidakSah(f"{nama} terlalu besar.")
     if d != d.quantize(Decimal(1).scaleb(-tempat)):
         raise NilaiTidakSah(f"{nama} paling banyak {tempat} angka di belakang koma.")
     return d

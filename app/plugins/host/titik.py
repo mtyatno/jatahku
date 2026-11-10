@@ -686,6 +686,9 @@ def _field_tidak_sah(detail: str):
     return siklus._galat(422, "field_tidak_sah", detail)
 
 
+field_tidak_sah = _field_tidak_sah      # dipakai jalur inti (transactions) untuk kode galat yang sama
+
+
 def _nilai_bawaan(tipe: str, nilai):
     if tipe in ("text", "select"):
         if not isinstance(nilai, str) or len(nilai) > 200:
