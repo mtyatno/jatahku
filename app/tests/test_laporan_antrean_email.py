@@ -61,10 +61,15 @@ DATA = susun_bulanan(bahan())   # "Laporan Oktober 2026", periode 1-31 Okt 2026
 KOSONG = {"terkirim": 0, "gagal": 0, "dilewati": 0, "dicoba_lagi": 0}
 _OTOMATIS = object()
 
-# Teks persis (Global Constraints), sengaja ditulis ulang di sini, bukan diimpor dari `surel`.
-BARIS_TERLAMPIR = "PDF laporan terlampir. Buka dengan kata sandi laporanmu."
-BARIS_ATUR_SANDI = "Atur kata sandi laporan di Pengaturan → Laporan untuk menerima PDF di email berikutnya."
-BARIS_UNDUH = "PDF laporan bisa diunduh di aplikasi."
+# Teks persis kotak PDF (spec, teks email laporan resmi), sengaja ditulis ulang di sini, bukan diimpor dari `surel`.
+BARIS_TERLAMPIR = (
+    "Berkas PDF terlampir dilindungi kata sandi laporan yang Anda atur di Pengaturan → Laporan. Demi keamanan, "
+    "kata sandi tidak pernah dikirim lewat email. Lupa kata sandi? Atur ulang di Pengaturan → Laporan, lalu unduh "
+    "PDF dari halaman laporan."
+)
+BARIS_ATUR_SANDI = ("PDF belum dilampirkan karena kata sandi laporan belum diatur. Atur di Pengaturan → Laporan agar "
+                    "laporan berikutnya disertai PDF terkunci.")
+BARIS_UNDUH = "PDF tidak dapat dilampirkan kali ini. Rincian lengkap tetap tersedia di aplikasi."
 
 
 def periode(bulan: int) -> tuple[date, date]:
@@ -353,8 +358,8 @@ class AntreanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((kiriman.tujuan, kiriman.subjek, kiriman.nama_file),
                          ("ani@contoh.id", "Laporan Oktober 2026 · Jatahku", "jatahku-laporan-2026-10.pdf"))
         self.assertIn(BARIS_TERLAMPIR, kiriman.teks)
-        self.assertIn(f'href="{self.tautan(rid)}"', kiriman.html)   # tombol "Lihat laporan"
-        self.assertIn(f"Lihat laporan: {self.tautan(rid)}", kiriman.teks)
+        self.assertIn(f'href="{self.tautan(rid)}"', kiriman.html)   # tombol "Buka Laporan di Jatahku →"
+        self.assertIn(f"Buka laporan di Jatahku: {self.tautan(rid)}", kiriman.teks)
         [token] = parse_qs(urlparse(kiriman.berhenti).query)["token"]
         self.assertEqual(surel.baca_token_berhenti(token), ani)   # berhenti berlangganan terikat ke penerima
         self.assertIn("Laporan Oktober 2026", teks_pdf(kiriman.pdf, SANDI))

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from app.core import security
 from app.core.config import get_settings
 from app.services import email_service
+from app.services.email_service import h
 from app.services.laporan import hitung, pdf, surel
 from app.tests.test_laporan_susun import bahan, semua_uang
 from app.services.laporan.susun import susun_bulanan
@@ -31,13 +32,31 @@ def isi(data=None, nama="Ani", lampiran=surel.LAMPIRAN_TERLAMPIR):
     return surel.isi_email_laporan(data or data_dasar(), nama, TL, TB, lampiran)
 
 
+TEKS_PDF_TERLAMPIR = (
+    "Berkas PDF terlampir dilindungi kata sandi laporan yang Anda atur di Pengaturan → Laporan. Demi keamanan, "
+    "kata sandi tidak pernah dikirim lewat email. Lupa kata sandi? Atur ulang di Pengaturan → Laporan, lalu unduh "
+    "PDF dari halaman laporan."
+)
+TEKS_PDF_BELUM_DIATUR = ("PDF belum dilampirkan karena kata sandi laporan belum diatur. Atur di Pengaturan → Laporan "
+                         "agar laporan berikutnya disertai PDF terkunci.")
+TEKS_PDF_TIDAK_TERSEDIA = "PDF tidak dapat dilampirkan kali ini. Rincian lengkap tetap tersedia di aplikasi."
+INTRO_TERLAMPIR = ("Laporan keuangan periodik Anda untuk periode 1 Okt – 31 Okt 2026 telah terbit. Rincian "
+                   "lengkapnya tersedia dalam berkas PDF terlampir.")
+INTRO_DI_APLIKASI = ("Laporan keuangan periodik Anda untuk periode 1 Okt – 31 Okt 2026 telah terbit. Rincian "
+                     "lengkapnya dapat dilihat di aplikasi.")
+
+
+def dengan_rekor(hari=7):
+    d = data_dasar()
+    d["sorotan"]["beruntun_terpanjang"] = hari
+    return d
+
+
 class IsiLaporan(unittest.TestCase):
     def test_subjek_dan_body_tanpa_nominal(self):
-        data = data_dasar()
+        data = dengan_rekor()
         subjek, html, teks = isi(data)
         self.assertEqual(subjek, "Laporan Oktober 2026 · Jatahku")
-        self.assertIn("Laporan Oktober 2026 sudah terbit.", teks)
-        self.assertIn("Hai Ani,", teks)
         semua = subjek + html + teks
         self.assertNotIn("Rp", semua)
         uangs = {u for u in semua_uang(data) if abs(Decimal(u)) >= 1000}  # nol dan receh tak bisa dibedakan dari angka lain
@@ -46,51 +65,123 @@ class IsiLaporan(unittest.TestCase):
             for bentuk in (u, hitung.uang(Decimal(u)), pdf.rupiah(u), pdf.rupiah(u)[2:]):
                 self.assertNotIn(bentuk, semua)
 
-    def test_baris_ringkasan(self):
-        _, html, teks = isi()
-        self.assertIn("Anggaran terpakai: 65%", teks)
-        self.assertIn("Amplop aman: 1 · Lewat batas: 0", teks)
-        self.assertIn("Pengeluaran turun 16% dibanding periode lalu", teks)
-        self.assertIn("2 amplop tidak pernah lewat batas", teks)
-        self.assertIn("Anggaran terpakai: 65%", html)
-        self.assertIn(TL, teks)
-        self.assertIn("Lihat laporan", html)
-        self.assertIn(TB, html)
-        self.assertIn("Berhenti berlangganan", html)
-        self.assertIn("Tidak ingin menerima laporan lewat email?", html)
+    def test_teks_polos_persis(self):
+        _, _, teks = isi(dengan_rekor())
+        self.assertEqual(teks, "\n".join([
+            "Yth. Bapak/Ibu Ani,",
+            "",
+            INTRO_TERLAMPIR,
+            "",
+            "RINGKASAN PERIODE",
+            "Anggaran terpakai: 65%",
+            "Amplop aman: 1 · Lewat batas: 0",
+            "Pengeluaran: turun 16% dibanding periode sebelumnya",
+            "Rekor mencatat: 7 hari berturut-turut",
+            "",
+            "🔒 Membuka berkas PDF",
+            TEKS_PDF_TERLAMPIR,
+            "",
+            f"Buka laporan di Jatahku: {TL}",
+            "",
+            "(Email ini dibuat secara otomatis oleh sistem, mohon tidak membalas email ini.)",
+            "",
+            "Keterangan:",
+            "1. Surat elektronik ini dibuat secara komputerisasi sehingga tidak memerlukan tanda tangan.",
+            "2. Apabila Anda bukan pemilik akun Jatahku yang dimaksud, mohon abaikan dan hapus email ini beserta "
+            "lampirannya.",
+            "3. Untuk bantuan, hubungi hi@jatahku.com.",
+            "",
+            f"Tidak ingin menerima laporan lewat email? Berhenti berlangganan: {TB}",
+            "© 2026 Jatahku.com",
+        ]))
 
-    def test_persen_dan_tren_null_dan_variasi(self):
-        d = data_dasar()
+    def test_html_berisi_bagian_desain_berurutan(self):
+        _, html, _ = isi(dengan_rekor())
+        bagian = [
+            "Yth. Bapak/Ibu <strong>Ani</strong>,",
+            "untuk periode <strong>1 Okt – 31 Okt 2026</strong> telah terbit.",
+            "RINGKASAN PERIODE",
+            "Anggaran terpakai: <strong>65%</strong>",
+            "Amplop aman: <strong>1</strong> · Lewat batas: <strong>0</strong>",
+            "Pengeluaran: <strong>turun 16%</strong> dibanding periode sebelumnya",
+            "Rekor mencatat: <strong>7 hari</strong> berturut-turut",
+            "🔒 Membuka berkas PDF",
+            TEKS_PDF_TERLAMPIR,
+            f'href="{TL}"',
+            "Buka Laporan di Jatahku →",
+            "(Email ini dibuat secara otomatis oleh sistem, mohon tidak membalas email ini.)",
+            "Keterangan:",
+            '<a href="mailto:hi@jatahku.com"',
+            "Tidak ingin menerima laporan lewat email?",
+            f'href="{h(TB)}"',
+            "Setiap rupiah ada jatahnya.",
+            "© 2026 Jatahku.com",
+        ]
+        posisi = [html.find(b) for b in bagian]
+        for b, p in zip(bagian, posisi):
+            self.assertNotEqual(p, -1, b)
+        self.assertEqual(posisi, sorted(posisi))
+
+    def test_baris_ringkasan_tanpa_data_tidak_tampil(self):
+        d = data_dasar()  # rekor beruntun 1 hari: bukan rekor, tidak ditampilkan
         d["email"]["persen_terpakai"] = None
         d["email"]["tren_persen"] = None
         _, html, teks = isi(d)
         self.assertIn("Anggaran terpakai: —", teks)
-        self.assertNotIn("Pengeluaran", teks)
-        self.assertNotIn("Pengeluaran", html)
-        for nilai, harap in ((-12, "Pengeluaran turun 12% dibanding periode lalu"),
-                             (5, "Pengeluaran naik 5% dibanding periode lalu"),
-                             (0, "Pengeluaran sama dengan periode lalu")):
+        self.assertIn("Anggaran terpakai: <strong>—</strong>", html)
+        for tak in ("Pengeluaran:", "Rekor mencatat"):
+            self.assertNotIn(tak, teks)
+            self.assertNotIn(tak, html)
+        for nilai, harap in ((-12, "Pengeluaran: turun 12% dibanding periode sebelumnya"),
+                             (5, "Pengeluaran: naik 5% dibanding periode sebelumnya"),
+                             (0, "Pengeluaran: sama dengan periode sebelumnya")):
             d["email"]["tren_persen"] = nilai
             self.assertIn(harap, isi(d)[2])
+        for hari, tampil in ((None, False), (0, False), (1, False), (2, True)):
+            d["sorotan"]["beruntun_terpanjang"] = hari
+            self.assertEqual("Rekor mencatat: 2 hari berturut-turut" in isi(d)[2], tampil, hari)
+        del d["sorotan"]
+        self.assertNotIn("Rekor mencatat", isi(d)[2])
 
-    def test_baris_lampiran_per_kode(self):
-        for kode, baris in (
-            (surel.LAMPIRAN_TERLAMPIR, "PDF laporan terlampir. Buka dengan kata sandi laporanmu."),
-            (surel.LAMPIRAN_BELUM_DIATUR,
-             "Atur kata sandi laporan di Pengaturan → Laporan untuk menerima PDF di email berikutnya."),
-            (surel.LAMPIRAN_TIDAK_TERSEDIA, "PDF laporan bisa diunduh di aplikasi."),
+    def test_periode(self):
+        d = data_dasar()
+        d["periode"] = {"mulai": "2026-12-27", "akhir": "2027-01-26", "gajian": 27}
+        _, html, teks = isi(d)
+        self.assertIn("untuk periode 27 Des 2026 – 26 Jan 2027 telah terbit.", teks)
+        self.assertIn("© 2027 Jatahku.com", teks)
+        del d["periode"]
+        _, html, teks = isi(d)
+        self.assertIn("Laporan keuangan periodik Anda telah terbit. Rincian lengkapnya tersedia dalam berkas PDF "
+                      "terlampir.", teks)
+        self.assertNotIn("©", teks)
+        self.assertNotIn("©", html)
+
+    def test_kotak_pdf_per_status_lampiran(self):
+        for kode, intro, judul_kotak, isi_kotak in (
+            (surel.LAMPIRAN_TERLAMPIR, INTRO_TERLAMPIR, "🔒 Membuka berkas PDF", TEKS_PDF_TERLAMPIR),
+            (surel.LAMPIRAN_BELUM_DIATUR, INTRO_DI_APLIKASI, "🔒 Berkas PDF", TEKS_PDF_BELUM_DIATUR),
+            (surel.LAMPIRAN_TIDAK_TERSEDIA, INTRO_DI_APLIKASI, "🔒 Berkas PDF", TEKS_PDF_TIDAK_TERSEDIA),
+            ("kode_asing", INTRO_DI_APLIKASI, "🔒 Berkas PDF", TEKS_PDF_TIDAK_TERSEDIA),
         ):
             _, html, teks = isi(lampiran=kode)
-            self.assertIn(baris, teks)
-            self.assertIn(baris, html)
-            for lain in ("PDF laporan terlampir.", "Atur kata sandi laporan", "PDF laporan bisa diunduh"):
-                if not baris.startswith(lain):
-                    self.assertNotIn(lain, teks)
+            self.assertIn(f"{intro}\n\nRINGKASAN PERIODE", teks, kode)
+            self.assertIn(f"\n\n{judul_kotak}\n{isi_kotak}\n\n", teks, kode)
+            self.assertIn(judul_kotak, html, kode)
+            self.assertIn(isi_kotak, html, kode)
+            for lain in {TEKS_PDF_TERLAMPIR, TEKS_PDF_BELUM_DIATUR, TEKS_PDF_TIDAK_TERSEDIA} - {isi_kotak}:
+                self.assertNotIn(lain, teks, kode)
+                self.assertNotIn(lain, html, kode)
 
-    def test_nama_di_escape(self):
+    def test_nama_di_escape_dan_nama_kosong(self):
         _, html, teks = isi(nama="<b>x</b>")
         self.assertIn("&lt;b&gt;x&lt;/b&gt;", html)
         self.assertNotIn("<b>x</b>", html)
+        self.assertTrue(teks.startswith("Yth. Bapak/Ibu <b>x</b>,\n"))
+        for kosong in ("", "   ", None):
+            _, html, teks = isi(nama=kosong)
+            self.assertTrue(teks.startswith("Yth. Bapak/Ibu,\n"), kosong)
+            self.assertIn("Yth. Bapak/Ibu,", html)
+            self.assertNotIn("<strong></strong>", html)
 
     def test_judul_di_escape(self):
         d = data_dasar()
@@ -243,6 +334,19 @@ class Template(unittest.TestCase):
         self.assertNotIn("Foot", polos)
         self.assertIn('<a href="https://f">Foot</a>', dgn)
         self.assertLess(dgn.index("Foot"), dgn.index("Setiap rupiah ada jatahnya."))
+
+    def test_penutup_dan_hak_cipta_opsional(self):
+        polos = email_service.email_template("J", "<p>x</p>", "Tombol", "https://u")
+        self.assertNotIn("©", polos)
+        dgn = email_service.email_template("J", "<p>isi</p>", "Tombol", "https://u", footer_html="<p>Foot</p>",
+                                           penutup_html="<p>Penutup</p>", hak_cipta="© 2026 <Jatahku>")
+        urutan = ["<p>isi</p>", "Tombol", "<p>Penutup</p>", "<p>Foot</p>", "Setiap rupiah ada jatahnya.",
+                  "@JatahkuBot", "© 2026 &lt;Jatahku&gt;"]
+        posisi = [dgn.find(b) for b in urutan]
+        self.assertNotIn(-1, posisi)
+        self.assertEqual(posisi, sorted(posisi))
+        tanpa_tombol = email_service.email_template("J", "<p>isi</p>", penutup_html="<p>Penutup</p>")
+        self.assertLess(tanpa_tombol.index("<p>isi</p>"), tanpa_tombol.index("<p>Penutup</p>"))
 
 
 if __name__ == "__main__":
