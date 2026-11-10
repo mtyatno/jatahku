@@ -32,13 +32,14 @@ rencana sendiri. Perbarui bagian ini saat status berubah.
 | `app/services/laporan/job.py` | `laporan_job` (penerbitan per household), notifikasi, lalu memanggil antrean email |
 | `app/services/laporan/antrean_email.py` | antrean email: `status_awal`, `proses_antrean_email` (klaim, coba ulang), `lampiran_untuk`, `hidupkan_lagi` |
 | `app/services/laporan/surel.py` | fungsi murni: isi email laporan dan verifikasi, tautan dan halaman berhenti berlangganan, halaman konfirmasi verifikasi |
-| `app/services/verifikasi_email.py` | token verifikasi (24 jam), `sama_email`, `tandai_terverifikasi` |
+| `app/services/verifikasi_email.py` | token verifikasi (24 jam; membawa sidik alamat, bukan alamat: `sidik_email`, `cocok_email`), `sama_email`, `tandai_terverifikasi` |
 | `app/services/email_service.py` | satu-satunya tempat SMTP: `send_laporan_email` (MIME + PDF + List-Unsubscribe), `send_verifikasi_email`, `SMTP_TIMEOUT` |
 | `app/core/security.py` | `create_purpose_token` / `decode_purpose_token`: token bertujuan (klaim `type`; `berlaku` wajib disebut) |
 | `app/services/laporan/pdf.py` + `app/assets/fonts/` | PDF dari `data`, AES-256, Noto Sans (OFL) |
 | `app/api/routes/laporan.py` | `/laporan`, `/laporan/{id}`, `/laporan/{id}/pdf`, `/laporan/berhenti-email`, `/user/laporan-pengaturan` (GET, PUT, PATCH) |
 | `app/api/routes/verifikasi_email.py` | `POST /user/email/verifikasi` (kirim tautan), `GET /auth/verifikasi-email` (tautan di email: halaman konfirmasi, tidak menulis) dan `POST /auth/verifikasi-email` (tombol "Verifikasi email") |
 | `app/core/rate_limit.py` | `kunci_per_user`: kunci batas frekuensi per user yang terautentikasi |
+| `app/core/log_akses.py` | filter logger `uvicorn.access`: nilai `?token=`/`?code=` dan nilai berisi alamat email ditulis `***`; dipasang di `app/main.py` |
 | `frontend/src/lib/laporanView.js`, `lib/laporanFormat.js` | helper murni halaman dan alur unduh (diuji `node --test`) |
 | `frontend/src/pages/Laporan.jsx`, `LaporanDetail.jsx`, `components/laporan/*`, `components/LaporanSettings.jsx` | UI (kartu Pengaturan memuat status email, tautan verifikasi, dan saklar email) |
 
@@ -229,16 +230,26 @@ Laporan yang terbit dikirim ke `users.email` bila alamatnya **terverifikasi** (`
 **Verifikasi.** `POST /user/email/verifikasi` (tombol "Kirim tautan verifikasi") mengirim email "Verifikasi email Jatahku
 kamu" lewat `email_service.send_verifikasi_email` ke alamat akun pemanggil sendiri. Tautannya
 `{API_URL}/auth/verifikasi-email?token=…`; token JWT (`JWT_SECRET`) bertujuan `verifikasi_email` dengan klaim `sub` (id
-user) dan `email` (huruf kecil), berlaku 24 jam. **Membuka tautan (GET) tidak mengubah apa pun** (Ruling F-4): pemindai
+user) dan `eh` (sidik alamat, lihat di bawah), berlaku 24 jam. **Membuka tautan (GET) tidak mengubah apa pun** (Ruling F-4): pemindai
 tautan di layanan email membuka GET, jadi yang tampil halaman "Verifikasi email kamu" ("Klik tombol di bawah untuk
 memverifikasi {email} sebagai alamat penerima laporan Jatahku.") dengan tombol "Verifikasi email". Tombol itu mengirim
 POST ke alamat yang sama; hanya POST yang memverifikasi, lalu 303 ke Pengaturan (`?email_verifikasi=berhasil`). Pola ini
-sama dengan tautan berhenti berlangganan. Yang diverifikasi alamat **yang ada di token**: bila alamat akun sudah berganti
-sejak tautan dikirim (`sama_email` membandingkan strip + huruf kecil) hasilnya `berubah` dan tidak ada yang ditulis.
+sama dengan tautan berhenti berlangganan. Yang diverifikasi alamat **akun di database, dan hanya bila sidiknya cocok
+dengan token**: bila alamat akun sudah berganti sejak tautan dikirim hasilnya `berubah` dan tidak ada yang ditulis
+(alamat yang hanya berbeda huruf besar-kecil atau spasi tepi tetap cocok). Alamat di halaman konfirmasi juga dari database.
 Tautan yang tidak perlu atau tidak bisa dikonfirmasi tidak menampilkan halaman: GET langsung 303 dengan `tidak_berlaku`,
 `berubah`, atau `berhasil` (alamat ini sudah terverifikasi). Login atau tautan Google dengan email yang sama dengan email
 akun juga memverifikasi (Google menjamin alamatnya). Mengganti email lewat jalur ORM mana pun mengosongkan verifikasi
 (bagian Model data).
+
+**Token verifikasi tidak memuat alamat** (11 Nov 2026). Badan JWT hanya base64url dan token ada di URL (email, riwayat
+peramban, log akses), jadi klaim `email` yang lama membuat alamat terbaca siapa pun yang memegang tautan. Gantinya klaim
+`eh`: HMAC-SHA256 (hex) dari alamat yang dinormalkan (`models.email_normal`: strip + huruf kecil), dengan kunci
+`HMAC-SHA256(JWT_SECRET, "verifikasi-email/v1")` (pemisah domain; tanpa kunci `.env` baru). Hash tanpa kunci tidak
+cukup: alamat yang mudah ditebak bisa dicocokkan. `verifikasi_email.cocok_email(user.email, sidik)` membandingkan
+dengan `hmac.compare_digest`; alamat kosong tidak pernah cocok. **Token bentuk lama (klaim `email`, tanpa `eh`) ditolak
+sebagai `tidak_berlaku`** walau belum 24 jam: user menekan "Kirim tautan verifikasi" lagi. Mengganti `JWT_SECRET`
+membatalkan token ini seperti semua token.
 
 **Isi email laporan** (`surel.isi_email_laporan`, fungsi murni; semua isi dari user atau data lewat `email_service.h`),
 bergaya pernyataan resmi (sejak 10 Nov 2026, sesudah tayang): subjek `"{judul} · Jatahku"`; judul laporan sebagai kepala;
@@ -318,8 +329,12 @@ percobaan ke-N; tidak dicoba lagi (alasan smtp)`, `email laporan <id> masih bers
 <id> gagal dibuat (<jenis galat>); email dikirim tanpa lampiran` (hanya cocok dengan pola kedua). Pola kedua juga menangkap
 peringatan startup `REPORT_SECRET_KEY kosong atau tidak valid: kata sandi dan PDF laporan nonaktif`. Email verifikasi
 dicatat `Email verifikasi terkirim` / `Email verifikasi gagal dikirim (<jenis galat>)` dan `Tautan verifikasi email user
-<id> gagal dikirim` (cocok dengan `grep -i verifikasi`), tanpa alamat (karena itu `send_verifikasi_email`, bukan
-`send_email`, yang mencatat "Email sent to <alamat>").
+<id> gagal dikirim` (cocok dengan `grep -i verifikasi`), tanpa alamat. Sejak 11 Nov 2026 pengirim lain di
+`email_service` juga begitu: `send_email` (reset password, hapus akun, selamat datang, peringatan) mencatat `Email
+terkirim` / `Email gagal dikirim (<jenis galat>)` dan backup `Email backup terkirim` / `Email backup gagal dikirim
+(<jenis galat>)`, tanpa alamat, subjek, atau pesan galat SMTP; `notification_service` mencatat `Email notifikasi user
+<id> gagal (<jenis galat>)`. Satu-satunya pesan galat yang dicatat utuh adalah `SMTP_PASSWORD kosong di .env, email tidak
+dikirim` (`SmtpPasswordKosong`, teks tetap).
 
 ## Halaman web
 
@@ -394,16 +409,25 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   = tujuan (`verifikasi_email`, `berhenti_email_laporan`). Token login menolak `type` selain `access` (dan refresh
   `refresh`), jadi token tujuan tidak pernah lolos sebagai sesi, dan sebaliknya; kedua fungsi juga menolak tujuan
   `access`/`refresh` (`ValueError`). `berlaku` wajib disebut (Ruling F-2): `berlaku=None` (tanpa `exp`) hanya bila
-  diminta terang-terangan, yaitu token berhenti. Verifikasi berlaku 24 jam dan membawa alamat; berhenti tanpa `exp`, hanya
-  mematikan satu saklar milik user itu. Kode aplikasi tidak pernah mencatat token (log akses nginx dan uvicorn mencatat
-  URL lengkap: bagian Batasan). Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store`.
+  diminta terang-terangan, yaitu token berhenti. Verifikasi berlaku 24 jam dan membawa sidik alamat (HMAC berkunci,
+  bagian "Email laporan"), bukan alamatnya; berhenti tanpa `exp`, hanya mematikan satu saklar milik user itu. Kode
+  aplikasi tidak pernah mencatat token. Tautan verifikasi dan halaman berhenti menjawab `Cache-Control: no-store`.
   `Referrer-Policy` adalah header global `strict-origin-when-cross-origin` (`SecurityHeadersMiddleware`, `app/main.py`;
   Ruling F-3): ke origin lain hanya origin yang terkirim, jadi token di path atau query tidak pernah keluar lewat
   `Referer`.
 - **Email hanya ke alamat terverifikasi**, dibaca ulang dari `users` tepat sebelum mengirim (email diganti sesudah
   terbit tidak mengirim ke alamat baru yang belum terverifikasi). Email laporan tanpa nominal; PDF ber-AES-256 dengan kata
   sandi laporan user.
-- **Log tanpa alamat**: lihat bagian "Email laporan"; cek operasional di checklist deploy (`grep -c @` → 0).
+- **Access log uvicorn tanpa token** (11 Nov 2026, `app/core/log_akses.py`): filter di logger `uvicorn.access` menulis
+  nilai parameter query `token` dan `code` sebagai `***` (`/auth/verifikasi-email`, `/laporan/berhenti-email`,
+  `/auth/tg-login`, `/household/join`, `/auth/cms-oauth/callback`), juga nilai parameter apa pun yang memuat alamat
+  email (mis. `/admin/users?search=`). Path, nama parameter, dan parameter lain tetap. Dipasang saat `app.main` dimuat;
+  bila penyamaran sendiri galat, seluruh query dibuang dan baris log tetap terbit. Rahasia baru lewat query: tambahkan
+  namanya ke `PARAM_RAHASIA`. Log akses **nginx** di depan API dan web tidak lewat filter ini (bagian Batasan).
+- **Log tanpa alamat**: lihat bagian "Email laporan" (semua pengirim email, bukan hanya laporan). Galat SQL yang tak
+  tertangani juga tanpa nilai parameter kueri (`hide_parameters` di `app/core/database.py`, menyala di luar
+  `APP_ENV=development`): traceback di journal tidak memuat alamat email atau keterangan transaksi. Cek operasional di
+  AGENTS.md, checklist "Log tanpa token dan alamat email" (`grep -c @` → 0).
 
 ## Batasan yang diketahui
 
@@ -422,10 +446,17 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
 - **Tautan verifikasi dibuka saat login di akun lain** (mis. browser bersama): yang diverifikasi user pada token, bukan
   yang sedang login, tetapi pesan `?email_verifikasi=` tampil di Pengaturan akun yang sedang login (pesannya hanya dari
   parameter URL). Baris status di kartu tetap menunjukkan status akun yang dilihat.
-- **Token ada di log akses:** nginx dan uvicorn mencatat URL lengkap, termasuk `?token=`; siapa pun yang bisa membaca log
-  itu bisa memakai tautannya. Token verifikasi kedaluwarsa dalam 24 jam dan hanya memverifikasi alamat yang memang
-  tercatat di akun itu; token berhenti tidak kedaluwarsa, tetapi hanya bisa mematikan email laporan (menyalakannya lagi
-  hanya dari Pengaturan).
+- **Token masih ada di log akses nginx** sampai langkah manual dijalankan: access log uvicorn sudah menyamarkannya
+  (bagian Keamanan), tetapi nginx (HestiaCP) di depan `api.jatahku.com` dan `jatahku.com` mencatat URL lengkap, termasuk
+  `?token=` tautan email ini dan halaman `/reset-password`, `/hapus-akun`, `/auth/tg`. Konfigurasi nginx tidak ada di
+  repo; langkahnya (format log tanpa query, pembersihan log lama) ada di AGENTS.md, checklist "Log tanpa token dan
+  alamat email", dan dijalankan pemilik server. Token verifikasi kedaluwarsa dalam 24 jam dan hanya memverifikasi alamat
+  yang memang tercatat di akun itu; token berhenti tidak kedaluwarsa, tetapi hanya bisa mematikan email laporan
+  (menyalakannya lagi hanya dari Pengaturan). **Baris lama** (sebelum 11 Nov 2026) di journal dan log nginx masih
+  memuat token dan alamat sampai dibersihkan atau terputar.
+- **Access log uvicorn hanya menyamarkan query.** Rahasia di path, header, atau badan tidak pernah dicatat uvicorn;
+  parameter query sensitif yang namanya bukan `token`/`code` dan nilainya tidak memuat `@` tidak tersamar sampai
+  namanya ditambahkan ke `PARAM_RAHASIA` (`app/core/log_akses.py`).
 - **Tombol ditekan orang yang tidak meminta:** pemilik alamat yang menerima email verifikasi yang tidak pernah dimintanya
   (mis. akun didaftarkan orang lain dengan alamatnya) lalu tetap menekan "Verifikasi email" memverifikasi alamat itu, dan
   laporan akun tersebut mulai dikirim ke sana; emailnya meminta mengabaikan bila tidak meminta. Pemindai tautan yang
@@ -526,6 +557,10 @@ bertambah (`openapi_cek`). Nama tidak bentrok dengan rencana Buku Usaha (`/p/buk
   GET/POST terpisah), serta tambahan di `test_laporan_api` (PATCH, berhenti email GET/POST, batas frekuensi, header
   halaman bertoken lewat `app.main`), `test_laporan_job` (status awal, antrean dalam job), `test_email_smtp_config`
   (`SMTP_TIMEOUT`), dan `test_google_auth`.
+- Log tanpa token dan alamat (11 Nov 2026): `test_log_akses` (penyamaran query; filter terpasang di `uvicorn.access`
+  sesudah `app.main` diimpor), `test_log_tanpa_alamat` (semua pengirim `email_service` dan email notifikasi, sukses dan
+  gagal, tanpa `@`), `test_log_parameter_sql` (`hide_parameters`), serta `test_verifikasi_email` dan
+  `test_verifikasi_email_api` (sidik HMAC, token tanpa alamat, token bentuk lama ditolak, alamat halaman dari database).
 - Frontend: `node --test src/lib/*.test.js src/native/*.test.js` (`laporanView` termasuk halaman daftar, banner, status
   email, pesan verifikasi; `laporanFormat`, `exportPeriod`), lalu `npm run build`.
 - PostgreSQL 16 nyata (4 Nov 2026, klaster sementara): `cek-migrasi.sh`; perbandingan skema migrasi vs lifespan; dan
