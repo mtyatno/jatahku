@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
+import { bacaToken, hapusTokenDariUrl } from '../lib/urlToken';
 
 // Halaman permintaan hapus akun tanpa login (syarat Google Play: URL hapus akun di web).
 // Tanpa token: isi email → link konfirmasi dikirim. Dengan token (dari email): konfirmasi → hapus.
@@ -35,8 +36,9 @@ function WhatIsDeleted() {
 
 export default function HapusAkun() {
   const { user, logout } = useAuth();
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // Token dibaca sekali lalu dihapus dari address bar (riwayat peramban, tangkapan layar); lihat lib/urlToken.js.
+  const [token] = useState(() => bacaToken(window.location.search));
+  useEffect(() => { hapusTokenDariUrl(window); }, []);
 
   const [email, setEmail] = useState('');
   const [confirm, setConfirm] = useState('');

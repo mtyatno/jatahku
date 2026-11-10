@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { bacaToken, hapusTokenDariUrl } from '../lib/urlToken';
 
 export default function TgLogin() {
   const [status, setStatus] = useState('loading');
   const navigate = useNavigate();
   const { loginWithTgToken } = useAuth();
+  // Token dibaca sekali (initializer) lalu dihapus dari address bar; lihat lib/urlToken.js.
+  const [token] = useState(() => bacaToken(window.location.search));
 
   useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get('token');
+    hapusTokenDariUrl(window);
     if (!token) {
       setStatus('invalid');
       return;
