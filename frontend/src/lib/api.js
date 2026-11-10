@@ -37,7 +37,7 @@ class ApiClient {
   }
 
   async request(path, options = {}) {
-    const { ruangKeluarga = false, ...fetchOptions } = options;
+    const { ruangKeluarga = false, ruang = null, ...fetchOptions } = options;
     options = fetchOptions;
     const isFormData = options.body instanceof FormData;
     // Ruang yang sedang dibuka (Plugin R4): header dikirim di setiap permintaan; server yang memutuskan.
@@ -46,7 +46,9 @@ class ApiClient {
     const dasar = isFormData
       ? { ...options.headers }
       : { 'Content-Type': 'application/json', ...options.headers };
-    const headers = ruangKeluarga ? dasar : withRuangHeader(dasar);
+    // `ruang` (review #201 T6): ruang yang dikunci saat form dibuka, supaya ganti ruang di tab lain tidak membelokkan
+    // kiriman form yang sudah terbuka.
+    const headers = ruangKeluarga ? dasar : ruang ? { ...dasar, [RUANG_HEADER]: ruang } : withRuangHeader(dasar);
     if (this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -93,9 +95,9 @@ class ApiClient {
 
   // Anggota, undangan, batasan, persetujuan, log (Plugin R5–R6, 04-kontrak-api.md §2). Ruang dari path; server
   // memeriksa peran owner/admin. Semua mengembalikan { ok, status, data } (data = JSON atau { detail }).
-  async ruangKirim(path, method = 'GET', body = undefined) {
+  async ruangKirim(path, method = 'GET', body = undefined, { ruang = null } = {}) {
     try {
-      const res = await this.request(path, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+      const res = await this.request(path, { method, ruang, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
       const data = res.status === 204 ? null : await res.json().catch(() => ({}));
       return { ok: res.ok, status: res.status, data };
     } catch {
@@ -155,8 +157,9 @@ class ApiClient {
     return this.ruangKirim(`/ruang/${rid}/plugins/${pluginId}/${aksi}`, 'POST', body);
   }
   // Endpoint plugin (Plugin U1, 04-kontrak-api.md §5 "Endpoint plugin"): ruang dari header; { ok, status, data }.
-  pluginRute(pluginId, path, method = 'GET', body = undefined) {
-    return this.ruangKirim(`/p/${pluginId}${path}`, method, body);
+  // `opsi.ruang`: kunci ruang tujuan (form yang menulis, review #201 T6); tanpa itu = ruang aktif saat dikirim.
+  pluginRute(pluginId, path, method = 'GET', body = undefined, opsi = {}) {
+    return this.ruangKirim(`/p/${pluginId}${path}`, method, body, opsi);
   }
   // Unduh data plugin (U1): lewat `api` (Authorization + ruang), bukan <a href>. Mengembalikan { ok, status, data }.
   async unduhEksporPlugin(rid, pluginId, format) {

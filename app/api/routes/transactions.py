@@ -320,6 +320,10 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     tambahan = {}
     if req.tambahan:
         from app.plugins.host import titik
+        # Transaksi yang disembunyikan dari anggota lain (amplop pribadi, `is_private`) tidak boleh membawa isian
+        # plugin: data plugin terbaca owner/admin ruang lewat ekspor dan laporan (review #201 temuan T3).
+        if envelope.owner_id is not None or req.is_private:
+            raise titik.field_tidak_sah("Isian tambahan tidak tersedia untuk pengeluaran pribadi.")
         tambahan = await titik.periksa_field(db, user, hid, "transaction", req.tambahan)
     # R5: batasan karyawan di ruang usaha (jenis, amplop, foto nota); di atas batas nominal → draf, bukan transaksi.
     batasan = await peran.batasan_karyawan(db, user.id, hid)

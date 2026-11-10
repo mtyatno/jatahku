@@ -147,6 +147,7 @@ test('penjualan: amplop bawaan, pesan galat, rupiah', () => {
   assert.equal(amplopBawaanNonPenjualan([{ envelope_id: 'x', nama: 'Kas' }]), '');
   assert.equal(pesanUsahaGalat(422, { kode: 'alokasi_belum_diatur' }).perlu, 'alokasi');
   assert.equal(pesanUsahaGalat(403, { kode: 'tanpa_izin' }).perlu, 'izin');
+  assert.match(pesanUsahaGalat(409, { kode: 'sedang_diproses' }).teks, /masih diproses/);
   assert.equal(pesanUsahaGalat(422, { kode: 'nilai_tidak_sah', detail: 'Tanggal salah.' }).teks, 'Tanggal salah.');
   assert.equal(rupiah('1000001.00'), 'Rp1.000.001');
 });

@@ -243,6 +243,7 @@ export function pesanUsahaGalat(status, body) {
   if (kode === 'tanpa_izin') return { teks: 'Buku Usaha perlu izin baru untuk mencatat pemasukan. Setujui di Fitur Tambahan.', perlu: 'izin' };
   if (kode === 'plugin_tidak_aktif') return { teks: 'Buku Usaha tidak aktif di ruang ini. Buka Fitur Tambahan untuk melanjutkannya.', perlu: 'fitur' };
   if (kode === 'khusus_admin') return { teks: 'Hanya pemilik dan admin ruang yang bisa mencatat ini.' };
+  if (kode === 'sedang_diproses') return { teks: 'Catatan ini masih diproses. Tunggu sebentar, lalu cek daftar pemasukan.' };
   if (kode === 'alokasi_bukan_100') return { teks: detail || 'Total alokasi harus 100%.' };
   return { teks: detail || 'Belum berhasil. Coba lagi sebentar.' };
 }

@@ -8,7 +8,7 @@ import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 import FundEnvelopeModal from './FundEnvelopeModal';
 import IsianPlugin from '../plugins/IsianPlugin';
-import { bodyTambahan } from '../lib/pluginHost';
+import { bodyTambahan, isianBolehUntuk } from '../lib/pluginHost';
 
 // Server menolak karena limit harian (pesan memuat "limit harian") → tawarkan
 // "Catat, naikkan limit hari ini" — sama dengan tombol di bot Telegram.
@@ -113,6 +113,7 @@ export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [
 
   const selectedEnv = envelopes.find(e => e.id === envelopeId);
   const showPrivate = shouldShowPrivateToggle(memberCount, selectedEnv);
+  const tampilIsian = isianPlugin.length > 0 && isianBolehUntuk(selectedEnv, showPrivate && isPrivate);
 
   const submit = async (extra = {}) => {
     if (voiceBusy) return;
@@ -120,7 +121,7 @@ export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [
     if (!payload) {
       if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
       payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, client_ref: newRef(), ...extra };
-      const tambahan = bodyTambahan(isianPlugin, isian);
+      const tambahan = tampilIsian ? bodyTambahan(isianPlugin, isian) : null;
       if (tambahan) payload.tambahan = tambahan;
       sentRef.current = payload;
     }
@@ -222,7 +223,7 @@ export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [
           {onCancel && <button type="button" onClick={onCancel} className="btn-outline">Batal</button>}
         </div>
       </div>
-      {isianPlugin.length > 0 && (
+      {tampilIsian && (
         <IsianPlugin fields={isianPlugin} nilai={isian} onChange={setIsian} disabled={saving || uncertain} />
       )}
       {showPrivate && (

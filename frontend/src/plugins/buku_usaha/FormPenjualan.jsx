@@ -4,9 +4,15 @@
 // Server yang membagi dan menyimpan (`POST /p/buku_usaha/penjualan`: pemasukan inti dan jenisnya dalam satu commit);
 // pratinjau dari `POST /p/buku_usaha/penjualan/pratinjau` memakai hitungan yang sama, jadi angka di layar = yang dicatat.
 // Dibuka dari menu Catat ▾ dan FAB (Layout, `aksi['buku_usaha.penjualan']`); props { onDone, onCancel }.
+//
+// Review #201: ruang dikunci saat form dibuka (T6; ganti ruang di tab lain tidak membelokkan kiriman), dan setiap
+// kiriman membawa `client_ref` yang sama selama isiannya tidak berubah (T5; kirim ulang sesudah koneksi putus tidak
+// mencatat dua kali).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { newRef } from '../../lib/ref';
+import { getRuangAktif } from '../../lib/ruangAktif';
 import { Icon } from '../../components/Icon';
 import {
   JENIS_PEMASUKAN, PLUGIN_ID, amplopBawaanNonPenjualan, digitSaja, pesanUsahaGalat, rapikanKontak, rupiah,
@@ -41,12 +47,14 @@ export default function FormPenjualan({ onDone, onCancel }) {
   const [pesan, setPesan] = useState(null);
   const [sibuk, setSibuk] = useState(false);
   const urutPratinjau = useRef(0);
+  const ruang = useMemo(() => getRuangAktif(), []);
+  const refKirim = useRef(null);
 
   useEffect(() => {
     let live = true;
     Promise.all([
-      api.pluginRute(PLUGIN_ID, '/kontak?peran=pelanggan'),
-      api.pluginRute(PLUGIN_ID, '/alokasi'),
+      api.pluginRute(PLUGIN_ID, '/kontak?peran=pelanggan', 'GET', undefined, { ruang }),
+      api.pluginRute(PLUGIN_ID, '/alokasi', 'GET', undefined, { ruang }),
     ]).then(([k, a]) => {
       if (!live) return;
       if (k.ok) setPelanggan(urutkanKontak(rapikanKontak(k.data)));
@@ -68,7 +76,7 @@ export default function FormPenjualan({ onDone, onCancel }) {
     const nomor = ++urutPratinjau.current;
     const t = setTimeout(async () => {
       const body = { jumlah, jenis: form.jenis, ...(form.jenis !== 'penjualan' ? { envelope_id: form.envelope_id } : {}) };
-      const r = await api.pluginRute(PLUGIN_ID, '/penjualan/pratinjau', 'POST', body);
+      const r = await api.pluginRute(PLUGIN_ID, '/penjualan/pratinjau', 'POST', body, { ruang });
       if (nomor !== urutPratinjau.current) return;
       setPratinjau(r.ok ? { pembagian: Array.isArray(r.data?.pembagian) ? r.data.pembagian : [] }
         : { galat: pesanUsahaGalat(r.status, r.data) });
@@ -76,7 +84,10 @@ export default function FormPenjualan({ onDone, onCancel }) {
     return () => clearTimeout(t);
   }, [form.jumlah, form.jenis, form.envelope_id]);
 
-  const ubah = (k) => (e) => setForm(f => ({ ...f, [k]: k === 'jumlah' ? digitSaja(e.target.value) : e.target.value }));
+  const ubah = (k) => (e) => {
+    refKirim.current = null;              // isian berubah = catatan baru
+    setForm(f => ({ ...f, [k]: k === 'jumlah' ? digitSaja(e.target.value) : e.target.value }));
+  };
   const jenis = JENIS_PEMASUKAN.find(j => j.id === form.jenis) || JENIS_PEMASUKAN[0];
 
   const kirim = async (e) => {
@@ -87,13 +98,15 @@ export default function FormPenjualan({ onDone, onCancel }) {
     if (!v.ok) return;
     setSibuk(true);                       // satu kiriman sekaligus: tombol terkunci sampai jawaban datang
     setPesan(null);
-    const r = await api.pluginRute(PLUGIN_ID, '/penjualan', 'POST', v.body);
+    if (!refKirim.current) refKirim.current = newRef();
+    const r = await api.pluginRute(PLUGIN_ID, '/penjualan', 'POST', { ...v.body, client_ref: refKirim.current }, { ruang });
     setSibuk(false);
     if (!r.ok) {
       setPesan({ ...pesanUsahaGalat(r.status, r.data), galat: true });
       return;
     }
     const n = Array.isArray(r.data?.pembagian) ? r.data.pembagian.length : 0;
+    if (r.data?.ulang) { onDone?.(`${jenis.label} ${rupiah(r.data?.jumlah)} sudah tercatat sebelumnya.`); return; }
     onDone?.(`${jenis.label} ${rupiah(r.data?.jumlah)} dicatat${n > 1 ? ` dan dibagi ke ${n} amplop` : ''}.`);
   };
 

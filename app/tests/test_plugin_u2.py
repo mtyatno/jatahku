@@ -683,6 +683,134 @@ class U2DbTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([a["envelope"] for a in r.json()["allocations"]], ["Makan", "Tabungan"])
         self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 0)
 
+    # ── review keamanan PR #201 ──
+    async def test_review_t1_meta_tidak_kena_batas_baris_ruang(self):
+        """T1: tabel pendamping 1:1 (income_meta, txn_meta) tidak menolak catatan sesudah batas per ruang."""
+        self.assertTrue(data_plugin.pendamping_inti(BukuUsahaTxnMeta.__table__))
+        self.assertTrue(data_plugin.pendamping_inti(BukuUsahaIncomeMeta.__table__))
+        from app.models.models import BukuUsahaAlokasi, BukuUsahaKontak
+        self.assertFalse(data_plugin.pendamping_inti(BukuUsahaKontak.__table__))
+        self.assertFalse(data_plugin.pendamping_inti(BukuUsahaAlokasi.__table__))
+        await self.pasang_aktif()
+        await self.atur_a3()
+        with patch.object(data_plugin, "BATAS_BARIS_RUANG", 2):
+            for _ in range(3):
+                await self.p("POST", "/penjualan", status=201, json={"jumlah": 1000})
+                self.assertEqual((await self.catat({"buku_usaha": {"akun": "Sewa"}})).status_code, 201)
+            self.current = self.pemilik
+            await self.kontak("A", "pelanggan")
+            await self.kontak("B", "pelanggan")
+            r = await self.p("POST", "/kontak", json={"nama": "C", "peran": "pelanggan"})
+            self.assertEqual(r.status_code, 422, r.text)                   # kontak tetap dibatasi
+        self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 3)
+        self.assertEqual(await self.hitung(BukuUsahaTxnMeta), 3)
+
+    async def test_review_t2_angka_raksasa_422(self):
+        await self.pasang_aktif()
+        await self.atur_a3()
+        for metode, path, body in (("POST", "/penjualan", {"jumlah": "1e30"}),
+                                   ("POST", "/penjualan", {"jumlah": 1e300}),
+                                   ("POST", "/penjualan/pratinjau", {"jumlah": "1e26"}),
+                                   ("PUT", "/alokasi", {"aturan": [{"envelope_id": str(self.env["Bahan"]),
+                                                                    "persen": "1e30"}]})):
+            r = await self.p(metode, path, json=body)
+            self.assertEqual((r.status_code, self.kode(r)), (422, "nilai_tidak_sah"), body)
+        async with self.Session() as db:
+            ctx = await self._ctx(db)
+            with self.assertRaises(NilaiTidakSah):
+                await ctx.catat_pemasukan(jumlah=D("1e30"), keterangan="x",
+                                          pembagian=[(self.env["Bahan"], D("1e30"))])
+        self.assertEqual(await self.hitung(Income, Income.household_id == self.usaha), 1)
+
+    async def test_review_t3_tanpa_isian_untuk_pengeluaran_pribadi(self):
+        await self.pasang_aktif()
+        async with self.Session() as db:
+            inc = Income(household_id=self.usaha, user_id=self.pemilik.id, amount=D("50000"), description="m",
+                         income_date=self.today)
+            db.add(inc)
+            await db.flush()
+            db.add(Allocation(income_id=inc.id, envelope_id=self.pribadi, amount=D("50000")))
+            await db.commit()
+        sebelum = await self.hitung(Transaction)
+        r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, envelope=self.pribadi)
+        self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
+        r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, is_private=True)
+        self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
+        self.assertEqual(await self.hitung(Transaction), sebelum)
+        self.assertEqual(await self.hitung(BukuUsahaTxnMeta), 0)
+        # Tanpa isian, pengeluaran pribadi tetap seperti biasa.
+        self.assertEqual((await self.catat(None, envelope=self.pribadi)).status_code, 201)
+
+    async def test_review_t5_penjualan_idempoten(self):
+        await self.pasang_aktif()
+        await self.atur_a3()
+        pelanggan = await self.kontak("Bu Sari", "pelanggan")
+        body = {"jumlah": 250000, "kontak_id": pelanggan["id"], "client_ref": "ref-u2-1"}
+        r1 = await self.p("POST", "/penjualan", status=201, json=body)
+        self.assertFalse(r1.json()["ulang"])
+        r2 = await self.p("POST", "/penjualan", status=200, json=body)
+        out = r2.json()
+        self.assertTrue(out["ulang"])
+        self.assertEqual((out["income_id"], out["jenis"], out["kontak"]["nama"], out["jumlah"]),
+                         (r1.json()["income_id"], "penjualan", "Bu Sari", "250000.00"))
+        self.assertEqual(sum(D(b["jumlah"]) for b in out["pembagian"]), D("250000"))
+        self.assertEqual(await self.hitung(Income, Income.household_id == self.usaha), 2)   # modal awal + satu
+        self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 1)
+        async with self.Session() as db:
+            self.assertEqual(len((await db.execute(select(PluginAuditLog).where(
+                PluginAuditLog.action == "inti:pemasukan"))).scalars().all()), 1)
+        # Ref lain = catatan baru; ref tidak sah ditolak.
+        await self.p("POST", "/penjualan", status=201, json={**body, "client_ref": "ref-u2-2"})
+        for salah in ("", "x" * 65, "ada spasi", 5):
+            r = await self.p("POST", "/penjualan", json={**body, "client_ref": salah})
+            self.assertEqual((r.status_code, self.kode(r)), (422, "nilai_tidak_sah"), salah)
+        # Ref yang sama di ruang lain bukan kiriman ulang.
+        await self.pasang_aktif(self.usaha2)
+        async with self.Session() as db:
+            bahan2 = (await db.execute(select(Envelope).where(Envelope.id == self.env_lain))).scalar_one()
+        await self.p("PUT", "/alokasi", hid=self.usaha2, status=200,
+                     json={"aturan": [{"envelope_id": str(bahan2.id), "persen": 100}]})
+        r = await self.p("POST", "/penjualan", hid=self.usaha2, status=201,
+                         json={"jumlah": 1000, "client_ref": "ref-u2-1"})
+        self.assertFalse(r.json()["ulang"])
+
+    async def test_review_t5_gagal_melepas_ref_dan_sedang_diproses(self):
+        await self.pasang_aktif()
+        await self.atur_a3()
+        asli = data_plugin.tambah
+
+        async def gagal(k, nama, nilai):
+            if nama == "income_meta":
+                raise RuntimeError("disk penuh")
+            return await asli(k, nama, nilai)
+        body = {"jumlah": 100000, "client_ref": "ref-gagal"}
+        with patch.object(data_plugin, "tambah", gagal):
+            r = await self.p("POST", "/penjualan", json=body)
+        self.assertEqual(r.status_code, 500, r.text)
+        r = await self.p("POST", "/penjualan", status=201, json=body)       # ref dilepas: kirim ulang tercatat sekali
+        self.assertFalse(r.json()["ulang"])
+        self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 1)
+        # Kiriman yang masih diproses (kunci "pending") → 409, tanpa menulis.
+        from app.services import idempotency
+        await idempotency.reserve(self.pemilik.id, "ref-proses", scope=f"pluginref:buku_usaha:{self.usaha}")
+        r = await self.p("POST", "/penjualan", json={**body, "client_ref": "ref-proses"})
+        self.assertEqual((r.status_code, self.kode(r)), (409, "sedang_diproses"))
+        self.assertEqual(await self.hitung(BukuUsahaIncomeMeta), 1)
+
+    async def test_review_t5_ref_pemasukan_terhapus_dicatat_lagi(self):
+        await self.pasang_aktif()
+        await self.atur_a3()
+        body = {"jumlah": 5000, "client_ref": "ref-hapus"}
+        iid = (await self.p("POST", "/penjualan", status=201, json=body)).json()["income_id"]
+        async with self.Session() as db:
+            import uuid as _u
+            from sqlalchemy import delete
+            await db.execute(delete(Allocation).where(Allocation.income_id == _u.UUID(iid)))
+            await db.execute(delete(Income).where(Income.id == _u.UUID(iid)))      # meta ikut (CASCADE)
+            await db.commit()
+        r = await self.p("POST", "/penjualan", status=201, json=body)
+        self.assertNotEqual(r.json()["income_id"], iid)
+
 
 if __name__ == "__main__":
     unittest.main()

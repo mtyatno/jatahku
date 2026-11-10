@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  bodyIzinBaru, bodyTambahan, fieldUntuk, izinBaru,
+  bodyIzinBaru, bodyTambahan, fieldUntuk, isianBolehUntuk, izinBaru,
   KONTRIBUSI_KOSONG, adaKartuPlugin, adaMenuPlugin, aksiApi, aksiCatatPlugin, aksiDariKunci, bodyPasang,
   bodyTambahKartu, butuhBelumAktif, formatEkspor, formatNilai, halamanUtama, idDariRute, kontribusiUntuk, menuPlugin,
   namaBerkasUnduhan, namaPlugin, pesanGalat, rapikanKontribusi, selTabel, tawaranKartu, tombolUntuk, urutkanKatalog,
@@ -223,4 +223,13 @@ test('field form plugin per target dan body tambahan (U2)', () => {
   assert.deepEqual(bodyTambahan(f, { 'bu.akun': 'Sewa', 'bu.pemasok': 'id-1' }), { bu: { pemasok: 'id-1', akun: 'Sewa' } });
   assert.deepEqual(bodyTambahan(f, { 'bu.akun': 'Hiburan', 'bu.pemasok': 'id-1' }), { bu: { pemasok: 'id-1' } });
   assert.deepEqual(fieldUntuk(null, 'transaction'), []);
+});
+
+test('isian plugin tidak untuk pengeluaran pribadi (review #201 T3)', () => {
+  assert.equal(isianBolehUntuk({ id: 'a', owner_id: null }, false), true);
+  assert.equal(isianBolehUntuk(undefined, false), true);
+  assert.equal(isianBolehUntuk({ id: 'a', owner_id: 'u1' }, false), false);
+  assert.equal(isianBolehUntuk({ id: 'a', is_personal: true }, false), false);      // bentuk /envelopes/summary
+  assert.equal(isianBolehUntuk({ id: 'a', is_personal: false }, false), true);
+  assert.equal(isianBolehUntuk({ id: 'a', owner_id: null }, true), false);
 });

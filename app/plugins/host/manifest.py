@@ -50,6 +50,9 @@ IZIN: dict[str, str] = {
     "reports:create": "Membuat laporan",
 }
 IZIN_TERLARANG_T1 = ("ai:analyze", "network:")   # ADR-P14; network:<domain> butuh ADR baru
+# Izin yang mengubah data atau mengirim sesuatu. Plugin dengan salah satunya hanya bisa dipasang/dipulihkan dengan
+# daftar izin yang dilihat user (`izin`), tidak lewat klien lama tanpa daftar (review PR #201 temuan T4).
+IZIN_TULIS = frozenset(k for k in IZIN if not k.endswith(":read"))
 
 # Perintah dan pola callback bot inti (`app/bot/handlers.py` `bot_commands()`/`bot_callbacks()`). Disalin sebagai
 # konstanta supaya validator tidak mengimpor bot; `test_plugin_host` gagal bila keduanya berbeda. Plugin tidak boleh

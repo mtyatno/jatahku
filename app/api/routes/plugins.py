@@ -291,10 +291,10 @@ async def rute_plugin(
     from app.services import setelah_commit
     try:
         hasil = await titik.jalankan_rute(db, user, hid, plugin_id, request.method, "/" + path, query, body)
+        await db.commit()        # tulisan plugin (ctx.data) dan tulisan inti (ctx.catat_pemasukan, U2) sekaligus
     except BaseException:
-        setelah_commit.buang(db)
+        await setelah_commit.batal(db)       # mis. lepas kunci `client_ref` (review #201 T5)
         raise
-    await db.commit()            # tulisan plugin (ctx.data) dan tulisan inti (ctx.catat_pemasukan, U2) sekaligus
     await setelah_commit.jalankan(db)
     if hasil.status == 204:
         return Response(status_code=204)
