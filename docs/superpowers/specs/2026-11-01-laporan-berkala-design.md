@@ -136,6 +136,25 @@ dijabarkan di `docs/laporan-berkala.md` bagian "Email laporan".
 - **F-6, verifikasi lewat Google juga menghidupkan lagi laporan yang dilewati** (keputusan rencana 2): login atau tautan
   Google yang memverifikasi alamat akun yang sudah ada menjalankan `hidupkan_lagi` seperti tombol "Verifikasi email".
 
+## Penyesuaian sesudah tayang (10 Nov 2026)
+
+Pemilik menguji email laporan di produksi dan meminta badan email bergaya pernyataan resmi (rujukan: e-statement bank
+dan desain teman), tetap **tanpa nominal** (6b). Rincian teks persis: `docs/laporan-berkala.md` bagian "Email laporan".
+- **Bahasa formal:** "Yth. Bapak/Ibu {nama}," dan "Anda"; pembuka "Laporan keuangan periodik Anda untuk periode
+  {27 Sep – 26 Okt 2026} telah terbit." Email verifikasi tetap memakai "kamu".
+- **Kotak RINGKASAN PERIODE:** anggaran terpakai (%), amplop aman/lewat batas, tren pengeluaran dibanding periode
+  sebelumnya, dan rekor hari beruntun mencatat (`data.sorotan.beruntun_terpanjang`, tampil bila ≥ 2). Sorotan berupa
+  kalimat tidak lagi dimuat. Baris tanpa data tidak tampil.
+- **Kotak PDF:** menjelaskan bahwa PDF dibuka dengan kata sandi laporan yang diatur sendiri di Pengaturan → Laporan dan
+  tidak pernah dikirim lewat email. Tidak ada pola atau contoh kata sandi (beda dengan bank yang memakai tanggal lahir):
+  kata sandi laporan dipilih user, dan contoh mendorong kata sandi yang mudah ditebak.
+- **Tombol** "Buka Laporan di Jatahku →" ke halaman laporan itu (`/laporan/<id>`), bukan Beranda.
+- **Penutup dan Keterangan:** catatan email otomatis, tanpa tanda tangan, "bukan pemilik akun → abaikan dan hapus", dan
+  alamat bantuan hi@jatahku.com (dipilih pemilik). Kaki menambah "© {tahun} Jatahku.com".
+- **`email_template`:** tombol kini `div` di sel isi (sebelumnya `<tr>` yang tersasar di dalam `<td>`, sehingga parser
+  HTML memindahkannya ke luar sel), ditambah `penutup_html` (di bawah tombol) dan `hak_cipta` (baris terakhir kaki).
+  Berlaku untuk semua email; isi email lain tidak berubah.
+
 ## 1. Tujuan dan keputusan
 
 **Tujuan.** Setiap periode anggaran, user mendapat refleksi keuangan yang enak dibaca — "hadiah" yang membuatnya
@@ -368,7 +387,8 @@ Dikirim bila email terverifikasi, `email_on`, dan laporan belum pernah dikirim.
 - **Subjek:** "Laporan Oktober 2026 · Jatahku" (judul laporan), tanpa angka.
 - **Body** (`email_template` + `h()`): persentase anggaran terpakai, jumlah amplop aman dan lewat batas, tren
   dibanding periode lalu (naik/turun %), satu sorotan, tombol "Lihat laporan" (`/laporan/<id>`). **Tanpa nominal
-  rupiah** — dirakit dari `data.email` saat terbit.
+  rupiah** — dirakit dari `data.email` saat terbit. (Sejak 10 Nov 2026 bergaya pernyataan resmi: lihat "Penyesuaian
+  sesudah tayang".)
 - **Kata sandi diatur:** lampiran PDF berpassword (`MIMEMultipart("mixed")`, pola `send_data_backup_email`).
 - **Kata sandi belum diatur:** tanpa lampiran, dengan ajakan "Atur kata sandi laporan untuk menerima PDF".
 - Kuartalan dan tahunan: pola yang sama, satu email per laporan.

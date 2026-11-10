@@ -240,15 +240,28 @@ Tautan yang tidak perlu atau tidak bisa dikonfirmasi tidak menampilkan halaman: 
 akun juga memverifikasi (Google menjamin alamatnya). Mengganti email lewat jalur ORM mana pun mengosongkan verifikasi
 (bagian Model data).
 
-**Isi email laporan** (`surel.isi_email_laporan`, fungsi murni; semua isi dari user atau data lewat `email_service.h`):
-subjek `"{judul} · Jatahku"`; sapaan `"Hai {nama},"` dan `"{judul} sudah terbit."`; baris `"Anggaran terpakai: {persen}%"`
-(null → `—`), `"Amplop aman: {n} · Lewat batas: {m}"`, tren (`"Pengeluaran turun 12% dibanding periode lalu"`, `"… naik …"`,
-`"Pengeluaran sama dengan periode lalu"`; null → tanpa baris) dan `data.email.sorotan` apa adanya; satu baris lampiran
-(di bawah); tombol "Lihat laporan" → `{APP_URL}/laporan/{id}`; kaki "Tidak ingin menerima laporan lewat email? Berhenti
-berlangganan". Hanya `data.judul` dan `data.email` yang dibaca dari `data`. Header `List-Unsubscribe` (tautan berhenti dan
-`mailto:`) dan `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). Baris lampiran: `terlampir` "PDF laporan
-terlampir. Buka dengan kata sandi laporanmu."; `belum_diatur` "Atur kata sandi laporan di Pengaturan → Laporan untuk
-menerima PDF di email berikutnya."; `tidak_tersedia` "PDF laporan bisa diunduh di aplikasi.". PDF dibuat dengan
+**Isi email laporan** (`surel.isi_email_laporan`, fungsi murni; semua isi dari user atau data lewat `email_service.h`),
+bergaya pernyataan resmi (sejak 10 Nov 2026, sesudah tayang): subjek `"{judul} · Jatahku"`; judul laporan sebagai kepala;
+sapaan `"Yth. Bapak/Ibu {nama},"` (nama kosong → `"Yth. Bapak/Ibu,"`); pembuka `"Laporan keuangan periodik Anda untuk
+periode {27 Sep – 26 Okt 2026} telah terbit. "` + `"Rincian lengkapnya tersedia dalam berkas PDF terlampir."` (`terlampir`)
+atau `"Rincian lengkapnya dapat dilihat di aplikasi."` (lainnya); periode tak terbaca → `"Laporan keuangan periodik Anda
+telah terbit. …"` dan tanpa baris ©. Kotak **RINGKASAN PERIODE**: `"Anggaran terpakai: {persen}%"` (null → `—`),
+`"Amplop aman: {n} · Lewat batas: {m}"`, tren `"Pengeluaran: naik/turun {x}% dibanding periode sebelumnya"` atau
+`"Pengeluaran: sama dengan periode sebelumnya"` (null → tanpa baris), dan `"Rekor mencatat: {n} hari berturut-turut"` dari
+`data.sorotan.beruntun_terpanjang` (hanya bila ≥ 2). Kotak PDF (judul + isi, per status lampiran, di bawah). Tombol
+"Buka Laporan di Jatahku →" → `{APP_URL}/laporan/{id}`. Penutup: "(Email ini dibuat secara otomatis oleh sistem, mohon
+tidak membalas email ini.)" dan **Keterangan** (1. dibuat secara komputerisasi tanpa tanda tangan; 2. bukan pemilik akun
+→ abaikan dan hapus email beserta lampirannya; 3. "Untuk bantuan, hubungi hi@jatahku.com." — `surel.KONTAK_BANTUAN`).
+Kaki: "Tidak ingin menerima laporan lewat email? Berhenti berlangganan", lalu baris "© {tahun akhir periode}
+Jatahku.com". Yang dibaca dari `data` hanya `judul`, `periode`, `email` (persen, hitungan amplop, tren) dan
+`sorotan.beruntun_terpanjang`: tidak ada nominal, dan kata sandi tidak pernah disebut atau dicontohkan (kata sandi laporan
+dipilih sendiri oleh user). Header `List-Unsubscribe` (tautan berhenti dan `mailto:`) dan `List-Unsubscribe-Post:
+List-Unsubscribe=One-Click` (RFC 8058). Kotak PDF: `terlampir` "🔒 Membuka berkas PDF" — "Berkas PDF terlampir dilindungi
+kata sandi laporan yang Anda atur di Pengaturan → Laporan. Demi keamanan, kata sandi tidak pernah dikirim lewat email.
+Lupa kata sandi? Atur ulang di Pengaturan → Laporan, lalu unduh PDF dari halaman laporan."; `belum_diatur` "🔒 Berkas PDF"
+— "PDF belum dilampirkan karena kata sandi laporan belum diatur. Atur di Pengaturan → Laporan agar laporan berikutnya
+disertai PDF terkunci."; `tidak_tersedia` (dan kode tak dikenal) "🔒 Berkas PDF" — "PDF tidak dapat dilampirkan kali ini.
+Rincian lengkap tetap tersedia di aplikasi.". Versi teks polos memuat isi yang sama. PDF dibuat dengan
 `pdf.buat_pdf` dan kata sandi laporan user (nama berkas sama dengan unduhan). Lampiran jatuh dengan anggun
 (`lampiran_untuk`, keputusan rencana 6), sama dengan jalur unduh: token kata sandi tak terbaca atau kata sandi yang kini
 ditolak → tanpa lampiran, baris `belum_diatur` (409 di unduh); kunci server tidak ada (503 di unduh) atau galat PDF tak

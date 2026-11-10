@@ -99,18 +99,25 @@ def send_verifikasi_email(to_email: str, subject: str, html_body: str, text_body
         return False
 
 
-def email_template(title: str, body_html: str, cta_text: str = None, cta_url: str = None, footer_html: str = None):
-    """Generate branded HTML email. `title`, `cta_text`, `cta_url` = teks biasa (di-escape di sini);
-    `body_html` = HTML, jadi pemanggil wajib meng-escape isinya dengan h(). `footer_html` = HTML siap pakai
-    (pemanggil meng-escape), disisipkan di kaki di atas "Setiap rupiah ada jatahnya."."""
+def email_template(title: str, body_html: str, cta_text: str = None, cta_url: str = None, footer_html: str = None,
+                   penutup_html: str = None, hak_cipta: str = None):
+    """Generate branded HTML email. `title`, `cta_text`, `cta_url`, `hak_cipta` = teks biasa (di-escape di sini);
+    `body_html` = HTML, jadi pemanggil wajib meng-escape isinya dengan h(). `penutup_html` = HTML siap pakai di bawah
+    tombol, masih di dalam kartu; `footer_html` = HTML siap pakai di kaki, di atas "Setiap rupiah ada jatahnya.";
+    `hak_cipta` = baris terakhir kaki. Ketiganya opsional."""
     cta_block = ""
     if cta_text and cta_url:
+        # Tombol di dalam sel isi (div, bukan <tr> yang tersasar di dalam <td>), jadi ikut padding kartu dan
+        # `penutup_html` sesudahnya tetap di sel yang sama.
         cta_block = f'''
-        <tr><td style="padding:24px 0 0">
-          <a href="{h(cta_url)}" style="display:inline-block;background:#0F6E56;color:#fff;padding:12px 32px;border-radius:12px;text-decoration:none;font-weight:600;font-size:14px">{h(cta_text)}</a>
-        </td></tr>'''
+    <div style="padding:24px 0 0">
+      <a href="{h(cta_url)}" style="display:inline-block;background:#0F6E56;color:#fff;padding:12px 32px;border-radius:12px;text-decoration:none;font-weight:600;font-size:14px">{h(cta_text)}</a>
+    </div>'''
 
+    penutup_block = penutup_html or ""
     footer_block = footer_html or ""
+    hak_cipta_block = (f'<p style="margin:8px 0 0;font-size:11px;color:#B4B2A9">{h(hak_cipta)}</p>'
+                       if hak_cipta else "")
 
     return f'''<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -126,6 +133,7 @@ def email_template(title: str, body_html: str, cta_text: str = None, cta_url: st
     <h2 style="margin:0 0 16px;font-size:20px;color:#2C2C2A;font-weight:600">{h(title)}</h2>
     <div style="color:#5F5E5A;font-size:14px;line-height:1.7">{body_html}</div>
     {cta_block}
+    {penutup_block}
   </td></tr>
   <tr><td style="padding:24px 32px;border-top:1px solid #E8E8E4;text-align:center">
     {footer_block}
@@ -134,6 +142,7 @@ def email_template(title: str, body_html: str, cta_text: str = None, cta_url: st
       <a href="https://jatahku.com" style="color:#0F6E56;text-decoration:none">jatahku.com</a> · 
       <a href="https://t.me/JatahkuBot" style="color:#0F6E56;text-decoration:none">@JatahkuBot</a>
     </p>
+    {hak_cipta_block}
   </td></tr>
 </table>
 </td></tr>

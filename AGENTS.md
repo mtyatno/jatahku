@@ -705,7 +705,7 @@ Setelah merge:
 6. Laporan pertama yang terkirim: **laporan yang terbit sebelum merge tidak pernah diemail** (`email_status` NULL, tahap 1),
    jadi tunggu laporan baru. Hari gajian berikutnya ±07:30 WIB (job :30 sesudah snapshot 00:05 UTC): email "Laporan … ·
    Jatahku" tiba di akun yang terverifikasi, badan tanpa nominal rupiah, PDF terlampir terbuka dengan kata sandi laporan
-   (tidak tanpa kata sandi), tombol "Lihat laporan" membuka `/laporan/<id>`. Status: `sudo -u postgres psql jatahku_db -c
+   (tidak tanpa kata sandi), tombol "Buka Laporan di Jatahku →" membuka `/laporan/<id>`. Status: `sudo -u postgres psql jatahku_db -c
    "SELECT email_status, email_alasan, COUNT(*) FROM reports WHERE terbit_at > now() - interval '2 days' GROUP BY 1, 2"`
    (`terkirim`; `dilewati` + `belum_verifikasi`/`tanpa_email`/`dimatikan` untuk yang tidak berhak; `gagal` = periksa
    SMTP, lalu "kirim ulang email" di `docs/laporan-berkala.md` bagian "Pemulihan").
