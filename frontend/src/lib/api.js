@@ -560,6 +560,23 @@ class ApiClient {
     throw new Error(detail || (res.status === 429 ? 'Terlalu sering mengubah kata sandi. Coba lagi nanti.' : 'Gagal menyimpan kata sandi laporan'));
   }
 
+  // 409/422/502 membawa `detail` berupa kalimat siap tampil; 429 (slowapi) berbadan {error}.
+  async kirimVerifikasiEmail() {
+    const res = await this.request('/user/email/verifikasi', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (res.ok) return data;
+    if (res.status === 429) throw new Error('Terlalu sering. Coba lagi nanti.');
+    throw new Error(typeof data?.detail === 'string' && data.detail ? data.detail : 'Gagal mengirim tautan verifikasi');
+  }
+
+  async ubahPengaturanLaporan(body) {
+    const res = await this.request('/user/laporan-pengaturan', { method: 'PATCH', body: JSON.stringify(body) });
+    const data = await res.json().catch(() => null);
+    if (res.ok) return data;
+    if (res.status === 429) throw new Error('Terlalu sering. Coba lagi nanti.');
+    throw new Error(typeof data?.detail === 'string' && data.detail ? data.detail : 'Gagal menyimpan pengaturan laporan');
+  }
+
   async getDailySpending(periodStart = null, periodEnd = null) {
     const params = new URLSearchParams();
     if (periodStart) params.set('period_start', periodStart);

@@ -26,8 +26,10 @@ dibaca SETELAH kunci didapat (`current_payday`), lalu berurutan:
    paling baru tutup tidak punya snapshot penerus (periode berjalan belum punya), jadi menulis ulangnya aman. Refresh
    yang melaporkan error per amplop menggagalkan household untuk jam ini (`RefreshSnapshotGagal`): laporan tidak boleh
    beku tanpa belanja satu amplop;
-5. per calon `muat_bahan` → lewati bila `ada_aktivitas` False (tidak ada laporan kosong) → `Report` dengan
-   `susun_bulanan`; satu commit untuk semua anggota household.
+5. pengaturan laporan (`report_settings`) semua calon dalam satu kueri, lalu per calon `muat_bahan` → lewati bila
+   `ada_aktivitas` False (tidak ada laporan kosong) → `Report` dengan `susun_bulanan` dan status email awal dari
+   `antrean_email.status_awal` (`menunggu`, atau `dilewati` dengan alasannya); satu commit untuk semua anggota
+   household.
 Sesi persiapan (langkah 2–3) ditutup sebelum refresh, dan pembangunan memakai sesi baru, jadi bacaannya pasti melihat
 snapshot yang baru ditulis.
 
@@ -37,7 +39,11 @@ UPDATE bersyarat `notified_at IS NULL` (klaim), lalu sesudah commit mengirim Tel
 dan Telegram yang gagal permanen (bot diblokir) tidak dikirim ulang. Setelah semua household, `laporan_job` menyapu
 laporan yang `notified_at`-nya masih NULL dan terbit dalam `JENDELA_TERBIT_HARI` hari (`kirim_notifikasi_tertunda`):
 galat DB atau restart di antara commit laporan dan notifikasinya tersusulkan jam berikutnya. Gagal kirim tidak
-membatalkan laporan yang sudah terbit. `email_status` tetap NULL di tahap 1.
+membatalkan laporan yang sudah terbit.
+
+Email (tahap 2): sesudah sapu notifikasi, masih di luar kunci household mana pun, `laporan_job` menjalankan satu
+putaran antrean email (`antrean_email.proses_antrean_email`: laporan baru maupun yang menunggu coba ulang) dan mencatat
+satu baris INFO berisi angka saja bila ada yang diproses. Laporan tahap 1 (`email_status` NULL) tidak pernah dikirim.
 """
 import html
 import logging
@@ -51,11 +57,12 @@ from app.core.database import AsyncSessionLocal
 from app.core.period import get_closed_periods
 from app.models.models import (
     JENIS_BULANAN, Allocation, Envelope, Household, HouseholdMember, HouseholdType, Income, MonthlySnapshot,
-    Notification, NotificationType, Report, Transaction, User,
+    Notification, NotificationType, Report, ReportSettings, Transaction, User,
 )
 from app.services import notification_service
 from app.services.advisor import advisor_cache
 from app.services.household_cycle import current_payday, household_lock, member_rows
+from app.services.laporan.antrean_email import hasil_kosong, proses_antrean_email, status_awal
 from app.services.laporan.muat import muat_bahan
 from app.services.laporan.susun import ada_aktivitas, susun_bulanan
 from app.services.rollover import create_monthly_snapshots
@@ -200,14 +207,21 @@ async def terbitkan_household(household_id, today: date) -> list[uuid.UUID]:
 
         laporan = []
         async with AsyncSessionLocal() as db:
+            pengaturan = {
+                p.user_id: p for p in (await db.execute(
+                    select(ReportSettings).where(ReportSettings.user_id.in_([u.id for u in calon]))
+                )).scalars().all()
+            }
             for user in calon:
                 bahan = await muat_bahan(db, user, household, ps, pe, payday, today)
                 if not ada_aktivitas(bahan):
                     continue
+                email_status, email_alasan = status_awal(user, pengaturan.get(user.id))
                 report = Report(
                     id=uuid.uuid4(),  # dibuat di sini, bukan saat flush: id dikembalikan untuk notifikasi
                     user_id=user.id, household_id=household_id, jenis=JENIS_BULANAN, periode_mulai=ps,
                     periode_akhir=pe, payday_day=payday, data=susun_bulanan(bahan),
+                    email_status=email_status, email_alasan=email_alasan,
                 )
                 db.add(report)
                 laporan.append(report)
@@ -280,11 +294,13 @@ async def kirim_notifikasi_tertunda(today: date, kecuali=frozenset()) -> int:
 
 async def laporan_job(today: date | None = None) -> dict:
     """Jalan tiap jam: terbitkan laporan bulanan untuk setiap ruang keluarga yang punya anggota, beri tahu
-    penerimanya, lalu sapu notifikasi yang tertinggal (`kirim_notifikasi_tertunda`; laporan yang sudah dicoba di jalan
-    ini tidak dicoba dua kali). `today` bawaan = tanggal server. Mengembalikan `{"terbit": laporan baru, "gagal":
-    household gagal}`. Household yang gagal dicatat (refresh snapshot yang error: `logger.error` dengan errornya; galat
-    lain: `logger.exception`) dan dicoba lagi jam berikutnya; notifikasi yang gagal dicatat tanpa membatalkan
-    laporannya dan disusulkan sapu jam berikutnya."""
+    penerimanya, sapu notifikasi yang tertinggal (`kirim_notifikasi_tertunda`; laporan yang sudah dicoba di jalan ini
+    tidak dicoba dua kali), lalu jalankan antrean email (`proses_antrean_email`, dengan waktu server). `today` bawaan =
+    tanggal server. Mengembalikan `{"terbit": laporan baru, "gagal": household gagal, "email": hasil antrean}`.
+    Household yang gagal dicatat (refresh snapshot yang error: `logger.error` dengan errornya; galat lain:
+    `logger.exception`) dan dicoba lagi jam berikutnya; notifikasi yang gagal dicatat tanpa membatalkan laporannya dan
+    disusulkan sapu jam berikutnya. Antrean yang gagal seluruhnya (mis. database putus) dicatat dan `email` berisi nol;
+    laporannya tetap di antrean untuk jam berikutnya."""
     today = today or date.today()
     async with AsyncSessionLocal() as db:
         household_ids = (await db.execute(
@@ -318,4 +334,12 @@ async def laporan_job(today: date | None = None) -> dict:
         await kirim_notifikasi_tertunda(today, kecuali=frozenset(dicoba))
     except Exception:
         logger.exception("sapu notifikasi laporan gagal; dicoba lagi jam berikutnya")
-    return {"terbit": terbit, "gagal": gagal}
+    try:
+        email = await proses_antrean_email()
+    except Exception:
+        logger.exception("antrean email laporan gagal; dicoba lagi jam berikutnya")
+        email = hasil_kosong()
+    if any(email.values()):
+        logger.info("email laporan: %s terkirim, %s gagal, %s dilewati, %s dicoba lagi",
+                    email["terkirim"], email["gagal"], email["dilewati"], email["dicoba_lagi"])
+    return {"terbit": terbit, "gagal": gagal, "email": email}

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
+from sqlalchemy import event
 from sqlalchemy import (
     String, Text, Numeric, Boolean, Integer, Date, DateTime,
     ForeignKey, Enum as SAEnum, func, UniqueConstraint, JSON, Index, text, CheckConstraint
@@ -114,6 +115,24 @@ class User(TimestampMixin, Base):
     )
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user")
     incomes: Mapped[list["Income"]] = relationship(back_populates="user")
+
+
+def email_normal(value: str | None) -> str:
+    """Bentuk baku alamat email untuk dibandingkan: strip + huruf kecil; None menjadi "". Satu-satunya definisi
+    (`services/verifikasi_email.sama_email` mendelegasikan ke sini; models.py tidak boleh mengimpor app/services)."""
+    return (value or "").strip().lower()
+
+
+@event.listens_for(User.email, "set", active_history=True)
+def _email_berubah_cabut_verifikasi(target, value, oldvalue, initiator):
+    """Jalur apa pun yang mengganti `users.email` lewat atribut ORM (route, bot, admin) mengosongkan
+    `email_verified_at` bila alamatnya benar-benar berganti (beda huruf besar-kecil/spasi saja tidak). Nilai lama
+    bukan str (user baru, atau tidak ada) → kosongkan. Pemanggil yang memverifikasi mengisi `email_verified_at`
+    SESUDAH mengisi email, tidak pernah di konstruktor `User(...)`. UPDATE Core atas kolom email
+    tidak lewat sini; tes pagar melarangnya."""
+    if not isinstance(oldvalue, str) or not isinstance(value, str) or email_normal(oldvalue) != email_normal(value) \
+            or not email_normal(value):
+        target.email_verified_at = None
 
 
 class AuthSession(TimestampMixin, Base):

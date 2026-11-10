@@ -20,6 +20,8 @@ from app.models.models import AuthSession, User, Household, HouseholdMember, Hou
 from app.services.password_reset import create_reset_token, redeem_reset_token
 from app.services.email_service import send_password_reset_email, send_password_changed_email
 from app.services.google_auth import verify_google_credential
+from app.services.laporan import antrean_email
+from app.services.verifikasi_email import sama_email, tandai_terverifikasi
 
 router = APIRouter()
 
@@ -103,6 +105,16 @@ async def _tokens(db: AsyncSession, user: User, request: Request) -> TokenRespon
     Ikut meng-commit perubahan user yang belum di-commit (last_login, dst.)."""
     pair = await auth_sessions.start_session(db, user, request)
     return TokenResponse(access_token=pair.access_token, refresh_token=pair.refresh_token)
+
+
+async def _verifikasi_dari_google(db: AsyncSession, user: User) -> None:
+    """Akun yang sudah ada dan alamatnya sama dengan email Google (Google menjamin `email_verified`): tandai
+    terverifikasi, lalu hidupkan lagi laporan ≤ 7 hari yang dilewati karena belum terverifikasi atau tanpa email, sama
+    dengan tombol "Verifikasi email" (keputusan rencana 2, Ruling F-6). Tidak commit: ikut transaksi pemanggil."""
+    tandai_terverifikasi(user)
+    await antrean_email.hidupkan_lagi(
+        db, user.id, (antrean_email.ALASAN_BELUM_VERIFIKASI, antrean_email.ALASAN_TANPA_EMAIL),
+    )
 
 
 async def _google_claims(credential: str) -> dict:
@@ -316,16 +328,21 @@ async def google_login(request: Request, req: GoogleCredentialRequest, db: Async
     user = (await db.execute(select(User).where(User.google_id == claims["sub"]))).scalar_one_or_none()
     if user:
         user.last_login = datetime.now(timezone.utc)
-        return await _tokens(db, user, request)
+        if sama_email(user.email, claims["email"]):
+            await _verifikasi_dari_google(db, user)
+        return await _tokens(db, user, request)   # commit, termasuk laporan yang dihidupkan lagi
 
     user = (await db.execute(select(User).where(User.email == claims["email"]))).scalar_one_or_none()
     if user:
         user.google_id = claims["sub"]
         user.last_login = datetime.now(timezone.utc)
+        if sama_email(user.email, claims["email"]):
+            await _verifikasi_dari_google(db, user)   # Google menjamin email_verified (verify_google_credential)
         return await _tokens(db, user, request)
 
     user = await _create_user(db, email=claims["email"], name=claims["name"], password_hash=None, google_id=claims["sub"])
     user.last_login = datetime.now(timezone.utc)
+    tandai_terverifikasi(user)   # email dari klaim Google yang terverifikasi; diisi sesudah konstruktor
     tokens = await _tokens(db, user, request)  # commit user + sesi
     await _notify_admin_new_user(user, via="Google")
     return tokens
@@ -351,6 +368,8 @@ async def google_link(
             user.email = claims["email"]
 
     user.google_id = claims["sub"]
+    if sama_email(user.email, claims["email"]):
+        await _verifikasi_dari_google(db, user)
     await db.commit()
     return {"status": "linked", "email": user.email}
 

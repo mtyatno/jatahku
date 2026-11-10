@@ -30,9 +30,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +41,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.rate_limit import kunci_per_user
 from app.models.models import Report, ReportSettings, User
-from app.services.laporan import hitung, pdf, rahasia
+from app.services.laporan import antrean_email, hitung, pdf, rahasia, surel
 
 logger = logging.getLogger("jatahku.laporan")
 
@@ -93,6 +93,22 @@ class PengaturanLaporan(BaseModel):
 
 class KataSandiLaporanIn(BaseModel):
     kata_sandi: str = Field(min_length=MIN_KATA_SANDI, max_length=MAKS_KATA_SANDI)
+
+
+class UbahPengaturanLaporan(BaseModel):
+    """Badan `PATCH /user/laporan-pengaturan`: hanya yang dikirim yang berubah. Tahap 2 hanya `email_on`; tahap 3
+    menambah `kuartalan_on` dan `tahunan_on` di sini. Badan tanpa satu pun field, `null`, atau field asing = 422."""
+    model_config = ConfigDict(extra="forbid")
+    email_on: bool | None = None
+
+    @model_validator(mode="after")
+    def _minimal_satu(self):
+        if not self.perubahan():
+            raise ValueError("Kirim minimal satu pengaturan yang diubah.")
+        return self
+
+    def perubahan(self) -> dict:
+        return {k: v for k, v in self.model_dump().items() if v is not None}
 
 
 class GalatKode(BaseModel):
@@ -188,6 +204,14 @@ def _bentuk_pengaturan(user: User, pengaturan: ReportSettings | None) -> dict:
     }
 
 
+def _jawab_pengaturan(user: User, pengaturan: ReportSettings | None) -> dict:
+    """Isi GET dan PATCH: `kata_sandi_diatur` true hanya bila kata sandi tersimpan benar-benar bisa dipakai."""
+    bentuk = _bentuk_pengaturan(user, pengaturan)
+    if bentuk["kata_sandi_diatur"] and not _token_masih_terpakai(user.id, pengaturan.kata_sandi_enc):
+        bentuk["kata_sandi_diatur"] = False
+    return bentuk
+
+
 def _token_masih_terpakai(user_id: UUID, token: str) -> bool:
     """Apakah token tersimpan masih bisa membuka PDF: terbaca dengan kunci server sekarang dan kata sandinya masih
     lolos `periksa_kata_sandi`. Sama dengan syarat jalur unduh PDF (409 bila tidak). Tanpa kunci server pemeriksaan
@@ -213,19 +237,24 @@ def _kunci_user(user_id: UUID):
     return select(User.id).where(User.id == user_id).with_for_update(key_share=True)
 
 
-async def _simpan_token(db: AsyncSession, user_id: UUID, token: str) -> ReportSettings:
-    """Upsert `report_settings` user ini: baris dibuat saat pertama kali disimpan; setelah itu hanya kata sandi dan
-    `updated_at` yang berubah (saklar lain dibiarkan). Baris `users` dikunci dulu: dua simpan pertama yang bersamaan
-    sama-sama tidak menemukan baris lalu INSERT, dan yang kalah gagal di kunci utama (500). Dengan kunci, yang kalah
-    menunggu, lalu menemukan baris yang baru dibuat dan memperbaruinya."""
+async def _simpan_pengaturan(db: AsyncSession, user_id: UUID, **ubah) -> ReportSettings:
+    """Upsert `report_settings` user ini (PUT kata sandi, PATCH saklar, dan berhenti berlangganan): baris dibuat saat
+    pertama kali disimpan dengan bawaan; setelah itu hanya kolom di `ubah` dan `updated_at` yang berubah (yang lain
+    dibiarkan). Baris `users` dikunci dulu: dua simpan pertama yang bersamaan sama-sama tidak menemukan baris lalu
+    INSERT, dan yang kalah gagal di kunci utama (500). Dengan kunci, yang kalah menunggu, lalu menemukan baris yang
+    baru dibuat dan memperbaruinya. `email_on` dinyalakan → laporan yang dilewati karena `dimatikan` dan masih dalam
+    jendela terbit kembali `menunggu` (keputusan rencana 2), dalam transaksi yang sama."""
     await db.execute(_kunci_user(user_id))
     pengaturan = await db.get(ReportSettings, user_id)
     if pengaturan is None:
-        pengaturan = ReportSettings(user_id=user_id, kata_sandi_enc=token, **BAWAAN_PENGATURAN)
+        pengaturan = ReportSettings(user_id=user_id, **{**BAWAAN_PENGATURAN, **ubah})
         db.add(pengaturan)
     else:
-        pengaturan.kata_sandi_enc = token
+        for kolom, nilai in ubah.items():
+            setattr(pengaturan, kolom, nilai)
         pengaturan.updated_at = datetime.now(timezone.utc)
+    if ubah.get("email_on") is True:
+        await antrean_email.hidupkan_lagi(db, user_id, (antrean_email.ALASAN_DIMATIKAN,))
     await db.commit()
     return pengaturan
 
@@ -253,6 +282,51 @@ async def daftar_laporan(
         .offset(offset)
     )).all()
     return [_ringkas(b.id, b.jenis, b.judul, b.periode_mulai, b.periode_akhir, b.terbit_at) for b in baris]
+
+
+# --- /laporan/berhenti-email (tanpa login; token bertanda tangan) ---------------------------------------------------
+# Dideklarasikan SEBELUM `/{report_id}`: kalau tidak, "berhenti-email" ditelan sebagai report_id (422).
+# GET hanya menampilkan konfirmasi dan tidak mengubah apa pun (pemindai tautan di layanan email membuka GET); hanya POST
+# (tombol halaman dan one-click RFC 8058) mematikan `email_on`. Batas 30/menit per IP (kunci bawaan limiter).
+# Alamat halaman memuat token: jangan disimpan cache. `Referrer-Policy` dipasang global oleh SecurityHeadersMiddleware
+# (`strict-origin-when-cross-origin`): ke origin lain hanya origin yang terkirim, tanpa path dan query bertoken.
+_KEPALA_HALAMAN = {"Cache-Control": "no-store"}
+
+
+def _halaman(html: str, status: int = 200) -> HTMLResponse:
+    return HTMLResponse(html, status_code=status, headers=_KEPALA_HALAMAN)
+
+
+@router.get(
+    "/berhenti-email",
+    response_class=HTMLResponse,
+    responses={400: {"description": "Tautan tidak berlaku.", "content": {"text/html": {}}},
+               429: {"description": "Lebih dari 30 permintaan per menit."}},
+)
+@limiter.shared_limit("30/minute", scope="berhenti_email_get")   # ember GET dan POST terpisah (satu URL)
+async def halaman_berhenti_email(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Halaman konfirmasi (200), atau 400 bila token tidak sah atau akunnya sudah tidak ada. Tidak mengubah apa pun."""
+    user_id = surel.baca_token_berhenti(token)
+    if user_id is None or await db.get(User, user_id) is None:
+        return _halaman(surel.halaman_tautan_tak_berlaku(), 400)
+    return _halaman(surel.halaman_konfirmasi_berhenti(token))
+
+
+@router.post(
+    "/berhenti-email",
+    response_class=HTMLResponse,
+    responses={400: {"description": "Tautan tidak berlaku.", "content": {"text/html": {}}},
+               429: {"description": "Lebih dari 30 permintaan per menit."}},
+)
+@limiter.shared_limit("30/minute", scope="berhenti_email_post")
+async def berhenti_email(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Matikan `email_on` user pada token. Menerima tombol halaman (badan kosong) dan one-click RFC 8058
+    (`List-Unsubscribe=One-Click`, form); badan tidak dibaca. Aman diulang."""
+    user_id = surel.baca_token_berhenti(token)
+    if user_id is None or await db.get(User, user_id) is None:
+        return _halaman(surel.halaman_tautan_tak_berlaku(), 400)
+    await _simpan_pengaturan(db, user_id, email_on=False)
+    return _halaman(surel.halaman_berhenti_selesai())
 
 
 @router.get("/{report_id}", response_model=LaporanDetail, responses={404: {"description": MSG_TIDAK_DITEMUKAN}})
@@ -336,11 +410,7 @@ async def ambil_pengaturan_laporan(
     """Status pengaturan laporan. Tanpa baris `report_settings`: bawaan, dan tidak ada baris yang dibuat.
     `kata_sandi_diatur` true hanya bila kata sandi tersimpan benar-benar bisa dipakai (`_token_masih_terpakai`): token
     yang tak terbaca atau kata sandi yang kini ditolak berarti false, sama dengan jalur unduh yang menjawab 409."""
-    pengaturan = await db.get(ReportSettings, user.id)
-    bentuk = _bentuk_pengaturan(user, pengaturan)
-    if bentuk["kata_sandi_diatur"] and not _token_masih_terpakai(user.id, pengaturan.kata_sandi_enc):
-        bentuk["kata_sandi_diatur"] = False
-    return bentuk
+    return _jawab_pengaturan(user, await db.get(ReportSettings, user.id))
 
 
 @pengaturan_router.put(
@@ -377,4 +447,22 @@ async def simpan_pengaturan_laporan(
         token = rahasia.enkripsi(kata_sandi)
     except rahasia.KunciLaporanTidakAda:
         return _kunci_belum_diatur()
-    return _bentuk_pengaturan(user, await _simpan_token(db, user.id, token))
+    return _bentuk_pengaturan(user, await _simpan_pengaturan(db, user.id, kata_sandi_enc=token))
+
+
+@pengaturan_router.patch(
+    "/laporan-pengaturan",
+    response_model=PengaturanLaporan,
+    responses={422: {"model": GalatValidasi, "description": "Badan kosong, field asing, atau nilai bukan boolean."}},
+)
+@limiter.limit("30/hour", key_func=kunci_per_user)   # ember sendiri, terpisah dari PUT kata sandi (5/jam)
+async def ubah_pengaturan_laporan(
+    request: Request,
+    body: UbahPengaturanLaporan,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ubah saklar laporan (`email_on`); yang tidak dikirim tidak berubah, kata sandi tidak tersentuh. Menyalakan
+    `email_on` menghidupkan lagi laporan terbaru yang dilewati karena email dimatikan. Jawabannya bentuk GET."""
+    pengaturan = await _simpan_pengaturan(db, user.id, **body.perubahan())
+    return _jawab_pengaturan(user, pengaturan)
