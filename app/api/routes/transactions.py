@@ -245,6 +245,18 @@ async def _check_row(db, user, row) -> tuple[date | None, BehaviorCheckResult]:
     return txn_date, check
 
 
+KODE_PRIVAT_DITOLAK = "privat_tidak_tersedia"
+PRIVAT_DITOLAK_MSG = "Pengeluaran di ruang usaha tidak bisa privat. Catat tanpa tanda privat."
+
+
+async def _ruang_usaha(db: AsyncSession, hid) -> bool:
+    return hid is not None and str(await ruang_jenis(db, hid)) == HouseholdType.USAHA
+
+
+def _privat_ditolak() -> RuangDitolak:
+    return RuangDitolak(kode=KODE_PRIVAT_DITOLAK, detail=PRIVAT_DITOLAK_MSG, status_code=422)
+
+
 def jawaban_draf(draf, detail: str | None = None) -> JSONResponse:
     """202 untuk catatan karyawan di atas batas nominal (04-kontrak-api.md §2): draf, belum transaksi."""
     return JSONResponse(status_code=202, content={
@@ -315,6 +327,10 @@ async def catat_transaksi(req: TransactionCreate, user: User, db: AsyncSession):
     # Aturan bersama web + Telegram (app/services/expense_rules.py)
     if not is_spendable(envelope):
         raise HTTPException(status_code=403, detail=NOT_SPENDABLE_MSG)
+    # Ruang usaha tidak punya pengeluaran privat (keputusan pemilik 11 Nov): pengeluaran usaha terbuka bagi pemilik dan
+    # admin, untuk semua peran. Ditolak, bukan diam-diam dicatat terbuka, karena pengirim mengira catatannya tersembunyi.
+    if req.is_private and await _ruang_usaha(db, hid):
+        raise _privat_ditolak()
     # Plugin U2: field Fitur Tambahan diperiksa sebelum apa pun disimpan (juga sebelum draf: karyawan tidak punya field
     # plugin, jadi kirimannya ditolak dan draf tidak pernah membawa isian plugin).
     tambahan = {}
@@ -580,6 +596,10 @@ async def batch_create_transactions(
         hid = ruang_baris[i]
         if not hid:
             results.append(BatchTransactionResult(index=i, ok=False, description=item.description, error="Envelope not found"))
+            continue
+        if item.is_private and hid in usaha:   # ruang usaha tanpa pengeluaran privat (lihat catat_transaksi)
+            results.append(BatchTransactionResult(index=i, ok=False, description=item.description,
+                                                  error=PRIVAT_DITOLAK_MSG, kode=KODE_PRIVAT_DITOLAK))
             continue
         if item.receipt_item_id:
             receipt_error = await _receipt_item_error(db, user, item.receipt_item_id)

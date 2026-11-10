@@ -734,8 +734,10 @@ class U2DbTests(unittest.IsolatedAsyncioTestCase):
         sebelum = await self.hitung(Transaction)
         r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, envelope=self.pribadi)
         self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
+        # Sejak 11 Nov ruang usaha tidak punya pengeluaran privat: ditolak lebih dulu (test_privat_ruang_usaha.py);
+        # penolakan isian untuk `is_private` di `transactions.py` tetap ada sebagai lapis kedua.
         r = await self.catat({"buku_usaha": {"akun": "Lain-lain"}}, is_private=True)
-        self.assertEqual((r.status_code, self.kode(r)), (422, "field_tidak_sah"))
+        self.assertEqual((r.status_code, self.kode(r)), (422, "privat_tidak_tersedia"))
         self.assertEqual(await self.hitung(Transaction), sebelum)
         self.assertEqual(await self.hitung(BukuUsahaTxnMeta), 0)
         # Tanpa isian, pengeluaran pribadi tetap seperti biasa.
