@@ -397,7 +397,7 @@ Kartu `refresh_on` memakai event `jatahku:txn-added` dan `jatahku:draf-baru`.
 
 Menyusul bersama Mode Atur (setelah beta): `POST /dashboard/layout/reset`, `dashboard_defaults` (keputusan kajian no. 7).
 
-## 5. Fitur Tambahan / plugin (H1, H2, H3, U1, U2) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan), endpoint plugin + ekspor data (U1, PR plugin/u1-kerangka-buku-usaha), dan tulis pemasukan + field form + izin baru (U2, PR plugin/u2-penjualan-alokasi)**
+## 5. Fitur Tambahan / plugin (H1, H2, H3, U1, U2, U3) — **v1 untuk katalog dan siklus (H1, PR plugin/h1-host-inti), titik ekstensi server (H2), `contributions` + persetujuan izin (H3, PR plugin/h3-fitur-tambahan), endpoint plugin + ekspor data (U1, PR plugin/u1-kerangka-buku-usaha), tulis pemasukan + field form + izin baru (U2, PR plugin/u2-penjualan-alokasi), dan baca agregat + berkas laporan (U3, PR plugin/u3-laba-rugi)**
 
 Pasang, lanjut, jeda, dan copot hanya untuk owner dan admin ruang (ADR-P11). Urutan pemeriksaan: ruang dari **path** → keanggotaan (bukan anggota, ruang tidak ada, id bukan UUID, atau ruang usaha di luar flag `ruang_usaha_users` (R4) → 404 `ruang_tidak_ada`, supaya keberadaan ruang lain tidak bocor) → peran (member → 403 `khusus_admin`) → plugin (`plugin_id` tidak dikenal → 404 `plugin_tidak_ada`). Header `X-Jatahku-Ruang` tidak menentukan ruang tulis. Aturan: `app/plugins/host/siklus.py`.
 
@@ -570,11 +570,45 @@ Host melayani semuanya lewat satu route `/{plugin_id}/{path}` di awalan `/p` (`a
   `izin_berubah`; tanpa `izin` → 422; belum terpasang atau arsip → 404 `plugin_tidak_aktif`. Diaudit `izin` (dari, ke,
   versi). Izin yang dibuang manifest ikut hilang.
 
-## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha)**
+### Baca agregat dan baris pendamping (SDK) — **v1 (U3, Plugin API 1.4)**
+
+Tanpa endpoint baru; bentuk untuk plugin (`app/plugins/host/ringkas.py`, `PluginContext`):
+
+- `ctx.ringkas_transaksi(mulai, akhir, *, per=(), hanya_bersama=False)` (`transactions:read`) dan
+  `ctx.ringkas_pemasukan(mulai, akhir, *, per=())` (`incomes:read`) → `[RingkasanView(kunci, jumlah, banyak,
+  dialokasikan)]`, dijumlahkan database (tidak dibatasi 1.000 baris seperti baca baris). `per` (≤ 3, tanpa ganda):
+  `bulan` ("YYYY-MM"), transaksi juga `amplop`, pemasukan juga `jenis` (`incomes.kind`), atau
+  `"<entitas>.<kolom>"` dari tabel **pendamping** plugin itu sendiri (indeks unik hidup `household_id` + FK ke
+  `transactions`/`incomes`; kolom host dan kolom rujukan ditolak). Lebih dari 1.000 kelompok, rentang terbalik, atau
+  `per` yang tidak sah → `ValueError` (500 `plugin_gagal`), tidak pernah memotong. `dialokasikan` = jumlah alokasi
+  pemasukan (prive keluar R8 = negatif).
+- Visibilitas sama dengan baca baris: ruang konteks, amplop yang boleh dilihat (`hanya_bersama=True`: amplop bersama
+  saja), pemasukan ruang keluarga hanya milik viewer, karyawan `khusus_admin`. Kelompok pendamping untuk transaksi
+  privat milik anggota lain (job: semua yang privat) bernilai `null`; nominalnya tetap dijumlah.
+- `ctx.transactions(…, pendamping="txn_meta", hanya_bersama=False)` dan `ctx.incomes(…, pendamping="income_meta")`
+  (aditif): `TransaksiView.meta` / `PemasukanView.meta` = baris pendamping hidup tanpa kolom host dan rujukan, `null` bila
+  tidak ada atau transaksinya privat milik orang lain.
+
+### Berkas laporan dari rute — **v1 (U3, Plugin API 1.4)**
+
+- Rute **GET** boleh mengembalikan `Laporan(format: "pdf"|"csv", nama_berkas, judul, subjudul, ringkasan: ((label,
+  nilai), …), tabel: (TabelLaporan(judul, kolom, baris, total?, catatan?), …), catatan: (…))`. Sel: teks, `Decimal`
+  (rupiah), `int`, `date`, atau `null`. Batas: 12 tabel, 8 kolom, 5.000 baris total, 12 ringkasan, 10 catatan; bentuk
+  lain atau `Laporan` dari rute non-GET → 500 `plugin_gagal`.
+- Host menggambar (`app/plugins/host/berkas.py`): **PDF** A4 fpdf2 Noto Sans (teks PDF, bukan HTML; karakter di luar font
+  dibuang), tanpa kata sandi; **CSV** UTF-8 + BOM, sel teks lewat anti formula-injection PR #136, angka apa adanya
+  (`"1234.50"`, negatif tetap angka), tanggal ISO, baris kedua `Ruang,<nama>`.
+- Jawaban `200` dengan `Content-Type` `application/pdf` / `text/csv; charset=utf-8`, `Content-Disposition: attachment;
+  filename="jatahku-<nama dirapikan>.<ext>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`,
+  `Content-Security-Policy: default-src 'none'; sandbox`. Setiap unduhan diaudit `laporan` (`format`, `rute`; tanpa
+  angka). Web menyimpannya lewat `api.unduhPluginRute` (lapisan native), tidak membukanya di tab aplikasi.
+
+## 6. Buku Usaha (U1–U4) — **v1 untuk pengaturan dan Kontak (U1, PR plugin/u1-kerangka-buku-usaha), alokasi + penjualan + field pengeluaran (U2), laba rugi + laporan (U3, PR plugin/u3-laba-rugi)**
 
 Semua di bawah `/p/buku_usaha/` (endpoint plugin §5: ruang dari header, owner/admin); 404 `plugin_tidak_aktif` bila
-Buku Usaha tidak aktif di ruang itu. Alokasi, penjualan, dan field pengeluaran v1 sejak U2; U3–U4 masih v0. Manifest
-0.2.0: izin `envelopes:read`, `incomes:write` (instalasi U1 menyetujuinya lewat `POST …/izin`).
+Buku Usaha tidak aktif di ruang itu. Kartu Beranda (U4) masih v0. Manifest 0.3.0 (`plugin_api >=1.4 <2.0`): izin
+`envelopes:read`, `transactions:read`, `incomes:read`, `incomes:write`; instalasi lama menyetujui izin baru lewat
+`POST …/izin` (sebelum itu laba rugi dan laporan 403 `tanpa_izin`).
 
 ```jsonc
 // Pengaturan (U1) — dipakai wizard pasang (boleh saat `terpasang`) dan kepala halaman
@@ -594,7 +628,7 @@ Buku Usaha tidak aktif di ruang itu. Alokasi, penjualan, dan field pengeluaran v
 // PATCH  /p/buku_usaha/kontak/{id} {kolom yang berubah} → {kontak}; DELETE /p/buku_usaha/kontak/{id} → 204 (hapus lunak;
 //        dibuang permanen sesudah 30 hari oleh job `plugin_jobs`)
 //        kontak ruang lain atau sudah dihapus → 404 `kontak_tidak_ada`
-// `total_bulan_ini` (v0) menyusul bersama `income_meta` dan `metrics.py` (U2–U3), aditif.
+// `total_bulan_ini` (v0) belum ada; per pelanggan menyusul bersama kartu Pelanggan teratas (U4, dari `metrics.py`), aditif.
 
 // Alokasi omzet (U2) — owner, admin — v1
 // GET /p/buku_usaha/alokasi → {"aturan": [{"envelope_id", "nama", "emoji", "persen": "45.00"}],   // urut persen turun
@@ -628,20 +662,40 @@ Buku Usaha tidak aktif di ruang itu. Alokasi, penjualan, dan field pengeluaran v
 //   {"buku_usaha": {"pemasok": "<id kontak pemasok ruang ini>", "akun": "Bahan baku" | "Gaji" | "Sewa" |
 //    "Listrik & air" | "Transport" | "Pemasaran" | "Peralatan" | "Lain-lain"}} → baris `txn_meta` (kontak_id, akun)
 
-// Laba rugi (U3) — owner, admin; member → 403 khusus_admin
-// GET /p/buku_usaha/laba-rugi?periode=2026-10
+// Laba rugi (U3) — owner, admin; member → 403 khusus_admin — v1. Bulan kalender (keputusan A U3, desain A2 no. 9).
+// GET /p/buku_usaha/laba-rugi?periode=2026-10   (kosong = bulan ini di zona waktu user; bukan YYYY-MM, sebelum 2000,
+//   atau sesudah bulan ini → 422 nilai_tidak_sah)
 {
-  "periode": "2026-10", "omzet": 48650000, "jumlah_penjualan": 112,
-  "beban": [{"akun": "…", "jumlah": 0}], "beban_total": 36300000,
-  "laba": 12350000, "margin": 0.254,
-  "banding": {"periode": "2026-09", "omzet": 44600000, "laba": 9650000},
-  "di_luar_laba_rugi": {"prive": 6000000, "modal": 0, "pinjaman": 0}
+  "periode": "2026-10", "mulai": "2026-10-01", "akhir": "2026-10-31",
+  "berjalan": false,                            // true = bulan ini (angka masih bisa berubah)
+  "omzet": "48650000.00", "jumlah_penjualan": 112,
+  "omzet_tanpa_jenis": {"jumlah": "0", "banyak": 0},   // ikut omzet: pemasukan kind pemasukan/top-up tanpa income_meta
+  "beban": [{"akun": "Bahan baku", "jumlah": "21800000.00", "banyak": 40, "porsi": "0.6006"},
+            … {"akun": "Belum berakun", …}],      // urut jumlah turun, "Belum berakun" terakhir
+  "beban_total": "36300000.00",
+  "laba": "12350000.00", "margin": "0.2539",      // rasio 4 desimal; null bila omzet 0
+  "di_luar_laba_rugi": [{"jenis": "prive", "jumlah": "6000000.00", "banyak": 1},
+                        {"jenis": "modal", …}, {"jenis": "pinjaman", …}, {"jenis": "lain", …}],   // urutan tetap
+  "prive_dari_laba": "0.4858",                    // null bila laba ≤ 0
+  "banding": {"periode": "2026-09", "omzet": "44600000.00", "beban_total": "34950000.00", "laba": "9650000.00",
+              "margin": "0.2164"},
+  "perubahan": {"omzet": "0.0908", "beban_total": "0.0386", "laba": "0.2798"}   // (kini − lalu) / |lalu|; null bila lalu 0
 }
-// Satu sumber angka: app/plugins/buku_usaha/metrics.py (aturan 6). Omzet hanya dari jenis penjualan.
+// Satu sumber angka: app/plugins/buku_usaha/metrics.py (aturan 6), lewat ctx.ringkas_* (§5). Aturan:
+// - Omzet = income_meta.jenis penjualan + pemasukan tanpa jenis (kind pemasukan/top-up tanpa income_meta, mis. penjualan
+//   karyawan lewat Catat cepat inti; dilaporkan terpisah di omzet_tanpa_jenis).
+// - Di luar laba rugi: modal, pinjaman, lain (income_meta) dan prive (kind prive; jumlah = −alokasi). Transfer dan
+//   penyesuaian tidak dihitung.
+// - Beban = semua transaksi di amplop bersama ruang ini (amplop pribadi tidak). Akun dari txn_meta.akun; tanpa akun,
+//   meta terhapus, atau transaksi privat anggota lain = "Belum berakun" (nominal tetap dihitung).
 
-// Laporan (U3) — dibuat di worker, bukan di proses API
-// POST /p/buku_usaha/laporan {"periode", "format": "pdf" | "csv"} → 202 {"job_id"}
-// GET  /p/buku_usaha/laporan/{job_id} → {"status": "antre" | "jalan" | "siap" | "gagal", "url"?}
+// Laporan (U3) — owner, admin; member → 403 khusus_admin — v1 (keputusan D: dibuat saat diminta, bukan job 202)
+// GET /p/buku_usaha/laporan?periode=2026-10&format=pdf|csv   (format kosong = pdf; lain → 422 format_tidak_dikenal)
+//   → 200 lampiran (§5 "Berkas laporan dari rute"): jatahku-buku-usaha-laba-rugi-2026-10.pdf / .csv
+//   Isi: ringkasan (omzet, beban, laba, margin, penjualan, prive), tabel Laba rugi (bulan ini vs lalu), Beban per akun,
+//   Di luar laba rugi, Penjualan (tanggal, keterangan, pelanggan, jenis, jumlah), Pengeluaran (tanggal, keterangan,
+//   amplop, akun, pemasok, jumlah); daftar baris paling banyak 1.000 terbaru per jenis — bila terpotong, laporan
+//   mengatakannya dan total tetap dari agregat. Pengeluaran privat anggota lain tersamar ("Transaksi privat"), tanpa akun/pemasok.
 ```
 
 Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas`, `buku_usaha.arus_kas_13`, `buku_usaha.alokasi_omzet`, `buku_usaha.beban_akun`, `buku_usaha.pelanggan_teratas` (owner, admin) dan `buku_usaha.penjualan_saya` (member).
@@ -685,6 +739,7 @@ Kunci kartu Beranda (U4): `buku_usaha.omzet`, `buku_usaha.laba`, `buku_usaha.kas
 | `alokasi_belum_diatur`, `amplop_tidak_ada`, `amplop_wajib`, `jenis_tidak_dikenal` | 422 | Penjualan dan alokasi omzet Buku Usaha (U2, §6) |
 | `izin_wajib` | 422 | `POST …/izin` tanpa daftar izin (U2, §5); pasang/pulihkan plugin berizin tulis tanpa daftar izin (review #201) |
 | `sedang_diproses` | 409 | Pemasukan plugin dengan `client_ref` yang sama masih diproses (review #201, §5) |
+| `format_tidak_dikenal` | 422 | `GET /p/buku_usaha/laporan` dengan format selain pdf/csv (U3, §6) |
 | `versi_beda` | 409 | `if_version` tata letak sudah usang |
 | `instans_hilang` | 422 | `PUT /dashboard/layout` kehilangan instans tanpa `removed` |
 | `ruang_tidak_ada` | 404 | User belum punya household (`/dashboard/*`), atau ruang di path bukan ruang user (`/ruang/{id}/plugins/*`, H1) |
