@@ -4,6 +4,25 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## Privat dimatikan di ruang usaha · 2026-11-11 · pemilik produk + Claude
+
+**Selesai** (branch `plugin/privat-ruang-usaha` dari `main`; PR #PR_PRIVAT; tanpa migrasi; tindak lanjut keputusan C U3)
+- Keputusan pemilik 11 Nov: ruang usaha tidak punya pengeluaran privat untuk semua peran (pengeluaran usaha terbuka bagi pemilik dan admin); karyawan sama sekali tidak bisa mencatat transaksi privat; kiriman bertanda privat ditolak, bukan diam-diam dicatat terbuka; transaksi privat lama dibiarkan (masih uji coba, tanpa data nyata); review keamanan terpisah.
+- Server (`routes/transactions.py`): `POST /transactions/` → 422 `privat_tidak_tersedia` sebelum isian plugin, batasan, draf, dan kunci idempotensi; `POST /transactions/batch` → galat per baris, baris lain tetap tercatat. Persetujuan draf (`ruang_kelola.py`) mencatat draf lama bertanda privat sebagai pengeluaran biasa (admin sudah melihat keterangannya di antrean).
+- Web: `shouldShowPrivateToggle(…, { ruangUsaha })` menyembunyikan pilihan di ruang usaha; `Layout` → `MultiAddTransaction` → `QuickAddTransaction` (`ruang.aktif.jenis`). Catat karyawan dan Catat banyak memang tidak punya pilihan privat.
+- Tes: unittest penuh 3660 dijalankan; 2 tes lama sengaja disesuaikan karena memakai privat di ruang usaha (`test_plugin_u2` T3 dan `test_ruang_r7` kamus privat: kini 422 `privat_tidak_tersedia`, lapis kedua tetap diuji: isian plugin untuk `is_private` dan hook `_after_saved(is_private=True)` tidak mengajari kamus ruang); 4 suite terkait diulang lulus (78 tes, +5 `test_privat_ruang_usaha.py`); node --test 745 (`src/lib`) lulus; build ok; `openapi_cek` tanpa perubahan memutus. Uji mutasi: cek tunggal, cek batch, dan persetujuan draf masing-masing dicabut → tes gagal.
+- Tidak dicek di browser: perubahan web hanya menyembunyikan satu kotak centang lewat fungsi yang dites; server yang menjaga.
+
+**Jebakan**
+- Antrean offline lama yang menyimpan baris privat di ruang usaha akan gagal per baris dengan pesan "tidak bisa privat"; kirim ulang tanpa tanda privat.
+- Bot dan chat web tidak tersentuh: chat selalu ruang keluarga.
+
+**Cara melanjutkan**
+- Sesi review baru: "review PR #PR_PRIVAT terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`.
+- Bila PR U3 (#204) di-merge lebih dulu, SESI-LOG bentrok di bagian atas: gabungkan `main`, simpan kedua entri.
+
+---
+
 ## U2 · review keamanan terpisah · 2026-11-10 · pemilik produk + Claude
 
 **Review** (branch `plugin/u2-review-keamanan`; lanjutan PR #201 yang sudah di-merge dan tayang; PR #202; tanpa migrasi)

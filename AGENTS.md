@@ -149,6 +149,13 @@ Dokumen: `docs/ai-advisor/` (mulai dari `00-indeks.md`). Satu sesi = satu PR; st
   tanggal, amplop, dan identitas pencatat SELALU terlihat.
 - **Agregat** (saldo, spent, KPI, count di evidence advisor) selalu menghitung
   semua transaksi termasuk yang privat.
+- **Ruang usaha tidak punya pengeluaran privat** (keputusan pemilik 11 Nov 2026):
+  pengeluaran usaha terbuka bagi pemilik dan admin, untuk semua peran.
+  `POST /transactions/` → 422 `privat_tidak_tersedia`; `POST /transactions/batch`
+  → galat per baris dengan kode yang sama; draf persetujuan dicatat terbuka. Web
+  tidak menampilkan pilihannya (`lib/privateToggle.js`, `ruangUsaha`). Jalur tulis
+  pengeluaran baru di ruang usaha wajib ikut aturan ini. Transaksi privat lama
+  (data uji coba) dibiarkan.
 - `masked_description` **fail-closed**: viewer/owner ambigu → sembunyikan deskripsi.
   Pemilik transaksi selalu melihat deskripsinya sendiri (short-circuit sebelum
   cek `is_private`).
