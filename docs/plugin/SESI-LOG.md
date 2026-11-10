@@ -4,6 +4,30 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ---
 
+## U2 · review keamanan terpisah · 2026-11-10 · pemilik produk + Claude
+
+**Review** (branch `plugin/u2-review-keamanan`; lanjutan PR #201 yang sudah di-merge dan tayang; PR #202; tanpa migrasi)
+- Review "PR #201 terhadap 03-workflow.md bagian keamanan" oleh agen terpisah tanpa konteks sesi (tidak membaca entri U2 di log ini maupun deskripsi PR), dengan probe di worktree terpisah. Hasil: **tidak ada temuan tinggi**; 1 sedang, 4 rendah, 1 dugaan, beberapa info. Gerbang ruang, batasan server, karyawan, plugin sebagai tamu, dan rahasia lulus.
+- Diperbaiki:
+  - **T1 (sedang, ketersediaan):** `BATAS_BARIS_RUANG` (20.000 per tabel per ruang) berlaku juga untuk `income_meta`/`txn_meta`, jadi sesudah ±20.000 penjualan atau pengeluaran berisian, pencatatan inti ikut ditolak. Tabel pendamping 1:1 data inti (indeks unik household + FK ke `transactions`/`incomes`) kini dikecualikan (`data.pendamping_inti`); kontak dan alokasi tetap dibatasi.
+  - **T2 (rendah):** angka dengan eksponen besar (`"1e30"`, `1e300`) membuat `quantize` melempar → 500. `alokasi.angka` dan `inti._nominal` menolak eksponen > 15 sebagai `NilaiTidakSah` (422).
+  - **T3 (rendah, privasi):** pemasok/akun bisa disimpan untuk pengeluaran di amplop pribadi atau `is_private`, lalu terbaca admin lewat ekspor plugin. Kini 422 `field_tidak_sah`; web menyembunyikan isiannya (`pluginHost.isianBolehUntuk`, memeriksa `owner_id` dan `is_personal` karena `/envelopes/summary` hanya memberi `is_personal`).
+  - **T4 (rendah):** pasang/pulihkan tanpa daftar `izin` (klien lama) memberi `incomes:write` tanpa layar izin. Plugin dengan izin tulis (`IZIN_TULIS` = semua selain `*:read`) kini wajib membawa daftar → 422 `izin_wajib`; plugin baca-saja tetap boleh tanpa daftar.
+  - **T5 (rendah, integritas):** penjualan tidak idempoten (keputusan E U2). Tanpa migrasi: `ctx.catat_pemasukan(client_ref=)` memakai `services/idempotency` (Redis) dengan lingkup `pluginref:<plugin>:<ruang>` per user; kirim ulang yang sudah tercatat → 200 catatan lama dengan `ulang: true` tanpa menulis; masih diproses → 409 `sedang_diproses`; kunci dilepas bila permintaan gagal lewat titipan baru `setelah_commit.titip_gagal` (route `/p` menjalankan `batal` saat jalankan_rute atau commit gagal). Web mengirim `client_ref` yang sama selama isian form tidak berubah.
+  - **T6 (dugaan):** form Penjualan yang terbuka bisa terkirim ke ruang lain bila ruang diganti di tab lain (header dibaca dari `localStorage` saat kirim). `request`/`ruangKirim`/`pluginRute` menerima opsi `ruang`; FormPenjualan mengunci ruang saat dibuka.
+- Tidak diubah (info dari review): `/transactions/batch` membuang `tambahan` diam-diam (terdokumentasi); tanggal mundur 366 hari untuk pemasukan plugin (hanya owner/admin; perlu diperhatikan U3 untuk laporan beku dan rollover); `member` ruang rumah tangga tidak diblok di rute non-GET dan `simpan_field` (pre-existing U1, belum ada plugin rumah tangga; `catat_pemasukan` sendiri tetap owner/admin).
+- Tes: unittest 3535 lulus (+6 di `test_plugin_u2.py`: T1, T2, T3, T5 ×3; +1 di `test_plugin_host.py`: T4; helper `aksi("pasang")` kini mengirim daftar izin manifest) · node --test 776 lulus · build ok · `openapi_cek` tanpa perubahan memutus · validator OK. Probe reviewer dijalankan ulang terhadap kode ini: keenam `test_temuan_*` tidak lagi mereproduksi masalahnya, semua `test_aman_*` tetap lulus.
+- Diperiksa di browser (stack lokal): form Penjualan dibuka di Dapur Nusa, ruang aktif diganti ke ruang keluarga sebelum kirim → kiriman tetap ber-header Dapur Nusa; kirim ulang body yang sama → 200 `ulang: true`; form pengeluaran "satu per satu": isian Pemasok/Akun tampil untuk amplop Bahan, hilang untuk amplop pribadi; konsol bersih.
+
+**Temuan di luar scope**
+- `shouldShowPrivateToggle` (`lib/privateToggle.js`) memeriksa `owner_id`, padahal `QuickAddTransaction` memakai `/envelopes/summary` yang hanya memberi `is_personal`: tanda "pribadi" tampil juga untuk amplop pribadi (anggota > 1). Kecil, PR terpisah.
+
+**Cara melanjutkan**
+- Merge tanpa migrasi; `/cek-deploy <PR>`. Pemilik produk: setujui izin baru Buku Usaha di produksi bila belum, lalu cek penjualan.
+- Sesudah cek produksi, U2 `selesai` di `PROGRESS.md` (PR dokumen kecil seperti #200), lalu `/sesi-plugin U3` atau `/sesi-plugin U5`.
+
+---
+
 ## U2 · Penjualan dan alokasi omzet · 2026-11-09 · pemilik produk + Claude
 
 **Review** (branch `plugin/u2-penjualan-alokasi`; issue #153; PR #201; tanpa migrasi; tidak bertanda review, tetapi **disarankan review keamanan terpisah** karena ini pertama kalinya plugin menulis ke tabel inti)
