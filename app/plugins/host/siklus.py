@@ -21,12 +21,15 @@ boleh (arah yang aman).
 Hak (`entitlements`) hanya dibaca untuk katalog; selama beta tidak ada yang ditolak (ADR-P13, keputusan
 R3 B). Penegakan `butuh_paket_usaha` (402) menyusul di V1.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 from app.models.models import AppSetting, Entitlement, Household, PluginAuditLog, PluginInstallation
 from app.plugins.host.manifest import Manifest
@@ -122,7 +125,18 @@ def ke_api(m: Manifest, inst: PluginInstallation | None) -> dict:
         "status": STATUS_API[status],
         "arsip_sampai": arsip.date().isoformat() if arsip else None,
         "izin_diberikan": list(inst.granted_permissions or []) if inst is not None and status != UNINSTALLED else [],
+        # U2 (aditif): izin di manifest versi sekarang yang belum disetujui instalasi ini (rilis baru menambah izin).
+        # Tidak pernah diberikan diam-diam: owner/admin menyetujuinya lewat `POST …/izin`; sebelum itu fungsi yang
+        # memakainya ditolak `tanpa_izin`.
+        "izin_baru": izin_baru(m, inst),
     }
+
+
+def izin_baru(m: Manifest, inst: PluginInstallation | None) -> list[str]:
+    if inst is None or inst.status == UNINSTALLED:
+        return []
+    diberikan = set(inst.granted_permissions or [])
+    return [p for p in m.permissions if p not in diberikan]
 
 
 async def katalog(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, *, boleh_kelola: bool) -> list[dict]:
@@ -142,6 +156,8 @@ async def katalog(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, 
             "izin": m.izin_tampil(),
             "kartu": [{"key": k.key, "judul": k.title, "bawaan": k.default} for k in m.contributes.cards],
             "hak": await hak(db, household_id, m),
+            # U1: format unduhan data plugin (`GET /ruang/{id}/plugins/{plugin_id}/ekspor`); [] bila plugin tanpa data.
+            "ekspor": list(m.data_lifecycle.export) if m.entities else [],
             "butuh": list(m.requires),
             "diperbaiki": m.id in mati,
             "boleh_kelola": boleh_kelola,
@@ -156,14 +172,17 @@ async def aktif_di_ruang(db: AsyncSession, household_id: UUID, user_id) -> list[
     return [m for m, _ in await aktif_dengan_instalasi(db, household_id, user_id)]
 
 
-async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID,
-                                 user_id) -> list[tuple[Manifest, PluginInstallation]]:
-    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2."""
+async def aktif_dengan_instalasi(db: AsyncSession, household_id: UUID, user_id, *,
+                                 termasuk_terpasang: bool = False) -> list[tuple[Manifest, PluginInstallation]]:
+    """Sama dengan `aktif_di_ruang`, beserta baris instalasinya (izin yang disetujui, pengaturan) untuk H2.
+    `termasuk_terpasang` (U1): hanya untuk rute GET plugin, supaya wizard pasang bisa membaca pengaturan plugin yang
+    masih `installed`; kontribusi lain tetap butuh `active`."""
     mati = await saklar_mati(db)
+    boleh = (ACTIVE, INSTALLED) if termasuk_terpasang else (ACTIVE,)
     hasil = []
     for pid, inst in sorted((await _instalasi_ruang(db, household_id)).items()):
         m = registry().get(pid)
-        if inst.status != ACTIVE or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
+        if inst.status not in boleh or m is None or pid in mati or not await boleh_dilihat(db, m, user_id):
             continue
         hasil.append((m, inst))
     return hasil
@@ -192,8 +211,10 @@ def kontribusi(aktif: list[Manifest], kartu: dict) -> dict:
             out["cards"].append({"key": k.key, "plugin": m.id, "judul": k.title, "shape": k.shape,
                                  "sizes": list(k.sizes), "size_bawaan": k.sizes[0], "bawaan": k.default})
         for f in c.form_fields:
-            out["form_fields"].append({"plugin": m.id, "target": f.target, "key": f.key, "type": f.type,
-                                       "label": f.label})
+            ff = {"plugin": m.id, "target": f.target, "key": f.key, "type": f.type, "label": f.label}
+            if f.options:                     # U2, aditif: pilihan field `select`
+                ff["options"] = list(f.options)
+            out["form_fields"].append(ff)
     return out
 
 
@@ -323,6 +344,28 @@ async def lanjut(db: AsyncSession, user, household_id: UUID, jenis_ruang: str, m
     return inst
 
 
+async def setujui_izin(db: AsyncSession, user, household_id: UUID, m: Manifest, izin: list[str]) -> PluginInstallation:
+    """U2: owner/admin menyetujui izin manifest versi sekarang untuk instalasi yang sudah ada (terpasang, aktif, atau
+    dijeda), tanpa mengubah statusnya. `izin` = daftar yang dilihat user di layar persetujuan; beda dengan manifest →
+    409 `izin_berubah` (sama dengan pasang). Butuh flag rollout user, seperti pasang dan lanjut. Izin yang dibuang
+    manifest ikut hilang dari `granted_permissions`."""
+    await _kunci_ruang(db, household_id)
+    inst = await instalasi(db, household_id, m.id, kunci=True)
+    if inst is None or inst.status == UNINSTALLED:
+        raise await _tidak_terpasang(db, user, m)
+    if not await boleh_dilihat(db, m, user.id):
+        raise _plugin_tidak_ada()
+    if izin is None:
+        raise _galat(422, "izin_wajib", "Daftar izin yang disetujui wajib dikirim.")
+    _cek_izin_disetujui(m, izin)
+    lama = sorted(inst.granted_permissions or [])
+    if lama != sorted(m.permissions):
+        inst.granted_permissions = list(m.permissions)
+        _audit(db, household_id, m.id, user.id, "izin", dari=lama, ke=list(m.permissions), versi=m.version)
+        await db.flush()
+    return inst
+
+
 async def _pemakai(db: AsyncSession, household_id: UUID, m: Manifest, status: tuple[str, ...]) -> list[str]:
     """Plugin di ruang ini yang membutuhkan `m` dan berstatus salah satu dari `status`."""
     terpasang = await _instalasi_ruang(db, household_id)
@@ -371,20 +414,44 @@ async def copot(db: AsyncSession, user, household_id: UUID, m: Manifest) -> Plug
 
 
 async def bersihkan_kedaluwarsa(db: AsyncSession, now: datetime | None = None) -> list[tuple[UUID, str]]:
-    """Hapus baris instalasi yang arsipnya lewat `purge_after`. Mengembalikan (ruang, plugin) yang dihapus.
+    """Hapus baris instalasi yang arsipnya lewat `purge_after`, beserta semua data `p_<id>_*` ruang itu (U1,
+    `host/data.py`). Mengembalikan (ruang, plugin) yang dihapus.
 
-    BELUM dijadwalkan di H1: ADR-P15 mewajibkan pemberitahuan 7 hari sebelum penghapusan, dan penghapusan
-    data `p_<id>_*` lewat hook plugin. Keduanya datang bersama plugin pertama (H2 `notifications`/`jobs`,
-    U1 tabel Buku Usaha); job harian memanggil fungsi ini sesudahnya."""
+    BELUM dijadwalkan: ADR-P15 mewajibkan pemberitahuan 7 hari sebelum penghapusan (job + notifikasi H2), baru relevan
+    90 hari sesudah copot pertama. Plugin yang manifestnya sedang tidak dimuat (deploy rusak): barisnya TIDAK dihapus
+    dan dicatat sebagai galat, supaya datanya tidak tertinggal tanpa catatan."""
     now = now or _sekarang()
     rows = (await db.execute(select(PluginInstallation).where(
         PluginInstallation.status == UNINSTALLED,
         PluginInstallation.purge_after.is_not(None),
     ))).scalars().all()
-    hapus = [r for r in rows if _aware(r.purge_after) <= now]
-    for r in hapus:
-        _audit(db, r.household_id, r.plugin_id, None, "bersihkan", dari=UNINSTALLED)
+    from app.plugins.host import data as data_plugin
+    hapus = []
+    for r in rows:
+        if _aware(r.purge_after) > now:
+            continue
+        m = registry().get(r.plugin_id)
+        if m is None:
+            # Review #196 temuan 2: tanpa manifest, data `p_<id>_*` tidak bisa dihapus dengan pasti; baris instalasi
+            # dibiarkan supaya arsipnya tidak "hilang" dari catatan dan job mencoba lagi (ADR-P15, hak hapus UU PDP).
+            log.error("plugin %s tidak dimuat; arsip ruang %s belum bisa dibersihkan", r.plugin_id, r.household_id)
+            continue
+        baris = await data_plugin.hapus_data_ruang(db, m, r.household_id)
+        _audit(db, r.household_id, r.plugin_id, None, "bersihkan", dari=UNINSTALLED, baris=baris)
+        hapus.append(r)
     if hapus:
         await db.execute(delete(PluginInstallation).where(PluginInstallation.id.in_([r.id for r in hapus])))
         await db.flush()
     return [(r.household_id, r.plugin_id) for r in hapus]
+
+
+async def bersihkan_terhapus(hari: int = 30) -> int:
+    from app.plugins.host import keadaan
+    """Hapus permanen baris plugin yang sudah dihapus lunak lebih dari `hari` hari (review #196 temuan 3: data pribadi
+    kontak yang dihapus admin tidak boleh tersimpan tanpa batas). Dipanggil job `plugin_jobs` tiap jam (idempoten,
+    murah). Mengembalikan jumlah baris."""
+    from app.plugins.host import data as data_plugin
+    async with keadaan.sesi() as db:
+        n = await data_plugin.bersihkan_terhapus(db, hari=hari)
+        await db.commit()
+    return n

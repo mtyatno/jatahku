@@ -39,7 +39,8 @@ from app.plugins.host import keadaan
 from app.plugins.host.kode import IZIN_PER_JENIS
 from app.plugins.host.keadaan import catat_audit, sesi
 from app.plugins.sdk.context import (
-    AksiRoute, NilaiTidakSah, PenggunaView, PeriodeView, PluginContext, RencanaPengeluaran, Saran,
+    AksiRoute, GalatRute, IzinDitolak, Jawaban, NilaiTidakSah, PenggunaView, PeriodeView, Permintaan, PluginContext,
+    RencanaPengeluaran, Saran,
 )
 from app.plugins.sdk.plugin import Pendaftaran
 
@@ -89,14 +90,17 @@ def _pengguna(user) -> PenggunaView | None:
 
 
 def konteks(db, m: Manifest, inst: PluginInstallation, ruang: Household, d: Pendaftaran, *,
-            viewer=None, peran: str = "sistem", sumber: str, sekarang: datetime | None = None) -> PluginContext:
+            viewer=None, peran: str = "sistem", sumber: str, sekarang: datetime | None = None,
+            boleh_tulis: bool = False) -> PluginContext:
     """Konteks untuk satu panggilan fungsi plugin; `viewer` = objek `User` pemicu (atau None untuk job).
-    `sekarang` = jam acuan panggilan itu (job: jam jadwalnya), dipakai penyaring notifikasi; None = jam sungguhan."""
+    `sekarang` = jam acuan panggilan itu (job: jam jadwalnya), dipakai penyaring notifikasi; None = jam sungguhan.
+    `boleh_tulis` (U1): hanya rute non-GET boleh menulis tabel plugin sendiri lewat `ctx.data()`."""
     return keadaan.buat(
         db=db, plugin_id=m.id, nama_plugin=m.name, ruang_id=ruang.id, nama_ruang=ruang.name or "",
         jenis_ruang=ruang.type or HouseholdType.RUMAH_TANGGA, viewer=_pengguna(viewer), peran=peran,
         izin=izin_efektif(inst, m, d), jenis_notifikasi=frozenset(m.contributes.notifications),
         pengaturan=dict(inst.settings or {}), sumber=sumber, sekarang=sekarang,
+        entitas=frozenset(m.entities), boleh_tulis=boleh_tulis,
     )
 
 
@@ -677,7 +681,7 @@ def tebak_kamus(kamus: list[tuple[str, list[str]]], deskripsi: str) -> str | Non
     return None
 
 
-# ── form_fields (validasi; disimpan di U2) ───────────────────────────────
+# ── form_fields (validasi H2; disimpan lewat simpan_field U2) ───────────────────────────────
 def _field_tidak_sah(detail: str):
     return siklus._galat(422, "field_tidak_sah", detail)
 
@@ -711,7 +715,7 @@ async def periksa_field(db, user, household_id, target: str, kiriman: dict) -> d
         raise _field_tidak_sah("Isian tambahan tidak sah.")
     peran = await _peran(db, user.id, household_id)
     ruang = await _ruang(db, household_id)
-    if peran is None or ruang is None:
+    if peran is None or ruang is None or _karyawan(ruang.type, peran):   # karyawan tanpa kontribusi plugin (H3 B)
         raise _field_tidak_sah("Isian tambahan tidak tersedia di ruang ini.")
     per_plugin: dict[str, dict[str, _Aktif]] = {}
     for a in await _fungsi_aktif(db, household_id, user.id, "field_form",
@@ -730,9 +734,170 @@ async def periksa_field(db, user, household_id, target: str, kiriman: dict) -> d
                 bersih.setdefault(pid, {})[key] = None       # field plugin selalu opsional
                 continue
             nilai = _nilai_bawaan(spec.type, nilai)
+            if spec.type == "select" and nilai not in spec.options:   # U2: pilihan dari manifest
+                raise _field_tidak_sah(f"{spec.label}: pilihan tidak dikenali.")
             ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"field:{target}.{key}")
             try:
                 bersih.setdefault(pid, {})[key] = await panggil(ctx, a.d.fn, nilai)
             except NilaiTidakSah as exc:
                 raise _field_tidak_sah(f"{spec.label}: {str(exc)[:120] or 'tidak sah'}")
     return bersih
+
+
+async def simpan_field(db, user, household_id, target: str, target_id, bersih: dict) -> None:
+    """U2: nilai bersih dari `periksa_field` disimpan plugin pemiliknya (`@plugin.simpan_field(target)`) untuk catatan
+    inti `target_id` yang baru di-flush, di sesi dan commit yang sama. Plugin tanpa fungsi simpan untuk target itu
+    dilewati (field validasi saja). Galat membatalkan catatan intinya: `NilaiTidakSah` → 422 `field_tidak_sah`,
+    lainnya → 500 `plugin_gagal` (log). Isian yang semuanya kosong tidak memanggil plugin."""
+    from app.services.ruang import RuangDitolak
+    bersih = {pid: {k: v for k, v in isian.items() if v is not None} for pid, isian in (bersih or {}).items()}
+    bersih = {pid: isian for pid, isian in bersih.items() if isian}
+    if not bersih:
+        return
+    peran = await _peran(db, user.id, household_id)
+    ruang = await _ruang(db, household_id)
+    if peran is None or ruang is None or _karyawan(ruang.type, peran):
+        raise _field_tidak_sah("Isian tambahan tidak tersedia di ruang ini.")
+    for a in await _fungsi_aktif(db, household_id, user.id, "simpan_field",
+                                 lambda m: {f.target for f in m.contributes.form_fields if f.target == target}):
+        isian = bersih.get(a.m.id)
+        if not isian:
+            continue
+        ctx = konteks(db, a.m, a.inst, ruang, a.d, viewer=user, peran=peran, sumber=f"simpan:{target}",
+                      boleh_tulis=True)
+        mulai = time.perf_counter()
+        try:
+            await panggil(ctx, a.d.fn, target_id, dict(isian))
+        except NilaiTidakSah as exc:
+            raise _field_tidak_sah(str(exc)[:200] or "Isian tambahan tidak sah.")
+        except RuangDitolak:
+            raise
+        except Exception:
+            log.exception("simpan field plugin %s '%s' gagal", a.m.id, target)
+            raise RuangDitolak(kode="plugin_gagal", detail=f"{a.m.name} sedang bermasalah. Coba lagi nanti.",
+                               status_code=500)
+        finally:
+            _waktu(mulai, a.m, a.d)
+
+
+# ── routes (endpoint plugin, U1) ─────────────────────────────────────────
+MAKS_BODY_RUTE = 64 * 1024
+MAKS_QUERY_RUTE = 20
+
+
+@dataclass(frozen=True)
+class HasilRute:
+    status: int
+    data: Any
+
+
+def _cocok_pola(pola: str, path: str) -> dict[str, str] | None:
+    """`/kontak/{id}` ↔ `/kontak/abc` → {"id": "abc"}; None bila tidak cocok. Segmen dibandingkan persis."""
+    a, b = pola.strip("/").split("/"), path.strip("/").split("/")
+    if len(a) != len(b):
+        return None
+    out = {}
+    for seg, nilai in zip(a, b):
+        if seg.startswith("{") and seg.endswith("}"):
+            if not nilai or len(nilai) > 120:
+                return None
+            out[seg[1:-1]] = nilai
+        elif seg != nilai:
+            return None
+    return out
+
+
+def json_aman(v):
+    """Nilai dari plugin → JSON: `Decimal` sebagai string desimal (tidak pernah float), UUID/tanggal sebagai teks."""
+    if isinstance(v, dict):
+        return {str(k): json_aman(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple, set, frozenset)):
+        return [json_aman(x) for x in v]
+    if isinstance(v, bool) or v is None or isinstance(v, (int, str)):
+        return v
+    if isinstance(v, float):
+        raise TypeError("nominal float tidak boleh keluar dari plugin; pakai Decimal")
+    if isinstance(v, Decimal):
+        if not v.is_finite():
+            raise TypeError("Decimal NaN/Infinity")
+        return format(v, "f")
+    if isinstance(v, (UUID, date, datetime)):
+        return v.isoformat() if not isinstance(v, UUID) else str(v)
+    if hasattr(v, "__dataclass_fields__"):
+        from dataclasses import asdict
+        return json_aman(asdict(v))
+    raise TypeError(f"nilai {type(v).__name__} tidak bisa dikirim sebagai JSON")
+
+
+async def jalankan_rute(db, user, household_id, plugin_id: str, metode: str, path: str, query: dict,
+                        body) -> HasilRute:
+    """`<metode> /p/<plugin_id>/<path>` untuk ruang header (`ruang_aktif`; karyawan sudah ditolak gerbang R5).
+
+    Urutan: plugin dikenal (404 `plugin_tidak_ada`) → aktif di ruang ini untuk user ini (404 `plugin_tidak_aktif`:
+    dijeda, dicopot, saklar darurat, flag — tidak dibedakan; status `terpasang` (wizard belum selesai) hanya membuka
+    rute GET, supaya wizard bisa membaca pengaturannya) → rute ada di manifest + kode (404 `rute_tidak_ada`) →
+    fungsi plugin dengan konteks ruang itu; non-GET boleh menulis tabel plugin sendiri (`ctx.data()`), yang diaudit.
+    Galat plugin: `GalatRute` apa adanya, `NilaiTidakSah` 422, `IzinDitolak` 403, lainnya 500 `plugin_gagal` (log)."""
+    from app.services.ruang import RuangDitolak
+    reg = registry()
+    m = reg.get(plugin_id)
+    if m is None or household_id is None:
+        raise RuangDitolak(kode="plugin_tidak_ada", detail="Fitur Tambahan ini tidak ditemukan.", status_code=404)
+    metode = metode.upper()
+    aktif = [(mm, inst) for mm, inst in await siklus.aktif_dengan_instalasi(
+        db, household_id, user.id, termasuk_terpasang=(metode == "GET")) if mm.id == plugin_id]
+    p = reg.kode_plugin(plugin_id)
+    if not aktif or p is None:
+        raise RuangDitolak(kode="plugin_tidak_aktif", detail=f"{m.name} tidak aktif di ruang ini.", status_code=404)
+    _, inst = aktif[0]
+    param = None
+    d = None
+    for r in m.contributes.routes:
+        if r.method != metode:
+            continue
+        param = _cocok_pola(r.path, path)
+        if param is not None:
+            d = p.ambil("rute", r.key)
+            break
+    if d is None or param is None:
+        raise RuangDitolak(kode="rute_tidak_ada", detail="Halaman atau aksi ini tidak ada.", status_code=404)
+    ruang = await _ruang(db, household_id)
+    peran = await _peran(db, user.id, household_id)
+    if ruang is None or peran is None or _karyawan(ruang.type, peran):
+        raise RuangDitolak(kode="khusus_admin", detail="Hanya pemilik dan admin ruang yang bisa membuka ini.")
+    ctx = konteks(db, m, inst, ruang, d, viewer=user, peran=peran, sumber=f"rute:{d.kunci}",
+                  boleh_tulis=metode != "GET")
+    permintaan = Permintaan(metode=metode, path=dict(param), query=dict(query), body=body)
+    mulai = time.perf_counter()
+    try:
+        hasil = await panggil(ctx, d.fn, permintaan)
+    except GalatRute as e:
+        kode = re.sub(r"[^a-z0-9_]", "", str(e.kode).lower())[:40] or "ditolak"
+        raise RuangDitolak(kode=kode, detail=(str(e.detail) or "Permintaan ditolak.")[:300],
+                           status_code=int(e.status) if 400 <= int(e.status) < 500 else 400)
+    except NilaiTidakSah as e:
+        raise RuangDitolak(kode="nilai_tidak_sah", detail=(str(e) or "Isian tidak sah.")[:300], status_code=422)
+    except IzinDitolak as e:
+        kode = "khusus_admin" if e.alasan == "khusus_admin" else "tanpa_izin"
+        raise RuangDitolak(kode=kode, detail="Fitur Tambahan ini tidak punya izin untuk itu.", status_code=403)
+    except RuangDitolak:
+        raise
+    except Exception:
+        log.exception("rute plugin %s '%s' gagal", m.id, d.kunci)
+        raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
+                           status_code=500)
+    finally:
+        _waktu(mulai, m, d)
+    status = 200
+    if isinstance(hasil, Jawaban):
+        status, hasil = int(hasil.status), hasil.data
+    if status not in (200, 201, 202, 204):
+        raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
+                           status_code=500)
+    try:
+        data = json_aman(hasil)
+    except TypeError:
+        log.exception("rute plugin %s '%s' mengembalikan nilai yang tidak sah", m.id, d.kunci)
+        raise RuangDitolak(kode="plugin_gagal", detail=f"{m.name} sedang bermasalah. Coba lagi nanti.",
+                           status_code=500)
+    return HasilRute(status=status, data=data)

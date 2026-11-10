@@ -21,7 +21,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 # Versi Plugin API yang disediakan host. Satu versi mayor hanya bertambah (01-kajian.md, "Versi dan kompatibilitas").
 # 1.1 (H2): `PluginContext` (`app/plugins/sdk/`), `contributes.checks`, `contributes.nlp_kamus`, jadwal job baku.
-PLUGIN_API_VERSION = (1, 1, 0)
+# 1.2 (U1): `contributes.routes` + `@plugin.rute`, `ctx.data()` untuk tabel `entities` (tanpa izin baru: tabel milik
+#           plugin sendiri, tulis hanya dari rute non-GET), ekspor data plugin (`data_lifecycle.export`).
+# 1.3 (U2): `ctx.catat_pemasukan` (`incomes:write` untuk rute), `@plugin.simpan_field(target)`, `options` untuk field
+#           `select`, persetujuan izin baru untuk instalasi yang sudah ada (`POST …/izin`).
+PLUGIN_API_VERSION = (1, 3, 0)
 
 PENERBIT_T1 = "Jatahku"
 JENIS_RUANG = ("rumah_tangga", "usaha")
@@ -145,6 +149,21 @@ class FieldForm(_Ketat):
     type: Literal["text", "number", "reference", "select"]
     label: str = Field(min_length=1, max_length=40)
     entity: str | None = None
+    # U2: pilihan untuk `select` (wajib di sana, dilarang di jenis lain); nilai dikirim apa adanya.
+    options: list[str] = Field(default=[], max_length=30)
+
+    @model_validator(mode="after")
+    def _cek_options(self):
+        if self.type == "select":
+            if not self.options:
+                raise ValueError(f"field '{self.key}': `select` butuh `options`")
+            if len(set(self.options)) != len(self.options) or any(not o.strip() or len(o) > 40 for o in self.options):
+                raise ValueError(f"field '{self.key}': `options` harus unik, 1–40 karakter")
+        elif self.options:
+            raise ValueError(f"field '{self.key}': `options` hanya untuk `select`")
+        if self.type == "reference" and not self.entity:
+            raise ValueError(f"field '{self.key}': `reference` butuh `entity`")
+        return self
 
 
 class Job(_Ketat):
@@ -189,6 +208,27 @@ class Laporan(_Ketat):
     formats: list[Literal["pdf", "csv", "json"]] = Field(min_length=1)
 
 
+_POLA_RUTE = re.compile(r"^(/(?:[a-z0-9_\-]+|\{[a-z][a-z0-9_]*\}))+$")
+
+
+class Rute(_Ketat):
+    """U1: endpoint plugin `<method> /p/<id><path>`; fungsinya `@plugin.rute(method, path)`. Dilayani host di
+    `app/api/routes/plugins.py` (ruang dari header, owner/admin, plugin aktif). `{nama}` = parameter path."""
+    method: Literal["GET", "POST", "PATCH", "PUT", "DELETE"]
+    path: str = Field(min_length=1, max_length=80)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v):
+        if not _POLA_RUTE.match(v):
+            raise ValueError(f"path rute '{v}' harus seperti /kontak atau /kontak/{{id}} (huruf kecil, angka, -, _)")
+        return v
+
+    @property
+    def key(self) -> str:
+        return f"{self.method} {self.path}"
+
+
 class Kontribusi(_Ketat):
     cards: list[Kartu] = []
     pages: list[Halaman] = []
@@ -205,6 +245,8 @@ class Kontribusi(_Ketat):
     setup: bool = False             # True = ada wizard; pasang → `installed` sampai `lanjut`
     # H2: pemeriksaan sebelum simpan pengeluaran (peringatan saja, `expense_rules.peringatan_plugin`).
     checks: list[str] = []
+    # U1: endpoint plugin (`/p/<id>/…`), maksimal 30.
+    routes: list[Rute] = Field(default=[], max_length=30)
     # H2: kamus Catat cepat, kategori (nama amplop tebakan) → kata. Hanya aktif di ruang yang memasang plugin
     # (`txn_nlp.find_best_envelope`), dicoba sebelum kamus kategori inti; tidak pernah dipakai lintas ruang.
     nlp_kamus: dict[str, list[str]] = {}
@@ -329,6 +371,9 @@ class Manifest(_Ketat):
             raise ValueError("kunci kartu/aksi ganda")
         if len(set(c.advisor_rules)) != len(c.advisor_rules):
             raise ValueError("kode aturan advisor ganda")
+        rute = [r.key for r in c.routes]
+        if len(set(rute)) != len(rute):
+            raise ValueError("rute ganda")
         for h in c.pages:
             if not (h.route == f"/p/{pid}" or h.route.startswith(f"/p/{pid}/")):
                 raise ValueError(f"route '{h.route}' harus di bawah /p/{pid}")

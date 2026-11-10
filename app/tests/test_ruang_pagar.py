@@ -45,6 +45,8 @@ DIIZINKAN = {
     # ruang); (2) penerima notifikasi plugin = owner/admin ruang tertentu (join); (3) pemilik ruang tertentu untuk
     # zona waktu dan flag job plugin (join). Peran di satu ruang memakai `ruang.keanggotaan`.
     "plugins/host/titik.py": 3,
+    # Plugin U1: rujukan kolom FK `users` di tabel plugin harus anggota ruang konteks (`ctx.data()`, cek rujukan).
+    "plugins/host/data.py": 1,
 }
 
 
@@ -101,6 +103,11 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/balance-check/apply"),                 # cocokkan saldo seluruh ruang
             ("POST", "/advisor/plan"), ("POST", "/advisor/execute"),  # rencana atas amplop satu ruang
             ("POST", "/transactions/suggest-envelope"), ("POST", "/transactions/suggest-envelopes"),  # saran, R7
+            # U1: endpoint plugin. Data yang disentuh hanya tabel plugin itu sendiri, selalu disaring ruang konteks
+            # (`app/plugins/host/data.py`): objek baru tanpa induk memakai ruang header (keputusan A, R3), objek lama
+            # milik ruang lain = 404 (lebih ketat dari "ruang dari objek"). Karyawan 403 (route di luar KARYAWAN_BOLEH).
+            ("POST", "/p/{plugin_id}/{path:path}"), ("PATCH", "/p/{plugin_id}/{path:path}"),
+            ("PUT", "/p/{plugin_id}/{path:path}"), ("DELETE", "/p/{plugin_id}/{path:path}"),
         }
 
         def pakai(dependant, fn):
@@ -153,6 +160,8 @@ class PagarSumberTests(unittest.TestCase):
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/lanjut"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/jeda"),
             ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/copot"),
+            # U2: setujui izin baru, sama (`_ruang_kelola`).
+            ("POST", "/ruang/{ruang_id}/plugins/{plugin_id}/izin"),
         }
         tulis = {("POST", "/household/invite")}
         # Awalan yang tidak menyentuh data ruang: panel admin (require_admin), akun dan sesi, laporan galat klien,

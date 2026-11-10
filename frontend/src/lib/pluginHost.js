@@ -149,10 +149,36 @@ export function bodyPasang(p) {
   return { izin: arr(p?.izin).map(i => i.kode) };
 }
 
+/**
+ * Izin baru (U2): izin manifest versi sekarang yang belum disetujui instalasi ini → [{kode, teks}] untuk layar
+ * persetujuan. Kosong bila tidak ada, bila plugin tidak terpasang, atau user bukan pemilik/admin.
+ */
+export function izinBaru(p) {
+  if (!p?.boleh_kelola || !['aktif', 'terpasang', 'dijeda'].includes(p.status)) return [];
+  const baru = new Set(arr(p.izin_baru));
+  return arr(p.izin).filter(i => baru.has(i.kode));
+}
+
+/** Body `POST …/izin`: SEMUA izin manifest yang dilihat (sama dengan pasang), bukan hanya yang baru. */
+export const bodyIzinBaru = (p) => bodyPasang(p);
+
 /** Plugin di `butuh` yang belum aktif di ruang ini (untuk teks layar pasang). */
 export function butuhBelumAktif(p, katalog) {
   const status = Object.fromEntries(arr(katalog).map(x => [x.id, x]));
   return arr(p?.butuh).filter(id => status[id]?.status !== 'aktif').map(id => status[id]?.nama || id);
+}
+
+/** Format unduhan data plugin dari katalog (U1): tombol unduh tampil bila ada data dan plugin pernah terpasang. */
+export function formatEkspor(p) {
+  if (!p || !['aktif', 'terpasang', 'dijeda', 'arsip'].includes(p.status)) return [];
+  return arr(p.ekspor).filter(f => f === 'csv' || f === 'json');
+}
+
+/** Nama berkas dari header Content-Disposition server, atau cadangan (nama aneh ditolak). */
+export function namaBerkasUnduhan(contentDisposition, cadangan) {
+  const m = /filename="([^"]+)"/.exec(String(contentDisposition || ''));
+  const nama = m ? m[1] : '';
+  return /^[\w.-]+$/.test(nama) ? nama : cadangan;
 }
 
 /** Jawaban server → pesan untuk user. */
@@ -240,4 +266,28 @@ export function selTabel(c, kolom) {
 export function adaKartuPlugin(layout, kontribusi) {
   const keys = new Set(arr(kontribusi?.cards).map(c => c.key));
   return arr(layout?.items).some(i => !i.hidden && i.visible !== false && keys.has(i.card));
+}
+
+// ── field form Fitur Tambahan (U2) ───────────────────────────────────────
+
+/** Field plugin untuk satu form inti (`target`: transaction, income): urutan manifest; `select` tanpa pilihan dibuang. */
+export function fieldUntuk(kontribusi, target) {
+  return arr(kontribusi?.form_fields).filter(f => f && f.target === target && typeof f.key === 'string'
+    && ['text', 'number', 'select', 'reference'].includes(f.type)
+    && (f.type !== 'select' || arr(f.options).length > 0));
+}
+
+/**
+ * Isian form → `tambahan` untuk `POST /transactions/` (`{plugin: {key: nilai}}`). Isian kosong tidak dikirim; semua
+ * kosong → null (field tidak dikirim sama sekali). Nilai `select` di luar pilihan dibuang (server juga menolak).
+ */
+export function bodyTambahan(fields, nilai) {
+  const out = {};
+  for (const f of arr(fields)) {
+    const v = nilai?.[`${f.plugin}.${f.key}`];
+    if (v === undefined || v === null || String(v).trim() === '') continue;
+    if (f.type === 'select' && !arr(f.options).includes(v)) continue;
+    (out[f.plugin] ||= {})[f.key] = f.type === 'number' ? String(v).trim() : v;
+  }
+  return Object.keys(out).length ? out : null;
 }

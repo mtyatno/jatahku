@@ -4,7 +4,7 @@
 // (daftar izin yang dilihat dikirim ke server: 409 `izin_berubah` bila manifest berubah di antaranya), menjeda,
 // melanjutkan, mencopot (arsip 90 hari, tawaran ekspor), dan memulihkan. Sesudah memasang, kartu Beranda ditawarkan
 // (yang `bawaan` sudah dicentang) dan ditambahkan lewat PUT /dashboard/layout. Semua aturan ditegakkan server.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
@@ -13,10 +13,11 @@ import { Icon } from '../components/Icon';
 import { loadCache, saveCache } from '../lib/localCache';
 import { cacheKeyLayout } from '../lib/dashboardRegistry';
 import {
-  STATUS_LABEL, aksiApi, bodyPasang, bodyTambahKartu, butuhBelumAktif, pesanGalat, tawaranKartu, tombolUntuk,
-  urutkanKatalog,
+  STATUS_LABEL, aksiApi, bodyIzinBaru, bodyPasang, bodyTambahKartu, butuhBelumAktif, formatEkspor, izinBaru, pesanGalat, tawaranKartu,
+  tombolUntuk, urutkanKatalog,
 } from '../lib/pluginHost';
 import { EVENT_PLUGIN_BERUBAH } from '../plugins/useKontribusi';
+import { webPlugin } from '../plugins/index';
 
 const LABEL_TOMBOL = { pasang: 'Pasang', pulihkan: 'Pulihkan', lanjut: 'Lanjutkan', jeda: 'Jeda', copot: 'Copot' };
 
@@ -168,10 +169,36 @@ function TawaranKartu({ p, sibuk, onTambah, onLewati }) {
   );
 }
 
+// ── unduh data plugin (U1) ──────────────────────────────────────────────────
+// `GET /ruang/{id}/plugins/{plugin_id}/ekspor?format=json|csv` lewat `api` (header Authorization dan ruang), bukan
+// tautan `<a href>` langsung ke API; berkas disimpan lewat lapisan native (web: unduhan browser).
+const LABEL_EKSPOR = { json: 'JSON', csv: 'CSV (ZIP)' };
+
+function TombolUnduh({ p, rid, sibuk, onPesan }) {
+  const [proses, setProses] = useState('');
+  const format = formatEkspor(p);
+  if (!format.length || !rid || !p.boleh_kelola) return null;
+  const unduh = async (f) => {
+    setProses(f);
+    const r = await api.unduhEksporPlugin(rid, p.id, f);
+    setProses('');
+    onPesan(r.ok ? { teks: `Data ${p.nama} (${LABEL_EKSPOR[f]}) diunduh.` } : { teks: pesanGalat(r.status, r.data), galat: true });
+  };
+  return (
+    <div className="flex flex-wrap gap-2">
+      {format.map(f => (
+        <button key={f} type="button" className="btn-outline !py-2 inline-flex items-center gap-1.5 disabled:opacity-50"
+          disabled={sibuk || !!proses} onClick={() => unduh(f)}>
+          <Icon name="download" size={16} /> {proses === f ? 'Menyiapkan…' : `Unduh ${LABEL_EKSPOR[f]}`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── layar copot ─────────────────────────────────────────────────────────────
-// Tombol unduh menyusul bersama endpoint ekspor (U1, `GET /ruang/{id}/plugins/{plugin_id}/ekspor`). Unduhan memakai
-// `api` (header Authorization dan ruang), bukan tautan `<a href>` langsung ke API.
-function LayarCopot({ p, sibuk, onCopot, onBatal }) {
+function LayarCopot({ p, rid, sibuk, onCopot, onBatal, onPesan }) {
+  const adaUnduhan = formatEkspor(p).length > 0;
   return (
     <div>
       <h3 className="font-display font-bold text-lg" style={{ color: 'var(--text)' }}>Copot {p.nama}?</h3>
@@ -182,9 +209,12 @@ function LayarCopot({ p, sibuk, onCopot, onBatal }) {
       </ul>
       <div className="mt-4 rounded-xl px-3 py-3" style={{ background: 'rgba(148,163,184,0.12)' }}>
         <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Simpan datanya dulu?</p>
-        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-          Unduhan data {p.nama} belum tersedia di versi ini. Datanya tetap tersimpan di arsip selama 90 hari.
+        <p className="text-xs mt-1 mb-2" style={{ color: 'var(--text-muted)' }}>
+          {adaUnduhan
+            ? 'Catatan usaha dan dokumen pendukungnya wajib disimpan 10 tahun untuk pajak; unduh salinannya sebelum mencopot. Unduhan tetap bisa selama arsip.'
+            : `${p.nama} tidak menyimpan data sendiri, jadi tidak ada yang perlu diunduh.`}
         </p>
+        <TombolUnduh p={p} rid={rid} sibuk={sibuk} onPesan={onPesan} />
       </div>
       <div className="flex flex-wrap gap-2 mt-4">
         <button type="button" className="btn-danger !px-5 !py-2.5 !rounded-xl disabled:opacity-50" disabled={sibuk} onClick={onCopot}>
@@ -199,9 +229,10 @@ function LayarCopot({ p, sibuk, onCopot, onBatal }) {
 // ── panel detail ────────────────────────────────────────────────────────────
 function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
   const { user } = useAuth();
-  const [langkah, setLangkah] = useState(null);     // null | 'izin' | 'pulihkan' | 'kartu' | 'copot'
+  const [langkah, setLangkah] = useState(null);     // null | 'izin' | 'pulihkan' | 'wizard' | 'kartu' | 'copot'
   const [sibuk, setSibuk] = useState(false);
   const [pesan, setPesan] = useState(null);
+  const Wizard = webPlugin(p.id)?.wizard || null;    // U1: wizard pasang plugin (status `terpasang`)
 
   useEffect(() => { setLangkah(null); setPesan(null); }, [p.id]);
 
@@ -229,10 +260,25 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
       setLangkah('kartu');
       return;
     }
+    if (hasil.status === 'terpasang' && Wizard) {
+      setLangkah('wizard');
+      return;
+    }
     setLangkah(null);
     setPesan({ teks: hasil.status === 'terpasang'
       ? `${p.nama} terpasang. Selesaikan pengaturannya untuk mulai memakai.`
       : `${p.nama} ${pulih ? 'dipulihkan' : 'terpasang'} di ${ruangNama}.` });
+  };
+
+  // Wizard selesai atau dilewati → `lanjut` (terpasang → aktif), lalu tawaran kartu seperti pasang tanpa wizard.
+  const selesaiWizard = async (jumlahAmplop = 0) => {
+    const hasil = await jalankan('lanjut');
+    if (!hasil) return;
+    if (tawaranKartu(p).length) { setLangkah('kartu'); return; }
+    setLangkah(null);
+    setPesan({ teks: jumlahAmplop
+      ? `${p.nama} aktif di ${ruangNama}. ${jumlahAmplop} amplop usaha dibuat; buka menu Usaha untuk mulai.`
+      : `${p.nama} aktif di ${ruangNama}. Buka menu Usaha untuk mulai.` });
   };
 
   const tambahKartu = async (keys) => {
@@ -263,11 +309,19 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
     if (tombol === 'pasang') { setLangkah('izin'); setPesan(null); return; }
     if (tombol === 'pulihkan') { setLangkah('pulihkan'); setPesan(null); return; }
     if (tombol === 'copot') { setLangkah('copot'); setPesan(null); return; }
+    if (tombol === 'lanjut' && p.status === 'terpasang' && Wizard) { setLangkah('wizard'); setPesan(null); return; }
     const hasil = await jalankan(tombol);
     if (!hasil) return;
     setPesan({ teks: tombol === 'jeda'
       ? `${p.nama} dijeda. Menu dan kartunya disembunyikan; datanya tetap tersimpan dan bisa dilanjutkan kapan saja.`
       : `${p.nama} aktif lagi di ${ruangNama}.` });
+  };
+
+  // U2: rilis baru meminta izin tambahan untuk instalasi yang sudah ada; status tidak berubah.
+  const setujuiIzin = async () => {
+    const hasil = await jalankan('izin', bodyIzinBaru(p));
+    if (!hasil) return;
+    setPesan({ teks: `Izin baru ${p.nama} disetujui. Fitur barunya bisa dipakai sekarang.` });
   };
 
   const copot = async () => {
@@ -302,6 +356,22 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
           {p.nama} sedang diperbaiki tim Jatahku. Menu dan kartunya disembunyikan sementara; datamu aman.
         </p>
       )}
+      {izinBaru(p).length > 0 && !langkah && (
+        <div className="mt-3 rounded-xl px-3 py-3" style={kotak('awas', gelap)} role="region" aria-label="Izin baru">
+          <p className="text-sm font-semibold">Pembaruan {p.nama} meminta izin baru:</p>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {izinBaru(p).map(i => (
+              <li key={i.kode} className="flex items-start gap-2 text-sm">
+                <Icon name="check" size={16} className="shrink-0 mt-0.5" /> {i.teks}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs mt-1.5">Sebelum disetujui, fitur yang memakainya belum bisa dipakai. Data ruang lain tetap tidak terbaca.</p>
+          <button type="button" className="btn-primary !py-2 mt-2 disabled:opacity-50" disabled={sibuk || !rid} onClick={setujuiIzin}>
+            {sibuk ? 'Memproses…' : 'Setujui izin baru'}
+          </button>
+        </div>
+      )}
       {p.status === 'arsip' && p.arsip_sampai && (
         <p className="text-sm mt-3" style={{ color: 'var(--text-muted)' }}>
           Dicopot. Datanya diarsipkan sampai {tanggal(p.arsip_sampai)}, lalu dihapus permanen.
@@ -318,9 +388,15 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
           <TawaranKartu p={p} sibuk={sibuk} onTambah={tambahKartu}
             onLewati={() => { setLangkah(null); setPesan({ teks: `${p.nama} terpasang di ${ruangNama}.` }); }} />
         </Bagian>
+      ) : langkah === 'wizard' && Wizard ? (
+        <Bagian judul="Pengaturan awal">
+          <Suspense fallback={<p className="text-sm" style={{ color: 'var(--text-muted)' }}>Memuat…</p>}>
+            <Wizard ruangNama={ruangNama} sibuk={sibuk} onSelesai={selesaiWizard} onLewati={() => selesaiWizard(0)} />
+          </Suspense>
+        </Bagian>
       ) : langkah === 'copot' ? (
         <Bagian judul="Copot">
-          <LayarCopot p={p} sibuk={sibuk} onCopot={copot} onBatal={() => setLangkah(null)} />
+          <LayarCopot p={p} rid={rid} sibuk={sibuk} onCopot={copot} onBatal={() => setLangkah(null)} onPesan={setPesan} />
         </Bagian>
       ) : (
         <>
@@ -340,7 +416,7 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
               <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Tidak meminta akses ke data ruang.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {p.izin.map(i => (
+                {(p.izin_diberikan.length ? p.izin.filter(i => p.izin_diberikan.includes(i.kode)) : p.izin).map(i => (
                   <li key={i.kode} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text)' }}>
                     <Icon name="lock" size={16} className="shrink-0 mt-0.5" color="var(--text-muted)" /> {i.teks}
                   </li>
@@ -358,6 +434,9 @@ function Panel({ p, katalog, ruangNama, rid, gelap, onBerubah }) {
               Saat dijeda, data tetap tersimpan dan menu serta kartunya disembunyikan. Saat dicopot, data diarsipkan 90 hari
               lalu dihapus permanen; data inti ruang ini tidak pernah ikut terhapus.
             </p>
+            {formatEkspor(p).length > 0 && (
+              <div className="mt-2"><TombolUnduh p={p} rid={rid} sibuk={sibuk} onPesan={setPesan} /></div>
+            )}
           </Bagian>
           {tombol.length > 0 ? (
             <div className="flex flex-wrap gap-2 mt-5">

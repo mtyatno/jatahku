@@ -58,6 +58,7 @@ from app.models.models import (
     ProofSample, ProofSampleConsent, ReceiptLearnVote, ReceiptScan, RecurringTransaction, Report, ReportSettings,
     RuangKamus, Transaction, User, UserEnvelopeKeyword, UserStreak,
 )
+from app.plugins.host import data as data_plugin
 from app.services.kotak_struk import belajar, donasi
 from app.services.laporan.pencatat import anonimkan_pencatat
 
@@ -108,6 +109,10 @@ async def _former_member(db: AsyncSession) -> uuid.UUID:
 async def _delete_envelopes(db: AsyncSession, env_ids: list) -> None:
     if not env_ids:
         return
+    # Data plugin (U1) yang merujuk transaksi atau amplop ini: eksplisit, tidak bergantung FK CASCADE/SET NULL.
+    txn_ids = list((await db.execute(select(Transaction.id).where(Transaction.envelope_id.in_(env_ids)))).scalars())
+    await data_plugin.hapus_rujukan(db, "transactions", txn_ids)
+    await data_plugin.hapus_rujukan(db, "envelopes", env_ids)
     for model in (Allocation, Transaction, PendingTransaction, RecurringTransaction,
                   Goal, MonthlySnapshot, UserEnvelopeKeyword, MerchantEnvelopeMap, RuangKamus):
         await db.execute(delete(model).where(model.envelope_id.in_(env_ids)))
@@ -115,6 +120,8 @@ async def _delete_envelopes(db: AsyncSession, env_ids: list) -> None:
 
 
 async def _delete_household(db: AsyncSession, hid) -> None:
+    # Semua data plugin ruang ini (tabel `p_*`, U1) lebih dulu: hapus ruang = hapus permanen (01-kajian.md "Siklus data").
+    await data_plugin.hapus_semua_data_ruang(db, hid)
     # Peta merchant dan merchant rumah tangga lebih dulu, eksplisit (tidak bergantung pada FK CASCADE).
     merchant_ids = select(HouseholdMerchant.id).where(HouseholdMerchant.household_id == hid)
     await db.execute(delete(MerchantEnvelopeMap).where(MerchantEnvelopeMap.merchant_id.in_(merchant_ids)))
@@ -161,6 +168,8 @@ async def _anonymize_leftovers(db: AsyncSession, user_id) -> None:
     `db.delete(income)` akan meng-UPDATE-nya jadi NULL, flush gagal (IntegrityError), seluruh
     hapus akun dibatalkan dan data user tetap tersimpan. Menghapus alokasinya malah mengubah
     saldo amplop bersama anggota lain, jadi bukan jalan keluarnya."""
+    # Data plugin yang dicatat user ini (U1) tetap milik ruang; pencatatnya dikosongkan (tampil "Mantan anggota").
+    await data_plugin.lepas_pembuat(db, user_id)
     await db.execute(delete(Transaction).where(Transaction.user_id == user_id, Transaction.is_deleted.is_(True)))
     has_txn = (await db.execute(select(func.count(Transaction.id)).where(Transaction.user_id == user_id))).scalar()
     incomes = (await db.execute(select(Income).where(Income.user_id == user_id))).scalars().all()
@@ -180,6 +189,7 @@ async def _anonymize_leftovers(db: AsyncSession, user_id) -> None:
             .where(Allocation.income_id == inc.id)
         )).one()
         if not n_alloc:  # tidak ada yang bergantung padanya lagi (mis. seluruhnya ke amplop pribadi)
+            await data_plugin.hapus_rujukan(db, "incomes", [inc.id])
             await db.delete(inc)
             continue
         allocated = Decimal(str(allocated or 0))

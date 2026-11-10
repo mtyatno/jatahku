@@ -13,11 +13,13 @@
 //     halaman: lazy(() => import('./Halaman.jsx')),          // semua rute /p/<id>/*; props { subpath, plugin }
 //     kartu,                                                 // kartu kustom; props { entri, item, ctx, kartu }
 //     aksi: { '<id>.penjualan': lazy(() => import('./FormPenjualan.jsx')) },   // props { onDone, onCancel }
-//   };
+//     wizard: lazy(() => import('./Wizard.jsx')),             // U1, opsional: status `terpasang` (manifest `setup`);
+//   };                                                        //   props { ruangNama, sibuk, onSelesai, onLewati }
 //
-// lalu didaftarkan di PLUGIN_WEB di bawah: `import bukuUsaha from './buku_usaha'; … { buku_usaha: bukuUsaha }`.
+// lalu didaftarkan di PLUGIN_WEB di bawah.
+import bukuUsaha from './buku_usaha';
 
-export const PLUGIN_WEB = {};
+export const PLUGIN_WEB = { buku_usaha: bukuUsaha };
 
 export function webPlugin(id) {
   return Object.prototype.hasOwnProperty.call(PLUGIN_WEB, id) ? PLUGIN_WEB[id] : null;

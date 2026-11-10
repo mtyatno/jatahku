@@ -180,13 +180,16 @@ class MigrationTests(unittest.TestCase):
 
     def test_single_head_after_kotak_belajar(self):
         """Tahap 2 (c9e4a7f2b5d8) menyusul Plugin R7 (d7r7k4a1m9c3, di atas laporan berkala 967a27d0c15d, yang menyusul
-        tahap 1 e7b3d5a9c1f4, yang menyusul Plugin H1 a7e3c1f5d9b2); satu head."""
+        tahap 1 e7b3d5a9c1f4, yang menyusul Plugin H1 a7e3c1f5d9b2); satu head yang garisnya melewati tahap 2
+        (migrasi sesudahnya boleh menyusul, mis. Plugin U1 u1b0k0u5aha1)."""
         from alembic.config import Config
         from alembic.script import ScriptDirectory
         cfg = Config(str(REPO / "alembic.ini"))
         cfg.set_main_option("script_location", str(REPO / "alembic"))   # tidak bergantung folder kerja
         script = ScriptDirectory.from_config(cfg)
-        self.assertEqual(script.get_heads(), ["c9e4a7f2b5d8"])
+        heads = script.get_heads()
+        self.assertEqual(len(heads), 1, heads)
+        self.assertIn("c9e4a7f2b5d8", [r.revision for r in script.iterate_revisions(heads[0], "base")])
 
         def children(parent):
             return [p.name for p in (REPO / "alembic" / "versions").glob("*.py")

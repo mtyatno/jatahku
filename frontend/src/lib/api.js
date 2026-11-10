@@ -7,6 +7,7 @@ import { clearSharesOnLogout } from './shareInbox';
 import { pendingCountOf } from './pendingProofs';
 import { skipBody } from './proofFormat';
 import { isRuangDitolak, setRuangAktif, withRuangHeader, RUANG_HEADER } from './ruangAktif';
+import { namaBerkasUnduhan } from './pluginHost';
 import { native } from '../native';
 
 // Alamat API dan tempat token ditentukan lapisan native (ADR-M6), bukan ditebak.
@@ -152,6 +153,23 @@ class ApiClient {
   kontribusiPlugin() { return this.ruangKirim('/plugins/contributions'); }
   aksiPlugin(rid, pluginId, aksi, body = undefined) {
     return this.ruangKirim(`/ruang/${rid}/plugins/${pluginId}/${aksi}`, 'POST', body);
+  }
+  // Endpoint plugin (Plugin U1, 04-kontrak-api.md §5 "Endpoint plugin"): ruang dari header; { ok, status, data }.
+  pluginRute(pluginId, path, method = 'GET', body = undefined) {
+    return this.ruangKirim(`/p/${pluginId}${path}`, method, body);
+  }
+  // Unduh data plugin (U1): lewat `api` (Authorization + ruang), bukan <a href>. Mengembalikan { ok, status, data }.
+  async unduhEksporPlugin(rid, pluginId, format) {
+    try {
+      const res = await this.request(`/ruang/${rid}/plugins/${pluginId}/ekspor?format=${format}`);
+      if (!res.ok) return { ok: false, status: res.status, data: await res.json().catch(() => ({})) };
+      const nama = namaBerkasUnduhan(res.headers.get('content-disposition'),
+        `jatahku-${pluginId}.${format === 'csv' ? 'zip' : 'json'}`);
+      await native.files.save(await res.blob(), nama);
+      return { ok: true, status: res.status, data: null };
+    } catch {
+      return { ok: false, status: 0, data: { detail: 'Terjadi kesalahan jaringan' } };
+    }
   }
   kartuBeranda() { return this.ruangKirim('/dashboard/cards'); }
   simpanTataLetak(body) { return this.ruangKirim('/dashboard/layout', 'PUT', body); }

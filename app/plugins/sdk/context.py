@@ -14,7 +14,7 @@ Plugin diperlakukan sebagai tamu (01-kajian.md "Penegakan"):
   Di ruang usaha pemasukan adalah data usaha: owner, admin, dan job melihat semuanya.
 - **Karyawan.** Di ruang usaha, peran `member` adalah karyawan (R5): data keuangan (amplop, transaksi, pemasukan)
   ditolak `khusus_admin` (ADR-P3), seperti tolak-bawaan R5 di route.
-- **Audit.** Penolakan izin dan setiap kiriman yang sampai (notifikasi; tulis menyusul U2) dicatat di
+- **Audit.** Penolakan izin, setiap kiriman yang sampai (notifikasi), dan setiap tulisan inti (U2: pemasukan) dicatat di
   `plugin_audit_log` lewat sesi DB sendiri, supaya tetap tercatat walau permintaan pemanggil dibatalkan. Baca yang
   diizinkan tidak dicatat per panggilan (keputusan pemilik produk 4 Nov, H2). Penolakan yang sama dicatat sekali per
   jam per proses.
@@ -34,6 +34,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -131,6 +132,31 @@ class AksiRoute:
     """Tombol yang hanya membuka halaman plugin (`/p/<id>…`)."""
     label: str
     ke: str
+
+
+@dataclass(frozen=True)
+class Permintaan:
+    """Masukan fungsi `rute` (endpoint plugin, U1): bagian path sesudah pola, query, dan body JSON (dict atau None).
+    Ruang, user, dan peran ada di konteks; `ruang_id` di body/query tidak pernah dipakai (aturan 1)."""
+    metode: str
+    path: dict[str, str]
+    query: dict[str, str]
+    body: Any
+
+
+@dataclass(frozen=True)
+class Jawaban:
+    """Keluaran fungsi `rute` bila status atau header perlu diatur; selain itu fungsi cukup mengembalikan data JSON."""
+    data: Any
+    status: int = 200
+
+
+class GalatRute(Exception):
+    """Fungsi `rute` menolak permintaan dengan `kode` mesin dan `detail` siap tampil (04-kontrak-api.md aturan 6)."""
+
+    def __init__(self, status: int, kode: str, detail: str):
+        super().__init__(f"{status} {kode}: {detail}")
+        self.status, self.kode, self.detail = status, kode, detail
 
 
 @dataclass(frozen=True)
@@ -255,6 +281,13 @@ class PluginContext(metaclass=_KelasBeku):
     def settings(self) -> dict:
         return dict(_k(self).pengaturan)
 
+    # ── data plugin sendiri (U1) ──
+    def data(self, entitas: str) -> "DataPlugin":
+        """Tabel plugin ini (`p_<id>_<entitas>`, manifest `entities`): selalu ruang konteks ini. Tulis hanya dari
+        fungsi `rute` non-GET; karyawan tidak membaca. Kolom `id`, `household_id`, `created_by`, waktu, dan
+        `deleted_at` milik host (`app/plugins/host/data.py`)."""
+        return DataPlugin(self, entitas)
+
     # ── baca ──
     async def envelopes(self) -> list[AmplopView]:
         """`envelopes:read`: amplop aktif ruang ini yang boleh dilihat viewer."""
@@ -330,6 +363,19 @@ class PluginContext(metaclass=_KelasBeku):
         )).all()
         return [AnggotaView(user_id=uid, nama=nama or "", peran=str(getattr(r, "value", r))) for uid, nama, r in rows]
 
+    # ── tulis inti (U2) ──
+    async def catat_pemasukan(self, *, jumlah: Decimal, keterangan: str, tanggal: date | None = None,
+                              pembagian: list[tuple[UUID, Decimal]]) -> dict:
+        """`incomes:write`, hanya dari `rute` non-GET oleh owner/admin: satu pemasukan di ruang ini lewat jalur
+        pemasukan inti, dibagi persis ke `pembagian` [(envelope_id, jumlah)] (total harus sama dengan `jumlah`; amplop
+        harus amplop aktif ruang ini yang terlihat viewer). Masuk dalam commit yang sama dengan tulisan `ctx.data()`
+        di rute itu. `tanggal` None = hari ini; tidak boleh sesudah hari ini atau lebih dari setahun ke belakang.
+        Mengembalikan `{"income_id", "jumlah", "tanggal", "pembagian": [{"envelope_id", "nama", "jumlah"}]}`;
+        isian salah → `NilaiTidakSah`."""
+        from app.plugins.host import inti
+        return await inti.catat_pemasukan(self, jumlah=jumlah, keterangan=keterangan, tanggal=tanggal,
+                                          pembagian=pembagian)
+
     # ── kirim ──
     async def notify(self, jenis: str, judul: str, isi: str, *, link: str | None = None,
                      kunci: str | None = None) -> int:
@@ -347,3 +393,55 @@ class PluginContext(metaclass=_KelasBeku):
         k.penghitung["notify"] += 1
         from app.plugins.host import titik
         return await titik.kirim_notifikasi(self, jenis, judul, isi, link=link, kunci=kunci or jenis, now=k.sekarang)
+
+
+class DataPlugin(metaclass=_KelasBeku):
+    """Pegangan satu tabel plugin untuk satu panggilan (`ctx.data("kontak")`). Tidak menyimpan apa pun selain konteks
+    dan nama entitas; setiap metode membaca keadaan host lagi (konteks yang sudah ditutup gagal)."""
+    __slots__ = ("_ctx", "_entitas")
+
+    def __init_subclass__(cls, **kw):
+        raise TypeError("DataPlugin tidak bisa diturunkan")
+
+    def __init__(self, ctx: PluginContext, entitas: str):
+        object.__setattr__(self, "_ctx", ctx)
+        object.__setattr__(self, "_entitas", entitas)
+
+    def __setattr__(self, nama, nilai):
+        raise AttributeError("DataPlugin hanya-baca")
+
+    def __reduce__(self):
+        raise TypeError("DataPlugin tidak bisa disalin")
+
+    __copy__ = __deepcopy__ = __reduce__
+
+    async def cari(self, *, saring: dict | None = None, teks: str | None = None, kolom_teks=(), urut=(),
+                   batas: int = 200) -> list[dict]:
+        """Baris hidup ruang ini: `saring` = kolom → nilai (persis), `teks` dicari di `kolom_teks` (tanpa peka huruf),
+        `urut` = nama kolom (awalan `-` = menurun), `batas` ≤ 1000."""
+        from app.plugins.host import data
+        return await data.cari(_k(self._ctx), self._entitas, saring=saring, teks=teks, kolom_teks=kolom_teks,
+                               urut=urut, batas=batas)
+
+    async def ambil(self, id_baris) -> dict | None:
+        """Satu baris hidup ruang ini, atau None (tidak ada, terhapus, atau milik ruang lain — tidak dibedakan)."""
+        from app.plugins.host import data
+        return await data.ambil(_k(self._ctx), self._entitas, id_baris)
+
+    async def hitung(self, *, saring: dict | None = None) -> int:
+        from app.plugins.host import data
+        return await data.hitung(_k(self._ctx), self._entitas, saring=saring)
+
+    async def tambah(self, nilai: dict) -> dict:
+        """Baris baru (`created_by` = user pemicu). Nilai salah → `NilaiTidakSah` (422 di endpoint)."""
+        from app.plugins.host import data
+        return await data.tambah(_k(self._ctx), self._entitas, nilai)
+
+    async def ubah(self, id_baris, nilai: dict) -> dict | None:
+        from app.plugins.host import data
+        return await data.ubah(_k(self._ctx), self._entitas, id_baris, nilai)
+
+    async def hapus(self, id_baris) -> bool:
+        """Hapus lunak; False bila baris tidak ada di ruang ini."""
+        from app.plugins.host import data
+        return await data.hapus(_k(self._ctx), self._entitas, id_baris)

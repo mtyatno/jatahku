@@ -7,6 +7,8 @@ import { parseAmount } from '../lib/parseAmount';
 import { Icon } from './Icon';
 import VoiceInput from './VoiceInput';
 import FundEnvelopeModal from './FundEnvelopeModal';
+import IsianPlugin from '../plugins/IsianPlugin';
+import { bodyTambahan } from '../lib/pluginHost';
 
 // Server menolak karena limit harian (pesan memuat "limit harian") → tawarkan
 // "Catat, naikkan limit hari ini" — sama dengan tombol di bot Telegram.
@@ -20,7 +22,9 @@ function isInsufficientFundsError(errMsg) {
   return lower.includes('dana tidak cukup') || lower.includes('belum ada dana') || lower.includes('belum didanai');
 }
 
-export default function QuickAddTransaction({ onSaved, onCancel }) {
+// `isianPlugin` (Plugin U2): field Fitur Tambahan untuk transaksi di ruang aktif (`pluginHost.fieldUntuk`), mis. pemasok
+// dan akun beban Buku Usaha; dikirim sebagai `tambahan`. Kosong = form seperti biasa.
+export default function QuickAddTransaction({ onSaved, onCancel, isianPlugin = [] }) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [envelopeId, setEnvelopeId] = useState('');
@@ -32,6 +36,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
   const [memberCount, setMemberCount] = useState(1);
   const [showFundModal, setShowFundModal] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [isian, setIsian] = useState({});
   // Hasil simpan belum pasti (koneksi putus / 409 / 5xx): isian dikunci.
   const [uncertain, setUncertain] = useState(false);
   const userTouchedRef = useRef(false);
@@ -103,7 +108,7 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     sentRef.current = null;
     setUncertain(false);
     setAmount(''); setDescription(''); setEnvelopeId('');
-    setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false);
+    setSuggested(false); userTouchedRef.current = false; setError(''); setIsPrivate(false); setIsian({});
   };
 
   const selectedEnv = envelopes.find(e => e.id === envelopeId);
@@ -115,12 +120,16 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
     if (!payload) {
       if (!envelopeId || !amount || Number(amount) <= 0) { setError('Lengkapi jumlah & amplop'); return; }
       payload = { envelope_id: envelopeId, amount: Number(amount), description, source: 'webapp', is_private: showPrivate ? isPrivate : false, client_ref: newRef(), ...extra };
+      const tambahan = bodyTambahan(isianPlugin, isian);
+      if (tambahan) payload.tambahan = tambahan;
       sentRef.current = payload;
     }
     setSaving(true); setError('');
 
     if (!navigator.onLine) {
-      await enqueueTransaction(payload);
+      // Antrean offline (`/transactions/batch`) belum membawa isian Fitur Tambahan: transaksinya tetap tercatat.
+      const { tambahan: _abaikan, ...antre } = payload;
+      await enqueueTransaction(antre);
       setSaving(false);
       window.dispatchEvent(new CustomEvent('jatahku:txn-added'));
       reset();
@@ -213,6 +222,9 @@ export default function QuickAddTransaction({ onSaved, onCancel }) {
           {onCancel && <button type="button" onClick={onCancel} className="btn-outline">Batal</button>}
         </div>
       </div>
+      {isianPlugin.length > 0 && (
+        <IsianPlugin fields={isianPlugin} nilai={isian} onChange={setIsian} disabled={saving || uncertain} />
+      )}
       {showPrivate && (
         <label className="flex items-start gap-2 cursor-pointer">
           <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} disabled={saving || uncertain}

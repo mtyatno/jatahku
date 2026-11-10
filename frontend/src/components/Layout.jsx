@@ -34,7 +34,7 @@ import CatatCepat from './CatatCepat';
 import { useKontribusiPlugin } from '../plugins/useKontribusi';
 import { webPlugin } from '../plugins';
 import {
-  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, halamanUtama, kontribusiUntuk, menuPlugin,
+  RUTE_FITUR, adaMenuPlugin, aksiCatatPlugin, aksiDariKunci, fieldUntuk, halamanUtama, kontribusiUntuk, menuPlugin,
 } from '../lib/pluginHost';
 
 function QuickAddEnvelope({ onClose }) {
@@ -999,7 +999,8 @@ export default function Layout() {
             </h3>
             {aksiLama === 'expense' && (
               <MultiAddTransaction onSaved={closeAction} onCancel={closeAction}
-                initialPhoto={actionPayload?.photo} photoMode={actionPayload?.photoMode} />
+                initialPhoto={actionPayload?.photo} photoMode={actionPayload?.photoMode}
+                isianPlugin={karyawan ? [] : fieldUntuk(kontribusi, 'transaction')} />
             )}
             {aksiLama === 'envelope' && <QuickAddEnvelope onClose={closeAction} />}
             {aksiLama === 'income' && <QuickAddIncome onClose={closeAction} prefill={actionPayload} />}
