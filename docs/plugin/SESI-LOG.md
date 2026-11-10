@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## Privat dimatikan di ruang usaha · 2026-11-11 · pemilik produk + Claude
 
-**Selesai** (branch `plugin/privat-ruang-usaha` dari `main`; PR #PR_PRIVAT; tanpa migrasi; tindak lanjut keputusan C U3)
+**Selesai** (branch `plugin/privat-ruang-usaha` dari `main`; PR #205; tanpa migrasi; tindak lanjut keputusan C U3)
 - Keputusan pemilik 11 Nov: ruang usaha tidak punya pengeluaran privat untuk semua peran (pengeluaran usaha terbuka bagi pemilik dan admin); karyawan sama sekali tidak bisa mencatat transaksi privat; kiriman bertanda privat ditolak, bukan diam-diam dicatat terbuka; transaksi privat lama dibiarkan (masih uji coba, tanpa data nyata); review keamanan terpisah.
 - Server (`routes/transactions.py`): `POST /transactions/` → 422 `privat_tidak_tersedia` sebelum isian plugin, batasan, draf, dan kunci idempotensi; `POST /transactions/batch` → galat per baris, baris lain tetap tercatat. Persetujuan draf (`ruang_kelola.py`) mencatat draf lama bertanda privat sebagai pengeluaran biasa (admin sudah melihat keterangannya di antrean).
 - Web: `shouldShowPrivateToggle(…, { ruangUsaha })` menyembunyikan pilihan di ruang usaha; `Layout` → `MultiAddTransaction` → `QuickAddTransaction` (`ruang.aktif.jenis`). Catat karyawan dan Catat banyak memang tidak punya pilihan privat.
@@ -18,7 +18,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 - Bot dan chat web tidak tersentuh: chat selalu ruang keluarga.
 
 **Cara melanjutkan**
-- Sesi review baru: "review PR #PR_PRIVAT terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`.
+- Sesi review baru: "review PR #205 terhadap 03-workflow.md bagian keamanan". Sesudah lulus: merge tanpa migrasi, `/cek-deploy <PR>`.
 - Bila PR U3 (#204) di-merge lebih dulu, SESI-LOG bentrok di bagian atas: gabungkan `main`, simpan kedua entri.
 
 ---
