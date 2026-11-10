@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from app.core import log_akses
 from app.core.config import get_settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.api.routes import health, auth, envelopes, transactions, incomes, webhook, link, snapshots, household, export, recurring, analytics, advisor, notifications, user_settings, admin, payment, cms_oauth, goals, balance_check, bot_chat, app_config, kotak_struk, dashboard, plugins, prive, laporan, verifikasi_email
@@ -17,6 +18,9 @@ from app.api.routes import admin_kotak
 settings = get_settings()
 limiter = Limiter(key_func=get_remote_address)
 log = logging.getLogger(__name__)
+# Access log uvicorn tanpa token dan alamat email: nilai `?token=`/`?code=` ditulis `***` (app/core/log_akses.py).
+# Dipasang saat modul dimuat, sebelum permintaan pertama dilayani.
+log_akses.pasang()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
