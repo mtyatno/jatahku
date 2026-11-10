@@ -6,7 +6,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 ## U3 · Laba rugi dan laporan · 2026-11-10 · pemilik produk + Claude
 
-**Selesai** (branch `plugin/u3-laba-rugi`; PR #PR_U3; tanpa migrasi; Plugin API 1.4; manifest Buku Usaha 0.3.0)
+**Selesai** (branch `plugin/u3-laba-rugi`; PR #204; tanpa migrasi; Plugin API 1.4; manifest Buku Usaha 0.3.0)
 - Keputusan pembuka (disetujui "lanjut"): A periode = bulan kalender; B baca agregat di SDK; C aturan angka (lihat di bawah); D laporan dibuat saat diminta, bukan job 202; E isi laporan (ringkasan, beban per akun, daftar penjualan dan pengeluaran), PDF tanpa kata sandi; F karyawan 403 `khusus_admin`.
 - **Host/SDK:** `host/ringkas.py`: `ctx.ringkas_transaksi` / `ctx.ringkas_pemasukan` menjumlah di database (kelompok `bulan`, `amplop`, `jenis`, atau `<entitas pendamping>.<kolom>`; > 1.000 kelompok = `ValueError`, tidak memotong); kelompok pendamping transaksi privat milik orang lain = `None`. `ctx.transactions(pendamping=, hanya_bersama=)` / `ctx.incomes(pendamping=)` memberi `meta`. `host/berkas.py`: rute GET boleh mengembalikan `Laporan`; host menggambar PDF (fpdf2, font laporan berkala, semafor bersama) atau CSV (`_csv_text` PR #136), memeriksa bentuk dan batas, mengirim lampiran (nosniff, CSP sandbox, no-store) dan mengaudit `laporan` tanpa angka.
 - **Buku Usaha:** `metrics.py` satu sumber angka (omzet = penjualan + pemasukan tanpa jenis; beban per akun dengan "Belum berakun" terakhir; laba, margin, banding bulan lalu, perubahan; prive/modal/pinjaman/lain di luar laba rugi; prive = −alokasi); `teks.py` templat dan format; `laporan.py` isi `Laporan`; rute `GET /laba-rugi` dan `GET /laporan`; izin baru `transactions:read`, `incomes:read`.
@@ -33,7 +33,7 @@ Entri terbaru di atas. Format: **Kode sesi · nama · tanggal · siapa** — sel
 
 **Cara melanjutkan**
 - Pemilik produk: jawab keputusan C; bila perlu ubah, satu baris di `metrics.hitung_bulan` (buang) atau penanda di `ringkas.py` (baris sendiri) + tes.
-- Opsional: "review PR #PR_U3 terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
+- Opsional: "review PR #204 terhadap 03-workflow.md bagian keamanan" di sesi terpisah.
 - Merge tanpa migrasi; `/cek-deploy <PR>`. Sesudah tayang: setujui izin baru Buku Usaha, buka tab Laba rugi, unduh PDF/CSV satu bulan, coba dengan akun karyawan (403).
 - Berikutnya `/sesi-plugin U4` (kartu Beranda, butuh U3 + B3) atau `/sesi-plugin U5`.
 
