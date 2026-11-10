@@ -716,6 +716,91 @@ Setelah merge:
   dipakai kode lama. Laporan berstatus `menunggu`/`mengirim` tidak terkirim lagi sesudah revert (kode lama tidak punya
   antrean) dan dikirim bila kode tahap 2 dipasang lagi.
 
+## Deploy Checklist — Log tanpa token dan alamat email (tanpa migrasi)
+Branch `keamanan/log-tanpa-token-dan-email` (perapian keamanan sesudah laporan berkala tahap 2). Access log uvicorn
+menyamarkan `?token=`/`?code=` (`app/core/log_akses.py`); token verifikasi email membawa sidik HMAC, bukan alamat; log
+`email_service` dan `notification_service` tanpa alamat; galat SQL tanpa nilai parameter (`hide_parameters`); halaman
+`/reset-password`, `/hapus-akun`, `/auth/tg` menghapus token dari address bar. **Tanpa migrasi, paket, atau `.env` baru.**
+Satu perubahan yang terasa user: **tautan verifikasi email yang dikirim sebelum deploy tidak berlaku lagi** (Pengaturan
+menampilkan "tautan tidak berlaku"); user menekan "Kirim tautan verifikasi" lagi. Detail: `docs/laporan-berkala.md`
+bagian "Keamanan" dan "Batasan yang diketahui".
+Setelah merge (hindari menit :05 dan :30 UTC):
+1. Tunggu deploy hijau (`api.jatahku.com/health` → `commit` baru; `jatahku.com/version.json` → commit yang sama).
+2. Token tersamar di access log uvicorn. Buat satu baris log bertoken (token asal, tidak mengubah apa pun), lalu periksa:
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' "https://api.jatahku.com/auth/verifikasi-email?token=uji-bukan-token"   # 303
+   curl -s -o /dev/null -w '%{http_code}\n' "https://api.jatahku.com/laporan/berhenti-email?token=uji-bukan-token"  # 400
+   sudo journalctl -u jatahku --since "10 min ago" | grep -c 'token=\*\*\*'                  # ≥ 2: barisnya ada dan tersamar
+   sudo journalctl -u jatahku --since "10 min ago" | grep -E "token=[^*&[:space:]]"          # harus kosong
+   ```
+   Hitungan pertama 0 berarti access log tidak sampai ke journal atau filter tidak terpasang (mis. unit dijalankan
+   dengan `--log-config` sendiri atau `--no-access-log`): periksa `systemctl cat jatahku` sebelum menganggap aman.
+3. Log aplikasi tanpa alamat: minta email reset password ke akun sendiri ("Lupa password?"), tunggu emailnya tiba, lalu
+   `sudo journalctl -u jatahku --since "10 min ago" | grep -c '@'` → 0. Baris email, bila ada, hanya teks tetap:
+   `sudo journalctl -u jatahku --since "10 min ago" | grep -E "Email (backup )?(terkirim|gagal dikirim)"` → `Email
+   terkirim` atau `Email gagal dikirim (<jenis galat>)`, tanpa alamat dan tanpa subjek. (Dengan konfigurasi log bawaan
+   uvicorn, logger aplikasi hanya tampil dari WARNING ke atas, jadi `Email terkirim` bisa tidak muncul sama sekali; yang
+   dulu memuat alamat di journal adalah baris galatnya.) Ulangi hitungan `@` sesudah jam :30 berikutnya yang mengirim
+   email laporan.
+4. Verifikasi email bentuk baru (akun yang emailnya belum terverifikasi): Pengaturan → 📄 Laporan → "Kirim tautan
+   verifikasi" → tautan di email → halaman "Verifikasi email kamu" menampilkan alamat akun → "Verifikasi email" →
+   Pengaturan "Email terverifikasi.". Tautan yang dikirim sebelum deploy → "tidak berlaku" (memang begitu).
+5. Address bar: buka tautan reset password dari email → address bar menjadi `https://jatahku.com/reset-password` tanpa
+   `?token=`, formulir tetap tampil, dan reset berhasil. Memuat ulang halaman sesudah token dihapus menampilkan "Link
+   tidak valid": buka lagi tautan dari email.
+- **Rollback:** revert PR. Tanpa migrasi. Tautan verifikasi yang dikirim kode ini (klaim `eh`) ditolak kode lama; user
+  mengirim tautan baru.
+
+**Log nginx (di luar repo; pemilik server; belum dijalankan dan belum diuji dari repo ini).** Konfigurasi nginx tidak
+ada di repo. Nginx (HestiaCP) di depan `jatahku.com` dan `api.jatahku.com` mencatat URL lengkap dengan format `combined`,
+jadi `?token=` tetap tercatat di sana: `/auth/verifikasi-email`, `/laporan/berhenti-email`, `/auth/tg-login` (API) dan
+`/reset-password`, `/hapus-akun`, `/auth/tg` (web). Kolom `Referer` juga memuatnya: aset halaman bertoken dimuat dengan
+`Referer` ber-query sebelum aplikasi sempat menghapus token dari address bar. Filter uvicorn tidak menjangkau log ini.
+1. Lihat keadaan sekarang (jumlah baris bertoken, dan format yang dipakai):
+   ```bash
+   sudo sh -c 'zgrep -c "token=" /var/log/nginx/domains/jatahku.com.log* /var/log/nginx/domains/api.jatahku.com.log*'
+   sudo grep -n "access_log" /home/jatahku/conf/web/jatahku.com/nginx.ssl.conf /home/jatahku/conf/web/api.jatahku.com/nginx.ssl.conf
+   ```
+2. Format log tanpa query, di konteks `http` (file baru `/etc/nginx/conf.d/log-tanpa-query.conf`; `combined` bawaan
+   nginx tidak bisa didefinisikan ulang). `$request_uri` dipotong di `?` supaya path asli tetap tercatat (`$uri` saja
+   akan mencatat `/app.html` untuk route SPA):
+   ```nginx
+   map $request_uri $uri_tanpa_query {
+       "~^(?<jalur>[^?]*)\?"  $jalur;
+       default                $request_uri;
+   }
+   map $http_referer $referer_tanpa_query {
+       "~^(?<asal>[^?]*)\?"   $asal;
+       default                $http_referer;
+   }
+   log_format combined_tanpa_query '$remote_addr - $remote_user [$time_local] '
+                                   '"$request_method $uri_tanpa_query $server_protocol" $status $body_bytes_sent '
+                                   '"$referer_tanpa_query" "$http_user_agent"';
+   ```
+   Bila query lain masih ingin terlihat, ganti `map` pertama dengan yang hanya menyamarkan token:
+   `"~^(?<awal>.*[?&]token=)[^&]*(?<sisa>.*)$"  "${awal}***${sisa}";` (hanya kemunculan `token=` terakhir).
+3. Pakai format itu di kedua domain: ubah `access_log /var/log/nginx/domains/<domain>.log combined;` menjadi
+   `… combined_tanpa_query;`. Baris itu berasal dari **template** HestiaCP, dan `nginx.conf`/`nginx.ssl.conf` hasil
+   generate ditimpa saat domain dibangun ulang, jadi ubah di template yang dipakai domain (salin ke template bernama
+   sendiri, lalu pilih template itu untuk domainnya di panel atau dengan `v-change-web-domain-tpl` /
+   `v-change-web-domain-proxy-tpl`). Menambah `access_log` kedua lewat file tambahan `nginx.ssl_conf_*` **tidak**
+   menggantikan yang lama: dua-duanya menulis, dan log lama tetap berisi token. Baris `access_log … bytes;` (statistik
+   bandwidth HestiaCP) jangan diubah.
+4. `sudo nginx -t && sudo systemctl reload nginx`, lalu ulangi dua `curl` di langkah 2 checklist di atas dan
+   `sudo tail -5 /var/log/nginx/domains/api.jatahku.com.log` → path tanpa `?token=`.
+
+**Membersihkan jejak lama (opsional; pemilik server; tidak bisa dibatalkan).** Baris yang tercatat sebelum deploy
+(journal) dan sebelum langkah nginx di atas masih memuat token dan alamat. Token berhenti berlangganan di baris lama
+tidak kedaluwarsa (hanya bisa mematikan email laporan). Jalankan sesudah langkah 2–3 checklist dan langkah nginx lulus:
+1. Journal: `sudo journalctl -u jatahku | grep -cE "token=[^*&[:space:]]|@"` (berapa baris lama). `journalctl
+   --vacuum-time` menghapus berkas journal **semua layanan** yang lebih tua dari batasnya, bukan hanya `jatahku`:
+   `sudo journalctl --rotate && sudo journalctl --vacuum-time=<umur>` (mis. `2d`, dijalankan dua hari sesudah deploy,
+   supaya yang tersisa hanya baris sesudah deploy). Ulangi hitungan → 0.
+2. Nginx: sesudah format baru aktif, `sudo logrotate -f /etc/logrotate.d/nginx`, lalu hapus berkas putaran lama kedua
+   domain (`/var/log/nginx/domains/jatahku.com.log.*` dan `api.jatahku.com.log.*`; cek dulu dengan `ls -la`). Statistik
+   web HestiaCP yang dibaca dari log lama ikut hilang. Ulangi `zgrep -c` di langkah 1 nginx → 0.
+3. Cadangan server yang menyalin `/var/log` atau journal masih memuat baris lama sampai cadangan itu kedaluwarsa.
+
 ## Deploy Checklist — Kotak Struk belajar tahap 2 (c9e4a7f2b5d8)
 Tahap 2 belajar lintas user (branch `feat/kotak-belajar-2`, label `migrasi`): kolom `receipt_scans.sample_lines` (JSONB
 NULL, lewat `KOTAK_DDL`), tabel `proof_sample_consents` dan `proof_samples` (unik `uq_proof_sample_item`, indeks

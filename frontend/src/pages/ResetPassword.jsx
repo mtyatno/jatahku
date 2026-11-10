@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import { Navigate, Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { bacaToken, hapusTokenDariUrl } from '../lib/urlToken';
 
 export default function ResetPassword() {
   const { user, resetPassword } = useAuth();
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // Token dibaca sekali lalu dihapus dari address bar (riwayat peramban, tangkapan layar); lihat lib/urlToken.js.
+  const [token] = useState(() => bacaToken(window.location.search));
+  useEffect(() => { hapusTokenDariUrl(window); }, []);
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
