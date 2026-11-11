@@ -41,15 +41,26 @@ laporan yang `notified_at`-nya masih NULL dan terbit dalam `JENDELA_TERBIT_HARI`
 galat DB atau restart di antara commit laporan dan notifikasinya tersusulkan jam berikutnya. Gagal kirim tidak
 membatalkan laporan yang sudah terbit.
 
-Email (tahap 2): sesudah sapu notifikasi, masih di luar kunci household mana pun, `laporan_job` menjalankan satu
-putaran antrean email (`antrean_email.proses_antrean_email`: laporan baru maupun yang menunggu coba ulang) dan mencatat
-satu baris INFO berisi angka saja bila ada yang diproses. Laporan tahap 1 (`email_status` NULL) tidak pernah dikirim.
+Email: `laporan_job` TIDAK mengirim email. Antrean email (laporan baru maupun yang menunggu coba ulang) dijalankan
+proses terpisah `worker_email`; job hanya mengisi status email awal saat terbit (`status_awal`). Worker mati tidak
+menghentikan penerbitan atau notifikasi, hanya menunda email.
+
+Batas waktu: household baru tidak dimulai sesudah `BATAS_JALAN` (40 menit) sejak job mulai, supaya satu jalan tidak
+bertabrakan dengan jalan jam berikutnya (`max_instances=1`). Sisanya dihitung `ditunda`, tidak diterbitkan dan tidak
+diberi tahu di jalan ini, dan diselesaikan jalan berikutnya (penerbitan idempoten). Sapu notifikasi dan pemeriksaan
+alarm tetap dijalankan. Jalan yang menerbitkan, menggagalkan, atau menunda sesuatu mencatat satu baris INFO berisi
+durasi (detik) dan ketiga angkanya; jalan sepi tiap jam tidak menambah log.
+
+Alarm: sesudah sapu, `laporan_job` memanggil `pantau_email.periksa_alarm` (spec worker email bagian 6) dengan sesi
+database dan klien Redis miliknya sendiri; galat apa pun darinya dicatat dan tidak mengubah hasil job.
 """
 import html
 import logging
+import time as waktu_mod
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
+import redis.asyncio as aioredis
 from sqlalchemy import or_, select, update
 
 from app.core.config import get_settings
@@ -62,7 +73,8 @@ from app.models.models import (
 from app.services import notification_service
 from app.services.advisor import advisor_cache
 from app.services.household_cycle import current_payday, household_lock, member_rows
-from app.services.laporan.antrean_email import AWALAN_AKUN_NONAKTIF, hasil_kosong, proses_antrean_email, status_awal
+from app.services.laporan import pantau_email
+from app.services.laporan.antrean_email import AWALAN_AKUN_NONAKTIF, status_awal
 from app.services.laporan.muat import muat_bahan
 from app.services.laporan.susun import ada_aktivitas, susun_bulanan
 from app.services.rollover import create_monthly_snapshots
@@ -71,6 +83,9 @@ logger = logging.getLogger("jatahku.laporan")
 
 # Laporan periode yang tutup lebih lama dari ini tidak diterbitkan lagi (server mati beberapa hari tetap terkejar).
 JENDELA_TERBIT_HARI = 7
+# Household baru tidak dimulai sesudah selama ini sejak `laporan_job` mulai (jalan berikutnya menyelesaikan sisanya).
+BATAS_JALAN = timedelta(minutes=40)
+_BATAS_WAKTU_REDIS = 5   # detik; Redis yang menggantung tidak boleh menahan job
 _PESAN_NOTIFIKASI = "Lihat bagaimana periode kemarin berjalan."
 
 
@@ -291,16 +306,38 @@ async def kirim_notifikasi_tertunda(today: date, kecuali=frozenset()) -> int:
     return terkirim
 
 
-async def laporan_job(today: date | None = None) -> dict:
+async def _periksa_alarm_email() -> None:
+    """Pemeriksaan alarm email laporan dengan sesi dan klien Redis milik sendiri (ditutup di sini). Galat apa pun,
+    termasuk saat membuka Redis atau sesi, dicatat dan tidak pernah dilempar: alarm tidak boleh mengubah hasil job."""
+    try:
+        redis = aioredis.from_url(get_settings().REDIS_URL, socket_timeout=_BATAS_WAKTU_REDIS,
+                                  socket_connect_timeout=_BATAS_WAKTU_REDIS)
+        try:
+            async with AsyncSessionLocal() as db:
+                await pantau_email.periksa_alarm(
+                    db, redis, datetime.now(timezone.utc),
+                    kirim=pantau_email.kirim_telegram_admin, api_menyala=pantau_email.API_MENYALA,
+                )
+        finally:
+            await redis.aclose()
+    except Exception:
+        logger.exception("pemeriksaan alarm email laporan gagal; dicoba lagi jam berikutnya")
+
+
+async def laporan_job(today: date | None = None, *, jam=waktu_mod.monotonic) -> dict:
     """Jalan tiap jam: terbitkan laporan bulanan untuk setiap ruang keluarga yang punya anggota, beri tahu
     penerimanya, sapu notifikasi yang tertinggal (`kirim_notifikasi_tertunda`; laporan yang sudah dicoba di jalan ini
-    tidak dicoba dua kali), lalu jalankan antrean email (`proses_antrean_email`, dengan waktu server). `today` bawaan =
-    tanggal server. Mengembalikan `{"terbit": laporan baru, "gagal": household gagal, "email": hasil antrean}`.
+    tidak dicoba dua kali), lalu periksa alarm email (`_periksa_alarm_email`). Tidak mengirim email: antrean email
+    milik `worker_email`. `today` bawaan = tanggal server; `jam` = jam monotonik (detik) yang dipakai untuk batas
+    waktu dan durasi, diganti tes. Mengembalikan `{"terbit": laporan baru, "gagal": household gagal, "ditunda":
+    household yang tidak dimulai karena melewati BATAS_JALAN}`.
     Household yang gagal dicatat (refresh snapshot yang error: `logger.error` dengan errornya; galat lain:
     `logger.exception`) dan dicoba lagi jam berikutnya; notifikasi yang gagal dicatat tanpa membatalkan laporannya dan
-    disusulkan sapu jam berikutnya. Antrean yang gagal seluruhnya (mis. database putus) dicatat dan `email` berisi nol;
-    laporannya tetap di antrean untuk jam berikutnya."""
+    disusulkan sapu jam berikutnya. Household yang ditunda tidak diterbitkan maupun diberi tahu di jalan ini (WARNING
+    menyebut jumlahnya); sapu dan alarm tetap jalan. Jalan yang menerbitkan, menggagalkan, atau menunda sesuatu
+    mencatat durasi dan ketiga angka di log INFO. Galat pemeriksaan alarm dicatat, tidak mengubah hasil."""
     today = today or date.today()
+    mulai = jam()
     async with AsyncSessionLocal() as db:
         household_ids = (await db.execute(
             select(Household.id).where(
@@ -309,9 +346,14 @@ async def laporan_job(today: date | None = None) -> dict:
             )
         )).scalars().all()
 
-    terbit = gagal = 0
+    terbit = gagal = ditunda = 0
     dicoba = set()
-    for household_id in household_ids:
+    for urutan, household_id in enumerate(household_ids):
+        if jam() - mulai >= BATAS_JALAN.total_seconds():
+            ditunda = len(household_ids) - urutan
+            logger.warning("laporan_job melewati batas %s menit: %s household ditunda ke jam berikutnya",
+                           int(BATAS_JALAN.total_seconds() // 60), ditunda)
+            break
         try:
             ids = await terbitkan_household(household_id, today)
         except RefreshSnapshotGagal as e:
@@ -333,12 +375,8 @@ async def laporan_job(today: date | None = None) -> dict:
         await kirim_notifikasi_tertunda(today, kecuali=frozenset(dicoba))
     except Exception:
         logger.exception("sapu notifikasi laporan gagal; dicoba lagi jam berikutnya")
-    try:
-        email = await proses_antrean_email()
-    except Exception:
-        logger.exception("antrean email laporan gagal; dicoba lagi jam berikutnya")
-        email = hasil_kosong()
-    if any(email.values()):
-        logger.info("email laporan: %s terkirim, %s gagal, %s dilewati, %s dicoba lagi",
-                    email["terkirim"], email["gagal"], email["dilewati"], email["dicoba_lagi"])
-    return {"terbit": terbit, "gagal": gagal, "email": email}
+    if terbit or gagal or ditunda:
+        logger.info("laporan_job selesai dalam %.1f detik: %s terbit, %s gagal, %s ditunda",
+                    jam() - mulai, terbit, gagal, ditunda)
+    await _periksa_alarm_email()
+    return {"terbit": terbit, "gagal": gagal, "ditunda": ditunda}
